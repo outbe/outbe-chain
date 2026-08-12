@@ -4,10 +4,10 @@
 
 Classification: `measurement_only`. Armable: `false`.
 
-- Generator source SHA-256: `314ae728ab570fcebb236c2f71f24818c615e2c9ea832229b54933849b0a9944`
-- Input-set SHA-256: `ef711b76183d78831263bc406415fdc29e656a58eb92e620a61f7f1d61f064e0`
+- Generator source SHA-256: `03d1fb4ec66fd75c07e858ea42b623b244417c9d2a3ce5f3a075f840ae818360`
+- Input-set SHA-256: `72f2394d9048f1970b4b090b282ecae4604bcd8d324dd85c9615f22ba64208a4`
 - Candidate-limit SHA-256: `a3c6ad4cf52140a9ebfc48eef7aafb8af80af59104f0070d09959cd042b13150`
-- Object kinds: `34`
+- Object kinds: `36`
 
 ## Candidate compile ceilings
 

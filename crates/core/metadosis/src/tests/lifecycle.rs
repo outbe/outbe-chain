@@ -2172,6 +2172,7 @@ fn test_cold_start_uses_materialized_short_genesis_schedule() {
             metadosis_bootstrap_duration_seconds: 300,
             metadosis_advance_interval_seconds: 10,
             ocomp_compute_vote_window_blocks: 120,
+            nod_materialization: Default::default(),
         };
         parameters.validate().unwrap();
         for (slot, value) in parameters.genesis_storage_words() {

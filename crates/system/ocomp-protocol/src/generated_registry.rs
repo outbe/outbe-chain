@@ -38,6 +38,8 @@ pub enum ObjectKind {
     OcompAccountabilitySummaryV1 = 0x0024,
     OcompVoteAccountabilityV1 = 0x0025,
     LysisTerminalV1 = 0x0026,
+    NodMaterializationBatchV1 = 0x0027,
+    NodMaterializationHeadV1 = 0x0028,
 }
 
 impl ObjectKind {
@@ -76,6 +78,8 @@ impl ObjectKind {
         Self::OcompAccountabilitySummaryV1,
         Self::OcompVoteAccountabilityV1,
         Self::LysisTerminalV1,
+        Self::NodMaterializationBatchV1,
+        Self::NodMaterializationHeadV1,
     ];
 
     #[must_use]
@@ -120,6 +124,8 @@ impl ObjectKind {
             Self::OcompAccountabilitySummaryV1 => "OcompAccountabilitySummaryV1",
             Self::OcompVoteAccountabilityV1 => "OcompVoteAccountabilityV1",
             Self::LysisTerminalV1 => "LysisTerminalV1",
+            Self::NodMaterializationBatchV1 => "NodMaterializationBatchV1",
+            Self::NodMaterializationHeadV1 => "NodMaterializationHeadV1",
         }
     }
 }
@@ -163,6 +169,8 @@ impl TryFrom<u16> for ObjectKind {
             0x0024 => Ok(Self::OcompAccountabilitySummaryV1),
             0x0025 => Ok(Self::OcompVoteAccountabilityV1),
             0x0026 => Ok(Self::LysisTerminalV1),
+            0x0027 => Ok(Self::NodMaterializationBatchV1),
+            0x0028 => Ok(Self::NodMaterializationHeadV1),
             value => Err(crate::error::ProtocolError::UnknownObjectKind(value)),
         }
     }

@@ -521,19 +521,30 @@ where
             let reader = RethStateReader { state: &state };
             let mut provider = ReadOnlyStorageProvider::new(reader);
             let storage = StorageHandle::new(&mut provider);
-            outbe_metadosis::resolve_historical_result_vote_carrier_signer(
-                storage,
-                &candidate.prefix,
-                transaction.sender(),
-                &outbe_ocomp_protocol::profile::poc_schema_limits(),
-            )
+            match candidate {
+                OcompSystemCarrierCandidate::ResultVote { prefix } => {
+                    outbe_metadosis::resolve_historical_result_vote_carrier_signer(
+                        storage,
+                        &prefix,
+                        transaction.sender(),
+                        &outbe_ocomp_protocol::profile::poc_schema_limits(),
+                    )
+                }
+                OcompSystemCarrierCandidate::NodMaterialization { .. } => {
+                    outbe_validatorset::contract::ValidatorSet::new(storage)
+                        .resolve_validator_for_role(
+                            transaction.sender(),
+                            outbe_validatorset::delegation::ValidatorDelegateRole::Ocomp,
+                        )
+                }
+            }
         };
         match authorization {
             Ok(Some(_)) => {}
             Ok(None) => {
                 return invalid(
                     transaction,
-                    "OCOMP carrier signer is not authorized by its pinned snapshot".to_owned(),
+                    "OCOMP carrier signer is not authorized for this action".to_owned(),
                 )
             }
             Err(error) => {
@@ -1008,7 +1019,7 @@ mod tests {
             panic!("carrier without pinned state must be rejected, got {outcome:?}");
         };
         assert!(
-            error.to_string().contains("pinned snapshot"),
+            error.to_string().contains("not authorized for this action"),
             "state authorization must run before ordinary intrinsic gas: {error}"
         );
         assert!(!error.to_string().contains("intrinsic"));

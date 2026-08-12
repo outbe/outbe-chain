@@ -997,6 +997,14 @@ def seed_nods(storage: StorageBuilder, nods: list):
     storage.set_slot(0, len(nods))
 
 
+def seed_nod_materialization_fifo(storage: StorageBuilder):
+    """Initialize the canonical NOD materialization FIFO bounds."""
+    # Pinned by `materialization_fifo_slots_match_the_genesis_seeder` in
+    # `crates/core/nod/src/adr006_tests.rs`.
+    storage.set_slot(19, 1)  # head_sequence
+    storage.set_slot(20, 1)  # tail_sequence (next-free)
+
+
 def seed_metadosis(storage: StorageBuilder, config: dict):
     """
     Metadosis storage layout — MUST track `crates/core/metadosis/src/schema.rs`
@@ -1920,14 +1928,16 @@ def main():
               f"{len(offering_days)} offering day_totals init, "
               f"{len(tribute_storage.entries)} storage entries")
 
-    # Seed NODs
+    # Seed NODs and the canonical materialization FIFO. The FIFO exists even
+    # when the genesis contains no legacy NOD records.
+    nod_storage = StorageBuilder()
     if "nods" in seed:
-        nod_storage = StorageBuilder()
         seed_nods(nod_storage, seed["nods"])
-        entry = alloc[NOD_ADDRESS]
-        entry.setdefault("storage", {}).update(nod_storage.entries)
-        print(f"  Nod: {len(seed['nods'])} nods, "
-              f"{len(nod_storage.entries)} storage entries")
+    seed_nod_materialization_fifo(nod_storage)
+    entry = alloc[NOD_ADDRESS]
+    entry.setdefault("storage", {}).update(nod_storage.entries)
+    print(f"  Nod: {len(seed.get('nods', []))} nods, "
+          f"{len(nod_storage.entries)} storage entries")
 
     # Seed Metadosis
     if "metadosis" in seed:

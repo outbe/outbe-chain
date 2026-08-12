@@ -33,6 +33,8 @@ object	0x0023	OcompQuorumV1	OcompQuorumV1
 object	0x0024	OcompAccountabilitySummaryV1	OcompAccountabilitySummaryV1
 object	0x0025	OcompVoteAccountabilityV1	OcompVoteAccountabilityV1
 object	0x0026	LysisTerminalV1	LysisTerminalV1
+object	0x0027	NodMaterializationBatchV1	NodMaterializationBatchV1
+object	0x0028	NodMaterializationHeadV1	NodMaterializationHeadV1
 domain		ProtocolBundle	OUTBE_OCOMP_PROTOCOL_BUNDLE_V1
 domain		PreAdmission	OUTBE_OCOMP_PRE_ADMISSION_V1
 domain		ActivationPreconditions	OUTBE_OCOMP_ACTIVATION_PRECONDITIONS_V1

@@ -117,6 +117,12 @@ pub fn mine_gratis(
 ) -> Result<U256> {
     let item =
         nod_api::load_item(storage, scope, parent, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
+    if NodContract::new(storage.clone())
+        .ocomp_certified_generation(item.body().worldwide_day)?
+        .is_some_and(|generation| generation.next_nod_ordinal < generation.nod_count)
+    {
+        return Err(NodFactoryError::NodGenerationNotMaterialized.into());
+    }
     let bucket_id = EntityId36::new(item.body().worldwide_day, item.body().bucket_key.0);
     let bucket = nod_api::load_bucket(storage, scope, parent, bucket_id)?
         .ok_or(NodFactoryError::NodNotQualified)?;

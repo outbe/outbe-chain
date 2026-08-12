@@ -28,6 +28,30 @@ pub enum NodFactoryError {
 
     #[error("invalid asset")]
     InvalidAsset,
+
+    #[error("caller is not an active OCOMP materializer")]
+    UnauthorizedMaterializer,
+
+    #[error("Nod materialization attempt limit reached for this block")]
+    MaterializationAttemptLimit,
+
+    #[error("stale Nod materialization queue sequence")]
+    StaleMaterializationQueue,
+
+    #[error("stale Nod materialization cursor")]
+    StaleMaterializationCursor,
+
+    #[error("invalid Nod materialization batch shape")]
+    InvalidMaterializationBatchShape,
+
+    #[error("invalid Nod materialization proof")]
+    InvalidMaterializationProof,
+
+    #[error("certified Nod already exists")]
+    DuplicateMaterializedNod,
+
+    #[error("certified Nod generation is not fully materialized")]
+    NodGenerationNotMaterialized,
 }
 
 impl From<NodFactoryError> for PrecompileError {
