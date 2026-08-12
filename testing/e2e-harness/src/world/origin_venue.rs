@@ -15,7 +15,7 @@ use crate::world::hardhat;
 
 /// Outbe EVM precompiles the origin engine is wired to, and the frame
 /// precompile-initiated calls arrive as.
-const DESIS: &str = "0x0000000000000000000000000000000000001016";
+pub(crate) const DESIS: &str = "0x0000000000000000000000000000000000001016";
 const INTEX_FACTORY: &str = "0x0000000000000000000000000000000000001015";
 const SYSTEM_CALLER: &str = "0xff00000000000000000000000000000000000001";
 
@@ -33,6 +33,9 @@ pub struct OriginContracts {
     pub intex_auction: Address,
     pub escrow: Address,
     pub nft_bridge: Address,
+    /// What bids are bonded and paid in, and the custody the escrow locks into.
+    pub payment_token: Address,
+    pub compact: Address,
     pub target_router: Address,
     /// Unwraps inbound proceeds to native; funded so it can pay.
     pub wcoen: Address,
@@ -135,6 +138,28 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64) -> Result<OriginContracts> 
         url,
     )?;
 
+    // Bids are bonded and paid in wCOEN held under a compact lock. Both are the
+    // repository's own mocks: the payment token has to be a real ERC-20 for the
+    // escrow to move, which the proceeds stub above deliberately is not.
+    let payment_token = address_from(
+        &forge::run(
+            &intex,
+            &["create", "test/mocks/MockWCOEN.sol:MockWCOEN"],
+            &[],
+            url,
+        )?,
+        "Deployed to:",
+    )?;
+    let compact = address_from(
+        &forge::run(
+            &intex,
+            &["create", "test/mocks/MockTheCompact.sol:MockTheCompact"],
+            &[],
+            url,
+        )?,
+        "Deployed to:",
+    )?;
+
     let contracts = OriginContracts {
         create_x,
         mailbox,
@@ -145,6 +170,8 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64) -> Result<OriginContracts> 
         intex_auction: address_from(&venue, "IntexAuction:")?,
         escrow: address_from(&venue, "EscrowAdapter:")?,
         nft_bridge: address_from(&venue, "IntexNFT1155Bridge:")?,
+        payment_token,
+        compact,
         target_router: address_from(&venue, "TargetRouter:")?,
         wcoen,
     };
@@ -225,8 +252,21 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
         intex,
         "auction-wire",
         &[
-            ("--intex-auction-contract", auction),
+            ("--intex-auction-contract", auction.clone()),
+            ("--escrow-contract", escrow.clone()),
+        ],
+        url,
+        chain_id,
+    )?;
+
+    hardhat::task(
+        intex,
+        "escrow-wire",
+        &[
             ("--escrow-contract", escrow),
+            ("--intex-auction-contract", auction),
+            ("--compact-contract", format!("{:?}", contracts.compact)),
+            ("--payment-token", format!("{:?}", contracts.payment_token)),
         ],
         url,
         chain_id,
