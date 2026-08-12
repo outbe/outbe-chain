@@ -54,7 +54,7 @@ pub(crate) fn preflight_brief(
     worldwide_day: WorldwideDay,
     now: u64,
 ) -> Result<u32> {
-    if worldwide_day.value() == 0 {
+    if !worldwide_day.is_valid() {
         return Err(DesisError::InvalidWorldwideDay(worldwide_day).into());
     }
     let contract = storage.contract::<DesisContract>();

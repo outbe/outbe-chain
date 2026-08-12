@@ -95,6 +95,7 @@ fn process_one(
     // (owner, worldwide_day) so a duplicate offer for the same owner and day
     // collides and is rejected downstream (TributeAlreadyExists).
     // draft_id is still validated by compute_token_id but not bound into the id.
+    // TODO refactor this to correctly validate tribute_draft_id
     let token_id = compute_token_id(offer.owner, offer.worldwide_day, &payload.tribute_draft_id)?;
 
     Ok(TributeOfferResult {
