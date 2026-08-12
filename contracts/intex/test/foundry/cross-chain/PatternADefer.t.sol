@@ -43,7 +43,9 @@ contract StubAuctionWithBids {
                 bidderAddress: address(uint160(0xCAFE + i)),
                 intexQuantity: 1,
                 intexBidRate: 100e6,
-                timestamp: uint32(block.timestamp)
+                timestamp: uint32(block.timestamp),
+                issuanceCurrency: 840,
+                referenceCurrency: 840
             });
         }
         // `data` left default — TM's `_doSendBidsToOutbe` drops the first tuple component.

@@ -386,6 +386,16 @@
               "name": "timestamp",
               "type": "uint32",
               "internalType": "uint32"
+            },
+            {
+              "name": "issuanceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "referenceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
             }
           ]
         }
@@ -656,6 +666,16 @@
           "internalType": "uint32"
         },
         {
+          "name": "issuanceCurrency",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "referenceCurrency",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
           "name": "chainId",
           "type": "uint64",
           "internalType": "uint64"
@@ -822,6 +842,18 @@
           "type": "uint32",
           "indexed": false,
           "internalType": "uint32"
+        },
+        {
+          "name": "issuanceCurrency",
+          "type": "uint16",
+          "indexed": false,
+          "internalType": "uint16"
+        },
+        {
+          "name": "referenceCurrency",
+          "type": "uint16",
+          "indexed": false,
+          "internalType": "uint16"
         }
       ],
       "anonymous": false
@@ -972,6 +1004,17 @@
       "type": "error",
       "name": "InvalidDayState",
       "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "InvalidIssuanceCurrency",
+      "inputs": [
+        {
+          "name": "isoCode",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ]
     },
     {
       "type": "error",

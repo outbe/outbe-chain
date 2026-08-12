@@ -25,6 +25,9 @@ import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 
 /// @dev Desis precompile stand-in that records the relayed bid intake.
+uint16 constant ISSUANCE_CCY = 840;
+uint16 constant REFERENCE_CCY = 840;
+
 contract RecordingDesis {
     uint32 public lastDay;
     uint32 public lastSrcChainId;
@@ -140,8 +143,9 @@ contract LocalLoopbackTest is Test {
     uint32 internal constant DAY = 20260714;
     uint128 internal constant PROMIS_LOAD_MINOR = 1000;
 
-    bytes32 internal constant REVEAL_BID_TYPEHASH =
-        keccak256("RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate)");
+    bytes32 internal constant REVEAL_BID_TYPEHASH = keccak256(
+        "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
+    );
 
     MockERC7786Bridge internal bridge;
     OriginRouter internal origin;
@@ -232,7 +236,8 @@ contract LocalLoopbackTest is Test {
     }
 
     function _sig(address bidder, uint16 qty, uint32 rate, uint256 pk) internal view returns (bytes memory) {
-        bytes32 structHash = keccak256(abi.encode(REVEAL_BID_TYPEHASH, DAY, bidder, qty, rate));
+        bytes32 structHash =
+            keccak256(abi.encode(REVEAL_BID_TYPEHASH, DAY, bidder, qty, rate, ISSUANCE_CCY, REFERENCE_CCY));
         bytes32 domainSeparator = keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
@@ -250,7 +255,7 @@ contract LocalLoopbackTest is Test {
     function _commitAndReveal(address bidder, uint16 qty, uint32 rate, uint256 pk) internal {
         bytes memory signature = _sig(bidder, qty, rate, pk);
         vm.prank(bidder);
-        auction.revealBid(DAY, qty, rate, uint64(block.chainid), signature);
+        auction.revealBid(DAY, qty, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), signature);
     }
 
     function test_FullWalk_OriginAsTarget() public {

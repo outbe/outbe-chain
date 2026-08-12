@@ -38,6 +38,10 @@ interface IIntexAuction {
         uint16 intexQuantity;
         /// @notice Timestamp assigned at reveal (ordering only).
         uint32 timestamp;
+        /// @notice Declared issuance currency (ISO numeric).
+        uint16 issuanceCurrency;
+        /// @notice Reference currency the bid prices in (ISO numeric).
+        uint16 referenceCurrency;
     }
 
     /// @notice Auction schedule — stage-end timestamps.
@@ -144,7 +148,14 @@ interface IIntexAuction {
     /// @param bidder Bidder address.
     /// @param quantity Revealed Intex quantity.
     /// @param bidRate Revealed bid rate (`1e6` fixed-point, % of the escrow basis).
-    event BidRevealed(uint32 indexed worldwideDay, address indexed bidder, uint16 indexed quantity, uint32 bidRate);
+    event BidRevealed(
+        uint32 indexed worldwideDay,
+        address indexed bidder,
+        uint16 indexed quantity,
+        uint32 bidRate,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency
+    );
 
     /// @notice Emitted on `cancelCommit` after the bidder withdraws their commit during the commit stage.
     /// @param worldwideDay Worldwide day (yyyymmdd).
@@ -204,6 +215,8 @@ interface IIntexAuction {
     error InvalidDayState();
     /// @notice The day does not carry a price for this reference currency.
     error ReferenceCurrencyNotPriced(uint32 worldwideDay, uint16 isoCode);
+    /// @notice The declared issuance currency is not a three-digit ISO code.
+    error InvalidIssuanceCurrency(uint16 isoCode);
     /// @notice Commit hash must be non-zero.
     error InvalidCommitHash();
     /// @notice Chain id mismatch between the caller-supplied value and `block.chainid`.
@@ -293,11 +306,21 @@ interface IIntexAuction {
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param quantity Requested quantity (Intex units).
     /// @param bidRate Bid rate (`1e6` fixed-point, % of the escrow basis).
+    /// @param issuanceCurrency Declared issuance currency (ISO numeric); only its three-digit range
+    ///                         is checked, since the network keeps no list of issuance currencies.
+    /// @param referenceCurrency Reference currency the bid prices in; must be one the day carries.
     /// @param chainId Chain id; must equal `block.chainid` (belt-and-braces; the EIP-712 domain
     ///                already binds it inside the signature).
     /// @param signature 65-byte ECDSA signature over the EIP-712 `RevealBid` typed data.
-    function revealBid(uint32 worldwideDay, uint16 quantity, uint32 bidRate, uint64 chainId, bytes memory signature)
-        external;
+    function revealBid(
+        uint32 worldwideDay,
+        uint16 quantity,
+        uint32 bidRate,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint64 chainId,
+        bytes memory signature
+    ) external;
 
     /// @notice Permissionless commit-bond claim for a bidder who committed but never revealed.
     ///         A cancelled (red-day) auction releases immediately; otherwise the bond is claimable
