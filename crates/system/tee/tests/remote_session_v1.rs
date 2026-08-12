@@ -1,23 +1,26 @@
 use alloy_primitives::B256;
-use outbe_primitives::tee_attestation_v1::{
-    EnclaveProfile, NodeHostAuthorizationWitnessV1, NodeIdV1,
-};
+use outbe_primitives::tee_attestation_v1::{NodeHostAuthorizationWitnessV1, NodeIdV1};
 use outbe_tee::{
     admit_remote_session_v1, admit_rpc_trusted_remote_session_v1, FinalizedRegistryBindingV1,
     FinalizedRegistryViewV1, RemoteSessionAdmissionError, RemoteSessionExpectationV1,
 };
 
-fn validator(seed: u8) -> NodeIdV1 {
-    NodeIdV1::Validator {
-        address: [seed; 20],
-        bls_minpk_public: [seed.wrapping_add(1); 48],
+fn node(seed: u8) -> NodeIdV1 {
+    let signing = k256::ecdsa::SigningKey::from_bytes((&[seed; 32]).into()).unwrap();
+    NodeIdV1 {
+        reth_p2p_public: signing
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .unwrap(),
     }
 }
 
 #[test]
 fn exact_finalized_source_and_target_admit_one_bounded_session() {
-    let source_node = validator(0x11);
-    let target_node = validator(0x21);
+    let source_node = node(0x11);
+    let target_node = node(0x21);
     let chain_id = [0x31; 32];
     let genesis_hash = B256::repeat_byte(0x32);
     let view = FinalizedRegistryViewV1 {
@@ -31,14 +34,12 @@ fn exact_finalized_source_and_target_admit_one_bounded_session() {
     let source_witness = NodeHostAuthorizationWitnessV1 {
         chain_id,
         genesis_hash,
-        enclave_profile: EnclaveProfile::Validator,
         node_id: source_node.clone(),
         node_host_noise_x25519: [0x41; 32],
     };
     let source = FinalizedRegistryBindingV1 {
         view,
         node_id_hash: source_node.node_id_hash().unwrap(),
-        profile: EnclaveProfile::Validator,
         enclave_id: B256::repeat_byte(0x42),
         binding_id: B256::repeat_byte(0x43),
         intent_hash: B256::repeat_byte(0x44),
@@ -49,7 +50,6 @@ fn exact_finalized_source_and_target_admit_one_bounded_session() {
     let target = FinalizedRegistryBindingV1 {
         view,
         node_id_hash: target_node.node_id_hash().unwrap(),
-        profile: EnclaveProfile::Validator,
         enclave_id: B256::repeat_byte(0x52),
         binding_id: B256::repeat_byte(0x53),
         intent_hash: B256::repeat_byte(0x54),
@@ -63,9 +63,7 @@ fn exact_finalized_source_and_target_admit_one_bounded_session() {
             chain_id,
             genesis_hash,
             source_node_id_hash: source.node_id_hash,
-            source_profile: EnclaveProfile::Validator,
             target_node_id_hash: target.node_id_hash,
-            target_profile: EnclaveProfile::Validator,
         },
         &source_witness,
         source,
@@ -81,8 +79,8 @@ fn exact_finalized_source_and_target_admit_one_bounded_session() {
 
 #[test]
 fn rpc_trust_is_an_explicit_non_finality_verified_result_type() {
-    let source_node = validator(0x61);
-    let target_node = validator(0x71);
+    let source_node = node(0x61);
+    let target_node = node(0x71);
     let chain_id = [0x81; 32];
     let genesis_hash = B256::repeat_byte(0x82);
     let view = FinalizedRegistryViewV1 {
@@ -96,14 +94,12 @@ fn rpc_trust_is_an_explicit_non_finality_verified_result_type() {
     let source_witness = NodeHostAuthorizationWitnessV1 {
         chain_id,
         genesis_hash,
-        enclave_profile: EnclaveProfile::Validator,
         node_id: source_node.clone(),
         node_host_noise_x25519: [0x91; 32],
     };
     let source = FinalizedRegistryBindingV1 {
         view,
         node_id_hash: source_node.node_id_hash().unwrap(),
-        profile: EnclaveProfile::Validator,
         enclave_id: B256::repeat_byte(0x92),
         binding_id: B256::repeat_byte(0x93),
         intent_hash: B256::repeat_byte(0x94),
@@ -114,7 +110,6 @@ fn rpc_trust_is_an_explicit_non_finality_verified_result_type() {
     let target = FinalizedRegistryBindingV1 {
         view,
         node_id_hash: target_node.node_id_hash().unwrap(),
-        profile: EnclaveProfile::Validator,
         enclave_id: B256::repeat_byte(0xA2),
         binding_id: B256::repeat_byte(0xA3),
         intent_hash: B256::repeat_byte(0xA4),
@@ -127,9 +122,7 @@ fn rpc_trust_is_an_explicit_non_finality_verified_result_type() {
             chain_id,
             genesis_hash,
             source_node_id_hash: source.node_id_hash,
-            source_profile: EnclaveProfile::Validator,
             target_node_id_hash: target.node_id_hash,
-            target_profile: EnclaveProfile::Validator,
         },
         &source_witness,
         source,
@@ -144,7 +137,7 @@ fn rpc_trust_is_an_explicit_non_finality_verified_result_type() {
 }
 
 #[test]
-fn stale_mixed_profile_chain_genesis_and_nodehost_key_substitutions_reject() {
+fn stale_mixed_chain_genesis_and_nodehost_key_substitutions_reject() {
     let (expected, source_witness, source, target) = admission_fixture();
 
     let mut stale_source = source;
@@ -167,12 +160,6 @@ fn stale_mixed_profile_chain_genesis_and_nodehost_key_substitutions_reject() {
         Err(RemoteSessionAdmissionError::MixedFinalizedViews)
     );
 
-    let mut wrong_profile = expected;
-    wrong_profile.source_profile = EnclaveProfile::FullNode;
-    assert_eq!(
-        admit_remote_session_v1(wrong_profile, &source_witness, source, target),
-        Err(RemoteSessionAdmissionError::WrongSourceProfile)
-    );
     let mut wrong_chain = expected;
     wrong_chain.chain_id = [0xE2; 32];
     assert_eq!(
@@ -200,8 +187,8 @@ fn admission_fixture() -> (
     FinalizedRegistryBindingV1,
     FinalizedRegistryBindingV1,
 ) {
-    let source_node = validator(0xB1);
-    let target_node = validator(0xC1);
+    let source_node = node(0xB1);
+    let target_node = node(0xC1);
     let chain_id = [0xD1; 32];
     let genesis_hash = B256::repeat_byte(0xD2);
     let view = FinalizedRegistryViewV1 {
@@ -215,14 +202,12 @@ fn admission_fixture() -> (
     let source_witness = NodeHostAuthorizationWitnessV1 {
         chain_id,
         genesis_hash,
-        enclave_profile: EnclaveProfile::Validator,
         node_id: source_node.clone(),
         node_host_noise_x25519: [0xD5; 32],
     };
     let source = FinalizedRegistryBindingV1 {
         view,
         node_id_hash: source_node.node_id_hash().unwrap(),
-        profile: EnclaveProfile::Validator,
         enclave_id: B256::repeat_byte(0xD6),
         binding_id: B256::repeat_byte(0xD7),
         intent_hash: B256::repeat_byte(0xD8),
@@ -233,7 +218,6 @@ fn admission_fixture() -> (
     let target = FinalizedRegistryBindingV1 {
         view,
         node_id_hash: target_node.node_id_hash().unwrap(),
-        profile: EnclaveProfile::Validator,
         enclave_id: B256::repeat_byte(0xDA),
         binding_id: B256::repeat_byte(0xDB),
         intent_hash: B256::repeat_byte(0xDC),
@@ -246,9 +230,7 @@ fn admission_fixture() -> (
             chain_id,
             genesis_hash,
             source_node_id_hash: source.node_id_hash,
-            source_profile: EnclaveProfile::Validator,
             target_node_id_hash: target.node_id_hash,
-            target_profile: EnclaveProfile::Validator,
         },
         source_witness,
         source,

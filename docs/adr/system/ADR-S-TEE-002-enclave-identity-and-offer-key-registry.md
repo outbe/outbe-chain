@@ -11,8 +11,9 @@
 ## Context
 
 Clients need one consensus-authoritative public key for encrypted Tribute offers,
-while nodes need authenticated per-validator enclave keys for Noise, result
-attestation, DKG share delivery and one-time registry onboarding. Local quote verification or local
+while every node needs one durable enclave identity for Noise, result attestation,
+DKG share delivery and one-time registry onboarding. That NodeHost identity must
+survive changes in the node's ValidatorSet role. Local quote verification or local
 enclave availability cannot make these facts canonical; the registry is their
 on-chain owner.
 
@@ -24,12 +25,15 @@ TeeRegistry is the sole owner of:
 - permanent genesis Tribute offer public key at fixed epoch zero;
 - attestation policy hash, DKG transcript and committee-snapshot binding;
 - active committee DKG group verification key; and
-- the current verified enclave registration bundle for each validator.
+- the current verified enclave registration bundle for each role-neutral
+  NodeHost;
+- the authenticated, one-way EVM-address-to-NodeHost association used when the
+  same node later enters the ValidatorSet lifecycle.
 
 Only an authenticated bootstrap/boundary system command may establish global and
-committee facts. A validator may register or update its own enclave identity
-only with a chain-verifiable quote, active/eligible ValidatorSet identity and keys
-bound by that quote. Local host claims are never sufficient.
+committee facts. Initial `registerEnclave` atomically registers a NodeHost and an
+EVM-address-to-NodeHost association authorized by both keys. It does not consult
+ValidatorSet and grants no validator role. Local host claims are never sufficient.
 
 ## State model and identities
 
@@ -37,16 +41,35 @@ Global state contains a one-time bootstrap marker, offer public key, policy hash
 key epoch, offer-key epoch, transcript hash, committee snapshot block/hash,
 registered count and chunked current group public key.
 
-Each validator registration is one aggregate:
+`NodeIdV1` contains exactly one persistent identity field:
 
 ```text
-validator
+reth_p2p_public (compressed secp256k1)
+```
+
+Each NodeHost registration is one aggregate keyed by `node_id_hash`:
+
+```text
+node_id_hash
 recipient_x25519
 attestation_pub
 noise_static_pub
 mrenclave, mrsigner, isv_svn
 keys_hash = keccak256(domain || every preceding field)
 ```
+
+Initial registration also carries `ValidatorNodeBindingV1`:
+
+```text
+chain_id, genesis_hash, evm_address, node_id_hash
+EVM signature + NodeHost P2P signature
+```
+
+The separately provisioned EVM and consensus-BLS keys do not participate in
+`NodeIdV1`, the NodeHost manifest, enclave identity or sealed state. Merely
+possessing them creates no role. ValidatorSet remains the sole owner of
+registration status, stake, BLS proof of possession, DKG eligibility and ACTIVE
+membership.
 
 Boundary-announced recipient keys are a distinct provisional channel fact and may
 not silently override a fully verified registration. Missing registration needs an
@@ -59,8 +82,9 @@ bootstrapped => nonzero valid offer key, policy/snapshot/transcript and group ke
 registration exists <=> keys_hash is nonzero and recomputes exactly
 registered_count = number of existing registration aggregates
 all public keys are nonzero, valid and unique in their identity role
-registration.validator is eligible under the referenced committee/ValidatorSet
-group key and registrations belong to the same activated committee epoch
+initial association node_id_hash = the NodeHost registered by the same operation
+one EVM address has at most one immutable NodeHost association
+NodeHost identity is independent of FullNode/Validator process mode and ValidatorSet status
 ```
 
 ## Registry state machines
@@ -68,26 +92,31 @@ group key and registrations belong to the same activated committee epoch
 ```text
 Unbootstrapped --validated block-1 bootstrap--> Bootstrapped(epoch E, offer O)
 
-Absent validator --verified quote + eligibility--> Registered(version V)
+Absent NodeHost + absent association --verified evidence + dual-signed binding-->
+  Registered NodeHost(version V) + Associated EVM address
 Registered(V) --verified newer/authorized quote--> Registered(V+1)
-Registered --committee removal/revocation policy--> Retired
+
+EVM/BLS keys --registerValidator/stake/readiness--> REGISTERED/PENDING
+PENDING --certified DKG boundary--> ACTIVE
+ACTIVE --jail/exit/re-entry--> ValidatorSet status changes only
 
 Committee(E) --prior-group-endorsed reshare--> Committee(E+1)
 ```
 
-Bootstrap is terminal and duplicate bootstrap rejects. Registration rotation must
-bind old/new intent and cannot be a blind overwrite. Committee reshare preserves
-the permanent offer key. Dormant epoch fields are not authority for rotation or
-replacement.
+Bootstrap is terminal and duplicate bootstrap rejects. Exact initial replay is
+idempotent; a conflicting address or NodeHost association rejects atomically.
+Registration rotation binds old/new intent and cannot be a blind overwrite.
+Committee reshare preserves the permanent offer key. ValidatorSet transitions,
+including BLS replacement, never recreate or rebind NodeHost identity.
 
 ## Bootstrap authority and atomicity
 
 The Phase-3b bootstrap handler validates committee membership, signatures, policy,
-registrations, transcript and snapshot before calling `write_bootstrap`. Registry
-defense-in-depth must repeat all local structural invariants. Global fields, group
-key chunks, registration aggregates, count and `bootstrapped` commit in one system
-transaction; the marker is written last so incomplete data is unreachable after
-rollback.
+NodeHost registrations, their dual-signed EVM associations, transcript and snapshot
+before calling `write_bootstrap`. Registry defense-in-depth repeats all local
+structural invariants. Global fields, group-key chunks, NodeHost registrations,
+associations, count and `bootstrapped` commit in one system transaction; the marker
+is written last so incomplete data is unreachable after rollback.
 
 The handler capability, not public access to the generated storage facade, conveys
 authority. Corrupt or contradictory bootstrap input is fatal consensus failure.
@@ -95,11 +124,21 @@ authority. Corrupt or contradictory bootstrap input is fatal consensus failure.
 ## Registration and key delivery
 
 V1 registration verifies canonical self-contained evidence whose intent binds the
-recipient, attestation and Noise keys, active policy and node identity. Validator
-identity is checked against ValidatorSet; FullNode identity is its persistent
-compressed Reth P2P key. The transaction sender is only a permissionless relay.
-Created, idempotent, renewal, replacement and measurement transition are explicit
-versioned outcomes and prevent stale-intent replay.
+recipient, attestation and Noise keys, active policy and the persistent compressed
+Reth P2P key. The same call verifies `ValidatorNodeBindingV1` with the separately
+provisioned EVM key and NodeHost P2P key, requires it to reference that exact
+NodeHost, and writes the existing `validator_v1_node_hash` association in the same
+checkpoint. The transaction sender is only a permissionless relay. There is no
+public `bindValidatorNodeHost`, reverse map or second TEE join. Created,
+idempotent, renewal, replacement and measurement transition are explicit versioned
+outcomes and prevent stale-intent replay.
+
+A FullNode may store EVM/BLS key material, but its runtime does not load it and the
+association confers no consensus or OCOMP authority. Promotion stops the FullNode
+process and starts validator mode on the same datadir. The ordinary
+`registerValidator`/stake/readiness/DKG lifecycle alone grants the role; the Reth
+P2P key, manifest, enclave identity, Noise identity, sealed state and resident
+offer key remain byte-identical.
 
 Offer-key delivery is an asynchronous encrypted artifact addressed to the verified
 recipient key. Its production contract must be one of:
@@ -129,12 +168,14 @@ length/availability marker last. Readers fail closed on malformed length/chunks.
 
 ## Replay, retry and failure
 
-Bootstrap replay rejects. Registration same-intent retry should return the original
-typed registration/delivery receipt without repeating count or delivery; different
-intent for the same registration version rejects. Boundary replay binds the complete
-artifact identity and returns the prior result.
+Bootstrap replay rejects. Initial registration replay succeeds only when both the
+NodeHost record and EVM association are exact idempotent replays; partial or
+conflicting states reject without writes. Registration same-intent retry returns
+the original typed registration/delivery receipt without repeating count or
+delivery; different intent for the same registration version rejects. Boundary
+replay binds the complete artifact identity and returns the prior result.
 
-Invalid user quotes/eligibility are reverts. Missing or corrupt canonical policy,
+Invalid user quotes, signatures and bindings are reverts. Missing or corrupt canonical policy,
 committee snapshot, group key, count/index equivalence or impossible activated
 artifact is fatal. An unavailable local enclave is operational failure and cannot
 alter consensus-visible execution.
@@ -146,9 +187,10 @@ maximum. Key encodings, keys-hash domain, policy hash, group public key codec,
 attestation verification, epochs and bootstrap/reshare artifact formats are
 hard-fork surfaces. Count increments and encoded lengths use checked exhaustion.
 
-Storage is append-only by declared slot order but needs an explicit schema version
-and migration for new registration/version/revocation data. Measurement-policy
-updates use rolling measurement overlap; the permanent offer key does not rotate.
+This decision lands with a network wipe. There is one canonical wire and storage
+model: no migration, compatibility decoder, dual read/write, activation gate,
+reserved legacy layout or fallback. Measurement-policy updates use rolling
+measurement overlap; the permanent offer key does not rotate.
 
 ## Production-interface and architectural evidence
 
@@ -164,10 +206,12 @@ is checked fail-closed by the same verifier at admission.
 ## Consequences and rejected alternatives
 
 An on-chain registry lets every node and client use the same authenticated enclave
-identity and offer key. Trusting a host-provided measurement and treating boundary
-announcements as attestation were rejected. Randomized or optional local output was
-also rejected. The accepted enclave-resident path is mandatory, fail-stop and
-byte-deterministic across nodes holding the same permanent OST3 key.
+identity and offer key without conflating machine identity with ValidatorSet role.
+Trusting a host-provided measurement, deriving NodeHost from role/EVM/BLS/OCOMP,
+standalone rebind, and treating boundary announcements as attestation were
+rejected. Randomized or optional local output was also rejected. The accepted
+enclave-resident path is mandatory, fail-stop and byte-deterministic across nodes
+holding the same permanent OST3 key.
 
 ## Remaining release evidence
 

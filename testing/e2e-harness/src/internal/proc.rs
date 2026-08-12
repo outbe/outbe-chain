@@ -34,12 +34,7 @@ const PINNED_QVL_RUNTIME_FILES: &[(&str, &str)] = &[
     ("/usr/lib/x86_64-linux-gnu/libgcc_s.so.1", "libgcc_s.so.1"),
 ];
 
-const SENSITIVE_ARG_FLAGS: &[&str] = &[
-    "--private-key",
-    "--node-private-key",
-    "--p2p-secret-key-hex",
-    "--dkg-seed",
-];
+const SENSITIVE_ARG_FLAGS: &[&str] = &["--private-key", "--p2p-secret-key-hex", "--dkg-seed"];
 
 /// Preserve a command's diagnostic shape without emitting secret argument
 /// values into CI logs, evidence capture, or agent transcripts.

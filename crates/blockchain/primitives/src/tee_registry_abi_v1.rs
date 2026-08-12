@@ -53,7 +53,10 @@ sol! {
         function registerEnclave(
             bytes calldata evidence,
             bytes calldata nodeSignature,
-            bytes calldata enclaveSignature
+            bytes calldata enclaveSignature,
+            bytes calldata validatorNodeBinding,
+            bytes calldata validatorSignature,
+            bytes calldata nodeBindingSignature
         ) external returns (bool);
 
         function renewEnclave(
@@ -79,14 +82,14 @@ sol! {
             view
             returns (NodeEnclaveBindingV1View memory);
 
-        function fullNodeEnclaveBinding(uint8 rethP2pPrefix, bytes32 rethP2pX)
+        function nodeHostEnclaveBinding(uint8 rethP2pPrefix, bytes32 rethP2pX)
             external
             view
             returns (NodeEnclaveBindingV1View memory);
 
         function isValidatorEnclaveReady(address validator) external view returns (bool);
 
-        function isFullNodeEnclaveReady(uint8 rethP2pPrefix, bytes32 rethP2pX)
+        function isNodeHostEnclaveReady(uint8 rethP2pPrefix, bytes32 rethP2pX)
             external
             view
             returns (bool);

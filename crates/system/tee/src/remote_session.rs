@@ -5,7 +5,7 @@
 //! authorize any secret-bearing command.
 
 use alloy_primitives::B256;
-use outbe_primitives::tee_attestation_v1::{EnclaveProfile, NodeHostAuthorizationWitnessV1};
+use outbe_primitives::tee_attestation_v1::NodeHostAuthorizationWitnessV1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FinalizedRegistryViewV1 {
@@ -21,7 +21,6 @@ pub struct FinalizedRegistryViewV1 {
 pub struct FinalizedRegistryBindingV1 {
     pub view: FinalizedRegistryViewV1,
     pub node_id_hash: B256,
-    pub profile: EnclaveProfile,
     pub enclave_id: B256,
     pub binding_id: B256,
     pub intent_hash: B256,
@@ -35,9 +34,7 @@ pub struct RemoteSessionExpectationV1 {
     pub chain_id: [u8; 32],
     pub genesis_hash: B256,
     pub source_node_id_hash: B256,
-    pub source_profile: EnclaveProfile,
     pub target_node_id_hash: B256,
-    pub target_profile: EnclaveProfile,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -118,12 +115,8 @@ pub enum RemoteSessionAdmissionError {
     WrongGenesis,
     #[error("remote session source node does not match")]
     WrongSourceNode,
-    #[error("remote session source profile does not match")]
-    WrongSourceProfile,
     #[error("remote session target node does not match")]
     WrongTargetNode,
-    #[error("remote session target profile does not match")]
-    WrongTargetProfile,
     #[error("NodeHost authorization witness is malformed")]
     MalformedSourceWitness,
     #[error("NodeHost authorization witness does not match the finalized source binding")]
@@ -162,14 +155,8 @@ pub fn admit_remote_session_v1(
     if source.node_id_hash != expected.source_node_id_hash {
         return Err(RemoteSessionAdmissionError::WrongSourceNode);
     }
-    if source.profile != expected.source_profile {
-        return Err(RemoteSessionAdmissionError::WrongSourceProfile);
-    }
     if target.node_id_hash != expected.target_node_id_hash {
         return Err(RemoteSessionAdmissionError::WrongTargetNode);
-    }
-    if target.profile != expected.target_profile {
-        return Err(RemoteSessionAdmissionError::WrongTargetProfile);
     }
 
     let witness_node_id_hash = source_witness
@@ -181,7 +168,6 @@ pub fn admit_remote_session_v1(
         .map_err(|_| RemoteSessionAdmissionError::MalformedSourceWitness)?;
     if source_witness.chain_id != expected.chain_id
         || source_witness.genesis_hash != expected.genesis_hash
-        || source_witness.enclave_profile != expected.source_profile
         || witness_node_id_hash != expected.source_node_id_hash
         || witness_authorization_hash != source.node_host_authorization_hash
     {

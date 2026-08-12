@@ -295,8 +295,8 @@ fn validator_relockstep(world: &mut World) {
     );
 }
 
-/// S2 — warm promotion: stop followers, reuse follower1's synced datadir as the
-/// joiner's, stake, and launch it as a validator.
+/// S2 — stop followers, preserve follower1's complete node identity and local
+/// state, then assign validator role through the ordinary ValidatorSet path.
 #[when("the first follower is promoted to a validator with its warm datadir")]
 fn warm_promotion(world: &mut World) {
     let primary = world.validators.primary_port();
@@ -307,19 +307,12 @@ fn warm_promotion(world: &mut World) {
     sleep(Duration::from_secs(3));
     world
         .localnet
-        .archive_full_node_identity_for_validator_promotion(FOLLOWER1_SLOT)
-        .expect("archive FullNode identity before validator promotion");
+        .move_role_neutral_node_slot(FOLLOWER1_SLOT, idx)
+        .expect("move the complete role-neutral node slot");
     world
         .localnet
-        .move_datadir(
-            &format!("validator-{FOLLOWER1_SLOT}/data"),
-            &format!("validator-{idx}/data"),
-        )
-        .expect("move warm datadir");
-    world
-        .localnet
-        .provision_joiner(idx)
-        .expect("provision joiner");
+        .provision_joiner_registration(idx)
+        .expect("register the node's already provisioned EVM/BLS material");
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner addr");

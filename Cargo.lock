@@ -7615,6 +7615,7 @@ dependencies = [
  "futures",
  "hex",
  "jsonrpsee",
+ "k256 0.13.4",
  "metrics",
  "metrics-util",
  "outbe-compressed-entities",

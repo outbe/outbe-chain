@@ -424,7 +424,8 @@ fn fifth_full_node_has_state_but_no_vote_capability(world: &mut World) {
     let data_dir = world.validators.data_dir(index);
     let validator_dir = data_dir.parent().expect("validator data directory parent");
     assert!(!validator_dir.join("ocomp-key-v1.hex").exists());
-    assert!(!validator_dir.join("signing-key.hex").exists());
+    assert!(validator_dir.join("signing-key.hex").is_file());
+    assert!(validator_dir.join("evm-key.hex").is_file());
     assert!(world.ocomp.process_records().iter().any(|record| {
         record.validator_index == Some(u8::try_from(index).expect("joiner index fits u8"))
             && record.role == OcompProcessRole::Worker
@@ -503,14 +504,6 @@ fn synced_node_completes_ocomp_validator_admission(world: &mut World) {
         .stop_keyless_full_node_roles(validator_index)
         .expect("stop keyless FullNode roles before validator-mode restart");
     world.localnet.stop_joiner_full_node(index);
-    world
-        .localnet
-        .archive_full_node_identity_for_validator_promotion(index)
-        .expect("archive immutable FullNode TEE identity before Validator promotion");
-    world
-        .localnet
-        .join_validator_enclave(index)
-        .expect("initialize fresh Validator TEE identity on the synchronized node slot");
     world
         .localnet
         .launch_joiner(index, &[])

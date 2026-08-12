@@ -20,8 +20,8 @@ use commonware_runtime::Clock;
 use outbe_primitives::signer::OutbeEvmSigner;
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapEvidenceV1,
-    EnclaveInitializationManifestV1, EnclaveProfile, GramineDirectEvidenceV1, NodeIdV1,
-    RegistrationIntentV1, TeePolicyV1, ENCLAVE_ID_DOMAIN_V1, MAX_ATTESTATION_EVIDENCE_BYTES,
+    EnclaveInitializationManifestV1, GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1,
+    TeePolicyV1, ValidatorNodeBindingV1, ENCLAVE_ID_DOMAIN_V1, MAX_ATTESTATION_EVIDENCE_BYTES,
 };
 use outbe_primitives::tee_bootstrap_v2::{
     TeeBootstrapAuthorityV2, TeeBootstrapParticipantSubmissionV2, TeeBootstrapV2,
@@ -50,7 +50,8 @@ const DELIVERY_MAX_PENDING_BYTES: usize = 16 * 1024 * 1024;
 const DELIVERY_ID_DOMAIN: &[u8] = b"outbe:tee-delivery:v1";
 const OST3_SUBMISSION: u8 = 0x30;
 const OST3_SIGNATURE: u8 = 0x31;
-const OST3_SUBMISSION_FIXED_BYTES: usize = 1 + 4 + 65 + 64;
+const OST3_SUBMISSION_FIXED_BYTES: usize =
+    1 + 4 + ValidatorNodeBindingV1::CANONICAL_LEN + 65 + 65 + 65 + 64;
 const OST3_SIGNATURE_BYTES: usize = 1 + 32 + 20 + 65;
 const OST3_SCOPE_DOMAIN: &[u8] = b"outbe/tee/bootstrap-v2-gossip/v1";
 const OST3_DEV_NODE_HOST_DOMAIN: &[u8] = b"outbe/tee/dev-node-host/v1";
@@ -83,6 +84,14 @@ impl Ost3WireMessage {
                 out.push(OST3_SUBMISSION);
                 out.extend_from_slice(&evidence_len.to_be_bytes());
                 out.extend_from_slice(&evidence);
+                out.extend_from_slice(
+                    &submission
+                        .validator_binding
+                        .encode_canonical()
+                        .map_err(|error| eyre::eyre!("cannot encode OST3 binding: {error}"))?,
+                );
+                out.extend_from_slice(&submission.validator_signature);
+                out.extend_from_slice(&submission.node_binding_signature);
                 out.extend_from_slice(&submission.node_signature);
                 out.extend_from_slice(&submission.enclave_signature);
                 Ok(out)
@@ -118,17 +127,33 @@ impl Ost3WireMessage {
                 let evidence_end = 5usize.checked_add(evidence_len)?;
                 let evidence =
                     AttestationEvidenceV1::decode_canonical(input.get(5..evidence_end)?).ok()?;
+                let binding_end =
+                    evidence_end.checked_add(ValidatorNodeBindingV1::CANONICAL_LEN)?;
+                let validator_binding =
+                    ValidatorNodeBindingV1::decode_canonical(input.get(evidence_end..binding_end)?)
+                        .ok()?;
+                let validator_signature_end = binding_end.checked_add(65)?;
+                let validator_signature = input
+                    .get(binding_end..validator_signature_end)?
+                    .try_into()
+                    .ok()?;
+                let node_binding_signature_end = validator_signature_end.checked_add(65)?;
+                let node_binding_signature = input
+                    .get(validator_signature_end..node_binding_signature_end)?
+                    .try_into()
+                    .ok()?;
+                let node_signature_end = node_binding_signature_end.checked_add(65)?;
                 let node_signature = input
-                    .get(evidence_end..evidence_end.checked_add(65)?)?
+                    .get(node_binding_signature_end..node_signature_end)?
                     .try_into()
                     .ok()?;
-                let enclave_signature = input
-                    .get(evidence_end.checked_add(65)?..)?
-                    .try_into()
-                    .ok()?;
+                let enclave_signature = input.get(node_signature_end..)?.try_into().ok()?;
                 Some(Self::Submission(Box::new(
                     TeeBootstrapParticipantSubmissionV2 {
                         evidence,
+                        validator_binding,
+                        validator_signature,
+                        node_binding_signature,
                         node_signature,
                         enclave_signature,
                     },
@@ -176,10 +201,7 @@ fn bootstrap_evidence_kind(
 }
 
 fn submission_validator(submission: &TeeBootstrapParticipantSubmissionV2) -> eyre::Result<Address> {
-    match evidence_intent(&submission.evidence).node_id {
-        NodeIdV1::Validator { address, .. } => Ok(Address::from(address)),
-        NodeIdV1::FullNode { .. } => Err(eyre::eyre!("OST3 submission is not a validator")),
-    }
+    Ok(Address::from(submission.validator_binding.validator))
 }
 
 fn validate_submission(
@@ -199,13 +221,25 @@ fn validate_submission(
         || intent.policy_hash != policy_hash
         || intent.chain_id != policy.chain_id
         || intent.genesis_hash != policy.genesis_hash
-        || intent.enclave_profile != EnclaveProfile::Validator
         || intent.binding_version != 1
         || intent.registration_version != 0
         || intent.renewal_nonce != 0
         || intent.transition_nonce != 0
         || !intent.verify_node_signature(&submission.node_signature)
         || !intent.verify_enclave_signature(&submission.enclave_signature)
+        || submission.validator_binding.chain_id != policy.chain_id
+        || submission.validator_binding.genesis_hash != policy.genesis_hash
+        || submission.validator_binding.node_id_hash
+            != intent
+                .node_id
+                .node_id_hash()
+                .map_err(|error| eyre::eyre!("invalid OST3 NodeHost identity: {error}"))?
+        || !submission
+            .validator_binding
+            .verify_validator_signature(&submission.validator_signature)
+        || !submission
+            .validator_binding
+            .verify_node_signature(&submission.node_binding_signature)
     {
         return Err(eyre::eyre!(
             "OST3 submission does not prove one canonical committee registration"
@@ -236,15 +270,8 @@ pub fn build_local_tee_bootstrap_submission_v2(
     policy: &TeePolicyV1,
     requested_valid_until: u64,
     evm_signer: &OutbeEvmSigner,
+    sign_node_hash: impl Fn(B256) -> Result<[u8; 65], String>,
 ) -> eyre::Result<TeeBootstrapParticipantSubmissionV2> {
-    let NodeIdV1::Validator { address, .. } = &node_id else {
-        return Err(eyre::eyre!("block-1 OST3 participant is not a validator"));
-    };
-    if Address::from(*address) != evm_signer.address() {
-        return Err(eyre::eyre!(
-            "OST3 node identity does not match the validator EVM signer"
-        ));
-    }
     let policy_hash = policy
         .policy_hash()
         .map_err(|error| eyre::eyre!("invalid OST3 policy: {error}"))?;
@@ -265,11 +292,10 @@ pub fn build_local_tee_bootstrap_submission_v2(
             })?;
             if manifest.chain_id != policy.chain_id
                 || manifest.genesis_hash != policy.genesis_hash
-                || manifest.enclave_profile != EnclaveProfile::Validator
                 || manifest.node_id != node_id
             {
                 return Err(eyre::eyre!(
-                    "committed NodeHost manifest does not match OST3 chain or validator identity"
+                    "committed NodeHost manifest does not match OST3 chain or persistent P2P identity"
                 ));
             }
             (
@@ -352,7 +378,6 @@ pub fn build_local_tee_bootstrap_submission_v2(
         operation: AttestationOperationV1::RegisterEnclave,
         attestation_mode: policy.attestation_mode,
         policy_hash,
-        enclave_profile: EnclaveProfile::Validator,
         node_id,
         enclave_id,
         binding_id,
@@ -369,9 +394,22 @@ pub fn build_local_tee_bootstrap_submission_v2(
     let intent_hash = intent
         .intent_hash()
         .map_err(|error| eyre::eyre!("invalid OST3 registration intent: {error}"))?;
-    let node_signature = evm_signer
-        .sign_hash(&intent_hash)
+    let node_signature = sign_node_hash(intent_hash)
         .map_err(|error| eyre::eyre!("cannot sign OST3 registration intent: {error}"))?;
+    let validator_binding = ValidatorNodeBindingV1 {
+        chain_id: policy.chain_id,
+        genesis_hash: policy.genesis_hash,
+        validator: evm_signer.address().into_array(),
+        node_id_hash,
+    };
+    let binding_hash = validator_binding
+        .binding_hash()
+        .map_err(|error| eyre::eyre!("invalid validator NodeHost binding: {error}"))?;
+    let validator_signature = evm_signer
+        .sign_hash(&binding_hash)
+        .map_err(|error| eyre::eyre!("cannot sign validator NodeHost binding: {error}"))?;
+    let node_binding_signature = sign_node_hash(binding_hash)
+        .map_err(|error| eyre::eyre!("cannot sign NodeHost validator binding: {error}"))?;
 
     let evidence_kind = bootstrap_evidence_kind(
         policy.attestation_mode,
@@ -439,6 +477,9 @@ pub fn build_local_tee_bootstrap_submission_v2(
         .map_err(|error| eyre::eyre!("local OST3 evidence is not canonical: {error}"))?;
     Ok(TeeBootstrapParticipantSubmissionV2 {
         evidence,
+        validator_binding,
+        validator_signature,
+        node_binding_signature,
         node_signature,
         enclave_signature,
     })

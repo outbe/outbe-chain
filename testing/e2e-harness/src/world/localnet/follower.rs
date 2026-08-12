@@ -33,6 +33,7 @@ impl Localnet {
         let node_dir = self.cfg.validator_dir(index);
         let data_dir = node_dir.join("data");
         fs::create_dir_all(&data_dir)?;
+        self.ensure_node_key_material(index)?;
 
         let reth_secret_path = node_dir.join("reth-p2p-secret.hex");
         if !reth_secret_path.is_file() {
@@ -58,10 +59,10 @@ impl Localnet {
             "join",
             "--enclave-socket",
             format!("127.0.0.1:{}", self.cfg.tee_port(index)),
-            "--profile",
-            "full-node",
             "--reth-p2p-secret-key",
             reth_secret_path.display(),
+            "--node-evm-key",
+            node_dir.join("evm-key.hex").display(),
             "--binding-id",
             random_hex_32()?,
             "--valid-until",

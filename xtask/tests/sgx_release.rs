@@ -7,7 +7,7 @@ use outbe_evm::tee_attestation_activation::DcapTestnetChainSpecBindingV1;
 use outbe_primitives::{
     chain::TESTNET_CHAIN_ID,
     tee_attestation_v1::{
-        AttestationMode, EnclaveProfile, TeePolicyScheduleEntryV1, TeePolicyScheduleV1, TeePolicyV1,
+        AttestationMode, TeePolicyScheduleEntryV1, TeePolicyScheduleV1, TeePolicyV1,
     },
     tee_genesis_v1::{
         initial_tee_policy_v1, tee_attestation_v1_genesis_field, InitialTeeProfileV1,
@@ -60,7 +60,7 @@ fn repository_default_testnet_genesis_is_dcap_required_but_not_release_authority
         binding.policy.attestation_mode,
         AttestationMode::DcapRequired
     );
-    assert_eq!(binding.policy.measurement_rules.len(), 2);
+    assert_eq!(binding.policy.measurement_rules.len(), 1);
     assert_eq!(binding.policy.minimum_tcb_evaluation_data_number, 1);
     for rule in &binding.policy.measurement_rules {
         assert_eq!(rule.mrenclave, B256::from([0x11; 32]));
@@ -68,17 +68,6 @@ fn repository_default_testnet_genesis_is_dcap_required_but_not_release_authority
         assert_eq!(rule.isv_prod_id, u16::MAX);
         assert_eq!(rule.minimum_isv_svn, u16::MAX);
     }
-    assert!(binding
-        .policy
-        .measurement_rules
-        .iter()
-        .any(|rule| rule.enclave_profile == EnclaveProfile::Validator));
-    assert!(binding
-        .policy
-        .measurement_rules
-        .iter()
-        .any(|rule| rule.enclave_profile == EnclaveProfile::FullNode));
-
     let signed = parse_sigstruct_view(SIGSTRUCT).expect("test SIGSTRUCT");
     let measurement = |value: &str| {
         B256::from_slice(&hex::decode(value).expect("32-byte hexadecimal SGX measurement"))
@@ -91,7 +80,7 @@ fn repository_default_testnet_genesis_is_dcap_required_but_not_release_authority
             signed.isv_svn,
         )
         .expect_err("placeholder genesis must not authorize the signed test release");
-    assert!(error.contains("does not exactly bind signed bundle measurements"));
+    assert!(error.contains("does not exactly bind the signed bundle measurement"));
 }
 
 fn processor_dcap_artifact_fixtures(

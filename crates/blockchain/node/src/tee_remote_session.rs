@@ -15,8 +15,7 @@ use outbe_primitives::{
         StorageHandle,
     },
     tee_attestation_v1::{
-        AttestationEvidenceV1, EnclaveProfile, NodeHostAuthorizationWitnessV1, NodeIdV1,
-        TeePolicyV1,
+        AttestationEvidenceV1, NodeHostAuthorizationWitnessV1, NodeIdV1, TeePolicyV1,
     },
 };
 use outbe_tee::{
@@ -212,19 +211,19 @@ where
 {
     with_local_finalized_registry(provider, chain_id, genesis_hash, |view, registry| {
         let source = registry
-            .node_enclave_binding_for_identity_v1(&source_witness.node_id, expected.source_profile)
+            .node_enclave_binding_for_identity_v1(&source_witness.node_id)
             .map_err(registry_error)?
             .ok_or(LocalRegistryAdmissionError::SourceBindingMissing)?;
         let target = registry
-            .node_enclave_binding_for_identity_v1(target_node, expected.target_profile)
+            .node_enclave_binding_for_identity_v1(target_node)
             .map_err(registry_error)?
             .ok_or(LocalRegistryAdmissionError::TargetBindingMissing)?;
 
         admit_remote_session_v1(
             expected,
             source_witness,
-            registry_binding(view, expected.source_profile, source),
-            registry_binding(view, expected.target_profile, target),
+            registry_binding(view, source),
+            registry_binding(view, target),
         )
         .map_err(Into::into)
     })
@@ -239,7 +238,6 @@ pub fn construct_local_finalized_replacement_authorization_v1<P>(
     genesis_hash: B256,
     node_data_dir: &Path,
     node_id: &NodeIdV1,
-    profile: EnclaveProfile,
 ) -> Result<FinalizedReplacementAuthorizationV1, LocalRegistryAdmissionError>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
@@ -250,7 +248,6 @@ where
         genesis_hash,
         node_data_dir,
         node_id,
-        profile,
     )
     .map(|result| result.authorization)
 }
@@ -264,14 +261,13 @@ pub fn construct_local_finalized_replacement_authorization_with_view_v1<P>(
     genesis_hash: B256,
     node_data_dir: &Path,
     node_id: &NodeIdV1,
-    profile: EnclaveProfile,
 ) -> Result<LocalFinalizedReplacementAuthorizationV1, LocalRegistryAdmissionError>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
     with_local_finalized_registry(provider, chain_id, genesis_hash, |view, registry| {
         let binding = registry
-            .node_enclave_binding_for_identity_v1(node_id, profile)
+            .node_enclave_binding_for_identity_v1(node_id)
             .map_err(registry_error)?
             .ok_or(LocalRegistryAdmissionError::ReplacementBindingMissing)?;
         let submission = load_replacement_candidate_submission(node_data_dir).map_err(|error| {
@@ -305,7 +301,6 @@ where
         }
         let finalized_binding = FinalizedReplacementBindingV1 {
             view,
-            profile,
             node_id_hash: binding.node_id_hash,
             enclave_id: binding.enclave_id,
             binding_id: binding.binding_id,
@@ -465,31 +460,29 @@ pub fn admit_anchored_remote_session_v1(
     );
     let registry = TeeRegistry::new(StorageHandle::new(&mut storage));
     let source = registry
-        .node_enclave_binding_for_identity_v1(&source_witness.node_id, expected.source_profile)
+        .node_enclave_binding_for_identity_v1(&source_witness.node_id)
         .map_err(|error| ExternalRegistryAdmissionError::Registry(error.to_string()))?
         .ok_or(ExternalRegistryAdmissionError::SourceBindingMissing)?;
     let target = registry
-        .node_enclave_binding_for_identity_v1(target_node, expected.target_profile)
+        .node_enclave_binding_for_identity_v1(target_node)
         .map_err(|error| ExternalRegistryAdmissionError::Registry(error.to_string()))?
         .ok_or(ExternalRegistryAdmissionError::TargetBindingMissing)?;
     admit_remote_session_v1(
         expected,
         source_witness,
-        registry_binding(checkpoint.view, expected.source_profile, source),
-        registry_binding(checkpoint.view, expected.target_profile, target),
+        registry_binding(checkpoint.view, source),
+        registry_binding(checkpoint.view, target),
     )
     .map_err(Into::into)
 }
 
 fn registry_binding(
     view: FinalizedRegistryViewV1,
-    profile: EnclaveProfile,
     binding: NodeEnclaveBindingV1,
 ) -> FinalizedRegistryBindingV1 {
     FinalizedRegistryBindingV1 {
         view,
         node_id_hash: binding.node_id_hash,
-        profile,
         enclave_id: binding.enclave_id,
         binding_id: binding.binding_id,
         intent_hash: binding.intent_hash,
