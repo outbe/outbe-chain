@@ -31,6 +31,8 @@ pub struct OriginContracts {
     /// collection and router a remote chain would host sit here too.
     pub intex_nft: Address,
     pub intex_auction: Address,
+    pub escrow: Address,
+    pub nft_bridge: Address,
     pub target_router: Address,
     /// Unwraps inbound proceeds to native; funded so it can pay.
     pub wcoen: Address,
@@ -141,6 +143,8 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64) -> Result<OriginContracts> 
         origin_router: address_from(&origin, "OriginRouter:")?,
         intex_nft: address_from(&venue, "IntexNFT1155:")?,
         intex_auction: address_from(&venue, "IntexAuction:")?,
+        escrow: address_from(&venue, "EscrowAdapter:")?,
+        nft_bridge: address_from(&venue, "IntexNFT1155Bridge:")?,
         target_router: address_from(&venue, "TargetRouter:")?,
         wcoen,
     };
@@ -184,9 +188,59 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
         intex,
         "grant-relayer-role",
         &[
-            ("--token", nft),
+            ("--token", nft.clone()),
             ("--adapter", INTEX_FACTORY.to_owned()),
             ("--contract", "IntexNFT1155".to_owned()),
+        ],
+        url,
+        chain_id,
+    )?;
+
+    let auction = format!("{:?}", contracts.intex_auction);
+    let escrow = format!("{:?}", contracts.escrow);
+
+    // The venue half: an inbound stage start is delivered by the target router,
+    // which can only reach the auction once it holds its address.
+    hardhat::task(
+        intex,
+        "target-bridge-wire",
+        &[
+            (
+                "--bridge-contract",
+                format!("{:?}", contracts.target_router),
+            ),
+            ("--intex-auction-contract", auction.clone()),
+            ("--intex-contract", nft),
+            ("--escrow-contract", escrow.clone()),
+            (
+                "--nft-bridge-contract",
+                format!("{:?}", contracts.nft_bridge),
+            ),
+        ],
+        url,
+        chain_id,
+    )?;
+
+    hardhat::task(
+        intex,
+        "auction-wire",
+        &[
+            ("--intex-auction-contract", auction),
+            ("--escrow-contract", escrow),
+        ],
+        url,
+        chain_id,
+    )?;
+
+    hardhat::task(
+        intex,
+        "nft-bridge-wire",
+        &[
+            (
+                "--nft-bridge-contract",
+                format!("{:?}", contracts.nft_bridge),
+            ),
+            ("--target-router", format!("{:?}", contracts.target_router)),
         ],
         url,
         chain_id,
