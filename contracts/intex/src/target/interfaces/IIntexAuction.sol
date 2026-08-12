@@ -76,9 +76,10 @@ interface IIntexAuction {
     }
 
     struct AuctionParams {
-        /// @notice Issuance currency (ISO numeric); single USD (840) until multi-currency.
+        /// @notice The day's default issuance currency (ISO numeric); a bid names its own.
         uint16 issuanceCurrency;
-        /// @notice Reference currency (ISO numeric); single USD (840) until multi-currency.
+        /// @notice The day's default reference currency (ISO numeric); a bid names its
+        ///         own, which must appear in `prices`.
         uint16 referenceCurrency;
         /// @notice Promis tokens per Intex unit (18 decimals).
         uint128 promisLoadMinor;

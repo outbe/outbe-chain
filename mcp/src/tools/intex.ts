@@ -187,21 +187,34 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       return undefined;
     }
   }
-  /** Payment tokens a series accepts: the vault router's assets for its reference currency. */
+  /**
+   * Payment tokens a series accepts: the vault router's assets for either of its
+   * currencies. An issuance-currency token only settles while both COEN rates are
+   * published and fresh, which `quoteCostAmount` is the one to answer.
+   */
   async function settlementTokens(n: Network, series: Hex): Promise<`0x${string}`[]> {
     const d = (await n.client.readContract({
       address: addr(n, "intex"),
       abi: INTEX_ABI,
       functionName: "seriesData",
       args: [series],
-    })) as { referenceCurrency: number };
-    const assets = (await n.client.readContract({
-      address: addr(n, "vaultRouter"),
-      abi: VAULT_ROUTER_ABI,
-      functionName: "referenceCurrencyAssets",
-      args: [d.referenceCurrency],
-    })) as readonly `0x${string}`[];
-    return assets.map((t) => getAddress(t));
+    })) as { referenceCurrency: number; issuanceCurrency: number };
+    const currencies = [d.referenceCurrency];
+    if (d.issuanceCurrency !== d.referenceCurrency) currencies.push(d.issuanceCurrency);
+    const perCurrency = await Promise.all(
+      currencies.map(
+        (iso) =>
+          n.client.readContract({
+            address: addr(n, "vaultRouter"),
+            abi: VAULT_ROUTER_ABI,
+            functionName: "referenceCurrencyAssets",
+            args: [iso],
+          }) as Promise<readonly `0x${string}`[]>,
+      ),
+    );
+    const seen = new Set<`0x${string}`>();
+    for (const asset of perCurrency.flat()) seen.add(getAddress(asset));
+    return [...seen];
   }
 
   /** Per-Intex cost of settling `series` in `token`, in that token's minor units. */
@@ -242,6 +255,14 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   const rateArg = z
     .string()
     .describe('bid rate as a fraction of strike, 0..1 (e.g. "0.8" = 80% of strike; min from auction_info)');
+  const issuanceCurrencyArg = z
+    .number()
+    .int()
+    .describe("declared issuance currency, ISO 4217 numeric (e.g. 949 = TRY); any 1..999 code");
+  const referenceCurrencyArg = z
+    .number()
+    .int()
+    .describe("reference currency the bid prices in, ISO 4217 numeric; must be one the day prices (auction_info)");
   const amountArg = z.string().describe("amount as the raw on-chain integer");
   const recipientArg = z.string().optional().describe("recipient on outbe (default: the signer)");
   const waitArg = z.boolean().optional().describe("wait for the receipt (default true)");
@@ -424,8 +445,9 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "auction_info",
     "One auction's stage, schedule (commit/reveal/issuance ends in UTC), and params (promis-load strike, " +
-      "min bid rate/quantity, entry/floor/call). Bids are sealed: the bid counts and clearing result stay 0 " +
-      "until clearing runs after reveal, so 0 here does NOT mean there are no participants.",
+      "min bid rate/quantity, and one entry/floor/call row per currency the day prices — bid in one of those). " +
+      "Bids are sealed: the bid counts and clearing result stay 0 until clearing runs after reveal, so 0 here " +
+      "does NOT mean there are no participants.",
     { worldwideDay: worldwideDayArg, network: networkArg.optional() },
     handler(async ({ worldwideDay, network }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
@@ -445,9 +467,12 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           callTrigger: { callWindow: number; callThreshold: number; callNoticePeriod: number };
           minIntexBidRate: bigint;
           minIntexBidQuantity: number;
-          entryPriceMinor: bigint;
-          floorPriceMinor: bigint;
-          callPriceMinor: bigint;
+          prices: readonly {
+            isoCode: number;
+            entryPriceMinor: bigint;
+            floorPriceMinor: bigint;
+            callPriceMinor: bigint;
+          }[];
           commitBondMinor: bigint;
         };
         result: { auctionClearingRate: bigint; wonBidsCount: number; issuedIntexCount: number; issuedIntexLoadedPromis: bigint };
@@ -478,10 +503,14 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           minIntexBidQuantity: Number(d.params.minIntexBidQuantity),
           // entry bond pulled at commit and returned at reveal/cancel; 0 = no bond.
           commitBondMinor: { raw: d.params.commitBondMinor.toString(), value: formatUnits(d.params.commitBondMinor, dec) },
-          // entry/floor/call are in the reference currency, on the 1e9 wire scale; raw integers.
-          entryPriceMinor: d.params.entryPriceMinor.toString(),
-          floorPriceMinor: d.params.floorPriceMinor.toString(),
-          callPriceMinor: d.params.callPriceMinor.toString(),
+          // One row per currency the day can clear in; a bid's reference currency must
+          // appear here. Prices are in that currency, on the 1e9 wire scale; raw integers.
+          prices: d.params.prices.map((row) => ({
+            isoCode: Number(row.isoCode),
+            entryPriceMinor: row.entryPriceMinor.toString(),
+            floorPriceMinor: row.floorPriceMinor.toString(),
+            callPriceMinor: row.callPriceMinor.toString(),
+          })),
         },
         result: {
           note: "populated only after clearing",
@@ -615,7 +644,15 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   );
 
   // --- Bid commit / reveal (BSC IntexAuction, signed) ------------------------
-  async function signReveal(n: Network, account: Account, worldwideDay: number, quantity: number, bidRate: bigint): Promise<Hex> {
+  async function signReveal(
+    n: Network,
+    account: Account,
+    worldwideDay: number,
+    quantity: number,
+    bidRate: bigint,
+    issuanceCurrency: number,
+    referenceCurrency: number,
+  ): Promise<Hex> {
     const typedData = revealBidTypedData({
       chainId: n.chainId,
       verifyingContract: addr(n, "auction"),
@@ -623,6 +660,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       bidder: account.address,
       quantity,
       bidRate: Number(bidRate),
+      issuanceCurrency,
+      referenceCurrency,
     });
     if (!account.signTypedData) throw new Error("the configured account cannot sign typed data");
     return account.signTypedData(typedData);
@@ -634,10 +673,18 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "hash (no separate salt). When the auction carries an entry bond (commitBondMinor > 0), commitBid pulls " +
       "it into escrow in the same transaction — the tool auto-approves the escrow if the allowance is short. " +
       "The bond returns at reveal/cancel; a green-day no-reveal locks it for 24 hours past revealEnd " +
-      "(intex_claim_commit_bond). IMPORTANT: save your (worldwideDay, quantity, rate); you must repeat them to " +
-      "reveal, they can't be recovered on-chain, and are only remembered this session. Requires OUTBE_PRIVATE_KEY.",
-    { worldwideDay: worldwideDayArg, quantity: quantityArg, rate: rateArg, network: networkArg.optional(), wait: waitArg },
-    handler(async ({ worldwideDay, quantity, rate, network, wait }) => {
+      "(intex_claim_commit_bond). IMPORTANT: save your (worldwideDay, quantity, rate, currencies); you must repeat " +
+      "them to reveal, they can't be recovered on-chain, and are only remembered this session. Requires OUTBE_PRIVATE_KEY.",
+    {
+      worldwideDay: worldwideDayArg,
+      quantity: quantityArg,
+      rate: rateArg,
+      issuanceCurrency: issuanceCurrencyArg,
+      referenceCurrency: referenceCurrencyArg,
+      network: networkArg.optional(),
+      wait: waitArg,
+    },
+    handler(async ({ worldwideDay, quantity, rate, issuanceCurrency, referenceCurrency, network, wait }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
       const account = requireAccount();
       const bidRate = toBidRate(rate);
@@ -673,7 +720,15 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           `A green-day no-reveal keeps it locked until 24 hours past revealEnd (intex_claim_commit_bond).`;
       }
 
-      const signature = await signReveal(n, account, worldwideDay, quantity, bidRate);
+      const signature = await signReveal(
+        n,
+        account,
+        worldwideDay,
+        quantity,
+        bidRate,
+        issuanceCurrency,
+        referenceCurrency,
+      );
       const hash = commitHash(signature);
       const data = encodeFunctionData({ abi: AUCTION_ABI, functionName: "commitBid", args: [worldwideDay, hash] });
       const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
@@ -683,6 +738,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         quantity,
         rate,
         bidRate: bidRate.toString(),
+        issuanceCurrency,
+        referenceCurrency,
         commitHash: hash,
         bond: bond.toString(),
         autoApprove,
@@ -697,11 +754,20 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "auction_bid_reveal",
-    "Reveal a committed Intex bid: re-derives the same signature from (worldwideDay, quantity, rate) and submits " +
-      "revealBid; the escrow then locks quantity * strike * rate / RATE_SCALE in wCOEN, where strike is the " +
-      "auction's promis_load. Auto-approves the escrow first if the allowance is short. Requires OUTBE_PRIVATE_KEY.",
-    { worldwideDay: worldwideDayArg, quantity: quantityArg, rate: rateArg, network: networkArg.optional(), wait: waitArg },
-    handler(async ({ worldwideDay, quantity, rate, network, wait }) => {
+    "Reveal a committed Intex bid: re-derives the same signature from (worldwideDay, quantity, rate, currencies) " +
+      "and submits revealBid; the escrow then locks quantity * strike * rate / RATE_SCALE in wCOEN, where strike is " +
+      "the auction's promis_load. The reference currency must be one the day prices, the issuance currency any " +
+      "1..999 code. Auto-approves the escrow first if the allowance is short. Requires OUTBE_PRIVATE_KEY.",
+    {
+      worldwideDay: worldwideDayArg,
+      quantity: quantityArg,
+      rate: rateArg,
+      issuanceCurrency: issuanceCurrencyArg,
+      referenceCurrency: referenceCurrencyArg,
+      network: networkArg.optional(),
+      wait: waitArg,
+    },
+    handler(async ({ worldwideDay, quantity, rate, issuanceCurrency, referenceCurrency, network, wait }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
       const account = requireAccount();
       const { decimals: dec, symbol } = await paymentMeta(n);
@@ -740,11 +806,27 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         note += ` The ${formatUnits(info.params.commitBondMinor, dec)} ${symbol} entry bond returns within the same transaction (released before the bid lock, so it can fund the bid).`;
       }
 
-      const signature = await signReveal(n, account, worldwideDay, quantity, bidRate);
+      const signature = await signReveal(
+        n,
+        account,
+        worldwideDay,
+        quantity,
+        bidRate,
+        issuanceCurrency,
+        referenceCurrency,
+      );
       const data = encodeFunctionData({
         abi: AUCTION_ABI,
         functionName: "revealBid",
-        args: [worldwideDay, quantity, bidRate, BigInt(n.chainId), signature],
+        args: [
+          worldwideDay,
+          quantity,
+          bidRate,
+          issuanceCurrency,
+          referenceCurrency,
+          BigInt(n.chainId),
+          signature,
+        ],
       });
       const receipt = await submit(n, addr(n, "auction"), data, 0n, wait);
       return ok({ network: n.name, worldwideDay, quantity, rate, bidRate: bidRate.toString(), locked: lockHuman, autoApprove, note, ...receipt });
