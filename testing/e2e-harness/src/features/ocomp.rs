@@ -2015,25 +2015,56 @@ fn capacity_owners_submit_public_tributes(world: &mut World, count: usize) {
 
 #[then(expr = "all validators observe exactly {int} public Tributes for the capacity day")]
 fn all_validators_observe_public_tributes(world: &mut World, count: usize) {
-    assert_eq!(world.state.ocomp_capacity_tribute_tx_hashes.len(), count);
+    let transaction_hashes = &world.state.ocomp_capacity_tribute_tx_hashes;
+    assert_eq!(transaction_hashes.len(), count);
     let expected_supply = count.to_string();
+    let worldwide_day = world
+        .state
+        .wwd
+        .as_deref()
+        .expect("capacity WorldwideDay")
+        .parse::<u32>()
+        .expect("numeric capacity WorldwideDay");
     for port in world.validators.committee_ports() {
-        let deadline = Instant::now() + Duration::from_secs(240);
+        let deadline = Instant::now() + Duration::from_secs(OCOMP_CAPACITY_COMPLETION_TIMEOUT_SECS);
         loop {
             let supply_matches = world.rpc.supply(port).as_deref() == Some(&expected_supply);
             let day_matches = world
                 .rpc
-                .tributes_by_day(port, world.state.wwd.as_ref().unwrap().parse().unwrap())
-                .is_some_and(|ids| ids.len() == count);
-            if supply_matches && day_matches {
-                break;
+                .tributes_by_day(port, worldwide_day)
+                .is_some_and(|ids| {
+                    ids.len() == count
+                        && ids.iter().collect::<std::collections::BTreeSet<_>>().len() == count
+                });
+            match bounded_completion_decision(
+                supply_matches && day_matches,
+                Instant::now(),
+                deadline,
+            ) {
+                BoundedCompletionDecision::Complete => break,
+                BoundedCompletionDecision::Continue => sleep(Duration::from_millis(250)),
+                BoundedCompletionDecision::TimedOut => {
+                    panic!("validator {port} did not expose {count} distinct Tributes")
+                }
             }
-            assert!(
-                Instant::now() < deadline,
-                "validator {port} did not expose {count} Tributes"
-            );
-            sleep(Duration::from_millis(250));
         }
+    }
+    for transaction_hash in [
+        transaction_hashes
+            .first()
+            .expect("first capacity transaction"),
+        transaction_hashes
+            .last()
+            .expect("last capacity transaction"),
+    ] {
+        world
+            .mongodb
+            .wait_for_tribute_projection(transaction_hash, 60)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "capacity boundary Tribute {transaction_hash} was not projected by every validator: {error}"
+                )
+            });
     }
 }
 
@@ -2154,90 +2185,6 @@ fn completed_materialization_survives_restart(world: &mut World) {
         .expect("materialization observation after restart");
     assert_eq!(after, before);
     assert_materialized_capacity_owners(world, 5);
-}
-
-#[then("all validators observe exactly 257 public Tributes for the capacity day")]
-fn all_validators_observe_257_public_tributes(world: &mut World) {
-    let transaction_hashes = &world.state.ocomp_capacity_tribute_tx_hashes;
-    assert_eq!(
-        transaction_hashes.len(),
-        OCOMP_CAPACITY_TRIBUTE_COUNT,
-        "capacity Tribute transaction set is incomplete"
-    );
-    for transaction_hash in transaction_hashes {
-        assert!(
-            world.rpc.wait_successful_receipt(transaction_hash, 240),
-            "capacity Tribute transaction did not succeed: {transaction_hash}"
-        );
-    }
-
-    let expected_supply = OCOMP_CAPACITY_TRIBUTE_COUNT.to_string();
-    let primary = world.validators.primary_port();
-    let supply_deadline = Instant::now() + Duration::from_secs(60);
-    while world.rpc.supply(primary).as_deref() != Some(expected_supply.as_str()) {
-        assert!(
-            Instant::now() < supply_deadline,
-            "capacity Tributes did not produce total supply {expected_supply}"
-        );
-        sleep(Duration::from_millis(250));
-    }
-
-    let worldwide_day = world
-        .state
-        .wwd
-        .as_deref()
-        .expect("capacity WorldwideDay")
-        .parse::<u32>()
-        .expect("numeric capacity WorldwideDay");
-    let committee_ports = world.validators.committee_ports();
-    let completion_deadline =
-        Instant::now() + Duration::from_secs(OCOMP_CAPACITY_COMPLETION_TIMEOUT_SECS);
-    loop {
-        let observations = committee_ports
-            .iter()
-            .map(|port| {
-                let ids = world.rpc.tributes_by_day(*port, worldwide_day);
-                let count = ids.as_ref().map_or(0, Vec::len);
-                let distinct = ids.as_ref().map_or(0, |ids| {
-                    ids.iter().collect::<std::collections::BTreeSet<_>>().len()
-                });
-                (*port, world.rpc.head(*port), count, distinct)
-            })
-            .collect::<Vec<_>>();
-        let all_complete = observations.iter().all(|(_, _, count, distinct)| {
-            *count == OCOMP_CAPACITY_TRIBUTE_COUNT && *distinct == OCOMP_CAPACITY_TRIBUTE_COUNT
-        });
-        match bounded_completion_decision(
-            all_complete,
-            Instant::now(),
-            completion_deadline,
-        ) {
-            BoundedCompletionDecision::Complete => break,
-            BoundedCompletionDecision::Continue => sleep(Duration::from_millis(250)),
-            BoundedCompletionDecision::TimedOut => panic!(
-                "committee did not expose 257 distinct public Tributes within the shared {}s completion window: {observations:?}",
-                OCOMP_CAPACITY_COMPLETION_TIMEOUT_SECS
-            ),
-        }
-    }
-
-    for transaction_hash in [
-        transaction_hashes
-            .first()
-            .expect("first capacity transaction"),
-        transaction_hashes
-            .last()
-            .expect("last capacity transaction"),
-    ] {
-        world
-            .mongodb
-            .wait_for_tribute_projection(transaction_hash, 60)
-            .unwrap_or_else(|error| {
-                panic!(
-                    "capacity boundary Tribute {transaction_hash} was not projected by every validator: {error}"
-                )
-            });
-    }
 }
 
 #[when("the committee logical clock reaches the public capacity processing time")]
