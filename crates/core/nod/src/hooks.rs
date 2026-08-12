@@ -25,11 +25,10 @@
 //! Multi-currency: a floor is only comparable to the rate of its own
 //! `reference_currency`, so every bin column is namespaced by ISO code and
 //! each reference currency walks an independent trie. The block reads the
-//! oracle's whole reference-currency registry, prices each one, and shares a
-//! single `MAX_BUCKET_QUALIFICATIONS_PER_BLOCK` budget across them. The
-//! starting currency rotates with block height so a currency with a large
-//! backlog cannot starve the ones behind it. A currency whose COEN pair is
-//! unregistered or unpriced is skipped for the block rather than halting it.
+//! oracle's whole reference-currency registry, prices each one in registry
+//! order, and shares a single `MAX_BUCKET_QUALIFICATIONS_PER_BLOCK` budget
+//! across them. A currency whose COEN pair is unregistered or unpriced is
+//! skipped for the block rather than halting it.
 
 use alloy_primitives::U256;
 use outbe_compressed_entities::{
@@ -95,33 +94,11 @@ pub fn qualify_nods(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
 ) -> Result<()> {
-    let currencies = get_all_reference_currencies(ctx)?;
-    let total = u64::try_from(currencies.len()).map_err(|_| {
-        outbe_primitives::error::PrecompileError::Fatal(
-            "oracle reference-currency count exceeds u64".into(),
-        )
-    })?;
-    if total == 0 {
-        return Ok(());
-    }
-    // Rotate the starting currency with block height. The budget below is
-    // shared, so without rotation a currency with a large backlog would take
-    // the whole block's budget every block and starve the ones behind it.
-    // The registry is read fresh each block, so this is a rotation rather
-    // than a stable round-robin if the registry ever changes length.
-    let start = usize::try_from(ctx.block.block_number % total).map_err(|_| {
-        outbe_primitives::error::PrecompileError::Fatal(
-            "reference-currency rotation index exceeds usize".into(),
-        )
-    })?;
     let mut budget = MAX_BUCKET_QUALIFICATIONS_PER_BLOCK;
-    for offset in 0..currencies.len() {
+    for iso_code in get_all_reference_currencies(ctx)? {
         if budget == 0 {
             break;
         }
-        let Some(&iso_code) = currencies.get((start + offset) % currencies.len()) else {
-            continue;
-        };
         let Some(rate) = coen_rate_for_opt(ctx.storage.clone(), iso_code)? else {
             continue;
         };

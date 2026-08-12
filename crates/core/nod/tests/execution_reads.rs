@@ -152,6 +152,65 @@ fn qualification_updates_the_overlay_and_keeps_the_product_event() {
         .any(|event| event.topics()[0] == INod::NodBucketQualified::SIGNATURE_HASH));
 }
 
+#[test]
+fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
+    let (mut provider, scope, parent) = active_world();
+    let day = WorldwideDay::new(20_260_716);
+    // (owner byte, reference currency, floor price).
+    let specs = [
+        (0x51u8, 840u16, 1000u64),
+        (0x52, 978, 1200),
+        (0x53, 840, 1250),
+        (0x54, 840, 1300),
+        (0x55, 978, 1300),
+        // Shares the rate's bin, so it exercises the tail-bin exact compare.
+        (0x56, 840, 1299),
+    ];
+    // Only the 840 buckets strictly below 1299 qualify: 1299/1300 are at or
+    // above the rate and the 978 buckets belong to another currency's trie.
+    let expected = [true, false, true, false, false, false];
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let bucket_ids: Vec<EntityId36> = specs
+            .iter()
+            .map(|&(owner_byte, currency, floor)| {
+                let floor = U256::from(floor);
+                let mut body = item(Address::repeat_byte(owner_byte), day);
+                body.floor_price_minor = floor;
+                body.reference_currency = currency;
+                body.bucket_key = NodContract::bucket_key(day, floor, currency);
+                api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
+                EntityId36::new(day, body.bucket_key.0)
+            })
+            .collect();
+
+        let context = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, 1_752_534_000, 1),
+            storage.clone(),
+        );
+        hooks::qualify_buckets_with_rate(
+            &context,
+            &scope,
+            &parent,
+            840,
+            U256::from(1299),
+            MAX_BUCKET_QUALIFICATIONS_PER_BLOCK,
+        )
+        .unwrap();
+
+        let qualified: Vec<bool> = bucket_ids
+            .iter()
+            .map(|&bucket_id| {
+                api::get_bucket(&storage, &scope, &parent, bucket_id)
+                    .unwrap()
+                    .unwrap()
+                    .is_qualified
+            })
+            .collect();
+        assert_eq!(qualified, expected);
+    });
+}
+
 struct CountingParent {
     inner: NodRepositoryReader,
     gets: AtomicUsize,
