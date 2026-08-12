@@ -127,6 +127,10 @@ pub struct BidData {
     pub timestamp: u32,
     /// Requested quantity (Intex units).
     pub intex_quantity: u16,
+    /// Declared issuance currency (ISO numeric).
+    pub issuance_currency: u16,
+    /// Reference currency the bid prices in (ISO numeric).
+    pub reference_currency: u16,
 }
 
 /// Auction clearing result.

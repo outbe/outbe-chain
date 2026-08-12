@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {ReferencePriceLib} from "../helpers/ReferencePriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
@@ -84,17 +85,7 @@ contract ReentrancyProbeDesis {
         return interfaceId == type(IDesis).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 
-    function processBidsBatch(
-        uint32,
-        uint32,
-        uint32,
-        uint16,
-        uint16,
-        address[] calldata,
-        uint16[] calldata,
-        uint32[] calldata,
-        uint32[] calldata
-    ) external {
+    function processBidsBatch(uint32, uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata) external {
         observed = true;
         guardHeld = reentryGuarded(bridge, srcChainId, peer, router);
     }
@@ -162,9 +153,8 @@ contract RouterReentrancyTest is CrossChainTest {
         vm.prank(address(probeDesis));
         outbeRouter.sendAuctionStageStart(p);
 
-        bytes memory packet = BridgeMsgCodec.encodeBidsBatch(
-            42, BNB_CHAIN_ID, 1, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
-        );
+        bytes memory packet =
+            BridgeMsgCodec.encodeBidsBatch(42, BNB_CHAIN_ID, 1, 0, 1, new address[](0), new uint256[](0));
 
         _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), packet);
 

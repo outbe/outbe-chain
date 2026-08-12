@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {ReferencePriceLib} from "../helpers/ReferencePriceLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
@@ -52,18 +53,17 @@ contract RecordingDesis {
         uint16, /* batchIndex */
         uint16 totalBatches,
         address[] calldata bidderAddresses,
-        uint16[] calldata intexQuantities,
-        uint32[] calldata intexBidRates,
-        uint32[] calldata /* timestamps */
+        uint256[] calldata packedBids
     ) external {
         lastDay = worldwideDay;
         lastSrcChainId = srcChainId;
         lastGeneration = relayGeneration;
         lastTotalBatches = totalBatches;
         for (uint256 i = 0; i < bidderAddresses.length; i++) {
+            (uint16 q, uint32 r,,,) = BridgeMsgCodec.unpackBid(packedBids[i]);
             bidders.push(bidderAddresses[i]);
-            quantities.push(intexQuantities[i]);
-            rates.push(intexBidRates[i]);
+            quantities.push(q);
+            rates.push(r);
         }
     }
 

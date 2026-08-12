@@ -481,9 +481,7 @@ contract OriginRouter is
             uint16 batchIndex,
             uint16 totalBatches,
             address[] memory bidderAddresses,
-            uint16[] memory intexQuantities,
-            uint32[] memory intexBidRates,
-            uint32[] memory timestamps
+            uint256[] memory packedBids
         ) = BridgeMsgCodec.decodeBidsBatch(payload);
 
         if (bodySrcChainId != srcChainId) revert SrcChainIdBodyMismatch(srcChainId, bodySrcChainId);
@@ -493,15 +491,7 @@ contract OriginRouter is
 
         IDesis(_os().desis)
             .processBidsBatch(
-                worldwideDay,
-                srcChainId,
-                relayGeneration,
-                batchIndex,
-                totalBatches,
-                bidderAddresses,
-                intexQuantities,
-                intexBidRates,
-                timestamps
+                worldwideDay, srcChainId, relayGeneration, batchIndex, totalBatches, bidderAddresses, packedBids
             );
 
         emit BidsBatchReceived(srcChainId, worldwideDay, bidderAddresses.length);

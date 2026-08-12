@@ -368,9 +368,7 @@ contract TargetRouter is
         uint32 gen = ++$.bidsRelayGeneration[worldwideDay];
 
         if (bidsCount == 0) {
-            _sendOneBidsBatch(
-                worldwideDay, gen, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
-            );
+            _sendOneBidsBatch(worldwideDay, gen, 0, 1, new address[](0), new uint256[](0));
             // Trusted bridge immutable; the flagged write is the erc7201 pointer load.
             // slither-disable-next-line reentrancy-eth
             _sendBidsDone(worldwideDay, gen, 1, 0);
@@ -390,21 +388,17 @@ contract TargetRouter is
             uint256 chunkLen = end - start;
 
             address[] memory bidderAddresses = new address[](chunkLen);
-            uint16[] memory intexQuantities = new uint16[](chunkLen);
-            uint32[] memory intexBidRates = new uint32[](chunkLen);
-            uint32[] memory timestamps = new uint32[](chunkLen);
+            uint256[] memory packedBids = new uint256[](chunkLen);
 
             for (uint256 i = 0; i < chunkLen; i++) {
                 IIntexAuction.SubmittedBidData memory bid = bids[start + i];
                 bidderAddresses[i] = bid.bidderAddress;
-                intexQuantities[i] = bid.intexQuantity;
-                intexBidRates[i] = bid.intexBidRate;
-                timestamps[i] = bid.timestamp;
+                packedBids[i] = BridgeMsgCodec.packBid(
+                    bid.intexQuantity, bid.intexBidRate, bid.timestamp, bid.issuanceCurrency, bid.referenceCurrency
+                );
             }
 
-            _sendOneBidsBatch(
-                worldwideDay, gen, batchIndex, totalBatches, bidderAddresses, intexQuantities, intexBidRates, timestamps
-            );
+            _sendOneBidsBatch(worldwideDay, gen, batchIndex, totalBatches, bidderAddresses, packedBids);
             batchIndex++;
         }
 
@@ -433,20 +427,10 @@ contract TargetRouter is
         uint16 batchIndex,
         uint16 totalBatches,
         address[] memory bidderAddresses,
-        uint16[] memory intexQuantities,
-        uint32[] memory intexBidRates,
-        uint32[] memory timestamps
+        uint256[] memory packedBids
     ) internal returns (bytes32 sendId) {
         bytes memory message = BridgeMsgCodec.encodeBidsBatch(
-            worldwideDay,
-            uint32(block.chainid),
-            relayGeneration,
-            batchIndex,
-            totalBatches,
-            bidderAddresses,
-            intexQuantities,
-            intexBidRates,
-            timestamps
+            worldwideDay, uint32(block.chainid), relayGeneration, batchIndex, totalBatches, bidderAddresses, packedBids
         );
         sendId = _send(OUTBE_CHAIN_ID, message, IntexGas.bidsBatch(bidderAddresses.length));
         emit BidsBatchSent(sendId, worldwideDay, bidderAddresses.length);

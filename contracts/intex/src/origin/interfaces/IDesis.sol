@@ -24,9 +24,7 @@ interface IDesis {
         uint16 batchIndex,
         uint16 totalBatches,
         address[] calldata bidderAddresses,
-        uint16[] calldata intexQuantities,
-        uint32[] calldata intexBidRates,
-        uint32[] calldata timestamps
+        uint256[] calldata packedBids
     ) external;
 
     /// @notice Per-chain completeness marker: the source relayed `totalBatches`/`totalBids` for this day/generation.

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.28;
 
+import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
@@ -14,12 +15,10 @@ contract BridgeMsgCodecHardeningHarness {
         uint16 batchIndex,
         uint16 totalBatches,
         address[] calldata bidders,
-        uint16[] calldata quantities,
-        uint32[] calldata rates,
-        uint32[] calldata timestamps
+        uint256[] calldata packedBids
     ) external pure returns (bytes memory) {
         return BridgeMsgCodec.encodeBidsBatch(
-            worldwideDay, srcChainId, relayGeneration, batchIndex, totalBatches, bidders, quantities, rates, timestamps
+            worldwideDay, srcChainId, relayGeneration, batchIndex, totalBatches, bidders, packedBids
         );
     }
 
@@ -51,17 +50,7 @@ contract BridgeMsgCodecHardeningHarness {
     function decodeBidsBatch(bytes calldata m)
         external
         pure
-        returns (
-            uint32,
-            uint32,
-            uint32,
-            uint16,
-            uint16,
-            address[] memory,
-            uint16[] memory,
-            uint32[] memory,
-            uint32[] memory
-        )
+        returns (uint32, uint32, uint32, uint16, uint16, address[] memory, uint256[] memory)
     {
         return BridgeMsgCodec.decodeBidsBatch(m);
     }
@@ -98,12 +87,8 @@ contract BridgeMsgCodecHardeningTest is Test {
         uint32[] memory rates = new uint32[](2);
         uint32[] memory timestamps = new uint32[](2);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                BridgeMsgCodec.BidsArrayLengthMismatch.selector, uint256(2), uint256(1), uint256(2), uint256(2)
-            )
-        );
-        harness.encodeBidsBatch(1, 1, 1, 0, 1, bidders, quantities, rates, timestamps);
+        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.BidsArrayLengthMismatch.selector, uint256(2), uint256(1)));
+        harness.encodeBidsBatch(1, 1, 1, 0, 1, bidders, BidPackLib.pack(quantities, rates, timestamps));
     }
 
     function test_encodeIssuanceInstructions_arrayLengthMismatch_reverts() public {

@@ -68,7 +68,7 @@ library BridgeMsgCodec {
     //     1 static head word + 3 dynamic offsets + 3 empty length words = 7×32 = 224
     //   ISSUANCE_INSTRUCTIONS(struct with 12 static + 2 dynamic, dynamic struct):
     //     outer offset(32) + 12 static + 2 inner offsets + 2 empty length words = 17×32 = 544
-    uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 416;
+    uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 288;
     uint16 internal constant MIN_LEN_REFUND_INSTRUCTIONS = HEADER_LEN + 224;
     uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 544;
 
@@ -115,10 +115,8 @@ library BridgeMsgCodec {
 
     /// @notice BIDS_BATCH parallel arrays decoded to unequal lengths.
     /// @param bidders Length of the bidder-addresses array.
-    /// @param quantities Length of the intex-quantities array.
-    /// @param rates Length of the intex-bid-rates array.
-    /// @param timestamps Length of the timestamps array.
-    error BidsArrayLengthMismatch(uint256 bidders, uint256 quantities, uint256 rates, uint256 timestamps);
+    /// @param packedBids Length of the packed-bid array.
+    error BidsArrayLengthMismatch(uint256 bidders, uint256 packedBids);
 
     /// @notice ISSUANCE_INSTRUCTIONS parallel arrays decoded to unequal lengths.
     /// @param recipients Length of the recipients array.
@@ -179,10 +177,8 @@ library BridgeMsgCodec {
     /// @param _relayGeneration The flush generation stamp the receiver uses to replace re-flushed sets.
     /// @param _batchIndex Index of this batch within the flush (0-based).
     /// @param _totalBatches Total number of batches in this flush (the receiver waits for all of them).
-    /// @param _bidderAddresses The bidder addresses (parallel with the other three arrays).
-    /// @param _intexQuantities The intex quantities per bidder.
-    /// @param _intexBidRates The intex bid rates per bidder (`1e6` fixed-point, % of the escrow basis).
-    /// @param _timestamps The bid timestamps per bidder.
+    /// @param _bidderAddresses The bidder addresses (parallel with `_packedBids`).
+    /// @param _packedBids One [`packBid`] word per bidder: quantity, rate, timestamp and the pair.
     /// @return The wire-encoded BIDS_BATCH message.
     function encodeBidsBatch(
         uint32 _worldwideDay,
@@ -191,36 +187,51 @@ library BridgeMsgCodec {
         uint16 _batchIndex,
         uint16 _totalBatches,
         address[] memory _bidderAddresses,
-        uint16[] memory _intexQuantities,
-        uint32[] memory _intexBidRates,
-        uint32[] memory _timestamps
+        uint256[] memory _packedBids
     ) internal pure returns (bytes memory) {
         // Decoder rejects parallel-array mismatch with BidsArrayLengthMismatch; fail-fast at the
         // source so a sender-side bug aborts before paying the bridge fee.
-        if (
-            _bidderAddresses.length != _intexQuantities.length || _bidderAddresses.length != _intexBidRates.length
-                || _bidderAddresses.length != _timestamps.length
-        ) {
-            revert BidsArrayLengthMismatch(
-                _bidderAddresses.length, _intexQuantities.length, _intexBidRates.length, _timestamps.length
-            );
+        if (_bidderAddresses.length != _packedBids.length) {
+            revert BidsArrayLengthMismatch(_bidderAddresses.length, _packedBids.length);
         }
         requireMaxArrayLen(_bidderAddresses.length, MAX_PAYLOAD_ARRAY_LEN);
         return abi.encodePacked(
             BODY_VERSION_V1,
             MSG_BIDS_BATCH,
             abi.encode(
-                _worldwideDay,
-                _srcChainId,
-                _relayGeneration,
-                _batchIndex,
-                _totalBatches,
-                _bidderAddresses,
-                _intexQuantities,
-                _intexBidRates,
-                _timestamps
+                _worldwideDay, _srcChainId, _relayGeneration, _batchIndex, _totalBatches, _bidderAddresses, _packedBids
             )
         );
+    }
+
+    /// @notice Packs one bid's scalars into a single word.
+    /// @dev The pair had to travel with every bid, and two more `uint16` arrays would have taken
+    ///      the per-bid cost from 128 to 192 bytes — past the send cap at a full batch. One word
+    ///      per bid costs 64 instead, so the batch got lighter rather than heavier.
+    ///      Layout, low bits up: [referenceCurrency(16)][issuanceCurrency(16)][timestamp(32)]
+    ///      [bidRate(32)][quantity(16)].
+    function packBid(
+        uint16 _quantity,
+        uint32 _bidRate,
+        uint32 _timestamp,
+        uint16 _issuanceCurrency,
+        uint16 _referenceCurrency
+    ) internal pure returns (uint256) {
+        return uint256(_referenceCurrency) | (uint256(_issuanceCurrency) << 16) | (uint256(_timestamp) << 32)
+            | (uint256(_bidRate) << 64) | (uint256(_quantity) << 96);
+    }
+
+    /// @notice Inverse of [`packBid`].
+    function unpackBid(uint256 _packed)
+        internal
+        pure
+        returns (uint16 quantity, uint32 bidRate, uint32 timestamp, uint16 issuanceCurrency, uint16 referenceCurrency)
+    {
+        referenceCurrency = uint16(_packed);
+        issuanceCurrency = uint16(_packed >> 16);
+        timestamp = uint32(_packed >> 32);
+        bidRate = uint32(_packed >> 64);
+        quantity = uint16(_packed >> 96);
     }
 
     /// @notice Encodes AUCTION_STAGE_START message.
@@ -551,10 +562,8 @@ library BridgeMsgCodec {
     /// @return relayGeneration The flush generation stamp the receiver uses to replace re-flushed sets.
     /// @return batchIndex Index of this batch within the flush (0-based).
     /// @return totalBatches Total number of batches in this flush (the receiver waits for all of them).
-    /// @return bidderAddresses The bidder addresses (parallel with the other three arrays).
-    /// @return intexQuantities The intex quantities per bidder.
-    /// @return intexBidRates The intex bid rates per bidder (`1e6` fixed-point, % of the escrow basis).
-    /// @return timestamps The bid timestamps per bidder.
+    /// @return bidderAddresses The bidder addresses (parallel with `packedBids`).
+    /// @return packedBids One [`packBid`] word per bidder.
     function decodeBidsBatch(bytes calldata _msg)
         internal
         pure
@@ -565,9 +574,7 @@ library BridgeMsgCodec {
             uint16 batchIndex,
             uint16 totalBatches,
             address[] memory bidderAddresses,
-            uint16[] memory intexQuantities,
-            uint32[] memory intexBidRates,
-            uint32[] memory timestamps
+            uint256[] memory packedBids
         )
     {
         // Match the fixed-length decoders' typed empty-payload revert (mirrors readHeader and the
@@ -575,26 +582,12 @@ library BridgeMsgCodec {
         // than an out-of-bounds Panic(0x32) on `_msg[0]`.
         if (_msg.length < HEADER_LEN) revert InvalidPayloadLength(MSG_BIDS_BATCH, _msg.length, HEADER_LEN);
         _assertBodyVersion(_msg);
-        (
-            worldwideDay,
-            srcChainId,
-            relayGeneration,
-            batchIndex,
-            totalBatches,
-            bidderAddresses,
-            intexQuantities,
-            intexBidRates,
-            timestamps
-        ) = abi.decode(_msg[2:], (uint32, uint32, uint32, uint16, uint16, address[], uint16[], uint32[], uint32[]));
-        // The four arrays are indexed in lockstep downstream; unequal lengths would index out of
+        (worldwideDay, srcChainId, relayGeneration, batchIndex, totalBatches, bidderAddresses, packedBids) =
+            abi.decode(_msg[2:], (uint32, uint32, uint32, uint16, uint16, address[], uint256[]));
+        // The two arrays are indexed in lockstep downstream; unequal lengths would index out of
         // bounds and panic inside the ordered lane. Reject with a typed error instead.
-        if (
-            bidderAddresses.length != intexQuantities.length || bidderAddresses.length != intexBidRates.length
-                || bidderAddresses.length != timestamps.length
-        ) {
-            revert BidsArrayLengthMismatch(
-                bidderAddresses.length, intexQuantities.length, intexBidRates.length, timestamps.length
-            );
+        if (bidderAddresses.length != packedBids.length) {
+            revert BidsArrayLengthMismatch(bidderAddresses.length, packedBids.length);
         }
         // Cap the batch so the receiver's crosschainMint/storage loop cannot exceed the inbound gas limit.
         if (bidderAddresses.length > MAX_BIDS_BATCH) revert BidsBatchTooLarge(bidderAddresses.length, MAX_BIDS_BATCH);

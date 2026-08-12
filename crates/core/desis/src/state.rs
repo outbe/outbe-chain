@@ -123,6 +123,8 @@ impl DesisContract<'_> {
             intex_bid_rate: limbs[0] as u32,
             timestamp: limbs[1] as u32,
             intex_quantity: (limbs[1] >> 32) as u16,
+            issuance_currency: (limbs[1] >> 48) as u16,
+            reference_currency: limbs[2] as u16,
         })
     }
 
@@ -135,10 +137,14 @@ impl DesisContract<'_> {
     ) -> Result<()> {
         let key = Self::bid_key(worldwide_day, chain_id, index);
         self.bid_bidder.write(&key, bid.bidder_address)?;
+        // The currency pair rides the free limbs of the same word: no new map and no
+        // attribute-order change.
         let packed = U256::from_limbs([
             u64::from(bid.intex_bid_rate),
-            (u64::from(bid.intex_quantity) << 32) | u64::from(bid.timestamp),
-            0,
+            (u64::from(bid.issuance_currency) << 48)
+                | (u64::from(bid.intex_quantity) << 32)
+                | u64::from(bid.timestamp),
+            u64::from(bid.reference_currency),
             0,
         ]);
         self.bid_packed.write(&key, packed)

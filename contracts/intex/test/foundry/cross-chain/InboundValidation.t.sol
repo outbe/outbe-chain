@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
@@ -173,9 +174,7 @@ contract InboundValidationTest is CrossChainTest {
     function test_OM_BodySrcChainIdMismatch_RevertsSrcChainIdBodyMismatch() public {
         // Build a well-formed BIDS_BATCH whose body-srcChainId (0xDEAD) disagrees with the
         // authenticated source chainId (BNB_CHAIN_ID = 1) → SrcChainIdBodyMismatch.
-        bytes memory packet = BridgeMsgCodec.encodeBidsBatch(
-            42, 0xDEAD, 1, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
-        );
+        bytes memory packet = BridgeMsgCodec.encodeBidsBatch(42, 0xDEAD, 1, 0, 1, new address[](0), new uint256[](0));
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.SrcChainIdBodyMismatch.selector, BNB_CHAIN_ID, 0xDEAD));
         _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), packet);
     }
@@ -183,9 +182,8 @@ contract InboundValidationTest is CrossChainTest {
     function test_OM_ShortBidsBatch_RevertsInvalidPayloadLength() public {
         // Empty-arrays BIDS_BATCH. Send a one-byte-short packet (truncate the last byte of the trailing
         // length word) to trip the per-type minimum-length check.
-        bytes memory full = BridgeMsgCodec.encodeBidsBatch(
-            42, BNB_CHAIN_ID, 1, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
-        );
+        bytes memory full =
+            BridgeMsgCodec.encodeBidsBatch(42, BNB_CHAIN_ID, 1, 0, 1, new address[](0), new uint256[](0));
         bytes memory truncated = new bytes(full.length - 1);
         for (uint256 i = 0; i < truncated.length; i++) {
             truncated[i] = full[i];

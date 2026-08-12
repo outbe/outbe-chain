@@ -1364,17 +1364,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "quantities",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "rates",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "timestamps",
+          "name": "packedBids",
           "type": "uint256",
           "internalType": "uint256"
         }

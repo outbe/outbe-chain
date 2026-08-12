@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {ReferencePriceLib} from "../helpers/ReferencePriceLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
@@ -161,9 +162,7 @@ contract BridgeMsgCodecValidationTest is Test {
 
     function test_EncodeBidsBatch_AtCap_Encodes() public pure {
         uint16 n = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN; // 64
-        bytes memory encoded = BridgeMsgCodec.encodeBidsBatch(
-            1, 30101, 1, 0, 1, new address[](n), new uint16[](n), new uint32[](n), new uint32[](n)
-        );
+        bytes memory encoded = BridgeMsgCodec.encodeBidsBatch(1, 30101, 1, 0, 1, new address[](n), new uint256[](n));
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_BIDS_BATCH);
     }
 
@@ -292,9 +291,7 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     function exposedEncodeBidsBatch(uint16 n) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeBidsBatch(
-            1, 30101, 1, 0, 1, new address[](n), new uint16[](n), new uint32[](n), new uint32[](n)
-        );
+        return BridgeMsgCodec.encodeBidsBatch(1, 30101, 1, 0, 1, new address[](n), new uint256[](n));
     }
 
     function exposedEncodeRefund(uint16 n) external pure returns (bytes memory) {

@@ -120,19 +120,9 @@
         "internalType": "address[]"
       },
       {
-        "name": "intexQuantities",
-        "type": "uint16[]",
-        "internalType": "uint16[]"
-      },
-      {
-        "name": "intexBidRates",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
-      },
-      {
-        "name": "timestamps",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
+        "name": "packedBids",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
       }
     ],
     "outputs": [],

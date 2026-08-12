@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {ReferencePriceLib} from "../helpers/ReferencePriceLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
@@ -16,9 +17,7 @@ contract BodyVersionTest is Test {
     function test_BridgeCodec_AllEncodersEmitVersionV1() public pure {
         bytes memory encoded;
 
-        encoded = BridgeMsgCodec.encodeBidsBatch(
-            1, 30101, 1, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
-        );
+        encoded = BridgeMsgCodec.encodeBidsBatch(1, 30101, 1, 0, 1, new address[](0), new uint256[](0));
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "bidsBatch.version");
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_BIDS_BATCH, "bidsBatch.msgType");
 
@@ -129,9 +128,7 @@ contract BodyVersionTest is Test {
     }
 
     function test_BridgeCodec_UnknownBodyVersion_BidsBatch_Reverts() public {
-        bytes memory packet = BridgeMsgCodec.encodeBidsBatch(
-            1, 30101, 1, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
-        );
+        bytes memory packet = BridgeMsgCodec.encodeBidsBatch(1, 30101, 1, 0, 1, new address[](0), new uint256[](0));
         packet[0] = 0x99;
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnsupportedBodyVersion.selector, 0x99));
         this.exposedDecodeBidsBatch(packet);
@@ -181,11 +178,7 @@ contract BodyVersionTest is Test {
             )
         );
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                BridgeMsgCodec.BidsArrayLengthMismatch.selector, uint256(2), uint256(1), uint256(2), uint256(2)
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.BidsArrayLengthMismatch.selector, uint256(2), uint256(1)));
         this.exposedDecodeBidsBatch(packet);
     }
 
@@ -237,15 +230,15 @@ contract BodyVersionTest is Test {
         timestamps[0] = 42;
 
         bytes memory lastPacket =
-            BridgeMsgCodec.encodeBidsBatch(1, 30101, 7, 1, 2, bidders, quantities, rates, timestamps);
-        (,, uint32 genLast, uint16 idxLast, uint16 totalLast,,,,) = this.exposedDecodeBidsBatch(lastPacket);
+            BridgeMsgCodec.encodeBidsBatch(1, 30101, 7, 1, 2, bidders, BidPackLib.pack(quantities, rates, timestamps));
+        (,, uint32 genLast, uint16 idxLast, uint16 totalLast,,) = this.exposedDecodeBidsBatch(lastPacket);
         assertEq(idxLast, 1, "batchIndex should round-trip");
         assertEq(totalLast, 2, "totalBatches should round-trip");
         assertEq(genLast, 7, "relayGeneration should round-trip");
 
         bytes memory midPacket =
-            BridgeMsgCodec.encodeBidsBatch(1, 30101, 7, 0, 2, bidders, quantities, rates, timestamps);
-        (,,, uint16 idxMid, uint16 totalMid,,,,) = this.exposedDecodeBidsBatch(midPacket);
+            BridgeMsgCodec.encodeBidsBatch(1, 30101, 7, 0, 2, bidders, BidPackLib.pack(quantities, rates, timestamps));
+        (,,, uint16 idxMid, uint16 totalMid,,) = this.exposedDecodeBidsBatch(midPacket);
         assertEq(idxMid, 0, "batchIndex=0 should round-trip");
         assertEq(totalMid, 2, "totalBatches should round-trip");
     }
@@ -255,17 +248,7 @@ contract BodyVersionTest is Test {
     function exposedDecodeBidsBatch(bytes calldata p)
         external
         pure
-        returns (
-            uint32,
-            uint32,
-            uint32,
-            uint16,
-            uint16,
-            address[] memory,
-            uint16[] memory,
-            uint32[] memory,
-            uint32[] memory
-        )
+        returns (uint32, uint32, uint32, uint16, uint16, address[] memory, uint256[] memory)
     {
         return BridgeMsgCodec.decodeBidsBatch(p);
     }

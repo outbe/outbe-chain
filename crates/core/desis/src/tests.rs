@@ -117,6 +117,8 @@ fn bids(n: u8, rate: u32) -> Vec<BidData> {
             intex_bid_rate: rate,
             timestamp: i as u32,
             intex_quantity: 1,
+            issuance_currency: 840,
+            reference_currency: 840,
         })
         .collect()
 }
@@ -893,6 +895,8 @@ fn schedule_derives_min_bid_qty_from_prior_clearing() {
                     intex_bid_rate: 200,
                     timestamp: i as u32,
                     intex_quantity: 1,
+                    issuance_currency: 840,
+                    reference_currency: 840,
                 })
                 .collect(),
         )
@@ -1355,18 +1359,24 @@ fn clearing_uniform_price_is_last_allocated_bid() {
                 intex_bid_rate: 300,
                 timestamp: 0,
                 intex_quantity: 1,
+                issuance_currency: 840,
+                reference_currency: 840,
             },
             BidData {
                 bidder_address: bidder(1),
                 intex_bid_rate: 200,
                 timestamp: 1,
                 intex_quantity: 1,
+                issuance_currency: 840,
+                reference_currency: 840,
             },
             BidData {
                 bidder_address: bidder(2),
                 intex_bid_rate: 150,
                 timestamp: 2,
                 intex_quantity: 1,
+                issuance_currency: 840,
+                reference_currency: 840,
             },
         ];
         runtime::process_bids_batch(
@@ -1402,12 +1412,16 @@ fn clear_bids_below_min_price_skipped() {
                 intex_bid_rate: 50,
                 timestamp: 0,
                 intex_quantity: 1,
+                issuance_currency: 840,
+                reference_currency: 840,
             },
             BidData {
                 bidder_address: bidder(1),
                 intex_bid_rate: 200,
                 timestamp: 1,
                 intex_quantity: 1,
+                issuance_currency: 840,
+                reference_currency: 840,
             },
         ];
         runtime::process_bids_batch(
@@ -1440,12 +1454,16 @@ fn clear_refunds_equal_locked_minus_paid() {
                 intex_bid_rate: 300,
                 timestamp: 0,
                 intex_quantity: 1,
+                issuance_currency: 840,
+                reference_currency: 840,
             },
             BidData {
                 bidder_address: bidder(1),
                 intex_bid_rate: 200,
                 timestamp: 1,
                 intex_quantity: 1,
+                issuance_currency: 840,
+                reference_currency: 840,
             },
         ];
         runtime::process_bids_batch(
@@ -1491,18 +1509,24 @@ fn clear_rate_escrow_scales_by_basis() {
                 intex_bid_rate: 800_000,
                 timestamp: 0,
                 intex_quantity: 1,
+                issuance_currency: 840,
+                reference_currency: 840,
             },
             BidData {
                 bidder_address: bidder(1),
                 intex_bid_rate: 600_000,
                 timestamp: 1,
                 intex_quantity: 1,
+                issuance_currency: 840,
+                reference_currency: 840,
             },
             BidData {
                 bidder_address: bidder(2),
                 intex_bid_rate: 400_000,
                 timestamp: 2,
                 intex_quantity: 1,
+                issuance_currency: 840,
+                reference_currency: 840,
             },
         ];
         runtime::process_bids_batch(
@@ -1607,6 +1631,8 @@ fn two_chain_bids_merge_and_carry_source_chain() {
                 intex_bid_rate: 300,
                 timestamp: 0,
                 intex_quantity: 1,
+                issuance_currency: 840,
+                reference_currency: 840,
             }],
         )
         .unwrap();
@@ -1624,6 +1650,8 @@ fn two_chain_bids_merge_and_carry_source_chain() {
                 intex_bid_rate: 200,
                 timestamp: 0,
                 intex_quantity: 1,
+                issuance_currency: 840,
+                reference_currency: 840,
             }],
         )
         .unwrap();

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {ReferencePriceLib} from "../helpers/ReferencePriceLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
@@ -157,12 +158,16 @@ contract BridgeMsgCodecGoldenTest is Test {
             uint16 batchIndex,
             uint16 totalBatches,
             address[] memory dBidders,
-            uint16[] memory dQuantities,
-            uint32[] memory dRates,
-            uint32[] memory dTimestamps
+            uint256[] memory dPacked
         ) = this.exposedDecodeBidsBatch(
             BridgeMsgCodec.encodeBidsBatch(
-                0x11223344, 0x0000ABCD, 0x0000002A, 0x0000, 0x0001, bidders, quantities, rates, timestamps
+                0x11223344,
+                0x0000ABCD,
+                0x0000002A,
+                0x0000,
+                0x0001,
+                bidders,
+                BidPackLib.pack(quantities, rates, timestamps)
             )
         );
 
@@ -174,19 +179,20 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(dBidders.length, 2, "bidders len");
         assertEq(dBidders[0], address(0xA11CE), "bidders[0]");
         assertEq(dBidders[1], address(0xB0B), "bidders[1]");
-        assertEq(dQuantities[0], 0x1111, "quantities[0]");
-        assertEq(dQuantities[1], 0x2222, "quantities[1]");
-        assertEq(dRates[0], 0x33333333, "rates[0]");
-        assertEq(dRates[1], 0x44444444, "rates[1]");
-        assertEq(dTimestamps[0], 0x55555555, "timestamps[0]");
-        assertEq(dTimestamps[1], 0x66666666, "timestamps[1]");
+        // Every scalar survives the one-word packing, the currency pair included.
+        for (uint256 i = 0; i < 2; ++i) {
+            (uint16 q, uint32 r, uint32 ts, uint16 iso, uint16 ref) = BridgeMsgCodec.unpackBid(dPacked[i]);
+            assertEq(q, quantities[i], "quantity");
+            assertEq(r, rates[i], "rate");
+            assertEq(ts, timestamps[i], "timestamp");
+            assertEq(iso, 840, "issuanceCurrency");
+            assertEq(ref, 840, "referenceCurrency");
+        }
     }
 
     function test_RoundTrip_BidsBatch_MidBatch_RelayGenerationOne() public view {
-        (,, uint32 relayGeneration, uint16 batchIndex, uint16 totalBatches,,,,) = this.exposedDecodeBidsBatch(
-            BridgeMsgCodec.encodeBidsBatch(
-                7, 30101, 1, 0, 2, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
-            )
+        (,, uint32 relayGeneration, uint16 batchIndex, uint16 totalBatches,,) = this.exposedDecodeBidsBatch(
+            BridgeMsgCodec.encodeBidsBatch(7, 30101, 1, 0, 2, new address[](0), new uint256[](0))
         );
         assertEq(batchIndex, 0, "batchIndex");
         assertEq(totalBatches, 2, "totalBatches");
@@ -301,17 +307,7 @@ contract BridgeMsgCodecGoldenTest is Test {
     function exposedDecodeBidsBatch(bytes calldata p)
         external
         pure
-        returns (
-            uint32,
-            uint32,
-            uint32,
-            uint16,
-            uint16,
-            address[] memory,
-            uint16[] memory,
-            uint32[] memory,
-            uint32[] memory
-        )
+        returns (uint32, uint32, uint32, uint16, uint16, address[] memory, uint256[] memory)
     {
         return BridgeMsgCodec.decodeBidsBatch(p);
     }
