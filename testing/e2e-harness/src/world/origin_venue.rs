@@ -30,6 +30,7 @@ pub struct OriginContracts {
     /// The venue half: the committee is its own auction target, so the
     /// collection and router a remote chain would host sit here too.
     pub intex_nft: Address,
+    pub intex_auction: Address,
     pub target_router: Address,
     /// Unwraps inbound proceeds to native; funded so it can pay.
     pub wcoen: Address,
@@ -139,6 +140,7 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64) -> Result<OriginContracts> 
         loopback: address_from(&hub, "LoopbackGatewayAdapter:")?,
         origin_router: address_from(&origin, "OriginRouter:")?,
         intex_nft: address_from(&venue, "IntexNFT1155:")?,
+        intex_auction: address_from(&venue, "IntexAuction:")?,
         target_router: address_from(&venue, "TargetRouter:")?,
         wcoen,
     };

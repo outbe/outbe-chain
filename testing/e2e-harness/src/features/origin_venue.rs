@@ -1,5 +1,8 @@
 //! Steps for the intex engine deployed onto the committee's own chain.
 
+use std::thread::sleep;
+use std::time::{Duration, Instant};
+
 use alloy_sol_types::sol;
 use cucumber::{then, when};
 
@@ -73,4 +76,57 @@ fn origin_router_knows_proceeds_route(world: &mut World) {
         !bridge.is_zero() && token == contracts.wcoen,
         "proceeds route is unset: bridge {bridge}, token {token}"
     );
+}
+
+sol! {
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IAuctionStage {
+        function getAuctionStage(uint32 worldwideDay) external view returns (uint8);
+    }
+}
+
+/// Desis dispatches the start on its own schedule tick, which lands some blocks
+/// after the day settles.
+const AUCTION_START_TIMEOUT: Duration = Duration::from_secs(300);
+
+#[then("the auction for that day opens on the target chain")]
+fn auction_opens_on_target(world: &mut World) {
+    let url = world.rpc.url(world.validators.primary_port());
+    let contracts = world
+        .state
+        .origin_contracts
+        .clone()
+        .expect("a deploy recorded its addresses");
+    let worldwide_day = world
+        .state
+        .wwd
+        .as_deref()
+        .expect("the settled day's WorldwideDay")
+        .parse::<u32>()
+        .expect("numeric WorldwideDay");
+
+    // The venue reverts with AuctionNotFound until the start message lands, so a
+    // reply at all is the proof that the whole origin-to-target path ran.
+    let deadline = Instant::now() + AUCTION_START_TIMEOUT;
+    loop {
+        if let Some(stage) = eth::read_call(
+            &url,
+            contracts.intex_auction,
+            &IAuctionStage::getAuctionStageCall {
+                worldwideDay: worldwide_day,
+            },
+        ) {
+            assert_ne!(
+                stage, 4,
+                "day {worldwide_day} reached the venue already cancelled"
+            );
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "day {worldwide_day} settled but no auction ever opened on the venue at {}",
+            contracts.intex_auction
+        );
+        sleep(Duration::from_secs(2));
+    }
 }
