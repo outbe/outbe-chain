@@ -1852,6 +1852,84 @@ fn test_iface_id_matches_selector_xor() {
     );
 }
 
+// --- Clearing: one series per currency pair ---
+
+/// Brief `units` of supply against several priced reference currencies and drive
+/// the schedule until the clearing gate is armed.
+fn open_clearing_priced(s: &StorageHandle, units: u128, references: &[u16]) {
+    let rows = references
+        .iter()
+        .map(|&iso_code| crate::schema::ReferencePrice {
+            iso_code,
+            entry_price_minor: U256::from(ENTRY_PRICE) * U256::from(iso_code),
+        })
+        .collect();
+    assert_eq!(
+        crate::api::dispatch_auction_brief(
+            s.clone(),
+            WORLDWIDE_DAY,
+            U256::from(units * LOAD_MINOR),
+            rows,
+            true,
+            NOW,
+        )
+        .unwrap(),
+        AuctionBriefReceipt::Accepted
+    );
+    runtime::schedule_tick(s, NOW).unwrap();
+    runtime::schedule_tick(s, ANCHOR + 86_400).unwrap();
+    arm_clearing(s);
+}
+
+#[test]
+fn clearing_issues_one_series_per_winning_currency_pair() {
+    use outbe_intexfactory::SeriesId;
+
+    let chain = 10u32;
+    with_targets(&[chain], |s| {
+        open_clearing_priced(&s, 4, &[840, 978]);
+
+        // Three winners over two pairs: two price in USD, one in EUR.
+        let mut relayed = bids(3, 200);
+        relayed[2].issuance_currency = 949;
+        relayed[2].reference_currency = 978;
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            chain,
+            1,
+            0,
+            1,
+            relayed,
+        )
+        .unwrap();
+        mark_done(&s, chain, 1, 1, 3);
+
+        let result = clear(&s);
+        assert_eq!(result.issued_intex_count, 3);
+
+        let usd = SeriesId::for_pair(WORLDWIDE_DAY, 840, 840).unwrap();
+        let lira = SeriesId::for_pair(WORLDWIDE_DAY, 949, 978).unwrap();
+        assert_eq!(usd.to_string(), "20260101-USD-U");
+        assert_eq!(lira.to_string(), "20260101-TRY-E");
+
+        // Each series holds only its own winners and its own reference price.
+        let usd_series = outbe_intex::api::read_series(&s, usd).unwrap();
+        let lira_series = outbe_intex::api::read_series(&s, lira).unwrap();
+        assert_eq!(usd_series.issued_intex_count, 2);
+        assert_eq!(lira_series.issued_intex_count, 1);
+        assert_eq!(
+            usd_series.entry_price_minor,
+            U256::from(ENTRY_PRICE) * U256::from(840u16)
+        );
+        assert_eq!(
+            lira_series.entry_price_minor,
+            U256::from(ENTRY_PRICE) * U256::from(978u16)
+        );
+    });
+}
+
 // --- Config construction ---
 
 #[test]

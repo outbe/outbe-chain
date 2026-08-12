@@ -110,6 +110,14 @@ impl AuctionConfig {
         }
     }
 
+    /// The day's entry price for one reference currency.
+    pub fn entry_price_for(&self, iso_code: u16) -> Option<U256> {
+        self.reference_prices
+            .iter()
+            .find(|row| row.iso_code == iso_code)
+            .map(|row| row.entry_price_minor)
+    }
+
     /// Per-Intex escrow basis = `promis_load` COEN (constant; the COEN VWAP cancels). The escrow
     /// pays wCOEN, so the bid rate applies against this. entry_price feeds only floor/call.
     pub fn escrow_basis_minor(&self) -> u128 {
@@ -142,6 +150,9 @@ pub struct ClearingResult {
     pub winner_quantities: Vec<U256>,
     /// Source chain of each winning bid (parallel to `winners`).
     pub winner_chains: Vec<u32>,
+    /// `(issuance, reference)` ISO pair of each winning bid (parallel to `winners`);
+    /// the day issues one series per distinct pair.
+    pub winner_currencies: Vec<(u16, u16)>,
     pub all_bidders: Vec<Address>,
     pub refunded_amounts: Vec<u128>,
     pub paid_amounts: Vec<u128>,

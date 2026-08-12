@@ -8,7 +8,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_promislimit::PromisLimitContract;
 
-use outbe_intexfactory::constants::{QUALIFIER_ISSUANCE_ISO, QUALIFIER_REFERENCE_ISO};
+use outbe_intexfactory::schema::IssuanceParams;
 use outbe_intexfactory::SeriesId;
 
 use crate::constants::{
@@ -754,21 +754,12 @@ fn clear_inner(
         // and stays here, above issuance.
         outbe_intexfactory::api::discard_day_contributors(&storage, worldwide_day)?;
     } else {
-        // Hand issuance to IntexFactory.
-        let params = outbe_intexfactory::schema::IssuanceParams {
-            series_id: derive_series_id(worldwide_day)?,
-            worldwide_day,
-            issued_intex_count: result.issued_intex_count,
-            promis_load_minor: config.promis_load_minor,
-            entry_price_minor: config.entry_price_minor,
-            issuance_currency: QUALIFIER_ISSUANCE_ISO,
-            reference_currency: QUALIFIER_REFERENCE_ISO,
-            recipients: result.winners.clone(),
-            quantities: result.winner_quantities.clone(),
-            recipient_chains: result.winner_chains.clone(),
-            snapshot_chains: snapshot.to_vec(),
-        };
-        outbe_intexfactory::api::issue(&storage, params)?;
+        // Hand issuance to IntexFactory, one series per winning currency pair.
+        // The ranking above stayed global — grouping only decides which series a
+        // won bid lands in, never who won or what they pay.
+        for group in issuance_groups(&result, &config, worldwide_day, snapshot)? {
+            outbe_intexfactory::api::issue(&storage, group)?;
+        }
     }
 
     // Send AUCTION_RESULT to every snapshot chain; skipped/zero-winner chains get
@@ -865,6 +856,7 @@ fn calculate_clearing(
     let mut winners: Vec<Address> = Vec::with_capacity(len);
     let mut winner_quantities: Vec<alloy_primitives::U256> = Vec::with_capacity(len);
     let mut winner_chains: Vec<u32> = Vec::with_capacity(len);
+    let mut winner_currencies: Vec<(u16, u16)> = Vec::with_capacity(len);
     let mut won_by_index: Vec<u32> = vec![0u32; len];
 
     let escrow_basis = config.escrow_basis_minor();
@@ -889,6 +881,7 @@ fn calculate_clearing(
             winners.push(bid.bidder_address);
             winner_quantities.push(alloy_primitives::U256::from(allocated));
             winner_chains.push(*chain_id);
+            winner_currencies.push((bid.issuance_currency, bid.reference_currency));
             won_by_index[i] = allocated;
             total_allocated += allocated;
             clearing_rate = bid.intex_bid_rate;
@@ -930,6 +923,7 @@ fn calculate_clearing(
         winners,
         winner_quantities,
         winner_chains,
+        winner_currencies,
         all_bidders,
         refunded_amounts,
         paid_amounts,
@@ -941,16 +935,57 @@ fn calculate_clearing(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// The single point where a series id is built. The currency pair is still the
-/// fixed qualifier pair, so a day yields one series; the clearing partition
-/// replaces the pair with each winning group's own.
-fn derive_series_id(worldwide_day: u32) -> Result<SeriesId> {
-    SeriesId::pack(
-        worldwide_day,
-        SeriesId::numeric_code(QUALIFIER_ISSUANCE_ISO),
-        SeriesId::numeric_code(QUALIFIER_REFERENCE_ISO)[0],
-    )
-    .map_err(Into::into)
+/// One issuance per distinct winning `(issuance, reference)` pair, in the order
+/// the pairs first appear in the ranking. Each group carries its own reference
+/// currency's entry price, which is what floor and call derive from.
+fn issuance_groups(
+    result: &ClearingResult,
+    config: &AuctionConfig,
+    worldwide_day: u32,
+    snapshot: &[u32],
+) -> Result<Vec<IssuanceParams>> {
+    let mut groups: Vec<IssuanceParams> = Vec::new();
+    for (i, &(issuance_currency, reference_currency)) in result.winner_currencies.iter().enumerate()
+    {
+        let at = match groups.iter().position(|g| {
+            (g.issuance_currency, g.reference_currency) == (issuance_currency, reference_currency)
+        }) {
+            Some(at) => at,
+            None => {
+                // Reveal only accepts a reference the day priced, so a winner
+                // without a row means the day's table and its bids disagree.
+                let entry_price_minor = config
+                    .entry_price_for(reference_currency)
+                    .ok_or(DesisError::UnpricedReferenceCurrency(reference_currency))?;
+                groups.push(IssuanceParams {
+                    series_id: SeriesId::for_pair(
+                        worldwide_day,
+                        issuance_currency,
+                        reference_currency,
+                    )?,
+                    worldwide_day,
+                    issued_intex_count: 0,
+                    promis_load_minor: config.promis_load_minor,
+                    entry_price_minor,
+                    issuance_currency,
+                    reference_currency,
+                    recipients: Vec::new(),
+                    quantities: Vec::new(),
+                    recipient_chains: Vec::new(),
+                    snapshot_chains: snapshot.to_vec(),
+                });
+                groups.len() - 1
+            }
+        };
+
+        let quantity = result.winner_quantities[i];
+        let group = &mut groups[at];
+        group.issued_intex_count += quantity.saturating_to::<u32>();
+        group.recipients.push(result.winners[i]);
+        group.quantities.push(quantity);
+        group.recipient_chains.push(result.winner_chains[i]);
+    }
+    Ok(groups)
 }
 
 fn require_origin_router(caller: Address) -> Result<()> {

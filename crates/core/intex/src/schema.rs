@@ -4,6 +4,7 @@
 use alloy_primitives::{keccak256, Address, FixedBytes, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::INTEX_ADDRESS;
+use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::storage::types::{Storable, StorableType, StorageKey};
 use std::fmt;
 
@@ -39,7 +40,7 @@ pub struct IntexCallTrigger {
 }
 
 /// Series identifier: the 14 ASCII bytes of `20260212-TRY-U`. A currency with no
-/// alpha code in the oracle falls back to its zero-padded numeric code (`949`).
+/// alpha code in ISO 4217 falls back to its zero-padded numeric code (`949`).
 #[repr(transparent)]
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SeriesId([u8; SERIES_ID_LEN]);
@@ -104,6 +105,21 @@ impl SeriesId {
             b'0' + ((iso / 10) % 10) as u8,
             b'0' + (iso % 10) as u8,
         ]
+    }
+
+    /// How a currency is spelled inside an id: its alpha-3 code, or its numeric
+    /// code when ISO assigns none.
+    pub fn currency_code(iso: u16) -> [u8; 3] {
+        iso_4217_alpha(iso).unwrap_or_else(|| Self::numeric_code(iso))
+    }
+
+    /// The id of the series a day issues for one `(issuance, reference)` pair.
+    pub fn for_pair(worldwide_day: u32, issuance: u16, reference: u16) -> Result<Self, IntexError> {
+        Self::pack(
+            worldwide_day,
+            Self::currency_code(issuance),
+            Self::currency_code(reference)[0],
+        )
     }
 }
 

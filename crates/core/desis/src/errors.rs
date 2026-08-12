@@ -17,6 +17,9 @@ pub enum DesisError {
 
     #[error("unauthorized origin: {0}")]
     UnauthorizedOrigin(Address),
+
+    #[error("winning bid references an unpriced currency: {0}")]
+    UnpricedReferenceCurrency(u16),
 }
 
 impl From<DesisError> for outbe_primitives::error::PrecompileError {
