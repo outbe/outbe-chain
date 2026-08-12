@@ -5,6 +5,7 @@ use outbe_compressed_entities::{
     derive_poseidon_entity_id, EntityId36, ExecutionScope, ParentBodySource,
 };
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferStatus, TributeZkContext};
 use outbe_tribute::{TributeContract, TributeData};
 use outbe_zkproof::FullProofPublicInputs;
@@ -54,6 +55,13 @@ impl TributeFactoryContract<'_> {
             zk_merkle_root,
             signature,
         } = input;
+
+        if iso_4217_alpha(tribute_currency).is_none() {
+            return Err(TributeFactoryError::InvalidCurrency {currency: tribute_currency}.into());
+        }
+        if iso_4217_alpha(reference_currency).is_none() {
+            return Err(TributeFactoryError::InvalidCurrency {currency: tribute_currency}.into());
+        }
 
         // When the caller is a registered L2 operator with ZK verification
         // enabled, the offer must carry a valid BLS MinSig signature over

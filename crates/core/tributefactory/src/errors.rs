@@ -71,6 +71,9 @@ pub enum TributeFactoryError {
     #[error("issuance currency {issuance_currency} not registered in oracle")]
     IssuanceCurrencyNotRegistered { issuance_currency: u16 },
 
+    #[error("Invalid currency code {currency}")]
+    InvalidCurrency { currency: u16 },
+
     #[error("wallet_addresses must be specified when sra_addresses is provided")]
     WalletAddressesRequiredWhenSraProvided,
 
