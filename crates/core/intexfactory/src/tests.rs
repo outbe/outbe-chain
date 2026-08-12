@@ -2071,3 +2071,69 @@ fn an_unpriced_reference_currency_is_skipped_not_fatal() {
         assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 1);
     });
 }
+
+#[test]
+fn a_currency_cut_off_by_the_budget_is_scanned_first_next_block() {
+    with_factory(|s| {
+        runtime::issue(&s, eur_series(8)).unwrap();
+
+        let oracle = OracleContract::new(s.clone());
+        oracle
+            .reference_currencies
+            .push(QUALIFIER_REFERENCE_ISO)
+            .unwrap();
+        oracle.reference_currencies.push(EUR_ISO).unwrap();
+        let above = U256::from(EXPECTED_FLOOR) + U256::from(1);
+        write_rate(&oracle, QUALIFIER_REFERENCE_ISO, PAIR_ID, above);
+        write_rate(&oracle, EUR_ISO, EUR_PAIR_ID, above);
+
+        // The dollar bin alone fills a whole block's budget. Ids without a series
+        // record are skipped per series but still count against it.
+        {
+            let mut factory = IntexFactoryContract::new(s.clone());
+            for id in 1..=qualified::MAX_SERIES_PER_BLOCK {
+                factory
+                    .insert_unqualified(
+                        sid(id),
+                        QUALIFIER_REFERENCE_ISO,
+                        U256::from(EXPECTED_FLOOR),
+                    )
+                    .unwrap();
+            }
+        }
+
+        let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, mature_ts, CHAIN_ID),
+            s.clone(),
+        );
+
+        let eur_id = eur_series(8).series_id;
+        qualified::scan_and_qualify(&ctx).unwrap();
+        assert_eq!(
+            outbe_intex::api::read_series(&s, eur_id)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            outbe_intex::IntexState::Issued,
+            "the dollar bin consumed the block's budget"
+        );
+        assert_eq!(
+            IntexFactoryContract::new(s.clone())
+                .qualify_currency_cursor
+                .read()
+                .unwrap(),
+            1,
+            "the next block resumes at the currency that was cut off"
+        );
+
+        qualified::scan_and_qualify(&ctx).unwrap();
+        assert_eq!(
+            outbe_intex::api::read_series(&s, eur_id)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            outbe_intex::IntexState::Qualified
+        );
+    });
+}

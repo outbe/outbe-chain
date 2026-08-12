@@ -50,12 +50,25 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
 
+    let currencies = outbe_oracle::api::get_all_reference_currencies(ctx)?;
+    if currencies.is_empty() {
+        return Ok(0);
+    }
+    let factory = IntexFactoryContract::new(ctx.storage.clone());
+    let start = factory.call_currency_cursor.read()? as usize % currencies.len();
+
     let mut budget = MAX_SERIES_PER_BLOCK;
     let mut called: u32 = 0;
-    for iso_code in outbe_oracle::api::get_all_reference_currencies(ctx)? {
+    let mut resume_at = start;
+    for offset in 0..currencies.len() {
+        let at = (start + offset) % currencies.len();
         if budget == 0 {
+            // Out of budget: the next run starts here, so a heavy currency
+            // cannot keep the ones behind it from ever being scanned.
+            resume_at = at;
             break;
         }
+        let iso_code = currencies[at];
         let Ok((_, pair_index)) =
             outbe_oracle::api::require_coen_pair(ctx.storage.clone(), iso_code)
         else {
@@ -66,6 +79,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         called = called.saturating_add(calls);
         budget = budget.saturating_sub(inspected);
     }
+    factory.call_currency_cursor.write(resume_at as u32)?;
     Ok(called)
 }
 

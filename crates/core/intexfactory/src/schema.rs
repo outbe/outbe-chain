@@ -83,6 +83,14 @@ pub struct IntexFactoryContract {
     // resume that currency's sweep from, so per-block work stays capped. 0 = fresh sweep.
     #[attribute(order = 14)]
     pub qualify_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
+
+    // Which reference currency each scan resumes at, so a currency whose
+    // population exhausts the shared per-block budget cannot starve the ones
+    // behind it in the registry. Index into the oracle's reference registry.
+    #[attribute(order = 15)]
+    pub qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 16)]
+    pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl IntexFactoryContract<'_> {

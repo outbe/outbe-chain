@@ -54,19 +54,32 @@ pub(crate) const MAX_SERIES_PER_BLOCK: u32 = 256;
 /// currency whose COEN pair is unregistered or unpriced is skipped for the block
 /// rather than halting it.
 pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
+    let currencies = get_all_reference_currencies(ctx)?;
+    if currencies.is_empty() {
+        return Ok(0);
+    }
+    let factory = IntexFactoryContract::new(ctx.storage.clone());
+    let start = factory.qualify_currency_cursor.read()? as usize % currencies.len();
+
     let mut budget = MAX_SERIES_PER_BLOCK;
     let mut promoted: u32 = 0;
-    for iso_code in get_all_reference_currencies(ctx)? {
+    let mut resume_at = start;
+    for offset in 0..currencies.len() {
+        let at = (start + offset) % currencies.len();
         if budget == 0 {
+            // Out of budget: the next block starts here, so a heavy currency
+            // cannot keep the ones behind it from ever being scanned.
+            resume_at = at;
             break;
         }
-        let Some(rate) = coen_rate_for_opt(ctx.storage.clone(), iso_code)? else {
+        let Some(rate) = coen_rate_for_opt(ctx.storage.clone(), currencies[at])? else {
             continue;
         };
-        let (qualified, inspected) = qualify_currency(ctx, iso_code, rate, budget)?;
+        let (qualified, inspected) = qualify_currency(ctx, currencies[at], rate, budget)?;
         promoted = promoted.saturating_add(qualified);
         budget = budget.saturating_sub(inspected);
     }
+    factory.qualify_currency_cursor.write(resume_at as u32)?;
     Ok(promoted)
 }
 
