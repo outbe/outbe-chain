@@ -695,11 +695,11 @@ fn capacity_forfeiture_preserves_retained_work_and_replays_without_effects() {
             .is_none());
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
-            desis.auction_stage.read(&victim.value()).unwrap(),
+            desis.auction_stage.read(&victim).unwrap(),
             outbe_desis::schema::AuctionStage::None as u8
         );
         assert_eq!(
-            desis.pending_supply_promis.read(&victim.value()).unwrap(),
+            desis.pending_supply_promis.read(&victim).unwrap(),
             U256::ZERO
         );
 
@@ -877,11 +877,11 @@ fn additional_ready_day_preserves_real_pending_ocomp_job_and_indexes_byte_for_by
             .is_none());
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
-            desis.auction_stage.read(&victim.value()).unwrap(),
+            desis.auction_stage.read(&victim).unwrap(),
             outbe_desis::schema::AuctionStage::None as u8
         );
         assert_eq!(
-            desis.pending_supply_promis.read(&victim.value()).unwrap(),
+            desis.pending_supply_promis.read(&victim).unwrap(),
             U256::ZERO
         );
     });

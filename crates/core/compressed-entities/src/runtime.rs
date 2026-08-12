@@ -318,7 +318,7 @@ fn prepare_tribute(body: TributeBodyV1) -> Result<PreparedBody> {
     let commitment = calculate_commitment(entity_id, &payload)?;
     let memberships = vec![
         IndexRecord::owner(IndexKind::TributeByOwner, body.owner, entity_id),
-        IndexRecord::day(body.worldwide_day.value(), entity_id),
+        IndexRecord::day(body.worldwide_day, entity_id),
     ];
     Ok(PreparedBody {
         collection: Collection::Tribute,
@@ -461,7 +461,7 @@ fn memberships_for_verified(body: &VerifiedBody) -> Result<Vec<IndexRecord>> {
     if let Some(tribute) = body.payload.as_tribute() {
         return Ok(vec![
             IndexRecord::owner(IndexKind::TributeByOwner, tribute.owner, id),
-            IndexRecord::day(tribute.worldwide_day.value(), id),
+            IndexRecord::day(tribute.worldwide_day, id),
         ]);
     }
     if let Some(item) = body.payload.as_nod_item() {

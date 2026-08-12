@@ -8,7 +8,7 @@ use alloy_primitives::{Address, U256};
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use outbe_tee::protocol::{
-    EnclaveRequest, EnclaveResponse, EncryptedTributeOffer, TributeOfferStatus,
+    EnclaveRequest, EnclaveResponse, EncryptedTributeOffer, TributeOfferStatus, WorldwideDay,
 };
 use outbe_tee::EnclaveClient;
 use outbe_tee_enclave::crypto::{chacha20poly1305_encrypt, hkdf_sha256};
@@ -48,7 +48,7 @@ fn encrypt_offer(
         cipher_text,
         nonce: nonce.to_vec(),
         ephemeral_pubkey: U256::from_be_bytes(eph_pub),
-        worldwide_day: 20250115,
+        worldwide_day: WorldwideDay::new(20250115),
         tribute_currency: 840,
         reference_currency: 840,
         exclude_from_intex_issuance: false,

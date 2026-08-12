@@ -1,6 +1,7 @@
 //! Local storage helpers for the Desis module.
 
 use alloy_primitives::U256;
+use outbe_common::WorldwideDay;
 use outbe_primitives::error::Result;
 
 use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract, IntexCallTrigger};
@@ -8,18 +9,22 @@ use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract, IntexCa
 impl DesisContract<'_> {
     // --- AuctionStage ---
 
-    pub(crate) fn read_stage(&self, worldwide_day: u32) -> Result<AuctionStage> {
+    pub(crate) fn read_stage(&self, worldwide_day: WorldwideDay) -> Result<AuctionStage> {
         let raw = self.auction_stage.read(&worldwide_day)?;
         AuctionStage::from_u8(raw).map_err(Into::into)
     }
 
-    pub(crate) fn write_stage(&self, worldwide_day: u32, stage: AuctionStage) -> Result<()> {
+    pub(crate) fn write_stage(
+        &self,
+        worldwide_day: WorldwideDay,
+        stage: AuctionStage,
+    ) -> Result<()> {
         self.auction_stage.write(&worldwide_day, stage as u8)
     }
 
     // --- AuctionConfig ---
 
-    pub(crate) fn read_auction_config(&self, worldwide_day: u32) -> Result<AuctionConfig> {
+    pub(crate) fn read_auction_config(&self, worldwide_day: WorldwideDay) -> Result<AuctionConfig> {
         let promis_load_minor = self.config_promis_load_minor.read(&worldwide_day)?;
         Ok(AuctionConfig {
             issuance_currency: self.config_issuance_currency.read(&worldwide_day)? as u16,
@@ -41,7 +46,7 @@ impl DesisContract<'_> {
 
     pub(crate) fn write_auction_config(
         &self,
-        worldwide_day: u32,
+        worldwide_day: WorldwideDay,
         cfg: &AuctionConfig,
     ) -> Result<()> {
         self.config_issuance_currency
@@ -70,7 +75,7 @@ impl DesisContract<'_> {
 
     pub(crate) fn append_bid(
         &self,
-        worldwide_day: u32,
+        worldwide_day: WorldwideDay,
         chain_id: u32,
         bid: &BidData,
     ) -> Result<u32> {
@@ -85,7 +90,7 @@ impl DesisContract<'_> {
 
     pub(crate) fn read_bid_at(
         &self,
-        worldwide_day: u32,
+        worldwide_day: WorldwideDay,
         chain_id: u32,
         index: u32,
     ) -> Result<BidData> {
@@ -102,7 +107,7 @@ impl DesisContract<'_> {
 
     fn write_bid_at(
         &self,
-        worldwide_day: u32,
+        worldwide_day: WorldwideDay,
         chain_id: u32,
         index: u32,
         bid: &BidData,
@@ -121,7 +126,7 @@ impl DesisContract<'_> {
     /// Load the chains' bids into memory, tagged with their source chain.
     pub(crate) fn read_chains_bids(
         &self,
-        worldwide_day: u32,
+        worldwide_day: WorldwideDay,
         chain_ids: &[u32],
     ) -> Result<Vec<(u32, BidData)>> {
         let mut bids = Vec::new();
@@ -137,7 +142,11 @@ impl DesisContract<'_> {
     }
 
     /// Drop the chain's bids for a generation supersede or post-clear cleanup.
-    pub(crate) fn reset_chain_intake(&self, worldwide_day: u32, chain_id: u32) -> Result<()> {
+    pub(crate) fn reset_chain_intake(
+        &self,
+        worldwide_day: WorldwideDay,
+        chain_id: u32,
+    ) -> Result<()> {
         let key = Self::chain_key(worldwide_day, chain_id);
         let chain_count = self.chain_bid_count.read(&key)?;
         let day_count = self.day_bid_count.read(&worldwide_day)?;
@@ -154,12 +163,12 @@ impl DesisContract<'_> {
     // --- clearing fan-in gate (dense active set) ---
 
     /// Append a day to the gate-active set (idempotent).
-    pub(crate) fn push_gate_active(&mut self, worldwide_day: u32) -> Result<()> {
+    pub(crate) fn push_gate_active(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
         if self.gate_active_slot.read(&worldwide_day)? != 0 {
             return Ok(());
         }
         let count = self.gate_active_count.read()?;
-        self.gate_active_at.write(&count, worldwide_day)?;
+        self.gate_active_at.write(&count, worldwide_day.value())?;
         // store index + 1 so that 0 unambiguously means "absent".
         self.gate_active_slot.write(&worldwide_day, count + 1)?;
         self.gate_active_count.write(count + 1)?;
@@ -167,7 +176,7 @@ impl DesisContract<'_> {
     }
 
     /// Remove a day from the gate-active set via swap-remove (idempotent).
-    pub(crate) fn remove_gate_active(&mut self, worldwide_day: u32) -> Result<()> {
+    pub(crate) fn remove_gate_active(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
         let slot1 = self.gate_active_slot.read(&worldwide_day)?;
         if slot1 == 0 {
             return Ok(());
@@ -175,8 +184,8 @@ impl DesisContract<'_> {
         let idx = slot1 - 1;
         let last = self.gate_active_count.read()? - 1;
         if idx != last {
-            let last_day = self.gate_active_at.read(&last)?;
-            self.gate_active_at.write(&idx, last_day)?;
+            let last_day: WorldwideDay = self.gate_active_at.read(&last)?.into();
+            self.gate_active_at.write(&idx, last_day.value())?;
             self.gate_active_slot.write(&last_day, idx + 1)?;
         }
         self.gate_active_at.clear(&last)?;
@@ -186,12 +195,12 @@ impl DesisContract<'_> {
     }
 
     /// Append a day to the schedule-active set (idempotent).
-    pub(crate) fn push_sched_active(&mut self, worldwide_day: u32) -> Result<()> {
+    pub(crate) fn push_sched_active(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
         if self.sched_active_slot.read(&worldwide_day)? != 0 {
             return Ok(());
         }
         let count = self.sched_active_count.read()?;
-        self.sched_active_at.write(&count, worldwide_day)?;
+        self.sched_active_at.write(&count, worldwide_day.value())?;
         // store index + 1 so that 0 unambiguously means "absent".
         self.sched_active_slot.write(&worldwide_day, count + 1)?;
         self.sched_active_count.write(count + 1)?;
@@ -199,7 +208,7 @@ impl DesisContract<'_> {
     }
 
     /// Remove a day from the schedule-active set via swap-remove (idempotent).
-    pub(crate) fn remove_sched_active(&mut self, worldwide_day: u32) -> Result<()> {
+    pub(crate) fn remove_sched_active(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
         let slot1 = self.sched_active_slot.read(&worldwide_day)?;
         if slot1 == 0 {
             return Ok(());
@@ -207,8 +216,8 @@ impl DesisContract<'_> {
         let idx = slot1 - 1;
         let last = self.sched_active_count.read()? - 1;
         if idx != last {
-            let last_day = self.sched_active_at.read(&last)?;
-            self.sched_active_at.write(&idx, last_day)?;
+            let last_day: WorldwideDay = self.sched_active_at.read(&last)?.into();
+            self.sched_active_at.write(&idx, last_day.value())?;
             self.sched_active_slot.write(&last_day, idx + 1)?;
         }
         self.sched_active_at.clear(&last)?;
@@ -219,11 +228,14 @@ impl DesisContract<'_> {
 
     // --- last cleared series ---
 
-    pub(crate) fn read_last_cleared_worldwide_day(&self) -> Result<u32> {
+    pub(crate) fn read_last_cleared_worldwide_day(&self) -> Result<WorldwideDay> {
         self.last_cleared_worldwide_day.read()
     }
 
-    pub(crate) fn write_last_cleared_worldwide_day(&self, worldwide_day: u32) -> Result<()> {
+    pub(crate) fn write_last_cleared_worldwide_day(
+        &self,
+        worldwide_day: WorldwideDay,
+    ) -> Result<()> {
         self.last_cleared_worldwide_day.write(worldwide_day)
     }
 

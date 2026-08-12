@@ -1,4 +1,5 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
+use outbe_common::WorldwideDay;
 use outbe_macros::contract;
 use outbe_primitives::{
     addresses::COMPRESSED_ENTITIES_ADDRESS,
@@ -154,10 +155,10 @@ impl IndexRecord {
         }
     }
 
-    pub(crate) fn day(day: u32, entity_id: EntityId36) -> Self {
+    pub(crate) fn day(day: WorldwideDay, entity_id: EntityId36) -> Self {
         Self {
             kind: IndexKind::TributeByDay,
-            partition: day.to_be_bytes().to_vec(),
+            partition: day.value().to_be_bytes().to_vec(),
             entity_id,
         }
     }

@@ -137,7 +137,7 @@ impl TributeFactoryContract<'_> {
             cipher_text: cipher_text.to_vec(),
             nonce: nonce.to_vec(),
             ephemeral_pubkey,
-            worldwide_day: worldwide_day.into(),
+            worldwide_day,
             tribute_currency,
             reference_currency,
             exclude_from_intex_issuance,

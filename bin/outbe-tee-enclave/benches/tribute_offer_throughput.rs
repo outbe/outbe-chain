@@ -20,7 +20,7 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 use alloy_primitives::{Address, U256};
 use x25519_dalek::{PublicKey, StaticSecret};
 
-use outbe_tee::protocol::EncryptedTributeOffer;
+use outbe_tee::protocol::{EncryptedTributeOffer, WorldwideDay};
 use outbe_tee::OFFER_HKDF_SALT;
 use outbe_tee_enclave::compute::compute_token_id;
 use outbe_tee_enclave::crypto::{
@@ -76,7 +76,7 @@ fn make_offer(owner: Address) -> EncryptedTributeOffer {
         cipher_text,
         nonce: NONCE.to_vec(),
         ephemeral_pubkey: U256::from_be_bytes(eph_pub),
-        worldwide_day: 20250115,
+        worldwide_day: WorldwideDay::new(20250115),
         tribute_currency: 840,
         reference_currency: 840,
         exclude_from_intex_issuance: false,
@@ -124,7 +124,7 @@ fn bench_components(c: &mut Criterion) {
         b.iter(|| {
             compute_token_id(
                 std::hint::black_box(owner),
-                20250115,
+                WorldwideDay::new(20250115),
                 std::hint::black_box(DRAFT),
             )
             .unwrap()
