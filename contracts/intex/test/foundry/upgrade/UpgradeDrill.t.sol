@@ -120,9 +120,7 @@ contract UpgradeDrillTest is CrossChainTest {
             referenceCurrency: 840,
             promisLoadMinor: 1000,
             minIntexBidRate: 1,
-            entryPriceMinor: 1,
-            floorPriceMinor: 1,
-            callPriceMinor: 1,
+            prices: ReferencePriceLib.onePriced(840, 1, 1, 1),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
             minIntexBidQuantity: 1,
             commitBondMinor: 0

@@ -398,38 +398,29 @@ library BridgeMsgCodec {
             }),
             minIntexBidRate: uint32(bytes4(_msg[38:42])),
             minIntexBidQuantity: uint16(bytes2(_msg[54:56])),
-            entryPriceMinor: 0,
-            floorPriceMinor: 0,
-            callPriceMinor: 0,
+            prices: new IIntexAuction.ReferencePrice[](0),
             commitBondMinor: uint128(bytes16(_msg[56:72]))
         });
 
-        // The day's own reference currency must be among the priced rows.
-        (params.entryPriceMinor, params.floorPriceMinor, params.callPriceMinor) =
-            _referencePriceOf(_msg, params.referenceCurrency);
+        params.prices = _referencePrices(_msg);
     }
 
-    /// @notice The priced row for `_isoCode`, reverting when the day does not carry it.
-    function _referencePriceOf(bytes calldata _msg, uint16 _isoCode)
-        private
-        pure
-        returns (uint64 entryPriceMinor, uint64 floorPriceMinor, uint64 callPriceMinor)
-    {
+    /// @notice Every priced row the message carries.
+    function _referencePrices(bytes calldata _msg) private pure returns (IIntexAuction.ReferencePrice[] memory rows) {
         uint256 count = uint8(_msg[73]);
         if (_msg.length != MIN_LEN_AUCTION_STAGE_START + count * REFERENCE_PRICE_LEN) {
             revert InvalidPayloadLength(MSG_AUCTION_STAGE_START, _msg.length, MIN_LEN_AUCTION_STAGE_START);
         }
+        rows = new IIntexAuction.ReferencePrice[](count);
         for (uint256 i = 0; i < count; ++i) {
             uint256 at = MIN_LEN_AUCTION_STAGE_START + i * REFERENCE_PRICE_LEN;
-            if (uint16(bytes2(_msg[at:at + 2])) == _isoCode) {
-                return (
-                    uint64(bytes8(_msg[at + 2:at + 10])),
-                    uint64(bytes8(_msg[at + 10:at + 18])),
-                    uint64(bytes8(_msg[at + 18:at + 26]))
-                );
-            }
+            rows[i] = IIntexAuction.ReferencePrice({
+                isoCode: uint16(bytes2(_msg[at:at + 2])),
+                entryPriceMinor: uint64(bytes8(_msg[at + 2:at + 10])),
+                floorPriceMinor: uint64(bytes8(_msg[at + 10:at + 18])),
+                callPriceMinor: uint64(bytes8(_msg[at + 18:at + 26]))
+            });
         }
-        revert IIntexAuction.InvalidDayState();
     }
 
     /// @notice Encodes ISSUANCE_INSTRUCTIONS message.

@@ -116,9 +116,9 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(params.referenceCurrency, 0xD1D2, "referenceCurrency");
         assertEq(params.promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
         assertEq(params.minIntexBidRate, 0x1A2B3C4D, "minIntexBidRate");
-        assertEq(params.entryPriceMinor, 0x1122334455667788, "entryPrice");
-        assertEq(params.floorPriceMinor, 0x99AABBCCDDEEFF00, "floorPriceMinor");
-        assertEq(params.callPriceMinor, 0xA1B2C3D4E5F60718, "callPriceMinor");
+        assertEq(params.prices[0].entryPriceMinor, 0x1122334455667788, "entryPrice");
+        assertEq(params.prices[0].floorPriceMinor, 0x99AABBCCDDEEFF00, "floorPriceMinor");
+        assertEq(params.prices[0].callPriceMinor, 0xA1B2C3D4E5F60718, "callPriceMinor");
         assertEq(params.callTrigger.callNoticePeriod, 0xCAFEBABE, "callNoticePeriod");
         assertEq(params.callTrigger.callWindow, 0x5678, "callWindow");
         assertEq(params.callTrigger.callThreshold, 0x9ABC, "callThreshold");

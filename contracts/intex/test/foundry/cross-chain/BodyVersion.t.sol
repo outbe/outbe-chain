@@ -77,9 +77,9 @@ contract BodyVersionTest is Test {
         assertEq(params.referenceCurrency, 10);
         assertEq(params.promisLoadMinor, 1e18);
         assertEq(params.minIntexBidRate, 5e6);
-        assertEq(params.entryPriceMinor, 7e6);
-        assertEq(params.floorPriceMinor, 11e6);
-        assertEq(params.callPriceMinor, 13e6);
+        assertEq(params.prices[0].entryPriceMinor, 7e6);
+        assertEq(params.prices[0].floorPriceMinor, 11e6);
+        assertEq(params.prices[0].callPriceMinor, 13e6);
         assertEq(params.callTrigger.callNoticePeriod, 5);
         assertEq(params.callTrigger.callWindow, 6);
         assertEq(params.callTrigger.callThreshold, 7);

@@ -171,19 +171,31 @@
               "internalType": "uint16"
             },
             {
-              "name": "entryPriceMinor",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "floorPriceMinor",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "callPriceMinor",
-              "type": "uint64",
-              "internalType": "uint64"
+              "name": "prices",
+              "type": "tuple[]",
+              "internalType": "struct IIntexAuction.ReferencePrice[]",
+              "components": [
+                {
+                  "name": "isoCode",
+                  "type": "uint16",
+                  "internalType": "uint16"
+                },
+                {
+                  "name": "entryPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "floorPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "callPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                }
+              ]
             },
             {
               "name": "commitBondMinor",
@@ -287,19 +299,31 @@
               "internalType": "uint16"
             },
             {
-              "name": "entryPriceMinor",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "floorPriceMinor",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "callPriceMinor",
-              "type": "uint64",
-              "internalType": "uint64"
+              "name": "prices",
+              "type": "tuple[]",
+              "internalType": "struct IIntexAuction.ReferencePrice[]",
+              "components": [
+                {
+                  "name": "isoCode",
+                  "type": "uint16",
+                  "internalType": "uint16"
+                },
+                {
+                  "name": "entryPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "floorPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "callPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                }
+              ]
             },
             {
               "name": "commitBondMinor",
@@ -591,19 +615,31 @@
                   "internalType": "uint16"
                 },
                 {
-                  "name": "entryPriceMinor",
-                  "type": "uint64",
-                  "internalType": "uint64"
-                },
-                {
-                  "name": "floorPriceMinor",
-                  "type": "uint64",
-                  "internalType": "uint64"
-                },
-                {
-                  "name": "callPriceMinor",
-                  "type": "uint64",
-                  "internalType": "uint64"
+                  "name": "prices",
+                  "type": "tuple[]",
+                  "internalType": "struct IIntexAuction.ReferencePrice[]",
+                  "components": [
+                    {
+                      "name": "isoCode",
+                      "type": "uint16",
+                      "internalType": "uint16"
+                    },
+                    {
+                      "name": "entryPriceMinor",
+                      "type": "uint64",
+                      "internalType": "uint64"
+                    },
+                    {
+                      "name": "floorPriceMinor",
+                      "type": "uint64",
+                      "internalType": "uint64"
+                    },
+                    {
+                      "name": "callPriceMinor",
+                      "type": "uint64",
+                      "internalType": "uint64"
+                    }
+                  ]
                 },
                 {
                   "name": "commitBondMinor",
@@ -767,19 +803,31 @@
                   "internalType": "uint16"
                 },
                 {
-                  "name": "entryPriceMinor",
-                  "type": "uint64",
-                  "internalType": "uint64"
-                },
-                {
-                  "name": "floorPriceMinor",
-                  "type": "uint64",
-                  "internalType": "uint64"
-                },
-                {
-                  "name": "callPriceMinor",
-                  "type": "uint64",
-                  "internalType": "uint64"
+                  "name": "prices",
+                  "type": "tuple[]",
+                  "internalType": "struct IIntexAuction.ReferencePrice[]",
+                  "components": [
+                    {
+                      "name": "isoCode",
+                      "type": "uint16",
+                      "internalType": "uint16"
+                    },
+                    {
+                      "name": "entryPriceMinor",
+                      "type": "uint64",
+                      "internalType": "uint64"
+                    },
+                    {
+                      "name": "floorPriceMinor",
+                      "type": "uint64",
+                      "internalType": "uint64"
+                    },
+                    {
+                      "name": "callPriceMinor",
+                      "type": "uint64",
+                      "internalType": "uint64"
+                    }
+                  ]
                 },
                 {
                   "name": "commitBondMinor",
@@ -943,6 +991,52 @@
       ],
       "outputs": [],
       "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "referencePriceOf",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "isoCode",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "tuple",
+          "internalType": "struct IIntexAuction.ReferencePrice",
+          "components": [
+            {
+              "name": "isoCode",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "entryPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "floorPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            },
+            {
+              "name": "callPriceMinor",
+              "type": "uint64",
+              "internalType": "uint64"
+            }
+          ]
+        }
+      ],
+      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -1639,6 +1733,22 @@
       "type": "error",
       "name": "ReentrancyGuardReentrantCall",
       "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "ReferenceCurrencyNotPriced",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "isoCode",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ]
     },
     {
       "type": "error",

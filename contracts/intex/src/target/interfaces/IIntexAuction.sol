@@ -63,6 +63,14 @@ interface IIntexAuction {
 
     /// @notice Auction input parameters, stored per auction. Field order mirrors the spec
     ///         (single-currency: flat entry/floor/call stand in for the `referencePrices[]` slot).
+    /// @notice Entry, floor and call price of one reference currency for a day.
+    struct ReferencePrice {
+        uint16 isoCode;
+        uint64 entryPriceMinor;
+        uint64 floorPriceMinor;
+        uint64 callPriceMinor;
+    }
+
     struct AuctionParams {
         /// @notice Issuance currency (ISO numeric); single USD (840) until multi-currency.
         uint16 issuanceCurrency;
@@ -76,12 +84,9 @@ interface IIntexAuction {
         uint32 minIntexBidRate;
         /// @notice Minimum quantity per bid (Intex units).
         uint16 minIntexBidQuantity;
-        /// @notice Per-unit entry price (reference ccy); feeds floor/call.
-        uint64 entryPriceMinor;
-        /// @notice Floor price (reference ccy).
-        uint64 floorPriceMinor;
-        /// @notice Call price (reference ccy).
-        uint64 callPriceMinor;
+        /// @notice One row per currency the day can clear in; the bid's reference
+        ///         currency must appear here.
+        ReferencePrice[] prices;
         /// @notice Entry bond (payment-token minor units) taken at `commitBid` and returned on
         ///         reveal/cancel; 0 disables the bond.
         uint128 commitBondMinor;
@@ -197,6 +202,8 @@ interface IIntexAuction {
     error InvalidSchedule();
     /// @notice `auctionStart` requires a final Green or Red day state.
     error InvalidDayState();
+    /// @notice The day does not carry a price for this reference currency.
+    error ReferenceCurrencyNotPriced(uint32 worldwideDay, uint16 isoCode);
     /// @notice Commit hash must be non-zero.
     error InvalidCommitHash();
     /// @notice Chain id mismatch between the caller-supplied value and `block.chainid`.
@@ -213,6 +220,13 @@ interface IIntexAuction {
     function wire(address _escrow) external;
 
     // --- Lifecycle ---
+
+    /// @notice The day's price row for `isoCode`.
+    /// @dev Reverts `ReferenceCurrencyNotPriced` when the day does not clear in it.
+    /// @param worldwideDay Worldwide day (yyyymmdd).
+    /// @param isoCode Reference currency (ISO numeric).
+    /// @return The entry, floor and call price of that currency.
+    function referencePriceOf(uint32 worldwideDay, uint16 isoCode) external view returns (ReferencePrice memory);
 
     /// @notice Create and start a new auction for `worldwideDay`.
     /// @dev The schedule (`commitEnd`/`revealEnd`/`issuanceEnd`) is computed on the
