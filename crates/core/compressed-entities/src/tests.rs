@@ -183,6 +183,7 @@ fn nod_bucket_v1_uses_one_strict_canonical_protobuf_representation() {
         is_qualified: true,
         total_nods: 2,
         entry_price_minor: U256::from(3),
+        reference_currency: 840,
     };
     let expected = hex::decode(concat!(
         "0a20",
@@ -191,13 +192,38 @@ fn nod_bucket_v1_uses_one_strict_canonical_protobuf_representation() {
         "1a200000000000000000000000000000000000000000000000000000000000000001",
         "2001",
         "2802",
-        "32200000000000000000000000000000000000000000000000000000000000000003"
+        "32200000000000000000000000000000000000000000000000000000000000000003",
+        "38c806"
     ))
     .unwrap();
 
     let payload = encode_nod_bucket_v1(&body).unwrap();
     assert_eq!(payload, expected);
     assert_eq!(decode_nod_bucket_v1(&payload).unwrap(), body);
+
+    // Field 7 is omitted on zero, so bodies written before the currency
+    // existed keep their exact prior bytes. This is what keeps the pinned
+    // `ces1-noble-poseidon` bucket payload and leaf byte-identical.
+    let unpriced = NodBucketBodyV1 {
+        reference_currency: 0,
+        ..body.clone()
+    };
+    let unpriced_payload = encode_nod_bucket_v1(&unpriced).unwrap();
+    assert_eq!(unpriced_payload.as_slice(), &expected[..expected.len() - 3]);
+    assert_eq!(
+        decode_nod_bucket_v1(&unpriced_payload).unwrap(),
+        unpriced,
+        "a body without field 7 must decode to reference_currency 0"
+    );
+
+    // An explicitly-encoded zero is a second encoding of the same body and
+    // must be rejected by the strict re-encode check.
+    let mut explicit_zero = unpriced_payload.clone();
+    explicit_zero.extend_from_slice(&[0x38, 0x00]);
+    assert!(matches!(
+        decode_nod_bucket_v1(&explicit_zero),
+        Err(CanonicalBodyError::ExplicitDefault { field: 7 })
+    ));
 }
 
 #[test]
@@ -372,6 +398,7 @@ fn protobuf_profile_rejects_order_length_width_wire_and_range_violations() {
         is_qualified: true,
         total_nods: 2,
         entry_price_minor: U256::from(3),
+        reference_currency: 840,
     };
     assert!(matches!(
         decode_nod_bucket_v1(&shorten_length_delimited(

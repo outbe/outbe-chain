@@ -100,6 +100,7 @@ fn bucket(bucket_key: B256) -> NodBucketState {
         is_qualified: true,
         total_nods: 1,
         entry_price_minor: U256::from(5),
+        reference_currency: 978,
     }
 }
 

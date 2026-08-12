@@ -10,7 +10,10 @@ use outbe_compressed_entities::{
     begin_block, EntityId36, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
     ParentBodySourceError, QueryRef, StoredBody,
 };
-use outbe_nod::{api, hooks, precompile::INod, NodContract, NodItemState, NodRepositoryReader};
+use outbe_nod::{
+    api, constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK, hooks, precompile::INod, NodContract,
+    NodItemState, NodRepositoryReader,
+};
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_primitives::{
     addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS},
@@ -27,7 +30,7 @@ fn item(owner: Address, day: WorldwideDay) -> NodItemState {
         worldwide_day: day,
         league_id: 4,
         floor_price_minor: U256::from(13),
-        bucket_key: NodContract::bucket_key(day, U256::from(13)),
+        bucket_key: NodContract::bucket_key(day, U256::from(13), 978),
         cost_amount_minor: U256::ZERO,
         issuance_currency: 840,
         reference_currency: 978,
@@ -110,19 +113,37 @@ fn qualification_updates_the_overlay_and_keeps_the_product_event() {
             BlockContext::empty_for_tests(1, 1_752_534_000, 1),
             storage.clone(),
         );
-        hooks::qualify_buckets_with_rate(
+        let inspected = hooks::qualify_buckets_with_rate(
             &context,
             &scope,
             &parent,
+            body.reference_currency,
             body.floor_price_minor + U256::from(1),
+            MAX_BUCKET_QUALIFICATIONS_PER_BLOCK,
         )
         .unwrap();
+        assert_eq!(inspected, 1);
         let bucket_id = EntityId36::new(body.worldwide_day, body.bucket_key.0);
         assert!(
             api::get_bucket(&storage, &scope, &parent, bucket_id)
                 .unwrap()
                 .unwrap()
                 .is_qualified
+        );
+
+        // A different reference currency walks its own trie and sees nothing,
+        // even though the floor value is identical.
+        assert_eq!(
+            hooks::qualify_buckets_with_rate(
+                &context,
+                &scope,
+                &parent,
+                840,
+                body.floor_price_minor + U256::from(1),
+                MAX_BUCKET_QUALIFICATIONS_PER_BLOCK,
+            )
+            .unwrap(),
+            0
         );
     });
     assert!(provider

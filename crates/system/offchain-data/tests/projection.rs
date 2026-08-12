@@ -281,6 +281,7 @@ fn bucket_body(bucket_key: B256) -> NodBucketState {
         is_qualified: true,
         total_nods: 3,
         entry_price_minor: U256::from(104),
+        reference_currency: 978,
     }
 }
 

@@ -621,6 +621,7 @@ pub fn canonical_bucket(body: &NodBucketState) -> NodBucketBodyV1 {
         is_qualified: body.is_qualified,
         total_nods: body.total_nods,
         entry_price_minor: body.entry_price_minor,
+        reference_currency: body.reference_currency,
     }
 }
 
@@ -656,5 +657,6 @@ pub fn from_canonical_bucket(body: NodBucketBodyV1) -> NodBucketState {
         is_qualified: body.is_qualified,
         total_nods: body.total_nods,
         entry_price_minor: body.entry_price_minor,
+        reference_currency: body.reference_currency,
     }
 }

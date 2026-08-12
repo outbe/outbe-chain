@@ -639,6 +639,7 @@ fn nod_item_and_bucket_follow_the_same_closed_transition_lifecycle() {
         is_qualified: false,
         total_nods: 1,
         entry_price_minor: U256::from(11),
+        reference_currency: 840,
     };
     let parent = MemoryParent::default();
     let scope = ExecutionScope::new();
@@ -735,6 +736,7 @@ fn every_typed_collection_obeys_the_complete_same_block_transition_matrix() {
         is_qualified: false,
         total_nods: 1,
         entry_price_minor: U256::from(11),
+        reference_currency: 840,
     };
     let mut bucket_updated = bucket_original.clone();
     bucket_updated.is_qualified = true;
@@ -863,6 +865,7 @@ fn untouched_reads_use_parent_once_and_classify_missing_committed_body() {
         is_qualified: false,
         total_nods: 1,
         entry_price_minor: U256::from(5),
+        reference_currency: 840,
     };
     let missing_bucket_id = entity(8, 30);
     let missing_bucket = NodBucketBodyV1 {
@@ -872,6 +875,7 @@ fn untouched_reads_use_parent_once_and_classify_missing_committed_body() {
         is_qualified: true,
         total_nods: 2,
         entry_price_minor: U256::from(7),
+        reference_currency: 840,
     };
     let mut parent = MemoryParent::default();
     let tree = Arc::new(TestAuthenticatedTree::default());
@@ -1743,6 +1747,7 @@ fn every_mutation_write_and_event_boundary_rolls_back_for_all_typed_collections(
         is_qualified: false,
         total_nods: 1,
         entry_price_minor: U256::from(11),
+        reference_currency: 840,
     };
     let mut bucket_updated = bucket_original.clone();
     bucket_updated.is_qualified = true;
@@ -1797,6 +1802,7 @@ fn every_cleanup_write_boundary_rolls_back_the_complete_end_block_cleanup() {
             is_qualified: false,
             total_nods: 1,
             entry_price_minor: U256::from(11),
+            reference_currency: 840,
         }),
     ];
 
@@ -1959,6 +1965,7 @@ fn body_codecs_cover_all_three_closed_variants() {
         is_qualified: true,
         total_nods: 13,
         entry_price_minor: U256::from(14),
+        reference_currency: 840,
     };
     assert!(!encode_nod_item_v1(&item).unwrap().is_empty());
     assert!(!encode_nod_bucket_v1(&bucket).unwrap().is_empty());
