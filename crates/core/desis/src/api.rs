@@ -12,7 +12,7 @@ use outbe_primitives::storage::StorageHandle;
 
 use crate::precompile::IDesis;
 use crate::runtime;
-use crate::schema::DesisContract;
+use crate::schema::{DesisContract, ReferencePrice};
 
 /// Stable consensus reason for the only business-level auction-brief rejection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -47,7 +47,7 @@ pub fn dispatch_auction_brief(
     storage: StorageHandle<'_>,
     worldwide_day: u32,
     supply_promis: U256,
-    entry_price: U256,
+    reference_prices: Vec<ReferencePrice>,
     is_green: bool,
     now: u64,
 ) -> Result<AuctionBriefReceipt> {
@@ -73,7 +73,7 @@ pub fn dispatch_auction_brief(
             storage.clone(),
             worldwide_day,
             supply_u128,
-            entry_price,
+            reference_prices,
             is_green,
             anchor,
         )?;

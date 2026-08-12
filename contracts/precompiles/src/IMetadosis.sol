@@ -30,6 +30,11 @@ interface IMetadosis {
 
     event WorldwideDayStatusChange(uint32 indexed worldwideDay, uint8 oldStatus, uint8 newStatus, uint64 blockNumber);
 
+    /// @notice A reference currency was left out of a day's auction because the
+    ///         oracle could price neither its previous closed UTC day nor the
+    ///         worldwide day itself.
+    event ReferenceCurrencyUnpriced(uint32 indexed worldwideDay, uint16 indexed isoCode);
+
     event WorldwideDayMissedOffering(
         uint32 indexed worldwideDay,
         uint256 dayMetadosisLimit,

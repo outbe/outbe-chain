@@ -151,6 +151,38 @@ fn with_active_scope<R>(
 /// longer drives Metadosis through a per-block lifecycle hook (see
 /// ), but these tests intentionally exercise the state
 /// machine sub-day, so they call `start_metadosis` directly.
+/// Genesis registers the day-type pair and lists its currency as a reference,
+/// and the auction brief needs a price for it. Without one the day would brief
+/// with no priced currency at all, which the resolver rejects.
+fn arm_reference_price(storage: &StorageHandle, timestamp: u64) {
+    use outbe_oracle::schema::OracleContract;
+    let index = match outbe_oracle::api::require_coen_pair(
+        storage.clone(),
+        outbe_oracle::constants::DAY_TYPE_ISO,
+    ) {
+        Ok((_, index)) => index,
+        Err(_) => {
+            outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
+                .unwrap()
+        }
+    };
+    let oracle = OracleContract::new(storage.clone());
+    if oracle.reference_currencies.len().unwrap() == 0 {
+        oracle
+            .reference_currencies
+            .push(outbe_oracle::constants::DAY_TYPE_ISO)
+            .unwrap();
+    }
+    let last_closed = outbe_primitives::time::previous_date_key(
+        outbe_primitives::time::timestamp_to_date_key(timestamp),
+    );
+    oracle
+        .utc_day_vwap_value
+        .get_nested(&last_closed)
+        .write(&index, U256::from(100u64))
+        .unwrap();
+}
+
 fn run_begin_block_with_chain_id(
     storage: StorageHandle,
     block_number: u64,
@@ -158,6 +190,7 @@ fn run_begin_block_with_chain_id(
     chain_id: u64,
 ) {
     arm_genesis_ocomp(&storage, CHAIN_ID);
+    arm_reference_price(&storage, timestamp);
     // The direct lifecycle fixture omits Cycle's daily allocation transaction.
     // Before a day can exercise the MissedOffering branch, model that preceding
     // production step by sealing its already-written limit as the immutable

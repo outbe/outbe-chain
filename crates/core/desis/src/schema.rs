@@ -50,6 +50,14 @@ pub struct IntexCallTrigger {
     pub call_notice_period: u32,
 }
 
+/// Entry price of one reference currency, captured at the brief.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReferencePrice {
+    pub iso_code: u16,
+    /// Per-unit entry price (1e18 oracle scale); floor and call derive from it.
+    pub entry_price_minor: U256,
+}
+
 /// Auction configuration (demand side).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuctionConfig {
@@ -70,26 +78,35 @@ pub struct AuctionConfig {
     /// Entry price (per-unit, reference currency, 1e18) captured at auction start.
     /// Floor and call derive from it; the escrow basis is `promis_load` (not entry-derived).
     pub entry_price_minor: U256,
+    /// One row per reference currency the oracle could price for this day.
+    pub reference_prices: Vec<ReferencePrice>,
 }
 
 impl AuctionConfig {
-    /// Build the demand-side config from the per-unit entry price (1e18-scaled).
+    /// Build the demand-side config from the day's per-reference entry prices.
     /// `promis_load_minor` scales `PROMIS_LOAD` to 18-dec minor units;
     /// `min_intex_bid_rate = 0` means no bid floor. Currencies come from the
     /// genesis ISO constants. `call_trigger`, `min_intex_bid_quantity` and
     /// `commit_bond_minor` are left at their defaults here and populated at
     /// auction start (`start_auction`), where the genesis `IntexParams` and the
     /// prior-clearing count are in reach.
-    pub fn from_entry_price(entry_price_minor: U256) -> Self {
+    pub fn from_reference_prices(reference_prices: Vec<ReferencePrice>) -> Self {
+        let reference_currency = outbe_intexfactory::constants::QUALIFIER_REFERENCE_ISO;
+        let entry_price_minor = reference_prices
+            .iter()
+            .find(|row| row.iso_code == reference_currency)
+            .map(|row| row.entry_price_minor)
+            .unwrap_or_default();
         Self {
             issuance_currency: outbe_intexfactory::constants::QUALIFIER_ISSUANCE_ISO,
-            reference_currency: outbe_intexfactory::constants::QUALIFIER_REFERENCE_ISO,
+            reference_currency,
             promis_load_minor: PROMIS_LOAD.saturating_mul(SCALE_1E18_U128),
             call_trigger: IntexCallTrigger::default(),
             min_intex_bid_rate: 0,
             min_intex_bid_quantity: 0,
             commit_bond_minor: 0,
             entry_price_minor,
+            reference_prices,
         }
     }
 
@@ -262,6 +279,18 @@ pub struct DesisContract {
     /// worldwide_day -> (active index + 1); 0 = not active.
     #[attribute(order = 34)]
     pub sched_active_slot: outbe_primitives::storage::dsl::Map<u32, u32>,
+
+    // --- Entry price per reference currency, captured at the brief ---
+    /// worldwide_day -> number of priced reference currencies.
+    #[attribute(order = 35)]
+    pub reference_price_count: outbe_primitives::storage::dsl::Map<u32, u32>,
+    /// keccak256(worldwide_day_be32 ++ index_be32) -> reference currency ISO code.
+    #[attribute(order = 36)]
+    pub reference_price_iso: outbe_primitives::storage::dsl::Map<B256, u32>,
+    /// keccak256(worldwide_day_be32 ++ index_be32) -> entry price (1e18 oracle scale).
+    /// Floor and call derive from it, so only the anchor is stored.
+    #[attribute(order = 37)]
+    pub reference_price_entry: outbe_primitives::storage::dsl::Map<B256, U256>,
 }
 
 impl DesisContract<'_> {
@@ -270,6 +299,14 @@ impl DesisContract<'_> {
         let mut buf = [0u8; 8];
         buf[0..4].copy_from_slice(&worldwide_day.to_be_bytes());
         buf[4..8].copy_from_slice(&chain_id.to_be_bytes());
+        keccak256(buf)
+    }
+
+    /// Composite key for per-(day, row) price fields.
+    pub fn reference_price_key(worldwide_day: u32, index: u32) -> B256 {
+        let mut buf = [0u8; 8];
+        buf[0..4].copy_from_slice(&worldwide_day.to_be_bytes());
+        buf[4..8].copy_from_slice(&index.to_be_bytes());
         keccak256(buf)
     }
 

@@ -3,7 +3,9 @@
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;
 
-use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract, IntexCallTrigger};
+use crate::schema::{
+    AuctionConfig, AuctionStage, BidData, DesisContract, IntexCallTrigger, ReferencePrice,
+};
 
 impl DesisContract<'_> {
     // --- AuctionStage ---
@@ -36,7 +38,21 @@ impl DesisContract<'_> {
             commit_bond_minor: u128::try_from(self.config_commit_bond_minor.read(&worldwide_day)?)
                 .map_err(|_| crate::DesisError::InvalidWorldwideDay(worldwide_day))?,
             entry_price_minor: self.config_entry_price.read(&worldwide_day)?,
+            reference_prices: self.read_reference_prices(worldwide_day)?,
         })
+    }
+
+    pub(crate) fn read_reference_prices(&self, worldwide_day: u32) -> Result<Vec<ReferencePrice>> {
+        let count = self.reference_price_count.read(&worldwide_day)?;
+        let mut rows = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            let key = Self::reference_price_key(worldwide_day, index);
+            rows.push(ReferencePrice {
+                iso_code: self.reference_price_iso.read(&key)? as u16,
+                entry_price_minor: self.reference_price_entry.read(&key)?,
+            });
+        }
+        Ok(rows)
     }
 
     pub(crate) fn write_auction_config(
@@ -63,7 +79,17 @@ impl DesisContract<'_> {
         self.config_commit_bond_minor
             .write(&worldwide_day, U256::from(cfg.commit_bond_minor))?;
         self.config_entry_price
-            .write(&worldwide_day, cfg.entry_price_minor)
+            .write(&worldwide_day, cfg.entry_price_minor)?;
+        self.reference_price_count
+            .write(&worldwide_day, cfg.reference_prices.len() as u32)?;
+        for (index, row) in cfg.reference_prices.iter().enumerate() {
+            let key = Self::reference_price_key(worldwide_day, index as u32);
+            self.reference_price_iso
+                .write(&key, u32::from(row.iso_code))?;
+            self.reference_price_entry
+                .write(&key, row.entry_price_minor)?;
+        }
+        Ok(())
     }
 
     // --- bid storage (per chain) ---

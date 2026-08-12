@@ -11,6 +11,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
 use crate::runtime;
+use crate::schema::ReferencePrice;
 
 /// Apply a GREEN day's immutable `auction_base` and return the canonical hash
 /// committed by `RequestBudgetSplitReceiptV1`.
@@ -38,7 +39,11 @@ pub fn apply_request_auction_base(
             storage.clone(),
             worldwide_day,
             supply_u128,
-            auction_entry_price,
+            // The OCOMP brief carries one price, and it is part of the request hash.
+            vec![ReferencePrice {
+                iso_code: outbe_intexfactory::constants::QUALIFIER_REFERENCE_ISO,
+                entry_price_minor: auction_entry_price,
+            }],
             true,
             logical_anchor,
         )

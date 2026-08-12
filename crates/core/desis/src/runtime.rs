@@ -18,21 +18,23 @@ use crate::constants::{
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
-use crate::schema::{AuctionConfig, AuctionStage, BidData, ClearingResult, DesisContract};
+use crate::schema::{
+    AuctionConfig, AuctionStage, BidData, ClearingResult, DesisContract, ReferencePrice,
+};
 use crate::sol_ext::IOriginRouter;
 
 // ---------------------------------------------------------------------------
 // Auction lifecycle
 // ---------------------------------------------------------------------------
 
-/// Record the day's auction brief: supply (raw PROMIS), entry price and day
-/// type. The schedule anchors to the midnight of `now`, or the next one when
+/// Record the day's auction brief: supply (raw PROMIS), the per-reference entry
+/// prices and the day type. The schedule anchors to the midnight of `now`, or the next one when
 /// too little of the commit window would remain.
 pub fn record_brief(
     storage: StorageHandle<'_>,
     worldwide_day: u32,
     supply_promis: u128,
-    entry_price: U256,
+    reference_prices: Vec<ReferencePrice>,
     is_green: bool,
     now: u64,
 ) -> Result<()> {
@@ -41,7 +43,7 @@ pub fn record_brief(
         storage,
         worldwide_day,
         supply_promis,
-        entry_price,
+        reference_prices,
         is_green,
         anchor,
     )
@@ -82,12 +84,15 @@ pub(crate) fn record_preflighted_brief(
     storage: StorageHandle<'_>,
     worldwide_day: u32,
     supply_promis: u128,
-    entry_price: U256,
+    reference_prices: Vec<ReferencePrice>,
     is_green: bool,
     anchor: u32,
 ) -> Result<()> {
     let mut contract = storage.contract::<DesisContract>();
-    contract.write_auction_config(worldwide_day, &AuctionConfig::from_entry_price(entry_price))?;
+    contract.write_auction_config(
+        worldwide_day,
+        &AuctionConfig::from_reference_prices(reference_prices),
+    )?;
     contract.write_stage(worldwide_day, AuctionStage::Briefed)?;
     contract
         .pending_supply_promis

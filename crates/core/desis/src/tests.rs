@@ -56,7 +56,7 @@ fn brief_at(s: &StorageHandle, worldwide_day: u32, supply_promis: u128, green: b
             s.clone(),
             worldwide_day,
             U256::from(supply_promis),
-            U256::from(ENTRY_PRICE),
+            entry_price_rows(),
             green,
             NOW,
         )
@@ -123,6 +123,14 @@ fn bids(n: u8, rate: u32) -> Vec<BidData> {
 
 // --- Auction brief ---
 
+/// The single priced reference currency the fixtures brief with.
+fn entry_price_rows() -> Vec<crate::schema::ReferencePrice> {
+    vec![crate::schema::ReferencePrice {
+        iso_code: outbe_intexfactory::constants::QUALIFIER_REFERENCE_ISO,
+        entry_price_minor: U256::from(ENTRY_PRICE),
+    }]
+}
+
 #[test]
 fn dispatch_auction_brief_records_the_brief() {
     with_storage(|s| {
@@ -130,7 +138,7 @@ fn dispatch_auction_brief_records_the_brief() {
             s.clone(),
             WORLDWIDE_DAY,
             U256::from(10 * PROMIS_LOAD_MINOR),
-            U256::from(ENTRY_PRICE),
+            entry_price_rows(),
             true,
             NOW,
         )
@@ -164,7 +172,7 @@ fn dispatch_auction_brief_records_a_red_day() {
             s.clone(),
             WORLDWIDE_DAY,
             U256::from(PROMIS_LOAD_MINOR),
-            U256::from(ENTRY_PRICE),
+            entry_price_rows(),
             false,
             NOW,
         )
@@ -285,6 +293,7 @@ fn assert_no_request_brief_state(storage: &StorageHandle<'_>) {
             min_intex_bid_quantity: 0,
             commit_bond_minor: 0,
             entry_price_minor: U256::ZERO,
+            reference_prices: vec![],
         }
     );
     assert_eq!(
@@ -413,7 +422,7 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
                 s.clone(),
                 WORLDWIDE_DAY,
                 U256::from(10 * PROMIS_LOAD_MINOR),
-                U256::from(ENTRY_PRICE),
+                entry_price_rows(),
                 true,
                 NOW,
             )
@@ -424,7 +433,7 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
             s.clone(),
             WORLDWIDE_DAY,
             U256::from(7 * PROMIS_LOAD_MINOR),
-            U256::from(ENTRY_PRICE),
+            entry_price_rows(),
             true,
             NOW,
         )
@@ -455,7 +464,7 @@ fn dispatch_auction_brief_oversized_supply_returns_typed_full_carry_over() {
                 s.clone(),
                 WORLDWIDE_DAY,
                 U256::MAX,
-                U256::from(ENTRY_PRICE),
+                entry_price_rows(),
                 true,
                 NOW,
             )
@@ -495,7 +504,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
                 storage.clone(),
                 WORLDWIDE_DAY,
                 U256::from(u128::MAX),
-                U256::from(ENTRY_PRICE),
+                entry_price_rows(),
                 true,
                 NOW,
             )
@@ -512,7 +521,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
                 storage.clone(),
                 WORLDWIDE_DAY,
                 supply,
-                U256::from(ENTRY_PRICE),
+                entry_price_rows(),
                 true,
                 NOW,
             )
@@ -548,7 +557,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
             storage.clone(),
             0,
             U256::MAX,
-            U256::from(ENTRY_PRICE),
+            entry_price_rows(),
             true,
             NOW,
         )
@@ -559,7 +568,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
             storage.clone(),
             WORLDWIDE_DAY,
             U256::MAX,
-            U256::from(ENTRY_PRICE),
+            entry_price_rows(),
             true,
             NOW,
         )
@@ -574,7 +583,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
             storage,
             WORLDWIDE_DAY + 1,
             U256::MAX,
-            U256::from(ENTRY_PRICE),
+            entry_price_rows(),
             true,
             late,
         )
@@ -594,7 +603,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
                 storage,
                 WORLDWIDE_DAY,
                 U256::from(7 * PROMIS_LOAD_MINOR),
-                U256::from(ENTRY_PRICE),
+                entry_price_rows(),
                 true,
                 NOW,
             )
@@ -612,7 +621,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
                 storage,
                 WORLDWIDE_DAY,
                 U256::from(7 * PROMIS_LOAD_MINOR),
-                U256::from(ENTRY_PRICE),
+                entry_price_rows(),
                 true,
                 NOW,
             )
@@ -632,7 +641,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
             storage,
             WORLDWIDE_DAY,
             U256::MAX,
-            U256::from(ENTRY_PRICE),
+            entry_price_rows(),
             true,
             NOW,
         )
@@ -654,7 +663,7 @@ fn brief_anchor_at(now: u64) -> u64 {
                 s.clone(),
                 WORLDWIDE_DAY,
                 U256::from(LOAD_MINOR),
-                U256::from(ENTRY_PRICE),
+                entry_price_rows(),
                 true,
                 now,
             )
@@ -691,7 +700,7 @@ fn schedule_starts_a_deferred_brief_at_the_next_midnight() {
                 s.clone(),
                 WORLDWIDE_DAY,
                 U256::from(10 * LOAD_MINOR),
-                U256::from(ENTRY_PRICE),
+                entry_price_rows(),
                 true,
                 noon,
             )
@@ -1820,6 +1829,9 @@ fn test_iface_id_matches_selector_xor() {
 #[test]
 fn escrow_basis_is_promis_load() {
     // wCOEN escrow basis = promis_load per Intex; entry no longer drives it.
-    let cfg = AuctionConfig::from_entry_price(U256::from(1_000_000_150_000_000u128));
+    let cfg = AuctionConfig::from_reference_prices(vec![crate::schema::ReferencePrice {
+        iso_code: outbe_intexfactory::constants::QUALIFIER_REFERENCE_ISO,
+        entry_price_minor: U256::from(1_000_000_150_000_000u128),
+    }]);
     assert_eq!(cfg.escrow_basis_minor(), cfg.promis_load_minor);
 }

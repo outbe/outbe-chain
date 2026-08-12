@@ -693,6 +693,7 @@ fn seed_local_terminal_fixture(
     StorageHandle::enter(provider, |storage| {
         arm_genesis_ocomp(&storage, CHAIN_ID);
         let scheduled = create_waiting_day(&storage, wwd, day_type, day_limit);
+        super::arm_reference_price(&storage, scheduled);
         let mut tribute = TributeContract::new(storage);
         tribute.initialize_fresh_ocomp_profile().unwrap();
         tribute
@@ -2939,7 +2940,10 @@ fn technical_desis_refusal_rolls_back_the_metadosis_cycle_command() {
                 storage.clone(),
                 wwd.value(),
                 U256::from(1_u8),
-                U256::from(1_u8),
+                vec![outbe_desis::ReferencePrice {
+                    iso_code: 840,
+                    entry_price_minor: U256::from(1_u8),
+                }],
                 true,
                 scheduled,
             )
