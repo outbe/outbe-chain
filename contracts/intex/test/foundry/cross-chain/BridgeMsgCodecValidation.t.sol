@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {ReferencePriceLib} from "../helpers/ReferencePriceLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
@@ -18,7 +19,7 @@ contract BridgeMsgCodecValidationTest is Test {
 
     function test_AuctionStageStart_OverLong_Reverts() public {
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
-            1, 100, 200, 300, 840, 840, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1, 9e18, 1
+            1, 100, 200, 300, 840, 840, 1e18, 1e6, ReferencePriceLib.one(840, 2e6, 3e6, 4e6), 5, 6, 7, 1, 9e18, 1
         );
         bytes memory tooLong = abi.encodePacked(packet, hex"00"); // 94 bytes, expected 93
         vm.expectRevert(
@@ -49,7 +50,7 @@ contract BridgeMsgCodecValidationTest is Test {
 
     function test_AuctionStageStart_Truncated_RevertsTyped() public {
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
-            1, 100, 200, 300, 840, 840, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1, 9e18, 1
+            1, 100, 200, 300, 840, 840, 1e18, 1e6, ReferencePriceLib.one(840, 2e6, 3e6, 4e6), 5, 6, 7, 1, 9e18, 1
         );
         bytes memory truncated = new bytes(packet.length - 1); // 92 bytes
         for (uint256 i = 0; i < truncated.length; i++) {
@@ -125,9 +126,9 @@ contract BridgeMsgCodecValidationTest is Test {
     function testFuzz_AuctionStageStart_DayStateByteAboveRed_Reverts(uint8 state) public {
         state = uint8(bound(state, 3, 255));
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
-            1, 100, 200, 300, 840, 840, 1e18, 1e6, 2e6, 3e6, 4e6, 5, 6, 7, 1, 9e18, 1
+            1, 100, 200, 300, 840, 840, 1e18, 1e6, ReferencePriceLib.one(840, 2e6, 3e6, 4e6), 5, 6, 7, 1, 9e18, 1
         );
-        packet[96] = bytes1(state);
+        packet[72] = bytes1(state);
         vm.expectRevert(IIntexAuction.InvalidDayState.selector);
         BridgeMsgCodec.decodeAuctionParams(packet);
     }
@@ -136,7 +137,9 @@ contract BridgeMsgCodecValidationTest is Test {
 
     function test_FixedWidth_RoundTrips_StillPass() public view {
         (uint32 s,,,) = BridgeMsgCodec.decodeAuctionParams(
-            BridgeMsgCodec.encodeAuctionStageStart(42, 1, 2, 3, 840, 840, 1e18, 1, 2, 3, 4e6, 5, 6, 7, 1, 9e18, 1)
+            BridgeMsgCodec.encodeAuctionStageStart(
+                42, 1, 2, 3, 840, 840, 1e18, 1, ReferencePriceLib.one(840, 2, 3, 4e6), 5, 6, 7, 1, 9e18, 1
+            )
         );
         assertEq(s, 42, "stageStart");
         assertEq(this.exposedDecodeAuctionStageClearing(BridgeMsgCodec.encodeAuctionStageClearing(7)), 7, "clearing");

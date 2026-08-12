@@ -13,7 +13,10 @@ pragma solidity 0.8.30;
 library IntexGas {
     // --- Outbe -> target chain fixed-size messages (TargetRouter handlers) ---
     /// @dev auctionStart creates the series' auction on the target chain.
-    uint256 internal constant AUCTION_STAGE_START = 500_000;
+    /// @notice Fixed head of an AUCTION_STAGE_START, before its price rows.
+    uint256 internal constant AUCTION_STAGE_START_BASE = 500_000;
+    /// @notice Marginal cost of storing one reference-price row on the target.
+    uint256 internal constant AUCTION_STAGE_START_PER_PRICE = 30_000;
     /// @dev Clearing also fires the bids relay back to Outbe (parked on failure), so it runs generously.
     uint256 internal constant AUCTION_STAGE_CLEARING = 2_000_000;
     uint256 internal constant AUCTION_RESULT = 300_000;
@@ -44,6 +47,11 @@ library IntexGas {
     }
 
     /// @notice Destination gas for an ISSUANCE_INSTRUCTIONS with `recipientCount` recipients.
+    /// @notice Destination gas for an AUCTION_STAGE_START carrying `priceCount` rows.
+    function auctionStart(uint256 priceCount) internal pure returns (uint256) {
+        return AUCTION_STAGE_START_BASE + priceCount * AUCTION_STAGE_START_PER_PRICE;
+    }
+
     function issuance(uint256 recipientCount) internal pure returns (uint256) {
         return ISSUANCE_BASE + recipientCount * ISSUANCE_PER_ITEM;
     }

@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {IIntexAuction} from "../../target/interfaces/IIntexAuction.sol";
+import {IOriginRouter} from "../../origin/interfaces/IOriginRouter.sol";
 
 /// @title BridgeMsgCodec
 /// @author Outbe
@@ -47,7 +48,11 @@ library BridgeMsgCodec {
     uint16 internal constant HEADER_LEN = 2;
 
     // encodePacked messages have a tight upper bound that equals the lower bound.
-    uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 97;
+    uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 74;
+    /// @notice Bytes per reference-price row: [iso(2)][entry(8)][floor(8)][call(8)].
+    uint16 internal constant REFERENCE_PRICE_LEN = 26;
+    /// @notice The oracle's reference list is short; a day may not exceed this.
+    uint8 internal constant MAX_REFERENCE_PRICES = 6;
     uint16 internal constant MIN_LEN_AUCTION_STAGE_CLEARING = 6;
     uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
     uint16 internal constant MIN_LEN_MARK_CALLED = 20;
@@ -219,11 +224,12 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes AUCTION_STAGE_START message.
-    /// @dev encodePacked layout (97 bytes), field order mirrors the Outbe `sol_ext` struct:
+    /// @dev encodePacked layout, 74 bytes of head plus 26 per priced currency:
     ///      [bodyVersion(1)][msgType(1)][worldwideDay(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
-    ///      [issuanceCurrency(2)][referenceCurrency(2)][promisLoadMinor(16)][minIntexBidRate(4)][entryPrice(8)][floorPriceMinor(8)]
-    ///      [callPriceMinor(8)][callNoticePeriod(4)][callWindow(4)][callThreshold(4)][minIntexBidQuantity(2)]
-    ///      [commitBondMinor(16)][dayState(1)]
+    ///      [issuanceCurrency(2)][referenceCurrency(2)][promisLoadMinor(16)][minIntexBidRate(4)]
+    ///      [callNoticePeriod(4)][callWindow(4)][callThreshold(4)][minIntexBidQuantity(2)]
+    ///      [commitBondMinor(16)][dayState(1)][priceCount(1)]
+    ///      then [isoCode(2)][entryPrice(8)][floorPrice(8)][callPrice(8)] per currency.
     /// @param _worldwideDay The worldwide day (yyyymmdd).
     /// @param _commitEnd The commit-stage end timestamp.
     /// @param _revealEnd The reveal-stage end timestamp.
@@ -232,9 +238,7 @@ library BridgeMsgCodec {
     /// @param _referenceCurrency The reference currency (ISO numeric).
     /// @param _promisLoadMinor The Promis load (minor units) for the series.
     /// @param _minIntexBidRate The minimum acceptable intex bid rate (`1e6` fixed-point).
-    /// @param _entryPrice The per-unit entry price (reference ccy); feeds floor/call.
-    /// @param _floorPriceMinor The floor price (minor units).
-    /// @param _callPriceMinor The call price (minor units).
+    /// @param _prices Entry, floor and call price of every currency the day can clear in.
     /// @param _callNoticePeriod The Called→deadline window in seconds (0 = default).
     /// @param _callWindow The call-trigger observation window in seconds.
     /// @param _callThreshold The call-trigger threshold in seconds.
@@ -251,9 +255,7 @@ library BridgeMsgCodec {
         uint16 _referenceCurrency,
         uint128 _promisLoadMinor,
         uint32 _minIntexBidRate,
-        uint64 _entryPrice,
-        uint64 _floorPriceMinor,
-        uint64 _callPriceMinor,
+        IOriginRouter.ReferencePrice[] memory _prices,
         uint32 _callNoticePeriod,
         uint32 _callWindow,
         uint32 _callThreshold,
@@ -262,6 +264,21 @@ library BridgeMsgCodec {
         uint8 _dayState
     ) internal pure returns (bytes memory) {
         // Split into two packed halves: 18 packed args in one call is too deep for the IR
+        // pipeline. Concatenation of encodePacked results is byte-identical to a single call.
+        if (_prices.length == 0 || _prices.length > MAX_REFERENCE_PRICES) {
+            revert PayloadArrayTooLong(_prices.length, MAX_REFERENCE_PRICES);
+        }
+        bytes memory rows = abi.encodePacked(uint8(_prices.length));
+        for (uint256 i = 0; i < _prices.length; ++i) {
+            rows = abi.encodePacked(
+                rows,
+                _prices[i].isoCode,
+                _prices[i].entryPriceMinor,
+                _prices[i].floorPriceMinor,
+                _prices[i].callPriceMinor
+            );
+        }
+        // Split into packed halves: this many packed args in one call is too deep for the IR
         // pipeline. Concatenation of encodePacked results is byte-identical to a single call.
         return abi.encodePacked(
             abi.encodePacked(
@@ -276,15 +293,13 @@ library BridgeMsgCodec {
                 _promisLoadMinor,
                 _minIntexBidRate
             ),
-            _entryPrice,
-            _floorPriceMinor,
-            _callPriceMinor,
             _callNoticePeriod,
             _callWindow,
             _callThreshold,
             _minIntexBidQuantity,
             _commitBondMinor,
-            _dayState
+            _dayState,
+            rows
         );
     }
 
@@ -361,10 +376,10 @@ library BridgeMsgCodec {
             IIntexAuction.AuctionParams memory params
         )
     {
-        _assertExactLength(_msg, MSG_AUCTION_STAGE_START, MIN_LEN_AUCTION_STAGE_START);
+        _assertMinLength(_msg, MSG_AUCTION_STAGE_START, MIN_LEN_AUCTION_STAGE_START);
         _assertBodyVersion(_msg);
         worldwideDay = uint32(bytes4(_msg[2:6]));
-        uint8 rawDayState = uint8(_msg[96]);
+        uint8 rawDayState = uint8(_msg[72]);
         if (rawDayState > uint8(IIntexAuction.WorldwideDayState.Red)) revert IIntexAuction.InvalidDayState();
         dayState = IIntexAuction.WorldwideDayState(rawDayState);
         schedule = IIntexAuction.AuctionSchedule({
@@ -377,17 +392,44 @@ library BridgeMsgCodec {
             referenceCurrency: uint16(bytes2(_msg[20:22])),
             promisLoadMinor: uint128(bytes16(_msg[22:38])),
             callTrigger: IIntexAuction.IntexCallTrigger({
-                callWindow: uint32(bytes4(_msg[70:74])),
-                callThreshold: uint32(bytes4(_msg[74:78])),
-                callNoticePeriod: uint32(bytes4(_msg[66:70]))
+                callWindow: uint32(bytes4(_msg[46:50])),
+                callThreshold: uint32(bytes4(_msg[50:54])),
+                callNoticePeriod: uint32(bytes4(_msg[42:46]))
             }),
             minIntexBidRate: uint32(bytes4(_msg[38:42])),
-            minIntexBidQuantity: uint16(bytes2(_msg[78:80])),
-            entryPriceMinor: uint64(bytes8(_msg[42:50])),
-            floorPriceMinor: uint64(bytes8(_msg[50:58])),
-            callPriceMinor: uint64(bytes8(_msg[58:66])),
-            commitBondMinor: uint128(bytes16(_msg[80:96]))
+            minIntexBidQuantity: uint16(bytes2(_msg[54:56])),
+            entryPriceMinor: 0,
+            floorPriceMinor: 0,
+            callPriceMinor: 0,
+            commitBondMinor: uint128(bytes16(_msg[56:72]))
         });
+
+        // The day's own reference currency must be among the priced rows.
+        (params.entryPriceMinor, params.floorPriceMinor, params.callPriceMinor) =
+            _referencePriceOf(_msg, params.referenceCurrency);
+    }
+
+    /// @notice The priced row for `_isoCode`, reverting when the day does not carry it.
+    function _referencePriceOf(bytes calldata _msg, uint16 _isoCode)
+        private
+        pure
+        returns (uint64 entryPriceMinor, uint64 floorPriceMinor, uint64 callPriceMinor)
+    {
+        uint256 count = uint8(_msg[73]);
+        if (_msg.length != MIN_LEN_AUCTION_STAGE_START + count * REFERENCE_PRICE_LEN) {
+            revert InvalidPayloadLength(MSG_AUCTION_STAGE_START, _msg.length, MIN_LEN_AUCTION_STAGE_START);
+        }
+        for (uint256 i = 0; i < count; ++i) {
+            uint256 at = MIN_LEN_AUCTION_STAGE_START + i * REFERENCE_PRICE_LEN;
+            if (uint16(bytes2(_msg[at:at + 2])) == _isoCode) {
+                return (
+                    uint64(bytes8(_msg[at + 2:at + 10])),
+                    uint64(bytes8(_msg[at + 10:at + 18])),
+                    uint64(bytes8(_msg[at + 18:at + 26]))
+                );
+            }
+        }
+        revert IIntexAuction.InvalidDayState();
     }
 
     /// @notice Encodes ISSUANCE_INSTRUCTIONS message.
@@ -500,6 +542,12 @@ library BridgeMsgCodec {
     ///      typed `InvalidPayloadLength` rather than an out-of-bounds panic on `_msg[0]`.
     function _assertExactLength(bytes calldata _msg, uint8 _msgType, uint16 _expected) private pure {
         if (_msg.length != _expected) revert InvalidPayloadLength(_msgType, _msg.length, _expected);
+    }
+
+    /// @dev Asserts a variable-width payload carries at least its fixed head; the
+    ///      exact length is checked against the row count once that head is read.
+    function _assertMinLength(bytes calldata _msg, uint8 _msgType, uint16 _minimum) private pure {
+        if (_msg.length < _minimum) revert InvalidPayloadLength(_msgType, _msg.length, _minimum);
     }
 
     /// @notice Decodes BIDS_BATCH message.

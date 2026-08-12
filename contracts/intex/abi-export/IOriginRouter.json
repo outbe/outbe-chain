@@ -236,19 +236,31 @@
               "internalType": "uint32"
             },
             {
-              "name": "entryPrice",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "floorPriceMinor",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "callPriceMinor",
-              "type": "uint64",
-              "internalType": "uint64"
+              "name": "prices",
+              "type": "tuple[]",
+              "internalType": "struct IOriginRouter.ReferencePrice[]",
+              "components": [
+                {
+                  "name": "isoCode",
+                  "type": "uint16",
+                  "internalType": "uint16"
+                },
+                {
+                  "name": "entryPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "floorPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "callPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                }
+              ]
             },
             {
               "name": "callNoticePeriod",
@@ -603,19 +615,31 @@
               "internalType": "uint32"
             },
             {
-              "name": "entryPrice",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "floorPriceMinor",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "callPriceMinor",
-              "type": "uint64",
-              "internalType": "uint64"
+              "name": "prices",
+              "type": "tuple[]",
+              "internalType": "struct IOriginRouter.ReferencePrice[]",
+              "components": [
+                {
+                  "name": "isoCode",
+                  "type": "uint16",
+                  "internalType": "uint16"
+                },
+                {
+                  "name": "entryPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "floorPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "callPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                }
+              ]
             },
             {
               "name": "callNoticePeriod",

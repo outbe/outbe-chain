@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {ReferencePriceLib} from "../helpers/ReferencePriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
@@ -123,6 +124,7 @@ contract IntexCallFlowTest is CrossChainTest {
     ///      later mark-called/qualified broadcasts, which fan out over that frozen snapshot.
     function _seedDaySnapshot(uint32 day) internal {
         IOriginRouter.AuctionStageStartParams memory p;
+        p.prices = ReferencePriceLib.one(840, 1, 2, 3);
         p.worldwideDay = day;
         p.dayState = 1;
         vm.prank(desis);

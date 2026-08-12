@@ -11,6 +11,7 @@ pragma solidity 0.8.30;
 ///      `dstChainId` and are checked against it. Every leg is isolated (see {flushPendingSend}) — a single failing leg
 ///      is parked, never reverting the fan-out. Sends are funded from the contract's relay float (`msg.value` must be
 ///      0); `quote*` return the native fee. Inbound delivery arrives via {ERC7786MessengerBase-receiveMessage}.
+
 interface IOriginRouter {
     // --- Events ---
     /// @notice Emitted when a BIDS_BATCH is received from a target chain.
@@ -126,6 +127,14 @@ interface IOriginRouter {
     }
 
     /// @notice Auction stage start parameters grouped to keep the calldata layout resilient against stack limits.
+    /// @notice Entry, floor and call price of one reference currency for a day.
+    struct ReferencePrice {
+        uint16 isoCode;
+        uint64 entryPriceMinor;
+        uint64 floorPriceMinor;
+        uint64 callPriceMinor;
+    }
+
     struct AuctionStageStartParams {
         uint32 worldwideDay;
         /// @notice End of the commit stage (UNIX seconds).
@@ -142,12 +151,8 @@ interface IOriginRouter {
         uint128 promisLoadMinor;
         /// @notice Minimum acceptable bid rate (`1e6` fixed-point, % of the escrow basis).
         uint32 minIntexBidRate;
-        /// @notice Per-unit entry price (reference ccy); feeds floor/call.
-        uint64 entryPrice;
-        /// @notice Floor price (payment-token minor units).
-        uint64 floorPriceMinor;
-        /// @notice Call price (payment-token minor units).
-        uint64 callPriceMinor;
+        /// @notice Entry, floor and call price of every currency the day can clear in.
+        ReferencePrice[] prices;
         /// @notice Called→deadline window in seconds (0 = default).
         uint32 callNoticePeriod;
         /// @notice Call-trigger observation window in seconds.

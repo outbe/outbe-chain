@@ -147,11 +147,17 @@ fn send_stage_start(
     issuance_end: u32,
     day_state: u8,
 ) -> Result<()> {
-    let floor_price = outbe_intexfactory::marked_up(config.entry_price_minor, iparams.floor_rate)?;
-    let call_price = outbe_intexfactory::marked_up(config.entry_price_minor, iparams.call_rate)?;
-    let entry_price_u64 = outbe_intexfactory::to_wire_price(config.entry_price_minor)?;
-    let floor_price_u64 = outbe_intexfactory::to_wire_price(floor_price)?;
-    let call_price_u64 = outbe_intexfactory::to_wire_price(call_price)?;
+    let mut prices = Vec::with_capacity(config.reference_prices.len());
+    for row in &config.reference_prices {
+        let floor = outbe_intexfactory::marked_up(row.entry_price_minor, iparams.floor_rate)?;
+        let call = outbe_intexfactory::marked_up(row.entry_price_minor, iparams.call_rate)?;
+        prices.push(IOriginRouter::ReferencePrice {
+            isoCode: row.iso_code,
+            entryPriceMinor: outbe_intexfactory::to_wire_price(row.entry_price_minor)?,
+            floorPriceMinor: outbe_intexfactory::to_wire_price(floor)?,
+            callPriceMinor: outbe_intexfactory::to_wire_price(call)?,
+        });
+    }
     let stage_params = IOriginRouter::AuctionStageStartParams {
         worldwideDay: worldwide_day,
         commitEnd: commit_end,
@@ -161,9 +167,7 @@ fn send_stage_start(
         referenceCurrency: config.reference_currency,
         promisLoadMinor: config.promis_load_minor,
         minIntexBidRate: config.min_intex_bid_rate,
-        entryPrice: entry_price_u64,
-        floorPriceMinor: floor_price_u64,
-        callPriceMinor: call_price_u64,
+        prices,
         callNoticePeriod: iparams.call_notice_period,
         callWindow: iparams.call_window,
         callThreshold: iparams.call_threshold,

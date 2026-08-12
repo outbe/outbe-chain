@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {ReferencePriceLib} from "../helpers/ReferencePriceLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
@@ -19,9 +20,7 @@ contract BridgeMsgCodecGoldenTest is Test {
             0xD1D2,
             0x0102030405060708090A0B0C0D0E0F10,
             0x1A2B3C4D,
-            0x1122334455667788,
-            0x99AABBCCDDEEFF00,
-            0xA1B2C3D4E5F60718,
+            ReferencePriceLib.one(0xD1D2, 0x1122334455667788, 0x99AABBCCDDEEFF00, 0xA1B2C3D4E5F60718),
             0xCAFEBABE,
             0x5678,
             0x9ABC,
@@ -31,9 +30,9 @@ contract BridgeMsgCodecGoldenTest is Test {
         );
         assertEq(
             encoded,
-            hex"0103112233445566778899aabbccddeeff00c1c2d1d20102030405060708090a0b0c0d0e0f101a2b3c4d112233445566778899aabbccddeeff00a1b2c3d4e5f60718cafebabe0000567800009abcabcdf1f2f3f4f5f6f7f8f9fafbfcfdfeff0101"
+            hex"0103112233445566778899aabbccddeeff00c1c2d1d20102030405060708090a0b0c0d0e0f101a2b3c4dcafebabe0000567800009abcabcdf1f2f3f4f5f6f7f8f9fafbfcfdfeff010101d1d2112233445566778899aabbccddeeff00a1b2c3d4e5f60718"
         );
-        assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START);
+        assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START + BridgeMsgCodec.REFERENCE_PRICE_LEN);
     }
 
     function test_Golden_AuctionStageClearing() public pure {
@@ -99,9 +98,7 @@ contract BridgeMsgCodecGoldenTest is Test {
                 0xD1D2,
                 0x0102030405060708090A0B0C0D0E0F10,
                 0x1A2B3C4D,
-                0x1122334455667788,
-                0x99AABBCCDDEEFF00,
-                0xA1B2C3D4E5F60718,
+                ReferencePriceLib.one(0xD1D2, 0x1122334455667788, 0x99AABBCCDDEEFF00, 0xA1B2C3D4E5F60718),
                 0xCAFEBABE,
                 0x5678,
                 0x9ABC,

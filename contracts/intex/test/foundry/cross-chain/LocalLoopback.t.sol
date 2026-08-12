@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {ReferencePriceLib} from "../helpers/ReferencePriceLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -225,9 +226,7 @@ contract LocalLoopbackTest is Test {
         p.referenceCurrency = 840;
         p.promisLoadMinor = PROMIS_LOAD_MINOR;
         p.minIntexBidRate = 600_000;
-        p.entryPrice = 1e13;
-        p.floorPriceMinor = 100;
-        p.callPriceMinor = 200;
+        p.prices = ReferencePriceLib.one(840, 1e4, 100, 200);
         p.minIntexBidQuantity = 1;
         p.dayState = 1;
     }

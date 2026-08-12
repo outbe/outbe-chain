@@ -254,7 +254,9 @@ contract OriginRouter is
 
     /// @inheritdoc IOriginRouter
     function quoteSendAuctionStageStart(AuctionStageStartParams calldata params) external view returns (uint256) {
-        return _broadcastFee(_os().targetChainIds, _encodeAuctionStageStart(params), IntexGas.AUCTION_STAGE_START);
+        return _broadcastFee(
+            _os().targetChainIds, _encodeAuctionStageStart(params), IntexGas.auctionStart(params.prices.length)
+        );
     }
 
     /// @inheritdoc IOriginRouter
@@ -339,7 +341,7 @@ contract OriginRouter is
         $.seriesTargets[params.worldwideDay] = snapshot; // freeze the fan-out set for the whole day
         bytes memory payload = _encodeAuctionStageStart(params);
         for (uint256 i = 0; i < snapshot.length; ++i) {
-            bytes32 sendId = _sendOrPark(snapshot[i], payload, IntexGas.AUCTION_STAGE_START);
+            bytes32 sendId = _sendOrPark(snapshot[i], payload, IntexGas.auctionStart(params.prices.length));
             emit AuctionStageSent(sendId, params.worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
         }
     }
@@ -530,9 +532,7 @@ contract OriginRouter is
             p.referenceCurrency,
             p.promisLoadMinor,
             p.minIntexBidRate,
-            p.entryPrice,
-            p.floorPriceMinor,
-            p.callPriceMinor,
+            p.prices,
             p.callNoticePeriod,
             p.callWindow,
             p.callThreshold,

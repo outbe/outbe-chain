@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {ReferencePriceLib} from "../helpers/ReferencePriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
@@ -79,6 +80,7 @@ contract OriginRouterProceedsTest is CrossChainTest {
     /// @dev Fire a minimal STAGE_START (as the DESIS_ROLE holder) so `seriesTargets[day]` is populated.
     function _seedDaySnapshot(uint32 day) internal {
         IOriginRouter.AuctionStageStartParams memory p;
+        p.prices = ReferencePriceLib.one(840, 1, 2, 3);
         p.worldwideDay = day;
         p.dayState = 1;
         vm.prank(address(desis));
