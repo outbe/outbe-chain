@@ -32,17 +32,21 @@ contract BridgeMsgCodecHardeningHarness {
 
     function encodeRefundInstructions(
         uint32 worldwideDay,
+        uint16 chunkIndex,
+        uint16 totalChunks,
         address[] calldata bidders,
         uint128[] calldata refundedAmounts,
         uint128[] calldata paidAmounts
     ) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeRefundInstructions(worldwideDay, bidders, refundedAmounts, paidAmounts);
+        return BridgeMsgCodec.encodeRefundInstructions(
+            worldwideDay, chunkIndex, totalChunks, bidders, refundedAmounts, paidAmounts
+        );
     }
 
     function decodeRefundInstructions(bytes calldata m)
         external
         pure
-        returns (uint32, address[] memory, uint128[] memory, uint128[] memory)
+        returns (uint32, uint16, uint16, address[] memory, uint128[] memory, uint128[] memory)
     {
         return BridgeMsgCodec.decodeRefundInstructions(m);
     }
@@ -135,7 +139,7 @@ contract BridgeMsgCodecHardeningTest is Test {
                 BridgeMsgCodec.RefundArrayLengthMismatch.selector, uint256(2), uint256(1), uint256(2)
             )
         );
-        harness.encodeRefundInstructions(1, bidders, refundedAmounts, paidAmounts);
+        harness.encodeRefundInstructions(1, 0, 1, bidders, refundedAmounts, paidAmounts);
     }
 
     // --- decodeRefundInstructions over-cap symmetric with BIDS / ISSUANCE ---
@@ -157,7 +161,7 @@ contract BridgeMsgCodecHardeningTest is Test {
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS,
-            abi.encode(uint32(42), bidders, refundedAmounts, paidAmounts)
+            abi.encode(uint32(42), uint16(0), uint16(1), bidders, refundedAmounts, paidAmounts)
         );
 
         vm.expectRevert(

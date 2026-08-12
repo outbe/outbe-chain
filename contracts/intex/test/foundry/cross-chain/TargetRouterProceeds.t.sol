@@ -107,7 +107,7 @@ contract TargetRouterProceedsTest is CrossChainTest {
         bidders[0] = bidder;
         refunded[0] = 0;
         paid[0] = AMOUNT;
-        bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(worldwideDay, bidders, refunded, paid);
+        bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(worldwideDay, 0, 1, bidders, refunded, paid);
         _deliver(OUTBE_CHAIN_ID, originSender, address(target), packet);
     }
 

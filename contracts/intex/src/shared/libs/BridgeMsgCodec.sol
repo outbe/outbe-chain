@@ -39,6 +39,11 @@ library BridgeMsgCodec {
     ///      live.
     uint16 internal constant MAX_PAYLOAD_ARRAY_LEN = 64;
 
+    /// @notice Upper bound on how many chunks one day's fan-out may be split into.
+    /// @dev Matches the bid-intake ceiling it mirrors — 64 entries across 256 chunks — and keeps a
+    ///      receiver's arrival set inside a single 256-bit word.
+    uint16 internal constant MAX_CHUNKS = 256;
+
     /// @notice Fixed-point scale for bid/clearing rates (`1e6` = 100%). Shared with the Outbe
     ///         `RATE_SCALE` and `IntexAuction`; escrow math is `qty * escrowBasis * rate / RATE_SCALE`.
     uint32 internal constant RATE_SCALE = 1_000_000;
@@ -64,12 +69,12 @@ library BridgeMsgCodec {
     // dynamic arrays being empty:
     //   BIDS_BATCH(uint32, uint32, uint32, uint16, uint16, t[]×4):
     //     5 static head words + 4 dynamic head offsets + 4 empty length words = 13×32 = 416
-    //   REFUND_INSTRUCTIONS(uint32, address[], uint64[], uint64[]):
-    //     1 static head word + 3 dynamic offsets + 3 empty length words = 7×32 = 224
+    //   REFUND_INSTRUCTIONS(uint32, uint16, uint16, address[], uint64[], uint64[]):
+    //     3 static head words + 3 dynamic offsets + 3 empty length words = 9×32 = 288
     //   ISSUANCE_INSTRUCTIONS(struct with 12 static + 2 dynamic, dynamic struct):
     //     outer offset(32) + 12 static + 2 inner offsets + 2 empty length words = 17×32 = 544
     uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 288;
-    uint16 internal constant MIN_LEN_REFUND_INSTRUCTIONS = HEADER_LEN + 224;
+    uint16 internal constant MIN_LEN_REFUND_INSTRUCTIONS = HEADER_LEN + 288;
     uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 544;
 
     /// @notice Per-message cap on inbound BIDS_BATCH entries. Bounds the crosschainMint/storage loop the
@@ -132,6 +137,9 @@ library BridgeMsgCodec {
     /// @param count Decoded number of bidders.
     /// @param max Maximum permitted bidders per message.
     error RefundBatchTooLarge(uint256 count, uint256 max);
+    /// @notice The refund chunk header is inconsistent: no chunks claimed, more than
+    ///         `MAX_CHUNKS`, or an index outside the claimed count.
+    error InvalidRefundChunk(uint16 chunkIndex, uint16 totalChunks);
 
     /// @notice An outbound payload array exceeds `MAX_PAYLOAD_ARRAY_LEN`.
     /// @dev Fail-fast on the source chain so the relayer learns before any bridge fee is burned.
@@ -459,6 +467,8 @@ library BridgeMsgCodec {
     /// @return The wire-encoded REFUND_INSTRUCTIONS message.
     function encodeRefundInstructions(
         uint32 _worldwideDay,
+        uint16 _chunkIndex,
+        uint16 _totalChunks,
         address[] memory _bidders,
         uint128[] memory _refundedAmounts,
         uint128[] memory _paidAmounts
@@ -467,10 +477,13 @@ library BridgeMsgCodec {
             revert RefundArrayLengthMismatch(_bidders.length, _refundedAmounts.length, _paidAmounts.length);
         }
         requireMaxArrayLen(_bidders.length, MAX_PAYLOAD_ARRAY_LEN);
+        if (_totalChunks == 0 || _totalChunks > MAX_CHUNKS || _chunkIndex >= _totalChunks) {
+            revert InvalidRefundChunk(_chunkIndex, _totalChunks);
+        }
         return abi.encodePacked(
             BODY_VERSION_V1,
             MSG_REFUND_INSTRUCTIONS,
-            abi.encode(_worldwideDay, _bidders, _refundedAmounts, _paidAmounts)
+            abi.encode(_worldwideDay, _chunkIndex, _totalChunks, _bidders, _refundedAmounts, _paidAmounts)
         );
     }
 
@@ -665,6 +678,8 @@ library BridgeMsgCodec {
     ///      `RefundArrayLengthMismatch` if the three parallel arrays differ in length.
     /// @param _msg The wire-encoded REFUND_INSTRUCTIONS message.
     /// @return worldwideDay The worldwide day (yyyymmdd).
+    /// @return chunkIndex Position of this chunk in the chain-day's run of refunds.
+    /// @return totalChunks How many chunks the chain-day's refunds span.
     /// @return bidders The bidder addresses (parallel with `refundedAmounts` and `paidAmounts`).
     /// @return refundedAmounts The amount refunded to each bidder.
     /// @return paidAmounts The amount paid by each bidder.
@@ -673,6 +688,8 @@ library BridgeMsgCodec {
         pure
         returns (
             uint32 worldwideDay,
+            uint16 chunkIndex,
+            uint16 totalChunks,
             address[] memory bidders,
             uint128[] memory refundedAmounts,
             uint128[] memory paidAmounts
@@ -682,8 +699,11 @@ library BridgeMsgCodec {
             revert InvalidPayloadLength(MSG_REFUND_INSTRUCTIONS, _msg.length, HEADER_LEN);
         }
         _assertBodyVersion(_msg);
-        (worldwideDay, bidders, refundedAmounts, paidAmounts) =
-            abi.decode(_msg[2:], (uint32, address[], uint128[], uint128[]));
+        (worldwideDay, chunkIndex, totalChunks, bidders, refundedAmounts, paidAmounts) =
+            abi.decode(_msg[2:], (uint32, uint16, uint16, address[], uint128[], uint128[]));
+        if (totalChunks == 0 || totalChunks > MAX_CHUNKS || chunkIndex >= totalChunks) {
+            revert InvalidRefundChunk(chunkIndex, totalChunks);
+        }
         // The three arrays are indexed in lockstep downstream; unequal lengths would index
         // out of bounds and panic inside the ordered lane. Reject with a typed error instead.
         if (bidders.length != refundedAmounts.length || bidders.length != paidAmounts.length) {

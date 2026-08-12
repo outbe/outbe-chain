@@ -315,7 +315,7 @@ contract LocalLoopbackTest is Test {
         paid[0] = 21_000;
         paid[1] = 14_000;
         vm.prank(address(desis));
-        origin.sendRefundInstructions(local, DAY, bidders, refunded, paid);
+        origin.sendRefundInstructions(local, DAY, 0, 1, bidders, refunded, paid);
 
         assertEq(
             uint8(escrow.getBidLock(DAY, iba1).status), uint8(IEscrowAdapter.LockStatus.Finalized), "iba1 not final"

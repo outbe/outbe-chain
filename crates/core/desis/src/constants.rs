@@ -32,3 +32,12 @@ pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 18 * 3600;
 /// `dayState` wire values carried by AUCTION_STAGE_START.
 pub const DAY_STATE_GREEN: u8 = 1;
 pub const DAY_STATE_RED: u8 = 2;
+
+/// Bidders per REFUND_INSTRUCTIONS message. Mirrors the codec's per-message array
+/// cap; a chain's whole bidder set is relayed as a run of chunks.
+pub const REFUND_CHUNK_LEN: usize = 64;
+
+/// Chunks one chain-day's refunds may span. Mirrors the codec bound, which keeps a
+/// receiver's arrival set inside one 256-bit word, and matches bid intake's own
+/// ceiling of 64 bids across 256 batches.
+pub const MAX_REFUND_CHUNKS: usize = 256;

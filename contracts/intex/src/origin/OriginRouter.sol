@@ -296,13 +296,17 @@ contract OriginRouter is
     function quoteSendRefundInstructions(
         uint32 dstChainId,
         uint32 worldwideDay,
+        uint16 chunkIndex,
+        uint16 totalChunks,
         address[] calldata bidders,
         uint128[] calldata refundedAmounts,
         uint128[] calldata paidAmounts
     ) external view returns (uint256) {
         return _quoteFee(
             dstChainId,
-            BridgeMsgCodec.encodeRefundInstructions(worldwideDay, bidders, refundedAmounts, paidAmounts),
+            BridgeMsgCodec.encodeRefundInstructions(
+                worldwideDay, chunkIndex, totalChunks, bidders, refundedAmounts, paidAmounts
+            ),
             IntexGas.refund(bidders.length)
         );
     }
@@ -397,6 +401,8 @@ contract OriginRouter is
     function sendRefundInstructions(
         uint32 dstChainId,
         uint32 worldwideDay,
+        uint16 chunkIndex,
+        uint16 totalChunks,
         address[] calldata bidders,
         uint128[] calldata refundedAmounts,
         uint128[] calldata paidAmounts
@@ -407,7 +413,9 @@ contract OriginRouter is
         _requireSeriesTarget(worldwideDay, dstChainId);
         sendId = _sendOrPark(
             dstChainId,
-            BridgeMsgCodec.encodeRefundInstructions(worldwideDay, bidders, refundedAmounts, paidAmounts),
+            BridgeMsgCodec.encodeRefundInstructions(
+                worldwideDay, chunkIndex, totalChunks, bidders, refundedAmounts, paidAmounts
+            ),
             IntexGas.refund(len)
         );
         emit RefundInstructionsSent(sendId, worldwideDay, len);

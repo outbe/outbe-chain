@@ -1993,3 +1993,28 @@ fn escrow_basis_is_promis_load() {
     }]);
     assert_eq!(cfg.escrow_basis_minor(), cfg.promis_load_minor);
 }
+
+// --- Refund fan-out chunking ---
+
+#[test]
+fn a_chains_bidders_ship_in_chunks_the_encoder_can_carry() {
+    use crate::constants::{MAX_REFUND_CHUNKS, REFUND_CHUNK_LEN};
+
+    // A chain relays every bidder it took, winners and losers alike, so the set is
+    // bounded by bid intake rather than by supply.
+    assert_eq!(runtime::refund_chunk_count(1).unwrap(), 1);
+    assert_eq!(runtime::refund_chunk_count(REFUND_CHUNK_LEN).unwrap(), 1);
+    assert_eq!(
+        runtime::refund_chunk_count(REFUND_CHUNK_LEN + 1).unwrap(),
+        2
+    );
+
+    // Intake's own ceiling — 64 bids across 256 batches — is exactly what the
+    // arrival set can carry, and one bidder more is refused rather than truncated.
+    let ceiling = REFUND_CHUNK_LEN * MAX_REFUND_CHUNKS;
+    assert_eq!(
+        runtime::refund_chunk_count(ceiling).unwrap(),
+        MAX_REFUND_CHUNKS
+    );
+    assert!(runtime::refund_chunk_count(ceiling + 1).is_err());
+}

@@ -210,9 +210,19 @@ contract BridgeMsgCodecGoldenTest is Test {
         paid[0] = 0x3333333333333333;
         paid[1] = 0x4444444444444444;
 
-        (uint32 worldwideDay, address[] memory dBidders, uint128[] memory dRefunded, uint128[] memory dPaid) = this.exposedDecodeRefundInstructions(
-            BridgeMsgCodec.encodeRefundInstructions(0x77665544, bidders, refunded, paid)
+        (
+            uint32 worldwideDay,
+            uint16 chunkIndex,
+            uint16 totalChunks,
+            address[] memory dBidders,
+            uint128[] memory dRefunded,
+            uint128[] memory dPaid
+        ) = this.exposedDecodeRefundInstructions(
+            BridgeMsgCodec.encodeRefundInstructions(0x77665544, 0, 1, bidders, refunded, paid)
         );
+
+        assertEq(chunkIndex, 0, "chunkIndex");
+        assertEq(totalChunks, 1, "totalChunks");
 
         assertEq(worldwideDay, 0x77665544, "worldwideDay");
         assertEq(dBidders[0], address(0xA11CE), "bidders[0]");
@@ -315,7 +325,7 @@ contract BridgeMsgCodecGoldenTest is Test {
     function exposedDecodeRefundInstructions(bytes calldata p)
         external
         pure
-        returns (uint32, address[] memory, uint128[] memory, uint128[] memory)
+        returns (uint32, uint16, uint16, address[] memory, uint128[] memory, uint128[] memory)
     {
         return BridgeMsgCodec.decodeRefundInstructions(p);
     }

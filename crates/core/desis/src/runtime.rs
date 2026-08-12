@@ -14,8 +14,8 @@ use outbe_intexfactory::SeriesId;
 
 use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
-    DAY_STATE_RED, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, RATE_SCALE,
-    REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
+    DAY_STATE_RED, MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, RATE_SCALE,
+    REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -817,6 +817,11 @@ fn clear_inner(
 
     // Send REFUND_INSTRUCTIONS per included chain with bidders (winners and losers alike);
     // a skipped chain's bidders reclaim on their own chain via the escrow timeout path.
+    //
+    // A chain's bidders are every bidder it relayed, not just its winners, so the set is bounded
+    // by bid intake rather than by supply and does not fit one message. It ships in chunks the
+    // encoder can carry; the destination applies each as it arrives and routes the day's proceeds
+    // once the last one lands.
     for &chain_id in included {
         let mut bidders = Vec::new();
         let mut refunded = Vec::new();
@@ -831,19 +836,25 @@ fn clear_inner(
         if bidders.is_empty() {
             continue;
         }
-        storage.call(
-            ORIGIN_ROUTER_ADDRESS,
-            U256::ZERO,
-            IOriginRouter::sendRefundInstructionsCall {
-                dstChainId: chain_id,
-                worldwideDay: worldwide_day.into(),
-                bidders,
-                refundedAmounts: refunded,
-                paidAmounts: paid,
-            }
-            .abi_encode()
-            .into(),
-        )?;
+        let total_chunks = refund_chunk_count(bidders.len())?;
+        for (chunk_index, start) in (0..bidders.len()).step_by(REFUND_CHUNK_LEN).enumerate() {
+            let end = (start + REFUND_CHUNK_LEN).min(bidders.len());
+            storage.call(
+                ORIGIN_ROUTER_ADDRESS,
+                U256::ZERO,
+                IOriginRouter::sendRefundInstructionsCall {
+                    dstChainId: chain_id,
+                    worldwideDay: worldwide_day.into(),
+                    chunkIndex: chunk_index as u16,
+                    totalChunks: total_chunks as u16,
+                    bidders: bidders[start..end].to_vec(),
+                    refundedAmounts: refunded[start..end].to_vec(),
+                    paidAmounts: paid[start..end].to_vec(),
+                }
+                .abi_encode()
+                .into(),
+            )?;
+        }
     }
 
     Ok(result)
@@ -964,6 +975,16 @@ fn calculate_clearing(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// How many REFUND_INSTRUCTIONS messages one chain's bidders take. Bounded by the
+/// codec's arrival set, which is one 256-bit word wide.
+pub(crate) fn refund_chunk_count(bidders: usize) -> Result<usize> {
+    let chunks = bidders.div_ceil(REFUND_CHUNK_LEN);
+    if chunks > MAX_REFUND_CHUNKS {
+        return Err(DesisError::RefundFanOutTooLarge(bidders).into());
+    }
+    Ok(chunks)
+}
 
 /// One issuance per distinct winning `(issuance, reference)` pair, in the order
 /// the pairs first appear in the ranking. Each group carries its own reference

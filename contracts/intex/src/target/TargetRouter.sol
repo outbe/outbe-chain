@@ -107,6 +107,16 @@ contract TargetRouter is
         /// @dev Set once the CLEARING for a day has triggered its bids relay, so a redelivered CLEARING never
         ///      re-relays under a fresh generation.
         mapping(uint32 worldwideDay => bool relayed) clearingRelayed;
+        /// @dev Bit per refund chunk already applied for a day, so a redelivered chunk neither
+        ///      re-counts its proceeds nor completes the day twice. One word covers `MAX_CHUNKS`.
+        mapping(uint32 worldwideDay => uint256 bitmap) refundChunksApplied;
+        /// @dev Proceeds accrued from the day's refund chunks so far. Routed to Outbe as one
+        ///      transfer once every chunk has arrived, because the origin marks a chain's
+        ///      contribution arrived on first delivery and a partial sum would close the
+        ///      creator-reward fan-in early.
+        mapping(uint32 worldwideDay => uint128 accrued) refundProceedsAccrued;
+        /// @dev How many of the day's refund chunks have been applied.
+        mapping(uint32 worldwideDay => uint16 applied) refundChunksSeen;
     }
 
     /// @notice A proceeds route parked because its outbound send reverted (e.g. relay float too low); retried
@@ -510,10 +520,21 @@ contract TargetRouter is
     function _handleRefundInstructions(uint32 _srcChainId, bytes32 _receiveId, bytes calldata _message) internal {
         (
             uint32 worldwideDay,
+            uint16 chunkIndex,
+            uint16 totalChunks,
             address[] memory bidders,
             uint128[] memory refundedAmounts,
             uint128[] memory paidAmounts
         ) = BridgeMsgCodec.decodeRefundInstructions(_message);
+
+        TargetRouterStorage storage $ = _ts();
+        uint256 bit = 1 << chunkIndex;
+        if ($.refundChunksApplied[worldwideDay] & bit != 0) {
+            // Redelivered chunk: the escrow already finalized these bidders and its proceeds are
+            // already counted. Acknowledge it and leave the day's totals alone.
+            emit RefundInstructionsReceived(_srcChainId, worldwideDay, 0);
+            return;
+        }
 
         IEscrowAdapter.FinalizationInstruction[] memory instructions =
             new IEscrowAdapter.FinalizationInstruction[](bidders.length);
@@ -524,10 +545,22 @@ contract TargetRouter is
             });
         }
 
-        uint128 totalPaid = _ts().escrowAdapter.finalizeAuction(worldwideDay, _receiveId, instructions);
+        uint128 totalPaid = $.escrowAdapter.finalizeAuction(worldwideDay, _receiveId, instructions);
 
-        // Proceeds land here (proceedsRecipient); route them to Outbe for creator payout, parking on failure.
-        if (totalPaid > 0) _routeOrParkProceeds(worldwideDay, totalPaid);
+        $.refundChunksApplied[worldwideDay] |= bit;
+        $.refundChunksSeen[worldwideDay] += 1;
+        $.refundProceedsAccrued[worldwideDay] += totalPaid;
+
+        // Proceeds land here (proceedsRecipient) chunk by chunk, but leave as one transfer: the
+        // origin counts a chain as having paid on the first delivery, so routing a partial sum
+        // would close the creator-reward fan-in while the rest is still in flight.
+        if ($.refundChunksSeen[worldwideDay] == totalChunks) {
+            uint128 proceeds = $.refundProceedsAccrued[worldwideDay];
+            if (proceeds > 0) {
+                $.refundProceedsAccrued[worldwideDay] = 0;
+                _routeOrParkProceeds(worldwideDay, proceeds);
+            }
+        }
 
         emit RefundInstructionsReceived(_srcChainId, worldwideDay, bidders.length);
     }

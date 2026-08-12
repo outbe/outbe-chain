@@ -273,10 +273,12 @@ interface IOriginRouter {
         external
         view
         returns (uint256 fee);
-    /// @notice Native fee to send refund instructions to a single target chain.
+    /// @notice Native fee to send one chunk of a day's refund instructions to a single target chain.
     function quoteSendRefundInstructions(
         uint32 dstChainId,
         uint32 worldwideDay,
+        uint16 chunkIndex,
+        uint16 totalChunks,
         address[] calldata bidders,
         uint128[] calldata refundedAmounts,
         uint128[] calldata paidAmounts
@@ -306,10 +308,15 @@ interface IOriginRouter {
         external
         payable
         returns (bytes32 sendId);
-    /// @notice Send refund instructions to a single target chain. Restricted to `DESIS_ROLE`.
+    /// @notice Send one chunk of a day's refund instructions to a single target chain.
+    ///         A chain's bidders span `totalChunks` messages; the destination applies each as it
+    ///         arrives and routes the day's proceeds once the last one lands. Restricted to
+    ///         `DESIS_ROLE`.
     function sendRefundInstructions(
         uint32 dstChainId,
         uint32 worldwideDay,
+        uint16 chunkIndex,
+        uint16 totalChunks,
         address[] calldata bidders,
         uint128[] calldata refundedAmounts,
         uint128[] calldata paidAmounts

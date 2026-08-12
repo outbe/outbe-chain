@@ -200,7 +200,7 @@ contract OriginRouterTest is CrossChainTest {
         vm.prank(user);
         vm.expectRevert();
         originRouter.sendRefundInstructions{value: 0.1 ether}(
-            BNB_CHAIN_ID, WORLDWIDE_DAY, bidders, refundedAmounts, paidAmounts
+            BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, bidders, refundedAmounts, paidAmounts
         );
     }
 
@@ -245,7 +245,7 @@ contract OriginRouterTest is CrossChainTest {
         vm.prank(desis);
         vm.expectRevert(IOriginRouter.EmptyArray.selector);
         originRouter.sendRefundInstructions{value: 0.1 ether}(
-            BNB_CHAIN_ID, WORLDWIDE_DAY, bidders, refundedAmounts, paidAmounts
+            BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, bidders, refundedAmounts, paidAmounts
         );
     }
 
@@ -263,7 +263,7 @@ contract OriginRouterTest is CrossChainTest {
         vm.prank(desis);
         vm.expectRevert(IOriginRouter.ArrayLengthMismatch.selector);
         originRouter.sendRefundInstructions{value: 0.1 ether}(
-            BNB_CHAIN_ID, WORLDWIDE_DAY, bidders, refundedAmounts, paidAmounts
+            BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, bidders, refundedAmounts, paidAmounts
         );
     }
 
@@ -319,7 +319,7 @@ contract OriginRouterTest is CrossChainTest {
         paidAmounts[1] = 75e6;
 
         uint256 fee = originRouter.quoteSendRefundInstructions(
-            BNB_CHAIN_ID, WORLDWIDE_DAY, bidders, refundedAmounts, paidAmounts
+            BNB_CHAIN_ID, WORLDWIDE_DAY, 0, 1, bidders, refundedAmounts, paidAmounts
         );
 
         assertEq(fee, 0.001 ether);

@@ -71,7 +71,7 @@ contract GasAttributeTest is CrossChainTest {
 
     function _assertRefundGas(uint256 n) internal {
         vm.prank(desis);
-        outbe.sendRefundInstructions(BNB_CHAIN_ID, 42, new address[](n), new uint128[](n), new uint128[](n));
+        outbe.sendRefundInstructions(BNB_CHAIN_ID, 42, 0, 1, new address[](n), new uint128[](n), new uint128[](n));
         _assertLastGas(IntexGas.refund(n));
     }
 

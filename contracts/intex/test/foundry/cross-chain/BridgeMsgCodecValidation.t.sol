@@ -204,7 +204,7 @@ contract BridgeMsgCodecValidationTest is Test {
         bytes memory overCap = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS,
-            abi.encode(uint32(1), new address[](n), new uint128[](n), new uint128[](n))
+            abi.encode(uint32(1), uint16(0), uint16(1), new address[](n), new uint128[](n), new uint128[](n))
         );
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -285,7 +285,7 @@ contract BridgeMsgCodecValidationTest is Test {
     function exposedDecodeRefundInstructions(bytes calldata p)
         external
         pure
-        returns (uint32, address[] memory, uint128[] memory, uint128[] memory)
+        returns (uint32, uint16, uint16, address[] memory, uint128[] memory, uint128[] memory)
     {
         return BridgeMsgCodec.decodeRefundInstructions(p);
     }
@@ -295,7 +295,7 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     function exposedEncodeRefund(uint16 n) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeRefundInstructions(1, new address[](n), new uint128[](n), new uint128[](n));
+        return BridgeMsgCodec.encodeRefundInstructions(1, 0, 1, new address[](n), new uint128[](n), new uint128[](n));
     }
 
     function exposedEncodeIssuance(uint16 n) external pure returns (bytes memory) {

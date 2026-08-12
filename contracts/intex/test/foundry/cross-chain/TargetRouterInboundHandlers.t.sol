@@ -275,7 +275,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         paidAmounts[0] = 0;
 
         bytes memory packet =
-            BridgeMsgCodec.encodeRefundInstructions(WORLDWIDE_DAY, bidders, refundedAmounts, paidAmounts);
+            BridgeMsgCodec.encodeRefundInstructions(WORLDWIDE_DAY, 0, 1, bidders, refundedAmounts, paidAmounts);
         _deliver(packet);
 
         IEscrowAdapter.BidLock memory lock = escrow.getBidLock(WORLDWIDE_DAY, bidder);
