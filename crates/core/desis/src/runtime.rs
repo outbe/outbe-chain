@@ -349,18 +349,13 @@ fn start_auction(
     contract.write_auction_config(worldwide_day, &config)?;
     let (commit, reveal, issuance) = (ts32(commit_end)?, ts32(reveal_end)?, ts32(issuance_end)?);
 
-    // A day nobody could price cannot hold an auction: every bid is a rate against
-    // a price, and there is none. That is the same outcome as a red day, and it is
-    // decided here rather than at the brief, because a day still has to settle and
-    // return its supply even when the oracle had nothing to say.
+    // A day nobody could price cannot hold an auction: every bid is a rate against a
+    // price, and there is none. It ends as a red day does — a closed record on every
+    // chain — but it is not one: a red day was briefed with no supply at all, while
+    // this one holds the day's PROMIS and has to give it back.
     let unpriced = config.reference_prices.is_empty();
-    if unpriced {
-        contract.emit(IDesis::AuctionCancelledUnpriced {
-            worldwideDay: worldwide_day.into(),
-        })?;
-    }
-
-    if unpriced || contract.brief_green.read(&worldwide_day)? == 0 {
+    let red = contract.brief_green.read(&worldwide_day)? == 0;
+    if unpriced || red {
         send_stage_start(
             storage,
             worldwide_day,
@@ -372,9 +367,16 @@ fn start_auction(
             DAY_STATE_RED,
         )?;
         contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
-        contract.emit(IDesis::AuctionCancelledRedDay {
-            worldwideDay: worldwide_day.into(),
-        })?;
+        if unpriced {
+            contract.emit(IDesis::AuctionCancelledUnpriced {
+                worldwideDay: worldwide_day.into(),
+            })?;
+            refund_unsold_supply(storage, contract, worldwide_day)?;
+        } else {
+            contract.emit(IDesis::AuctionCancelledRedDay {
+                worldwideDay: worldwide_day.into(),
+            })?;
+        }
         contract.remove_sched_active(worldwide_day)?;
         return Ok(StartOutcome::Retired);
     }
@@ -500,6 +502,19 @@ pub fn process_bids_batch(
         return Err(PrecompileError::Revert(
             "processBidsBatch: invalid batch index/total".into(),
         ));
+    }
+    // The target checks the pair at reveal, but this is the peer boundary and the pair
+    // is the one field clearing cannot recover from: a code the series id cannot spell
+    // would only surface hours later, as a day whose clearing reverts every block.
+    if let Some(bad) = bids.iter().find(|bid| {
+        SeriesId::currency_code(bid.issuance_currency).is_err()
+            || SeriesId::currency_code(bid.reference_currency).is_err()
+    }) {
+        return Err(DesisError::UnspellableBidCurrency(
+            bad.issuance_currency,
+            bad.reference_currency,
+        )
+        .into());
     }
     let mut contract = storage.contract::<DesisContract>();
 

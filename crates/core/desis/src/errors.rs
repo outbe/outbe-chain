@@ -24,6 +24,9 @@ pub enum DesisError {
 
     #[error("chain relayed {0} bidders, more than the refund fan-out can carry")]
     RefundFanOutTooLarge(usize),
+
+    #[error("relayed bid names a currency no series id can spell: issuance {0}, reference {1}")]
+    UnspellableBidCurrency(u16, u16),
 }
 
 impl From<DesisError> for outbe_primitives::error::PrecompileError {

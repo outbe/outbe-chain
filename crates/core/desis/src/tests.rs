@@ -2066,5 +2066,39 @@ fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
             0,
             "and leaves the schedule"
         );
+        // It was briefed green, so it holds the day's PROMIS — unlike a red day, which
+        // is briefed with none. Cancelling it must give that supply back.
+        assert_eq!(
+            outbe_promislimit::PromisLimitContract::new(s.clone())
+                .get_total_unallocated()
+                .unwrap(),
+            U256::from(4 * LOAD_MINOR),
+            "an unpriced day returns its supply"
+        );
+    });
+}
+
+#[test]
+fn a_relayed_bid_naming_an_unspellable_currency_is_refused_at_intake() {
+    // A code no series id can spell would otherwise surface at clearing, which is the
+    // one place that cannot recover: the day would revert every block until it expired.
+    let chain = 10u32;
+    with_targets(&[chain], |s| {
+        open_clearing(&s, 2);
+        let mut relayed = bids(1, 200);
+        relayed[0].issuance_currency = 1949;
+
+        let err = runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            chain,
+            1,
+            0,
+            1,
+            relayed,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("no series id can spell"), "{err}");
     });
 }
