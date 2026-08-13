@@ -46,6 +46,10 @@ library BridgeMsgCodec {
     ///      10_000-byte send ceiling, with destination gas the binding limit rather than bytes.
     uint16 internal constant MAX_SERIES_PER_ISSUANCE = 8;
 
+    /// @notice Worldwide-day state on the wire: the day either runs an auction or is a
+    ///         closed record. Mirrors the Desis constants of the same names.
+    uint8 internal constant DAY_STATE_RED = 2;
+
     /// @notice Upper bound on how many chunks one day's fan-out may be split into.
     /// @dev Matches the bid-intake ceiling it mirrors — 64 entries across 256 chunks — and keeps a
     ///      receiver's arrival set inside a single 256-bit word.
@@ -145,6 +149,8 @@ library BridgeMsgCodec {
     /// @param count Decoded number of bidders.
     /// @param max Maximum permitted bidders per message.
     error RefundBatchTooLarge(uint256 count, uint256 max);
+    /// @notice A live day was encoded without a single reference price to bid against.
+    error MissingReferencePrices();
     /// @notice An ISSUANCE_INSTRUCTIONS message carried no series at all.
     error EmptyIssuanceBatch();
     /// @notice An ISSUANCE_INSTRUCTIONS message carried more series than one may hold.
@@ -296,8 +302,15 @@ library BridgeMsgCodec {
     ) internal pure returns (bytes memory) {
         // Split into two packed halves: 18 packed args in one call is too deep for the IR
         // pipeline. Concatenation of encodePacked results is byte-identical to a single call.
-        if (_prices.length == 0 || _prices.length > MAX_REFERENCE_PRICES) {
+        if (_prices.length > MAX_REFERENCE_PRICES) {
             revert PayloadArrayTooLong(_prices.length, MAX_REFERENCE_PRICES);
+        }
+        // A live day must price at least one currency — a bid is a rate against a price.
+        // A cancelled day carries none: the destination stores it as a closed record and
+        // never reads the table, and a day the oracle could price nothing for is exactly
+        // one of the ways a day ends up cancelled.
+        if (_prices.length == 0 && _dayState != DAY_STATE_RED) {
+            revert MissingReferencePrices();
         }
         bytes memory rows = abi.encodePacked(uint8(_prices.length));
         for (uint256 i = 0; i < _prices.length; ++i) {

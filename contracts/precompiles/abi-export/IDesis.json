@@ -226,6 +226,19 @@
   },
   {
     "type": "event",
+    "name": "AuctionCancelledUnpriced",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "AuctionCleared",
     "inputs": [
       {

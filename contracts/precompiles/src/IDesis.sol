@@ -58,6 +58,9 @@ interface IDesis {
     /// @notice The chain missed the fan-in deadline; the clearing excluded its bids.
     event ChainSkipped(uint32 indexed worldwideDay, uint32 indexed srcChainId);
     event AuctionCancelledRedDay(uint32 indexed worldwideDay);
+    /// @notice The day was cancelled because the oracle could price none of its reference
+    /// currencies, so no bid could have been measured against anything.
+    event AuctionCancelledUnpriced(uint32 indexed worldwideDay);
     event AuctionOverdue(uint32 indexed worldwideDay);
     event AuctionCleared(uint32 indexed worldwideDay, uint32 issuedIntexCount, uint32 clearingRate, uint64 totalDemand);
     event AuctionClearedEmpty(uint32 indexed worldwideDay, uint64 totalDemand);

@@ -329,7 +329,18 @@ fn start_auction(
     contract.write_auction_config(worldwide_day, &config)?;
     let (commit, reveal, issuance) = (ts32(commit_end)?, ts32(reveal_end)?, ts32(issuance_end)?);
 
-    if contract.brief_green.read(&worldwide_day)? == 0 {
+    // A day nobody could price cannot hold an auction: every bid is a rate against
+    // a price, and there is none. That is the same outcome as a red day, and it is
+    // decided here rather than at the brief, because a day still has to settle and
+    // return its supply even when the oracle had nothing to say.
+    let unpriced = config.reference_prices.is_empty();
+    if unpriced {
+        contract.emit(IDesis::AuctionCancelledUnpriced {
+            worldwideDay: worldwide_day.into(),
+        })?;
+    }
+
+    if unpriced || contract.brief_green.read(&worldwide_day)? == 0 {
         send_stage_start(
             storage,
             worldwide_day,

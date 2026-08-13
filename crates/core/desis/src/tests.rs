@@ -2029,3 +2029,39 @@ fn a_chains_bidders_ship_in_chunks_the_encoder_can_carry() {
     );
     assert!(runtime::refund_chunk_count(ceiling + 1).is_err());
 }
+
+#[test]
+fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
+    // An oracle gap prices nothing — the same condition that makes a day red.
+    // Settlement still has to complete, so the day must reach a terminal stage
+    // instead of failing the brief.
+    with_storage(|s| {
+        assert_eq!(
+            crate::api::dispatch_auction_brief(
+                s.clone(),
+                WORLDWIDE_DAY,
+                U256::from(4 * LOAD_MINOR),
+                Vec::new(),
+                true,
+                NOW,
+            )
+            .unwrap(),
+            AuctionBriefReceipt::Accepted
+        );
+
+        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 86_400).unwrap();
+
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            AuctionStage::Cancelled,
+            "an unpriced day ends as a closed record"
+        );
+        assert_eq!(
+            contract.sched_active_count.read().unwrap(),
+            0,
+            "and leaves the schedule"
+        );
+    });
+}

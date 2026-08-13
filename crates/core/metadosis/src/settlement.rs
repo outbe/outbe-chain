@@ -6,7 +6,7 @@ use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_desis::ReferencePrice;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result},
+    error::Result,
     storage::StorageHandle,
     time::{previous_date_key, timestamp_to_date_key},
 };
@@ -295,7 +295,12 @@ fn dispatch_brief(
 /// One entry price per reference currency the oracle can price for the day: the
 /// previous closed UTC day's VWAP of that currency's COEN pair, falling back to
 /// the worldwide day's own. A currency the oracle cannot price is left out with
-/// an event rather than failing the day, but at least one must survive.
+/// an event.
+///
+/// The table may come back empty — an oracle gap prices nothing, which is also
+/// the condition that makes the day red. Settlement must still complete on such
+/// a day, so the emptiness is carried to the auction rather than raised here:
+/// what an unpriced day cannot do is run an auction, and that is Desis' call.
 fn resolve_reference_entry_prices(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
@@ -322,11 +327,6 @@ fn resolve_reference_entry_prices(
         }
     }
 
-    if rows.is_empty() {
-        return Err(PrecompileError::Revert(
-            "no reference currency has an entry price for the auction".into(),
-        ));
-    }
     Ok(rows)
 }
 
