@@ -24,7 +24,7 @@ contract MockEscrowAdapter {
         totalPaidToReturn = v;
     }
 
-    function finalizeAuction(uint32, bytes32, IEscrowAdapter.FinalizationInstruction[] calldata)
+    function finalizeAuction(uint32, bytes32, IEscrowAdapter.FinalizationInstruction[] calldata, bool)
         external
         view
         returns (uint128)

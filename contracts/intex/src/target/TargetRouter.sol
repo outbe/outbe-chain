@@ -554,16 +554,20 @@ contract TargetRouter is
             });
         }
 
-        uint128 totalPaid = $.escrowAdapter.finalizeAuction(worldwideDay, _receiveId, instructions);
-
+        // Count the chunk before settling it: whether this one completes the day is what
+        // tells the escrow to close the day, and the escrow refuses instructions after that.
         $.refundChunksApplied[worldwideDay] |= bit;
-        $.refundChunksSeen[worldwideDay] += 1;
+        uint16 seen = $.refundChunksSeen[worldwideDay] + 1;
+        $.refundChunksSeen[worldwideDay] = seen;
+        bool completesDay = seen == totalChunks;
+
+        uint128 totalPaid = $.escrowAdapter.finalizeAuction(worldwideDay, _receiveId, instructions, completesDay);
         $.refundProceedsAccrued[worldwideDay] += totalPaid;
 
         // Proceeds land here (proceedsRecipient) chunk by chunk, but leave as one transfer: the
         // origin counts a chain as having paid on the first delivery, so routing a partial sum
         // would close the creator-reward fan-in while the rest is still in flight.
-        if ($.refundChunksSeen[worldwideDay] == totalChunks) {
+        if (completesDay) {
             uint128 proceeds = $.refundProceedsAccrued[worldwideDay];
             if (proceeds > 0) {
                 $.refundProceedsAccrued[worldwideDay] = 0;

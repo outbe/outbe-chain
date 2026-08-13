@@ -6,6 +6,8 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
+import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
+import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -17,7 +19,7 @@ contract SummingEscrowAdapter {
         paymentToken = token;
     }
 
-    function finalizeAuction(uint32, bytes32, IEscrowAdapter.FinalizationInstruction[] calldata instructions)
+    function finalizeAuction(uint32, bytes32, IEscrowAdapter.FinalizationInstruction[] calldata instructions, bool)
         external
         pure
         returns (uint128 totalPaid)
@@ -116,5 +118,55 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
         _deliverChunk(0, 1, 25e18);
         assertEq(tokenBridge.calls(), 1);
         assertEq(tokenBridge.lastAmount(), 25e18);
+    }
+
+    /// The mock escrow above cannot see the rule that matters: the real adapter closes a
+    /// day on finalization and refuses everything after. Chunking a day past it is what
+    /// would strand the later chunks' bidders in `Locked` — holding a claim on their full
+    /// principal while the winners among them already hold minted Intex — so the run has
+    /// to be driven through the real contract.
+    function test_TheRealEscrowSettlesEveryChunkOfADay() public {
+        MockWCOEN token = new MockWCOEN();
+        MockTheCompact compact = new MockTheCompact();
+        EscrowAdapter escrow = DeployProxy.escrowAdapter(address(this), address(this));
+        escrow.wire(address(this), address(compact), address(token));
+        compact.setResetPeriodSeconds(0);
+        escrow.grantRole(escrow.RELAYER_ROLE(), address(target));
+        escrow.grantRole(escrow.AUCTION_ROLE(), address(this));
+        escrow.setProceedsRecipient(address(target));
+        target.wire(makeAddr("auction"), makeAddr("intex"), address(escrow), makeAddr("nftBridge"));
+
+        address[2] memory bidders = [makeAddr("early"), makeAddr("late")];
+        for (uint256 i = 0; i < bidders.length; i++) {
+            token.mint(bidders[i], 1e24);
+            vm.prank(bidders[i]);
+            token.approve(address(escrow), type(uint256).max);
+            escrow.lockFunds(DAY, bidders[i], 100e18);
+        }
+
+        _deliverChunkFor(bidders[0], 0, 2, 100e18);
+        _deliverChunkFor(bidders[1], 1, 2, 100e18);
+
+        assertTrue(
+            escrow.getBidLock(DAY, bidders[0]).status == IEscrowAdapter.LockStatus.Finalized, "first chunk settled"
+        );
+        assertTrue(
+            escrow.getBidLock(DAY, bidders[1]).status == IEscrowAdapter.LockStatus.Finalized, "second chunk settled too"
+        );
+    }
+
+    function _deliverChunkFor(address bidder, uint16 chunkIndex, uint16 totalChunks, uint128 paidAmount) internal {
+        address[] memory bidders = new address[](1);
+        uint128[] memory refunded = new uint128[](1);
+        uint128[] memory paid = new uint128[](1);
+        bidders[0] = bidder;
+        refunded[0] = 0;
+        paid[0] = paidAmount;
+        _deliver(
+            OUTBE_CHAIN_ID,
+            originSender,
+            address(target),
+            BridgeMsgCodec.encodeRefundInstructions(DAY, chunkIndex, totalChunks, bidders, refunded, paid)
+        );
     }
 }
