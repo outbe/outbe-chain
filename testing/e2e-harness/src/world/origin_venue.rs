@@ -237,7 +237,7 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
                 format!("{:?}", contracts.target_router),
             ),
             ("--intex-auction-contract", auction.clone()),
-            ("--intex-contract", nft),
+            ("--intex-contract", nft.clone()),
             ("--escrow-contract", escrow.clone()),
             (
                 "--nft-bridge-contract",
@@ -263,8 +263,8 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
         intex,
         "escrow-wire",
         &[
-            ("--escrow-contract", escrow),
-            ("--intex-auction-contract", auction),
+            ("--escrow-contract", escrow.clone()),
+            ("--intex-auction-contract", auction.clone()),
             ("--compact-contract", format!("{:?}", contracts.compact)),
             ("--payment-token", format!("{:?}", contracts.payment_token)),
         ],
@@ -272,15 +272,38 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
         chain_id,
     )?;
 
+    // The venue accepts an inbound stage start, escrow move or mint only from a
+    // relayer, and the target router is it.
+    let target_router = format!("{:?}", contracts.target_router);
+    let nft_bridge = format!("{:?}", contracts.nft_bridge);
+    for (token, adapter, contract) in [
+        (auction, target_router.clone(), "IntexAuction"),
+        (escrow, target_router.clone(), "EscrowAdapter"),
+        (nft.clone(), target_router, "IntexNFT1155"),
+        (nft.clone(), nft_bridge.clone(), "IntexNFT1155"),
+    ] {
+        hardhat::task(
+            intex,
+            "grant-relayer-role",
+            &[
+                ("--token", token),
+                ("--adapter", adapter),
+                ("--contract", contract.to_owned()),
+            ],
+            url,
+            chain_id,
+        )?;
+    }
+
+    // A loopback target keeps its winners on the shared collection and never
+    // drives migration, so it skips the bridge-side wiring a remote target needs.
     hardhat::task(
         intex,
-        "nft-bridge-wire",
+        "grant-system-relayer-role",
         &[
-            (
-                "--nft-bridge-contract",
-                format!("{:?}", contracts.nft_bridge),
-            ),
-            ("--target-router", format!("{:?}", contracts.target_router)),
+            ("--token", nft),
+            ("--adapter", nft_bridge),
+            ("--contract", "IntexNFT1155".to_owned()),
         ],
         url,
         chain_id,
