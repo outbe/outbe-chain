@@ -12,6 +12,11 @@
 
 use std::{sync::Arc, time::Duration};
 
+use alloy_rpc_types_engine::PayloadId;
+use outbe_primitives::runtime_audit_v1::{
+    process_instance_id, PROPOSAL_VIEW_CANCELLED, SCHEMA_VERSION,
+};
+
 // Marshal block-resolution timing constants (FINALIZE_*, VERIFY_RESOLUTION_TIMEOUT,
 // PROPOSE_RESOLUTION_TIMEOUT) moved to `crate::config` — they are read cross-module
 // by the finalization actor, verify, and epoch-boundary resolution paths.
@@ -272,6 +277,21 @@ enum ProposeOutcome {
     BoundaryUnavailable,
     ProjectionUnavailable,
     RetentionUnavailable,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ProposalPayloadTrace {
+    payload_id: Arc<std::sync::OnceLock<PayloadId>>,
+}
+
+impl ProposalPayloadTrace {
+    fn record(&self, payload_id: PayloadId) {
+        let _ = self.payload_id.set(payload_id);
+    }
+
+    fn payload_id(&self) -> Option<PayloadId> {
+        self.payload_id.get().copied()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -652,6 +672,7 @@ impl ApplicationHandler {
                             let propose = *propose;
                             let mut response = propose.response;
                             let execution_read_budget = ExecutionReadBudget::new();
+                            let payload_trace = ProposalPayloadTrace::default();
                             // Closure-level instant covering the whole build + marshal path,
                             // used only for proposer-side min-block-time pacing.
                             let propose_start = ctx.current();
@@ -660,13 +681,27 @@ impl ApplicationHandler {
                                 propose.context,
                                 propose_start,
                                 execution_read_budget.clone(),
+                                payload_trace.clone(),
                             ));
                             let cancelled = Box::pin(response.closed());
                             let outcome = match futures::future::select(handle, cancelled).await {
                                 futures::future::Either::Left((outcome, _)) => outcome,
                                 futures::future::Either::Right(((), _)) => {
                                     execution_read_budget.cancel();
-                                    debug!("view cancelled during proposal execution");
+                                    if let Some(payload_id) = payload_trace.payload_id() {
+                                        debug!(
+                                            audit_schema = SCHEMA_VERSION,
+                                            audit_event = %PROPOSAL_VIEW_CANCELLED,
+                                            process_instance = %process_instance_id(),
+                                            %payload_id,
+                                            "view cancelled during proposal execution"
+                                        );
+                                    } else {
+                                        debug!(
+                                            payload_id = "unassigned",
+                                            "view cancelled during proposal execution"
+                                        );
+                                    }
                                     return;
                                 }
                             };
@@ -897,6 +932,7 @@ impl ApplicationShared {
         context: super::ingress::SimplexContext,
         propose_start: std::time::SystemTime,
         execution_read_budget: ExecutionReadBudget,
+        payload_trace: ProposalPayloadTrace,
     ) -> eyre::Result<ProposeOutcome> {
         let (parent_view, parent) = context.parent;
         let parent_digest = Digest(parent.0);
@@ -1068,6 +1104,7 @@ impl ApplicationShared {
                 parent_proof_key,
                 propose_start,
                 execution_read_budget,
+                payload_trace,
             )
             .await
         {
@@ -1280,6 +1317,7 @@ impl ApplicationShared {
         parent_proof_key: Option<CertifiedParentProofKey>,
         propose_start: std::time::SystemTime,
         execution_read_budget: ExecutionReadBudget,
+        payload_trace: ProposalPayloadTrace,
     ) -> eyre::Result<BuildBlockOutcome> {
         let next_block_number = parent_height.get().saturating_add(1);
         if let Err(rejection) = self.epoch_fence.check(round, next_block_number) {
@@ -1536,6 +1574,7 @@ impl ApplicationShared {
             .canonicalize_and_build(parent_height, parent_digest, attrs)
             .await
             .map_err(|e| eyre::eyre!("canonicalize_and_build failed: {e}"))?;
+        payload_trace.record(payload_id);
 
         debug!(%payload_id, "payload building started via FCU");
 
@@ -2355,6 +2394,16 @@ mod tests {
     use crate::test_fixtures::*;
 
     const OUTSIDER: Address = address!("0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead");
+
+    #[test]
+    fn proposal_payload_trace_exposes_the_exact_fcu_payload_id() {
+        let trace = super::ProposalPayloadTrace::default();
+        let payload_id = alloy_rpc_types_engine::PayloadId::new([0x85; 8]);
+
+        assert_eq!(trace.payload_id(), None);
+        trace.record(payload_id);
+        assert_eq!(trace.payload_id(), Some(payload_id));
+    }
 
     // `valid_metadata_with_supplemental_finalize_vote` and the
     // V1 supplemental-finalize-vote tests below are retired. V2 contract
