@@ -547,8 +547,7 @@ const DAY: u32 = 20_260_212;
 fn packs_and_unpacks_every_component() {
     let id = SeriesId::pack(DAY, *b"TRY", b'U').unwrap();
     assert_eq!(id.worldwide_day(), DAY);
-    assert_eq!(id.issuance_code(), *b"TRY");
-    assert_eq!(id.reference_code(), b'U');
+    assert_eq!(id.as_bytes(), b"20260212-TRY-U");
     assert_eq!(SeriesId::from_bytes(*id.as_bytes()), id);
 }
 

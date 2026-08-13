@@ -86,18 +86,6 @@ impl SeriesId {
         })
     }
 
-    pub fn issuance_code(&self) -> [u8; 3] {
-        [
-            self.0[ISSUANCE_AT],
-            self.0[ISSUANCE_AT + 1],
-            self.0[ISSUANCE_AT + 2],
-        ]
-    }
-
-    pub const fn reference_code(&self) -> u8 {
-        self.0[REFERENCE_AT]
-    }
-
     /// `949 -> b"949"`, `32 -> b"032"`. ISO 4217 numbers are three digits, and a
     /// wider one has no spelling here: folding it would give two currencies one id.
     pub fn numeric_code(iso: u16) -> Result<[u8; 3], IntexError> {
