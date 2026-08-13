@@ -40,8 +40,6 @@ reth-node-core.workspace = true
 reth-provider.workspace = true
 reth-rpc-server-types.workspace = true
 
-commonware-codec.workspace = true
-commonware-cryptography.workspace = true
 commonware-runtime.workspace = true
 
 alloy-primitives.workspace = true
