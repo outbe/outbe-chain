@@ -42,7 +42,6 @@ impl DesisContract<'_> {
             min_intex_bid_quantity: self.config_min_bid_quantity.read(&worldwide_day)? as u16,
             commit_bond_minor: u128::try_from(self.config_commit_bond_minor.read(&worldwide_day)?)
                 .map_err(|_| crate::DesisError::InvalidWorldwideDay(worldwide_day))?,
-            entry_price_minor: self.config_entry_price.read(&worldwide_day)?,
             reference_prices: self.read_reference_prices(worldwide_day)?,
         })
     }
@@ -86,8 +85,6 @@ impl DesisContract<'_> {
             .write(&worldwide_day, u32::from(cfg.min_intex_bid_quantity))?;
         self.config_commit_bond_minor
             .write(&worldwide_day, U256::from(cfg.commit_bond_minor))?;
-        self.config_entry_price
-            .write(&worldwide_day, cfg.entry_price_minor)?;
         self.reference_price_count
             .write(&worldwide_day, cfg.reference_prices.len() as u32)?;
         for (index, row) in cfg.reference_prices.iter().enumerate() {

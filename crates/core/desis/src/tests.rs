@@ -180,7 +180,10 @@ fn dispatch_auction_brief_records_the_brief() {
             WORLDWIDE_DAY.value()
         );
         let cfg = contract.read_auction_config(WORLDWIDE_DAY).unwrap();
-        assert_eq!(cfg.entry_price_minor, U256::from(ENTRY_PRICE));
+        assert_eq!(
+            cfg.entry_price_for(QUALIFIER_REFERENCE_ISO),
+            Some(U256::from(ENTRY_PRICE))
+        );
     });
 }
 
@@ -234,8 +237,8 @@ fn strict_request_auction_base_commits_the_exact_green_brief() {
             contract
                 .read_auction_config(WORLDWIDE_DAY)
                 .unwrap()
-                .entry_price_minor,
-            U256::from(ENTRY_PRICE)
+                .entry_price_for(QUALIFIER_REFERENCE_ISO),
+            Some(U256::from(ENTRY_PRICE))
         );
     });
 }
@@ -311,7 +314,6 @@ fn assert_no_request_brief_state(storage: &StorageHandle<'_>) {
             min_intex_bid_rate: 0,
             min_intex_bid_quantity: 0,
             commit_bond_minor: 0,
-            entry_price_minor: U256::ZERO,
             reference_prices: vec![],
         }
     );

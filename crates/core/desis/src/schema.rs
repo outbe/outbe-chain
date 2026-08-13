@@ -76,9 +76,6 @@ pub struct AuctionConfig {
     pub min_intex_bid_quantity: u16,
     /// Commit-entry bond (payment-token 18-dec minor units); 0 disables the bond.
     pub commit_bond_minor: u128,
-    /// Entry price (per-unit, reference currency, 1e18) captured at auction start.
-    /// Floor and call derive from it; the escrow basis is `promis_load` (not entry-derived).
-    pub entry_price_minor: U256,
     /// One row per reference currency the oracle could price for this day.
     pub reference_prices: Vec<ReferencePrice>,
 }
@@ -92,21 +89,14 @@ impl AuctionConfig {
     /// auction start (`start_auction`), where the genesis `IntexParams` and the
     /// prior-clearing count are in reach.
     pub fn from_reference_prices(reference_prices: Vec<ReferencePrice>) -> Self {
-        let reference_currency = outbe_intexfactory::constants::QUALIFIER_REFERENCE_ISO;
-        let entry_price_minor = reference_prices
-            .iter()
-            .find(|row| row.iso_code == reference_currency)
-            .map(|row| row.entry_price_minor)
-            .unwrap_or_default();
         Self {
             issuance_currency: outbe_intexfactory::constants::QUALIFIER_ISSUANCE_ISO,
-            reference_currency,
+            reference_currency: outbe_intexfactory::constants::QUALIFIER_REFERENCE_ISO,
             promis_load_minor: PROMIS_LOAD.saturating_mul(SCALE_1E18_U128),
             call_trigger: IntexCallTrigger::default(),
             min_intex_bid_rate: 0,
             min_intex_bid_quantity: 0,
             commit_bond_minor: 0,
-            entry_price_minor,
             reference_prices,
         }
     }
@@ -179,9 +169,6 @@ pub struct DesisContract {
     pub config_min_bid_rate: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
     #[attribute(order = 2)]
     pub config_min_bid_quantity: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
-    /// Entry price (1e18) captured at auction start; carried to IntexFactory.
-    #[attribute(order = 3)]
-    pub config_entry_price: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
 
     // --- Auction stage ---
     /// worldwide_day -> AuctionStage (u8).
