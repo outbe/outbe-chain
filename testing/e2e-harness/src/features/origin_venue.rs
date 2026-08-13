@@ -149,6 +149,24 @@ fn day_closure(_world: &World, _worldwide_day: u32) -> String {
     "day closure unreadable without ocomp-integration".to_owned()
 }
 
+/// Desis starts a briefed auction from its own schedule tick, which fires every
+/// twelve hours of logical time.
+#[cfg(feature = "ocomp-integration")]
+const AUCTION_TICK_PERIOD_SECS: u64 = 43_200;
+
+#[cfg(feature = "ocomp-integration")]
+#[when("the committee logical clock reaches the next auction schedule tick")]
+fn committee_clock_reaches_next_auction_tick(world: &mut World) {
+    let url = world.rpc.url(world.validators.primary_port());
+    let now = eth::latest_block_timestamp(&url).expect("committee block timestamp");
+    let target = now
+        .checked_div(AUCTION_TICK_PERIOD_SECS)
+        .and_then(|periods| periods.checked_add(1))
+        .and_then(|periods| periods.checked_mul(AUCTION_TICK_PERIOD_SECS))
+        .expect("auction tick boundary after the committee clock");
+    crate::features::ocomp::restart_committee_at_logical_time(world, target.saturating_add(60));
+}
+
 /// Desis dispatches the start on its own schedule tick, which lands some blocks
 /// after the day settles.
 const AUCTION_START_TIMEOUT: Duration = Duration::from_secs(300);

@@ -1746,7 +1746,7 @@ fn advance_fresh_metadosis_time(
     }
 }
 
-fn restart_committee_at_logical_time(
+pub(crate) fn restart_committee_at_logical_time(
     world: &mut World,
     requested_timestamp: u64,
 ) -> (i64, Vec<MetadosisFinalizedPointV1>, u64) {
