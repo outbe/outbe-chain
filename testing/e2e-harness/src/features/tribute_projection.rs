@@ -15,6 +15,19 @@ use crate::world::World;
 #[when("an operator submits one encrypted tribute offer")]
 fn submit_one_offer(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
+    let primary = world.validators.primary_port();
+    let mut offering = false;
+    for _ in 0..240 {
+        if world.rpc.wwd_status(primary, &wwd).as_deref() == Some("2") {
+            offering = true;
+            break;
+        }
+        sleep(Duration::from_millis(500));
+    }
+    assert!(
+        offering,
+        "worldwide-day {wwd} did not reach authoritative OFFERING status"
+    );
     let key = world
         .validators
         .by_name("validator-0")

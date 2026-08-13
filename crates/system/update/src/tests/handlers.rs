@@ -6,8 +6,7 @@ use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::tee_attestation_v1::{
-    AttestationMode, EnclaveProfile, PlatformTcbStatusSetV1, QvlTcbStatusV1, TeeMeasurementRuleV1,
-    TeePolicyV1,
+    AttestationMode, PlatformTcbStatusSetV1, QvlTcbStatusV1, TeeMeasurementRuleV1, TeePolicyV1,
 };
 use outbe_teeregistry::TeeRegistry;
 
@@ -121,7 +120,6 @@ fn update_tee_policy(
         collateral_margin: 3_600,
         resource_schedule_hash: B256::repeat_byte(0x62),
         measurement_rules: vec![TeeMeasurementRuleV1 {
-            enclave_profile: EnclaveProfile::Validator,
             mrenclave,
             mrsigner: B256::repeat_byte(0x64),
             isv_prod_id: 7,

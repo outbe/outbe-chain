@@ -10,9 +10,8 @@ use alloy_primitives::B256;
 use outbe_primitives::{
     chain::TESTNET_CHAIN_ID,
     tee_attestation_v1::{
-        AttestationMode, EnclaveProfile, PlatformTcbStatusSetV1, QvlTcbStatusV1,
-        ResourceScheduleV1, TeeAttestationManifestV1, TeePolicyScheduleV1, TeePolicyV1,
-        MAX_TEE_POLICY_SCHEDULE_BYTES,
+        AttestationMode, PlatformTcbStatusSetV1, QvlTcbStatusV1, ResourceScheduleV1,
+        TeeAttestationManifestV1, TeePolicyScheduleV1, TeePolicyV1, MAX_TEE_POLICY_SCHEDULE_BYTES,
     },
     tee_genesis_v1::{
         initial_tee_policy_v1, is_gramine_direct_dev_chain_id, InitialTeeProfileV1,
@@ -123,24 +122,17 @@ impl DcapTestnetChainSpecBindingV1 {
                     .into(),
             );
         }
-        let matches_rule = |profile| {
-            policy.measurement_rules.iter().any(|rule| {
-                rule.enclave_profile == profile
-                    && rule.mrenclave == mrenclave
-                    && rule.mrsigner == mrsigner
-                    && rule.isv_prod_id == isv_prod_id
-                    && rule.minimum_isv_svn == isv_svn
-                    && rule.admit_from_height == policy.activation_height
-                    && rule.admit_until_height_exclusive == u64::MAX
-            })
-        };
-        if policy.measurement_rules.len() != 2
-            || !matches_rule(EnclaveProfile::Validator)
-            || !matches_rule(EnclaveProfile::FullNode)
-        {
+        let matches_rule = policy.measurement_rules.iter().any(|rule| {
+            rule.mrenclave == mrenclave
+                && rule.mrsigner == mrsigner
+                && rule.isv_prod_id == isv_prod_id
+                && rule.minimum_isv_svn == isv_svn
+                && rule.admit_from_height == policy.activation_height
+                && rule.admit_until_height_exclusive == u64::MAX
+        });
+        if policy.measurement_rules.len() != 1 || !matches_rule {
             return Err(
-                "active testnet policy does not exactly bind signed bundle measurements for Validator and FullNode"
-                    .into(),
+                "active testnet policy does not exactly bind the signed bundle measurement".into(),
             );
         }
         let expected = initial_tee_policy_v1(
@@ -314,8 +306,8 @@ mod tests {
     use super::*;
     use outbe_primitives::{
         tee_attestation_v1::{
-            AttestationMode, EnclaveProfile, PlatformTcbStatusSetV1, QvlTcbStatusV1,
-            TeeMeasurementRuleV1, TeePolicyScheduleEntryV1,
+            AttestationMode, PlatformTcbStatusSetV1, QvlTcbStatusV1, TeeMeasurementRuleV1,
+            TeePolicyScheduleEntryV1,
         },
         tee_genesis_v1::{
             initial_tee_policy_v1, tee_attestation_v1_genesis_field, InitialTeeProfileV1,
@@ -415,7 +407,6 @@ mod tests {
             collateral_margin: 3_600,
             resource_schedule_hash,
             measurement_rules: vec![TeeMeasurementRuleV1 {
-                enclave_profile: EnclaveProfile::Validator,
                 mrenclave: B256::repeat_byte(0x22),
                 mrsigner: B256::repeat_byte(0x33),
                 isv_prod_id: 1,
@@ -493,7 +484,7 @@ mod tests {
     }
 
     #[test]
-    fn dcap_testnet_binding_requires_exact_release_measurements_for_both_roles() {
+    fn dcap_testnet_binding_requires_exact_role_neutral_release_measurement() {
         let (_, _, spec) = testnet_chain_spec();
         let binding = DcapTestnetChainSpecBindingV1::from_chain_spec(&spec).unwrap();
         binding
@@ -512,7 +503,7 @@ mod tests {
                 2,
             )
             .unwrap_err()
-            .contains("signed bundle measurements"));
+            .contains("signed bundle measurement"));
 
         let mut non_intel_root = binding.clone();
         non_intel_root.policy.intel_root_der_hash = B256::repeat_byte(0x99);

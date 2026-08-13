@@ -4,8 +4,7 @@ use outbe_primitives::addresses::UPDATE_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::tee_attestation_v1::{
-    AttestationMode, EnclaveProfile, PlatformTcbStatusSetV1, QvlTcbStatusV1, TeeMeasurementRuleV1,
-    TeePolicyV1,
+    AttestationMode, PlatformTcbStatusSetV1, QvlTcbStatusV1, TeeMeasurementRuleV1, TeePolicyV1,
 };
 use outbe_teeregistry::TeeRegistry;
 use outbe_vote::constants::VOTING_WINDOW_BLOCKS;
@@ -73,7 +72,6 @@ fn tee_policy(
         collateral_margin: 3_600,
         resource_schedule_hash: B256::repeat_byte(0x32),
         measurement_rules: vec![TeeMeasurementRuleV1 {
-            enclave_profile: EnclaveProfile::Validator,
             mrenclave,
             mrsigner: B256::repeat_byte(0x34),
             isv_prod_id: 7,

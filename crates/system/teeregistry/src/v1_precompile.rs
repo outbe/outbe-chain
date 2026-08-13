@@ -12,7 +12,7 @@ use outbe_primitives::{
     storage::{gas::PRECOMPILE_BASE_GAS, StorageHandle},
     tee_attestation_v1::{
         AttestationEvidenceV1, AttestationMode, RegistryMutatorV1, TeeRegistryGasScheduleV1,
-        MAX_ATTESTATION_EVIDENCE_BYTES, MAX_EVIDENCE_CALL_FRAMING_BYTES,
+        ValidatorNodeBindingV1, MAX_ATTESTATION_EVIDENCE_BYTES, MAX_EVIDENCE_CALL_FRAMING_BYTES,
     },
     tee_registry_abi_v1::{ITeeRegistryV1, NodeEnclaveBindingV1View},
 };
@@ -152,6 +152,42 @@ pub fn dispatch(
                         preflight.enclave_signature.try_into().map_err(|_| {
                             PrecompileError::Fatal("preflight enclave signature mismatch".into())
                         })?;
+                    let binding = ValidatorNodeBindingV1::decode_canonical(
+                        preflight.validator_node_binding.ok_or_else(|| {
+                            PrecompileError::Fatal(
+                                "V1 registration binding preflight was bypassed".into(),
+                            )
+                        })?,
+                    )
+                    .map_err(|error| {
+                        PrecompileError::Revert(format!(
+                            "validator NodeHost binding is not canonical: {error}"
+                        ))
+                    })?;
+                    let validator_signature: [u8; 65] = preflight
+                        .validator_signature
+                        .ok_or_else(|| {
+                            PrecompileError::Fatal(
+                                "V1 validator signature preflight was bypassed".into(),
+                            )
+                        })?
+                        .try_into()
+                        .map_err(|_| {
+                            PrecompileError::Fatal("preflight validator signature mismatch".into())
+                        })?;
+                    let node_binding_signature: [u8; 65] = preflight
+                        .node_binding_signature
+                        .ok_or_else(|| {
+                            PrecompileError::Fatal(
+                                "V1 NodeHost binding signature preflight was bypassed".into(),
+                            )
+                        })?
+                        .try_into()
+                        .map_err(|_| {
+                            PrecompileError::Fatal(
+                                "preflight NodeHost binding signature mismatch".into(),
+                            )
+                        })?;
                     let (node_id_hash, recipient_x25519) =
                         registration_onboarding_target(preflight.evidence)?;
                     let outcome = if policy.attestation_mode == AttestationMode::DcapRequired {
@@ -159,6 +195,9 @@ pub fn dispatch(
                             preflight.evidence,
                             &node_signature,
                             &enclave_signature,
+                            &binding,
+                            &validator_signature,
+                            &node_binding_signature,
                             policy,
                         )?;
                         registry.emit_verified_onboarding_artifact_v1(&onboarding, node_id_hash)?;
@@ -171,6 +210,9 @@ pub fn dispatch(
                             preflight.evidence,
                             &node_signature,
                             &enclave_signature,
+                            &binding,
+                            &validator_signature,
+                            &node_binding_signature,
                             policy,
                         )?;
                         registry.emit_offer_key_sealed_for_registry_v1(
@@ -273,16 +315,16 @@ pub fn dispatch(
                         registry.validator_enclave_binding_v1(call.validator)?,
                     ))
                 }),
-                fullNodeEnclaveBinding(call) => view(call, |call| {
-                    Ok(binding_view(registry.full_node_enclave_binding_v1(
+                nodeHostEnclaveBinding(call) => view(call, |call| {
+                    Ok(binding_view(registry.node_host_enclave_binding_v1(
                         full_node_public_key(call.rethP2pPrefix, call.rethP2pX),
                     )?))
                 }),
                 isValidatorEnclaveReady(call) => view(call, |call| {
                     registry.is_validator_enclave_ready_v1(call.validator)
                 }),
-                isFullNodeEnclaveReady(call) => view(call, |call| {
-                    registry.is_full_node_enclave_ready_v1(full_node_public_key(
+                isNodeHostEnclaveReady(call) => view(call, |call| {
+                    registry.is_node_host_enclave_ready_v1(full_node_public_key(
                         call.rethP2pPrefix,
                         call.rethP2pX,
                     ))
@@ -351,6 +393,9 @@ struct RegisterPreflight<'a> {
     evidence: &'a [u8],
     node_signature: &'a [u8],
     enclave_signature: &'a [u8],
+    validator_node_binding: Option<&'a [u8]>,
+    validator_signature: Option<&'a [u8]>,
+    node_binding_signature: Option<&'a [u8]>,
 }
 
 /// Validates the complete canonical ABI layout without allocating dynamic
@@ -358,19 +403,27 @@ struct RegisterPreflight<'a> {
 /// offsets, zero padding and trailing bytes reject before policy allocation or
 /// native QVL execution.
 fn preflight_evidence_mutator_call(data: &[u8]) -> Result<RegisterPreflight<'_>> {
-    const HEAD_WORDS: usize = 3;
-    const HEAD_LEN: usize = HEAD_WORDS * 32;
+    const MUTATOR_HEAD_WORDS: usize = 3;
+    const REGISTER_HEAD_WORDS: usize = 6;
+    let is_register =
+        data.get(..4) == Some(ITeeRegistryV1::registerEnclaveCall::SELECTOR.as_slice());
+    let head_words = if is_register {
+        REGISTER_HEAD_WORDS
+    } else {
+        MUTATOR_HEAD_WORDS
+    };
+    let head_len = head_words * 32;
 
     let args = data
         .get(4..)
         .ok_or_else(|| invalid_register_abi("missing function selector"))?;
     let head = args
-        .get(..HEAD_LEN)
+        .get(..head_len)
         .ok_or_else(|| invalid_register_abi("truncated argument head"))?;
     let evidence_offset = abi_usize(&head[0..32])?;
     let node_signature_offset = abi_usize(&head[32..64])?;
     let enclave_signature_offset = abi_usize(&head[64..96])?;
-    if evidence_offset != HEAD_LEN {
+    if evidence_offset != head_len {
         return Err(invalid_register_abi("non-canonical evidence offset"));
     }
 
@@ -395,12 +448,62 @@ fn preflight_evidence_mutator_call(data: &[u8]) -> Result<RegisterPreflight<'_>>
             "non-canonical enclave signature offset",
         ));
     }
-    let (enclave_signature, final_offset) = dynamic_bytes(args, enclave_signature_offset)?;
+    let (enclave_signature, next_offset) = dynamic_bytes(args, enclave_signature_offset)?;
     if enclave_signature.len() != 64 {
         return Err(PrecompileError::Revert(
             "enclave proof-of-possession signature must be 64 bytes".into(),
         ));
     }
+    let (validator_node_binding, validator_signature, node_binding_signature, final_offset) =
+        if is_register {
+            let binding_offset = abi_usize(&head[96..128])?;
+            let validator_signature_offset = abi_usize(&head[128..160])?;
+            let node_binding_signature_offset = abi_usize(&head[160..192])?;
+            if binding_offset != next_offset {
+                return Err(invalid_register_abi(
+                    "non-canonical validator NodeHost binding offset",
+                ));
+            }
+            let (binding, next_offset) = dynamic_bytes(args, binding_offset)?;
+            if binding.len() != ValidatorNodeBindingV1::CANONICAL_LEN {
+                return Err(PrecompileError::Revert(format!(
+                    "validator NodeHost binding must be {} bytes",
+                    ValidatorNodeBindingV1::CANONICAL_LEN
+                )));
+            }
+            if validator_signature_offset != next_offset {
+                return Err(invalid_register_abi(
+                    "non-canonical validator signature offset",
+                ));
+            }
+            let (validator_signature, next_offset) =
+                dynamic_bytes(args, validator_signature_offset)?;
+            if validator_signature.len() != 65 {
+                return Err(PrecompileError::Revert(
+                    "validator NodeHost binding signature must be 65 bytes".into(),
+                ));
+            }
+            if node_binding_signature_offset != next_offset {
+                return Err(invalid_register_abi(
+                    "non-canonical NodeHost binding signature offset",
+                ));
+            }
+            let (node_binding_signature, final_offset) =
+                dynamic_bytes(args, node_binding_signature_offset)?;
+            if node_binding_signature.len() != 65 {
+                return Err(PrecompileError::Revert(
+                    "NodeHost binding signature must be 65 bytes".into(),
+                ));
+            }
+            (
+                Some(binding),
+                Some(validator_signature),
+                Some(node_binding_signature),
+                final_offset,
+            )
+        } else {
+            (None, None, None, next_offset)
+        };
     if final_offset != args.len() {
         return Err(invalid_register_abi("trailing ABI bytes"));
     }
@@ -419,6 +522,9 @@ fn preflight_evidence_mutator_call(data: &[u8]) -> Result<RegisterPreflight<'_>>
         evidence,
         node_signature,
         enclave_signature,
+        validator_node_binding,
+        validator_signature,
+        node_binding_signature,
     })
 }
 
@@ -559,14 +665,49 @@ fn dispatch_mutator_after_verifier_for_test(
         registry.validate_transition_key_ready_proof_v1(&evidence)?;
     }
     match kind {
-        RegistryMutatorV1::RegisterEnclave => registry
-            .register_enclave_after_verifier_with_active_policy_for_test(
+        RegistryMutatorV1::RegisterEnclave => {
+            let binding = ValidatorNodeBindingV1::decode_canonical(
+                preflight.validator_node_binding.ok_or_else(|| {
+                    PrecompileError::Fatal("registration binding preflight was bypassed".into())
+                })?,
+            )
+            .map_err(|error| {
+                PrecompileError::Revert(format!(
+                    "validator NodeHost binding is not canonical: {error}"
+                ))
+            })?;
+            let validator_signature = preflight
+                .validator_signature
+                .ok_or_else(|| {
+                    PrecompileError::Fatal(
+                        "registration validator signature preflight was bypassed".into(),
+                    )
+                })?
+                .try_into()
+                .map_err(|_| {
+                    PrecompileError::Fatal("preflight validator signature mismatch".into())
+                })?;
+            let node_binding_signature = preflight
+                .node_binding_signature
+                .ok_or_else(|| {
+                    PrecompileError::Fatal(
+                        "registration NodeHost binding signature preflight was bypassed".into(),
+                    )
+                })?
+                .try_into()
+                .map_err(|_| {
+                    PrecompileError::Fatal("preflight NodeHost binding signature mismatch".into())
+                })?;
+            registry.register_enclave_and_bind_after_verifier_for_test(
                 intent,
                 &node_signature,
                 &enclave_signature,
-                &policy,
+                &binding,
+                &validator_signature,
+                &node_binding_signature,
                 capability,
-            ),
+            )
+        }
         RegistryMutatorV1::RenewEnclave => registry
             .renew_enclave_after_verifier_with_active_policy_for_test(
                 intent,
@@ -709,9 +850,8 @@ mod tests {
         storage::{hashmap::HashMapStorageProvider, PrecompileStorageProvider},
         tee_attestation_v1::{
             AttestationEvidenceV1, AttestationOperationV1, DcapCollateralComponentV1,
-            DcapCollateralKind, DcapEvidenceV1, EnclaveProfile, NodeIdV1, PlatformTcbStatusSetV1,
-            QvlTcbStatusV1, RegistrationIntentV1, ResourceScheduleV1, TeeMeasurementRuleV1,
-            TeePolicyV1,
+            DcapCollateralKind, DcapEvidenceV1, NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1,
+            RegistrationIntentV1, ResourceScheduleV1, TeeMeasurementRuleV1, TeePolicyV1,
         },
     };
 
@@ -747,7 +887,6 @@ mod tests {
             collateral_margin: 3_600,
             resource_schedule_hash: resources.schedule_hash().unwrap(),
             measurement_rules: vec![TeeMeasurementRuleV1 {
-                enclave_profile: EnclaveProfile::Validator,
                 mrenclave: B256::repeat_byte(0x45),
                 mrsigner: B256::repeat_byte(0x46),
                 isv_prod_id: 7,
@@ -803,6 +942,9 @@ mod tests {
             evidence: Bytes::from(evidence),
             nodeSignature: Bytes::from(vec![0x51; node_len]),
             enclaveSignature: Bytes::from(vec![0x52; enclave_len]),
+            validatorNodeBinding: Bytes::from(vec![0x53; ValidatorNodeBindingV1::CANONICAL_LEN]),
+            validatorSignature: Bytes::from(vec![0x54; 65]),
+            nodeBindingSignature: Bytes::from(vec![0x55; 65]),
         }
         .abi_encode()
     }
@@ -820,6 +962,12 @@ mod tests {
                 evidence: Bytes::from(evidence),
                 nodeSignature: node_signature,
                 enclaveSignature: enclave_signature,
+                validatorNodeBinding: Bytes::from(vec![
+                    0x53;
+                    ValidatorNodeBindingV1::CANONICAL_LEN
+                ]),
+                validatorSignature: Bytes::from(vec![0x54; 65]),
+                nodeBindingSignature: Bytes::from(vec![0x55; 65]),
             }
             .abi_encode(),
             RegistryMutatorV1::RenewEnclave => ITeeRegistryV1::renewEnclaveCall {
@@ -864,8 +1012,7 @@ mod tests {
             },
             attestation_mode: AttestationMode::DcapRequired,
             policy_hash: policy.policy_hash().unwrap(),
-            enclave_profile: EnclaveProfile::FullNode,
-            node_id: NodeIdV1::FullNode {
+            node_id: NodeIdV1 {
                 reth_p2p_public: reth_p2p_public.as_bytes().try_into().unwrap(),
             },
             enclave_id: B256::repeat_byte(1),
@@ -1137,7 +1284,7 @@ mod tests {
         let encoded_public = p2p_signing.verifying_key().to_encoded_point(true);
         let reth_p2p_prefix = encoded_public.as_bytes()[0];
         let reth_p2p_x = B256::from_slice(&encoded_public.as_bytes()[1..]);
-        let ready_call = ITeeRegistryV1::isFullNodeEnclaveReadyCall {
+        let ready_call = ITeeRegistryV1::isNodeHostEnclaveReadyCall {
             rethP2pPrefix: reth_p2p_prefix,
             rethP2pX: reth_p2p_x,
         };
@@ -1146,7 +1293,7 @@ mod tests {
             .unwrap();
         assert!(!bool::abi_decode(&ready).unwrap());
 
-        let binding_call = ITeeRegistryV1::fullNodeEnclaveBindingCall {
+        let binding_call = ITeeRegistryV1::nodeHostEnclaveBindingCall {
             rethP2pPrefix: reth_p2p_prefix,
             rethP2pX: reth_p2p_x,
         };
@@ -1166,7 +1313,7 @@ mod tests {
                 .exists
         );
 
-        let invalid = ITeeRegistryV1::isFullNodeEnclaveReadyCall {
+        let invalid = ITeeRegistryV1::isNodeHostEnclaveReadyCall {
             rethP2pPrefix: 0x04,
             rethP2pX: reth_p2p_x,
         };

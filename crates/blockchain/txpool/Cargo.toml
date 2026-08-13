@@ -10,6 +10,7 @@ publish.workspace = true
 outbe-primitives.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-metadosis.workspace = true
+outbe-validatorset.workspace = true
 outbe-zerofee.workspace = true
 
 # Reth

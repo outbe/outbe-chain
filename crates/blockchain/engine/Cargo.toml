@@ -55,6 +55,7 @@ alloy-consensus.workspace = true
 bytes.workspace = true
 
 # Crypto
+k256.workspace = true
 
 # Utilities
 clap.workspace = true

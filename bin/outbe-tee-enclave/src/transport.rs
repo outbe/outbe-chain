@@ -1619,7 +1619,7 @@ mod tests {
     #[test]
     fn transition_quote_requires_resident_offer_key_and_signs_candidate_manifest() {
         use outbe_primitives::tee_attestation_v1::{
-            AttestationMode, AttestationOperationV1, EnclaveProfile, RegistrationIntentV1,
+            AttestationMode, AttestationOperationV1, RegistrationIntentV1,
             TransitionKeyReadyProofV1,
         };
 
@@ -1640,7 +1640,7 @@ mod tests {
             response => panic!("unexpected challenge response: {response:?}"),
         };
         let (manifest, node_signature) =
-            signed_initialization_manifest(&keys, challenge, [0x32; 32], EnclaveProfile::Validator);
+            signed_initialization_manifest(&keys, challenge, [0x32; 32]);
         let pending = initialization
             .prepare(
                 &manifest.encode_canonical().unwrap(),
@@ -1655,7 +1655,6 @@ mod tests {
             operation: AttestationOperationV1::TransitionEnclaveMeasurement,
             attestation_mode: AttestationMode::DcapRequired,
             policy_hash: B256::repeat_byte(0x33),
-            enclave_profile: manifest.enclave_profile,
             node_id: manifest.node_id.clone(),
             enclave_id: manifest.enclave_id().unwrap(),
             binding_id: B256::repeat_byte(0x34),
@@ -1732,7 +1731,7 @@ mod tests {
     #[test]
     fn sgx_no_attest_production_session_signs_only_gramine_direct_dev_evidence() {
         use outbe_primitives::tee_attestation_v1::{
-            AttestationMode, AttestationOperationV1, EnclaveProfile, RegistrationIntentV1,
+            AttestationMode, AttestationOperationV1, RegistrationIntentV1,
         };
 
         let root = tempfile::tempdir().unwrap();
@@ -1745,12 +1744,8 @@ mod tests {
             crate::gramine::AttestationType::SgxNoAttest,
         )
         .unwrap();
-        let (manifest, node_signature) = signed_initialization_manifest(
-            &keys,
-            [0x42; 32],
-            [0x43; 32],
-            EnclaveProfile::Validator,
-        );
+        let (manifest, node_signature) =
+            signed_initialization_manifest(&keys, [0x42; 32], [0x43; 32]);
         let pending = initialization
             .prepare(
                 &manifest.encode_canonical().unwrap(),
@@ -1765,7 +1760,6 @@ mod tests {
             operation: AttestationOperationV1::RegisterEnclave,
             attestation_mode: AttestationMode::GramineDirectDev,
             policy_hash: B256::repeat_byte(0x44),
-            enclave_profile: manifest.enclave_profile,
             node_id: manifest.node_id.clone(),
             enclave_id: manifest.enclave_id().unwrap(),
             binding_id: B256::repeat_byte(0x45),
@@ -1828,39 +1822,25 @@ mod tests {
         keys: &EnclaveKeys,
         challenge: [u8; 32],
         node_host_noise_x25519: [u8; 32],
-        profile: outbe_primitives::tee_attestation_v1::EnclaveProfile,
     ) -> (
         outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1,
         [u8; 65],
     ) {
         use k256::ecdsa::signature::hazmat::PrehashSigner as _;
-        use outbe_primitives::tee_attestation_v1::{
-            EnclaveInitializationManifestV1, EnclaveProfile, NodeIdV1,
-        };
+        use outbe_primitives::tee_attestation_v1::{EnclaveInitializationManifestV1, NodeIdV1};
 
         let signing = k256::ecdsa::SigningKey::from_bytes((&[0x61; 32]).into()).unwrap();
-        let public = signing.verifying_key().to_encoded_point(false);
-        let hash = alloy_primitives::keccak256(&public.as_bytes()[1..]);
-        let mut address = [0u8; 20];
-        address.copy_from_slice(&hash[12..]);
-        let node_id = match profile {
-            EnclaveProfile::Validator => NodeIdV1::Validator {
-                address,
-                bls_minpk_public: [0x32; 48],
-            },
-            EnclaveProfile::FullNode => NodeIdV1::FullNode {
-                reth_p2p_public: signing
-                    .verifying_key()
-                    .to_encoded_point(true)
-                    .as_bytes()
-                    .try_into()
-                    .unwrap(),
-            },
+        let node_id = NodeIdV1 {
+            reth_p2p_public: signing
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()
+                .unwrap(),
         };
         let manifest = EnclaveInitializationManifestV1 {
             chain_id: [0x10; 32],
             genesis_hash: B256::repeat_byte(0x11),
-            enclave_profile: profile,
             node_id,
             initialization_challenge: challenge,
             node_host_noise_x25519,
@@ -1939,7 +1919,7 @@ mod tests {
     #[test]
     fn authenticated_noise_rpc_replays_real_processor_acceptance_through_enclave_qvl() {
         use outbe_primitives::tee_attestation_v1::{
-            AttestationEvidenceV1, AttestationMode, EnclaveProfile, GramineDirectEvidenceV1,
+            AttestationEvidenceV1, AttestationMode, GramineDirectEvidenceV1,
         };
         use outbe_tee::{
             dcap_protocol::{DcapPlatformTcbStatusV1, DcapRejectCodeV1, DcapVerificationOutcomeV1},
@@ -1978,12 +1958,8 @@ mod tests {
         let challenge = AuthorizedEnclaveClient::discover_endpoint(&endpoint).unwrap();
         let node_host_path = root.path().join("node-host-noise.key");
         let node_host = NodeHostNoiseKey::create_new(&node_host_path).unwrap();
-        let (manifest, node_signature) = signed_initialization_manifest(
-            &keys,
-            challenge.challenge,
-            node_host.public(),
-            EnclaveProfile::Validator,
-        );
+        let (manifest, node_signature) =
+            signed_initialization_manifest(&keys, challenge.challenge, node_host.public());
         let mut client = AuthorizedEnclaveClient::initialize_endpoint(
             &endpoint,
             &manifest,
@@ -2035,7 +2011,7 @@ mod tests {
     #[test]
     fn authorized_node_host_client_signs_dev_evidence_in_sgx_no_attest_mode() {
         use outbe_primitives::tee_attestation_v1::{
-            AttestationMode, AttestationOperationV1, EnclaveProfile, RegistrationIntentV1,
+            AttestationMode, AttestationOperationV1, RegistrationIntentV1,
         };
         use outbe_tee::{AuthorizedEnclaveClient, NodeHostNoiseKey};
 
@@ -2078,12 +2054,8 @@ mod tests {
         let challenge = AuthorizedEnclaveClient::discover_endpoint(&endpoint).unwrap();
         let node_host_path = root.path().join("node-host-noise.key");
         let node_host = NodeHostNoiseKey::create_new(&node_host_path).unwrap();
-        let (manifest, node_signature) = signed_initialization_manifest(
-            &keys,
-            challenge.challenge,
-            node_host.public(),
-            EnclaveProfile::Validator,
-        );
+        let (manifest, node_signature) =
+            signed_initialization_manifest(&keys, challenge.challenge, node_host.public());
         let mut client = AuthorizedEnclaveClient::initialize_endpoint(
             &endpoint,
             &manifest,
@@ -2097,7 +2069,6 @@ mod tests {
             operation: AttestationOperationV1::RegisterEnclave,
             attestation_mode: AttestationMode::GramineDirectDev,
             policy_hash: B256::repeat_byte(0x55),
-            enclave_profile: manifest.enclave_profile,
             node_id: manifest.node_id.clone(),
             enclave_id: manifest.enclave_id().unwrap(),
             binding_id: B256::repeat_byte(0x56),
@@ -2469,12 +2440,7 @@ mod tests {
     #[test]
     fn purpose_bound_target_derivation_requires_exact_manifest_context_and_nonce() {
         let keys = EnclaveKeys::new([0x35; 32], None).unwrap();
-        let (manifest, _) = signed_initialization_manifest(
-            &keys,
-            [0x36; 32],
-            [0x37; 32],
-            outbe_primitives::tee_attestation_v1::EnclaveProfile::FullNode,
-        );
+        let (manifest, _) = signed_initialization_manifest(&keys, [0x36; 32], [0x37; 32]);
         let group_sig = b"deterministic founding group signature";
         let (offer_secret, offer_public) =
             crate::crypto::derive_tribute_offer_secret_from_group_sig(
@@ -2968,12 +2934,8 @@ mod tests {
         let node_host_public =
             x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(node_host_private))
                 .to_bytes();
-        let (manifest, node_signature) = signed_initialization_manifest(
-            &keys,
-            challenge,
-            node_host_public,
-            outbe_primitives::tee_attestation_v1::EnclaveProfile::Validator,
-        );
+        let (manifest, node_signature) =
+            signed_initialization_manifest(&keys, challenge, node_host_public);
 
         // First connection: signed manifest plus possession of the exact embedded
         // NodeHost Noise key commits the write-once authorization.
@@ -3089,14 +3051,10 @@ mod tests {
     }
 
     #[test]
-    fn public_node_host_client_initializes_and_reconnects_both_profiles() {
-        use outbe_primitives::tee_attestation_v1::EnclaveProfile;
+    fn public_node_host_client_initializes_and_reconnects_role_neutral_identity() {
         use outbe_tee::{AuthorizedEnclaveClient, NodeHostNoiseKey};
 
-        for (profile, seed) in [
-            (EnclaveProfile::Validator, 0x71),
-            (EnclaveProfile::FullNode, 0x72),
-        ] {
+        for seed in [0x71, 0x72] {
             let root = tempfile::tempdir().unwrap();
             let socket = root.path().join("enclave.sock");
             let endpoint = socket.to_str().unwrap().to_string();
@@ -3135,12 +3093,8 @@ mod tests {
 
             let node_host_path = root.path().join("node-host-noise.key");
             let node_host = NodeHostNoiseKey::create_new(&node_host_path).unwrap();
-            let (manifest, node_signature) = signed_initialization_manifest(
-                &keys,
-                challenge.challenge,
-                node_host.public(),
-                profile,
-            );
+            let (manifest, node_signature) =
+                signed_initialization_manifest(&keys, challenge.challenge, node_host.public());
             let mut initialized = AuthorizedEnclaveClient::initialize_endpoint(
                 &endpoint,
                 &manifest,
@@ -3174,9 +3128,7 @@ mod tests {
 
     #[test]
     fn preauthenticated_remote_ticket_opens_one_live_noise_session_and_cannot_replay() {
-        use outbe_primitives::tee_attestation_v1::{
-            EnclaveProfile, NodeHostAuthorizationWitnessV1, NodeIdV1,
-        };
+        use outbe_primitives::tee_attestation_v1::{NodeHostAuthorizationWitnessV1, NodeIdV1};
         use outbe_tee::{
             admit_remote_session_v1, AuthorizedEnclaveClient, FinalizedRegistryBindingV1,
             FinalizedRegistryViewV1, NodeHostNoiseKey, RemoteEnclaveClient,
@@ -3223,12 +3175,8 @@ mod tests {
 
         let owner_path = root.path().join("owner-noise.key");
         let owner = NodeHostNoiseKey::create_new(&owner_path).unwrap();
-        let (manifest, node_signature) = signed_initialization_manifest(
-            &keys,
-            challenge,
-            owner.public(),
-            EnclaveProfile::Validator,
-        );
+        let (manifest, node_signature) =
+            signed_initialization_manifest(&keys, challenge, owner.public());
         let mut owner_client = AuthorizedEnclaveClient::initialize_endpoint(
             &endpoint,
             &manifest,
@@ -3239,14 +3187,18 @@ mod tests {
 
         let source_path = root.path().join("source-noise.key");
         let source = NodeHostNoiseKey::create_new(&source_path).unwrap();
-        let source_node = NodeIdV1::Validator {
-            address: [0xB1; 20],
-            bls_minpk_public: [0xB2; 48],
+        let source_node = NodeIdV1 {
+            reth_p2p_public: k256::ecdsa::SigningKey::from_bytes((&[0xB1; 32]).into())
+                .unwrap()
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()
+                .unwrap(),
         };
         let source_witness = NodeHostAuthorizationWitnessV1 {
             chain_id: manifest.chain_id,
             genesis_hash: manifest.genesis_hash,
-            enclave_profile: EnclaveProfile::Validator,
             node_id: source_node.clone(),
             node_host_noise_x25519: source.public(),
         };
@@ -3276,7 +3228,6 @@ mod tests {
         let source_binding = FinalizedRegistryBindingV1 {
             view,
             node_id_hash: source_node.node_id_hash().unwrap(),
-            profile: EnclaveProfile::Validator,
             enclave_id: B256::repeat_byte(0xB5),
             binding_id: B256::repeat_byte(0xB6),
             intent_hash: B256::repeat_byte(0xB7),
@@ -3288,7 +3239,6 @@ mod tests {
         let target_binding = FinalizedRegistryBindingV1 {
             view,
             node_id_hash: target_hash,
-            profile: EnclaveProfile::Validator,
             enclave_id: manifest.enclave_id().unwrap(),
             binding_id: B256::repeat_byte(0xC1),
             intent_hash: B256::repeat_byte(0xC2),
@@ -3301,9 +3251,7 @@ mod tests {
                 chain_id: manifest.chain_id,
                 genesis_hash: manifest.genesis_hash,
                 source_node_id_hash: source_binding.node_id_hash,
-                source_profile: EnclaveProfile::Validator,
                 target_node_id_hash: target_hash,
-                target_profile: EnclaveProfile::Validator,
             },
             &source_witness,
             source_binding,
@@ -3356,10 +3304,10 @@ mod tests {
     }
 
     #[test]
-    fn validator_node_host_state_initializes_once_and_reconnects_from_datadir() {
-        use alloy_primitives::{Address, U256};
+    fn node_host_state_initializes_once_and_reconnects_from_datadir() {
+        use alloy_primitives::U256;
         use k256::ecdsa::signature::hazmat::PrehashSigner as _;
-        use outbe_tee::{connect_or_initialize_validator_enclave, ValidatorNodeHostIdentityV1};
+        use outbe_tee::{connect_or_initialize_node_host_enclave, NodeHostIdentityV1};
 
         let root = tempfile::tempdir().unwrap();
         let socket = root.path().join("enclave.sock");
@@ -3395,14 +3343,15 @@ mod tests {
         });
 
         let signing = k256::ecdsa::SigningKey::from_bytes((&[0x61; 32]).into()).unwrap();
-        let public = signing.verifying_key().to_encoded_point(false);
-        let hash = alloy_primitives::keccak256(&public.as_bytes()[1..]);
-        let validator = Address::from_slice(&hash[12..]);
-        let identity = ValidatorNodeHostIdentityV1 {
+        let identity = NodeHostIdentityV1 {
             chain_id,
             genesis_hash,
-            validator,
-            consensus_bls_public: [0x32; 48],
+            reth_p2p_public: signing
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()
+                .unwrap(),
         };
         let sign = |hash: B256| {
             let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signing
@@ -3417,7 +3366,7 @@ mod tests {
         std::fs::create_dir(&node_data_dir).unwrap();
 
         let mut initialized =
-            connect_or_initialize_validator_enclave(&endpoint, &node_data_dir, identity, sign)
+            connect_or_initialize_node_host_enclave(&endpoint, &node_data_dir, identity, sign)
                 .unwrap();
         assert!(matches!(
             initialized.request(&EnclaveRequest::GetPublicKeys).unwrap(),
@@ -3426,7 +3375,7 @@ mod tests {
         drop(initialized);
 
         let mut reconnected =
-            connect_or_initialize_validator_enclave(&endpoint, &node_data_dir, identity, sign)
+            connect_or_initialize_node_host_enclave(&endpoint, &node_data_dir, identity, sign)
                 .unwrap();
         assert!(matches!(
             reconnected.request(&EnclaveRequest::GetPublicKeys).unwrap(),
@@ -3445,8 +3394,8 @@ mod tests {
     }
 
     #[test]
-    fn validator_replacement_candidate_keeps_the_committed_enclave_active() {
-        use alloy_primitives::{Address, U256};
+    fn node_host_replacement_candidate_keeps_the_committed_enclave_active() {
+        use alloy_primitives::U256;
         use k256::ecdsa::signature::hazmat::PrehashSigner as _;
         use outbe_primitives::tee_attestation_v1::{
             AttestationEvidenceV1, AttestationMode, AttestationOperationV1,
@@ -3454,8 +3403,8 @@ mod tests {
             EnclaveInitializationManifestV1, RegistrationIntentV1,
         };
         use outbe_tee::{
-            connect_or_initialize_validator_enclave, persist_replacement_candidate_submission,
-            prepare_validator_enclave_replacement_candidate, ValidatorNodeHostIdentityV1,
+            connect_or_initialize_node_host_enclave, persist_replacement_candidate_submission,
+            prepare_node_host_enclave_replacement_candidate, NodeHostIdentityV1,
         };
 
         let root = tempfile::tempdir().unwrap();
@@ -3520,14 +3469,15 @@ mod tests {
         });
 
         let signing = k256::ecdsa::SigningKey::from_bytes((&[0x63; 32]).into()).unwrap();
-        let public = signing.verifying_key().to_encoded_point(false);
-        let hash = alloy_primitives::keccak256(&public.as_bytes()[1..]);
-        let validator = Address::from_slice(&hash[12..]);
-        let identity = ValidatorNodeHostIdentityV1 {
+        let identity = NodeHostIdentityV1 {
             chain_id,
             genesis_hash,
-            validator,
-            consensus_bls_public: [0x33; 48],
+            reth_p2p_public: signing
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()
+                .unwrap(),
         };
         let sign = |hash: B256| {
             let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signing
@@ -3542,10 +3492,10 @@ mod tests {
         std::fs::create_dir(&node_data_dir).unwrap();
 
         drop(
-            connect_or_initialize_validator_enclave(&endpoint_a, &node_data_dir, identity, sign)
+            connect_or_initialize_node_host_enclave(&endpoint_a, &node_data_dir, identity, sign)
                 .unwrap(),
         );
-        let candidate = prepare_validator_enclave_replacement_candidate(
+        let candidate = prepare_node_host_enclave_replacement_candidate(
             &endpoint_b,
             &node_data_dir,
             identity,
@@ -3573,7 +3523,7 @@ mod tests {
             .join(outbe_tee::node_host::NODE_HOST_REPLACEMENT_CANDIDATE_V1);
         let candidate_bytes = std::fs::read(&candidate_path).unwrap();
         drop(candidate);
-        let resumed = prepare_validator_enclave_replacement_candidate(
+        let resumed = prepare_node_host_enclave_replacement_candidate(
             &endpoint_b,
             &node_data_dir,
             identity,
@@ -3590,7 +3540,6 @@ mod tests {
             operation: AttestationOperationV1::ReplaceEnclaveBinding,
             attestation_mode: AttestationMode::DcapRequired,
             policy_hash: B256::repeat_byte(0x21),
-            enclave_profile: candidate_manifest.enclave_profile,
             node_id: candidate_manifest.node_id.clone(),
             enclave_id: candidate_manifest.enclave_id().unwrap(),
             binding_id: B256::repeat_byte(0x45),
@@ -3655,7 +3604,7 @@ mod tests {
         .contains("conflicts with the durable replacement submission"));
 
         let mut active_client =
-            connect_or_initialize_validator_enclave(&endpoint_a, &node_data_dir, identity, sign)
+            connect_or_initialize_node_host_enclave(&endpoint_a, &node_data_dir, identity, sign)
                 .unwrap();
         assert!(matches!(
             active_client
@@ -3670,11 +3619,11 @@ mod tests {
 
     #[test]
     fn replacement_candidate_resumes_after_crash_between_stage_and_initialize() {
-        use alloy_primitives::{Address, U256};
+        use alloy_primitives::U256;
         use k256::ecdsa::signature::hazmat::PrehashSigner as _;
         use outbe_tee::{
-            connect_or_initialize_validator_enclave,
-            prepare_validator_enclave_replacement_candidate, ValidatorNodeHostIdentityV1,
+            connect_or_initialize_node_host_enclave,
+            prepare_node_host_enclave_replacement_candidate, NodeHostIdentityV1,
         };
 
         let root = tempfile::tempdir().unwrap();
@@ -3723,13 +3672,15 @@ mod tests {
         });
 
         let signing = k256::ecdsa::SigningKey::from_bytes((&[0x64; 32]).into()).unwrap();
-        let public = signing.verifying_key().to_encoded_point(false);
-        let address_hash = alloy_primitives::keccak256(&public.as_bytes()[1..]);
-        let identity = ValidatorNodeHostIdentityV1 {
+        let identity = NodeHostIdentityV1 {
             chain_id,
             genesis_hash,
-            validator: Address::from_slice(&address_hash[12..]),
-            consensus_bls_public: [0x34; 48],
+            reth_p2p_public: signing
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()
+                .unwrap(),
         };
         let sign = |hash: B256| {
             let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = signing
@@ -3743,7 +3694,7 @@ mod tests {
         let node_data_dir = root.path().join("node-data");
         std::fs::create_dir(&node_data_dir).unwrap();
         drop(
-            connect_or_initialize_validator_enclave(
+            connect_or_initialize_node_host_enclave(
                 &active_endpoint,
                 &node_data_dir,
                 identity,
@@ -3769,7 +3720,7 @@ mod tests {
             )
             .unwrap();
         });
-        assert!(prepare_validator_enclave_replacement_candidate(
+        assert!(prepare_node_host_enclave_replacement_candidate(
             &candidate_endpoint,
             &node_data_dir,
             identity,
@@ -3817,7 +3768,7 @@ mod tests {
             }
             accepted
         });
-        let retry = prepare_validator_enclave_replacement_candidate(
+        let retry = prepare_node_host_enclave_replacement_candidate(
             &candidate_endpoint,
             &node_data_dir,
             identity,
@@ -3834,15 +3785,13 @@ mod tests {
     }
 
     #[test]
-    fn full_node_host_state_uses_exact_reth_p2p_identity_and_reconnects() {
+    fn node_host_replacement_preserves_exact_reth_p2p_identity() {
         use alloy_primitives::U256;
         use k256::ecdsa::signature::hazmat::PrehashSigner as _;
-        use outbe_primitives::tee_attestation_v1::{
-            EnclaveInitializationManifestV1, EnclaveProfile, NodeIdV1,
-        };
+        use outbe_primitives::tee_attestation_v1::{EnclaveInitializationManifestV1, NodeIdV1};
         use outbe_tee::{
-            connect_or_initialize_full_node_enclave,
-            prepare_full_node_enclave_replacement_candidate, FullNodeNodeHostIdentityV1,
+            connect_or_initialize_node_host_enclave,
+            prepare_node_host_enclave_replacement_candidate, NodeHostIdentityV1,
         };
 
         let root = tempfile::tempdir().unwrap();
@@ -3913,7 +3862,7 @@ mod tests {
             .as_bytes()
             .try_into()
             .unwrap();
-        let identity = FullNodeNodeHostIdentityV1 {
+        let identity = NodeHostIdentityV1 {
             chain_id,
             genesis_hash,
             reth_p2p_public,
@@ -3931,7 +3880,7 @@ mod tests {
         std::fs::create_dir(&node_data_dir).unwrap();
 
         let mut initialized =
-            connect_or_initialize_full_node_enclave(&endpoint, &node_data_dir, identity, sign)
+            connect_or_initialize_node_host_enclave(&endpoint, &node_data_dir, identity, sign)
                 .unwrap();
         assert!(matches!(
             initialized.request(&EnclaveRequest::GetPublicKeys).unwrap(),
@@ -3940,28 +3889,21 @@ mod tests {
         drop(initialized);
 
         let mut reconnected =
-            connect_or_initialize_full_node_enclave(&endpoint, &node_data_dir, identity, sign)
+            connect_or_initialize_node_host_enclave(&endpoint, &node_data_dir, identity, sign)
                 .unwrap();
         assert!(matches!(
             reconnected.request(&EnclaveRequest::GetPublicKeys).unwrap(),
             EnclaveResponse::PublicKeys { .. }
         ));
         drop(reconnected);
-        let candidate = prepare_full_node_enclave_replacement_candidate(
+        let candidate = prepare_node_host_enclave_replacement_candidate(
             &candidate_endpoint,
             &node_data_dir,
             identity,
             sign,
         )
         .unwrap();
-        assert_eq!(
-            candidate.manifest().enclave_profile,
-            EnclaveProfile::FullNode
-        );
-        assert_eq!(
-            candidate.manifest().node_id,
-            NodeIdV1::FullNode { reth_p2p_public }
-        );
+        assert_eq!(candidate.manifest().node_id, NodeIdV1 { reth_p2p_public });
         let candidate_manifest = candidate.manifest().clone();
         drop(candidate);
         server.join().unwrap();
@@ -3974,8 +3916,7 @@ mod tests {
         )
         .unwrap();
         let manifest = EnclaveInitializationManifestV1::decode_canonical(&manifest_bytes).unwrap();
-        assert_eq!(manifest.enclave_profile, EnclaveProfile::FullNode);
-        assert_eq!(manifest.node_id, NodeIdV1::FullNode { reth_p2p_public });
+        assert_eq!(manifest.node_id, NodeIdV1 { reth_p2p_public });
         assert_ne!(
             manifest.enclave_id().unwrap(),
             candidate_manifest.enclave_id().unwrap()

@@ -53,9 +53,9 @@ use outbe_ocomp_protocol::{
         OcompTerminalOutcome,
     },
     system_carrier::{
-        classify_ocomp_system_carrier, OcompSystemCarrierError, OcompSystemCarrierView,
-        MAX_OCOMP_SYSTEM_CARRIER_CALLDATA_BYTES, MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
-        OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+        classify_ocomp_system_carrier, OcompSystemCarrierCandidate, OcompSystemCarrierError,
+        OcompSystemCarrierView, MAX_OCOMP_SYSTEM_CARRIER_CALLDATA_BYTES,
+        MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS, OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
     },
     unit::{
         BinaryReducerNode, EntityIdHalfOpenRange, PlanCommitmentV1, UnitArtifactV1, UnitInterval,
@@ -636,8 +636,11 @@ fn ocomp_system_carrier_classifier_is_exact_and_fail_closed() {
     let candidate = classify_ocomp_system_carrier(canonical, &LIMITS)
         .unwrap()
         .expect("canonical carrier");
-    assert_eq!(candidate.prefix.ocomp_key_hash, vote.ocomp_key_hash);
-    assert_eq!(candidate.prefix.job_id, vote.job_id);
+    let OcompSystemCarrierCandidate::ResultVote { prefix } = candidate else {
+        panic!("vote carrier must remain a vote candidate");
+    };
+    assert_eq!(prefix.ocomp_key_hash, vote.ocomp_key_hash);
+    assert_eq!(prefix.job_id, vote.job_id);
 
     assert!(matches!(
         classify_ocomp_system_carrier(
