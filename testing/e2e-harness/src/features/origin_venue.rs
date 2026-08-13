@@ -110,6 +110,24 @@ fn desis_stage(url: &str, worldwide_day: u32) -> String {
 /// Whether Metadosis ever closed the day. Closing it is what applies the budget
 /// split, and that is the only thing that briefs Desis for a day that ran a job,
 /// so a missing receipt places the gap before Desis rather than inside it.
+/// A red day briefs no supply, so Desis is left with nothing to start. Reading
+/// the type separates that from a green day whose closure simply never ran.
+#[cfg(feature = "ocomp-integration")]
+fn day_colour(world: &World, worldwide_day: u32) -> String {
+    match world
+        .rpc
+        .metadosis_wwd_state_on(world.validators.primary_port(), worldwide_day)
+    {
+        Some(state) => format!("day type {} in status {}", state.day_type, state.status),
+        None => "day state unreadable".to_owned(),
+    }
+}
+
+#[cfg(not(feature = "ocomp-integration"))]
+fn day_colour(_world: &World, _worldwide_day: u32) -> String {
+    "day type unreadable without ocomp-integration".to_owned()
+}
+
 #[cfg(feature = "ocomp-integration")]
 fn day_closure(world: &World, worldwide_day: u32) -> String {
     match world
@@ -170,10 +188,11 @@ fn auction_opens_on_target(world: &mut World) {
         }
         assert!(
             Instant::now() < deadline,
-            "day {worldwide_day} settled but no auction ever opened on the venue at {}: {}; {}",
+            "day {worldwide_day} settled but no auction ever opened on the venue at {}: {}; {}; {}",
             contracts.intex_auction,
             desis_stage(&url, worldwide_day),
-            day_closure(world, worldwide_day)
+            day_closure(world, worldwide_day),
+            day_colour(world, worldwide_day)
         );
         sleep(Duration::from_secs(2));
     }
