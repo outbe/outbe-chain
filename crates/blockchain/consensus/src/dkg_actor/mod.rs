@@ -8,13 +8,16 @@
 //!   share holders are Dealers; the frozen target set are Players.
 
 pub mod actor;
+mod recovery;
 pub mod wire;
 
 #[cfg(test)]
 mod sim_tests;
 
+#[cfg(test)]
+pub use actor::{run_initial_dkg, run_reshare_dealer_only};
 pub use actor::{
-    run_initial_dkg, run_initial_dkg_durable, run_reshare_dealer_only,
-    run_reshare_dealer_only_durable, DkgComplete, DkgDealerOnlyComplete, DkgDealerRetryStore,
+    run_initial_dkg_durable, run_reshare_dealer_only_durable, DkgComplete, DkgDealerOnlyComplete,
     DkgProgress,
 };
+pub use recovery::DkgRetryStore;

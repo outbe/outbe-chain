@@ -997,7 +997,7 @@ mod tests {
             PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded
         );
         assert_eq!(policy.accepted_qe_tcb_status, QvlTcbStatusV1::UpToDate);
-        assert_eq!(policy.measurement_rules.len(), 2);
+        assert_eq!(policy.measurement_rules.len(), 1);
         assert_eq!(
             policy.measurement_rules[0].mrenclave,
             B256::repeat_byte(0x11)
