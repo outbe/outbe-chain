@@ -14,8 +14,7 @@ interface IIntexFactory {
     ///         settler. Allowed in Qualified (voluntary) and Called (forced).
     ///         `paymentToken` must be registered with the vault router under either of the
     ///         series' currencies; the issuance one converts through COEN and needs fresh rates.
-    function settle(bytes14 seriesId, address intexHolder, uint256 amount, address paymentToken)
-        external;
+    function settle(bytes14 seriesId, address intexHolder, uint256 amount, address paymentToken) external;
 
     /// @notice Per-Intex cost of settling `seriesId` in `paymentToken`, in that
     ///         token's minor units. Reverts if the series does not accept it.
