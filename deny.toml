@@ -8,8 +8,9 @@ yanked = "deny"
 # constraint tracing, not Outbe's terminal logger. hickory-proto's DNSSEC
 # features are not enabled, so the NSEC3 validation path is absent; the encoder
 # only receives fixed-shape resolver queries, not attacker-supplied record sets.
+# bitmaps reaches us only through reth-transaction-pool's imbl persistent maps.
 # Revisit when upstreams bump the tracing-subscriber / hickory-dns / bincode /
-# paste dependencies.
+# paste / imbl dependencies.
 ignore = [
     "RUSTSEC-2023-0089", # atomic-polyfill unmaintained
     "RUSTSEC-2024-0436", # paste unmaintained
@@ -18,6 +19,7 @@ ignore = [
     "RUSTSEC-2026-0118", # hickory-dns NSEC3 loop — not on our attack surface
     "RUSTSEC-2026-0119", # hickory-dns name-compression CPU — not on our attack surface
     "RUSTSEC-2026-0173", # proc-macro-error2 unmaintained
+    "RUSTSEC-2026-0247", # bitmaps unmaintained; reth-transaction-pool -> imbl -> bitmaps
 ]
 
 [licenses]

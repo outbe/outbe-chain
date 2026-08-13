@@ -309,7 +309,7 @@ pub(crate) fn run_tee_bootstrap_v1(
     ctx: &BlockRuntimeContext,
     payload: &outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2,
 ) -> Result<()> {
-    use outbe_primitives::{tee_attestation_v1::NodeIdV1, tee_signatures::recover_signer};
+    use outbe_primitives::tee_signatures::recover_signer;
     use outbe_teeregistry::{TeeBootstrapData, TeeRegistry};
     use std::collections::BTreeSet;
 
@@ -347,13 +347,8 @@ pub(crate) fn run_tee_bootstrap_v1(
     let participant_validators = payload
         .participants
         .iter()
-        .map(|participant| match participant.intent.node_id {
-            NodeIdV1::Validator { address, .. } => Ok(Address::from(address)),
-            NodeIdV1::FullNode { .. } => Err(PrecompileError::Revert(
-                "TeeBootstrapV2: bootstrap participant is not a validator".into(),
-            )),
-        })
-        .collect::<Result<BTreeSet<_>>>()?;
+        .map(|participant| Address::from(participant.validator_binding.validator))
+        .collect::<BTreeSet<_>>();
     if participant_validators != committee || payload.participants.len() != committee.len() {
         return Err(PrecompileError::Revert(
             "TeeBootstrapV2: participants must equal the complete active consensus committee"
@@ -403,13 +398,12 @@ pub(crate) fn run_tee_bootstrap_v1(
             &evidence,
             &participant.node_signature,
             &participant.enclave_signature,
+            &participant.validator_binding,
+            &participant.validator_signature,
+            &participant.node_binding_signature,
         )?;
     }
 
-    let registrations = committee
-        .iter()
-        .map(|validator| registry.registration(*validator))
-        .collect::<Result<Vec<_>>>()?;
     let policy_hash = payload.policy.policy_hash().map_err(|error| {
         PrecompileError::Fatal(format!(
             "authoritative TeeBootstrapV2 policy cannot be hashed: {error}"
@@ -424,7 +418,6 @@ pub(crate) fn run_tee_bootstrap_v1(
         committee_snapshot_block: payload.committee_snapshot_block,
         committee_snapshot_hash,
         tribute_offer_group_public_key: payload.tribute_offer_group_public_key.clone(),
-        registrations,
     })
 }
 
@@ -1647,9 +1640,9 @@ mod tests {
     use outbe_primitives::{
         tee_attestation_v1::{
             AttestationMode, AttestationOperationV1, DcapCollateralComponentV1, DcapCollateralKind,
-            EnclaveProfile, NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1, RegistrationIntentV1,
+            NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1, RegistrationIntentV1,
             ResourceScheduleV1, TeeAttestationManifestV1, TeeMeasurementRuleV1,
-            TeePolicyScheduleEntryV1, TeePolicyScheduleV1, TeePolicyV1,
+            TeePolicyScheduleEntryV1, TeePolicyScheduleV1, TeePolicyV1, ValidatorNodeBindingV1,
         },
         tee_bootstrap_v2::{
             TeeBootstrapCommitteeSignatureV2, TeeBootstrapParticipantEvidenceV2,
@@ -1776,7 +1769,6 @@ mod tests {
                 .schedule_hash()
                 .unwrap(),
             measurement_rules: vec![TeeMeasurementRuleV1 {
-                enclave_profile: EnclaveProfile::Validator,
                 mrenclave: B256::repeat_byte(0x81),
                 mrsigner: B256::repeat_byte(0x82),
                 isv_prod_id: 1,
@@ -1807,32 +1799,44 @@ mod tests {
             .enumerate()
             .map(|(index, key)| {
                 let validator = tee_evm_address(key);
-                let mut consensus_pubkey = [7_u8; 48];
-                consensus_pubkey[0] = index as u8;
-                TeeBootstrapParticipantV2 {
-                    intent: RegistrationIntentV1 {
-                        chain_id: U256::from(CHAIN_ID).to_be_bytes(),
-                        genesis_hash: B256::repeat_byte(0x11),
-                        operation: AttestationOperationV1::RegisterEnclave,
-                        attestation_mode: AttestationMode::DcapRequired,
-                        policy_hash,
-                        enclave_profile: EnclaveProfile::Validator,
-                        node_id: NodeIdV1::Validator {
-                            address: validator.into_array(),
-                            bls_minpk_public: consensus_pubkey,
-                        },
-                        enclave_id: B256::repeat_byte(0x41 + index as u8),
-                        binding_id: B256::repeat_byte(0x51 + index as u8),
-                        binding_version: 1,
-                        registration_version: 0,
-                        renewal_nonce: 0,
-                        transition_nonce: 0,
-                        requested_valid_until: 7_200,
-                        recipient_x25519: [0x61 + index as u8; 32],
-                        attestation_ed25519: [0x71 + index as u8; 32],
-                        noise_responder_x25519: [0x81 + index as u8; 32],
-                        node_host_authorization_hash: B256::repeat_byte(0x91 + index as u8),
+                let intent = RegistrationIntentV1 {
+                    chain_id: U256::from(CHAIN_ID).to_be_bytes(),
+                    genesis_hash: B256::repeat_byte(0x11),
+                    operation: AttestationOperationV1::RegisterEnclave,
+                    attestation_mode: AttestationMode::DcapRequired,
+                    policy_hash,
+                    node_id: NodeIdV1 {
+                        reth_p2p_public: key
+                            .verifying_key()
+                            .to_encoded_point(true)
+                            .as_bytes()
+                            .try_into()
+                            .unwrap(),
                     },
+                    enclave_id: B256::repeat_byte(0x41 + index as u8),
+                    binding_id: B256::repeat_byte(0x51 + index as u8),
+                    binding_version: 1,
+                    registration_version: 0,
+                    renewal_nonce: 0,
+                    transition_nonce: 0,
+                    requested_valid_until: 7_200,
+                    recipient_x25519: [0x61 + index as u8; 32],
+                    attestation_ed25519: [0x71 + index as u8; 32],
+                    noise_responder_x25519: [0x81 + index as u8; 32],
+                    node_host_authorization_hash: B256::repeat_byte(0x91 + index as u8),
+                };
+                let validator_binding = ValidatorNodeBindingV1 {
+                    chain_id: U256::from(CHAIN_ID).to_be_bytes(),
+                    genesis_hash: B256::repeat_byte(0x11),
+                    validator: validator.into_array(),
+                    node_id_hash: intent.node_id.node_id_hash().unwrap(),
+                };
+                let binding_hash = validator_binding.binding_hash().unwrap();
+                TeeBootstrapParticipantV2 {
+                    validator_binding,
+                    validator_signature: tee_sign(key, &binding_hash),
+                    node_binding_signature: tee_sign(key, &binding_hash),
+                    intent,
                     evidence: TeeBootstrapParticipantEvidenceV2::Dcap {
                         quote: vec![0xA1 + index as u8; 64],
                         collateral_component_indices: [0, 1, 2, 3, 4, 5, 6, 7],

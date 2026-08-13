@@ -23,6 +23,9 @@ pub const DEFAULT_METADOSIS_WAITING_PERIOD_SECONDS: u64 = 12 * 60 * 60;
 pub const DEFAULT_METADOSIS_BOOTSTRAP_DURATION_SECONDS: u64 = 504 * 60 * 60;
 pub const DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS: u64 = 12 * 60 * 60;
 pub const DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS: u64 = 1_800;
+pub const DEFAULT_NOD_MATERIALIZATION_BATCH_SUBTREE_HEIGHT: u8 = 3;
+pub const DEFAULT_NOD_MATERIALIZATION_RETRY_INTERVAL_BLOCKS: u64 = 30;
+pub const DEFAULT_NOD_MATERIALIZATION_MAX_ATTEMPTS_PER_BLOCK: u16 = 1;
 
 /// Immutable system-owned account containing the resolved genesis parameters.
 /// It has marker bytecode but no public precompile dispatch or runtime writer.
@@ -37,9 +40,12 @@ pub const SLOT_METADOSIS_WAITING_PERIOD_SECONDS: u64 = 4;
 pub const SLOT_METADOSIS_BOOTSTRAP_DURATION_SECONDS: u64 = 5;
 pub const SLOT_METADOSIS_ADVANCE_INTERVAL_SECONDS: u64 = 6;
 pub const SLOT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS: u64 = 7;
-pub const SLOT_PARAMETERS_HASH: u64 = 8;
-pub const SLOT_INSTALLED: u64 = 9;
-pub const STORAGE_SLOT_COUNT: usize = 10;
+pub const SLOT_NOD_MATERIALIZATION_BATCH_SUBTREE_HEIGHT: u64 = 8;
+pub const SLOT_NOD_MATERIALIZATION_RETRY_INTERVAL_BLOCKS: u64 = 9;
+pub const SLOT_NOD_MATERIALIZATION_MAX_ATTEMPTS_PER_BLOCK: u64 = 10;
+pub const SLOT_PARAMETERS_HASH: u64 = 11;
+pub const SLOT_INSTALLED: u64 = 12;
+pub const STORAGE_SLOT_COUNT: usize = 13;
 
 const PARAMETERS_HASH_DOMAIN_V1: &[u8] = b"OUTBE_CHAIN_PROTOCOL_CONSTANTS_V1";
 
@@ -52,6 +58,63 @@ pub struct GenesisProtocolParametersV1 {
     pub metadosis_bootstrap_duration_seconds: u64,
     pub metadosis_advance_interval_seconds: u64,
     pub ocomp_compute_vote_window_blocks: u64,
+    pub nod_materialization: NodMaterializationProfileV1,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NodMaterializationProfileV1 {
+    pub batch_subtree_height: u8,
+    pub retry_interval_blocks: u64,
+    pub max_attempts_per_block: u16,
+}
+
+impl Default for NodMaterializationProfileV1 {
+    fn default() -> Self {
+        Self {
+            batch_subtree_height: DEFAULT_NOD_MATERIALIZATION_BATCH_SUBTREE_HEIGHT,
+            retry_interval_blocks: DEFAULT_NOD_MATERIALIZATION_RETRY_INTERVAL_BLOCKS,
+            max_attempts_per_block: DEFAULT_NOD_MATERIALIZATION_MAX_ATTEMPTS_PER_BLOCK,
+        }
+    }
+}
+
+impl NodMaterializationProfileV1 {
+    pub fn batch_capacity(self) -> Result<usize, ProtocolConstantsError> {
+        1_usize
+            .checked_shl(u32::from(self.batch_subtree_height))
+            .ok_or(ProtocolConstantsError::InvalidValue {
+                field: "nodMaterialization.batchSubtreeHeight",
+                requirement: "produce a capacity in 1..=256",
+                actual: u64::from(self.batch_subtree_height),
+            })
+    }
+
+    fn validate(self) -> Result<(), ProtocolConstantsError> {
+        let capacity = self.batch_capacity()?;
+        if capacity == 0 || capacity > 256 {
+            return Err(ProtocolConstantsError::InvalidValue {
+                field: "nodMaterialization.batchSubtreeHeight",
+                requirement: "produce a capacity in 1..=256",
+                actual: u64::from(self.batch_subtree_height),
+            });
+        }
+        if self.retry_interval_blocks == 0 {
+            return Err(ProtocolConstantsError::InvalidValue {
+                field: "nodMaterialization.retryIntervalBlocks",
+                requirement: "be non-zero",
+                actual: 0,
+            });
+        }
+        if self.max_attempts_per_block == 0 {
+            return Err(ProtocolConstantsError::InvalidValue {
+                field: "nodMaterialization.maxAttemptsPerBlock",
+                requirement: "be non-zero",
+                actual: 0,
+            });
+        }
+        Ok(())
+    }
 }
 
 impl Default for GenesisProtocolParametersV1 {
@@ -64,6 +127,7 @@ impl Default for GenesisProtocolParametersV1 {
             metadosis_bootstrap_duration_seconds: DEFAULT_METADOSIS_BOOTSTRAP_DURATION_SECONDS,
             metadosis_advance_interval_seconds: DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS,
             ocomp_compute_vote_window_blocks: DEFAULT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
+            nod_materialization: NodMaterializationProfileV1::default(),
         }
     }
 }
@@ -77,6 +141,16 @@ struct GenesisProtocolOverridesV1 {
     metadosis: MetadosisOverridesV1,
     #[serde(default)]
     ocomp: OcompOverridesV1,
+    #[serde(default)]
+    nod_materialization: NodMaterializationOverridesV1,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct NodMaterializationOverridesV1 {
+    batch_subtree_height: Option<u8>,
+    retry_interval_blocks: Option<u64>,
+    max_attempts_per_block: Option<u16>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -154,6 +228,20 @@ impl GenesisProtocolParametersV1 {
                 .ocomp
                 .compute_vote_window_blocks
                 .unwrap_or(defaults.ocomp_compute_vote_window_blocks),
+            nod_materialization: NodMaterializationProfileV1 {
+                batch_subtree_height: overrides
+                    .nod_materialization
+                    .batch_subtree_height
+                    .unwrap_or(defaults.nod_materialization.batch_subtree_height),
+                retry_interval_blocks: overrides
+                    .nod_materialization
+                    .retry_interval_blocks
+                    .unwrap_or(defaults.nod_materialization.retry_interval_blocks),
+                max_attempts_per_block: overrides
+                    .nod_materialization
+                    .max_attempts_per_block
+                    .unwrap_or(defaults.nod_materialization.max_attempts_per_block),
+            },
         };
         resolved.validate()?;
         Ok(resolved)
@@ -165,6 +253,7 @@ impl GenesisProtocolParametersV1 {
             self.metadosis_forming_period_seconds,
             DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS,
         )?;
+        self.nod_materialization.validate()?;
         validate_at_most(
             "metadosis.lookbackDelaySeconds",
             self.metadosis_lookback_delay_seconds,
@@ -210,7 +299,7 @@ impl GenesisProtocolParametersV1 {
 
     #[must_use]
     pub fn parameters_hash(self) -> B256 {
-        let mut encoded = Vec::with_capacity(PARAMETERS_HASH_DOMAIN_V1.len() + 2 + 7 * 8);
+        let mut encoded = Vec::with_capacity(PARAMETERS_HASH_DOMAIN_V1.len() + 2 + 7 * 8 + 11);
         encoded.extend_from_slice(PARAMETERS_HASH_DOMAIN_V1);
         encoded.extend_from_slice(&PROTOCOL_CONSTANTS_SCHEMA_VERSION.to_be_bytes());
         for value in [
@@ -224,6 +313,14 @@ impl GenesisProtocolParametersV1 {
         ] {
             encoded.extend_from_slice(&value.to_be_bytes());
         }
+        encoded.push(self.nod_materialization.batch_subtree_height);
+        encoded.extend_from_slice(&self.nod_materialization.retry_interval_blocks.to_be_bytes());
+        encoded.extend_from_slice(
+            &self
+                .nod_materialization
+                .max_attempts_per_block
+                .to_be_bytes(),
+        );
         keccak256(encoded)
     }
 
@@ -263,6 +360,18 @@ impl GenesisProtocolParametersV1 {
             (
                 U256::from(SLOT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS),
                 U256::from(self.ocomp_compute_vote_window_blocks),
+            ),
+            (
+                U256::from(SLOT_NOD_MATERIALIZATION_BATCH_SUBTREE_HEIGHT),
+                U256::from(self.nod_materialization.batch_subtree_height),
+            ),
+            (
+                U256::from(SLOT_NOD_MATERIALIZATION_RETRY_INTERVAL_BLOCKS),
+                U256::from(self.nod_materialization.retry_interval_blocks),
+            ),
+            (
+                U256::from(SLOT_NOD_MATERIALIZATION_MAX_ATTEMPTS_PER_BLOCK),
+                U256::from(self.nod_materialization.max_attempts_per_block),
             ),
             (
                 U256::from(SLOT_PARAMETERS_HASH),
@@ -346,6 +455,20 @@ impl GenesisProtocolParametersV1 {
                 read(SLOT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS)?,
                 "OCOMP vote window",
             )?,
+            nod_materialization: NodMaterializationProfileV1 {
+                batch_subtree_height: u8::try_from(read(
+                    SLOT_NOD_MATERIALIZATION_BATCH_SUBTREE_HEIGHT,
+                )?)
+                .map_err(|_| invalid_genesis("materialization subtree height does not fit u8"))?,
+                retry_interval_blocks: word_u64(
+                    read(SLOT_NOD_MATERIALIZATION_RETRY_INTERVAL_BLOCKS)?,
+                    "materialization retry interval",
+                )?,
+                max_attempts_per_block: u16::try_from(read(
+                    SLOT_NOD_MATERIALIZATION_MAX_ATTEMPTS_PER_BLOCK,
+                )?)
+                .map_err(|_| invalid_genesis("materialization attempt limit does not fit u16"))?,
+            },
         };
         resolved.validate()?;
         let stored_hash = B256::from(read(SLOT_PARAMETERS_HASH)?.to_be_bytes::<32>());
@@ -384,12 +507,29 @@ static RESOLVED_BY_GENESIS: OnceLock<RwLock<BTreeMap<B256, Arc<GenesisProtocolPa
 /// is cached process-wide by genesis hash; because the record is part of the
 /// genesis state root, equal keys necessarily name equal parameter records.
 pub fn load(ctx: &BlockRuntimeContext<'_>) -> RuntimeResult<Arc<GenesisProtocolParametersV1>> {
-    let genesis_hash = ctx.block.genesis_hash;
+    load_from_storage_with_genesis(ctx.storage.clone(), ctx.block.genesis_hash)
+}
+
+/// Loads immutable protocol parameters for APIs that own only a storage handle.
+/// The result shares the same process-wide genesis-keyed cache as block runtime
+/// callers, so downstream modules do not need to know whether a value came from
+/// a genesis override or from the canonical defaults materialized into genesis.
+pub fn load_from_storage(
+    storage: StorageHandle<'_>,
+) -> RuntimeResult<Arc<GenesisProtocolParametersV1>> {
+    let genesis_hash = storage.genesis_hash()?;
+    load_from_storage_with_genesis(storage, genesis_hash)
+}
+
+fn load_from_storage_with_genesis(
+    storage: StorageHandle<'_>,
+    genesis_hash: B256,
+) -> RuntimeResult<Arc<GenesisProtocolParametersV1>> {
     // `BlockContext::empty_for_tests` deliberately has no chain identity and
     // predates genesis materialization. Preserve those isolated unit contexts
     // without weakening production: every real node supplies a non-zero
     // ChainSpec genesis hash and therefore takes the strict storage path below.
-    if genesis_hash.is_zero() && !slot::<bool>(ctx.storage.clone(), SLOT_INSTALLED).read()? {
+    if genesis_hash.is_zero() && !slot::<bool>(storage.clone(), SLOT_INSTALLED).read()? {
         return Ok(Arc::new(GenesisProtocolParametersV1::default()));
     }
     if !genesis_hash.is_zero() {
@@ -404,7 +544,7 @@ pub fn load(ctx: &BlockRuntimeContext<'_>) -> RuntimeResult<Arc<GenesisProtocolP
         }
     }
 
-    let loaded = Arc::new(load_uncached(ctx.storage.clone())?);
+    let loaded = Arc::new(load_uncached(storage)?);
     if genesis_hash.is_zero() {
         return Ok(loaded);
     }
@@ -471,6 +611,23 @@ pub fn load_uncached(storage: StorageHandle<'_>) -> RuntimeResult<GenesisProtoco
             SLOT_OCOMP_COMPUTE_VOTE_WINDOW_BLOCKS,
         )
         .read()?,
+        nod_materialization: NodMaterializationProfileV1 {
+            batch_subtree_height: slot(
+                storage.clone(),
+                SLOT_NOD_MATERIALIZATION_BATCH_SUBTREE_HEIGHT,
+            )
+            .read()?,
+            retry_interval_blocks: slot(
+                storage.clone(),
+                SLOT_NOD_MATERIALIZATION_RETRY_INTERVAL_BLOCKS,
+            )
+            .read()?,
+            max_attempts_per_block: slot(
+                storage.clone(),
+                SLOT_NOD_MATERIALIZATION_MAX_ATTEMPTS_PER_BLOCK,
+            )
+            .read()?,
+        },
     };
     resolved
         .validate()

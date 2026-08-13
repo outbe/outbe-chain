@@ -15,6 +15,18 @@ interface INodFactory {
 
     event NodBurned(address indexed owner, bytes nodId, uint256 gratisLoadMinor);
 
+    event NodMaterializationProgress(
+        uint64 indexed queueSequence,
+        uint32 indexed worldwideDay,
+        uint64 generation,
+        uint32 firstNodOrdinal,
+        uint32 nextNodOrdinal,
+        bool completed,
+        uint64 blockNumber
+    );
+
+    error NodMaterializationRejected(uint8 code);
+
     event NodSettled(address indexed owner, address indexed payer, bytes nodId, address asset, uint256 amountPaid);
 
     /// @notice Constant-size owner event for one certified OCOMP generation.
@@ -54,4 +66,11 @@ interface INodFactory {
     ///         caller's current on-chain gratis op-nonce. The Nod owner is the
     ///         gratis recipient, so they can always supply this authorization.
     function mineGratis(bytes calldata nodId, uint256 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
+
+    /// @notice Materialize the current certified FIFO head from one canonical
+    ///         proof-backed OCOMP batch.
+    function materializeCertifiedNods(bytes calldata canonicalBatch) external;
+
+    /// @notice Return the canonical current FIFO head, or `exists=false` when empty.
+    function materializationHead() external view returns (bool exists, bytes memory canonicalHead);
 }

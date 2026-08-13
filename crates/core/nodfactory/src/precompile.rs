@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
-use outbe_primitives::dispatch::{dispatch_call, mutate, preflight_dynamic_bytes_len};
-use outbe_primitives::error::Result;
+use outbe_primitives::dispatch::{dispatch_call, mutate, preflight_dynamic_bytes_len, view};
+use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::runtime;
 use outbe_compressed_entities::{EntityId36, ExecutionScope, ParentBodySource};
@@ -27,6 +27,11 @@ pub fn dispatch(
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
     preflight_entity_id(data)?;
+    if data.get(..4)
+        == Some(outbe_ocomp_protocol::abi::MATERIALIZE_CERTIFIED_NODS_SELECTOR.as_slice())
+    {
+        return dispatch_materialization(storage, scope, parent, data, caller);
+    }
     dispatch_call(data, INodFactory::INodFactoryCalls::abi_decode, |call| {
         use INodFactory::INodFactoryCalls::*;
         match call {
@@ -48,7 +53,50 @@ pub fn dispatch(
                     auth,
                 )
             }),
+            materializationHead(c) => view(c, |_| {
+                let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
+                let head =
+                    outbe_nod::NodContract::new(storage.clone()).ocomp_materialization_head()?;
+                let (exists, canonical_head) =
+                    crate::materialization::encode_materialization_head(head, &limits)?;
+                Ok(INodFactory::materializationHeadReturn {
+                    exists,
+                    canonicalHead: canonical_head,
+                })
+            }),
+            materializeCertifiedNods(_) => Err(PrecompileError::Fatal(
+                "Nod materialization bypassed its bounded dispatcher".into(),
+            )),
         }
+    })
+}
+
+fn dispatch_materialization(
+    storage: outbe_primitives::storage::StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    data: &[u8],
+    caller: Address,
+) -> Result<Bytes> {
+    crate::materialization::authorize_materializer(storage.clone(), caller)
+        .map_err(crate::materialization::typed_materialization_error)?;
+    let profile = outbe_chain_constants::load_from_storage(storage.clone())?.nod_materialization;
+    let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
+    storage.clone().with_checkpoint(|| {
+        crate::materialization::consume_materialization_attempt(&storage, profile)
+            .map_err(crate::materialization::typed_materialization_error)?;
+        let batch =
+            outbe_ocomp_protocol::abi::decode_materialize_certified_nods_calldata(data, &limits)
+                .map_err(|_| {
+                    crate::materialization::typed_materialization_error(PrecompileError::from(
+                        crate::errors::NodFactoryError::InvalidMaterializationBatchShape,
+                    ))
+                })?;
+        crate::materialization::materialize_after_attempt(
+            &storage, scope, parent, &batch, profile, &limits,
+        )
+        .map_err(crate::materialization::typed_materialization_error)?;
+        Ok(Bytes::new())
     })
 }
 

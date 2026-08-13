@@ -25,6 +25,8 @@ pub fn active_nod_set(
         || nod.worldwide_day.value() == 0
         || nod.generation == 0
         || nod.issued_at == 0
+        || active.job_id != nod.job_id
+        || active.program_semantics_hash != nod.program_semantics_hash
         || active.nod_root != nod.nod_root
         || active.bucket_root != nod.bucket_root
         || active.output_manifest_root != nod.output_manifest_root

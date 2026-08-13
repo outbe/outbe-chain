@@ -13,9 +13,8 @@ use serde_json::{json, Value};
 use crate::{
     chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID},
     tee_attestation_v1::{
-        AttestationMode, EnclaveProfile, PlatformTcbStatusSetV1, QvlTcbStatusV1,
-        ResourceScheduleV1, TeeMeasurementRuleV1, TeePolicyScheduleEntryV1, TeePolicyScheduleV1,
-        TeePolicyV1,
+        AttestationMode, PlatformTcbStatusSetV1, QvlTcbStatusV1, ResourceScheduleV1,
+        TeeMeasurementRuleV1, TeePolicyScheduleEntryV1, TeePolicyScheduleV1, TeePolicyV1,
     },
 };
 
@@ -65,9 +64,8 @@ impl InitialTeeProfileV1 {
 
 /// Build the only policy shape permitted at block 1.
 ///
-/// Validator and full-node rules intentionally share the exact release
-/// measurement tuple because both roles execute the same pinned enclave binary.
-/// Their profile discriminants remain distinct policy rules.
+/// NodeHost admission is role-neutral because every role executes the same
+/// pinned enclave binary.
 pub fn initial_tee_policy_v1(
     profile: InitialTeeProfileV1,
     chain_id: u64,
@@ -98,7 +96,7 @@ pub fn initial_tee_policy_v1(
     let resource_schedule_hash = ResourceScheduleV1::normative()
         .and_then(|schedule| schedule.schedule_hash())
         .map_err(|error| format!("derive normative resource schedule: {error}"))?;
-    let (minimum_tcb_evaluation_data_number, validator, full_node) = match profile {
+    let (minimum_tcb_evaluation_data_number, measurement_rule) = match profile {
         InitialTeeProfileV1::DcapRequired(measurement) => {
             if measurement.mrenclave.is_zero() || measurement.mrsigner.is_zero() {
                 return Err("DcapRequired measurements must be non-zero".into());
@@ -108,8 +106,7 @@ pub fn initial_tee_policy_v1(
                     "DcapRequired minimum TCB evaluation data number must be non-zero".into(),
                 );
             }
-            let rule = |enclave_profile| TeeMeasurementRuleV1 {
-                enclave_profile,
+            let rule = TeeMeasurementRuleV1 {
                 mrenclave: measurement.mrenclave,
                 mrsigner: measurement.mrsigner,
                 isv_prod_id: measurement.isv_prod_id,
@@ -117,42 +114,21 @@ pub fn initial_tee_policy_v1(
                 admit_from_height: 1,
                 admit_until_height_exclusive: u64::MAX,
             };
-            (
-                measurement.minimum_tcb_evaluation_data_number,
-                rule(EnclaveProfile::Validator),
-                rule(EnclaveProfile::FullNode),
-            )
+            (measurement.minimum_tcb_evaluation_data_number, rule)
         }
         InitialTeeProfileV1::GramineDirectDev => {
             // These are domain-separated non-hardware projections used only by
             // the explicitly separate development policy. They are not SGX
             // measurements and cannot be selected by DcapRequired construction.
-            let rule = |enclave_profile, profile_name: &[u8]| TeeMeasurementRuleV1 {
-                enclave_profile,
-                mrenclave: keccak256(
-                    [
-                        b"outbe/tee/gramine-direct-dev/mrenclave/v1".as_slice(),
-                        profile_name,
-                    ]
-                    .concat(),
-                ),
-                mrsigner: keccak256(
-                    [
-                        b"outbe/tee/gramine-direct-dev/mrsigner/v1".as_slice(),
-                        profile_name,
-                    ]
-                    .concat(),
-                ),
+            let rule = TeeMeasurementRuleV1 {
+                mrenclave: keccak256(b"outbe/tee/gramine-direct-dev/mrenclave/v1"),
+                mrsigner: keccak256(b"outbe/tee/gramine-direct-dev/mrsigner/v1"),
                 isv_prod_id: 1,
                 minimum_isv_svn: 1,
                 admit_from_height: 1,
                 admit_until_height_exclusive: u64::MAX,
             };
-            (
-                1,
-                rule(EnclaveProfile::Validator, b"validator"),
-                rule(EnclaveProfile::FullNode, b"full-node"),
-            )
+            (1, rule)
         }
     };
 
@@ -178,7 +154,7 @@ pub fn initial_tee_policy_v1(
         maximum_lease: 604_800,
         collateral_margin: 3_600,
         resource_schedule_hash,
-        measurement_rules: vec![validator, full_node],
+        measurement_rules: vec![measurement_rule],
     };
     policy
         .encode_canonical()
@@ -273,7 +249,7 @@ mod tests {
     }
 
     #[test]
-    fn dcap_policy_pins_both_roles_to_one_release_measurement() {
+    fn dcap_policy_pins_one_role_neutral_release_measurement() {
         let measurement = dcap_measurement();
         let policy = initial_tee_policy_v1(
             InitialTeeProfileV1::DcapRequired(measurement),
@@ -282,17 +258,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(policy.attestation_mode, AttestationMode::DcapRequired);
-        assert_eq!(policy.measurement_rules.len(), 2);
+        assert_eq!(policy.measurement_rules.len(), 1);
         for rule in &policy.measurement_rules {
             assert_eq!(rule.mrenclave, measurement.mrenclave);
             assert_eq!(rule.mrsigner, measurement.mrsigner);
             assert_eq!(rule.isv_prod_id, measurement.isv_prod_id);
             assert_eq!(rule.minimum_isv_svn, measurement.minimum_isv_svn);
         }
-        assert_ne!(
-            policy.measurement_rules[0].enclave_profile,
-            policy.measurement_rules[1].enclave_profile
-        );
         assert_eq!(
             policy.accepted_platform_tcb_statuses,
             PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded

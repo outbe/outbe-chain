@@ -6,9 +6,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use alloy_primitives::{hex, Address, Bytes};
+use alloy_primitives::{hex, Bytes};
 use eyre::{eyre, Result};
-use outbe_primitives::tee_attestation_v1::NodeIdV1;
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 
 use crate::internal::{
@@ -50,8 +49,8 @@ fn full_node_joiner_role_args(
 }
 
 impl Localnet {
-    /// Launch the future joiner as a non-voting full-execution follower while
-    /// preserving the validator slot's durable Reth datadir for promotion.
+    /// Launch a node in non-voting full-execution mode while preserving its
+    /// durable Reth datadir and role-neutral NodeHost identity.
     /// The FullNode owns an enclave and NodeHost identity in its own slot. The
     /// process receives no validator BLS key and no OCOMP voting credentials.
     pub fn launch_joiner_full_node(
@@ -96,8 +95,17 @@ impl Localnet {
     /// Provision a joiner: keygen, fund, register, p2p, enclave, `tee join`
     /// (port of `e2e_provision_joiner`). Leaves keys under `validator-<index>/`.
     pub fn provision_joiner(&mut self, index: usize) -> Result<()> {
+        self.provision_existing_node_as_joiner(index)?;
+        self.join_node_enclave(index)
+    }
+
+    /// Add ValidatorSet and OCOMP material to an already joined role-neutral
+    /// NodeHost. This deliberately does not perform a second TEE join.
+    pub fn provision_existing_node_as_joiner(&mut self, index: usize) -> Result<()> {
         self.provision_joiner_registration(index)?;
-        self.join_validator_enclave(index)
+        #[cfg(feature = "ocomp-integration")]
+        crate::world::ocomp::stage_direct_joiner_domain_material(&self.cfg, index)?;
+        Ok(())
     }
 
     /// Generate and register Validator/OCOMP identity without changing the
@@ -107,8 +115,7 @@ impl Localnet {
         fs::create_dir_all(&vd)?;
         let signing_key = vd.join("signing-key.hex").display().to_string();
 
-        // Fresh hybrid key material for the joiner.
-        self.keygen(&["hybrid", "--output-dir", &vd.display().to_string()])?;
+        self.ensure_node_key_material(index)?;
         let bls = first_hex(&self.keygen(&["show-pubkey", "--key", &signing_key])?, 96)
             .ok_or_else(|| eyre!("no BLS pubkey from keygen"))?;
         let key = read_evm_key(&vd)?;
@@ -155,7 +162,7 @@ impl Localnet {
         }
 
         // Fund from validator-0, prove that an unrelated EOA cannot register
-        // this validator identity, then self-register and publish the P2P
+        // this ValidatorSet identity, then self-register and publish the P2P
         // address. The rejected call uses the joiner's otherwise-valid BLS
         // binding, isolating caller authorization from proof validation.
         let v0 = read_evm_key(&self.cfg.validator_dir(0))?;
@@ -215,12 +222,9 @@ impl Localnet {
         Ok(())
     }
 
-    /// Start a fresh Validator-profile enclave and complete its on-chain TEE join.
-    pub fn join_validator_enclave(&mut self, index: usize) -> Result<()> {
+    /// Start a node's role-neutral enclave and complete its one on-chain TEE join.
+    pub fn join_node_enclave(&mut self, index: usize) -> Result<()> {
         let vd = self.cfg.validator_dir(index);
-        let signing_key = vd.join("signing-key.hex").display().to_string();
-        let bls = first_hex(&self.keygen(&["show-pubkey", "--key", &signing_key])?, 96)
-            .ok_or_else(|| eyre!("no BLS pubkey from keygen"))?;
         let key = read_evm_key(&vd)?;
         self.start_node_enclave(index)?;
         let port = self.cfg.tee_port(index);
@@ -236,10 +240,10 @@ impl Localnet {
             "join",
             "--enclave-socket",
             sock,
-            "--profile",
-            "validator",
-            "--consensus-bls-public",
-            bls,
+            "--reth-p2p-secret-key",
+            vd.join("reth-p2p-secret.hex").display(),
+            "--node-evm-key",
+            vd.join("evm-key.hex").display(),
             "--binding-id",
             binding_id,
             "--valid-until",
@@ -249,7 +253,7 @@ impl Localnet {
             "--private-key",
             key,
             "--timeout-secs",
-            if matches!(self.cfg.tee_mode, crate::env::TeeMode::Real) {
+            if self.cfg.tee_mode.passes_sgx_devices() {
                 "180"
             } else {
                 "60"
@@ -277,43 +281,12 @@ impl Localnet {
         self.enclaves.remove(&index);
     }
 
-    /// Preserve the stopped FullNode's immutable local TEE identity before the
-    /// same synchronized node slot is promoted to a Validator. Chain data and
-    /// OCOMP results remain in place; only profile-bound identity is moved.
-    pub fn archive_full_node_identity_for_validator_promotion(
-        &mut self,
-        index: usize,
-    ) -> Result<()> {
-        self.stop_node_enclave(index);
-
-        let validator_dir = self.cfg.validator_dir(index);
-        let archive_dir = validator_dir.join("full-node-identity-v1");
-        let tee_dir = validator_dir.join("tee");
-        let node_host_dir = validator_dir
-            .join("data")
-            .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1);
-        let archived_tee_dir = archive_dir.join("tee");
-        let archived_node_host_dir = archive_dir.join("tee-node-host-v1");
-
-        if archive_dir.exists() {
-            return Err(eyre!(
-                "FullNode identity archive already exists: {}",
-                archive_dir.display()
-            ));
-        }
-        for path in [&tee_dir, &node_host_dir] {
-            if !path.exists() {
-                return Err(eyre!(
-                    "cannot promote FullNode without its committed identity: {}",
-                    path.display()
-                ));
-            }
-        }
-
-        fs::create_dir(&archive_dir)?;
-        fs::rename(&tee_dir, &archived_tee_dir)?;
-        fs::rename(&node_host_dir, &archived_node_host_dir)?;
-        Ok(())
+    /// Move one complete harness-owned node slot without changing any identity
+    /// or key material. Production nodes keep their directory in place; this
+    /// exists only because the harness reserves distinct numeric port slots.
+    pub fn move_role_neutral_node_slot(&mut self, from: usize, to: usize) -> Result<()> {
+        self.stop_node_enclave(from);
+        self.move_datadir(&format!("validator-{from}"), &format!("validator-{to}"))
     }
 
     pub fn restart_full_node_enclave(&mut self, index: usize) -> Result<()> {
@@ -341,34 +314,16 @@ impl Localnet {
         let endpoint = format!("127.0.0.1:{}", self.cfg.tee_port(index));
         let unexpected_reinitialize =
             |_| Err("committed node unexpectedly required reinitialization".to_owned());
-        let mut client = match manifest.node_id {
-            NodeIdV1::Validator {
-                address,
-                bls_minpk_public,
-            } => outbe_tee::connect_or_initialize_validator_enclave(
-                &endpoint,
-                &node_data_dir,
-                outbe_tee::ValidatorNodeHostIdentityV1 {
-                    chain_id,
-                    genesis_hash: manifest.genesis_hash,
-                    validator: Address::from(address),
-                    consensus_bls_public: bls_minpk_public,
-                },
-                unexpected_reinitialize,
-            ),
-            NodeIdV1::FullNode { reth_p2p_public } => {
-                outbe_tee::connect_or_initialize_full_node_enclave(
-                    &endpoint,
-                    &node_data_dir,
-                    outbe_tee::FullNodeNodeHostIdentityV1 {
-                        chain_id,
-                        genesis_hash: manifest.genesis_hash,
-                        reth_p2p_public,
-                    },
-                    unexpected_reinitialize,
-                )
-            }
-        }
+        let mut client = outbe_tee::connect_or_initialize_node_host_enclave(
+            &endpoint,
+            &node_data_dir,
+            outbe_tee::NodeHostIdentityV1 {
+                chain_id,
+                genesis_hash: manifest.genesis_hash,
+                reth_p2p_public: manifest.node_id.reth_p2p_public,
+            },
+            unexpected_reinitialize,
+        )
         .map_err(|error| eyre!("authenticated node enclave reopen failed: {error}"))?;
         match client.request(&EnclaveRequest::GetPublicKeys)? {
             EnclaveResponse::PublicKeys {
@@ -508,6 +463,24 @@ impl Localnet {
     fn keygen(&self, args: &[&str]) -> Result<String> {
         proc::run_capture(&self.cfg.bin_keygen, args)
     }
+
+    pub(super) fn ensure_node_key_material(&self, index: usize) -> Result<()> {
+        let node_dir = self.cfg.validator_dir(index);
+        let bls = node_dir.join("signing-key.hex");
+        let evm = node_dir.join("evm-key.hex");
+        match (bls.is_file(), evm.is_file()) {
+            (true, true) => Ok(()),
+            (false, false) => {
+                self.keygen(&["hybrid", "--output-dir", &node_dir.display().to_string()])?;
+                Ok(())
+            }
+            _ => Err(eyre!(
+                "node key material is partial: both {} and {} must exist or both be absent",
+                bls.display(),
+                evm.display()
+            )),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -515,7 +488,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn full_node_joiner_role_has_no_validator_or_ocomp_vote_credentials() {
+    fn full_node_runtime_does_not_load_separately_provisioned_role_keys() {
         let args = full_node_joiner_role_args(
             "p2p-secret",
             "127.0.0.1:34000",

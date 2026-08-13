@@ -76,9 +76,6 @@ pub const CYCLE_ADDRESS: Address = address!("0x000000000000000000000000000000000
 
 pub const CCA_ADDRESS: Address = address!("0x0000000000000000000000000000000000001011");
 
-/// Merchant pool accumulator address. Receives the 4 % Merchant slice of
-pub const MERCHANT_ADDRESS: Address = address!("0x0000000000000000000000000000000000001012");
-
 // ---------------------------------------------------------------------------
 // Validator infrastructure precompiles (0xEE00 range)
 // ---------------------------------------------------------------------------

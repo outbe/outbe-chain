@@ -301,7 +301,7 @@ mod tests {
         let tx_hash = format!("0x{}", "11".repeat(32));
         let block_hash = B256::repeat_byte(0x12);
         let expected = ExpectedOnboardingBindingV1 {
-            selector: NodeBindingSelectorV1::Validator(Address::repeat_byte(0x13)),
+            selector: NodeBindingSelectorV1::NodeHost([0x13; 33]),
             chain_id: [0x14; 32],
             genesis_hash: B256::repeat_byte(0x15),
             node_id_hash: B256::repeat_byte(0x16),

@@ -1372,6 +1372,13 @@ fn next_consensus_epoch_after_dkg_activation(current_epoch: Epoch) -> Epoch {
     Epoch::new(current_epoch.get().saturating_add(1))
 }
 
+fn next_dkg_cycle_after_restored_target(
+    current_next_cycle: u64,
+    restored_target_cycle: u64,
+) -> u64 {
+    current_next_cycle.max(restored_target_cycle.saturating_add(1))
+}
+
 fn genesis_hash(node: &OutbeFullNode) -> Result<B256> {
     let hash = node
         .provider
@@ -3079,7 +3086,7 @@ where
     // FAILS FAST (node halts via startup error) on timeout or error, rather than
     // proceeding into a permanently un-bootstrapped chain (no offer key on-chain =>
     // offers impossible). Local liveness only — not a consensus rule on imported
-    // blocks. Missing local enclave or validator identity is a startup error,
+    // blocks. Missing local enclave or NodeHost identity is a startup error,
     // never a production fallback.
     let socket = args.tee_enclave_socket.clone().ok_or_else(|| {
         eyre::eyre!("mandatory TEE chain requires --tee-enclave-socket before consensus startup")
@@ -3141,16 +3148,6 @@ where
                 committee.contains(&my_validator),
                 "local validator is absent from the exact OST3 epoch-0 committee snapshot"
             );
-            let encoded_consensus_key = local_consensus_key.encode();
-            let consensus_bls_public: [u8; 48] = encoded_consensus_key
-                .as_ref()
-                .try_into()
-                .map_err(|_| eyre::eyre!("validator consensus public key is not 48 bytes"))?;
-            let node_id = outbe_primitives::tee_attestation_v1::NodeIdV1::Validator {
-                address: my_validator.into_array(),
-                bls_minpk_public: consensus_bls_public,
-            };
-            let numeric_chain_id = node.chain_spec().chain().id();
             let requested_valid_until = node
                 .chain_spec()
                 .genesis
@@ -3168,6 +3165,21 @@ where
                 .to_str()
                 .ok_or_else(|| eyre::eyre!("TEE enclave endpoint is not valid UTF-8"))?
                 .to_owned();
+            let reth_p2p_secret = node
+                .config
+                .network
+                .secret_key(node.data_dir.p2p_secret())
+                .wrap_err("failed to load persistent Reth P2P identity for OST3")?;
+            let node_host_signing =
+                k256::ecdsa::SigningKey::from_slice(reth_p2p_secret.secret_bytes().as_slice())
+                    .map_err(|error| eyre::eyre!("invalid Reth P2P signing key: {error}"))?;
+            let reth_p2p_public = node_host_signing
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()
+                .map_err(|_| eyre::eyre!("Reth P2P public key is not compressed SEC1-33"))?;
+            let node_id = outbe_primitives::tee_attestation_v1::NodeIdV1 { reth_p2p_public };
 
             // Step 1 (TEE DKG → shared offer key) + Step 2 (bootstrap coordination →
             // block-1 payload), under one deadline. Any error or timeout halts.
@@ -3186,20 +3198,9 @@ where
                 .timeout(deadline, async move {
                     let (mut enclave, production_manifest) = match tee_session {
                         crate::args::ResolvedTeeSession::ProductionNodeHost => {
-                            let production = outbe_tee::connect_or_initialize_validator_enclave(
+                            let production = outbe_tee::connect_committed_node_host_enclave(
                                 &endpoint,
                                 &node_data_dir,
-                                outbe_tee::ValidatorNodeHostIdentityV1 {
-                                    chain_id: numeric_chain_id,
-                                    genesis_hash: tee_policy.genesis_hash,
-                                    validator: my_validator,
-                                    consensus_bls_public,
-                                },
-                                |hash| {
-                                    evm_signer
-                                        .sign_hash(&hash)
-                                        .map_err(|error| error.to_string())
-                                },
                             )
                             .map_err(|error| {
                                 eyre::eyre!("production NodeHost reconnect failed: {error}")
@@ -3254,6 +3255,19 @@ where
                             &tee_policy,
                             requested_valid_until,
                             &evm_signer,
+                            |hash| {
+                                use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+                                let (signature, recovery): (
+                                    k256::ecdsa::Signature,
+                                    k256::ecdsa::RecoveryId,
+                                ) = node_host_signing
+                                    .sign_prehash(hash.as_slice())
+                                    .map_err(|error| error.to_string())?;
+                                let mut bytes = [0_u8; 65];
+                                bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
+                                bytes[64] = recovery.to_byte();
+                                Ok(bytes)
+                            },
                         )?;
                     let authority = outbe_primitives::tee_bootstrap_v2::TeeBootstrapAuthorityV2 {
                         policy: tee_policy,
@@ -3314,7 +3328,7 @@ where
             // A restarted active validator must already hold the exact resident
             // offer key committed on-chain. Startup never recovers or replaces a
             // lost key and never falls back to a pre-V1 delivery protocol.
-            let my_validator = proposer_evm_address.ok_or_else(|| {
+            let _my_validator = proposer_evm_address.ok_or_else(|| {
                 eyre::eyre!("active validator consensus startup requires its EVM identity")
             })?;
             let on_chain_offer = validators::read_tee_offer_public_at_latest(&node.provider)
@@ -3323,17 +3337,6 @@ where
                 !on_chain_offer.is_zero(),
                 "mandatory OST3 chain has no on-chain offer key after block 1"
             );
-            let evm_key_path = args
-                .effective_validator_evm_key()?
-                .ok_or_else(|| eyre::eyre!("validator restart requires its EVM signer key"))?;
-            let evm_signer = outbe_primitives::signer::OutbeEvmSigner::from_file(&evm_key_path)
-                .map_err(|error| eyre::eyre!("failed to load validator EVM signer: {error}"))?;
-            let local_consensus_key = signing_key.public_key();
-            let encoded_consensus_key = local_consensus_key.encode();
-            let consensus_bls_public: [u8; 48] = encoded_consensus_key
-                .as_ref()
-                .try_into()
-                .map_err(|_| eyre::eyre!("validator consensus public key is not 48 bytes"))?;
             let node_data_dir = node
                 .config
                 .datadir
@@ -3347,24 +3350,10 @@ where
             let mut enclave = match tee_session {
                 crate::args::ResolvedTeeSession::ProductionNodeHost => {
                     outbe_tee::RuntimeEnclaveClient::Production(
-                        outbe_tee::connect_or_initialize_validator_enclave(
-                            endpoint,
-                            &node_data_dir,
-                            outbe_tee::ValidatorNodeHostIdentityV1 {
-                                chain_id: node.chain_spec().chain().id(),
-                                genesis_hash: tee_policy.genesis_hash,
-                                validator: my_validator,
-                                consensus_bls_public,
-                            },
-                            |hash| {
-                                evm_signer
-                                    .sign_hash(&hash)
-                                    .map_err(|error| error.to_string())
-                            },
-                        )
-                        .map_err(|error| {
-                            eyre::eyre!("production NodeHost reconnect failed: {error}")
-                        })?,
+                        outbe_tee::connect_committed_node_host_enclave(endpoint, &node_data_dir)
+                            .map_err(|error| {
+                                eyre::eyre!("production NodeHost reconnect failed: {error}")
+                            })?,
                     )
                 }
                 crate::args::ResolvedTeeSession::Development => {
@@ -4032,6 +4021,10 @@ where
                 })?
             }
         };
+        let restored_target_dkg_cycle = match &restored {
+            RestoredPendingDkgActivation::Participant(pending) => pending.target.dkg_cycle,
+            RestoredPendingDkgActivation::DealerOnly(pending) => pending.target.dkg_cycle,
+        };
         let exact_carrier_height = find_exact_finalized_preannounce_carrier(
             &node.provider,
             pending_artifact,
@@ -4056,6 +4049,8 @@ where
                     active_epoch == current_epoch,
                     "deferred startup DKG plan changed active epoch"
                 );
+                dkg_cycle =
+                    next_dkg_cycle_after_restored_target(dkg_cycle, restored_target_dkg_cycle);
                 match restored {
                     RestoredPendingDkgActivation::Participant(pending) => {
                         frozen_dkg_target = Some(pending.target.clone());

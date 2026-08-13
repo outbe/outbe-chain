@@ -180,8 +180,7 @@ mod tests {
     use crate::encode_protocol_version;
     use alloy_primitives::B256;
     use outbe_primitives::tee_attestation_v1::{
-        AttestationMode, EnclaveProfile, PlatformTcbStatusSetV1, QvlTcbStatusV1,
-        TeeMeasurementRuleV1, TeePolicyV1,
+        AttestationMode, PlatformTcbStatusSetV1, QvlTcbStatusV1, TeeMeasurementRuleV1, TeePolicyV1,
     };
 
     const LOCALNET_CHAIN_ID: u64 = 54_322_345;
@@ -220,7 +219,6 @@ mod tests {
             collateral_margin: 3_600,
             resource_schedule_hash: B256::repeat_byte(0x44),
             measurement_rules: vec![TeeMeasurementRuleV1 {
-                enclave_profile: EnclaveProfile::Validator,
                 mrenclave: B256::repeat_byte(0x55),
                 mrsigner: B256::repeat_byte(0x66),
                 isv_prod_id: 7,

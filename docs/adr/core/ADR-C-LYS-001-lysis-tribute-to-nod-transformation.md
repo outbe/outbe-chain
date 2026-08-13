@@ -1,217 +1,100 @@
-# ADR-C-LYS-001: Lysis atomically transforms a sealed Tribute day into Nods
+# ADR-C-LYS-001: Lysis deterministically commits the Tribute-to-NOD transformation
 
-- **Status:** Proposed; fresh-devnet OCOMP path implemented, exact-revision Linux evidence pending
-- **Date:** 2026-07-30
-- **Decision owners:** Tribute/Nod economics and authenticated-state maintainers
-- **Scope:** `crates/core/lysis` and its direct Tribute, Nod, Fidelity, Oracle,
-  Intex-contributor and compressed-entity seams
-- **Depends on:** ADR-B-CNS-003, ADR-B-EVM-004, ADR-S-OCM-002 through
-  ADR-S-OCM-004, ADR-C-GRT-001, ADR-C-MET-001, ADR-C-FID-001,
-  ADR-C-TRB-001, ADR-C-NOD-001
-- **Related:** ADR-S-OCM-001, ADR-B-OCD-001 through ADR-B-OCD-015,
-  PFS-002
-- **Supersedes:** Lysis sections of former broad pre-space Cycle/daily-orchestration document (previously numbered 029)
+- **Status:** Accepted
+- **Date:** 2026-08-12
+- **Owners:** `crates/core/lysis`, OCOMP result construction and verification
+- **Depends on:** ADR-C-TRB-001, ADR-C-NOD-001, ADR-C-FID-001,
+  ADR-S-OCM-002, ADR-S-OCM-003, ADR-S-OCM-004
 
 ## Context
 
-Lysis is a deterministic domain transformation executed through bounded work:
-it consumes one sealed WorldwideDay's complete authenticated Tribute
-population, allocates a supplied Gratis budget, creates the surviving Nod
-representation and records Intex contributor provenance. Its all-or-nothing
-conservation and authenticated-state obligations deserve a separate
-architecture review boundary.
+Lysis transforms one sealed WorldwideDay of Tributes into a deterministic NOD
+generation. The computation requires the authenticated Tribute population,
+Fidelity leagues, frozen Oracle values, and the Metadosis budget. It is too large
+for direct on-chain execution, but its result must remain independently
+verifiable and canonically applicable.
 
 ## Decision
 
-Lysis V1 is a deterministic typed OCOMP program. Metadosis creates its exact
-request; the authenticated input/export contract is ADR-S-OCM-002; independent
-execution/evidence is ADR-S-OCM-003; and full-result quorum apply is
-ADR-S-OCM-004.
+Lysis V1 is a typed OCOMP program. Given one finalized `JobIntentV1` and its
+authenticated inputs, every validator and FullNode computes the same result
+without writing chain state.
 
-The semantic program accepts a typed frozen job and authenticated input bundle
-and, without chain writes:
+The program:
 
-1. requires the Tribute partition to be initialized and sealed;
-2. reads all authenticated Tribute bodies in canonical paginated key order;
-3. verifies body count and nominal sum against sealed `DayTotals`;
-4. groups records by current Fidelity league;
-5. computes deterministic fixed-point allocation fractions;
-6. requires one strictly positive allocation per Tribute, never exceeding the
-   remaining budget;
-7. derives exactly one typed Nod action for each `(owner, day)` identity with
-   canonical Oracle prices, floor, league and cost;
-8. derives canonical contributor and Tribute-retirement effects;
-9. streams bounded `ResultChunkV1` objects and builds their canonical catalog
-   root, output roots, counts, totals and conservation commitments; and
-10. returns constant-size `LysisResultV1` plus exact `unused_lysis`.
+1. verifies the sealed Tribute partition, count, and nominal total;
+2. reads Tribute bodies in canonical key order;
+3. resolves the committed Fidelity and Oracle inputs;
+4. computes deterministic fixed-point allocations within the frozen budget;
+5. derives at most one `NodActionV1` for each owner and WorldwideDay;
+6. derives contributor and Tribute-retirement effects;
+7. emits bounded `ResultChunkV1` objects; and
+8. returns constant-size roots, counts, totals, conservation commitments, and
+   `unused_lysis` in `LysisResultV1`.
 
-Metadosis splits the daily limit before Lysis:
+The NOD entry price and all other economics are fixed by this computation. They
+are not read again during later materialization.
+
+## Certification and activation
+
+Validators vote for the complete `LysisResultV1`. The quorum-forming vote makes
+that result canonical and atomically installs the certified generation metadata,
+roots, scalar effects, Tribute retirement, contributor state, carry-over, and
+Metadosis completion. On-chain activation does not iterate through all NOD
+actions and does not rerun Lysis.
+
+The certified `nod_root` is the authority for the ordered `NodActionV1` list
+while materialization is pending. Individual NOD ledger entries are then
+created through the bounded materializer defined by ADR-C-NOD-002. The final
+batch clears the duplicate NOD-module root projection; Metadosis retains the
+historical certified result, while ordinary NOD bodies, indexes, and buckets
+become operational authority. Certification and materialization are therefore
+two parts of one user-visible outcome:
 
 ```text
-day_limit = lysis_budget + auction_base
-unused_lysis = lysis_budget - used_by_nods
+sealed Tributes
+  -> deterministic Lysis result
+  -> OCOMP quorum certification
+  -> proof-backed NOD batches
+  -> ordinary enumerable and mineable NODs
 ```
 
-For a GREEN day, Metadosis sends `auction_base` to Desis before the OCOMP
-job starts. A RED day sends no auction supply.
+The generation is incomplete for mining while its materialization projection
+exists. The final batch removes that projection only after every certified NOD
+action has been issued atomically. This completion transition does not change
+the canonical Lysis result and does not introduce a replacement generation.
 
-Desis is not a Lysis input or quorum-apply effect. `unused_lysis` is credited to
-Promis carry-over only when the q-forming vote atomically applies the certified
-result.
+## Merkle contract
 
-On-chain quorum apply does not rerun these steps or iterate every result action.
-The closed Lysis verifier checks the typed result commitment, bindings, live
-target preconditions, root transition and equations.
+The ordered NOD action list uses the canonical OCOMP list hashing rules:
 
-Only then may it create the private in-frame apply capability (currently named
-`CertifiedLysisActivation` internally). Its apply path calls domain-owner
-certified methods inside one outer checkpoint.
+- `ListKind::NodActions` leaf, node, pad, and root hashes;
+- global action ordinals;
+- power-of-two padding;
+- bounded result chunks;
+- a shared upper path for a materialization batch.
 
-Metadosis owns terminal day status. Lysis owns transformation/result
-correctness and its certified effect contract. Physical compressed-entity
-persistence follows ADR-B-CNS-003 and the CE series; Lysis cannot claim storage
-durability before end-block commit.
-
-Metadosis is not a synchronous Lysis caller. For fresh devnet, every populated
-positive-gratis day enters OCOMP pre-admission and Lysis-owned effects are
-reachable only from verified OCOMP result apply. Missing OCOMP profile is a
-startup/runtime invariant failure. Zero limit, unknown day type, empty Tribute
-day and zero Gratis allocation remain explicit local Metadosis terminal
-outcomes and do not invoke Lysis.
-
-NodFactory owns later Nod mining, not Lysis. Mining requires Nod owner, qualified
-state and valid PoW; any cost payment, Nod deletion and matching Gratis mint share
-one transaction.
+The materializer rederives the NOD identity from owner and WorldwideDay and the
+bucket identity from WorldwideDay and floor price. A proof can authorize only
+the exact action at the exact ordinal under the certified root.
 
 ## Invariants
 
-- The input partition is sealed and its authenticated bodies exactly match totals.
-- Each consumed Tribute maps to exactly one unique Nod and no pre-existing Nod is
-  overwritten.
-- Sum of Nod Gratis loads plus returned remainder equals the supplied budget.
-- `auction_base` never enters the Lysis input or result.
-- `unused_lysis` is credited once to carry-over and never tops up a live auction.
-- Every allocation is positive and no intermediate remaining budget underflows.
-- Tribute supply/count/nominal are consumed exactly once.
-- Contributor owner/nominal entries match the transformed Tribute set and their
-  sum; ordering is canonical.
-- `LysisResultV1` is bound to one exact `JobId`, attempt, request-time
-  logical context and protocol bundle.
-- Pure execution has no storage writer, system clock, network or configuration
-  input.
-- Only `CertifiedLysisActivation` can reach Lysis-owned effect methods.
-- A failed transformation leaves no Nod, contributor, Tribute-total, retirement
-  or carry-over effect.
-- A successful transformation cannot be replayed for the same sealed population.
+- The input partition is finalized, initialized, sealed, and consistent with
+  its committed totals.
+- The program is deterministic for the pinned intent and protocol semantics.
+- There is at most one NOD action per owner per WorldwideDay.
+- Allocation never exceeds the frozen Lysis budget.
+- Result chunks, manifest, roots, counts, totals, and conservation equations
+  describe the same ordered result.
+- Quorum activation commits only constant-size certified state.
+- Materialization never changes the certified action or its economics.
+- A FullNode whose local Lysis result disagrees with the canonical quorum result
+  stops rather than accepting inconsistent local data.
 
-## Atomicity, determinism and capacity
+## Non-goals
 
-Pure execution is partitioned into fork-pinned `UnitSpecV1` variants and a fixed
-reduction order. Fixed-point constants, Fidelity league mapping, rounding, dust
-destination, CE ordering, planner/reducer rules and price inputs are
-consensus-critical. One, two and four workers plus arbitrary retry/completion
-order must produce byte-identical result bytes. No floating point, wall time,
-database enumeration order, network response or worker identity participates.
-
-The PoC bounds one work shard, input/result chunks, concurrent workers and the
-constant-size activation envelope; it does not cap total Tribute. Arbitrary `N`
-is represented by committed counts and roots and processed with bounded
-cursors. The PoC proves the architecture on a multi-shard fixture and proves
-non-proportional plan construction for 10,000 and 1,000,000,000 records; it does
-not claim billion-record throughput, storage capacity or operational readiness.
-
-Metadosis `CapacityForfeiture` is not a Lysis execution or fallback. It binds
-the authenticated sealed Tribute root, source generation and exact aggregate
-count/nominal, then clears owner totals and requests retirement in constant
-consensus work. It creates no Nod and converts no Tribute value into Promis;
-only the victim WWD's already-formed Metadosis limit is routed to carry-over.
-Physical body retention and release remain node-owned exactly as for certified
-retirement.
-
-## Failure and recovery
-
-Malformed/missing bodies, root/totals mismatch, duplicate Nod identity, zero
-allocation, arithmetic overflow or unavailable required opening makes the local
-execution invalid and produces no signature. Corrupt authenticated state is an
-invariant failure, not a skippable Tribute.
-
-During certified apply, a nested owner error or receipt mismatch aborts the outer
-checkpoint. Retrying begins from the same live job. A diagnostic emitted inside a
-reverted frame is not durable failure state; operational reporting cannot change
-consensus state.
-
-## Security, compatibility and evidence
-
-Only OCOMP may execute/verify the pinned Lysis program, and only its private
-certified capability may apply effects. The supplied budget/day cannot be
-user-selected through a public bypass. Tribute bodies are trusted only after the
-ADR-S-OCM-002 completeness contract; Oracle and Fidelity assumptions are imported
-from their ADRs.
-
-Body codec, identity `(owner, day)`, allocation math, fixed-point scales, grouping,
-Nod schema and contributor encoding require fork activation for changes.
-
-Inspected tests cover the pure Lysis arithmetic/model, count/total mismatch,
-uniqueness, rollback, retirement preconditions and Nod mining guards. Production
-caller inventory contains no Metadosis-to-`outbe_lysis::runtime::lysis` edge;
-populated Metadosis days create OCOMP request state and verified result apply is
-the sole production Lysis effect path. Full Linux E2E closure remains governed
-by the Metadosis/OCOMP evidence plan.
-
-## Consequences
-
-Lysis has one crisp semantic outcome: exact bounded result chunks and one
-constant-size typed result commitment for the complete authenticated job,
-followed by either fully conserved certified root application or no state
-change. OCOMP can evolve operationally without owning its economics.
-
-## Rejected alternatives
-
-- **Skip malformed or tiny Tributes:** totals and one-to-one provenance would no
-  longer close.
-- **Commit Nods incrementally without an FSM:** retry could duplicate or omit value.
-- **Delete bodies before all Nods exist:** recovery would lose authoritative input.
-- **Let Cycle invoke Lysis directly:** it bypasses the WorldwideDay FSM and limit.
-- **Keep synchronous on-chain Lysis as fallback:** compute outage would reintroduce
-  unbounded consensus work and change failure semantics.
-- **Apply generic calls/write sets:** domain invariants and private mutation
-  authority would be bypassed.
-- **Expose Lysis as a public generic `TaskAdapter`:** one program does not prove a
-  safe common wire abstraction.
-
-## Open questions and technical debt
-
-1. Formalize maximum nominal, budget, league population and product bounds; replace
-   unchecked fixed-point intermediates with checked arithmetic where required.
-2. Small budgets/rounding may produce a zero allocation and block the whole day.
-   Define minimum allocation, eligibility and dust policy.
-3. Nod identity `(owner, day)` assumes at most one Tribute per owner/day. Prove and
-   structurally test the invariant across all Tribute mutation/import paths.
-4. `consume_lysis_partition` zeros totals while physical bodies disappear at CE
-   persistence. Prove no public read exposes a logically consumed body and that all
-   owner/day indexes retire atomically.
-5. Define exact retry behavior when end-block CE persistence fails after execution
-   produced a retirement intent.
-6. The error path's FAILED event/state is reverted with the transaction. Add durable
-   non-authoritative diagnostics and remove misleading writes.
-7. Prove contributor aggregation when several Tributes resolve to the same owner;
-   specify whether entries are per Tribute or per unique owner.
-8. Price snapshots used for Nod cost/floor must be pinned to a precise block/day;
-   current Oracle availability/finality assumptions need ADR-S-ORC-001 closure.
-9. Nod mining accepts an asset whose binding to `reference_currency` is unfinished.
-    Close this before cost-bearing mining is enabled.
-10. ERC-20 transfer/approve return handling and nonstandard-token behavior require
-    safe-call and adversarial-token tests.
-11. Prove `day_limit = lysis_budget + auction_base` and
-    `lysis_budget = used_by_nods + unused_lysis` with checked arithmetic.
-12. Add generated tests spanning all leagues, permutations, duplicate identities,
-    rounding extremes, every injected nested-call failure and replay.
-13. Add structural caller tests proving no user ABI or unrelated module can invoke
-    raw Lysis/consume mutators.
-14. Freeze `UnitSpecV1`, planner/reducer semantics, typed result/action codecs and
-    an independent reference corpus.
-15. Prove 1/2/4-worker byte equality, Supervisor-submitted authenticated system
-    result votes only after finality+4, snapshot-derived quorum binding,
-    job-pinned all-participant accountability (production default 1,800 blocks) with ACTIVE-only deadline jail
-    and non-ACTIVE non-mutation, independent FullNode recomputation and the full
-    PFS-002 activation/output path.
+This decision does not change the Lysis algorithm, work-shard size, ValidatorSet
+membership, voting quorum, Worker protocol, or FullNode replay model. It does not
+materialize all NODs inside the quorum-forming transaction and does not introduce
+on-demand NOD creation.

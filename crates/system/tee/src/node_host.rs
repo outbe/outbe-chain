@@ -12,10 +12,10 @@ use std::os::unix::fs::{
 };
 use std::path::{Path, PathBuf};
 
-use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_primitives::{keccak256, B256, U256};
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationOperationV1, DcapEvidenceV1, EnclaveInitializationManifestV1,
-    EnclaveProfile, NodeIdV1, RegistrationIntentV1, MAX_ATTESTATION_EVIDENCE_BYTES,
+    NodeIdV1, RegistrationIntentV1, MAX_ATTESTATION_EVIDENCE_BYTES,
 };
 
 use crate::{
@@ -46,58 +46,21 @@ const REPLACEMENT_PROMOTION_VERSION_V1: u8 = 1;
 const REPLACEMENT_PROMOTION_BYTES: u64 = 1 + 32 + 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ValidatorNodeHostIdentityV1 {
-    pub chain_id: u64,
-    pub genesis_hash: B256,
-    pub validator: Address,
-    pub consensus_bls_public: [u8; 48],
-}
-
-impl ValidatorNodeHostIdentityV1 {
-    fn into_common(self) -> NodeHostIdentityV1 {
-        NodeHostIdentityV1 {
-            chain_id: self.chain_id,
-            genesis_hash: self.genesis_hash,
-            enclave_profile: EnclaveProfile::Validator,
-            node_id: NodeIdV1::Validator {
-                address: self.validator.into_array(),
-                bls_minpk_public: self.consensus_bls_public,
-            },
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FullNodeNodeHostIdentityV1 {
+pub struct NodeHostIdentityV1 {
     pub chain_id: u64,
     pub genesis_hash: B256,
     pub reth_p2p_public: [u8; 33],
 }
 
-impl FullNodeNodeHostIdentityV1 {
-    fn into_common(self) -> NodeHostIdentityV1 {
-        NodeHostIdentityV1 {
-            chain_id: self.chain_id,
-            genesis_hash: self.genesis_hash,
-            enclave_profile: EnclaveProfile::FullNode,
-            node_id: NodeIdV1::FullNode {
-                reth_p2p_public: self.reth_p2p_public,
-            },
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct NodeHostIdentityV1 {
-    chain_id: u64,
-    genesis_hash: B256,
-    enclave_profile: EnclaveProfile,
-    node_id: NodeIdV1,
-}
-
 impl NodeHostIdentityV1 {
     fn chain_id_word(&self) -> [u8; 32] {
         U256::from(self.chain_id).to_be_bytes()
+    }
+
+    fn node_id(&self) -> NodeIdV1 {
+        NodeIdV1 {
+            reth_p2p_public: self.reth_p2p_public,
+        }
     }
 }
 
@@ -133,7 +96,6 @@ pub struct FinalizedReplacementAuthorizationV1 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FinalizedReplacementBindingV1 {
     pub view: FinalizedRegistryViewV1,
-    pub profile: EnclaveProfile,
     pub node_id_hash: B256,
     pub enclave_id: B256,
     pub binding_id: B256,
@@ -342,50 +304,44 @@ impl ReplacementCandidateRecordV1 {
     }
 }
 
-/// Connect to the one initialized validator enclave, or perform its one-time
+/// Connect to the one initialized NodeHost enclave, or perform its one-time
 /// initialization when no committed host manifest exists.
 ///
 /// `node_data_dir` is the resolved chain-specific reth data directory. The
 /// function owns only its fixed `tee-node-host-v1` child. A committed manifest
 /// is never replaced: losing or replacing the enclave identity is an explicit
 /// operator decision, not an implicit startup recovery path.
-pub fn connect_or_initialize_validator_enclave<F>(
+pub fn connect_or_initialize_node_host_enclave<F>(
     endpoint: &str,
     node_data_dir: &Path,
-    identity: ValidatorNodeHostIdentityV1,
+    identity: NodeHostIdentityV1,
     sign_authorization: F,
 ) -> Result<AuthorizedEnclaveClient, TransportError>
 where
     F: Fn(B256) -> Result<[u8; 65], String>,
 {
-    connect_or_initialize_enclave(
-        endpoint,
-        node_data_dir,
-        identity.into_common(),
-        sign_authorization,
-    )
+    connect_or_initialize_enclave(endpoint, node_data_dir, identity, sign_authorization)
 }
 
-/// Connect to the one initialized full-node enclave, or perform its one-time
-/// initialization when no committed host manifest exists.
-///
-/// The authorization signer must be the exact persistent Reth P2P key whose
-/// compressed public key is carried by `identity`.
-pub fn connect_or_initialize_full_node_enclave<F>(
+/// Reconnect to the one already committed NodeHost identity. This path never
+/// creates state and is used by later startup stages after the node entrypoint
+/// has resolved and committed the persistent Reth P2P identity.
+pub fn connect_committed_node_host_enclave(
     endpoint: &str,
     node_data_dir: &Path,
-    identity: FullNodeNodeHostIdentityV1,
-    sign_authorization: F,
-) -> Result<AuthorizedEnclaveClient, TransportError>
-where
-    F: Fn(B256) -> Result<[u8; 65], String>,
-{
-    connect_or_initialize_enclave(
-        endpoint,
-        node_data_dir,
-        identity.into_common(),
-        sign_authorization,
-    )
+) -> Result<AuthorizedEnclaveClient, TransportError> {
+    let paths = NodeHostPaths::new(node_data_dir);
+    ensure_private_directory(&paths.root)?;
+    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
+    if !path_exists(&paths.manifest)? || !path_exists(&paths.noise_key)? {
+        return Err(TransportError::Codec(
+            "one committed production NodeHost manifest is required".into(),
+        ));
+    }
+    let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
+    reconcile_replacement_state(&paths, &node_host)?;
+    let manifest = read_manifest(&paths.manifest)?;
+    AuthorizedEnclaveClient::connect_endpoint(endpoint, &manifest, &node_host)
 }
 
 /// Load the one committed production manifest after applying the same bounded,
@@ -417,43 +373,19 @@ pub fn load_committed_enclave_manifest_v1(
     Ok(manifest)
 }
 
-/// Stage one fresh validator enclave under the already committed node identity
+/// Stage one fresh enclave under the already committed NodeHost identity
 /// and persistent NodeHost key. The committed enclave remains the normal
 /// startup target.
-pub fn prepare_validator_enclave_replacement_candidate<F>(
+pub fn prepare_node_host_enclave_replacement_candidate<F>(
     endpoint: &str,
     node_data_dir: &Path,
-    identity: ValidatorNodeHostIdentityV1,
+    identity: NodeHostIdentityV1,
     sign_authorization: F,
 ) -> Result<ReplacementCandidateEnclaveV1, TransportError>
 where
     F: Fn(B256) -> Result<[u8; 65], String>,
 {
-    prepare_enclave_replacement_candidate(
-        endpoint,
-        node_data_dir,
-        identity.into_common(),
-        sign_authorization,
-    )
-}
-
-/// Full-node variant of validator candidate staging. The only varying adapter
-/// is the persistent Reth P2P authorization identity.
-pub fn prepare_full_node_enclave_replacement_candidate<F>(
-    endpoint: &str,
-    node_data_dir: &Path,
-    identity: FullNodeNodeHostIdentityV1,
-    sign_authorization: F,
-) -> Result<ReplacementCandidateEnclaveV1, TransportError>
-where
-    F: Fn(B256) -> Result<[u8; 65], String>,
-{
-    prepare_enclave_replacement_candidate(
-        endpoint,
-        node_data_dir,
-        identity.into_common(),
-        sign_authorization,
-    )
+    prepare_enclave_replacement_candidate(endpoint, node_data_dir, identity, sign_authorization)
 }
 
 /// Persist exact canonical replacement transaction material. An exact retry is
@@ -743,8 +675,7 @@ where
         let refreshed_manifest = EnclaveInitializationManifestV1 {
             chain_id: identity.chain_id_word(),
             genesis_hash: identity.genesis_hash,
-            enclave_profile: identity.enclave_profile,
-            node_id: identity.node_id.clone(),
+            node_id: identity.node_id(),
             initialization_challenge: challenge.challenge,
             node_host_noise_x25519: node_host.public(),
             recipient_x25519: challenge.recipient_x25519,
@@ -788,8 +719,7 @@ where
     let manifest = EnclaveInitializationManifestV1 {
         chain_id: identity.chain_id_word(),
         genesis_hash: identity.genesis_hash,
-        enclave_profile: identity.enclave_profile,
-        node_id: identity.node_id.clone(),
+        node_id: identity.node_id(),
         initialization_challenge: challenge.challenge,
         node_host_noise_x25519: node_host.public(),
         recipient_x25519: challenge.recipient_x25519,
@@ -838,7 +768,6 @@ fn validate_replacement_candidate_state(
         || record.manifest.node_host_noise_x25519 != node_host.public()
         || record.manifest.chain_id != active.chain_id
         || record.manifest.genesis_hash != active.genesis_hash
-        || record.manifest.enclave_profile != active.enclave_profile
         || record.manifest.node_id != active.node_id
     {
         return Err(TransportError::Codec(
@@ -936,8 +865,7 @@ where
     let manifest = EnclaveInitializationManifestV1 {
         chain_id: identity.chain_id_word(),
         genesis_hash: identity.genesis_hash,
-        enclave_profile: identity.enclave_profile,
-        node_id: identity.node_id.clone(),
+        node_id: identity.node_id(),
         initialization_challenge: challenge.challenge,
         node_host_noise_x25519: node_host.public(),
         recipient_x25519: challenge.recipient_x25519,
@@ -960,7 +888,7 @@ fn validate_identity(identity: &NodeHostIdentityV1) -> Result<(), TransportError
         ));
     }
     identity
-        .node_id
+        .node_id()
         .node_id_hash()
         .map_err(|error| TransportError::Codec(error.to_string()))?;
     Ok(())
@@ -976,8 +904,7 @@ fn validate_manifest_identity(
         .map_err(|error| TransportError::Codec(error.to_string()))?;
     if manifest.chain_id != identity.chain_id_word()
         || manifest.genesis_hash != identity.genesis_hash
-        || manifest.enclave_profile != identity.enclave_profile
-        || manifest.node_id != identity.node_id
+        || manifest.node_id != identity.node_id()
         || manifest.node_host_noise_x25519 != node_host.public()
     {
         return Err(TransportError::Codec(
@@ -1133,7 +1060,6 @@ fn validate_finalized_replacement_binding(
         && !finalized.node_host_authorization_hash.is_zero();
     let exact_match = finalized.view.chain_id == expected_chain_id
         && finalized.view.genesis_hash == intent.genesis_hash
-        && finalized.profile == intent.enclave_profile
         && finalized.node_id_hash == node_id_hash
         && finalized.enclave_id == intent.enclave_id
         && finalized.binding_id == intent.binding_id
@@ -1677,19 +1603,17 @@ mod tests {
         let node_host = NodeHostNoiseKey::create_new(&paths.noise_key).unwrap();
         let node_host_public = node_host.public();
         let node_signer = k256::ecdsa::SigningKey::from_bytes((&[0x61; 32]).into()).unwrap();
-        let public = node_signer.verifying_key().to_encoded_point(false);
-        let address_hash = keccak256(&public.as_bytes()[1..]);
-        let mut address = [0_u8; 20];
-        address.copy_from_slice(&address_hash[12..]);
+        let reth_p2p_public = node_signer
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .unwrap();
         let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x62; 32]);
-        let node_id = NodeIdV1::Validator {
-            address,
-            bls_minpk_public: [0x32; 48],
-        };
+        let node_id = NodeIdV1 { reth_p2p_public };
         let active = EnclaveInitializationManifestV1 {
             chain_id: U256::from(19_u64).to_be_bytes(),
             genesis_hash: B256::repeat_byte(0x14),
-            enclave_profile: EnclaveProfile::Validator,
             node_id: node_id.clone(),
             initialization_challenge: [0x41; 32],
             node_host_noise_x25519: node_host.public(),
@@ -1722,7 +1646,6 @@ mod tests {
             operation,
             attestation_mode: AttestationMode::DcapRequired,
             policy_hash: B256::repeat_byte(0x21),
-            enclave_profile: candidate.enclave_profile,
             node_id,
             enclave_id: candidate.enclave_id().unwrap(),
             binding_id: B256::repeat_byte(0x45),
@@ -1869,7 +1792,6 @@ mod tests {
                 state_root: B256::repeat_byte(0xA2),
                 consensus_timestamp: 19_000,
             },
-            profile: intent.enclave_profile,
             node_id_hash: intent.node_id.node_id_hash().unwrap(),
             enclave_id: intent.enclave_id,
             binding_id: intent.binding_id,

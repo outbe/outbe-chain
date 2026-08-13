@@ -13,15 +13,17 @@
 //! - [`committee`] — the bootstrapped validator set (start/stop/restart/kill).
 //! - [`joiner`] — a validator that joins a running localnet (index = committee size).
 //! - [`follower`] — full-execution follower nodes (`--upstream`).
-//! - [`probes`] — datadir moves + node-log inspection.
+//! - [`log_audit`] — runtime-log normalization, policy, and evidence.
+//! - [`probes`] — datadir, compressed-entity, and timing observations.
 
 mod bootstrap;
 mod committee;
 mod follower;
 mod joiner;
+mod log_audit;
 mod probes;
 
-pub(crate) use probes::LogAudit;
+pub(crate) use log_audit::LogAudit;
 pub use probes::{CeStartupReplayObservationV1, OcompRuntimeTraceMarkerV1};
 
 use std::collections::HashMap;
@@ -200,7 +202,7 @@ impl Localnet {
     /// per-request deadlines; keep the harness outside its five-minute
     /// co-located-EPC allowance so it observes the node's verdict.
     pub fn tee_bootstrap_wait_attempts(&self) -> u32 {
-        if matches!(self.cfg.tee_mode, crate::env::TeeMode::Real) {
+        if self.cfg.tee_mode.passes_sgx_devices() {
             72
         } else {
             18
@@ -268,6 +270,8 @@ impl Localnet {
             CO_LOCATED_DEVNET_CROSS_BLOCK_CACHE_MIB,
             "--log.file.directory",
             node_dir.join("logs").display(),
+            "--color",
+            "never",
         ];
         if matches!(self.cfg.tee_mode, crate::env::TeeMode::SgxNoAttest) {
             args.extend(args!["--tee-session-mode", "production-node-host"]);
@@ -520,6 +524,20 @@ mod tests {
     }
 
     #[test]
+    fn sgx_no_attest_uses_the_hardware_bootstrap_allowance() {
+        let env = Environment {
+            tee_mode: crate::env::TeeMode::SgxNoAttest,
+            ..Environment::default()
+        };
+        env.ports
+            .start_scenario(env.validators)
+            .expect("allocate deterministic scenario ports");
+        let localnet = Localnet::new(Config::for_scenario(&env, 1));
+
+        assert_eq!(localnet.tee_bootstrap_wait_attempts(), 72);
+    }
+
+    #[test]
     fn co_located_devnet_bounds_each_nodes_cross_block_cache() {
         let env = Environment::default();
         env.ports
@@ -549,6 +567,20 @@ mod tests {
             .map(|pair| pair[1].as_str());
 
         assert_eq!(proof_window, Some("1868"));
+    }
+
+    #[test]
+    fn runtime_audit_stdout_is_free_of_ansi_formatting() {
+        let env = Environment::default();
+        env.ports
+            .start_scenario(env.validators)
+            .expect("allocate deterministic scenario ports");
+        let localnet = Localnet::new(Config::for_scenario(&env, 1));
+        let args = localnet.reth_base_args(Path::new("/tmp/outbe-e2e-node"), 0);
+
+        assert!(args
+            .windows(2)
+            .any(|pair| pair[0] == "--color" && pair[1] == "never"));
     }
 
     /// Both layouts, and nothing else — in particular not `validator-*/data`.
