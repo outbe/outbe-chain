@@ -62,10 +62,6 @@ pub struct ReferencePrice {
 /// Auction configuration (demand side).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuctionConfig {
-    /// Issuance-currency ISO-4217 code (e.g. 840 = USD).
-    pub issuance_currency: u16,
-    /// Reference-currency ISO-4217 code (e.g. 840 = USD).
-    pub reference_currency: u16,
     /// Promis tokens per Intex unit (18 decimals); bounded by uint128.
     pub promis_load_minor: u128,
     /// Call-trigger parameters sourced from genesis `IntexParams`.
@@ -83,15 +79,12 @@ pub struct AuctionConfig {
 impl AuctionConfig {
     /// Build the demand-side config from the day's per-reference entry prices.
     /// `promis_load_minor` scales `PROMIS_LOAD` to 18-dec minor units;
-    /// `min_intex_bid_rate = 0` means no bid floor. Currencies come from the
-    /// genesis ISO constants. `call_trigger`, `min_intex_bid_quantity` and
-    /// `commit_bond_minor` are left at their defaults here and populated at
-    /// auction start (`start_auction`), where the genesis `IntexParams` and the
-    /// prior-clearing count are in reach.
+    /// `min_intex_bid_rate = 0` means no bid floor. `call_trigger`,
+    /// `min_intex_bid_quantity` and `commit_bond_minor` are left at their defaults
+    /// here and populated at auction start (`start_auction`), where the genesis
+    /// `IntexParams` and the prior-clearing count are in reach.
     pub fn from_reference_prices(reference_prices: Vec<ReferencePrice>) -> Self {
         Self {
-            issuance_currency: outbe_intexfactory::constants::QUALIFIER_ISSUANCE_ISO,
-            reference_currency: outbe_intexfactory::constants::QUALIFIER_REFERENCE_ISO,
             promis_load_minor: PROMIS_LOAD.saturating_mul(SCALE_1E18_U128),
             call_trigger: IntexCallTrigger::default(),
             min_intex_bid_rate: 0,
@@ -201,13 +194,7 @@ pub struct DesisContract {
     #[attribute(order = 10)]
     pub clearing_initiated: outbe_primitives::storage::dsl::Map<WorldwideDay, u8>,
 
-    // --- Extended auction config (per series) ---
-    /// worldwide_day -> issuance-currency ISO-4217 code.
-    #[attribute(order = 11)]
-    pub config_issuance_currency: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
-    /// worldwide_day -> reference-currency ISO-4217 code.
-    #[attribute(order = 12)]
-    pub config_reference_currency: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    // --- Extended auction config ---
     /// worldwide_day -> call-trigger window (whole days).
     #[attribute(order = 13)]
     pub config_call_window: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,

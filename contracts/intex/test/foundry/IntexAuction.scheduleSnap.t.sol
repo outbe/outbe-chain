@@ -37,8 +37,6 @@ contract IntexAuctionScheduleSnapTest is Test {
             issuanceEnd: uint32(block.timestamp + ISSUANCE_OFFSET)
         });
         IIntexAuction.AuctionParams memory p = IIntexAuction.AuctionParams({
-            issuanceCurrency: 840,
-            referenceCurrency: 840,
             promisLoadMinor: 1000,
             minIntexBidRate: 10,
             prices: ReferencePriceLib.onePriced(840, 100, 100, 100),

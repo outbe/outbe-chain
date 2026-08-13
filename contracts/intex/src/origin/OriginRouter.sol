@@ -547,8 +547,6 @@ contract OriginRouter is
             p.commitEnd,
             p.revealEnd,
             p.issuanceEnd,
-            p.issuanceCurrency,
-            p.referenceCurrency,
             p.promisLoadMinor,
             p.minIntexBidRate,
             p.prices,

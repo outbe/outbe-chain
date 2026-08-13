@@ -86,8 +86,6 @@ contract IntexAuctionBondTest is Test {
 
     function _params(uint128 bond) internal pure returns (IIntexAuction.AuctionParams memory) {
         return IIntexAuction.AuctionParams({
-            issuanceCurrency: 840,
-            referenceCurrency: 840,
             promisLoadMinor: PROMIS_LOAD_MINOR,
             minIntexBidRate: 1,
             prices: ReferencePriceLib.onePriced(840, ENTRY_PRICE, 100, 200),

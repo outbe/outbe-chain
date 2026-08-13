@@ -226,8 +226,6 @@ contract LocalLoopbackTest is Test {
         p.commitEnd = uint32(startTs + 100);
         p.revealEnd = uint32(startTs + 200);
         p.issuanceEnd = uint32(startTs + 300);
-        p.issuanceCurrency = 840;
-        p.referenceCurrency = 840;
         p.promisLoadMinor = PROMIS_LOAD_MINOR;
         p.minIntexBidRate = 600_000;
         p.prices = ReferencePriceLib.one(840, 1e4, 100, 200);

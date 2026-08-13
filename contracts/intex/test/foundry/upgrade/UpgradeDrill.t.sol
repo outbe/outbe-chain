@@ -116,8 +116,6 @@ contract UpgradeDrillTest is CrossChainTest {
             issuanceEnd: uint32(block.timestamp + 3 hours)
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
-            issuanceCurrency: 840,
-            referenceCurrency: 840,
             promisLoadMinor: 1000,
             minIntexBidRate: 1,
             prices: ReferencePriceLib.onePriced(840, 1, 1, 1),

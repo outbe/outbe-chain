@@ -114,19 +114,6 @@ contract IntexAuction is
         return (a.worldwideDayState, a.schedule, a.params, a.result);
     }
 
-    /// @inheritdoc IIntexAuction
-    function referencePriceOf(uint32 worldwideDay, uint16 isoCode)
-        external
-        view
-        returns (IIntexAuction.ReferencePrice memory)
-    {
-        IIntexAuction.ReferencePrice[] storage rows = _s().auctions[worldwideDay].params.prices;
-        for (uint256 i = 0; i < rows.length; ++i) {
-            if (rows[i].isoCode == isoCode) return rows[i];
-        }
-        revert ReferenceCurrencyNotPriced(worldwideDay, isoCode);
-    }
-
     /// @notice Live bid counters tracked while the auction runs. Flattened to match the
     ///         original public-mapping getter ABI.
     function auctionRunningCounts(uint32 worldwideDay)

@@ -11,14 +11,15 @@ use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, times
 
 use crate::called;
 use crate::constants::{
-    CALL_RATE, FLOOR_RATE, MAX_RECIPIENTS_PER_MESSAGE, MAX_SERIES_PER_MESSAGE,
-    QUALIFICATION_PERIOD, QUALIFIER_REFERENCE_ISO,
+    CALL_RATE, FLOOR_RATE, MAX_RECIPIENTS_PER_MESSAGE, MAX_SERIES_PER_MESSAGE, QUALIFICATION_PERIOD,
 };
 use crate::precompile::{self, IIntexFactory};
 use crate::qualified;
 use crate::runtime;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
 
+/// ISO code every fixture prices in.
+const REFERENCE_ISO: u16 = 840;
 const DAY: u64 = 24 * 60 * 60;
 
 fn holder() -> Address {
@@ -529,7 +530,7 @@ fn issue_enrolls_in_floor_bin() {
         let bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_FLOOR)).unwrap();
         assert_eq!(
             f.unqualified_bin_count
-                .read(&IntexFactoryContract::scoped(QUALIFIER_REFERENCE_ISO, bin))
+                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             1
         );
@@ -542,29 +543,25 @@ fn insert_remove_unqualified_roundtrip() {
         let mut f = IntexFactoryContract::new(s.clone());
         let floor = U256::from(2_000u64);
         let bin = IntexFactoryContract::price_to_bin(floor).unwrap();
-        f.insert_unqualified(sid(11), QUALIFIER_REFERENCE_ISO, floor)
-            .unwrap();
-        f.insert_unqualified(sid(22), QUALIFIER_REFERENCE_ISO, floor)
-            .unwrap();
+        f.insert_unqualified(sid(11), REFERENCE_ISO, floor).unwrap();
+        f.insert_unqualified(sid(22), REFERENCE_ISO, floor).unwrap();
         assert_eq!(
             f.unqualified_bin_count
-                .read(&IntexFactoryContract::scoped(QUALIFIER_REFERENCE_ISO, bin))
+                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             2
         );
-        f.remove_unqualified(sid(11), QUALIFIER_REFERENCE_ISO, floor)
-            .unwrap();
+        f.remove_unqualified(sid(11), REFERENCE_ISO, floor).unwrap();
         assert_eq!(
             f.unqualified_bin_count
-                .read(&IntexFactoryContract::scoped(QUALIFIER_REFERENCE_ISO, bin))
+                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             1
         );
-        f.remove_unqualified(sid(22), QUALIFIER_REFERENCE_ISO, floor)
-            .unwrap();
+        f.remove_unqualified(sid(22), REFERENCE_ISO, floor).unwrap();
         assert_eq!(
             f.unqualified_bin_count
-                .read(&IntexFactoryContract::scoped(QUALIFIER_REFERENCE_ISO, bin))
+                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             0
         );
@@ -615,7 +612,7 @@ fn try_qualify_gates_qualification_floor_and_latches() {
         let bin = IntexFactoryContract::price_to_bin(floor).unwrap();
         assert_eq!(
             f.unqualified_bin_count
-                .read(&IntexFactoryContract::scoped(QUALIFIER_REFERENCE_ISO, bin))
+                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             0
         );
@@ -717,15 +714,12 @@ const PAIR_ID: u32 = 1;
 /// scans walk to decide which currencies to price this block.
 fn list_reference(oracle: &OracleContract) {
     if oracle.reference_currencies.len().unwrap() == 0 {
-        oracle
-            .reference_currencies
-            .push(QUALIFIER_REFERENCE_ISO)
-            .unwrap();
+        oracle.reference_currencies.push(REFERENCE_ISO).unwrap();
     }
 }
 
 fn setup_pair(oracle: &OracleContract) -> AddressPair {
-    let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
+    let pair = outbe_oracle::api::AddressPair::new_coen_to(REFERENCE_ISO);
     let pair_id = PAIR_ID;
     oracle.pair_to_index.write(&pair, pair_id).unwrap();
     // Full registry entry so the production VWAP paths (calculate_vwaps
@@ -770,19 +764,13 @@ fn qualify_enrolls_in_call_trigger_bin() {
         let trig_bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
         assert_eq!(
             f.unqualified_bin_count
-                .read(&IntexFactoryContract::scoped(
-                    QUALIFIER_REFERENCE_ISO,
-                    floor_bin
-                ))
+                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, floor_bin))
                 .unwrap(),
             0
         );
         assert_eq!(
             f.qualified_bin_count
-                .read(&IntexFactoryContract::scoped(
-                    QUALIFIER_REFERENCE_ISO,
-                    trig_bin
-                ))
+                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, trig_bin))
                 .unwrap(),
             1
         );
@@ -795,29 +783,25 @@ fn insert_remove_qualified_roundtrip() {
         let mut f = IntexFactoryContract::new(s.clone());
         let trigger = U256::from(EXPECTED_TRIGGER);
         let bin = IntexFactoryContract::price_to_bin(trigger).unwrap();
-        f.insert_qualified(sid(11), QUALIFIER_REFERENCE_ISO, trigger)
-            .unwrap();
-        f.insert_qualified(sid(22), QUALIFIER_REFERENCE_ISO, trigger)
-            .unwrap();
+        f.insert_qualified(sid(11), REFERENCE_ISO, trigger).unwrap();
+        f.insert_qualified(sid(22), REFERENCE_ISO, trigger).unwrap();
         assert_eq!(
             f.qualified_bin_count
-                .read(&IntexFactoryContract::scoped(QUALIFIER_REFERENCE_ISO, bin))
+                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             2
         );
-        f.remove_qualified(sid(11), QUALIFIER_REFERENCE_ISO, trigger)
-            .unwrap();
+        f.remove_qualified(sid(11), REFERENCE_ISO, trigger).unwrap();
         assert_eq!(
             f.qualified_bin_count
-                .read(&IntexFactoryContract::scoped(QUALIFIER_REFERENCE_ISO, bin))
+                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             1
         );
-        f.remove_qualified(sid(22), QUALIFIER_REFERENCE_ISO, trigger)
-            .unwrap();
+        f.remove_qualified(sid(22), REFERENCE_ISO, trigger).unwrap();
         assert_eq!(
             f.qualified_bin_count
-                .read(&IntexFactoryContract::scoped(QUALIFIER_REFERENCE_ISO, bin))
+                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             0
         );
@@ -856,7 +840,7 @@ fn try_call_marks_called_when_threshold_met() {
         let bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
         assert_eq!(
             f.qualified_bin_count
-                .read(&IntexFactoryContract::scoped(QUALIFIER_REFERENCE_ISO, bin))
+                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             0
         );
@@ -992,7 +976,7 @@ fn seed_issued(s: &StorageHandle<'_>, id: u32) {
     )
     .unwrap();
     IntexFactoryContract::new(s.clone())
-        .insert_unqualified(sid(id), QUALIFIER_REFERENCE_ISO, U256::from(EXPECTED_FLOOR))
+        .insert_unqualified(sid(id), REFERENCE_ISO, U256::from(EXPECTED_FLOOR))
         .unwrap();
 }
 
@@ -1043,12 +1027,8 @@ fn call_survives_router_failure() {
         seed_issued(&s, 7);
         outbe_intex::api::mark_qualified(&s, sid(7)).unwrap();
         let mut f = IntexFactoryContract::new(s.clone());
-        f.insert_qualified(
-            sid(7),
-            QUALIFIER_REFERENCE_ISO,
-            U256::from(EXPECTED_TRIGGER),
-        )
-        .unwrap();
+        f.insert_qualified(sid(7), REFERENCE_ISO, U256::from(EXPECTED_TRIGGER))
+            .unwrap();
 
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
@@ -1092,7 +1072,7 @@ fn scan_and_qualify_promotes_aged_series() {
         runtime::issue(&s, sample(7)).unwrap();
         // Qualifier pair live rate above the floor.
         let oracle = OracleContract::new(s.clone());
-        let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(REFERENCE_ISO);
         // The ISO resolves through the pair registry, so the pair must exist
         // and the rate columns are keyed by its index.
         oracle.pair_to_index.write(&pair, PAIR_ID).unwrap();
@@ -1118,10 +1098,7 @@ fn scan_and_qualify_promotes_aged_series() {
         let trig_bin = IntexFactoryContract::price_to_bin(U256::from(EXPECTED_TRIGGER)).unwrap();
         assert_eq!(
             f.qualified_bin_count
-                .read(&IntexFactoryContract::scoped(
-                    QUALIFIER_REFERENCE_ISO,
-                    trig_bin
-                ))
+                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, trig_bin))
                 .unwrap(),
             1
         );
@@ -1185,7 +1162,7 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
                 .write_snapshot(
                     noon,
                     &[(
-                        outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO),
+                        outbe_oracle::api::AddressPair::new_coen_to(REFERENCE_ISO),
                         breach,
                         U256::from(1),
                     )],
@@ -1223,7 +1200,7 @@ fn scan_does_not_halt_on_overflow_rate() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
-        let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(REFERENCE_ISO);
         oracle.pair_to_index.write(&pair, PAIR_ID).unwrap();
         // Out-of-range rate: price_to_bin overflows.
         oracle.exchange_rate.write(&PAIR_ID, U256::MAX).unwrap();
@@ -1253,15 +1230,11 @@ fn scan_isolates_bad_series() {
         // A bin entry whose series record does not exist: read_series errors -> the series must be
         // skipped (logged), not halt the block.
         IntexFactoryContract::new(s.clone())
-            .insert_unqualified(
-                sid(999),
-                QUALIFIER_REFERENCE_ISO,
-                U256::from(EXPECTED_FLOOR),
-            )
+            .insert_unqualified(sid(999), REFERENCE_ISO, U256::from(EXPECTED_FLOOR))
             .unwrap();
 
         let oracle = OracleContract::new(s.clone());
-        let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(REFERENCE_ISO);
         // The ISO resolves through the pair registry, so the pair must exist
         // and the rate columns are keyed by its index.
         oracle.pair_to_index.write(&pair, PAIR_ID).unwrap();
@@ -1319,7 +1292,7 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
 fn scan_caps_work_per_block_and_resumes_via_cursor() {
     with_factory(|s| {
         let oracle = OracleContract::new(s.clone());
-        let pair = outbe_oracle::api::AddressPair::new_coen_to(QUALIFIER_REFERENCE_ISO);
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(REFERENCE_ISO);
         // The ISO resolves through the pair registry, so the pair must exist
         // and the rate columns are keyed by its index.
         oracle.pair_to_index.write(&pair, PAIR_ID).unwrap();
@@ -1339,12 +1312,12 @@ fn scan_caps_work_per_block_and_resumes_via_cursor() {
             let mut factory = IntexFactoryContract::new(s.clone());
             for id in 1..=cap {
                 factory
-                    .insert_unqualified(sid(id), QUALIFIER_REFERENCE_ISO, f1)
+                    .insert_unqualified(sid(id), REFERENCE_ISO, f1)
                     .unwrap();
             }
             for id in 1001..=1005u32 {
                 factory
-                    .insert_unqualified(sid(id), QUALIFIER_REFERENCE_ISO, f2)
+                    .insert_unqualified(sid(id), REFERENCE_ISO, f2)
                     .unwrap();
             }
         }
@@ -1358,13 +1331,13 @@ fn scan_caps_work_per_block_and_resumes_via_cursor() {
         qualified::scan_and_qualify(&ctx).unwrap();
         let cursor1 = IntexFactoryContract::new(s.clone())
             .qualify_scan_cursor
-            .read(&QUALIFIER_REFERENCE_ISO)
+            .read(&REFERENCE_ISO)
             .unwrap();
         assert!(cursor1 > 0, "cursor advanced past the capped bin");
         assert_eq!(
             IntexFactoryContract::new(s.clone())
                 .unqualified_bin_count
-                .read(&IntexFactoryContract::scoped(QUALIFIER_REFERENCE_ISO, bin2))
+                .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin2))
                 .unwrap(),
             5,
             "second bin untouched in block 1"
@@ -1374,7 +1347,7 @@ fn scan_caps_work_per_block_and_resumes_via_cursor() {
         qualified::scan_and_qualify(&ctx).unwrap();
         let cursor2 = IntexFactoryContract::new(s.clone())
             .qualify_scan_cursor
-            .read(&QUALIFIER_REFERENCE_ISO)
+            .read(&REFERENCE_ISO)
             .unwrap();
         assert_eq!(cursor2, 0, "cursor wrapped after a full sweep");
     });
@@ -1999,14 +1972,11 @@ fn a_currency_rate_never_qualifies_another_currency_series() {
         runtime::issue(&s, eur_series(8)).unwrap();
 
         let oracle = OracleContract::new(s.clone());
-        oracle
-            .reference_currencies
-            .push(QUALIFIER_REFERENCE_ISO)
-            .unwrap();
+        oracle.reference_currencies.push(REFERENCE_ISO).unwrap();
         oracle.reference_currencies.push(EUR_ISO).unwrap();
         let above = U256::from(EXPECTED_FLOOR) + U256::from(1);
         let below = U256::from(EXPECTED_FLOOR) - U256::from(1);
-        write_rate(&oracle, QUALIFIER_REFERENCE_ISO, PAIR_ID, above);
+        write_rate(&oracle, REFERENCE_ISO, PAIR_ID, above);
         write_rate(&oracle, EUR_ISO, EUR_PAIR_ID, below);
 
         let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
@@ -2055,13 +2025,10 @@ fn an_unpriced_reference_currency_is_skipped_not_fatal() {
         // Listed before its pair exists — the registry and the pair registry are
         // populated independently.
         oracle.reference_currencies.push(EUR_ISO).unwrap();
-        oracle
-            .reference_currencies
-            .push(QUALIFIER_REFERENCE_ISO)
-            .unwrap();
+        oracle.reference_currencies.push(REFERENCE_ISO).unwrap();
         write_rate(
             &oracle,
-            QUALIFIER_REFERENCE_ISO,
+            REFERENCE_ISO,
             PAIR_ID,
             U256::from(EXPECTED_FLOOR) + U256::from(1),
         );
@@ -2081,13 +2048,10 @@ fn a_currency_cut_off_by_the_budget_is_scanned_first_next_block() {
         runtime::issue(&s, eur_series(8)).unwrap();
 
         let oracle = OracleContract::new(s.clone());
-        oracle
-            .reference_currencies
-            .push(QUALIFIER_REFERENCE_ISO)
-            .unwrap();
+        oracle.reference_currencies.push(REFERENCE_ISO).unwrap();
         oracle.reference_currencies.push(EUR_ISO).unwrap();
         let above = U256::from(EXPECTED_FLOOR) + U256::from(1);
-        write_rate(&oracle, QUALIFIER_REFERENCE_ISO, PAIR_ID, above);
+        write_rate(&oracle, REFERENCE_ISO, PAIR_ID, above);
         write_rate(&oracle, EUR_ISO, EUR_PAIR_ID, above);
 
         // The dollar bin alone fills a whole block's budget. Ids without a series
@@ -2096,11 +2060,7 @@ fn a_currency_cut_off_by_the_budget_is_scanned_first_next_block() {
             let mut factory = IntexFactoryContract::new(s.clone());
             for id in 1..=qualified::MAX_SERIES_PER_BLOCK {
                 factory
-                    .insert_unqualified(
-                        sid(id),
-                        QUALIFIER_REFERENCE_ISO,
-                        U256::from(EXPECTED_FLOOR),
-                    )
+                    .insert_unqualified(sid(id), REFERENCE_ISO, U256::from(EXPECTED_FLOOR))
                     .unwrap();
             }
         }
@@ -2197,7 +2157,7 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
         // Intex is half its dollar price.
         publish_rate(
             &oracle,
-            QUALIFIER_REFERENCE_ISO,
+            REFERENCE_ISO,
             PAIR_ID,
             U256::from(2u64) * SCALE_1E18,
             0,
@@ -2215,7 +2175,7 @@ fn an_unpriced_issuance_currency_cannot_be_settled_in() {
         let oracle = OracleContract::new(s.clone());
         publish_rate(
             &oracle,
-            QUALIFIER_REFERENCE_ISO,
+            REFERENCE_ISO,
             PAIR_ID,
             U256::from(2u64) * SCALE_1E18,
             0,
@@ -2232,7 +2192,7 @@ fn a_stale_rate_cannot_be_settled_in() {
         let oracle = OracleContract::new(s.clone());
         publish_rate(
             &oracle,
-            QUALIFIER_REFERENCE_ISO,
+            REFERENCE_ISO,
             PAIR_ID,
             U256::from(2u64) * SCALE_1E18,
             0,
@@ -2253,7 +2213,7 @@ fn a_stale_rate_cannot_be_settled_in() {
 #[test]
 fn the_reference_currency_settles_without_reading_any_rate() {
     // No rate is published at all, yet the reference currency still settles.
-    with_dual_currency_series(QUALIFIER_REFERENCE_ISO as u64, |s| {
+    with_dual_currency_series(REFERENCE_ISO as u64, |s| {
         let cost = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap();
         assert_eq!(cost, U256::from(1_000_000u64));
     });

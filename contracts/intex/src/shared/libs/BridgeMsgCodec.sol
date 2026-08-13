@@ -55,7 +55,7 @@ library BridgeMsgCodec {
     uint16 internal constant HEADER_LEN = 2;
 
     // Fixed head of AUCTION_STAGE_START; the price rows follow it.
-    uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 74;
+    uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 70;
     /// @notice Bytes per reference-price row: [iso(2)][entry(8)][floor(8)][call(8)].
     uint16 internal constant REFERENCE_PRICE_LEN = 26;
     /// @notice The oracle's reference list is short; a day may not exceed this.
@@ -249,18 +249,15 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes AUCTION_STAGE_START message.
-    /// @dev encodePacked layout, 74 bytes of head plus 26 per priced currency:
+    /// @dev encodePacked layout, 70 bytes of head plus 26 per priced currency:
     ///      [bodyVersion(1)][msgType(1)][worldwideDay(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
-    ///      [issuanceCurrency(2)][referenceCurrency(2)][promisLoadMinor(16)][minIntexBidRate(4)]
-    ///      [callNoticePeriod(4)][callWindow(4)][callThreshold(4)][minIntexBidQuantity(2)]
-    ///      [commitBondMinor(16)][dayState(1)][priceCount(1)]
+    ///      [promisLoadMinor(16)][minIntexBidRate(4)][callNoticePeriod(4)][callWindow(4)]
+    ///      [callThreshold(4)][minIntexBidQuantity(2)][commitBondMinor(16)][dayState(1)][priceCount(1)]
     ///      then [isoCode(2)][entryPrice(8)][floorPrice(8)][callPrice(8)] per currency.
     /// @param _worldwideDay The worldwide day (yyyymmdd).
     /// @param _commitEnd The commit-stage end timestamp.
     /// @param _revealEnd The reveal-stage end timestamp.
     /// @param _issuanceEnd The issuance-stage end timestamp.
-    /// @param _issuanceCurrency The issuance currency (ISO numeric).
-    /// @param _referenceCurrency The reference currency (ISO numeric).
     /// @param _promisLoadMinor The Promis load (minor units) for the series.
     /// @param _minIntexBidRate The minimum acceptable intex bid rate (`1e6` fixed-point).
     /// @param _prices Entry, floor and call price of every currency the day can clear in.
@@ -276,8 +273,6 @@ library BridgeMsgCodec {
         uint32 _commitEnd,
         uint32 _revealEnd,
         uint32 _issuanceEnd,
-        uint16 _issuanceCurrency,
-        uint16 _referenceCurrency,
         uint128 _promisLoadMinor,
         uint32 _minIntexBidRate,
         IOriginRouter.ReferencePrice[] memory _prices,
@@ -315,8 +310,6 @@ library BridgeMsgCodec {
                 _commitEnd,
                 _revealEnd,
                 _issuanceEnd,
-                _issuanceCurrency,
-                _referenceCurrency,
                 _promisLoadMinor,
                 _minIntexBidRate
             ),
@@ -385,9 +378,8 @@ library BridgeMsgCodec {
     ///         Kept `external` so the struct construction lives in the linked library, off the
     ///         router's runtime size (EIP-170). Mirrors `encodeAuctionStageStart`'s layout:
     ///         [bodyVersion(1)][msgType(1)][worldwideDay(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
-    ///         [issuanceCurrency(2)][referenceCurrency(2)][promisLoadMinor(16)][minIntexBidRate(4)]
-    ///         [entryPrice(8)][floorPriceMinor(8)][callPriceMinor(8)][callNoticePeriod(4)]
-    ///         [callWindow(4)][callThreshold(4)][minIntexBidQuantity(2)][commitBondMinor(16)][dayState(1)]
+    ///         [promisLoadMinor(16)][minIntexBidRate(4)][callNoticePeriod(4)][callWindow(4)]
+    ///         [callThreshold(4)][minIntexBidQuantity(2)][commitBondMinor(16)][dayState(1)][priceCount(1)]
     /// @param _msg The wire-encoded AUCTION_STAGE_START message.
     /// @return worldwideDay The worldwide day (yyyymmdd).
     /// @return dayState The final worldwide-day state (Green or Red).
@@ -406,7 +398,7 @@ library BridgeMsgCodec {
         _assertMinLength(_msg, MSG_AUCTION_STAGE_START, MIN_LEN_AUCTION_STAGE_START);
         _assertBodyVersion(_msg);
         worldwideDay = uint32(bytes4(_msg[2:6]));
-        uint8 rawDayState = uint8(_msg[72]);
+        uint8 rawDayState = uint8(_msg[68]);
         if (rawDayState > uint8(IIntexAuction.WorldwideDayState.Red)) revert IIntexAuction.InvalidDayState();
         dayState = IIntexAuction.WorldwideDayState(rawDayState);
         schedule = IIntexAuction.AuctionSchedule({
@@ -415,18 +407,16 @@ library BridgeMsgCodec {
             issuanceEnd: uint32(bytes4(_msg[14:18]))
         });
         params = IIntexAuction.AuctionParams({
-            issuanceCurrency: uint16(bytes2(_msg[18:20])),
-            referenceCurrency: uint16(bytes2(_msg[20:22])),
-            promisLoadMinor: uint128(bytes16(_msg[22:38])),
+            promisLoadMinor: uint128(bytes16(_msg[18:34])),
             callTrigger: IIntexAuction.IntexCallTrigger({
-                callWindow: uint32(bytes4(_msg[46:50])),
-                callThreshold: uint32(bytes4(_msg[50:54])),
-                callNoticePeriod: uint32(bytes4(_msg[42:46]))
+                callWindow: uint32(bytes4(_msg[42:46])),
+                callThreshold: uint32(bytes4(_msg[46:50])),
+                callNoticePeriod: uint32(bytes4(_msg[38:42]))
             }),
-            minIntexBidRate: uint32(bytes4(_msg[38:42])),
-            minIntexBidQuantity: uint16(bytes2(_msg[54:56])),
+            minIntexBidRate: uint32(bytes4(_msg[34:38])),
+            minIntexBidQuantity: uint16(bytes2(_msg[50:52])),
             prices: new IIntexAuction.ReferencePrice[](0),
-            commitBondMinor: uint128(bytes16(_msg[56:72]))
+            commitBondMinor: uint128(bytes16(_msg[52:68]))
         });
 
         params.prices = _referencePrices(_msg);
@@ -434,7 +424,7 @@ library BridgeMsgCodec {
 
     /// @notice Every priced row the message carries.
     function _referencePrices(bytes calldata _msg) private pure returns (IIntexAuction.ReferencePrice[] memory rows) {
-        uint256 count = uint8(_msg[73]);
+        uint256 count = uint8(_msg[69]);
         // Re-checked inbound: more rows than the quoted gas covers would revert and redeliver.
         if (count > MAX_REFERENCE_PRICES) {
             revert PayloadArrayTooLong(count, MAX_REFERENCE_PRICES);

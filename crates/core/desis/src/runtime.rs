@@ -203,8 +203,6 @@ fn send_stage_start(
         commitEnd: commit_end,
         revealEnd: reveal_end,
         issuanceEnd: issuance_end,
-        issuanceCurrency: config.issuance_currency,
-        referenceCurrency: config.reference_currency,
         promisLoadMinor: config.promis_load_minor,
         minIntexBidRate: config.min_intex_bid_rate,
         prices,
@@ -815,15 +813,11 @@ fn clear_inner(
         // No series anywhere, so the day's recorded contributor map can never distribute.
         outbe_intexfactory::api::discard_day_contributors(&storage, worldwide_day.value())?;
     } else {
-        // Hand issuance to IntexFactory, one series per winning currency pair.
-        // The ranking above stayed global — grouping only decides which series a
-        // won bid lands in, never who won or what they pay.
         let mut legs = Vec::new();
         for group in issuance_groups(&result, &config, worldwide_day, snapshot)? {
             legs.extend(outbe_intexfactory::api::issue(&storage, group)?);
         }
 
-        // A chain takes the day's series in as few messages as the wire allows.
         outbe_intexfactory::api::send_issuance(&storage, legs)?;
     }
 
@@ -850,8 +844,7 @@ fn clear_inner(
         )?;
     }
 
-    // REFUND_INSTRUCTIONS per included chain, winners and losers alike, in chunks the encoder
-    // can carry; a skipped chain's bidders reclaim via the escrow timeout path.
+    // A skipped chain's bidders reclaim through the escrow timeout path instead.
     for &chain_id in included {
         let mut bidders = Vec::new();
         let mut refunded = Vec::new();

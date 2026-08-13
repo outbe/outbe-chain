@@ -94,8 +94,6 @@ contract OriginRouterTest is CrossChainTest {
             commitEnd: uint32(block.timestamp + 3600),
             revealEnd: uint32(block.timestamp + 5400),
             issuanceEnd: uint32(block.timestamp + 7200),
-            issuanceCurrency: 840,
-            referenceCurrency: 840,
             promisLoadMinor: 1000,
             minIntexBidRate: 50e6,
             prices: ReferencePriceLib.one(840, 100e6, 50e6, 25e6),

@@ -79,22 +79,19 @@ pub struct IntexFactoryContract {
     #[attribute(order = 13)]
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 
-    // Begin-block qualify-scan cursor per reference currency: the unqualified bin to
-    // resume that currency's sweep from, so per-block work stays capped. 0 = fresh sweep.
+    // Bin each currency's sweep resumes from, so per-block work stays capped. 0 = fresh sweep.
     #[attribute(order = 14)]
     pub qualify_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    // Which reference currency each scan resumes at, so a currency whose
-    // population exhausts the shared per-block budget cannot starve the ones
-    // behind it in the registry. Index into the oracle's reference registry.
+    // Registry index each scan resumes at, so a currency that exhausts the shared
+    // budget cannot starve the ones behind it.
     #[attribute(order = 15)]
     pub qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 16)]
     pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 
-    // Where each currency's Called scan resumes, mirroring the qualify cursor: the run is
-    // budgeted, so without this a currency re-walks its lowest bins every day and the
-    // series above the budget are never evaluated.
+    // Called-scan twin of the qualify cursor: without it a budgeted run re-walks the
+    // lowest bins every day and never reaches the series above them.
     #[attribute(order = 17)]
     pub call_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 }

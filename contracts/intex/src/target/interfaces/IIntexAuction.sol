@@ -75,11 +75,6 @@ interface IIntexAuction {
 
     /// @notice Auction input parameters, stored per auction.
     struct AuctionParams {
-        /// @notice The day's default issuance currency (ISO numeric); a bid names its own.
-        uint16 issuanceCurrency;
-        /// @notice The day's default reference currency (ISO numeric); a bid names its
-        ///         own, which must appear in `prices`.
-        uint16 referenceCurrency;
         /// @notice Promis tokens per Intex unit (18 decimals).
         uint128 promisLoadMinor;
         /// @notice Call-trigger parameters (window/threshold/period).
@@ -233,13 +228,6 @@ interface IIntexAuction {
     function wire(address _escrow) external;
 
     // --- Lifecycle ---
-
-    /// @notice The day's price row for `isoCode`; reverts `ReferenceCurrencyNotPriced` when
-    ///         the day does not clear in it.
-    /// @param worldwideDay Worldwide day (yyyymmdd).
-    /// @param isoCode Reference currency (ISO numeric).
-    /// @return The entry, floor and call price of that currency.
-    function referencePriceOf(uint32 worldwideDay, uint16 isoCode) external view returns (ReferencePrice memory);
 
     /// @notice Create and start a new auction for `worldwideDay`.
     /// @dev The schedule (`commitEnd`/`revealEnd`/`issuanceEnd`) is computed on the

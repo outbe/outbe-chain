@@ -29,8 +29,6 @@ impl DesisContract<'_> {
     pub(crate) fn read_auction_config(&self, worldwide_day: WorldwideDay) -> Result<AuctionConfig> {
         let promis_load_minor = self.config_promis_load_minor.read(&worldwide_day)?;
         Ok(AuctionConfig {
-            issuance_currency: self.config_issuance_currency.read(&worldwide_day)? as u16,
-            reference_currency: self.config_reference_currency.read(&worldwide_day)? as u16,
             promis_load_minor: u128::try_from(promis_load_minor)
                 .map_err(|_| crate::DesisError::InvalidWorldwideDay(worldwide_day))?,
             call_trigger: IntexCallTrigger {
@@ -67,10 +65,6 @@ impl DesisContract<'_> {
         worldwide_day: WorldwideDay,
         cfg: &AuctionConfig,
     ) -> Result<()> {
-        self.config_issuance_currency
-            .write(&worldwide_day, u32::from(cfg.issuance_currency))?;
-        self.config_reference_currency
-            .write(&worldwide_day, u32::from(cfg.reference_currency))?;
         self.config_promis_load_minor
             .write(&worldwide_day, U256::from(cfg.promis_load_minor))?;
         self.config_call_window

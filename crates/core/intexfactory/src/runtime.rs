@@ -35,9 +35,8 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 /// NFT call here.
 pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<IssuanceLeg>> {
     if params.issued_intex_count == 0 {
-        // Nothing to issue. Whether the day as a whole distributes is the
-        // caller's decision — a day may issue several series, and one empty
-        // group must not touch the state its siblings armed.
+        // Whether the day distributes is the caller's decision: one empty group
+        // must not touch the state its siblings armed.
         return Ok(Vec::new());
     }
 
@@ -74,8 +73,8 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
     };
     outbe_intex::api::create_series(storage, record)?;
 
-    // What each snapshot chain must be told. Not sent here: only the caller sees the whole
-    // day, and a chain's share of it travels in as few messages as the caps allow.
+    // Not sent here: only the caller sees the whole day, and a chain's share of it
+    // travels in as few messages as the caps allow.
     let legs: Vec<IssuanceLeg> = issuance_legs(&params)
         .into_iter()
         .map(|(chain_id, recipients, quantities)| IssuanceLeg {

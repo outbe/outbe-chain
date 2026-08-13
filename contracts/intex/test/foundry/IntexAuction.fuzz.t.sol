@@ -163,8 +163,6 @@ contract IntexAuctionFuzzTest is Test {
             issuanceEnd: uint32(block.timestamp + ISSUANCE_OFFSET)
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
-            issuanceCurrency: 840,
-            referenceCurrency: 840,
             promisLoadMinor: PROMIS_LOAD_MINOR,
             minIntexBidRate: MIN_RATE,
             prices: ReferencePriceLib.onePriced(840, ENTRY_PRICE, 100, 200),

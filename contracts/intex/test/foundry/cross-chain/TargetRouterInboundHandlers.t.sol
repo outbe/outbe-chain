@@ -308,8 +308,6 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
             issuanceEnd: uint32(block.timestamp + 3 days)
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
-            issuanceCurrency: 840,
-            referenceCurrency: 840,
             promisLoadMinor: PROMIS_LOAD_MINOR,
             minIntexBidRate: 60e6,
             prices: ReferencePriceLib.onePriced(840, ENTRY_PRICE, FLOOR_PRICE_MINOR, ENTRY_PRICE),

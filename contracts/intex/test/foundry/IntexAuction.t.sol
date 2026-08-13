@@ -76,8 +76,6 @@ contract AuctionTest is Test {
         returns (IIntexAuction.AuctionParams memory)
     {
         return IIntexAuction.AuctionParams({
-            issuanceCurrency: 840,
-            referenceCurrency: 840,
             promisLoadMinor: PROMIS_LOAD_MINOR,
             minIntexBidRate: minIntexBidRate,
             prices: ReferencePriceLib.onePriced(840, entryPrice, 100, 200),

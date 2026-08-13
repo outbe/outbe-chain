@@ -32,12 +32,6 @@ pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 /// Time a series must age past `issued_at` before it can become Qualified.
 pub const QUALIFICATION_PERIOD: u32 = 21 * 24 * 3600;
 
-/// The day's default reference currency, where a single one is still required: the scalar
-/// pair on the auction-start message and the OCOMP brief. The scans walk the registry.
-pub const QUALIFIER_REFERENCE_ISO: u16 = 840;
-/// The day's default issuance currency; a bid names its own.
-pub const QUALIFIER_ISSUANCE_ISO: u16 = 840;
-
 /// Bin step (basis points) for the floor-price bin ladder.
 pub const BIN_STEP_BP: u16 = 25;
 

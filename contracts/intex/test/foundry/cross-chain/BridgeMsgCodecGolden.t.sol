@@ -18,8 +18,6 @@ contract BridgeMsgCodecGoldenTest is Test {
             0x55667788,
             0x99AABBCC,
             0xDDEEFF00,
-            0xC1C2,
-            0xD1D2,
             0x0102030405060708090A0B0C0D0E0F10,
             0x1A2B3C4D,
             ReferencePriceLib.one(0xD1D2, 0x1122334455667788, 0x99AABBCCDDEEFF00, 0xA1B2C3D4E5F60718),
@@ -32,7 +30,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         );
         assertEq(
             encoded,
-            hex"0103112233445566778899aabbccddeeff00c1c2d1d20102030405060708090a0b0c0d0e0f101a2b3c4dcafebabe0000567800009abcabcdf1f2f3f4f5f6f7f8f9fafbfcfdfeff010101d1d2112233445566778899aabbccddeeff00a1b2c3d4e5f60718"
+            hex"0103112233445566778899aabbccddeeff000102030405060708090a0b0c0d0e0f101a2b3c4dcafebabe0000567800009abcabcdf1f2f3f4f5f6f7f8f9fafbfcfdfeff010101d1d2112233445566778899aabbccddeeff00a1b2c3d4e5f60718"
         );
         assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START + BridgeMsgCodec.REFERENCE_PRICE_LEN);
     }
@@ -96,8 +94,6 @@ contract BridgeMsgCodecGoldenTest is Test {
                 0x55667788,
                 0x99AABBCC,
                 0xDDEEFF00,
-                0xC1C2,
-                0xD1D2,
                 0x0102030405060708090A0B0C0D0E0F10,
                 0x1A2B3C4D,
                 ReferencePriceLib.one(0xD1D2, 0x1122334455667788, 0x99AABBCCDDEEFF00, 0xA1B2C3D4E5F60718),
@@ -114,8 +110,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(schedule.commitEnd, 0x55667788, "commitEnd");
         assertEq(schedule.revealEnd, 0x99AABBCC, "revealEnd");
         assertEq(schedule.issuanceEnd, 0xDDEEFF00, "issuanceEnd");
-        assertEq(params.issuanceCurrency, 0xC1C2, "issuanceCurrency");
-        assertEq(params.referenceCurrency, 0xD1D2, "referenceCurrency");
+        assertEq(params.prices[0].isoCode, 0xD1D2, "priceIsoCode");
         assertEq(params.promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
         assertEq(params.minIntexBidRate, 0x1A2B3C4D, "minIntexBidRate");
         assertEq(params.prices[0].entryPriceMinor, 0x1122334455667788, "entryPrice");

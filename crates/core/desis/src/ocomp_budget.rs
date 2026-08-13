@@ -41,8 +41,6 @@ pub fn apply_request_auction_base(
             storage.clone(),
             worldwide_day,
             supply_u128,
-            // The prices are the ones the request froze and its hash commits, one
-            // row per reference currency the day could price.
             auction_entry_prices
                 .iter()
                 .map(|row| ReferencePrice {

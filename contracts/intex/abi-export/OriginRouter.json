@@ -443,16 +443,6 @@
               "internalType": "uint32"
             },
             {
-              "name": "issuanceCurrency",
-              "type": "uint16",
-              "internalType": "uint16"
-            },
-            {
-              "name": "referenceCurrency",
-              "type": "uint16",
-              "internalType": "uint16"
-            },
-            {
               "name": "promisLoadMinor",
               "type": "uint128",
               "internalType": "uint128"
@@ -914,16 +904,6 @@
               "name": "issuanceEnd",
               "type": "uint32",
               "internalType": "uint32"
-            },
-            {
-              "name": "issuanceCurrency",
-              "type": "uint16",
-              "internalType": "uint16"
-            },
-            {
-              "name": "referenceCurrency",
-              "type": "uint16",
-              "internalType": "uint16"
             },
             {
               "name": "promisLoadMinor",

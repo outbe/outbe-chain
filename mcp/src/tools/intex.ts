@@ -461,8 +461,6 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         worldwideDayState: number;
         schedule: { commitEnd: number; revealEnd: number; issuanceEnd: number };
         params: {
-          issuanceCurrency: number;
-          referenceCurrency: number;
           promisLoadMinor: bigint;
           callTrigger: { callWindow: number; callThreshold: number; callNoticePeriod: number };
           minIntexBidRate: bigint;
@@ -489,8 +487,6 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         },
         paymentToken: { symbol: meta.symbol, decimals: dec },
         params: {
-          issuanceCurrency: d.params.issuanceCurrency,
-          referenceCurrency: d.params.referenceCurrency,
           // strike basis: per-Intex promis_load in the payment token (wCOEN). Escrow lock = qty * this * rate / 1e6.
           promisLoadMinor: { raw: d.params.promisLoadMinor.toString(), value: formatUnits(d.params.promisLoadMinor, dec) },
           callTrigger: {
@@ -503,8 +499,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           minIntexBidQuantity: Number(d.params.minIntexBidQuantity),
           // entry bond pulled at commit and returned at reveal/cancel; 0 = no bond.
           commitBondMinor: { raw: d.params.commitBondMinor.toString(), value: formatUnits(d.params.commitBondMinor, dec) },
-          // One row per currency the day can clear in; a bid's reference currency must
-          // appear here. Prices are in that currency, on the 1e9 wire scale; raw integers.
+          // A bid's reference currency must appear here. Prices are on the 1e9 wire scale.
           prices: d.params.prices.map((row) => ({
             isoCode: Number(row.isoCode),
             entryPriceMinor: row.entryPriceMinor.toString(),
