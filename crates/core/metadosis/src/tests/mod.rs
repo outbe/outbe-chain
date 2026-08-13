@@ -146,14 +146,8 @@ fn with_active_scope<R>(
     result
 }
 
-/// Drive the WWD lifecycle the way the daily Cycle handler does:
-/// invoke `start_metadosis` on a synthetic context. Production no
-/// longer drives Metadosis through a per-block lifecycle hook (see
-/// ), but these tests intentionally exercise the state
-/// machine sub-day, so they call `start_metadosis` directly.
-/// Genesis registers the day-type pair and lists its currency as a reference,
-/// and the auction brief needs a price for it. Without one the day would brief
-/// with no priced currency at all, which the resolver rejects.
+/// Price the day-type currency, which genesis lists as a reference: the brief needs a
+/// price for it.
 fn arm_reference_price(storage: &StorageHandle, timestamp: u64) {
     use outbe_oracle::schema::OracleContract;
     let index = match outbe_oracle::api::require_coen_pair(
@@ -183,6 +177,9 @@ fn arm_reference_price(storage: &StorageHandle, timestamp: u64) {
         .unwrap();
 }
 
+/// Drive the WWD lifecycle the way the daily Cycle handler does: invoke `start_metadosis`
+/// on a synthetic context. These tests exercise the state machine sub-day, so they call it
+/// directly rather than through a per-block hook.
 fn run_begin_block_with_chain_id(
     storage: StorageHandle,
     block_number: u64,

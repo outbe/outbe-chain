@@ -65,8 +65,6 @@ interface IIntexAuction {
         uint32 callNoticePeriod;
     }
 
-    /// @notice Auction input parameters, stored per auction. Field order mirrors the spec
-    ///         (single-currency: flat entry/floor/call stand in for the `referencePrices[]` slot).
     /// @notice Entry, floor and call price of one reference currency for a day.
     struct ReferencePrice {
         uint16 isoCode;
@@ -75,6 +73,7 @@ interface IIntexAuction {
         uint64 callPriceMinor;
     }
 
+    /// @notice Auction input parameters, stored per auction.
     struct AuctionParams {
         /// @notice The day's default issuance currency (ISO numeric); a bid names its own.
         uint16 issuanceCurrency;

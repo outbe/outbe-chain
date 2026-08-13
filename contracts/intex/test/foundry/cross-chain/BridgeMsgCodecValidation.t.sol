@@ -6,7 +6,7 @@ import {ReferencePriceLib} from "../helpers/ReferencePriceLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
-import {_asBatch} from "../helpers/IssuanceBatch.sol";
+import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
 /// @dev PR-A Tier-1 input-validation hardening of BridgeMsgCodec:
 ///      - fixed-width decoders assert exact length (truncation silent-truncation);
@@ -306,6 +306,6 @@ contract BridgeMsgCodecValidationTest is Test {
         payload.seriesId = "20260212-TRY-U";
         payload.recipients = new address[](n);
         payload.quantities = new uint256[](n);
-        return BridgeMsgCodec.encodeIssuanceInstructions(_asBatch(payload));
+        return BridgeMsgCodec.encodeIssuanceInstructions(IssuanceBatchLib.one(payload));
     }
 }

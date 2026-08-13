@@ -11,7 +11,6 @@ pragma solidity 0.8.30;
 ///      `dstChainId` and are checked against it. Every leg is isolated (see {flushPendingSend}) — a single failing leg
 ///      is parked, never reverting the fan-out. Sends are funded from the contract's relay float (`msg.value` must be
 ///      0); `quote*` return the native fee. Inbound delivery arrives via {ERC7786MessengerBase-receiveMessage}.
-
 interface IOriginRouter {
     // --- Events ---
     /// @notice Emitted when a BIDS_BATCH is received from a target chain.
@@ -126,7 +125,6 @@ interface IOriginRouter {
         bytes payload;
     }
 
-    /// @notice Auction stage start parameters grouped to keep the calldata layout resilient against stack limits.
     /// @notice Entry, floor and call price of one reference currency for a day.
     struct ReferencePrice {
         uint16 isoCode;
@@ -135,6 +133,7 @@ interface IOriginRouter {
         uint64 callPriceMinor;
     }
 
+    /// @notice Auction stage start parameters grouped to keep the calldata layout resilient against stack limits.
     struct AuctionStageStartParams {
         uint32 worldwideDay;
         /// @notice End of the commit stage (UNIX seconds).

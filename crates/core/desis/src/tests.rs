@@ -10,6 +10,7 @@ use crate::api::{AuctionBriefReceipt, AuctionBriefRejectionReason};
 use crate::constants::ORIGIN_ROUTER_ADDRESS;
 use crate::runtime;
 use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract};
+use outbe_intexfactory::constants::QUALIFIER_REFERENCE_ISO;
 
 const CHAIN_ID: u64 = 1;
 const WORLDWIDE_DAY: WorldwideDay = WorldwideDay::new(20260101);
@@ -119,8 +120,8 @@ fn bids(n: u8, rate: u32) -> Vec<BidData> {
             intex_bid_rate: rate,
             timestamp: i as u32,
             intex_quantity: 1,
-            issuance_currency: 840,
-            reference_currency: 840,
+            issuance_currency: QUALIFIER_REFERENCE_ISO,
+            reference_currency: QUALIFIER_REFERENCE_ISO,
         })
         .collect()
 }
@@ -131,7 +132,7 @@ fn bids(n: u8, rate: u32) -> Vec<BidData> {
 /// in-process fixtures use, in the wire shape the receipt commits.
 fn frozen_entry_prices() -> Vec<outbe_ocomp_protocol::intent::ReferenceEntryPriceV1> {
     vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
-        reference_currency: outbe_intexfactory::constants::QUALIFIER_REFERENCE_ISO,
+        reference_currency: QUALIFIER_REFERENCE_ISO,
         entry_price_minor: U256::from(ENTRY_PRICE),
         source: outbe_ocomp_protocol::intent::AuctionEntryPriceSource::LastClosedDayVwap,
         source_day: WORLDWIDE_DAY.value(),
@@ -141,7 +142,7 @@ fn frozen_entry_prices() -> Vec<outbe_ocomp_protocol::intent::ReferenceEntryPric
 /// The single priced reference currency the fixtures brief with.
 fn entry_price_rows() -> Vec<crate::schema::ReferencePrice> {
     vec![crate::schema::ReferencePrice {
-        iso_code: outbe_intexfactory::constants::QUALIFIER_REFERENCE_ISO,
+        iso_code: QUALIFIER_REFERENCE_ISO,
         entry_price_minor: U256::from(ENTRY_PRICE),
     }]
 }
@@ -911,8 +912,8 @@ fn schedule_derives_min_bid_qty_from_prior_clearing() {
                     intex_bid_rate: 200,
                     timestamp: i as u32,
                     intex_quantity: 1,
-                    issuance_currency: 840,
-                    reference_currency: 840,
+                    issuance_currency: QUALIFIER_REFERENCE_ISO,
+                    reference_currency: QUALIFIER_REFERENCE_ISO,
                 })
                 .collect(),
         )
@@ -1375,24 +1376,24 @@ fn clearing_uniform_price_is_last_allocated_bid() {
                 intex_bid_rate: 300,
                 timestamp: 0,
                 intex_quantity: 1,
-                issuance_currency: 840,
-                reference_currency: 840,
+                issuance_currency: QUALIFIER_REFERENCE_ISO,
+                reference_currency: QUALIFIER_REFERENCE_ISO,
             },
             BidData {
                 bidder_address: bidder(1),
                 intex_bid_rate: 200,
                 timestamp: 1,
                 intex_quantity: 1,
-                issuance_currency: 840,
-                reference_currency: 840,
+                issuance_currency: QUALIFIER_REFERENCE_ISO,
+                reference_currency: QUALIFIER_REFERENCE_ISO,
             },
             BidData {
                 bidder_address: bidder(2),
                 intex_bid_rate: 150,
                 timestamp: 2,
                 intex_quantity: 1,
-                issuance_currency: 840,
-                reference_currency: 840,
+                issuance_currency: QUALIFIER_REFERENCE_ISO,
+                reference_currency: QUALIFIER_REFERENCE_ISO,
             },
         ];
         runtime::process_bids_batch(
@@ -1428,16 +1429,16 @@ fn clear_bids_below_min_price_skipped() {
                 intex_bid_rate: 50,
                 timestamp: 0,
                 intex_quantity: 1,
-                issuance_currency: 840,
-                reference_currency: 840,
+                issuance_currency: QUALIFIER_REFERENCE_ISO,
+                reference_currency: QUALIFIER_REFERENCE_ISO,
             },
             BidData {
                 bidder_address: bidder(1),
                 intex_bid_rate: 200,
                 timestamp: 1,
                 intex_quantity: 1,
-                issuance_currency: 840,
-                reference_currency: 840,
+                issuance_currency: QUALIFIER_REFERENCE_ISO,
+                reference_currency: QUALIFIER_REFERENCE_ISO,
             },
         ];
         runtime::process_bids_batch(
@@ -1470,16 +1471,16 @@ fn clear_refunds_equal_locked_minus_paid() {
                 intex_bid_rate: 300,
                 timestamp: 0,
                 intex_quantity: 1,
-                issuance_currency: 840,
-                reference_currency: 840,
+                issuance_currency: QUALIFIER_REFERENCE_ISO,
+                reference_currency: QUALIFIER_REFERENCE_ISO,
             },
             BidData {
                 bidder_address: bidder(1),
                 intex_bid_rate: 200,
                 timestamp: 1,
                 intex_quantity: 1,
-                issuance_currency: 840,
-                reference_currency: 840,
+                issuance_currency: QUALIFIER_REFERENCE_ISO,
+                reference_currency: QUALIFIER_REFERENCE_ISO,
             },
         ];
         runtime::process_bids_batch(
@@ -1525,24 +1526,24 @@ fn clear_rate_escrow_scales_by_basis() {
                 intex_bid_rate: 800_000,
                 timestamp: 0,
                 intex_quantity: 1,
-                issuance_currency: 840,
-                reference_currency: 840,
+                issuance_currency: QUALIFIER_REFERENCE_ISO,
+                reference_currency: QUALIFIER_REFERENCE_ISO,
             },
             BidData {
                 bidder_address: bidder(1),
                 intex_bid_rate: 600_000,
                 timestamp: 1,
                 intex_quantity: 1,
-                issuance_currency: 840,
-                reference_currency: 840,
+                issuance_currency: QUALIFIER_REFERENCE_ISO,
+                reference_currency: QUALIFIER_REFERENCE_ISO,
             },
             BidData {
                 bidder_address: bidder(2),
                 intex_bid_rate: 400_000,
                 timestamp: 2,
                 intex_quantity: 1,
-                issuance_currency: 840,
-                reference_currency: 840,
+                issuance_currency: QUALIFIER_REFERENCE_ISO,
+                reference_currency: QUALIFIER_REFERENCE_ISO,
             },
         ];
         runtime::process_bids_batch(
@@ -1647,8 +1648,8 @@ fn two_chain_bids_merge_and_carry_source_chain() {
                 intex_bid_rate: 300,
                 timestamp: 0,
                 intex_quantity: 1,
-                issuance_currency: 840,
-                reference_currency: 840,
+                issuance_currency: QUALIFIER_REFERENCE_ISO,
+                reference_currency: QUALIFIER_REFERENCE_ISO,
             }],
         )
         .unwrap();
@@ -1666,8 +1667,8 @@ fn two_chain_bids_merge_and_carry_source_chain() {
                 intex_bid_rate: 200,
                 timestamp: 0,
                 intex_quantity: 1,
-                issuance_currency: 840,
-                reference_currency: 840,
+                issuance_currency: QUALIFIER_REFERENCE_ISO,
+                reference_currency: QUALIFIER_REFERENCE_ISO,
             }],
         )
         .unwrap();
@@ -1968,8 +1969,6 @@ fn a_reference_currency_whose_letter_is_taken_is_dropped_from_the_day() {
     });
 }
 
-// --- Config construction ---
-
 #[test]
 fn clearing_without_winners_discards_the_day_contributor_map() {
     let chain = 10u32;
@@ -1995,11 +1994,13 @@ fn clearing_without_winners_discards_the_day_contributor_map() {
     });
 }
 
+// --- Config construction ---
+
 #[test]
 fn escrow_basis_is_promis_load() {
     // wCOEN escrow basis = promis_load per Intex; entry no longer drives it.
     let cfg = AuctionConfig::from_reference_prices(vec![crate::schema::ReferencePrice {
-        iso_code: outbe_intexfactory::constants::QUALIFIER_REFERENCE_ISO,
+        iso_code: QUALIFIER_REFERENCE_ISO,
         entry_price_minor: U256::from(1_000_000_150_000_000u128),
     }]);
     assert_eq!(cfg.escrow_basis_minor(), cfg.promis_load_minor);
@@ -2029,6 +2030,8 @@ fn a_chains_bidders_ship_in_chunks_the_encoder_can_carry() {
     );
     assert!(runtime::refund_chunk_count(ceiling + 1).is_err());
 }
+
+// --- Days the oracle could not price ---
 
 #[test]
 fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
@@ -2074,6 +2077,8 @@ fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
         );
     });
 }
+
+// --- Bid intake: the currency pair ---
 
 #[test]
 fn a_relayed_bid_naming_an_unspellable_currency_is_refused_at_intake() {

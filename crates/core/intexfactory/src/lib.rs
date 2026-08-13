@@ -19,8 +19,7 @@ pub use config::IntexParams;
 pub use errors::IntexFactoryError;
 pub use outbe_intex::SeriesId;
 pub use qualified::IntexLifecycle;
-pub use runtime::marked_up;
-pub use runtime::to_wire_price;
+pub use runtime::{marked_up, to_wire_price};
 pub use schema::{IntexFactoryContract, IssuanceParams};
 
 #[cfg(test)]

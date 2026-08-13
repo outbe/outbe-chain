@@ -251,7 +251,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return True once `createSeries` has run for it.
     function seriesExists(bytes14 seriesId) external view returns (bool);
 
-    /// @notice Issued token id for a series (= `uint256(seriesId)`). Pure helper.
+    /// @notice Issued token id for a series (= `uint256(uint112(seriesId))`). Pure helper.
     /// @param seriesId Series identifier.
     /// @return The Issued token id.
     function issuedTokenId(bytes14 seriesId) external pure returns (uint256);

@@ -5,8 +5,7 @@ use outbe_primitives::storage::StorageHandle;
 
 use crate::api;
 use crate::precompile::{dispatch, IIntex};
-use crate::schema::SeriesId;
-use crate::schema::{CreateSeriesParams, IntexCallTrigger, IntexState};
+use crate::schema::{CreateSeriesParams, IntexCallTrigger, IntexState, SeriesId};
 use outbe_primitives::storage::types::{Storable, StorageKey};
 
 const CHAIN_ID: u64 = 1;

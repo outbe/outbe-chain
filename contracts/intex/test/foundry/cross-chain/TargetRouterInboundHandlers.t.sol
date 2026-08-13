@@ -21,7 +21,7 @@ import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 import {RevertingERC1155Receiver} from "@test-mocks/RevertingERC1155Receiver.sol";
-import {_asBatch} from "../helpers/IssuanceBatch.sol";
+import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
 /// @dev End-to-end traversal of the five `TargetRouter` inbound handlers that previously only
 ///      had codec-level round-trip coverage. Each test hand-builds a `BridgeMsgCodec` packet and
@@ -180,7 +180,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
             recipients: recipients,
             quantities: quantities
         });
-        bytes memory packet = BridgeMsgCodec.encodeIssuanceInstructions(_asBatch(payload));
+        bytes memory packet = BridgeMsgCodec.encodeIssuanceInstructions(IssuanceBatchLib.one(payload));
         _deliver(packet);
 
         uint256 tokenId = intex.issuedTokenId(SERIES_ID);
@@ -194,7 +194,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         returns (bytes memory)
     {
         return BridgeMsgCodec.encodeIssuanceInstructions(
-            _asBatch(
+            IssuanceBatchLib.one(
                 BridgeMsgCodec.IssuanceInstructionsPayload({
                     seriesId: SERIES_ID,
                     worldwideDay: WORLDWIDE_DAY,

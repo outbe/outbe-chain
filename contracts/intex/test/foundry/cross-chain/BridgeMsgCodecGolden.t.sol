@@ -6,7 +6,7 @@ import {ReferencePriceLib} from "../helpers/ReferencePriceLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
-import {_asBatch} from "../helpers/IssuanceBatch.sol";
+import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
 /// @dev Golden-value and per-field round-trip coverage for BridgeMsgCodec encode/decode.
 contract BridgeMsgCodecGoldenTest is Test {
@@ -258,8 +258,9 @@ contract BridgeMsgCodecGoldenTest is Test {
         p.recipients = recipients;
         p.quantities = quantities;
 
-        BridgeMsgCodec.IssuanceInstructionsPayload memory d =
-            this.exposedDecodeIssuanceInstructions(BridgeMsgCodec.encodeIssuanceInstructions(_asBatch(p)))[0];
+        BridgeMsgCodec.IssuanceInstructionsPayload memory d = this.exposedDecodeIssuanceInstructions(
+            BridgeMsgCodec.encodeIssuanceInstructions(IssuanceBatchLib.one(p))
+        )[0];
 
         assertEq(d.seriesId, bytes14("20260212-TRY-U"), "seriesId");
         assertEq(d.worldwideDay, 0x55555555, "worldwideDay");

@@ -247,9 +247,9 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   const networkArg = z.string().describe(`network name (one of: ${NETWORKS.map((d) => d.name).join(", ")})`);
   const accountArg = z.string().optional().describe("0x address to query (default: the configured signer)");
   const seriesArg = z
-  .string()
-  .describe('series id, e.g. "20260212-TRY-U"')
-  .transform((v) => toSeriesId(v));
+    .string()
+    .describe('series id, e.g. "20260212-TRY-U"')
+    .transform((v) => toSeriesId(v));
   const worldwideDayArg = z.number().int().describe("auction worldwide day (yyyymmdd)");
   const quantityArg = z.number().int().describe("bid quantity (uint16)");
   const rateArg = z

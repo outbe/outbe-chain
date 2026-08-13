@@ -32,9 +32,10 @@ pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 /// Time a series must age past `issued_at` before it can become Qualified.
 pub const QUALIFICATION_PERIOD: u32 = 21 * 24 * 3600;
 
-/// The day's default currencies, where a single one is still required: the scalar pair on
-/// the auction-start message and the OCOMP brief. The scans walk the oracle's registry.
+/// The day's default reference currency, where a single one is still required: the scalar
+/// pair on the auction-start message and the OCOMP brief. The scans walk the registry.
 pub const QUALIFIER_REFERENCE_ISO: u16 = 840;
+/// The day's default issuance currency; a bid names its own.
 pub const QUALIFIER_ISSUANCE_ISO: u16 = 840;
 
 /// Bin step (basis points) for the floor-price bin ladder.
@@ -43,9 +44,6 @@ pub const BIN_STEP_BP: u16 = 25;
 /// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.
 pub const PRICE_RATE_DEN: u16 = 100;
 
-/// Oracle prices carry 1e18, the wire and the target chains 1e9. Moves with
-/// `PRICE_DECIMALS = 9` in `IntexMetadata`.
-pub const ORACLE_TO_WIRE_SCALE: u64 = 1_000_000_000;
 /// Floor price = entry * 1.08.
 pub const FLOOR_RATE: u16 = 8;
 /// Call price = entry * 2.28; its breach arms a Call Event.
@@ -58,6 +56,10 @@ pub const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 3600;
 pub const CALL_WINDOW: u32 = 28 * 24 * 3600;
 /// Call-trigger threshold: how much of the window must be in breach to force-call.
 pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
+
+/// Oracle prices carry 1e18, the wire and the target chains 1e9. Moves with
+/// `PRICE_DECIMALS = 9` in `IntexMetadata`.
+pub const ORACLE_TO_WIRE_SCALE: u64 = 1_000_000_000;
 
 /// Commit-entry bond on the target-chain auction: 100M wCOEN (18-dec minor units).
 pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * 10u128.pow(18);

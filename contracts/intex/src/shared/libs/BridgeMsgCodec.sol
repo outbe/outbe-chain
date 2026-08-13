@@ -54,7 +54,7 @@ library BridgeMsgCodec {
     // Header is fixed at 2 bytes: [bodyVersion(1)][msgType(1)].
     uint16 internal constant HEADER_LEN = 2;
 
-    // encodePacked messages have a tight upper bound that equals the lower bound.
+    // Fixed head of AUCTION_STAGE_START; the price rows follow it.
     uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 74;
     /// @notice Bytes per reference-price row: [iso(2)][entry(8)][floor(8)][call(8)].
     uint16 internal constant REFERENCE_PRICE_LEN = 26;
@@ -288,8 +288,6 @@ library BridgeMsgCodec {
         uint128 _commitBondMinor,
         uint8 _dayState
     ) internal pure returns (bytes memory) {
-        // Split into two packed halves: 18 packed args in one call is too deep for the IR
-        // pipeline. Concatenation of encodePacked results is byte-identical to a single call.
         if (_prices.length > MAX_REFERENCE_PRICES) {
             revert PayloadArrayTooLong(_prices.length, MAX_REFERENCE_PRICES);
         }

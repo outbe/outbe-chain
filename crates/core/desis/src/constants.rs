@@ -33,9 +33,11 @@ pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 18 * 3600;
 pub const DAY_STATE_GREEN: u8 = 1;
 pub const DAY_STATE_RED: u8 = 2;
 
-/// Bidders per REFUND_INSTRUCTIONS message, and chunks one chain-day may span.
-/// Both mirror the codec's `MAX_PAYLOAD_ARRAY_LEN` and `MAX_CHUNKS`.
-pub const REFUND_CHUNK_LEN: usize = 64;
+/// Bidders per REFUND_INSTRUCTIONS message: the same per-message array cap the issuance
+/// fan-out uses, and the codec's `MAX_PAYLOAD_ARRAY_LEN`.
+pub use outbe_intexfactory::constants::MAX_RECIPIENTS_PER_MESSAGE as REFUND_CHUNK_LEN;
+
+/// Chunks one chain-day's refunds may span; mirrors the codec's `MAX_CHUNKS`.
 pub const MAX_REFUND_CHUNKS: usize = 256;
 
 /// Reference currencies one day may price. Mirrors the codec's `MAX_REFERENCE_PRICES`:

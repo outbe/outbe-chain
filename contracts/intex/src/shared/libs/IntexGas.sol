@@ -49,12 +49,13 @@ library IntexGas {
         return BIDS_BASE + itemCount * BIDS_PER_ITEM;
     }
 
-    /// @notice Destination gas for an ISSUANCE_INSTRUCTIONS with `recipientCount` recipients.
     /// @notice Destination gas for an AUCTION_STAGE_START carrying `priceCount` rows.
     function auctionStart(uint256 priceCount) internal pure returns (uint256) {
         return AUCTION_STAGE_START_BASE + priceCount * AUCTION_STAGE_START_PER_PRICE;
     }
 
+    /// @notice Destination gas for an ISSUANCE_INSTRUCTIONS creating `seriesCount` series and
+    ///         minting to `recipientCount` recipients.
     function issuance(uint256 seriesCount, uint256 recipientCount) internal pure returns (uint256) {
         return ISSUANCE_BASE + seriesCount * ISSUANCE_PER_SERIES + recipientCount * ISSUANCE_PER_ITEM;
     }
