@@ -78,8 +78,8 @@ library BridgeMsgCodec {
 
     // abi.encode payloads have variable length. The minimum corresponds to all
     // dynamic arrays being empty:
-    //   BIDS_BATCH(uint32, uint32, uint32, uint16, uint16, t[]×4):
-    //     5 static head words + 4 dynamic head offsets + 4 empty length words = 13×32 = 416
+    //   BIDS_BATCH(uint32, uint32, uint32, uint16, uint16, address[], uint256[]):
+    //     5 static head words + 2 dynamic head offsets + 2 empty length words = 9×32 = 288
     //   REFUND_INSTRUCTIONS(uint32, uint16, uint16, address[], uint64[], uint64[]):
     //     3 static head words + 3 dynamic offsets + 3 empty length words = 9×32 = 288
     //   ISSUANCE_INSTRUCTIONS(dynamic array of a struct with 12 static + 2 dynamic fields):
@@ -452,6 +452,12 @@ library BridgeMsgCodec {
     /// @notice Every priced row the message carries.
     function _referencePrices(bytes calldata _msg) private pure returns (IIntexAuction.ReferencePrice[] memory rows) {
         uint256 count = uint8(_msg[73]);
+        // Re-checked inbound, as every variable-length decoder here is: a peer compromise or an
+        // unsynchronised encoder could otherwise hand the receiver more rows than the gas it was
+        // quoted for, and the message would be redelivered for as long as it runs out.
+        if (count > MAX_REFERENCE_PRICES) {
+            revert PayloadArrayTooLong(count, MAX_REFERENCE_PRICES);
+        }
         if (_msg.length != MIN_LEN_AUCTION_STAGE_START + count * REFERENCE_PRICE_LEN) {
             revert InvalidPayloadLength(MSG_AUCTION_STAGE_START, _msg.length, MIN_LEN_AUCTION_STAGE_START);
         }

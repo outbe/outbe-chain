@@ -559,7 +559,9 @@ contract TargetRouter is
         $.refundChunksApplied[worldwideDay] |= bit;
         uint16 seen = $.refundChunksSeen[worldwideDay] + 1;
         $.refundChunksSeen[worldwideDay] = seen;
-        bool completesDay = seen == totalChunks;
+        // `>=` rather than `==`: an overshoot would otherwise leave the day's proceeds
+        // accrued in this contract with nothing left to release them.
+        bool completesDay = seen >= totalChunks;
 
         uint128 totalPaid = $.escrowAdapter.finalizeAuction(worldwideDay, _receiveId, instructions, completesDay);
         $.refundProceedsAccrued[worldwideDay] += totalPaid;

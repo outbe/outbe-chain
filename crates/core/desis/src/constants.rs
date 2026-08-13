@@ -41,3 +41,8 @@ pub const REFUND_CHUNK_LEN: usize = 64;
 /// receiver's arrival set inside one 256-bit word, and matches bid intake's own
 /// ceiling of 64 bids across 256 batches.
 pub const MAX_REFUND_CHUNKS: usize = 256;
+
+/// Reference currencies one day may price. Mirrors the wire's own cap: the auction
+/// start message carries the table, and a day that exceeded it could not be started
+/// on any chain at all.
+pub const MAX_REFERENCE_PRICES: usize = 6;

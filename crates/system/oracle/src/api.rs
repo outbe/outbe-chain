@@ -118,6 +118,18 @@ pub fn coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option
     Ok((!stored.is_zero()).then_some(stored))
 }
 
+/// Registry index of the `COEN/<iso_code>` pair, or `None` when the pair was never
+/// registered.
+///
+/// The reference registry lists currencies independently of whether their pair
+/// exists, so a caller walking it needs to tell "not registered" apart from a read
+/// that actually failed. [`require_coen_pair`] collapses both into an error.
+pub fn coen_pair_index_opt(storage: StorageHandle, iso_code: u16) -> Result<Option<PairIndex>> {
+    let oracle: OracleContract<'_> = OracleContract::new(storage);
+    let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
+    Ok((index != 0).then_some(index))
+}
+
 pub fn get_exchange_rate(storage: StorageHandle, base: Address, quote: Address) -> Result<U256> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     oracle.get_exchange_rate(base, quote)

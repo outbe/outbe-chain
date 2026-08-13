@@ -91,6 +91,12 @@ pub struct IntexFactoryContract {
     pub qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 16)]
     pub call_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
+
+    // Where each currency's Called scan resumes, mirroring the qualify cursor: the run is
+    // budgeted, so without this a currency re-walks its lowest bins every day and the
+    // series above the budget are never evaluated.
+    #[attribute(order = 17)]
+    pub call_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 }
 
 impl IntexFactoryContract<'_> {

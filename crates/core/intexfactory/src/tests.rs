@@ -2347,10 +2347,13 @@ fn one_series_with_more_winners_than_a_message_spans_several() {
 }
 
 #[test]
-fn a_message_belongs_to_exactly_one_chain() {
+fn a_chains_series_batch_even_when_another_chain_comes_between_them() {
+    // A day emits its legs series by series, so one chain's legs are never adjacent.
+    // Both of chain 10's series still travel together, or the batching would do
+    // nothing precisely when a day has several currency pairs.
     let legs = vec![leg(10, 1, 2), leg(20, 1, 3), leg(10, 2, 1)];
     assert_eq!(
         shape(&runtime::pack_issuance_messages(legs)),
-        vec![(10, 1, 2), (20, 1, 3), (10, 1, 1)]
+        vec![(10, 2, 3), (20, 1, 3)]
     );
 }

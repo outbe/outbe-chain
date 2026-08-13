@@ -49,6 +49,13 @@ wire_struct! {
     }
 }
 
+fn validate_pre_admission_envelope(
+    envelope: &PreAdmissionEnvelopeV1,
+    _limits: &SchemaLimits,
+) -> Result<(), ProtocolError> {
+    envelope.validate_price_table()
+}
+
 wire_struct! {
     pub struct PreAdmissionEnvelopeV1 {
         pub chain_id: u64,
@@ -75,6 +82,7 @@ wire_struct! {
         pub correctness_profile_id: B256,
         pub capacity_profile_id: B256,
     }
+    validate = validate_pre_admission_envelope;
 }
 impl_top_level_codec!(PreAdmissionEnvelopeV1, PreAdmissionEnvelopeV1);
 

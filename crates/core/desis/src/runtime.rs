@@ -14,8 +14,9 @@ use outbe_intexfactory::SeriesId;
 
 use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
-    DAY_STATE_RED, MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, RATE_SCALE,
-    REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
+    DAY_STATE_RED, MAX_REFERENCE_PRICES, MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS,
+    ORIGIN_ROUTER_ADDRESS, RATE_SCALE, REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS,
+    SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -90,7 +91,7 @@ pub(crate) fn record_preflighted_brief(
     anchor: u32,
 ) -> Result<()> {
     let mut contract = storage.contract::<DesisContract>();
-    let reference_prices = keep_distinct_letters(&mut contract, worldwide_day, reference_prices)?;
+    let reference_prices = choose_reference_prices(&mut contract, worldwide_day, reference_prices)?;
     contract.write_auction_config(
         worldwide_day,
         &AuctionConfig::from_reference_prices(reference_prices),
@@ -107,30 +108,49 @@ pub(crate) fn record_preflighted_brief(
     Ok(())
 }
 
-/// A series id spells its reference currency with a single letter, so two
-/// references sharing a first letter would produce one id for two series. The
-/// day keeps the first of them and drops the rest: a currency nobody can price
-/// in is a currency nobody can bid in, which is what keeps the collision out of
-/// clearing.
-fn keep_distinct_letters(
+/// The currencies a day will actually price, from the ones offered.
+///
+/// Two rules narrow the list, and both drop rather than fail: a day that cannot be
+/// briefed is a day that cannot settle. A series id spells its reference currency
+/// with a single letter, so two currencies sharing a first letter would derive one
+/// id for two series; and the auction start message carries the table, so a day
+/// with more currencies than it can carry could not be started anywhere.
+///
+/// The offered rows are ordered by currency first, so the same day resolves to the
+/// same table whichever path briefed it — the two disagree on the order they collect
+/// prices in, and both of these rules keep whichever row comes first.
+fn choose_reference_prices(
     contract: &mut DesisContract<'_>,
     worldwide_day: WorldwideDay,
-    rows: Vec<ReferencePrice>,
+    mut rows: Vec<ReferencePrice>,
 ) -> Result<Vec<ReferencePrice>> {
-    let letter_of = |iso_code: u16| SeriesId::currency_code(iso_code)[0];
+    rows.sort_by_key(|row| row.iso_code);
+
+    // A currency the id cannot spell cannot own a letter; reveal already refuses such a
+    // bid, so this only decides which rows survive.
+    let letter_of = |iso_code: u16| SeriesId::currency_code(iso_code).map(|code| code[0]).ok();
     let mut kept: Vec<ReferencePrice> = Vec::with_capacity(rows.len());
     for row in rows {
-        match kept
-            .iter()
-            .find(|k| letter_of(k.iso_code) == letter_of(row.iso_code))
-        {
-            Some(taken) => contract.emit(IDesis::ReferenceCurrencyLetterTaken {
+        let Some(letter) = letter_of(row.iso_code) else {
+            continue;
+        };
+        if let Some(taken) = kept.iter().find(|k| letter_of(k.iso_code) == Some(letter)) {
+            contract.emit(IDesis::ReferenceCurrencyLetterTaken {
                 worldwideDay: worldwide_day.into(),
                 isoCode: row.iso_code,
                 takenBy: taken.iso_code,
-            })?,
-            None => kept.push(row),
+            })?;
+            continue;
         }
+        if kept.len() == MAX_REFERENCE_PRICES {
+            contract.emit(IDesis::ReferenceCurrencyOverCap {
+                worldwideDay: worldwide_day.into(),
+                isoCode: row.iso_code,
+                cap: MAX_REFERENCE_PRICES as u8,
+            })?;
+            continue;
+        }
+        kept.push(row);
     }
     Ok(kept)
 }

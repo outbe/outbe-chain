@@ -98,28 +98,34 @@ impl SeriesId {
         self.0[REFERENCE_AT]
     }
 
-    /// `949 -> b"949"`, `32 -> b"032"`.
-    pub fn numeric_code(iso: u16) -> [u8; 3] {
-        let iso = iso % 1000;
-        [
+    /// `949 -> b"949"`, `32 -> b"032"`. ISO 4217 numbers are three digits, and a
+    /// wider one has no spelling here: folding it would give two currencies one id.
+    pub fn numeric_code(iso: u16) -> Result<[u8; 3], IntexError> {
+        if iso > 999 {
+            return Err(IntexError::InvalidSeriesId);
+        }
+        Ok([
             b'0' + (iso / 100) as u8,
             b'0' + ((iso / 10) % 10) as u8,
             b'0' + (iso % 10) as u8,
-        ]
+        ])
     }
 
     /// How a currency is spelled inside an id: its alpha-3 code, or its numeric
     /// code when ISO assigns none.
-    pub fn currency_code(iso: u16) -> [u8; 3] {
-        iso_4217_alpha(iso).unwrap_or_else(|| Self::numeric_code(iso))
+    pub fn currency_code(iso: u16) -> Result<[u8; 3], IntexError> {
+        match iso_4217_alpha(iso) {
+            Some(alpha) => Ok(alpha),
+            None => Self::numeric_code(iso),
+        }
     }
 
     /// The id of the series a day issues for one `(issuance, reference)` pair.
     pub fn for_pair(worldwide_day: u32, issuance: u16, reference: u16) -> Result<Self, IntexError> {
         Self::pack(
             worldwide_day,
-            Self::currency_code(issuance),
-            Self::currency_code(reference)[0],
+            Self::currency_code(issuance)?,
+            Self::currency_code(reference)?[0],
         )
     }
 }

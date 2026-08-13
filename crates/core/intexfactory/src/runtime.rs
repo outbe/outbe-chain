@@ -151,10 +151,16 @@ pub fn pack_issuance_messages(
     let mut per_chain: Vec<(u32, Vec<IssuanceInstructionsParams>)> = Vec::new();
     for leg in legs {
         for slice in split_recipients(leg.payload) {
-            match per_chain.last_mut() {
-                Some((chain, message))
-                    if *chain == leg.chain_id
-                        && message.len() < MAX_SERIES_PER_MESSAGE
+            // A day's legs arrive series by series, so one chain's legs are not adjacent.
+            // The message to fill is the last one belonging to *this* chain; looking only
+            // at the tail would open a new message for every series and batch nothing.
+            let open = per_chain
+                .iter_mut()
+                .rev()
+                .find(|(chain, _)| *chain == leg.chain_id);
+            match open {
+                Some((_, message))
+                    if message.len() < MAX_SERIES_PER_MESSAGE
                         && recipient_count(message) + slice.recipients.len()
                             <= MAX_RECIPIENTS_PER_MESSAGE =>
                 {
@@ -248,6 +254,8 @@ pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
 
 /// Per-Intex cost in the payment token's minor units. `entry_price` and
 /// `promis_load_minor` are both 1e18-scaled, so their product carries 1e36.
+/// Rounded up, as the issuance-currency route is: the two must agree in direction,
+/// or the same series costs a minor unit more through one door than the other.
 pub(crate) fn derived_cost_amount(
     entry_price: U256,
     promis_load_minor: U256,
@@ -258,7 +266,7 @@ pub(crate) fn derived_cost_amount(
     )?;
     entry_price
         .checked_mul(promis_load_minor)
-        .map(|v| v / U256::from(10u64).pow(U256::from(exp)))
+        .map(|v| v.div_ceil(U256::from(10u64).pow(U256::from(exp))))
         .ok_or_else(|| PrecompileError::Revert("cost amount overflow".into()))
 }
 
@@ -671,7 +679,9 @@ fn cost_in_token(
 /// The oracle's COEN price in `iso_code`, refused when absent or older than
 /// [`FX_RATE_MAX_AGE_SECONDS`].
 fn fresh_coen_rate(storage: &StorageHandle<'_>, iso_code: u16, now: u64) -> Result<U256> {
-    let Ok((_, pair_index)) = outbe_oracle::api::require_coen_pair(storage.clone(), iso_code)
+    // "No pair registered" is a real answer for a currency; a failed read is not, and
+    // must not reach the settler dressed as one.
+    let Some(pair_index) = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso_code)?
     else {
         return Err(IntexFactoryError::FxRateUnavailable(iso_code).into());
     };

@@ -1949,7 +1949,10 @@ fn clearing_issues_one_series_per_winning_currency_pair() {
 #[test]
 fn a_reference_currency_whose_letter_is_taken_is_dropped_from_the_day() {
     // CHF and CNY both spell their series `C`, which would give one id to two
-    // series. Only the first survives the brief, so the second cannot be bid in.
+    // series. The day keeps one of them, and which one cannot depend on the order
+    // the prices happened to be collected in: the two brief paths disagree on that,
+    // and a currency must not become biddable or not from one day to the next.
+    // Ordering by code first makes the lower one the survivor, always.
     with_storage(|s| {
         open_clearing_priced(&s, 4, &[756, 156]);
         let config = s
@@ -1962,9 +1965,9 @@ fn a_reference_currency_whose_letter_is_taken_is_dropped_from_the_day() {
                 .iter()
                 .map(|row| row.iso_code)
                 .collect::<Vec<_>>(),
-            vec![756]
+            vec![156]
         );
-        assert!(config.entry_price_for(156).is_none());
+        assert!(config.entry_price_for(756).is_none());
     });
 }
 

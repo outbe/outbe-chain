@@ -69,11 +69,13 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
             break;
         }
         let iso_code = currencies[at];
-        let Ok((_, pair_index)) =
-            outbe_oracle::api::require_coen_pair(ctx.storage.clone(), iso_code)
-        else {
-            continue;
-        };
+        // A currency with no registered COEN pair has nothing to compare against; a real
+        // read failure is not that, and must not be mistaken for it.
+        let pair_index =
+            match outbe_oracle::api::coen_pair_index_opt(ctx.storage.clone(), iso_code)? {
+                Some(index) => index,
+                None => continue,
+            };
         let (calls, inspected) =
             call_currency(ctx, &oracle, iso_code, pair_index, last_closed_day, budget)?;
         called = called.saturating_add(calls);
@@ -113,9 +115,10 @@ fn call_currency(
 
     let mut called: u32 = 0;
     let mut visited: u32 = 0;
-    let mut cursor: u32 = 0;
+    let mut cursor: u32 = factory.call_scan_cursor.read(&iso_code)?;
     loop {
         if visited >= budget {
+            factory.call_scan_cursor.write(&iso_code, cursor)?;
             break;
         }
         let next = match tree_math::find_first_left_inclusive(
@@ -123,7 +126,11 @@ fn call_currency(
             cursor,
         )? {
             Some(b) if b <= v_bin => b,
-            _ => break,
+            _ => {
+                // End of the eligible range: the next run sweeps this currency afresh.
+                factory.call_scan_cursor.write(&iso_code, 0)?;
+                break;
+            }
         };
 
         // Snapshot before mutating: try_call removes Called series.
@@ -164,7 +171,10 @@ fn call_currency(
 
         cursor = match next.checked_add(1) {
             Some(c) if c <= MAX_BIN_ID => c,
-            _ => break,
+            _ => {
+                factory.call_scan_cursor.write(&iso_code, 0)?;
+                break;
+            }
         };
     }
     Ok((called, visited))

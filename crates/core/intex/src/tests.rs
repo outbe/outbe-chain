@@ -560,7 +560,7 @@ fn reads_as_text_in_both_code_forms() {
         "20260212-TRY-U"
     );
     assert_eq!(
-        SeriesId::pack(DAY, SeriesId::numeric_code(949), b'U')
+        SeriesId::pack(DAY, SeriesId::numeric_code(949).unwrap(), b'U')
             .unwrap()
             .to_string(),
         "20260212-949-U"
@@ -568,10 +568,14 @@ fn reads_as_text_in_both_code_forms() {
 }
 
 #[test]
-fn numeric_code_zero_pads() {
-    assert_eq!(SeriesId::numeric_code(840), *b"840");
-    assert_eq!(SeriesId::numeric_code(32), *b"032");
-    assert_eq!(SeriesId::numeric_code(8), *b"008");
+fn numeric_code_zero_pads_and_refuses_a_wider_code() {
+    assert_eq!(SeriesId::numeric_code(840).unwrap(), *b"840");
+    assert_eq!(SeriesId::numeric_code(32).unwrap(), *b"032");
+    assert_eq!(SeriesId::numeric_code(8).unwrap(), *b"008");
+    // ISO numbers are three digits. Folding a wider one would spell two currencies
+    // the same way and give a day two series with one id.
+    assert!(SeriesId::numeric_code(1949).is_err());
+    assert!(SeriesId::for_pair(DAY, 1949, 840).is_err());
 }
 
 #[test]

@@ -1093,17 +1093,24 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       const tokens = await settlementTokens(n, series);
       const priced = await Promise.all(
         tokens.map(async (token) => {
-          const [decimals, symbol, cost] = await Promise.all([
+          const [decimals, symbol] = await Promise.all([
             n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" }),
             n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
-            quoteCostAmount(n, series, token),
           ]);
-          return {
-            token,
-            symbol: symbol as string,
-            decimals: Number(decimals),
-            costAmount: { raw: cost.toString(), value: formatUnits(cost, Number(decimals)) },
-          };
+          const base = { token, symbol: symbol as string, decimals: Number(decimals) };
+          // A quote in the issuance currency needs a fresh COEN rate and can be refused;
+          // that says something about this token only, so it is reported as the answer for
+          // this token rather than taking the whole list — including the reference-currency
+          // tokens, which need no rate at all — down with it.
+          try {
+            const cost = await quoteCostAmount(n, series, token);
+            return {
+              ...base,
+              costAmount: { raw: cost.toString(), value: formatUnits(cost, Number(decimals)) },
+            };
+          } catch (error) {
+            return { ...base, unavailable: (error as Error).message };
+          }
         }),
       );
       return ok({ network: n.name, series, tokens: priced });
