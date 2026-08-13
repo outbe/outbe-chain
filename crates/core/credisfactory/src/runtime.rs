@@ -4,7 +4,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
 
 use outbe_credis::constants::{BP_DEN, POLICY_RATE_FACTOR_BP};
-use outbe_credis::{CredisContract, CredisState, OpenPositionParams, Position};
+use outbe_credis::{CredisContract, CredisState, OpenPositionParams};
 use outbe_oracle::api::{coen_rate_for_opt, get_currency_rate};
 use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
@@ -208,10 +208,11 @@ pub fn settle(
 
 /// Latches an Open position whose currency's live COEN price has crossed its floor.
 ///
-/// The block scan owns the one-way latch; this only spares a settler the wait for the
-/// next sweep when the price is above the floor right now. An unpriced currency simply
-/// does not latch here — `coen_rate_for_opt` reports that instead of reverting, so a
-/// cold oracle cannot block a position that the scan already latched.
+/// The daily scan owns the one-way latch and reads the finalized daily reference
+/// price; this arm reads the live spot instead, so a settler who sees the price above
+/// their floor right now never waits for the next daily run. An unpriced currency
+/// simply does not latch here — `coen_rate_for_opt` reports that instead of reverting,
+/// so a cold oracle cannot block a position the scan already latched.
 fn latch_if_above_floor(
     storage: &StorageHandle<'_>,
     credis: &mut CredisContract<'_>,
@@ -272,14 +273,6 @@ pub fn void_remainder(storage: StorageHandle<'_>, position_id: U256) -> Result<(
         .add_to_total_unallocated(void.gratis_burned)?;
 
     Ok(())
-}
-
-/// True when `position` is a called position whose settlement window has lapsed with
-/// principal still outstanding — i.e. the void sweep should take it.
-pub fn is_voidable(position: &Position, now: u64) -> Result<bool> {
-    Ok(position.lifecycle_state()? == CredisState::Called
-        && !position.outstanding.is_zero()
-        && now >= outbe_credis::settlement_deadline(position))
 }
 
 /// Reads the disbursed asset's ISO 4217 currency code via a static

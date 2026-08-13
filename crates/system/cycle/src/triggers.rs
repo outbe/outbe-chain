@@ -22,6 +22,7 @@ pub enum TriggerId {
     WwdAdvanceNoon = 2,
     AuctionAdvance = 3,
     GemCallDaily = 4,
+    CredisCallDaily = 5,
 }
 
 impl TriggerId {
@@ -64,6 +65,7 @@ pub enum TriggerHandler {
     WwdAdvanceNoon,
     AuctionAdvance,
     GemCallDaily,
+    CredisCallDaily,
 }
 
 impl TriggerHandler {
@@ -74,7 +76,10 @@ impl TriggerHandler {
             // Terminal allocation and the subsequent WWD process command.
             Self::EmissionLimitDaily => 2,
             Self::WwdAdvanceNoon => 1,
-            Self::IntexDaily | Self::AuctionAdvance | Self::GemCallDaily => 0,
+            Self::IntexDaily
+            | Self::AuctionAdvance
+            | Self::GemCallDaily
+            | Self::CredisCallDaily => 0,
         }
     }
 
@@ -94,6 +99,7 @@ impl TriggerHandler {
             }
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
             Self::GemCallDaily => outbe_gem::hooks::run_call_daily(ctx),
+            Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
         }
     }
 }
@@ -110,7 +116,7 @@ pub fn metadosis_mutation_lease_budget_per_tick() -> u8 {
 
 /// Active trigger table. Order is informational only — the dispatcher
 /// fires triggers independently per slot.
-pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 5] {
+pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 6] {
     let production_default = outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS;
     let (wwd_period_seconds, wwd_start_offset_seconds) =
         if metadosis_advance_interval_seconds == production_default {
@@ -178,10 +184,20 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             requires_accounting_window: false,
             handler: TriggerHandler::GemCallDaily,
         },
+        TriggerSpec {
+            id: TriggerId::CredisCallDaily.as_u32(),
+            label: "credis_call_daily",
+            period_seconds: 86_400,
+            start_offset_seconds: 0,
+            // Reads finalized oracle VWAP history to latch, call and void credis
+            // positions; no dependency on the parent block's settlement accounting.
+            requires_accounting_window: false,
+            handler: TriggerHandler::CredisCallDaily,
+        },
     ]
 }
 
-pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 5] =
+pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 6] =
     active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
 pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &ACTIVE_TRIGGER_ARRAY;
 
@@ -220,6 +236,12 @@ mod protocol_parameter_tests {
         assert!(matches!(
             configured[4].handler,
             TriggerHandler::GemCallDaily
+        ));
+        assert_eq!(configured[5].period_seconds, 86_400);
+        assert_eq!(configured[5].start_offset_seconds, 0);
+        assert!(matches!(
+            configured[5].handler,
+            TriggerHandler::CredisCallDaily
         ));
 
         let defaults =

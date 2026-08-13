@@ -152,6 +152,7 @@ impl CredisContract<'_> {
         self.create_position_record(&position)?;
         self.append_to_address_index(params.smart_account, position_id)?;
         self.append_to_global_index(position_id)?;
+        self.insert_active(position_id)?;
 
         self.emit(ICredis::PositionCreated {
             positionId: position_id,
@@ -197,6 +198,7 @@ impl CredisContract<'_> {
         position.state = CredisState::Called as u8;
         position.called_at = now;
         self.update_position_record(&position)?;
+        self.bump_called_count(position.smart_account)?;
         self.emit(ICredis::PositionCalled {
             positionId: position_id,
             calledAt: now,
@@ -219,7 +221,8 @@ impl CredisContract<'_> {
     ///   remains locked.
     pub fn settle(&mut self, position_id: U256, amount: U256, now: u64) -> Result<Settlement> {
         let mut position = self.load_position(position_id)?;
-        match position.lifecycle_state()? {
+        let state_before = position.lifecycle_state()?;
+        match state_before {
             CredisState::Open => return Err(CredisError::NotSettleable.into()),
             CredisState::Settled | CredisState::Void => {
                 return Err(CredisError::PositionClosed.into())
@@ -263,6 +266,14 @@ impl CredisContract<'_> {
             position.state = CredisState::Settled as u8;
         }
         self.update_position_record(&position)?;
+        if closed {
+            // Terminal: leave the active index, and release the owner's call
+            // block if this settlement resolved a called position.
+            self.remove_active(position_id)?;
+            if state_before == CredisState::Called {
+                self.drop_called_count(position.smart_account)?;
+            }
+        }
 
         self.emit(ICredis::SettlementApplied {
             positionId: position_id,
@@ -322,6 +333,8 @@ impl CredisContract<'_> {
         position.collateral_locked = U256::ZERO;
         position.state = CredisState::Void as u8;
         self.update_position_record(&position)?;
+        self.remove_active(position_id)?;
+        self.drop_called_count(position.smart_account)?;
 
         self.emit(ICredis::PositionVoided {
             positionId: position_id,
@@ -353,15 +366,18 @@ impl CredisContract<'_> {
 
     /// True if any of `account`'s positions is CALLED. Such an owner cannot open
     /// new positions until the call resolves.
-    // ponytail: O(positions-per-account) walk. A `called_position_counts` map
-    // makes it O(1) once the call transition has a single choke point.
     pub fn has_called_position(&self, account: Address) -> Result<bool> {
-        for position in self.get_positions_by_address(account)? {
-            if position.lifecycle_state()? == CredisState::Called {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        Ok(self.called_position_counts.read(&account)? > 0)
+    }
+
+    /// Number of positions still on the price path — those the daily scan visits.
+    pub fn active_len(&self) -> Result<u32> {
+        self.read_active_len()
+    }
+
+    /// Position id at active-index `index`, or `None` past the end.
+    pub fn active_at(&self, index: u32) -> Result<Option<U256>> {
+        self.read_active_at(index)
     }
 
     /// Sum of `outstanding` across all positions for `account`.

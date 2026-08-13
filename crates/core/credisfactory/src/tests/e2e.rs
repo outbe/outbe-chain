@@ -1,235 +1,17 @@
 //! End-to-end flow: mine → pledge → requestCredis → latch → settle → void.
 //!
-//! The confidential Gratis path runs against the in-process enclave engine
-//! (`outbe_gratis::enclave_client::test_enclave`); balances/pledged amounts are
-//! asserted by decrypting the ciphertext with the account's view key, exactly as
-//! a client would. `HashMapStorageProvider` does not run a real EVM, so the
-//! runtime's Rust → Solidity sub-calls into `IVaultRouter` / `IERC20` are
-//! stubbed via `enable_sub_call_stub` (returns `default_success()`).
-//!
-//! There is no price-scan hook yet, so the tests that need a CALLED position
-//! drive `mark_called` directly — the daily reference-price scan that fires it in
-//! production is a separate change.
+//! The harness (in-process enclave, sub-call stubs, view-key decryption, the
+//! finalized daily series) lives in [`crate::tests::common`].
 
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 
 use outbe_credis::{CredisContract, CredisState};
-use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
-use outbe_gratis::enclave_client::test_enclave;
-use outbe_gratisfactory::runtime as gf;
-use outbe_oracle::schema::OracleContract;
-use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
-use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::PromisLimitContract;
-use outbe_tee::protocol::{GratisOp, ModifyAuth};
-use outbe_tee_enclave::gratis::{
-    decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
-    pledge_secret, spend_auth_mac,
-};
 
 use crate::runtime;
 use crate::tests::common::*;
-
-/// Issuance currency (ISO 4217) reported by `asset()`'s stubbed `isoCode()`.
-const ISSUANCE_ISO: u16 = 840;
-
-const DAY: u64 = 86_400;
-
-/// Policy rate seeded for USD in these e2e tests (4.30 %, 1e18 scaled).
-fn policy_rate() -> U256 {
-    U256::from(43_000_000_000_000_000u128)
-}
-
-fn one_e18() -> U256 {
-    U256::from(10u64).pow(U256::from(18u64))
-}
-
-/// COEN/840 rate these tests seed: 2.0, 1e18-scaled. This is the entry price of
-/// every position opened here, so floor = 2.16 and call = 2.64.
-fn oracle_rate() -> U256 {
-    U256::from(2u64) * one_e18()
-}
-
-/// A price above every position's floor (2.16), so the settlement latch trips.
-fn above_floor() -> U256 {
-    U256::from(2_200_000_000_000_000_000u64)
-}
-
-/// Credit a pledge asks for: $2.00 in 6-decimal minor units. At [`oracle_rate`] that
-/// costs exactly [`pledge_cost`] gratis.
-fn pledge_stables() -> U256 {
-    U256::from(2_000_000u64)
-}
-
-/// Gratis collateral [`pledge_stables`] costs: `2e6 * 1e12 * 1e18 / 2e18 = 1e18`.
-fn pledge_cost() -> U256 {
-    one_e18()
-}
-
-/// Pledge [`pledge_stables`] of credit for `who` at op-nonce `nonce` (uncapped), and
-/// return the resulting handle. The gratis it costs is derived from the seeded rate.
-fn pledge(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> B256 {
-    let (handle, gratis_cost) = gf::pledge_gratis(
-        storage.clone(),
-        who,
-        pledge_stables(),
-        asset(),
-        U256::MAX,
-        auth(GratisOp::Pledge, who, pledge_stables(), nonce),
-    )
-    .unwrap();
-    assert_eq!(gratis_cost, pledge_cost(), "seeded rate drifted");
-    handle
-}
-
-/// Pledge and open a position for alice, originated by [`cca`].
-fn open(storage: &StorageHandle<'_>, nonce: u64) -> U256 {
-    let handle = pledge(storage, alice(), nonce);
-    let spend = credis_spend_auth(alice(), handle, alice());
-    let (position_id, _) =
-        runtime::request_credis(storage.clone(), cca(), alice(), handle, spend).unwrap();
-    position_id
-}
-
-fn chain_b256() -> B256 {
-    B256::from(U256::from(CHAIN_ID))
-}
-
-fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
-    outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
-    set_coen_rate(&storage, rate_1e18);
-    let oracle = OracleContract::new(storage);
-    oracle
-        .reference_currency_rate
-        .write(&ISSUANCE_ISO, policy_rate())
-        .unwrap();
-}
-
-/// Re-publishes the COEN/840 rate — how these tests move the price across a floor.
-fn set_coen_rate(storage: &StorageHandle<'_>, rate_1e18: U256) {
-    outbe_oracle::api::set_exchange_rate(
-        storage.clone(),
-        Address::ZERO,
-        outbe_oracle::api::DAY_TYPE_PAIR,
-        rate_1e18,
-        0,
-        0,
-    )
-    .unwrap();
-}
-
-fn now_of(storage: &StorageHandle<'_>) -> u64 {
-    storage.timestamp().unwrap().to::<u64>()
-}
-
-fn advance_to(storage: &StorageHandle<'_>, timestamp: u64) {
-    storage.set_block_timestamp(U256::from(timestamp)).unwrap();
-}
-
-/// Settles exactly the accrued interest plus `principal` of the outstanding
-/// balance, and returns what was actually pulled from `payer`.
-fn settle_principal(
-    storage: &StorageHandle<'_>,
-    payer: Address,
-    position_id: U256,
-    principal: U256,
-) -> U256 {
-    let position = CredisContract::new(storage.clone())
-        .get_position(position_id)
-        .unwrap();
-    let interest = CredisContract::accrued_interest(&position, now_of(storage)).unwrap();
-    runtime::settle(storage.clone(), payer, position_id, interest + principal).unwrap()
-}
-
-/// ABI-encoded `uint16` return for the asset's `isoCode()` static sub-call.
-fn iso_word(iso: u16) -> Bytes {
-    let mut b = vec![0u8; 32];
-    b[30..32].copy_from_slice(&iso.to_be_bytes());
-    Bytes::from(b)
-}
-
-/// 32-byte zero word — the stubbed `uint256` return for the vault sub-calls.
-fn zero_word() -> Bytes {
-    Bytes::from(vec![0u8; 32])
-}
-
-/// Positive Fidelity so `gratisfactory::pledge_gratis` clears the eligibility gate.
-fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
-    const ONE_YEAR_SECS: u64 = 365 * 86_400;
-    outbe_fidelity::api::cohort_in(
-        storage,
-        account,
-        U256::from(100u64),
-        CREATED_AT - ONE_YEAR_SECS,
-    )
-    .unwrap();
-}
-
-fn auth(op: GratisOp, owner: Address, amount: U256, op_nonce: u64) -> ModifyAuth {
-    let mk = derive_modify_key(&test_enclave::state_key(), owner).unwrap();
-    ModifyAuth {
-        mac: modify_mac(&mk, owner, op, amount, op_nonce, chain_b256()),
-        op_nonce,
-    }
-}
-
-fn view_balance(s: &StorageHandle<'_>, a: Address) -> U256 {
-    let vk = derive_view_key(&test_enclave::state_key(), a).unwrap();
-    let blob = outbe_gratis::api::balance_ct(s.clone(), a).unwrap();
-    if blob.is_empty() {
-        return U256::ZERO;
-    }
-    decrypt_balance(&vk, a, &blob).unwrap()
-}
-
-fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
-    let vk = derive_view_key(&test_enclave::state_key(), a).unwrap();
-    let blob = outbe_gratis::api::pledged_ct(s.clone(), a).unwrap();
-    if blob.is_empty() {
-        return U256::ZERO;
-    }
-    decrypt_pledged(&vk, a, &blob).unwrap()
-}
-
-/// The spend authorization the pledger EOA hands to the CCA to bind a pledge to a
-/// destination smart account (`HMAC(pledgeSecret, "credis-bind" || bundle)`).
-fn credis_spend_auth(eoa: Address, handle: B256, bundle: Address) -> [u8; 32] {
-    let mk = derive_modify_key(&test_enclave::state_key(), eoa).unwrap();
-    spend_auth_mac(&pledge_secret(&mk, handle), bundle)
-}
-
-/// Storage set up with the block time, sub-call stubs, and the enclave installed.
-fn env() -> HashMapStorageProvider {
-    test_enclave::install();
-    fidelity_enclave::install();
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(CREATED_AT));
-    storage.set_block_number(BLOCK_NUMBER);
-    storage.enable_sub_call_stub();
-    storage.stub_sub_call_at(VAULT_ROUTER_ADDRESS, zero_word());
-    storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
-    storage
-}
-
-/// Mints `amount` gratis to alice and seeds the fidelity + oracle state a pledge needs.
-fn bootstrap(storage: &StorageHandle<'_>, amount: U256) {
-    outbe_gratis::api::mint(
-        storage.clone(),
-        alice(),
-        amount,
-        auth(GratisOp::Mint, alice(), amount, 0),
-    )
-    .unwrap();
-    seed_fidelity(storage.clone(), alice());
-    seed_oracle(storage.clone(), oracle_rate());
-}
-
-fn teardown() {
-    fidelity_enclave::uninstall();
-    test_enclave::uninstall();
-}
 
 #[test]
 fn request_credis_seals_the_position_geometry_from_the_pledge_quote() {
@@ -516,12 +298,16 @@ fn void_sweep_burns_only_the_unpaid_share() {
             .unwrap();
         assert!(!cohorts_before.is_empty(), "alice has a seeded cohort");
 
-        // One second inside the window the sweep must find nothing.
+        // One second inside the window the scan must find nothing. No daily
+        // reference price is published, so the latch and call arms stay inert and
+        // only the price-independent void arm can act.
         let deadline = called_at + 14 * DAY;
         advance_to(&storage, deadline - 1);
+        finalize_through(&storage, deadline - 1);
         assert_eq!(scan(&storage, deadline - 1), 0, "window still open");
 
         advance_to(&storage, deadline);
+        finalize_through(&storage, deadline);
         assert_eq!(scan(&storage, deadline), 1);
 
         // Only the unpaid share was burned; the settled half stays with alice.
@@ -562,8 +348,13 @@ fn void_sweep_burns_only_the_unpaid_share() {
             "the void burn should record a sale cohort"
         );
 
-        // Idempotent: a second sweep at the same height finds nothing to burn.
+        // Idempotent: a second run at the same height finds nothing to burn — the
+        // voided position has left the active index entirely.
         assert_eq!(scan(&storage, deadline), 0);
+        assert_eq!(
+            CredisContract::new(storage.clone()).active_len().unwrap(),
+            0
+        );
     });
     teardown();
 }
@@ -589,6 +380,7 @@ fn a_position_settled_inside_the_window_is_never_voided() {
 
         let deadline = called_at + 14 * DAY;
         advance_to(&storage, deadline + DAY);
+        finalize_through(&storage, deadline + DAY);
         assert_eq!(scan(&storage, deadline + DAY), 0);
 
         // Nothing burned: the whole pledge is back with alice.
@@ -605,14 +397,4 @@ fn a_position_settled_inside_the_window_is_never_voided() {
         );
     });
     teardown();
-}
-
-/// Runs the begin-block void sweep at `timestamp`, returning how many positions
-/// it voided.
-fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
-    let ctx = BlockRuntimeContext::new(
-        BlockContext::empty_for_tests(BLOCK_NUMBER, timestamp, CHAIN_ID),
-        storage.clone(),
-    );
-    crate::lifecycle::scan_and_void(&ctx).unwrap()
 }

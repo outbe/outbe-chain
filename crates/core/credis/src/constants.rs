@@ -14,6 +14,12 @@ pub const FLOOR_RATE_PCT: u16 = 8;
 /// Call price: `entry + 32%`. A sustained breach of it arms the call.
 pub const CALL_RATE_PCT: u16 = 32;
 
+/// Length of the sustained breach that calls a position: the official daily
+/// reference price must sit at or above the call price for this many
+/// **consecutive** UTC days. A single day below resets the run, which is why the
+/// scan tests `min(window) >= call_price` rather than counting breach days.
+pub const CALL_STREAK_DAYS: u32 = 21;
+
 /// Settlement window opened by the call. Settlement stays open on unchanged
 /// terms throughout; whatever remains when it lapses is voided.
 pub const CALL_WINDOW_SECS: u64 = 14 * 24 * 60 * 60;

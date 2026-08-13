@@ -161,6 +161,22 @@ pub struct CredisContract {
     /// Dense index — index → position_id.
     #[attribute(order = 4)]
     pub position_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
+
+    /// Dense index of the positions still on the price path — those in `Open`,
+    /// `Settleable` or `Called`. Membership invariant: a position is listed iff
+    /// its state is non-terminal, so the daily scan visits only the positions
+    /// that can still transition instead of the whole book.
+    #[attribute(order = 5)]
+    pub active_positions: outbe_primitives::storage::dsl::List<U256>,
+
+    /// position_id → its slot in [`Self::active_positions`], for O(1) swap-remove.
+    #[attribute(order = 6)]
+    pub active_position_index: outbe_primitives::storage::dsl::Map<U256, u32>,
+
+    /// Per-account count of positions currently `Called`. An owner with a
+    /// non-zero count cannot open new positions.
+    #[attribute(order = 7)]
+    pub called_position_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
 }
 
 impl CredisContract<'_> {

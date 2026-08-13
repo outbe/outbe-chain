@@ -8,17 +8,18 @@
 //!   loan via the vault sub-call.
 //! - `settle` applies a payment interest-first and releases the principal-proportional
 //!   share of collateral from the pledger's pledged ledger back to its balance.
-//! - [`CredisLifecycle`] sweeps called positions whose settlement window has lapsed,
-//!   burning the unpaid share of the collateral into the Promis Reserve.
+//! - [`called`] is the daily Cycle-triggered price-path scan: it latches positions
+//!   past their floor, calls those whose sustained breach completed, and voids the
+//!   remainder of called positions whose settlement window has lapsed, burning the
+//!   unpaid share of the collateral into the Promis Reserve.
 
+pub mod called;
 pub mod errors;
-pub mod lifecycle;
 pub mod precompile;
 pub mod runtime;
 pub mod schema;
 mod sol_ext;
 
-pub use lifecycle::CredisLifecycle;
 pub use schema::CredisFactoryContract;
 
 #[cfg(test)]

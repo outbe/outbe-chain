@@ -108,6 +108,19 @@ pub fn coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option
     Ok((!stored.is_zero()).then_some(stored))
 }
 
+/// Registry index of the `COEN/<iso_code>` pair, or `None` when the pair is not
+/// registered.
+///
+/// The non-reverting counterpart to [`require_coen_pair`], for the same reason
+/// [`coen_rate_for_opt`] exists: a scheduled job that walks positions in several
+/// currencies must skip a currency this chain cannot price rather than revert and
+/// take the block down with it. Storage faults still propagate.
+pub fn coen_pair_index_opt(storage: StorageHandle, iso_code: u16) -> Result<Option<PairIndex>> {
+    let oracle: OracleContract<'_> = OracleContract::new(storage);
+    let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
+    Ok((index != 0).then_some(index))
+}
+
 pub fn get_exchange_rate(storage: StorageHandle, base: Address, quote: Address) -> Result<U256> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     oracle.get_exchange_rate(base, quote)
