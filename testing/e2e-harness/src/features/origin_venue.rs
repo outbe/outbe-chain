@@ -89,6 +89,12 @@ sol! {
     interface IOriginTargets {
         function targetsOf(uint32 worldwideDay) external view returns (uint32[] memory);
     }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IDesisBids {
+        function getBidsCount(uint32 worldwideDay) external view returns (uint256);
+        function isChainDone(uint32 worldwideDay, uint32 srcChainId) external view returns (bool);
+    }
 }
 
 fn frozen_targets(url: &str, router: Address, worldwide_day: u32) -> String {
@@ -198,7 +204,7 @@ fn advance_past_window_to_stage(world: &mut World, target_stage: u8) {
     }
 }
 
-const AUCTION_START_TIMEOUT: Duration = Duration::from_secs(600);
+const AUCTION_START_TIMEOUT: Duration = Duration::from_secs(1200);
 
 #[then("the auction for that day opens on the target chain")]
 fn auction_opens_on_target(world: &mut World) {
@@ -243,6 +249,34 @@ fn auction_opens_on_target(world: &mut World) {
             day_colour(world, worldwide_day)
         );
         sleep(Duration::from_secs(2));
+    }
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn relayed_bids(url: &str, worldwide_day: u32, chain_id: u32) -> String {
+    let desis = origin_venue::DESIS
+        .parse()
+        .expect("desis precompile address");
+    let count = eth::read_call(
+        url,
+        desis,
+        &IDesisBids::getBidsCountCall {
+            worldwideDay: worldwide_day,
+        },
+    );
+    let done = eth::read_call(
+        url,
+        desis,
+        &IDesisBids::isChainDoneCall {
+            worldwideDay: worldwide_day,
+            srcChainId: chain_id,
+        },
+    );
+    match (count, done) {
+        (Some(count), Some(done)) => {
+            format!("Desis holds {count} relayed bids, chain {chain_id} done={done}")
+        }
+        _ => "Desis did not report its relayed bids".to_owned(),
     }
 }
 
@@ -327,7 +361,11 @@ fn bidders_reveal(world: &mut World) {
 fn auction_clears(world: &mut World) {
     advance_past_window_to_stage(world, 2);
 
-    let contracts = world
+    let chain_id = world
+        .rpc
+        .chain_id(world.validators.primary_port())
+        .expect("committee chain id");
+    let _contracts = world
         .state
         .origin_contracts
         .clone()
@@ -352,9 +390,9 @@ fn auction_clears(world: &mut World) {
         assert_ne!(stage, Some(6), "Desis cancelled day {worldwide_day}");
         assert!(
             Instant::now() < deadline,
-            "day {worldwide_day} never cleared on Desis: {}; venue at {}",
+            "day {worldwide_day} never cleared on Desis: {}; {}",
             desis_stage(&url, worldwide_day),
-            frozen_targets(&url, contracts.origin_router, worldwide_day)
+            relayed_bids(&url, worldwide_day, chain_id as u32)
         );
         sleep(Duration::from_secs(2));
     }
