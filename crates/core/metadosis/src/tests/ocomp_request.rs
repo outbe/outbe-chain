@@ -931,6 +931,15 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
                     | (U256::from(1_u32) << 128),
             )
             .unwrap();
+        nod.ocomp_materialization_job_id
+            .write(&fixture.wwd, B256::repeat_byte(0x7a))
+            .unwrap();
+        nod.ocomp_materialization_program_semantics_hash
+            .write(&fixture.wwd, B256::repeat_byte(0x7b))
+            .unwrap();
+        nod.ocomp_materialization_last_progress_height
+            .write(&fixture.wwd, fixture.block_number)
+            .unwrap();
 
         outbe_intex::api::create_series(
             &storage,

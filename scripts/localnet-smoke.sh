@@ -33,7 +33,7 @@ export OUT_DIR OUTBE_CHAIN_BINARY
 
 if [[ ! -x "$OUTBE_CHAIN_BINARY" ]]; then
   echo "smoke: node binary not found/executable: $OUTBE_CHAIN_BINARY" >&2
-  echo "smoke: build it first (cargo build --release --bin outbe-chain)" >&2
+  echo "smoke: build it first (cargo build --release -p outbe-chain --features test-protocol-overrides --bin outbe-chain)" >&2
   exit 1
 fi
 

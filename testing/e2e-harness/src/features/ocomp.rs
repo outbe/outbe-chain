@@ -1372,7 +1372,7 @@ fn fresh_capacity_day_is_created_in_forming(world: &mut World) {
         &std::fs::read(&genesis_path).expect("read fresh Metadosis genesis"),
     )
     .expect("decode fresh Metadosis genesis");
-    let protocol_constants = GenesisProtocolParametersV1::from_materialized_genesis(&genesis)
+    let protocol_constants = GenesisProtocolParametersV1::from_genesis(&genesis)
         .expect("read immutable fresh Metadosis protocol constants");
     assert_eq!(
         state.forming_end - state.forming_start,

@@ -23,6 +23,7 @@ use outbe_compressed_entities::{
 };
 #[cfg(test)]
 use outbe_lysis::activation_v1::LysisOwnerReceiptsV1;
+use outbe_nod::schema::NodContract;
 #[cfg(test)]
 use outbe_ocomp_protocol::league_snapshot::league_snapshot_key;
 #[cfg(test)]
@@ -1357,6 +1358,10 @@ impl ActivationFixture {
         provider.set_timestamp(U256::from(current_time));
         let scope = begin_activation_scope(&mut provider);
         StorageHandle::enter(&mut provider, |storage| {
+            let nod = NodContract::new(storage.clone());
+            nod.ocomp_materialization_head_sequence.write(1).unwrap();
+            nod.ocomp_materialization_tail_sequence.write(1).unwrap();
+
             if seed_targets {
                 let tribute = TributeContract::new(storage.clone());
                 tribute.ocomp_profile_ready.write(true).unwrap();
