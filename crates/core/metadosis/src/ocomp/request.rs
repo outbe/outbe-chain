@@ -285,7 +285,7 @@ fn build_and_commit_request(
         day_type: protocol_day_type,
         day_limit,
         lysis_budget,
-        auction_entry_price: sealed_envelope.auction_entry_price,
+        auction_entry_prices: sealed_envelope.auction_entry_prices.clone(),
         logical_anchor: ctx.block.timestamp,
     };
 
@@ -358,7 +358,7 @@ fn build_and_commit_request(
             gratis_supply: calculation.gratis_supply,
             lysis_budget,
             auction_base: split.auction_base,
-            auction_entry_price: sealed_envelope.auction_entry_price,
+            auction_entry_prices: sealed_envelope.auction_entry_prices.clone(),
             request_budget_split_receipt_hash: receipt_hash,
         },
         logical_evaluation_height: ctx.block.block_number,
@@ -493,7 +493,7 @@ fn build_and_commit_retry(
         day_type: old_frozen.day_type,
         day_limit: old_frozen.day_limit,
         lysis_budget: old_frozen.lysis_budget,
-        auction_entry_price: old_frozen.auction_entry_price,
+        auction_entry_prices: old_frozen.auction_entry_prices.clone(),
         logical_anchor: receipt.logical_anchor,
     };
     let receipt = validate_replayed_request_budget_effect(effect, &receipt)?;

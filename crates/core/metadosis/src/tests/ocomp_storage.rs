@@ -205,15 +205,25 @@ fn receipt() -> RequestBudgetSplitReceiptV1 {
                 protocol_bundle_hash,
                 WWD.value(),
                 AUCTION_BASE,
-                AUCTION_ENTRY_PRICE,
+                &entry_prices(),
                 REQUEST_TIME,
             )
             .unwrap(),
         ),
         carry_over_credit: U256::ZERO,
-        auction_entry_price: AUCTION_ENTRY_PRICE,
+        auction_entry_prices: entry_prices(),
         logical_anchor: REQUEST_TIME,
     }
+}
+
+/// The day's frozen price table for these fixtures.
+fn entry_prices() -> Vec<outbe_ocomp_protocol::intent::ReferenceEntryPriceV1> {
+    vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
+        reference_currency: 840,
+        entry_price_minor: AUCTION_ENTRY_PRICE,
+        source: outbe_ocomp_protocol::intent::AuctionEntryPriceSource::LastClosedDayVwap,
+        source_day: 20_251_231,
+    }]
 }
 
 fn intent(
@@ -248,7 +258,7 @@ fn intent(
             gratis_supply: DAY_LIMIT,
             lysis_budget: LYSIS_BUDGET,
             auction_base: AUCTION_BASE,
-            auction_entry_price: AUCTION_ENTRY_PRICE,
+            auction_entry_prices: entry_prices(),
             request_budget_split_receipt_hash: receipt_hash,
         },
         logical_evaluation_height: request_height,

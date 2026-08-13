@@ -38,9 +38,10 @@ use outbe_ocomp_protocol::{
         materialize_authenticated_openings, CheckpointIdentityV1, InputChunkKind, InputManifestV1,
     },
     intent::{
-        ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
-        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-        MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
+        ActivationPreconditionsV1, AuctionEntryPriceSource, ContributorTargetPreconditionV1,
+        DayType, FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
+        MetadosisExpectedStatus, NodTargetPreconditionV1, ReferenceEntryPriceV1,
+        TributeInputBindingV1,
     },
     league_snapshot::league_snapshot_slot,
     opening::{
@@ -694,7 +695,12 @@ fn job_intent(day: WorldwideDay, protocol_bundle_hash: B256, nominal_total: U256
             gratis_supply: U256::from(20),
             lysis_budget: U256::from(1_000_000),
             auction_base: U256::from(700),
-            auction_entry_price: U256::from(95),
+            auction_entry_prices: vec![ReferenceEntryPriceV1 {
+                reference_currency: 840,
+                entry_price_minor: U256::from(95),
+                source: AuctionEntryPriceSource::LastClosedDayVwap,
+                source_day: 6,
+            }],
             request_budget_split_receipt_hash: B256::repeat_byte(0x55),
         },
         logical_evaluation_height: 1,

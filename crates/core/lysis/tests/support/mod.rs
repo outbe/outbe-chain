@@ -2,9 +2,10 @@ use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{
     hash::hash_framed,
     intent::{
-        ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
-        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-        MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
+        ActivationPreconditionsV1, AuctionEntryPriceSource, ContributorTargetPreconditionV1,
+        DayType, FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
+        MetadosisExpectedStatus, NodTargetPreconditionV1, ReferenceEntryPriceV1,
+        TributeInputBindingV1,
     },
     profile::poc_schema_limits,
     receipts::{desis_request_brief_hash, BudgetSplitDestination, RequestBudgetSplitReceiptV1},
@@ -66,7 +67,12 @@ fn request_receipt(day_type: DayType) -> RequestBudgetSplitReceiptV1 {
     let protocol_bundle_hash = hash(41);
     let wwd = 7;
     let auction_base = U256::from(40);
-    let auction_entry_price = U256::from(9);
+    let auction_entry_prices = vec![ReferenceEntryPriceV1 {
+        reference_currency: 840,
+        entry_price_minor: U256::from(9),
+        source: AuctionEntryPriceSource::LastClosedDayVwap,
+        source_day: 6,
+    }];
     let logical_anchor = 1_000;
     let green = day_type == DayType::Green;
     RequestBudgetSplitReceiptV1 {
@@ -88,7 +94,7 @@ fn request_receipt(day_type: DayType) -> RequestBudgetSplitReceiptV1 {
                     protocol_bundle_hash,
                     wwd,
                     auction_base,
-                    auction_entry_price,
+                    &auction_entry_prices,
                     logical_anchor,
                 )
                 .unwrap(),
@@ -97,7 +103,7 @@ fn request_receipt(day_type: DayType) -> RequestBudgetSplitReceiptV1 {
             None
         },
         carry_over_credit: if green { U256::ZERO } else { auction_base },
-        auction_entry_price,
+        auction_entry_prices,
         logical_anchor,
     }
 }
@@ -127,7 +133,12 @@ fn intent(day_type: DayType, request_receipt_hash: B256) -> JobIntentV1 {
             gratis_supply: U256::from(60),
             lysis_budget: U256::from(60),
             auction_base: U256::from(40),
-            auction_entry_price: U256::from(9),
+            auction_entry_prices: vec![ReferenceEntryPriceV1 {
+                reference_currency: 840,
+                entry_price_minor: U256::from(9),
+                source: AuctionEntryPriceSource::LastClosedDayVwap,
+                source_day: 6,
+            }],
             request_budget_split_receipt_hash: request_receipt_hash,
         },
         logical_evaluation_height: 100,

@@ -7,6 +7,7 @@
 
 use alloy_primitives::{B256, U256};
 use outbe_common::WorldwideDay;
+use outbe_ocomp_protocol::intent::ReferenceEntryPriceV1;
 use outbe_ocomp_protocol::receipts::desis_request_brief_hash;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
@@ -21,7 +22,7 @@ pub fn apply_request_auction_base(
     protocol_bundle_hash: B256,
     worldwide_day: WorldwideDay,
     auction_base: U256,
-    auction_entry_price: U256,
+    auction_entry_prices: &[ReferenceEntryPriceV1],
     logical_anchor: u64,
 ) -> Result<B256> {
     let supply_u128 = u128::try_from(auction_base).map_err(|_| {
@@ -31,7 +32,7 @@ pub fn apply_request_auction_base(
         protocol_bundle_hash,
         worldwide_day.value(),
         auction_base,
-        auction_entry_price,
+        auction_entry_prices,
         logical_anchor,
     )
     .map_err(|error| PrecompileError::Revert(format!("invalid OCOMP Desis brief hash: {error}")))?;
@@ -40,11 +41,15 @@ pub fn apply_request_auction_base(
             storage.clone(),
             worldwide_day,
             supply_u128,
-            // The OCOMP brief carries one price, and it is part of the request hash.
-            vec![ReferencePrice {
-                iso_code: outbe_intexfactory::constants::QUALIFIER_REFERENCE_ISO,
-                entry_price_minor: auction_entry_price,
-            }],
+            // The prices are the ones the request froze and its hash commits, one
+            // row per reference currency the day could price.
+            auction_entry_prices
+                .iter()
+                .map(|row| ReferencePrice {
+                    iso_code: row.reference_currency,
+                    entry_price_minor: row.entry_price_minor,
+                })
+                .collect(),
             true,
             logical_anchor,
         )

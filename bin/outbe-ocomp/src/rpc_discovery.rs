@@ -386,9 +386,10 @@ mod tests {
     use alloy_primitives::U256;
     use outbe_ocomp_protocol::{
         intent::{
-            ActivationPreconditionsV1, ContributorTargetPreconditionV1, DayType,
-            FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-            MetadosisExpectedStatus, NodTargetPreconditionV1, TributeInputBindingV1,
+            ActivationPreconditionsV1, AuctionEntryPriceSource, ContributorTargetPreconditionV1,
+            DayType, FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
+            MetadosisExpectedStatus, NodTargetPreconditionV1, ReferenceEntryPriceV1,
+            TributeInputBindingV1,
         },
         profile::poc_schema_limits,
         state::OcompFinalizedJobV1,
@@ -437,7 +438,12 @@ mod tests {
                 gratis_supply: U256::ZERO,
                 lysis_budget: U256::from(80),
                 auction_base: U256::from(20),
-                auction_entry_price: U256::from(95),
+                auction_entry_prices: vec![ReferenceEntryPriceV1 {
+                    reference_currency: 840,
+                    entry_price_minor: U256::from(95),
+                    source: AuctionEntryPriceSource::LastClosedDayVwap,
+                    source_day: 6,
+                }],
                 request_budget_split_receipt_hash: B256::repeat_byte(0x49),
             },
             logical_evaluation_height: 90,

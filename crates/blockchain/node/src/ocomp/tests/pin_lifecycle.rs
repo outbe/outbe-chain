@@ -27,10 +27,10 @@ use outbe_ocomp_protocol::{
     common::{BoundedBytes, ProofBytes},
     intent::{
         intent_storage_key, job_id_from_intent_id, ActivationPreconditionsV1,
-        CertifiedParentAccountingMetadataV2, ContributorTargetPreconditionV1, DayType,
-        FinalizedIntentProofV1, FrozenMetadosisValuesV1, JobIntentV1,
-        MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
-        ParentProofKind, TributeInputBindingV1,
+        AuctionEntryPriceSource, CertifiedParentAccountingMetadataV2,
+        ContributorTargetPreconditionV1, DayType, FinalizedIntentProofV1, FrozenMetadosisValuesV1,
+        JobIntentV1, MetadosisAttemptPreconditionV1, MetadosisExpectedStatus,
+        NodTargetPreconditionV1, ParentProofKind, ReferenceEntryPriceV1, TributeInputBindingV1,
     },
     state::{OcompJobRecordV1, OcompJobStatus},
 };
@@ -386,7 +386,12 @@ fn production_intent(block_number: u64) -> JobIntentV1 {
             gratis_supply: U256::from(20),
             lysis_budget: U256::from(300),
             auction_base: U256::from(700),
-            auction_entry_price: U256::from(95),
+            auction_entry_prices: vec![ReferenceEntryPriceV1 {
+                reference_currency: 840,
+                entry_price_minor: U256::from(95),
+                source: AuctionEntryPriceSource::LastClosedDayVwap,
+                source_day: 6,
+            }],
             request_budget_split_receipt_hash: B256::repeat_byte(9),
         },
         logical_evaluation_height: block_number,

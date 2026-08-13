@@ -127,6 +127,17 @@ fn bids(n: u8, rate: u32) -> Vec<BidData> {
 
 // --- Auction brief ---
 
+/// The frozen price table an OCOMP request brings: the same single row the
+/// in-process fixtures use, in the wire shape the receipt commits.
+fn frozen_entry_prices() -> Vec<outbe_ocomp_protocol::intent::ReferenceEntryPriceV1> {
+    vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
+        reference_currency: outbe_intexfactory::constants::QUALIFIER_REFERENCE_ISO,
+        entry_price_minor: U256::from(ENTRY_PRICE),
+        source: outbe_ocomp_protocol::intent::AuctionEntryPriceSource::LastClosedDayVwap,
+        source_day: WORLDWIDE_DAY.value(),
+    }]
+}
+
 /// The single priced reference currency the fixtures brief with.
 fn entry_price_rows() -> Vec<crate::schema::ReferencePrice> {
     vec![crate::schema::ReferencePrice {
@@ -202,7 +213,7 @@ fn strict_request_auction_base_commits_the_exact_green_brief() {
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::from(7 * PROMIS_LOAD_MINOR),
-            U256::from(ENTRY_PRICE),
+            &frozen_entry_prices(),
             NOW,
         )
         .expect("strict request brief");
@@ -236,7 +247,7 @@ fn strict_request_auction_base_propagates_duplicate_refusal_without_overwrite() 
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::from(7 * PROMIS_LOAD_MINOR),
-            U256::from(ENTRY_PRICE),
+            &frozen_entry_prices(),
             NOW,
         )
         .unwrap();
@@ -246,7 +257,7 @@ fn strict_request_auction_base_propagates_duplicate_refusal_without_overwrite() 
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::from(9 * PROMIS_LOAD_MINOR),
-            U256::from(ENTRY_PRICE),
+            &frozen_entry_prices(),
             NOW,
         )
         .is_err());
@@ -268,7 +279,7 @@ fn strict_request_auction_base_rejects_oversized_supply_without_state() {
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::MAX,
-            U256::from(ENTRY_PRICE),
+            &frozen_entry_prices(),
             NOW,
         )
         .is_err());
@@ -324,7 +335,7 @@ fn strict_request_auction_base_rolls_back_every_partial_write_boundary() {
                 B256::repeat_byte(0x41),
                 WORLDWIDE_DAY,
                 U256::from(7 * PROMIS_LOAD_MINOR),
-                U256::from(ENTRY_PRICE),
+                &frozen_entry_prices(),
                 NOW,
             )
         });
@@ -345,7 +356,7 @@ fn strict_request_auction_base_rolls_back_every_partial_write_boundary() {
                 B256::repeat_byte(0x41),
                 WORLDWIDE_DAY,
                 U256::from(7 * PROMIS_LOAD_MINOR),
-                U256::from(ENTRY_PRICE),
+                &frozen_entry_prices(),
                 NOW,
             )
         });
@@ -369,7 +380,7 @@ fn strict_request_auction_base_never_tops_up_a_live_auction() {
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::from(7 * PROMIS_LOAD_MINOR),
-            U256::from(ENTRY_PRICE),
+            &frozen_entry_prices(),
             NOW,
         )
         .unwrap();
@@ -388,7 +399,7 @@ fn strict_request_auction_base_never_tops_up_a_live_auction() {
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::from(9 * PROMIS_LOAD_MINOR),
-            U256::from(ENTRY_PRICE + 1),
+            &frozen_entry_prices(),
             NOW,
         )
         .is_err());
