@@ -75,7 +75,7 @@ Feature: Governance proposals and protocol updates
     Then proposal 2 is still pending with 3 yes votes
     When the committee passes the vote deadline
     Then proposal 1 is approved and the scheduled update matches the proposal
-    And proposal 2 is rejected without a schedule on every validator
+    And proposal 2 is errored without a schedule on every validator
     And approval and scheduling for proposal 1 are committed atomically exactly once
     And the committee continues producing finalized blocks
 

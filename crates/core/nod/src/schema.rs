@@ -2,6 +2,7 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, EntityId36};
 use outbe_macros::{contract, storage_record, storage_schema};
+use outbe_ocomp_protocol::nod_materialization::NodMaterializationHeadV1;
 use outbe_primitives::addresses::NOD_ADDRESS;
 use outbe_primitives::storage::types::Mapping;
 use outbe_primitives::storage::types::StorageKey;
@@ -119,6 +120,8 @@ pub struct NodOcompTargetProjection {
 pub struct NodCertifiedGenerationProjection {
     pub worldwide_day: WorldwideDay,
     pub generation: u64,
+    pub job_id: B256,
+    pub program_semantics_hash: B256,
     pub nod_root: B256,
     pub bucket_root: B256,
     pub output_manifest_root: B256,
@@ -128,6 +131,8 @@ pub struct NodCertifiedGenerationProjection {
     pub nod_amount_total: U256,
     pub nod_gratis_consumed: U256,
     pub issued_at: u64,
+    pub next_nod_ordinal: u32,
+    pub last_progress_height: u64,
 }
 
 impl NodCertifiedGenerationProjection {
@@ -239,6 +244,46 @@ pub struct NodContract {
     /// Exact certified Gratis consumed by the Nod generation.
     #[attribute(order = 25)]
     pub ocomp_nod_gratis_consumed: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
+
+    /// Job whose certified result installed the generation.
+    #[attribute(order = 26)]
+    pub ocomp_materialization_job_id: outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
+
+    /// Exact Lysis program semantics used to produce the certified generation.
+    #[attribute(order = 27)]
+    pub ocomp_materialization_program_semantics_hash:
+        outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
+
+    /// Next canonical Nod ordinal that has not yet been materialized.
+    #[attribute(order = 28)]
+    pub ocomp_materialization_next_nod_ordinal:
+        outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+
+    /// Block height of the latest successful materialization progress.
+    #[attribute(order = 29)]
+    pub ocomp_materialization_last_progress_height:
+        outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
+
+    /// Sequence of the current FIFO head. Genesis initializes it to one.
+    #[attribute(order = 30)]
+    pub ocomp_materialization_head_sequence: outbe_primitives::storage::dsl::Value<u64>,
+
+    /// Next-free FIFO sequence. Genesis initializes it to one; equality with
+    /// the head denotes an empty FIFO.
+    #[attribute(order = 31)]
+    pub ocomp_materialization_tail_sequence: outbe_primitives::storage::dsl::Value<u64>,
+
+    /// Worldwide day stored at each occupied FIFO sequence.
+    #[attribute(order = 32)]
+    pub ocomp_materialization_queue_wwd: Mapping<u64, WorldwideDay>,
+
+    /// Block height associated with the shared per-block attempt counter.
+    #[attribute(order = 33)]
+    pub ocomp_materialization_attempt_height: outbe_primitives::storage::dsl::Value<u64>,
+
+    /// Number of materialization attempts observed at the height above.
+    #[attribute(order = 34)]
+    pub ocomp_materialization_attempt_count: outbe_primitives::storage::dsl::Value<u16>,
 }
 
 impl<'storage> NodContract<'storage> {
@@ -309,6 +354,16 @@ impl<'storage> NodContract<'storage> {
         let metadata = self.ocomp_generation_metadata.read(&worldwide_day)?;
         let nod_amount_total = self.ocomp_nod_amount_total.read(&worldwide_day)?;
         let nod_gratis_consumed = self.ocomp_nod_gratis_consumed.read(&worldwide_day)?;
+        let job_id = self.ocomp_materialization_job_id.read(&worldwide_day)?;
+        let program_semantics_hash = self
+            .ocomp_materialization_program_semantics_hash
+            .read(&worldwide_day)?;
+        let next_nod_ordinal = self
+            .ocomp_materialization_next_nod_ordinal
+            .read(&worldwide_day)?;
+        let last_progress_height = self
+            .ocomp_materialization_last_progress_height
+            .read(&worldwide_day)?;
 
         if generation == 0 {
             if !nod_root.is_zero()
@@ -317,6 +372,10 @@ impl<'storage> NodContract<'storage> {
                 || !metadata.is_zero()
                 || !nod_amount_total.is_zero()
                 || !nod_gratis_consumed.is_zero()
+                || !job_id.is_zero()
+                || !program_semantics_hash.is_zero()
+                || next_nod_ordinal != 0
+                || last_progress_height != 0
             {
                 return Err(outbe_primitives::error::PrecompileError::Fatal(
                     "absent Nod OCOMP generation has residual state".into(),
@@ -329,6 +388,8 @@ impl<'storage> NodContract<'storage> {
             || bucket_root.is_zero()
             || output_manifest_root.is_zero()
             || !(metadata >> 160usize).is_zero()
+            || job_id.is_zero()
+            || program_semantics_hash.is_zero()
         {
             return Err(outbe_primitives::error::PrecompileError::Fatal(
                 "installed Nod OCOMP generation is malformed".into(),
@@ -342,6 +403,8 @@ impl<'storage> NodContract<'storage> {
             || tribute_count == 0
             || nod_count != tribute_count
             || bucket_count > nod_count
+            || next_nod_ordinal > nod_count
+            || last_progress_height == 0
         {
             return Err(outbe_primitives::error::PrecompileError::Fatal(
                 "installed Nod OCOMP generation metadata is malformed".into(),
@@ -351,6 +414,8 @@ impl<'storage> NodContract<'storage> {
         Ok(Some(NodCertifiedGenerationProjection {
             worldwide_day,
             generation,
+            job_id,
+            program_semantics_hash,
             nod_root,
             bucket_root,
             output_manifest_root,
@@ -360,6 +425,81 @@ impl<'storage> NodContract<'storage> {
             nod_amount_total,
             nod_gratis_consumed,
             issued_at,
+            next_nod_ordinal,
+            last_progress_height,
+        }))
+    }
+
+    /// Clears the transient proof authority after all certified NODs have been
+    /// materialized into the ordinary ledger.
+    pub fn clear_ocomp_certified_generation(
+        &self,
+        worldwide_day: WorldwideDay,
+    ) -> outbe_primitives::error::Result<()> {
+        self.ocomp_target_generation.write(&worldwide_day, 0)?;
+        self.ocomp_namespace_root
+            .write(&worldwide_day, B256::ZERO)?;
+        self.ocomp_bucket_root.write(&worldwide_day, B256::ZERO)?;
+        self.ocomp_output_manifest_root
+            .write(&worldwide_day, B256::ZERO)?;
+        self.ocomp_generation_metadata
+            .write(&worldwide_day, U256::ZERO)?;
+        self.ocomp_nod_amount_total
+            .write(&worldwide_day, U256::ZERO)?;
+        self.ocomp_nod_gratis_consumed
+            .write(&worldwide_day, U256::ZERO)?;
+        self.ocomp_materialization_job_id
+            .write(&worldwide_day, B256::ZERO)?;
+        self.ocomp_materialization_program_semantics_hash
+            .write(&worldwide_day, B256::ZERO)?;
+        self.ocomp_materialization_next_nod_ordinal
+            .write(&worldwide_day, 0)?;
+        self.ocomp_materialization_last_progress_height
+            .write(&worldwide_day, 0)
+    }
+
+    /// Reads and validates the current canonical materialization FIFO head.
+    pub fn ocomp_materialization_head(
+        &self,
+    ) -> outbe_primitives::error::Result<Option<NodMaterializationHeadV1>> {
+        let head = self.ocomp_materialization_head_sequence.read()?;
+        let tail = self.ocomp_materialization_tail_sequence.read()?;
+        if head == 0 || tail == 0 || head > tail {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(
+                "Nod materialization FIFO bounds are malformed".into(),
+            ));
+        }
+        if head == tail {
+            return Ok(None);
+        }
+        let worldwide_day = self.ocomp_materialization_queue_wwd.read(&head)?;
+        if worldwide_day.value() == 0 {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(
+                "Nod materialization FIFO head entry is missing".into(),
+            ));
+        }
+        let projection = self
+            .ocomp_certified_generation(worldwide_day)?
+            .ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::Fatal(
+                    "Nod materialization FIFO head projection is missing".into(),
+                )
+            })?;
+        if projection.next_nod_ordinal >= projection.nod_count {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(
+                "Nod materialization FIFO head is already complete".into(),
+            ));
+        }
+        Ok(Some(NodMaterializationHeadV1 {
+            queue_sequence: head,
+            job_id: projection.job_id,
+            program_semantics_hash: projection.program_semantics_hash,
+            worldwide_day: worldwide_day.value(),
+            generation: projection.generation,
+            nod_root: projection.nod_root,
+            nod_count: projection.nod_count,
+            next_nod_ordinal: projection.next_nod_ordinal,
+            last_progress_height: projection.last_progress_height,
         }))
     }
 }

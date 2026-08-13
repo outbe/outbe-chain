@@ -30,6 +30,8 @@ fn nod_projection() -> NodCertifiedGenerationProjection {
     NodCertifiedGenerationProjection {
         worldwide_day: WorldwideDay::new(WWD),
         generation: 9,
+        job_id: B256::with_last_byte(1),
+        program_semantics_hash: B256::with_last_byte(2),
         nod_root: B256::with_last_byte(3),
         bucket_root: B256::with_last_byte(4),
         output_manifest_root: B256::with_last_byte(6),
@@ -39,6 +41,8 @@ fn nod_projection() -> NodCertifiedGenerationProjection {
         nod_amount_total: U256::from(1_000),
         nod_gratis_consumed: U256::from(500),
         issued_at: 1_785_024_000,
+        next_nod_ordinal: 0,
+        last_progress_height: 1,
     }
 }
 

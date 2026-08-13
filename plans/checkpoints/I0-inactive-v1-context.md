@@ -54,7 +54,7 @@ remains mandatory.
 - Registry gas schedule hash:
   `11edf34f5614ee89ceb28c4597c309ad055cc67a752e335affa69fbc177c3da8`
 - Registration intent hash:
-  `7866748eebd89640c998bfaf64d5c5a44b4849a44c7b0e1ac32d118560a85e13`
+  `c93297665ac2c94b631f2adf0036b6b54031fdcb3e987c629fd86573ebed7660`
 - Report-policy/`NodeHost` commitment:
   `378c9bbee1671eeb2d8447ba76919a81f2175148800244ff0ca20c2e907d5216`
 - Policy hash:
@@ -64,7 +64,7 @@ remains mandatory.
 - Maximum DCAP verification charge:
   `9,405,024`
 - Maximum registration transaction gas:
-  `28,768,784`
+  `28,848,784`
 - Maximum replacement transaction gas:
   `29,133,784`
 

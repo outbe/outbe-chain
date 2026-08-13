@@ -21,12 +21,14 @@ fn tuned_setup(world: &mut World) {
         world,
         6,
         &[
+            ("TESTNET_EPOCH_LENGTH_BLOCKS", "180".to_string()),
+            ("TESTNET_DKG_PREPARE_WINDOW_BLOCKS", "100".to_string()),
             ("TESTNET_DKG_ACTIVATION_GRACE_BLOCKS", "600".to_string()),
-            // Keep validator-3 ACTIVE until the height-90 target freeze. The
-            // default E2E threshold (30) would jail it first, silently turning
-            // the intended 4->5 target into a 4-member replacement target whose
-            // three online players can complete DKG without a retry.
-            ("TESTNET_DEV_FELONY_THRESHOLD", "119".to_string()),
+            // Keep validator-3 ACTIVE through the real 120-second failed-DKG
+            // timeout. The default E2E threshold would jail it first, silently
+            // turning the intended 4->5 target into a 4-member replacement
+            // target whose three online players can complete DKG without a retry.
+            ("TESTNET_DEV_FELONY_THRESHOLD", "179".to_string()),
         ],
     );
 }
@@ -57,13 +59,6 @@ fn freeze_target(world: &mut World) {
         .localnet
         .provision_joiner(idx)
         .expect("provision joiner");
-    #[cfg(feature = "ocomp-integration")]
-    world
-        .ocomp
-        .stage_joiner_domain_material(
-            u8::try_from(idx).expect("joiner index fits OCOMP harness wire"),
-        )
-        .expect("stage joiner OCOMP domain before validator-mode start");
     world
         .localnet
         .launch_joiner(idx, &[])

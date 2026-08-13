@@ -100,11 +100,29 @@ fn nod_identity_and_abi_boundary_preserve_exact_36_bytes() {
 }
 
 #[test]
+fn materialization_fifo_slots_match_the_genesis_seeder() {
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let nod = NodContract::new(storage);
+        assert_eq!(
+            nod.ocomp_materialization_head_sequence.slot(),
+            U256::from(19)
+        );
+        assert_eq!(
+            nod.ocomp_materialization_tail_sequence.slot(),
+            U256::from(20)
+        );
+    });
+}
+
+#[test]
 fn certified_generation_is_available_through_the_public_nod_abi() {
     let worldwide_day = WorldwideDay::new(20_260_726);
     let generation = NodCertifiedGenerationProjection {
         worldwide_day,
         generation: 9,
+        job_id: B256::repeat_byte(0x44),
+        program_semantics_hash: B256::repeat_byte(0x55),
         nod_root: B256::repeat_byte(0x11),
         bucket_root: B256::repeat_byte(0x22),
         output_manifest_root: B256::repeat_byte(0x33),
@@ -114,6 +132,8 @@ fn certified_generation_is_available_through_the_public_nod_abi() {
         nod_amount_total: U256::from(50_000),
         nod_gratis_consumed: U256::from(7_000),
         issued_at: 1_753_488_000,
+        next_nod_ordinal: 129,
+        last_progress_height: 4_096,
     };
     let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
     let scope = ExecutionScope::new();
@@ -141,6 +161,18 @@ fn certified_generation_is_available_through_the_public_nod_abi() {
             .unwrap();
         nod.ocomp_nod_gratis_consumed
             .write(&worldwide_day, generation.nod_gratis_consumed)
+            .unwrap();
+        nod.ocomp_materialization_job_id
+            .write(&worldwide_day, generation.job_id)
+            .unwrap();
+        nod.ocomp_materialization_program_semantics_hash
+            .write(&worldwide_day, generation.program_semantics_hash)
+            .unwrap();
+        nod.ocomp_materialization_next_nod_ordinal
+            .write(&worldwide_day, generation.next_nod_ordinal)
+            .unwrap();
+        nod.ocomp_materialization_last_progress_height
+            .write(&worldwide_day, generation.last_progress_height)
             .unwrap();
 
         let call = crate::precompile::INod::certifiedGenerationCall {

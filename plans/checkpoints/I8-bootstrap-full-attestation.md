@@ -58,7 +58,7 @@ Its golden hash is
 `8879dd524fc4c5ccfc1c353b1f6840502f6e4f1eebc9825b27a8039bedf029a9`.
 `ResourceScheduleV1` binds that hash and the normative TeeRegistry schedule;
 its updated golden hash is
-`83015a5531a87b9c5d782a06bdc270c67c73364a4e5c644f728ae23fc0a50e0b`.
+`7f30b7850c913f571dee9cb8dbb8290f15903771a43d2c7f8b4ba6629f3dedf9`.
 
 The complete OST3 calldata cap is 1,310,720 bytes, including selector and
 version. Deduplicated collateral reduces encoded bytes only: every participant

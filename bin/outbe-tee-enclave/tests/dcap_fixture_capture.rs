@@ -4,22 +4,25 @@ use std::{fs, process::Command};
 
 use alloy_primitives::B256;
 use outbe_primitives::tee_attestation_v1::{
-    AttestationMode, AttestationOperationV1, EnclaveProfile, NodeIdV1, RegistrationIntentV1,
+    AttestationMode, AttestationOperationV1, NodeIdV1, RegistrationIntentV1,
 };
 use outbe_tee_enclave::gramine::capture_report_data_from_intent;
 
 fn intent() -> RegistrationIntentV1 {
+    let reth_p2p_public = k256::ecdsa::SigningKey::from_bytes((&[0x77; 32]).into())
+        .unwrap()
+        .verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .try_into()
+        .unwrap();
     RegistrationIntentV1 {
         chain_id: [0x11; 32],
         genesis_hash: B256::repeat_byte(0x22),
         operation: AttestationOperationV1::RegisterEnclave,
         attestation_mode: AttestationMode::DcapRequired,
         policy_hash: B256::repeat_byte(0x33),
-        enclave_profile: EnclaveProfile::Validator,
-        node_id: NodeIdV1::Validator {
-            address: [0x77; 20],
-            bls_minpk_public: [0x88; 48],
-        },
+        node_id: NodeIdV1 { reth_p2p_public },
         enclave_id: B256::repeat_byte(0x99),
         binding_id: B256::repeat_byte(0xaa),
         binding_version: 1,

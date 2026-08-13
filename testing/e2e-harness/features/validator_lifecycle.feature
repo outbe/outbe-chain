@@ -7,7 +7,7 @@ Feature: Validator admission, membership, recovery, and removal
   Scenario: A FullNode becomes ACTIVE, preserves an in-flight offer, and exits cleanly
     Given a fresh lifecycle localnet with a 6-block voting window
     When operator "validator-0" submits a tribute offer
-    Then the committee processes the offer without changing the day status
+    Then the committee processes and projects the offer
     When a full node joins and syncs to the committee tip
     Then the full node matches committee supply and state root and is not a participant
     When the full node stakes and confirms readiness
@@ -31,14 +31,14 @@ Feature: Validator admission, membership, recovery, and removal
 
   @pfs-006-09
   Scenario: Completed DKG survives a joining node restart before activation
-    Given a fresh localnet with a 6-block voting window
+    Given a fresh localnet with a restartable DKG window
     When a joiner completes DKG and waits below the activation boundary
     And the joining node and enclave restart before activation
     Then the recovered pending DKG activates once and consensus continues
 
   @pfs-006-09
   Scenario: In-flight DKG survives a joining node and enclave restart
-    Given a fresh localnet with a 6-block voting window
+    Given a fresh localnet with a restartable DKG window
     When a joining validator is restarted during its DKG ceremony
     Then the old committee stays live and a later DKG activates the joiner once
 
@@ -50,7 +50,7 @@ Feature: Validator admission, membership, recovery, and removal
 
   @pfs-006-09
   Scenario: An ACTIVE validator and enclave restart during reshare
-    Given a fresh localnet with a 6-block voting window
+    Given a fresh localnet with a restartable DKG window
     When an active validator and enclave restart during a joining reshare
     Then the frozen reshare activates once with the restarted validator in lockstep
 

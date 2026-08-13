@@ -484,7 +484,7 @@ mod tests {
 
     sol! {
         interface ITeeRegistryRouteTest {
-            function isFullNodeEnclaveReady(uint8 rethP2pPrefix, bytes32 rethP2pX)
+            function isNodeHostEnclaveReady(uint8 rethP2pPrefix, bytes32 rethP2pX)
                 external
                 view
                 returns (bool);
@@ -561,7 +561,7 @@ mod tests {
         let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
         let route = lookup(&TEE_REGISTRY_ADDRESS).unwrap();
 
-        let v1 = ITeeRegistryRouteTest::isFullNodeEnclaveReadyCall {
+        let v1 = ITeeRegistryRouteTest::isNodeHostEnclaveReadyCall {
             rethP2pPrefix: 2,
             // SEC1 compressed secp256k1 generator point.
             rethP2pX: b256!("79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"),
@@ -578,7 +578,7 @@ mod tests {
             )
             .unwrap();
         assert!(
-            !ITeeRegistryRouteTest::isFullNodeEnclaveReadyCall::abi_decode_returns(&output)
+            !ITeeRegistryRouteTest::isNodeHostEnclaveReadyCall::abi_decode_returns(&output)
                 .unwrap()
         );
 
