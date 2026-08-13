@@ -307,22 +307,23 @@ fn the_call_and_the_void_compose_across_runs() {
     teardown();
 }
 
+/// Rewrites a position's issuance currency in place. `requestCredis` derives it
+/// from the disbursed asset, and the harness has a single stubbed asset, so this
+/// is how a test puts two positions in different currencies.
+fn repoint_currency(storage: &StorageHandle<'_>, position_id: U256, iso: u16) {
+    let credis = CredisContract::new(storage.clone());
+    let mut position = credis.get_position(position_id).unwrap();
+    position.issuance_currency = iso;
+    credis.positions.update(&position).unwrap();
+}
+
 #[test]
-fn each_currency_latches_off_its_own_daily_series() {
+fn a_position_in_an_unpriced_currency_never_latches() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let position_id = open(&storage, 1);
-
-        // Re-point the asset's `isoCode()` stub at an unregistered currency and
-        // hand-rewrite the position's currency, so this position prices off a
-        // series that does not exist.
-        {
-            let credis = CredisContract::new(storage.clone());
-            let mut position = credis.get_position(position_id).unwrap();
-            position.issuance_currency = 978; // EUR — no COEN pair registered
-            credis.positions.update(&position).unwrap();
-        }
+        repoint_currency(&storage, position_id, EUR); // no COEN/978 pair registered
 
         // USD's series is far above the floor, but this position is not in USD.
         let at = CREATED_AT + 2 * DAY;
@@ -330,6 +331,47 @@ fn each_currency_latches_off_its_own_daily_series() {
         set_vwap(&storage, last_closed_day(at), at_call());
         assert_eq!(scan(&storage, at), 0, "an unpriced currency never latches");
         assert_eq!(state_of(&storage, position_id), CredisState::Open);
+    });
+    teardown();
+}
+
+#[test]
+fn each_currency_latches_and_calls_off_its_own_daily_series() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        bootstrap_for(&storage, bob(), pledge_cost());
+        register_currency(&storage, EUR);
+
+        let usd = open_for(&storage, alice(), 1);
+        let eur = open_for(&storage, bob(), 1);
+        repoint_currency(&storage, eur, EUR);
+
+        // Both positions carry the same geometry (floor 2.16, call 2.64) because
+        // they were quoted off the same seeded rate; only the series they read
+        // differs.
+        let at = CREATED_AT + AFTER_STREAK;
+        advance_to(&storage, at);
+        let day = last_closed_day(at);
+        // USD breaches the call price for the full streak; EUR only clears its floor.
+        fill_days(&storage, day, CALL_STREAK_DAYS, at_call());
+        let mut d = day;
+        for _ in 0..CALL_STREAK_DAYS {
+            set_vwap_for(&storage, EUR, d, above_floor());
+            d = previous_date_key(d);
+        }
+
+        assert_eq!(scan(&storage, at), 2);
+        assert_eq!(
+            state_of(&storage, usd),
+            CredisState::Called,
+            "USD read the breached series"
+        );
+        assert_eq!(
+            state_of(&storage, eur),
+            CredisState::Settleable,
+            "EUR read its own series and only latched"
+        );
     });
     teardown();
 }

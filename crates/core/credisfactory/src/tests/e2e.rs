@@ -254,6 +254,68 @@ fn request_credis_rejects_an_owner_with_an_unresolved_call() {
 }
 
 #[test]
+fn request_credis_requires_the_card_account_to_hold_matching_funds() {
+    let mut storage = env();
+    // §7: the bundle must already hold the credit it is asking for. One wei short
+    // of the requested $2.00 is a rejection.
+    set_matched_funds(&mut storage, pledge_stables() - U256::from(1u64));
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let handle = pledge(&storage, alice(), 1);
+        let spend = credis_spend_auth(alice(), handle, alice());
+
+        let err =
+            runtime::request_credis(storage.clone(), cca(), alice(), handle, spend).unwrap_err();
+        assert!(err.to_string().contains("matching funds"), "got: {err}");
+    });
+    teardown();
+
+    // Exactly the requested amount clears the rule.
+    let mut storage = env();
+    set_matched_funds(&mut storage, pledge_stables());
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let handle = pledge(&storage, alice(), 1);
+        let spend = credis_spend_auth(alice(), handle, alice());
+        runtime::request_credis(storage.clone(), cca(), alice(), handle, spend).unwrap();
+    });
+    teardown();
+}
+
+#[test]
+fn a_stale_pledge_quote_cannot_be_exercised() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost() * U256::from(2u64));
+        let stale = pledge(&storage, alice(), 1);
+
+        // §7: the quote fixes P₀, so it expires if unused. One second past the
+        // TTL is too late.
+        advance_to(
+            &storage,
+            CREATED_AT + outbe_credis::constants::PLEDGE_QUOTE_TTL_SECS + 1,
+        );
+        let spend = credis_spend_auth(alice(), stale, alice());
+        let err =
+            runtime::request_credis(storage.clone(), cca(), alice(), stale, spend).unwrap_err();
+        assert!(err.to_string().contains("quote has expired"), "got: {err}");
+
+        // A quote struck at the new height is live, so age is what is being
+        // judged rather than anything about the ticket itself.
+        let fresh = pledge(&storage, alice(), 2);
+        let spend = credis_spend_auth(alice(), fresh, alice());
+        runtime::request_credis(storage.clone(), cca(), alice(), fresh, spend).unwrap();
+
+        // Spending a ticket clears its quote, so the record cannot linger.
+        assert_eq!(
+            outbe_gratisfactory::api::pledge_quoted_at(storage.clone(), fresh).unwrap(),
+            0
+        );
+    });
+    teardown();
+}
+
+#[test]
 fn request_credis_rejects_zero_smart_account() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));

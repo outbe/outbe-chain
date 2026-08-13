@@ -82,17 +82,25 @@ impl CredisContract<'_> {
     // Active-position index (non-terminal positions only)
     // ---------------------------------------------------------------------
 
-    /// Appends a position to the dense active index.
-    pub(crate) fn insert_active(&mut self, position_id: U256) -> Result<()> {
+    /// Appends a position to the dense active index and bumps its owner's open
+    /// count. The two move together so the count can never drift from the index.
+    pub(crate) fn insert_active(&mut self, position_id: U256, owner: Address) -> Result<()> {
         let index = self.active_positions.len()?;
         self.active_positions.push(position_id)?;
         self.active_position_index.write(&position_id, index)?;
+        let open = self.open_position_counts.read(&owner)?;
+        self.open_position_counts
+            .write(&owner, open.saturating_add(1))?;
         Ok(())
     }
 
-    /// Swap-removes a position from the dense active index. Caller guarantees
-    /// the position is currently listed, i.e. its state was non-terminal.
-    pub(crate) fn remove_active(&mut self, position_id: U256) -> Result<()> {
+    /// Swap-removes a position from the dense active index and drops its owner's
+    /// open count. Caller guarantees the position is currently listed, i.e. its
+    /// state was non-terminal.
+    pub(crate) fn remove_active(&mut self, position_id: U256, owner: Address) -> Result<()> {
+        let open = self.open_position_counts.read(&owner)?;
+        self.open_position_counts
+            .write(&owner, open.saturating_sub(1))?;
         let index = self.active_position_index.read(&position_id)?;
         let last = self
             .active_positions
@@ -118,6 +126,10 @@ impl CredisContract<'_> {
 
     pub(crate) fn read_active_at(&self, index: u32) -> Result<Option<U256>> {
         self.active_positions.get(index)
+    }
+
+    pub(crate) fn read_open_position_count(&self, account: Address) -> Result<u32> {
+        self.open_position_counts.read(&account)
     }
 
     // ---------------------------------------------------------------------

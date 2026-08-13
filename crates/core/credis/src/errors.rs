@@ -31,6 +31,8 @@ pub enum CredisError {
     NothingOutstanding,
     #[error("credis arithmetic overflow")]
     ArithmeticOverflow,
+    #[error("owner already holds the maximum number of open positions")]
+    TooManyOpenPositions,
 }
 
 impl From<CredisError> for PrecompileError {

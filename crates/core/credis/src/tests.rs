@@ -4,7 +4,7 @@ use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::constants::{CALL_RATE_PCT, FLOOR_RATE_PCT};
+use crate::constants::{CALL_RATE_PCT, FLOOR_RATE_PCT, MAX_OPEN_POSITIONS_PER_OWNER};
 use crate::errors::CredisError;
 use crate::precompile::{dispatch, ICredis};
 use crate::runtime::{marked_up, settlement_deadline, OpenPositionParams};
@@ -606,6 +606,43 @@ fn has_called_position_tracks_the_owners_book() {
             !credis.has_called_position(alice()).unwrap(),
             "settling the call in full clears the owner's block"
         );
+    });
+}
+
+#[test]
+fn the_open_position_cap_bounds_live_exposure_not_lifetime_originations() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage);
+        for tag in 0..MAX_OPEN_POSITIONS_PER_OWNER {
+            credis
+                .open_position(params(handle(tag as u8), alice()))
+                .unwrap();
+        }
+        assert_eq!(
+            credis.open_position_count(alice()).unwrap(),
+            MAX_OPEN_POSITIONS_PER_OWNER
+        );
+
+        let err = credis
+            .open_position(params(handle(200), alice()))
+            .unwrap_err();
+        assert!(err.to_string().contains("maximum number"), "got: {err}");
+
+        // Another owner is unaffected — the cap is per account.
+        credis.open_position(params(handle(201), bob())).unwrap();
+
+        // Closing one frees a slot: the cap counts live positions, not the
+        // owner's lifetime book.
+        let first = CredisContract::position_id(handle(0), alice());
+        credis.mark_settleable(first).unwrap();
+        credis
+            .settle(first, U256::from(999_999_999_999u64), at(1))
+            .unwrap();
+        assert_eq!(
+            credis.open_position_count(alice()).unwrap(),
+            MAX_OPEN_POSITIONS_PER_OWNER - 1
+        );
+        credis.open_position(params(handle(200), alice())).unwrap();
     });
 }
 

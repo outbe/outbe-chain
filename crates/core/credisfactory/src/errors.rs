@@ -14,6 +14,12 @@ pub enum CredisFactoryError {
     OwnerHasCalledPosition,
     #[error("asset isoCode() call returned undecodable data")]
     AssetIsoUndecodable,
+    #[error("asset balanceOf() call returned undecodable data")]
+    AssetBalanceUndecodable,
+    #[error("pledge quote has expired")]
+    PledgeQuoteExpired,
+    #[error("smart account does not hold matching funds for the requested credit")]
+    UnmatchedFunding,
 }
 
 impl From<CredisFactoryError> for PrecompileError {

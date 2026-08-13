@@ -36,3 +36,14 @@ pub const POLICY_RATE_FACTOR_BP: u32 = 10_000;
 
 /// Denominator for [`POLICY_RATE_FACTOR_BP`].
 pub const BP_DEN: u32 = 10_000;
+
+/// Cap on how many non-terminal positions one owner may hold at once, per §7.
+// ponytail: §10 leaves the per-account cap TBD. A governance-settable parameter
+// is the upgrade path; until then this is a flat protocol constant.
+pub const MAX_OPEN_POSITIONS_PER_OWNER: u32 = 16;
+
+/// How long a pledge quote stays exercisable. The quote fixes `P₀` and therefore
+/// the whole geometry of the position, so a stale one cannot be spent — §7.
+// ponytail: §10 leaves the quote TTL TBD; 15 minutes is a placeholder wide enough
+// for a CCA round-trip and narrow enough that the entry price is still current.
+pub const PLEDGE_QUOTE_TTL_SECS: u64 = 15 * 60;

@@ -7855,6 +7855,7 @@ dependencies = [
  "alloy-sol-types",
  "outbe-fidelity",
  "outbe-gratis",
+ "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promis",

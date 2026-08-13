@@ -34,6 +34,9 @@ pub const BLOCK_NUMBER: u64 = 42;
 /// Issuance currency (ISO 4217) reported by `asset()`'s stubbed `isoCode()`.
 pub const ISSUANCE_ISO: u16 = 840;
 
+/// A second ISO currency, for the multi-currency scan tests.
+pub const EUR: u16 = 978;
+
 pub const DAY: u64 = 86_400;
 
 pub fn alice() -> Address {
@@ -172,11 +175,17 @@ pub fn finalize_through(storage: &StorageHandle<'_>, timestamp: u64) {
     bump_watermark(storage, last_closed_day(timestamp));
 }
 
-/// Publishes a finalized daily reference price for one UTC day.
+/// Publishes a finalized daily reference price for one UTC day, in USD.
 pub fn set_vwap(storage: &StorageHandle<'_>, utc_day: u32, value: U256) {
+    set_vwap_for(storage, ISSUANCE_ISO, utc_day, value);
+}
+
+/// Publishes a finalized daily reference price for one UTC day in the COEN/`iso`
+/// series. The pair must already be registered.
+pub fn set_vwap_for(storage: &StorageHandle<'_>, iso: u16, utc_day: u32, value: U256) {
     let oracle = OracleContract::new(storage.clone());
     let index = oracle
-        .pair_index_of(outbe_oracle::api::DAY_TYPE_PAIR)
+        .pair_index_of(outbe_oracle::api::AddressPair::new_coen_to(iso))
         .unwrap();
     oracle
         .utc_day_vwap_value
@@ -184,6 +193,15 @@ pub fn set_vwap(storage: &StorageHandle<'_>, utc_day: u32, value: U256) {
         .write(&index, value)
         .unwrap();
     bump_watermark(storage, utc_day);
+}
+
+/// Registers the COEN/`iso` pair so that currency has its own daily series.
+pub fn register_currency(storage: &StorageHandle<'_>, iso: u16) {
+    outbe_oracle::api::register_pair(
+        storage.clone(),
+        outbe_oracle::api::AddressPair::new_coen_to(iso),
+    )
+    .unwrap();
 }
 
 /// Sets `days` consecutive closed UTC days ending at `latest` to `value`.
@@ -248,6 +266,20 @@ pub fn zero_word() -> Bytes {
     Bytes::from(vec![0u8; 32])
 }
 
+/// ABI-encoded `uint256` return, for the asset's `balanceOf()` static sub-call.
+pub fn u256_word(value: U256) -> Bytes {
+    Bytes::from(value.to_be_bytes::<32>().to_vec())
+}
+
+/// `IERC20.balanceOf(address)` selector.
+pub const BALANCE_OF_SELECTOR: [u8; 4] = [0x70, 0xa0, 0x82, 0x31];
+
+/// Sets what the asset reports as `smart_account`'s stablecoin balance, which is
+/// what the §7 matched-funding check reads.
+pub fn set_matched_funds(storage: &mut HashMapStorageProvider, amount: U256) {
+    storage.stub_sub_call_at_selector(asset(), BALANCE_OF_SELECTOR, u256_word(amount));
+}
+
 /// Positive Fidelity so `gratisfactory::pledge_gratis` clears the eligibility gate.
 pub fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
     const ONE_YEAR_SECS: u64 = 365 * 86_400;
@@ -303,6 +335,9 @@ pub fn env() -> HashMapStorageProvider {
     storage.enable_sub_call_stub();
     storage.stub_sub_call_at(VAULT_ROUTER_ADDRESS, zero_word());
     storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
+    // Matched funding defaults to satisfied; the tests that exercise §7 override
+    // it. The selector stub takes priority over the address-wide `isoCode()` one.
+    set_matched_funds(&mut storage, pledge_stables());
     storage
 }
 

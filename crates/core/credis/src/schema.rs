@@ -177,6 +177,11 @@ pub struct CredisContract {
     /// non-zero count cannot open new positions.
     #[attribute(order = 7)]
     pub called_position_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
+
+    /// Per-account count of non-terminal positions — the owner's share of
+    /// [`Self::active_positions`], bounded by `MAX_OPEN_POSITIONS_PER_OWNER`.
+    #[attribute(order = 8)]
+    pub open_position_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
 }
 
 impl CredisContract<'_> {

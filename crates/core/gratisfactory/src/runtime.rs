@@ -19,6 +19,7 @@ use alloy_sol_types::{SolCall, SolEvent};
 
 use crate::errors::GratisFactoryError;
 use crate::precompile::IGratisFactory;
+use crate::schema::GratisFactoryContract;
 use crate::sol_ext::IReferenceCurrency;
 use outbe_fidelity::api::FidelityCohortOp;
 use outbe_gratis::api::{self as gratis, ModifyAuth, PledgeTerms};
@@ -110,12 +111,25 @@ pub fn pledge_gratis(
     let now = storage.timestamp()?.to::<u64>();
     let section =
         outbe_fidelity::api::cohort_section(storage.clone(), caller, FidelityCohortOp::Probe, now)?;
-    let (handle, outcome) =
-        gratis::pledge_with_fidelity(storage, caller, amount_stables, terms, auth, section)?;
+    let (handle, outcome) = gratis::pledge_with_fidelity(
+        storage.clone(),
+        caller,
+        amount_stables,
+        terms,
+        auth,
+        section,
+    )?;
     // todo implement correct fidelity eligibility check on `outcome.league`
     if outcome.league == u16::MAX {
         return Err(GratisFactoryError::FidelityNotEligible.into());
     }
+
+    // Stamp the quote so whoever spends the ticket can reject a stale entry
+    // price (§7). The ticket itself is enclave-sealed and cannot carry this
+    // without a TEE wire change; see `crate::schema`.
+    GratisFactoryContract::new(storage)
+        .pledge_quoted_at
+        .write(&handle, now)?;
     Ok((handle, gratis_amount))
 }
 
@@ -129,7 +143,12 @@ pub fn unpledge_gratis(
     pledge_handle: B256,
     auth: ModifyAuth,
 ) -> Result<U256> {
-    gratis::unpledge(storage, caller, amount_stables, pledge_handle, auth)
+    let refunded = gratis::unpledge(storage.clone(), caller, amount_stables, pledge_handle, auth)?;
+    // The ticket is gone; its quote can never be exercised again.
+    GratisFactoryContract::new(storage)
+        .pledge_quoted_at
+        .clear(&pledge_handle)?;
+    Ok(refunded)
 }
 
 /// Mint `amount` gratis to `account` (authorized by the account owner's modify

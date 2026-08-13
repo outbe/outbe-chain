@@ -12,7 +12,8 @@ use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::units::SCALE_1E18;
 
 use crate::constants::{
-    CALL_RATE_PCT, CALL_WINDOW_SECS, DAYS_PER_YEAR, FLOOR_RATE_PCT, PRICE_RATE_DEN,
+    CALL_RATE_PCT, CALL_WINDOW_SECS, DAYS_PER_YEAR, FLOOR_RATE_PCT, MAX_OPEN_POSITIONS_PER_OWNER,
+    PRICE_RATE_DEN,
 };
 use crate::errors::CredisError;
 use crate::precompile::ICredis;
@@ -128,6 +129,12 @@ impl CredisContract<'_> {
         if self.position_exists(position_id)? {
             return Err(CredisError::PositionAlreadyExists.into());
         }
+        // §7: a per-account cap bounds how many positions an owner may carry.
+        // Terminal positions have already left the count, so this bounds live
+        // exposure rather than lifetime originations.
+        if self.read_open_position_count(params.smart_account)? >= MAX_OPEN_POSITIONS_PER_OWNER {
+            return Err(CredisError::TooManyOpenPositions.into());
+        }
 
         let position = Position {
             position_id,
@@ -152,7 +159,7 @@ impl CredisContract<'_> {
         self.create_position_record(&position)?;
         self.append_to_address_index(params.smart_account, position_id)?;
         self.append_to_global_index(position_id)?;
-        self.insert_active(position_id)?;
+        self.insert_active(position_id, params.smart_account)?;
 
         self.emit(ICredis::PositionCreated {
             positionId: position_id,
@@ -269,7 +276,7 @@ impl CredisContract<'_> {
         if closed {
             // Terminal: leave the active index, and release the owner's call
             // block if this settlement resolved a called position.
-            self.remove_active(position_id)?;
+            self.remove_active(position_id, position.smart_account)?;
             if state_before == CredisState::Called {
                 self.drop_called_count(position.smart_account)?;
             }
@@ -333,7 +340,7 @@ impl CredisContract<'_> {
         position.collateral_locked = U256::ZERO;
         position.state = CredisState::Void as u8;
         self.update_position_record(&position)?;
-        self.remove_active(position_id)?;
+        self.remove_active(position_id, position.smart_account)?;
         self.drop_called_count(position.smart_account)?;
 
         self.emit(ICredis::PositionVoided {
@@ -368,6 +375,12 @@ impl CredisContract<'_> {
     /// new positions until the call resolves.
     pub fn has_called_position(&self, account: Address) -> Result<bool> {
         Ok(self.called_position_counts.read(&account)? > 0)
+    }
+
+    /// How many non-terminal positions `account` currently holds, against the
+    /// `MAX_OPEN_POSITIONS_PER_OWNER` cap.
+    pub fn open_position_count(&self, account: Address) -> Result<u32> {
+        self.read_open_position_count(account)
     }
 
     /// Number of positions still on the price path — those the daily scan visits.

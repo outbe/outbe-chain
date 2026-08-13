@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
 
-use outbe_credis::constants::{BP_DEN, POLICY_RATE_FACTOR_BP};
+use outbe_credis::constants::{BP_DEN, PLEDGE_QUOTE_TTL_SECS, POLICY_RATE_FACTOR_BP};
 use outbe_credis::{CredisContract, CredisState, OpenPositionParams};
 use outbe_oracle::api::{coen_rate_for_opt, get_currency_rate};
 use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
@@ -74,6 +74,23 @@ pub fn request_credis(
     let asset = terms.asset;
     if asset.is_zero() {
         return Err(CredisFactoryError::InvalidAsset.into());
+    }
+
+    // §7 quote freshness. The ticket is opaque ciphertext, so its age is read from
+    // the timestamp gratisfactory recorded beside it; consuming the ticket above
+    // already proved the handle is real, so a zero here means the quote record was
+    // lost rather than that the handle is unknown. Cleared once accepted.
+    let quoted_at = outbe_gratisfactory::api::pledge_quoted_at(storage.clone(), pledge_handle)?;
+    if quoted_at == 0 || current_time > quoted_at.saturating_add(PLEDGE_QUOTE_TTL_SECS) {
+        return Err(CredisFactoryError::PledgeQuoteExpired.into());
+    }
+    outbe_gratisfactory::api::clear_pledge_quote(storage.clone(), pledge_handle)?;
+
+    // §7 matched funding: the card account must already hold the credit it is
+    // asking for, in the same stablecoin.
+    let held = read_erc20_balance(&storage, asset, smart_account)?;
+    if held < terms.stables_amount {
+        return Err(CredisFactoryError::UnmatchedFunding.into());
     }
 
     // Derive the issuance currency from the disbursed asset (it self-reports its
@@ -273,6 +290,17 @@ pub fn void_remainder(storage: StorageHandle<'_>, position_id: U256) -> Result<(
         .add_to_total_unallocated(void.gratis_burned)?;
 
     Ok(())
+}
+
+/// Reads `account`'s balance of `asset` via a static `IERC20.balanceOf` sub-call.
+fn read_erc20_balance(
+    storage: &StorageHandle<'_>,
+    asset: Address,
+    account: Address,
+) -> Result<U256> {
+    let ret = storage.staticcall(asset, IERC20::balanceOfCall { account }.abi_encode().into())?;
+    IERC20::balanceOfCall::abi_decode_returns(&ret)
+        .map_err(|_| CredisFactoryError::AssetBalanceUndecodable.into())
 }
 
 /// Reads the disbursed asset's ISO 4217 currency code via a static
