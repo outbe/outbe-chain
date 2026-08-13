@@ -24,7 +24,6 @@ sol! {
     }
 }
 
-/// Gas money each bidder gets; bids themselves are paid in the payment token.
 const BIDDER_NATIVE_WEI: u128 = 1_000_000_000_000_000_000;
 
 #[derive(Clone, Debug)]
@@ -35,7 +34,6 @@ pub struct Bidder {
     pub bid_rate: u32,
 }
 
-/// Deterministic bidders, one per `(quantity, rate)` pair.
 pub fn derive(bids: &[(u16, u32)]) -> Result<Vec<Bidder>> {
     bids.iter()
         .enumerate()
@@ -55,8 +53,6 @@ pub fn derive(bids: &[(u16, u32)]) -> Result<Vec<Bidder>> {
         .collect()
 }
 
-/// Give every bidder gas, payment tokens and an escrow allowance covering both
-/// the entry bond and the reveal lock.
 pub fn fund(
     url: &str,
     token: Address,
@@ -199,8 +195,6 @@ pub fn reveal(
 mod tests {
     use super::*;
 
-    /// The venue recovers the bidder from this signature with OpenZeppelin's
-    /// ECDSA, which only accepts the 27/28 recovery byte.
     #[test]
     fn a_bid_signature_recovers_the_bidder_in_the_form_solidity_accepts() {
         let auction = Address::repeat_byte(0x11);

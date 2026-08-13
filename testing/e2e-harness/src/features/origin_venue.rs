@@ -34,8 +34,6 @@ fn committee_chain_hosts_engine(world: &mut World) {
         .clone()
         .expect("a deploy recorded its addresses");
 
-    // Bytecode at each address is the only claim a deploy can make on its own;
-    // whether the engine is wired is a separate step.
     for (name, address) in [
         ("ERC7786Bridge", contracts.bridge),
         ("LoopbackGatewayAdapter", contracts.loopback),
@@ -67,8 +65,6 @@ fn origin_router_knows_proceeds_route(world: &mut World) {
         .clone()
         .expect("a deploy recorded its addresses");
 
-    // Without the route an inbound delivery reverts as an unauthorised caller,
-    // and the day never opens a payout round.
     let bridge = eth::read_call(
         &url,
         contracts.origin_router,
@@ -95,8 +91,6 @@ sol! {
     }
 }
 
-/// The targets frozen for the day. An empty snapshot means the start had nowhere
-/// to go, which is a different fault from one that was dispatched and lost.
 fn frozen_targets(url: &str, router: Address, worldwide_day: u32) -> String {
     match eth::read_call(
         url,
@@ -111,8 +105,6 @@ fn frozen_targets(url: &str, router: Address, worldwide_day: u32) -> String {
     }
 }
 
-/// What Desis itself thinks the day reached, so a venue that never heard of the
-/// auction can be told apart from a day Desis never scheduled.
 fn desis_stage(url: &str, worldwide_day: u32) -> String {
     let desis = origin_venue::DESIS
         .parse()
@@ -133,7 +125,6 @@ fn desis_stage(url: &str, worldwide_day: u32) -> String {
     }
 }
 
-/// A red day briefs no supply, so Desis is left with nothing to start.
 #[cfg(feature = "ocomp-integration")]
 fn day_colour(world: &World, worldwide_day: u32) -> String {
     match world
@@ -150,7 +141,6 @@ fn day_colour(_world: &World, _worldwide_day: u32) -> String {
     "day type unreadable without ocomp-integration".to_owned()
 }
 
-/// Closing the day is what applies the budget split and briefs Desis.
 #[cfg(feature = "ocomp-integration")]
 fn day_closure(world: &World, worldwide_day: u32) -> String {
     match world
@@ -172,63 +162,16 @@ fn day_closure(_world: &World, _worldwide_day: u32) -> String {
     "day closure unreadable without ocomp-integration".to_owned()
 }
 
-/// Desis starts a briefed auction from its own schedule tick, which fires every
-/// twelve hours of logical time.
+/// Desis drives the auction on this cadence.
 #[cfg(feature = "ocomp-integration")]
 const AUCTION_TICK_PERIOD_SECS: u64 = 43_200;
 
 #[cfg(feature = "ocomp-integration")]
-const CLOCK_FINALITY_TIMEOUT: Duration = Duration::from_secs(240);
+const AUCTION_WINDOW_SECS: u64 = 24 * 3600;
 
-/// Cycling the roles directly rather than through the fault injector keeps the
-/// scenario's fault budget free, so an auction can cross as many windows as it needs.
 #[cfg(feature = "ocomp-integration")]
 fn advance_committee_clock(world: &mut World, target: u64) {
-    let ports = world.validators.committee_ports();
-    let before = ports
-        .iter()
-        .filter_map(|port| eth::finalized_number(&world.rpc.url(*port)))
-        .max()
-        .expect("a finalized height before the clock moves");
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("system clock is after unix epoch")
-        .as_secs();
-    let offset = i64::try_from(i128::from(target) - i128::from(now)).expect("logical clock offset");
-
-    world
-        .localnet
-        .restart_committee_at_unix_time_offset(offset)
-        .unwrap_or_else(|error| {
-            panic!("restart the committee at logical time {target}: {error:#}")
-        });
-
-    let deadline = Instant::now() + CLOCK_FINALITY_TIMEOUT;
-    loop {
-        let finalized = ports
-            .iter()
-            .map(|port| eth::finalized_number(&world.rpc.url(*port)).unwrap_or_default())
-            .collect::<Vec<_>>();
-        if finalized.iter().all(|height| *height > before) {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the committee did not finalize past {before} after moving to {target}: {finalized:?}"
-        );
-        sleep(Duration::from_secs(1));
-    }
-
-    for validator_index in 0..4_u8 {
-        world
-            .ocomp
-            .restart_node_facing_processes(validator_index)
-            .unwrap_or_else(|error| {
-                panic!(
-                    "restart validator-{validator_index} OCOMP roles after the clock move: {error}"
-                )
-            });
-    }
+    let _ = crate::features::ocomp::restart_committee_at_logical_time(world, target);
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -249,18 +192,21 @@ fn committee_clock_reaches_next_auction_tick(world: &mut World) {
     advance_committee_clock(world, next_tick_after(now));
 }
 
-/// The venue derives its stage from the block clock, so each hop lands on the
-/// tick boundary where Desis also gets its turn to drive the auction on.
 #[cfg(feature = "ocomp-integration")]
-fn advance_until_stage(world: &mut World, target_stage: u8, max_hops: usize) {
+fn advance_past_window_to_stage(world: &mut World, target_stage: u8) {
     let contracts = world
         .state
         .origin_contracts
         .clone()
         .expect("a deploy recorded its addresses");
     let worldwide_day = settled_day(world);
-    for _ in 0..max_hops {
-        let url = world.rpc.url(world.validators.primary_port());
+    let url = world.rpc.url(world.validators.primary_port());
+    let now = eth::latest_block_timestamp(&url).expect("committee block timestamp");
+    advance_committee_clock(world, next_tick_after(now + AUCTION_WINDOW_SECS));
+
+    let url = world.rpc.url(world.validators.primary_port());
+    let deadline = Instant::now() + AUCTION_START_TIMEOUT;
+    loop {
         let stage = eth::read_call(
             &url,
             contracts.intex_auction,
@@ -269,18 +215,18 @@ fn advance_until_stage(world: &mut World, target_stage: u8, max_hops: usize) {
             },
         )
         .expect("the venue knows the auction");
+        assert_ne!(stage, 4, "day {worldwide_day} was cancelled on the venue");
         if stage >= target_stage {
-            assert_ne!(stage, 4, "day {worldwide_day} was cancelled on the venue");
             return;
         }
-        let now = eth::latest_block_timestamp(&url).expect("committee block timestamp");
-        advance_committee_clock(world, next_tick_after(now));
+        assert!(
+            Instant::now() < deadline,
+            "day {worldwide_day} stalled at venue stage {stage} short of {target_stage}"
+        );
+        sleep(Duration::from_secs(2));
     }
-    panic!("day {worldwide_day} never reached auction stage {target_stage} on the venue");
 }
 
-/// Desis dispatches the start on its own schedule tick, which lands some blocks
-/// after the day settles.
 const AUCTION_START_TIMEOUT: Duration = Duration::from_secs(300);
 
 #[then("the auction for that day opens on the target chain")]
@@ -340,7 +286,6 @@ fn settled_day(world: &World) -> u32 {
         .expect("numeric WorldwideDay")
 }
 
-/// Covers both the entry bond and the reveal lock with room to spare.
 #[cfg(feature = "ocomp-integration")]
 const BIDDER_ALLOWANCE: u128 = 1_000_000_000 * 1_000_000_000_000_000_000;
 
@@ -383,7 +328,7 @@ fn bidders_commit(world: &mut World) {
 #[cfg(feature = "ocomp-integration")]
 #[when("those bidders reveal their bids once the venue is revealing")]
 fn bidders_reveal(world: &mut World) {
-    advance_until_stage(world, 1, 6);
+    advance_past_window_to_stage(world, 1);
 
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
@@ -406,12 +351,10 @@ fn bidders_reveal(world: &mut World) {
     .expect("reveal the bids");
 }
 
-/// Desis reaches Cleared only after every target chain relayed its bids back and
-/// the clearing ran, so this is the whole round trip in one reading.
 #[cfg(feature = "ocomp-integration")]
 #[then("the auction clears and the venue moves past its reveal window")]
 fn auction_clears(world: &mut World) {
-    advance_until_stage(world, 2, 6);
+    advance_past_window_to_stage(world, 2);
 
     let contracts = world
         .state
