@@ -6,6 +6,7 @@
 //! `world.state`. The handles hold a cloned [`Config`] and defer all subprocess
 //! work to `crate::internal`.
 
+pub mod bidders;
 pub mod forge;
 pub mod hardhat;
 pub mod localnet;
