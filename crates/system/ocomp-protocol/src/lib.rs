@@ -19,6 +19,7 @@ pub mod intent;
 pub mod league_snapshot;
 pub mod list;
 pub mod local_control;
+pub mod nod_materialization;
 pub mod opening;
 pub mod profile;
 pub mod receipts;

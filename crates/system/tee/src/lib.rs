@@ -44,13 +44,12 @@ pub use dcap_v1::{dcap_collateral_validity_window_v1, DcapCollateralValidityWind
 pub use errors::TransportError;
 pub use host_collateral::acquire_dcap_collateral_v1;
 pub use node_host::{
-    connect_or_initialize_full_node_enclave, connect_or_initialize_validator_enclave,
+    connect_committed_node_host_enclave, connect_or_initialize_node_host_enclave,
     construct_finalized_replacement_authorization_v1, load_committed_enclave_manifest_v1,
     load_replacement_candidate_submission, persist_replacement_candidate_submission,
-    prepare_full_node_enclave_replacement_candidate,
-    prepare_validator_enclave_replacement_candidate, promote_replacement_candidate,
-    FinalizedReplacementAuthorizationV1, FinalizedReplacementBindingV1, FullNodeNodeHostIdentityV1,
-    ReplacementCandidateEnclaveV1, ReplacementCandidateSubmissionV1, ValidatorNodeHostIdentityV1,
+    prepare_node_host_enclave_replacement_candidate, promote_replacement_candidate,
+    FinalizedReplacementAuthorizationV1, FinalizedReplacementBindingV1, NodeHostIdentityV1,
+    ReplacementCandidateEnclaveV1, ReplacementCandidateSubmissionV1,
 };
 pub use remote_session::{
     admit_remote_session_v1, admit_rpc_trusted_remote_session_v1, FinalizedRegistryBindingV1,

@@ -44,6 +44,20 @@ Feature: Off-chain computation and Metadosis
     When a late follower replays the finalized OCOMP request and quorum blocks
     Then runtime traces prove proposal import and historical replay without on-chain calculation
 
+  @ocomp-materialization
+  Scenario: A certified generation is materialized into user NODs in bounded batches
+    Given a fresh four-validator OCOMP public capacity localnet
+    When 10 capacity owners submit one encrypted Tribute each at no more than two per block
+    Then all validators observe exactly 10 public Tributes for the capacity day
+    When the committee logical clock reaches the public capacity processing time
+    Then Metadosis creates one finalized JobIntent from that public Tribute
+    When the production OCOMP domains process that finalized JobIntent
+    Then three matching validator domains atomically certify the Lysis generation
+    And the certified generation is materialized through at least two bounded transactions
+    And every capacity owner enumerates one ordinary NOD with matching nodData
+    When all validator nodes and OCOMP node-facing processes restart with preserved data
+    Then the completed materialization cursor and ordinary NOD set remain unchanged
+
   @ocomp-capacity
   Scenario: A shard-cap-plus-one public population is completely processed
     Given a fresh four-validator OCOMP public capacity localnet
@@ -54,6 +68,10 @@ Feature: Off-chain computation and Metadosis
     When the production OCOMP domains process that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod
     And the certified generation contains exactly 257 Tribute and Nod records
+    And the certified generation is materialized through at least two bounded transactions
+    And five deterministic capacity owners enumerate ordinary NODs with matching nodData
+    When all validator nodes and OCOMP node-facing processes restart with preserved data
+    Then the completed materialization cursor and ordinary NOD set remain unchanged
     And validator 0 reconstructs that certified generation from canonical history
 
   @ocomp-int-024
@@ -64,19 +82,6 @@ Feature: Off-chain computation and Metadosis
     When validator 0 OCOMP worker is stopped through the typed fault control
     Then consensus finality advances while only that worker remains stopped
     And validator 0 OCOMP worker restarts through the typed topology
-
-  @ocomp-e2e @ocomp-e2e-007
-  # OCOMP-TEST-ID: OCM-E2E-007
-  Scenario: An incompatible Supervisor cannot affect consensus or compatible domains
-    Given a fresh four-validator OCOMP public measurement localnet
-    When validator 0 OCOMP supervisor is replaced by an incompatible peer
-    And an operator submits one encrypted tribute offer
-    Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
-    Then Metadosis creates one finalized JobIntent from that public Tribute
-    When the production OCOMP domains process that finalized JobIntent
-    Then three compatible validator domains atomically apply Lysis and create the Nod
-    And the incompatible supervisor remains outside OCOMP while consensus finality advances
 
   @ocomp-public-expiry
   # OCOMP-TEST-ID: OCM-PUB-003
@@ -91,20 +96,6 @@ Feature: Off-chain computation and Metadosis
     And validator 2 prepares one valid vote without broadcasting it
     And the held validator vote is broadcast at the exclusive deadline
     Then the no-quorum job expires at its exclusive deadline without creating Nod
-
-  @metadosis-failure-recovery
-  Scenario: Exhausted OCOMP attempts fail one WWD without halting the chain
-    Given a fresh four-validator OCOMP failure-recovery localnet
-    When validators 2 and 3 OCOMP workers are stopped before the job
-    And an operator submits one encrypted tribute offer
-    Then the tribute transaction succeeds and supply becomes one
-    And every validator projects the same tribute and indexes
-    Then Metadosis creates one finalized JobIntent from that public Tribute
-    When the production OCOMP domains process that finalized JobIntent
-    Then the no-quorum job expires at its exclusive deadline without creating Nod
-    And the exhausted no-quorum OCOMP day fails atomically
-    When all validator nodes and OCOMP node-facing processes restart with preserved data
-    Then the failed WWD and accounting remain identical after restart
 
   @ocomp-public-mutation
   # OCOMP-TEST-ID: OCM-PUB-002

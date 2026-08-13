@@ -115,13 +115,13 @@ pub struct TeeFilteredReshareTarget {
 ///
 /// Ordering is inherited from ValidatorSet storage order. The three parallel
 /// ValidatorSet vectors are filtered by the same indices, and every removed
-/// address is emitted once in that same order. `GramineDirectDev` is a distinct
-/// dev-network policy and deliberately keeps the ordinary target unchanged; it
-/// is never selected as a DcapRequired fallback.
+/// address is emitted once in that same order. Attestation mode changes how a
+/// NodeHost is admitted, not whether the resulting live Registry binding is
+/// required for DKG membership.
 pub fn read_tee_filtered_reshare_target_from_state(
     state_access: &dyn RethStateAccess,
     context: ReadOnlyBlockContext,
-    attestation_mode: AttestationMode,
+    _attestation_mode: AttestationMode,
 ) -> Result<TeeFilteredReshareTarget> {
     if !context.is_complete() {
         return Err(eyre::eyre!(
@@ -130,13 +130,6 @@ pub fn read_tee_filtered_reshare_target_from_state(
     }
 
     let target = read_reshare_target_from_state(state_access)?;
-    if attestation_mode == AttestationMode::GramineDirectDev {
-        return Ok(TeeFilteredReshareTarget {
-            validator_set: target,
-            tee_expired_target_exclusions: Vec::new(),
-        });
-    }
-
     if target.public_keys.len() != target.addresses.len()
         || target.addresses.len() != target.p2p_addresses.len()
     {
@@ -517,8 +510,16 @@ pub fn read_tee_recipient_x25519_from_state(
 
     {
         let reg = outbe_teeregistry::TeeRegistry::new(storage);
-        reg.registration(validator)
-            .map(|r| r.recipient_x25519)
+        reg.validator_enclave_binding_v1(validator)
+            .and_then(|binding| {
+                binding
+                    .map(|binding| binding.recipient_x25519)
+                    .ok_or_else(|| {
+                        outbe_primitives::error::PrecompileError::Revert(
+                            "validator has no NodeHost enclave binding".into(),
+                        )
+                    })
+            })
             .map_err(|e| eyre::eyre!("failed to read tee recipient_x25519: {e}"))
     }
 }
@@ -590,7 +591,7 @@ mod tests {
     use commonware_math::algebra::Random;
     use outbe_primitives::consensus_p2p::{encode_v1, P2pAddress, P2P_ADDRESS_VERSION_V1};
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-    use outbe_primitives::tee_attestation_v1::{EnclaveProfile, NodeIdV1};
+    use outbe_primitives::tee_attestation_v1::NodeIdV1;
     use std::collections::HashMap;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -661,9 +662,16 @@ mod tests {
                 vs.activate_validator_via_boundary_for_test(validator)
                     .unwrap();
 
-                let node_hash = NodeIdV1::Validator {
-                    address: validator.into_array(),
-                    bls_minpk_public: consensus_pubkey,
+                let node_hash = NodeIdV1 {
+                    reth_p2p_public: k256::ecdsa::SigningKey::from_bytes(
+                        (&[(index + 1) as u8; 32]).into(),
+                    )
+                    .unwrap()
+                    .verifying_key()
+                    .to_encoded_point(true)
+                    .as_bytes()
+                    .try_into()
+                    .unwrap(),
                 }
                 .node_id_hash()
                 .unwrap();
@@ -682,10 +690,6 @@ mod tests {
                 registry
                     .v1_node_intent_hash
                     .write(&node_hash, B256::with_last_byte((index + 21) as u8))
-                    .unwrap();
-                registry
-                    .v1_node_profile
-                    .write(&node_hash, EnclaveProfile::Validator as u64)
                     .unwrap();
                 registry
                     .v1_node_valid_until
@@ -857,13 +861,13 @@ mod tests {
     }
 
     #[test]
-    fn gramine_dev_keeps_ordinary_target_without_registry_bindings() {
+    fn gramine_dev_requires_the_same_live_validator_node_host_binding_as_production() {
         let freeze_timestamp = 1_800_000_000;
-        let (access, validators) = tee_expiry_state(freeze_timestamp);
+        let access = populated_p2p_state(|_, _| {});
         let filtered = read_tee_filtered_reshare_target_from_state(
             &access,
             ReadOnlyBlockContext {
-                chain_id: 424_242,
+                chain_id: 54_322_345,
                 genesis_hash: B256::with_last_byte(0xBB),
                 block_number: 1_200,
                 timestamp: freeze_timestamp,
@@ -871,8 +875,11 @@ mod tests {
             AttestationMode::GramineDirectDev,
         )
         .unwrap();
-        assert_eq!(filtered.validator_set.addresses, validators);
-        assert!(filtered.tee_expired_target_exclusions.is_empty());
+        assert!(filtered.validator_set.addresses.is_empty());
+        assert_eq!(
+            filtered.tee_expired_target_exclusions,
+            vec![Address::with_last_byte(0x11)]
+        );
     }
 
     #[test]

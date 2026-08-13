@@ -200,7 +200,7 @@ impl Localnet {
     /// per-request deadlines; keep the harness outside its five-minute
     /// co-located-EPC allowance so it observes the node's verdict.
     pub fn tee_bootstrap_wait_attempts(&self) -> u32 {
-        if matches!(self.cfg.tee_mode, crate::env::TeeMode::Real) {
+        if self.cfg.tee_mode.passes_sgx_devices() {
             72
         } else {
             18
@@ -517,6 +517,20 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|pair| { pair[0] == "--tee-session-mode" && pair[1] == "production-node-host" }));
+    }
+
+    #[test]
+    fn sgx_no_attest_uses_the_hardware_bootstrap_allowance() {
+        let env = Environment {
+            tee_mode: crate::env::TeeMode::SgxNoAttest,
+            ..Environment::default()
+        };
+        env.ports
+            .start_scenario(env.validators)
+            .expect("allocate deterministic scenario ports");
+        let localnet = Localnet::new(Config::for_scenario(&env, 1));
+
+        assert_eq!(localnet.tee_bootstrap_wait_attempts(), 72);
     }
 
     #[test]

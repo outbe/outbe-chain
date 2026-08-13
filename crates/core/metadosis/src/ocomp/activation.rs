@@ -409,6 +409,7 @@ fn apply_certified_result(
     };
     let nod_input = CertifiedNodGenerationV1 {
         binding: binding.clone(),
+        program_semantics_hash: bundle.lysis_program_semantics_hash,
         precondition: plan.nod().precondition().clone(),
         roots: result.roots.clone(),
         counts: plan.nod().exact_counts().clone(),

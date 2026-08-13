@@ -13,9 +13,9 @@ use crate::system_tx::{
 };
 use crate::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
-    DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1, EnclaveProfile,
-    GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1, SystemGasScheduleV1,
-    TeeBootstrapGasInputV1, TeePolicyV1, TeeRegistryGasScheduleV1, MAX_ATTESTATION_EVIDENCE_BYTES,
+    DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1, GramineDirectEvidenceV1,
+    RegistrationIntentV1, SystemGasScheduleV1, TeeBootstrapGasInputV1, TeePolicyV1,
+    TeeRegistryGasScheduleV1, ValidatorNodeBindingV1, MAX_ATTESTATION_EVIDENCE_BYTES,
     MAX_COLLATERAL_COMPONENT_BYTES, MAX_EVIDENCE_CALL_FRAMING_BYTES, MAX_QUOTE_BYTES,
     MAX_TEE_BOOTSTRAP_BYTES,
 };
@@ -42,6 +42,9 @@ pub enum TeeBootstrapParticipantEvidenceV2 {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TeeBootstrapParticipantV2 {
     pub intent: RegistrationIntentV1,
+    pub validator_binding: ValidatorNodeBindingV1,
+    pub validator_signature: [u8; 65],
+    pub node_binding_signature: [u8; 65],
     pub evidence: TeeBootstrapParticipantEvidenceV2,
     pub node_signature: [u8; 65],
     pub enclave_signature: [u8; 64],
@@ -56,6 +59,9 @@ pub struct TeeBootstrapCommitteeSignatureV2 {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TeeBootstrapParticipantSubmissionV2 {
     pub evidence: AttestationEvidenceV1,
+    pub validator_binding: ValidatorNodeBindingV1,
+    pub validator_signature: [u8; 65],
+    pub node_binding_signature: [u8; 65],
     pub node_signature: [u8; 65],
     pub enclave_signature: [u8; 64],
 }
@@ -116,10 +122,13 @@ impl TeeBootstrapV2 {
                         "TEE bootstrap submission mode does not match policy",
                     ));
                 }
-                let validator = validator_address(evidence_intent(&submission.evidence))?;
+                let validator = Address::from(submission.validator_binding.validator);
                 Ok((
                     validator,
                     submission.evidence,
+                    submission.validator_binding,
+                    submission.validator_signature,
+                    submission.node_binding_signature,
                     submission.node_signature,
                     submission.enclave_signature,
                 ))
@@ -132,7 +141,16 @@ impl TeeBootstrapV2 {
         // up to participant_count * evidence_cap before the OST3 cap is known.
         let mut component_indices = BTreeMap::<(u8, Vec<u8>), u16>::new();
         let mut participants = Vec::with_capacity(ordered.len());
-        for (_, evidence, node_signature, enclave_signature) in ordered {
+        for (
+            _,
+            evidence,
+            validator_binding,
+            validator_signature,
+            node_binding_signature,
+            node_signature,
+            enclave_signature,
+        ) in ordered
+        {
             let (intent, evidence) = match evidence {
                 AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
                     intent,
@@ -181,6 +199,9 @@ impl TeeBootstrapV2 {
             };
             participants.push(TeeBootstrapParticipantV2 {
                 intent,
+                validator_binding,
+                validator_signature,
+                node_binding_signature,
                 evidence,
                 node_signature,
                 enclave_signature,
@@ -217,7 +238,7 @@ impl TeeBootstrapV2 {
             .iter()
             .map(|participant| {
                 Ok(TeeBootstrapCommitteeSignatureV2 {
-                    validator: validator_address(&participant.intent)?,
+                    validator: Address::from(participant.validator_binding.validator),
                     signature: [0; 65],
                 })
             })
@@ -356,6 +377,9 @@ impl TeeBootstrapV2 {
         put_len_u16(&mut out, self.participants.len())?;
         for participant in &self.participants {
             put_bytes_u32(&mut out, &participant.intent.encode_canonical()?)?;
+            out.extend_from_slice(&participant.validator_binding.encode_canonical()?);
+            out.extend_from_slice(&participant.validator_signature);
+            out.extend_from_slice(&participant.node_binding_signature);
             out.push(participant.intent.attestation_mode as u8);
             match &participant.evidence {
                 TeeBootstrapParticipantEvidenceV2::Dcap {
@@ -400,6 +424,7 @@ impl TeeBootstrapV2 {
             let intent_len = participant.intent.encode_canonical()?.len();
             checked_add_len(&mut len, 4)?;
             checked_add_len(&mut len, intent_len)?;
+            checked_add_len(&mut len, ValidatorNodeBindingV1::CANONICAL_LEN + 65 + 65)?;
             checked_add_len(&mut len, 1)?;
             match &participant.evidence {
                 TeeBootstrapParticipantEvidenceV2::Dcap { quote, .. } => {
@@ -467,6 +492,11 @@ impl TeeBootstrapV2 {
             let intent = RegistrationIntentV1::decode_canonical(
                 decoder.bounded_bytes("registration intent", MAX_EVIDENCE_CALL_FRAMING_BYTES)?,
             )?;
+            let validator_binding = ValidatorNodeBindingV1::decode_canonical(
+                decoder.take(ValidatorNodeBindingV1::CANONICAL_LEN)?,
+            )?;
+            let validator_signature = decoder.array()?;
+            let node_binding_signature = decoder.array()?;
             let mode = AttestationMode::decode(decoder.u8()?)?;
             let evidence = match mode {
                 AttestationMode::DcapRequired => {
@@ -491,6 +521,9 @@ impl TeeBootstrapV2 {
             };
             participants.push(TeeBootstrapParticipantV2 {
                 intent,
+                validator_binding,
+                validator_signature,
+                node_binding_signature,
                 evidence,
                 node_signature: decoder.array()?,
                 enclave_signature: decoder.array()?,
@@ -654,14 +687,28 @@ impl TeeBootstrapV2 {
         for (participant_index, participant) in self.participants.iter().enumerate() {
             if participant.intent.operation != AttestationOperationV1::RegisterEnclave
                 || participant.intent.attestation_mode != self.policy.attestation_mode
-                || participant.intent.enclave_profile != EnclaveProfile::Validator
                 || participant.intent.policy_hash != policy_hash
             {
                 return Err(CodecError::NonCanonical(
-                    "TEE bootstrap participant intent is not a policy-bound validator registration",
+                    "TEE bootstrap participant intent is not a policy-bound NodeHost registration",
                 ));
             }
-            let validator = validator_address(&participant.intent)?;
+            let validator = Address::from(participant.validator_binding.validator);
+            if participant.validator_binding.chain_id != participant.intent.chain_id
+                || participant.validator_binding.genesis_hash != participant.intent.genesis_hash
+                || participant.validator_binding.node_id_hash
+                    != participant.intent.node_id.node_id_hash()?
+                || !participant
+                    .validator_binding
+                    .verify_validator_signature(&participant.validator_signature)
+                || !participant
+                    .validator_binding
+                    .verify_node_signature(&participant.node_binding_signature)
+            {
+                return Err(CodecError::NonCanonical(
+                    "TEE bootstrap validator NodeHost binding is invalid",
+                ));
+            }
             if previous_validator.is_some_and(|previous| previous >= validator) {
                 return Err(CodecError::NonCanonical(
                     "TEE bootstrap participants are not strictly sorted and unique",
@@ -738,22 +785,6 @@ fn checked_add_len(total: &mut usize, value: usize) -> Result<(), CodecError> {
         .checked_add(value)
         .ok_or(CodecError::ArithmeticOverflow)?;
     Ok(())
-}
-
-fn evidence_intent(evidence: &AttestationEvidenceV1) -> &RegistrationIntentV1 {
-    match evidence {
-        AttestationEvidenceV1::Dcap(value) => &value.intent,
-        AttestationEvidenceV1::GramineDirectDev(value) => &value.intent,
-    }
-}
-
-fn validator_address(intent: &RegistrationIntentV1) -> Result<Address, CodecError> {
-    match intent.node_id {
-        NodeIdV1::Validator { address, .. } => Ok(Address::from(address)),
-        NodeIdV1::FullNode { .. } => Err(CodecError::NonCanonical(
-            "TEE bootstrap participant is not a validator",
-        )),
-    }
 }
 
 fn compare_components(

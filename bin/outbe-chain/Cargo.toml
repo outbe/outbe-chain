@@ -25,9 +25,11 @@ outbe-ocomp-protocol.workspace = true
 outbe-consensus.workspace = true
 outbe-engine.workspace = true
 outbe-metadosis.workspace = true
+outbe-nod.workspace = true
 outbe-primitives.workspace = true
 outbe-operator.workspace = true
 outbe-tee.workspace = true
+outbe-validatorset.workspace = true
 outbe-zkproof.workspace = true
 
 reth-ethereum = { workspace = true, features = ["node", "cli", "exex"] }

@@ -20,7 +20,8 @@ use alloy_evm::{
 use alloy_primitives::{keccak256, map::AddressMap, Address, Bytes, Log, B256, U256};
 use outbe_compressed_entities::ExecutionScope;
 use outbe_ocomp_protocol::system_carrier::{
-    classify_ocomp_system_carrier, OcompSystemCarrierView, OCOMP_SYSTEM_CARRIER_INTERNAL_GAS_LIMIT,
+    classify_ocomp_system_carrier, OcompSystemCarrierCandidate, OcompSystemCarrierView,
+    OCOMP_SYSTEM_CARRIER_INTERNAL_GAS_LIMIT,
 };
 use outbe_offchain_data::{ExecutionReadBudgetGuard, RuntimeBodyReaders};
 use outbe_primitives::{
@@ -1320,6 +1321,16 @@ fn is_ocomp_deadline_passed_revert(result: &ExecutionResult<HaltReason>) -> bool
     )
 }
 
+fn is_nod_materialization_soft_revert(result: &ExecutionResult<HaltReason>) -> bool {
+    matches!(
+        result,
+        ExecutionResult::Revert { output, .. }
+            if outbe_nodfactory::materialization::is_soft_materialization_revert_data(
+                output.as_ref()
+            )
+    )
+}
+
 #[cfg(test)]
 mod system_tx_failure_code_tests {
     use super::*;
@@ -1357,6 +1368,43 @@ mod system_tx_failure_code_tests {
         assert!(!is_ocomp_deadline_passed_revert(&revert_result()));
         assert!(!is_ocomp_deadline_passed_revert(&halt_result(
             HaltReason::OutOfGas(OutOfGasError::Precompile)
+        )));
+    }
+
+    #[test]
+    fn only_typed_materialization_race_and_proof_rejections_are_failed_receipts() {
+        use outbe_nodfactory::materialization::{
+            materialization_revert_data, NodMaterializationRejectionV1,
+        };
+
+        for rejection in [
+            NodMaterializationRejectionV1::StaleQueueSequence,
+            NodMaterializationRejectionV1::StaleCursor,
+            NodMaterializationRejectionV1::AttemptLimit,
+            NodMaterializationRejectionV1::InvalidBatchShape,
+            NodMaterializationRejectionV1::InvalidProof,
+            NodMaterializationRejectionV1::DuplicateNod,
+        ] {
+            let result = ExecutionResult::Revert {
+                gas: ResultGas::default(),
+                logs: Vec::new(),
+                output: materialization_revert_data(rejection),
+            };
+            assert!(is_nod_materialization_soft_revert(&result));
+        }
+
+        assert!(!is_nod_materialization_soft_revert(&revert_result()));
+        assert!(!is_nod_materialization_soft_revert(
+            &ExecutionResult::Revert {
+                gas: ResultGas::default(),
+                logs: Vec::new(),
+                output: materialization_revert_data(
+                    NodMaterializationRejectionV1::UnauthorizedSigner,
+                ),
+            }
+        ));
+        assert!(!is_nod_materialization_soft_revert(&halt_result(
+            HaltReason::OutOfGas(OutOfGasError::Precompile),
         )));
     }
 
@@ -3783,12 +3831,23 @@ where
                     );
                     let mut provider = DirectStorageProvider::new(db, ctx);
                     let storage = StorageHandle::new(&mut provider);
-                    outbe_metadosis::resolve_historical_result_vote_carrier_signer(
-                        storage,
-                        &candidate.prefix,
-                        signer,
-                        &outbe_ocomp_protocol::profile::poc_schema_limits(),
-                    )
+                    match candidate {
+                        OcompSystemCarrierCandidate::ResultVote { prefix } => {
+                            outbe_metadosis::resolve_historical_result_vote_carrier_signer(
+                                storage,
+                                &prefix,
+                                signer,
+                                &outbe_ocomp_protocol::profile::poc_schema_limits(),
+                            )
+                        }
+                        OcompSystemCarrierCandidate::NodMaterialization { .. } => {
+                            outbe_validatorset::contract::ValidatorSet::new(storage)
+                                .resolve_validator_for_role(
+                                    signer,
+                                    outbe_validatorset::delegation::ValidatorDelegateRole::Ocomp,
+                                )
+                        }
+                    }
                 }
                 .map_err(|error| {
                     BlockExecutionError::msg(format!(
@@ -3797,7 +3856,7 @@ where
                 })?;
                 if authorized.is_none() {
                     return Err(BlockExecutionError::msg(
-                        "OCOMP system carrier signer is not authorized by its pinned snapshot",
+                        "OCOMP system carrier signer is not authorized",
                     ));
                 }
 
@@ -3813,8 +3872,15 @@ where
                 });
                 self.inner.evm.restore_zero_fee_overrides(snapshot);
                 let output = execution?;
-                let deadline_revert = is_ocomp_deadline_passed_revert(&output.result.result);
-                if !output.result.result.is_success() && !deadline_revert {
+                let allowed_failed_receipt = match candidate {
+                    OcompSystemCarrierCandidate::ResultVote { .. } => {
+                        is_ocomp_deadline_passed_revert(&output.result.result)
+                    }
+                    OcompSystemCarrierCandidate::NodMaterialization { .. } => {
+                        is_nod_materialization_soft_revert(&output.result.result)
+                    }
+                };
+                if !output.result.result.is_success() && !allowed_failed_receipt {
                     return Err(BlockExecutionError::msg(format!(
                         "OCOMP system carrier execution did not succeed: {:?}",
                         output.result.result
@@ -5457,7 +5523,13 @@ mod tests {
         .expect("canonical OCOMP envelope must classify")
         .expect("canonical OCOMP envelope must select the system carrier");
 
-        assert_eq!(candidate.prefix.ocomp_key_hash, B256::repeat_byte(0x35));
+        let outbe_ocomp_protocol::system_carrier::OcompSystemCarrierCandidate::ResultVote {
+            prefix,
+        } = candidate
+        else {
+            panic!("expected result-vote carrier")
+        };
+        assert_eq!(prefix.ocomp_key_hash, B256::repeat_byte(0x35));
     }
 
     #[allow(dead_code)] // retained for follow-up tests

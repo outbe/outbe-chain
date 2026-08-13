@@ -73,6 +73,8 @@ interface ITeeRegistryV1 {
         uint64 transitionNonce
     );
 
+    event ValidatorNodeHostBoundV1(address indexed validator, bytes32 indexed nodeIdHash);
+
     /// @notice One-time permanent offer-key onboarding artifact for a newly
     ///         created V1 binding. Renewal, replacement and idempotent replay
     ///         never emit it.
@@ -90,9 +92,14 @@ interface ITeeRegistryV1 {
     function activePolicyV1() external view returns (bytes memory);
     function stagedSuccessorPolicyV1() external view returns (bool exists, uint256 proposalId, bytes memory policy);
 
-    function registerEnclave(bytes calldata evidence, bytes calldata nodeSignature, bytes calldata enclaveSignature)
-        external
-        returns (bool);
+    function registerEnclave(
+        bytes calldata evidence,
+        bytes calldata nodeSignature,
+        bytes calldata enclaveSignature,
+        bytes calldata validatorNodeBinding,
+        bytes calldata validatorSignature,
+        bytes calldata nodeBindingSignature
+    ) external returns (bool);
 
     function renewEnclave(bytes calldata evidence, bytes calldata nodeSignature, bytes calldata enclaveSignature)
         external
@@ -112,12 +119,12 @@ interface ITeeRegistryV1 {
 
     function validatorEnclaveBinding(address validator) external view returns (NodeEnclaveBindingV1View memory);
 
-    function fullNodeEnclaveBinding(uint8 rethP2pPrefix, bytes32 rethP2pX)
+    function nodeHostEnclaveBinding(uint8 rethP2pPrefix, bytes32 rethP2pX)
         external
         view
         returns (NodeEnclaveBindingV1View memory);
 
     function isValidatorEnclaveReady(address validator) external view returns (bool);
 
-    function isFullNodeEnclaveReady(uint8 rethP2pPrefix, bytes32 rethP2pX) external view returns (bool);
+    function isNodeHostEnclaveReady(uint8 rethP2pPrefix, bytes32 rethP2pX) external view returns (bool);
 }

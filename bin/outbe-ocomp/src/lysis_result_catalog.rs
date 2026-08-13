@@ -36,16 +36,98 @@ use crate::{
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedLysisResultChunkV1 {
     plan_ordinal: u32,
+    producer_artifact_ref: outbe_ocomp_protocol::CasObjectRefV1,
     summary: RootReduceSummaryV1,
     output_manifest_entry: OutputManifestEntryV1,
     chunk: ResultChunkV1,
     canonical_chunk_bytes: Vec<u8>,
 }
 
+/// Opens one exact result chunk through its plan-derived ROOT_REDUCE leaf.
+///
+/// This addressable path performs no prefix scan. The leaf artifact, admitted
+/// manifest entry, CAS object, and decoded chunk are all rebound to the frozen
+/// plan before the chunk is returned.
+pub fn verified_result_chunk_at(
+    audit: &LocalLysisPlanAuditV1<'_>,
+    chunk_ordinal: u32,
+) -> Result<VerifiedLysisResultChunkV1, LysisResultCatalogError> {
+    let topology = LysisPlanTopologyV1::new(audit.plan().primary_work_unit_count)?;
+    if chunk_ordinal >= audit.plan().primary_work_unit_count {
+        return Err(PlannerErrorV1::PlanPositionOutOfRange {
+            ordinal: chunk_ordinal,
+            total_unit_count: audit.plan().primary_work_unit_count,
+        }
+        .into());
+    }
+    let expected_position = PlannedUnitPositionV1::TreeNode {
+        phase: UnitPhase::RootReduce,
+        level: 0,
+        index: chunk_ordinal,
+    };
+    let plan_ordinal = topology.plan_ordinal_of(expected_position)?;
+    let item = audit.verified_artifact_at(plan_ordinal)?;
+    if item.position() != expected_position {
+        return Err(
+            ProtocolError::InvalidInvariant("result chunk producer ROOT_REDUCE position").into(),
+        );
+    }
+    let admitted_entry = item
+        .admission()
+        .result_chunk
+        .as_ref()
+        .ok_or(ProtocolError::InvalidInvariant(
+            "ROOT_REDUCE leaf admitted result entry",
+        ))?
+        .output_manifest_entry
+        .clone();
+    let (summary, embedded_entry) = decode_leaf(&item, audit.limits())?;
+    if embedded_entry != admitted_entry {
+        return Err(
+            ProtocolError::InvalidInvariant("ROOT_REDUCE leaf admitted manifest entry").into(),
+        );
+    }
+    let primary_shard = require_leaf_summary(&summary, audit, chunk_ordinal, &admitted_entry)?;
+    if admitted_entry.result_chunk_ref.expected_ocb1_kind != Some(ObjectKind::ResultChunkV1.tag()) {
+        return Err(ProtocolError::InvalidInvariant("result chunk descriptor object kind").into());
+    }
+    let object = audit
+        .reader()
+        .read_verified(&admitted_entry.result_chunk_ref)?;
+    let canonical_chunk_bytes = object.bytes().to_vec();
+    let chunk = ResultChunkV1::decode_canonical(&canonical_chunk_bytes, audit.limits())?;
+    if chunk.protocol_bundle_hash != audit.plan().protocol_bundle_hash
+        || chunk.job_id != audit.plan().job_id
+        || chunk.attempt != audit.plan().attempt
+        || chunk.chunk_ordinal != admitted_entry.chunk_ordinal
+        || chunk.first_nod_ordinal != primary_shard.start_ordinal
+        || chunk.result_chunk_hash(audit.limits())? != admitted_entry.result_chunk_hash
+        || u32::try_from(chunk.ordered_nod_actions.len()).ok() != Some(summary.nod_count)
+        || u32::try_from(chunk.ordered_eligible_contributors.len()).ok()
+            != Some(summary.contributor_count)
+    {
+        return Err(ProtocolError::InvalidInvariant("exact result chunk semantic binding").into());
+    }
+    require_chunk_summary(&chunk, &summary, chunk_ordinal, audit.limits())?;
+    Ok(VerifiedLysisResultChunkV1 {
+        plan_ordinal,
+        producer_artifact_ref: item.admission().artifact_ref.clone(),
+        summary,
+        output_manifest_entry: admitted_entry,
+        chunk,
+        canonical_chunk_bytes,
+    })
+}
+
 impl VerifiedLysisResultChunkV1 {
     #[must_use]
     pub const fn plan_ordinal(&self) -> u32 {
         self.plan_ordinal
+    }
+
+    #[must_use]
+    pub const fn producer_artifact_ref(&self) -> &outbe_ocomp_protocol::CasObjectRefV1 {
+        &self.producer_artifact_ref
     }
 
     #[must_use]
@@ -275,6 +357,10 @@ impl<'a> ExactLysisResultCatalogCursorV1<'a> {
         Ok(LysisResultCatalogStepV1::Chunk(Box::new(
             VerifiedLysisResultChunkV1 {
                 plan_ordinal: pending.plan_ordinal,
+                producer_artifact_ref: self
+                    .audit
+                    .plan_bound_admission_at(pending.plan_ordinal)?
+                    .artifact_ref,
                 summary: pending.summary,
                 output_manifest_entry: pending.output_manifest_entry,
                 chunk,

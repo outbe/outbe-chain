@@ -162,11 +162,13 @@ lost, create a new genesis and a new network; there is no recovery or fallback.
 ## 6. Add a FullNode after block 1
 
 A FullNode is not a founder. Give it the same `genesis.json`, verified release
-image and bootnodes; generate its own persistent Reth P2P key and run its DCAP
-enclave:
+image and bootnodes; provision its persistent Reth P2P key plus independent
+EVM/BLS key files, then run its DCAP enclave. The FullNode runtime does not load
+the EVM/BLS files and their presence grants no ValidatorSet role:
 
 ```bash
 mkdir -p /var/lib/outbe/testnet/fullnode/tee
+outbe-keygen hybrid --output-dir /var/lib/outbe/testnet/fullnode/keys
 docker run --rm --network host \
   --device /dev/sgx_enclave:/dev/sgx_enclave \
   --device /dev/sgx_provision:/dev/sgx_provision \
@@ -187,10 +189,10 @@ LATEST_TS_HEX=$(curl -fsS -H 'content-type: application/json' \
 VALID_UNTIL=$((LATEST_TS_HEX + 7200))
 
 outbe-cli tee join \
-  --profile full-node \
   --enclave-socket 127.0.0.1:17000 \
   --node-data-dir /var/lib/outbe/testnet/fullnode/data \
   --reth-p2p-secret-key /var/lib/outbe/testnet/fullnode/reth-p2p-secret.hex \
+  --node-evm-key /var/lib/outbe/testnet/fullnode/keys/evm-key.hex \
   --binding-id "$BINDING_ID" \
   --valid-until "$VALID_UNTIL" \
   --private-key "$FUNDED_RELAY_KEY" \

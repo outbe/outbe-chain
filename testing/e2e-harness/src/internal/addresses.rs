@@ -17,6 +17,12 @@ pub(crate) const SLASH_ADDR: Address = address!("0x00000000000000000000000000000
 pub(crate) const TRIBUTE_ADDR: Address = address!("0x0000000000000000000000000000000000001101");
 /// Nod precompile (`totalSupply()`).
 pub(crate) const NOD_ADDR: Address = address!("0x0000000000000000000000000000000000001006");
+/// NodFactory precompile (`materializationHead`, `mineGratis`).
+#[cfg(feature = "ocomp-integration")]
+pub(crate) const NOD_FACTORY_ADDR: Address = address!("0x0000000000000000000000000000000000001007");
+/// Confidential Gratis ledger (`opNonceOf`).
+#[cfg(feature = "ocomp-integration")]
+pub(crate) const GRATIS_ADDR: Address = address!("0x0000000000000000000000000000000000001003");
 /// Metadosis worldwide-day registry (`getWorldwideDay(uint32)`).
 pub(crate) const WWD_ADDR: Address = address!("0x000000000000000000000000000000000000100E");
 /// PromiseLimit carry-over ledger (`totalUnallocated()`).

@@ -3,9 +3,8 @@
 use alloy_primitives::B256;
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
-    DcapCollateralKind, DcapEvidenceV1, EnclaveProfile, NodeIdV1, PlatformTcbStatusSetV1,
-    QvlTcbStatusV1, RegistrationIntentV1, TeeMeasurementRuleV1, TeePolicyV1,
-    TeeRegistryGasScheduleV1,
+    DcapCollateralKind, DcapEvidenceV1, NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1,
+    RegistrationIntentV1, TeeMeasurementRuleV1, TeePolicyV1, TeeRegistryGasScheduleV1,
 };
 use outbe_tee::dcap_v1::{verify_dcap_evidence, DcapRejectCodeV1};
 use serde::Deserialize;
@@ -73,7 +72,6 @@ fn policy() -> TeePolicyV1 {
         collateral_margin: 3_600,
         resource_schedule_hash: B256::repeat_byte(0x44),
         measurement_rules: vec![TeeMeasurementRuleV1 {
-            enclave_profile: EnclaveProfile::Validator,
             mrenclave: B256::from(measurements.mrenclave),
             mrsigner: B256::from(measurements.mrsigner),
             isv_prod_id: measurements.isv_prod_id,
@@ -86,17 +84,20 @@ fn policy() -> TeePolicyV1 {
 
 fn evidence(policy: &TeePolicyV1) -> DcapEvidenceV1 {
     let collateral: FixtureCollateral = serde_json::from_str(COLLATERAL_WRAPPER).unwrap();
+    let reth_p2p_public = k256::ecdsa::SigningKey::from_bytes((&[0x77; 32]).into())
+        .unwrap()
+        .verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .try_into()
+        .unwrap();
     let intent = RegistrationIntentV1 {
         chain_id: policy.chain_id,
         genesis_hash: policy.genesis_hash,
         operation: AttestationOperationV1::RegisterEnclave,
         attestation_mode: AttestationMode::DcapRequired,
         policy_hash: policy.policy_hash().unwrap(),
-        enclave_profile: EnclaveProfile::Validator,
-        node_id: NodeIdV1::Validator {
-            address: [0x77; 20],
-            bls_minpk_public: [0x88; 48],
-        },
+        node_id: NodeIdV1 { reth_p2p_public },
         enclave_id: B256::repeat_byte(0x99),
         binding_id: B256::repeat_byte(0xaa),
         binding_version: 1,

@@ -21,8 +21,10 @@ use outbe_ocomp::{
     input_ref_catalog::{InputRefCatalogError, VerifiedInputChunkRefCatalog},
     lysis_plan_audit::{ExactLysisPlanError, LocalLysisPlanAuditV1, LysisPlanAuditStepV1},
     lysis_result_catalog::{
-        ExactLysisResultCatalogCursorV1, LysisResultCatalogError, LysisResultCatalogStepV1,
+        verified_result_chunk_at, ExactLysisResultCatalogCursorV1, LysisResultCatalogError,
+        LysisResultCatalogStepV1,
     },
+    nod_materialization::build_nod_materialization_batch,
     nod_proof::{build_certified_nod_proof, NodProofBuildError},
 };
 use outbe_ocomp_protocol::{
@@ -32,6 +34,7 @@ use outbe_ocomp_protocol::{
         InputChunkKind, InputManifestV1,
     },
     list::verify_ordered_list_membership,
+    nod_materialization::NodMaterializationHeadV1,
     opening::{
         partition_lysis_opening_subjects, LysisOpeningsProofV1, RawContractOpeningProofV1,
         RawStorageSlotV1,
@@ -82,10 +85,11 @@ enum ResultCatalogFault {
 /// descriptors. Other phase payloads are deliberately minimal and do not
 /// claim to be evidence of a real worker-pipeline execution.
 fn synthetic_fixture(substitute_bucket_spec: bool, corrupt_fidelity_root: bool) -> Fixture {
-    synthetic_fixture_with_result_fault(
+    synthetic_fixture_with_options(
         substitute_bucket_spec,
         corrupt_fidelity_root,
         ResultCatalogFault::None,
+        257,
     )
 }
 
@@ -93,6 +97,24 @@ fn synthetic_fixture_with_result_fault(
     substitute_bucket_spec: bool,
     corrupt_fidelity_root: bool,
     result_fault: ResultCatalogFault,
+) -> Fixture {
+    synthetic_fixture_with_options(
+        substitute_bucket_spec,
+        corrupt_fidelity_root,
+        result_fault,
+        257,
+    )
+}
+
+fn synthetic_fixture_with_tribute_count(tribute_count: u32) -> Fixture {
+    synthetic_fixture_with_options(false, false, ResultCatalogFault::None, tribute_count)
+}
+
+fn synthetic_fixture_with_options(
+    substitute_bucket_spec: bool,
+    corrupt_fidelity_root: bool,
+    result_fault: ResultCatalogFault,
+    tribute_count: u32,
 ) -> Fixture {
     let limits = poc_schema_limits();
     let list_limits = poc_input_list_limits();
@@ -107,7 +129,7 @@ fn synthetic_fixture_with_result_fault(
     let job_id = hash(0x30);
     let day = WorldwideDay::new(20_260_725);
 
-    let mut tributes = (0..257_u32)
+    let mut tributes = (0..tribute_count)
         .map(|index| {
             let mut owner_bytes = [0_u8; 20];
             owner_bytes[16..].copy_from_slice(&(index + 1).to_be_bytes());
@@ -1048,6 +1070,76 @@ fn cold_restart_streams_exact_result_chunks_only_from_root_reduce_leaves() {
 }
 
 #[test]
+fn one_chunk_nod_generation_builds_exact_first_and_final_batch_paths() {
+    let fixture = synthetic_fixture_with_tribute_count(10);
+    let reader = FilesystemCasReader::open(&fixture.cas_root, CAS_LIMITS).unwrap();
+    let input_refs = VerifiedInputChunkRefCatalog::reopen(
+        &fixture.input_ref_root,
+        &reader,
+        fixture.limits,
+        poc_input_list_limits(),
+    )
+    .unwrap();
+    let admissions =
+        VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
+    let audit = LocalLysisPlanAuditV1::open(
+        &admissions,
+        &input_refs,
+        &reader,
+        &fixture.bundle,
+        &fixture.limits,
+    )
+    .unwrap();
+
+    let mut root = StreamingOrderedListRoot::new(ListKind::NodActions, 10).unwrap();
+    for step in ExactLysisResultCatalogCursorV1::open(&audit).unwrap() {
+        if let LysisResultCatalogStepV1::Chunk(chunk) = step.unwrap() {
+            for action in &chunk.chunk().ordered_nod_actions {
+                root.push(
+                    &action.encode_canonical_record(&fixture.limits).unwrap(),
+                    fixture.limits.max_bounded_bytes,
+                )
+                .unwrap();
+            }
+        }
+    }
+    let mut head = NodMaterializationHeadV1 {
+        queue_sequence: 9,
+        job_id: audit.plan().job_id,
+        program_semantics_hash: fixture.bundle.bundle().lysis_program_semantics_hash,
+        worldwide_day: audit.plan().wwd,
+        generation: 1,
+        nod_root: root.finish().unwrap(),
+        nod_count: 10,
+        next_nod_ordinal: 0,
+        last_progress_height: 100,
+    };
+
+    let first = build_nod_materialization_batch(&audit, &head, 3).unwrap();
+    assert_eq!(first.actions.len(), 8);
+    assert_eq!(first.root_path.len(), 1);
+    outbe_ocomp_protocol::nod_materialization::verify_nod_materialization_batch(
+        &first,
+        &head,
+        3,
+        &fixture.limits,
+    )
+    .expect("first compact batch verifies");
+
+    head.next_nod_ordinal = 8;
+    let final_batch = build_nod_materialization_batch(&audit, &head, 3).unwrap();
+    assert_eq!(final_batch.actions.len(), 2);
+    assert_eq!(final_batch.root_path.len(), 1);
+    outbe_ocomp_protocol::nod_materialization::verify_nod_materialization_batch(
+        &final_batch,
+        &head,
+        3,
+        &fixture.limits,
+    )
+    .expect("padded final compact batch verifies");
+}
+
+#[test]
 fn cold_reloaded_result_catalog_builds_a_verified_nod_proof_across_shards() {
     let fixture = synthetic_fixture(false, false);
     let reader = FilesystemCasReader::open(&fixture.cas_root, CAS_LIMITS).unwrap();
@@ -1094,6 +1186,110 @@ fn cold_reloaded_result_catalog_builds_a_verified_nod_proof_across_shards() {
 
     let action = proof.verify_against(&authority, &fixture.limits).unwrap();
     assert_eq!(action.raw_ordinal, 256);
+}
+
+#[test]
+fn addressable_chunk_and_batch_proof_do_not_scan_preceding_chunks() {
+    let fixture = synthetic_fixture(false, false);
+    let authority = {
+        let reader = FilesystemCasReader::open(&fixture.cas_root, CAS_LIMITS).unwrap();
+        let input_refs = VerifiedInputChunkRefCatalog::reopen(
+            &fixture.input_ref_root,
+            &reader,
+            fixture.limits,
+            poc_input_list_limits(),
+        )
+        .unwrap();
+        let admissions =
+            VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits)
+                .unwrap();
+        let audit = LocalLysisPlanAuditV1::open(
+            &admissions,
+            &input_refs,
+            &reader,
+            &fixture.bundle,
+            &fixture.limits,
+        )
+        .unwrap();
+        let mut root = StreamingOrderedListRoot::new(ListKind::NodActions, 257).unwrap();
+        for step in ExactLysisResultCatalogCursorV1::open(&audit).unwrap() {
+            if let LysisResultCatalogStepV1::Chunk(chunk) = step.unwrap() {
+                for action in &chunk.chunk().ordered_nod_actions {
+                    root.push(
+                        &action.encode_canonical_record(&fixture.limits).unwrap(),
+                        fixture.limits.max_bounded_bytes,
+                    )
+                    .unwrap();
+                }
+            }
+        }
+        ActiveNodSetV1 {
+            job_id: audit.plan().job_id,
+            program_semantics_hash: fixture.bundle.bundle().lysis_program_semantics_hash,
+            worldwide_day: audit.plan().wwd,
+            generation: 1,
+            nod_root: root.finish().unwrap(),
+            nod_count: 257,
+        }
+    };
+
+    let first_digest = hex::encode(fixture.result_chunk_refs[0].transport_digest);
+    std::fs::remove_file(
+        fixture
+            .cas_root
+            .join("objects")
+            .join(&first_digest[..2])
+            .join(&first_digest[2..]),
+    )
+    .unwrap();
+
+    let reader = FilesystemCasReader::open(&fixture.cas_root, CAS_LIMITS).unwrap();
+    let input_refs = VerifiedInputChunkRefCatalog::reopen(
+        &fixture.input_ref_root,
+        &reader,
+        fixture.limits,
+        poc_input_list_limits(),
+    )
+    .unwrap();
+    let admissions =
+        VerifiedAdmissionCatalog::reopen(&fixture.admission_root, &reader, fixture.limits).unwrap();
+    let audit = LocalLysisPlanAuditV1::open(
+        &admissions,
+        &input_refs,
+        &reader,
+        &fixture.bundle,
+        &fixture.limits,
+    )
+    .unwrap();
+
+    assert_eq!(
+        verified_result_chunk_at(&audit, 1)
+            .unwrap()
+            .chunk()
+            .chunk_ordinal,
+        1
+    );
+    let head = NodMaterializationHeadV1 {
+        queue_sequence: 9,
+        job_id: authority.job_id,
+        program_semantics_hash: authority.program_semantics_hash,
+        worldwide_day: authority.worldwide_day,
+        generation: authority.generation,
+        nod_root: authority.nod_root,
+        nod_count: authority.nod_count,
+        next_nod_ordinal: 256,
+        last_progress_height: 100,
+    };
+    let batch = build_nod_materialization_batch(&audit, &head, 3).unwrap();
+    assert_eq!(batch.first_nod_ordinal, 256);
+    assert_eq!(batch.actions.len(), 1);
+    outbe_ocomp_protocol::nod_materialization::verify_nod_materialization_batch(
+        &batch,
+        &head,
+        3,
+        &fixture.limits,
+    )
+    .expect("final partial batch with canonical empty upper siblings");
 }
 
 #[test]

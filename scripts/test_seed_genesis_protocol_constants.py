@@ -58,6 +58,14 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
         self.assertEqual(seed["metadosis"]["other"], 7)
         self.assertEqual(seed["oracle"]["scurve_seeds"], [{"peak_day": 20260807}])
 
+    def test_nod_materialization_fifo_is_initialized_without_seeded_nods(self):
+        storage = seed_genesis.StorageBuilder()
+
+        seed_genesis.seed_nod_materialization_fifo(storage)
+
+        self.assertEqual(storage.entries[seed_genesis.hex32(19)], seed_genesis.hex32(1))
+        self.assertEqual(storage.entries[seed_genesis.hex32(20)], seed_genesis.hex32(1))
+
 
 if __name__ == "__main__":
     unittest.main()

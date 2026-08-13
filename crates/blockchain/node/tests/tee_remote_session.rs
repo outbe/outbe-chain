@@ -16,7 +16,7 @@ use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     tee_attestation_v1::{
         AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
-        DcapCollateralKind, DcapEvidenceV1, EnclaveInitializationManifestV1, EnclaveProfile,
+        DcapCollateralKind, DcapEvidenceV1, EnclaveInitializationManifestV1,
         NodeHostAuthorizationWitnessV1, NodeIdV1, RegistrationIntentV1,
     },
 };
@@ -50,26 +50,15 @@ const CONSENSUS_TIMESTAMP: u64 = 1_700_000_000;
 type TestProvider = MockEthProvider<OutbePrimitives, ChainSpec<OutbeHeader>>;
 
 #[test]
-fn current_finalized_registry_admits_both_profiles_and_rejects_superseded_state() {
-    for (case, source_node, target_node, profile) in [
-        (
-            0_u8,
-            validator(0x11),
-            validator(0x21),
-            EnclaveProfile::Validator,
-        ),
-        (
-            1_u8,
-            full_node(0x31),
-            full_node(0x41),
-            EnclaveProfile::FullNode,
-        ),
+fn current_finalized_registry_admits_role_neutral_nodes_and_rejects_superseded_state() {
+    for (case, source_node, target_node) in [
+        (0_u8, validator(0x11), validator(0x21)),
+        (1_u8, full_node(0x31), full_node(0x41)),
     ] {
         let genesis_hash = B256::repeat_byte(0x31 + case);
         let source_witness = NodeHostAuthorizationWitnessV1 {
             chain_id: chain_id_word(CHAIN_ID),
             genesis_hash,
-            enclave_profile: profile,
             node_id: source_node.clone(),
             node_host_noise_x25519: [0x41; 32],
         };
@@ -83,7 +72,6 @@ fn current_finalized_registry_admits_both_profiles_and_rejects_superseded_state(
             seed_binding(
                 &registry,
                 &source_node,
-                profile,
                 SeedBindingIds {
                     enclave_id: B256::repeat_byte(0x42),
                     binding_id: B256::repeat_byte(0x43),
@@ -96,7 +84,6 @@ fn current_finalized_registry_admits_both_profiles_and_rejects_superseded_state(
             seed_binding(
                 &registry,
                 &target_node,
-                profile,
                 SeedBindingIds {
                     enclave_id: B256::repeat_byte(0x52),
                     binding_id: B256::repeat_byte(0x53),
@@ -156,9 +143,7 @@ fn current_finalized_registry_admits_both_profiles_and_rejects_superseded_state(
                 chain_id: chain_id_word(CHAIN_ID),
                 genesis_hash,
                 source_node_id_hash: source_hash,
-                source_profile: profile,
                 target_node_id_hash: target_hash,
-                target_profile: profile,
             },
             &source_witness,
             &target_node,
@@ -181,7 +166,6 @@ fn current_finalized_registry_admits_both_profiles_and_rejects_superseded_state(
                 genesis_hash,
                 missing_candidate_dir.path(),
                 &source_node,
-                profile,
             ),
             Err(LocalRegistryAdmissionError::ReplacementAuthorization(_))
         ));
@@ -196,9 +180,7 @@ fn current_finalized_registry_admits_both_profiles_and_rejects_superseded_state(
                     chain_id: chain_id_word(CHAIN_ID),
                     genesis_hash,
                     source_node_id_hash: source_hash,
-                    source_profile: profile,
                     target_node_id_hash: target_hash,
-                    target_profile: profile,
                 },
                 &source_witness,
                 &target_node,
@@ -212,7 +194,6 @@ fn current_finalized_registry_admits_both_profiles_and_rejects_superseded_state(
                 genesis_hash,
                 missing_candidate_dir.path(),
                 &source_node,
-                profile,
             ),
             Err(LocalRegistryAdmissionError::ReplacementBindingMissing)
         ));
@@ -228,9 +209,7 @@ fn current_finalized_registry_admits_both_profiles_and_rejects_superseded_state(
                     chain_id: chain_id_word(CHAIN_ID),
                     genesis_hash,
                     source_node_id_hash: source_hash,
-                    source_profile: profile,
                     target_node_id_hash: target_hash,
-                    target_profile: profile,
                 },
                 &source_witness,
                 &target_node,
@@ -289,7 +268,6 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
     let target_manifest = outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1 {
         chain_id: chain_id_word(CHAIN_ID),
         genesis_hash,
-        enclave_profile: EnclaveProfile::Validator,
         node_id: target_node.clone(),
         initialization_challenge: challenge,
         node_host_noise_x25519: target_owner.public(),
@@ -315,7 +293,6 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
     let source_witness = NodeHostAuthorizationWitnessV1 {
         chain_id: chain_id_word(CHAIN_ID),
         genesis_hash,
-        enclave_profile: EnclaveProfile::Validator,
         node_id: source_node.clone(),
         node_host_noise_x25519: source_host.public(),
     };
@@ -331,7 +308,6 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
         seed_binding(
             &registry,
             &source_node,
-            EnclaveProfile::Validator,
             SeedBindingIds {
                 enclave_id: B256::repeat_byte(0x95),
                 binding_id: B256::repeat_byte(0x96),
@@ -344,7 +320,6 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
         seed_binding(
             &registry,
             &target_node,
-            EnclaveProfile::Validator,
             SeedBindingIds {
                 enclave_id: target_manifest.enclave_id().unwrap(),
                 binding_id: B256::repeat_byte(0x99),
@@ -392,9 +367,7 @@ fn production_facade_installs_current_finalized_ticket_in_live_enclave() {
             chain_id: chain_id_word(CHAIN_ID),
             genesis_hash,
             source_node_id_hash: source_hash,
-            source_profile: EnclaveProfile::Validator,
             target_node_id_hash: target_hash,
-            target_profile: EnclaveProfile::Validator,
         },
         &source_witness,
         &target_node,
@@ -434,7 +407,6 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
     let active = EnclaveInitializationManifestV1 {
         chain_id: chain_id_word(chain_id),
         genesis_hash,
-        enclave_profile: EnclaveProfile::Validator,
         node_id: node_id.clone(),
         initialization_challenge: [0x74; 32],
         node_host_noise_x25519: node_host.public(),
@@ -475,7 +447,6 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
         operation: AttestationOperationV1::ReplaceEnclaveBinding,
         attestation_mode: AttestationMode::DcapRequired,
         policy_hash: B256::repeat_byte(0x7C),
-        enclave_profile: candidate.enclave_profile,
         node_id: node_id.clone(),
         enclave_id: candidate.enclave_id().unwrap(),
         binding_id: B256::repeat_byte(0x7D),
@@ -517,7 +488,6 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
         seed_binding(
             &registry,
             &node_id,
-            EnclaveProfile::Validator,
             SeedBindingIds {
                 enclave_id: intent.enclave_id,
                 binding_id: intent.binding_id,
@@ -579,7 +549,6 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
         genesis_hash,
         &node_data_dir,
         &node_id,
-        EnclaveProfile::Validator,
     )
     .unwrap();
     assert_eq!(authorized.view.block_number, 90);
@@ -591,7 +560,6 @@ fn current_finalized_registry_constructs_exact_replacement_authorization() {
         genesis_hash,
         &node_data_dir,
         &node_id,
-        EnclaveProfile::Validator,
     )
     .unwrap();
     assert_eq!(authorization, authorized.authorization);
@@ -609,7 +577,6 @@ fn external_light_client_checkpoint_authenticates_the_exact_registry_storage_pro
     let source_witness = NodeHostAuthorizationWitnessV1 {
         chain_id: chain_id_word(CHAIN_ID),
         genesis_hash,
-        enclave_profile: EnclaveProfile::Validator,
         node_id: source_node.clone(),
         node_host_noise_x25519: [0x71; 32],
     };
@@ -621,7 +588,6 @@ fn external_light_client_checkpoint_authenticates_the_exact_registry_storage_pro
         seed_binding(
             &registry,
             &source_node,
-            EnclaveProfile::Validator,
             SeedBindingIds {
                 enclave_id: B256::repeat_byte(0x72),
                 binding_id: B256::repeat_byte(0x73),
@@ -634,7 +600,6 @@ fn external_light_client_checkpoint_authenticates_the_exact_registry_storage_pro
         seed_binding(
             &registry,
             &target_node,
-            EnclaveProfile::Validator,
             SeedBindingIds {
                 enclave_id: B256::repeat_byte(0x82),
                 binding_id: B256::repeat_byte(0x83),
@@ -714,9 +679,7 @@ fn external_light_client_checkpoint_authenticates_the_exact_registry_storage_pro
         chain_id: chain_id_word(CHAIN_ID),
         genesis_hash,
         source_node_id_hash: source_hash,
-        source_profile: EnclaveProfile::Validator,
         target_node_id_hash: target_hash,
-        target_profile: EnclaveProfile::Validator,
     };
     let admitted = admit_anchored_remote_session_v1(
         checkpoint,
@@ -752,18 +715,25 @@ fn external_light_client_checkpoint_authenticates_the_exact_registry_storage_pro
 }
 
 fn validator(seed: u8) -> NodeIdV1 {
-    NodeIdV1::Validator {
-        address: [seed; 20],
-        bls_minpk_public: [seed.wrapping_add(1); 48],
+    let signing = k256::ecdsa::SigningKey::from_bytes((&[seed; 32]).into()).unwrap();
+    NodeIdV1 {
+        reth_p2p_public: signing
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .unwrap(),
     }
 }
 
-fn validator_node_for_signer(signer: &k256::ecdsa::SigningKey, bls_seed: u8) -> NodeIdV1 {
-    let public = signer.verifying_key().to_encoded_point(false);
-    let address_hash = keccak256(&public.as_bytes()[1..]);
-    NodeIdV1::Validator {
-        address: address_hash.as_slice()[12..].try_into().unwrap(),
-        bls_minpk_public: [bls_seed; 48],
+fn validator_node_for_signer(signer: &k256::ecdsa::SigningKey, _bls_seed: u8) -> NodeIdV1 {
+    NodeIdV1 {
+        reth_p2p_public: signer
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .unwrap(),
     }
 }
 
@@ -800,7 +770,7 @@ fn full_node(seed: u8) -> NodeIdV1 {
         .as_bytes()
         .try_into()
         .unwrap();
-    NodeIdV1::FullNode { reth_p2p_public }
+    NodeIdV1 { reth_p2p_public }
 }
 
 struct SeedBindingIds {
@@ -812,7 +782,6 @@ struct SeedBindingIds {
 fn seed_binding(
     registry: &TeeRegistry<'_>,
     node: &NodeIdV1,
-    profile: EnclaveProfile,
     ids: SeedBindingIds,
     valid_until: u64,
     noise_responder_x25519: [u8; 32],
@@ -824,16 +793,6 @@ fn seed_binding(
         intent_hash,
     } = ids;
     let node_hash = node.node_id_hash().unwrap();
-    if let NodeIdV1::Validator { address, .. } = node {
-        registry
-            .validator_v1_node_hash
-            .write(&Address::from(*address), node_hash)
-            .unwrap();
-    }
-    registry
-        .v1_node_profile
-        .write(&node_hash, profile as u64)
-        .unwrap();
     registry
         .v1_node_enclave_id
         .write(&node_hash, enclave_id)
