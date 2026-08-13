@@ -57,9 +57,8 @@ fn read_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
 fn convert_stables_to_gratis(
     storage: StorageHandle<'_>,
     amount_stables: U256,
-    asset: Address,
+    iso_code: u16,
 ) -> Result<(U256, U256)> {
-    let iso_code = read_iso_code(&storage, asset)?;
     let rate = coen_rate_for(storage, iso_code)?;
     let numerator = amount_stables
         .checked_mul(decimals_diff())
@@ -86,7 +85,7 @@ pub fn pledge_gratis(
     max_gratis: U256,
     auth: ModifyAuth,
 ) -> Result<(B256, U256)> {
-    // todo add asset validation and check if it is enought liquidity in the vaults
+    // todo check if there is enough liquidity in the vaults
     if asset.is_zero() {
         return Err(GratisFactoryError::InvalidAsset.into());
     }
@@ -94,8 +93,17 @@ pub fn pledge_gratis(
         return Err(GratisFactoryError::InvalidAmount.into());
     }
 
+    // §6 admissibility: the chain must maintain both feeds for this currency —
+    // the COEN price series and the official policy rate — before a pledge can be
+    // quoted in it. Rejecting here rather than at `requestCredis` means the
+    // pledger never locks collateral against a position that could not be opened.
+    let iso_code = read_iso_code(&storage, asset)?;
+    if !outbe_oracle::api::is_credis_admissible(storage.clone(), iso_code)? {
+        return Err(GratisFactoryError::CurrencyNotAdmissible { iso_code }.into());
+    }
+
     let (gratis_amount, entry_rate) =
-        convert_stables_to_gratis(storage.clone(), amount_stables, asset)?;
+        convert_stables_to_gratis(storage.clone(), amount_stables, iso_code)?;
     if gratis_amount > max_gratis {
         return Err(GratisFactoryError::GratisCapExceeded.into());
     }

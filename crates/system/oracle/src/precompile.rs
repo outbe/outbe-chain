@@ -133,6 +133,25 @@ pub fn dispatch(
                     Ok(())
                 })
             }
+            setCurrencyRate(c) => {
+                reject_value(&value)?;
+                let iso_code = c.isoCode;
+                let rate = c.rate;
+                mutate_void(c, caller, |sender, c| {
+                    oracle.set_currency_rate(sender, c.isoCode, c.rate)?;
+                    let event = IOracle::CurrencyRateSet {
+                        isoCode: iso_code,
+                        rate,
+                    };
+                    let _ = oracle
+                        .storage
+                        .emit_event(ORACLE_ADDRESS, event.encode_log_data());
+                    Ok(())
+                })
+            }
+            isCredisAdmissible(c) => view(c, |c| {
+                crate::api::is_credis_admissible(oracle.storage.clone(), c.isoCode)
+            }),
             delegateFeederConsent(c) => {
                 reject_value(&value)?;
                 let feeder = c.feeder;

@@ -96,11 +96,12 @@ fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
 }
 
 /// Register the COEN/840 pair plus the ISO 840 settlement mapping the pledge
-/// conversion resolves through (the asset's `isoCode()` selects the pair).
+/// conversion resolves through (the asset's `isoCode()` selects the pair), and
+/// publish the currency's policy rate — §6 admissibility needs both feeds.
 fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
     outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
     outbe_oracle::api::set_exchange_rate(
-        storage,
+        storage.clone(),
         Address::ZERO,
         outbe_oracle::api::DAY_TYPE_PAIR,
         rate_1e18,
@@ -108,6 +109,19 @@ fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
         0,
     )
     .unwrap();
+    seed_policy_rate(storage, ASSET_ISO);
+}
+
+/// Publishes an official policy rate for `iso`, the other half of §6
+/// admissibility. Writes the registry entry and the rate directly rather than
+/// going through `setCurrencyRate`, which requires a registered currency.
+fn seed_policy_rate(storage: StorageHandle<'_>, iso: u16) {
+    let oracle = outbe_oracle::schema::OracleContract::new(storage);
+    oracle.reference_currencies.push(iso).unwrap();
+    oracle
+        .reference_currency_rate
+        .write(&iso, U256::from(43_000_000_000_000_000u128))
+        .unwrap();
 }
 
 /// Give `account` a positive Fidelity index so `pledge_gratis` clears the
@@ -245,6 +259,61 @@ fn pledge_debits_the_oracle_derived_gratis_and_parks_it_in_the_ticket() {
 /// `maxGratis` is the pledger's slippage protection: the MAC only covers the stables
 /// figure, so a rate move that makes the credit cost more gratis than they accepted
 /// must revert rather than quietly draining the extra.
+#[test]
+fn pledge_rejects_a_currency_without_both_semiosis_feeds() {
+    with_env(|storage| {
+        let seed = pledge_cost();
+        outbe_gratis::api::mint(
+            storage.clone(),
+            alice(),
+            seed,
+            auth(GratisOp::Mint, alice(), seed, 0),
+        )
+        .unwrap();
+        seed_fidelity(storage.clone(), alice());
+
+        // §6: drop the policy-rate half of the pair of feeds. The COEN price pair
+        // is still registered, so this isolates admissibility from pricing.
+        outbe_oracle::schema::OracleContract::new(storage.clone())
+            .reference_currency_rate
+            .write(&ASSET_ISO, U256::ZERO)
+            .unwrap();
+
+        let err = runtime::pledge_gratis(
+            storage.clone(),
+            alice(),
+            pledge_stables(),
+            asset(),
+            U256::MAX,
+            auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("not admissible"), "got: {err}");
+
+        // Nothing was locked: the pledger keeps their whole balance.
+        assert_eq!(view_balance(&storage, alice()), seed);
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+
+        // Republishing the rate makes the currency admissible again.
+        outbe_oracle::api::set_currency_rate(
+            storage.clone(),
+            Address::ZERO,
+            ASSET_ISO,
+            U256::from(43_000_000_000_000_000u128),
+        )
+        .unwrap();
+        runtime::pledge_gratis(
+            storage.clone(),
+            alice(),
+            pledge_stables(),
+            asset(),
+            U256::MAX,
+            auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
+        )
+        .unwrap();
+    });
+}
+
 #[test]
 fn pledge_rejects_when_derived_gratis_exceeds_max() {
     with_env(|storage| {

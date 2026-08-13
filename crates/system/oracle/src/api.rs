@@ -184,6 +184,20 @@ pub fn set_exchange_rate(
     oracle.set_exchange_rate(caller, pair, rate, block_number, timestamp)
 }
 
+/// Publishes a currency's official annual policy rate, 1e18 scaled (system-only,
+/// `Address::ZERO` caller). The ISO code must already be a registered reference
+/// currency, and the rate must be non-zero — zero is the "no rate published"
+/// sentinel [`get_currency_rate`] reads.
+pub fn set_currency_rate(
+    storage: StorageHandle,
+    caller: Address,
+    iso_code: u16,
+    rate: U256,
+) -> Result<()> {
+    let mut oracle: OracleContract<'_> = OracleContract::new(storage);
+    oracle.set_currency_rate(caller, iso_code, rate)
+}
+
 /// Stored WorldwideDay VWAP for the pair registered under `index`, or `None`
 /// when the day has no snapshot or that pair had no data in it. Callers get the
 /// index from [`require_coen_pair`] or [`register_pair`].
@@ -322,11 +336,30 @@ pub fn get_max_active_scurve_value(
     scurve::get_max_active_scurve_value(&oracle, pair, scurve_timestamp)
 }
 
-/// Annualized currency rate (1e18 scaled) for an ISO 4217 code, read from the
-/// reference-currency collection. Reverts when the code is not a registered
-/// reference currency or carries no (non-zero) rate. Called by the Credis
-/// Factory at issuance to pin the position's policy rate.
+/// Official annual policy rate (1e18 scaled) for an ISO 4217 code — the central
+/// bank's published rate for that currency — read from the reference-currency
+/// collection. Reverts when the code is not a registered reference currency or
+/// carries no (non-zero) rate. Called by the Credis Factory at issuance to pin
+/// the position's policy rate for its life.
 pub fn get_currency_rate(storage: StorageHandle, iso_code: u16) -> Result<U256> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     oracle.get_currency_rate(iso_code)
+}
+
+/// Whether `iso_code` is admissible for Credis.
+///
+/// §6 of the Credis product paper: a currency qualifies only when this chain
+/// maintains **both** feeds for it — the COEN daily reference price series (a
+/// registered `COEN/<iso_code>` pair) and the official policy-rate feed. A
+/// position in a currency missing either would be unpriceable: without the pair
+/// its floor and call could never be evaluated, and without the rate its interest
+/// could not accrue.
+///
+/// Non-reverting, so a caller can gate on it rather than catch a revert.
+pub fn is_credis_admissible(storage: StorageHandle, iso_code: u16) -> Result<bool> {
+    let oracle: OracleContract<'_> = OracleContract::new(storage);
+    if oracle.pair_index_of(AddressPair::new_coen_to(iso_code))? == 0 {
+        return Ok(false);
+    }
+    Ok(!oracle.reference_currency_rate.read(&iso_code)?.is_zero())
 }

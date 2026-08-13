@@ -249,6 +249,45 @@ impl OracleContract<'_> {
         Ok(rate)
     }
 
+    /// True when `iso_code` is in the reference-currency registry.
+    pub fn is_reference_currency(&self, iso_code: u16) -> Result<bool> {
+        let len = self.reference_currencies.len()?;
+        for i in 0..len {
+            if self.reference_currencies.get(i)? == Some(iso_code) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Publishes a currency's official annual policy rate (system-only).
+    ///
+    /// Without this, `reference_currency_rate` could only ever be written at
+    /// genesis, so bringing an ECB or Bank of England feed online would need a
+    /// hard fork. The currency must already be in the reference registry, or a
+    /// rate would exist for a code that `check_reference_currency` rejects.
+    pub(crate) fn set_currency_rate(
+        &mut self,
+        caller: Address,
+        iso_code: u16,
+        rate: U256,
+    ) -> Result<()> {
+        if caller != Address::ZERO {
+            return Err(OracleError::OnlySystem("set currency rate").into());
+        }
+        if !self.is_reference_currency(iso_code)? {
+            return Err(OracleError::NotReferenceCurrency { iso_code }.into());
+        }
+        // ponytail: zero doubles as "no rate published" in `get_currency_rate`,
+        // so a genuine 0% policy rate (ECB 2016-2022, BoJ) is unrepresentable.
+        // Distinguishing them needs an explicit presence flag beside the rate —
+        // a schema change, deferred until a 0% currency is actually onboarded.
+        if rate.is_zero() {
+            return Err(OracleError::NoCurrencyRate { iso_code }.into());
+        }
+        self.reference_currency_rate.write(&iso_code, rate)
+    }
+
     /// Sets the exchange rate for a pair (system-only bootstrap write).
     pub(crate) fn set_exchange_rate(
         &mut self,

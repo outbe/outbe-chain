@@ -16,6 +16,8 @@ pub enum GratisFactoryError {
     OracleConversionOverflow,
     #[error("pledge cost exceeds maxGratis")]
     GratisCapExceeded,
+    #[error("currency {iso_code} is not admissible for credis: it needs both a COEN price pair and an official policy rate")]
+    CurrencyNotAdmissible { iso_code: u16 },
 }
 
 impl From<GratisFactoryError> for PrecompileError {

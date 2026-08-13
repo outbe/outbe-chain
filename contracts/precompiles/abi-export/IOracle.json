@@ -960,6 +960,25 @@
   },
   {
     "type": "function",
+    "name": "isCredisAdmissible",
+    "inputs": [
+      {
+        "name": "isoCode",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "admissible",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isVoteTarget",
     "inputs": [
       {
@@ -981,6 +1000,24 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setCurrencyRate",
+    "inputs": [
+      {
+        "name": "isoCode",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "rate",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -1039,6 +1076,25 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "CurrencyRateSet",
+    "inputs": [
+      {
+        "name": "isoCode",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
+      },
+      {
+        "name": "rate",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",

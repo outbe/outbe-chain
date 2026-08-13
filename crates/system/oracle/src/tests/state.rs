@@ -337,6 +337,107 @@ fn set_exchange_rate_rejects_a_non_system_caller() {
     });
 }
 
+// ---------------------------------------------------------------------------
+// Official policy-rate feed and Credis admissibility (§6)
+// ---------------------------------------------------------------------------
+
+/// ISO 4217 numeric for EUR — a currency genesis does not seed.
+const EUR: u16 = 978;
+
+#[test]
+fn set_currency_rate_publishes_a_registered_currencys_policy_rate() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        oracle.reference_currencies.push(EUR).unwrap();
+
+        // Before publication the currency is registered but unrated.
+        assert!(oracle.get_currency_rate(EUR).is_err());
+
+        let rate = U256::from(25_000_000_000_000_000u128); // 2.5%
+        oracle.set_currency_rate(Address::ZERO, EUR, rate).unwrap();
+        assert_eq!(oracle.get_currency_rate(EUR).unwrap(), rate);
+
+        // Republishing is how a central-bank move lands; no fork required.
+        let moved = U256::from(20_000_000_000_000_000u128);
+        oracle.set_currency_rate(Address::ZERO, EUR, moved).unwrap();
+        assert_eq!(oracle.get_currency_rate(EUR).unwrap(), moved);
+    });
+}
+
+#[test]
+fn set_currency_rate_is_system_only() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        oracle.reference_currencies.push(EUR).unwrap();
+
+        let err = oracle
+            .set_currency_rate(Address::new([1u8; 20]), EUR, U256::from(1u64))
+            .unwrap_err();
+        assert!(err.to_string().contains("system"), "got: {err}");
+        assert!(
+            oracle.get_currency_rate(EUR).is_err(),
+            "nothing was written"
+        );
+    });
+}
+
+#[test]
+fn set_currency_rate_rejects_an_unregistered_currency_and_a_zero_rate() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+
+        // A rate for a code outside the reference registry would be readable via
+        // get_currency_rate while check_reference_currency rejects it.
+        let err = oracle
+            .set_currency_rate(Address::ZERO, EUR, U256::from(1u64))
+            .unwrap_err();
+        assert!(err.to_string().contains("reference currency"), "got: {err}");
+
+        // Zero is the "no rate published" sentinel, so it cannot be written.
+        oracle.reference_currencies.push(EUR).unwrap();
+        assert!(oracle
+            .set_currency_rate(Address::ZERO, EUR, U256::ZERO)
+            .is_err());
+    });
+}
+
+#[test]
+fn credis_admissibility_needs_both_the_price_pair_and_the_policy_rate() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let admissible = || crate::api::is_credis_admissible(storage.clone(), EUR).unwrap();
+
+        // Neither feed.
+        assert!(!admissible());
+
+        // Price pair only.
+        oracle.register_pair(AddressPair::new_coen_to(EUR)).unwrap();
+        assert!(!admissible(), "no policy rate yet");
+
+        // Both.
+        oracle.reference_currencies.push(EUR).unwrap();
+        oracle
+            .set_currency_rate(Address::ZERO, EUR, U256::from(25_000_000_000_000_000u128))
+            .unwrap();
+        assert!(admissible());
+    });
+}
+
+#[test]
+fn a_policy_rate_without_a_price_pair_is_not_admissible() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        oracle.reference_currencies.push(EUR).unwrap();
+        oracle
+            .set_currency_rate(Address::ZERO, EUR, U256::from(25_000_000_000_000_000u128))
+            .unwrap();
+
+        // The rate exists but the chain cannot price COEN in EUR, so a position
+        // in it could never have its floor or call evaluated.
+        assert!(!crate::api::is_credis_admissible(storage.clone(), EUR).unwrap());
+    });
+}
+
 #[test]
 fn get_exchange_rate_reverts_for_an_unregistered_pair() {
     with_storage(|storage| {
@@ -1282,7 +1383,7 @@ fn genesis_seeds_the_usd_currency_rate() {
         .unwrap();
         assert_eq!(
             oracle.get_currency_rate(840).unwrap(),
-            crate::constants::DEFAULT_USD_CURRENCY_RATE
+            crate::constants::DEFAULT_USD_POLICY_RATE
         );
     });
 }

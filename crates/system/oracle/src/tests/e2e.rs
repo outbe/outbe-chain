@@ -460,7 +460,7 @@ fn ioracle_selectors_are_unique() {
     use alloy_sol_types::SolInterface;
     use std::collections::HashSet;
 
-    const EXPECTED_IORACLE_FUNCTIONS: usize = 36;
+    const EXPECTED_IORACLE_FUNCTIONS: usize = 38;
 
     let selectors: Vec<[u8; 4]> = IOracle::IOracleCalls::selectors().collect();
     assert_eq!(
