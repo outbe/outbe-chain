@@ -223,7 +223,7 @@ impl Localnet {
     /// for the deployment topology by its operator.
     fn extend_real_sgx_startup_timeout(&self, args: &mut Vec<String>) {
         if self.cfg.tee_mode.passes_sgx_devices() {
-            args.extend(args!["--tee-bootstrap-timeout-secs", "180"]);
+            args.extend(args!["--tee-bootstrap-timeout-secs", "300"]);
         }
     }
 

@@ -3220,7 +3220,7 @@ fn completed_vote_is_retried_and_mutated(world: &mut World) {
             assert!(
                 error
                     .to_string()
-                    .contains("OCOMP carrier signer is not authorized by its pinned snapshot"),
+                    .contains("OCOMP carrier signer is not authorized for this action"),
                 "changed-binding vote failed for an unexpected reason: {error:#}"
             );
             None
@@ -3573,7 +3573,7 @@ fn one_valid_then_changed_binding_vote(world: &mut World) {
             assert!(
                 error
                     .to_string()
-                    .contains("OCOMP carrier signer is not authorized by its pinned snapshot"),
+                    .contains("OCOMP carrier signer is not authorized for this action"),
                 "changed-binding vote failed for an unexpected reason: {error:#}"
             );
             None
