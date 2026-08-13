@@ -107,6 +107,28 @@ fn desis_stage(url: &str, worldwide_day: u32) -> String {
     }
 }
 
+/// Whether Metadosis ever closed the day. Closing it is what applies the budget
+/// split, and that is the only thing that briefs Desis for a day that ran a job,
+/// so a missing receipt places the gap before Desis rather than inside it.
+#[cfg(feature = "ocomp-integration")]
+fn day_closure(world: &World, worldwide_day: u32) -> String {
+    match world
+        .rpc
+        .metadosis_terminal_receipt_on(world.validators.primary_port(), worldwide_day)
+    {
+        Some(receipt) => format!(
+            "Metadosis closed the day at block {} with outcome {}",
+            receipt.block_number, receipt.outcome
+        ),
+        None => "Metadosis never closed the day, so nothing ever briefed Desis".to_owned(),
+    }
+}
+
+#[cfg(not(feature = "ocomp-integration"))]
+fn day_closure(_world: &World, _worldwide_day: u32) -> String {
+    "day closure unreadable without ocomp-integration".to_owned()
+}
+
 /// Desis dispatches the start on its own schedule tick, which lands some blocks
 /// after the day settles.
 const AUCTION_START_TIMEOUT: Duration = Duration::from_secs(300);
@@ -146,9 +168,10 @@ fn auction_opens_on_target(world: &mut World) {
         }
         assert!(
             Instant::now() < deadline,
-            "day {worldwide_day} settled but no auction ever opened on the venue at {}: {}",
+            "day {worldwide_day} settled but no auction ever opened on the venue at {}: {}; {}",
             contracts.intex_auction,
-            desis_stage(&url, worldwide_day)
+            desis_stage(&url, worldwide_day),
+            day_closure(world, worldwide_day)
         );
         sleep(Duration::from_secs(2));
     }
