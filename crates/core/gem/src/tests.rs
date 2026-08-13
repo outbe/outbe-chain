@@ -177,14 +177,19 @@ fn add_gem_parks_issued_in_bin_tree() {
         let gem = GemContract::new(storage.clone());
         let floor = U256::from(540_000_000_000_000_000u128);
         let bin = GemContract::price_to_bin(floor).unwrap();
-        assert_eq!(gem.unqualified_bin_count.read(&bin).unwrap(), 1);
+        assert_eq!(
+            gem.unqualified_bin_count
+                .read(&GemContract::scoped(840, bin))
+                .unwrap(),
+            1
+        );
         assert_eq!(
             gem.unqualified_bin_gems
-                .read(&GemContract::bin_index_key(bin, 0))
+                .read(&GemContract::bin_index_key(840, bin, 0))
                 .unwrap(),
             gem_id
         );
-        assert!(tree_math::contains(&gem, bin).unwrap());
+        assert!(tree_math::contains(&crate::state::CurrencyBins(&gem, 840), bin).unwrap());
     });
 }
 
@@ -199,8 +204,13 @@ fn qualify_removes_from_bin_tree() {
         assert!(gem
             .qualify(gem_id, T_NOW, 840, floor + U256::from(1u64))
             .unwrap());
-        assert_eq!(gem.unqualified_bin_count.read(&bin).unwrap(), 0);
-        assert!(!tree_math::contains(&gem, bin).unwrap());
+        assert_eq!(
+            gem.unqualified_bin_count
+                .read(&GemContract::scoped(840, bin))
+                .unwrap(),
+            0
+        );
+        assert!(!tree_math::contains(&crate::state::CurrencyBins(&gem, 840), bin).unwrap());
     });
 }
 
@@ -213,8 +223,13 @@ fn add_gem_qualified_initial_state_skips_bin_tree() {
         let _gem_id = api::add_gem(storage, p.clone()).unwrap();
         let gem = GemContract::new(storage.clone());
         let bin = GemContract::price_to_bin(p.floor_price_minor).unwrap();
-        assert_eq!(gem.unqualified_bin_count.read(&bin).unwrap(), 0);
-        assert!(!tree_math::contains(&gem, bin).unwrap());
+        assert_eq!(
+            gem.unqualified_bin_count
+                .read(&GemContract::scoped(840, bin))
+                .unwrap(),
+            0
+        );
+        assert!(!tree_math::contains(&crate::state::CurrencyBins(&gem, 840), bin).unwrap());
     });
 }
 
@@ -238,8 +253,13 @@ fn scan_skips_bins_above_rate() {
         // High gem stays Issued (rate 0.5 < floor 0.9). It must still be
         // in its bin and the bin must still be set in the trie.
         let high_bin = GemContract::price_to_bin(high.floor_price_minor).unwrap();
-        assert_eq!(gem.unqualified_bin_count.read(&high_bin).unwrap(), 1);
-        assert!(tree_math::contains(&gem, high_bin).unwrap());
+        assert_eq!(
+            gem.unqualified_bin_count
+                .read(&GemContract::scoped(840, high_bin))
+                .unwrap(),
+            1
+        );
+        assert!(tree_math::contains(&crate::state::CurrencyBins(&gem, 840), high_bin).unwrap());
     });
 }
 

@@ -13,6 +13,7 @@ use outbe_primitives::{
 
 use crate::constants::{CALL_WINDOW, MAX_GEM_QUALIFICATIONS_PER_BLOCK};
 use crate::schema::GemContract;
+use crate::state::CurrencyBins;
 
 pub struct GemLifecycle;
 
@@ -54,13 +55,9 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<()> {
 /// `budget` gems. Returns how many it inspected so the caller can share one
 /// per-block budget across currencies.
 ///
-/// Whole bins are processed atomically, so the resumption cursor is
+/// Only this currency's trie is walked, so no gem of another currency is ever
+/// read here. Whole bins are processed atomically, so the resumption cursor is
 /// bin-granular and a bin larger than the remaining budget overshoots it.
-///
-// ponytail: the bin ladder is shared across currencies rather than scoped per
-// ISO like `nod::state::CurrencyBins`, so each currency's sweep walks bins
-// holding other currencies' gems and spends budget skipping them one by one.
-// Upgrade path: currency-scoped bins keyed by `(iso, bin)`.
 pub(crate) fn qualify_with_rate(
     ctx: &BlockRuntimeContext,
     iso_code: u16,
@@ -78,31 +75,32 @@ pub(crate) fn qualify_with_rate(
             gem.qualify_scan_cursor.write(&iso_code, cursor)?;
             break;
         }
-        let next = match tree_math::find_first_left_inclusive(&gem, cursor)? {
-            Some(b) if b <= r_bin => b,
-            _ => {
-                // End of the eligible range: next block sweeps from the bottom.
-                gem.qualify_scan_cursor.write(&iso_code, 0)?;
-                break;
-            }
-        };
+        let next =
+            match tree_math::find_first_left_inclusive(&CurrencyBins(&gem, iso_code), cursor)? {
+                Some(b) if b <= r_bin => b,
+                _ => {
+                    // End of the eligible range: next block sweeps from the bottom.
+                    gem.qualify_scan_cursor.write(&iso_code, 0)?;
+                    break;
+                }
+            };
 
         // Snapshot the bin's gem_ids before mutating; qualify() calls
         // remove_unqualified() on success which shifts entries in storage.
-        let count = gem.unqualified_bin_count.read(&next)?;
+        let count = gem
+            .unqualified_bin_count
+            .read(&GemContract::scoped(iso_code, next))?;
         let mut bin_gems: Vec<U256> = Vec::with_capacity(count as usize);
         for i in 0..count {
             let id = gem
                 .unqualified_bin_gems
-                .read(&GemContract::bin_index_key(next, i))?;
+                .read(&GemContract::bin_index_key(iso_code, next, i))?;
             if !id.is_zero() {
                 bin_gems.push(id);
             }
         }
 
         for gem_id in bin_gems {
-            // Gems in other currencies cost a read before they are skipped, so
-            // they spend budget too.
             inspected = inspected.saturating_add(1);
             gem.qualify(gem_id, now, iso_code, rate)?;
         }

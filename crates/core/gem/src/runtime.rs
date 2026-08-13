@@ -7,9 +7,9 @@ use crate::precompile::IGem::{GemBurned, GemCalled, GemQualified};
 use crate::schema::{GemContract, GemState};
 
 impl GemContract<'_> {
-    /// `rate` is COEN/`iso_code`. The bin ladder is shared across currencies,
-    /// so a sweep hands this gems denominated in other currencies; they are
-    /// skipped silently rather than promoted against an unrelated rate.
+    /// `rate` is COEN/`iso_code`. Each currency walks its own bin trie, so the
+    /// currency check below only ever fires on a corrupt index; it skips rather
+    /// than promoting against an unrelated rate.
     pub(crate) fn qualify(
         &mut self,
         gem_id: U256,
