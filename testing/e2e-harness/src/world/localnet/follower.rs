@@ -33,6 +33,7 @@ impl Localnet {
         let node_dir = self.cfg.validator_dir(index);
         let data_dir = node_dir.join("data");
         fs::create_dir_all(&data_dir)?;
+        self.ensure_node_key_material(index)?;
 
         let reth_secret_path = node_dir.join("reth-p2p-secret.hex");
         if !reth_secret_path.is_file() {
@@ -58,10 +59,10 @@ impl Localnet {
             "join",
             "--enclave-socket",
             format!("127.0.0.1:{}", self.cfg.tee_port(index)),
-            "--profile",
-            "full-node",
             "--reth-p2p-secret-key",
             reth_secret_path.display(),
+            "--node-evm-key",
+            node_dir.join("evm-key.hex").display(),
             "--binding-id",
             random_hex_32()?,
             "--valid-until",
@@ -108,6 +109,8 @@ impl Localnet {
             "2",
             "--upstream",
             format!("http://localhost:{}", self.cfg.http_port(upstream_slot)),
+            "--consensus.listen-addr",
+            format!("127.0.0.1:{}", self.cfg.consensus_port(index)),
         ]);
         self.extend_real_sgx_startup_timeout(&mut args);
 
@@ -119,40 +122,6 @@ impl Localnet {
         attach_log(&mut command, &node_dir)?;
         let guard = self.spawn_node(name, &node_dir, command)?;
         self.followers.insert(name.to_owned(), guard);
-        Ok(())
-    }
-
-    /// Launch a full-execution follower (`--upstream`). Ports derive from `slot`;
-    /// the upstream URL and shared enclave derive from their slots.
-    pub fn launch_follower(
-        &mut self,
-        name: &str,
-        slot: usize,
-        upstream_slot: usize,
-        tee_slot: usize,
-    ) -> Result<()> {
-        let fd = self.cfg.dir.join(name);
-        fs::create_dir_all(fd.join("data"))?;
-        fs::create_dir_all(fd.join("logs"))?;
-
-        let mut a = self.reth_base_args(&fd, slot);
-        a.extend(args![
-            "--p2p-secret-key-hex",
-            random_hex_32()?,
-            "--tee-enclave-socket",
-            format!("127.0.0.1:{}", self.cfg.tee_port(tee_slot)),
-            "--upstream",
-            format!("http://localhost:{}", self.cfg.http_port(upstream_slot)),
-        ]);
-        self.extend_real_sgx_startup_timeout(&mut a);
-
-        let mut cmd = Command::new(&self.cfg.bin_chain);
-        cmd.env("RUST_MIN_STACK", "16777216")
-            .env("RUST_LOG", "info,outbe_consensus::follow=debug")
-            .args(&a);
-        attach_log(&mut cmd, &fd)?;
-        let guard = self.spawn_node(name, &fd, cmd)?;
-        self.followers.insert(name.to_string(), guard);
         Ok(())
     }
 

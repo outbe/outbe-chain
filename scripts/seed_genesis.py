@@ -157,7 +157,6 @@ EMISSION_LIMIT_ADDRESS = "000000000000000000000000000000000000100d"
 PROMIS_LIMIT_ADDRESS = "000000000000000000000000000000000000100f"
 CYCLE_ADDRESS = "0000000000000000000000000000000000001010"
 CCA_ADDRESS = "0000000000000000000000000000000000001011"
-MERCHANT_ADDRESS = "0000000000000000000000000000000000001012"
 CREDIS_ADDRESS = "000000000000000000000000000000000000100a"
 CREDIS_FACTORY_ADDRESS = "0000000000000000000000000000000000001009"
 INTEX_FACTORY_ADDRESS = "0000000000000000000000000000000000001015"
@@ -248,7 +247,6 @@ ALL_PRECOMPILE_ADDRESSES = [
 # collision-protected for genesis tooling but do not receive marker bytecode.
 PROTOCOL_ACCUMULATOR_ADDRESSES = [
     CCA_ADDRESS,
-    MERCHANT_ADDRESS,
 ]
 IMMUTABLE_PROTOCOL_ADDRESSES = [CHAIN_CONSTANTS_ADDRESS]
 
@@ -916,6 +914,14 @@ def seed_tribute_day_totals(storage: StorageBuilder, days: list[int]):
     default."""
     for wwd in days:
         storage.set_mapping(1, u32_bytes(wwd), 1)
+
+
+def seed_nod_materialization_fifo(storage: StorageBuilder):
+    """Initialize the canonical NOD materialization FIFO bounds."""
+    # Pinned by `materialization_fifo_slots_match_the_genesis_seeder` in
+    # `crates/core/nod/src/adr006_tests.rs`.
+    storage.set_slot(19, 1)  # head_sequence
+    storage.set_slot(20, 1)  # tail_sequence (next-free)
 
 
 def seed_metadosis(storage: StorageBuilder, config: dict):
@@ -1837,6 +1843,14 @@ def main():
         print(f"  Tribute: {len(seed['tributes'])} tributes, "
               f"{len(offering_days)} offering day_totals init, "
               f"{len(tribute_storage.entries)} storage entries")
+
+    # Initialize the canonical materialization FIFO. NOD bodies are stored in
+    # compressed-entity storage and are not seeded into EVM slots.
+    nod_storage = StorageBuilder()
+    seed_nod_materialization_fifo(nod_storage)
+    entry = alloc[NOD_ADDRESS]
+    entry.setdefault("storage", {}).update(nod_storage.entries)
+    print(f"  Nod: {len(nod_storage.entries)} storage entries")
 
     # Seed Metadosis
     if "metadosis" in seed:

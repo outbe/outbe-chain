@@ -9,6 +9,7 @@ pub mod api;
 pub mod certified;
 pub mod certified_read;
 pub mod errors;
+pub mod materialization;
 pub mod precompile;
 pub mod runtime;
 mod sol_ext;

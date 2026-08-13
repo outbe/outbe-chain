@@ -7,15 +7,14 @@ use outbe_primitives::{
 /// Emission sink allocation percentages (integer, denominator = 100).
 ///
 /// (Phase 4) replaced the legacy `(Validator 4 %, AgentReward
-/// 8 %, Metadosis 88 %)` table with a five-pool split that sums to
-/// 20 %, leaving 80 % for the terminal Metadosis sink. The CCA and
-/// Merchant pools are pure accumulators on dedicated system addresses
-/// and only AgentReward owns WAA / SRA.
+/// 8 %, Metadosis 88 %)` table with a four-pool split that sums to
+/// 16 %, leaving 84 % for the terminal Metadosis sink. CCA is a pure
+/// accumulator on a dedicated system address and only AgentReward owns
+/// WAA / SRA.
 pub const VALIDATOR_REWARD_PCT: u64 = 4;
 pub const WAA_REWARD_PCT: u64 = 4;
 pub const SRA_REWARD_PCT: u64 = 4;
 pub const CCA_REWARD_PCT: u64 = 4;
-pub const MERCHANT_REWARD_PCT: u64 = 4;
 
 pub const PERCENT_DENOMINATOR: u64 = 100;
 
@@ -23,19 +22,18 @@ pub const PERCENT_DENOMINATOR: u64 = 100;
 /// extension points, not dynamically registered runtime plugins.
 ///
 /// replaced the per-block 3-sink table (`Validator 4 %`,
-/// `AgentReward 8 %`, `Metadosis 88 %`) with the day 6-sink table
-/// `(Validator 4 %, WAA 4 %, SRA 4 %, CCA 4 %, Merchant 4 %, Metadosis
-/// terminal)`. The validator pool is forwarded to `outbe-rewards::api`
-/// by the Cycle handler; WAA / SRA / CCA / Merchant are routed through
+/// `AgentReward 8 %`, `Metadosis 88 %`) with the day 5-sink table
+/// `(Validator 4 %, WAA 4 %, SRA 4 %, CCA 4 %, Metadosis terminal)`.
+/// The validator pool is forwarded to `outbe-rewards::api`
+/// by the Cycle handler; WAA / SRA / CCA are routed through
 /// `outbe_agentreward::distribute_daily`; the residue and the terminal
-/// 80 % land on Metadosis through [`crate::block::dispatch_terminal_remainder_at`].
+/// 84 % land on Metadosis through [`crate::block::dispatch_terminal_remainder_at`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EmissionSinkId {
     Validator,
     Waa,
     Sra,
     Cca,
-    Merchant,
     Metadosis,
 }
 
@@ -53,7 +51,7 @@ pub struct EmissionAllocation {
     pub amount: U256,
 }
 
-pub const ACTIVE_EMISSION_SINKS: [EmissionSinkSpec; 6] = [
+pub const ACTIVE_EMISSION_SINKS: [EmissionSinkSpec; 5] = [
     EmissionSinkSpec {
         id: EmissionSinkId::Validator,
         pct: Some(VALIDATOR_REWARD_PCT),
@@ -69,10 +67,6 @@ pub const ACTIVE_EMISSION_SINKS: [EmissionSinkSpec; 6] = [
     EmissionSinkSpec {
         id: EmissionSinkId::Cca,
         pct: Some(CCA_REWARD_PCT),
-    },
-    EmissionSinkSpec {
-        id: EmissionSinkId::Merchant,
-        pct: Some(MERCHANT_REWARD_PCT),
     },
     EmissionSinkSpec {
         id: EmissionSinkId::Metadosis,
@@ -237,7 +231,7 @@ mod tests {
 
     #[test]
     fn test_allocation_percentages() {
-        // Day 6-sink table: 5×4 % + Metadosis terminal 80 %.
+        // Day 5-sink table: 4×4 % + Metadosis terminal 84 %.
         let total = U256::from(10000u64);
         let allocations = allocate_emission(total).unwrap();
         for sink in [
@@ -245,7 +239,6 @@ mod tests {
             EmissionSinkId::Waa,
             EmissionSinkId::Sra,
             EmissionSinkId::Cca,
-            EmissionSinkId::Merchant,
         ] {
             assert_eq!(
                 allocation_for(&allocations, sink),
@@ -255,8 +248,8 @@ mod tests {
         }
         assert_eq!(
             allocation_for(&allocations, EmissionSinkId::Metadosis),
-            U256::from(8000u64),
-            "Metadosis should receive the remaining 80 %"
+            U256::from(8400u64),
+            "Metadosis should receive the remaining 84 %"
         );
     }
 
@@ -335,9 +328,9 @@ mod tests {
 
     #[test]
     fn test_allocation_rounding_dust_goes_to_terminal_sink() {
-        // 5 × 4 % = 20 % → each non-terminal sink gets floor(101 * 4 / 100) = 4.
-        // Sum of fixed shares = 20. Metadosis terminal absorbs the
-        // remainder = 81, including the rounding dust (101 - 20 = 81).
+        // 4 × 4 % = 16 % → each non-terminal sink gets floor(101 * 4 / 100) = 4.
+        // Sum of fixed shares = 16. Metadosis terminal absorbs the
+        // remainder = 85, including the rounding dust (101 - 16 = 85).
         let total = U256::from(101u64);
         let allocations = allocate_emission(total).unwrap();
 
@@ -346,7 +339,6 @@ mod tests {
             EmissionSinkId::Waa,
             EmissionSinkId::Sra,
             EmissionSinkId::Cca,
-            EmissionSinkId::Merchant,
         ] {
             assert_eq!(
                 allocation_for(&allocations, sink),
@@ -356,7 +348,7 @@ mod tests {
         }
         assert_eq!(
             allocation_for(&allocations, EmissionSinkId::Metadosis),
-            U256::from(81u64),
+            U256::from(85u64),
             "Metadosis terminal absorbs the dust"
         );
         assert_eq!(allocation_sum(&allocations), total);
@@ -394,9 +386,7 @@ mod tests {
                     storage.sstore(TEST_ADDRESS, U256::from(3u64), amount)?;
                     Ok(U256::ZERO)
                 }
-                EmissionSinkId::Sra | EmissionSinkId::Cca | EmissionSinkId::Merchant => {
-                    Ok(U256::ZERO)
-                }
+                EmissionSinkId::Sra | EmissionSinkId::Cca => Ok(U256::ZERO),
             })
             .unwrap();
 
@@ -442,10 +432,7 @@ mod tests {
                     storage.sstore(TEST_ADDRESS, U256::from(2u64), amount)?;
                     Ok(U256::ZERO)
                 }
-                EmissionSinkId::Waa
-                | EmissionSinkId::Sra
-                | EmissionSinkId::Cca
-                | EmissionSinkId::Merchant => Ok(U256::ZERO),
+                EmissionSinkId::Waa | EmissionSinkId::Sra | EmissionSinkId::Cca => Ok(U256::ZERO),
             })
             .unwrap();
 
@@ -486,10 +473,7 @@ mod tests {
                     storage.sstore(TEST_ADDRESS, U256::from(2u64), amount)?;
                     Ok(U256::ZERO)
                 }
-                EmissionSinkId::Waa
-                | EmissionSinkId::Sra
-                | EmissionSinkId::Cca
-                | EmissionSinkId::Merchant => Ok(U256::ZERO),
+                EmissionSinkId::Waa | EmissionSinkId::Sra | EmissionSinkId::Cca => Ok(U256::ZERO),
             })
             .unwrap();
 
@@ -531,10 +515,9 @@ mod tests {
                         storage.sstore(TEST_ADDRESS, U256::from(2u64), amount)?;
                         Err(PrecompileError::Revert("metadosis sink failed".into()))
                     }
-                    EmissionSinkId::Waa
-                    | EmissionSinkId::Sra
-                    | EmissionSinkId::Cca
-                    | EmissionSinkId::Merchant => Ok(U256::ZERO),
+                    EmissionSinkId::Waa | EmissionSinkId::Sra | EmissionSinkId::Cca => {
+                        Ok(U256::ZERO)
+                    }
                 });
 
             assert!(result.is_err(), "terminal failure must fail the pipeline");

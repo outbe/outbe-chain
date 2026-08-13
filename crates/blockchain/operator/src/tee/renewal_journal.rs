@@ -394,7 +394,7 @@ mod tests {
     use alloy_primitives::U256;
     use outbe_primitives::tee_attestation_v1::{
         AttestationMode, AttestationOperationV1, DcapCollateralComponentV1, DcapCollateralKind,
-        DcapEvidenceV1, EnclaveProfile, NodeIdV1,
+        DcapEvidenceV1, NodeIdV1,
     };
 
     fn binding() -> RenewalBindingV1 {
@@ -439,8 +439,7 @@ mod tests {
             operation: AttestationOperationV1::RenewEnclave,
             attestation_mode: AttestationMode::DcapRequired,
             policy_hash: B256::repeat_byte(6),
-            enclave_profile: EnclaveProfile::FullNode,
-            node_id: NodeIdV1::FullNode {
+            node_id: NodeIdV1 {
                 reth_p2p_public: full_node_public,
             },
             enclave_id: B256::repeat_byte(2),

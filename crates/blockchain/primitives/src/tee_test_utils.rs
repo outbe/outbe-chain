@@ -7,15 +7,16 @@
 use std::collections::BTreeMap;
 
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
+use k256::ecdsa::signature::hazmat::PrehashSigner as _;
 use ring::signature::{Ed25519KeyPair, KeyPair as _};
 use serde_json::Value;
 
 use crate::{
     signer::OutbeEvmSigner,
     tee_attestation_v1::{
-        AttestationEvidenceV1, AttestationMode, AttestationOperationV1, EnclaveProfile,
-        GramineDirectEvidenceV1, NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1,
-        RegistrationIntentV1, ResourceScheduleV1, TeeMeasurementRuleV1, TeePolicyV1,
+        AttestationEvidenceV1, AttestationMode, AttestationOperationV1, GramineDirectEvidenceV1,
+        NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1, RegistrationIntentV1, ResourceScheduleV1,
+        TeeMeasurementRuleV1, TeePolicyV1, ValidatorNodeBindingV1,
     },
     tee_bootstrap_v2::{
         TeeBootstrapAuthorityV2, TeeBootstrapParticipantSubmissionV2, TeeBootstrapV2,
@@ -59,26 +60,14 @@ pub fn gramine_direct_policy_v1(chain_id: u64, genesis_hash: B256) -> Result<Tee
         maximum_lease: 604_800,
         collateral_margin: 3_600,
         resource_schedule_hash,
-        measurement_rules: vec![
-            TeeMeasurementRuleV1 {
-                enclave_profile: EnclaveProfile::Validator,
-                mrenclave: B256::repeat_byte(0x81),
-                mrsigner: B256::repeat_byte(0x82),
-                isv_prod_id: 1,
-                minimum_isv_svn: 2,
-                admit_from_height: 1,
-                admit_until_height_exclusive: u64::MAX,
-            },
-            TeeMeasurementRuleV1 {
-                enclave_profile: EnclaveProfile::FullNode,
-                mrenclave: B256::repeat_byte(0x91),
-                mrsigner: B256::repeat_byte(0x92),
-                isv_prod_id: 2,
-                minimum_isv_svn: 3,
-                admit_from_height: 1,
-                admit_until_height_exclusive: u64::MAX,
-            },
-        ],
+        measurement_rules: vec![TeeMeasurementRuleV1 {
+            mrenclave: B256::repeat_byte(0x81),
+            mrsigner: B256::repeat_byte(0x82),
+            isv_prod_id: 1,
+            minimum_isv_svn: 2,
+            admit_from_height: 1,
+            admit_until_height_exclusive: u64::MAX,
+        }],
     };
     policy
         .encode_canonical()
@@ -148,17 +137,26 @@ pub fn gramine_direct_bootstrap_v2(
             &validator.evm_secret,
             ordinal,
         ));
+        let node_secret = deterministic_key(
+            b"outbe/test/gramine-direct/node-host-p2p",
+            &validator.evm_secret,
+            ordinal,
+        );
+        let node_signer = k256::ecdsa::SigningKey::from_bytes((&node_secret).into())
+            .map_err(|_| "construct GramineDirectDev test NodeHost signer")?;
+        let reth_p2p_public = node_signer
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .map_err(|_| "GramineDirectDev test NodeHost key is not SEC1-33")?;
         let mut intent = RegistrationIntentV1 {
             chain_id: policy.chain_id,
             genesis_hash: policy.genesis_hash,
             operation: AttestationOperationV1::RegisterEnclave,
             attestation_mode: AttestationMode::GramineDirectDev,
             policy_hash,
-            enclave_profile: EnclaveProfile::Validator,
-            node_id: NodeIdV1::Validator {
-                address: address.into_array(),
-                bls_minpk_public: validator.bls_minpk_public,
-            },
+            node_id: NodeIdV1 { reth_p2p_public },
             enclave_id: B256::repeat_byte(1),
             binding_id,
             binding_version: 1,
@@ -177,9 +175,33 @@ pub fn gramine_direct_bootstrap_v2(
         let intent_hash = intent
             .intent_hash()
             .map_err(|error| format!("hash GramineDirectDev test intent: {error}"))?;
-        let node_signature = signer
-            .sign_hash(&intent_hash)
-            .map_err(|error| format!("sign GramineDirectDev test intent as node: {error}"))?;
+        let (node_signature_body, node_recovery) = node_signer
+            .sign_prehash(intent_hash.as_slice())
+            .map_err(|_| "sign GramineDirectDev test intent as NodeHost")?;
+        let mut node_signature = [0_u8; 65];
+        node_signature[..64].copy_from_slice(node_signature_body.to_bytes().as_slice());
+        node_signature[64] = node_recovery.to_byte();
+        let validator_binding = ValidatorNodeBindingV1 {
+            chain_id: policy.chain_id,
+            genesis_hash: policy.genesis_hash,
+            validator: address.into_array(),
+            node_id_hash: intent
+                .node_id
+                .node_id_hash()
+                .map_err(|error| format!("hash GramineDirectDev test NodeHost: {error}"))?,
+        };
+        let binding_hash = validator_binding
+            .binding_hash()
+            .map_err(|error| format!("hash GramineDirectDev validator binding: {error}"))?;
+        let validator_signature = signer
+            .sign_hash(&binding_hash)
+            .map_err(|error| format!("sign GramineDirectDev validator binding: {error}"))?;
+        let (node_binding_body, node_binding_recovery) = node_signer
+            .sign_prehash(binding_hash.as_slice())
+            .map_err(|_| "sign GramineDirectDev NodeHost binding")?;
+        let mut node_binding_signature = [0_u8; 65];
+        node_binding_signature[..64].copy_from_slice(node_binding_body.to_bytes().as_slice());
+        node_binding_signature[64] = node_binding_recovery.to_byte();
         let enclave_signature: [u8; 64] = attestation
             .sign(intent_hash.as_slice())
             .as_ref()
@@ -191,6 +213,9 @@ pub fn gramine_direct_bootstrap_v2(
                 dev_attestation_public: attestation_public,
                 dev_signature: enclave_signature,
             }),
+            validator_binding,
+            validator_signature,
+            node_binding_signature,
             node_signature,
             enclave_signature,
         });

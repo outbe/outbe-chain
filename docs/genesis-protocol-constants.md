@@ -1,47 +1,45 @@
-# Параметры протокола в genesis
+# Genesis protocol parameters
 
-Outbe хранит изменяемые между сетями, но неизменяемые внутри одной сети
-параметры времени в `genesis.json`. Это позволяет LocalNet проходить полный
-путь Tribute → Metadosis → OCOMP → Lysis → NOD за минуты, сохраняя тот же
-production-код и те же переходы состояний.
+Outbe stores network-specific but immutable protocol parameters in
+`genesis.json`. LocalNet can therefore exercise the complete protocol in minutes
+without changing production code or state transitions.
 
-## Как это работает
+## Resolution and storage
 
-1. В `config.outbeProtocol` указываются только нужные переопределения.
-2. `outbe-chain constants genesis` дополняет отсутствующие поля production-
-   значениями, проверяет набор и записывает его в immutable account
+1. `config.outbeProtocol` contains optional overrides.
+2. `outbe-chain constants genesis` resolves every missing field to its canonical
+   default, validates the complete value, and writes it to immutable account
    `0x000000000000000000000000000000000000ee11`.
-3. Account входит в genesis state root и genesis hash.
-4. Только после этого создаются OCOMP bindings и регистрации валидаторов.
-5. Во время исполнения `outbe-chain-constants` читает запись один раз,
-   проверяет schema/hash и кэширует `Arc<GenesisProtocolParametersV1>` по
-   `genesis_hash`. Metadosis, Cycle и OCOMP не знают, было поле задано явно или
-   получено из default.
+3. The account is covered by the genesis state root and genesis hash.
+4. OCOMP validator registrations and bindings are created only after this step.
+5. Runtime loads and validates the complete record once, then caches the
+   immutable `GenesisProtocolParametersV1` by genesis hash.
 
-Runtime API для изменения значений отсутствует. Потерянная, повреждённая или
-несовместимая запись является фатальной ошибкой конфигурации сети; runtime не
-подставляет default молча.
+There is no runtime mutation API and no CLI or environment override. Missing,
+malformed, hash-mismatched, or incompatible materialized storage is fatal.
 
-## Поддерживаемые поля
+## Supported fields
 
-| JSON path | Тип/единица | Default | Допустимо | Использует |
+| JSON path | Type and unit | Default | Validation | Consumer |
 |---|---:|---:|---:|---|
-| `metadosis.formingPeriodSeconds` | `u64`, секунды | 180000 (50 ч) | `1..=180000` | граница FORMING |
-| `metadosis.lookbackDelaySeconds` | `u64`, секунды | 1807200 (502 ч) | `0..=1807200` | граница LOOKBACK |
-| `metadosis.offeringPeriodSeconds` | `u64`, секунды | 180000 (50 ч) | `1..=180000` | окно Tribute offers |
-| `metadosis.waitingPeriodSeconds` | `u64`, секунды | 43200 (12 ч) | `1..=43200` | переход WAITING → READY |
-| `metadosis.bootstrapDurationSeconds` | `u64`, секунды | 1814400 (504 ч) | `1..=1814400` | bootstrap Metadosis |
-| `metadosis.advanceIntervalSeconds` | `u64`, секунды | 43200 (production noon lane) | `1..=43200` | период dedicated WWD advancement в коротком genesis-профиле |
-| `ocomp.computeVoteWindowBlocks` | `u64`, блоки | 1800 | `1..=1800` и capacity gates | общий срок вычисления и включения vote |
+| `metadosis.formingPeriodSeconds` | `u64`, seconds | 180000 | `1..=180000` | FORMING boundary |
+| `metadosis.lookbackDelaySeconds` | `u64`, seconds | 1807200 | `0..=1807200` | LOOKBACK boundary |
+| `metadosis.offeringPeriodSeconds` | `u64`, seconds | 180000 | `1..=180000` | Tribute offering window |
+| `metadosis.waitingPeriodSeconds` | `u64`, seconds | 43200 | `1..=43200` | WAITING to READY |
+| `metadosis.bootstrapDurationSeconds` | `u64`, seconds | 1814400 | `1..=1814400` | Metadosis bootstrap |
+| `metadosis.advanceIntervalSeconds` | `u64`, seconds | 43200 | `1..=43200` | WWD advancement cadence |
+| `ocomp.computeVoteWindowBlocks` | `u64`, blocks | 1800 | `1..=1800` plus capacity gates | compute and vote deadline |
+| `nodMaterialization.batchSubtreeHeight` | `u8`, tree levels | 3 | capacity `2^height` in `1..=256` | NOD batch capacity |
+| `nodMaterialization.retryIntervalBlocks` | `u64`, blocks | 30 | nonzero | no-progress wake cadence |
+| `nodMaterialization.maxAttemptsPerBlock` | `u16`, attempts | 1 | nonzero | execution attempt cap |
 
-Значения могут только сокращать production-default в этой версии. Ноль
-разрешён только для lookback. Неизвестные поля, неверный `schemaVersion`,
-переполнение и небезопасные значения останавливают генерацию genesis.
+Unknown fields, unsupported schema versions, overflow, and unsafe values fail
+genesis generation. Missing fields use defaults only in the central resolver;
+consumers cannot observe whether a value was explicit or defaulted.
 
-## Пример production
+## Production example
 
-Поля можно не указывать: отсутствие `outbeProtocol` означает полный набор
-default, который всё равно материализуется в `EE11`.
+Omitting `outbeProtocol` selects and materializes the complete default profile.
 
 ```json
 {
@@ -51,7 +49,7 @@ default, который всё равно материализуется в `EE1
 }
 ```
 
-## Пример LocalNet
+## LocalNet example
 
 ```json
 {
@@ -68,38 +66,33 @@ default, который всё равно материализуется в `EE1
       },
       "ocomp": {
         "computeVoteWindowBlocks": 120
+      },
+      "nodMaterialization": {
+        "batchSubtreeHeight": 3,
+        "retryIntervalBlocks": 12,
+        "maxAttemptsPerBlock": 1
       }
     }
   }
 }
 ```
 
-`formingPeriodSeconds` считается от канонического UTC+14-начала WorldwideDay,
-полученного как `WorldwideDay::from_timestamp(timestamp блока 1)`, а не от
-сырой UTC-даты и не от момента запуска ноды. После 10:00 UTC ключ WorldwideDay
-уже соответствует следующей календарной дате. Поэтому
-LocalNet harness записывает в genesis не буквальный `60`, а
-`seconds_since_that_wwd_start + 60`: FORMING заканчивается примерно через минуту
-после блока 1, при этом смысл consensus-поля не меняется. Значение `60` в
-примере применимо к genesis, созданному точно на этой границе WorldwideDay.
+`formingPeriodSeconds` is measured from the canonical UTC+14 start of the
+WorldwideDay derived from block 1, not from process startup. The LocalNet harness
+therefore resolves the absolute phase boundary relative to that canonical start.
 
-LocalNet не получает заранее созданный далеко истекающий OFFERING-день.
-Первый WorldwideDay создаётся на block 1 и проходит обычный reducer по коротким
-genesis-bound периодам.
+The NOD materialization FIFO is initialized in genesis with
+`head_sequence = tail_sequence = 1`, even when no legacy NOD is seeded.
 
-## Порядок подготовки сети
+## Network preparation order
 
 ```text
-base/prefund
-  → seed_genesis.py (config.outbeProtocol и обычный state seed)
-  → outbe-chain constants genesis (immutable EE11)
-  → outbe-chain ocomp bindings / keygen / genesis
-  → outbe-chain tee genesis
+base and prefunds
+  -> seed_genesis.py (ordinary state seed and optional overrides)
+  -> outbe-chain constants genesis (immutable EE11 record)
+  -> OCOMP bindings, keys, and genesis install
+  -> TEE genesis policy
 ```
 
-`seed_genesis.py` поддерживает ключ `protocol_constants` в seed JSON и переносит
-его в `config.outbeProtocol`, но не знает slot ordinals. Единственный владелец
-storage-layout и hash — Rust crate `crates/blockchain/constants`.
-
-Изменение параметра меняет genesis hash. Для существующей сети это не upgrade:
-требуется wipe и новый genesis.
+Changing any parameter changes the genesis hash. Existing networks cannot adopt
+new values through an Update; a wipe and new genesis are required.

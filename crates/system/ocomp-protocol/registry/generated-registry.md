@@ -39,6 +39,8 @@
 | `0x0024` | `OcompAccountabilitySummaryV1` | `OcompAccountabilitySummaryV1` |
 | `0x0025` | `OcompVoteAccountabilityV1` | `OcompVoteAccountabilityV1` |
 | `0x0026` | `LysisTerminalV1` | `LysisTerminalV1` |
+| `0x0027` | `NodMaterializationBatchV1` | `NodMaterializationBatchV1` |
+| `0x0028` | `NodMaterializationHeadV1` | `NodMaterializationHeadV1` |
 
 ## Hash domains
 

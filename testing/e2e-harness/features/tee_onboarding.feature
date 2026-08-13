@@ -1,4 +1,4 @@
-@tee @real-sgx @min-validators-4
+@tee @real-sgx @dcap-only @min-validators-4
 Feature: Permanent TEE offer-key onboarding
   Validator-set activation is tested separately. This scenario owns only the
   permanent attested key and authenticated NodeHost restart contract.

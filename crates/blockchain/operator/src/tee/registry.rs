@@ -1,6 +1,6 @@
 //! Canonical Registry selectors and exact onboarding expectations.
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{B256, U256};
 use alloy_sol_types::SolCall;
 use eyre::{Result, WrapErr as _};
 use outbe_primitives::{
@@ -15,18 +15,13 @@ use crate::rpc::RenewalRpc;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NodeBindingSelectorV1 {
-    Validator(Address),
-    FullNode([u8; 33]),
+    NodeHost([u8; 33]),
 }
 
 impl NodeBindingSelectorV1 {
     pub fn binding_call(&self) -> Vec<u8> {
         match self {
-            Self::Validator(validator) => ITeeRegistryV1::validatorEnclaveBindingCall {
-                validator: *validator,
-            }
-            .abi_encode(),
-            Self::FullNode(public) => ITeeRegistryV1::fullNodeEnclaveBindingCall {
+            Self::NodeHost(public) => ITeeRegistryV1::nodeHostEnclaveBindingCall {
                 rethP2pPrefix: public[0],
                 rethP2pX: B256::from_slice(&public[1..]),
             }
@@ -38,14 +33,7 @@ impl NodeBindingSelectorV1 {
         &self,
         encoded: &[u8],
     ) -> alloy_sol_types::Result<NodeEnclaveBindingV1View> {
-        match self {
-            Self::Validator(_) => {
-                ITeeRegistryV1::validatorEnclaveBindingCall::abi_decode_returns(encoded)
-            }
-            Self::FullNode(_) => {
-                ITeeRegistryV1::fullNodeEnclaveBindingCall::abi_decode_returns(encoded)
-            }
-        }
+        ITeeRegistryV1::nodeHostEnclaveBindingCall::abi_decode_returns(encoded)
     }
 }
 

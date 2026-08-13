@@ -28,7 +28,8 @@ use crate::world::localnet::StartOpts;
 use crate::world::ocomp::{OcompMeasurementForkV1, OcompProcessFault, OcompProcessRole};
 use crate::world::ocomp::{
     OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS, OCOMP_DYNAMIC_DKG_PREPARE_WINDOW_BLOCKS,
-    OCOMP_DYNAMIC_VOTE_WINDOW_BLOCKS, OCOMP_TEST_EPOCH_LENGTH_BLOCKS,
+    OCOMP_DYNAMIC_VOTE_WINDOW_BLOCKS, OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE,
+    OCOMP_TEST_EPOCH_LENGTH_BLOCKS,
 };
 use crate::world::state::{
     MetadosisFinalizedPointV1, MetadosisFreshLifecycleObservationV1, MetadosisTimeControlEpochV1,
@@ -104,38 +105,6 @@ fn fresh_ocomp_short_window_public_measurement_localnet(world: &mut World) {
 #[given("a fresh four-validator OCOMP public capacity localnet")]
 fn fresh_ocomp_public_capacity_localnet(world: &mut World) {
     start_ocomp_measurement_localnet(world, Some(OCOMP_CAPACITY_TRIBUTE_COUNT), None);
-}
-
-#[given("a fresh four-validator OCOMP failure-recovery localnet")]
-fn fresh_ocomp_failure_recovery_localnet(world: &mut World) {
-    bootstrap_localnet(
-        world,
-        6,
-        &[(
-            "TESTNET_EPOCH_LENGTH_BLOCKS",
-            OCOMP_TEST_EPOCH_LENGTH_BLOCKS.to_string(),
-        )],
-    );
-    let now_secs = unix_time_secs();
-    let mut start_opts = StartOpts::near_next_utc_day_with_lead(6, now_secs, 120);
-    let offset = start_opts
-        .unix_time_offset_secs
-        .expect("failure-recovery logical clock offset");
-    world
-        .localnet
-        .shift_genesis_timestamp(offset)
-        .expect("shift OCOMP failure-recovery genesis before deriving fork identity");
-    start_opts.genesis_timestamp_pre_shifted = true;
-    let prepared = world
-        .ocomp
-        .prepare_failure_recovery_fork_install()
-        .expect("prepare immutable one-attempt OCOMP failure-recovery fork");
-    world
-        .localnet
-        .bind_tee_genesis()
-        .expect("bind canonical TEE genesis after failure-recovery manifest");
-    launch_prepared_ocomp(world, &mut start_opts, &prepared, true);
-    wait_for_finalized_ocomp_activation(world);
 }
 
 #[given("a fresh four-validator OCOMP dynamic-membership localnet with two scheduled jobs")]
@@ -456,7 +425,8 @@ fn fifth_full_node_has_state_but_no_vote_capability(world: &mut World) {
     let data_dir = world.validators.data_dir(index);
     let validator_dir = data_dir.parent().expect("validator data directory parent");
     assert!(!validator_dir.join("ocomp-key-v1.hex").exists());
-    assert!(!validator_dir.join("signing-key.hex").exists());
+    assert!(validator_dir.join("signing-key.hex").is_file());
+    assert!(validator_dir.join("evm-key.hex").is_file());
     assert!(world.ocomp.process_records().iter().any(|record| {
         record.validator_index == Some(u8::try_from(index).expect("joiner index fits u8"))
             && record.role == OcompProcessRole::Worker
@@ -535,14 +505,6 @@ fn synced_node_completes_ocomp_validator_admission(world: &mut World) {
         .stop_keyless_full_node_roles(validator_index)
         .expect("stop keyless FullNode roles before validator-mode restart");
     world.localnet.stop_joiner_full_node(index);
-    world
-        .localnet
-        .archive_full_node_identity_for_validator_promotion(index)
-        .expect("archive immutable FullNode TEE identity before Validator promotion");
-    world
-        .localnet
-        .join_validator_enclave(index)
-        .expect("initialize fresh Validator TEE identity on the synchronized node slot");
     world
         .localnet
         .launch_joiner(index, &[])
@@ -1568,19 +1530,19 @@ fn committee_clock_reaches_fresh_capacity_processing(world: &mut World) {
     // far as READY. Production settlement deliberately belongs to the daily
     // Cycle handler, so cross the first UTC midnight after the processing time
     // before expecting the READY day to become an OCOMP job.
-    let target = first_daily_cycle_after(scheduled_process_time);
+    let target = first_daily_cycle_at_or_after(scheduled_process_time);
     advance_fresh_metadosis_time(world, target, &[(0, 1), (1, 2), (2, 3), (3, 4)], 8);
 }
 
-fn first_daily_cycle_after(timestamp: u64) -> u64 {
+fn first_daily_cycle_at_or_after(timestamp: u64) -> u64 {
     const SECONDS_PER_DAY: u64 = 86_400;
 
     timestamp
-        .checked_div(SECONDS_PER_DAY)
-        .and_then(|day| day.checked_add(1))
+        .checked_add(SECONDS_PER_DAY - 1)
+        .and_then(|rounded| rounded.checked_div(SECONDS_PER_DAY))
         .and_then(|day| day.checked_mul(SECONDS_PER_DAY))
         .and_then(|midnight| midnight.checked_add(1))
-        .expect("first UTC daily Cycle after Metadosis processing time")
+        .expect("first UTC daily Cycle at or after Metadosis processing time")
 }
 
 #[then("the same fresh capacity day advances through WAITING and READY")]
@@ -1976,12 +1938,24 @@ fn submit_dynamic_membership_tributes(world: &mut World) {
 
 #[when("all 257 capacity owners submit one encrypted Tribute each")]
 fn capacity_owners_submit_257_public_tributes(world: &mut World) {
+    capacity_owners_submit_public_tributes(world, OCOMP_CAPACITY_TRIBUTE_COUNT);
+}
+
+#[when(
+    expr = "{int} capacity owners submit one encrypted Tribute each at no more than two per block"
+)]
+fn bounded_capacity_owners_submit_public_tributes(world: &mut World, count: usize) {
+    capacity_owners_submit_public_tributes(world, count);
+}
+
+fn capacity_owners_submit_public_tributes(world: &mut World, count: usize) {
     let private_keys = world.state.ocomp_capacity_tribute_private_keys.clone();
-    assert_eq!(
-        private_keys.len(),
-        OCOMP_CAPACITY_TRIBUTE_COUNT,
-        "capacity fixture did not retain exactly 257 funded owners"
+    assert!(
+        private_keys.len() >= count,
+        "capacity fixture retained only {} funded owners, expected at least {count}",
+        private_keys.len()
     );
+    let private_keys = &private_keys[..count];
     let worldwide_day = world
         .state
         .wwd
@@ -1996,14 +1970,20 @@ fn capacity_owners_submit_257_public_tributes(world: &mut World) {
                     let rpc = world.rpc.clone();
                     let worldwide_day = worldwide_day.clone();
                     scope.spawn(move || {
-                        rpc.tribute_offer(private_key, &worldwide_day)
-                            .ok_or_else(|| {
-                                format!(
-                                    "capacity owner {} did not return a public Tribute tx hash",
-                                    rpc.address_of(private_key)
-                                        .unwrap_or_else(|| "unknown".to_owned())
-                                )
-                            })
+                        rpc.tribute_offer_with_params(
+                            private_key,
+                            &worldwide_day,
+                            OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE,
+                            840,
+                            false,
+                        )
+                        .ok_or_else(|| {
+                            format!(
+                                "capacity owner {} did not return a public Tribute tx hash",
+                                rpc.address_of(private_key)
+                                    .unwrap_or_else(|| "unknown".to_owned())
+                            )
+                        })
                     })
                 })
                 .collect::<Vec<_>>()
@@ -2027,38 +2007,17 @@ fn capacity_owners_submit_257_public_tributes(world: &mut World) {
 
     assert_eq!(
         transaction_hashes.len(),
-        OCOMP_CAPACITY_TRIBUTE_COUNT,
+        count,
         "not every capacity owner submitted a public Tribute"
     );
     world.state.ocomp_capacity_tribute_tx_hashes = transaction_hashes;
 }
 
-#[then("all validators observe exactly 257 public Tributes for the capacity day")]
-fn all_validators_observe_257_public_tributes(world: &mut World) {
+#[then(expr = "all validators observe exactly {int} public Tributes for the capacity day")]
+fn all_validators_observe_public_tributes(world: &mut World, count: usize) {
     let transaction_hashes = &world.state.ocomp_capacity_tribute_tx_hashes;
-    assert_eq!(
-        transaction_hashes.len(),
-        OCOMP_CAPACITY_TRIBUTE_COUNT,
-        "capacity Tribute transaction set is incomplete"
-    );
-    for transaction_hash in transaction_hashes {
-        assert!(
-            world.rpc.wait_successful_receipt(transaction_hash, 240),
-            "capacity Tribute transaction did not succeed: {transaction_hash}"
-        );
-    }
-
-    let expected_supply = OCOMP_CAPACITY_TRIBUTE_COUNT.to_string();
-    let primary = world.validators.primary_port();
-    let supply_deadline = Instant::now() + Duration::from_secs(60);
-    while world.rpc.supply(primary).as_deref() != Some(expected_supply.as_str()) {
-        assert!(
-            Instant::now() < supply_deadline,
-            "capacity Tributes did not produce total supply {expected_supply}"
-        );
-        sleep(Duration::from_millis(250));
-    }
-
+    assert_eq!(transaction_hashes.len(), count);
+    let expected_supply = count.to_string();
     let worldwide_day = world
         .state
         .wwd
@@ -2066,38 +2025,30 @@ fn all_validators_observe_257_public_tributes(world: &mut World) {
         .expect("capacity WorldwideDay")
         .parse::<u32>()
         .expect("numeric capacity WorldwideDay");
-    let committee_ports = world.validators.committee_ports();
-    let completion_deadline =
-        Instant::now() + Duration::from_secs(OCOMP_CAPACITY_COMPLETION_TIMEOUT_SECS);
-    loop {
-        let observations = committee_ports
-            .iter()
-            .map(|port| {
-                let ids = world.rpc.tributes_by_day(*port, worldwide_day);
-                let count = ids.as_ref().map_or(0, Vec::len);
-                let distinct = ids.as_ref().map_or(0, |ids| {
-                    ids.iter().collect::<std::collections::BTreeSet<_>>().len()
+    for port in world.validators.committee_ports() {
+        let deadline = Instant::now() + Duration::from_secs(OCOMP_CAPACITY_COMPLETION_TIMEOUT_SECS);
+        loop {
+            let supply_matches = world.rpc.supply(port).as_deref() == Some(&expected_supply);
+            let day_matches = world
+                .rpc
+                .tributes_by_day(port, worldwide_day)
+                .is_some_and(|ids| {
+                    ids.len() == count
+                        && ids.iter().collect::<std::collections::BTreeSet<_>>().len() == count
                 });
-                (*port, world.rpc.head(*port), count, distinct)
-            })
-            .collect::<Vec<_>>();
-        let all_complete = observations.iter().all(|(_, _, count, distinct)| {
-            *count == OCOMP_CAPACITY_TRIBUTE_COUNT && *distinct == OCOMP_CAPACITY_TRIBUTE_COUNT
-        });
-        match bounded_completion_decision(
-            all_complete,
-            Instant::now(),
-            completion_deadline,
-        ) {
-            BoundedCompletionDecision::Complete => break,
-            BoundedCompletionDecision::Continue => sleep(Duration::from_millis(250)),
-            BoundedCompletionDecision::TimedOut => panic!(
-                "committee did not expose 257 distinct public Tributes within the shared {}s completion window: {observations:?}",
-                OCOMP_CAPACITY_COMPLETION_TIMEOUT_SECS
-            ),
+            match bounded_completion_decision(
+                supply_matches && day_matches,
+                Instant::now(),
+                deadline,
+            ) {
+                BoundedCompletionDecision::Complete => break,
+                BoundedCompletionDecision::Continue => sleep(Duration::from_millis(250)),
+                BoundedCompletionDecision::TimedOut => {
+                    panic!("validator {port} did not expose {count} distinct Tributes")
+                }
+            }
         }
     }
-
     for transaction_hash in [
         transaction_hashes
             .first()
@@ -2115,6 +2066,125 @@ fn all_validators_observe_257_public_tributes(world: &mut World) {
                 )
             });
     }
+}
+
+#[then("three matching validator domains atomically certify the Lysis generation")]
+fn validators_certify_lysis_generation(world: &mut World) {
+    quorum_applies_lysis_and_creates_nod(world);
+}
+
+#[then("mineGratis is rejected while that certified generation is incomplete")]
+fn mine_is_rejected_before_materialization_completion(world: &mut World) {
+    let private_key = world
+        .state
+        .ocomp_capacity_tribute_private_keys
+        .first()
+        .expect("first capacity owner key")
+        .clone();
+    let generation = world
+        .state
+        .ocomp_certified_generation
+        .clone()
+        .expect("certified generation before mining gate");
+    world
+        .rpc
+        .assert_certified_nod_mining_blocked(
+            world.validators.primary_port(),
+            &private_key,
+            &generation,
+        )
+        .expect("pre-completion certified NOD mining rejection");
+}
+
+#[then("the certified generation is materialized through at least two bounded transactions")]
+fn certified_generation_crosses_multiple_materialization_batches(world: &mut World) {
+    let generation = world
+        .state
+        .ocomp_certified_generation
+        .clone()
+        .expect("certified generation before materialization");
+    let observation = world
+        .rpc
+        .wait_for_completed_nod_materialization(world.validators.primary_port(), &generation, 300)
+        .expect("completed multi-batch NOD materialization");
+    assert!(observation.successful_batch_transactions >= 2);
+    world.state.ocomp_nod_materialization = Some(observation);
+}
+
+#[then("every capacity owner enumerates one ordinary NOD with matching nodData")]
+fn every_capacity_owner_has_one_materialized_nod(world: &mut World) {
+    assert_materialized_capacity_owners(world, usize::MAX);
+}
+
+#[then("five deterministic capacity owners enumerate ordinary NODs with matching nodData")]
+fn five_capacity_owners_have_materialized_nods(world: &mut World) {
+    assert_materialized_capacity_owners(world, 5);
+}
+
+fn assert_materialized_capacity_owners(world: &mut World, limit: usize) {
+    let count = world
+        .state
+        .ocomp_capacity_tribute_tx_hashes
+        .len()
+        .min(limit);
+    let completion_block_number = world
+        .state
+        .ocomp_nod_materialization
+        .as_ref()
+        .expect("materialization completion before owner reads")
+        .completion_block_number;
+    for private_key in &world.state.ocomp_capacity_tribute_private_keys[..count] {
+        let owner = world
+            .rpc
+            .address_of(private_key)
+            .expect("capacity owner address")
+            .parse()
+            .expect("capacity owner address format");
+        world
+            .rpc
+            .assert_one_materialized_nod_for_owner(
+                world.validators.primary_port(),
+                owner,
+                completion_block_number,
+            )
+            .expect("ordinary owner NOD and nodData");
+    }
+}
+
+#[then("mineGratis succeeds after the certified generation is completely materialized")]
+fn mine_succeeds_after_materialization_completion(world: &mut World) {
+    let private_key = world
+        .state
+        .ocomp_capacity_tribute_private_keys
+        .first()
+        .expect("first capacity owner key")
+        .clone();
+    world
+        .rpc
+        .mine_first_materialized_capacity_nod(world.validators.primary_port(), &private_key)
+        .expect("post-completion mineGratis");
+}
+
+#[then("the completed materialization cursor and ordinary NOD set remain unchanged")]
+fn completed_materialization_survives_restart(world: &mut World) {
+    let before = world
+        .state
+        .ocomp_nod_materialization
+        .clone()
+        .expect("materialization observation before restart");
+    let after = world
+        .rpc
+        .completed_nod_materialization(
+            world.validators.primary_port(),
+            world
+                .state
+                .ocomp_certified_generation
+                .as_ref()
+                .expect("certified generation after restart"),
+        )
+        .expect("materialization observation after restart");
+    assert_eq!(after, before);
+    assert_materialized_capacity_owners(world, 5);
 }
 
 #[when("the committee logical clock reaches the public capacity processing time")]
@@ -2152,7 +2222,7 @@ fn committee_clock_reaches_public_capacity_processing(world: &mut World) {
         "capacity WorldwideDay must remain in OFFERING until all 257 receipts and projections are observed"
     );
 
-    let target = first_daily_cycle_after(state.scheduled_process_time);
+    let target = first_daily_cycle_at_or_after(state.scheduled_process_time);
     let _ = restart_committee_at_logical_time(world, target);
 }
 
@@ -3653,172 +3723,6 @@ fn no_quorum_job_expires_without_nod(world: &mut World) {
     world.state.ocomp_expired_without_nod = Some(true);
 }
 
-#[then("the exhausted no-quorum OCOMP day fails atomically")]
-fn exhausted_no_quorum_day_fails_atomically(world: &mut World) {
-    const FAILED: u8 = 7;
-    const METADOSIS_FAILURE: u8 = 3;
-    const RETIREMENT_REQUESTED: u8 = 2;
-
-    let request = world
-        .state
-        .ocomp_job_request
-        .clone()
-        .expect("finalized exhausted JobIntent");
-    let ports = world.validators.committee_ports();
-    let deadline = Instant::now() + Duration::from_secs(120);
-    let (receipt, promis_limit, commitment) = loop {
-        let receipts = ports
-            .iter()
-            .map(|port| {
-                world
-                    .rpc
-                    .metadosis_terminal_receipt_on(*port, request.worldwide_day)
-            })
-            .collect::<Vec<_>>();
-        let limits = ports
-            .iter()
-            .map(|port| world.rpc.promis_limit_total_unallocated_on(*port))
-            .collect::<Vec<_>>();
-        let states = ports
-            .iter()
-            .map(|port| {
-                world
-                    .rpc
-                    .metadosis_wwd_state_on(*port, request.worldwide_day)
-            })
-            .collect::<Vec<_>>();
-        if receipts.iter().all(Option::is_some)
-            && limits.iter().all(Option::is_some)
-            && states
-                .iter()
-                .all(|state| state.as_ref().is_some_and(|state| state.status == FAILED))
-        {
-            let receipt = receipts[0].clone().expect("failure receipt");
-            if receipt.outcome == METADOSIS_FAILURE
-                && receipt.retirement_outcome == RETIREMENT_REQUESTED
-                && receipts
-                    .iter()
-                    .all(|candidate| candidate.as_ref() == Some(&receipt))
-                && limits
-                    .iter()
-                    .all(|candidate| *candidate == Some(receipt.carry_over_after))
-                && ports.iter().all(|port| {
-                    world
-                        .rpc
-                        .tributes_by_day(*port, request.worldwide_day)
-                        .is_some_and(|tributes| tributes.is_empty())
-                        && world.rpc.supply(*port).as_deref() == Some("0")
-                })
-            {
-                let commitments = ports
-                    .iter()
-                    .map(|port| world.rpc.block_commitment(*port, receipt.block_number))
-                    .collect::<Vec<_>>();
-                if commitments.iter().all(Option::is_some) {
-                    let commitment = commitments[0].clone().expect("failure commitment");
-                    if commitments
-                        .iter()
-                        .all(|candidate| candidate.as_ref() == Some(&commitment))
-                    {
-                        let promis_limit = receipt.carry_over_after;
-                        break (receipt, promis_limit, commitment);
-                    }
-                }
-            }
-        }
-        assert!(
-            Instant::now() < deadline,
-            "exhausted OCOMP day did not converge on atomic FAILED accounting"
-        );
-        sleep(Duration::from_millis(250));
-    };
-
-    assert!(!receipt.value_routed.is_zero());
-    assert_eq!(
-        receipt.carry_over_before.checked_add(receipt.value_routed),
-        Some(receipt.carry_over_after)
-    );
-    assert!(
-        ports.iter().all(|port| world
-            .rpc
-            .finalized(*port)
-            .is_some_and(|height| height > receipt.block_number)),
-        "FAILED terminalization stopped finality"
-    );
-    world.state.ocomp_failed_terminal_receipt = Some(receipt);
-    world.state.ocomp_failed_promis_limit = Some(promis_limit);
-    world.state.ocomp_failed_terminal_commitment = Some(commitment);
-}
-
-#[then("the failed WWD and accounting remain identical after restart")]
-fn failed_wwd_survives_restart_without_double_effects(world: &mut World) {
-    const FAILED: u8 = 7;
-    let request = world
-        .state
-        .ocomp_job_request
-        .clone()
-        .expect("failed JobIntent before replay assertion");
-    let receipt = world
-        .state
-        .ocomp_failed_terminal_receipt
-        .clone()
-        .expect("pre-restart failure receipt");
-    let promis_limit = world
-        .state
-        .ocomp_failed_promis_limit
-        .expect("pre-restart PromiseLimit");
-    let commitment = world
-        .state
-        .ocomp_failed_terminal_commitment
-        .clone()
-        .expect("pre-restart terminal commitment");
-
-    for port in world.validators.committee_ports() {
-        assert!(
-            world
-                .rpc
-                .wait_finalized_at_least(port, receipt.block_number.saturating_add(1), 60),
-            "validator on port {port} did not resume finality after restart"
-        );
-        assert_eq!(
-            world
-                .rpc
-                .metadosis_wwd_state_on(port, request.worldwide_day)
-                .map(|state| state.status),
-            Some(FAILED)
-        );
-        assert_eq!(
-            world
-                .rpc
-                .metadosis_terminal_receipt_on(port, request.worldwide_day),
-            Some(receipt.clone())
-        );
-        assert_eq!(
-            world.rpc.promis_limit_total_unallocated_on(port),
-            Some(promis_limit),
-            "restart/replay credited PromiseLimit twice on port {port}"
-        );
-        assert!(world
-            .rpc
-            .tributes_by_day(port, request.worldwide_day)
-            .is_some_and(|tributes| tributes.is_empty()));
-        assert_eq!(world.rpc.supply(port).as_deref(), Some("0"));
-        assert_eq!(
-            world.rpc.block_commitment(port, receipt.block_number),
-            Some(commitment.clone())
-        );
-        let record = world
-            .rpc
-            .finalized_ocomp_job_record_on(port, request.intent_id)
-            .expect("expired evidence remains queryable after restart");
-        assert_eq!(record.status, OcompJobStatus::Expired);
-        assert_eq!(
-            record.terminal.as_ref().map(|terminal| terminal.outcome),
-            Some(OcompTerminalOutcome::Expired)
-        );
-    }
-}
-
 #[then("all four OCOMP domains run their node-facing production roles")]
 fn four_domains_run_node_facing_roles(world: &mut World) {
     let counts = world
@@ -4022,123 +3926,6 @@ fn validator_zero_worker_restarts(world: &mut World) {
         1,
         "exactly one validator-0 worker must be live after restart"
     );
-}
-
-#[when("validator 0 OCOMP supervisor is replaced by an incompatible peer")]
-fn replace_validator_zero_with_incompatible_supervisor(world: &mut World) {
-    let primary = world.validators.primary_port();
-    world.state.ocomp_finality_before_fault = world.rpc.finalized(primary);
-    world
-        .ocomp
-        .apply_process_fault(OcompProcessFault::StopSupervisor { validator_index: 0 })
-        .expect("stop validator-0 canonical Supervisor");
-    world
-        .ocomp
-        .restart_incompatible_supervisor(0)
-        .expect("start validator-0 incompatible Supervisor");
-}
-
-#[then("the incompatible supervisor remains outside OCOMP while consensus finality advances")]
-fn incompatible_supervisor_isolated_from_consensus(world: &mut World) {
-    let before = world
-        .state
-        .ocomp_finality_before_fault
-        .expect("height captured before incompatible Supervisor");
-    let primary = world.validators.primary_port();
-    assert!(
-        world
-            .rpc
-            .wait_finalized_at_least(primary, before.saturating_add(2), 60),
-        "consensus finality did not advance with one incompatible Supervisor"
-    );
-    let log = world
-        .ocomp
-        .supervisor_log_tail(0, 80)
-        .expect("read validator-0 Supervisor log");
-    assert!(
-        log.contains("OCOMP worker registration rejected: worker identity does not match the Supervisor domain"),
-        "validator-0 Supervisor did not record the incompatible Worker registration:\n{log}"
-    );
-    let records = world.ocomp.process_records();
-    let validator_zero_supervisors = records
-        .iter()
-        .filter(|record| {
-            record.validator_index == Some(0)
-                && record.role == OcompProcessRole::Supervisor
-                && record.worker_ordinal.is_none()
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        validator_zero_supervisors.len(),
-        2,
-        "incompatible replacement must retain both lifecycle records"
-    );
-    assert_eq!(
-        validator_zero_supervisors
-            .iter()
-            .filter(|record| record.stopped_at_millis.is_some())
-            .count(),
-        1,
-        "the canonical validator-0 Supervisor was not stopped exactly once"
-    );
-    assert_eq!(
-        validator_zero_supervisors
-            .iter()
-            .filter(|record| record.stopped_at_millis.is_none())
-            .count(),
-        1,
-        "the incompatible validator-0 Supervisor is not the sole live replacement"
-    );
-
-    let request = world
-        .state
-        .ocomp_job_request
-        .as_ref()
-        .expect("incompatible-Supervisor scenario JobIntent");
-    let activation = world
-        .state
-        .ocomp_activation
-        .as_ref()
-        .expect("three compatible domains activated Lysis");
-    let deadline = Instant::now() + Duration::from_secs(180);
-    let closed = loop {
-        let observed = world
-            .validators
-            .committee_ports()
-            .into_iter()
-            .map(|port| {
-                world
-                    .rpc
-                    .finalized_ocomp_vote_accountability_on(port, activation.job_id)
-            })
-            .collect::<Vec<_>>();
-        if observed.iter().all(|value| {
-            value.as_ref().is_some_and(|accountability| {
-                accountability.closed_height == Some(request.deadline_height)
-            })
-        }) {
-            let first = observed[0]
-                .clone()
-                .expect("all closed accountability records are present");
-            assert!(
-                observed.iter().all(|value| value.as_ref() == Some(&first)),
-                "validators expose different closed accountability after one incompatible domain"
-            );
-            break first;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "response window did not close with validator 0 recorded missing: {observed:?}"
-        );
-        sleep(Duration::from_millis(250));
-    };
-    assert_eq!(closed.quorum_result_digest, Some(activation.result_digest));
-    assert_eq!(closed.quorum_signer_bitmap, Some(vec![0b1110]));
-    assert_eq!(closed.timely_bitmap, Some(vec![0b1110]));
-    assert_eq!(closed.matching_bitmap, Some(vec![0b1110]));
-    assert_eq!(closed.divergent_bitmap, Some(vec![0]));
-    assert_eq!(closed.missing_bitmap, Some(vec![0b0001]));
-    assert_eq!(closed.equivocation_bitmap, Some(vec![0]));
 }
 
 #[when("all validator nodes and OCOMP node-facing processes restart with preserved data")]
@@ -4430,10 +4217,20 @@ fn runtime_traces_cover_ocomp_execution_paths(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::{
-        bounded_completion_decision, dynamic_live_ports_after_jail,
+        bounded_completion_decision, dynamic_live_ports_after_jail, first_daily_cycle_at_or_after,
         joiner_restart_is_in_safe_early_epoch_window, post_restart_convergence_target,
         BoundedCompletionDecision, OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
     };
+
+    #[test]
+    fn daily_cycle_keeps_an_exact_midnight_processing_boundary() {
+        assert_eq!(first_daily_cycle_at_or_after(172_800), 172_801);
+    }
+
+    #[test]
+    fn daily_cycle_rounds_a_non_boundary_processing_time_up() {
+        assert_eq!(first_daily_cycle_at_or_after(172_801), 259_201);
+    }
 
     #[test]
     fn capacity_completion_window_returns_as_soon_as_every_validator_is_done() {

@@ -13,6 +13,9 @@ from typing import Any
 
 
 CONTRACT_PATH = "release/project-toolchain-v1.json"
+APT_SOURCES_PATH = "release/apt/ubuntu.sources"
+APT_SNAPSHOT_HOST = "https://snapshot.ubuntu.com/ubuntu/"
+MUTABLE_APT_HOSTS = ("archive.ubuntu.com", "security.ubuntu.com", "ports.ubuntu.com")
 EXPECTED_TOP_LEVEL_KEYS = {
     "activation",
     "apt_provenance",
@@ -164,6 +167,16 @@ def load_and_validate_pin(path: Path) -> dict[str, Any]:
     return pin
 
 
+def apt_ledger(deb_dir: Path) -> tuple[str, str, int]:
+    """Return the closure ledger, its digest and its package count."""
+
+    debs = sorted(deb_dir.resolve().glob("*.deb"), key=lambda path: path.name)
+    if any(not path.is_file() or path.is_symlink() for path in debs):
+        raise ValueError("APT package closure contains a non-regular artifact")
+    ledger = "".join(f"{_sha256_file(path)}  {path.name}\n" for path in debs)
+    return ledger, hashlib.sha256(ledger.encode("ascii")).hexdigest(), len(debs)
+
+
 def verify_apt_inputs(*, pin_path: Path, root: Path, deb_dir: Path) -> None:
     """Verify the base APT authority and downloaded package closure before install."""
 
@@ -176,18 +189,19 @@ def verify_apt_inputs(*, pin_path: Path, root: Path, deb_dir: Path) -> None:
         if _sha256_file(candidate) != source["sha256"]:
             raise ValueError(f"APT provenance digest mismatch: {source['path']}")
 
-    debs = sorted(deb_dir.resolve().glob("*.deb"), key=lambda path: path.name)
-    if any(not path.is_file() or path.is_symlink() for path in debs):
-        raise ValueError("APT package closure contains a non-regular artifact")
+    ledger, actual_digest, count = apt_ledger(deb_dir)
     closure = pin["apt_provenance"]["deb_closure"]
-    if len(debs) != closure["count"]:
+    if count != closure["count"]:
         raise ValueError(
-            f"APT package closure count mismatch: expected {closure['count']}, found {len(debs)}"
+            f"APT package closure count mismatch: expected {closure['count']}, found {count}\n"
+            f"resolved closure:\n{ledger}"
         )
-    ledger = "".join(f"{_sha256_file(path)}  {path.name}\n" for path in debs)
-    actual_digest = hashlib.sha256(ledger.encode("ascii")).hexdigest()
     if actual_digest != closure["sha256"]:
-        raise ValueError("APT package closure digest mismatch")
+        raise ValueError(
+            "APT package closure digest mismatch: "
+            f"expected {closure['sha256']}, found {actual_digest}\n"
+            f"resolved closure:\n{ledger}"
+        )
 
 
 def _require_equal(
@@ -257,6 +271,7 @@ def repository_differences(repo_root: Path) -> list[str]:
     )
     for required_input in (
         CONTRACT_PATH,
+        APT_SOURCES_PATH,
         "release/dcap-native-qvl-v1.json",
         "scripts/release/verify_dcap_native_qvl.py",
         "scripts/release/verify_project_toolchain.py",
@@ -337,6 +352,23 @@ def repository_differences(repo_root: Path) -> list[str]:
             differences.append(f"project toolchain recipe does not consume {image}")
     if "FROM toolchain AS builder" not in recipe or "FROM scratch AS artifacts" not in recipe:
         differences.append("project toolchain recipe does not own the release artifact stages")
+    if f"COPY {APT_SOURCES_PATH} /etc/apt/sources.list.d/ubuntu.sources" not in recipe:
+        differences.append("project toolchain recipe does not install the frozen APT sources")
+
+    apt_sources = (repo_root / APT_SOURCES_PATH).read_text(encoding="utf-8")
+    uris = [
+        line.split(":", 1)[1].strip()
+        for line in apt_sources.splitlines()
+        if line.startswith("URIs:")
+    ]
+    if not uris:
+        differences.append("frozen APT sources declare no URI")
+    for uri in uris:
+        if not uri.startswith(APT_SNAPSHOT_HOST):
+            differences.append(f"frozen APT sources use a mutable archive URI: {uri}")
+    for host in MUTABLE_APT_HOSTS:
+        if any(host in line for line in apt_sources.splitlines() if not line.startswith("#")):
+            differences.append(f"frozen APT sources still reach the mutable host {host}")
 
     tee_build = (repo_root / "crates/system/tee/build.rs").read_text(encoding="utf-8")
     for release_pin in (
@@ -364,10 +396,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     parser.add_argument("--verify-apt-inputs", action="store_true")
+    parser.add_argument("--emit-apt-ledger", action="store_true")
     parser.add_argument("--pin", type=Path)
     parser.add_argument("--apt-root", type=Path)
     parser.add_argument("--deb-dir", type=Path)
     args = parser.parse_args()
+    if args.emit_apt_ledger:
+        if args.deb_dir is None:
+            parser.error("--emit-apt-ledger requires --deb-dir")
+        ledger, digest, count = apt_ledger(args.deb_dir)
+        print(ledger, end="")
+        print(json.dumps({"count": count, "sha256": digest}))
+        return
     if args.verify_apt_inputs:
         if args.pin is None or args.apt_root is None or args.deb_dir is None:
             parser.error("--verify-apt-inputs requires --pin, --apt-root and --deb-dir")

@@ -174,8 +174,6 @@ pub struct FixtureState {
     pub joiner_offer_public_before_restart: Option<[u8; 32]>,
     /// VRF expiry observed while a permanently stalled frozen DKG target is live.
     pub vrf_expiry_height: Option<u64>,
-    /// Worldwide-day status byte captured before a tribute offer (invariant check).
-    pub wwd_status_before: Option<String>,
     /// Exact lifecycle accounting snapshot captured immediately before exit.
     pub lifecycle_stake_before_exit: Option<alloy_primitives::U256>,
     pub lifecycle_total_before_exit: Option<alloy_primitives::U256>,
@@ -195,6 +193,8 @@ pub struct FixtureState {
     pub ocomp_capacity_tribute_private_keys: Vec<String>,
     /// Public transaction hashes submitted by those capacity owners.
     pub ocomp_capacity_tribute_tx_hashes: Vec<String>,
+    /// Public canonical NOD materialization evidence captured before restart.
+    pub ocomp_nod_materialization: Option<crate::world::rpc::NodMaterializationObservationV1>,
     /// Hash of a duplicate logical offer expected to be rejected without state changes.
     pub duplicate_tribute_tx_hash: Option<String>,
     /// Exact primary/owner/day Mongo documents before a duplicate offer.
@@ -347,7 +347,6 @@ impl Default for FixtureState {
             marker_count: None,
             joiner_offer_public_before_restart: None,
             vrf_expiry_height: None,
-            wwd_status_before: None,
             lifecycle_stake_before_exit: None,
             lifecycle_total_before_exit: None,
             lifecycle_staking_balance_before_exit: None,
@@ -359,6 +358,7 @@ impl Default for FixtureState {
             tribute_tx_hash: None,
             ocomp_capacity_tribute_private_keys: Vec::new(),
             ocomp_capacity_tribute_tx_hashes: Vec::new(),
+            ocomp_nod_materialization: None,
             duplicate_tribute_tx_hash: None,
             tribute_projection_before_duplicate: None,
             ocomp_finality_before_fault: None,

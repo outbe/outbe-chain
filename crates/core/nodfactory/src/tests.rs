@@ -102,6 +102,7 @@ struct World {
 impl World {
     fn new() -> Self {
         let mut provider = HashMapStorageProvider::new(1);
+        provider.set_block_number(1);
         provider.set_timestamp(U256::from(1_700_000_000));
         let scope = ExecutionScope::new();
         StorageHandle::enter(&mut provider, |storage| {
@@ -569,3 +570,5 @@ fn certified_generation_has_no_public_installation_selector() {
     assert_eq!(world.provider.storage, storage_before);
     assert_eq!(world.provider.get_ordered_events(), events_before);
 }
+
+mod materialization;

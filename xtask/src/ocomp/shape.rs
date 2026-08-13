@@ -310,10 +310,10 @@ fn load_objects(repository_root: &Path) -> Result<Vec<ObjectRow>> {
             name: fields[3].to_owned(),
         });
     }
-    ensure!(objects.len() == 34, "OCOMP V1 must have exactly 34 objects");
+    ensure!(objects.len() == 36, "OCOMP V1 must have exactly 36 objects");
     ensure!(
         objects.first().is_some_and(|object| object.tag == 0x0001)
-            && objects.last().is_some_and(|object| object.tag == 0x0026),
+            && objects.last().is_some_and(|object| object.tag == 0x0028),
         "object registry bounds changed"
     );
     ensure!(

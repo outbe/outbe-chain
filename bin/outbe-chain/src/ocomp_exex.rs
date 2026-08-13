@@ -18,7 +18,7 @@ use std::{
 };
 
 use alloy_consensus::{BlockHeader as _, Transaction as _, TxReceipt as _};
-use alloy_primitives::{Sealable as _, B256};
+use alloy_primitives::{Address, Sealable as _, B256, U256};
 use alloy_sol_types::SolEvent as _;
 use eyre::{bail, Context as _};
 use futures::StreamExt as _;
@@ -28,8 +28,8 @@ use outbe_ocomp::{
     embedded::{EmbeddedJobActionV1, EmbeddedJobStateV1, EmbeddedOcompJobsV1, EmbeddedOcompModeV1},
     embedded_checkpoint::{OcompExExCheckpointStoreV1, OcompExExCheckpointV1},
     embedded_runtime::{
-        EmbeddedComputeOutcomeV1, EmbeddedNodePolicyV1, EmbeddedOcompDomainConfigV1,
-        EmbeddedOcompDomainV1, EmbeddedVoteOutcomeV1,
+        EmbeddedComputeOutcomeV1, EmbeddedMaterializationOutcomeV1, EmbeddedNodePolicyV1,
+        EmbeddedOcompDomainConfigV1, EmbeddedOcompDomainV1, EmbeddedVoteOutcomeV1,
     },
     supervisor::DiscoveryRecord,
 };
@@ -48,13 +48,16 @@ use outbe_primitives::{
         ProjectionCheckpoint, ProjectionFailure, ProjectionFailureClass,
         ProjectionReadinessPublisher, ProjectionStatus,
     },
+    storage::readonly::{ReadOnlyStorageProvider, StorageReader},
+    storage::StorageHandle,
     OutbeReceipt,
 };
 use reth_ethereum::exex::{ExExContext, ExExEvent, ExExHead};
 use reth_node_builder::FullNodeComponents;
 use reth_primitives_traits::{Block as _, BlockBody as _};
 use reth_provider::{
-    BlockHashReader, BlockIdReader, BlockReader, ReceiptProvider, StateProviderFactory,
+    BlockHashReader, BlockIdReader, BlockReader, ReceiptProvider, StateProvider,
+    StateProviderFactory,
 };
 use tracing::{error, info, warn};
 
@@ -95,6 +98,12 @@ struct RuntimeJobV1 {
     vote_eligible: bool,
     vote_started: bool,
     canonical_result: Option<LysisResultV1>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct MaterializationAttemptKeyV1 {
+    queue_sequence: u64,
+    first_nod_ordinal: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -172,6 +181,12 @@ struct EmbeddedOcompExExV1<P> {
     compute_rx: mpsc::Receiver<EmbeddedComputeOutcomeV1>,
     vote_tx: mpsc::Sender<EmbeddedVoteOutcomeV1>,
     vote_rx: mpsc::Receiver<EmbeddedVoteOutcomeV1>,
+    materialization_tx: mpsc::Sender<EmbeddedMaterializationOutcomeV1>,
+    materialization_rx: mpsc::Receiver<EmbeddedMaterializationOutcomeV1>,
+    materialization_active: Option<MaterializationAttemptKeyV1>,
+    materialization_attempt_heights: BTreeMap<MaterializationAttemptKeyV1, u64>,
+    chain_id: u64,
+    genesis_hash: B256,
 }
 
 pub async fn run_ocomp_exex<Node>(
@@ -242,6 +257,7 @@ where
     };
     let (compute_tx, compute_rx) = mpsc::channel();
     let (vote_tx, vote_rx) = mpsc::channel();
+    let (materialization_tx, materialization_rx) = mpsc::channel();
     let mut runtime = EmbeddedOcompExExV1 {
         provider,
         policy: config.policy,
@@ -260,6 +276,12 @@ where
         compute_rx,
         vote_tx,
         vote_rx,
+        materialization_tx,
+        materialization_rx,
+        materialization_active: None,
+        materialization_attempt_heights: BTreeMap::new(),
+        chain_id: config.identity.chain_id,
+        genesis_hash: config.genesis_hash,
     };
 
     let mut poll = tokio::time::interval(POLL_INTERVAL);
@@ -293,6 +315,9 @@ where
                 }
                 while let Ok(outcome) = runtime.vote_rx.try_recv() {
                     runtime.handle_vote(outcome);
+                }
+                while let Ok(outcome) = runtime.materialization_rx.try_recv() {
+                    runtime.handle_materialization(outcome);
                 }
                 if let Some(checkpoint) = runtime.advance_checkpoint()? {
                     if ctx.events.send(ExExEvent::FinishedHeight(
@@ -348,6 +373,7 @@ where
         }
         if target.number == self.scanned_height {
             self.refresh_jobs(target.number, target.hash)?;
+            self.reconcile_materialization(target.number, target.hash)?;
             self.publish_readiness(target.number, target.hash)?;
             return Ok(());
         }
@@ -359,6 +385,7 @@ where
                 .ok_or_else(|| eyre::eyre!("OCOMP canonical block {number} is unavailable"))?;
             self.scan_requests(number, hash)?;
             self.refresh_jobs(number, hash)?;
+            self.reconcile_materialization(number, hash)?;
             self.scanned_height = number;
             self.scanned_hash = hash;
             self.publish_readiness(number, hash)?;
@@ -754,6 +781,124 @@ where
         }
     }
 
+    fn reconcile_materialization(&mut self, height: u64, hash: B256) -> eyre::Result<()> {
+        let block = self
+            .provider
+            .block_by_hash(hash)
+            .wrap_err("load NOD materialization trigger block")?
+            .ok_or_else(|| eyre::eyre!("NOD materialization trigger block is unavailable"))?;
+        let Some(proposer) =
+            finalized_materialization_proposer(height, block.body().transactions())?
+        else {
+            return Ok(());
+        };
+        let state = self
+            .provider
+            .state_by_block_hash(hash)
+            .wrap_err("open NOD materialization finalized state")?;
+        let reader = OcompExExStateReaderV1 {
+            state: state.as_ref(),
+        };
+        let mut readonly = ReadOnlyStorageProvider::new_with_chain_identity(
+            reader,
+            self.chain_id,
+            self.genesis_hash,
+        );
+        let storage = StorageHandle::new(&mut readonly);
+        let head = outbe_nod::NodContract::new(storage.clone())
+            .ocomp_materialization_head()
+            .wrap_err("read finalized NOD materialization head")?;
+        let profile =
+            outbe_chain_constants::load_from_storage(storage.clone())?.nod_materialization;
+        let represented_validator = match self.domain.validator_sender_address() {
+            Some(sender) => outbe_validatorset::contract::ValidatorSet::new(storage)
+                .resolve_validator_for_role(
+                    sender,
+                    outbe_validatorset::delegation::ValidatorDelegateRole::Ocomp,
+                )
+                .wrap_err("resolve finalized OCOMP materializer")?,
+            None => None,
+        };
+        let progress_observed = head
+            .as_ref()
+            .is_some_and(|head| head.last_progress_height == height);
+        if !should_wake_nod_materializer(
+            self.policy,
+            represented_validator,
+            proposer,
+            height,
+            head.as_ref(),
+            progress_observed,
+            profile.retry_interval_blocks,
+        ) {
+            return Ok(());
+        }
+        let head = head.ok_or_else(|| eyre::eyre!("materialization wake lost FIFO head"))?;
+        let key = MaterializationAttemptKeyV1 {
+            queue_sequence: head.queue_sequence,
+            first_nod_ordinal: head.next_nod_ordinal,
+        };
+        if self.materialization_active.is_some()
+            || self.materialization_attempt_heights.get(&key) == Some(&height)
+        {
+            return Ok(());
+        }
+        self.domain.spawn_validator_materialization(
+            head,
+            profile.batch_subtree_height,
+            self.materialization_tx.clone(),
+        )?;
+        self.materialization_active = Some(key);
+        self.materialization_attempt_heights.insert(key, height);
+        info!(
+            queue_sequence = key.queue_sequence,
+            first_nod_ordinal = key.first_nod_ordinal,
+            "finalized proposer woke NOD materialization"
+        );
+        Ok(())
+    }
+
+    fn handle_materialization(&mut self, outcome: EmbeddedMaterializationOutcomeV1) {
+        let (key, success, detail) = match outcome {
+            EmbeddedMaterializationOutcomeV1::Finalized {
+                job_id,
+                queue_sequence,
+                first_nod_ordinal,
+                success,
+            } => {
+                info!(%job_id, queue_sequence, first_nod_ordinal, success, "NOD materialization transaction finalized");
+                (
+                    MaterializationAttemptKeyV1 {
+                        queue_sequence,
+                        first_nod_ordinal,
+                    },
+                    Some(success),
+                    None,
+                )
+            }
+            EmbeddedMaterializationOutcomeV1::Unavailable {
+                job_id,
+                queue_sequence,
+                first_nod_ordinal,
+                detail,
+            } => {
+                warn!(%job_id, queue_sequence, first_nod_ordinal, %detail, "NOD materialization attempt unavailable");
+                (
+                    MaterializationAttemptKeyV1 {
+                        queue_sequence,
+                        first_nod_ordinal,
+                    },
+                    None,
+                    Some(detail),
+                )
+            }
+        };
+        if self.materialization_active == Some(key) {
+            self.materialization_active = None;
+        }
+        let _ = (success, detail);
+    }
+
     fn verify_full_node_exact(&self, job_id: B256, canonical: &LysisResultV1) -> eyre::Result<()> {
         if self.policy == EmbeddedNodePolicyV1::FullNode {
             self.domain
@@ -1045,9 +1190,208 @@ fn local_compute_failure_is_fatal(policy: EmbeddedNodePolicyV1) -> bool {
     policy == EmbeddedNodePolicyV1::FullNode
 }
 
+fn authenticated_finalized_proposer(
+    transactions: &[impl reth_primitives_traits::SignedTransaction],
+) -> eyre::Result<Address> {
+    let transaction = transactions
+        .first()
+        .ok_or_else(|| eyre::eyre!("finalized block has no proposer-signed system transaction"))?;
+
+    transaction
+        .try_recover()
+        .wrap_err("recover finalized block proposer from system transaction")
+}
+
+fn finalized_materialization_proposer(
+    height: u64,
+    transactions: &[impl reth_primitives_traits::SignedTransaction],
+) -> eyre::Result<Option<Address>> {
+    if height == 0 {
+        return Ok(None);
+    }
+    authenticated_finalized_proposer(transactions).map(Some)
+}
+
+fn should_wake_nod_materializer(
+    policy: EmbeddedNodePolicyV1,
+    represented_validator: Option<Address>,
+    block_proposer: Address,
+    finalized_height: u64,
+    head: Option<&outbe_ocomp_protocol::nod_materialization::NodMaterializationHeadV1>,
+    progress_observed: bool,
+    retry_interval_blocks: u64,
+) -> bool {
+    if policy != EmbeddedNodePolicyV1::Validator
+        || represented_validator != Some(block_proposer)
+        || retry_interval_blocks == 0
+    {
+        return false;
+    }
+    let Some(head) = head.filter(|head| head.next_nod_ordinal < head.nod_count) else {
+        return false;
+    };
+    progress_observed
+        || finalized_height
+            >= head
+                .last_progress_height
+                .saturating_add(retry_interval_blocks)
+}
+
+struct OcompExExStateReaderV1<'a> {
+    state: &'a dyn StateProvider,
+}
+
+impl StorageReader for OcompExExStateReaderV1<'_> {
+    fn read_storage(&self, address: Address, key: B256) -> outbe_primitives::error::Result<U256> {
+        self.state
+            .storage(address, key)
+            .map(|value| value.unwrap_or_default())
+            .map_err(|error| {
+                outbe_primitives::error::PrecompileError::Storage(format!(
+                    "OCOMP ExEx finalized state read failed: {error}"
+                ))
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn materialization_head(
+        last_progress_height: u64,
+    ) -> outbe_ocomp_protocol::nod_materialization::NodMaterializationHeadV1 {
+        outbe_ocomp_protocol::nod_materialization::NodMaterializationHeadV1 {
+            queue_sequence: 1,
+            job_id: B256::repeat_byte(0x11),
+            program_semantics_hash: B256::repeat_byte(0x22),
+            worldwide_day: 20_260_812,
+            generation: 1,
+            nod_root: B256::repeat_byte(0x33),
+            nod_count: 10,
+            next_nod_ordinal: 8,
+            last_progress_height,
+        }
+    }
+
+    #[test]
+    fn finalized_materialization_wake_uses_the_authenticated_system_tx_signer() {
+        use outbe_primitives::{
+            signer::OutbeEvmSigner,
+            system_tx::{build_unsigned_system_tx, SystemTxInputV2},
+        };
+
+        let signer = OutbeEvmSigner::from_secret_bytes([0x41; 32]).expect("test signer");
+        let input = SystemTxInputV2::CycleTick;
+        let unsigned = build_unsigned_system_tx(
+            input.kind(),
+            0,
+            2,
+            outbe_primitives::chain::CHAIN_ID,
+            input.encode().expect("canonical system input"),
+        )
+        .expect("unsigned system transaction");
+        let signed = signer
+            .sign_unsigned(unsigned)
+            .expect("signed system transaction");
+
+        let proposer = authenticated_finalized_proposer(&[signed])
+            .expect("recover authenticated finalized proposer");
+        assert_eq!(proposer, signer.address());
+        assert_ne!(
+            proposer,
+            outbe_primitives::addresses::REWARDS_ADDRESS,
+            "the protocol reward beneficiary is not proposer identity"
+        );
+        assert!(should_wake_nod_materializer(
+            EmbeddedNodePolicyV1::Validator,
+            Some(signer.address()),
+            proposer,
+            100,
+            Some(&materialization_head(90)),
+            true,
+            30,
+        ));
+    }
+
+    #[test]
+    fn genesis_without_system_transactions_has_no_materialization_proposer() {
+        let transactions: Vec<outbe_primitives::OutbeTxEnvelope> = Vec::new();
+        assert_eq!(
+            finalized_materialization_proposer(0, &transactions)
+                .expect("genesis has no materialization proposer"),
+            None
+        );
+    }
+
+    #[test]
+    fn only_the_validator_representing_the_finalized_proposer_wakes_materialization() {
+        let represented = alloy_primitives::Address::repeat_byte(0x11);
+        let other = alloy_primitives::Address::repeat_byte(0x22);
+        let head = materialization_head(90);
+
+        assert!(should_wake_nod_materializer(
+            EmbeddedNodePolicyV1::Validator,
+            Some(represented),
+            represented,
+            100,
+            Some(&head),
+            true,
+            30,
+        ));
+        assert!(!should_wake_nod_materializer(
+            EmbeddedNodePolicyV1::Validator,
+            Some(represented),
+            other,
+            100,
+            Some(&head),
+            true,
+            30,
+        ));
+        assert!(!should_wake_nod_materializer(
+            EmbeddedNodePolicyV1::FullNode,
+            None,
+            represented,
+            100,
+            Some(&head),
+            true,
+            30,
+        ));
+    }
+
+    #[test]
+    fn retry_wake_uses_the_resolved_interval_and_requires_an_incomplete_head() {
+        let represented = alloy_primitives::Address::repeat_byte(0x11);
+        let head = materialization_head(90);
+
+        assert!(!should_wake_nod_materializer(
+            EmbeddedNodePolicyV1::Validator,
+            Some(represented),
+            represented,
+            119,
+            Some(&head),
+            false,
+            30,
+        ));
+        assert!(should_wake_nod_materializer(
+            EmbeddedNodePolicyV1::Validator,
+            Some(represented),
+            represented,
+            120,
+            Some(&head),
+            false,
+            30,
+        ));
+        assert!(!should_wake_nod_materializer(
+            EmbeddedNodePolicyV1::Validator,
+            Some(represented),
+            represented,
+            120,
+            None,
+            true,
+            30,
+        ));
+    }
 
     #[test]
     fn loaded_checkpoint_waits_for_provider_finality_before_entering_running() {

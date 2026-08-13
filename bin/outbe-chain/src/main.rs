@@ -6,8 +6,6 @@
 //! Also provides the `dkg` subcommand for bootstrapping BLS threshold key material.
 
 use clap::Parser;
-use commonware_codec::Encode as _;
-use commonware_cryptography::Signer as _;
 use commonware_runtime::Runner as _;
 use eyre::WrapErr as _;
 use outbe_compressed_entities::{
@@ -63,29 +61,19 @@ mod ocomp_exex;
 mod ocomp_genesis;
 mod tee_genesis;
 
-enum RenewalNodeAuthorityV1 {
-    Validator(Arc<OutbeEvmSigner>),
-    FullNode(k256::ecdsa::SigningKey),
-}
+struct RenewalNodeAuthorityV1(k256::ecdsa::SigningKey);
 
 impl RenewalNodeSignerV1 for RenewalNodeAuthorityV1 {
     fn sign_node_hash(&self, hash: alloy_primitives::B256) -> eyre::Result<[u8; 65]> {
-        match self {
-            Self::Validator(signer) => signer
-                .sign_hash(&hash)
-                .map_err(|error| eyre::eyre!("validator renewal signing failed: {error}")),
-            Self::FullNode(signer) => {
-                use k256::ecdsa::signature::hazmat::PrehashSigner as _;
-                let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
-                    signer.sign_prehash(hash.as_slice()).map_err(|error| {
-                        eyre::eyre!("full-node renewal signing failed: {error}")
-                    })?;
-                let mut bytes = [0_u8; 65];
-                bytes[..64].copy_from_slice(&signature.to_bytes());
-                bytes[64] = recovery.to_byte();
-                Ok(bytes)
-            }
-        }
+        use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+        let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = self
+            .0
+            .sign_prehash(hash.as_slice())
+            .map_err(|error| eyre::eyre!("NodeHost renewal signing failed: {error}"))?;
+        let mut bytes = [0_u8; 65];
+        bytes[..64].copy_from_slice(&signature.to_bytes());
+        bytes[64] = recovery.to_byte();
+        Ok(bytes)
     }
 }
 
@@ -293,7 +281,6 @@ where
                     genesis_hash,
                     &node_data_dir,
                     &committed.node_id,
-                    committed.enclave_profile,
                 ) {
                     Ok(authorized) => {
                         if let Err(error) = outbe_tee::promote_replacement_candidate(
@@ -364,7 +351,6 @@ where
                 genesis_hash,
                 &node_data_dir,
                 &committed.node_id,
-                committed.enclave_profile,
             ) {
                 Ok(authorized) => {
                     // A matching finalized B proves that transition execution
@@ -1079,8 +1065,7 @@ fn run_node() -> eyre::Result<()> {
         } else {
             None
         };
-        let renewal_validator_authority = evm_signer.clone();
-        let mut renewal_full_node_authority = None;
+        let mut renewal_node_host_authority = None;
 
         // Every network declares exactly one attestation policy in genesis. The
         // local session protocol is an independent, explicit operator choice:
@@ -1101,71 +1086,36 @@ fn run_node() -> eyre::Result<()> {
             .map_err(eyre::Report::msg)?;
         match tee_session {
             outbe_engine::args::ResolvedTeeSession::ProductionNodeHost => {
-                if args.is_validator {
-                let signing_key_path = args.signing_key.as_deref().ok_or_else(|| {
-                    eyre::eyre!("validator TEE initialization requires --consensus.signing-key")
-                })?;
-                let bls_key = outbe_engine::validators::load_signing_key(
-                    signing_key_path,
-                    &args.key_backend()?,
+                use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+
+                let (signing, reth_p2p_public) = load_reth_p2p_node_host_signer(
+                    &builder.config().network,
+                    builder.config().datadir().p2p_secret(),
                 )?;
-                let consensus_bls_public: [u8; 48] = bls_key
-                    .public_key()
-                    .encode()
-                    .as_ref()
-                    .try_into()
-                    .map_err(|_| eyre::eyre!("validator BLS public key is not 48 bytes"))?;
-                let signer = evm_signer.as_ref().ok_or_else(|| {
-                    eyre::eyre!("validator EVM signer unavailable during TEE initialization")
-                })?;
-                let client = outbe_tee::connect_or_initialize_validator_enclave(
+                let client = outbe_tee::connect_or_initialize_node_host_enclave(
                     endpoint,
                     &node_data_dir,
-                    outbe_tee::ValidatorNodeHostIdentityV1 {
+                    outbe_tee::NodeHostIdentityV1 {
                         chain_id: builder.config().chain.chain().id(),
                         genesis_hash: builder.config().chain.genesis_hash(),
-                        validator: signer.address(),
-                        consensus_bls_public,
+                        reth_p2p_public,
                     },
-                    |hash| signer.sign_hash(&hash).map_err(|error| error.to_string()),
+                    |hash| {
+                        let (signature, recovery): (
+                            k256::ecdsa::Signature,
+                            k256::ecdsa::RecoveryId,
+                        ) = signing
+                            .sign_prehash(hash.as_slice())
+                            .map_err(|error| error.to_string())?;
+                        let mut bytes = [0_u8; 65];
+                        bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
+                        bytes[64] = recovery.to_byte();
+                        Ok(bytes)
+                    },
                 )
-                .wrap_err("validator NodeHost enclave initialization failed")?;
+                .wrap_err("NodeHost enclave initialization failed")?;
+                renewal_node_host_authority = Some(signing);
                 outbe_tee::install_authorized_enclave_client(client).map_err(eyre::Report::msg)?;
-                } else {
-                    use k256::ecdsa::signature::hazmat::PrehashSigner as _;
-
-                    // Resolve the identity through the same Reth API and default
-                    // discovery-secret path used later by the network builder.
-                    let (signing, reth_p2p_public) = load_reth_p2p_node_host_signer(
-                        &builder.config().network,
-                        builder.config().datadir().p2p_secret(),
-                    )?;
-                    let client = outbe_tee::connect_or_initialize_full_node_enclave(
-                        endpoint,
-                        &node_data_dir,
-                        outbe_tee::FullNodeNodeHostIdentityV1 {
-                            chain_id: builder.config().chain.chain().id(),
-                            genesis_hash: builder.config().chain.genesis_hash(),
-                            reth_p2p_public,
-                        },
-                        |hash| {
-                            let (signature, recovery): (
-                                k256::ecdsa::Signature,
-                                k256::ecdsa::RecoveryId,
-                            ) = signing
-                                .sign_prehash(hash.as_slice())
-                                .map_err(|error| error.to_string())?;
-                            let mut bytes = [0_u8; 65];
-                            bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
-                            bytes[64] = recovery.to_byte();
-                            Ok(bytes)
-                        },
-                    )
-                    .wrap_err("full-node NodeHost enclave initialization failed")?;
-                    renewal_full_node_authority = Some(signing);
-                    outbe_tee::install_authorized_enclave_client(client)
-                        .map_err(eyre::Report::msg)?;
-                }
             }
             outbe_engine::args::ResolvedTeeSession::Development => {
                 let client = outbe_tee::EnclaveClient::connect_endpoint(endpoint)
@@ -1175,7 +1125,7 @@ fn run_node() -> eyre::Result<()> {
         }
         info!(
             socket = %socket.display(),
-            validator_node_host = args.is_validator,
+            node_host_identity = "reth-p2p-secp256k1",
             attestation_mode = ?initial_tee_policy.attestation_mode,
             session_mode = ?tee_session,
             "mandatory TEE enclave sidecar connected before execution launch",
@@ -1226,34 +1176,14 @@ fn run_node() -> eyre::Result<()> {
                 })?;
                 let manifest = outbe_tee::load_committed_enclave_manifest_v1(&node_data_dir)
                     .wrap_err("load committed NodeHost manifest for renewal")?;
-                let (selector, authority) = match &manifest.node_id {
-                    outbe_primitives::tee_attestation_v1::NodeIdV1::Validator {
-                        address,
-                        ..
-                    } if args.is_validator => (
-                        NodeBindingSelectorV1::Validator(alloy_primitives::Address::from(*address)),
-                        RenewalNodeAuthorityV1::Validator(
-                            renewal_validator_authority.clone().ok_or_else(|| {
-                                eyre::eyre!("validator renewal authority is unavailable")
-                            })?,
-                        ),
-                    ),
-                    outbe_primitives::tee_attestation_v1::NodeIdV1::FullNode {
-                        reth_p2p_public,
-                    } if !args.is_validator => (
-                        NodeBindingSelectorV1::FullNode(*reth_p2p_public),
-                        RenewalNodeAuthorityV1::FullNode(
-                            renewal_full_node_authority.take().ok_or_else(|| {
-                                eyre::eyre!("full-node renewal authority is unavailable")
-                            })?,
-                        ),
-                    ),
-                    _ => {
-                        eyre::bail!(
-                            "committed NodeHost manifest profile does not match the node role"
-                        );
-                    }
-                };
+                let selector = NodeBindingSelectorV1::NodeHost(
+                    manifest.node_id.reth_p2p_public,
+                );
+                let authority = RenewalNodeAuthorityV1(
+                    renewal_node_host_authority.take().ok_or_else(|| {
+                        eyre::eyre!("NodeHost renewal authority is unavailable")
+                    })?,
+                );
                 Some(RenewalWorkerV1 {
                     rpc_url: args.tee_renewal_rpc_url.clone(),
                     relay,

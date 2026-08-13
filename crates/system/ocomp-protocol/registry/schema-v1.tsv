@@ -33,3 +33,5 @@ kind	type	fields_in_canonical_order
 0x0024	OcompAccountabilitySummaryV1	closed_height:u64,result_validator_set_epoch:u64,result_committee_set_hash:Hash,result_ocomp_binding_hash:Hash,member_count:u16,quorum_threshold:u16,winning_ResultDigest:Option<Hash>,quorum_evidence_hash:Option<Hash>,timely_bitmap:Vec<u8>,matching_bitmap:Vec<u8>,divergent_bitmap:Vec<u8>,missing_bitmap:Vec<u8>,equivocation_bitmap:Vec<u8>
 0x0025	OcompVoteAccountabilityV1	JobId:Hash,result_validator_set_epoch:u64,result_committee_set_hash:Hash,result_ocomp_binding_hash:Hash,member_count:u16,quorum_threshold:u16,slots:Vec<Option<ResultVoteSlotV1>>,quorum:Option<OcompQuorumV1>,closed_summary:Option<OcompAccountabilitySummaryV1>
 0x0026	LysisTerminalV1	outcome:u8,terminal_height:u64,terminal_time:u64,next_pending_nonce:Option<u64>,completed_binding:Option<OcompCompletedBindingV1>
+0x0027	NodMaterializationBatchV1	queue_sequence:u64,first_nod_ordinal:u32,actions:Vec<NodActionV1>,root_path:Vec<Hash>
+0x0028	NodMaterializationHeadV1	queue_sequence:u64,JobId:Hash,program_semantics_hash:Hash,wwd:u32,generation:u64,nod_root:Hash,nod_count:u32,next_nod_ordinal:u32,last_progress_height:u64

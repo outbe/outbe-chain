@@ -1,4 +1,4 @@
-//! Canonical replay-visible carrier for one validator-authenticated OCOMP vote.
+//! Canonical replay-visible carrier for validator-authenticated OCOMP actions.
 //!
 //! The signed EIP-1559 envelope is propagated and replayed like any other
 //! transaction, but its `gas_limit` is a protocol marker rather than the budget
@@ -9,12 +9,15 @@ use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 use alloy_primitives::{Address, U256};
 
 use crate::{
-    abi::{METADOSIS_ADDRESS, SUBMIT_LYSIS_RESULT_SELECTOR},
+    abi::{
+        decode_materialize_certified_nods_calldata, MATERIALIZE_CERTIFIED_NODS_SELECTOR,
+        METADOSIS_ADDRESS, NOD_FACTORY_ADDRESS, SUBMIT_LYSIS_RESULT_SELECTOR,
+    },
     vote::{decode_submit_lysis_result_prefix, ResultVotePrefixV1},
     ProtocolError, SchemaLimits,
 };
 
-/// Exact visible gas marker signed into every OCOMP vote carrier.
+/// Exact visible gas marker signed into every OCOMP system carrier.
 pub const OCOMP_SYSTEM_CARRIER_GAS_LIMIT: u64 = 30_000;
 
 /// Per-carrier internal execution ceiling, separate from Ethereum user gas.
@@ -46,12 +49,18 @@ pub struct OcompSystemCarrierView<'a> {
 
 /// Canonical routing data retained after stateless carrier classification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OcompSystemCarrierCandidate {
-    pub prefix: ResultVotePrefixV1,
+pub enum OcompSystemCarrierCandidate {
+    ResultVote {
+        prefix: ResultVotePrefixV1,
+    },
+    NodMaterialization {
+        queue_sequence: u64,
+        first_nod_ordinal: u32,
+    },
 }
 
-/// Strict rejection for a transaction that targets the OCOMP vote selector but
-/// does not satisfy the canonical system-carrier envelope.
+/// Strict rejection for a transaction that targets an OCOMP system selector
+/// but does not satisfy the canonical carrier envelope.
 #[derive(Debug, thiserror::Error)]
 pub enum OcompSystemCarrierError {
     #[error("OCOMP system carrier must be one EIP-1559 transaction")]
@@ -68,21 +77,25 @@ pub enum OcompSystemCarrierError {
     CalldataTooLarge { actual: usize, limit: usize },
     #[error("malformed canonical OCOMP result vote carrier: {0}")]
     MalformedVote(#[source] ProtocolError),
+    #[error("malformed canonical OCOMP NOD materialization carrier: {0}")]
+    MalformedMaterialization(#[source] ProtocolError),
 }
 
 /// Classifies the exact OCOMP system carrier without reading chain state.
 ///
 /// `Ok(None)` is reserved for transactions that do not target
-/// `Metadosis.submitLysisResult`. Once both target and selector match, every
-/// envelope or payload defect is a fail-closed error rather than a fallback to
-/// ordinary transaction execution.
+/// an OCOMP system action. Once a target and selector match, every envelope or
+/// payload defect is a fail-closed error rather than a fallback to ordinary
+/// transaction execution.
 pub fn classify_ocomp_system_carrier(
     tx: OcompSystemCarrierView<'_>,
     limits: &SchemaLimits,
 ) -> Result<Option<OcompSystemCarrierCandidate>, OcompSystemCarrierError> {
-    if tx.to != Some(METADOSIS_ADDRESS)
-        || tx.input.get(..4) != Some(SUBMIT_LYSIS_RESULT_SELECTOR.as_slice())
-    {
+    let is_vote = tx.to == Some(METADOSIS_ADDRESS)
+        && tx.input.get(..4) == Some(SUBMIT_LYSIS_RESULT_SELECTOR.as_slice());
+    let is_materialization = tx.to == Some(NOD_FACTORY_ADDRESS)
+        && tx.input.get(..4) == Some(MATERIALIZE_CERTIFIED_NODS_SELECTOR.as_slice());
+    if !is_vote && !is_materialization {
         return Ok(None);
     }
     if !tx.is_eip1559 {
@@ -106,13 +119,27 @@ pub fn classify_ocomp_system_carrier(
             expected: OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
         });
     }
-    if tx.input.len() > MAX_OCOMP_SYSTEM_CARRIER_CALLDATA_BYTES {
+    let calldata_limit = if is_vote {
+        MAX_OCOMP_SYSTEM_CARRIER_CALLDATA_BYTES
+    } else {
+        68 + ((limits.codec.max_body_bytes + crate::codec::OCB1_HEADER_LEN + 31) & !31)
+    };
+    if tx.input.len() > calldata_limit {
         return Err(OcompSystemCarrierError::CalldataTooLarge {
             actual: tx.input.len(),
-            limit: MAX_OCOMP_SYSTEM_CARRIER_CALLDATA_BYTES,
+            limit: calldata_limit,
         });
     }
-    let prefix = decode_submit_lysis_result_prefix(tx.input, limits)
-        .map_err(OcompSystemCarrierError::MalformedVote)?;
-    Ok(Some(OcompSystemCarrierCandidate { prefix }))
+    if is_vote {
+        let prefix = decode_submit_lysis_result_prefix(tx.input, limits)
+            .map_err(OcompSystemCarrierError::MalformedVote)?;
+        Ok(Some(OcompSystemCarrierCandidate::ResultVote { prefix }))
+    } else {
+        let batch = decode_materialize_certified_nods_calldata(tx.input, limits)
+            .map_err(OcompSystemCarrierError::MalformedMaterialization)?;
+        Ok(Some(OcompSystemCarrierCandidate::NodMaterialization {
+            queue_sequence: batch.queue_sequence,
+            first_nod_ordinal: batch.first_nod_ordinal,
+        }))
+    }
 }

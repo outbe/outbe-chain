@@ -154,7 +154,7 @@ pub fn calculate_distribution_with_cap(
 // New daily orchestrator surface
 // ────────────────────────────────────────────────────────────────────────
 
-/// One of the four reward pools that AgentReward owns end-to-end. The
+/// One of the three reward pools that AgentReward owns end-to-end. The
 /// validator pool is intentionally NOT part of this enum: validator
 /// emission is orchestrated by the EmissionLimit Cycle handler
 /// directly against `outbe_rewards::api`, both because the
@@ -176,10 +176,6 @@ pub enum PoolKind {
     /// CCA accumulator. The amount is simply added to `CCA_ADDRESS`'s
     /// native balance; there is no distribution logic in v1.
     Cca,
-    /// Merchant accumulator. The amount is simply added to
-    /// `MERCHANT_ADDRESS`'s native balance; there is no distribution
-    /// logic in v1.
-    Merchant,
 }
 
 /// Daily orchestrator entrypoint called by the EmissionLimit Cycle
@@ -190,8 +186,8 @@ pub enum PoolKind {
 /// Excess accounting (per pool kind):
 /// * `Waa` / `Sra`: 32 %-cap distribution residue, plus the entire pool
 ///   when no tributes were recorded for the day (no-tribute case).
-/// * `Cca` / `Merchant`: always zero — these pools are pure
-///   accumulators on `CCA_ADDRESS` / `MERCHANT_ADDRESS`.
+/// * `Cca`: always zero — this pool is a pure accumulator on
+///   `CCA_ADDRESS`.
 ///
 /// Mint/burn parity is enforced inside the WAA/SRA helpers: each pool
 /// is minted onto `AGENT_REWARD_ADDRESS` before distribution, and the
@@ -210,10 +206,6 @@ pub fn distribute_daily(
             PoolKind::Sra => distribute_capped(ctx, prev_day, PoolKind::Sra, *amount)?,
             PoolKind::Cca => {
                 accumulate_to_address(ctx, outbe_primitives::addresses::CCA_ADDRESS, *amount)?;
-                U256::ZERO
-            }
-            PoolKind::Merchant => {
-                accumulate_to_address(ctx, outbe_primitives::addresses::MERCHANT_ADDRESS, *amount)?;
                 U256::ZERO
             }
         };
@@ -276,9 +268,9 @@ fn distribute_capped(
     Ok(excess)
 }
 
-/// Mints `amount` onto `target`'s native balance. Used for the CCA and
-/// Merchant pools, which are plain accumulators in v1 — no distribution
-/// logic, no excess.
+/// Mints `amount` onto `target`'s native balance. Used for the CCA
+/// pool, which is a plain accumulator in v1 — no distribution logic,
+/// no excess.
 fn accumulate_to_address(
     ctx: &outbe_primitives::block::BlockRuntimeContext,
     target: alloy_primitives::Address,
