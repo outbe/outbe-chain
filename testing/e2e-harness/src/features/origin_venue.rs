@@ -162,35 +162,10 @@ fn day_closure(_world: &World, _worldwide_day: u32) -> String {
     "day closure unreadable without ocomp-integration".to_owned()
 }
 
-/// Desis drives the auction on this cadence.
+/// An e2e build runs the auction on minute-long windows, so the run waits the
+/// stages out rather than moving the clock across a day it never formed.
 #[cfg(feature = "ocomp-integration")]
-const AUCTION_TICK_PERIOD_SECS: u64 = 43_200;
-
-#[cfg(feature = "ocomp-integration")]
-const AUCTION_WINDOW_SECS: u64 = 24 * 3600;
-
-#[cfg(feature = "ocomp-integration")]
-fn advance_committee_clock(world: &mut World, target: u64) {
-    let _ = crate::features::ocomp::restart_committee_at_logical_time(world, target);
-}
-
-#[cfg(feature = "ocomp-integration")]
-fn next_tick_after(timestamp: u64) -> u64 {
-    timestamp
-        .checked_div(AUCTION_TICK_PERIOD_SECS)
-        .and_then(|periods| periods.checked_add(1))
-        .and_then(|periods| periods.checked_mul(AUCTION_TICK_PERIOD_SECS))
-        .expect("auction tick boundary after the committee clock")
-        .saturating_add(60)
-}
-
-#[cfg(feature = "ocomp-integration")]
-#[when("the committee logical clock reaches the next auction schedule tick")]
-fn committee_clock_reaches_next_auction_tick(world: &mut World) {
-    let url = world.rpc.url(world.validators.primary_port());
-    let now = eth::latest_block_timestamp(&url).expect("committee block timestamp");
-    advance_committee_clock(world, next_tick_after(now));
-}
+const AUCTION_STAGE_TIMEOUT: Duration = Duration::from_secs(900);
 
 #[cfg(feature = "ocomp-integration")]
 fn advance_past_window_to_stage(world: &mut World, target_stage: u8) {
@@ -201,11 +176,7 @@ fn advance_past_window_to_stage(world: &mut World, target_stage: u8) {
         .expect("a deploy recorded its addresses");
     let worldwide_day = settled_day(world);
     let url = world.rpc.url(world.validators.primary_port());
-    let now = eth::latest_block_timestamp(&url).expect("committee block timestamp");
-    advance_committee_clock(world, next_tick_after(now + AUCTION_WINDOW_SECS));
-
-    let url = world.rpc.url(world.validators.primary_port());
-    let deadline = Instant::now() + AUCTION_START_TIMEOUT;
+    let deadline = Instant::now() + AUCTION_STAGE_TIMEOUT;
     loop {
         let stage = eth::read_call(
             &url,
@@ -227,7 +198,7 @@ fn advance_past_window_to_stage(world: &mut World, target_stage: u8) {
     }
 }
 
-const AUCTION_START_TIMEOUT: Duration = Duration::from_secs(300);
+const AUCTION_START_TIMEOUT: Duration = Duration::from_secs(600);
 
 #[then("the auction for that day opens on the target chain")]
 fn auction_opens_on_target(world: &mut World) {

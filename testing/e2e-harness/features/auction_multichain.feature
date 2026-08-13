@@ -26,7 +26,6 @@ Feature: Multichain auction from a settled day
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When the production OCOMP domains process that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod
-    When the committee logical clock reaches the next auction schedule tick
     Then the auction for that day opens on the target chain
     When two bidders commit their bids
     And those bidders reveal their bids once the venue is revealing

@@ -6,14 +6,17 @@ use outbe_common::WorldwideDay;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
+#[cfg(not(feature = "e2e-test"))]
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_promislimit::PromisLimitContract;
 
 use outbe_intexfactory::constants::{QUALIFIER_ISSUANCE_ISO, QUALIFIER_REFERENCE_ISO};
 
+#[cfg(not(feature = "e2e-test"))]
+use crate::constants::MIN_COMMIT_WINDOW_SECONDS;
 use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
-    DAY_STATE_RED, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, RATE_SCALE,
+    DAY_STATE_RED, ORIGIN_ROUTER_ADDRESS, RATE_SCALE,
     REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
@@ -63,18 +66,25 @@ pub(crate) fn preflight_brief(
     }
     // Anchor to this midnight while it still leaves the minimum commit window;
     // a late brief (stall past midnight) anchors to the next one instead.
-    let midnight = now - now % SECONDS_PER_DAY;
-    let elapsed = now.checked_sub(midnight).ok_or_else(|| {
-        PrecompileError::Fatal("brief timestamp precedes its UTC midnight".into())
-    })?;
-    let remaining = COMMIT_WINDOW_SECONDS.saturating_sub(elapsed);
-    let anchor_ts = if remaining >= MIN_COMMIT_WINDOW_SECONDS {
-        midnight
-    } else {
-        midnight
-            .checked_add(SECONDS_PER_DAY)
-            .ok_or_else(|| PrecompileError::Revert("brief anchor timestamp overflow".into()))?
+    #[cfg(not(feature = "e2e-test"))]
+    let anchor_ts = {
+        let midnight = now - now % SECONDS_PER_DAY;
+        let elapsed = now.checked_sub(midnight).ok_or_else(|| {
+            PrecompileError::Fatal("brief timestamp precedes its UTC midnight".into())
+        })?;
+        let remaining = COMMIT_WINDOW_SECONDS.saturating_sub(elapsed);
+        if remaining >= MIN_COMMIT_WINDOW_SECONDS {
+            midnight
+        } else {
+            midnight
+                .checked_add(SECONDS_PER_DAY)
+                .ok_or_else(|| PrecompileError::Revert("brief anchor timestamp overflow".into()))?
+        }
     };
+    // An e2e run's windows are minutes, so anchoring to midnight would put the
+    // whole auction a day out; it starts from the brief instead.
+    #[cfg(feature = "e2e-test")]
+    let anchor_ts = now;
     u32::try_from(anchor_ts).map_err(|_| PrecompileError::Revert("brief anchor exceeds u32".into()))
 }
 

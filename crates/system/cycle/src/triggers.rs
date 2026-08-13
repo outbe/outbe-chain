@@ -108,6 +108,13 @@ pub fn metadosis_mutation_lease_budget_per_tick() -> u8 {
     })
 }
 
+/// An e2e run walks a whole auction inside one day, so its stages need a cadence
+/// that fits there rather than the production half-day one.
+#[cfg(not(feature = "e2e-test"))]
+const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 43_200;
+#[cfg(feature = "e2e-test")]
+const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 120;
+
 /// Active trigger table. Order is informational only — the dispatcher
 /// fires triggers independently per slot.
 pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 5] {
@@ -161,7 +168,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
         TriggerSpec {
             id: TriggerId::AuctionAdvance.as_u32(),
             label: "auction_advance",
-            period_seconds: 43_200,
+            period_seconds: AUCTION_ADVANCE_PERIOD_SECONDS,
             start_offset_seconds: 0,
             // Gated like emission_limit_1 so the brief it writes and this start
             // land in the same slot.

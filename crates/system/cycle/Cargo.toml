@@ -5,6 +5,9 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+e2e-test = []
+
 [dependencies]
 outbe-chain-constants.workspace = true
 outbe-macros.workspace = true

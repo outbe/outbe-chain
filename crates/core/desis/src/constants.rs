@@ -27,13 +27,29 @@ pub const RATE_SCALE: u32 = 1_000_000;
 pub const BIDS_FANIN_TIMEOUT_SECS: u64 = 12 * 3600;
 
 /// Midnight-anchored schedule: the commit, reveal and settlement windows each span one day.
+#[cfg(not(feature = "e2e-test"))]
 pub const COMMIT_WINDOW_SECONDS: u64 = 24 * 3600;
+#[cfg(not(feature = "e2e-test"))]
 pub const REVEAL_WINDOW_SECONDS: u32 = 24 * 3600;
+#[cfg(not(feature = "e2e-test"))]
 pub const SETTLEMENT_WINDOW_SECONDS: u64 = 24 * 3600;
+
+/// An e2e run walks the same stages inside one day, so its windows have to fit
+/// there: a day-long window would carry the auction over a midnight the run
+/// never formed.
+#[cfg(feature = "e2e-test")]
+pub const COMMIT_WINDOW_SECONDS: u64 = 300;
+#[cfg(feature = "e2e-test")]
+pub const REVEAL_WINDOW_SECONDS: u32 = 300;
+#[cfg(feature = "e2e-test")]
+pub const SETTLEMENT_WINDOW_SECONDS: u64 = 300;
 
 /// Guarantee at least this much commit window; a brief that would leave less
 /// anchors to the next midnight instead.
+#[cfg(not(feature = "e2e-test"))]
 pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 18 * 3600;
+#[cfg(feature = "e2e-test")]
+pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 300;
 
 /// `dayState` wire values carried by AUCTION_STAGE_START.
 pub const DAY_STATE_GREEN: u8 = 1;
