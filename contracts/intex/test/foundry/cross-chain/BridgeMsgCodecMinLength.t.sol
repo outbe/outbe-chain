@@ -3,6 +3,8 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
+import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
+import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 
 /// The inbound length floors are hand-derived ABI arithmetic, so each is pinned against the
 /// smallest message its encoder can produce.
@@ -23,6 +25,34 @@ contract BridgeMsgCodecMinLengthTest is Test {
 
         bytes memory smallest = BridgeMsgCodec.encodeIssuanceInstructions(series);
         assertEq(smallest.length, BridgeMsgCodec.MIN_LEN_ISSUANCE_INSTRUCTIONS, "issuance floor");
+    }
+
+    function test_StageStartFloorIsADayWithNoPricedCurrency() public view {
+        // A day the oracle could price in nothing is cancelled, and its message carries no rows.
+        bytes memory smallest =
+            this.encodeStageStart(new IOriginRouter.ReferencePrice[](0), uint8(IIntexAuction.WorldwideDayState.Red));
+        assertEq(smallest.length, BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START, "stage start floor");
+
+        (, IIntexAuction.WorldwideDayState dayState,, IIntexAuction.AuctionParams memory params) =
+            BridgeMsgCodec.decodeAuctionParams(smallest);
+        assertEq(uint8(dayState), uint8(IIntexAuction.WorldwideDayState.Red), "red");
+        assertEq(params.prices.length, 0, "no rows");
+    }
+
+    function test_ALiveDayMustPriceSomething() public {
+        vm.expectRevert(BridgeMsgCodec.MissingReferencePrices.selector);
+        this.encodeStageStart(new IOriginRouter.ReferencePrice[](0), uint8(IIntexAuction.WorldwideDayState.Green));
+    }
+
+    /// External so the encoder runs one call deep, as a real send does.
+    function encodeStageStart(IOriginRouter.ReferencePrice[] calldata rows, uint8 dayState)
+        external
+        pure
+        returns (bytes memory)
+    {
+        return BridgeMsgCodec.encodeAuctionStageStart(
+            20_250_101, 100, 200, 300, 1e18, 1e6, rows, 5, 6, 7, 1, 9e18, dayState
+        );
     }
 
     function test_EveryFloorAdmitsWhatTheEncoderProduces() public pure {
