@@ -289,10 +289,7 @@ fn scan_qualifies_each_currency_against_its_own_rate() {
         seed_currency(storage, 840, Some(floor + U256::from(1u64)));
         seed_currency(storage, EUR, Some(floor - U256::from(1u64)));
 
-        assert_eq!(
-            crate::hooks::scan_and_qualify(&block_ctx(storage)).unwrap(),
-            1
-        );
+        crate::hooks::scan_and_qualify(&block_ctx(storage)).unwrap();
         assert_eq!(
             api::get_gem(storage, usd_id).unwrap().unwrap().state,
             GemState::Qualified as u8
@@ -316,10 +313,7 @@ fn scan_skips_a_currency_without_a_priced_pair() {
         seed_currency(storage, 840, Some(floor + U256::from(1u64)));
         seed_currency(storage, EUR, None);
 
-        assert_eq!(
-            crate::hooks::scan_and_qualify(&block_ctx(storage)).unwrap(),
-            1
-        );
+        crate::hooks::scan_and_qualify(&block_ctx(storage)).unwrap();
         assert_eq!(
             api::get_gem(storage, usd_id).unwrap().unwrap().state,
             GemState::Qualified as u8
@@ -327,6 +321,58 @@ fn scan_skips_a_currency_without_a_priced_pair() {
         assert_eq!(
             api::get_gem(storage, eur_id).unwrap().unwrap().state,
             GemState::Issued as u8
+        );
+    });
+}
+
+/// A sweep cut short by the budget must resume from its persisted bin cursor.
+#[test]
+fn qualify_resumes_from_the_bin_cursor_after_the_budget_runs_out() {
+    with_storage(|storage| {
+        let mut low = sample_params(ALICE);
+        low.floor_price_minor = U256::from(100_000_000_000_000_000u128);
+        let low_id = api::add_gem(storage, low).unwrap();
+        let mut high = sample_params(BOB);
+        high.floor_price_minor = U256::from(200_000_000_000_000_000u128);
+        let high_id = api::add_gem(storage, high).unwrap();
+
+        let rate = U256::from(500_000_000_000_000_000u128);
+        let ctx = block_ctx(storage);
+
+        // Budget of one: only the lower bin is drained this block.
+        assert_eq!(
+            crate::hooks::qualify_with_rate(&ctx, 840, rate, 1).unwrap(),
+            1
+        );
+        assert_eq!(
+            api::get_gem(storage, high_id).unwrap().unwrap().state,
+            GemState::Issued as u8
+        );
+        assert!(
+            GemContract::new(storage.clone())
+                .qualify_scan_cursor
+                .read(&840)
+                .unwrap()
+                > 0
+        );
+
+        // Next block picks up where it stopped, then resets for a fresh sweep.
+        assert_eq!(
+            crate::hooks::qualify_with_rate(&ctx, 840, rate, 256).unwrap(),
+            1
+        );
+        for id in [low_id, high_id] {
+            assert_eq!(
+                api::get_gem(storage, id).unwrap().unwrap().state,
+                GemState::Qualified as u8
+            );
+        }
+        assert_eq!(
+            GemContract::new(storage.clone())
+                .qualify_scan_cursor
+                .read(&840)
+                .unwrap(),
+            0
         );
     });
 }

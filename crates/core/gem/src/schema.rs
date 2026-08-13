@@ -151,6 +151,11 @@ pub struct GemContract {
 
     #[attribute(order = 12)]
     pub callable_gem_index: outbe_primitives::storage::dsl::Map<U256, u32>,
+
+    /// Next bin the qualify scan visits, per reference currency. Non-zero only
+    /// while a sweep was cut short by the per-block budget.
+    #[attribute(order = 13)]
+    pub qualify_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 }
 
 impl GemContract<'_> {

@@ -11,7 +11,7 @@ use outbe_primitives::{
     time::{previous_date_key, timestamp_to_date_key},
 };
 
-use crate::constants::CALL_WINDOW;
+use crate::constants::{CALL_WINDOW, MAX_GEM_QUALIFICATIONS_PER_BLOCK};
 use crate::schema::GemContract;
 
 pub struct GemLifecycle;
@@ -21,7 +21,6 @@ impl BlockLifecycle for GemLifecycle {
     type EndBlockResult = ();
 
     fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
-        // TODO refactor this. Oracle is called here for each block
         scan_and_qualify(ctx)?;
         Ok(())
     }
@@ -36,36 +35,56 @@ impl BlockLifecycle for GemLifecycle {
 /// pair is unregistered or unpriced is skipped for this block rather than
 /// halting it — the registry lists currencies independently of whether a pair
 /// has been priced yet.
-pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let mut promoted: u32 = 0;
+pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<()> {
+    let mut budget = MAX_GEM_QUALIFICATIONS_PER_BLOCK;
     for iso_code in get_all_reference_currencies(ctx)? {
+        if budget == 0 {
+            break;
+        }
         let Some(rate) = coen_rate_for_opt(ctx.storage.clone(), iso_code)? else {
             continue;
         };
-        promoted = promoted.saturating_add(qualify_with_rate(ctx, iso_code, rate)?);
+        let inspected = qualify_with_rate(ctx, iso_code, rate, budget)?;
+        budget = budget.saturating_sub(inspected);
     }
-    Ok(promoted)
+    Ok(())
 }
 
-/// Drains the floor-bins crossed by one currency's `rate`. Returns the number
-/// of gems promoted.
+/// Drains the floor-bins crossed by one currency's `rate`, inspecting at most
+/// `budget` gems. Returns how many it inspected so the caller can share one
+/// per-block budget across currencies.
+///
+/// Whole bins are processed atomically, so the resumption cursor is
+/// bin-granular and a bin larger than the remaining budget overshoots it.
 ///
 // ponytail: the bin ladder is shared across currencies rather than scoped per
 // ISO like `nod::state::CurrencyBins`, so each currency's sweep walks bins
-// holding other currencies' gems and skips them one by one — O(currencies ×
-// bins) per block, and the sweep carries no per-block budget at all. Upgrade
-// path: currency-scoped bins keyed by `(iso, bin)`.
-fn qualify_with_rate(ctx: &BlockRuntimeContext, iso_code: u16, rate: U256) -> Result<u32> {
+// holding other currencies' gems and spends budget skipping them one by one.
+// Upgrade path: currency-scoped bins keyed by `(iso, bin)`.
+pub(crate) fn qualify_with_rate(
+    ctx: &BlockRuntimeContext,
+    iso_code: u16,
+    rate: U256,
+    budget: u32,
+) -> Result<u32> {
     let now = ctx.block.timestamp;
     let r_bin = GemContract::price_to_bin(rate)?;
     let mut gem = GemContract::new(ctx.storage.clone());
 
-    let mut promoted: u32 = 0;
-    let mut cursor: u32 = 0;
+    let mut inspected: u32 = 0;
+    let mut cursor: u32 = gem.qualify_scan_cursor.read(&iso_code)?;
     loop {
+        if inspected >= budget {
+            gem.qualify_scan_cursor.write(&iso_code, cursor)?;
+            break;
+        }
         let next = match tree_math::find_first_left_inclusive(&gem, cursor)? {
             Some(b) if b <= r_bin => b,
-            _ => break,
+            _ => {
+                // End of the eligible range: next block sweeps from the bottom.
+                gem.qualify_scan_cursor.write(&iso_code, 0)?;
+                break;
+            }
         };
 
         // Snapshot the bin's gem_ids before mutating; qualify() calls
@@ -82,17 +101,21 @@ fn qualify_with_rate(ctx: &BlockRuntimeContext, iso_code: u16, rate: U256) -> Re
         }
 
         for gem_id in bin_gems {
-            if gem.qualify(gem_id, now, iso_code, rate)? {
-                promoted = promoted.saturating_add(1);
-            }
+            // Gems in other currencies cost a read before they are skipped, so
+            // they spend budget too.
+            inspected = inspected.saturating_add(1);
+            gem.qualify(gem_id, now, iso_code, rate)?;
         }
 
         cursor = match next.checked_add(1) {
             Some(c) if c <= MAX_BIN_ID => c,
-            _ => break,
+            _ => {
+                gem.qualify_scan_cursor.write(&iso_code, 0)?;
+                break;
+            }
         };
     }
-    Ok(promoted)
+    Ok(inspected)
 }
 
 /// Trailing finalized daily VWAPs of one pair, newest first. `None` marks a day

@@ -5,6 +5,10 @@ pub const TOKEN_IMAGE_BASE: &str = "https://api.outbe.io/gem/image/";
 
 pub const BIN_STEP_BP: u16 = 25;
 
+/// Gems a begin-block qualify scan may inspect, shared across all reference
+/// currencies. The per-currency bin cursor resumes the rest next block.
+pub const MAX_GEM_QUALIFICATIONS_PER_BLOCK: u32 = 256;
+
 /// Call-trigger evaluation window in seconds (28 days): span scanned for
 /// breaches of a gem's Call Threshold. The daily scan divides by 86400.
 pub const CALL_WINDOW: u32 = 28 * 24 * 3600;
