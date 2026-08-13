@@ -15,6 +15,20 @@ interface INodFactory {
 
     event NodBurned(address indexed owner, bytes nodId, uint256 gratisLoadMinor);
 
+    event NodMaterializationProgress(
+        uint64 indexed queueSequence,
+        uint32 indexed worldwideDay,
+        uint64 generation,
+        uint32 firstNodOrdinal,
+        uint32 nextNodOrdinal,
+        bool completed,
+        uint64 blockNumber
+    );
+
+    error NodMaterializationRejected(uint8 code);
+
+    event NodSettled(address indexed owner, address indexed payer, bytes nodId, address asset, uint256 amountPaid);
+
     /// @notice Constant-size owner event for one certified OCOMP generation.
     ///         There is deliberately no matching public installation selector.
     event CertifiedNodGenerationInstalled(
@@ -34,12 +48,29 @@ interface INodFactory {
         bytes32 stateEventDigest
     );
 
-    /// @notice Burn the caller-owned Nod and mint its gratis load to the caller.
-    ///         Authorized by the caller's Gratis modify key: `mac =
+    /// @notice Pay a Nod's `costAmountMinor` into the reserve vault and mark it
+    ///         settled. Callable by anyone, for any Nod, at any point in its
+    ///         life; the payer does not have to be the owner. The payment asset
+    ///         is not caller-selected: it is the first asset the VaultRouter has
+    ///         registered under the Nod's `referenceCurrency`, and settlement
+    ///         reverts if that currency has none. The caller MUST grant this
+    ///         precompile an ERC20 allowance of at least `costAmountMinor` in
+    ///         that asset beforehand; the `NodSettled` log names it. A zero-cost
+    ///         Nod is settled without any transfer and resolves no asset.
+    /// @return The amount paid.
+    function settleNod(bytes calldata nodId) external returns (uint256);
+
+    /// @notice Burn the caller-owned, settled Nod and mint its gratis load to
+    ///         the caller. Authorized by the caller's Gratis modify key: `mac =
     ///         HMAC(modifyKey, op-preimage)` where `opNonce` MUST equal the
     ///         caller's current on-chain gratis op-nonce. The Nod owner is the
     ///         gratis recipient, so they can always supply this authorization.
-    function mineGratis(bytes calldata nodId, uint256 nonce, address asset, bytes32 mac, uint64 opNonce)
-        external
-        returns (uint256);
+    function mineGratis(bytes calldata nodId, uint256 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
+
+    /// @notice Materialize the current certified FIFO head from one canonical
+    ///         proof-backed OCOMP batch.
+    function materializeCertifiedNods(bytes calldata canonicalBatch) external;
+
+    /// @notice Return the canonical current FIFO head, or `exists=false` when empty.
+    function materializationHead() external view returns (bool exists, bytes memory canonicalHead);
 }

@@ -1385,7 +1385,7 @@ fn missed_offering_routes_the_formed_limit_once_and_exposes_a_durable_receipt() 
         );
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
-            desis.auction_stage.read(&wwd.value()).unwrap(),
+            desis.auction_stage.read(&wwd).unwrap(),
             outbe_desis::schema::AuctionStage::None as u8
         );
 
@@ -2172,6 +2172,7 @@ fn test_cold_start_uses_materialized_short_genesis_schedule() {
             metadosis_bootstrap_duration_seconds: 300,
             metadosis_advance_interval_seconds: 10,
             ocomp_compute_vote_window_blocks: 120,
+            nod_materialization: Default::default(),
         };
         parameters.validate().unwrap();
         for (slot, value) in parameters.genesis_storage_words() {
@@ -2738,7 +2739,7 @@ fn test_ready_processing_no_tributes_returns_full_limit_to_promis() {
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
 
         // A red day is recorded as a supply-less brief; the limit stays in PROMIS.
-        let series = u32::from(wwd);
+        let series = wwd;
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
             desis.auction_stage.read(&series).unwrap(),
@@ -2849,7 +2850,7 @@ fn active_ocomp_profile_preserves_the_empty_day_compatibility_branch() {
         assert!(metadosis.closed_wwd.read_all().unwrap().contains(&wwd));
         assert_no_ocomp_job(&storage, wwd);
 
-        let series = wwd.value();
+        let series = wwd;
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
             desis.auction_stage.read(&series).unwrap(),
@@ -2894,8 +2895,7 @@ fn green_empty_day_capacity_rejection_routes_the_exact_receipt_supply() {
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), WwdStatus::Completed);
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
-            outbe_desis::AuctionStage::from_u8(desis.auction_stage.read(&wwd.value()).unwrap())
-                .unwrap(),
+            outbe_desis::AuctionStage::from_u8(desis.auction_stage.read(&wwd).unwrap()).unwrap(),
             outbe_desis::AuctionStage::None
         );
         assert_eq!(desis.sched_active_count.read().unwrap(), 0);
@@ -2937,7 +2937,7 @@ fn technical_desis_refusal_rolls_back_the_metadosis_cycle_command() {
         assert_eq!(
             outbe_desis::api::dispatch_auction_brief(
                 storage.clone(),
-                wwd.value(),
+                wwd,
                 U256::from(1_u8),
                 U256::from(1_u8),
                 true,
@@ -2967,7 +2967,7 @@ fn technical_desis_refusal_rolls_back_the_metadosis_cycle_command() {
         );
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
-            desis.pending_supply_promis.read(&wwd.value()).unwrap(),
+            desis.pending_supply_promis.read(&wwd).unwrap(),
             U256::from(1_u8)
         );
         assert_eq!(desis.sched_active_count.read().unwrap(), 1);
@@ -2996,7 +2996,7 @@ fn active_ocomp_profile_preserves_the_populated_zero_limit_branch() {
         assert!(metadosis.closed_wwd.read_all().unwrap().contains(&wwd));
         assert_no_ocomp_job(&storage, wwd);
 
-        let series = wwd.value();
+        let series = wwd;
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
             desis.auction_stage.read(&series).unwrap(),
@@ -3045,7 +3045,7 @@ fn active_ocomp_profile_preserves_the_populated_zero_lysis_budget_branch() {
         assert!(metadosis.closed_wwd.read_all().unwrap().contains(&wwd));
         assert_no_ocomp_job(&storage, wwd);
 
-        let series = wwd.value();
+        let series = wwd;
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
             desis.auction_stage.read(&series).unwrap(),
@@ -3094,7 +3094,7 @@ fn active_ocomp_profile_preserves_the_populated_unknown_day_branch() {
         assert!(metadosis.closed_wwd.read_all().unwrap().contains(&wwd));
         assert_no_ocomp_job(&storage, wwd);
 
-        let series = wwd.value();
+        let series = wwd;
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
             desis.auction_stage.read(&series).unwrap(),
@@ -3224,7 +3224,7 @@ fn no_tributes_green_day_briefs_the_full_limit() {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::COMPLETED);
 
-        let series = u32::from(wwd);
+        let series = wwd;
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
             desis.auction_stage.read(&series).unwrap(),
@@ -3278,7 +3278,7 @@ fn zero_limit_green_day_dispatches_no_brief() {
         let metadosis = MetadosisContract::new(storage.clone());
         assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
 
-        let series = u32::from(wwd);
+        let series = wwd;
         let desis = storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
             desis.auction_stage.read(&series).unwrap(),
@@ -3356,7 +3356,7 @@ fn auction_brief_dispatched_only_on_the_ready_tick() {
         for k in 1..6u64 {
             run_begin_block(storage.clone(), k + 1, base_ts + k * SECONDS_PER_DAY);
             let desis = storage.contract::<outbe_desis::schema::DesisContract>();
-            stages.push(desis.auction_stage.read(&wwd_key).unwrap());
+            stages.push(desis.auction_stage.read(&wwd_key.into()).unwrap());
         }
 
         let briefed = outbe_desis::schema::AuctionStage::Briefed as u8;

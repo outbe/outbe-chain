@@ -29,6 +29,7 @@ use crate::precompile::INodFactory;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CertifiedNodGenerationV1 {
     pub binding: EffectBindingV1,
+    pub program_semantics_hash: alloy_primitives::B256,
     pub precondition: NodTargetPreconditionV1,
     pub roots: ResultRootsV1,
     pub counts: ExactCountsV1,
@@ -52,14 +53,8 @@ pub fn install_certified_generation(
 
     let worldwide_day = WorldwideDay::new(input.precondition.wwd);
     let nod = NodContract::new(storage.clone());
-    let current = nod.ocomp_target_projection(worldwide_day)?;
-    if current.target_generation != input.precondition.target_generation
-        || current.namespace_root_before != input.precondition.namespace_root_before
-    {
-        return Err(revert("certified Nod target precondition changed"));
-    }
-
-    let next_generation = current
+    let next_generation = input
+        .precondition
         .target_generation
         .checked_add(1)
         .ok_or_else(|| revert("certified Nod generation overflow"))?;
@@ -90,9 +85,52 @@ pub fn install_certified_generation(
         .map_err(protocol_error)?;
     receipt.receipt_hash(limits).map_err(protocol_error)?;
 
+    if let Some(existing) = nod.ocomp_certified_generation(worldwide_day)? {
+        if generation_matches(&existing, input, next_generation) {
+            capability.authorize_nod_installation()?;
+            return Ok(receipt);
+        }
+        return Err(revert(
+            "a different certified Nod generation already exists for this WWD",
+        ));
+    }
+    if input.precondition.target_generation != 0
+        || !input.precondition.namespace_root_before.is_zero()
+    {
+        return Err(revert("certified Nod target precondition changed"));
+    }
+
+    let raw_head = nod.ocomp_materialization_head_sequence.read()?;
+    let raw_tail = nod.ocomp_materialization_tail_sequence.read()?;
+    let tail_sequence = match (raw_head, raw_tail) {
+        (head, tail) if head != 0 && tail != 0 && head <= tail => {
+            if head < tail {
+                nod.ocomp_materialization_head()?;
+            }
+            tail
+        }
+        _ => {
+            return Err(PrecompileError::Fatal(
+                "Nod materialization FIFO bounds are malformed".into(),
+            ))
+        }
+    };
+    let queued_wwd = nod.ocomp_materialization_queue_wwd.read(&tail_sequence)?;
+    if queued_wwd.value() != 0 {
+        return Err(PrecompileError::Fatal(
+            "Nod materialization FIFO tail entry is occupied".into(),
+        ));
+    }
+    let next_tail = tail_sequence
+        .checked_add(1)
+        .ok_or_else(|| PrecompileError::Fatal("Nod materialization FIFO tail overflow".into()))?;
+    let activation_height = storage.block_number()?;
+
     let installed = NodCertifiedGenerationProjection {
         worldwide_day,
         generation: next_generation,
+        job_id: input.binding.job_id,
+        program_semantics_hash: input.program_semantics_hash,
         nod_root: input.roots.nod_root,
         bucket_root: input.roots.bucket_root,
         output_manifest_root: input.roots.output_manifest_root,
@@ -102,6 +140,8 @@ pub fn install_certified_generation(
         nod_amount_total: input.nod_amount_total,
         nod_gratis_consumed: input.nod_gratis_consumed,
         issued_at: input.issued_at,
+        next_nod_ordinal: 0,
+        last_progress_height: activation_height,
     };
 
     storage.with_checkpoint(|| {
@@ -117,6 +157,17 @@ pub fn install_certified_generation(
             .write(&worldwide_day, installed.nod_amount_total)?;
         nod.ocomp_nod_gratis_consumed
             .write(&worldwide_day, installed.nod_gratis_consumed)?;
+        nod.ocomp_materialization_job_id
+            .write(&worldwide_day, installed.job_id)?;
+        nod.ocomp_materialization_program_semantics_hash
+            .write(&worldwide_day, installed.program_semantics_hash)?;
+        nod.ocomp_materialization_next_nod_ordinal
+            .write(&worldwide_day, installed.next_nod_ordinal)?;
+        nod.ocomp_materialization_last_progress_height
+            .write(&worldwide_day, installed.last_progress_height)?;
+        nod.ocomp_materialization_queue_wwd
+            .write(&tail_sequence, worldwide_day)?;
+        nod.ocomp_materialization_tail_sequence.write(next_tail)?;
         // The generation is the active-state selector and therefore switches
         // only after every root and scalar has been written successfully.
         nod.ocomp_target_generation
@@ -151,6 +202,25 @@ pub fn install_certified_generation(
     Ok(receipt)
 }
 
+fn generation_matches(
+    existing: &NodCertifiedGenerationProjection,
+    input: &CertifiedNodGenerationV1,
+    expected_generation: u64,
+) -> bool {
+    existing.generation == expected_generation
+        && existing.job_id == input.binding.job_id
+        && existing.program_semantics_hash == input.program_semantics_hash
+        && existing.nod_root == input.roots.nod_root
+        && existing.bucket_root == input.roots.bucket_root
+        && existing.output_manifest_root == input.roots.output_manifest_root
+        && existing.tribute_count == input.counts.tribute_count
+        && existing.nod_count == input.counts.nod_count
+        && existing.bucket_count == input.counts.bucket_count
+        && existing.nod_amount_total == input.nod_amount_total
+        && existing.nod_gratis_consumed == input.nod_gratis_consumed
+        && existing.issued_at == input.issued_at
+}
+
 fn validate_input(
     capability: &CertifiedLysisActivation<'_>,
     input: &CertifiedNodGenerationV1,
@@ -160,6 +230,9 @@ fn validate_input(
     }
     if input.issued_at == 0 {
         return Err(revert("certified Nod logical issuance time is zero"));
+    }
+    if input.binding.job_id.is_zero() || input.program_semantics_hash.is_zero() {
+        return Err(revert("certified Nod materialization binding is zero"));
     }
     if input.roots.nod_root.is_zero()
         || input.roots.bucket_root.is_zero()
@@ -190,6 +263,7 @@ mod tests {
     use alloy_primitives::{Address, LogData, B256};
     use alloy_sol_types::SolEvent;
     use outbe_ocomp_protocol::{
+        nod_materialization::NodMaterializationHeadV1,
         profile::poc_schema_limits,
         receipts::{EffectBindingV1, NodStateEventProjectionV1},
         result::{ExactCountsV1, ResultRootsV1},
@@ -215,10 +289,19 @@ mod tests {
 
     impl ActivationTestProvider {
         fn new() -> Self {
-            Self {
+            let mut provider = Self {
                 inner: HashMapStorageProvider::new(1),
                 active_call: None,
-            }
+            };
+            provider.inner.set_block_number(1);
+            StorageHandle::enter(&mut provider, |storage| {
+                let nod = NodContract::new(storage);
+                nod.ocomp_materialization_head_sequence.write(1)?;
+                nod.ocomp_materialization_tail_sequence.write(1)?;
+                Ok::<_, PrecompileError>(())
+            })
+            .unwrap();
+            provider
         }
 
         fn run(&mut self, input: &CertifiedNodGenerationV1) -> Result<NodBatchReceiptV1> {
@@ -248,6 +331,33 @@ mod tests {
                     .ocomp_certified_generation(wwd)
                     .unwrap()
             })
+        }
+
+        fn materialization_head(&mut self) -> Option<NodMaterializationHeadV1> {
+            StorageHandle::enter(self, |storage| {
+                NodContract::new(storage)
+                    .ocomp_materialization_head()
+                    .unwrap()
+            })
+        }
+
+        fn queue_bounds(&mut self) -> (u64, u64) {
+            StorageHandle::enter(self, |storage| {
+                let nod = NodContract::new(storage);
+                (
+                    nod.ocomp_materialization_head_sequence.read().unwrap(),
+                    nod.ocomp_materialization_tail_sequence.read().unwrap(),
+                )
+            })
+        }
+
+        fn set_queue_bounds(&mut self, head: u64, tail: u64) {
+            StorageHandle::enter(self, |storage| {
+                let nod = NodContract::new(storage);
+                nod.ocomp_materialization_head_sequence.write(head)?;
+                nod.ocomp_materialization_tail_sequence.write(tail)
+            })
+            .unwrap();
         }
     }
 
@@ -397,6 +507,7 @@ mod tests {
     fn input(wwd: u32, call: u8) -> CertifiedNodGenerationV1 {
         CertifiedNodGenerationV1 {
             binding: binding(call),
+            program_semantics_hash: B256::repeat_byte(7),
             precondition: NodTargetPreconditionV1 {
                 wwd,
                 target_generation: 0,
@@ -434,6 +545,8 @@ mod tests {
             Some(NodCertifiedGenerationProjection {
                 worldwide_day: WorldwideDay::new(input.precondition.wwd),
                 generation: 1,
+                job_id: input.binding.job_id,
+                program_semantics_hash: input.program_semantics_hash,
                 nod_root: input.roots.nod_root,
                 bucket_root: input.roots.bucket_root,
                 output_manifest_root: input.roots.output_manifest_root,
@@ -443,6 +556,8 @@ mod tests {
                 nod_amount_total: input.nod_amount_total,
                 nod_gratis_consumed: input.nod_gratis_consumed,
                 issued_at: input.issued_at,
+                next_nod_ordinal: 0,
+                last_progress_height: 1,
             })
         );
         assert_eq!(receipt.issued_at, input.issued_at);
@@ -451,6 +566,21 @@ mod tests {
         assert_eq!(receipt.nod_root, input.roots.nod_root);
         assert_eq!(receipt.nod_amount_total, input.nod_amount_total);
         assert_eq!(receipt.nod_gratis_consumed, input.nod_gratis_consumed);
+        assert_eq!(provider.queue_bounds(), (1, 2));
+        assert_eq!(
+            provider.materialization_head(),
+            Some(NodMaterializationHeadV1 {
+                queue_sequence: 1,
+                job_id: input.binding.job_id,
+                program_semantics_hash: input.program_semantics_hash,
+                worldwide_day: input.precondition.wwd,
+                generation: 1,
+                nod_root: input.roots.nod_root,
+                nod_count: input.counts.nod_count,
+                next_nod_ordinal: 0,
+                last_progress_height: 1,
+            })
+        );
 
         let projection = NodStateEventProjectionV1 {
             wwd: input.precondition.wwd,
@@ -496,14 +626,14 @@ mod tests {
     }
 
     #[test]
-    fn wrong_generation_root_and_exact_replay_are_side_effect_free() {
+    fn exact_replay_is_idempotent_and_wrong_generation_is_side_effect_free() {
         let mut provider = ActivationTestProvider::new();
         let first = input(20_260_726, 22);
-        provider.run(&first).unwrap();
+        let first_receipt = provider.run(&first).unwrap();
         let state_after_first = provider.inner.storage.clone();
         let events_after_first = provider.inner.get_ordered_events().to_vec();
 
-        assert!(provider.run(&first).is_err());
+        assert_eq!(provider.run(&first).unwrap(), first_receipt);
         assert_eq!(provider.inner.storage, state_after_first);
         assert_eq!(provider.inner.get_ordered_events(), events_after_first);
 
@@ -518,10 +648,12 @@ mod tests {
     }
 
     #[test]
-    fn exact_nonzero_generation_precondition_advances_once() {
+    fn a_distinct_second_generation_for_the_same_wwd_is_rejected() {
         let mut provider = ActivationTestProvider::new();
         let first = input(20_260_733, 29);
         provider.run(&first).unwrap();
+        let state_after_first = provider.inner.storage.clone();
+        let events_after_first = provider.inner.get_ordered_events().to_vec();
 
         let mut next = input(first.precondition.wwd, 30);
         next.precondition.target_generation = 1;
@@ -533,25 +665,9 @@ mod tests {
         next.nod_gratis_consumed = U256::from(501);
         next.issued_at += 1;
 
-        provider.run(&next).unwrap();
-        assert_eq!(
-            provider
-                .generation(WorldwideDay::new(next.precondition.wwd))
-                .unwrap(),
-            NodCertifiedGenerationProjection {
-                worldwide_day: WorldwideDay::new(next.precondition.wwd),
-                generation: 2,
-                nod_root: next.roots.nod_root,
-                bucket_root: next.roots.bucket_root,
-                output_manifest_root: next.roots.output_manifest_root,
-                tribute_count: next.counts.tribute_count,
-                nod_count: next.counts.nod_count,
-                bucket_count: next.counts.bucket_count,
-                nod_amount_total: next.nod_amount_total,
-                nod_gratis_consumed: next.nod_gratis_consumed,
-                issued_at: next.issued_at,
-            }
-        );
+        assert!(provider.run(&next).is_err());
+        assert_eq!(provider.inner.storage, state_after_first);
+        assert_eq!(provider.inner.get_ordered_events(), events_after_first);
     }
 
     #[test]
@@ -581,6 +697,7 @@ mod tests {
 
         for value in invalid {
             let mut provider = ActivationTestProvider::new();
+            let state_before = provider.inner.storage.clone();
             let call_id = if value.binding.activation_call_id == B256::repeat_byte(99) {
                 B256::repeat_byte(24)
             } else {
@@ -592,21 +709,36 @@ mod tests {
                 })
             });
             assert!(result.is_err());
-            assert!(provider.inner.storage.is_empty());
+            assert_eq!(provider.inner.storage, state_before);
             assert!(provider.inner.get_ordered_events().is_empty());
         }
     }
 
     #[test]
     fn storage_and_event_failures_roll_back_every_owner_write() {
-        for operation in 0..=7 {
+        for operation in 0..32 {
             let mut provider = ActivationTestProvider::new();
+            let state_before = provider.inner.storage.clone();
             provider.inner.fail_after_mutation_at(operation);
-            assert!(provider.run(&input(20_260_729, 25)).is_err());
-            assert!(provider.inner.storage.is_empty());
-            assert!(provider.inner.get_ordered_events().is_empty());
+            if provider.run(&input(20_260_729, 25)).is_err() {
+                assert_eq!(provider.inner.storage, state_before, "mutation {operation}");
+                assert!(provider.inner.get_ordered_events().is_empty());
+            }
             provider.inner.clear_mutation_failure();
         }
+    }
+
+    #[test]
+    fn fifo_tail_overflow_rejects_installation_without_partial_state() {
+        let mut provider = ActivationTestProvider::new();
+        provider.set_queue_bounds(1, u64::MAX);
+        let state_before = provider.inner.storage.clone();
+        let events_before = provider.inner.get_ordered_events().to_vec();
+
+        assert!(provider.run(&input(20_260_735, 32)).is_err());
+        assert_eq!(provider.inner.storage, state_before);
+        assert_eq!(provider.inner.get_ordered_events(), events_before);
+        assert_eq!(provider.queue_bounds(), (1, u64::MAX));
     }
 
     #[test]
@@ -662,6 +794,13 @@ mod tests {
 
         provider.run(&first).unwrap();
         provider.run(&second).unwrap();
+
+        assert_eq!(provider.queue_bounds(), (1, 3));
+        assert_eq!(
+            provider.materialization_head().unwrap().worldwide_day,
+            first.precondition.wwd,
+            "certified generations must remain FIFO"
+        );
 
         assert_eq!(
             provider

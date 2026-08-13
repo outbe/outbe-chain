@@ -24,6 +24,7 @@ use outbe_nod::NodCertifiedGenerationProjection;
 use outbe_nodfactory::certified_read::active_nod_set;
 #[cfg(feature = "ocomp-integration")]
 use outbe_ocomp_protocol::{
+    nod_materialization::NodMaterializationHeadV1,
     profile::poc_schema_limits,
     state::{ActiveGenerationV1, OcompJobRecordV1},
     vote::OcompVoteAccountabilityV1,
@@ -32,13 +33,13 @@ use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "ocomp-integration")]
-use crate::internal::eth::{IDesis, IMetadosis, IPromisLimit};
+use crate::internal::eth::{IDesis, IGratis, INodFactory, IPromisLimit};
 use crate::internal::{
     addresses,
     config::Config,
     eth::{
-        self, IGovernance, IL2Registry, INod, IStaking, ITeeRegistry, ITribute, IUpdate,
-        IValidatorSet, IVote, IWorldwideDay, IZeroFee,
+        self, IGovernance, IL2Registry, IMetadosis, INod, IStaking, ITeeRegistryV1, ITribute,
+        IUpdate, IValidatorSet, IVote, IZeroFee,
     },
     parse::{self, ScheduledUpdate, VoteStatus},
     shell::Sh,
@@ -144,6 +145,26 @@ pub struct OcompPublicActivationV1 {
     pub transaction_hash: B256,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct NodMaterializationObservationV1 {
+    pub worldwide_day: u32,
+    pub generation: u64,
+    pub nod_count: u32,
+    pub next_nod_ordinal: u32,
+    pub successful_batch_transactions: u32,
+    pub completion_block_number: u64,
+}
+
+#[cfg(feature = "ocomp-integration")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NodMaterializationProgressV1 {
+    worldwide_day: u32,
+    generation: u64,
+    next_nod_ordinal: u32,
+    completed: bool,
+    block_number: u64,
+}
+
 /// One public `submitLysisResult(bytes)` transaction observed in a canonical
 /// finalized block. The harness derives this only from public RPC block and
 /// receipt data; Supervisor journals and chain storage are not test inputs.
@@ -247,6 +268,304 @@ impl Rpc {
         eth::send_raw_transaction(&self.url(port), raw_transaction)
     }
 
+    #[cfg(feature = "ocomp-integration")]
+    pub fn assert_certified_nod_mining_blocked(
+        &self,
+        port: u16,
+        private_key: &str,
+        generation: &OcompCertifiedGenerationV1,
+    ) -> Result<()> {
+        let head = self
+            .nod_materialization_head_on(port)
+            .ok_or_else(|| eyre!("certified NOD materialization head is absent"))?;
+        if head.worldwide_day != generation.worldwide_day
+            || head.generation != generation.generation
+            || head.next_nod_ordinal >= head.nod_count
+        {
+            return Err(eyre!(
+                "certified materialization head does not match the incomplete generation"
+            ));
+        }
+        let owner = self
+            .address_of(private_key)
+            .ok_or_else(|| eyre!("derive first capacity owner"))?
+            .parse::<Address>()
+            .wrap_err("parse first capacity owner")?;
+        let nod_id = outbe_nod::NodContract::generate_nod_id(
+            owner,
+            WorldwideDay::new(generation.worldwide_day),
+        )?;
+        let call = INodFactory::mineGratisCall {
+            nodId: nod_id.into_bytes().to_vec().into(),
+            nonce: U256::ZERO,
+            mac: B256::ZERO,
+            opNonce: 0,
+        };
+        // This is an intentional negative transaction. Supplying an explicit
+        // bounded gas limit prevents the RPC client from replacing the actual
+        // status=0 receipt with an eth_estimateGas error.
+        let transaction_hash = eth::send_calldata(
+            &self.url(port),
+            addresses::NOD_FACTORY_ADDR,
+            private_key,
+            call.abi_encode(),
+            300_000,
+        )?;
+        if eth::receipt_success(&self.url(port), &transaction_hash) != Some(false) {
+            return Err(eyre!(
+                "mineGratis succeeded before materialization completion"
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn wait_for_completed_nod_materialization(
+        &self,
+        port: u16,
+        generation: &OcompCertifiedGenerationV1,
+        timeout_seconds: u64,
+    ) -> Option<NodMaterializationObservationV1> {
+        let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
+        loop {
+            if let Some(completed) = self.completed_nod_materialization(port, generation) {
+                return Some(completed);
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            sleep(Duration::from_millis(250));
+        }
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn completed_nod_materialization(
+        &self,
+        port: u16,
+        expected: &OcompCertifiedGenerationV1,
+    ) -> Option<NodMaterializationObservationV1> {
+        let pending_projection = eth::read_call(
+            &self.url(port),
+            addresses::NOD_ADDR,
+            &INod::certifiedGenerationCall {
+                worldwideDay: expected.worldwide_day,
+            },
+        )?;
+        if pending_projection.exists || self.nod_materialization_head_on(port).is_some() {
+            return None;
+        }
+        let progress =
+            self.materialization_progress_on(port, expected.worldwide_day, expected.generation)?;
+        let completed = progress
+            .iter()
+            .find(|event| event.completed && event.next_nod_ordinal == expected.nod_count)?;
+        Some(NodMaterializationObservationV1 {
+            worldwide_day: expected.worldwide_day,
+            generation: expected.generation,
+            nod_count: expected.nod_count,
+            next_nod_ordinal: completed.next_nod_ordinal,
+            successful_batch_transactions: u32::try_from(progress.len()).ok()?,
+            completion_block_number: completed.block_number,
+        })
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn assert_one_materialized_nod_for_owner(
+        &self,
+        port: u16,
+        owner: Address,
+        completion_block_number: u64,
+    ) -> Result<()> {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let last_observation = match self.materialized_nod_for_owner_on(port, owner) {
+                Ok(Some((nod_id, body))) => {
+                    if body.owner != owner || body.nodId.as_ref() != nod_id.as_slice() {
+                        return Err(eyre!("owner enumeration and nodData disagree"));
+                    }
+                    return Ok(());
+                }
+                Ok(None) => "balanceOf returned zero".to_owned(),
+                Err(error) => error,
+            };
+            if Instant::now() >= deadline {
+                return Err(eyre!(
+                    "materialized owner read did not become available: owner={owner:#x} completion_block={completion_block_number} head={:?} finalized={:?} last_observation={last_observation}",
+                    self.head(port),
+                    self.finalized(port),
+                ));
+            }
+            sleep(Duration::from_millis(250));
+        }
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn mine_first_materialized_capacity_nod(&self, port: u16, private_key: &str) -> Result<()> {
+        let owner = self
+            .address_of(private_key)
+            .ok_or_else(|| eyre!("derive capacity owner"))?
+            .parse::<Address>()
+            .wrap_err("parse capacity owner")?;
+        let nod_id = self
+            .nod_id_of_owner_by_index_on(port, owner, 0)
+            .map_err(|error| eyre!("capacity owner NOD read failed: {error}"))?
+            .ok_or_else(|| eyre!("capacity owner NOD is unavailable"))?;
+        let body = self
+            .nod_data_on(port, &nod_id)
+            .map_err(|error| eyre!("capacity owner NOD body read failed: {error}"))?;
+        let entity = outbe_compressed_entities::EntityId36::try_from(nod_id.as_slice())?;
+        let nonce = (0_u64..100_000)
+            .map(U256::from)
+            .find(|nonce| outbe_nodfactory::runtime::validate_pow(entity, *nonce).is_ok())
+            .ok_or_else(|| eyre!("find bounded mineGratis nonce"))?;
+        let op_nonce = eth::read_call(
+            &self.url(port),
+            addresses::GRATIS_ADDR,
+            &IGratis::opNonceOfCall { account: owner },
+        )
+        .ok_or_else(|| eyre!("read Gratis op nonce"))?;
+        let modify_key = eth::derive_gratis_modify_key(&self.url(port), private_key)?;
+        let chain_id = B256::from(U256::from(
+            self.chain_id(port)
+                .ok_or_else(|| eyre!("read chain ID for mineGratis"))?,
+        ));
+        let mac = outbe_tee_enclave::gratis::modify_mac(
+            &modify_key,
+            owner,
+            outbe_tee::protocol::GratisOp::Mint,
+            body.gratisLoadMinor,
+            op_nonce,
+            chain_id,
+        );
+        let transaction_hash = eth::send_call(
+            &self.url(port),
+            addresses::NOD_FACTORY_ADDR,
+            private_key,
+            &INodFactory::mineGratisCall {
+                nodId: nod_id.into(),
+                nonce,
+                mac: B256::from(mac),
+                opNonce: op_nonce,
+            },
+            None,
+        )?;
+        if eth::receipt_success(&self.url(port), &transaction_hash) != Some(true) {
+            return Err(eyre!("post-completion mineGratis transaction failed"));
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn nod_materialization_head_on(&self, port: u16) -> Option<NodMaterializationHeadV1> {
+        let head = eth::read_call(
+            &self.url(port),
+            addresses::NOD_FACTORY_ADDR,
+            &INodFactory::materializationHeadCall {},
+        )?;
+        head.exists.then(|| {
+            NodMaterializationHeadV1::decode_canonical(
+                head.canonicalHead.as_ref(),
+                &poc_schema_limits(),
+            )
+            .ok()
+        })?
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn materialized_nod_for_owner_on(
+        &self,
+        port: u16,
+        owner: Address,
+    ) -> std::result::Result<Option<(Vec<u8>, crate::internal::eth::INod::NodData)>, String> {
+        let balance = eth::read_call_result(
+            &self.url(port),
+            addresses::NOD_ADDR,
+            &INod::balanceOfCall { owner },
+        )?;
+        if balance.is_zero() {
+            return Ok(None);
+        }
+        if balance != U256::from(1) {
+            return Err(format!(
+                "balanceOf returned {balance}, expected exactly one"
+            ));
+        }
+        let nod_id = self
+            .nod_id_of_owner_by_index_on(port, owner, 0)?
+            .ok_or_else(|| "index zero unexpectedly reported absence".to_owned())?;
+        if self.nod_id_of_owner_by_index_on(port, owner, 1)?.is_some() {
+            return Err("owner has more than one materialized NOD".to_owned());
+        }
+        let body = self.nod_data_on(port, &nod_id)?;
+        Ok(Some((nod_id, body)))
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn nod_id_of_owner_by_index_on(
+        &self,
+        port: u16,
+        owner: Address,
+        index: u64,
+    ) -> std::result::Result<Option<Vec<u8>>, String> {
+        let result = eth::read_call_result(
+            &self.url(port),
+            addresses::NOD_ADDR,
+            &INod::tokenOfOwnerByIndexCall {
+                owner,
+                index: U256::from(index),
+            },
+        )
+        .map(|value| value.to_vec());
+        classify_owner_index_result(index, result)
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn nod_data_on(
+        &self,
+        port: u16,
+        nod_id: &[u8],
+    ) -> std::result::Result<crate::internal::eth::INod::NodData, String> {
+        eth::read_call_result(
+            &self.url(port),
+            addresses::NOD_ADDR,
+            &INod::nodDataCall {
+                nodId: nod_id.to_vec().into(),
+            },
+        )
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn materialization_progress_on(
+        &self,
+        port: u16,
+        worldwide_day: u32,
+        generation: u64,
+    ) -> Option<Vec<NodMaterializationProgressV1>> {
+        let finalized_height = eth::finalized_number(&self.url(port))?;
+        let topic0 = keccak256(
+            b"NodMaterializationProgress(uint64,uint32,uint64,uint32,uint32,bool,uint64)",
+        );
+        let logs = eth::raw_json_with_params(
+            &self.url(port),
+            "eth_getLogs",
+            serde_json::json!([{
+                "address": format!("{:#x}", addresses::NOD_FACTORY_ADDR),
+                "fromBlock": "0x0",
+                "toBlock": format!("0x{finalized_height:x}"),
+                "topics": [format!("{topic0:#x}")],
+            }]),
+        )?;
+        Some(
+            logs.as_array()?
+                .iter()
+                .filter_map(decode_nod_materialization_progress)
+                .filter(|event| {
+                    event.worldwide_day == worldwide_day && event.generation == generation
+                })
+                .collect::<Vec<_>>(),
+        )
+    }
+
     pub(crate) fn url(&self, port: u16) -> String {
         format!("http://localhost:{port}")
     }
@@ -326,6 +645,7 @@ impl Rpc {
             },
             block_number,
         )
+        .map(|stage| stage as u8)
     }
 
     /// Canonical block hash at `height` on the node at `port`.
@@ -399,7 +719,7 @@ impl Rpc {
         eth::read_call(
             &self.cfg.rpc0,
             addresses::TEE_ADDR,
-            &ITeeRegistry::isBootstrappedCall {},
+            &ITeeRegistryV1::isBootstrappedCall {},
         )
         .unwrap_or(false)
     }
@@ -437,7 +757,9 @@ impl Rpc {
         let r = eth::read_call(
             rpc_url,
             addresses::UPDATE_ADDR,
-            &IUpdate::getScheduledUpdateCall { id: U256::from(id) },
+            &IUpdate::getScheduledUpdateCall {
+                proposalId: U256::from(id),
+            },
         )?;
         Some(ScheduledUpdate {
             version: r.version as u64,
@@ -838,7 +1160,7 @@ impl Rpc {
         eth::read_call(
             &self.url(port),
             addresses::VS_ADDR,
-            &IValidatorSet::validatorByAddressCall { v },
+            &IValidatorSet::validatorByAddressCall { addr: v },
         )
     }
 
@@ -906,7 +1228,7 @@ impl Rpc {
 
     /// Whether the validator holds a live DKG share.
     pub fn has_share(&self, port: u16, addr: &str) -> Option<bool> {
-        self.validator_record(port, addr).map(|r| r.hasShare)
+        self.validator_record(port, addr).map(|r| r.hasBLSShare)
     }
 
     /// Whether `addr` is a current consensus participant (ACTIVE or EXITING-with-share).
@@ -917,7 +1239,7 @@ impl Rpc {
         eth::read_call(
             &self.url(port),
             addresses::VS_ADDR,
-            &IValidatorSet::isConsensusParticipantCall { v },
+            &IValidatorSet::isConsensusParticipantCall { addr: v },
         )
         .unwrap_or(false)
     }
@@ -998,9 +1320,9 @@ impl Rpc {
         let r = eth::read_call(
             &self.url(port),
             addresses::WWD_ADDR,
-            &IWorldwideDay::getWorldwideDayCall { day },
+            &IMetadosis::getWorldwideDayCall { wwd: day },
         )?;
-        Some(r.f0.to_string())
+        Some(r.status.to_string())
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -1012,16 +1334,16 @@ impl Rpc {
         let r = eth::read_call(
             &self.url(port),
             addresses::WWD_ADDR,
-            &IWorldwideDay::getWorldwideDayCall { day },
+            &IMetadosis::getWorldwideDayCall { wwd: day },
         )?;
         Some(MetadosisWorldwideDayStateV1 {
-            status: r.f0,
-            day_type: r.f1,
-            forming_start: r.f2,
-            forming_end: r.f3,
-            lookback_end: r.f4,
-            offering_end: r.f5,
-            scheduled_process_time: r.f6,
+            status: r.status,
+            day_type: r.dayType,
+            forming_start: r.formingStart,
+            forming_end: r.formingEnd,
+            lookback_end: r.lookbackEnd,
+            offering_end: r.offeringEnd,
+            scheduled_process_time: r.scheduledProcessTime,
         })
     }
 
@@ -1065,17 +1387,17 @@ impl Rpc {
         let r = eth::read_call_at(
             &self.url(port),
             addresses::WWD_ADDR,
-            &IWorldwideDay::getWorldwideDayCall { day },
+            &IMetadosis::getWorldwideDayCall { wwd: day },
             block_number,
         )?;
         Some(MetadosisWorldwideDayStateV1 {
-            status: r.f0,
-            day_type: r.f1,
-            forming_start: r.f2,
-            forming_end: r.f3,
-            lookback_end: r.f4,
-            offering_end: r.f5,
-            scheduled_process_time: r.f6,
+            status: r.status,
+            day_type: r.dayType,
+            forming_start: r.formingStart,
+            forming_end: r.formingEnd,
+            lookback_end: r.lookbackEnd,
+            offering_end: r.offeringEnd,
+            scheduled_process_time: r.scheduledProcessTime,
         })
     }
 
@@ -1089,7 +1411,7 @@ impl Rpc {
         eth::read_call_reverts_at(
             &self.url(port),
             addresses::WWD_ADDR,
-            &IWorldwideDay::getWorldwideDaysByStatusCall { status },
+            &IMetadosis::getWorldwideDaysByStatusCall { status },
             block_number,
         )
     }
@@ -1199,7 +1521,7 @@ impl Rpc {
         let days: Vec<u32> = eth::read_call(
             &self.cfg.rpc0,
             addresses::WWD_ADDR,
-            &IWorldwideDay::getWorldwideDaysByStatusCall { status: OFFERING },
+            &IMetadosis::getWorldwideDaysByStatusCall { status: OFFERING },
         )?;
         let worldwide_day = *days.first()?;
         if days.len() > 1 {
@@ -1789,6 +2111,8 @@ impl Rpc {
         let nod = NodCertifiedGenerationProjection {
             worldwide_day: WorldwideDay::new(nod.worldwideDay),
             generation: nod.generation,
+            job_id: active.job_id,
+            program_semantics_hash: active.program_semantics_hash,
             nod_root: nod.nodRoot,
             bucket_root: nod.bucketRoot,
             output_manifest_root: nod.outputManifestRoot,
@@ -1798,6 +2122,8 @@ impl Rpc {
             nod_amount_total: nod.nodAmountTotal,
             nod_gratis_consumed: nod.nodGratisConsumed,
             issued_at: nod.issuedAt,
+            next_nod_ordinal: 0,
+            last_progress_height: activation.block_number,
         };
         let authority = active_nod_set(&active, &nod).ok()?;
         if authority.job_id != activation.job_id {
@@ -1926,7 +2252,7 @@ impl Rpc {
             addresses::STK_ADDR,
             key,
             &IStaking::stakeCall {
-                v,
+                validatorAddress: v,
                 amount: base_units,
             },
             Some(base_units),
@@ -1988,7 +2314,9 @@ impl Rpc {
             &self.cfg.rpc0,
             addresses::VS_ADDR,
             caller_key,
-            &IValidatorSet::deactivateValidatorCall { v: validator },
+            &IValidatorSet::deactivateValidatorCall {
+                validatorAddress: validator,
+            },
             None,
         )?;
         if !self.wait_successful_receipt(&tx, 20) {
@@ -2618,6 +2946,26 @@ impl Rpc {
     }
 }
 
+#[cfg(feature = "ocomp-integration")]
+fn classify_owner_index_result(
+    index: u64,
+    result: std::result::Result<Vec<u8>, String>,
+) -> std::result::Result<Option<Vec<u8>>, String> {
+    match result {
+        Ok(nod_id) if nod_id.len() == outbe_compressed_entities::EntityId36::LEN => {
+            Ok(Some(nod_id))
+        }
+        Ok(nod_id) => Err(format!(
+            "tokenOfOwnerByIndex returned a {}-byte NOD id",
+            nod_id.len()
+        )),
+        Err(error) if index > 0 && error.to_ascii_lowercase().contains("index out of bounds") => {
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 fn unix_time_millis() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2753,6 +3101,46 @@ fn receipt_has_failure_code(receipt: &serde_json::Value, code: u16) -> bool {
     })
 }
 
+#[cfg(feature = "ocomp-integration")]
+fn decode_nod_materialization_progress(
+    log: &serde_json::Value,
+) -> Option<NodMaterializationProgressV1> {
+    let topics = log.get("topics")?.as_array()?;
+    if topics.len() != 3 {
+        return None;
+    }
+    let topic_word = |index: usize| {
+        let value = topics.get(index)?.as_str()?;
+        let bytes = hex::decode(value.trim_start_matches("0x")).ok()?;
+        (bytes.len() == 32).then(|| U256::from_be_slice(&bytes))
+    };
+    let _queue_sequence = u64::try_from(topic_word(1)?).ok()?;
+    let worldwide_day = u32::try_from(topic_word(2)?).ok()?;
+    let data = log
+        .get("data")?
+        .as_str()
+        .and_then(|value| hex::decode(value.trim_start_matches("0x")).ok())?;
+    if data.len() != 5 * 32 {
+        return None;
+    }
+    let word = |index: usize| {
+        let start = index * 32;
+        U256::from_be_slice(&data[start..start + 32])
+    };
+    let completed = match word(3) {
+        value if value.is_zero() => false,
+        value if value == U256::from(1) => true,
+        _ => return None,
+    };
+    Some(NodMaterializationProgressV1 {
+        worldwide_day,
+        generation: u64::try_from(word(0)).ok()?,
+        next_nod_ordinal: u32::try_from(word(2)).ok()?,
+        completed,
+        block_number: u64::try_from(word(4)).ok()?,
+    })
+}
+
 #[cfg(test)]
 mod ocomp_tests {
     use alloy_primitives::B256;
@@ -2833,6 +3221,68 @@ mod ocomp_tests {
         assert_eq!(
             select_ocomp_job_request_log(&logs, Some(20260807)),
             Some(&requested)
+        );
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn materialization_progress_decodes_indexed_identity_and_nonindexed_progress() {
+        let mut data = Vec::new();
+        for value in [7_u64, 0, 8, 1, 42] {
+            data.extend_from_slice(&U256::from(value).to_be_bytes::<32>());
+        }
+        let log = serde_json::json!({
+            "topics": [
+                format!("{:#x}", keccak256(b"NodMaterializationProgress(uint64,uint32,uint64,uint32,uint32,bool,uint64)")),
+                format!("0x{:064x}", 3),
+                format!("0x{:064x}", 20_260_813),
+            ],
+            "data": format!("0x{}", hex::encode(data)),
+        });
+
+        assert_eq!(
+            decode_nod_materialization_progress(&log),
+            Some(NodMaterializationProgressV1 {
+                worldwide_day: 20_260_813,
+                generation: 7,
+                next_nod_ordinal: 8,
+                completed: true,
+                block_number: 42,
+            })
+        );
+    }
+
+    #[test]
+    fn first_owner_index_revert_is_not_reported_as_an_absent_nod() {
+        let error = classify_owner_index_result(
+            0,
+            Err("execution reverted: index out of bounds".to_owned()),
+        )
+        .expect_err("index zero must preserve the execution failure");
+
+        assert!(error.contains("index out of bounds"));
+    }
+
+    #[test]
+    fn second_owner_index_transport_failure_does_not_prove_uniqueness() {
+        let error = classify_owner_index_result(
+            1,
+            Err("compressed-entity tree unavailable: exact parent mismatch".to_owned()),
+        )
+        .expect_err("a readiness failure must not be treated as an absent second NOD");
+
+        assert!(error.contains("exact parent mismatch"));
+    }
+
+    #[test]
+    fn exact_second_owner_index_out_of_bounds_proves_uniqueness() {
+        assert_eq!(
+            classify_owner_index_result(
+                1,
+                Err("execution reverted: index out of bounds".to_owned()),
+            )
+            .expect("the canonical bounds error is an expected absence"),
+            None,
         );
     }
 }

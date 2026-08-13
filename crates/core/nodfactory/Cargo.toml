@@ -7,12 +7,14 @@ publish.workspace = true
 
 [dependencies]
 outbe-common.workspace = true
+outbe-chain-constants.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-primitives.workspace = true
 outbe-nod.workspace = true
 outbe-vaultrouter.workspace = true
 outbe-gratisfactory.workspace = true
+outbe-validatorset.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true

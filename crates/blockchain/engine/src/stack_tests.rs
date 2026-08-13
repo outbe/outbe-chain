@@ -584,6 +584,20 @@ fn startup_dkg_round_zero_requires_genesis_formation_proof() {
 }
 
 #[test]
+fn existing_chain_without_current_threshold_material_fails_with_recovery_contract() {
+    let error = missing_current_threshold_material_error(
+        "saved DKG material is stale for the latest finalized boundary",
+    );
+    let message = error.to_string();
+
+    assert!(message.contains("startup cannot recover threshold material before sync starts"));
+    assert!(message.contains("--consensus.public-polynomial"));
+    assert!(message.contains("--consensus.dkg-output"));
+    assert!(message.contains("without --consensus.signing-share"));
+    assert!(message.contains("saved DKG material is stale"));
+}
+
+#[test]
 fn offer_key_gate_allows_only_proven_founding_identity_to_be_keyless() {
     let founding = StartupDkgContext {
         last_execution_height: 0,
@@ -912,12 +926,6 @@ fn recovered_boundary_rejects_stale_threshold_material() {
         ),
         "saved or CLI material from an older DKG boundary must not build a signer"
     );
-}
-
-#[test]
-fn startup_live_join_uses_next_cycle_after_recovered_boundary() {
-    let boundary = test_boundary_with_vrf_hash(B256::with_last_byte(0x55), 244);
-    assert_eq!(next_live_reshare_round(&boundary), 245);
 }
 
 #[derive(Clone, Default)]
@@ -1992,38 +2000,6 @@ fn test_startup_live_join_scan_height_never_uses_unfinalized_execution_head() {
 }
 
 #[test]
-fn test_startup_live_join_round_follows_chain_dkg_cycle() {
-    let (keys, _participants, output, _share, _polynomial) = run_test_dkg_complete();
-
-    let validator_set = validators::ValidatorSet {
-        public_keys: keys.iter().map(|key| key.public_key()).collect(),
-        addresses: vec![
-            Address::with_last_byte(0x11),
-            Address::with_last_byte(0x22),
-            Address::with_last_byte(0x33),
-        ],
-        p2p_addresses: vec![validators::ValidatorP2pAddress::Missing; 3],
-    };
-
-    let artifact = dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
-        epoch: Epoch::new(42),
-        validator_set: &validator_set,
-        output: &output,
-        is_full_dkg: false,
-        dkg_cycle: 41,
-        freeze_height: 10,
-        planned_activation_height: 20,
-        vrf_material_version: 41,
-        is_validator_set_change: true,
-        tee_reshare_registrations: Vec::new(),
-        tee_expired_target_exclusions: Vec::new(),
-    })
-    .unwrap();
-
-    assert_eq!(next_live_reshare_round(&artifact), 42);
-}
-
-#[test]
 fn test_build_peer_map_from_bootnodes() {
     let key = bls12381::PrivateKey::random(rand_core::OsRng);
     let pk = key.public_key();
@@ -2492,6 +2468,16 @@ fn startup_pending_dkg_epoch_plan_fails_closed_on_invalid_or_expired_handoff() {
         .unwrap_err()
         .to_string();
     assert!(expired.contains("missed activation deadline 530"));
+}
+
+#[test]
+fn deferred_startup_pending_dkg_reserves_the_following_cycle() {
+    assert_eq!(next_dkg_cycle_after_restored_target(2, 2), 3);
+    assert_eq!(next_dkg_cycle_after_restored_target(5, 2), 5);
+    assert_eq!(
+        next_dkg_cycle_after_restored_target(u64::MAX, u64::MAX),
+        u64::MAX
+    );
 }
 
 #[test]

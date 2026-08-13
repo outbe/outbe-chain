@@ -5,7 +5,6 @@ use outbe_compressed_entities::{
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::math::{
-    constants::MAX_BIN_ID,
     price_helper,
     tree_math::{self, BinTreeStorage},
 };
@@ -120,6 +119,18 @@ impl NodContract<'_> {
                 item.nod_id
             )));
         }
+
+        let canonical_bucket_key = Self::bucket_key(
+            item.worldwide_day,
+            item.floor_price_minor,
+            item.reference_currency,
+        );
+        if item.bucket_key != canonical_bucket_key {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
+                "Nod bucket identity mismatch: expected {canonical_bucket_key}, found {}",
+                item.bucket_key
+            )));
+        }
         if self
             .get_item_verified(scope, parent, item.nod_id)?
             .is_some()
@@ -149,10 +160,15 @@ impl NodContract<'_> {
                     is_qualified: false,
                     total_nods: 1,
                     entry_price_minor,
+                    reference_currency: item.reference_currency,
                 };
                 self.bucket_worldwide_day
                     .write(&item.bucket_key, item.worldwide_day)?;
-                self.insert_unqualified(item.bucket_key, item.floor_price_minor)?;
+                self.insert_unqualified(
+                    item.bucket_key,
+                    item.floor_price_minor,
+                    item.reference_currency,
+                )?;
                 bucket
             }
         };
@@ -184,6 +200,23 @@ impl NodContract<'_> {
                 BodyInput::NodBucket(&canonical_bucket),
             )
         }
+    }
+
+    /// Marks a loaded Nod item settled using the capability retained by the caller's checks.
+    pub(crate) fn record_nod_settled(
+        &mut self,
+        scope: &ExecutionScope,
+        item: LoadedNodItem,
+    ) -> Result<()> {
+        let (mut item, capability) = item.into_parts();
+        item.is_settled = true;
+        let canonical = crate::repository::canonical_item(&item);
+        update(
+            self.storage_handle(),
+            scope,
+            capability,
+            BodyInput::NodItem(&canonical),
+        )
     }
 
     /// Records compact removal state using capabilities retained by the caller's checks.
@@ -252,52 +285,53 @@ impl NodContract<'_> {
         price_helper::convert_128x128_price_to_decimal(p_128x128)
     }
 
-    /// Storage key for the `index`-th bucket_key parked in bin `bin_id`.
-    /// Mirrors the existing `owner_index_key` keccak-of-concat pattern.
-    pub(crate) fn bin_index_key(bin_id: u32, index: u32) -> B256 {
-        let mut buf = [0u8; 8];
-        buf[0..4].copy_from_slice(&bin_id.to_be_bytes());
-        buf[4..8].copy_from_slice(&index.to_be_bytes());
+    /// Namespaces a bin-column key by the bucket's reference currency.
+    ///
+    /// Mapping keys are left-padded to 32 bytes before hashing, so a wider
+    /// integer type alone namespaces nothing — the ISO has to occupy real
+    /// high bits. Bin ids are 24-bit and the trie's mid/leaf keys are 16-bit,
+    /// so the low 32 bits always hold `key` unambiguously. ISO `0` is the one
+    /// value that would alias the un-namespaced key; `record_nod_issued`
+    /// rejects it at the funnel so it can never be written.
+    pub(crate) const fn scoped(reference_currency: u16, key: u32) -> u64 {
+        ((reference_currency as u64) << 32) | key as u64
+    }
+
+    /// Storage key for the `index`-th bucket_key parked in bin `bin_id` of
+    /// `reference_currency`. Mirrors the `owner_index_key` keccak-of-concat
+    /// pattern.
+    pub(crate) fn bin_index_key(reference_currency: u16, bin_id: u32, index: u32) -> B256 {
+        let mut buf = [0u8; 10];
+        buf[0..2].copy_from_slice(&reference_currency.to_be_bytes());
+        buf[2..6].copy_from_slice(&bin_id.to_be_bytes());
+        buf[6..10].copy_from_slice(&index.to_be_bytes());
         alloy_primitives::keccak256(buf)
     }
 
-    /// Reads all bucket_keys currently parked in `bin_id` in insertion order.
-    /// Skips zero entries (defensive — should not occur in normal operation).
-    /// Currently unused at runtime (the qualifier hook inlines the iteration
-    /// to interleave per-bucket survivor decisions with reads); kept for
-    /// admin/debug surfaces.
-    #[allow(dead_code)]
-    pub(crate) fn read_bin_buckets(&self, bin_id: u32) -> Result<Vec<B256>> {
-        let count = self.unqualified_bin_count.read(&bin_id)?;
-        let mut out = Vec::with_capacity(count as usize);
-        for i in 0..count {
-            let bk = self
-                .unqualified_bin_buckets
-                .read(&Self::bin_index_key(bin_id, i))?;
-            if !bk.is_zero() {
-                out.push(bk);
-            }
-        }
-        Ok(out)
-    }
-
-    /// Parks `bucket_key` in the bin for `floor_price` and marks the bin
-    /// non-empty in the bitmap trie. Called from `runtime::issue` when a new
-    /// bucket is created (i.e., the first NOD with a given
-    /// `(wwd, floor_price)` pair is issued).
-    pub(crate) fn insert_unqualified(&mut self, bucket_key: B256, floor_price: U256) -> Result<()> {
+    /// Parks `bucket_key` in `reference_currency`'s bin for `floor_price` and
+    /// marks the bin non-empty in that currency's bitmap trie. Called from
+    /// `record_nod_issued` when a new bucket is created (i.e., the first NOD
+    /// with a given `(wwd, floor_price, reference_currency)` triple).
+    pub(crate) fn insert_unqualified(
+        &mut self,
+        bucket_key: B256,
+        floor_price: U256,
+        reference_currency: u16,
+    ) -> Result<()> {
         let bin_id = Self::price_to_bin(floor_price)?;
-        debug_assert!(bin_id <= MAX_BIN_ID);
-        let count = self.unqualified_bin_count.read(&bin_id)?;
-        self.unqualified_bin_buckets
-            .write(&Self::bin_index_key(bin_id, count), bucket_key)?;
+        let scoped = Self::scoped(reference_currency, bin_id);
+        let count = self.unqualified_bin_count.read(&scoped)?;
+        self.unqualified_bin_buckets.write(
+            &Self::bin_index_key(reference_currency, bin_id, count),
+            bucket_key,
+        )?;
         let next_count = count.checked_add(1).ok_or_else(|| {
             outbe_primitives::error::PrecompileError::Fatal(format!(
-                "Nod unqualified bin {bin_id} member count overflow"
+                "Nod unqualified bin {reference_currency}:{bin_id} member count overflow"
             ))
         })?;
-        self.unqualified_bin_count.write(&bin_id, next_count)?;
-        tree_math::add(self, bin_id)?;
+        self.unqualified_bin_count.write(&scoped, next_count)?;
+        tree_math::add(&CurrencyBins(self, reference_currency), bin_id)?;
         Ok(())
     }
 }
@@ -322,28 +356,39 @@ pub(crate) fn nod_bucket_from_verified(body: &VerifiedBody) -> Result<NodBucketS
 
 // --- BinTreeStorage impl ---------------------------------------------------
 //
-// Adapter between the contract's three bin-tree storage slots and the
-// `tree_math::BinTreeStorage` trait. The trait functions take `&self` —
-// storage writes go through the DSL's interior-mutable `StorageHandle`,
-// so no `&mut` is needed at any call site.
+// Adapter between one currency's slice of the contract's three bin-tree
+// storage columns and the `tree_math::BinTreeStorage` trait. Mirrors
+// `outbe_intexfactory::state::QualifiedBinTree`, which runs two tries on one
+// contract the same way.
+//
+// The trait functions take `&self` — storage writes go through the DSL's
+// interior-mutable `StorageHandle`, so no `&mut` is needed at any call site.
+// Construct the view inline at each `tree_math` call rather than binding it,
+// so it never conflicts with a `&mut NodContract` borrow.
 
-impl BinTreeStorage for NodContract<'_> {
+pub(crate) struct CurrencyBins<'a, 'storage>(pub(crate) &'a NodContract<'storage>, pub(crate) u16);
+
+impl BinTreeStorage for CurrencyBins<'_, '_> {
     fn read_root(&self) -> Result<U256> {
-        self.bin_tree_root.read()
+        self.0.bin_tree_root.read(&self.1)
     }
     fn write_root(&self, value: U256) -> Result<()> {
-        self.bin_tree_root.write(value)
+        self.0.bin_tree_root.write(&self.1, value)
     }
     fn read_mid(&self, key: u32) -> Result<U256> {
-        self.bin_tree_mid.read(&key)
+        self.0.bin_tree_mid.read(&NodContract::scoped(self.1, key))
     }
     fn write_mid(&self, key: u32, value: U256) -> Result<()> {
-        self.bin_tree_mid.write(&key, value)
+        self.0
+            .bin_tree_mid
+            .write(&NodContract::scoped(self.1, key), value)
     }
     fn read_leaf(&self, key: u32) -> Result<U256> {
-        self.bin_tree_leaf.read(&key)
+        self.0.bin_tree_leaf.read(&NodContract::scoped(self.1, key))
     }
     fn write_leaf(&self, key: u32, value: U256) -> Result<()> {
-        self.bin_tree_leaf.write(&key, value)
+        self.0
+            .bin_tree_leaf
+            .write(&NodContract::scoped(self.1, key), value)
     }
 }

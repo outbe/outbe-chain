@@ -49,7 +49,11 @@ fn issue_nod_inner(
 ) -> Result<EntityId36> {
     let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day)?;
 
-    let bucket_key = NodContract::bucket_key(params.worldwide_day, params.floor_price_minor);
+    let bucket_key = NodContract::bucket_key(
+        params.worldwide_day,
+        params.floor_price_minor,
+        params.reference_currency,
+    );
 
     let issued_at = storage.timestamp()?.to::<u64>();
 
@@ -65,6 +69,7 @@ fn issue_nod_inner(
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,
         issued_at,
+        is_settled: false,
     };
     add(&item)?;
 
@@ -85,102 +90,70 @@ fn issue_nod_inner(
     Ok(nod_id)
 }
 
-/// Atomic mine-gratis path: validate ownership + PoW + bucket
-/// qualification, pull `cost_amount_minor` from the caller as a vault
-/// deposit (when non-zero), burn the Nod (emitting `NodBurned`), then
-/// delegate the matching gratis mint to `gratisfactory` (which mints to the
-/// owner and records the Fidelity cohort; the `GratisMinted` event is emitted
-/// by the Gratis token). Returns the minted amount.
+/// Atomic settle path: pay `cost_amount_minor` into the reserve vault and mark
+/// the Nod settled, emitting `NodSettled`. Returns the amount paid.
 ///
-/// Cost-amount payment: when `item.cost_amount_minor > 0` the runtime pulls
-/// that amount of `asset` from the caller into the precompile address via
-/// `IERC20.transferFrom`, approves the reserve `VAULT_ROUTER_ADDRESS` for the
-/// same amount, and calls `IVaultRouter.deposit` declaring the
-/// `StablesSource::NodCostAmount` classifier. The caller MUST grant the
-/// NodFactory precompile an ERC20 allowance of at least `cost_amount_minor`
-/// before invoking `mineGratis`.
+/// Settlement is unrestricted: any address may settle any Nod at any point in
+/// its life, including before its bucket qualifies. Ownership, PoW, and
+/// qualification are `mine_gratis` concerns only.
 ///
-/// When `cost_amount_minor == 0` the payment sequence is skipped entirely
-/// and `asset` is not validated, so callers mining zero-cost Nods can pass
-/// `Address::ZERO`.
-/// Mines a Nod through the block-scoped compressed-body lifecycle.
-#[allow(clippy::too_many_arguments)]
-pub fn mine_gratis(
+/// The payment asset is not caller-selected: it is resolved from the vault
+/// router's registry of assets denominating the Nod's recorded
+/// `reference_currency`, taking the first registered entry. Settling a
+/// nonzero-cost Nod whose reference currency has no registered asset fails
+/// with `NoSettlementAsset`.
+///
+/// Payment pulls `cost_amount_minor` of that asset from `payer` into the
+/// precompile address via `IERC20.transferFrom`, approves the reserve
+/// `VAULT_ROUTER_ADDRESS` for the same amount, and calls `IVaultRouter.deposit`
+/// declaring the `StablesSource::NodCostAmount` classifier. The payer MUST
+/// grant the NodFactory precompile an ERC20 allowance of at least
+/// `cost_amount_minor` beforehand.
+///
+/// When `cost_amount_minor == 0` the payment sequence is skipped entirely and
+/// no asset is resolved.
+pub fn settle_nod(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    caller: Address,
+    payer: Address,
     nod_id: EntityId36,
-    nonce: U256,
-    asset: Address,
-    auth: outbe_gratisfactory::api::ModifyAuth,
 ) -> Result<U256> {
     let item =
         nod_api::load_item(storage, scope, parent, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
-    let bucket_id = EntityId36::new(item.body().worldwide_day, item.body().bucket_key.0);
-    let bucket = nod_api::load_bucket(storage, scope, parent, bucket_id)?
-        .ok_or(NodFactoryError::NodNotQualified)?;
-    storage.clone().with_checkpoint(|| {
-        mine_gratis_inner(
-            storage,
-            MineGratisInput {
-                caller,
-                nod_id,
-                nonce,
-                asset,
-                item,
-                bucket,
-                auth,
-            },
-            scope,
-        )
-    })
+    if item.body().is_settled {
+        return Err(NodFactoryError::NodAlreadySettled.into());
+    }
+    storage
+        .clone()
+        .with_checkpoint(|| settle_nod_inner(storage, scope, payer, nod_id, item))
 }
 
-struct MineGratisInput {
-    caller: Address,
-    nod_id: EntityId36,
-    nonce: U256,
-    asset: Address,
-    item: LoadedNodItem,
-    bucket: LoadedNodBucket,
-    auth: outbe_gratisfactory::api::ModifyAuth,
-}
-
-fn mine_gratis_inner(
+fn settle_nod_inner(
     storage: &StorageHandle<'_>,
-    input: MineGratisInput,
     scope: &ExecutionScope,
+    payer: Address,
+    nod_id: EntityId36,
+    item: LoadedNodItem,
 ) -> Result<U256> {
-    let MineGratisInput {
-        caller,
-        nod_id,
-        nonce,
-        asset,
-        item,
-        bucket,
-        auth,
-    } = input;
-    if caller != item.body().owner {
-        return Err(NodFactoryError::NotOwner.into());
-    }
-
-    validate_pow(nod_id, nonce)?;
-
-    if !bucket.body().is_qualified {
-        return Err(NodFactoryError::NodNotQualified.into());
-    }
-
+    let owner = item.body().owner;
     let cost = item.body().cost_amount_minor;
-    if !cost.is_zero() {
-        // TODO check that asset aligns with reference_currency
-        if asset.is_zero() {
-            return Err(NodFactoryError::InvalidAsset.into());
-        }
+    let reference_currency = item.body().reference_currency;
 
-        // 1) Pull stablecoin from caller into the nodfactory precompile address.
+    // Effects before interactions: a reentrant asset sees the settled flag
+    // and reverts instead of paying twice.
+    nod_api::settle_nod(storage, scope, item)?;
+
+    let mut asset = Address::ZERO;
+    if !cost.is_zero() {
+        // The cost amount is denominated in the Nod's reference currency, so the
+        // asset comes from the router's registry for that currency rather than
+        // from the caller.
+        asset = settlement_asset(storage, reference_currency)?;
+
+        // 1) Pull stablecoin from the payer into the nodfactory precompile address.
         let transfer = IERC20::transferFromCall {
-            from: caller,
+            from: payer,
             to: NOD_FACTORY_ADDRESS,
             amount: cost,
         }
@@ -201,6 +174,100 @@ fn mine_gratis_inner(
         outbe_vaultrouter::api::deposit(storage, asset, cost)?;
     }
 
+    emit_event(
+        storage,
+        INodFactory::NodSettled {
+            owner,
+            payer,
+            nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+            asset,
+            amountPaid: cost,
+        },
+    )?;
+
+    Ok(cost)
+}
+
+/// Atomic mine-gratis path: validate ownership + PoW + bucket qualification +
+/// settlement, burn the Nod (emitting `NodBurned`), then delegate the matching
+/// gratis mint to `gratisfactory` (which mints to the owner and records the
+/// Fidelity cohort; the `GratisMinted` event is emitted by the Gratis token).
+/// Returns the minted amount.
+///
+/// The Nod's cost amount must already have been paid through [`settle_nod`];
+/// this path moves no value of its own.
+pub fn mine_gratis(
+    storage: &StorageHandle<'_>,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    caller: Address,
+    nod_id: EntityId36,
+    nonce: U256,
+    auth: outbe_gratisfactory::api::ModifyAuth,
+) -> Result<U256> {
+    let item =
+        nod_api::load_item(storage, scope, parent, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
+    if NodContract::new(storage.clone())
+        .ocomp_certified_generation(item.body().worldwide_day)?
+        .is_some_and(|generation| generation.next_nod_ordinal < generation.nod_count)
+    {
+        return Err(NodFactoryError::NodGenerationNotMaterialized.into());
+    }
+    let bucket_id = EntityId36::new(item.body().worldwide_day, item.body().bucket_key.0);
+    let bucket = nod_api::load_bucket(storage, scope, parent, bucket_id)?
+        .ok_or(NodFactoryError::NodNotQualified)?;
+    storage.clone().with_checkpoint(|| {
+        mine_gratis_inner(
+            storage,
+            MineGratisInput {
+                caller,
+                nod_id,
+                nonce,
+                item,
+                bucket,
+                auth,
+            },
+            scope,
+        )
+    })
+}
+
+struct MineGratisInput {
+    caller: Address,
+    nod_id: EntityId36,
+    nonce: U256,
+    item: LoadedNodItem,
+    bucket: LoadedNodBucket,
+    auth: outbe_gratisfactory::api::ModifyAuth,
+}
+
+fn mine_gratis_inner(
+    storage: &StorageHandle<'_>,
+    input: MineGratisInput,
+    scope: &ExecutionScope,
+) -> Result<U256> {
+    let MineGratisInput {
+        caller,
+        nod_id,
+        nonce,
+        item,
+        bucket,
+        auth,
+    } = input;
+    if caller != item.body().owner {
+        return Err(NodFactoryError::NotOwner.into());
+    }
+
+    validate_pow(nod_id, nonce)?;
+
+    if !bucket.body().is_qualified {
+        return Err(NodFactoryError::NodNotQualified.into());
+    }
+
+    if !item.body().is_settled {
+        return Err(NodFactoryError::NodNotSettled.into());
+    }
+
     let owner = item.body().owner;
     let gratis_load_minor = item.body().gratis_load_minor;
     nod_api::remove_nod(storage, scope, item, bucket)?;
@@ -217,6 +284,16 @@ fn mine_gratis_inner(
     outbe_gratisfactory::api::mint(storage.clone(), owner, gratis_load_minor, auth)?;
 
     Ok(gratis_load_minor)
+}
+
+/// Resolves the settlement asset for a reference currency from the vault
+/// router's registry. Registry order carries no meaning, so the first entry is
+/// as good as any; an empty registry is a configuration error, not a payer one.
+fn settlement_asset(storage: &StorageHandle<'_>, reference_currency: u16) -> Result<Address> {
+    outbe_vaultrouter::api::reference_currency_assets(storage, reference_currency)?
+        .into_iter()
+        .next()
+        .ok_or_else(|| NodFactoryError::NoSettlementAsset { reference_currency }.into())
 }
 
 /// PoW gate for `mine_gratis`, delegating to the shared [`outbe_common::pow`]

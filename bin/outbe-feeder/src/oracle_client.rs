@@ -9,9 +9,10 @@ use alloy_primitives::{Address, Bytes};
 use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
-use alloy_sol_types::{sol, SolCall};
+use alloy_sol_types::SolCall;
 use eyre::{Context, Result};
 
+use crate::abi::{IOracle, IValidatorSet};
 use crate::config::AccountConfig;
 
 /// Oracle precompile address (0xEE05).
@@ -20,44 +21,6 @@ const ORACLE_ADDRESS: Address =
 /// Validator set precompile address (0xEE00).
 const VALIDATOR_SET_ADDRESS: Address =
     alloy_primitives::address!("0x000000000000000000000000000000000000EE00");
-
-sol! {
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IOracle {
-        function getParams() external view returns (
-            uint64 votePeriod, uint256 rewardBand, uint64 slashWindow,
-            uint256 minValidPerWindow, uint256 slashFraction,
-            uint64 lookbackDuration, bool enabled
-        );
-        function getVotePenaltyCounter(address validator)
-            external view returns (uint64 success, uint64 abstain, uint64 miss);
-        function getAggregateVote(address validator)
-            external view returns (
-                bool exists,
-                uint32[] memory pairIds,
-                uint256[] memory rates,
-                uint256[] memory volumes
-            );
-    }
-
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IValidatorSet {
-        function validatorByAddress(address addr) external view returns (
-            address validatorAddress,
-            bytes memory consensusPubkey,
-            uint256 stake,
-            uint8 status,
-            uint64 slashCount,
-            uint64 missedBlocks,
-            uint64 missedVotes,
-            uint64 blocksProposed,
-            uint64 joinedAtHeight,
-            uint64 deactivatedAtHeight,
-            uint64 unbondingEnd,
-            bool hasBLSShare
-        );
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct OracleParams {

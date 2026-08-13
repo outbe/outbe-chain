@@ -43,7 +43,7 @@ pub fn run_emission_limit_daily(
     let current_day = timestamp_to_date_key(block_ts);
     let prev_day = previous_date_key(current_day);
 
-    // idempotency guard. This handler mints the CCA/Merchant agent pools
+    // idempotency guard. This handler mints the CCA agent pool
     // and re-dispatches terminal Metadosis with no PER-MINT day guard (only the
     // validator topup is independently idempotent via `daily_topup_settled`), so
     // a second invocation for an already-settled `prev_day` would double-mint
@@ -120,7 +120,6 @@ pub fn run_emission_limit_daily(
     let waa_amount = amount_for(EmissionSinkId::Waa);
     let sra_amount = amount_for(EmissionSinkId::Sra);
     let cca_amount = amount_for(EmissionSinkId::Cca);
-    let merchant_amount = amount_for(EmissionSinkId::Merchant);
     let metadosis_amount = amount_for(EmissionSinkId::Metadosis);
 
     let g1 = gas(ctx);
@@ -168,7 +167,6 @@ pub fn run_emission_limit_daily(
             (PoolKind::Waa, waa_amount),
             (PoolKind::Sra, sra_amount),
             (PoolKind::Cca, cca_amount),
-            (PoolKind::Merchant, merchant_amount),
         ],
     )
     .map_err(|e| {

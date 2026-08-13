@@ -20,7 +20,7 @@ use crate::{
 // transaction's immediate SLOAD/SSTORE work. These reserves cover the later
 // no-refund end-block zeroing only.
 const SSTORE_RESET_GAS: u64 = 5_000;
-pub(crate) const MAX_STORED_BODY_BYTES_V1: usize = 230;
+pub(crate) const MAX_STORED_BODY_BYTES_V1: usize = 232;
 const BODY_RECORD_BYTES: usize = 38;
 const MAX_INDEX_RECORD_BYTES: usize = 59;
 

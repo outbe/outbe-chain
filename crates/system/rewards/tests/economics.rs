@@ -9,8 +9,7 @@
 
 use alloy_primitives::{address, b256, Bytes, B256, U256};
 use outbe_emissionlimit::allocation::{
-    CCA_REWARD_PCT, MERCHANT_REWARD_PCT, PERCENT_DENOMINATOR, SRA_REWARD_PCT, VALIDATOR_REWARD_PCT,
-    WAA_REWARD_PCT,
+    CCA_REWARD_PCT, PERCENT_DENOMINATOR, SRA_REWARD_PCT, VALIDATOR_REWARD_PCT, WAA_REWARD_PCT,
 };
 use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
@@ -77,14 +76,13 @@ const VRF_HASH: B256 = b256!("0x1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa1111aaaa
 #[test]
 fn certified_notarization_participation_economics_pinned_by_chainspec() {
     // Per `outbe-emissionlimit::allocation`, the V2 fixed
-    // table is: Validator 4%, WAA 4%, SRA 4%, CCA 4%, Merchant 4%,
+    // table is: Validator 4%, WAA 4%, SRA 4%, CCA 4%,
     // Metadosis (terminal) = remainder. Any change here is a hard-fork
     // economic policy change and must surface as a test failure.
     assert_eq!(VALIDATOR_REWARD_PCT, 4);
     assert_eq!(WAA_REWARD_PCT, 4);
     assert_eq!(SRA_REWARD_PCT, 4);
     assert_eq!(CCA_REWARD_PCT, 4);
-    assert_eq!(MERCHANT_REWARD_PCT, 4);
     assert_eq!(PERCENT_DENOMINATOR, 100);
 
     // The validator share that flows through the `Rewards` precompile
@@ -92,15 +90,11 @@ fn certified_notarization_participation_economics_pinned_by_chainspec() {
     // skew between `outbe-rewards` and `outbe-emissionlimit` trips.
     assert_eq!(VALIDATOR_REWARD_PERCENT, 4);
 
-    // The fixed table sums to 20% so the terminal Metadosis pool
-    // receives 80%. Pin that derived invariant.
-    let fixed_pct_sum = VALIDATOR_REWARD_PCT
-        + WAA_REWARD_PCT
-        + SRA_REWARD_PCT
-        + CCA_REWARD_PCT
-        + MERCHANT_REWARD_PCT;
-    assert_eq!(fixed_pct_sum, 20);
-    assert_eq!(PERCENT_DENOMINATOR - fixed_pct_sum, 80);
+    // The fixed table sums to 16% so the terminal Metadosis pool
+    // receives 84%. Pin that derived invariant.
+    let fixed_pct_sum = VALIDATOR_REWARD_PCT + WAA_REWARD_PCT + SRA_REWARD_PCT + CCA_REWARD_PCT;
+    assert_eq!(fixed_pct_sum, 16);
+    assert_eq!(PERCENT_DENOMINATOR - fixed_pct_sum, 84);
 }
 
 // ---------------------------------------------------------------------------
@@ -233,5 +227,4 @@ fn finalization_preference_is_documented_as_stronger_certificate_not_different_e
     assert_eq!(WAA_REWARD_PCT, 4);
     assert_eq!(SRA_REWARD_PCT, 4);
     assert_eq!(CCA_REWARD_PCT, 4);
-    assert_eq!(MERCHANT_REWARD_PCT, 4);
 }

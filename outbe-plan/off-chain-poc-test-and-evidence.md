@@ -215,7 +215,6 @@ states.
 | Test ID | Scenario |
 |---|---|
 | `OCM-E2E-001` | one tracer public Tribute -> finalized JobIntent -> four independent compute domains -> q=3 -> certified Nod, with exact request/quorum replay trace |
-| `OCM-E2E-007` | one incompatible supervisor refuses OCOMP while its node continues finality |
 | `OCM-E2E-008` | completed nodes and compute processes restart/replay and select the same public active generation without CAS authority |
 | `OCM-TRC-001` | second assertion over the retained `OCM-E2E-001` tracer scenario: proposer/import/replay traces for exact request and q-forming vote blocks contain zero calls to mutating Lysis, Fidelity league and Oracle calculation boundaries |
 

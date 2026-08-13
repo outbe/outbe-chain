@@ -728,14 +728,14 @@ fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal
         assert_eq!(
             DesisContract::new(storage.clone())
                 .auction_stage
-                .read(&prepared.wwd.value())
+                .read(&prepared.wwd)
                 .unwrap(),
             AuctionStage::Briefed as u8
         );
         assert_eq!(
             DesisContract::new(storage.clone())
                 .pending_supply_promis
-                .read(&prepared.wwd.value())
+                .read(&prepared.wwd)
                 .unwrap(),
             record.intent.frozen_metadosis_values.auction_base
         );

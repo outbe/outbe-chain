@@ -112,8 +112,7 @@ pub fn verify_dcap_evidence(
         return Err(DcapRejectCodeV1::PlatformIdentityMismatch);
     }
     let measurement_accepted = policy.measurement_rules.iter().any(|rule| {
-        rule.enclave_profile == evidence.intent.enclave_profile
-            && rule.mrenclave == B256::from(measurements.mrenclave)
+        rule.mrenclave == B256::from(measurements.mrenclave)
             && rule.mrsigner == B256::from(measurements.mrsigner)
             && rule.isv_prod_id == measurements.isv_prod_id
             && measurements.isv_svn >= rule.minimum_isv_svn

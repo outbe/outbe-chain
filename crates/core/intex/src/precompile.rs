@@ -83,7 +83,7 @@ fn to_abi_data(r: &SeriesRecord) -> Result<IIntex::SeriesData> {
         callNoticePeriod: r.call_notice_period,
         issuanceCurrency: r.issuance_currency,
         referenceCurrency: r.reference_currency,
-        worldwideDay: r.worldwide_day,
+        worldwideDay: r.worldwide_day.into(),
         costAmountMinor: r.cost_amount_minor()?,
     })
 }

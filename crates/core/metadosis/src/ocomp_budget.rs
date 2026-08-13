@@ -77,7 +77,7 @@ pub(crate) fn apply_fresh_request_budget_effect(
             let actual = outbe_desis::ocomp_budget::apply_request_auction_base(
                 storage.clone(),
                 request.protocol_bundle_hash,
-                request.wwd,
+                request.wwd.into(),
                 split.auction_base,
                 request.auction_entry_price,
                 request.logical_anchor,

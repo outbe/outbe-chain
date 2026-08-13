@@ -774,6 +774,7 @@ mod tests {
             is_qualified: true,
             total_nods: 3,
             entry_price_minor: U256::from(11),
+            reference_currency: 840,
         };
         let id = body.entity_id();
         let stored = StoredBody::new_v1(encode_nod_bucket_v1(&body).unwrap()).unwrap();
@@ -1034,6 +1035,7 @@ mod tests {
             is_qualified: true,
             total_nods: 3,
             entry_price_minor: U256::from(11),
+            reference_currency: 840,
         };
         assert_eq!(changed.entity_id(), id);
         let (wrong_leaf_body, _) = stored_body(id, encode_nod_bucket_v1(&changed).unwrap());
@@ -1092,6 +1094,7 @@ mod tests {
             issuance_currency: 840,
             reference_currency: 978,
             issued_at: 123,
+            is_settled: false,
         };
         let (bucket_id, bucket_bytes, bucket_leaf) = bucket_body(0x33);
         let cases = [
@@ -1224,10 +1227,10 @@ mod tests {
                     "6ee7794258ab3871f1ce5a35eb8fb097d9354268ca00c0b1d4c92e1ec02e7935"
                 ),
                 alloy_primitives::b256!(
-                    "6317492817180e7ee5ed6d2bd3b03a52eb1e89c7dc21a31e02706aa7143bde69"
+                    "4b6f6412eb82bdbe53b79b1655a4c439a0ba5fcfcf77e0d46f1deb2e147b0768"
                 ),
                 alloy_primitives::b256!(
-                    "66fc537da7d8007c48c721911a742796a9bd95ef3e6355a9c3537fb42de9387e"
+                    "ba91d721be365a1df5277ca6f0c900bde30583283808a032df5100b1368e8c4f"
                 ),
                 alloy_primitives::b256!(
                     "b18365a42684056c32976e0eff1458f25534e3e425b79176693b4d9687b0d229"

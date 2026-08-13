@@ -3,6 +3,7 @@
 use alloy_consensus::SignableTransaction as _;
 use alloy_eips::eip2718::Encodable2718 as _;
 use alloy_primitives::{Address, Bytes, Signature, B256};
+use k256::ecdsa::signature::hazmat::PrehashSigner as _;
 use outbe_primitives::{
     consensus::{DkgBoundaryArtifact, ReshareResult},
     system_tx::{
@@ -12,10 +13,10 @@ use outbe_primitives::{
     },
     tee_attestation_v1::{
         AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
-        DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1, EnclaveProfile, NodeIdV1,
+        DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1, NodeIdV1,
         PlatformTcbStatusSetV1, QvlTcbStatusV1, RegistrationIntentV1, ResourceScheduleV1,
         SystemGasScheduleV1, TeeMeasurementRuleV1, TeePolicyV1, TeeRegistryGasScheduleV1,
-        MAX_ATTESTATION_EVIDENCE_BYTES, MAX_TEE_BOOTSTRAP_BYTES,
+        ValidatorNodeBindingV1, MAX_ATTESTATION_EVIDENCE_BYTES, MAX_TEE_BOOTSTRAP_BYTES,
     },
     tee_bootstrap_v2::{
         TeeBootstrapAuthorityV2, TeeBootstrapCommitteeSignatureV2,
@@ -27,7 +28,7 @@ use outbe_primitives::{
 fn policy() -> TeePolicyV1 {
     TeePolicyV1 {
         policy_version: 1,
-        chain_id: [0; 32],
+        chain_id: [0x10; 32],
         genesis_hash: B256::repeat_byte(0x11),
         activation_height: 1,
         predecessor_policy_hash: B256::ZERO,
@@ -54,7 +55,6 @@ fn policy() -> TeePolicyV1 {
             .schedule_hash()
             .unwrap(),
         measurement_rules: vec![TeeMeasurementRuleV1 {
-            enclave_profile: EnclaveProfile::Validator,
             mrenclave: B256::repeat_byte(0x81),
             mrsigner: B256::repeat_byte(0x82),
             isv_prod_id: 1,
@@ -66,16 +66,20 @@ fn policy() -> TeePolicyV1 {
 }
 
 fn intent(address: u8, policy_hash: B256) -> RegistrationIntentV1 {
+    let node_signer = k256::ecdsa::SigningKey::from_bytes((&[address; 32]).into()).unwrap();
     RegistrationIntentV1 {
-        chain_id: [0; 32],
+        chain_id: [0x10; 32],
         genesis_hash: B256::repeat_byte(0x11),
         operation: AttestationOperationV1::RegisterEnclave,
         attestation_mode: AttestationMode::DcapRequired,
         policy_hash,
-        enclave_profile: EnclaveProfile::Validator,
-        node_id: NodeIdV1::Validator {
-            address: [address; 20],
-            bls_minpk_public: [address.wrapping_add(1); 48],
+        node_id: NodeIdV1 {
+            reth_p2p_public: node_signer
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()
+                .unwrap(),
         },
         enclave_id: B256::repeat_byte(address.wrapping_add(2)),
         binding_id: B256::repeat_byte(address.wrapping_add(3)),
@@ -91,6 +95,53 @@ fn intent(address: u8, policy_hash: B256) -> RegistrationIntentV1 {
     }
 }
 
+fn validator_binding_authorization(
+    seed: u8,
+    participant_intent: &RegistrationIntentV1,
+) -> (ValidatorNodeBindingV1, [u8; 65], [u8; 65]) {
+    let validator_signer =
+        k256::ecdsa::SigningKey::from_bytes((&[seed.wrapping_add(0x40); 32]).into()).unwrap();
+    let node_signer = k256::ecdsa::SigningKey::from_bytes((&[seed; 32]).into()).unwrap();
+    let validator_public = validator_signer.verifying_key().to_encoded_point(false);
+    let validator_hash = alloy_primitives::keccak256(&validator_public.as_bytes()[1..]);
+    let binding = ValidatorNodeBindingV1 {
+        chain_id: participant_intent.chain_id,
+        genesis_hash: participant_intent.genesis_hash,
+        validator: Address::from_slice(&validator_hash[12..]).into_array(),
+        node_id_hash: participant_intent.node_id.node_id_hash().unwrap(),
+    };
+    let binding_hash = binding.binding_hash().unwrap();
+    let sign = |key: &k256::ecdsa::SigningKey| {
+        let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
+            key.sign_prehash(binding_hash.as_slice()).unwrap();
+        let mut encoded = [0_u8; 65];
+        encoded[..64].copy_from_slice(signature.to_bytes().as_slice());
+        encoded[64] = recovery.to_byte();
+        encoded
+    };
+    let validator_signature = sign(&validator_signer);
+    let node_binding_signature = sign(&node_signer);
+    (binding, validator_signature, node_binding_signature)
+}
+
+fn participant(seed: u8, policy_hash: B256) -> TeeBootstrapParticipantV2 {
+    let participant_intent = intent(seed, policy_hash);
+    let (validator_binding, validator_signature, node_binding_signature) =
+        validator_binding_authorization(seed, &participant_intent);
+    TeeBootstrapParticipantV2 {
+        intent: participant_intent,
+        validator_binding,
+        validator_signature,
+        node_binding_signature,
+        evidence: TeeBootstrapParticipantEvidenceV2::Dcap {
+            quote: vec![seed; 64],
+            collateral_component_indices: [0, 1, 2, 3, 4, 5, 6, 7],
+        },
+        node_signature: [seed; 65],
+        enclave_signature: [seed; 64],
+    }
+}
+
 fn fixture() -> TeeBootstrapV2 {
     let policy = policy();
     let policy_hash = policy.policy_hash().unwrap();
@@ -100,23 +151,16 @@ fn fixture() -> TeeBootstrapV2 {
             bytes: vec![kind],
         })
         .collect();
-    let participants = [0x31_u8, 0x32]
+    let mut participants = [0x31_u8, 0x32]
         .into_iter()
-        .map(|address| TeeBootstrapParticipantV2 {
-            intent: intent(address, policy_hash),
-            evidence: TeeBootstrapParticipantEvidenceV2::Dcap {
-                quote: vec![address; 64],
-                collateral_component_indices: [0, 1, 2, 3, 4, 5, 6, 7],
-            },
-            node_signature: [address; 65],
-            enclave_signature: [address; 64],
-        })
-        .collect();
-    let committee_signatures = [0x31_u8, 0x32]
-        .into_iter()
-        .map(|address| TeeBootstrapCommitteeSignatureV2 {
-            validator: Address::repeat_byte(address),
-            signature: [address; 65],
+        .map(|seed| participant(seed, policy_hash))
+        .collect::<Vec<_>>();
+    participants.sort_by_key(|participant| Address::from(participant.validator_binding.validator));
+    let committee_signatures = participants
+        .iter()
+        .map(|participant| TeeBootstrapCommitteeSignatureV2 {
+            validator: Address::from(participant.validator_binding.validator),
+            signature: [participant.intent.recipient_x25519[0]; 65],
         })
         .collect();
 
@@ -139,20 +183,17 @@ fn fixture_with_participant_count(count: u8) -> TeeBootstrapV2 {
     let mut payload = fixture();
     let policy_hash = payload.policy.policy_hash().unwrap();
     payload.participants = (1..=count)
-        .map(|address| TeeBootstrapParticipantV2 {
-            intent: intent(address, policy_hash),
-            evidence: TeeBootstrapParticipantEvidenceV2::Dcap {
-                quote: vec![address; 64],
-                collateral_component_indices: [0, 1, 2, 3, 4, 5, 6, 7],
-            },
-            node_signature: [address; 65],
-            enclave_signature: [address; 64],
-        })
+        .map(|seed| participant(seed, policy_hash))
         .collect();
-    payload.committee_signatures = (1..=count)
-        .map(|address| TeeBootstrapCommitteeSignatureV2 {
-            validator: Address::repeat_byte(address),
-            signature: [address; 65],
+    payload
+        .participants
+        .sort_by_key(|participant| Address::from(participant.validator_binding.validator));
+    payload.committee_signatures = payload
+        .participants
+        .iter()
+        .map(|participant| TeeBootstrapCommitteeSignatureV2 {
+            validator: Address::from(participant.validator_binding.validator),
+            signature: [participant.intent.recipient_x25519[0]; 65],
         })
         .collect();
     payload
@@ -162,7 +203,6 @@ fn production_shaped_payload(count: u8) -> TeeBootstrapV2 {
     let mut payload = fixture_with_participant_count(count);
     payload.policy.measurement_rules = (1_u8..=64)
         .map(|measurement| TeeMeasurementRuleV1 {
-            enclave_profile: EnclaveProfile::Validator,
             mrenclave: B256::repeat_byte(measurement),
             mrsigner: B256::repeat_byte(0x82),
             isv_prod_id: 1,
@@ -204,6 +244,9 @@ fn submissions(payload: &TeeBootstrapV2) -> Vec<TeeBootstrapParticipantSubmissio
         .enumerate()
         .map(|(index, participant)| TeeBootstrapParticipantSubmissionV2 {
             evidence: payload.logical_evidence(index).unwrap(),
+            validator_binding: participant.validator_binding.clone(),
+            validator_signature: participant.validator_signature,
+            node_binding_signature: participant.node_binding_signature,
             node_signature: participant.node_signature,
             enclave_signature: participant.enclave_signature,
         })
@@ -428,10 +471,7 @@ fn thirty_two_validator_near_cap_bootstrap_fits_five_transaction_block() {
             new_active_set: payload
                 .participants
                 .iter()
-                .map(|participant| match participant.intent.node_id {
-                    NodeIdV1::Validator { address, .. } => Address::from(address),
-                    NodeIdV1::FullNode { .. } => unreachable!(),
-                })
+                .map(|participant| Address::from(participant.validator_binding.validator))
                 .collect(),
         },
         tee_recipient_pubkeys: Vec::new(),
@@ -502,6 +542,9 @@ fn assembly_reuses_existing_authority_and_deduplicates_complete_submissions() {
         .rev()
         .map(|(index, participant)| TeeBootstrapParticipantSubmissionV2 {
             evidence: expected.logical_evidence(index).unwrap(),
+            validator_binding: participant.validator_binding.clone(),
+            validator_signature: participant.validator_signature,
+            node_binding_signature: participant.node_binding_signature,
             node_signature: participant.node_signature,
             enclave_signature: participant.enclave_signature,
         })
@@ -526,6 +569,9 @@ fn assembly_rejects_aggregate_calldata_over_cap_before_signing() {
     let policy_hash = template.policy.policy_hash().unwrap();
     let submissions = (1_u8..=2)
         .map(|address| {
+            let participant_intent = intent(address, policy_hash);
+            let (validator_binding, validator_signature, node_binding_signature) =
+                validator_binding_authorization(address, &participant_intent);
             let components = (1_u8..=8)
                 .map(|kind| DcapCollateralComponentV1 {
                     kind: DcapCollateralKind::try_from(kind).unwrap(),
@@ -534,11 +580,14 @@ fn assembly_rejects_aggregate_calldata_over_cap_before_signing() {
                 .collect();
             TeeBootstrapParticipantSubmissionV2 {
                 evidence: AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
-                    intent: intent(address, policy_hash),
+                    intent: participant_intent.clone(),
                     quote: vec![address; 64],
                     components,
                     transition_key_ready_proof: None,
                 }),
+                validator_binding,
+                validator_signature,
+                node_binding_signature,
                 node_signature: [address; 65],
                 enclave_signature: [address; 64],
             }

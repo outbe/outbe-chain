@@ -19,8 +19,8 @@ use outbe_primitives::storage::StorageHandle;
 use crate::api::{IVaultRouter, IVaultRouterCrosschainExtention};
 use crate::errors::VaultRouterError;
 use crate::schema::{VaultRouterContract, UNKNOWN};
+use crate::sol_ext::IReferenceCurrency;
 use crate::sol_ext::{ITokenBundle, IVaultV2, IERC20};
-use outbe_primitives::reference_currency_abi::IReferenceCurrency;
 
 /// This precompile's own address (`address(this)` in the Solidity original).
 const SELF: Address = VAULT_ROUTER_ADDRESS;

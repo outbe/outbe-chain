@@ -15,7 +15,7 @@ use outbe_primitives::storage::StorageHandle;
 use crate::api::IVaultRouterCrosschainExtention;
 use crate::errors::VaultRouterError;
 use crate::schema::VaultRouterContract;
-use crate::sol_ext::{IERC7786Bridge, IERC7786TokenBridge, IERC20};
+use crate::sol_ext::{IERC7786GatewaySource, IERC7786TokenBridge, IGatewayQuote, IERC20};
 
 const SELF: Address = VAULT_ROUTER_ADDRESS;
 
@@ -207,7 +207,7 @@ pub fn withdraw(
         let ret = storage.call(
             config.message_bridge,
             value,
-            IERC7786Bridge::sendMessageCall {
+            IERC7786GatewaySource::sendMessageCall {
                 recipient: recipient.into(),
                 payload: payload.into(),
                 attributes,
@@ -215,7 +215,7 @@ pub fn withdraw(
             .abi_encode()
             .into(),
         )?;
-        let send_id = IERC7786Bridge::sendMessageCall::abi_decode_returns(&ret)
+        let send_id = IERC7786GatewaySource::sendMessageCall::abi_decode_returns(&ret)
             .map_err(|_| VaultRouterError::UndecodableReturn("ERC7786Bridge sendMessage"))?;
         contract.emit(IVaultRouterCrosschainExtention::CrosschainWithdrawalSent {
             operationId: operation_id,
@@ -541,7 +541,7 @@ fn message_bridge_quote(
 ) -> Result<U256> {
     let ret = storage.staticcall(
         bridge,
-        IERC7786Bridge::quoteCall {
+        IGatewayQuote::quote_1Call {
             recipient: recipient.into(),
             payload: payload.into(),
             attributes,
@@ -549,7 +549,7 @@ fn message_bridge_quote(
         .abi_encode()
         .into(),
     )?;
-    IERC7786Bridge::quoteCall::abi_decode_returns(&ret)
+    IGatewayQuote::quote_1Call::abi_decode_returns(&ret)
         .map_err(|_| VaultRouterError::UndecodableReturn("ERC7786Bridge quote").into())
 }
 

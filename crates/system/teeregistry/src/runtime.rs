@@ -1,52 +1,7 @@
-#[cfg(feature = "tee-attestation-v1")]
-use alloy_primitives::keccak256;
 use alloy_primitives::{Address, B256};
 use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::schema::TeeRegistry;
-
-/// Domain label binding the per-validator `keys_hash` (mirrors the bootstrap
-/// bundle's `outbe/tee/keys/v1`), so a V1 `registerEnclave` produces the
-/// same `keysHash(addr)` shape as the block-1 bootstrap registration.
-#[cfg(feature = "tee-attestation-v1")]
-const TEE_KEYS_HASH_DOMAIN: &[u8] = b"outbe/tee/keys/v1";
-
-/// `keccak256(domain ‖ validator ‖ recipient ‖ attestation ‖ noise ‖ mrenclave ‖
-/// mrsigner ‖ isv_svn_be)` — binds all of a validator's enclave key material.
-#[cfg(feature = "tee-attestation-v1")]
-pub(crate) fn compute_keys_hash(
-    validator: Address,
-    recipient_x25519: B256,
-    attestation_pub: B256,
-    noise_static_pub: B256,
-    mrenclave: B256,
-    mrsigner: B256,
-    isv_svn: u16,
-) -> B256 {
-    let mut buf = Vec::with_capacity(TEE_KEYS_HASH_DOMAIN.len() + 20 + 32 * 5 + 2);
-    buf.extend_from_slice(TEE_KEYS_HASH_DOMAIN);
-    buf.extend_from_slice(validator.as_slice());
-    buf.extend_from_slice(recipient_x25519.as_slice());
-    buf.extend_from_slice(attestation_pub.as_slice());
-    buf.extend_from_slice(noise_static_pub.as_slice());
-    buf.extend_from_slice(mrenclave.as_slice());
-    buf.extend_from_slice(mrsigner.as_slice());
-    buf.extend_from_slice(&isv_svn.to_be_bytes());
-    keccak256(&buf)
-}
-
-/// Per-validator TEE registration bundle written at bootstrap.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TeeRegistration {
-    pub validator: Address,
-    pub recipient_x25519: B256,
-    pub attestation_pub: B256,
-    pub noise_static_pub: B256,
-    pub mrenclave: B256,
-    pub mrsigner: B256,
-    pub isv_svn: u64,
-    pub keys_hash: B256,
-}
 
 /// The one-time bootstrap payload written into the registry by the
 /// `TeeBootstrap` system transaction (Phase 3b). The system-tx native
@@ -64,7 +19,6 @@ pub struct TeeBootstrapData {
     /// Encoded DKG group public key (constant term) of the bootstrapping committee.
     /// The verification key for reshare endorsements; stored chunked on-chain.
     pub tribute_offer_group_public_key: alloy_primitives::Bytes,
-    pub registrations: Vec<TeeRegistration>,
 }
 
 impl TeeRegistry<'_> {
@@ -96,20 +50,6 @@ impl TeeRegistry<'_> {
     /// accepted production authority.
     pub fn policy_hash(&self) -> Result<B256> {
         self.policy_hash.read()
-    }
-
-    /// Read a validator's full registration bundle.
-    pub fn registration(&self, validator: Address) -> Result<TeeRegistration> {
-        Ok(TeeRegistration {
-            validator,
-            recipient_x25519: self.recipient_x25519.read(&validator)?,
-            attestation_pub: self.attestation_pub.read(&validator)?,
-            noise_static_pub: self.noise_static_pub.read(&validator)?,
-            mrenclave: self.mrenclave.read(&validator)?,
-            mrsigner: self.mrsigner.read(&validator)?,
-            isv_svn: self.isv_svn.read(&validator)?,
-            keys_hash: self.keys_hash.read(&validator)?,
-        })
     }
 
     /// Record the recipient X25519 pubkeys announced by a `BoundaryOutcome`
@@ -181,9 +121,6 @@ impl TeeRegistry<'_> {
             ));
         }
 
-        let count = u32::try_from(data.registrations.len())
-            .map_err(|_| PrecompileError::Revert("too many TEE registrations".to_string()))?;
-
         self.tribute_offer_public_key
             .write(data.tribute_offer_public_key)?;
         self.policy_hash.write(data.policy_hash)?;
@@ -196,26 +133,12 @@ impl TeeRegistry<'_> {
             .write(data.committee_snapshot_hash)?;
         self.set_group_public_key(&data.tribute_offer_group_public_key)?;
 
-        for reg in &data.registrations {
-            self.recipient_x25519
-                .write(&reg.validator, reg.recipient_x25519)?;
-            self.attestation_pub
-                .write(&reg.validator, reg.attestation_pub)?;
-            self.noise_static_pub
-                .write(&reg.validator, reg.noise_static_pub)?;
-            self.mrenclave.write(&reg.validator, reg.mrenclave)?;
-            self.mrsigner.write(&reg.validator, reg.mrsigner)?;
-            self.isv_svn.write(&reg.validator, reg.isv_svn)?;
-            self.keys_hash.write(&reg.validator, reg.keys_hash)?;
-        }
-
-        self.registered_count.write(count)?;
         self.bootstrapped.write(true)?;
         Ok(())
     }
 
-    /// Re-register the new committee's per-validator enclave keys after a
-    /// tribute-offer reshare (R5). Each entry is
+    /// Validate the new committee's reshare evidence against the already
+    /// registered role-neutral NodeHost bindings. Each entry is
     /// `(validator, recipient_x25519, attestation_pub, noise_static_pub)`. The
     /// offer key is PRESERVED across a reshare, so the offer-key / bootstrapped /
     /// policy / snapshot slots are NOT touched — only the rotating per-validator
@@ -226,9 +149,16 @@ impl TeeRegistry<'_> {
         registrations: &[(Address, B256, B256, B256)],
     ) -> Result<()> {
         for (validator, recipient_x25519, attestation_pub, noise_static_pub) in registrations {
-            self.recipient_x25519.write(validator, *recipient_x25519)?;
-            self.attestation_pub.write(validator, *attestation_pub)?;
-            self.noise_static_pub.write(validator, *noise_static_pub)?;
+            let node_hash = self.validator_v1_node_hash.read(validator)?;
+            if node_hash.is_zero()
+                || self.v1_node_recipient_x25519.read(&node_hash)? != *recipient_x25519
+                || self.v1_node_attestation_ed25519.read(&node_hash)? != *attestation_pub
+                || self.v1_node_noise_responder_x25519.read(&node_hash)? != *noise_static_pub
+            {
+                return Err(PrecompileError::Revert(
+                    "reshare registration does not match the validator's NodeHost binding".into(),
+                ));
+            }
         }
         Ok(())
     }

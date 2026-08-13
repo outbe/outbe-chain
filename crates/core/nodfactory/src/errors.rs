@@ -20,14 +20,44 @@ pub enum NodFactoryError {
     #[error("nod is not qualified")]
     NodNotQualified,
 
+    #[error("nod is already settled")]
+    NodAlreadySettled,
+
+    #[error("nod is not settled")]
+    NodNotSettled,
+
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
 
     #[error("nonce exceeds uint64 range")]
     NonceExceedsUint64Range,
 
-    #[error("invalid asset")]
-    InvalidAsset,
+    #[error("caller is not an active OCOMP materializer")]
+    UnauthorizedMaterializer,
+
+    #[error("Nod materialization attempt limit reached for this block")]
+    MaterializationAttemptLimit,
+
+    #[error("stale Nod materialization queue sequence")]
+    StaleMaterializationQueue,
+
+    #[error("stale Nod materialization cursor")]
+    StaleMaterializationCursor,
+
+    #[error("invalid Nod materialization batch shape")]
+    InvalidMaterializationBatchShape,
+
+    #[error("invalid Nod materialization proof")]
+    InvalidMaterializationProof,
+
+    #[error("certified Nod already exists")]
+    DuplicateMaterializedNod,
+
+    #[error("certified Nod generation is not fully materialized")]
+    NodGenerationNotMaterialized,
+
+    #[error("no settlement asset registered for reference currency {reference_currency}")]
+    NoSettlementAsset { reference_currency: u16 },
 }
 
 impl From<NodFactoryError> for PrecompileError {

@@ -5,7 +5,8 @@ There are two node roles:
 - **Full node** — `outbe-chain node` (no `--validator`). It has a persistent
   compressed Reth P2P identity registered through TeeRegistry V1, follows a
   selected certified `--upstream`, re-executes blocks and serves RPC. It does not
-  vote or propose and needs no consensus BLS key.
+  vote or propose. Its provisioning includes separate EVM and consensus-BLS key
+  files, but FullNode runtime does not load them and their presence grants no role.
 
 - **Validator** — `outbe-chain node --validator`. This is **one** role with a
   lifecycle. The node always runs `--validator`; what it does depends on whether it
@@ -58,7 +59,8 @@ cargo build --release -p outbe-keygen --bin outbe-keygen   # key generation
   signed ReleaseManifest measurements by following
   [Testnet SGX release and rollout](testnet-sgx-release.md). Do not build or sign the
   release bundle on the validator host.
-- An EVM account (secp256k1) funded with native COEN.
+- A funded relay EVM account and per-node persistent Reth P2P, EVM and
+  consensus-BLS key files. The relay may be different from the node EVM address.
 
 `outbe-cli` / `outbe-keygen` never send key material to the RPC; only signed
 transactions and public keys go over the wire.
@@ -75,16 +77,21 @@ node.
 
 ```sh
 RETH_P2P_SECRET=/var/lib/outbe/reth-p2p-secret.hex
+NODE_KEYS_DIR=/var/lib/outbe/keys
 NODE_DATA_DIR=/var/lib/outbe/<resolved-chain-data-dir>
 BINDING_ID=0x$(openssl rand -hex 32)
 VALID_UNTIL=$(( $(date -u +%s) + 86400 ))
 
+# Provision independent node key material once. FullNode runtime does not load it.
+outbe-keygen hybrid --output-dir "$NODE_KEYS_DIR"
+
 # The exact release enclave is already running at 127.0.0.1:7000.
-# RELAY_EVM_KEY is only a funded transaction relay; the P2P key is node authority.
+# RELAY_EVM_KEY is only a funded transaction relay. The P2P and node EVM keys
+# jointly authorize the one-time address-to-NodeHost association.
 outbe-cli tee join --enclave-socket 127.0.0.1:7000 \
-  --profile full-node \
   --node-data-dir "$NODE_DATA_DIR" \
   --reth-p2p-secret-key "$RETH_P2P_SECRET" \
+  --node-evm-key "$NODE_KEYS_DIR/evm-key.hex" \
   --binding-id "$BINDING_ID" --valid-until "$VALID_UNTIL" \
   --private-key "$RELAY_EVM_KEY" \
   --rpc-url http://<certified-rpc>:8545 --timeout-secs 60
@@ -126,8 +133,10 @@ Check it with `outbe-cli monitor health` / `cast block finalized`. A certified
 FullNode's `outbe_consensusStatus.lastFinalizedBlock` advances only after the
 exact parent proof, OCOMP retention and snapshot arming have all succeeded.
 
-If this FullNode later becomes a validator, keep the synchronized data directory,
-stop it, and restart it with the complete validator profile from sections 2–3.
+If this FullNode later receives validator role, stop it and restart validator mode
+on the same synchronized datadir using the already provisioned EVM/BLS keys. Do
+not repeat `tee join`: the P2P identity, NodeHost association, manifest, enclave,
+Noise identity, sealed state and resident offer key remain unchanged.
 
 ---
 
@@ -150,6 +159,10 @@ VALIDATOR_ADDR=$(cast wallet address --private-key "$EVM_KEY")
 
 Keep `signing-key.hex` / `evm-key.hex` secret and backed up.
 
+For a node that previously ran as a FullNode, reuse the files provisioned before
+its first `tee join`; do not generate replacements during promotion. These key
+files had no authority while the process ran without `--validator`.
+
 Generate the validator's OCOMP result-signing key before its first validator
 startup. The public registration binds this key to the chain, genesis,
 validator address and current BLS MinPk identity; the secret key remains local:
@@ -169,6 +182,11 @@ local-control profile described in section 1.
 
 ### 2.2 Register, announce P2P, and install the offer key once
 
+Every node performs exactly one role-neutral TEE join before its first node
+startup. If this datadir already ran as a FullNode, that join and the association
+already exist: skip the final command in this section and retain all NodeHost
+artifacts.
+
 ```sh
 # register the validator (binds your address to your BLS pubkey) -> REGISTERED
 SIG=$(outbe-keygen sign-registration --key /var/lib/outbe/keys/signing-key.hex \
@@ -180,24 +198,25 @@ outbe-cli validator register --pubkey "0x$BLS_PUBKEY" --bls-sig "0x$SIG" \
 outbe-cli validator set-p2p --symmetric <public-host>:30400 \
   --private-key "$EVM_KEY" --rpc-url http://<rpc>:8545
 
-# Start the exact accepted enclave sidecar first. Then bind its V1 identity and
-# install the permanent key before running this joining node.
+# For a newly provisioned node only: start the accepted enclave sidecar, register
+# its role-neutral V1 identity and atomically associate the node EVM address.
 NODE_DATA_DIR=/var/lib/outbe/<resolved-chain-data-dir>
+RETH_P2P_SECRET=/var/lib/outbe/reth-p2p-secret.hex
 BINDING_ID=0x$(openssl rand -hex 32)
 VALID_UNTIL=$(( $(date -u +%s) + 86400 ))
 outbe-cli tee join --enclave-socket 127.0.0.1:7000 \
-  --profile validator \
   --node-data-dir "$NODE_DATA_DIR" \
-  --node-private-key "$EVM_KEY" \
-  --consensus-bls-public "0x$BLS_PUBKEY" \
+  --reth-p2p-secret-key "$RETH_P2P_SECRET" \
+  --node-evm-key /var/lib/outbe/keys/evm-key.hex \
   --binding-id "$BINDING_ID" --valid-until "$VALID_UNTIL" \
   --private-key "$RELAY_EVM_KEY" \
   --rpc-url http://<certified-rpc>:8545 --timeout-secs 60
 ```
 
-The relay and validator keys may belong to different accounts; admission authority
-comes from the Validator NodeHost signature and canonical evidence, not
-`msg.sender`. A Created registration emits one matching
+The relay and node EVM keys may belong to different accounts. NodeHost admission
+requires canonical evidence plus signatures from the persistent P2P key and node
+EVM key, not `msg.sender`. This association does not register a validator. A
+Created registration emits one matching
 `OfferKeySealedForRegistryV1`; idempotent replay, renewal and replacement never
 redeliver it.
 
@@ -230,6 +249,13 @@ outbe-chain node --validator \
   --ocomp.key                   /var/lib/outbe/ocomp/ocomp-key-v1.hex \
   --tee-enclave-socket          127.0.0.1:7000
 ```
+
+An existing-chain validator must not wait for a future DKG boundary during
+startup, because synchronization is not running yet. If its local signing share
+or DKG material is missing or stale, startup fails immediately. Restart it with
+the current public polynomial and DKG output, without `--consensus.signing-share`,
+so it can synchronize as `VerifierOnly` and acquire a new share through the
+normal running reshare path.
 
 There is deliberately no OCOMP validator-index or committee file. For every
 finalized job the node opens that job's historical ValidatorSet snapshot,
@@ -313,12 +339,13 @@ the difference is only whether the node already holds a share.
   clears the prior OCOMP readiness. It then rejoins only through the next certified
   reshare.
 
-- **FullNode becoming a validator** — stop the FullNode and restart the same
-  synchronized data directory with `--validator`, the consensus/EVM/OCOMP keys,
-  public DKG artifacts and the complete OCOMP local-control profile from section
-  2.3. It does not receive a manually assigned OCOMP index. After registration,
-  stake and `confirm-ready`, the next certified reshare makes it ACTIVE and its
-  address appears automatically in snapshots for new OCOMP jobs.
+- **FullNode receiving validator role** — stop the FullNode and restart the same
+  synchronized data directory with `--validator`, the already provisioned
+  consensus/EVM keys, OCOMP key, public DKG artifacts and complete local-control
+  profile from section 2.3. Do not repeat TEE join or replace any NodeHost
+  artifact. The ordinary `registerValidator`, stake and `confirm-ready` path leads
+  to PENDING; the next certified reshare makes it ACTIVE and its address appears
+  automatically in snapshots for new OCOMP jobs.
 
 Once a new or returning node is registered, staked, PENDING and confirmed, the
 normal action is simply to **wait for the next periodic reshare** — it re-reads the

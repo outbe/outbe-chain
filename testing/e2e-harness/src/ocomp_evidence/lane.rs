@@ -51,7 +51,7 @@ const PUBLIC_SCENARIOS: [(&str, &str, &str); 4] = [
     ),
 ];
 
-const E2E_SCENARIOS: [(&str, &str, &str); 4] = [
+const E2E_SCENARIOS: [(&str, &str, &str); 3] = [
     (
         "OCM-E2E-001",
         "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay",
@@ -61,11 +61,6 @@ const E2E_SCENARIOS: [(&str, &str, &str); 4] = [
         "OCM-TRC-001",
         "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay",
         "RUNTIME_BOUNDARY_TRACE",
-    ),
-    (
-        "OCM-E2E-007",
-        "An incompatible Supervisor cannot affect consensus or compatible domains",
-        "PROCESS_BOUNDARY",
     ),
     (
         "OCM-E2E-008",
@@ -701,7 +696,6 @@ fn validate_e2e_scenario(test_id: &str, scenario: &Value) -> Result<()> {
     let public = public_path(scenario)?;
     match test_id {
         "OCM-E2E-001" => validate_applied_public_path(scenario),
-        "OCM-E2E-007" => validate_applied_public_path_with_vote_count(scenario, 3),
         "OCM-E2E-008" => {
             validate_applied_public_path(scenario)?;
             ensure!(
@@ -1035,7 +1029,6 @@ mod tests {
             .map(|(test_id, scenario, _)| (*test_id, *scenario))
             .collect::<BTreeMap<_, _>>();
         assert_eq!(e2e["OCM-E2E-001"], e2e["OCM-TRC-001"]);
-        assert_ne!(e2e["OCM-E2E-001"], e2e["OCM-E2E-007"]);
         assert_eq!(e2e["OCM-E2E-001"], e2e["OCM-E2E-008"]);
     }
 

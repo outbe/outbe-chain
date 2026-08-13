@@ -336,7 +336,7 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
     };
     let nod_owner = Address::repeat_byte(0x42);
     let nod_id = outbe_compressed_entities::derive_poseidon_entity_id(nod_owner, day).unwrap();
-    let bucket_key = NodContract::bucket_key(day, U256::from(14));
+    let bucket_key = NodContract::bucket_key(day, U256::from(14), 978);
     let mut nod = NodItemState {
         nod_id,
         owner: nod_owner,
@@ -349,6 +349,7 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 1_752_534_000,
+        is_settled: false,
     };
     let bucket_id = EntityId36::new(day, bucket_key.0);
     let mut execution = HashMapStorageProvider::new(1);
@@ -427,6 +428,7 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
         is_qualified: true,
         total_nods: 1,
         entry_price_minor: U256::from(16),
+        reference_currency: nod.reference_currency,
     };
     assert_eq!(
         encode_tribute_v1(&canonical_body(&projected_tribute)).unwrap(),

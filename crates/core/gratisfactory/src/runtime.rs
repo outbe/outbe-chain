@@ -19,12 +19,12 @@ use alloy_sol_types::{SolCall, SolEvent};
 
 use crate::errors::GratisFactoryError;
 use crate::precompile::IGratisFactory;
+use crate::sol_ext::IReferenceCurrency;
 use outbe_fidelity::api::FidelityCohortOp;
 use outbe_gratis::api::{self as gratis, ModifyAuth, PledgeTerms};
 use outbe_oracle::api::coen_rate_for;
 use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::reference_currency_abi::IReferenceCurrency;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18;
 

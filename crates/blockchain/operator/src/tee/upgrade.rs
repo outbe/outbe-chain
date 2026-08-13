@@ -1134,17 +1134,8 @@ fn validate_candidate_identity_v1(
     {
         eyre::bail!("candidate manifest is not a same-NodeHost successor of finalized A");
     }
-    match (selector, &manifest.node_id) {
-        (
-            NodeBindingSelectorV1::Validator(address),
-            outbe_primitives::tee_attestation_v1::NodeIdV1::Validator {
-                address: expected, ..
-            },
-        ) if address.as_slice() == expected => {}
-        (
-            NodeBindingSelectorV1::FullNode(public),
-            outbe_primitives::tee_attestation_v1::NodeIdV1::FullNode { reth_p2p_public },
-        ) if public == reth_p2p_public => {}
+    match selector {
+        NodeBindingSelectorV1::NodeHost(public) if public == &manifest.node_id.reth_p2p_public => {}
         _ => {
             eyre::bail!("upgrade selector does not match the candidate node identity");
         }
@@ -1171,7 +1162,6 @@ fn transition_intent_v1(
         policy_hash: successor
             .policy_hash()
             .map_err(|error| eyre::eyre!("hash staged successor policy: {error}"))?,
-        enclave_profile: manifest.enclave_profile,
         node_id: manifest.node_id.clone(),
         enclave_id: manifest
             .enclave_id()

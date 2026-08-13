@@ -31,195 +31,42 @@ use tokio::runtime::Runtime;
 /// Legacy-style gas price used by the old `cast send --gas-price` calls (1 gwei).
 const GAS_PRICE_WEI: u128 = 1_000_000_000;
 
-// Precompile ABI surface the harness reads/writes. Signatures mirror the
-// `cast call`/`cast send` strings they replace (and `bin/outbe-cli/src/abi.rs`).
-sol! {
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IValidatorSet {
-        event ValidatorDeactivated(address indexed validator, uint64 atHeight);
-        function validatorByAddress(address v) external view returns (
-            address addr, bytes pubkey, uint256 stake, uint8 status,
-            uint64 slashCount, uint64 missedBlocks, uint64 missedVotes,
-            uint64 blocksProposed, uint64 joined, uint64 deactivated,
-            uint64 unbondEnd, bool hasShare);
-        function isConsensusParticipant(address v) external view returns (bool);
-        function activeValidatorCount() external view returns (uint32);
-        function activeConsensusCount() external view returns (uint32);
-        function getEpochNumber() external view returns (uint256);
-        function deactivateValidator(address v) external;
-        function registerValidator(address v, bytes pubkey, bytes sig) external;
-        function setP2pAddress(address v, uint8 kind, bytes addr) external;
-        function setDelegate(uint8 role, address delegate) external;
-        function getDelegate(address validator, uint8 role) external view returns (address);
-        function resolveValidator(uint8 role, address signer) external view returns (address);
-    }
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IUpdate {
-        // Returned as a single (dynamic) struct, not flat values — the `bytes`
-        // member makes struct-return and multi-return ABI-encode differently.
-        struct ScheduledUpdate {
-            uint256 proposalId;
-            uint32 version;
-            uint64 activationHeight;
-            bytes info;
-            uint8 status;
-        }
-        function getActiveVersion() external view returns (uint32);
-        function getScheduledUpdate(uint256 id) external view returns (ScheduledUpdate memory);
-    }
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IGovernance {
-        struct Oip {
-            uint256 id;
-            uint8 status;
-            address author;
-            uint64 createdBlock;
-            uint64 updatedBlock;
-            bytes32 textHash;
-            string text;
-        }
-        struct Gip {
-            uint256 id;
-            uint8 status;
-            address author;
-            uint64 createdBlock;
-            uint64 updatedBlock;
-            bytes32 textHash;
-            string text;
-        }
-        function getOip(uint256 id) external view returns (Oip memory);
-        function getGip(uint256 id) external view returns (Gip memory);
-    }
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface ITeeRegistry {
-        function isBootstrapped() external view returns (bool);
-    }
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IL2Registry {
-        function registerNetwork(uint64 chainId, address l1Address, bytes publicKey) external;
-        function setZkEnabled(uint64 chainId, bool enabled) external;
-        function getNetwork(uint64 chainId) external view returns (
-            address l1Address, bytes publicKey, bool zkEnabled);
-    }
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface ITribute {
-        function totalSupply() external view returns (uint256);
-        function getTributesByOwner(address owner) external view returns (bytes[] memory);
-        function getTributesByDay(uint32 worldwideDay) external view returns (bytes[] memory);
-    }
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface INod {
-        struct NodData {
-            bytes nodId;
-            address owner;
-            uint32 worldwideDay;
-            uint16 leagueId;
-            uint256 floorPriceMinor;
-            uint256 gratisLoadMinor;
-            uint256 costOfGratisMinor;
-            uint256 costAmountMinor;
-            bool isQualified;
-            uint16 issuanceCurrency;
-            uint16 referenceCurrency;
-            uint64 issuedAt;
-        }
-        struct CertifiedGenerationData {
-            bool exists;
-            uint32 worldwideDay;
-            uint64 generation;
-            bytes32 nodRoot;
-            bytes32 bucketRoot;
-            bytes32 outputManifestRoot;
-            uint32 tributeCount;
-            uint32 nodCount;
-            uint32 bucketCount;
-            uint256 nodAmountTotal;
-            uint256 nodGratisConsumed;
-            uint64 issuedAt;
-        }
-        function totalSupply() external view returns (uint256);
-        function tokenByIndex(uint256 index) external view returns (bytes memory);
-        function nodData(bytes calldata nodId) external view returns (NodData memory);
-        function certifiedGeneration(uint32 worldwideDay)
-            external
-            view
-            returns (CertifiedGenerationData memory);
-    }
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IMetadosis {
-        function getOffchainJob(bytes32 intentId)
-            external
-            view
-            returns (bytes memory ocompJobRecordV1);
-        function submitLysisResult(bytes calldata resultVoteV1) external;
-        function getOffchainVoteAccountability(bytes32 jobId)
-            external
-            view
-            returns (bytes memory ocompVoteAccountabilityV1);
-        function getActiveLysisGeneration(uint32 wwd)
-            external
-            view
-            returns (bytes memory activeGenerationV1);
-        function getWorldwideDayTerminalReceipt(uint32 wwd)
-            external
-            view
-            returns (
-                uint8 outcome,
-                uint256 valueRouted,
-                uint256 carryOverBefore,
-                uint256 carryOverAfter,
-                uint8 retirementOutcome,
-                uint64 blockNumber
-            );
-    }
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IPromisLimit {
-        function totalUnallocated() external view returns (uint256);
-    }
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IDesis {
-        function getAuctionStage(uint32 worldwideDay) external view returns (uint8);
-    }
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IStaking {
-        function stake(address v, uint256 amount) external payable;
-        function claimUnbonded() external;
-        function getStake(address validator) external view returns (uint256);
-        function getTotalStaked() external view returns (uint256);
-    }
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IWorldwideDay {
-        function getWorldwideDay(uint32 day) external view returns (
-            uint8 f0, uint8 f1, uint64 f2, uint64 f3, uint64 f4,
-            uint64 f5, uint64 f6, uint256 f7, uint256 f8);
-        function getWorldwideDaysByStatus(uint8 status) external view returns (uint32[] memory);
-    }
-    interface IZeroFee {
-        function authorizeSponsorship(address signer) external view returns (bool);
-        function getCounter(address signer) external view returns (uint32 day, uint32 count);
-    }
-    interface IAgentReward {
-        function claimReward(uint256 agentId) external;
-    }
-}
+// Precompile ABI surface the harness reads/writes, generated from the canonical
+// Solidity sources so the harness exercises the same selectors the node
+// dispatches.
+sol!("../../contracts/precompiles/src/IValidatorSet.sol");
+sol!("../../contracts/precompiles/src/IUpdate.sol");
+sol!("../../contracts/precompiles/src/IGovernance.sol");
+sol!("../../contracts/precompiles/src/IL2Registry.sol");
+sol!("../../contracts/precompiles/src/ITribute.sol");
+sol!("../../contracts/precompiles/src/INod.sol");
+sol!("../../contracts/precompiles/src/INodFactory.sol");
+sol!("../../contracts/precompiles/src/IGratis.sol");
+sol!("../../contracts/precompiles/src/IMetadosis.sol");
+sol!("../../contracts/precompiles/src/IPromisLimit.sol");
+sol!("../../contracts/precompiles/src/IDesis.sol");
+sol!("../../contracts/precompiles/src/IStaking.sol");
+sol!("../../contracts/precompiles/src/IZeroFee.sol");
+sol!("../../contracts/precompiles/src/IAgentReward.sol");
+sol!("../../contracts/precompiles/src/ITeeRegistryV1.sol");
 
 sol!(
-    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    #![sol(extra_derives(Debug, PartialEq))]
     "../../contracts/precompiles/src/IVote.sol"
 );
 
 sol!(
-    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    #![sol(extra_derives(Debug, PartialEq))]
     "../../contracts/precompiles/src/IStablecoinFactory.sol"
 );
 
 sol!(
-    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    #![sol(extra_derives(Debug, PartialEq))]
     "../../contracts/precompiles/src/IStablecoinPolicyRegistry.sol"
 );
 
 sol!(
-    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    #![sol(extra_derives(Debug, PartialEq))]
     "../../contracts/precompiles/src/IStablecoin.sol"
 );
 
@@ -251,25 +98,62 @@ where
     rx.recv().expect("eth runtime dropped the task")
 }
 
-/// `eth_call` a view function and decode its return, or `None` on any transport /
-/// decode error (the analogue of the old `cast … 2>/dev/null`).
-pub(crate) fn read_call<C: SolCall>(url: &str, to: Address, call: &C) -> Option<C::Return>
+/// `eth_call` a view function and decode its return while preserving the failure.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn read_call_result<C: SolCall>(
+    url: &str,
+    to: Address,
+    call: &C,
+) -> std::result::Result<C::Return, String>
 where
     C::Return: Send + 'static,
 {
     let url = url.to_string();
     let data = call.abi_encode();
     block_on(async move {
-        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
+        let endpoint = url
+            .parse()
+            .map_err(|error| format!("invalid RPC URL: {error}"))?;
+        let provider = ProviderBuilder::new().connect_http(endpoint);
         let tx = TransactionRequest::default()
             .to(to)
             .input(Bytes::from(data).into());
-        // Pin state and block context to the canonical head. Omitting the block
-        // tag lets some RPC implementations execute against `pending`, whose
-        // timestamp can cross a UTC boundary before a block is canonical.
-        let out = provider.call(tx).block(BlockId::latest()).await.ok()?;
-        C::abi_decode_returns(&out).ok()
+        let out = provider
+            .call(tx)
+            .block(BlockId::latest())
+            .await
+            .map_err(|error| format!("eth_call failed: {error}"))?;
+        C::abi_decode_returns(&out).map_err(|error| format!("ABI decode failed: {error}"))
     })
+}
+
+/// `eth_call` a view function and decode its return, or `None` on any transport /
+/// decode error (the analogue of the old `cast … 2>/dev/null`).
+pub(crate) fn read_call<C: SolCall>(url: &str, to: Address, call: &C) -> Option<C::Return>
+where
+    C::Return: Send + 'static,
+{
+    #[cfg(feature = "ocomp-integration")]
+    {
+        read_call_result(url, to, call).ok()
+    }
+
+    #[cfg(not(feature = "ocomp-integration"))]
+    {
+        let url = url.to_string();
+        let data = call.abi_encode();
+        block_on(async move {
+            let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
+            let tx = TransactionRequest::default()
+                .to(to)
+                .input(Bytes::from(data).into());
+            // Pin state and block context to the canonical head. Omitting the block
+            // tag lets some RPC implementations execute against `pending`, whose
+            // timestamp can cross a UTC boundary before a block is canonical.
+            let out = provider.call(tx).block(BlockId::latest()).await.ok()?;
+            C::abi_decode_returns(&out).ok()
+        })
+    }
 }
 
 /// Execute a typed view against the exact canonical state at `height`.
@@ -440,6 +324,74 @@ pub(crate) fn raw_json_result(
             .await
             .map_err(Into::into)
     })
+}
+
+/// Request the caller's Gratis modify key through the production enclave RPC
+/// and open the sealed response with a fresh client X25519 key.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn derive_gratis_modify_key(url: &str, key: &str) -> Result<[u8; 32]> {
+    use outbe_tee::protocol::{derive_account_keys_message, eip191_hash, Ledger};
+    use outbe_tee_enclave::crypto::{decrypt_share, x25519_public, EncryptedShare};
+    use rand_core::RngCore as _;
+
+    let signer: PrivateKeySigner = key
+        .parse()
+        .map_err(|error| eyre!("invalid private key: {error}"))?;
+    let account = signer.address();
+    let mut ephemeral_secret = [0_u8; 32];
+    rand_core::OsRng.fill_bytes(&mut ephemeral_secret);
+    let ephemeral_public = x25519_public(&ephemeral_secret);
+    let digest = eip191_hash(&derive_account_keys_message(
+        Ledger::Gratis,
+        account,
+        B256::from(ephemeral_public),
+    ));
+    let signature = signer
+        .sign_hash_sync(&digest)
+        .map_err(|error| eyre!("sign Gratis key request: {error}"))?;
+    let response = raw_json_result(
+        url,
+        "outbe_deriveKeys",
+        serde_json::json!([
+            "Gratis",
+            format!("{account:#x}"),
+            format!("{:#x}", B256::from(ephemeral_public)),
+            format!("0x{}", hex::encode(signature.as_bytes())),
+        ]),
+    )?;
+
+    let decode = |field: &'static str| -> Result<Vec<u8>> {
+        let value = response
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("outbe_deriveKeys omitted {field}"))?;
+        hex::decode(value.trim_start_matches("0x"))
+            .map_err(|error| eyre!("decode outbe_deriveKeys {field}: {error}"))
+    };
+    let ephemeral_pubkey: [u8; 32] = decode("enclaveEphemeralPubkey")?
+        .try_into()
+        .map_err(|value: Vec<u8>| eyre!("enclave ephemeral key is {} bytes", value.len()))?;
+    let nonce: [u8; 12] = decode("nonce")?
+        .try_into()
+        .map_err(|value: Vec<u8>| eyre!("sealed-key nonce is {} bytes", value.len()))?;
+    let plaintext = decrypt_share(
+        &ephemeral_secret,
+        &EncryptedShare {
+            ephemeral_pub: ephemeral_pubkey,
+            nonce,
+            ciphertext: decode("sealed")?,
+        },
+    )
+    .map_err(|error| eyre!("open sealed Gratis keys: {error}"))?;
+    if plaintext.len() != 64 {
+        return Err(eyre!(
+            "outbe_deriveKeys plaintext is {} bytes instead of 64",
+            plaintext.len()
+        ));
+    }
+    plaintext[32..]
+        .try_into()
+        .map_err(|_| eyre!("Gratis modify key is not 32 bytes"))
 }
 
 /// Broadcast one already signed public transaction without reconstructing or
@@ -737,10 +689,7 @@ pub(crate) fn send_reward_call(
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
     let wallet = EthereumWallet::from(signer);
     let url = url.to_string();
-    let data = IAgentReward::claimRewardCall {
-        agentId: U256::ZERO,
-    }
-    .abi_encode();
+    let data = IAgentReward::claimRewardCall { amount: U256::ZERO }.abi_encode();
     block_on(async move {
         let provider = ProviderBuilder::new()
             .wallet(wallet)

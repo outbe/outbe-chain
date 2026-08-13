@@ -6,10 +6,10 @@ use k256::ecdsa::{signature::hazmat::PrehashSigner as _, SigningKey};
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
     DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1, EnclaveInitializationManifestV1,
-    EnclaveProfile, NodeHostAuthorizationWitnessV1, NodeIdV1, PlatformTcbStatusSetV1,
-    QvlTcbStatusV1, RegistrationIntentV1, RegistryMutatorV1, ResourceScheduleV1,
-    SystemGasScheduleV1, TeeBootstrapGasInputV1, TeeMeasurementRuleV1, TeePolicyScheduleEntryV1,
-    TeePolicyScheduleV1, TeePolicyV1, TeeRegistryGasScheduleV1, TransitionKeyReadyProofV1,
+    NodeHostAuthorizationWitnessV1, NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1,
+    RegistrationIntentV1, RegistryMutatorV1, ResourceScheduleV1, SystemGasScheduleV1,
+    TeeBootstrapGasInputV1, TeeMeasurementRuleV1, TeePolicyScheduleEntryV1, TeePolicyScheduleV1,
+    TeePolicyV1, TeeRegistryGasScheduleV1, TransitionKeyReadyProofV1,
     ACTIVE_TEE_ATTESTATION_V1_MANIFEST, MAX_ACTIVE_MEASUREMENT_RULES,
     MAX_ATTESTATION_EVIDENCE_BYTES, MAX_COLLATERAL_COMPONENT_BYTES,
     MAX_EVIDENCE_CALL_FRAMING_BYTES, MAX_NODE_HOST_AUTHORIZATION_WITNESS_BYTES, MAX_QUOTE_BYTES,
@@ -17,17 +17,14 @@ use outbe_primitives::tee_attestation_v1::{
 };
 
 fn validator_intent(genesis_hash: B256) -> RegistrationIntentV1 {
+    let node_id = node_id(&SigningKey::from_bytes((&[0x31; 32]).into()).unwrap());
     RegistrationIntentV1 {
         chain_id: [0; 32],
         genesis_hash,
         operation: AttestationOperationV1::RegisterEnclave,
         attestation_mode: AttestationMode::DcapRequired,
         policy_hash: B256::repeat_byte(0x21),
-        enclave_profile: EnclaveProfile::Validator,
-        node_id: NodeIdV1::Validator {
-            address: [0x31; 20],
-            bls_minpk_public: [0x32; 48],
-        },
+        node_id,
         enclave_id: B256::repeat_byte(0x41),
         binding_id: B256::repeat_byte(0x42),
         binding_version: 1,
@@ -42,6 +39,17 @@ fn validator_intent(genesis_hash: B256) -> RegistrationIntentV1 {
     }
 }
 
+fn node_id(key: &SigningKey) -> NodeIdV1 {
+    NodeIdV1 {
+        reth_p2p_public: key
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .unwrap(),
+    }
+}
+
 fn recoverable_signature(key: &SigningKey, prehash: B256) -> [u8; 65] {
     let (signature, recovery_id) = key.sign_prehash(prehash.as_slice()).unwrap();
     let mut out = [0u8; 65];
@@ -51,18 +59,10 @@ fn recoverable_signature(key: &SigningKey, prehash: B256) -> [u8; 65] {
 }
 
 fn validator_initialization_manifest(key: &SigningKey) -> EnclaveInitializationManifestV1 {
-    let public = key.verifying_key().to_encoded_point(false);
-    let address_hash = alloy_primitives::keccak256(&public.as_bytes()[1..]);
-    let mut address = [0u8; 20];
-    address.copy_from_slice(&address_hash.as_slice()[12..]);
     EnclaveInitializationManifestV1 {
         chain_id: [0x10; 32],
         genesis_hash: B256::repeat_byte(0x11),
-        enclave_profile: EnclaveProfile::Validator,
-        node_id: NodeIdV1::Validator {
-            address,
-            bls_minpk_public: [0x32; 48],
-        },
+        node_id: node_id(key),
         initialization_challenge: [0x41; 32],
         node_host_noise_x25519: [0x42; 32],
         recipient_x25519: [0x51; 32],
@@ -78,7 +78,6 @@ fn intent_for_manifest(manifest: &EnclaveInitializationManifestV1) -> Registrati
         operation: AttestationOperationV1::RegisterEnclave,
         attestation_mode: AttestationMode::DcapRequired,
         policy_hash: B256::repeat_byte(0x21),
-        enclave_profile: manifest.enclave_profile,
         node_id: manifest.node_id.clone(),
         enclave_id: manifest.enclave_id().unwrap(),
         binding_id: B256::repeat_byte(0x42),
@@ -137,7 +136,7 @@ fn node_host_authorization_survives_fresh_enclave_initialization() {
     );
     assert_eq!(
         original.node_host_authorization_hash().unwrap(),
-        b256!("7e9282a26adfb0a997e6c8afbfc453204b98ff499250dec01dc8097164fddb94")
+        b256!("b13eb9d78b874da96d5a8262fcb2ff1237d2be7ee82c127d3138fb47b653e838")
     );
     let mut another_node_host = original.clone();
     another_node_host.node_host_noise_x25519 = [0x44; 32];
@@ -171,19 +170,12 @@ fn canonical_node_host_witness_opens_the_exact_manifest_authorization() {
 }
 
 #[test]
-fn initialization_manifest_rejects_wrong_signer_profile_and_intent_keys() {
+fn initialization_manifest_rejects_wrong_signer_and_intent_keys() {
     let validator_key = SigningKey::from_bytes((&[0x61; 32]).into()).unwrap();
     let other_key = SigningKey::from_bytes((&[0x62; 32]).into()).unwrap();
     let manifest = validator_initialization_manifest(&validator_key);
     let wrong_signature = recoverable_signature(&other_key, manifest.authorization_hash().unwrap());
     assert!(!manifest.verify_node_signature(&wrong_signature));
-
-    let mut wrong_profile = manifest.clone();
-    wrong_profile.enclave_profile = EnclaveProfile::FullNode;
-    assert_eq!(
-        wrong_profile.encode_canonical().unwrap_err(),
-        CodecError::NonCanonical("node kind does not match enclave profile")
-    );
 
     let mut wrong_intent = intent_for_manifest(&manifest);
     wrong_intent.noise_responder_x25519[0] ^= 1;
@@ -194,20 +186,10 @@ fn initialization_manifest_rejects_wrong_signer_profile_and_intent_keys() {
 }
 
 #[test]
-fn full_node_initialization_signature_uses_the_exact_reth_p2p_key() {
-    let full_node_key = SigningKey::from_bytes((&[0x71; 32]).into()).unwrap();
-    let compressed: [u8; 33] = full_node_key
-        .verifying_key()
-        .to_encoded_point(true)
-        .as_bytes()
-        .try_into()
-        .unwrap();
-    let mut manifest = validator_initialization_manifest(&full_node_key);
-    manifest.enclave_profile = EnclaveProfile::FullNode;
-    manifest.node_id = NodeIdV1::FullNode {
-        reth_p2p_public: compressed,
-    };
-    let signature = recoverable_signature(&full_node_key, manifest.authorization_hash().unwrap());
+fn node_host_initialization_signature_uses_the_exact_reth_p2p_key() {
+    let node_host_key = SigningKey::from_bytes((&[0x71; 32]).into()).unwrap();
+    let manifest = validator_initialization_manifest(&node_host_key);
+    let signature = recoverable_signature(&node_host_key, manifest.authorization_hash().unwrap());
     assert!(manifest.verify_node_signature(&signature));
 
     let other_key = SigningKey::from_bytes((&[0x72; 32]).into()).unwrap();
@@ -240,13 +222,8 @@ fn registration_intent_rejects_same_chain_id_with_another_genesis() {
 #[test]
 fn registration_intent_requires_node_and_enclave_pop_over_the_same_hash() {
     let node_key = SigningKey::from_bytes((&[0x63; 32]).into()).unwrap();
-    let public = node_key.verifying_key().to_encoded_point(false);
-    let address_hash = alloy_primitives::keccak256(&public.as_bytes()[1..]);
     let mut intent = validator_intent(B256::repeat_byte(0x11));
-    intent.node_id = NodeIdV1::Validator {
-        address: address_hash.as_slice()[12..].try_into().unwrap(),
-        bls_minpk_public: [0x32; 48],
-    };
+    intent.node_id = node_id(&node_key);
 
     let enclave_key = ed25519_dalek::SigningKey::from_bytes(&[0x64; 32]);
     intent.attestation_ed25519 = enclave_key.verifying_key().to_bytes();
@@ -283,13 +260,13 @@ fn registration_intent_roundtrips_and_rejects_unknown_or_trailing_data() {
         })
     ));
 
-    // version + chain id + genesis + operation + mode + policy hash + profile +
-    // NodeId version = byte 100, NodeId kind = byte 101.
-    unknown_kind[101] = 0xff;
+    // version + chain id + genesis + operation + mode + policy hash = 99 bytes;
+    // the nested NodeId version starts at byte 99.
+    unknown_kind[99] = 0xff;
     assert!(matches!(
         RegistrationIntentV1::decode_canonical(&unknown_kind),
-        Err(CodecError::UnknownDiscriminant {
-            field: "node kind",
+        Err(CodecError::UnsupportedVersion {
+            field: "NodeIdV1",
             value: 0xff
         })
     ));
@@ -304,23 +281,17 @@ fn registration_intent_roundtrips_and_rejects_unknown_or_trailing_data() {
 
 #[test]
 fn node_id_codec_rejects_trailing_unknown_and_noncanonical_keys() {
-    let full_node = NodeIdV1::FullNode {
-        reth_p2p_public: {
-            let mut key = [0x44; 33];
-            key[0] = 0x02;
-            key
-        },
-    };
-    let encoded = full_node.encode_canonical().unwrap();
-    assert_eq!(NodeIdV1::decode_canonical(&encoded).unwrap(), full_node);
-    assert_ne!(full_node.node_id_hash().unwrap(), B256::ZERO);
+    let node_host = node_id(&SigningKey::from_bytes((&[0x44; 32]).into()).unwrap());
+    let encoded = node_host.encode_canonical().unwrap();
+    assert_eq!(NodeIdV1::decode_canonical(&encoded).unwrap(), node_host);
+    assert_ne!(node_host.node_id_hash().unwrap(), B256::ZERO);
 
     let mut unknown = encoded.clone();
-    unknown[1] = 0xff;
+    unknown[0] = 0xff;
     assert!(matches!(
         NodeIdV1::decode_canonical(&unknown),
-        Err(CodecError::UnknownDiscriminant {
-            field: "node kind",
+        Err(CodecError::UnsupportedVersion {
+            field: "NodeIdV1",
             value: 0xff
         })
     ));
@@ -332,15 +303,15 @@ fn node_id_codec_rejects_trailing_unknown_and_noncanonical_keys() {
         CodecError::TrailingBytes(1)
     );
     assert_eq!(
-        NodeIdV1::FullNode {
+        NodeIdV1 {
             reth_p2p_public: [0; 33]
         }
         .encode_canonical()
         .unwrap_err(),
-        CodecError::NonCanonical("full-node node id is not canonical compressed secp256k1")
+        CodecError::NonCanonical("node id is not canonical compressed secp256k1")
     );
     assert_eq!(
-        NodeIdV1::FullNode {
+        NodeIdV1 {
             reth_p2p_public: {
                 let mut invalid = [0xff; 33];
                 invalid[0] = 0x02;
@@ -349,7 +320,7 @@ fn node_id_codec_rejects_trailing_unknown_and_noncanonical_keys() {
         }
         .encode_canonical()
         .unwrap_err(),
-        CodecError::NonCanonical("full-node node id is not canonical compressed secp256k1")
+        CodecError::NonCanonical("node id is not canonical compressed secp256k1")
     );
 }
 
@@ -421,7 +392,7 @@ fn normative_qvl_and_registry_gas_match_engineering_gate_vectors() {
                 .intent_hash()
                 .unwrap()
         ),
-        "7866748eebd89640c998bfaf64d5c5a44b4849a44c7b0e1ac32d118560a85e13"
+        "c93297665ac2c94b631f2adf0036b6b54031fdcb3e987c629fd86573ebed7660"
     );
     let encoded = gas.encode_canonical().unwrap();
     assert_eq!(
@@ -469,7 +440,7 @@ fn normative_qvl_and_registry_gas_match_engineering_gate_vectors() {
             AttestationMode::DcapRequired,
         )
         .unwrap(),
-        28_768_784
+        28_848_784
     );
     assert_eq!(
         gas.maximum_transaction_gas(
@@ -607,7 +578,7 @@ fn report_data_has_fixed_intent_and_node_host_policy_commitments() {
 
     assert_eq!(
         hex::encode(&report_data[..32]),
-        "7866748eebd89640c998bfaf64d5c5a44b4849a44c7b0e1ac32d118560a85e13"
+        "c93297665ac2c94b631f2adf0036b6b54031fdcb3e987c629fd86573ebed7660"
     );
     assert_eq!(
         hex::encode(&report_data[32..]),
@@ -885,9 +856,8 @@ fn evidence_codec_checks_declared_caps_before_payload_allocation() {
     ));
 }
 
-fn measurement_rule(profile: EnclaveProfile, marker: u8) -> TeeMeasurementRuleV1 {
+fn measurement_rule(marker: u8) -> TeeMeasurementRuleV1 {
     TeeMeasurementRuleV1 {
-        enclave_profile: profile,
         mrenclave: B256::repeat_byte(marker),
         mrsigner: B256::repeat_byte(marker + 1),
         isv_prod_id: u16::from(marker),
@@ -928,10 +898,7 @@ fn policy(
         maximum_lease: 604_800,
         collateral_margin: 3_600,
         resource_schedule_hash: resources.schedule_hash().unwrap(),
-        measurement_rules: vec![
-            measurement_rule(EnclaveProfile::Validator, 1),
-            measurement_rule(EnclaveProfile::FullNode, 3),
-        ],
+        measurement_rules: vec![measurement_rule(1), measurement_rule(3)],
     }
 }
 
@@ -941,7 +908,7 @@ fn policy_and_schedule_roundtrip_with_height_selection() {
     let first_hash = first.policy_hash().unwrap();
     assert_eq!(
         hex::encode(first_hash),
-        "65a7eea620112d21f4d2e8e3c08082475812965fc44e21272c1af2159835f13c"
+        "c89d53264d68786a3126be04cc47799598c92871b0088aad1d23c397d1f47847"
     );
     let mut second = policy(2, 100, first_hash);
     second.accepted_platform_tcb_statuses = PlatformTcbStatusSetV1::UpToDateOnly;
@@ -963,7 +930,7 @@ fn policy_and_schedule_roundtrip_with_height_selection() {
     let encoded = schedule.encode_canonical().unwrap();
     assert_eq!(
         hex::encode(schedule.schedule_hash().unwrap()),
-        "83015a5531a87b9c5d782a06bdc270c67c73364a4e5c644f728ae23fc0a50e0b"
+        "7f30b7850c913f571dee9cb8dbb8290f15903771a43d2c7f8b4ba6629f3dedf9"
     );
     assert_eq!(
         TeePolicyScheduleV1::decode_canonical(&encoded).unwrap(),
@@ -1052,7 +1019,6 @@ fn measurement_admission_counts_overlapping_matches_instead_of_accepting_any() {
 
     assert_eq!(
         candidate.measurement_rule_match_count(
-            original.enclave_profile,
             original.mrenclave,
             original.mrsigner,
             original.isv_prod_id,

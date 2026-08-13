@@ -80,6 +80,12 @@ impl From<WorldwideDay> for u32 {
     }
 }
 
+impl From<WorldwideDay> for u64 {
+    fn from(val: WorldwideDay) -> Self {
+        u64::from(val.0)
+    }
+}
+
 impl FromStr for WorldwideDay {
     type Err = String;
 

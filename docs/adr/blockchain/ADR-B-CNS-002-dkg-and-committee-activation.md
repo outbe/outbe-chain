@@ -126,7 +126,7 @@ is an error/abstention, not a false vote.
 | Current | Event | Guard | Effects | Next/error |
 |---|---|---|---|---|
 | No local material at genesis | start initial DKG | complete genesis-formation proof; local genesis member | all-member ceremony | Ceremony running or fatal startup |
-| Existing chain, no usable local share | start/restart | chain history exists | sync/follow and live-join recovery | Non-signing join required |
+| Existing chain, no usable local share | start/restart | current public polynomial and DKG output are supplied without a signing share | start as `VerifierOnly`, sync/follow, then acquire a share through the running reshare path | Non-signing join; missing or stale public material fails startup immediately |
 | Idle outgoing epoch | preparation height | canonical target frozen; no conflicting cycle | start threshold ceremony and gossip | Ceremony running |
 | Ceremony running | valid dealer/player material | canonical participant/round/proof checks | accumulate deterministic output | Running |
 | Ceremony running | threshold/all-genesis completion | output validates | persist pending triplet; create boundary artifact | Boundary pending |

@@ -239,17 +239,8 @@ fn validate_identity(
     {
         eyre::bail!("committed NodeHost manifest does not match the finalized Registry binding");
     }
-    match (&config.selector, &manifest.node_id) {
-        (
-            NodeBindingSelectorV1::Validator(address),
-            outbe_primitives::tee_attestation_v1::NodeIdV1::Validator {
-                address: expected, ..
-            },
-        ) if address.as_slice() == expected => {}
-        (
-            NodeBindingSelectorV1::FullNode(public),
-            outbe_primitives::tee_attestation_v1::NodeIdV1::FullNode { reth_p2p_public },
-        ) if public == reth_p2p_public => {}
+    match &config.selector {
+        NodeBindingSelectorV1::NodeHost(public) if public == &manifest.node_id.reth_p2p_public => {}
         _ => {
             eyre::bail!("renewal selector does not match the committed node identity");
         }
@@ -388,7 +379,6 @@ fn renewal_intent(
             .policy
             .policy_hash()
             .map_err(|error| eyre::eyre!("hash active policy: {error}"))?,
-        enclave_profile: config.manifest.enclave_profile,
         node_id: config.manifest.node_id.clone(),
         enclave_id: view.binding.enclave_id,
         binding_id: view.binding.binding_id,
@@ -555,7 +545,7 @@ mod tests {
     use super::*;
     use crate::tx::RawRelayTransactionV1;
     use alloy_primitives::Address;
-    use outbe_primitives::tee_attestation_v1::{AttestationMode, EnclaveProfile, NodeIdV1};
+    use outbe_primitives::tee_attestation_v1::{AttestationMode, NodeIdV1};
 
     fn binding() -> RenewalBindingV1 {
         RenewalBindingV1 {
@@ -599,8 +589,7 @@ mod tests {
             operation: AttestationOperationV1::RenewEnclave,
             attestation_mode: AttestationMode::DcapRequired,
             policy_hash: B256::repeat_byte(6),
-            enclave_profile: EnclaveProfile::FullNode,
-            node_id: NodeIdV1::FullNode {
+            node_id: NodeIdV1 {
                 reth_p2p_public: public,
             },
             enclave_id: B256::repeat_byte(2),

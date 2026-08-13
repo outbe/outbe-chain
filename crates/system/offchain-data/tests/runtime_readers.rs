@@ -88,6 +88,7 @@ fn nod(nod_id: EntityId36, bucket_key: B256) -> NodItemState {
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 1_752_534_000,
+        is_settled: false,
     }
 }
 
@@ -99,6 +100,7 @@ fn bucket(bucket_key: B256) -> NodBucketState {
         is_qualified: true,
         total_nods: 1,
         entry_price_minor: U256::from(5),
+        reference_currency: 978,
     }
 }
 

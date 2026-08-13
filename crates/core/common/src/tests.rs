@@ -2,7 +2,7 @@ use crate::WorldwideDay;
 use alloy_primitives::{address, U256};
 use outbe_primitives::storage::{
     hashmap::HashMapStorageProvider,
-    types::{Mapping, Slot, Storable, StorageKey},
+    types::{Mapping, Slot, Storable, StorableType, StorageKey},
     StorageHandle,
 };
 use outbe_primitives::time::date_key_to_utc_timestamp;
@@ -53,6 +53,23 @@ fn storage_word_roundtrip() {
 fn storage_key_is_big_endian_u32() {
     let wwd = WorldwideDay::new(0x0102_0304);
     assert_eq!(wwd.key_bytes(), vec![0x01, 0x02, 0x03, 0x04]);
+}
+
+/// Storage-compatible with the raw `u32` day key it replaced: schemas that
+/// retyped a `Map<u32, _>` / `Map<_, u32>` day slot must address and store the
+/// exact same bytes, or live state silently moves.
+#[test]
+fn storage_encoding_is_identical_to_the_raw_u32_day() {
+    for raw in [0u32, 1, 20_260_101, u32::MAX] {
+        let wwd = WorldwideDay::new(raw);
+        assert_eq!(wwd.key_bytes(), raw.key_bytes(), "mapping key moved");
+        assert_eq!(wwd.to_word(), raw.to_word(), "stored word moved");
+        assert_eq!(
+            <WorldwideDay as StorableType>::SLOTS,
+            <u32 as StorableType>::SLOTS,
+            "slot count moved"
+        );
+    }
 }
 
 #[test]

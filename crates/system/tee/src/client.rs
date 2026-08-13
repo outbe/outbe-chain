@@ -1471,8 +1471,16 @@ mod tests {
 
     fn registration_intent(attestation_ed25519: [u8; 32]) -> RegistrationIntentV1 {
         use outbe_primitives::tee_attestation_v1::{
-            AttestationMode, AttestationOperationV1, EnclaveProfile, NodeIdV1,
+            AttestationMode, AttestationOperationV1, NodeIdV1,
         };
+
+        let reth_p2p_public = k256::ecdsa::SigningKey::from_bytes((&[0x14; 32]).into())
+            .unwrap()
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .unwrap();
 
         let mut intent = RegistrationIntentV1 {
             chain_id: [0x11; 32],
@@ -1480,11 +1488,7 @@ mod tests {
             operation: AttestationOperationV1::RegisterEnclave,
             attestation_mode: AttestationMode::DcapRequired,
             policy_hash: B256::repeat_byte(0x13),
-            enclave_profile: EnclaveProfile::Validator,
-            node_id: NodeIdV1::Validator {
-                address: [0x14; 20],
-                bls_minpk_public: [0x15; 48],
-            },
+            node_id: NodeIdV1 { reth_p2p_public },
             enclave_id: B256::repeat_byte(0x16),
             binding_id: B256::repeat_byte(0x17),
             binding_version: 1,
@@ -1833,13 +1837,8 @@ mod tests {
         let results = vec![TributeOfferResult {
             token_id: B256::repeat_byte(0x11),
             owner: Address::repeat_byte(0x22),
-            worldwide_day: 20_240,
             issuance_amount_minor: U256::from(1_000u64),
-            issuance_currency: 1,
             nominal_amount_minor: U256::from(2_000u64),
-            reference_currency: 2,
-            exclude_from_intex_issuance: false,
-            tribute_price_minor: U256::from(3u64),
             su_hashes: vec!["0xabc".to_string()],
             wallet_addresses: vec![],
             sra_addresses: vec![],
