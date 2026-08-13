@@ -99,6 +99,7 @@
     "Dockerfile.project-toolchain",
     "crates/core/compressed-entities/vendor/sparse-merkle-tree/UPSTREAM.sha256",
     "crates/core/compressed-entities/vendor/sparse-merkle-tree/VENDORED.sha256",
+    "release/apt/ubuntu.sources",
     "release/release-manifest-v1.schema.json",
     "release/reproducible-elf-candidate-gates-v1.json",
     "release/reproducible-elf-build-v1.json",
