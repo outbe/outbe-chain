@@ -116,11 +116,13 @@ fn day_closure(world: &World, worldwide_day: u32) -> String {
         .rpc
         .metadosis_terminal_receipt_on(world.validators.primary_port(), worldwide_day)
     {
-        Some(receipt) => format!(
+        // An absent receipt reads back zeroed rather than reverting, so the
+        // block number is what tells a real closure from no closure at all.
+        Some(receipt) if receipt.block_number > 0 => format!(
             "Metadosis closed the day at block {} with outcome {}",
             receipt.block_number, receipt.outcome
         ),
-        None => "Metadosis never closed the day, so nothing ever briefed Desis".to_owned(),
+        _ => "Metadosis never closed the day, so nothing ever briefed Desis".to_owned(),
     }
 }
 
