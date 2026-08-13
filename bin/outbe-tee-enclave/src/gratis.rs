@@ -31,7 +31,7 @@ const FIELD_EOA: u8 = 2;
 
 /// Sealed-EOA blob: `nonce(12) ‖ ChaCha20Poly1305(Address 20B)` = 48 bytes. Written once
 /// at `ConsumePledge` and stored on the Credis position; the nonce is carried in the blob
-/// so `open_eoa_ct` needs no handle at payAnadosis/expiry time.
+/// so `open_eoa_ct` needs no handle at settlement/void time.
 const EOA_CT_LEN: usize = 12 + 20 + 16;
 
 /// PledgeLockTicket plaintext:
@@ -354,7 +354,7 @@ fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
 /// without the EOA ever appearing in calldata or stored plaintext. `pledge_handle = Some`
 /// → the blob in `current_pledge_record` is a live `PledgeLockTicket` (credis
 /// `ConsumePledge` time, when calldata no longer carries the EOA); `None` → the
-/// self-contained `eoa_ct` stored on the Credis position (payAnadosis / expiry). No state
+/// self-contained `eoa_ct` stored on the Credis position (settlement / void). No state
 /// mutation, no authorization — the on-chain Credis position is the accounting authority.
 fn apply_reveal_owner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
     let owner = match req.pledge_handle {
@@ -541,7 +541,7 @@ fn apply_consume_pledge(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<G
     Ok(r)
 }
 
-/// payAnadosis: release `amount` of collateral from the EOA's OWN pledged ledger back
+/// Settlement: release `amount` of collateral from the EOA's OWN pledged ledger back
 /// to its balance (`EOA.pledged -= amount; EOA.balance += amount`). Amount-based (no
 /// ticket): the on-chain Credis position schedule is the accounting authority for the
 /// per-installment amount; the enclave only enforces pledged-ledger sufficiency.
@@ -1034,7 +1034,7 @@ mod tests {
     }
 
     /// The EOA is recovered through the enclave both at consume (from the live ticket) and
-    /// at payAnadosis/expiry (from the sealed `eoa_ct`), never from calldata.
+    /// at settlement/void (from the sealed `eoa_ct`), never from calldata.
     #[test]
     fn reveal_owner_roundtrips_ticket_and_eoa_ct() {
         let sk = state_key();

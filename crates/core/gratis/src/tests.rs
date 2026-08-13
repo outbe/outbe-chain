@@ -180,7 +180,7 @@ fn burn_insufficient_balance_reverts() {
 }
 
 #[test]
-fn pledge_consume_and_pay_anadosis_flow() {
+fn pledge_consume_and_settle_flow() {
     with_env(|storage| {
         let amount = U256::from(1000u64);
         let stables = U256::from(500u64);

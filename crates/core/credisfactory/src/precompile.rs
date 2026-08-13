@@ -2,9 +2,9 @@
 //!
 //! `requestCredis` consumes a confidential Gratis pledge (pledge handle + spend
 //! authorization) and opens a credis position bound to `smartAccount`.
-//! `anadosis` applies an arbitrary amount to the schedule (whole installments in
-//! order, the last one possibly partial) and releases the matching share of the
-//! pledged collateral back to the original pledger's encrypted Gratis balance.
+//! `settle` applies an arbitrary amount interest-first and releases the matching
+//! share of the pledged collateral back to the original pledger's encrypted
+//! Gratis balance.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
@@ -49,8 +49,8 @@ pub fn dispatch(
                         amountStables: amount_stables,
                     })
                 }),
-                anadosis(c) => mutate(c, caller, |sender, c| {
-                    runtime::pay_anadosis(storage.clone(), sender, c.positionId, c.amount)
+                settle(c) => mutate(c, caller, |sender, c| {
+                    runtime::settle(storage.clone(), sender, c.positionId, c.amount)
                 }),
                 supportsInterface(c) => view(c, |c| {
                     let id: [u8; 4] = c.interfaceId.0;
