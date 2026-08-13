@@ -75,8 +75,8 @@ fn convert_stables_to_gratis(
 /// exceeds `max_gratis` — that cap is the pledger's slippage protection, authenticated
 /// by their transaction signature rather than the MAC. Returns
 /// `(pledge_handle, gratis_cost)`; the handle is what the CCA presents at
-/// `requestCredis`. The anadosis installment count lives on the Credis position, not
-/// the pledge.
+/// `requestCredis`. The loan's own terms — the policy rate, the floor and call prices —
+/// are sealed on the Credis position, not on the pledge.
 pub fn pledge_gratis(
     storage: StorageHandle<'_>,
     caller: Address,

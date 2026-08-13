@@ -4,149 +4,172 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::CREDIS_ADDRESS;
 
-/// Number of monthly anadosis installments per position (cosmos `NumberOfPayments`).
-pub const NUMBER_OF_ANADOSIS: u32 = 10;
+use crate::errors::CredisError;
 
-/// Seconds per month (30 days; cosmos `SecondsPerMonth`).
-pub const SECONDS_PER_MONTH: u64 = 30 * 24 * 60 * 60;
+/// Position lifecycle state.
+///
+/// `Open -> Settleable` is a one-way price latch; `Settleable -> Called` is the
+/// sustained-breach trigger. Both `Settled` (fully repaid) and `Void` (call
+/// window lapsed with a remainder) are terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CredisState {
+    Open = 0,
+    Settleable = 1,
+    Called = 2,
+    Settled = 3,
+    Void = 4,
+}
 
-/// Position head record. Keyed by `position_id = keccak256(commitment || smart_account)`.
+impl CredisState {
+    pub fn from_u8(value: u8) -> Result<Self, CredisError> {
+        match value {
+            0 => Ok(Self::Open),
+            1 => Ok(Self::Settleable),
+            2 => Ok(Self::Called),
+            3 => Ok(Self::Settled),
+            4 => Ok(Self::Void),
+            other => Err(CredisError::InvalidStateValue(other)),
+        }
+    }
+
+    /// True once the position can no longer change: fully repaid or voided.
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Settled | Self::Void)
+    }
+}
+
+/// Position record. Keyed by `position_id = keccak256(pledge_handle || smart_account)`.
+///
+/// Every term is sealed at opening and never changes afterwards; only
+/// `outstanding`, `collateral_locked`, `last_settled_at`, `called_at` and
+/// `state` move over the position's life.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[storage_record(exists_field = smart_account)]
 pub struct Position {
     #[key]
     pub position_id: U256,
 
+    /// The card bundle the loan was disbursed to.
     #[attribute(order = 0)]
     pub smart_account: Address,
 
+    /// The agent that originated the position. Carries the accountability for
+    /// how it resolves.
     #[attribute(order = 1)]
+    pub cca: Address,
+
+    /// The stablecoin the position is denominated and disbursed in.
+    #[attribute(order = 2)]
     pub asset: Address,
 
-    #[attribute(order = 2)]
-    pub total_anadosis_amount: U256,
-
+    /// ISO 4217 numeric code of `asset` (e.g. 840 = USD), read at opening.
     #[attribute(order = 3)]
-    pub outstanding_anadosis_amount: U256,
-
-    #[attribute(order = 4)]
-    pub total_gratis_amount: U256,
-
-    #[attribute(order = 5)]
-    pub outstanding_gratis_amount: U256,
-
-    #[attribute(order = 6)]
-    pub next_anadosis_number: u32,
-
-    #[attribute(order = 7)]
-    pub created_at: u64,
-
-    /// Original Credis amount (principal) in the issuance currency, before the
-    /// currency-rate markup. `total_anadosis_amount` holds principal + interest.
-    #[attribute(order = 9)]
-    pub credis_principal: U256,
-
-    /// Annualized currency rate (1e18 scaled) read from the Oracle and pinned
-    /// at issuance for the lifetime of this schedule.
-    #[attribute(order = 10)]
-    pub currency_rate: U256,
-
-    /// Issuance currency as an ISO 4217 numeric code (e.g., 840 = USD), derived
-    /// from the disbursed asset's `isoCode()` at issuance.
-    #[attribute(order = 11)]
     pub issuance_currency: u16,
 
     /// The pledger EOA sealed under the enclave state key (`nonce ‖ ct`, produced by
     /// gratis `ConsumePledge`). Stored as ciphertext so external observers cannot link the
-    /// EOA to `smart_account`; the expiry sweep / payAnadosis recover the plaintext EOA
+    /// EOA to `smart_account`; settlement and the void sweep recover the plaintext EOA
     /// via a `RevealOwner` enclave round-trip to key the right `pledged_ct` and fidelity
     /// cohort. Never a plaintext address on-chain.
-    #[attribute(order = 12)]
+    #[attribute(order = 4)]
     pub eoa_ct: Vec<u8>,
 
+    /// `P` — stablecoin minor units disbursed. Fixed.
+    #[attribute(order = 5)]
+    pub principal: U256,
+
+    /// `P_out` — outstanding principal. Reaching zero closes the position.
+    #[attribute(order = 6)]
+    pub outstanding: U256,
+
+    /// `G` — pledged Gratis, valued 1:1 against principal at the entry price. Fixed.
+    #[attribute(order = 7)]
+    pub collateral: U256,
+
+    /// The share of `G` still locked. Released principal-proportionally.
+    #[attribute(order = 8)]
+    pub collateral_locked: U256,
+
+    /// `r` — the currency's annual official policy rate (1e18 scaled) times the
+    /// policy-rate factor, pinned at opening for the position's life.
+    #[attribute(order = 9)]
+    pub policy_rate: U256,
+
+    /// `P₀` — COEN price in the position's currency (1e18 oracle scale), quoted
+    /// at pledge time and carried in from the pledge ticket.
+    #[attribute(order = 10)]
+    pub entry_price: U256,
+
+    /// `P₀ + 8%`. The price at which settlement unlocks.
+    #[attribute(order = 11)]
+    pub floor_price: U256,
+
+    /// `P₀ + 32%`. The price whose sustained breach triggers the call.
+    #[attribute(order = 12)]
+    pub call_price: U256,
+
     #[attribute(order = 13)]
-    pub entry_price_minor: U256,
+    pub originated_at: u64,
+
+    /// Anchor of the interest day count. Equals `originated_at` until the first
+    /// settlement, then the timestamp of the most recent one.
+    #[attribute(order = 14)]
+    pub last_settled_at: u64,
+
+    /// 0 until the position is called.
+    #[attribute(order = 15, default = 0)]
+    pub called_at: u64,
+
+    /// Lifecycle state as `u8`; decode via [`CredisState::from_u8`].
+    #[attribute(order = 16)]
+    pub state: u8,
 }
 
-/// Per-anadosis record. Keyed by `anadosis_key = keccak256(position_id || anadosis_number_be32)`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[storage_record(exists_field = due_date)]
-pub struct Anadosis {
-    #[key]
-    pub anadosis_key: B256,
-
-    #[attribute(order = 0)]
-    pub anadosis_number: u32,
-
-    #[attribute(order = 1)]
-    pub due_date: u64,
-
-    #[attribute(order = 2)]
-    pub anadosis_amount: U256,
-
-    #[attribute(order = 3)]
-    pub gratis_amount: U256,
-
-    #[attribute(order = 4, default = 0)]
-    pub paid_at: u64,
-
-    /// Portion of `anadosis_amount` still owed. Starts equal to `anadosis_amount`
-    /// and is drawn down by each payment; `paid_at` is stamped only once this
-    /// reaches zero, so a partially paid installment still counts as overdue.
-    #[attribute(order = 5)]
-    pub unpaid_amount: U256,
+impl Position {
+    pub fn lifecycle_state(&self) -> Result<CredisState, CredisError> {
+        CredisState::from_u8(self.state)
+    }
 }
 
 /// EVM storage layout for the Credis position contract.
 ///
-/// - positions / anadosis_records are keyed by `position_id` and `anadosis_key`
-///   respectively.
-/// - `address_position_*` and `total_positions` / `position_id_at_index`
-///   provide dense, no-`Vec` enumeration in the same shape as `outbe-nod`'s
-///   owner index (`crates/core/nod/src/schema.rs:107-119`).
+/// `address_position_*` and `total_positions` / `position_id_at_index` provide
+/// dense, no-`Vec` enumeration in the same shape as `outbe-nod`'s owner index
+/// (`crates/core/nod/src/schema.rs`). Slot assignment is macro-generated: a
+/// `Map<K, V>` over a record reserves `V::SLOTS` top-level slots, so the
+/// positions map alone spans as many slots as `Position` has attributes.
 #[storage_schema]
 #[contract(addr = CREDIS_ADDRESS)]
 pub struct CredisContract {
-    /// slots 0..7: position head record keyed by position_id (8 slots).
+    /// Position record keyed by position_id.
     #[attribute(order = 0)]
     pub positions: outbe_primitives::storage::dsl::Map<U256, Position>,
 
-    /// slots 8..13: anadosis record keyed by anadosis_key (6 slots).
+    /// Per-account count of positions ever created.
     #[attribute(order = 1)]
-    pub anadosis_records: outbe_primitives::storage::dsl::Map<B256, Anadosis>,
-
-    /// slot 14: per-account count of positions ever created.
-    #[attribute(order = 2)]
     pub address_position_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
 
-    /// slot 15: per-account index — keccak(addr ++ idx_be32) → position_id.
-    #[attribute(order = 3)]
+    /// Per-account index — keccak(addr ++ idx_be32) → position_id.
+    #[attribute(order = 2)]
     pub address_position_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    /// slot 16: total positions ever created (for getAllPositions iteration).
-    #[attribute(order = 4)]
+    /// Total positions ever created (for getAllPositions iteration).
+    #[attribute(order = 3)]
     pub total_positions: outbe_primitives::storage::dsl::Value<u64>,
 
-    /// slot 17: dense index — index → position_id.
-    #[attribute(order = 5)]
+    /// Dense index — index → position_id.
+    #[attribute(order = 4)]
     pub position_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
 }
 
 impl CredisContract<'_> {
-    /// position_id derivation: `keccak256(commitment || smart_account)`.
+    /// position_id derivation: `keccak256(pledge_handle || smart_account)`.
     pub fn position_id(handle_id: U256, smart_account: Address) -> U256 {
         let mut buf = [0u8; 52];
         buf[0..32].copy_from_slice(&handle_id.to_be_bytes::<32>());
         buf[32..52].copy_from_slice(smart_account.as_slice());
         U256::from_be_bytes(keccak256(buf).0)
-    }
-
-    /// Composite key for per-anadosis storage: `keccak256(position_id || anadosis_number_be32)`.
-    pub fn anadosis_key(position_id: U256, anadosis_number: u32) -> B256 {
-        let mut buf = [0u8; 36];
-        buf[0..32].copy_from_slice(&position_id.to_be_bytes::<32>());
-        buf[32..36].copy_from_slice(&anadosis_number.to_be_bytes());
-        keccak256(buf)
     }
 
     /// Composite key for per-address position index: `keccak256(addr ++ idx_be32)`.

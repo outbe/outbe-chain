@@ -47,8 +47,8 @@ pub struct GenesisAggregateVote {
 
 /// A reference currency for genesis import/export: an ISO 4217 numeric code
 /// plus its annualized currency rate (1e18 scaled). The currency rate is
-/// read by the Credis Factory at issuance and pinned onto the Anadosis
-/// schedule. Currencies used purely as pricing references (no credis) may carry
+/// read by the Credis Factory at issuance and pinned onto the position as its
+/// policy rate. Currencies used purely as pricing references (no credis) may carry
 /// a zero rate.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReferenceCurrency {
