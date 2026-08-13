@@ -12,10 +12,19 @@ use crate::config::{self, IntexParams};
 use crate::runtime;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
 
-/// Create a series and enroll it for autonomous qualification. Called by the
-/// clearing engine after a cleared auction.
-pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> {
+/// Create a series and enroll it for autonomous qualification, returning what each
+/// target chain must be told. Called by the clearing engine after a cleared auction,
+/// which packs the day's legs into messages and sends them.
+pub fn issue(
+    storage: &StorageHandle<'_>,
+    params: IssuanceParams,
+) -> Result<Vec<runtime::IssuanceLeg>> {
     runtime::issue(storage, params)
+}
+
+/// Send a day's issuance legs, packed into as few per-chain messages as the wire allows.
+pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<runtime::IssuanceLeg>) -> Result<()> {
+    runtime::send_issuance(storage, legs)
 }
 
 /// Discard a day's contributor map. The clearing engine calls this for a day

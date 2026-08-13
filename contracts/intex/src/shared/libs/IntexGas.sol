@@ -32,8 +32,11 @@ library IntexGas {
 
     uint256 internal constant BIDS_BASE = 1_300_000;
     uint256 internal constant BIDS_PER_ITEM = 160_000;
-    /// @dev createSeries plus handler overhead; the NFT's enumerable-holder mints dominate the per-item cost.
-    uint256 internal constant ISSUANCE_BASE = 600_000;
+    /// @dev Handler overhead only; a message carries several series, so the createSeries cost is
+    ///      per series rather than in the base. The NFT's enumerable-holder mints dominate the
+    ///      per-recipient cost.
+    uint256 internal constant ISSUANCE_BASE = 200_000;
+    uint256 internal constant ISSUANCE_PER_SERIES = 400_000;
     uint256 internal constant ISSUANCE_PER_ITEM = 250_000;
     uint256 internal constant REFUND_BASE = 250_000;
     uint256 internal constant REFUND_PER_ITEM = 150_000;
@@ -52,8 +55,8 @@ library IntexGas {
         return AUCTION_STAGE_START_BASE + priceCount * AUCTION_STAGE_START_PER_PRICE;
     }
 
-    function issuance(uint256 recipientCount) internal pure returns (uint256) {
-        return ISSUANCE_BASE + recipientCount * ISSUANCE_PER_ITEM;
+    function issuance(uint256 seriesCount, uint256 recipientCount) internal pure returns (uint256) {
+        return ISSUANCE_BASE + seriesCount * ISSUANCE_PER_SERIES + recipientCount * ISSUANCE_PER_ITEM;
     }
 
     /// @notice Destination gas for a REFUND_INSTRUCTIONS with `bidderCount` bidders.

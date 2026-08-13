@@ -39,6 +39,13 @@ library BridgeMsgCodec {
     ///      live.
     uint16 internal constant MAX_PAYLOAD_ARRAY_LEN = 64;
 
+    /// @notice Upper bound on how many series one ISSUANCE_INSTRUCTIONS message may carry.
+    /// @dev A day issues one series per winning currency pair, and each costs a message per chain
+    ///      of presence, so several travel together. Bounded so the worst case — this many series
+    ///      each carrying part of `MAX_PAYLOAD_ARRAY_LEN` recipients — stays well inside the
+    ///      10_000-byte send ceiling, with destination gas the binding limit rather than bytes.
+    uint16 internal constant MAX_SERIES_PER_ISSUANCE = 8;
+
     /// @notice Upper bound on how many chunks one day's fan-out may be split into.
     /// @dev Matches the bid-intake ceiling it mirrors — 64 entries across 256 chunks — and keeps a
     ///      receiver's arrival set inside a single 256-bit word.
@@ -71,11 +78,12 @@ library BridgeMsgCodec {
     //     5 static head words + 4 dynamic head offsets + 4 empty length words = 13×32 = 416
     //   REFUND_INSTRUCTIONS(uint32, uint16, uint16, address[], uint64[], uint64[]):
     //     3 static head words + 3 dynamic offsets + 3 empty length words = 9×32 = 288
-    //   ISSUANCE_INSTRUCTIONS(struct with 12 static + 2 dynamic, dynamic struct):
-    //     outer offset(32) + 12 static + 2 inner offsets + 2 empty length words = 17×32 = 544
+    //   ISSUANCE_INSTRUCTIONS(dynamic array of a struct with 12 static + 2 dynamic fields):
+    //     array offset(32) + array length(32) + one element's offset(32) + 12 static
+    //     + 2 inner offsets + 2 empty length words = 19×32 = 608
     uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 288;
     uint16 internal constant MIN_LEN_REFUND_INSTRUCTIONS = HEADER_LEN + 288;
-    uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 544;
+    uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 608;
 
     /// @notice Per-message cap on inbound BIDS_BATCH entries. Bounds the crosschainMint/storage loop the
     ///         receiver runs so one oversized batch cannot exceed the inbound gas limit and stall
@@ -137,6 +145,10 @@ library BridgeMsgCodec {
     /// @param count Decoded number of bidders.
     /// @param max Maximum permitted bidders per message.
     error RefundBatchTooLarge(uint256 count, uint256 max);
+    /// @notice An ISSUANCE_INSTRUCTIONS message carried no series at all.
+    error EmptyIssuanceBatch();
+    /// @notice An ISSUANCE_INSTRUCTIONS message carried more series than one may hold.
+    error IssuanceSeriesBatchTooLarge(uint256 count, uint256 max);
     /// @notice The refund chunk header is inconsistent: no chunks claimed, more than
     ///         `MAX_CHUNKS`, or an index outside the claimed count.
     error InvalidRefundChunk(uint16 chunkIndex, uint16 totalChunks);
@@ -442,20 +454,40 @@ library BridgeMsgCodec {
         }
     }
 
-    /// @notice Encodes ISSUANCE_INSTRUCTIONS message.
-    /// @dev Reverts `PayloadArrayTooLong` if `_payload.recipients` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
-    /// @param _payload The issuance instructions payload to encode.
+    /// @notice Encodes ISSUANCE_INSTRUCTIONS message: the series a chain receives from one day.
+    /// @dev A day issues one series per winning currency pair, so a chain's share of it is a set
+    ///      rather than a single series. The two caps bound what one message asks of the receiver:
+    ///      `MAX_SERIES_PER_ISSUANCE` series and `MAX_PAYLOAD_ARRAY_LEN` recipients across all of
+    ///      them. A larger set is split into several messages by the sender, which is safe because
+    ///      the receiver creates a series only if it is absent.
+    /// @param _series The per-series issuance payloads carried by this message.
     /// @return The wire-encoded ISSUANCE_INSTRUCTIONS message.
-    function encodeIssuanceInstructions(IssuanceInstructionsPayload memory _payload)
+    function encodeIssuanceInstructions(IssuanceInstructionsPayload[] memory _series)
         internal
         pure
         returns (bytes memory)
     {
-        if (_payload.recipients.length != _payload.quantities.length) {
-            revert IssuanceArrayLengthMismatch(_payload.recipients.length, _payload.quantities.length);
+        _assertIssuanceLimits(_series);
+        return abi.encodePacked(BODY_VERSION_V1, MSG_ISSUANCE_INSTRUCTIONS, abi.encode(_series));
+    }
+
+    /// @dev Shared outbound/inbound check: per-series array parity, the series count and the
+    ///      recipient count summed over the message.
+    function _assertIssuanceLimits(IssuanceInstructionsPayload[] memory _series) private pure {
+        if (_series.length == 0) revert EmptyIssuanceBatch();
+        if (_series.length > MAX_SERIES_PER_ISSUANCE) {
+            revert IssuanceSeriesBatchTooLarge(_series.length, MAX_SERIES_PER_ISSUANCE);
         }
-        requireMaxArrayLen(_payload.recipients.length, MAX_PAYLOAD_ARRAY_LEN);
-        return abi.encodePacked(BODY_VERSION_V1, MSG_ISSUANCE_INSTRUCTIONS, abi.encode(_payload));
+        uint256 recipients;
+        for (uint256 i = 0; i < _series.length; i++) {
+            if (_series[i].recipients.length != _series[i].quantities.length) {
+                revert IssuanceArrayLengthMismatch(_series[i].recipients.length, _series[i].quantities.length);
+            }
+            recipients += _series[i].recipients.length;
+        }
+        if (recipients > MAX_PAYLOAD_ARRAY_LEN) {
+            revert IssuanceBatchTooLarge(recipients, MAX_PAYLOAD_ARRAY_LEN);
+        }
     }
 
     /// @notice Encodes REFUND_INSTRUCTIONS message.
@@ -644,11 +676,11 @@ library BridgeMsgCodec {
     ///      `IssuanceArrayLengthMismatch` if `recipients` and `quantities` differ in length, and
     ///      `IssuanceBatchTooLarge` if `recipients` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
     /// @param _msg The wire-encoded ISSUANCE_INSTRUCTIONS message.
-    /// @return payload The decoded issuance instructions payload.
+    /// @return series The decoded per-series issuance payloads.
     function decodeIssuanceInstructions(bytes calldata _msg)
         external
         pure
-        returns (IssuanceInstructionsPayload memory payload)
+        returns (IssuanceInstructionsPayload[] memory series)
     {
         if (_msg.length < HEADER_LEN) {
             revert InvalidPayloadLength(MSG_ISSUANCE_INSTRUCTIONS, _msg.length, HEADER_LEN);
@@ -656,21 +688,16 @@ library BridgeMsgCodec {
         _assertBodyVersion(_msg);
         // Decode in a dedicated frame so the struct ABI-decoder's locals don't share this
         // function's stack — keeps the 14-field payload within bounds under via_ir.
-        payload = _decodeIssuancePayload(_msg[2:]);
-        // `recipients` and `quantities` are indexed in lockstep when minting; unequal lengths would
-        // index out of bounds and panic inside the ordered lane. Reject with a typed error instead.
-        if (payload.recipients.length != payload.quantities.length) {
-            revert IssuanceArrayLengthMismatch(payload.recipients.length, payload.quantities.length);
-        }
-        // Cap the recipient count so the receiver's mint loop cannot exceed the inbound gas limit.
-        if (payload.recipients.length > MAX_PAYLOAD_ARRAY_LEN) {
-            revert IssuanceBatchTooLarge(payload.recipients.length, MAX_PAYLOAD_ARRAY_LEN);
-        }
+        series = _decodeIssuancePayload(_msg[2:]);
+        // Re-checked inbound: the arrays are indexed in lockstep when minting, and the counts bound
+        // the receiver's create/mint loops against the inbound gas limit. A peer compromise or a
+        // future encoder change is what these guard; the drop-don't-block handler catches them.
+        _assertIssuanceLimits(series);
     }
 
-    /// @dev Isolated frame for the `IssuanceInstructionsPayload` ABI decode (via_ir stack relief).
-    function _decodeIssuancePayload(bytes calldata _body) private pure returns (IssuanceInstructionsPayload memory) {
-        return abi.decode(_body, (IssuanceInstructionsPayload));
+    /// @dev Isolated frame for the `IssuanceInstructionsPayload[]` ABI decode (via_ir stack relief).
+    function _decodeIssuancePayload(bytes calldata _body) private pure returns (IssuanceInstructionsPayload[] memory) {
+        return abi.decode(_body, (IssuanceInstructionsPayload[]));
     }
 
     /// @notice Decodes REFUND_INSTRUCTIONS message.

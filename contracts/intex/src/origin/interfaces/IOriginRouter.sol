@@ -171,8 +171,6 @@ interface IOriginRouter {
     /// @dev `issuedIntexCount` is the auction-cleared cap that pins `mint` on the destination NFT
     ///      contract. Must equal the auction's cleared count.
     struct IssuanceInstructionsParams {
-        /// @notice Destination chain for this issuance leg (must be in the series' STAGE_START snapshot).
-        uint32 dstChainId;
         bytes14 seriesId;
         /// @notice Worldwide day the series was derived from (provenance; carried to the destination NFT).
         uint32 worldwideDay;
@@ -269,7 +267,7 @@ interface IOriginRouter {
         uint32 wonBidsCount
     ) external view returns (uint256 fee);
     /// @notice Native fee to send issuance instructions to the target chain in `params.dstChainId`.
-    function quoteSendIssuanceInstructions(IssuanceInstructionsParams calldata params)
+    function quoteSendIssuanceInstructions(uint32 dstChainId, IssuanceInstructionsParams[] calldata series)
         external
         view
         returns (uint256 fee);
@@ -302,9 +300,13 @@ interface IOriginRouter {
         uint64 auctionClearingRate,
         uint32 wonBidsCount
     ) external payable returns (bytes32 sendId);
-    /// @notice Send issuance instructions to `params.dstChainId`. Empty `recipients` creates the series only.
-    ///         Restricted to `INTEX_FACTORY_ROLE`.
-    function sendIssuanceInstructions(IssuanceInstructionsParams calldata params)
+    /// @notice Send one chain its share of a day's issuance: the series it must create and the
+    ///         winners it must mint to. Empty `recipients` on a series creates it only, which is
+    ///         what a chain with no local winners still needs. A day whose series or winners
+    ///         exceed one message is split by the caller; the destination creates a series only
+    ///         if it is absent, so the split is invisible to it. Restricted to
+    ///         `INTEX_FACTORY_ROLE`.
+    function sendIssuanceInstructions(uint32 dstChainId, IssuanceInstructionsParams[] calldata series)
         external
         payable
         returns (bytes32 sendId);

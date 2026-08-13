@@ -459,44 +459,53 @@ contract TargetRouter is
     /// @notice Decode ISSUANCE_INSTRUCTIONS, create the series, and mint tokens via IntexNFT1155.
     function _handleIssuanceInstructions(uint32 _srcChainId, bytes calldata _message) internal {
         TargetRouterStorage storage $ = _ts();
-        BridgeMsgCodec.IssuanceInstructionsPayload memory payload = BridgeMsgCodec.decodeIssuanceInstructions(_message);
+        BridgeMsgCodec.IssuanceInstructionsPayload[] memory series = BridgeMsgCodec.decodeIssuanceInstructions(_message);
 
-        $.intex
-            .createSeries(
-                IIntexNFT1155.CreateSeriesParams({
-                    seriesId: payload.seriesId,
-                    worldwideDay: payload.worldwideDay,
-                    issuanceCurrency: payload.issuanceCurrency,
-                    referenceCurrency: payload.referenceCurrency,
-                    issuedIntexCount: payload.issuedIntexCount,
-                    promisLoadMinor: payload.promisLoadMinor,
-                    entryPriceMinor: payload.entryPriceMinor,
-                    floorPriceMinor: payload.floorPriceMinor,
-                    callPriceMinor: payload.callPriceMinor,
-                    callTrigger: IIntexNFT1155.IntexCallTrigger({
-                        callWindow: payload.callWindow,
-                        callThreshold: payload.callThreshold,
-                        callNoticePeriod: payload.callNoticePeriod
-                    })
-                })
-            );
-        uint256 recipientsLen = payload.recipients.length;
-        for (uint256 i = 0; i < recipientsLen; i++) {
-            uint256 quantity = payload.quantities[i];
-            if (quantity == 0) continue;
-            address recipient = payload.recipients[i];
-            // Per-recipient self-call: a reverting receiver hook parks only that mint, not the whole batch.
-            try this.mintIssuanceOne(payload.seriesId, recipient, quantity) {}
-            catch (bytes memory reason) {
-                uint256 idx = $.nextPendingIssuanceMintIdx++;
-                $.pendingIssuanceMints[idx] = PendingIssuanceMint({
-                    seriesId: payload.seriesId, recipient: recipient, quantity: quantity, exists: true, done: false
-                });
-                emit IssuanceMintDeferred(idx, payload.seriesId, recipient, reason);
+        for (uint256 s = 0; s < series.length; s++) {
+            BridgeMsgCodec.IssuanceInstructionsPayload memory payload = series[s];
+
+            // Create-if-absent: a day's issuance reaches this chain in as many messages as its
+            // series and recipients need, and any of them may be the first to mention a series.
+            if (!$.intex.seriesExists(payload.seriesId)) {
+                $.intex
+                    .createSeries(
+                        IIntexNFT1155.CreateSeriesParams({
+                            seriesId: payload.seriesId,
+                            worldwideDay: payload.worldwideDay,
+                            issuanceCurrency: payload.issuanceCurrency,
+                            referenceCurrency: payload.referenceCurrency,
+                            issuedIntexCount: payload.issuedIntexCount,
+                            promisLoadMinor: payload.promisLoadMinor,
+                            entryPriceMinor: payload.entryPriceMinor,
+                            floorPriceMinor: payload.floorPriceMinor,
+                            callPriceMinor: payload.callPriceMinor,
+                            callTrigger: IIntexNFT1155.IntexCallTrigger({
+                                callWindow: payload.callWindow,
+                                callThreshold: payload.callThreshold,
+                                callNoticePeriod: payload.callNoticePeriod
+                            })
+                        })
+                    );
             }
-        }
 
-        emit IssuanceInstructionsReceived(_srcChainId, payload.seriesId, payload.recipients.length);
+            uint256 recipientsLen = payload.recipients.length;
+            for (uint256 i = 0; i < recipientsLen; i++) {
+                uint256 quantity = payload.quantities[i];
+                if (quantity == 0) continue;
+                address recipient = payload.recipients[i];
+                // Per-recipient self-call: a reverting receiver hook parks only that mint, not the whole batch.
+                try this.mintIssuanceOne(payload.seriesId, recipient, quantity) {}
+                catch (bytes memory reason) {
+                    uint256 idx = $.nextPendingIssuanceMintIdx++;
+                    $.pendingIssuanceMints[idx] = PendingIssuanceMint({
+                        seriesId: payload.seriesId, recipient: recipient, quantity: quantity, exists: true, done: false
+                    });
+                    emit IssuanceMintDeferred(idx, payload.seriesId, recipient, reason);
+                }
+            }
+
+            emit IssuanceInstructionsReceived(_srcChainId, payload.seriesId, recipientsLen);
+        }
     }
 
     /// @notice Self-call shim around a single issuance mint; isolates a reverting recipient hook.

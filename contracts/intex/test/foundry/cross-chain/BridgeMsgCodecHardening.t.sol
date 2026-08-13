@@ -4,6 +4,7 @@ pragma solidity ^0.8.28;
 import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
+import {_asBatch} from "../helpers/IssuanceBatch.sol";
 
 /// @dev Thin external wrapper around the `internal pure` encoders so the per-encoder revert paths
 ///      can be asserted via `vm.expectRevert` from a test contract.
@@ -22,12 +23,12 @@ contract BridgeMsgCodecHardeningHarness {
         );
     }
 
-    function encodeIssuanceInstructions(BridgeMsgCodec.IssuanceInstructionsPayload calldata payload)
+    function encodeIssuanceInstructions(BridgeMsgCodec.IssuanceInstructionsPayload[] calldata series)
         external
         pure
         returns (bytes memory)
     {
-        return BridgeMsgCodec.encodeIssuanceInstructions(payload);
+        return BridgeMsgCodec.encodeIssuanceInstructions(series);
     }
 
     function encodeRefundInstructions(
@@ -62,7 +63,7 @@ contract BridgeMsgCodecHardeningHarness {
     function decodeIssuanceInstructions(bytes calldata m)
         external
         pure
-        returns (BridgeMsgCodec.IssuanceInstructionsPayload memory)
+        returns (BridgeMsgCodec.IssuanceInstructionsPayload[] memory)
     {
         return BridgeMsgCodec.decodeIssuanceInstructions(m);
     }
@@ -122,7 +123,7 @@ contract BridgeMsgCodecHardeningTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(BridgeMsgCodec.IssuanceArrayLengthMismatch.selector, uint256(2), uint256(1))
         );
-        harness.encodeIssuanceInstructions(payload);
+        harness.encodeIssuanceInstructions(_asBatch(payload));
     }
 
     function test_encodeRefundInstructions_arrayLengthMismatch_reverts() public {

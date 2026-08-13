@@ -309,15 +309,15 @@
       "name": "quoteSendIssuanceInstructions",
       "inputs": [
         {
-          "name": "params",
-          "type": "tuple",
-          "internalType": "struct IOriginRouter.IssuanceInstructionsParams",
+          "name": "dstChainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "series",
+          "type": "tuple[]",
+          "internalType": "struct IOriginRouter.IssuanceInstructionsParams[]",
           "components": [
-            {
-              "name": "dstChainId",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
             {
               "name": "seriesId",
               "type": "bytes14",
@@ -461,6 +461,16 @@
           "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
+        },
+        {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "totalChunks",
+          "type": "uint16",
+          "internalType": "uint16"
         },
         {
           "name": "bidders",
@@ -682,15 +692,15 @@
       "name": "sendIssuanceInstructions",
       "inputs": [
         {
-          "name": "params",
-          "type": "tuple",
-          "internalType": "struct IOriginRouter.IssuanceInstructionsParams",
+          "name": "dstChainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "series",
+          "type": "tuple[]",
+          "internalType": "struct IOriginRouter.IssuanceInstructionsParams[]",
           "components": [
-            {
-              "name": "dstChainId",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
             {
               "name": "seriesId",
               "type": "bytes14",
@@ -822,6 +832,16 @@
           "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
+        },
+        {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "totalChunks",
+          "type": "uint16",
+          "internalType": "uint16"
         },
         {
           "name": "bidders",

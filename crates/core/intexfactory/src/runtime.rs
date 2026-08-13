@@ -14,12 +14,14 @@ use outbe_vaultrouter::api::IVaultRouter;
 
 use crate::config;
 use crate::constants::{
-    DIST_CHUNK_LIMIT, FX_RATE_MAX_AGE_SECONDS, INTEX_NFT1155_ADDRESS, ORACLE_TO_WIRE_SCALE,
-    ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS,
+    DIST_CHUNK_LIMIT, FX_RATE_MAX_AGE_SECONDS, INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_MESSAGE,
+    MAX_SERIES_PER_MESSAGE, ORACLE_TO_WIRE_SCALE, ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY,
+    PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
 use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IReferenceCurrency, IERC1155, IERC20};
+use IOriginRouter::IssuanceInstructionsParams;
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
 pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
@@ -31,12 +33,12 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 /// canonical IntexNFT1155 createSeries now arrives per chain via the ISSUANCE
 /// broadcast (including a loopback leg on the origin), so there is no in-process
 /// NFT call here.
-pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> {
+pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<IssuanceLeg>> {
     if params.issued_intex_count == 0 {
         // Nothing to issue. Whether the day as a whole distributes is the
         // caller's decision — a day may issue several series, and one empty
         // group must not touch the state its siblings armed.
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     // u32 timestamp; bounded until 2106.
@@ -72,36 +74,31 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
     };
     outbe_intex::api::create_series(storage, record)?;
 
-    // One ISSUANCE per snapshot chain. Relay-float-funded: value 0, the router pays the bridge
-    // fee from its float.
-    for (chain_id, recipients, quantities) in issuance_legs(&params) {
-        let router_params = IOriginRouter::IssuanceInstructionsParams {
-            dstChainId: chain_id,
-            seriesId: params.series_id.into(),
-            worldwideDay: params.worldwide_day.into(),
-            issuedIntexCount: params.issued_intex_count,
-            promisLoadMinor: params.promis_load_minor,
-            entryPriceMinor: entry_price_minor_u64,
-            floorPriceMinor: floor_price_minor_u64,
-            callNoticePeriod: cfg.call_notice_period,
-            issuanceCurrency: params.issuance_currency,
-            referenceCurrency: params.reference_currency,
-            callWindow: cfg.call_window,
-            callThreshold: cfg.call_threshold,
-            callPriceMinor: call_price_minor_u64,
-            recipients,
-            quantities,
-        };
-        storage.call(
-            ORIGIN_ROUTER_ADDRESS,
-            U256::ZERO,
-            IOriginRouter::sendIssuanceInstructionsCall {
-                params: router_params,
-            }
-            .abi_encode()
-            .into(),
-        )?;
-    }
+    // The instructions this series adds to each snapshot chain. They are not sent here: a day
+    // issues one series per winning currency pair, and a chain takes them in as few messages as
+    // the caps allow, which only the caller — holding the whole day — can pack.
+    let legs: Vec<IssuanceLeg> = issuance_legs(&params)
+        .into_iter()
+        .map(|(chain_id, recipients, quantities)| IssuanceLeg {
+            chain_id,
+            payload: IOriginRouter::IssuanceInstructionsParams {
+                seriesId: params.series_id.into(),
+                worldwideDay: params.worldwide_day.into(),
+                issuedIntexCount: params.issued_intex_count,
+                promisLoadMinor: params.promis_load_minor,
+                entryPriceMinor: entry_price_minor_u64,
+                floorPriceMinor: floor_price_minor_u64,
+                callNoticePeriod: cfg.call_notice_period,
+                issuanceCurrency: params.issuance_currency,
+                referenceCurrency: params.reference_currency,
+                callWindow: cfg.call_window,
+                callThreshold: cfg.call_threshold,
+                callPriceMinor: call_price_minor_u64,
+                recipients,
+                quantities,
+            },
+        })
+        .collect();
 
     // Enroll into the unqualified floor-bin index for begin_block qualify.
     factory.insert_unqualified(
@@ -130,7 +127,85 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<()> 
             issuedIntexCount: params.issued_intex_count,
             entryPrice: params.entry_price_minor,
         },
-    )
+    )?;
+
+    Ok(legs)
+}
+
+/// What one series adds to one chain's issuance: the series to create there and the
+/// winners of that chain to mint to (empty on a chain with no local winners, which
+/// still needs the series created for bridging).
+#[derive(Clone)]
+pub struct IssuanceLeg {
+    pub chain_id: u32,
+    pub payload: IOriginRouter::IssuanceInstructionsParams,
+}
+
+/// Pack a day's legs into messages: per chain, in leg order, filling each message up to
+/// `MAX_SERIES_PER_MESSAGE` series and `MAX_RECIPIENTS_PER_MESSAGE` recipients. A series
+/// with more winners on a chain than one message carries spans several — safe because the
+/// receiver creates a series only when it is absent.
+pub fn pack_issuance_messages(
+    legs: Vec<IssuanceLeg>,
+) -> Vec<(u32, Vec<IssuanceInstructionsParams>)> {
+    let mut per_chain: Vec<(u32, Vec<IssuanceInstructionsParams>)> = Vec::new();
+    for leg in legs {
+        for slice in split_recipients(leg.payload) {
+            match per_chain.last_mut() {
+                Some((chain, message))
+                    if *chain == leg.chain_id
+                        && message.len() < MAX_SERIES_PER_MESSAGE
+                        && recipient_count(message) + slice.recipients.len()
+                            <= MAX_RECIPIENTS_PER_MESSAGE =>
+                {
+                    message.push(slice);
+                }
+                _ => per_chain.push((leg.chain_id, vec![slice])),
+            }
+        }
+    }
+    per_chain
+}
+
+/// Send a day's packed issuance messages. Relay-float-funded: value 0, the router
+/// quotes and pays the bridge fee from its own float.
+pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Result<()> {
+    for (chain_id, series) in pack_issuance_messages(legs) {
+        storage.call(
+            ORIGIN_ROUTER_ADDRESS,
+            U256::ZERO,
+            IOriginRouter::sendIssuanceInstructionsCall {
+                dstChainId: chain_id,
+                series,
+            }
+            .abi_encode()
+            .into(),
+        )?;
+    }
+    Ok(())
+}
+
+fn recipient_count(message: &[IssuanceInstructionsParams]) -> usize {
+    message.iter().map(|item| item.recipients.len()).sum()
+}
+
+/// One series' instructions for a chain, cut into pieces a single message can carry.
+/// The series fields repeat on every piece; only the winners differ.
+fn split_recipients(payload: IssuanceInstructionsParams) -> Vec<IssuanceInstructionsParams> {
+    if payload.recipients.len() <= MAX_RECIPIENTS_PER_MESSAGE {
+        return vec![payload];
+    }
+    (0..payload.recipients.len())
+        .step_by(MAX_RECIPIENTS_PER_MESSAGE)
+        .map(|start| {
+            let end = (start + MAX_RECIPIENTS_PER_MESSAGE).min(payload.recipients.len());
+            IssuanceInstructionsParams {
+                recipients: payload.recipients[start..end].to_vec(),
+                quantities: payload.quantities[start..end].to_vec(),
+                ..payload.clone()
+            }
+        })
+        .collect()
 }
 
 /// One `(chain, recipients, quantities)` issuance leg per snapshot chain: winners land on their

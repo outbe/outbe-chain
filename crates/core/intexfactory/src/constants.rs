@@ -71,3 +71,9 @@ pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * 10u128.pow(18);
 /// congested. Past it the issuance option disappears and the reference
 /// currency, which needs no rate at all, still settles.
 pub const FX_RATE_MAX_AGE_SECONDS: u64 = 6 * 3600;
+
+/// Series one ISSUANCE_INSTRUCTIONS message may carry, and recipients across all of
+/// them. Mirror the codec's own bounds: a day issues one series per winning currency
+/// pair, so a chain's share of it travels together rather than as a message each.
+pub const MAX_SERIES_PER_MESSAGE: usize = 8;
+pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 64;

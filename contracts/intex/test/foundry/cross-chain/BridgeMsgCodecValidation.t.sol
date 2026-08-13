@@ -6,6 +6,7 @@ import {ReferencePriceLib} from "../helpers/ReferencePriceLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
+import {_asBatch} from "../helpers/IssuanceBatch.sol";
 
 /// @dev PR-A Tier-1 input-validation hardening of BridgeMsgCodec:
 ///      - fixed-width decoders assert exact length (truncation silent-truncation);
@@ -188,9 +189,11 @@ contract BridgeMsgCodecValidationTest is Test {
 
     function test_EncodeIssuance_OverCap_Reverts() public {
         uint16 n = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN + 1;
+        // The cap is now on the recipients a whole message carries, however many series they are
+        // spread over, so it reports the message's total rather than one array's length.
         vm.expectRevert(
             abi.encodeWithSelector(
-                BridgeMsgCodec.PayloadArrayTooLong.selector, uint256(n), BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN
+                BridgeMsgCodec.IssuanceBatchTooLarge.selector, uint256(n), uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN)
             )
         );
         this.exposedEncodeIssuance(n);
@@ -303,6 +306,6 @@ contract BridgeMsgCodecValidationTest is Test {
         payload.seriesId = "20260212-TRY-U";
         payload.recipients = new address[](n);
         payload.quantities = new uint256[](n);
-        return BridgeMsgCodec.encodeIssuanceInstructions(payload);
+        return BridgeMsgCodec.encodeIssuanceInstructions(_asBatch(payload));
     }
 }

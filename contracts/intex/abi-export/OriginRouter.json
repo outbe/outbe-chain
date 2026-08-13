@@ -536,15 +536,15 @@
       "name": "quoteSendIssuanceInstructions",
       "inputs": [
         {
-          "name": "params",
-          "type": "tuple",
-          "internalType": "struct IOriginRouter.IssuanceInstructionsParams",
+          "name": "dstChainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "series",
+          "type": "tuple[]",
+          "internalType": "struct IOriginRouter.IssuanceInstructionsParams[]",
           "components": [
-            {
-              "name": "dstChainId",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
             {
               "name": "seriesId",
               "type": "bytes14",
@@ -688,6 +688,16 @@
           "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
+        },
+        {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "totalChunks",
+          "type": "uint16",
+          "internalType": "uint16"
         },
         {
           "name": "bidders",
@@ -993,15 +1003,15 @@
       "name": "sendIssuanceInstructions",
       "inputs": [
         {
-          "name": "params",
-          "type": "tuple",
-          "internalType": "struct IOriginRouter.IssuanceInstructionsParams",
+          "name": "dstChainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "series",
+          "type": "tuple[]",
+          "internalType": "struct IOriginRouter.IssuanceInstructionsParams[]",
           "components": [
-            {
-              "name": "dstChainId",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
             {
               "name": "seriesId",
               "type": "bytes14",
@@ -1162,6 +1172,16 @@
           "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
+        },
+        {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "totalChunks",
+          "type": "uint16",
+          "internalType": "uint16"
         },
         {
           "name": "bidders",
@@ -1981,6 +2001,11 @@
     },
     {
       "type": "error",
+      "name": "EmptyIssuanceBatch",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "FailedCall",
       "inputs": []
     },
@@ -2039,6 +2064,22 @@
     },
     {
       "type": "error",
+      "name": "InvalidRefundChunk",
+      "inputs": [
+        {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "totalChunks",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "IssuanceArrayLengthMismatch",
       "inputs": [
         {
@@ -2048,6 +2089,38 @@
         },
         {
           "name": "quantities",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "IssuanceBatchTooLarge",
+      "inputs": [
+        {
+          "name": "count",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "max",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "IssuanceSeriesBatchTooLarge",
+      "inputs": [
+        {
+          "name": "count",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "max",
           "type": "uint256",
           "internalType": "uint256"
         }

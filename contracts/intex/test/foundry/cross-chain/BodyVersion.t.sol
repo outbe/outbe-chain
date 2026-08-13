@@ -6,6 +6,7 @@ import {ReferencePriceLib} from "../helpers/ReferencePriceLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
+import {_asBatch} from "../helpers/IssuanceBatch.sol";
 
 /// @dev Exercises the body-version contract on both codecs:
 ///      - every encoder emits `bodyVersion == BODY_VERSION_V1` at offset 0;
@@ -49,7 +50,7 @@ contract BodyVersionTest is Test {
 
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
-        encoded = BridgeMsgCodec.encodeIssuanceInstructions(payload);
+        encoded = BridgeMsgCodec.encodeIssuanceInstructions(_asBatch(payload));
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "issuance.version");
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, "issuance.msgType");
     }
@@ -152,7 +153,7 @@ contract BodyVersionTest is Test {
     function test_BridgeCodec_UnknownBodyVersion_IssuanceInstructions_Reverts() public {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
-        bytes memory packet = BridgeMsgCodec.encodeIssuanceInstructions(payload);
+        bytes memory packet = BridgeMsgCodec.encodeIssuanceInstructions(_asBatch(payload));
         packet[0] = 0x77;
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnsupportedBodyVersion.selector, 0x77));
         this.exposedDecodeIssuanceInstructions(packet);
@@ -189,7 +190,7 @@ contract BodyVersionTest is Test {
         payload.quantities = new uint256[](2); // short
         // Hand-build the body so the encoder's new parity check does not intervene.
         bytes memory packet = abi.encodePacked(
-            BridgeMsgCodec.BODY_VERSION_V1, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, abi.encode(payload)
+            BridgeMsgCodec.BODY_VERSION_V1, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, abi.encode(_asBatch(payload))
         );
 
         vm.expectRevert(
@@ -208,7 +209,7 @@ contract BodyVersionTest is Test {
         payload.recipients = new address[](n);
         payload.quantities = new uint256[](n);
         bytes memory packet = abi.encodePacked(
-            BridgeMsgCodec.BODY_VERSION_V1, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, abi.encode(payload)
+            BridgeMsgCodec.BODY_VERSION_V1, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, abi.encode(_asBatch(payload))
         );
 
         vm.expectRevert(
@@ -276,7 +277,7 @@ contract BodyVersionTest is Test {
     function exposedDecodeIssuanceInstructions(bytes calldata p)
         external
         pure
-        returns (BridgeMsgCodec.IssuanceInstructionsPayload memory)
+        returns (BridgeMsgCodec.IssuanceInstructionsPayload[] memory)
     {
         return BridgeMsgCodec.decodeIssuanceInstructions(p);
     }

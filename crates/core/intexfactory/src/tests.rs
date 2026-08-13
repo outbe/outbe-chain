@@ -10,7 +10,10 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 
 use crate::called;
-use crate::constants::{CALL_RATE, FLOOR_RATE, QUALIFICATION_PERIOD, QUALIFIER_REFERENCE_ISO};
+use crate::constants::{
+    CALL_RATE, FLOOR_RATE, MAX_RECIPIENTS_PER_MESSAGE, MAX_SERIES_PER_MESSAGE,
+    QUALIFICATION_PERIOD, QUALIFIER_REFERENCE_ISO,
+};
 use crate::precompile::{self, IIntexFactory};
 use crate::qualified;
 use crate::runtime;
@@ -2254,4 +2257,100 @@ fn the_reference_currency_settles_without_reading_any_rate() {
         let cost = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap();
         assert_eq!(cost, U256::from(1_000_000u64));
     });
+}
+
+// ---------------------------------------------------------------------
+// Packing a day's issuance into messages
+// ---------------------------------------------------------------------
+
+fn leg(chain_id: u32, series: u32, recipients: usize) -> runtime::IssuanceLeg {
+    let mut payload = crate::sol_ext::IOriginRouter::IssuanceInstructionsParams {
+        seriesId: sid(series).into(),
+        worldwideDay: series,
+        issuedIntexCount: 1,
+        promisLoadMinor: PROMIS_LOAD_MINOR,
+        entryPriceMinor: 0,
+        floorPriceMinor: 0,
+        callNoticePeriod: 0,
+        issuanceCurrency: 840,
+        referenceCurrency: 840,
+        callWindow: 0,
+        callThreshold: 0,
+        callPriceMinor: 0,
+        recipients: Vec::new(),
+        quantities: Vec::new(),
+    };
+    for i in 0..recipients {
+        payload
+            .recipients
+            .push(Address::from([(i % 250) as u8 + 1; 20]));
+        payload.quantities.push(U256::from(1u64));
+    }
+    runtime::IssuanceLeg { chain_id, payload }
+}
+
+fn shape(
+    messages: &[(
+        u32,
+        Vec<crate::sol_ext::IOriginRouter::IssuanceInstructionsParams>,
+    )],
+) -> Vec<(u32, usize, usize)> {
+    messages
+        .iter()
+        .map(|(chain, series)| {
+            (
+                *chain,
+                series.len(),
+                series.iter().map(|s| s.recipients.len()).sum(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_chains_series_travel_together_up_to_the_message_caps() {
+    // Nine empty-recipient series on one chain: the series cap alone splits them.
+    let legs: Vec<_> = (1..=9u32).map(|s| leg(10, s, 0)).collect();
+    assert_eq!(
+        shape(&runtime::pack_issuance_messages(legs)),
+        vec![(10, MAX_SERIES_PER_MESSAGE, 0), (10, 1, 0)]
+    );
+}
+
+#[test]
+fn a_message_never_carries_more_winners_than_the_wire_allows() {
+    // Two series of 40 winners each: together they exceed the recipient cap, so the
+    // second starts a new message rather than overfilling the first.
+    let legs = vec![leg(10, 1, 40), leg(10, 2, 40)];
+    assert_eq!(
+        shape(&runtime::pack_issuance_messages(legs)),
+        vec![(10, 1, 40), (10, 1, 40)]
+    );
+}
+
+#[test]
+fn one_series_with_more_winners_than_a_message_spans_several() {
+    // 150 winners of one series on one chain: three messages, and every piece repeats
+    // the series so whichever arrives first can create it.
+    let messages = runtime::pack_issuance_messages(vec![leg(10, 1, 150)]);
+    assert_eq!(
+        shape(&messages),
+        vec![
+            (10, 1, MAX_RECIPIENTS_PER_MESSAGE),
+            (10, 1, MAX_RECIPIENTS_PER_MESSAGE),
+            (10, 1, 150 - 2 * MAX_RECIPIENTS_PER_MESSAGE)
+        ]
+    );
+    for (_, series) in &messages {
+        assert_eq!(SeriesId::from(series[0].seriesId), sid(1));
+    }
+}
+
+#[test]
+fn a_message_belongs_to_exactly_one_chain() {
+    let legs = vec![leg(10, 1, 2), leg(20, 1, 3), leg(10, 2, 1)];
+    assert_eq!(
+        shape(&runtime::pack_issuance_messages(legs)),
+        vec![(10, 1, 2), (20, 1, 3), (10, 1, 1)]
+    );
 }

@@ -787,9 +787,15 @@ fn clear_inner(
         // Hand issuance to IntexFactory, one series per winning currency pair.
         // The ranking above stayed global — grouping only decides which series a
         // won bid lands in, never who won or what they pay.
+        let mut legs = Vec::new();
         for group in issuance_groups(&result, &config, worldwide_day, snapshot)? {
-            outbe_intexfactory::api::issue(&storage, group)?;
+            legs.extend(outbe_intexfactory::api::issue(&storage, group)?);
         }
+
+        // A chain takes the day's series in as few messages as the wire allows: with the
+        // issuance currency free for each bidder to name, a day's pair count is bounded by
+        // its winners, and a message per series per chain would multiply with it.
+        outbe_intexfactory::api::send_issuance(&storage, legs)?;
     }
 
     // Send AUCTION_RESULT to every snapshot chain; skipped/zero-winner chains get

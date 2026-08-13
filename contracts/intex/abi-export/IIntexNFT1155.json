@@ -912,6 +912,25 @@
     },
     {
       "type": "function",
+      "name": "seriesExists",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "seriesHolderCount",
       "inputs": [
         {

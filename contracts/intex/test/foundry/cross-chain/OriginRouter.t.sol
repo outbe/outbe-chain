@@ -111,10 +111,10 @@ contract OriginRouterTest is CrossChainTest {
     function _baseIssuanceParams(address[] memory recipients, uint256[] memory quantities)
         internal
         pure
-        returns (IOriginRouter.IssuanceInstructionsParams memory)
+        returns (IOriginRouter.IssuanceInstructionsParams[] memory batch)
     {
-        return IOriginRouter.IssuanceInstructionsParams({
-            dstChainId: BNB_CHAIN_ID,
+        batch = new IOriginRouter.IssuanceInstructionsParams[](1);
+        batch[0] = IOriginRouter.IssuanceInstructionsParams({
             seriesId: SERIES_ID,
             worldwideDay: WORLDWIDE_DAY,
             issuedIntexCount: 10_000,
@@ -186,7 +186,9 @@ contract OriginRouterTest is CrossChainTest {
 
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendIssuanceInstructions{value: 0.1 ether}(_baseIssuanceParams(recipients, quantities));
+        originRouter.sendIssuanceInstructions{value: 0.1 ether}(
+            BNB_CHAIN_ID, _baseIssuanceParams(recipients, quantities)
+        );
     }
 
     function test_sendRefundInstructions_revert_unauthorized() public {
@@ -221,7 +223,7 @@ contract OriginRouterTest is CrossChainTest {
         uint256[] memory quantities = new uint256[](0);
 
         vm.prank(intexFactory);
-        originRouter.sendIssuanceInstructions(_baseIssuanceParams(recipients, quantities));
+        originRouter.sendIssuanceInstructions(BNB_CHAIN_ID, _baseIssuanceParams(recipients, quantities));
     }
 
     function test_sendIssuanceInstructions_revert_array_length_mismatch() public {
@@ -234,7 +236,9 @@ contract OriginRouterTest is CrossChainTest {
 
         vm.prank(intexFactory);
         vm.expectRevert(IOriginRouter.ArrayLengthMismatch.selector);
-        originRouter.sendIssuanceInstructions{value: 0.1 ether}(_baseIssuanceParams(recipients, quantities));
+        originRouter.sendIssuanceInstructions{value: 0.1 ether}(
+            BNB_CHAIN_ID, _baseIssuanceParams(recipients, quantities)
+        );
     }
 
     function test_sendRefundInstructions_revert_empty_array() public {
@@ -301,7 +305,8 @@ contract OriginRouterTest is CrossChainTest {
         quantities[0] = 10;
         quantities[1] = 20;
 
-        uint256 fee = originRouter.quoteSendIssuanceInstructions(_baseIssuanceParams(recipients, quantities));
+        uint256 fee =
+            originRouter.quoteSendIssuanceInstructions(BNB_CHAIN_ID, _baseIssuanceParams(recipients, quantities));
 
         assertEq(fee, 0.001 ether);
     }

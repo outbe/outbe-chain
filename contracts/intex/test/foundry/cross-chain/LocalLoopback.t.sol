@@ -335,26 +335,25 @@ contract LocalLoopbackTest is Test {
         uint256[] memory amounts = new uint256[](2);
         amounts[0] = 30;
         amounts[1] = 20;
+        IOriginRouter.IssuanceInstructionsParams[] memory issuance = new IOriginRouter.IssuanceInstructionsParams[](1);
+        issuance[0] = IOriginRouter.IssuanceInstructionsParams({
+            seriesId: CreateSeriesLib.seriesId(DAY),
+            worldwideDay: DAY,
+            issuedIntexCount: 50,
+            promisLoadMinor: PROMIS_LOAD_MINOR,
+            entryPriceMinor: 1e13,
+            floorPriceMinor: 100,
+            callNoticePeriod: 0,
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
+            callWindow: 30,
+            callThreshold: 21,
+            callPriceMinor: 200,
+            recipients: winners,
+            quantities: amounts
+        });
         vm.prank(address(factory));
-        origin.sendIssuanceInstructions(
-            IOriginRouter.IssuanceInstructionsParams({
-                dstChainId: local,
-                seriesId: CreateSeriesLib.seriesId(DAY),
-                worldwideDay: DAY,
-                issuedIntexCount: 50,
-                promisLoadMinor: PROMIS_LOAD_MINOR,
-                entryPriceMinor: 1e13,
-                floorPriceMinor: 100,
-                callNoticePeriod: 0,
-                issuanceCurrency: 840,
-                referenceCurrency: 840,
-                callWindow: 30,
-                callThreshold: 21,
-                callPriceMinor: 200,
-                recipients: winners,
-                quantities: amounts
-            })
-        );
+        origin.sendIssuanceInstructions(local, issuance);
         uint256 tokenId = intex.issuedTokenId(CreateSeriesLib.seriesId(DAY));
         assertEq(intex.balanceOf(iba1, tokenId), 30, "iba1 mint");
         assertEq(intex.balanceOf(iba2, tokenId), 20, "iba2 mint");

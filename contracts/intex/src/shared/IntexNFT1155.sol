@@ -462,6 +462,11 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
+    function seriesExists(bytes14 seriesId) external view returns (bool) {
+        return _s().seriesData[_issuedTokenId(seriesId)].issuedAt != 0;
+    }
+
+    /// @inheritdoc IIntexNFT1155
     function issuedTokenId(bytes14 seriesId) external pure returns (uint256) {
         return _issuedTokenId(seriesId);
     }
