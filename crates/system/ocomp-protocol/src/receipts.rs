@@ -419,7 +419,7 @@ impl RequestBudgetSplitReceiptV1 {
             && self.carry_over_credit == U256::ZERO;
         let red = self.day_type == DayType::Red
             && self.destination == BudgetSplitDestination::CarryOver
-            && self.desis_brief_hash.is_none()
+            && self.desis_brief_hash.is_some()
             && self.carry_over_credit == self.auction_base;
         require(green || red, "request budget split destination")
     }

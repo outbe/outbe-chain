@@ -72,28 +72,31 @@ pub(crate) fn apply_fresh_request_budget_effect(
 ) -> Result<RequestBudgetSplitReceiptV1> {
     let split = RequestBudgetSplit::derive(request.day_limit, request.lysis_budget)?;
     let receipt = expected_receipt(request, split, request.pending_nonce)?;
-    match request.day_type {
-        DayType::Green => {
-            let actual = outbe_desis::ocomp_budget::apply_request_auction_base(
-                storage.clone(),
-                request.protocol_bundle_hash,
-                request.wwd.into(),
-                split.auction_base,
-                request.auction_entry_price,
-                request.logical_anchor,
-            )?;
-            if receipt.desis_brief_hash != Some(actual) {
-                return Err(MetadosisError::OcompDesisBriefHashMismatch.into());
-            }
+    let green = request.day_type == DayType::Green;
+    // One checkpoint: a red day writes both the brief and the carry-over, and
+    // neither may survive the other's failure.
+    storage.with_checkpoint(|| {
+        let actual = outbe_desis::ocomp_budget::apply_request_auction_base(
+            storage.clone(),
+            request.protocol_bundle_hash,
+            request.wwd.into(),
+            split.auction_base,
+            request.auction_entry_price,
+            request.logical_anchor,
+            green,
+        )?;
+        if receipt.desis_brief_hash != Some(actual) {
+            return Err(MetadosisError::OcompDesisBriefHashMismatch.into());
         }
-        DayType::Red => {
+        if !green {
             let delta = PromisLimitContract::new(storage.clone())
                 .checked_add_carry_over(split.auction_base)?;
             if delta.credited != receipt.carry_over_credit {
                 return Err(MetadosisError::OcompBudgetReceiptMismatch.into());
             }
         }
-    }
+        Ok(())
+    })?;
     receipt
         .validate_semantics()
         .map_err(protocol_error_to_revert)?;
@@ -127,23 +130,28 @@ fn expected_receipt(
     split: RequestBudgetSplit,
     effect_nonce: u64,
 ) -> Result<RequestBudgetSplitReceiptV1> {
-    let (destination, desis_brief_hash, carry_over_credit) = match request.day_type {
+    let (destination, briefed_supply, carry_over_credit) = match request.day_type {
         DayType::Green => (
             BudgetSplitDestination::DesisAuction,
-            Some(
-                desis_request_brief_hash(
-                    request.protocol_bundle_hash,
-                    request.wwd,
-                    split.auction_base,
-                    request.auction_entry_price,
-                    request.logical_anchor,
-                )
-                .map_err(protocol_error_to_revert)?,
-            ),
+            split.auction_base,
             U256::ZERO,
         ),
-        DayType::Red => (BudgetSplitDestination::CarryOver, None, split.auction_base),
+        DayType::Red => (
+            BudgetSplitDestination::CarryOver,
+            U256::ZERO,
+            split.auction_base,
+        ),
     };
+    let desis_brief_hash = Some(
+        desis_request_brief_hash(
+            request.protocol_bundle_hash,
+            request.wwd,
+            briefed_supply,
+            request.auction_entry_price,
+            request.logical_anchor,
+        )
+        .map_err(protocol_error_to_revert)?,
+    );
     let receipt = RequestBudgetSplitReceiptV1 {
         protocol_bundle_hash: request.protocol_bundle_hash,
         wwd: request.wwd,
