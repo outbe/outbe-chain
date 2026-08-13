@@ -311,10 +311,9 @@ pub fn active_dist_at(storage: &StorageHandle<'_>, index: u32) -> Result<u32> {
 // Creator-reward: multi-chain proceeds fan-in aggregation
 // -------------------------------------------------------------------------
 
-/// Arm proceeds fan-in for a day: mark the winning chains expected (deduped),
-/// set the fan-in `deadline`, and enroll the day in the awaiting-proceeds set the
-/// begin-block sweep watches. A day may issue several series, so this accumulates
-/// into the union of their winning chains rather than replacing the previous arm.
+/// Arm proceeds fan-in for a day: mark the winning chains expected, set the `deadline`,
+/// enroll the day in the awaiting-proceeds set. A day may issue several series, so the
+/// expected set accumulates into their union.
 pub fn arm_proceeds(
     storage: &StorageHandle<'_>,
     worldwide_day: u32,

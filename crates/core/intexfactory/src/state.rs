@@ -210,10 +210,8 @@ fn remove_bin(
     Ok(())
 }
 
-// Adapters between one currency's slice of a bin-tree's three columns and
-// `BinTreeStorage`, so both indexes reuse `tree_math` and neither currency can
-// see another's bins. Construct the view inline at each `tree_math` call rather
-// than binding it, so it never conflicts with a `&mut IntexFactoryContract`.
+// Adapters between one currency's slice of a bin-tree's columns and `BinTreeStorage`.
+// Construct inline at each `tree_math` call, so it never conflicts with a `&mut` borrow.
 
 /// The unqualified (floor-price) trie of one reference currency.
 pub(crate) struct UnqualifiedBinTree<'a, 'b>(

@@ -107,12 +107,11 @@ contract TargetRouter is
         /// @dev Set once the CLEARING for a day has triggered its bids relay, so a redelivered CLEARING never
         ///      re-relays under a fresh generation.
         mapping(uint32 worldwideDay => bool relayed) clearingRelayed;
-        /// @dev Bit per refund chunk already applied for a day, so a redelivered chunk neither
-        ///      re-counts its proceeds nor completes the day twice. One word covers `MAX_CHUNKS`.
+        /// @dev Bit per applied refund chunk, so a redelivered one neither re-counts nor
+        ///      completes the day. One word covers `MAX_CHUNKS`.
         mapping(uint32 worldwideDay => uint256 bitmap) refundChunksApplied;
-        /// @dev Proceeds accrued from the day's refund chunks so far. Routed to Outbe as one
-        ///      transfer once every chunk has arrived, because the origin marks a chain's
-        ///      contribution arrived on first delivery and a partial sum would close the
+        /// @dev Proceeds accrued so far, routed as one transfer once every chunk has arrived:
+        ///      the origin marks a chain paid on first delivery, so a partial sum closes the
         ///      creator-reward fan-in early.
         mapping(uint32 worldwideDay => uint128 accrued) refundProceedsAccrued;
         /// @dev How many of the day's refund chunks have been applied.
@@ -464,8 +463,7 @@ contract TargetRouter is
         for (uint256 s = 0; s < series.length; s++) {
             BridgeMsgCodec.IssuanceInstructionsPayload memory payload = series[s];
 
-            // Create-if-absent: a day's issuance reaches this chain in as many messages as its
-            // series and recipients need, and any of them may be the first to mention a series.
+            // Create-if-absent: any of a day's messages may be the first to name a series.
             if (!$.intex.seriesExists(payload.seriesId)) {
                 $.intex
                     .createSeries(
@@ -539,8 +537,7 @@ contract TargetRouter is
         TargetRouterStorage storage $ = _ts();
         uint256 bit = 1 << chunkIndex;
         if ($.refundChunksApplied[worldwideDay] & bit != 0) {
-            // Redelivered chunk: the escrow already finalized these bidders and its proceeds are
-            // already counted. Acknowledge it and leave the day's totals alone.
+            // Redelivered: already settled and counted.
             emit RefundInstructionsReceived(_srcChainId, worldwideDay, 0);
             return;
         }
@@ -554,8 +551,7 @@ contract TargetRouter is
             });
         }
 
-        // Count the chunk before settling it: whether this one completes the day is what
-        // tells the escrow to close the day, and the escrow refuses instructions after that.
+        // Counted before settling: the escrow refuses instructions once the day is closed.
         $.refundChunksApplied[worldwideDay] |= bit;
         uint16 seen = $.refundChunksSeen[worldwideDay] + 1;
         $.refundChunksSeen[worldwideDay] = seen;
@@ -566,9 +562,7 @@ contract TargetRouter is
         uint128 totalPaid = $.escrowAdapter.finalizeAuction(worldwideDay, _receiveId, instructions, completesDay);
         $.refundProceedsAccrued[worldwideDay] += totalPaid;
 
-        // Proceeds land here (proceedsRecipient) chunk by chunk, but leave as one transfer: the
-        // origin counts a chain as having paid on the first delivery, so routing a partial sum
-        // would close the creator-reward fan-in while the rest is still in flight.
+        // One transfer per day: the origin counts a chain paid on the first delivery.
         if (completesDay) {
             uint128 proceeds = $.refundProceedsAccrued[worldwideDay];
             if (proceeds > 0) {

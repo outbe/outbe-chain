@@ -219,7 +219,7 @@ fn receipt() -> RequestBudgetSplitReceiptV1 {
 /// The day's frozen price table for these fixtures.
 fn entry_prices() -> Vec<outbe_ocomp_protocol::intent::ReferenceEntryPriceV1> {
     vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
-        reference_currency: 840,
+        reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
         entry_price_minor: AUCTION_ENTRY_PRICE,
         source: outbe_ocomp_protocol::intent::AuctionEntryPriceSource::LastClosedDayVwap,
         source_day: 20_251_231,

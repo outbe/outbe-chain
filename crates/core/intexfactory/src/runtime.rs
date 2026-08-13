@@ -74,9 +74,8 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
     };
     outbe_intex::api::create_series(storage, record)?;
 
-    // The instructions this series adds to each snapshot chain. They are not sent here: a day
-    // issues one series per winning currency pair, and a chain takes them in as few messages as
-    // the caps allow, which only the caller — holding the whole day — can pack.
+    // What each snapshot chain must be told. Not sent here: only the caller sees the whole
+    // day, and a chain's share of it travels in as few messages as the caps allow.
     let legs: Vec<IssuanceLeg> = issuance_legs(&params)
         .into_iter()
         .map(|(chain_id, recipients, quantities)| IssuanceLeg {
@@ -132,28 +131,25 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
     Ok(legs)
 }
 
-/// What one series adds to one chain's issuance: the series to create there and the
-/// winners of that chain to mint to (empty on a chain with no local winners, which
-/// still needs the series created for bridging).
+/// What one series adds to one chain: the series to create and that chain's winners
+/// (empty on a chain with none, which still needs the series for bridging).
 #[derive(Clone)]
 pub struct IssuanceLeg {
     pub chain_id: u32,
     pub payload: IOriginRouter::IssuanceInstructionsParams,
 }
 
-/// Pack a day's legs into messages: per chain, in leg order, filling each message up to
-/// `MAX_SERIES_PER_MESSAGE` series and `MAX_RECIPIENTS_PER_MESSAGE` recipients. A series
-/// with more winners on a chain than one message carries spans several — safe because the
-/// receiver creates a series only when it is absent.
+/// Pack a day's legs into per-chain messages, up to `MAX_SERIES_PER_MESSAGE` series and
+/// `MAX_RECIPIENTS_PER_MESSAGE` recipients each. A series with more winners spans several,
+/// which the receiver's create-if-absent makes safe.
 pub fn pack_issuance_messages(
     legs: Vec<IssuanceLeg>,
 ) -> Vec<(u32, Vec<IssuanceInstructionsParams>)> {
     let mut per_chain: Vec<(u32, Vec<IssuanceInstructionsParams>)> = Vec::new();
     for leg in legs {
         for slice in split_recipients(leg.payload) {
-            // A day's legs arrive series by series, so one chain's legs are not adjacent.
-            // The message to fill is the last one belonging to *this* chain; looking only
-            // at the tail would open a new message for every series and batch nothing.
+            // Legs arrive series by series, so this chain's open message is not the last one
+            // built; matching on the tail alone would batch nothing.
             let open = per_chain
                 .iter_mut()
                 .rev()
@@ -195,8 +191,7 @@ fn recipient_count(message: &[IssuanceInstructionsParams]) -> usize {
     message.iter().map(|item| item.recipients.len()).sum()
 }
 
-/// One series' instructions for a chain, cut into pieces a single message can carry.
-/// The series fields repeat on every piece; only the winners differ.
+/// One series' instructions cut into pieces a message can carry; only the winners differ.
 fn split_recipients(payload: IssuanceInstructionsParams) -> Vec<IssuanceInstructionsParams> {
     if payload.recipients.len() <= MAX_RECIPIENTS_PER_MESSAGE {
         return vec![payload];
@@ -235,10 +230,8 @@ pub(crate) fn issuance_legs(params: &IssuanceParams) -> Vec<(u32, Vec<Address>, 
         .collect()
 }
 
-/// Narrows an oracle-scale price for the wire, which carries prices as `u64` on
-/// the 1e9 scale. At 1e18 the type caps prices near 18.44, and since the call
-/// price is the entry price marked up, the auction stops working once COEN
-/// passes roughly 8 — silently, by reverting the day and retrying forever.
+/// Narrows an oracle-scale price for the wire's `u64` on the 1e9 scale. At 1e18 the type
+/// capped prices near 18.44, which stopped the auction once COEN passed roughly 8.
 pub fn to_wire_price(price_minor: U256) -> Result<u64> {
     u64::try_from(price_minor / U256::from(ORACLE_TO_WIRE_SCALE))
         .map_err(|_| PrecompileError::Revert("price exceeds the wire scale".into()))
@@ -252,10 +245,8 @@ pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
         .ok_or_else(|| PrecompileError::Revert("marked-up price overflow".into()))
 }
 
-/// Per-Intex cost in the payment token's minor units. `entry_price` and
-/// `promis_load_minor` are both 1e18-scaled, so their product carries 1e36.
-/// Rounded up, as the issuance-currency route is: the two must agree in direction,
-/// or the same series costs a minor unit more through one door than the other.
+/// Per-Intex cost in the payment token's minor units; `entry_price` and `promis_load_minor`
+/// are both 1e18-scaled, so their product carries 1e36. Rounded up, as the issuance route is.
 pub(crate) fn derived_cost_amount(
     entry_price: U256,
     promis_load_minor: U256,
@@ -631,14 +622,9 @@ enum PaymentCurrency {
     Issuance,
 }
 
-/// Per-Intex cost in `token`'s minor units.
-///
-/// The cost is quoted in the series' reference currency, so paying in it needs
-/// no rate at all. Paying in the issuance currency converts through COEN as the
-/// pivot: `cost_iss = cost_ref * rate(COEN/iss) / rate(COEN/ref)`. Both the
-/// conversion and the decimals scaling collapse into a single division, so the
-/// result is rounded once — rounding the conversion first and the decimals after
-/// would round twice and let a quote disagree with the charge it pays.
+/// Per-Intex cost in `token`'s minor units. The reference currency needs no rate; the
+/// issuance currency converts through COEN — `cost_ref * rate(COEN/iss) / rate(COEN/ref)`
+/// — with the decimals scaling folded into the same division, so it rounds once.
 fn cost_in_token(
     storage: &StorageHandle<'_>,
     series: &outbe_intex::SeriesRecord,
@@ -679,8 +665,7 @@ fn cost_in_token(
 /// The oracle's COEN price in `iso_code`, refused when absent or older than
 /// [`FX_RATE_MAX_AGE_SECONDS`].
 fn fresh_coen_rate(storage: &StorageHandle<'_>, iso_code: u16, now: u64) -> Result<U256> {
-    // "No pair registered" is a real answer for a currency; a failed read is not, and
-    // must not reach the settler dressed as one.
+    // A missing pair is an answer; a failed read is not, and must not look like one.
     let Some(pair_index) = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso_code)?
     else {
         return Err(IntexFactoryError::FxRateUnavailable(iso_code).into());

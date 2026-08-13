@@ -35,12 +35,8 @@ wire_enum_u8! {
 }
 
 wire_struct! {
-    /// One reference currency's frozen auction entry price.
-    ///
-    /// A worldwide day prices every reference currency the oracle carries, so the
-    /// value the job and its receipt agree on is a row per currency rather than a
-    /// single number. Each row records where its price came from, so a fallback is
-    /// visible in the receipt instead of being indistinguishable from a real close.
+    /// One reference currency's frozen auction entry price, with where it came from,
+    /// so a fallback stays visible in the receipt.
     pub struct ReferenceEntryPriceV1 {
         pub reference_currency: u16,
         pub entry_price_minor: U256,
@@ -219,10 +215,8 @@ impl PreAdmissionEnvelopeV1 {
         hash_framed(HashDomain::PreAdmission, &self.encode_canonical(limits)?)
     }
 
-    /// The price table must be non-empty and strictly ascending by currency: the
-    /// rows are hashed in order, so two orderings of the same prices would
-    /// otherwise be two different days. How many currencies a day may carry is a
-    /// capacity question and is bounded by the capacity profile, not here.
+    /// Non-empty and strictly ascending by currency: the rows are hashed in order, so
+    /// two orderings of the same prices would otherwise be two different days.
     pub fn validate_price_table(&self) -> Result<(), ProtocolError> {
         require(
             !self.auction_entry_prices.is_empty(),

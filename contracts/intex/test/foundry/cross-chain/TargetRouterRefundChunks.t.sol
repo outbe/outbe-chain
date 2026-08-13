@@ -46,10 +46,8 @@ contract CountingTokenBridge {
     }
 }
 
-/// A chain's refunds arrive as a run of chunks. The escrow applies each as it lands,
-/// but the day's proceeds leave as one transfer: the origin counts a chain as having
-/// paid on the first delivery, so a partial sum would close the creator-reward fan-in
-/// while the rest of the chain's money is still in flight.
+/// A chain's refunds arrive as a run of chunks, but the day's proceeds leave as one
+/// transfer: the origin counts a chain paid on the first delivery.
 contract TargetRouterRefundChunksTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20_260_713;
@@ -120,11 +118,8 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
         assertEq(tokenBridge.lastAmount(), 25e18);
     }
 
-    /// The mock escrow above cannot see the rule that matters: the real adapter closes a
-    /// day on finalization and refuses everything after. Chunking a day past it is what
-    /// would strand the later chunks' bidders in `Locked` — holding a claim on their full
-    /// principal while the winners among them already hold minted Intex — so the run has
-    /// to be driven through the real contract.
+    /// Driven through the real adapter: the rule that matters — a finalized day refuses
+    /// everything after — is exactly what the mock above cannot express.
     function test_TheRealEscrowSettlesEveryChunkOfADay() public {
         MockWCOEN token = new MockWCOEN();
         MockTheCompact compact = new MockTheCompact();

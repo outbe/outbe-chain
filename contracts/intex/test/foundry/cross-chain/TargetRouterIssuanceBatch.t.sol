@@ -8,10 +8,8 @@ import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
-/// A day issues one series per winning currency pair, so a chain's share of it is a set.
-/// It travels in as few messages as the caps allow, and a series with more winners than one
-/// message carries spans several — which only works because the receiver creates a series
-/// when it is absent rather than assuming the first message carries it.
+/// A chain's share of a day is a set of series, carried in as few messages as the caps
+/// allow; a series may span several, which create-if-absent makes safe.
 contract TargetRouterIssuanceBatchTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20_250_101;

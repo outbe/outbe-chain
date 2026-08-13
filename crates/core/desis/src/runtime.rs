@@ -108,17 +108,9 @@ pub(crate) fn record_preflighted_brief(
     Ok(())
 }
 
-/// The currencies a day will actually price, from the ones offered.
-///
-/// Two rules narrow the list, and both drop rather than fail: a day that cannot be
-/// briefed is a day that cannot settle. A series id spells its reference currency
-/// with a single letter, so two currencies sharing a first letter would derive one
-/// id for two series; and the auction start message carries the table, so a day
-/// with more currencies than it can carry could not be started anywhere.
-///
-/// The offered rows are ordered by currency first, so the same day resolves to the
-/// same table whichever path briefed it — the two disagree on the order they collect
-/// prices in, and both of these rules keep whichever row comes first.
+/// The currencies a day will actually price: one per series-id letter, at most
+/// `MAX_REFERENCE_PRICES`. Ordered by currency first, so the two brief paths — which
+/// collect prices in different orders — resolve a day to the same table.
 fn choose_reference_prices(
     contract: &mut DesisContract<'_>,
     worldwide_day: WorldwideDay,
@@ -126,8 +118,6 @@ fn choose_reference_prices(
 ) -> Result<Vec<ReferencePrice>> {
     rows.sort_by_key(|row| row.iso_code);
 
-    // A currency the id cannot spell cannot own a letter; reveal already refuses such a
-    // bid, so this only decides which rows survive.
     let letter_of = |iso_code: u16| SeriesId::currency_code(iso_code).map(|code| code[0]).ok();
     let mut kept: Vec<ReferencePrice> = Vec::with_capacity(rows.len());
     for row in rows {
@@ -349,10 +339,8 @@ fn start_auction(
     contract.write_auction_config(worldwide_day, &config)?;
     let (commit, reveal, issuance) = (ts32(commit_end)?, ts32(reveal_end)?, ts32(issuance_end)?);
 
-    // A day nobody could price cannot hold an auction: every bid is a rate against a
-    // price, and there is none. It ends as a red day does — a closed record on every
-    // chain — but it is not one: a red day was briefed with no supply at all, while
-    // this one holds the day's PROMIS and has to give it back.
+    // A day nobody could price cannot hold an auction, and ends as a red day does — but
+    // unlike a red day it was briefed with supply, which has to go back.
     let unpriced = config.reference_prices.is_empty();
     let red = contract.brief_green.read(&worldwide_day)? == 0;
     if unpriced || red {
@@ -503,9 +491,8 @@ pub fn process_bids_batch(
             "processBidsBatch: invalid batch index/total".into(),
         ));
     }
-    // The target checks the pair at reveal, but this is the peer boundary and the pair
-    // is the one field clearing cannot recover from: a code the series id cannot spell
-    // would only surface hours later, as a day whose clearing reverts every block.
+    // Checked here because clearing cannot recover from it: an unspellable code would
+    // otherwise surface as a day whose clearing reverts every block.
     if let Some(bad) = bids.iter().find(|bid| {
         SeriesId::currency_code(bid.issuance_currency).is_err()
             || SeriesId::currency_code(bid.reference_currency).is_err()
@@ -825,9 +812,7 @@ fn clear_inner(
     }
 
     if result.issued_intex_count == 0 {
-        // No series is created anywhere, so the day's lysis-recorded contributor
-        // map would never distribute — discard it. This is a whole-day decision
-        // and stays here, above issuance.
+        // No series anywhere, so the day's recorded contributor map can never distribute.
         outbe_intexfactory::api::discard_day_contributors(&storage, worldwide_day.value())?;
     } else {
         // Hand issuance to IntexFactory, one series per winning currency pair.
@@ -838,9 +823,7 @@ fn clear_inner(
             legs.extend(outbe_intexfactory::api::issue(&storage, group)?);
         }
 
-        // A chain takes the day's series in as few messages as the wire allows: with the
-        // issuance currency free for each bidder to name, a day's pair count is bounded by
-        // its winners, and a message per series per chain would multiply with it.
+        // A chain takes the day's series in as few messages as the wire allows.
         outbe_intexfactory::api::send_issuance(&storage, legs)?;
     }
 
@@ -867,13 +850,8 @@ fn clear_inner(
         )?;
     }
 
-    // Send REFUND_INSTRUCTIONS per included chain with bidders (winners and losers alike);
-    // a skipped chain's bidders reclaim on their own chain via the escrow timeout path.
-    //
-    // A chain's bidders are every bidder it relayed, not just its winners, so the set is bounded
-    // by bid intake rather than by supply and does not fit one message. It ships in chunks the
-    // encoder can carry; the destination applies each as it arrives and routes the day's proceeds
-    // once the last one lands.
+    // REFUND_INSTRUCTIONS per included chain, winners and losers alike, in chunks the encoder
+    // can carry; a skipped chain's bidders reclaim via the escrow timeout path.
     for &chain_id in included {
         let mut bidders = Vec::new();
         let mut refunded = Vec::new();

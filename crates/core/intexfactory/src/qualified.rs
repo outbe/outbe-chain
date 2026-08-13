@@ -1,9 +1,7 @@
 //! Per-block qualification: drains floor-bins crossed by the live COEN rate and
 //! qualifies Issued series past their qualification period. Runs in `begin_block`.
-//!
-//! A floor is only comparable to the rate of its own reference currency, so each
-//! currency walks its own bin trie with its own rate and its own cursor, and they
-//! share one per-block budget.
+//! A floor compares only to its own currency's rate, so each currency walks its own
+//! trie with its own cursor; they share one per-block budget.
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
@@ -47,12 +45,9 @@ impl BlockLifecycle for IntexLifecycle {
 /// Max series visited per begin-block qualify scan; the cursor resumes the rest next block.
 pub(crate) const MAX_SERIES_PER_BLOCK: u32 = 256;
 
-/// Returns the number of series promoted Issued -> Qualified this block.
-///
-/// Every reference currency the oracle knows about is scanned against its own
-/// COEN rate, in registry order, sharing one [`MAX_SERIES_PER_BLOCK`] budget. A
-/// currency whose COEN pair is unregistered or unpriced is skipped for the block
-/// rather than halting it.
+/// Number of series promoted Issued -> Qualified this block. Every reference currency is
+/// scanned against its own rate, sharing one [`MAX_SERIES_PER_BLOCK`] budget; an unpriced
+/// one is skipped for the block rather than halting it.
 pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
     let currencies = get_all_reference_currencies(ctx)?;
     if currencies.is_empty() {
@@ -67,8 +62,7 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
     for offset in 0..currencies.len() {
         let at = (start + offset) % currencies.len();
         if budget == 0 {
-            // Out of budget: the next block starts here, so a heavy currency
-            // cannot keep the ones behind it from ever being scanned.
+            // Resume here, so a heavy currency cannot starve the ones behind it.
             resume_at = at;
             break;
         }

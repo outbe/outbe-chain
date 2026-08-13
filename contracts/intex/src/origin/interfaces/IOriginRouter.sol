@@ -300,20 +300,14 @@ interface IOriginRouter {
         uint64 auctionClearingRate,
         uint32 wonBidsCount
     ) external payable returns (bytes32 sendId);
-    /// @notice Send one chain its share of a day's issuance: the series it must create and the
-    ///         winners it must mint to. Empty `recipients` on a series creates it only, which is
-    ///         what a chain with no local winners still needs. A day whose series or winners
-    ///         exceed one message is split by the caller; the destination creates a series only
-    ///         if it is absent, so the split is invisible to it. Restricted to
-    ///         `INTEX_FACTORY_ROLE`.
+    /// @notice Send one chain the series of a day it must create and the winners to mint to.
+    ///         Empty `recipients` creates the series only. Restricted to `INTEX_FACTORY_ROLE`.
     function sendIssuanceInstructions(uint32 dstChainId, IssuanceInstructionsParams[] calldata series)
         external
         payable
         returns (bytes32 sendId);
     /// @notice Send one chunk of a day's refund instructions to a single target chain.
-    ///         A chain's bidders span `totalChunks` messages; the destination applies each as it
-    ///         arrives and routes the day's proceeds once the last one lands. Restricted to
-    ///         `DESIS_ROLE`.
+    ///         Restricted to `DESIS_ROLE`.
     function sendRefundInstructions(
         uint32 dstChainId,
         uint32 worldwideDay,

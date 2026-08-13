@@ -4,10 +4,8 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
-/// The inbound length floors are what stop a truncated message from being sliced out of
-/// bounds, and they are arithmetic over an ABI layout — the kind of number that goes stale
-/// silently when a field is added. Each is pinned here against the smallest message the
-/// encoder can actually produce, so a layout change fails here rather than in production.
+/// The inbound length floors are hand-derived ABI arithmetic, so each is pinned against the
+/// smallest message its encoder can produce.
 contract BridgeMsgCodecMinLengthTest is Test {
     function test_RefundFloorIsTheSmallestRealRefund() public pure {
         bytes memory smallest = BridgeMsgCodec.encodeRefundInstructions(

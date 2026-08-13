@@ -28,12 +28,9 @@ use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
 use crate::state::QualifiedBinTree;
 
-/// Run the daily Called scan. Returns the number of series force-called.
-///
-/// A call trigger is only comparable to the VWAP of its own reference currency,
-/// so each currency is scanned against its own pair, in oracle registry order,
-/// sharing one [`MAX_SERIES_PER_BLOCK`] budget. A currency without a registered
-/// or finalized pair is skipped for the run rather than halting it.
+/// Run the daily Called scan. Returns the number of series force-called. Each currency is
+/// scanned against its own pair, sharing one [`MAX_SERIES_PER_BLOCK`] budget; one without a
+/// registered or finalized pair is skipped for the run.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
 
@@ -63,14 +60,12 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     for offset in 0..currencies.len() {
         let at = (start + offset) % currencies.len();
         if budget == 0 {
-            // Out of budget: the next run starts here, so a heavy currency
-            // cannot keep the ones behind it from ever being scanned.
+            // Resume here, so a heavy currency cannot starve the ones behind it.
             resume_at = at;
             break;
         }
         let iso_code = currencies[at];
-        // A currency with no registered COEN pair has nothing to compare against; a real
-        // read failure is not that, and must not be mistaken for it.
+        // No registered pair is an answer; a failed read is not.
         let pair_index =
             match outbe_oracle::api::coen_pair_index_opt(ctx.storage.clone(), iso_code)? {
                 Some(index) => index,

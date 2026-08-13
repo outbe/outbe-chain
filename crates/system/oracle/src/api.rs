@@ -32,7 +32,7 @@ pub enum OcompAuctionEntryPriceSource {
 /// `oracle_state_version` reuses the authoritative monotonic snapshot stream
 /// index: every exchange-rate snapshot advances it, while the WWD and S-curve
 /// counters identify the exact derived collections read for this day.
-/// One reference currency's frozen auction entry price, with the day it came from.
+/// One reference currency's frozen auction entry price.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OcompReferenceEntryPrice {
     pub reference_currency: u16,
@@ -44,9 +44,8 @@ pub struct OcompReferenceEntryPrice {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OcompOraclePreAdmissionProjection {
     pub profile_ready: bool,
-    /// One row per reference currency that has a price, ascending by currency.
-    /// A currency the oracle cannot price for this day is absent rather than
-    /// zero, so a day never freezes a price nobody published.
+    /// One row per priced reference currency, ascending by currency; an unpriced
+    /// currency is absent rather than zero.
     pub auction_entry_prices: Vec<OcompReferenceEntryPrice>,
     pub oracle_state_version: u64,
     /// Registered pairs, i.e. the upper bound on the day-VWAP entries an
@@ -118,12 +117,8 @@ pub fn coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option
     Ok((!stored.is_zero()).then_some(stored))
 }
 
-/// Registry index of the `COEN/<iso_code>` pair, or `None` when the pair was never
-/// registered.
-///
-/// The reference registry lists currencies independently of whether their pair
-/// exists, so a caller walking it needs to tell "not registered" apart from a read
-/// that actually failed. [`require_coen_pair`] collapses both into an error.
+/// Registry index of the `COEN/<iso_code>` pair, or `None` when it was never registered.
+/// Unlike [`require_coen_pair`], which collapses both into an error.
 pub fn coen_pair_index_opt(storage: StorageHandle, iso_code: u16) -> Result<Option<PairIndex>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
@@ -205,16 +200,9 @@ pub fn get_worldwide_day_vwap_for_pair(
     oracle.get_worldwide_day_vwap_for_pair(worldwide_day, index)
 }
 
-/// Selects the already-stored auction entry prices and returns only authenticated
-/// collection counts. This path never invokes calculation.
-///
-/// The day freezes one price per reference currency, so the read walks the
-/// reference registry — bounded by it, and by the capacity profile that commits
-/// its size — rather than the single fork-fixed pair it once did. The day-type
-/// currency keeps its own semantics, including the current-VWAP fallback that
-/// decides a day with no close behind it; every other currency contributes only
-/// if its own pair closed, because there is no equivalent fallback for it and a
-/// day must not freeze a price nobody published.
+/// Selects the already-stored auction entry prices and the authenticated collection counts;
+/// never invokes calculation. One price per reference currency, so the read walks the
+/// registry; only the day-type currency keeps the current-VWAP fallback.
 pub fn ocomp_pre_admission_projection(
     storage: StorageHandle,
     worldwide_day: WorldwideDay,

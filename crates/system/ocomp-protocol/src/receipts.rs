@@ -390,11 +390,8 @@ pub fn empty_apply_event_summary_hash() -> Result<B256, ProtocolError> {
     hash_framed(HashDomain::ApplyEventSummary, &[])
 }
 
-/// Canonical hash of the auction brief a request applies.
-///
-/// The day prices one reference currency per row, so the table is length-prefixed
-/// and its rows are hashed in the order given — the caller keeps them ascending by
-/// currency, which makes the encoding unambiguous rather than merely conventional.
+/// Canonical hash of the auction brief a request applies. The price table is
+/// length-prefixed and hashed in the order given, which the caller keeps ascending.
 pub fn desis_request_brief_hash(
     protocol_bundle_hash: B256,
     wwd: u32,

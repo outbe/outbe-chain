@@ -235,8 +235,8 @@ interface IIntexAuction {
 
     // --- Lifecycle ---
 
-    /// @notice The day's price row for `isoCode`.
-    /// @dev Reverts `ReferenceCurrencyNotPriced` when the day does not clear in it.
+    /// @notice The day's price row for `isoCode`; reverts `ReferenceCurrencyNotPriced` when
+    ///         the day does not clear in it.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param isoCode Reference currency (ISO numeric).
     /// @return The entry, floor and call price of that currency.

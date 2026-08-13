@@ -39,20 +39,11 @@ library BridgeMsgCodec {
     ///      live.
     uint16 internal constant MAX_PAYLOAD_ARRAY_LEN = 64;
 
-    /// @notice Upper bound on how many series one ISSUANCE_INSTRUCTIONS message may carry.
-    /// @dev A day issues one series per winning currency pair, and each costs a message per chain
-    ///      of presence, so several travel together. Bounded so the worst case — this many series
-    ///      each carrying part of `MAX_PAYLOAD_ARRAY_LEN` recipients — stays well inside the
-    ///      10_000-byte send ceiling, with destination gas the binding limit rather than bytes.
+    /// @notice Series one ISSUANCE_INSTRUCTIONS message may carry. With `MAX_PAYLOAD_ARRAY_LEN`
+    ///         recipients split across them the worst case stays inside the 10_000-byte send cap.
     uint16 internal constant MAX_SERIES_PER_ISSUANCE = 8;
 
-    /// @notice Worldwide-day state on the wire: the day either runs an auction or is a
-    ///         closed record. Mirrors the Desis constants of the same names.
-    uint8 internal constant DAY_STATE_RED = 2;
-
-    /// @notice Upper bound on how many chunks one day's fan-out may be split into.
-    /// @dev Matches the bid-intake ceiling it mirrors — 64 entries across 256 chunks — and keeps a
-    ///      receiver's arrival set inside a single 256-bit word.
+    /// @notice Chunks one day's fan-out may span; keeps a receiver's arrival set in one word.
     uint16 internal constant MAX_CHUNKS = 256;
 
     /// @notice Fixed-point scale for bid/clearing rates (`1e6` = 100%). Shared with the Outbe
@@ -230,11 +221,8 @@ library BridgeMsgCodec {
         );
     }
 
-    /// @notice Packs one bid's scalars into a single word.
-    /// @dev The pair had to travel with every bid, and two more `uint16` arrays would have taken
-    ///      the per-bid cost from 128 to 192 bytes — past the send cap at a full batch. One word
-    ///      per bid costs 64 instead, so the batch got lighter rather than heavier.
-    ///      Layout, low bits up: [referenceCurrency(16)][issuanceCurrency(16)][timestamp(32)]
+    /// @notice Packs one bid's scalars into a single word: 64 bytes per bid rather than 128.
+    /// @dev Layout, low bits up: [referenceCurrency(16)][issuanceCurrency(16)][timestamp(32)]
     ///      [bidRate(32)][quantity(16)].
     function packBid(
         uint16 _quantity,
@@ -305,11 +293,8 @@ library BridgeMsgCodec {
         if (_prices.length > MAX_REFERENCE_PRICES) {
             revert PayloadArrayTooLong(_prices.length, MAX_REFERENCE_PRICES);
         }
-        // A live day must price at least one currency — a bid is a rate against a price.
-        // A cancelled day carries none: the destination stores it as a closed record and
-        // never reads the table, and a day the oracle could price nothing for is exactly
-        // one of the ways a day ends up cancelled.
-        if (_prices.length == 0 && _dayState != DAY_STATE_RED) {
+        // A live day must price something to bid against; a cancelled one is a closed record.
+        if (_prices.length == 0 && _dayState != uint8(IIntexAuction.WorldwideDayState.Red)) {
             revert MissingReferencePrices();
         }
         bytes memory rows = abi.encodePacked(uint8(_prices.length));
@@ -452,9 +437,7 @@ library BridgeMsgCodec {
     /// @notice Every priced row the message carries.
     function _referencePrices(bytes calldata _msg) private pure returns (IIntexAuction.ReferencePrice[] memory rows) {
         uint256 count = uint8(_msg[73]);
-        // Re-checked inbound, as every variable-length decoder here is: a peer compromise or an
-        // unsynchronised encoder could otherwise hand the receiver more rows than the gas it was
-        // quoted for, and the message would be redelivered for as long as it runs out.
+        // Re-checked inbound: more rows than the quoted gas covers would revert and redeliver.
         if (count > MAX_REFERENCE_PRICES) {
             revert PayloadArrayTooLong(count, MAX_REFERENCE_PRICES);
         }
@@ -474,11 +457,8 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes ISSUANCE_INSTRUCTIONS message: the series a chain receives from one day.
-    /// @dev A day issues one series per winning currency pair, so a chain's share of it is a set
-    ///      rather than a single series. The two caps bound what one message asks of the receiver:
-    ///      `MAX_SERIES_PER_ISSUANCE` series and `MAX_PAYLOAD_ARRAY_LEN` recipients across all of
-    ///      them. A larger set is split into several messages by the sender, which is safe because
-    ///      the receiver creates a series only if it is absent.
+    /// @dev Capped at `MAX_SERIES_PER_ISSUANCE` series and `MAX_PAYLOAD_ARRAY_LEN` recipients;
+    ///      a larger set is split by the sender.
     /// @param _series The per-series issuance payloads carried by this message.
     /// @return The wire-encoded ISSUANCE_INSTRUCTIONS message.
     function encodeIssuanceInstructions(IssuanceInstructionsPayload[] memory _series)
@@ -490,8 +470,7 @@ library BridgeMsgCodec {
         return abi.encodePacked(BODY_VERSION_V1, MSG_ISSUANCE_INSTRUCTIONS, abi.encode(_series));
     }
 
-    /// @dev Shared outbound/inbound check: per-series array parity, the series count and the
-    ///      recipient count summed over the message.
+    /// @dev Per-series array parity, plus the series and recipient counts of the message.
     function _assertIssuanceLimits(IssuanceInstructionsPayload[] memory _series) private pure {
         if (_series.length == 0) revert EmptyIssuanceBatch();
         if (_series.length > MAX_SERIES_PER_ISSUANCE) {
@@ -509,7 +488,7 @@ library BridgeMsgCodec {
         }
     }
 
-    /// @notice Encodes REFUND_INSTRUCTIONS message.
+    /// @notice Encodes one chunk of a day's REFUND_INSTRUCTIONS.
     /// @dev Reverts `PayloadArrayTooLong` if `_bidders` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
     /// @param _worldwideDay The worldwide day (yyyymmdd).
     /// @param _bidders The bidder addresses (parallel with `_refundedAmounts` and `_paidAmounts`).
@@ -708,9 +687,7 @@ library BridgeMsgCodec {
         // Decode in a dedicated frame so the struct ABI-decoder's locals don't share this
         // function's stack — keeps the 14-field payload within bounds under via_ir.
         series = _decodeIssuancePayload(_msg[2:]);
-        // Re-checked inbound: the arrays are indexed in lockstep when minting, and the counts bound
-        // the receiver's create/mint loops against the inbound gas limit. A peer compromise or a
-        // future encoder change is what these guard; the drop-don't-block handler catches them.
+        // Re-checked inbound against a bad peer, as every variable-length decode here is.
         _assertIssuanceLimits(series);
     }
 

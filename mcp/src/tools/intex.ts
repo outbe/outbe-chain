@@ -1098,10 +1098,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
             n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "symbol" }),
           ]);
           const base = { token, symbol: symbol as string, decimals: Number(decimals) };
-          // A quote in the issuance currency needs a fresh COEN rate and can be refused;
-          // that says something about this token only, so it is reported as the answer for
-          // this token rather than taking the whole list — including the reference-currency
-          // tokens, which need no rate at all — down with it.
+          // A refused issuance-currency quote is this token's answer, not the list's.
           try {
             const cost = await quoteCostAmount(n, series, token);
             return {

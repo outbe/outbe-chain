@@ -439,7 +439,7 @@ mod tests {
                 lysis_budget: U256::from(80),
                 auction_base: U256::from(20),
                 auction_entry_prices: vec![ReferenceEntryPriceV1 {
-                    reference_currency: 840,
+                    reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
                     entry_price_minor: U256::from(95),
                     source: AuctionEntryPriceSource::LastClosedDayVwap,
                     source_day: 6,

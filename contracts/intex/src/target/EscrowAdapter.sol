@@ -374,17 +374,15 @@ contract EscrowAdapter is
         bool completesDay
     ) external override onlyRole(RELAYER_ROLE) nonReentrant returns (uint128 totalPaid) {
         EscrowAdapterStorage storage $ = _s();
-        // A closed day takes no more instructions; while it is still open, each bidder is
-        // guarded on its own — a lock leaves `Locked` on its first instruction — so the
-        // day's bidders may arrive in several sets without settling anyone twice.
+        // A closed day takes no more instructions; within an open one each bidder is
+        // guarded by its own lock leaving `Locked`.
         if ($.auctionEscrowState[worldwideDay].finalized) {
             revert AlreadyFinalized();
         }
         if (instructions.length == 0) revert ZeroValue("instructions");
 
-        // Effects before any external interaction. The day closes only on the set that
-        // completes it, and that moment anchors the post-finalize `claimRefund` window
-        // (POST_FINALIZE_REFUND_DELAY).
+        // Effects before any external interaction. The completing set closes the day, which
+        // anchors the post-finalize `claimRefund` window (POST_FINALIZE_REFUND_DELAY).
         if (completesDay) {
             $.auctionEscrowState[worldwideDay].finalized = true;
             $.auctionEscrowState[worldwideDay].finalizedAt = uint32(block.timestamp);

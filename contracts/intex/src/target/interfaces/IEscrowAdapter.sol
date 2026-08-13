@@ -282,11 +282,8 @@ interface IEscrowAdapter {
     // --- Bridge Finalization ---
 
     /// @notice Finalize part of a day's escrow with per-bidder refund/payout instructions.
-    /// @dev A day's bidders arrive in as many messages as the wire needs, so this is called
-    ///      once per arriving set. Each bidder is settled exactly once — a lock leaves
-    ///      `Locked` on its first instruction — while the day itself closes only when the
-    ///      caller says the set is complete, which is what anchors the post-finalize claim
-    ///      window and admits `retryFinalize`.
+    /// @dev Called once per arriving set of a day's bidders. A lock leaves `Locked` on its
+    ///      first instruction, so no bidder settles twice; `completesDay` closes the day.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param receiveId Inbound bridge message id that carried the refund instructions; threaded into the
     ///        emitted events so an indexer can attribute each fund movement to its source packet.

@@ -15,7 +15,7 @@ use crate::ocomp_budget::{
 /// The day's frozen price table: one dollar row, as a single-currency day carries.
 fn entry_prices() -> Vec<ReferenceEntryPriceV1> {
     vec![ReferenceEntryPriceV1 {
-        reference_currency: 840,
+        reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
         entry_price_minor: U256::from(2),
         source: AuctionEntryPriceSource::LastClosedDayVwap,
         source_day: 20_251_231,

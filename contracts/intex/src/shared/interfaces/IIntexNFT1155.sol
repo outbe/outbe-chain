@@ -247,8 +247,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     // --- Reads ---
 
     /// @notice Whether the series has been created here.
-    /// @dev A day's issuance may reach a chain in several messages, so the receiver creates a
-    ///      series only when it is absent rather than assuming the first message carries it.
     /// @param seriesId Series identifier.
     /// @return True once `createSeries` has run for it.
     function seriesExists(bytes14 seriesId) external view returns (bool);

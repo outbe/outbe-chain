@@ -696,7 +696,7 @@ fn job_intent(day: WorldwideDay, protocol_bundle_hash: B256, nominal_total: U256
             lysis_budget: U256::from(1_000_000),
             auction_base: U256::from(700),
             auction_entry_prices: vec![ReferenceEntryPriceV1 {
-                reference_currency: 840,
+                reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
                 entry_price_minor: U256::from(95),
                 source: AuctionEntryPriceSource::LastClosedDayVwap,
                 source_day: 6,

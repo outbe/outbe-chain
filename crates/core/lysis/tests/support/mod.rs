@@ -68,7 +68,7 @@ fn request_receipt(day_type: DayType) -> RequestBudgetSplitReceiptV1 {
     let wwd = 7;
     let auction_base = U256::from(40);
     let auction_entry_prices = vec![ReferenceEntryPriceV1 {
-        reference_currency: 840,
+        reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
         entry_price_minor: U256::from(9),
         source: AuctionEntryPriceSource::LastClosedDayVwap,
         source_day: 6,
@@ -134,7 +134,7 @@ fn intent(day_type: DayType, request_receipt_hash: B256) -> JobIntentV1 {
             lysis_budget: U256::from(60),
             auction_base: U256::from(40),
             auction_entry_prices: vec![ReferenceEntryPriceV1 {
-                reference_currency: 840,
+                reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
                 entry_price_minor: U256::from(9),
                 source: AuctionEntryPriceSource::LastClosedDayVwap,
                 source_day: 6,

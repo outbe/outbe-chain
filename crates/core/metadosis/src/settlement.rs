@@ -292,15 +292,10 @@ fn dispatch_brief(
     }
 }
 
-/// One entry price per reference currency the oracle can price for the day: the
-/// previous closed UTC day's VWAP of that currency's COEN pair, falling back to
-/// the worldwide day's own. A currency the oracle cannot price is left out with
-/// an event.
-///
-/// The table may come back empty — an oracle gap prices nothing, which is also
-/// the condition that makes the day red. Settlement must still complete on such
-/// a day, so the emptiness is carried to the auction rather than raised here:
-/// what an unpriced day cannot do is run an auction, and that is Desis' call.
+/// One entry price per reference currency the oracle can price for the day: the previous
+/// closed UTC day's VWAP of that currency's COEN pair, falling back to the worldwide day's
+/// own. A currency it cannot price is left out with an event, and the table may come back
+/// empty — an unpriced day still has to settle, so the auction decides what that means.
 fn resolve_reference_entry_prices(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
