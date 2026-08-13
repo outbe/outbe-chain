@@ -2,7 +2,6 @@ use alloy_primitives::U256;
 use outbe_primitives::error::Result;
 use outbe_primitives::time::timestamp_to_date_key;
 
-use crate::constants::CALL_THRESHOLD;
 use crate::errors::GemError;
 use crate::precompile::IGem::{GemBurned, GemCalled, GemQualified};
 use crate::schema::{GemContract, GemState};
@@ -37,13 +36,14 @@ impl GemContract<'_> {
     }
 
     /// `Qualified -> Called` when the coen daily VWAP exceeded this gem's Call
-    /// Threshold on at least `CALL_THRESHOLD` of the trailing `window`
-    /// (newest-first `(day, vwap)` pairs). No-op unless the gem is Qualified.
-    /// Returns true if called.
+    /// Threshold on at least `call_threshold` of its trailing `call_window`,
+    /// read off `window` (newest-first `(day, vwap)` pairs). No-op unless the
+    /// gem is Qualified. Returns true if called.
     ///
-    /// `window` must come from the `COEN/<iso>` pair of this gem's own
-    /// `reference_currency` — the caller selects it (`hooks::window_for`), so
-    /// there is nothing to re-check here. An empty window never breaches.
+    /// Both terms are per-gem snapshots taken at issuance, so a later change to
+    /// `CALL_WINDOW`/`CALL_THRESHOLD` cannot re-term a live gem. `window` must
+    /// come from this gem's own `reference_currency` pair — the caller selects
+    /// it (`hooks::window_for`).
     pub(crate) fn trigger_call(
         &mut self,
         window: &[(u32, Option<U256>)],
@@ -54,9 +54,15 @@ impl GemContract<'_> {
         if item.state != GemState::Qualified as u8 {
             return Ok(false);
         }
+        // Both terms are stored in seconds; the daily scan needs day counts.
+        let window_days = item.call_window / 86_400;
+        let threshold_days = item.call_threshold / 86_400;
+        if window_days == 0 || threshold_days == 0 {
+            return Ok(false);
+        }
         let issued_day = timestamp_to_date_key(item.issued_at);
         let mut breaches: u32 = 0;
-        for (day, vwap) in window {
+        for (day, vwap) in window.iter().take(window_days as usize) {
             if *day < issued_day {
                 break;
             }
@@ -66,8 +72,7 @@ impl GemContract<'_> {
                 }
             }
         }
-        // CALL_THRESHOLD is stored in seconds; the daily scan needs the day count.
-        if breaches < CALL_THRESHOLD / 86_400 {
+        if breaches < threshold_days {
             return Ok(false);
         }
 
