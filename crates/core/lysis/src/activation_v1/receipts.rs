@@ -1,4 +1,4 @@
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{
     hash::hash_framed,
     intent::DayType,
@@ -259,19 +259,22 @@ fn verify_request_receipt(
             && receipt.logical_anchor == expected.logical_anchor,
         "Lysis request receipt fields",
     )?;
-    if expected.day_type == DayType::Green {
-        ensure(
-            receipt.desis_brief_hash
-                == Some(desis_request_brief_hash(
-                    expected.protocol_bundle_hash,
-                    expected.wwd,
-                    expected.auction_base,
-                    expected.auction_entry_price,
-                    expected.logical_anchor,
-                )?),
-            "Lysis request Desis brief",
-        )?;
-    }
+    let briefed_supply = if expected.day_type == DayType::Green {
+        expected.auction_base
+    } else {
+        U256::ZERO
+    };
+    ensure(
+        receipt.desis_brief_hash
+            == Some(desis_request_brief_hash(
+                expected.protocol_bundle_hash,
+                expected.wwd,
+                briefed_supply,
+                expected.auction_entry_price,
+                expected.logical_anchor,
+            )?),
+        "Lysis request Desis brief",
+    )?;
     Ok(())
 }
 

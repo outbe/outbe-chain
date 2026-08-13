@@ -82,20 +82,16 @@ fn request_receipt(day_type: DayType) -> RequestBudgetSplitReceiptV1 {
         } else {
             BudgetSplitDestination::CarryOver
         },
-        desis_brief_hash: if green {
-            Some(
-                desis_request_brief_hash(
-                    protocol_bundle_hash,
-                    wwd,
-                    auction_base,
-                    auction_entry_price,
-                    logical_anchor,
-                )
-                .unwrap(),
+        desis_brief_hash: Some(
+            desis_request_brief_hash(
+                protocol_bundle_hash,
+                wwd,
+                if green { auction_base } else { U256::ZERO },
+                auction_entry_price,
+                logical_anchor,
             )
-        } else {
-            None
-        },
+            .unwrap(),
+        ),
         carry_over_credit: if green { U256::ZERO } else { auction_base },
         auction_entry_price,
         logical_anchor,
