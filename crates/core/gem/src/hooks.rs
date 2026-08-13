@@ -1,13 +1,17 @@
 use alloy_primitives::U256;
-use outbe_oracle::{api::coen_rate_for, schema::OracleContract};
+use outbe_oracle::{
+    api::{coen_rate_for_opt, get_all_reference_currencies},
+    schema::OracleContract,
+};
 use outbe_primitives::{
+    address_pair::AddressPair,
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
     math::{constants::MAX_BIN_ID, tree_math},
     time::{previous_date_key, timestamp_to_date_key},
 };
 
-use crate::constants::{CALL_WINDOW, QUALIFIER_REFERENCE_ISO};
+use crate::constants::CALL_WINDOW;
 use crate::schema::GemContract;
 
 pub struct GemLifecycle;
@@ -27,8 +31,31 @@ impl BlockLifecycle for GemLifecycle {
     }
 }
 
+/// Qualifies every reference currency the oracle knows about, each against its
+/// own COEN rate. An uninitialized registry does no work. A currency whose COEN
+/// pair is unregistered or unpriced is skipped for this block rather than
+/// halting it — the registry lists currencies independently of whether a pair
+/// has been priced yet.
 pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
-    let rate = coen_rate_for(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)?;
+    let mut promoted: u32 = 0;
+    for iso_code in get_all_reference_currencies(ctx)? {
+        let Some(rate) = coen_rate_for_opt(ctx.storage.clone(), iso_code)? else {
+            continue;
+        };
+        promoted = promoted.saturating_add(qualify_with_rate(ctx, iso_code, rate)?);
+    }
+    Ok(promoted)
+}
+
+/// Drains the floor-bins crossed by one currency's `rate`. Returns the number
+/// of gems promoted.
+///
+// ponytail: the bin ladder is shared across currencies rather than scoped per
+// ISO like `nod::state::CurrencyBins`, so each currency's sweep walks bins
+// holding other currencies' gems and skips them one by one — O(currencies ×
+// bins) per block, and the sweep carries no per-block budget at all. Upgrade
+// path: currency-scoped bins keyed by `(iso, bin)`.
+fn qualify_with_rate(ctx: &BlockRuntimeContext, iso_code: u16, rate: U256) -> Result<u32> {
     let now = ctx.block.timestamp;
     let r_bin = GemContract::price_to_bin(rate)?;
     let mut gem = GemContract::new(ctx.storage.clone());
@@ -55,7 +82,7 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
         }
 
         for gem_id in bin_gems {
-            if gem.qualify(gem_id, now, rate)? {
+            if gem.qualify(gem_id, now, iso_code, rate)? {
                 promoted = promoted.saturating_add(1);
             }
         }
@@ -67,6 +94,10 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
     }
     Ok(promoted)
 }
+
+/// Trailing finalized daily VWAPs of one pair, newest first. `None` marks a day
+/// the pair had no data for.
+type VwapWindow = Vec<(u32, Option<U256>)>;
 
 /// Cycle daily-trigger entry: run the Called scan, discarding the count.
 pub fn run_call_daily(ctx: &BlockRuntimeContext) -> Result<()> {
@@ -80,8 +111,6 @@ pub fn run_call_daily(ctx: &BlockRuntimeContext) -> Result<()> {
 /// the number of gems mutated (called or burned).
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
-    let (_, pair_index) =
-        outbe_oracle::api::require_coen_pair(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)?;
 
     // Most recent fully-closed UTC day (finalized VWAP).
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
@@ -95,17 +124,6 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
 
-    // Trailing window of finalized daily VWAPs, newest first. Read once: every
-    // candidate shares pair 840, so only the per-gem Call Threshold differs.
-    // CALL_WINDOW is stored in seconds; the daily scan needs the day count.
-    let window_days = CALL_WINDOW / 86_400;
-    let mut window: Vec<(u32, Option<U256>)> = Vec::with_capacity(window_days as usize);
-    let mut day = last_closed_day;
-    for _ in 0..window_days {
-        window.push((day, oracle.get_utc_day_vwap_for_pair(day, pair_index)?));
-        day = previous_date_key(day);
-    }
-
     // Snapshot the callable-gem ids before mutating: a forfeit burn swap-pops
     // the list, which would shift a live cursor mid-scan.
     let mut gem = GemContract::new(ctx.storage.clone());
@@ -117,15 +135,31 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         }
     }
 
+    // A VWAP window belongs to one `COEN/<iso>` pair, but `callable_gems` mixes
+    // currencies. Cache the windows and keep the single pass instead of
+    // rescanning the whole list once per currency; the registry holds a handful
+    // of codes, so a linear probe beats a map.
+    let mut windows: Vec<(u16, VwapWindow)> = Vec::new();
+
     let now = ctx.block.timestamp;
     let mut mutated: u32 = 0;
     for gem_id in ids {
+        let Some(item) = gem.gem_items.get(gem_id)? else {
+            continue;
+        };
+        let index = window_for(
+            &oracle,
+            &mut windows,
+            item.reference_currency,
+            last_closed_day,
+        )?;
+        let window = windows[index].1.as_slice();
         // Isolate per-gem: a deterministic Err rolls back this gem's checkpoint
         // and is skipped, so one bad gem never halts the daily scan. Structural
         // reads above keep `?` so infra errors still propagate. A gem is either
         // Qualified (call) or Called (forfeit); the inapplicable op is a no-op.
         let res = ctx.storage.with_checkpoint(|| {
-            if gem.trigger_call(&window, gem_id, now)? {
+            if gem.trigger_call(window, gem_id, now)? {
                 return Ok(true);
             }
             gem.forfeit(gem_id, now)
@@ -135,4 +169,35 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         }
     }
     Ok(mutated)
+}
+
+/// Index into `cache` of the trailing finalized-VWAP window for `COEN/<iso>`,
+/// newest first, filling it on first use.
+///
+/// An unregistered pair caches an empty window: a gem in that currency can
+/// never register a breach, but it must still reach `forfeit`, so this is a
+/// skip of the call check rather than a skip of the gem.
+fn window_for(
+    oracle: &OracleContract<'_>,
+    cache: &mut Vec<(u16, VwapWindow)>,
+    iso_code: u16,
+    last_closed_day: u32,
+) -> Result<usize> {
+    if let Some(index) = cache.iter().position(|(code, _)| *code == iso_code) {
+        return Ok(index);
+    }
+    let pair_index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
+    let mut window = Vec::new();
+    if pair_index != 0 {
+        // CALL_WINDOW is stored in seconds; the daily scan needs the day count.
+        let window_days = CALL_WINDOW / 86_400;
+        window.reserve(window_days as usize);
+        let mut day = last_closed_day;
+        for _ in 0..window_days {
+            window.push((day, oracle.get_utc_day_vwap_for_pair(day, pair_index)?));
+            day = previous_date_key(day);
+        }
+    }
+    cache.push((iso_code, window));
+    Ok(cache.len() - 1)
 }

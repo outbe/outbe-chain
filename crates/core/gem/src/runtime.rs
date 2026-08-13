@@ -2,21 +2,27 @@ use alloy_primitives::U256;
 use outbe_primitives::error::Result;
 use outbe_primitives::time::timestamp_to_date_key;
 
-use crate::constants::{CALL_THRESHOLD, QUALIFIER_REFERENCE_ISO};
+use crate::constants::CALL_THRESHOLD;
 use crate::errors::GemError;
 use crate::precompile::IGem::{GemBurned, GemCalled, GemQualified};
 use crate::schema::{GemContract, GemState};
 
 impl GemContract<'_> {
-    pub(crate) fn qualify(&mut self, gem_id: U256, now: u64, rate: U256) -> Result<bool> {
+    /// `rate` is COEN/`iso_code`. The bin ladder is shared across currencies,
+    /// so a sweep hands this gems denominated in other currencies; they are
+    /// skipped silently rather than promoted against an unrelated rate.
+    pub(crate) fn qualify(
+        &mut self,
+        gem_id: U256,
+        now: u64,
+        iso_code: u16,
+        rate: U256,
+    ) -> Result<bool> {
         let item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
         if item.state != GemState::Issued as u8 {
             return Ok(false);
         }
-        // `rate` is COEN/<QUALIFIER_REFERENCE_ISO>; floor_price_minor is denominated
-        // in the gem's own reference_currency. Skip silently if they don't
-        // match so we don't promote against an unrelated rate.
-        if item.reference_currency != QUALIFIER_REFERENCE_ISO {
+        if item.reference_currency != iso_code {
             return Ok(false);
         }
         if rate <= item.floor_price_minor {
@@ -32,8 +38,12 @@ impl GemContract<'_> {
 
     /// `Qualified -> Called` when the coen daily VWAP exceeded this gem's Call
     /// Threshold on at least `CALL_THRESHOLD` of the trailing `window`
-    /// (newest-first `(day, vwap)` pairs). No-op unless the gem is Qualified
-    /// against the qualifier pair. Returns true if called.
+    /// (newest-first `(day, vwap)` pairs). No-op unless the gem is Qualified.
+    /// Returns true if called.
+    ///
+    /// `window` must come from the `COEN/<iso>` pair of this gem's own
+    /// `reference_currency` — the caller selects it (`hooks::window_for`), so
+    /// there is nothing to re-check here. An empty window never breaches.
     pub(crate) fn trigger_call(
         &mut self,
         window: &[(u32, Option<U256>)],
@@ -42,9 +52,6 @@ impl GemContract<'_> {
     ) -> Result<bool> {
         let item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
         if item.state != GemState::Qualified as u8 {
-            return Ok(false);
-        }
-        if item.reference_currency != QUALIFIER_REFERENCE_ISO {
             return Ok(false);
         }
         let issued_day = timestamp_to_date_key(item.issued_at);
