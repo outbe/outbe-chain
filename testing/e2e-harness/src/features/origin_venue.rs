@@ -129,11 +129,7 @@ fn desis_stage(url: &str, worldwide_day: u32) -> String {
     }
 }
 
-/// Whether Metadosis ever closed the day. Closing it is what applies the budget
-/// split, and that is the only thing that briefs Desis for a day that ran a job,
-/// so a missing receipt places the gap before Desis rather than inside it.
-/// A red day briefs no supply, so Desis is left with nothing to start. Reading
-/// the type separates that from a green day whose closure simply never ran.
+/// A red day briefs no supply, so Desis is left with nothing to start.
 #[cfg(feature = "ocomp-integration")]
 fn day_colour(world: &World, worldwide_day: u32) -> String {
     match world
@@ -150,6 +146,7 @@ fn day_colour(_world: &World, _worldwide_day: u32) -> String {
     "day type unreadable without ocomp-integration".to_owned()
 }
 
+/// Closing the day is what applies the budget split and briefs Desis.
 #[cfg(feature = "ocomp-integration")]
 fn day_closure(world: &World, worldwide_day: u32) -> String {
     match world
@@ -177,6 +174,60 @@ fn day_closure(_world: &World, _worldwide_day: u32) -> String {
 const AUCTION_TICK_PERIOD_SECS: u64 = 43_200;
 
 #[cfg(feature = "ocomp-integration")]
+const CLOCK_FINALITY_TIMEOUT: Duration = Duration::from_secs(240);
+
+/// Cycling the roles directly rather than through the fault injector keeps the
+/// scenario's fault budget free, so an auction can cross as many windows as it needs.
+#[cfg(feature = "ocomp-integration")]
+fn advance_committee_clock(world: &mut World, target: u64) {
+    let ports = world.validators.committee_ports();
+    let before = ports
+        .iter()
+        .filter_map(|port| eth::finalized_number(&world.rpc.url(*port)))
+        .max()
+        .expect("a finalized height before the clock moves");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock is after unix epoch")
+        .as_secs();
+    let offset = i64::try_from(i128::from(target) - i128::from(now)).expect("logical clock offset");
+
+    world
+        .localnet
+        .restart_committee_at_unix_time_offset(offset)
+        .unwrap_or_else(|error| {
+            panic!("restart the committee at logical time {target}: {error:#}")
+        });
+
+    let deadline = Instant::now() + CLOCK_FINALITY_TIMEOUT;
+    loop {
+        let finalized = ports
+            .iter()
+            .map(|port| eth::finalized_number(&world.rpc.url(*port)).unwrap_or_default())
+            .collect::<Vec<_>>();
+        if finalized.iter().all(|height| *height > before) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the committee did not finalize past {before} after moving to {target}: {finalized:?}"
+        );
+        sleep(Duration::from_secs(1));
+    }
+
+    for validator_index in 0..4_u8 {
+        world
+            .ocomp
+            .restart_node_facing_processes(validator_index)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "restart validator-{validator_index} OCOMP roles after the clock move: {error}"
+                )
+            });
+    }
+}
+
+#[cfg(feature = "ocomp-integration")]
 #[when("the committee logical clock reaches the next auction schedule tick")]
 fn committee_clock_reaches_next_auction_tick(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
@@ -186,7 +237,7 @@ fn committee_clock_reaches_next_auction_tick(world: &mut World) {
         .and_then(|periods| periods.checked_add(1))
         .and_then(|periods| periods.checked_mul(AUCTION_TICK_PERIOD_SECS))
         .expect("auction tick boundary after the committee clock");
-    crate::features::ocomp::restart_committee_at_logical_time(world, target.saturating_add(60));
+    advance_committee_clock(world, target.saturating_add(60));
 }
 
 /// Desis dispatches the start on its own schedule tick, which lands some blocks
