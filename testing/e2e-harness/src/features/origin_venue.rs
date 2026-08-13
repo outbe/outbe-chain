@@ -4,11 +4,15 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use alloy_primitives::Address;
+#[cfg(feature = "ocomp-integration")]
+use alloy_primitives::U256;
 use alloy_sol_types::sol;
 use cucumber::{then, when};
 
 use crate::env::environment;
 use crate::internal::eth;
+#[cfg(feature = "ocomp-integration")]
+use crate::world::bidders;
 use crate::world::{origin_venue, World};
 
 #[when("the intex engine is deployed on the committee chain")]
@@ -228,16 +232,51 @@ fn advance_committee_clock(world: &mut World, target: u64) {
 }
 
 #[cfg(feature = "ocomp-integration")]
+fn next_tick_after(timestamp: u64) -> u64 {
+    timestamp
+        .checked_div(AUCTION_TICK_PERIOD_SECS)
+        .and_then(|periods| periods.checked_add(1))
+        .and_then(|periods| periods.checked_mul(AUCTION_TICK_PERIOD_SECS))
+        .expect("auction tick boundary after the committee clock")
+        .saturating_add(60)
+}
+
+#[cfg(feature = "ocomp-integration")]
 #[when("the committee logical clock reaches the next auction schedule tick")]
 fn committee_clock_reaches_next_auction_tick(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let now = eth::latest_block_timestamp(&url).expect("committee block timestamp");
-    let target = now
-        .checked_div(AUCTION_TICK_PERIOD_SECS)
-        .and_then(|periods| periods.checked_add(1))
-        .and_then(|periods| periods.checked_mul(AUCTION_TICK_PERIOD_SECS))
-        .expect("auction tick boundary after the committee clock");
-    advance_committee_clock(world, target.saturating_add(60));
+    advance_committee_clock(world, next_tick_after(now));
+}
+
+/// The venue derives its stage from the block clock, so each hop lands on the
+/// tick boundary where Desis also gets its turn to drive the auction on.
+#[cfg(feature = "ocomp-integration")]
+fn advance_until_stage(world: &mut World, target_stage: u8, max_hops: usize) {
+    let contracts = world
+        .state
+        .origin_contracts
+        .clone()
+        .expect("a deploy recorded its addresses");
+    let worldwide_day = settled_day(world);
+    for _ in 0..max_hops {
+        let url = world.rpc.url(world.validators.primary_port());
+        let stage = eth::read_call(
+            &url,
+            contracts.intex_auction,
+            &IAuctionStage::getAuctionStageCall {
+                worldwideDay: worldwide_day,
+            },
+        )
+        .expect("the venue knows the auction");
+        if stage >= target_stage {
+            assert_ne!(stage, 4, "day {worldwide_day} was cancelled on the venue");
+            return;
+        }
+        let now = eth::latest_block_timestamp(&url).expect("committee block timestamp");
+        advance_committee_clock(world, next_tick_after(now));
+    }
+    panic!("day {worldwide_day} never reached auction stage {target_stage} on the venue");
 }
 
 /// Desis dispatches the start on its own schedule tick, which lands some blocks
@@ -285,6 +324,123 @@ fn auction_opens_on_target(world: &mut World) {
             frozen_targets(&url, contracts.origin_router, worldwide_day),
             day_closure(world, worldwide_day),
             day_colour(world, worldwide_day)
+        );
+        sleep(Duration::from_secs(2));
+    }
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn settled_day(world: &World) -> u32 {
+    world
+        .state
+        .wwd
+        .as_deref()
+        .expect("the settled day's WorldwideDay")
+        .parse::<u32>()
+        .expect("numeric WorldwideDay")
+}
+
+/// Covers both the entry bond and the reveal lock with room to spare.
+#[cfg(feature = "ocomp-integration")]
+const BIDDER_ALLOWANCE: u128 = 1_000_000_000 * 1_000_000_000_000_000_000;
+
+#[cfg(feature = "ocomp-integration")]
+const BIDS: [(u16, u32); 2] = [(30, 800_000), (40, 700_000)];
+
+#[cfg(feature = "ocomp-integration")]
+#[when("two bidders commit their bids")]
+fn bidders_commit(world: &mut World) {
+    let port = world.validators.primary_port();
+    let url = world.rpc.url(port);
+    let chain_id = world.rpc.chain_id(port).expect("committee chain id");
+    let contracts = world
+        .state
+        .origin_contracts
+        .clone()
+        .expect("a deploy recorded its addresses");
+    let worldwide_day = settled_day(world);
+
+    let bidders = bidders::derive(&BIDS).expect("derive the bidders");
+    bidders::fund(
+        &url,
+        contracts.payment_token,
+        contracts.escrow,
+        &bidders,
+        U256::from(BIDDER_ALLOWANCE),
+    )
+    .expect("fund the bidders");
+    bidders::commit(
+        &url,
+        contracts.intex_auction,
+        chain_id,
+        worldwide_day,
+        &bidders,
+    )
+    .expect("commit the bids");
+    world.state.auction_bidders = bidders;
+}
+
+#[cfg(feature = "ocomp-integration")]
+#[when("those bidders reveal their bids once the venue is revealing")]
+fn bidders_reveal(world: &mut World) {
+    advance_until_stage(world, 1, 6);
+
+    let port = world.validators.primary_port();
+    let url = world.rpc.url(port);
+    let chain_id = world.rpc.chain_id(port).expect("committee chain id");
+    let contracts = world
+        .state
+        .origin_contracts
+        .clone()
+        .expect("a deploy recorded its addresses");
+    let worldwide_day = settled_day(world);
+    let bidders = world.state.auction_bidders.clone();
+
+    bidders::reveal(
+        &url,
+        contracts.intex_auction,
+        chain_id,
+        worldwide_day,
+        &bidders,
+    )
+    .expect("reveal the bids");
+}
+
+/// Desis reaches Cleared only after every target chain relayed its bids back and
+/// the clearing ran, so this is the whole round trip in one reading.
+#[cfg(feature = "ocomp-integration")]
+#[then("the auction clears and the venue moves past its reveal window")]
+fn auction_clears(world: &mut World) {
+    advance_until_stage(world, 2, 6);
+
+    let contracts = world
+        .state
+        .origin_contracts
+        .clone()
+        .expect("a deploy recorded its addresses");
+    let worldwide_day = settled_day(world);
+    let deadline = Instant::now() + AUCTION_START_TIMEOUT;
+    loop {
+        let url = world.rpc.url(world.validators.primary_port());
+        let desis = origin_venue::DESIS
+            .parse()
+            .expect("desis precompile address");
+        let stage = eth::read_call(
+            &url,
+            desis,
+            &IAuctionStage::getAuctionStageCall {
+                worldwideDay: worldwide_day,
+            },
+        );
+        if stage == Some(5) {
+            return;
+        }
+        assert_ne!(stage, Some(6), "Desis cancelled day {worldwide_day}");
+        assert!(
+            Instant::now() < deadline,
+            "day {worldwide_day} never cleared on Desis: {}; venue at {}",
+            desis_stage(&url, worldwide_day),
+            frozen_targets(&url, contracts.origin_router, worldwide_day)
         );
         sleep(Duration::from_secs(2));
     }

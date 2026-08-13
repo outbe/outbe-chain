@@ -315,6 +315,7 @@ pub struct FixtureState {
     pub target_contracts: Option<crate::world::target_chain::TargetContracts>,
     /// Addresses the origin-side deploy reported.
     pub origin_contracts: Option<crate::world::origin_venue::OriginContracts>,
+    pub auction_bidders: Vec<crate::world::bidders::Bidder>,
 }
 
 #[derive(Debug)]
@@ -436,6 +437,7 @@ impl Default for FixtureState {
             stablecoin: None,
             target_contracts: None,
             origin_contracts: None,
+            auction_bidders: Vec::new(),
         }
     }
 }

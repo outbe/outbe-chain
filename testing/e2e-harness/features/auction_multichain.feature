@@ -28,3 +28,6 @@ Feature: Multichain auction from a settled day
     Then three matching validator domains atomically apply Lysis and create the Nod
     When the committee logical clock reaches the next auction schedule tick
     Then the auction for that day opens on the target chain
+    When two bidders commit their bids
+    And those bidders reveal their bids once the venue is revealing
+    Then the auction clears and the venue moves past its reveal window
