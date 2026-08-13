@@ -84,6 +84,7 @@ fn activated_dkg_cleanup_removes_retry_and_pending_artifacts() {
         DKG_PENDING_BOUNDARY_FILE,
         DKG_PENDING_BOUNDARY_TMP_FILE,
         DKG_DEALER_RETRY_FILE,
+        DKG_PLAYER_RETRY_FILE,
     ] {
         std::fs::write(dir.path().join(file), b"stale").unwrap();
     }
@@ -97,6 +98,7 @@ fn activated_dkg_cleanup_removes_retry_and_pending_artifacts() {
         DKG_PENDING_BOUNDARY_FILE,
         DKG_PENDING_BOUNDARY_TMP_FILE,
         DKG_DEALER_RETRY_FILE,
+        DKG_PLAYER_RETRY_FILE,
     ] {
         assert!(!dir.path().join(file).exists(), "{file} was not retired");
     }
@@ -1755,7 +1757,7 @@ fn test_completed_dkg_is_durable_before_activation_boundary() {
     };
     let complete = dkg_actor::DkgComplete {
         output: output.clone(),
-        share: Some(share),
+        share,
         participants: participants.clone(),
     };
     let dir = tempfile::tempdir().unwrap();

@@ -77,8 +77,16 @@ the byte-identical transcript and targets only players whose ACK is absent. Raw
 secret files use owner-only temporary files, file sync, atomic rename and parent
 directory sync for plaintext, encrypted envelopes and keychain markers. Keychain
 markers name content-versioned entries, so the old marker remains valid until the
-replacement marker commits. Dealer retry state is retained through the pending
-boundary and removed only after canonical activation/promotion.
+replacement marker commits.
+
+A target Player persists every cryptographically accepted incoming dealer bundle
+and its expected ACK before that ACK may be sent. The journal is bound to the
+exact ceremony and replayed in canonical dealer-key order into a fresh Player
+after restart. A participant completion always contains a private share;
+public-output observation without a share belongs only to FullNode and
+non-target/dealer-only paths. Player and dealer retry state remain live through
+the pending boundary and are retired together only after matching canonical
+activation.
 
 The keys directory is separate from consensus archives so routine data snapshots
 do not overwrite per-validator key material. Migration from the legacy location
@@ -128,8 +136,10 @@ is an error/abstention, not a false vote.
 | No local material at genesis | start initial DKG | complete genesis-formation proof; local genesis member | all-member ceremony | Ceremony running or fatal startup |
 | Existing chain, no usable local share | start/restart | current public polynomial and DKG output are supplied without a signing share | start as `VerifierOnly`, sync/follow, then acquire a share through the running reshare path | Non-signing join; missing or stale public material fails startup immediately |
 | Idle outgoing epoch | preparation height | canonical target frozen; no conflicting cycle | start threshold ceremony and gossip | Ceremony running |
-| Ceremony running | valid dealer/player material | canonical participant/round/proof checks | accumulate deterministic output | Running |
-| Ceremony running | threshold/all-genesis completion | output validates | persist pending triplet; create boundary artifact | Boundary pending |
+| Ceremony running | valid incoming dealer bundle | canonical participant/round/proof checks | persist the exact Player input, then permit ACK transmission | Running |
+| Ceremony running | participant process restart | exact ceremony journal exists and decodes | replay canonical Player inputs and reproduce each expected ACK | Running or fatal local corruption |
+| Ceremony running | participant finalize | output and private share validate | persist pending triplet; create boundary artifact | Boundary pending |
+| Ceremony running | participant finalize without private share | local key belongs to frozen target | publish no participant completion or boundary | Retry same target or fatal at existing expiry |
 | Ceremony running | timeout/insufficient live threshold before VRF deadline | frozen target unchanged | keep outgoing committee live | Retry same frozen target |
 | Ceremony running | timeout at or after VRF deadline | finalized height reached deadline | mark VRF expired and terminate consensus stack | Fatal/operator recovery |
 | Boundary pending | proposal before activation | parent ancestry says boundary not due | do not emit | Pending |
@@ -155,6 +165,10 @@ compute a replacement target automatically.
 - `planned_activation_height > freeze_height` and cycle/epoch identifiers are
   monotonic under the configured cadence.
 - Pending/finalized key triplets are complete and internally consistent.
+- A target Player ACK proves that the corresponding canonical input is durably
+  recoverable for the exact ceremony.
+- Successful target-participant completion contains a private share; a
+  shareless public observation cannot enter the participant activation path.
 - At most one locally pending boundary and one matching committed receipt exist.
 - Incoming committee activation and both outgoing/incoming snapshot writes share
   one execution checkpoint.
@@ -168,7 +182,8 @@ compute a replacement target automatically.
 
 | Effect | Owner | Atomicity domain | Receipt/error | Retry/idempotency |
 |---|---|---|---|---|
-| Dealer/player gossip | ceremony/network actors | externally asynchronous | validated message/feedback | duplicate gossip canonicalized by ceremony |
+| Dealer/player gossip | ceremony/network actors | externally asynchronous | ACK only after durable Player input | exact duplicate reuses the persisted ACK; conflicting bytes are rejected |
+| Persist Player retry journal | DKG recovery store | local key backend | bounded ceremony-scoped snapshot or fatal local error | replayed before networking; retired after matching activation |
 | Persist pending/final DKG files | engine key persistence | local filesystem triplet protocol | propagated error + validated reload | incomplete triplet fails closed |
 | Publish boundary artifact | consensus application | block proposal/certificate | artifact hash and finalized chain evidence | duplicate classified from parent ancestry |
 | Activate validator set/snapshots | ValidatorSet begin-zone hook | EVM execution checkpoint | committed receipt/events or block error | block replay deterministic |
