@@ -42,7 +42,7 @@ pub const COMMIT_WINDOW_SECONDS: u64 = 300;
 #[cfg(feature = "e2e-test")]
 pub const REVEAL_WINDOW_SECONDS: u32 = 300;
 #[cfg(feature = "e2e-test")]
-pub const SETTLEMENT_WINDOW_SECONDS: u64 = 300;
+pub const SETTLEMENT_WINDOW_SECONDS: u64 = 1800;
 
 /// Guarantee at least this much commit window; a brief that would leave less
 /// anchors to the next midnight instead.
