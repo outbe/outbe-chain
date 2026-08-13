@@ -11,52 +11,22 @@
 
 use alloy_sol_types::sol;
 
-sol! {
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IERC20 {
-        function approve(address spender, uint256 amount) external returns (bool);
-        function transfer(address to, uint256 amount) external returns (bool);
-        function transferFrom(address from, address to, uint256 amount) external returns (bool);
-        function balanceOf(address account) external view returns (uint256);
-    }
+sol!("../../../contracts/tokens/src/interfaces/IERC20.sol");
 
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface IVaultV2 {
-        function asset() external view returns (address);
-        function owner() external view returns (address);
-        function deposit(uint256 assets, address onBehalf) external returns (uint256 shares);
-        function previewWithdraw(uint256 assets) external view returns (uint256 shares);
-        function withdraw(uint256 assets, address receiver, address onBehalf)
-            external returns (uint256 shares);
-    }
+sol!("../../../contracts/precompiles/src/IVaultV2.sol");
 
-    #[sol(alloy_sol_types = alloy_sol_types)]
-    interface ITokenBundle {
-        function topUp(address sender, address token, uint256 amount) external;
-    }
+sol!("../../../contracts/tokens/src/interfaces/IReferenceCurrency.sol");
 
-    interface IERC7786Bridge {
-        function quote(bytes recipient, bytes payload, bytes[] attributes)
-            external view returns (uint256 nativeFee);
-        function sendMessage(bytes recipient, bytes payload, bytes[] attributes)
-            external payable returns (bytes32 sendId);
-    }
+sol!("../../../contracts/smart-account/src/interfaces/ITokenBundle.sol");
 
-    interface IERC7786TokenBridge {
-        function quoteSend(
-            uint32 destinationDomain,
-            address to,
-            uint256 amount,
-            bytes extraData,
-            uint256 gasLimit
-        ) external view returns (uint256 nativeFee);
+// Bridge sends go through `IERC7786GatewaySource`; the fee estimate comes from
+// the gateway's `IGatewayQuote` extension. Both live in the same file.
+//
+// `docs = false`: this vendored ERC-7786 copy indents its NatSpec four spaces,
+// which re-emits as a rustdoc code block and gets compiled as a doctest.
+sol!(
+    #![sol(docs = false)]
+    "../../../contracts/crosschain/src/interfaces/IERC7786.sol"
+);
 
-        function sendAndCall(
-            uint32 destinationDomain,
-            address to,
-            uint256 amount,
-            bytes extraData,
-            uint256 gasLimit
-        ) external payable returns (bytes32 sendId);
-    }
-}
+sol!("../../../contracts/intex/src/target/interfaces/IERC7786TokenBridge.sol");

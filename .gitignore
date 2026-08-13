@@ -10,6 +10,7 @@ piolium
 .codex/
 .claude/
 .cursor/
+.grok/
 
 # Pi project-local packages (if using pi install -l)
 .serena

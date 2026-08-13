@@ -9354,7 +9354,7 @@ mod tests {
         let proposer = test_evm_signer().address();
         let worldwide_day = WorldwideDay::new(20_241_220);
         let floor_price_minor = U256::from(500_000_000_000_000_000u128);
-        let bucket_key = NodContract::bucket_key(worldwide_day, floor_price_minor);
+        let bucket_key = NodContract::bucket_key(worldwide_day, floor_price_minor, 840);
         let seed_state = || {
             let (directory, tree_service) = persistent_test_tree(B256::ZERO);
             let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
@@ -9406,6 +9406,7 @@ mod tests {
                             issuance_currency: 840,
                             reference_currency: 840,
                             issued_at: 1,
+                            is_settled: false,
                         },
                         U256::from(450_000_000_000_000_000u128),
                     )
@@ -9440,6 +9441,7 @@ mod tests {
                     is_qualified: false,
                     total_nods: 1,
                     entry_price_minor: U256::from(450_000_000_000_000_000u128),
+                    reference_currency: 840,
                 })
                 .expect("seed independent off-chain Nod bucket");
             let readers = RuntimeBodyReaders::new(reader);
@@ -9670,7 +9672,7 @@ mod tests {
             outbe_compressed_entities::derive_poseidon_entity_id(tribute_owner, day).unwrap();
         let nod_owner = Address::repeat_byte(0x32);
         let nod_id = outbe_compressed_entities::derive_poseidon_entity_id(nod_owner, day).unwrap();
-        let bucket_key = NodContract::bucket_key(day, U256::from(13));
+        let bucket_key = NodContract::bucket_key(day, U256::from(13), 978);
         let ctx = BlockContext::new(1, 1, CHAIN_ID, proposer, vec![proposer]);
 
         let run = || {
@@ -9713,6 +9715,7 @@ mod tests {
                             issuance_currency: 840,
                             reference_currency: 978,
                             issued_at: 15,
+                            is_settled: false,
                         },
                         U256::from(16),
                     )?;
@@ -9804,6 +9807,7 @@ mod tests {
                     issuance_currency: 840,
                     reference_currency: 978,
                     issued_at: 15,
+                    is_settled: false,
                 },
                 U256::from(16),
             )?;

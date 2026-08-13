@@ -95,6 +95,7 @@ fn assert_bucket_roundtrip(record: NodBucketState) {
     assert_eq!(reconstructed.is_qualified, record.is_qualified);
     assert_eq!(reconstructed.total_nods, record.total_nods);
     assert_eq!(reconstructed.entry_price_minor, record.entry_price_minor);
+    assert_eq!(reconstructed.reference_currency, record.reference_currency);
 }
 
 #[test]
@@ -112,6 +113,7 @@ fn stored_events_carry_exact_canonical_nod_bodies_and_commitments() {
         issuance_currency: 0,
         reference_currency: 0,
         issued_at: 0,
+        is_settled: false,
     });
     let max_day = WorldwideDay::new(u32::MAX);
     assert_item_roundtrip(NodItemState {
@@ -126,6 +128,7 @@ fn stored_events_carry_exact_canonical_nod_bodies_and_commitments() {
         issuance_currency: u16::MAX,
         reference_currency: u16::MAX,
         issued_at: u64::MAX,
+        is_settled: true,
     });
     assert_bucket_roundtrip(NodBucketState {
         bucket_key: B256::ZERO,
@@ -134,6 +137,7 @@ fn stored_events_carry_exact_canonical_nod_bodies_and_commitments() {
         is_qualified: false,
         total_nods: 0,
         entry_price_minor: U256::ZERO,
+        reference_currency: 0,
     });
     assert_bucket_roundtrip(NodBucketState {
         bucket_key: B256::repeat_byte(u8::MAX),
@@ -142,6 +146,7 @@ fn stored_events_carry_exact_canonical_nod_bodies_and_commitments() {
         is_qualified: true,
         total_nods: u64::MAX,
         entry_price_minor: U256::MAX,
+        reference_currency: u16::MAX,
     });
 }
 

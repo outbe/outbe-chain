@@ -274,6 +274,7 @@ fn nod_item(id: EntityId36, owner: Address) -> NodItemBodyV1 {
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 7,
+        is_settled: false,
     }
 }
 
@@ -638,6 +639,7 @@ fn nod_item_and_bucket_follow_the_same_closed_transition_lifecycle() {
         is_qualified: false,
         total_nods: 1,
         entry_price_minor: U256::from(11),
+        reference_currency: 840,
     };
     let parent = MemoryParent::default();
     let scope = ExecutionScope::new();
@@ -734,6 +736,7 @@ fn every_typed_collection_obeys_the_complete_same_block_transition_matrix() {
         is_qualified: false,
         total_nods: 1,
         entry_price_minor: U256::from(11),
+        reference_currency: 840,
     };
     let mut bucket_updated = bucket_original.clone();
     bucket_updated.is_qualified = true;
@@ -862,6 +865,7 @@ fn untouched_reads_use_parent_once_and_classify_missing_committed_body() {
         is_qualified: false,
         total_nods: 1,
         entry_price_minor: U256::from(5),
+        reference_currency: 840,
     };
     let missing_bucket_id = entity(8, 30);
     let missing_bucket = NodBucketBodyV1 {
@@ -871,6 +875,7 @@ fn untouched_reads_use_parent_once_and_classify_missing_committed_body() {
         is_qualified: true,
         total_nods: 2,
         entry_price_minor: U256::from(7),
+        reference_currency: 840,
     };
     let mut parent = MemoryParent::default();
     let tree = Arc::new(TestAuthenticatedTree::default());
@@ -1742,6 +1747,7 @@ fn every_mutation_write_and_event_boundary_rolls_back_for_all_typed_collections(
         is_qualified: false,
         total_nods: 1,
         entry_price_minor: U256::from(11),
+        reference_currency: 840,
     };
     let mut bucket_updated = bucket_original.clone();
     bucket_updated.is_qualified = true;
@@ -1796,6 +1802,7 @@ fn every_cleanup_write_boundary_rolls_back_the_complete_end_block_cleanup() {
             is_qualified: false,
             total_nods: 1,
             entry_price_minor: U256::from(11),
+            reference_currency: 840,
         }),
     ];
 
@@ -1928,9 +1935,9 @@ fn first_touch_lists_preserve_the_exact_deterministic_operation_order() {
 
         let expected_indexes = [
             IndexRecord::owner(IndexKind::TributeByOwner, owner, second.tribute_id).key(),
-            IndexRecord::day(second.worldwide_day.value(), second.tribute_id).key(),
+            IndexRecord::day(second.worldwide_day, second.tribute_id).key(),
             IndexRecord::owner(IndexKind::TributeByOwner, owner, first.tribute_id).key(),
-            IndexRecord::day(first.worldwide_day.value(), first.tribute_id).key(),
+            IndexRecord::day(first.worldwide_day, first.tribute_id).key(),
         ];
         assert_eq!(schema.touched_index_deltas.len().unwrap(), 4);
         for (index, expected) in expected_indexes.into_iter().enumerate() {
@@ -1958,6 +1965,7 @@ fn body_codecs_cover_all_three_closed_variants() {
         is_qualified: true,
         total_nods: 13,
         entry_price_minor: U256::from(14),
+        reference_currency: 840,
     };
     assert!(!encode_nod_item_v1(&item).unwrap().is_empty());
     assert!(!encode_nod_bucket_v1(&bucket).unwrap().is_empty());
@@ -2022,7 +2030,7 @@ fn exact_index_record_key_and_status_vectors_are_protocol_pinned() {
             b256!("0e268c587c867de1282d3fc167d077e5348c119a859d72f8244a179e5d7dbc1e"),
         ),
         (
-            IndexRecord::day(42, id),
+            IndexRecord::day(WorldwideDay::new(42), id),
             concat!(
                 "0102040000002a0000002a",
                 "1111111111111111111111111111111111111111111111111111111111111111"
@@ -2173,6 +2181,7 @@ fn maximum_v1_body_footprint_and_storage_tail_cleanup_are_exact() {
         issuance_currency: u16::MAX,
         reference_currency: u16::MAX,
         issued_at: u64::MAX,
+        is_settled: true,
     };
     let shorter = NodItemBodyV1 {
         nod_id: id,
@@ -2186,6 +2195,7 @@ fn maximum_v1_body_footprint_and_storage_tail_cleanup_are_exact() {
         issuance_currency: 0,
         reference_currency: 0,
         issued_at: 0,
+        is_settled: false,
     };
     let maximum_stored = StoredBody::new_v1(encode_nod_item_v1(&maximum).unwrap())
         .unwrap()

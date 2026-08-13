@@ -956,7 +956,7 @@ fn noon_dispatcher_commits_the_same_typed_missed_offering_outcome() {
 
         let desis = ctx.storage.contract::<outbe_desis::schema::DesisContract>();
         assert_eq!(
-            desis.auction_stage.read(&wwd.value()).unwrap(),
+            desis.auction_stage.read(&wwd).unwrap(),
             outbe_desis::schema::AuctionStage::None as u8
         );
         let cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();

@@ -31,25 +31,35 @@ substitute for binding returned public fields to the exact request.
 
 ## Authoritative interface and command
 
-The ABI supplies ciphertext, nonce, ephemeral X25519 public key, reference currency,
-Intex-exclusion flag and four reserved ZK byte fields. The dispatcher currently
-ignores all ZK fields. It builds `OfferTributeInput` with the actual caller and
-invokes crate-private `offer_tribute` under the EVM transaction journal.
+The ABI supplies ciphertext, nonce, ephemeral X25519 public key, WorldwideDay,
+tribute currency, reference currency, Intex-exclusion flag and four reserved ZK byte
+fields. The BLS gate and the proof's public inputs are verified before the enclave
+call; `zkVerificationKey`/`zkPublicKey` remain ignored placeholders. The dispatcher
+builds `OfferTributeInput` with the actual caller and invokes crate-private
+`offer_tribute` under the EVM transaction journal.
+
+The WorldwideDay and the tribute currency are cleartext because both are written to
+public chain state at issuance, and because the host cannot admit or price an offer
+it cannot read. For a ZK-verified offer both are folded into the `nft_hash` the
+proof commits to, so a declaration disagreeing with the attested L2 draft is
+rejected.
 
 The command sequence is:
 
-1. accept only reference currency 840;
-2. select an active `OFFERING` day and resolve the maximum of that day's Oracle VWAP
-   and active S-curve value for the registered settlement pair;
-3. synchronously send sender, encrypted envelope, public flags and price to the
+1. require a valid calendar day that is in `OFFERING` status, and a registered
+   reference currency;
+2. resolve the maximum of that day's Oracle VWAP and active S-curve value for the
+   `COEN/<tributeCurrency>` pair — the tribute's own day, not whichever day happens
+   to be first in the offering list;
+3. synchronously send sender, encrypted envelope, public fields and price to the
    configured attested enclave;
 4. verify the enclave's canonical-input hash and Ed25519 attestation signature;
-5. require a created result, an offering returned day, and canonical
-   `Poseidon(sender, day)` owner/token identity;
+5. require a created result and canonical `Poseidon(sender, day)` owner/token
+   identity, recomputed from the request's own day;
 6. require the Tribute identity absent, parse and consume all returned SU hashes,
    and validate paired WAA/SRA address lists;
-7. issue the immutable Tribute from the returned economics and increment the
-   AgentReward counters.
+7. issue the immutable Tribute from the returned economics plus the request's own
+   public fields, and increment the AgentReward counters.
 
 ## State and invariants
 
@@ -60,7 +70,9 @@ satisfy:
   from unused to used exactly once;
 - the Tribute id equals the public canonical derivation and was absent before the
   command;
-- returned day is offering and the Tribute partition accepts issuance;
+- the request's day is a valid calendar day in `OFFERING` status — checked once,
+  on the node, before the enclave call — and the Tribute partition accepts
+  issuance;
 - Tribute body fields are the accepted enclave result for the exact signed request;
 - WAA and SRA lists are either both empty or both nonempty and every entry parses
   as an address;
@@ -141,14 +153,8 @@ atomic side effects.
 
 ## Open questions and technical debt
 
-- Bind all returned public echoes to the request. The host currently checks only
-  owner/token identity and offering status; it does not compare returned reference
-  currency, exclusion flag or Tribute price with the values sent to the enclave.
 - Require exactly one result for the one-offer request. The current code takes the
   first result and silently ignores any additional signed results.
-- Bind the priced WorldwideDay to the returned WorldwideDay. Price is resolved from
-  the first active `OFFERING` day, but a result for a different simultaneously
-  offering day is accepted with that price.
 - Remove the stale node-startup claim that an unset socket uses an in-process stub,
   or implement and explicitly restrict such a fallback to a dev-only chain policy;
   the current execution adapter returns “client not configured”.

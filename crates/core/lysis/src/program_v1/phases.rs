@@ -5,15 +5,13 @@ use std::collections::BTreeMap;
 use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, EntityId36};
+use outbe_nod::NodContract;
 use outbe_primitives::units::SCALE_1E18;
 
 use crate::constants::calc_floor_price;
 
 use super::{
-    execute::{
-        compute_fraction_map_from_groups, nod_bucket_key, validate_entry_price,
-        validate_required_gratis,
-    },
+    execute::{compute_fraction_map_from_groups, validate_entry_price, validate_required_gratis},
     FidelityPhaseV1, LeagueFractionV1, NodActionV1, ObservedTributeV1, ProgramErrorV1,
 };
 
@@ -676,7 +674,11 @@ pub fn output_finalize(
                     message: error.to_string(),
                 }
             })?;
-        let bucket_key = nod_bucket_key(amount.worldwide_day, amount.floor_price_minor);
+        let bucket_key = NodContract::bucket_key(
+            amount.worldwide_day,
+            amount.floor_price_minor,
+            amount.reference_currency,
+        );
         ordered_records.push(FinalizedOutputRecordV1 {
             raw_ordinal: amount.raw_ordinal,
             nod_action: NodActionV1 {

@@ -11,6 +11,7 @@ pub use crate::constants::{DAY_TYPE_ISO, DAY_TYPE_PAIR};
 pub use crate::types::{currency_address, AddressPair, AssetType, COEN_ASSET};
 
 use alloy_primitives::{Address, U256};
+
 use outbe_common::WorldwideDay;
 use outbe_primitives::{
     block::BlockRuntimeContext,
@@ -88,6 +89,25 @@ pub fn coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<U256> {
     oracle.get_exchange_rate(COEN_ASSET, currency_address(iso_code))
 }
 
+/// Current COEN price to currency `iso_code`, or `None` when the pair is not
+/// registered or carries no published rate.
+///
+/// [`get_all_reference_currencies`] lists currencies independently of whether
+/// their `COEN/<iso>` pair has been registered and priced, so a block hook
+/// walking that registry needs a read that reports "not priceable yet" instead
+/// of reverting and halting the block. Storage faults still propagate.
+pub fn coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option<U256>> {
+    let oracle: OracleContract<'_> = OracleContract::new(storage);
+    // `COEN_ASSET` is the zero address, so `new_coen_to` is always canonical
+    // and the stored rate needs no reciprocal inversion.
+    let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
+    if index == 0 {
+        return Ok(None);
+    }
+    let stored = oracle.exchange_rate.read(&index)?;
+    Ok((!stored.is_zero()).then_some(stored))
+}
+
 pub fn get_exchange_rate(storage: StorageHandle, base: Address, quote: Address) -> Result<U256> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     oracle.get_exchange_rate(base, quote)
@@ -111,6 +131,32 @@ pub fn require_coen_pair(
 pub fn register_pair(storage: StorageHandle, pair: AddressPair) -> Result<PairIndex> {
     let mut oracle: OracleContract<'_> = OracleContract::new(storage);
     oracle.register_pair(pair)
+}
+
+/// Nominal COEN price for `COEN/<iso_code>` at `worldwide_day`, 1e18 scaled:
+/// `max(WorldwideDay VWAP, highest active S-curve value)`.
+///
+/// `None` when no `COEN/<iso_code>` pair is registered — the currency is not one
+/// this chain can price at all. `Some(0)` when the pair exists but the day has
+/// neither a VWAP snapshot nor a live S-curve entry, which is a transient
+/// oracle-cold condition rather than an unknown currency. Callers that must
+/// distinguish "unsupported" from "not priced yet" get that for free.
+pub fn coen_pair_price(
+    storage: StorageHandle,
+    iso_code: u16,
+    worldwide_day: WorldwideDay,
+) -> Result<Option<U256>> {
+    let oracle: OracleContract<'_> = OracleContract::new(storage.clone());
+    let pair = AddressPair::new_coen_to(iso_code);
+    let index = oracle.pair_index_of(pair)?;
+    if index == 0 {
+        return Ok(None);
+    }
+    let vwap = oracle
+        .get_worldwide_day_vwap_for_pair(worldwide_day, index)?
+        .unwrap_or(U256::ZERO);
+    let max_scurve = get_max_active_scurve_value(storage, worldwide_day, pair)?;
+    Ok(Some(vwap.max(max_scurve)))
 }
 
 pub fn set_exchange_rate(

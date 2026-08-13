@@ -608,6 +608,7 @@ pub fn canonical_item(body: &NodItemState) -> NodItemBodyV1 {
         issuance_currency: body.issuance_currency,
         reference_currency: body.reference_currency,
         issued_at: body.issued_at,
+        is_settled: body.is_settled,
     }
 }
 
@@ -620,6 +621,7 @@ pub fn canonical_bucket(body: &NodBucketState) -> NodBucketBodyV1 {
         is_qualified: body.is_qualified,
         total_nods: body.total_nods,
         entry_price_minor: body.entry_price_minor,
+        reference_currency: body.reference_currency,
     }
 }
 
@@ -642,6 +644,7 @@ pub fn from_canonical_item(body: NodItemBodyV1) -> NodItemState {
         issuance_currency: body.issuance_currency,
         reference_currency: body.reference_currency,
         issued_at: body.issued_at,
+        is_settled: body.is_settled,
     }
 }
 
@@ -654,5 +657,6 @@ pub fn from_canonical_bucket(body: NodBucketBodyV1) -> NodBucketState {
         is_qualified: body.is_qualified,
         total_nods: body.total_nods,
         entry_price_minor: body.entry_price_minor,
+        reference_currency: body.reference_currency,
     }
 }

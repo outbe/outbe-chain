@@ -1259,3 +1259,130 @@ fn get_reference_currencies_precompile_returns_the_seeded_list() {
         assert_eq!(decoded, vec![840u16, 978u16]);
     });
 }
+
+// -----------------------------------------------------------------------
+// COEN price lookup (`api::coen_pair_price`)
+// -----------------------------------------------------------------------
+
+/// `None` distinguishes "this chain cannot price that currency at all" from
+/// `Some(0)`, "the pair exists but the day has no data yet". TributeFactory maps
+/// the first to `IssuanceCurrencyNotRegistered` and the second to
+/// `NominalPriceUnavailable`, so the two must not collapse.
+#[test]
+fn coen_pair_price_separates_an_unregistered_pair_from_an_unpriced_day() {
+    let day = 20260302u32.into();
+
+    with_storage(|storage| {
+        assert_eq!(
+            crate::api::coen_pair_price(storage.clone(), 840, day).unwrap(),
+            None,
+            "no COEN/840 pair is registered"
+        );
+
+        OracleContract::new(storage.clone())
+            .register_pair(AddressPair::new_coen_to(840))
+            .unwrap();
+        assert_eq!(
+            crate::api::coen_pair_price(storage, 840, day).unwrap(),
+            Some(U256::ZERO),
+            "registered but with neither a day VWAP nor an S-curve entry"
+        );
+    });
+}
+
+/// Each currency is priced from its own `COEN/<iso>` pair, and a pair COEN is not
+/// the base of never leaks into the answer.
+#[test]
+fn coen_pair_price_reads_the_matching_coen_pair() {
+    let eur: Address = AssetType::IsoCurrency(978).into();
+    let day = 20260302u32;
+
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
+        oracle.register_pair(AddressPair::new_coen_to(978)).unwrap();
+        // COEN is not the base — must not be mistaken for a COEN/<iso> pair.
+        oracle
+            .register_pair(AddressPair::from_addresses(usd(), ETH))
+            .unwrap();
+
+        oracle
+            .write_snapshot(
+                1_500,
+                &[
+                    (pair_key(COEN, usd()), U256::from(110u64), U256::from(1u64)),
+                    (pair_key(COEN, eur), U256::from(90u64), U256::from(1u64)),
+                    (pair_key(usd(), ETH), U256::from(2_200u64), U256::from(1u64)),
+                ],
+            )
+            .unwrap();
+        oracle
+            .store_worldwide_day_vwap_snapshot(day.into(), 1_000, 3_000)
+            .unwrap();
+
+        assert_eq!(
+            crate::api::coen_pair_price(storage.clone(), 840, day.into()).unwrap(),
+            Some(U256::from(110u64))
+        );
+        assert_eq!(
+            crate::api::coen_pair_price(storage.clone(), 978, day.into()).unwrap(),
+            Some(U256::from(90u64))
+        );
+        // ETH is quoted against USD, not COEN, so it is not a currency price.
+        assert_eq!(
+            crate::api::coen_pair_price(storage, 826, day.into()).unwrap(),
+            None
+        );
+    });
+}
+
+/// The price is `max(day VWAP, active S-curve)` — an S-curve peak above the day's
+/// VWAP wins, and only for the currency it belongs to.
+#[test]
+fn coen_pair_price_takes_the_max_of_vwap_and_scurve() {
+    let eur: Address = AssetType::IsoCurrency(978).into();
+    let worldwide_day = outbe_common::WorldwideDay::from_timestamp(ATOMIC_DAY_START);
+
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
+        oracle.register_pair(AddressPair::new_coen_to(978)).unwrap();
+
+        oracle
+            .write_snapshot(
+                ATOMIC_DAY_START + 100,
+                &[
+                    (pair_key(COEN, usd()), U256::from(110u64), U256::from(1u64)),
+                    (pair_key(COEN, eur), U256::from(90u64), U256::from(1u64)),
+                ],
+            )
+            .unwrap();
+        oracle
+            .store_worldwide_day_vwap_snapshot(
+                worldwide_day,
+                ATOMIC_DAY_START,
+                ATOMIC_DAY_START + outbe_primitives::time::SECONDS_PER_DAY,
+            )
+            .unwrap();
+
+        // USD gets an S-curve peak above its VWAP; EUR gets none.
+        crate::scurve::store_scurve_entry(
+            &mut oracle,
+            pair_key(COEN, usd()),
+            ATOMIC_DAY_START,
+            U256::from(500u64),
+        )
+        .unwrap();
+
+        assert_eq!(
+            crate::api::coen_pair_price(storage.clone(), 840, worldwide_day).unwrap(),
+            Some(U256::from(500u64)),
+            "S-curve peak wins for USD"
+        );
+        assert_eq!(
+            crate::api::coen_pair_price(storage, 978, worldwide_day).unwrap(),
+            Some(U256::from(90u64)),
+            "EUR keeps its own VWAP"
+        );
+    });
+}

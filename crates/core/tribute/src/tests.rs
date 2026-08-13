@@ -421,7 +421,8 @@ fn incremental_pre_admission_matches_independent_randomized_full_fold() {
                 &mut tribute,
                 alloy_primitives::Address::repeat_byte(owner_byte),
             );
-            tribute.reference_currency = 800 + u16::try_from(seed % 5).unwrap();
+            tribute.reference_currency =
+                [840, 978, 826, 392, 756][usize::try_from(seed % 5).unwrap()];
             tribute.nominal_amount_minor = U256::from((seed % 10_000) + 1);
             tc.issue(&tribute).unwrap();
             entries.push((tribute, true));

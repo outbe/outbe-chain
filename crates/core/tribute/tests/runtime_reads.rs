@@ -460,13 +460,13 @@ fn every_tribute_body_input_schema_envelope_and_evm_leaf_is_authenticated() {
     changed.issuance_amount_minor += U256::from(1);
     mutations.push(("issuance_amount_minor", changed));
     let mut changed = copy_tribute(&original);
-    changed.issuance_currency += 1;
+    changed.issuance_currency = 978;
     mutations.push(("issuance_currency", changed));
     let mut changed = copy_tribute(&original);
     changed.nominal_amount_minor += U256::from(1);
     mutations.push(("nominal_amount_minor", changed));
     let mut changed = copy_tribute(&original);
-    changed.reference_currency += 1;
+    changed.reference_currency = 978;
     mutations.push(("reference_currency", changed));
     let mut changed = copy_tribute(&original);
     changed.tribute_price_minor += U256::from(1);

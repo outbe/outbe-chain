@@ -2,6 +2,7 @@
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolCall;
+use outbe_common::WorldwideDay;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
@@ -11,7 +12,8 @@ use crate::runtime;
 use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract};
 
 const CHAIN_ID: u64 = 1;
-const WORLDWIDE_DAY: u32 = 20260101;
+const WORLDWIDE_DAY: WorldwideDay = WorldwideDay::new(20260101);
+const NEXT_WORLDWIDE_DAY: WorldwideDay = WorldwideDay::new(20260102);
 const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
 /// The single default target chain the auction fans in from (matches `src_chain_id` in the calls).
 const SRC_CHAIN: u32 = 1;
@@ -50,7 +52,7 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     with_targets(&[SRC_CHAIN], f)
 }
 
-fn brief_at(s: &StorageHandle, worldwide_day: u32, supply_promis: u128, green: bool) {
+fn brief_at(s: &StorageHandle, worldwide_day: WorldwideDay, supply_promis: u128, green: bool) {
     assert_eq!(
         crate::api::dispatch_auction_brief(
             s.clone(),
@@ -151,7 +153,10 @@ fn dispatch_auction_brief_records_the_brief() {
             NOW - NOW % 86_400
         );
         assert_eq!(contract.sched_active_count.read().unwrap(), 1);
-        assert_eq!(contract.sched_active_at.read(&0).unwrap(), WORLDWIDE_DAY);
+        assert_eq!(
+            contract.sched_active_at.read(&0).unwrap(),
+            WORLDWIDE_DAY.value()
+        );
         let cfg = contract.read_auction_config(WORLDWIDE_DAY).unwrap();
         assert_eq!(cfg.entry_price_minor, U256::from(ENTRY_PRICE));
     });
@@ -294,7 +299,7 @@ fn assert_no_request_brief_state(storage: &StorageHandle<'_>) {
     assert_eq!(contract.brief_green.read(&WORLDWIDE_DAY).unwrap(), 0);
     assert_eq!(contract.auction_at.read(&WORLDWIDE_DAY).unwrap(), 0);
     assert_eq!(contract.sched_active_count.read().unwrap(), 0);
-    assert_eq!(contract.sched_active_at.read(&0).unwrap(), 0);
+    assert_eq!(contract.sched_active_at.read(&0).unwrap(), 0u32);
     assert_eq!(contract.sched_active_slot.read(&WORLDWIDE_DAY).unwrap(), 0);
 }
 
@@ -478,7 +483,7 @@ fn dispatch_auction_brief_oversized_supply_returns_typed_full_carry_over() {
     let logs = storage.get_events(outbe_primitives::addresses::DESIS_ADDRESS);
     assert_eq!(logs.len(), 1);
     let event = IDesis::AuctionBriefRejectedToCarryOver::decode_log_data(&logs[0]).unwrap();
-    assert_eq!(event.worldwideDay, WORLDWIDE_DAY);
+    assert_eq!(event.worldwideDay, WORLDWIDE_DAY.value());
     assert_eq!(event.supply, U256::MAX);
     assert_eq!(event.maxAccepted, U256::from(u128::MAX));
     assert_eq!(
@@ -531,7 +536,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
     let event =
         crate::precompile::IDesis::AuctionBriefRejectedToCarryOver::decode_log_data(&logs[0])
             .unwrap();
-    assert_eq!(event.worldwideDay, WORLDWIDE_DAY);
+    assert_eq!(event.worldwideDay, WORLDWIDE_DAY.value());
     assert_eq!(event.supply, supply);
     assert_eq!(event.maxAccepted, U256::from(u128::MAX));
     assert_eq!(
@@ -546,7 +551,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
     StorageHandle::enter(&mut provider, |storage| {
         assert!(crate::api::dispatch_auction_brief(
             storage.clone(),
-            0,
+            WorldwideDay::new(0),
             U256::MAX,
             U256::from(ENTRY_PRICE),
             true,
@@ -572,7 +577,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
             + 1;
         assert!(crate::api::dispatch_auction_brief(
             storage,
-            WORLDWIDE_DAY + 1,
+            NEXT_WORLDWIDE_DAY,
             U256::MAX,
             U256::from(ENTRY_PRICE),
             true,
@@ -891,12 +896,12 @@ fn schedule_derives_min_bid_qty_from_prior_clearing() {
         mark_done(&s, SRC_CHAIN, 1, 1, 100);
         clear(&s);
 
-        brief_at(&s, WORLDWIDE_DAY + 1, 10 * LOAD_MINOR, true);
+        brief_at(&s, NEXT_WORLDWIDE_DAY, 10 * LOAD_MINOR, true);
         runtime::schedule_tick(&s, NOW).unwrap();
         let contract = s.contract::<DesisContract>();
         let min_qty = contract
             .config_min_bid_quantity
-            .read(&(WORLDWIDE_DAY + 1))
+            .read(&(NEXT_WORLDWIDE_DAY))
             .unwrap();
         assert_eq!(min_qty, 4);
     });
@@ -1200,7 +1205,7 @@ fn no_bids_clears_as_no_sale() {
         // Lysis recorded creator rewards for the day before the auction concluded.
         outbe_intex::api::record_contributors(
             &s,
-            WORLDWIDE_DAY,
+            WORLDWIDE_DAY.value(),
             &[(bidder(9), U256::from(100u64))],
         )
         .unwrap();
@@ -1231,7 +1236,7 @@ fn no_bids_clears_as_no_sale() {
         );
         // No series will ever exist for the day, so the contributor map is discarded.
         assert_eq!(
-            outbe_intex::api::contributor_count(&s, WORLDWIDE_DAY).unwrap(),
+            outbe_intex::api::contributor_count(&s, WORLDWIDE_DAY.value()).unwrap(),
             0
         );
     });
@@ -1737,7 +1742,7 @@ fn force_clear_skips_missing_chain_after_deadline() {
     let found = storage.get_events(desis_addr).iter().any(|log| {
         log.topics().first() == Some(&skip_sig)
             && IDesis::ChainSkipped::decode_log_data(log)
-                .map(|ev| ev.worldwideDay == WORLDWIDE_DAY && ev.srcChainId == chain_b)
+                .map(|ev| ev.worldwideDay == WORLDWIDE_DAY.value() && ev.srcChainId == chain_b)
                 .unwrap_or(false)
     });
     assert!(found, "expected ChainSkipped for the missing chain");

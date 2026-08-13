@@ -533,7 +533,7 @@ mod tests {
                 &storage,
                 crate::CreateSeriesParams {
                     series_id,
-                    worldwide_day: series_id,
+                    worldwide_day: series_id.into(),
                     issued_intex_count: 1,
                     promis_load_minor: 1,
                     entry_price_minor: U256::from(1),
@@ -588,7 +588,7 @@ mod tests {
                 &storage,
                 crate::CreateSeriesParams {
                     series_id: value.precondition.series_id,
-                    worldwide_day: value.precondition.series_id,
+                    worldwide_day: value.precondition.series_id.into(),
                     issued_intex_count: 1,
                     promis_load_minor: 1,
                     entry_price_minor: U256::from(1),

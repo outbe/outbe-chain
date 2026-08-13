@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use alloy_primitives::{Address, LogData, B256};
-use alloy_sol_types::{sol, SolEvent};
+use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
 use outbe_primitives::addresses::{NOD_ADDRESS, TRIBUTE_ADDRESS};
 use thiserror::Error;
@@ -15,15 +15,10 @@ use thiserror::Error;
 use crate::{
     body_commitment, decode_nod_bucket_v1, decode_nod_item_v1, decode_tribute_v1,
     runtime::{NodBodyDeleted, NodBodyStored, NodBucketBodyDeleted, NodBucketBodyStored},
-    runtime::{TributeBodyDeleted, TributeBodyStored},
+    runtime::{TributeBodyDeleted, TributeBodyStored, TributePartitionRetired},
     Commitment, EntityId36, EntityRef, FinalLeafMutation, PartitionRef, ACTIVE_COMMITMENT_SCHEME,
     BODY_SCHEMA_V1,
 };
-
-sol! {
-    /// Exact ADR-011 receipt event emitted by the Tribute precompile.
-    event TributePartitionRetired(uint32 indexed worldwideDay);
-}
 
 /// One canonical receipt-visible body transition in execution order.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

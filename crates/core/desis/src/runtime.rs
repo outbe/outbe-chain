@@ -2,6 +2,7 @@
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
+use outbe_common::WorldwideDay;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
@@ -29,7 +30,7 @@ use crate::sol_ext::IOriginRouter;
 /// too little of the commit window would remain.
 pub fn record_brief(
     storage: StorageHandle<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     supply_promis: u128,
     entry_price: U256,
     is_green: bool,
@@ -50,11 +51,11 @@ pub fn record_brief(
 /// oversized supply as the sole committed business rejection.
 pub(crate) fn preflight_brief(
     storage: &StorageHandle<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     now: u64,
 ) -> Result<u32> {
-    if worldwide_day == 0 {
-        return Err(DesisError::InvalidWorldwideDay(0).into());
+    if !worldwide_day.is_valid() {
+        return Err(DesisError::InvalidWorldwideDay(worldwide_day).into());
     }
     let contract = storage.contract::<DesisContract>();
     if contract.read_stage(worldwide_day)? != AuctionStage::None {
@@ -79,7 +80,7 @@ pub(crate) fn preflight_brief(
 
 pub(crate) fn record_preflighted_brief(
     storage: StorageHandle<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     supply_promis: u128,
     entry_price: U256,
     is_green: bool,
@@ -109,7 +110,7 @@ fn fold_profile(
     // minBidQty = 4% of the prior clearing's issued count.
     let min_bid_qty: u16 = {
         let last_worldwide_day = contract.read_last_cleared_worldwide_day()?;
-        if last_worldwide_day != 0 {
+        if last_worldwide_day.value() != 0 {
             let prev_issued = contract.read_last_clearing_issued_count()?;
             let derived =
                 (prev_issued as u64).saturating_mul(BID_QUANTITY_FLOOR_BPS as u64) / 10_000;
@@ -133,7 +134,7 @@ fn fold_profile(
 #[allow(clippy::too_many_arguments)]
 fn send_stage_start(
     storage: &StorageHandle<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     config: &AuctionConfig,
     iparams: &outbe_intexfactory::IntexParams,
     commit_end: u32,
@@ -150,7 +151,7 @@ fn send_stage_start(
     let call_price_u64 = u64::try_from(call_price)
         .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
     let stage_params = IOriginRouter::AuctionStageStartParams {
-        worldwideDay: worldwide_day,
+        worldwideDay: worldwide_day.into(),
         commitEnd: commit_end,
         revealEnd: reveal_end,
         issuanceEnd: issuance_end,
@@ -204,13 +205,13 @@ pub(crate) fn schedule_tick(storage: &StorageHandle<'_>, now: u64) -> Result<()>
     {
         let contract = storage.contract::<DesisContract>();
         for i in 0..count {
-            days.push(contract.sched_active_at.read(&i)?);
+            days.push(contract.sched_active_at.read(&i)?.into());
         }
     }
     for day in days {
         let res = storage.with_checkpoint(|| advance_day(storage, day, now));
         if let Err(e) = res {
-            tracing::warn!(target: "outbe::desis", day, error = ?e, "schedule tick: skipping day");
+            tracing::warn!(target: "outbe::desis", %day, error = ?e, "schedule tick: skipping day");
         }
     }
     Ok(())
@@ -218,7 +219,7 @@ pub(crate) fn schedule_tick(storage: &StorageHandle<'_>, now: u64) -> Result<()>
 
 /// Walk one day's schedule: start at the anchor, flip to Revealing at commit
 /// end, arm the clearing gate at reveal end, retire overdue and terminal days.
-fn advance_day(storage: &StorageHandle<'_>, worldwide_day: u32, now: u64) -> Result<()> {
+fn advance_day(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u64) -> Result<()> {
     loop {
         let mut contract = storage.contract::<DesisContract>();
         let stage = contract.read_stage(worldwide_day)?;
@@ -232,7 +233,7 @@ fn advance_day(storage: &StorageHandle<'_>, worldwide_day: u32, now: u64) -> Res
             }
             _ if now >= issuance_end => {
                 contract.emit(IDesis::AuctionOverdue {
-                    worldwideDay: worldwide_day,
+                    worldwideDay: worldwide_day.into(),
                 })?;
                 refund_unsold_supply(storage, &mut contract, worldwide_day)?;
                 contract.remove_gate_active(worldwide_day)?;
@@ -281,7 +282,7 @@ enum StartOutcome {
 fn start_auction(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     commit_end: u64,
     reveal_end: u64,
     issuance_end: u64,
@@ -305,14 +306,14 @@ fn start_auction(
         )?;
         contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
         contract.emit(IDesis::AuctionCancelledRedDay {
-            worldwideDay: worldwide_day,
+            worldwideDay: worldwide_day.into(),
         })?;
         contract.remove_sched_active(worldwide_day)?;
         return Ok(StartOutcome::Retired);
     }
     if now >= commit_end {
         contract.emit(IDesis::AuctionOverdue {
-            worldwideDay: worldwide_day,
+            worldwideDay: worldwide_day.into(),
         })?;
         contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
         refund_unsold_supply(storage, contract, worldwide_day)?;
@@ -331,7 +332,7 @@ fn start_auction(
     )?;
     contract.write_stage(worldwide_day, AuctionStage::Started)?;
     contract.emit(IDesis::AuctionCreated {
-        worldwideDay: worldwide_day,
+        worldwideDay: worldwide_day.into(),
     })?;
     Ok(StartOutcome::Started)
 }
@@ -341,7 +342,7 @@ fn start_auction(
 fn refund_unsold_supply(
     storage: &StorageHandle<'_>,
     contract: &mut DesisContract<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
 ) -> Result<()> {
     let supply = contract.pending_supply_promis.read(&worldwide_day)?;
     if supply.is_zero() {
@@ -351,7 +352,7 @@ fn refund_unsold_supply(
         .pending_supply_promis
         .write(&worldwide_day, U256::ZERO)?;
     contract.emit(IDesis::UnusedSupplyReported {
-        worldwideDay: worldwide_day,
+        worldwideDay: worldwide_day.into(),
         unusedPromis: supply,
     })?;
     PromisLimitContract::new(storage.clone()).add_to_total_unallocated(supply)?;
@@ -360,7 +361,7 @@ fn refund_unsold_supply(
 
 /// Arm the clearing from the brief supply: convert raw PROMIS to whole Intex
 /// units, start the fan-in gate and broadcast the clearing stage.
-fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: u32, now: u64) -> Result<()> {
+fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u64) -> Result<()> {
     let mut contract = storage.contract::<DesisContract>();
     let config = contract.read_auction_config(worldwide_day)?;
     if config.promis_load_minor == 0 {
@@ -384,7 +385,7 @@ fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: u32, now: u64) -> Re
         ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
         IOriginRouter::sendAuctionStageClearingCall {
-            worldwideDay: worldwide_day,
+            worldwideDay: worldwide_day.into(),
         }
         .abi_encode()
         .into(),
@@ -418,7 +419,7 @@ fn intake_is_open(stage: AuctionStage) -> Result<bool> {
 pub fn process_bids_batch(
     storage: StorageHandle<'_>,
     caller: Address,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     src_chain_id: u32,
     generation: u32,
     batch_index: u16,
@@ -492,7 +493,7 @@ pub fn process_bids_batch(
 pub fn process_bids_done(
     storage: StorageHandle<'_>,
     caller: Address,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     src_chain_id: u32,
     relay_generation: u32,
     total_batches: u16,
@@ -540,7 +541,7 @@ pub fn process_bids_done(
 /// skip excludes it.
 fn try_finalize_chain(
     contract: &mut DesisContract<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     chain_id: u32,
 ) -> Result<()> {
     let key = DesisContract::chain_key(worldwide_day, chain_id);
@@ -562,7 +563,7 @@ fn try_finalize_chain(
     }
     contract.chain_done.write(&key, 1u8)?;
     contract.emit(IDesis::ChainBidsDone {
-        worldwideDay: worldwide_day,
+        worldwideDay: worldwide_day.into(),
         srcChainId: chain_id,
         bidsCount: bid_count,
     })
@@ -577,7 +578,7 @@ fn try_finalize_chain(
 /// `ChainSkipped`). Returns `None` while the gate is not ready.
 pub fn force_clear(
     storage: StorageHandle<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     now: u64,
 ) -> Result<Option<ClearingResult>> {
     let snapshot = fetch_targets(&storage, worldwide_day)?;
@@ -610,13 +611,13 @@ pub fn tick_gate(ctx: &BlockRuntimeContext) -> Result<()> {
     {
         let contract = storage.contract::<DesisContract>();
         for i in 0..count {
-            days.push(contract.gate_active_at.read(&i)?);
+            days.push(contract.gate_active_at.read(&i)?.into());
         }
     }
     for day in days {
         let res = storage.with_checkpoint(|| force_clear(storage.clone(), day, now));
         if let Err(e) = res {
-            tracing::warn!(target: "outbe::desis", day, error = ?e, "clearing gate: skipping day");
+            tracing::warn!(target: "outbe::desis", %day, error = ?e, "clearing gate: skipping day");
         }
     }
     Ok(())
@@ -624,11 +625,11 @@ pub fn tick_gate(ctx: &BlockRuntimeContext) -> Result<()> {
 
 /// The day's frozen target snapshot, read from the OriginRouter registry
 /// (deterministic: frozen at STAGE_START).
-fn fetch_targets(storage: &StorageHandle<'_>, worldwide_day: u32) -> Result<Vec<u32>> {
+fn fetch_targets(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<Vec<u32>> {
     let ret = storage.staticcall(
         ORIGIN_ROUTER_ADDRESS,
         IOriginRouter::targetsOfCall {
-            worldwideDay: worldwide_day,
+            worldwideDay: worldwide_day.into(),
         }
         .abi_encode()
         .into(),
@@ -640,7 +641,7 @@ fn fetch_targets(storage: &StorageHandle<'_>, worldwide_day: u32) -> Result<Vec<
 /// Split the snapshot into chains whose intake finalized and chains still missing.
 fn partition_chains(
     contract: &DesisContract<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     snapshot: &[u32],
 ) -> Result<(Vec<u32>, Vec<u32>)> {
     let mut included = Vec::with_capacity(snapshot.len());
@@ -664,7 +665,7 @@ fn partition_chains(
 /// and send the per-chain AUCTION_RESULT / REFUND_INSTRUCTIONS messages.
 fn clear_inner(
     storage: StorageHandle<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     snapshot: &[u32],
     included: &[u32],
     skipped: &[u32],
@@ -710,19 +711,19 @@ fn clear_inner(
 
     for &chain_id in skipped {
         contract.emit(IDesis::ChainSkipped {
-            worldwideDay: worldwide_day,
+            worldwideDay: worldwide_day.into(),
             srcChainId: chain_id,
         })?;
     }
 
     if result.issued_intex_count == 0 {
         contract.emit(IDesis::AuctionClearedEmpty {
-            worldwideDay: worldwide_day,
+            worldwideDay: worldwide_day.into(),
             totalDemand: total_demand,
         })?;
     } else {
         contract.emit(IDesis::AuctionCleared {
-            worldwideDay: worldwide_day,
+            worldwideDay: worldwide_day.into(),
             issuedIntexCount: result.issued_intex_count,
             clearingRate: result.clearing_rate,
             totalDemand: total_demand,
@@ -735,7 +736,7 @@ fn clear_inner(
     let unused_promis = supply_promis.saturating_sub(issued_promis);
     if !unused_promis.is_zero() {
         contract.emit(IDesis::UnusedSupplyReported {
-            worldwideDay: worldwide_day,
+            worldwideDay: worldwide_day.into(),
             unusedPromis: unused_promis,
         })?;
         PromisLimitContract::new(storage.clone()).add_to_total_unallocated(unused_promis)?;
@@ -771,7 +772,7 @@ fn clear_inner(
             U256::ZERO,
             IOriginRouter::sendAuctionResultCall {
                 dstChainId: chain_id,
-                worldwideDay: worldwide_day,
+                worldwideDay: worldwide_day.into(),
                 issuedIntexCount: result.issued_intex_count,
                 auctionClearingRate: u64::from(result.clearing_rate),
                 wonBidsCount: won_bids_count,
@@ -802,7 +803,7 @@ fn clear_inner(
             U256::ZERO,
             IOriginRouter::sendRefundInstructionsCall {
                 dstChainId: chain_id,
-                worldwideDay: worldwide_day,
+                worldwideDay: worldwide_day.into(),
                 bidders,
                 refundedAmounts: refunded,
                 paidAmounts: paid,
@@ -929,8 +930,8 @@ fn calculate_clearing(
 // ---------------------------------------------------------------------------
 
 /// The single point where a series id is derived from the day; identity until multi-currency (then 1 -> N).
-fn derive_series_id(worldwide_day: u32) -> u32 {
-    worldwide_day
+fn derive_series_id(worldwide_day: WorldwideDay) -> u32 {
+    worldwide_day.value()
 }
 
 fn require_origin_router(caller: Address) -> Result<()> {
@@ -940,16 +941,16 @@ fn require_origin_router(caller: Address) -> Result<()> {
     Ok(())
 }
 
-fn require_nonzero_worldwide_day(worldwide_day: u32) -> Result<()> {
-    if worldwide_day == 0 {
-        return Err(DesisError::InvalidWorldwideDay(0).into());
+fn require_nonzero_worldwide_day(worldwide_day: WorldwideDay) -> Result<()> {
+    if worldwide_day.value() == 0 {
+        return Err(DesisError::InvalidWorldwideDay(worldwide_day).into());
     }
     Ok(())
 }
 
 fn require_stage(
     contract: &DesisContract<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     expected: AuctionStage,
 ) -> Result<()> {
     let actual = contract.read_stage(worldwide_day)?;

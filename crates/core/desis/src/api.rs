@@ -7,6 +7,7 @@
 //! day — one auction per day; series ids are allocated at issuance.
 
 use alloy_primitives::U256;
+use outbe_common::WorldwideDay;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -45,7 +46,7 @@ pub enum AuctionBriefReceipt {
 /// corruption propagate as `Err`.
 pub fn dispatch_auction_brief(
     storage: StorageHandle<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     supply_promis: U256,
     entry_price: U256,
     is_green: bool,
@@ -58,7 +59,7 @@ pub fn dispatch_auction_brief(
             let reason = AuctionBriefRejectionReason::SupplyExceedsAuctionDomain;
             let mut contract = storage.contract::<DesisContract>();
             contract.emit(IDesis::AuctionBriefRejectedToCarryOver {
-                worldwideDay: worldwide_day,
+                worldwideDay: worldwide_day.into(),
                 supply: supply_promis,
                 maxAccepted: max_accepted,
                 reasonCode: reason.code(),

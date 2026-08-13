@@ -420,9 +420,7 @@ async fn twap(
 }
 
 async fn twaps(client: &(impl Rpc + Sync), seconds: u64) -> Result<()> {
-    let call = IOracle::getTwapsCall {
-        lookbackSeconds: seconds,
-    };
+    let call = IOracle::getTwapsCall { lookback: seconds };
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
     let ret = IOracle::getTwapsCall::abi_decode_returns(&result)?;
 
@@ -572,7 +570,8 @@ async fn vote_targets(client: &(impl Rpc + Sync)) -> Result<()> {
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
     let targets = IOracle::getVoteTargetsCall::abi_decode_returns(&result)?;
 
-    println!("Active vote target pair IDs: {:?}", targets);
+    println!("Active vote target bases:  {:?}", targets.bases);
+    println!("Active vote target quotes: {:?}", targets.quotes);
     Ok(())
 }
 

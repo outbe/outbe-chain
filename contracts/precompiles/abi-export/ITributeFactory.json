@@ -19,6 +19,16 @@
         "internalType": "uint256"
       },
       {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "tributeCurrency",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
         "name": "referenceCurrency",
         "type": "uint16",
         "internalType": "uint16"

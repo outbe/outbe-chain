@@ -59,6 +59,8 @@ pub fn dispatch(
                                 cipher_text: c.cipherText,
                                 nonce: c.nonce,
                                 ephemeral_pubkey: c.ephemeralPubkey,
+                                worldwide_day: c.worldwideDay.into(),
+                                tribute_currency: c.tributeCurrency,
                                 reference_currency: c.referenceCurrency,
                                 exclude_from_intex_issuance: c.excludeFromIntexIssuance,
                                 zk_proof: c.zkProof,

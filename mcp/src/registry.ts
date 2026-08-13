@@ -1,15 +1,16 @@
-import { type Abi, type Address, getAddress, parseAbi } from "viem";
+import { type Abi, type Address, getAddress } from "viem";
+import { PRECOMPILE_ABI as ABI } from "./abi.js";
 
 /**
  * Precompile registry for outbe-chain.
  *
  * Addresses: crates/blockchain/primitives/src/addresses.rs
  * Dispatch:  crates/blockchain/evm/src/precompiles.rs::outbe_dispatch_fn
- * ABIs:      contracts/precompiles/src/I*.sol (human-readable form below).
- *            ITeeRegistry has no .sol — taken from bin/outbe-cli/src/abi.rs.
+ * ABIs:      generated from contracts/precompiles/src/I*.sol — see ./abi.ts.
  *
- * Output parameter names are kept verbatim so `humanize()` (format.ts) can
- * apply per-field formatting (worldwide_day -> date, *Minor -> COEN, etc).
+ * Each entry pairs an address with the whole generated ABI of its interface, so
+ * the signatures — and the output parameter names `humanize()` in format.ts
+ * keys off — always come from the Solidity, never from a hand-written string.
  */
 
 export interface ContractEntry {
@@ -21,312 +22,119 @@ export interface ContractEntry {
 
 const A = (hex: string): Address => getAddress(hex);
 
-// --- Shared struct definitions referenced by multiple signatures -------------
-const STRUCTS = [
-  "struct NodData { uint256 nodId; address owner; uint32 worldwideDay; uint32 leagueId; uint256 floorPriceMinor; uint256 gratisLoadMinor; uint256 costOfGratisMinor; uint256 costAmountMinor; bool isQualified; uint16 issuanceCurrency; uint16 referenceCurrency; uint64 issuedAt; }",
-  "struct GemData { uint256 gemId; address owner; uint8 gemType; uint8 state; uint256 gemLoad; uint256 entryPrice; uint256 costAmount; uint256 floorPrice; uint16 issuanceCurrency; uint16 referenceCurrency; uint64 issuedAt; }",
-  "struct Position { uint256 positionId; address asset; address smartAccount; uint256 totalAnadosisAmount; uint256 outstandingAnadosisAmount; uint256 totalGratisAmount; uint256 outstandingGratisAmount; uint32 nextAnadosisNumber; uint64 createdAt; uint256 credisPrincipal; uint256 entryPriceMinor; uint256 currencyRate; uint16 issuanceCurrency; bytes eoaCiphertext; }",
-  "struct Anadosis { uint32 anadosisNumber; uint64 dueDate; uint64 paidAt; uint256 anadosisAmount; uint256 gratisAmount; uint256 unpaidAmount; }",
-  "struct PledgeTicket { uint256 commitment; uint256 amount; int64 createdAtBlock; }",
-  "struct ExchangeRateTuple { address base; address quote; uint256 exchangeRate; uint256 volume; }",
-];
-
 export const CONTRACTS: Record<string, ContractEntry> = {
   tribute: {
     address: A("0x0000000000000000000000000000000000001101"),
-    note: "Tribute NFT",
-    abi: parseAbi([
-      "function name() view returns (string)",
-      "function symbol() view returns (string)",
-      "function totalSupply() view returns (uint256)",
-      "function balanceOf(address owner) view returns (uint256)",
-      "function ownerOf(uint256 tokenId) view returns (address)",
-      "function tokenURI(uint256 tokenId) view returns (string)",
-      "function getDayTotals(uint32 worldwideDay) view returns (uint32 tributeCount, uint256 tributeNominalAmountMinor, bool isSealed)",
-      "function getTributesByOwner(address owner) view returns (uint256[] tokenIds)",
-      "function getTributesByDay(uint32 worldwideDay) view returns (uint256[] tokenIds)",
-    ]),
+    note: "Tribute NFT — token ids are `bytes`, not uint256",
+    abi: ABI.ITribute,
   },
 
   tributefactory: {
     address: A("0x0000000000000000000000000000000000001100"),
     note: "TributeFactory (offerTribute, enclave decrypt)",
-    abi: parseAbi([
-      "function offerTribute(bytes cipherText, bytes nonce, uint256 ephemeralPubkey, uint16 referenceCurrency, bool excludeFromIntexIssuance, bytes zkProof, bytes zkVerificationKey, bytes zkPublicKey, bytes zkMerkleRoot, bytes signature) returns (uint256 tributeId)",
-    ]),
+    abi: ABI.ITributeFactory,
   },
 
   nod: {
     address: A("0x0000000000000000000000000000000000001006"),
-    note: "Nod NFT",
-    abi: parseAbi([
-      ...STRUCTS,
-      "function name() view returns (string)",
-      "function symbol() view returns (string)",
-      "function totalSupply() view returns (uint256)",
-      "function balanceOf(address owner) view returns (uint256)",
-      "function ownerOf(uint256 nodId) view returns (address)",
-      "function tokenURI(uint256 nodId) view returns (string)",
-      "function nodData(uint256 nodId) view returns (NodData)",
-      "function tokens(address owner) view returns (uint256[])",
-      "function tokenByIndex(uint256 index) view returns (uint256)",
-      "function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)",
-    ]),
+    note: "Nod NFT — token ids are `bytes`, not uint256",
+    abi: ABI.INod,
   },
 
   gratis: {
     address: A("0x0000000000000000000000000000000000001003"),
     note: "Gratis — confidential (TEE-encrypted) balances; balanceOf/pledgedOf return the account's ciphertext blob (decrypt off-chain with the account's view key from outbe_deriveGratisKeys).",
-    abi: parseAbi([
-      "function name() view returns (string)",
-      "function symbol() view returns (string)",
-      "function decimals() view returns (uint8)",
-      "function totalSupply() view returns (uint256)",
-      "function pledgedTotalSupply() view returns (uint256)",
-      "function balanceOf(address account) view returns (bytes balanceCiphertext)",
-      "function pledgedOf(address account) view returns (bytes pledgedCiphertext)",
-      "function allowance(address owner, address spender) view returns (uint256)",
-    ]),
+    abi: ABI.IGratis,
   },
 
   promis: {
     address: A("0x0000000000000000000000000000000000001337"),
     note: "Promis — confidential (TEE-encrypted) balances; balanceOf returns the account's ciphertext blob (decrypt off-chain with the account's view key from outbe_deriveKeys(Promis, ...)). opNonceOf is the modify-auth replay counter a write's mac/opNonce must bind.",
-    abi: parseAbi([
-      "function name() view returns (string)",
-      "function symbol() view returns (string)",
-      "function decimals() view returns (uint8)",
-      "function totalSupply() view returns (uint256)",
-      "function balanceOf(address account) view returns (bytes balanceCiphertext)",
-      "function opNonceOf(address account) view returns (uint64)",
-    ]),
+    abi: ABI.IPromis,
   },
 
   promislimit: {
     address: A("0x000000000000000000000000000000000000100F"),
     note: "Promis limit",
-    abi: parseAbi(["function totalUnallocated() view returns (uint256)"]),
+    abi: ABI.IPromisLimit,
   },
 
   gem: {
     address: A("0x0000000000000000000000000000000000001013"),
     note: "Gem NFT",
-    abi: parseAbi([
-      ...STRUCTS,
-      "function name() view returns (string)",
-      "function symbol() view returns (string)",
-      "function totalSupply() view returns (uint256)",
-      "function balanceOf(address owner) view returns (uint256)",
-      "function ownerOf(uint256 gemId) view returns (address)",
-      "function tokenURI(uint256 gemId) view returns (string)",
-      "function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)",
-      "function getGemStatus(uint256 gemId) view returns (GemData)",
-    ]),
+    abi: ABI.IGem,
   },
 
   gemfactory: {
     address: A("0x0000000000000000000000000000000000002013"),
     note: "Gem factory",
-    abi: parseAbi([
-      "function getStatistics() view returns (uint256 totalGemsIssued, uint256 totalIntexParked)",
-    ]),
+    abi: ABI.IGemFactory,
   },
 
   credis: {
     address: A("0x000000000000000000000000000000000000100A"),
     note: "Credis positions",
-    abi: parseAbi([
-      ...STRUCTS,
-      "function getPosition(uint256 positionId) view returns (Position)",
-      "function getPositionsByAddress(address smartAccount) view returns (Position[])",
-      "function getAllPositions() view returns (Position[])",
-      "function hasOverdueAnadosis(address smartAccount) view returns (bool)",
-      "function getNextAnadosis(uint256 positionId) view returns (Anadosis)",
-      "function getPositionAnadosis(uint256 positionId) view returns (Anadosis[])",
-      "function credisOf(address smartAccount) view returns (uint256)",
-      "function outstandingAnadosisOf(address smartAccount) view returns (uint256)",
-    ]),
-  },
-
-  gratisfactory: {
-    address: A("0x0000000000000000000000000000000000002003"),
-    note: "Gratis factory (pledge tickets)",
-    abi: parseAbi([
-      ...STRUCTS,
-      "function getPledgeTicket(uint256 commitment) view returns (PledgeTicket)",
-      "function getPledgeTicketByAddress(address account) view returns (PledgeTicket[])",
-      "function getAllPledgeTickets() view returns (PledgeTicket[])",
-    ]),
+    abi: ABI.ICredis,
   },
 
   agentreward: {
     address: A("0x000000000000000000000000000000000000100B"),
     note: "Agent reward",
-    abi: parseAbi([
-      "function getClaimableBalance(address account) view returns (uint256 balanceMinor)",
-      "function claimReward(uint256 amount) returns (uint256)",
-    ]),
+    abi: ABI.IAgentReward,
   },
 
   fidelity: {
     address: A("0x000000000000000000000000000000000000100C"),
     note: "Fidelity RCFI (per-account index is owner-signature-gated; only the public scalars are callable here)",
-    abi: parseAbi([
-      "function getFidelityIndex(address account, uint64 expiry, bytes signature) view returns (uint256)",
-      "function getFidelityIndexAt(address account, uint64 timestamp, uint64 expiry, bytes signature) view returns (uint256)",
-      "function decimals() view returns (uint8)",
-      "function maxFidelityIndexAt(uint64 timestamp) view returns (uint256)",
-      "function minLeague() view returns (uint16)",
-      "function maxLeague() view returns (uint16)",
-    ]),
+    abi: ABI.IFidelity,
   },
 
   metadosis: {
     address: A("0x000000000000000000000000000000000000100E"),
     note: "Metadosis (WorldwideDay lifecycle)",
-    abi: parseAbi([
-      "function getWorldwideDay(uint32 wwd) view returns (uint8 status, uint8 dayType, uint64 formingStart, uint64 formingEnd, uint64 lookbackEnd, uint64 offeringEnd, uint64 scheduledProcessTime, uint256 previousVwap, uint256 currentVwap)",
-      "function getDayMetadosisLimit(uint32 date) view returns (uint256 amount, bool isUsed)",
-      "function getActiveWorldwideDays() view returns (uint32[] wwds)",
-      "function getWorldwideDaysByStatus(uint8 status) view returns (uint32[] wwds)",
-      "function getBootstrapEndTime() view returns (uint64 endTime)",
-    ]),
+    abi: ABI.IMetadosis,
   },
 
   oracle: {
     address: A("0x000000000000000000000000000000000000EE05"),
     note: "Oracle (rates, VWAP, pairs)",
-    abi: parseAbi([
-      ...STRUCTS,
-      "function getExchangeRate(address base, address quote) view returns (uint256 rate)",
-      "function getExchangeRateData(address base, address quote) view returns (uint256 rate, uint64 lastBlock, uint64 lastTimestamp)",
-      "function getCoenExchangeRateFor(uint16 isoCode) view returns (uint256 rate)",
-      "function getVwap(address base, address quote, uint64 lookbackSeconds) view returns (uint256 vwap)",
-      "function getDayVwap(address base, address quote) view returns (uint256 vwap)",
-      "function getTwap(address base, address quote, uint64 lookbackSeconds) view returns (uint256 twap)",
-      "function getNominalPrice(address base, address quote, uint64 timestamp) view returns (uint256 price)",
-      "function getNominalPriceComponents(address base, address quote, uint64 timestamp) view returns (uint256 nominalPrice, uint256 vwap, uint256 maxScurve, string source)",
-      "function getParams() view returns (uint64 votePeriod, uint256 rewardBand, uint64 slashWindow, uint256 minValidPerWindow, uint256 slashFraction, uint64 lookbackDuration, bool enabled)",
-      "function getPairCount() view returns (uint32 count)",
-      "function getPairByIndex(uint32 index) view returns (address base, address quote)",
-      "function getVoteTargets() view returns (address[] bases, address[] quotes)",
-      "function isVoteTarget(address base, address quote) view returns (bool)",
-      "function getReferenceCurrencies() view returns (uint16[] isoCodes)",
-      "function getCurrencyRate(uint16 isoCode) view returns (uint256 rate)",
-      "function getFeederDelegation(address validator) view returns (address feeder)",
-      "function getVotePenaltyCounter(address validator) view returns (uint64 success, uint64 abstain, uint64 miss)",
-      "function getSlashWindowProgress(address validator) view returns (uint64 success, uint64 abstain, uint64 miss, uint64 slashWindow)",
-      "function getAggregateVote(address validator) view returns (bool exists, address[] bases, address[] quotes, uint256[] rates, uint256[] volumes)",
-      // curated writes:
-      "function submitVote(ExchangeRateTuple[] tuples)",
-      "function delegateFeederConsent(address feeder)",
-    ]),
+    abi: ABI.IOracle,
   },
 
   staking: {
     address: A("0x000000000000000000000000000000000000EE02"),
     note: "Staking",
-    abi: parseAbi([
-      "function getStake(address validator) view returns (uint256 stakeMinor)",
-      "function getTotalStaked() view returns (uint256 totalStakedMinor)",
-      // curated writes:
-      "function stake(address validatorAddress, uint256 amount)",
-      "function unstake(uint256 amount)",
-      "function claimUnbonded()",
-    ]),
-  },
-
-  rewards: {
-    address: A("0x000000000000000000000000000000000000EE03"),
-    note: "Validator rewards",
-    abi: parseAbi([
-      "function pendingRewards(address validator) view returns (uint256 pendingMinor)",
-      // curated write:
-      "function claimRewards() returns (uint256)",
-    ]),
+    abi: ABI.IStaking,
   },
 
   validatorset: {
     address: A("0x000000000000000000000000000000000000EE00"),
     note: "Validator set / epoch",
-    abi: parseAbi([
-      "function getValidators() view returns (address[])",
-      "function getActiveValidators() view returns (address[])",
-      "function getActiveConsensusSet() view returns (address[])",
-      "function validatorCount() view returns (uint32)",
-      "function activeValidatorCount() view returns (uint32)",
-      "function activeConsensusCount() view returns (uint32)",
-      "function isValidator(address addr) view returns (bool)",
-      "function isConsensusParticipant(address addr) view returns (bool)",
-      "function getEpochNumber() view returns (uint256)",
-      "function getEpochStartTimestamp() view returns (uint64)",
-      "function getEpochStartBlock() view returns (uint64)",
-      "function validatorByAddress(address addr) view returns (address validatorAddress, bytes consensusPubkey, uint256 stakeMinor, uint8 status, uint64 slashCount, uint64 missedBlocks, uint64 missedVotes, uint64 blocksProposed, uint64 joinedAtHeight, uint64 deactivatedAtHeight, uint64 unbondingEnd, bool hasBLSShare)",
-    ]),
+    abi: ABI.IValidatorSet,
   },
 
   slashindicator: {
     address: A("0x000000000000000000000000000000000000EE01"),
     note: "Slash indicator",
-    abi: parseAbi([
-      "function getProposerMissCount(address validator) view returns (uint64)",
-      "function getVoterMissCount(address validator) view returns (uint64)",
-      "function getFelonyCount(address validator) view returns (uint64)",
-    ]),
+    abi: ABI.ISlashIndicator,
   },
 
   zerofee: {
     address: A("0x000000000000000000000000000000000000EE09"),
     note: "ZeroFee paymaster",
-    abi: parseAbi([
-      "function getCounter(address signer) view returns (uint32 day, uint32 count)",
-    ]),
+    abi: ABI.IZeroFee,
   },
 
   teeregistry: {
     address: A("0x000000000000000000000000000000000000EE0A"),
     note: "TEE registry (offer key)",
-    abi: parseAbi([
-      "function isBootstrapped() view returns (bool)",
-      "function tributeOfferPublicKey() view returns (uint256)",
-      "function tributeOfferEpoch() view returns (uint256)",
-      "function keyEpoch() view returns (uint256)",
-      "function activePolicyV1() view returns (bytes)",
-    ]),
+    abi: ABI.ITeeRegistryV1,
   },
 
   governance: {
     address: A("0x0000000000000000000000000000000000001018"),
     note: "Governance (canon, meta-canon, OIP, GIP)",
-    // `statusCode` (not `status`) so it bypasses the WorldwideDay status
-    // humanizer in format.ts; the proposal status name is attached in view.ts.
-    abi: parseAbi([
-      "struct Proposal { uint256 id; uint8 statusCode; address author; uint64 createdBlock; uint64 updatedBlock; bytes32 textHash; string text; }",
-      "struct ProposalMeta { uint256 id; uint8 statusCode; address author; uint64 createdBlock; uint64 updatedBlock; bytes32 textHash; }",
-      "function getMetaCanon() view returns (string text, uint64 version, bytes32 hash)",
-      "function getCanon() view returns (string text, uint64 version, bytes32 hash)",
-      "function getMetaCanonRevisionHash(uint64 version) view returns (bytes32)",
-      "function getCanonRevisionHash(uint64 version) view returns (bytes32)",
-      "function getOip(uint256 id) view returns (Proposal)",
-      "function getGip(uint256 id) view returns (Proposal)",
-      "function oipCount() view returns (uint64)",
-      "function gipCount() view returns (uint64)",
-      "function getOipsByAuthor(address author, uint256 offset, uint256 limit) view returns (ProposalMeta[])",
-      "function getGipsByAuthor(address author, uint256 offset, uint256 limit) view returns (ProposalMeta[])",
-      "function getAcceptedOips(uint256 offset, uint256 limit) view returns (ProposalMeta[])",
-      "function getAcceptedGips(uint256 offset, uint256 limit) view returns (ProposalMeta[])",
-      "function getRejectedOips(uint256 offset, uint256 limit) view returns (ProposalMeta[])",
-      "function getRejectedGips(uint256 offset, uint256 limit) view returns (ProposalMeta[])",
-      "function oipCountByAuthor(address author) view returns (uint256)",
-      "function gipCountByAuthor(address author) view returns (uint256)",
-      "function acceptedOipCount() view returns (uint256)",
-      "function acceptedGipCount() view returns (uint256)",
-      "function rejectedOipCount() view returns (uint256)",
-      "function rejectedGipCount() view returns (uint256)",
-      "function getOipDiff(uint256 id, uint8 base) view returns (string)",
-      "function getGipDiff(uint256 id, uint8 base) view returns (string)",
-      "function isAuthority(address who) view returns (bool)",
-    ]),
+    abi: ABI.IGovernance,
   },
 };
 
@@ -373,8 +181,15 @@ export const PROPOSAL_STATUS = [
   "Implemented",
 ] as const;
 
+export type ProposalStatusName = (typeof PROPOSAL_STATUS)[number];
+
 export function proposalStatusName(v: number): string {
   return PROPOSAL_STATUS[v] ?? `UNKNOWN(${v})`;
+}
+
+/** Status name -> on-chain `uint8` code accepted by `get{Oip,Gip}sByStatus`. */
+export function proposalStatusCode(name: ProposalStatusName): number {
+  return PROPOSAL_STATUS.indexOf(name);
 }
 
 // Gem lifecycle state (crates/core/gem/src/schema.rs::GemState).

@@ -41,11 +41,12 @@ fn item(owner: Address) -> NodItemState {
         worldwide_day,
         league_id: 4,
         floor_price_minor: U256::from(13),
-        bucket_key: B256::repeat_byte(0x44),
+        bucket_key: NodContract::bucket_key(worldwide_day, U256::from(13), 978),
         cost_amount_minor: U256::from(17),
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 1_752_534_000,
+        is_settled: false,
     }
 }
 
