@@ -9,6 +9,10 @@ use outbe_primitives::{
     consensus::OUTBE_MAX_BLOCK_SIZE,
     error::PrecompileError,
     reshare_artifact::{decode_outbe_block_artifacts, sanitize_prefinal_outbe_block_artifacts},
+    runtime_audit_v1::{
+        process_instance_id, BODY_READ_REQUEST_DEADLINE, OTHER_PAYLOAD_EXECUTION_FAILURE,
+        PAYLOAD_EXECUTION_FAILED, SCHEMA_VERSION,
+    },
     system_tx::GENESIS_BOOTSTRAP_BLOCK_NUMBER,
     OutbeBuiltPayload, OutbeHeader, OutbePayloadAttributes, OutbePrimitives, OutbeTxEnvelope,
 };
@@ -524,7 +528,21 @@ where
                         trace!(target: "payload_builder", %error, ?tx_hash, "skipping invalid transaction");
                         continue;
                     }
-                    Err(err) => return Err(PayloadBuilderError::evm(err)),
+                    Err(err) => {
+                        let failure_kind = payload_execution_failure_kind(&err);
+                        debug!(
+                            target: "payload_builder",
+                            audit_schema = SCHEMA_VERSION,
+                            audit_event = %PAYLOAD_EXECUTION_FAILED,
+                            process_instance = %process_instance_id(),
+                            payload_id = %payload_id,
+                            ?tx_hash,
+                            failure_kind = %failure_kind,
+                            %err,
+                            "payload transaction execution failed"
+                        );
+                        return Err(PayloadBuilderError::evm(err));
+                    }
                 };
 
                 if let Some(blob_count) = tx_blob_count {
@@ -695,6 +713,17 @@ fn ce_work_admission_error(error: &BlockExecutionError) -> Option<&PrecompileErr
     error.as_internal()?.downcast_other::<PrecompileError>()
 }
 
+fn payload_execution_failure_kind(error: &BlockExecutionError) -> &'static str {
+    if matches!(
+        ce_work_admission_error(error),
+        Some(PrecompileError::BodyReadRequestDeadline)
+    ) {
+        BODY_READ_REQUEST_DEADLINE
+    } else {
+        OTHER_PAYLOAD_EXECUTION_FAILURE
+    }
+}
+
 fn ce_local_readiness_error(error: &BlockExecutionError) -> bool {
     matches!(
         ce_work_admission_error(error),
@@ -721,6 +750,10 @@ mod tests {
         ExactParentIdentity, FinalizedMarker, ACTIVE_COMMITMENT_SCHEME,
         LOCAL_STORAGE_SCHEMA_VERSION,
     };
+    use outbe_primitives::runtime_audit_v1::{
+        BODY_READ_REQUEST_DEADLINE, OTHER_PAYLOAD_EXECUTION_FAILURE,
+    };
+
     use outbe_evm::{
         system_tx::{split_system_layout, system_tx_intrinsic_gas, SystemTxKind},
         OutbeEvmSigner,
@@ -753,6 +786,21 @@ mod tests {
     type TestPool = NoopTransactionPool<EthPooledTransaction>;
     type TestProvider = MockEthProvider<OutbePrimitives, ChainSpec<OutbeHeader>>;
     const TEST_CONSENSUS_PUBLIC_KEY: [u8; 48] = [0x11; 48];
+
+    #[test]
+    fn payload_failure_kind_is_structural_and_stable() {
+        let deadline = BlockExecutionError::other(PrecompileError::BodyReadRequestDeadline);
+        let other = BlockExecutionError::msg("unclassified payload failure");
+
+        assert_eq!(
+            payload_execution_failure_kind(&deadline),
+            BODY_READ_REQUEST_DEADLINE
+        );
+        assert_eq!(
+            payload_execution_failure_kind(&other),
+            OTHER_PAYLOAD_EXECUTION_FAILURE
+        );
+    }
 
     struct TestBestTransactions {
         transactions: std::vec::IntoIter<Arc<ValidPoolTransaction<EthPooledTransaction>>>,
