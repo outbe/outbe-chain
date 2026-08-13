@@ -3,6 +3,7 @@
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
+use alloy_primitives::Address;
 use alloy_sol_types::sol;
 use cucumber::{then, when};
 
@@ -82,6 +83,27 @@ sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IAuctionStage {
         function getAuctionStage(uint32 worldwideDay) external view returns (uint8);
+    }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IOriginTargets {
+        function targetsOf(uint32 worldwideDay) external view returns (uint32[] memory);
+    }
+}
+
+/// The targets frozen for the day. An empty snapshot means the start had nowhere
+/// to go, which is a different fault from one that was dispatched and lost.
+fn frozen_targets(url: &str, router: Address, worldwide_day: u32) -> String {
+    match eth::read_call(
+        url,
+        router,
+        &IOriginTargets::targetsOfCall {
+            worldwideDay: worldwide_day,
+        },
+    ) {
+        Some(targets) if targets.is_empty() => "the router froze no targets for the day".to_owned(),
+        Some(targets) => format!("the router froze targets {targets:?}"),
+        None => "the router did not answer".to_owned(),
     }
 }
 
@@ -206,9 +228,10 @@ fn auction_opens_on_target(world: &mut World) {
         }
         assert!(
             Instant::now() < deadline,
-            "day {worldwide_day} settled but no auction ever opened on the venue at {}: {}; {}; {}",
+            "day {worldwide_day} settled but no auction ever opened on the venue at {}: {}; {}; {}; {}",
             contracts.intex_auction,
             desis_stage(&url, worldwide_day),
+            frozen_targets(&url, contracts.origin_router, worldwide_day),
             day_closure(world, worldwide_day),
             day_colour(world, worldwide_day)
         );
