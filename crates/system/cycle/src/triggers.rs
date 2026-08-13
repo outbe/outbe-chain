@@ -113,7 +113,7 @@ pub fn metadosis_mutation_lease_budget_per_tick() -> u8 {
 #[cfg(not(feature = "e2e-test"))]
 const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 43_200;
 #[cfg(feature = "e2e-test")]
-const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 120;
+const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 60;
 
 /// Active trigger table. Order is informational only — the dispatcher
 /// fires triggers independently per slot.
