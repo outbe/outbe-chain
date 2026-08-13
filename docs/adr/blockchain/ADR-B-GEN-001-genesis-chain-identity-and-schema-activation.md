@@ -82,18 +82,23 @@ non-identical existing allocation entry.
 
 ### Immutable genesis protocol parameters
 
-Optional `config.outbeProtocol` timing overrides are resolved exactly once by
-`outbe-chain constants genesis`. The Rust-owned schema materializes the complete
-`GenesisProtocolParametersV1` record at system account `0x...EE11` before OCOMP
-registrations bind the genesis hash. Missing JSON fields use canonical production
-defaults during generation; missing or corrupt runtime storage never falls back.
-The account has marker code, a schema version, all resolved values, a parameters
-hash and an installed marker, but no public dispatch or runtime writer.
+Production and testnet binaries read the canonical
+`GenesisProtocolParametersV1` directly from a compile-time Rust constant. They
+have no protocol-parameter singleton and reject any `config.outbeProtocol` key.
+Optional timing overrides are read only when the node is compiled with
+`test-protocol-overrides` for LocalNet/E2E. In that build, the Rust-owned
+resolver validates the complete profile and fills missing JSON fields from the
+same defaults. There is no constants account, marker code, storage schema,
+runtime storage read or runtime writer.
 
-Runtime consumers call `outbe-chain-constants` and receive the same immutable
-typed record without observing whether a field was explicit or defaulted. The
-process cache is keyed by non-zero genesis hash. Python tooling may copy
-`seed.protocol_constants` to JSON but does not reproduce the Rust slot layout.
+Runtime consumers call explicit scalar getters in `outbe-chain-constants`, such
+as `get_metadosis_forming_period_seconds()`. Normal builds read the compile-time
+default record. Feature builds read the same process-wide
+`OnceLock<GenesisProtocolParametersV1>` without exposing whether a field was
+explicit or defaulted, and fail immediately if a getter runs before
+initialization. Python tooling may copy
+`seed.protocol_constants` to JSON but does not resolve defaults or reproduce a
+Rust state layout. Production release tooling does not enable the test feature.
 The normative catalog is `docs/genesis-protocol-constants.md`.
 
 ### Startup validation and readiness

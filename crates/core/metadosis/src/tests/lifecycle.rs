@@ -2161,51 +2161,6 @@ fn test_cold_start_uses_genesis_default_schedule_independent_of_chain_id() {
 }
 
 #[test]
-fn test_cold_start_uses_materialized_short_genesis_schedule() {
-    with_storage(|storage| {
-        let forming_period = outbe_primitives::time::UTC_PLUS_14_OFFSET + 60;
-        let parameters = outbe_chain_constants::GenesisProtocolParametersV1 {
-            metadosis_forming_period_seconds: forming_period,
-            metadosis_lookback_delay_seconds: 0,
-            metadosis_offering_period_seconds: 120,
-            metadosis_waiting_period_seconds: 30,
-            metadosis_bootstrap_duration_seconds: 300,
-            metadosis_advance_interval_seconds: 10,
-            ocomp_compute_vote_window_blocks: 120,
-            nod_materialization: Default::default(),
-        };
-        parameters.validate().unwrap();
-        for (slot, value) in parameters.genesis_storage_words() {
-            outbe_primitives::storage::types::Slot::<U256>::new(
-                slot,
-                outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS,
-                storage.clone(),
-            )
-            .write(value)
-            .unwrap();
-        }
-
-        let timestamp = crate::runtime::date_key_to_timestamp(20260302) + 30;
-        run_begin_block_with_chain_id(storage.clone(), 1, timestamp, CHAIN_ID);
-
-        let metadosis = MetadosisContract::new(storage);
-        let day = metadosis.worldwide_days.entry(20260302u32.into());
-        let start = outbe_common::WorldwideDay::new(20260302).start_timestamp();
-        assert_eq!(day.forming_end().read().unwrap(), start + forming_period);
-        assert_eq!(day.lookback_end().read().unwrap(), start + forming_period);
-        assert_eq!(
-            day.offering_end().read().unwrap(),
-            start + forming_period + 120
-        );
-        assert_eq!(
-            day.scheduled_process_time().read().unwrap(),
-            start + forming_period + 150
-        );
-        assert_eq!(metadosis.get_bootstrap_end_time().unwrap(), timestamp + 300);
-    });
-}
-
-#[test]
 fn test_offering_entry_captures_vwap_unblocks_and_exit_reblocks() {
     with_storage(|storage| {
         let wwd_raw = 20260302u32;
@@ -3318,54 +3273,6 @@ fn test_events_emitted_for_accumulation_and_lifecycle() {
         events.len() >= 2,
         "expected accumulation + lifecycle events"
     );
-}
-
-#[test]
-fn auction_brief_dispatched_only_on_the_ready_tick() {
-    const SECONDS_PER_DAY: u64 = 24 * SECONDS_PER_HOUR;
-    with_storage(|storage| {
-        let parameters = outbe_chain_constants::GenesisProtocolParametersV1 {
-            // Preserve the original five-day characterization explicitly in
-            // genesis instead of deriving a hidden schedule from chain id.
-            metadosis_lookback_delay_seconds: 0,
-            ..Default::default()
-        };
-        for (slot, value) in parameters.genesis_storage_words() {
-            outbe_primitives::storage::types::Slot::<U256>::new(
-                slot,
-                outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS,
-                storage.clone(),
-            )
-            .write(value)
-            .unwrap();
-        }
-        let wwd_key: u32 = 20260601;
-        let base_ts = crate::runtime::date_key_to_timestamp(wwd_key);
-
-        // Block 1 creates the day; seed its limit afterwards so READY processing
-        // has something to brief.
-        run_begin_block(storage.clone(), 1, base_ts);
-        let mut metadosis = MetadosisContract::new(storage.clone());
-        metadosis
-            .set_metadosis_limit(wwd_key.into(), U256::from(777u64))
-            .unwrap();
-        drop(metadosis);
-
-        // k1 FORMING, k2 offering entry, k3-k4 offering/waiting, k5 READY.
-        let mut stages = Vec::new();
-        for k in 1..6u64 {
-            run_begin_block(storage.clone(), k + 1, base_ts + k * SECONDS_PER_DAY);
-            let desis = storage.contract::<outbe_desis::schema::DesisContract>();
-            stages.push(desis.auction_stage.read(&wwd_key.into()).unwrap());
-        }
-
-        let briefed = outbe_desis::schema::AuctionStage::Briefed as u8;
-        assert_eq!(
-            stages,
-            vec![0, 0, 0, 0, briefed],
-            "the brief must dispatch on the READY tick only"
-        );
-    });
 }
 
 #[test]

@@ -783,7 +783,7 @@ impl OcompTopology {
     /// Prepare two independently scheduled public jobs around one real DKG
     /// membership boundary. The shortened epoch is still above the normative
     /// snapshot-retention lower bound; the compute-and-vote deadline comes from
-    /// the same immutable genesis constants record used by production.
+    /// the test-only genesis override selected by the E2E node build.
     #[cfg(feature = "ocomp-integration")]
     pub fn prepare_dynamic_membership_fork_install(&self) -> Result<OcompDynamicMembershipForkV1> {
         let genesis_path = self.cfg.dir.join("genesis.json");
@@ -1309,9 +1309,7 @@ impl OcompTopology {
         let base_spec = parse_outbe_chain_spec(&genesis_path)?;
         let base_genesis_hash = base_spec.genesis_hash();
         let protocol_constants =
-            outbe_chain_constants::GenesisProtocolParametersV1::from_materialized_genesis(
-                &genesis,
-            )?;
+            outbe_chain_constants::GenesisProtocolParametersV1::from_genesis(&genesis)?;
         let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
         let install = measurement_fork_install(
             chain_id,
@@ -3490,10 +3488,7 @@ mod tests {
     use crate::internal::proc::ChildGuard;
     use alloy_primitives::B256;
     #[cfg(feature = "ocomp-integration")]
-    use outbe_chain_constants::{
-        GenesisProtocolParametersV1, CHAIN_CONSTANTS_ADDRESS, CHAIN_CONSTANTS_MARKER_CODE,
-        GENESIS_CONFIG_KEY,
-    };
+    use outbe_chain_constants::GENESIS_CONFIG_KEY;
     #[cfg(feature = "ocomp-integration")]
     use outbe_metadosis::{WwdDayType, WwdStatus};
 
@@ -4606,22 +4601,6 @@ mod tests {
         let mut genesis = serde_json::to_value(&spec.genesis).unwrap();
         genesis["config"][outbe_node::ocomp::fork::EPOCH_LENGTH_BLOCKS_GENESIS_KEY] =
             serde_json::json!(OCOMP_TEST_EPOCH_LENGTH_BLOCKS);
-        let parameters = GenesisProtocolParametersV1::default();
-        let storage = parameters
-            .genesis_storage_words()
-            .into_iter()
-            .map(|(slot, value)| {
-                (
-                    format!("0x{slot:064x}"),
-                    serde_json::Value::String(format!("0x{value:064x}")),
-                )
-            })
-            .collect::<serde_json::Map<_, _>>();
-        genesis["alloc"][format!("{CHAIN_CONSTANTS_ADDRESS:#x}")] = serde_json::json!({
-            "balance": "0x0",
-            "code": format!("0x{}", hex::encode(CHAIN_CONSTANTS_MARKER_CODE)),
-            "storage": storage,
-        });
         std::fs::write(
             topology.cfg.dir.join("genesis.json"),
             serde_json::to_vec_pretty(&genesis).unwrap(),
@@ -4672,24 +4651,6 @@ mod tests {
                 "advanceIntervalSeconds": 10
             },
             "ocomp": { "computeVoteWindowBlocks": vote_window_blocks }
-        });
-        let parameters =
-            GenesisProtocolParametersV1::resolve(genesis["config"].get(GENESIS_CONFIG_KEY))
-                .unwrap();
-        let storage = parameters
-            .genesis_storage_words()
-            .into_iter()
-            .map(|(slot, value)| {
-                (
-                    format!("0x{slot:064x}"),
-                    serde_json::Value::String(format!("0x{value:064x}")),
-                )
-            })
-            .collect::<serde_json::Map<_, _>>();
-        genesis["alloc"][format!("{CHAIN_CONSTANTS_ADDRESS:#x}")] = serde_json::json!({
-            "balance": "0x0",
-            "code": format!("0x{}", hex::encode(CHAIN_CONSTANTS_MARKER_CODE)),
-            "storage": storage,
         });
         genesis["alloc"][format!("{METADOSIS_ADDRESS:#x}")] = serde_json::json!({
             "balance": "0x0",

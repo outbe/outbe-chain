@@ -56,7 +56,6 @@ use std::{path::PathBuf, sync::Arc, thread};
 use tokio::sync::oneshot;
 use tracing::info;
 
-mod constants_genesis;
 mod ocomp_exex;
 mod ocomp_genesis;
 mod tee_genesis;
@@ -476,6 +475,14 @@ impl ChainSpecParser for OutbeChainSpecParser {
         .activation()
         .map_err(|error| eyre::eyre!("invalid mandatory teeAttestationV1 ChainSpec: {error}"))?;
         outbe_node::ocomp::fork::require_startup_ocomp_fork_install(chain_spec.as_ref())?;
+        outbe_chain_constants::initialize(
+            chain_spec
+                .genesis
+                .config
+                .extra_fields
+                .get(outbe_chain_constants::GENESIS_CONFIG_KEY),
+        )
+        .map_err(|error| eyre::eyre!("invalid config.outbeProtocol: {error}"))?;
         Ok(chain_spec)
     }
 }
@@ -588,9 +595,6 @@ fn main() -> eyre::Result<()> {
     }
     if args.len() > 1 && args[1] == "tee" {
         return tee_genesis::run(&args);
-    }
-    if args.len() > 1 && args[1] == "constants" {
-        return constants_genesis::run(&args);
     }
     if args.len() > 1 && args[1] == "ocomp" {
         return ocomp_genesis::run(&args);

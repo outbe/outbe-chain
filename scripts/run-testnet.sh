@@ -52,7 +52,7 @@ locate_binary() {
         return
     fi
 
-    for candidate in ./target/debug/outbe-chain ./target/release/outbe-chain; do
+    for candidate in ./target/release/outbe-chain; do
         if [ -x "$candidate" ]; then
             OUTBE_CHAIN_BINARY="$candidate"
             echo "Using outbe-chain binary: $OUTBE_CHAIN_BINARY"
@@ -60,7 +60,7 @@ locate_binary() {
         fi
     done
 
-    echo "Error: outbe-chain binary not found. Run 'cargo build --bin outbe-chain' or set OUTBE_CHAIN_BINARY."
+    echo "Error: release outbe-chain binary not found. Build it with test-protocol-overrides or set OUTBE_CHAIN_BINARY."
     exit 1
 }
 
@@ -161,14 +161,14 @@ do_start() {
         # stable sealing key, for localnet/CI without SGX. Node args are identical
         # — only which binary the container runs differs.
         local tee_bin_name="outbe-tee-enclave"
-        local tee_build_hint="cargo build --bin outbe-tee-enclave"
+        local tee_build_hint="cargo build --release --bin outbe-tee-enclave"
         if [ -n "${OUTBE_TEE_ENCLAVE_MOCK:-}" ]; then
             tee_bin_name="outbe-tee-enclave-mock"
-            tee_build_hint="cargo build --bin outbe-tee-enclave-mock --features mock"
+            tee_build_hint="cargo build --release --bin outbe-tee-enclave-mock --features mock"
         fi
         tee_enclave_bin="${OUTBE_TEE_ENCLAVE_BINARY:-}"
         if [ -z "$tee_enclave_bin" ]; then
-            for cand in "./target/debug/$tee_bin_name" "./target/release/$tee_bin_name"; do
+            for cand in "./target/release/$tee_bin_name"; do
                 if [ -x "$cand" ]; then tee_enclave_bin="$cand"; break; fi
             done
         fi

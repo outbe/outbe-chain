@@ -212,9 +212,6 @@ TEE_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee0a"
 # before production dispatch activates.
 STABLECOIN_FACTORY_ADDRESS = "000000000000000000000000000000000000ee0f"
 STABLECOIN_POLICY_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee10"
-# Immutable protocol timing record. Python may author config.outbeProtocol, but
-# only `outbe-chain constants genesis` owns this account's Rust storage layout.
-CHAIN_CONSTANTS_ADDRESS = "000000000000000000000000000000000000ee11"
 STABLECOIN_ADDRESS_PREFIX = "53c0"
 OUTBE_SYSTEM_TX_ADDRESS = "ff00000000000000000000000000000000000001"
 
@@ -248,12 +245,9 @@ ALL_PRECOMPILE_ADDRESSES = [
 PROTOCOL_ACCUMULATOR_ADDRESSES = [
     CCA_ADDRESS,
 ]
-IMMUTABLE_PROTOCOL_ADDRESSES = [CHAIN_CONSTANTS_ADDRESS]
-
 PROTECTED_PROTOCOL_ADDRESSES = set(
     ALL_PRECOMPILE_ADDRESSES
     + PROTOCOL_ACCUMULATOR_ADDRESSES
-    + IMMUTABLE_PROTOCOL_ADDRESSES
 )
 
 # Marker bytecode for precompile accounts (prevents EIP-161 empty account removal)
@@ -1538,9 +1532,8 @@ def seed_external_contracts(alloc, contracts_list, contracts_dir):
 def seed_protocol_constants(genesis: dict, seed: dict) -> None:
     """Copy optional protocol timing overrides into genesis config.
 
-    Rust resolves defaults, validates the complete record, and materializes its
-    storage later. Keeping that layout out of Python preserves one owner for the
-    consensus-visible schema.
+    Rust resolves defaults, validates the complete record, and installs it in
+    immutable process memory during node startup.
     """
     profile = seed.get("protocol_constants")
     if profile is None:
@@ -1618,7 +1611,8 @@ def main():
         "--fresh-metadosis",
         action="store_true",
         help="Do not seed an already-OFFERING WorldwideDay; block 1 creates it "
-             "from config.outbeProtocol timings. Intended for production-shaped E2E.",
+             "from config.outbeProtocol timings in a test-protocol-overrides node. "
+             "Intended for production-shaped E2E.",
     )
     args = parser.parse_args()
 
