@@ -38,9 +38,9 @@ pub const SETTLEMENT_WINDOW_SECONDS: u64 = 24 * 3600;
 /// there: a day-long window would carry the auction over a midnight the run
 /// never formed.
 #[cfg(feature = "e2e-test")]
-pub const COMMIT_WINDOW_SECONDS: u64 = 600;
+pub const COMMIT_WINDOW_SECONDS: u64 = 900;
 #[cfg(feature = "e2e-test")]
-pub const REVEAL_WINDOW_SECONDS: u32 = 300;
+pub const REVEAL_WINDOW_SECONDS: u32 = 1800;
 #[cfg(feature = "e2e-test")]
 pub const SETTLEMENT_WINDOW_SECONDS: u64 = 1800;
 
