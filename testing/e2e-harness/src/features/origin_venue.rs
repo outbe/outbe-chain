@@ -91,6 +91,12 @@ sol! {
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IVenueCounts {
+        function auctionRunningCounts(uint32 worldwideDay)
+            external view returns (uint32 committedBidsCount, uint32 revealedBidsCount);
+    }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
     interface IDesisBids {
         function getBidsCount(uint32 worldwideDay) external view returns (uint256);
         function isChainDone(uint32 worldwideDay, uint32 srcChainId) external view returns (bool);
@@ -253,6 +259,23 @@ fn auction_opens_on_target(world: &mut World) {
 }
 
 #[cfg(feature = "ocomp-integration")]
+fn venue_bid_counts(url: &str, venue: Address, worldwide_day: u32) -> String {
+    match eth::read_call(
+        url,
+        venue,
+        &IVenueCounts::auctionRunningCountsCall {
+            worldwideDay: worldwide_day,
+        },
+    ) {
+        Some(counts) => format!(
+            "venue holds {} committed and {} revealed bids",
+            counts.committedBidsCount, counts.revealedBidsCount
+        ),
+        None => "venue did not report its bid counts".to_owned(),
+    }
+}
+
+#[cfg(feature = "ocomp-integration")]
 fn relayed_bids(url: &str, worldwide_day: u32, chain_id: u32) -> String {
     let desis = origin_venue::DESIS
         .parse()
@@ -365,11 +388,12 @@ fn auction_clears(world: &mut World) {
         .rpc
         .chain_id(world.validators.primary_port())
         .expect("committee chain id");
-    let _contracts = world
+    let venue = world
         .state
         .origin_contracts
         .clone()
-        .expect("a deploy recorded its addresses");
+        .expect("a deploy recorded its addresses")
+        .intex_auction;
     let worldwide_day = settled_day(world);
     let deadline = Instant::now() + AUCTION_START_TIMEOUT;
     loop {
@@ -390,9 +414,17 @@ fn auction_clears(world: &mut World) {
         assert_ne!(stage, Some(6), "Desis cancelled day {worldwide_day}");
         assert!(
             Instant::now() < deadline,
-            "day {worldwide_day} never cleared on Desis: {}; {}",
+            "day {worldwide_day} never cleared on Desis: {}; {}; venue stage {:?}, {}",
             desis_stage(&url, worldwide_day),
-            relayed_bids(&url, worldwide_day, chain_id as u32)
+            relayed_bids(&url, worldwide_day, chain_id as u32),
+            eth::read_call(
+                &url,
+                venue,
+                &IAuctionStage::getAuctionStageCall {
+                    worldwideDay: worldwide_day
+                },
+            ),
+            venue_bid_counts(&url, venue, worldwide_day)
         );
         sleep(Duration::from_secs(2));
     }
