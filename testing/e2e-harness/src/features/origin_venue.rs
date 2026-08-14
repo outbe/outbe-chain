@@ -108,6 +108,12 @@ sol! {
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IParkedWork {
+        function nextPendingBidsRelayIdx() external view returns (uint256);
+        function nextParkedSendIdx() external view returns (uint256);
+    }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
     interface IVenueCounts {
         function auctionRunningCounts(uint32 worldwideDay)
             external view returns (uint32 committedBidsCount, uint32 revealedBidsCount);
@@ -293,6 +299,19 @@ fn venue_schedule(url: &str, venue: Address, worldwide_day: u32) -> String {
     }
 }
 
+/// Both sides swallow a failed send by parking it, so a non-zero index is the
+/// only trace of work that never left.
+#[cfg(feature = "ocomp-integration")]
+fn parked_work(url: &str, router: Address, venue_router: Address) -> String {
+    let sends = eth::read_call(url, router, &IParkedWork::nextParkedSendIdxCall {});
+    let relays = eth::read_call(
+        url,
+        venue_router,
+        &IParkedWork::nextPendingBidsRelayIdxCall {},
+    );
+    format!("origin parked sends {sends:?}, venue parked bid relays {relays:?}")
+}
+
 #[cfg(feature = "ocomp-integration")]
 fn venue_bid_counts(url: &str, venue: Address, worldwide_day: u32) -> String {
     match eth::read_call(
@@ -446,12 +465,14 @@ fn auction_clears(world: &mut World) {
         .rpc
         .chain_id(world.validators.primary_port())
         .expect("committee chain id");
-    let venue = world
+    let deployed = world
         .state
         .origin_contracts
         .clone()
-        .expect("a deploy recorded its addresses")
-        .intex_auction;
+        .expect("a deploy recorded its addresses");
+    let venue = deployed.intex_auction;
+    let router = deployed.origin_router;
+    let venue_router = deployed.target_router;
     let worldwide_day = settled_day(world);
     let deadline = Instant::now() + AUCTION_START_TIMEOUT;
     loop {
@@ -472,7 +493,7 @@ fn auction_clears(world: &mut World) {
         assert_ne!(stage, Some(6), "Desis cancelled day {worldwide_day}");
         assert!(
             Instant::now() < deadline,
-            "day {worldwide_day} never cleared on Desis: {}; {}; venue stage {:?}, {}",
+            "day {worldwide_day} never cleared on Desis: {}; {}; venue stage {:?}, {}; {}",
             desis_stage(&url, worldwide_day),
             relayed_bids(&url, worldwide_day, chain_id as u32),
             eth::read_call(
@@ -482,7 +503,8 @@ fn auction_clears(world: &mut World) {
                     worldwideDay: worldwide_day
                 },
             ),
-            venue_bid_counts(&url, venue, worldwide_day)
+            venue_bid_counts(&url, venue, worldwide_day),
+            parked_work(&url, router, venue_router)
         );
         sleep(Duration::from_secs(2));
     }
