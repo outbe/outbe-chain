@@ -239,9 +239,9 @@ fn auction_opens_on_target(world: &mut World) {
                 worldwideDay: worldwide_day,
             },
         ) {
-            assert_ne!(
-                stage, 4,
-                "day {worldwide_day} reached the venue already cancelled"
+            assert!(
+                stage < 2,
+                "day {worldwide_day} reached the venue at stage {stage}, past its commit window"
             );
             return;
         }
