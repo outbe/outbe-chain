@@ -463,8 +463,8 @@ mod tests {
     use k256::ecdsa::signature::hazmat::PrehashSigner as _;
     use outbe_primitives::tee_attestation_v1::{
         AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
-        DcapCollateralKind, DcapEvidenceV1, EnclaveInitializationManifestV1, EnclaveProfile,
-        NodeIdV1, RegistrationIntentV1,
+        DcapCollateralKind, DcapEvidenceV1, EnclaveInitializationManifestV1, NodeIdV1,
+        RegistrationIntentV1,
     };
     use outbe_tee::dcap_protocol::{
         dcap_onboarding_request_hash, dcap_verification_request_hash, DcapPckCaV1,
@@ -487,8 +487,7 @@ mod tests {
         let manifest = EnclaveInitializationManifestV1 {
             chain_id: [0x83; 32],
             genesis_hash: B256::repeat_byte(0x84),
-            enclave_profile: EnclaveProfile::FullNode,
-            node_id: NodeIdV1::FullNode {
+            node_id: NodeIdV1 {
                 reth_p2p_public: node_public,
             },
             initialization_challenge: [0x85; 32],
@@ -503,7 +502,6 @@ mod tests {
             operation: AttestationOperationV1::RegisterEnclave,
             attestation_mode: AttestationMode::DcapRequired,
             policy_hash: B256::repeat_byte(0x87),
-            enclave_profile: manifest.enclave_profile,
             node_id: manifest.node_id.clone(),
             enclave_id: manifest.enclave_id().unwrap(),
             binding_id: B256::repeat_byte(0x88),

@@ -367,23 +367,26 @@ contract EscrowAdapter is
 
     // --- Bridge Finalization ---
     /// @inheritdoc IEscrowAdapter
-    function finalizeAuction(uint32 worldwideDay, bytes32 receiveId, FinalizationInstruction[] calldata instructions)
-        external
-        override
-        onlyRole(RELAYER_ROLE)
-        nonReentrant
-        returns (uint128 totalPaid)
-    {
+    function finalizeAuction(
+        uint32 worldwideDay,
+        bytes32 receiveId,
+        FinalizationInstruction[] calldata instructions,
+        bool completesDay
+    ) external override onlyRole(RELAYER_ROLE) nonReentrant returns (uint128 totalPaid) {
         EscrowAdapterStorage storage $ = _s();
+        // A closed day takes no more instructions; within an open one each bidder is
+        // guarded by its own lock leaving `Locked`.
         if ($.auctionEscrowState[worldwideDay].finalized) {
             revert AlreadyFinalized();
         }
         if (instructions.length == 0) revert ZeroValue("instructions");
 
-        // Effects: mark finalized + record the timestamp before any external interaction. The
-        // timestamp anchors the post-finalize `claimRefund` window (POST_FINALIZE_REFUND_DELAY).
-        $.auctionEscrowState[worldwideDay].finalized = true;
-        $.auctionEscrowState[worldwideDay].finalizedAt = uint32(block.timestamp);
+        // Effects before any external interaction. The completing set closes the day, which
+        // anchors the post-finalize `claimRefund` window (POST_FINALIZE_REFUND_DELAY).
+        if (completesDay) {
+            $.auctionEscrowState[worldwideDay].finalized = true;
+            $.auctionEscrowState[worldwideDay].finalizedAt = uint32(block.timestamp);
+        }
 
         uint128 totalRefunded = 0;
         uint32 bidsProcessed = 0;

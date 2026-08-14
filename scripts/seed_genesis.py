@@ -157,7 +157,6 @@ EMISSION_LIMIT_ADDRESS = "000000000000000000000000000000000000100d"
 PROMIS_LIMIT_ADDRESS = "000000000000000000000000000000000000100f"
 CYCLE_ADDRESS = "0000000000000000000000000000000000001010"
 CCA_ADDRESS = "0000000000000000000000000000000000001011"
-MERCHANT_ADDRESS = "0000000000000000000000000000000000001012"
 CREDIS_ADDRESS = "000000000000000000000000000000000000100a"
 CREDIS_FACTORY_ADDRESS = "0000000000000000000000000000000000001009"
 INTEX_FACTORY_ADDRESS = "0000000000000000000000000000000000001015"
@@ -213,9 +212,6 @@ TEE_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee0a"
 # before production dispatch activates.
 STABLECOIN_FACTORY_ADDRESS = "000000000000000000000000000000000000ee0f"
 STABLECOIN_POLICY_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee10"
-# Immutable protocol timing record. Python may author config.outbeProtocol, but
-# only `outbe-chain constants genesis` owns this account's Rust storage layout.
-CHAIN_CONSTANTS_ADDRESS = "000000000000000000000000000000000000ee11"
 STABLECOIN_ADDRESS_PREFIX = "53c0"
 OUTBE_SYSTEM_TX_ADDRESS = "ff00000000000000000000000000000000000001"
 
@@ -248,14 +244,10 @@ ALL_PRECOMPILE_ADDRESSES = [
 # collision-protected for genesis tooling but do not receive marker bytecode.
 PROTOCOL_ACCUMULATOR_ADDRESSES = [
     CCA_ADDRESS,
-    MERCHANT_ADDRESS,
 ]
-IMMUTABLE_PROTOCOL_ADDRESSES = [CHAIN_CONSTANTS_ADDRESS]
-
 PROTECTED_PROTOCOL_ADDRESSES = set(
     ALL_PRECOMPILE_ADDRESSES
     + PROTOCOL_ACCUMULATOR_ADDRESSES
-    + IMMUTABLE_PROTOCOL_ADDRESSES
 )
 
 # Marker bytecode for precompile accounts (prevents EIP-161 empty account removal)
@@ -918,6 +910,14 @@ def seed_tribute_day_totals(storage: StorageBuilder, days: list[int]):
         storage.set_mapping(1, u32_bytes(wwd), 1)
 
 
+def seed_nod_materialization_fifo(storage: StorageBuilder):
+    """Initialize the canonical NOD materialization FIFO bounds."""
+    # Pinned by `materialization_fifo_slots_match_the_genesis_seeder` in
+    # `crates/core/nod/src/adr006_tests.rs`.
+    storage.set_slot(19, 1)  # head_sequence
+    storage.set_slot(20, 1)  # tail_sequence (next-free)
+
+
 def seed_metadosis(storage: StorageBuilder, config: dict):
     """
     Metadosis storage layout — MUST track `crates/core/metadosis/src/schema.rs`
@@ -1532,9 +1532,8 @@ def seed_external_contracts(alloc, contracts_list, contracts_dir):
 def seed_protocol_constants(genesis: dict, seed: dict) -> None:
     """Copy optional protocol timing overrides into genesis config.
 
-    Rust resolves defaults, validates the complete record, and materializes its
-    storage later. Keeping that layout out of Python preserves one owner for the
-    consensus-visible schema.
+    Rust resolves defaults, validates the complete record, and installs it in
+    immutable process memory during node startup.
     """
     profile = seed.get("protocol_constants")
     if profile is None:
@@ -1612,7 +1611,8 @@ def main():
         "--fresh-metadosis",
         action="store_true",
         help="Do not seed an already-OFFERING WorldwideDay; block 1 creates it "
-             "from config.outbeProtocol timings. Intended for production-shaped E2E.",
+             "from config.outbeProtocol timings in a test-protocol-overrides node. "
+             "Intended for production-shaped E2E.",
     )
     args = parser.parse_args()
 
@@ -1837,6 +1837,14 @@ def main():
         print(f"  Tribute: {len(seed['tributes'])} tributes, "
               f"{len(offering_days)} offering day_totals init, "
               f"{len(tribute_storage.entries)} storage entries")
+
+    # Initialize the canonical materialization FIFO. NOD bodies are stored in
+    # compressed-entity storage and are not seeded into EVM slots.
+    nod_storage = StorageBuilder()
+    seed_nod_materialization_fifo(nod_storage)
+    entry = alloc[NOD_ADDRESS]
+    entry.setdefault("storage", {}).update(nod_storage.entries)
+    print(f"  Nod: {len(nod_storage.entries)} storage entries")
 
     # Seed Metadosis
     if "metadosis" in seed:

@@ -55,7 +55,7 @@ contract EscrowConservationHandler is Test {
             bidder: b, refundedAmount: refunded, paidAmount: l.lockedAmount - refunded
         });
         vm.prank(bridger);
-        try escrow.finalizeAuction(s, keccak256(abi.encode(s, b)), ins) {} catch {}
+        try escrow.finalizeAuction(s, keccak256(abi.encode(s, b)), ins, true) {} catch {}
     }
 
     function retry(uint256 seriesSeed, uint256 bidderSeed, uint128 refundSeed) external {

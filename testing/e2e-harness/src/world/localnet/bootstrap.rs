@@ -36,10 +36,10 @@ const LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS: u64 = 120;
 
 impl Localnet {
     /// Add the canonical block-1 TEE manifest after every scenario has finished
-    /// mutating genesis. Real SGX binds the exact test SIGSTRUCT into a
-    /// `DcapRequired` policy; non-hardware lanes remain separate
-    /// `GramineDirectDev` chains. The product binary constructs and validates the
-    /// policy bytes; the harness never reimplements its codec.
+    /// mutating genesis. The DCAP lane binds the exact test SIGSTRUCT into a
+    /// `DcapRequired` policy. SGX without DCAP and the non-hardware lanes use an
+    /// explicit `GramineDirectDev` policy. The product binary constructs and
+    /// validates the policy bytes; the harness never reimplements its codec.
     pub(crate) fn bind_tee_genesis(&self) -> Result<()> {
         self.ensure_ocomp_genesis()?;
         let genesis = self.cfg.dir.join("genesis.json");
@@ -283,9 +283,6 @@ impl Localnet {
         self.patch_felony(tuning)?;
         // Step 2d: opt-in lifecycle timing for claim/accounting E2E scenarios.
         self.patch_staking_timing(tuning)?;
-        // Step 2e: resolve optional protocol timings into immutable genesis
-        // storage before OCOMP registrations bind the genesis hash.
-        self.materialize_protocol_constants()?;
         Ok(())
     }
 
@@ -452,24 +449,6 @@ impl Localnet {
         self.run_setup(&mut cmd, "seed_genesis.py")
     }
 
-    fn materialize_protocol_constants(&self) -> Result<()> {
-        let genesis = self.cfg.dir.join("genesis.json");
-        let generated = self.cfg.dir.join("genesis.constants.json");
-        let original = self.cfg.dir.join("genesis.pre-constants.json");
-        let mut command = Command::new(&self.cfg.bin_chain);
-        command
-            .arg("constants")
-            .arg("genesis")
-            .arg("--input")
-            .arg(&genesis)
-            .arg("--output")
-            .arg(&generated);
-        self.run_setup(&mut command, "outbe-chain constants genesis")?;
-        fs::rename(&genesis, &original)?;
-        fs::rename(&generated, &genesis)?;
-        Ok(())
-    }
-
     /// Lower the SlashIndicator felony thresholds so downtime slashing triggers
     /// within the short dev epoch (`bootstrap-testnet.sh:228-253`).
     fn patch_felony(&self, tuning: &[(&str, String)]) -> Result<()> {
@@ -543,13 +522,13 @@ fn apply_co_located_sgx_timing(
     Ok(())
 }
 
-/// DCAP hardware E2E exercises the same DcapRequired network class as testnet.
-/// SGX-no-attest uses real hardware but deliberately keeps the separately
-/// identified GramineDirectDev chain.
+/// Hardware E2E uses the testnet chain identity. `SgxNoAttest` keeps LocalNet
+/// consensus/timing defaults and an explicit `GramineDirectDev` policy while
+/// running the production enclave inside SGX without DCAP.
 const fn localnet_chain_id(tee_mode: TeeMode) -> u64 {
     match tee_mode {
-        TeeMode::Real => TESTNET_CHAIN_ID,
-        TeeMode::SgxNoAttest | TeeMode::GramineDirect | TeeMode::Mock => DEVNET_CHAIN_ID,
+        TeeMode::Real | TeeMode::SgxNoAttest => TESTNET_CHAIN_ID,
+        TeeMode::GramineDirect | TeeMode::Mock => DEVNET_CHAIN_ID,
     }
 }
 
@@ -753,11 +732,16 @@ mod tests {
     }
 
     #[test]
-    fn co_located_real_sgx_gets_wider_consensus_windows_only_in_hardware_lane() {
+    fn co_located_sgx_gets_wider_consensus_windows() {
         let mut real = json!({ "config": {} });
         apply_co_located_sgx_timing(&mut real, crate::env::TeeMode::Real).unwrap();
         assert_eq!(real["config"]["leaderTimeoutMs"], json!(15_000));
         assert_eq!(real["config"]["certificationTimeoutMs"], json!(30_000));
+
+        let mut no_attest = json!({ "config": {} });
+        apply_co_located_sgx_timing(&mut no_attest, crate::env::TeeMode::SgxNoAttest).unwrap();
+        assert_eq!(no_attest["config"]["leaderTimeoutMs"], json!(15_000));
+        assert_eq!(no_attest["config"]["certificationTimeoutMs"], json!(30_000));
 
         let mut mock = json!({ "config": {} });
         apply_co_located_sgx_timing(&mut mock, crate::env::TeeMode::Mock).unwrap();
@@ -765,9 +749,9 @@ mod tests {
     }
 
     #[test]
-    fn hardware_and_dev_tee_lanes_have_distinct_network_identities() {
+    fn sgx_no_attest_uses_testnet_identity_while_dev_transports_use_devnet() {
         assert_eq!(localnet_chain_id(TeeMode::Real), TESTNET_CHAIN_ID);
-        assert_eq!(localnet_chain_id(TeeMode::SgxNoAttest), DEVNET_CHAIN_ID);
+        assert_eq!(localnet_chain_id(TeeMode::SgxNoAttest), TESTNET_CHAIN_ID);
         assert_eq!(localnet_chain_id(TeeMode::GramineDirect), DEVNET_CHAIN_ID);
         assert_eq!(localnet_chain_id(TeeMode::Mock), DEVNET_CHAIN_ID);
     }

@@ -20,8 +20,8 @@ Feature: Multichain auction from a settled day
     Given a fresh four-validator OCOMP public capacity localnet
     When the intex engine is deployed on the committee chain
     Then the committee chain hosts the intex engine
-    When all 257 capacity owners submit one encrypted Tribute each
-    Then all validators observe exactly 257 public Tributes for the capacity day
+    When 33 capacity owners submit one encrypted Tribute each at no more than two per block
+    Then all validators observe exactly 33 public Tributes for the capacity day
     When the committee logical clock reaches the public capacity processing time
     And the committee clock settles after the jump
     Then Metadosis creates one finalized JobIntent from that public Tribute

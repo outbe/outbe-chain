@@ -7,12 +7,10 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::{
     error::{PrecompileError, Result},
-    tee_attestation_v1::{EnclaveProfile, NodeIdV1, TeePolicyV1, MAX_TEE_POLICY_BYTES},
+    tee_attestation_v1::{NodeIdV1, TeePolicyV1, MAX_TEE_POLICY_BYTES},
 };
 use outbe_validatorset::contract::ValidatorSet;
 
-#[cfg(feature = "tee-attestation-v1")]
-use crate::runtime::compute_keys_hash;
 use crate::schema::TeeRegistry;
 #[cfg(feature = "tee-attestation-v1")]
 use alloy_primitives::keccak256;
@@ -20,7 +18,7 @@ use alloy_primitives::keccak256;
 #[cfg(feature = "tee-attestation-v1")]
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, PlatformTcbStatusSetV1,
-    RegistrationIntentV1,
+    RegistrationIntentV1, ValidatorNodeBindingV1,
 };
 #[cfg(feature = "tee-attestation-v1")]
 use outbe_tee::dcap_protocol::{
@@ -30,7 +28,7 @@ use outbe_tee::dcap_protocol::{
 
 pub use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1::{
     EnclaveBindingReplacedV1, EnclaveMeasurementTransitionedV1, EnclaveRegisteredV1,
-    EnclaveRenewedV1, OfferKeySealedForRegistryV1, TeePolicyActivatedV1,
+    EnclaveRenewedV1, OfferKeySealedForRegistryV1, TeePolicyActivatedV1, ValidatorNodeHostBoundV1,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,6 +115,38 @@ pub struct NodeEnclaveBindingV1 {
 }
 
 impl TeeRegistry<'_> {
+    #[cfg(feature = "tee-attestation-v1")]
+    fn require_initial_binding_target_v1(
+        intent: &RegistrationIntentV1,
+        binding: &ValidatorNodeBindingV1,
+    ) -> Result<()> {
+        let registered_node_id_hash = intent
+            .node_id
+            .node_id_hash()
+            .map_err(|error| revert_codec("registration NodeHost identity is invalid", error))?;
+        if binding.node_id_hash != registered_node_id_hash {
+            return Err(PrecompileError::Revert(
+                "initial address association must reference the same NodeHost as the registration"
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "tee-attestation-v1")]
+    fn require_initial_binding_evidence_target_v1(
+        evidence: &[u8],
+        binding: &ValidatorNodeBindingV1,
+    ) -> Result<()> {
+        let decoded = AttestationEvidenceV1::decode_canonical(evidence)
+            .map_err(|error| revert_codec("attestation evidence is not canonical", error))?;
+        let intent = match &decoded {
+            AttestationEvidenceV1::Dcap(value) => &value.intent,
+            AttestationEvidenceV1::GramineDirectDev(value) => &value.intent,
+        };
+        Self::require_initial_binding_target_v1(intent, binding)
+    }
+
     /// Installs the immutable first V1 policy. Successors are staged and
     /// promoted only by the existing protocol Update lifecycle; this bootstrap
     /// method intentionally cannot rotate a policy.
@@ -484,22 +514,14 @@ impl TeeRegistry<'_> {
         self.node_enclave_binding_v1(node_id_hash)
     }
 
-    pub fn full_node_enclave_binding_v1(
+    pub fn node_host_enclave_binding_v1(
         &self,
         reth_p2p_public: [u8; 33],
     ) -> Result<Option<NodeEnclaveBindingV1>> {
-        let node_id_hash = NodeIdV1::FullNode { reth_p2p_public }
+        let node_id_hash = NodeIdV1 { reth_p2p_public }
             .node_id_hash()
-            .map_err(|error| revert_codec("full-node P2P identity is invalid", error))?;
-        let binding = self.node_enclave_binding_v1(node_id_hash)?;
-        if binding.is_some()
-            && self.v1_node_profile.read(&node_id_hash)? != EnclaveProfile::FullNode as u64
-        {
-            return Err(PrecompileError::Fatal(
-                "stored full-node binding has the wrong enclave profile".into(),
-            ));
-        }
-        Ok(binding)
+            .map_err(|error| revert_codec("NodeHost P2P identity is invalid", error))?;
+        self.node_enclave_binding_v1(node_id_hash)
     }
 
     /// Reads one V1 binding by its complete canonical node identity and rejects
@@ -509,32 +531,17 @@ impl TeeRegistry<'_> {
     pub fn node_enclave_binding_for_identity_v1(
         &self,
         node_id: &NodeIdV1,
-        profile: EnclaveProfile,
     ) -> Result<Option<NodeEnclaveBindingV1>> {
         let expected_hash = node_id
             .node_id_hash()
             .map_err(|error| revert_codec("node identity is invalid", error))?;
-        let binding = match (profile, node_id) {
-            (EnclaveProfile::Validator, NodeIdV1::Validator { address, .. }) => {
-                self.validator_enclave_binding_v1(Address::from(*address))?
-            }
-            (EnclaveProfile::FullNode, NodeIdV1::FullNode { reth_p2p_public }) => {
-                self.full_node_enclave_binding_v1(*reth_p2p_public)?
-            }
-            _ => {
-                return Err(PrecompileError::Revert(
-                    "node identity does not match the requested enclave profile".into(),
-                ))
-            }
-        };
+        let binding = self.node_host_enclave_binding_v1(node_id.reth_p2p_public)?;
         let Some(binding) = binding else {
             return Ok(None);
         };
-        if binding.node_id_hash != expected_hash
-            || self.v1_node_profile.read(&expected_hash)? != profile as u64
-        {
+        if binding.node_id_hash != expected_hash {
             return Err(PrecompileError::Fatal(
-                "stored V1 binding identity/profile mismatch".into(),
+                "stored V1 binding identity mismatch".into(),
             ));
         }
         Ok(Some(binding))
@@ -548,21 +555,12 @@ impl TeeRegistry<'_> {
         let node_hash = node_id
             .node_id_hash()
             .map_err(|error| revert_codec("node identity is invalid", error))?;
-        let mut slots = Vec::with_capacity(24);
-        if let NodeIdV1::Validator { address, .. } = node_id {
-            slots.push(B256::from(
-                self.validator_v1_node_hash
-                    .slot(&Address::from(*address))
-                    .slot()
-                    .to_be_bytes::<32>(),
-            ));
-        }
+        let mut slots = Vec::with_capacity(22);
         for slot in [
             self.v1_node_enclave_id.slot(&node_hash).slot(),
             self.v1_node_binding_id.slot(&node_hash).slot(),
             self.v1_node_intent_hash.slot(&node_hash).slot(),
             self.v1_node_policy_hash.slot(&node_hash).slot(),
-            self.v1_node_profile.slot(&node_hash).slot(),
             self.v1_node_binding_version.slot(&node_hash).slot(),
             self.v1_node_registration_version.slot(&node_hash).slot(),
             self.v1_node_renewal_nonce.slot(&node_hash).slot(),
@@ -591,8 +589,8 @@ impl TeeRegistry<'_> {
 
     /// Deterministic attestation readiness only. Full nodes do not consult the
     /// validator set; the exact compressed Reth P2P key is their node identity.
-    pub fn is_full_node_enclave_ready_v1(&self, reth_p2p_public: [u8; 33]) -> Result<bool> {
-        let Some(binding) = self.full_node_enclave_binding_v1(reth_p2p_public)? else {
+    pub fn is_node_host_enclave_ready_v1(&self, reth_p2p_public: [u8; 33]) -> Result<bool> {
+        let Some(binding) = self.node_host_enclave_binding_v1(reth_p2p_public)? else {
             return Ok(false);
         };
         Ok(!binding.binding_id.is_zero()
@@ -607,23 +605,11 @@ impl TeeRegistry<'_> {
         let Some(binding) = self.validator_enclave_binding_v1(validator)? else {
             return Ok(false);
         };
-        if binding.binding_id.is_zero()
-            || binding.enclave_id.is_zero()
-            || self.v1_node_profile.read(&binding.node_id_hash)? != EnclaveProfile::Validator as u64
-        {
+        if binding.binding_id.is_zero() || binding.enclave_id.is_zero() {
             return Ok(false);
         }
         let validators = ValidatorSet::new(self.storage.clone());
-        let Some(record) = validators.get_validator(validator)? else {
-            return Ok(false);
-        };
-        let expected_node_hash = NodeIdV1::Validator {
-            address: validator.into_array(),
-            bls_minpk_public: record.consensus_pubkey,
-        }
-        .node_id_hash()
-        .map_err(|error| revert_codec("validator node identity is invalid", error))?;
-        if expected_node_hash != binding.node_id_hash {
+        if validators.get_validator(validator)?.is_none() {
             return Ok(false);
         }
         Ok(binding.valid_until > consensus_timestamp(&self.storage)?)
@@ -677,6 +663,73 @@ impl TeeRegistry<'_> {
 
 #[cfg(feature = "tee-attestation-v1")]
 impl TeeRegistry<'_> {
+    /// Writes the independently authorized address-to-NodeHost association as
+    /// the second half of initial registration. ValidatorSet membership is not
+    /// consulted: key possession is not a validator role, and the ordinary
+    /// ValidatorSet lifecycle remains the sole owner of that role.
+    fn apply_validator_node_binding_v1(
+        &mut self,
+        binding: &ValidatorNodeBindingV1,
+        validator_signature: &[u8; 65],
+        node_signature: &[u8; 65],
+    ) -> Result<V1RegistrationOutcome> {
+        binding
+            .validate_chain_identity(
+                chain_id_word(self.storage.chain_id()?),
+                self.storage.genesis_hash()?,
+            )
+            .map_err(|error| revert_codec("validator NodeHost binding chain mismatch", error))?;
+        if !binding.verify_validator_signature(validator_signature)
+            || !binding.verify_node_signature(node_signature)
+        {
+            return Err(PrecompileError::Revert(
+                "validator NodeHost binding proof of possession is invalid".into(),
+            ));
+        }
+        let validator = Address::from(binding.validator);
+        let node = self
+            .node_enclave_binding_v1(binding.node_id_hash)?
+            .ok_or_else(|| {
+                PrecompileError::Revert(
+                    "validator NodeHost binding references an unregistered NodeHost".into(),
+                )
+            })?;
+        if node.valid_until <= consensus_timestamp(&self.storage)? {
+            return Err(PrecompileError::Revert(
+                "validator NodeHost binding references an expired NodeHost".into(),
+            ));
+        }
+        let current = self.validator_v1_node_hash.read(&validator)?;
+        if current == binding.node_id_hash {
+            return Ok(V1RegistrationOutcome::Idempotent);
+        }
+        if !current.is_zero() {
+            return Err(PrecompileError::Revert(
+                "validator is already bound to another NodeHost".into(),
+            ));
+        }
+        self.validator_v1_node_hash
+            .write(&validator, binding.node_id_hash)?;
+        self.emit(ValidatorNodeHostBoundV1 {
+            validator,
+            nodeIdHash: binding.node_id_hash,
+        })?;
+        Ok(V1RegistrationOutcome::Created)
+    }
+
+    fn require_atomic_initial_outcome_v1(
+        registration: V1RegistrationOutcome,
+        association: V1RegistrationOutcome,
+    ) -> Result<V1RegistrationOutcome> {
+        if registration != association {
+            return Err(PrecompileError::Fatal(
+                "initial NodeHost registration and address association are partially committed"
+                    .into(),
+            ));
+        }
+        Ok(registration)
+    }
+
     /// Emit the bounded deterministic offer-key artifact for one newly created
     /// V1 binding. Missing local enclave state is a fatal execution invariant,
     /// never a reason to omit a consensus-visible log.
@@ -809,17 +862,24 @@ impl TeeRegistry<'_> {
     }
 
     /// Production verifier boundary. The caller/relay is intentionally absent.
+    #[allow(clippy::too_many_arguments)]
     pub fn register_enclave_v1(
         &mut self,
         evidence: &[u8],
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
+        binding: &ValidatorNodeBindingV1,
+        validator_signature: &[u8; 65],
+        node_binding_signature: &[u8; 65],
     ) -> Result<V1RegistrationOutcome> {
         let policy = self.active_policy_v1()?;
         self.register_enclave_with_active_policy_v1(
             evidence,
             node_signature,
             enclave_signature,
+            binding,
+            validator_signature,
+            node_binding_signature,
             &policy,
         )
     }
@@ -854,37 +914,66 @@ impl TeeRegistry<'_> {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn register_enclave_with_active_policy_v1(
         &mut self,
         evidence: &[u8],
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
+        binding: &ValidatorNodeBindingV1,
+        validator_signature: &[u8; 65],
+        node_binding_signature: &[u8; 65],
         policy: &TeePolicyV1,
     ) -> Result<V1RegistrationOutcome> {
-        self.apply_evidence_mutation_with_active_policy_v1(
-            AttestationOperationV1::RegisterEnclave,
-            evidence,
-            node_signature,
-            enclave_signature,
-            policy,
-        )
+        Self::require_initial_binding_evidence_target_v1(evidence, binding)?;
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            let registration = self.apply_evidence_mutation_with_active_policy_v1(
+                AttestationOperationV1::RegisterEnclave,
+                evidence,
+                node_signature,
+                enclave_signature,
+                policy,
+            )?;
+            let association = self.apply_validator_node_binding_v1(
+                binding,
+                validator_signature,
+                node_binding_signature,
+            )?;
+            Self::require_atomic_initial_outcome_v1(registration, association)
+        })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn register_enclave_with_onboarding_v1(
         &mut self,
         evidence: &[u8],
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
+        binding: &ValidatorNodeBindingV1,
+        validator_signature: &[u8; 65],
+        node_binding_signature: &[u8; 65],
         policy: &TeePolicyV1,
     ) -> Result<V1OnboardingOutcome> {
-        self.apply_evidence_mutation_with_onboarding_v1(
-            AttestationOperationV1::RegisterEnclave,
-            evidence,
-            node_signature,
-            enclave_signature,
-            policy,
-            true,
-        )
+        Self::require_initial_binding_evidence_target_v1(evidence, binding)?;
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            let onboarding = self.apply_evidence_mutation_with_onboarding_v1(
+                AttestationOperationV1::RegisterEnclave,
+                evidence,
+                node_signature,
+                enclave_signature,
+                policy,
+                true,
+            )?;
+            let association = self.apply_validator_node_binding_v1(
+                binding,
+                validator_signature,
+                node_binding_signature,
+            )?;
+            Self::require_atomic_initial_outcome_v1(onboarding.registration, association)?;
+            Ok(onboarding)
+        })
     }
 
     pub(crate) fn renew_enclave_with_active_policy_v1(
@@ -1073,8 +1162,7 @@ impl TeeRegistry<'_> {
                     } else {
                         self.storage.block_number()?
                     };
-                let claims =
-                    direct_dev_claims(policy, dev.intent.enclave_profile, height, evidence_hash)?;
+                let claims = direct_dev_claims(policy, height, evidence_hash)?;
                 (dev.intent.clone(), claims, evidence_hash, None)
             }
         };
@@ -1184,35 +1272,12 @@ impl TeeRegistry<'_> {
             ));
         }
 
-        let validator = match &intent.node_id {
-            NodeIdV1::Validator {
-                address,
-                bls_minpk_public,
-            } => {
-                let validator = Address::from(*address);
-                let validators = ValidatorSet::new(self.storage.clone());
-                let Some(record) = validators.get_validator(validator)? else {
-                    return Err(PrecompileError::Revert(
-                        "validator identity is not registered".into(),
-                    ));
-                };
-                if record.consensus_pubkey != *bls_minpk_public {
-                    return Err(PrecompileError::Revert(
-                        "validator consensus public key mismatch".into(),
-                    ));
-                }
-                Some(validator)
-            }
-            NodeIdV1::FullNode { .. } => None,
-        };
-
         let height = if expected_operation == AttestationOperationV1::TransitionEnclaveMeasurement {
             policy.activation_height
         } else {
             self.storage.block_number()?
         };
         if policy.measurement_rule_match_count(
-            intent.enclave_profile,
             claims.mrenclave,
             claims.mrsigner,
             claims.isv_prod_id,
@@ -1284,11 +1349,6 @@ impl TeeRegistry<'_> {
                 let current = current.as_ref().ok_or_else(|| {
                     PrecompileError::Revert("cannot renew a missing enclave binding".into())
                 })?;
-                if intent.enclave_profile as u64 != self.v1_node_profile.read(&node_id_hash)? {
-                    return Err(PrecompileError::Revert(
-                        "renewal changes the registered enclave profile".into(),
-                    ));
-                }
                 ensure_continuous_binding(current, intent, claims)?;
                 if intent.binding_version != current.binding_version
                     || intent.registration_version
@@ -1306,13 +1366,11 @@ impl TeeRegistry<'_> {
                 let current = current.as_ref().ok_or_else(|| {
                     PrecompileError::Revert("cannot replace a missing enclave binding".into())
                 })?;
-                if intent.enclave_profile as u64 != self.v1_node_profile.read(&node_id_hash)?
-                    || B256::from(intent.node_host_authorization_hash)
-                        != current.node_host_authorization_hash
+                if B256::from(intent.node_host_authorization_hash)
+                    != current.node_host_authorization_hash
                 {
                     return Err(PrecompileError::Revert(
-                        "replacement changes the node profile or persistent NodeHost authorization"
-                            .into(),
+                        "replacement changes the persistent NodeHost authorization".into(),
                     ));
                 }
                 if intent.enclave_id == current.enclave_id
@@ -1338,12 +1396,11 @@ impl TeeRegistry<'_> {
                 let current = current.as_ref().ok_or_else(|| {
                     PrecompileError::Revert("cannot transition a missing enclave binding".into())
                 })?;
-                if intent.enclave_profile as u64 != self.v1_node_profile.read(&node_id_hash)?
-                    || B256::from(intent.node_host_authorization_hash)
-                        != current.node_host_authorization_hash
+                if B256::from(intent.node_host_authorization_hash)
+                    != current.node_host_authorization_hash
                 {
                     return Err(PrecompileError::Revert(
-                        "measurement transition changes the node profile or persistent NodeHost authorization"
+                        "measurement transition changes the persistent NodeHost authorization"
                             .into(),
                     ));
                 }
@@ -1400,14 +1457,6 @@ impl TeeRegistry<'_> {
             ));
         }
 
-        if let Some(validator) = validator {
-            let validator_node_hash = self.validator_v1_node_hash.read(&validator)?;
-            if !validator_node_hash.is_zero() && validator_node_hash != node_id_hash {
-                return Err(PrecompileError::Revert(
-                    "validator address already has another node binding".into(),
-                ));
-            }
-        }
         let enclave_owner = self.v1_enclave_node_hash.read(&intent.enclave_id)?;
         let binding_owner = self.v1_binding_node_hash.read(&intent.binding_id)?;
         match expected_operation {
@@ -1444,10 +1493,6 @@ impl TeeRegistry<'_> {
         let attestation = B256::from(intent.attestation_ed25519);
         let noise = B256::from(intent.noise_responder_x25519);
 
-        if let Some(validator) = validator {
-            self.validator_v1_node_hash
-                .write(&validator, node_id_hash)?;
-        }
         self.v1_node_enclave_id
             .write(&node_id_hash, intent.enclave_id)?;
         self.v1_enclave_node_hash
@@ -1460,8 +1505,6 @@ impl TeeRegistry<'_> {
         self.v1_node_evidence_hash
             .write(&node_id_hash, evidence_hash)?;
         self.v1_node_policy_hash.write(&node_id_hash, policy_hash)?;
-        self.v1_node_profile
-            .write(&node_id_hash, intent.enclave_profile as u64)?;
         self.v1_node_binding_version
             .write(&node_id_hash, intent.binding_version)?;
         self.v1_node_registration_version
@@ -1497,38 +1540,6 @@ impl TeeRegistry<'_> {
             &node_id_hash,
             B256::from(intent.node_host_authorization_hash),
         )?;
-
-        if let Some(validator) = validator {
-            let first_registration = self.recipient_x25519.read(&validator)?.is_zero();
-            self.recipient_x25519.write(&validator, recipient)?;
-            self.attestation_pub.write(&validator, attestation)?;
-            self.noise_static_pub.write(&validator, noise)?;
-            self.mrenclave.write(&validator, claims.mrenclave)?;
-            self.mrsigner.write(&validator, claims.mrsigner)?;
-            self.isv_svn.write(&validator, u64::from(claims.isv_svn))?;
-            self.keys_hash.write(
-                &validator,
-                compute_keys_hash(
-                    validator,
-                    recipient,
-                    attestation,
-                    noise,
-                    claims.mrenclave,
-                    claims.mrsigner,
-                    claims.isv_svn,
-                ),
-            )?;
-            if first_registration {
-                let count = self
-                    .registered_count
-                    .read()?
-                    .checked_add(1)
-                    .ok_or_else(|| {
-                        PrecompileError::Fatal("TEE registered-count overflow".into())
-                    })?;
-                self.registered_count.write(count)?;
-            }
-        }
 
         match expected_operation {
             AttestationOperationV1::RegisterEnclave => self.emit(EnclaveRegisteredV1 {
@@ -1613,22 +1624,36 @@ impl TeeRegistry<'_> {
     }
 
     #[cfg(test)]
-    pub(crate) fn register_enclave_after_verifier_with_active_policy_for_test(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn register_enclave_and_bind_after_verifier_for_test(
         &mut self,
         intent: &RegistrationIntentV1,
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
-        policy: &TeePolicyV1,
+        binding: &ValidatorNodeBindingV1,
+        validator_signature: &[u8; 65],
+        node_binding_signature: &[u8; 65],
         capability: PostVerifierDcapCapabilityV1,
     ) -> Result<V1RegistrationOutcome> {
-        self.apply_verified_mutation_v1(
-            AttestationOperationV1::RegisterEnclave,
-            intent,
-            node_signature,
-            enclave_signature,
-            policy,
-            capability,
-        )
+        let policy = self.active_policy_v1()?;
+        Self::require_initial_binding_target_v1(intent, binding)?;
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            let registration = self.apply_verified_mutation_v1(
+                AttestationOperationV1::RegisterEnclave,
+                intent,
+                node_signature,
+                enclave_signature,
+                &policy,
+                capability,
+            )?;
+            let association = self.apply_validator_node_binding_v1(
+                binding,
+                validator_signature,
+                node_binding_signature,
+            )?;
+            Self::require_atomic_initial_outcome_v1(registration, association)
+        })
     }
 
     #[cfg(test)]
@@ -1766,25 +1791,20 @@ fn ensure_continuous_binding(
 #[cfg(feature = "tee-attestation-v1")]
 fn direct_dev_claims(
     policy: &TeePolicyV1,
-    profile: EnclaveProfile,
     height: u64,
     evidence_hash: B256,
 ) -> Result<VerifiedEnclaveClaimsV1> {
     let mut matching = policy.measurement_rules.iter().filter(|rule| {
-        rule.enclave_profile == profile
-            && height >= rule.admit_from_height
-            && height < rule.admit_until_height_exclusive
+        height >= rule.admit_from_height && height < rule.admit_until_height_exclusive
     });
     let rule = matching.next().ok_or_else(|| {
         PrecompileError::Revert(
-            "GramineDirectDev policy has no active measurement projection for the enclave profile"
-                .into(),
+            "GramineDirectDev policy has no active measurement projection".into(),
         )
     })?;
     if matching.next().is_some() {
         return Err(PrecompileError::Revert(
-            "GramineDirectDev policy has overlapping measurement projections for the enclave profile"
-                .into(),
+            "GramineDirectDev policy has overlapping measurement projections".into(),
         ));
     }
     Ok(VerifiedEnclaveClaimsV1 {

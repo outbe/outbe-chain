@@ -29,8 +29,9 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
 
     address private admin = address(this);
     address private user = address(0x1);
-    uint32 private constant SERIES_ID = 20260401;
-    uint256 private constant TOKEN_ID = uint256(SERIES_ID);
+    uint32 private constant SERIES_ID_DAY = 20260401;
+    bytes14 private constant SERIES_ID = "20260401-USD-U";
+    uint256 private constant TOKEN_ID = uint256(uint112(SERIES_ID));
     uint256 private constant AMOUNT = 100;
     uint32 private constant ISSUED_INTEX_COUNT = 10_000;
 
@@ -56,8 +57,8 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         adapterB.setRemoteMessenger(A_CHAIN_ID, _interop(A_CHAIN_ID, address(adapterA)));
 
         // Create series on both chains
-        tokenA.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
-        tokenB.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
+        tokenA.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_INTEX_COUNT, 0));
+        tokenB.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_INTEX_COUNT, 0));
 
         // Bridge is only allowed in Qualified state for the user-driven adapter.
         tokenA.markQualified(SERIES_ID);
@@ -264,9 +265,10 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
     function test_inboundCrosschainMintFailure_parksAndRetries() public {
         // A series that exists on A only: the destination crosschainMint reverts NonexistentToken, which
         // must park the transfer (not unwind the packet and strand the burned tokens).
-        uint32 failSeries = 20260402;
-        uint256 failTokenId = uint256(failSeries);
-        tokenA.createSeries(CreateSeriesLib.params(failSeries, ISSUED_INTEX_COUNT, 0));
+        uint32 failDay = 20260402;
+        bytes14 failSeries = "20260402-USD-U";
+        uint256 failTokenId = uint256(uint112(failSeries));
+        tokenA.createSeries(CreateSeriesLib.params(failDay, ISSUED_INTEX_COUNT, 0));
         tokenA.markQualified(failSeries);
         tokenA.mint(user, AMOUNT, failSeries);
 
@@ -293,7 +295,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         assertEq(amount, AMOUNT);
 
         // Fix the cause on B, then retry → minted and entry cleared.
-        tokenB.createSeries(CreateSeriesLib.params(failSeries, ISSUED_INTEX_COUNT, 0));
+        tokenB.createSeries(CreateSeriesLib.params(failDay, ISSUED_INTEX_COUNT, 0));
         tokenB.markQualified(failSeries);
         adapterB.retryCrosschainMint(receiveId, 0);
         assertEq(tokenB.balanceOf(user, failTokenId), AMOUNT, "minted on retry");
@@ -308,9 +310,10 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
 
     function test_inboundCrosschainMintFailure_reclaimToSourceRestoresOrigin() public {
         // Park an inbound on B for a series that exists on A only.
-        uint32 failSeries = 20260402;
-        uint256 failTokenId = uint256(failSeries);
-        tokenA.createSeries(CreateSeriesLib.params(failSeries, ISSUED_INTEX_COUNT, 0));
+        uint32 failDay = 20260402;
+        bytes14 failSeries = "20260402-USD-U";
+        uint256 failTokenId = uint256(uint112(failSeries));
+        tokenA.createSeries(CreateSeriesLib.params(failDay, ISSUED_INTEX_COUNT, 0));
         tokenA.markQualified(failSeries);
         tokenA.mint(user, AMOUNT, failSeries);
 

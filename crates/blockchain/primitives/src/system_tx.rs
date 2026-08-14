@@ -1455,9 +1455,9 @@ mod tests {
         use crate::{
             tee_attestation_v1::{
                 AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
-                DcapCollateralKind, EnclaveProfile, NodeIdV1, PlatformTcbStatusSetV1,
-                QvlTcbStatusV1, RegistrationIntentV1, ResourceScheduleV1, TeeMeasurementRuleV1,
-                TeePolicyV1,
+                DcapCollateralKind, NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1,
+                RegistrationIntentV1, ResourceScheduleV1, TeeMeasurementRuleV1, TeePolicyV1,
+                ValidatorNodeBindingV1,
             },
             tee_bootstrap_v2::{
                 TeeBootstrapCommitteeSignatureV2, TeeBootstrapParticipantEvidenceV2,
@@ -1465,7 +1465,18 @@ mod tests {
             },
         };
 
-        let validator = address!("0x2222222222222222222222222222222222222222");
+        use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+        let validator_signer =
+            crate::signer::OutbeEvmSigner::from_secret_bytes([0x22; 32]).expect("validator signer");
+        let validator = validator_signer.address();
+        let node_signer =
+            k256::ecdsa::SigningKey::from_bytes((&[0x23; 32]).into()).expect("NodeHost signer");
+        let reth_p2p_public = node_signer
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .expect("SEC1-33 NodeHost public key");
         let policy = TeePolicyV1 {
             policy_version: 1,
             chain_id: [0; 32],
@@ -1495,7 +1506,6 @@ mod tests {
                 .schedule_hash()
                 .expect("resource schedule hashes"),
             measurement_rules: vec![TeeMeasurementRuleV1 {
-                enclave_profile: EnclaveProfile::Validator,
                 mrenclave: B256::repeat_byte(0x81),
                 mrsigner: B256::repeat_byte(0x82),
                 isv_prod_id: 1,
@@ -1511,11 +1521,7 @@ mod tests {
             operation: AttestationOperationV1::RegisterEnclave,
             attestation_mode: AttestationMode::DcapRequired,
             policy_hash,
-            enclave_profile: EnclaveProfile::Validator,
-            node_id: NodeIdV1::Validator {
-                address: validator.into_array(),
-                bls_minpk_public: [0x31; 48],
-            },
+            node_id: NodeIdV1 { reth_p2p_public },
             enclave_id: B256::repeat_byte(0x32),
             binding_id: B256::repeat_byte(0x33),
             binding_version: 1,
@@ -1528,6 +1534,23 @@ mod tests {
             noise_responder_x25519: [0x36; 32],
             node_host_authorization_hash: B256::repeat_byte(0x37),
         };
+
+        let validator_binding = ValidatorNodeBindingV1 {
+            chain_id: intent.chain_id,
+            genesis_hash: intent.genesis_hash,
+            validator: validator.into_array(),
+            node_id_hash: intent.node_id.node_id_hash().expect("NodeHost hash"),
+        };
+        let binding_hash = validator_binding.binding_hash().expect("binding hash");
+        let validator_signature = validator_signer
+            .sign_hash(&binding_hash)
+            .expect("validator binding signature");
+        let (node_signature_body, node_recovery) = node_signer
+            .sign_prehash(binding_hash.as_slice())
+            .expect("NodeHost binding signature");
+        let mut node_binding_signature = [0_u8; 65];
+        node_binding_signature[..64].copy_from_slice(node_signature_body.to_bytes().as_slice());
+        node_binding_signature[64] = node_recovery.to_byte();
 
         TeeBootstrapV2 {
             policy,
@@ -1546,6 +1569,9 @@ mod tests {
                 .collect(),
             participants: vec![TeeBootstrapParticipantV2 {
                 intent,
+                validator_binding,
+                validator_signature,
+                node_binding_signature,
                 evidence: TeeBootstrapParticipantEvidenceV2::Dcap {
                     quote: vec![0x41; 64],
                     collateral_component_indices: [0, 1, 2, 3, 4, 5, 6, 7],

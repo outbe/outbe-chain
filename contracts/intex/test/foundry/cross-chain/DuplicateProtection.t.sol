@@ -30,8 +30,9 @@ contract DuplicateProtectionTest is CrossChainTest {
     address internal sender = address(0xA11CE);
     address internal recipient = address(0xBEEF);
 
-    uint32 internal constant SERIES_ID = 20260101;
-    uint256 internal constant TOKEN_ID = uint256(SERIES_ID);
+    uint32 internal constant SERIES_ID_DAY = 20260101;
+    bytes14 internal constant SERIES_ID = "20260101-USD-U";
+    uint256 internal constant TOKEN_ID = uint256(uint112(SERIES_ID));
 
     function setUp() public {
         _setUpBridge();
@@ -61,7 +62,7 @@ contract DuplicateProtectionTest is CrossChainTest {
     }
 
     function _seedSeries(IntexNFT1155 intex) internal {
-        intex.createSeries(CreateSeriesLib.params(SERIES_ID, 10_000, 0));
+        intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
         intex.markQualified(SERIES_ID);
     }
 

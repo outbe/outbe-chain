@@ -10,8 +10,8 @@ use std::{
 
 use alloy_primitives::B256;
 use outbe_primitives::tee_attestation_v1::{
-    AttestationMode, AttestationOperationV1, EnclaveProfile, NodeIdV1, PlatformTcbStatusSetV1,
-    QvlTcbStatusV1, RegistrationIntentV1, TeeMeasurementRuleV1, TeePolicyV1,
+    AttestationMode, AttestationOperationV1, NodeIdV1, PlatformTcbStatusSetV1, QvlTcbStatusV1,
+    RegistrationIntentV1, TeeMeasurementRuleV1, TeePolicyV1,
 };
 
 #[path = "outbe-dcap-fixture/assemble.rs"]
@@ -113,7 +113,6 @@ fn policy(
         collateral_margin: 3_600,
         resource_schedule_hash: B256::repeat_byte(0x44),
         measurement_rules: vec![TeeMeasurementRuleV1 {
-            enclave_profile: EnclaveProfile::Validator,
             mrenclave: B256::from(mrenclave),
             mrsigner: B256::from(mrsigner),
             isv_prod_id,
@@ -125,6 +124,13 @@ fn policy(
 }
 
 fn intent(policy: &TeePolicyV1, timestamp: u64) -> Result<RegistrationIntentV1, String> {
+    let reth_p2p_public = k256::ecdsa::SigningKey::from_bytes((&[0x77; 32]).into())
+        .map_err(|error| format!("construct fixture NodeHost key: {error}"))?
+        .verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .try_into()
+        .map_err(|_| "encode fixture NodeHost key".to_owned())?;
     Ok(RegistrationIntentV1 {
         chain_id: policy.chain_id,
         genesis_hash: policy.genesis_hash,
@@ -133,11 +139,7 @@ fn intent(policy: &TeePolicyV1, timestamp: u64) -> Result<RegistrationIntentV1, 
         policy_hash: policy
             .policy_hash()
             .map_err(|error| format!("hash TeePolicyV1: {error}"))?,
-        enclave_profile: EnclaveProfile::Validator,
-        node_id: NodeIdV1::Validator {
-            address: [0x77; 20],
-            bls_minpk_public: [0x88; 48],
-        },
+        node_id: NodeIdV1 { reth_p2p_public },
         enclave_id: B256::repeat_byte(0x99),
         binding_id: B256::repeat_byte(0xaa),
         binding_version: 1,

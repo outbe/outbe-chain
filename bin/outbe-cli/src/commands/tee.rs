@@ -2,7 +2,8 @@
 //!
 //! Pre-start flow: before launching `outbe-chain node` on a
 //! TEE-bootstrapped chain, the joiner registers its enclave on-chain
-//! (`registerEnclave(bytes,bytes,bytes)`), reads the deterministically sealed offer
+//! (`registerEnclave(bytes,bytes,bytes,bytes,bytes,bytes)`), reads the
+//! deterministically sealed offer
 //! key from its own transaction log (`OfferKeySealedForRegistryV1`), and installs
 //! it in its enclave. Only
 //! then can the node execute offer blocks. Mirrors `secretd tx register auth` +
@@ -12,7 +13,7 @@ use std::{fs, path::PathBuf, time::Duration};
 
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
-use clap::{Subcommand, ValueEnum};
+use clap::Subcommand;
 use eyre::{Result, WrapErr};
 use k256::ecdsa::signature::hazmat::PrehashSigner as _;
 use outbe_operator::{
@@ -26,10 +27,11 @@ use outbe_operator::{
     },
     tx::RelaySignerV1,
 };
+use outbe_primitives::signer::OutbeEvmSigner;
 use outbe_primitives::tee_attestation_v1::{
-    AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapEvidenceV1, EnclaveProfile,
+    AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapEvidenceV1,
     GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1, RegistryMutatorV1, TeePolicyV1,
-    TeeRegistryGasScheduleV1, ENCLAVE_ID_DOMAIN_V1,
+    TeeRegistryGasScheduleV1, ValidatorNodeBindingV1, ENCLAVE_ID_DOMAIN_V1,
 };
 use outbe_tee::protocol::{
     EnclaveRequest, EnclaveResponse, MAX_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES,
@@ -37,8 +39,7 @@ use outbe_tee::protocol::{
 };
 use outbe_tee::{
     acquire_dcap_collateral_v1, load_committed_enclave_manifest_v1, EnclaveClient,
-    FullNodeNodeHostIdentityV1, ReplacementCandidateEnclaveV1, RuntimeEnclaveClient,
-    ValidatorNodeHostIdentityV1,
+    NodeHostIdentityV1, ReplacementCandidateEnclaveV1, RuntimeEnclaveClient,
 };
 use zeroize::Zeroizing;
 
@@ -110,12 +111,6 @@ impl<R: Rpc + Sync> RenewalRpc for CliFinalityRpc<'_, R> {
     }
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
-pub enum TeeNodeProfile {
-    Validator,
-    FullNode,
-}
-
 #[derive(Subcommand)]
 pub enum TeeCmd {
     /// Register this node's enclave on-chain and install the offer key it is sealed.
@@ -124,23 +119,17 @@ pub enum TeeCmd {
         /// Enclave sidecar endpoint: a UDS path or a `host:port` (Gramine) address.
         #[arg(long)]
         enclave_socket: String,
-        /// Node identity registered by this intent.
-        #[arg(long, value_enum)]
-        profile: TeeNodeProfile,
         /// Resolved chain-specific Reth data directory. Required by
         /// DcapRequired NodeHost initialization.
         #[arg(long)]
         node_data_dir: Option<PathBuf>,
-        /// Validator node-authority EVM key. Defaults to the global relay
-        /// private key. Supplying both proves that an unrelated account may relay.
-        #[arg(long)]
-        node_private_key: Option<String>,
-        /// Validator Commonware BLS MinPk public key as exactly 48 bytes of hex.
-        #[arg(long)]
-        consensus_bls_public: Option<String>,
-        /// Full-node persistent Reth P2P secp256k1 secret file.
+        /// Persistent Reth P2P secp256k1 secret file.
         #[arg(long)]
         reth_p2p_secret_key: Option<PathBuf>,
+        /// Separately provisioned node EVM key. It authorizes the address-to-
+        /// NodeHost association but does not create a ValidatorSet role.
+        #[arg(long)]
+        node_evm_key: PathBuf,
         /// Fresh one-use nonzero 32-byte binding id. Keep it stable while
         /// tracking one submitted transaction.
         #[arg(long)]
@@ -162,11 +151,7 @@ pub enum TeeCmd {
         /// Resolved chain-specific node data directory containing NodeHost state.
         #[arg(long)]
         node_data_dir: PathBuf,
-        /// Validator node-authority key. This is distinct from the global
-        /// funded relay key and defaults to it only when explicitly supplied.
-        #[arg(long)]
-        node_private_key: Option<String>,
-        /// Full-node persistent Reth P2P secret file.
+        /// Persistent Reth P2P secret file.
         #[arg(long)]
         reth_p2p_secret_key: Option<PathBuf>,
     },
@@ -195,8 +180,6 @@ pub enum TeeCmd {
         #[arg(long)]
         candidate_tee_dir: PathBuf,
         #[arg(long)]
-        node_private_key: Option<String>,
-        #[arg(long)]
         reth_p2p_secret_key: Option<PathBuf>,
     },
     /// Copy only MRSIGNER-sealed `sealed_root.bin` from A to B and fsync the
@@ -212,8 +195,6 @@ pub enum TeeCmd {
         candidate_enclave_socket: String,
         #[arg(long)]
         node_data_dir: PathBuf,
-        #[arg(long)]
-        node_private_key: Option<String>,
         #[arg(long)]
         reth_p2p_secret_key: Option<PathBuf>,
         #[arg(long)]
@@ -247,11 +228,9 @@ impl TeeCmd {
         match self {
             TeeCmd::Join {
                 enclave_socket,
-                profile,
                 node_data_dir,
-                node_private_key,
-                consensus_bls_public,
                 reth_p2p_secret_key,
+                node_evm_key,
                 binding_id,
                 valid_until,
                 timeout_secs,
@@ -261,11 +240,9 @@ impl TeeCmd {
                     TeeJoinArgs {
                         private_key,
                         enclave_socket: &enclave_socket,
-                        profile,
                         node_data_dir: node_data_dir.as_deref(),
-                        node_private_key: node_private_key.as_deref(),
-                        consensus_bls_public: consensus_bls_public.as_deref(),
                         reth_p2p_secret_key: reth_p2p_secret_key.as_deref(),
+                        node_evm_key: &node_evm_key,
                         binding_id: &binding_id,
                         valid_until,
                         timeout_secs,
@@ -276,7 +253,6 @@ impl TeeCmd {
             TeeCmd::RenewNow {
                 enclave_socket,
                 node_data_dir,
-                node_private_key,
                 reth_p2p_secret_key,
             } => {
                 renew_now(
@@ -284,7 +260,6 @@ impl TeeCmd {
                     private_key,
                     &enclave_socket,
                     &node_data_dir,
-                    node_private_key.as_deref(),
                     reth_p2p_secret_key.as_deref(),
                 )
                 .await
@@ -299,17 +274,14 @@ impl TeeCmd {
                 node_data_dir,
                 active_tee_dir,
                 candidate_tee_dir,
-                node_private_key,
                 reth_p2p_secret_key,
             } => {
                 upgrade_prepare(
                     client,
-                    private_key,
                     &candidate_enclave_socket,
                     &node_data_dir,
                     &active_tee_dir,
                     &candidate_tee_dir,
-                    node_private_key.as_deref(),
                     reth_p2p_secret_key.as_deref(),
                 )
                 .await
@@ -318,7 +290,6 @@ impl TeeCmd {
             TeeCmd::UpgradeSubmit {
                 candidate_enclave_socket,
                 node_data_dir,
-                node_private_key,
                 reth_p2p_secret_key,
                 binding_id,
                 valid_until,
@@ -328,7 +299,6 @@ impl TeeCmd {
                     private_key,
                     &candidate_enclave_socket,
                     &node_data_dir,
-                    node_private_key.as_deref(),
                     reth_p2p_secret_key.as_deref(),
                     &binding_id,
                     valid_until,
@@ -349,7 +319,6 @@ async fn renew_now(
     relay_private_key: Option<&str>,
     enclave_socket: &str,
     node_data_dir: &std::path::Path,
-    node_private_key: Option<&str>,
     reth_p2p_secret_key: Option<&std::path::Path>,
 ) -> Result<()> {
     let relay_key = relay_private_key.ok_or_else(|| {
@@ -359,61 +328,22 @@ async fn renew_now(
     let manifest = load_committed_enclave_manifest_v1(node_data_dir)
         .map_err(|error| eyre::eyre!("load committed NodeHost manifest: {error}"))?;
     let rpc_chain_id = client.eth_chain_id().await?;
-    let (selector, mut enclave, node_signing_key) = match &manifest.node_id {
-        NodeIdV1::Validator {
-            address,
-            bls_minpk_public,
-        } => {
-            if reth_p2p_secret_key.is_some() {
-                eyre::bail!("--reth-p2p-secret-key is invalid for a Validator manifest");
-            }
-            let key = node_private_key.or(relay_private_key).ok_or_else(|| {
-                eyre::eyre!("Validator renewal requires --node-private-key or the global signer")
-            })?;
-            let signing = crate::tx::TxSigner::new(key)?.key().clone();
-            let enclave = outbe_tee::connect_or_initialize_validator_enclave(
-                enclave_socket,
-                node_data_dir,
-                ValidatorNodeHostIdentityV1 {
-                    chain_id: rpc_chain_id,
-                    genesis_hash: manifest.genesis_hash,
-                    validator: Address::from(*address),
-                    consensus_bls_public: *bls_minpk_public,
-                },
-                |hash| sign_node_hash(&signing, hash),
-            )
-            .map_err(|error| eyre::eyre!("connect Validator NodeHost enclave: {error}"))?;
-            (
-                NodeBindingSelectorV1::Validator(Address::from(*address)),
-                enclave,
-                signing,
-            )
-        }
-        NodeIdV1::FullNode { reth_p2p_public } => {
-            if node_private_key.is_some() {
-                eyre::bail!("--node-private-key is invalid for a FullNode manifest");
-            }
-            let path = reth_p2p_secret_key
-                .ok_or_else(|| eyre::eyre!("FullNode renewal requires --reth-p2p-secret-key"))?;
-            let signing = load_secp256k1_key_file(path)?;
-            let enclave = outbe_tee::connect_or_initialize_full_node_enclave(
-                enclave_socket,
-                node_data_dir,
-                FullNodeNodeHostIdentityV1 {
-                    chain_id: rpc_chain_id,
-                    genesis_hash: manifest.genesis_hash,
-                    reth_p2p_public: *reth_p2p_public,
-                },
-                |hash| sign_node_hash(&signing, hash),
-            )
-            .map_err(|error| eyre::eyre!("connect FullNode NodeHost enclave: {error}"))?;
-            (
-                NodeBindingSelectorV1::FullNode(*reth_p2p_public),
-                enclave,
-                signing,
-            )
-        }
-    };
+    let path = reth_p2p_secret_key
+        .ok_or_else(|| eyre::eyre!("NodeHost renewal requires --reth-p2p-secret-key"))?;
+    let node_signing_key = load_secp256k1_key_file(path)?;
+    ensure_signer_matches_node_id(&node_signing_key, &manifest.node_id)?;
+    let mut enclave = outbe_tee::connect_or_initialize_node_host_enclave(
+        enclave_socket,
+        node_data_dir,
+        NodeHostIdentityV1 {
+            chain_id: rpc_chain_id,
+            genesis_hash: manifest.genesis_hash,
+            reth_p2p_public: manifest.node_id.reth_p2p_public,
+        },
+        |hash| sign_node_hash(&node_signing_key, hash),
+    )
+    .map_err(|error| eyre::eyre!("connect NodeHost enclave: {error}"))?;
+    let selector = NodeBindingSelectorV1::NodeHost(manifest.node_id.reth_p2p_public);
     let config = RenewalServiceConfigV1 {
         node_data_dir: node_data_dir.to_path_buf(),
         selector,
@@ -444,12 +374,7 @@ async fn renewal_status(
 ) -> Result<()> {
     let manifest = load_committed_enclave_manifest_v1(node_data_dir)
         .map_err(|error| eyre::eyre!("load committed NodeHost manifest: {error}"))?;
-    let selector = match manifest.node_id {
-        NodeIdV1::Validator { address, .. } => {
-            NodeBindingSelectorV1::Validator(Address::from(address))
-        }
-        NodeIdV1::FullNode { reth_p2p_public } => NodeBindingSelectorV1::FullNode(reth_p2p_public),
-    };
+    let selector = NodeBindingSelectorV1::NodeHost(manifest.node_id.reth_p2p_public);
     let status = read_renewal_status_v1(
         &CliFinalityRpc(client),
         node_data_dir,
@@ -465,12 +390,10 @@ async fn renewal_status(
 #[allow(clippy::too_many_arguments)]
 async fn upgrade_prepare(
     client: &(impl Rpc + Sync),
-    relay_private_key: Option<&str>,
     candidate_enclave_socket: &str,
     node_data_dir: &std::path::Path,
     active_tee_dir: &std::path::Path,
     candidate_tee_dir: &std::path::Path,
-    node_private_key: Option<&str>,
     reth_p2p_secret_key: Option<&std::path::Path>,
 ) -> Result<()> {
     let active = load_committed_enclave_manifest_v1(node_data_dir)
@@ -481,8 +404,6 @@ async fn upgrade_prepare(
         node_data_dir,
         &active,
         rpc_chain_id,
-        relay_private_key,
-        node_private_key,
         reth_p2p_secret_key,
     )?;
     let staged = read_finalized_staged_successor_policy_v1(&CliFinalityRpc(client))
@@ -531,7 +452,6 @@ async fn upgrade_submit(
     relay_private_key: Option<&str>,
     candidate_enclave_socket: &str,
     node_data_dir: &std::path::Path,
-    node_private_key: Option<&str>,
     reth_p2p_secret_key: Option<&std::path::Path>,
     binding_id: &str,
     valid_until: u64,
@@ -548,8 +468,6 @@ async fn upgrade_submit(
         node_data_dir,
         &active,
         rpc_chain_id,
-        Some(relay_private_key),
-        node_private_key,
         reth_p2p_secret_key,
     )?;
     let signer = |hash| {
@@ -588,8 +506,6 @@ fn connect_upgrade_candidate_v1(
     node_data_dir: &std::path::Path,
     active: &outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1,
     rpc_chain_id: u64,
-    relay_private_key: Option<&str>,
-    node_private_key: Option<&str>,
     reth_p2p_secret_key: Option<&std::path::Path>,
 ) -> Result<(
     ReplacementCandidateEnclaveV1,
@@ -599,61 +515,26 @@ fn connect_upgrade_candidate_v1(
     if active.chain_id != U256::from(rpc_chain_id).to_be_bytes() {
         eyre::bail!("committed NodeHost manifest chain id does not match eth_chainId");
     }
-    match &active.node_id {
-        NodeIdV1::Validator {
-            address,
-            bls_minpk_public,
-        } => {
-            if reth_p2p_secret_key.is_some() {
-                eyre::bail!("--reth-p2p-secret-key is invalid for a Validator upgrade");
-            }
-            let key = node_private_key.or(relay_private_key).ok_or_else(|| {
-                eyre::eyre!("Validator upgrade requires --node-private-key or the global signer")
-            })?;
-            let signing = crate::tx::TxSigner::new(key)?.key().clone();
-            let candidate = outbe_tee::prepare_validator_enclave_replacement_candidate(
-                candidate_enclave_socket,
-                node_data_dir,
-                ValidatorNodeHostIdentityV1 {
-                    chain_id: rpc_chain_id,
-                    genesis_hash: active.genesis_hash,
-                    validator: Address::from(*address),
-                    consensus_bls_public: *bls_minpk_public,
-                },
-                |hash| sign_node_hash(&signing, hash),
-            )
-            .map_err(|error| eyre::eyre!("prepare Validator candidate B: {error}"))?;
-            Ok((
-                candidate,
-                signing,
-                NodeBindingSelectorV1::Validator(Address::from(*address)),
-            ))
-        }
-        NodeIdV1::FullNode { reth_p2p_public } => {
-            if node_private_key.is_some() {
-                eyre::bail!("--node-private-key is invalid for a FullNode upgrade");
-            }
-            let path = reth_p2p_secret_key
-                .ok_or_else(|| eyre::eyre!("FullNode upgrade requires --reth-p2p-secret-key"))?;
-            let signing = load_secp256k1_key_file(path)?;
-            let candidate = outbe_tee::prepare_full_node_enclave_replacement_candidate(
-                candidate_enclave_socket,
-                node_data_dir,
-                FullNodeNodeHostIdentityV1 {
-                    chain_id: rpc_chain_id,
-                    genesis_hash: active.genesis_hash,
-                    reth_p2p_public: *reth_p2p_public,
-                },
-                |hash| sign_node_hash(&signing, hash),
-            )
-            .map_err(|error| eyre::eyre!("prepare FullNode candidate B: {error}"))?;
-            Ok((
-                candidate,
-                signing,
-                NodeBindingSelectorV1::FullNode(*reth_p2p_public),
-            ))
-        }
-    }
+    let path = reth_p2p_secret_key
+        .ok_or_else(|| eyre::eyre!("NodeHost upgrade requires --reth-p2p-secret-key"))?;
+    let signing = load_secp256k1_key_file(path)?;
+    ensure_signer_matches_node_id(&signing, &active.node_id)?;
+    let candidate = outbe_tee::prepare_node_host_enclave_replacement_candidate(
+        candidate_enclave_socket,
+        node_data_dir,
+        NodeHostIdentityV1 {
+            chain_id: rpc_chain_id,
+            genesis_hash: active.genesis_hash,
+            reth_p2p_public: active.node_id.reth_p2p_public,
+        },
+        |hash| sign_node_hash(&signing, hash),
+    )
+    .map_err(|error| eyre::eyre!("prepare NodeHost candidate B: {error}"))?;
+    Ok((
+        candidate,
+        signing,
+        NodeBindingSelectorV1::NodeHost(active.node_id.reth_p2p_public),
+    ))
 }
 
 /// Query the enclave's offer recipient + identity public keys and (optionally)
@@ -736,11 +617,9 @@ async fn pubkey(client: &(impl Rpc + Sync), enclave_socket: &str, diff_chain: bo
 struct TeeJoinArgs<'a> {
     private_key: Option<&'a str>,
     enclave_socket: &'a str,
-    profile: TeeNodeProfile,
     node_data_dir: Option<&'a std::path::Path>,
-    node_private_key: Option<&'a str>,
-    consensus_bls_public: Option<&'a str>,
     reth_p2p_secret_key: Option<&'a std::path::Path>,
+    node_evm_key: &'a std::path::Path,
     binding_id: &'a str,
     valid_until: u64,
     timeout_secs: u64,
@@ -771,11 +650,9 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
     let TeeJoinArgs {
         private_key,
         enclave_socket,
-        profile,
         node_data_dir,
-        node_private_key,
-        consensus_bls_public,
         reth_p2p_secret_key,
+        node_evm_key,
         binding_id,
         valid_until,
         timeout_secs,
@@ -801,66 +678,34 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
         ));
     }
 
-    let (node_id, node_signing_key) = match profile {
-        TeeNodeProfile::Validator => {
-            if reth_p2p_secret_key.is_some() {
-                return Err(eyre::eyre!(
-                    "--reth-p2p-secret-key is only valid for --profile full-node"
-                ));
-            }
-            let consensus = parse_hex_array::<48>(
-                consensus_bls_public.ok_or_else(|| {
-                    eyre::eyre!("--profile validator requires --consensus-bls-public")
-                })?,
-                "--consensus-bls-public",
-            )?;
-            let node_key = node_private_key.or(private_key).ok_or_else(|| {
-                eyre::eyre!(
-                    "validator node authority requires --node-private-key or the global --private-key"
-                )
-            })?;
-            let node_signer = crate::tx::TxSigner::new(node_key)?;
-            (
-                NodeIdV1::Validator {
-                    address: node_signer.address().into_array(),
-                    bls_minpk_public: consensus,
-                },
-                node_signer.key().clone(),
-            )
-        }
-        TeeNodeProfile::FullNode => {
-            if node_private_key.is_some() || consensus_bls_public.is_some() {
-                return Err(eyre::eyre!(
-                    "validator node-authority arguments are invalid for --profile full-node"
-                ));
-            }
-            let path = reth_p2p_secret_key
-                .ok_or_else(|| eyre::eyre!("--profile full-node requires --reth-p2p-secret-key"))?;
-            let signing = load_secp256k1_key_file(path)?;
-            let public: [u8; 33] = signing
-                .verifying_key()
-                .to_encoded_point(true)
-                .as_bytes()
-                .try_into()
-                .map_err(|_| eyre::eyre!("Reth P2P public key is not compressed SEC1-33"))?;
-            (
-                NodeIdV1::FullNode {
-                    reth_p2p_public: public,
-                },
-                signing,
-            )
-        }
+    let path = reth_p2p_secret_key
+        .ok_or_else(|| eyre::eyre!("tee join requires --reth-p2p-secret-key"))?;
+    let node_signing_key = load_secp256k1_key_file(path)?;
+    let reth_p2p_public = compressed_public_key(&node_signing_key)?;
+    let node_id = NodeIdV1 { reth_p2p_public };
+    let node_id_hash = node_id
+        .node_id_hash()
+        .map_err(|error| eyre::eyre!("hash V1 node identity: {error}"))?;
+    let node_evm_signer = OutbeEvmSigner::from_file(node_evm_key)
+        .map_err(|error| eyre::eyre!("load separately provisioned node EVM key: {error}"))?;
+    let validator_binding = ValidatorNodeBindingV1 {
+        chain_id: policy.chain_id,
+        genesis_hash: policy.genesis_hash,
+        validator: node_evm_signer.address().into_array(),
+        node_id_hash,
     };
-    let enclave_profile = match profile {
-        TeeNodeProfile::Validator => EnclaveProfile::Validator,
-        TeeNodeProfile::FullNode => EnclaveProfile::FullNode,
-    };
-    let binding_selector = match &node_id {
-        NodeIdV1::Validator { address, .. } => {
-            NodeBindingSelectorV1::Validator(Address::from(*address))
-        }
-        NodeIdV1::FullNode { reth_p2p_public } => NodeBindingSelectorV1::FullNode(*reth_p2p_public),
-    };
+    let validator_binding_hash = validator_binding
+        .binding_hash()
+        .map_err(|error| eyre::eyre!("hash address-to-NodeHost binding: {error}"))?;
+    let validator_signature = node_evm_signer
+        .sign_hash(&validator_binding_hash)
+        .map_err(|error| eyre::eyre!("sign address-to-NodeHost binding: {error}"))?;
+    let node_binding_signature = sign_node_hash(&node_signing_key, validator_binding_hash)
+        .map_err(|error| eyre::eyre!("sign NodeHost side of address binding: {error}"))?;
+    let validator_binding = validator_binding
+        .encode_canonical()
+        .map_err(|error| eyre::eyre!("encode address-to-NodeHost binding: {error}"))?;
+    let binding_selector = NodeBindingSelectorV1::NodeHost(reth_p2p_public);
     let node_id_for_reopen = node_id.clone();
 
     // Read the permanent chain key before generating a fresh quote. Its exact
@@ -902,45 +747,21 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
             fs::create_dir_all(node_data_dir).wrap_err_with(|| {
                 format!("create NodeHost data directory {}", node_data_dir.display())
             })?;
-            let signer = |hash| sign_node_hash(&node_signing_key, hash);
-            let client = match (&node_id, profile) {
-                (
-                    NodeIdV1::Validator {
-                        address,
-                        bls_minpk_public,
-                    },
-                    TeeNodeProfile::Validator,
-                ) => outbe_tee::connect_or_initialize_validator_enclave(
-                    enclave_socket,
-                    node_data_dir,
-                    ValidatorNodeHostIdentityV1 {
-                        chain_id: rpc_chain_id,
-                        genesis_hash: policy.genesis_hash,
-                        validator: Address::from(*address),
-                        consensus_bls_public: *bls_minpk_public,
-                    },
-                    signer,
-                ),
-                (NodeIdV1::FullNode { reth_p2p_public }, TeeNodeProfile::FullNode) => {
-                    outbe_tee::connect_or_initialize_full_node_enclave(
-                        enclave_socket,
-                        node_data_dir,
-                        FullNodeNodeHostIdentityV1 {
-                            chain_id: rpc_chain_id,
-                            genesis_hash: policy.genesis_hash,
-                            reth_p2p_public: *reth_p2p_public,
-                        },
-                        signer,
-                    )
-                }
-                _ => unreachable!("profile and node id are constructed together"),
-            }
+            let client = outbe_tee::connect_or_initialize_node_host_enclave(
+                enclave_socket,
+                node_data_dir,
+                NodeHostIdentityV1 {
+                    chain_id: rpc_chain_id,
+                    genesis_hash: policy.genesis_hash,
+                    reth_p2p_public,
+                },
+                |hash| sign_node_hash(&node_signing_key, hash),
+            )
             .map_err(|error| eyre::eyre!("production NodeHost initialization failed: {error}"))?;
             let manifest = load_committed_enclave_manifest_v1(node_data_dir)
                 .map_err(|error| eyre::eyre!("load committed NodeHost manifest: {error}"))?;
             if manifest.chain_id != policy.chain_id
                 || manifest.genesis_hash != policy.genesis_hash
-                || manifest.enclave_profile != enclave_profile
                 || manifest.node_id != node_id
             {
                 return Err(eyre::eyre!(
@@ -999,7 +820,6 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
         operation: AttestationOperationV1::RegisterEnclave,
         attestation_mode: policy.attestation_mode,
         policy_hash,
-        enclave_profile,
         node_id,
         enclave_id,
         binding_id,
@@ -1073,6 +893,9 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
         evidence: evidence.clone().into(),
         nodeSignature: node_signature.to_vec().into(),
         enclaveSignature: enclave_signature.to_vec().into(),
+        validatorNodeBinding: validator_binding.into(),
+        validatorSignature: validator_signature.to_vec().into(),
+        nodeBindingSignature: node_binding_signature.to_vec().into(),
     }
     .abi_encode();
     let gas_limit = TeeRegistryGasScheduleV1::normative()
@@ -1176,39 +999,16 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                 let node_data_dir = node_data_dir.ok_or_else(|| {
                     eyre::eyre!("authenticated onboarding lost its required node data directory")
                 })?;
-                let signer = |hash| sign_node_hash(&node_signing_key, hash);
-                let mut reopened = match (&node_id_for_reopen, profile) {
-                    (
-                        NodeIdV1::Validator {
-                            address,
-                            bls_minpk_public,
-                        },
-                        TeeNodeProfile::Validator,
-                    ) => outbe_tee::connect_or_initialize_validator_enclave(
-                        enclave_socket,
-                        node_data_dir,
-                        ValidatorNodeHostIdentityV1 {
-                            chain_id: rpc_chain_id,
-                            genesis_hash: policy.genesis_hash,
-                            validator: Address::from(*address),
-                            consensus_bls_public: *bls_minpk_public,
-                        },
-                        signer,
-                    ),
-                    (NodeIdV1::FullNode { reth_p2p_public }, TeeNodeProfile::FullNode) => {
-                        outbe_tee::connect_or_initialize_full_node_enclave(
-                            enclave_socket,
-                            node_data_dir,
-                            FullNodeNodeHostIdentityV1 {
-                                chain_id: rpc_chain_id,
-                                genesis_hash: policy.genesis_hash,
-                                reth_p2p_public: *reth_p2p_public,
-                            },
-                            signer,
-                        )
-                    }
-                    _ => unreachable!("profile and node id were constructed together"),
-                }
+                let mut reopened = outbe_tee::connect_or_initialize_node_host_enclave(
+                    enclave_socket,
+                    node_data_dir,
+                    NodeHostIdentityV1 {
+                        chain_id: rpc_chain_id,
+                        genesis_hash: policy.genesis_hash,
+                        reth_p2p_public: node_id_for_reopen.reth_p2p_public,
+                    },
+                    |hash| sign_node_hash(&node_signing_key, hash),
+                )
                 .map_err(|error| eyre::eyre!("reopen initialized enclave: {error}"))?;
                 match reopened.request(&EnclaveRequest::GetPublicKeys)? {
                     EnclaveResponse::PublicKeys {
@@ -1313,6 +1113,21 @@ fn load_secp256k1_key_file(path: &std::path::Path) -> Result<k256::ecdsa::Signin
         fs::read(path).wrap_err_with(|| format!("read Reth P2P secret {}", path.display()))?,
     );
     parse_secp256k1_key_bytes(encoded.as_ref())
+}
+
+fn compressed_public_key(key: &k256::ecdsa::SigningKey) -> Result<[u8; 33]> {
+    key.verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .try_into()
+        .map_err(|_| eyre::eyre!("Reth P2P public key is not compressed SEC1-33"))
+}
+
+fn ensure_signer_matches_node_id(key: &k256::ecdsa::SigningKey, node_id: &NodeIdV1) -> Result<()> {
+    if compressed_public_key(key)? != node_id.reth_p2p_public {
+        eyre::bail!("Reth P2P secret does not match the committed NodeHost identity");
+    }
+    Ok(())
 }
 
 fn parse_secp256k1_key_bytes(encoded: &[u8]) -> Result<k256::ecdsa::SigningKey> {

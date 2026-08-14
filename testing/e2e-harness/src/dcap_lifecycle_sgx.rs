@@ -28,16 +28,14 @@ use outbe_operator::tee::{
 };
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
-    DcapCollateralKind, DcapEvidenceV1, EnclaveInitializationManifestV1, EnclaveProfile,
-    PlatformTcbStatusSetV1, QvlTcbStatusV1, RegistrationIntentV1, TeeMeasurementRuleV1,
-    TeePolicyV1,
+    DcapCollateralKind, DcapEvidenceV1, EnclaveInitializationManifestV1, PlatformTcbStatusSetV1,
+    QvlTcbStatusV1, RegistrationIntentV1, TeeMeasurementRuleV1, TeePolicyV1,
 };
 use outbe_tee::{
     dcap_protocol::DcapVerificationOutcomeV1,
     node_host::{
-        connect_or_initialize_full_node_enclave, connect_or_initialize_validator_enclave,
-        load_committed_enclave_manifest_v1, prepare_validator_enclave_replacement_candidate,
-        FullNodeNodeHostIdentityV1, ValidatorNodeHostIdentityV1,
+        connect_or_initialize_node_host_enclave, load_committed_enclave_manifest_v1,
+        prepare_node_host_enclave_replacement_candidate, NodeHostIdentityV1,
     },
     protocol::{EnclaveRequest, EnclaveResponse, ParticipantAnnounce},
     tee_dkg::{Ack, DealerBundle, FinalizedLog},
@@ -222,7 +220,7 @@ fn run(cli: Cli) -> Result<()> {
         )?;
         let identity = validator_identity(&validator_signers[index], validator_bls[index]);
         let signer = &validator_signers[index];
-        let client = connect_or_initialize_validator_enclave(
+        let client = connect_or_initialize_node_host_enclave(
             &spec.endpoint,
             &validator_data[index],
             identity,
@@ -260,7 +258,7 @@ fn run(cli: Cli) -> Result<()> {
         validator_bls[joiner_index],
     );
     let joiner_signer = &validator_signers[joiner_index];
-    let mut joiner = connect_or_initialize_validator_enclave(
+    let mut joiner = connect_or_initialize_node_host_enclave(
         &specs[4].endpoint,
         &validator_data[joiner_index],
         joiner_identity,
@@ -307,7 +305,7 @@ fn run(cli: Cli) -> Result<()> {
         "listening on tcp://",
         Duration::from_secs(180),
     )?;
-    let mut joiner = connect_or_initialize_validator_enclave(
+    let mut joiner = connect_or_initialize_node_host_enclave(
         &specs[4].endpoint,
         &validator_data[joiner_index],
         joiner_identity,
@@ -331,7 +329,7 @@ fn run(cli: Cli) -> Result<()> {
     let full_node_data = private_dir(&work.path().join("full-node-data"))?;
     let full_node_signer = random_k256_signer()?;
     let full_node_public = compressed_public(&full_node_signer)?;
-    let full_node_identity = FullNodeNodeHostIdentityV1 {
+    let full_node_identity = NodeHostIdentityV1 {
         chain_id: CHAIN_ID,
         genesis_hash: GENESIS_HASH,
         reth_p2p_public: full_node_public,
@@ -342,7 +340,7 @@ fn run(cli: Cli) -> Result<()> {
         "listening on tcp://",
         Duration::from_secs(180),
     )?;
-    let mut full_node = connect_or_initialize_full_node_enclave(
+    let mut full_node = connect_or_initialize_node_host_enclave(
         &specs[5].endpoint,
         &full_node_data,
         full_node_identity,
@@ -385,7 +383,7 @@ fn run(cli: Cli) -> Result<()> {
         "listening on tcp://",
         Duration::from_secs(180),
     )?;
-    let mut full_node = connect_or_initialize_full_node_enclave(
+    let mut full_node = connect_or_initialize_node_host_enclave(
         &specs[5].endpoint,
         &full_node_data,
         full_node_identity,
@@ -415,7 +413,7 @@ fn run(cli: Cli) -> Result<()> {
     )?;
     let active_signer = &validator_signers[0];
     let active_identity = validator_identity(active_signer, validator_bls[0]);
-    let candidate = prepare_validator_enclave_replacement_candidate(
+    let candidate = prepare_node_host_enclave_replacement_candidate(
         &specs[6].endpoint,
         &validator_data[0],
         active_identity,
@@ -446,7 +444,7 @@ fn run(cli: Cli) -> Result<()> {
         "listening on tcp://",
         Duration::from_secs(180),
     )?;
-    let mut candidate = prepare_validator_enclave_replacement_candidate(
+    let mut candidate = prepare_node_host_enclave_replacement_candidate(
         &specs[6].endpoint,
         &validator_data[0],
         active_identity,
@@ -809,7 +807,6 @@ fn registration_intent(
         operation,
         attestation_mode: AttestationMode::DcapRequired,
         policy_hash,
-        enclave_profile: manifest.enclave_profile,
         node_id: manifest.node_id.clone(),
         enclave_id: manifest.enclave_id().map_err(codec)?,
         binding_id,
@@ -830,13 +827,7 @@ fn registration_intent(
 fn lifecycle_policy(specs: &[SgxSpec]) -> Result<TeePolicyV1> {
     let mut rules = specs
         .iter()
-        .enumerate()
-        .map(|(index, spec)| TeeMeasurementRuleV1 {
-            enclave_profile: if index == 5 {
-                EnclaveProfile::FullNode
-            } else {
-                EnclaveProfile::Validator
-            },
+        .map(|spec| TeeMeasurementRuleV1 {
             mrenclave: spec.measurement.mrenclave,
             mrsigner: spec.measurement.mrsigner,
             isv_prod_id: spec.measurement.isv_prod_id,
@@ -846,12 +837,7 @@ fn lifecycle_policy(specs: &[SgxSpec]) -> Result<TeePolicyV1> {
         })
         .collect::<Vec<_>>();
     rules.sort_by_key(|rule| {
-        let profile = match rule.enclave_profile {
-            EnclaveProfile::Validator => 1_u8,
-            EnclaveProfile::FullNode => 2_u8,
-        };
         (
-            profile,
             rule.mrenclave,
             rule.mrsigner,
             rule.isv_prod_id,
@@ -1063,13 +1049,26 @@ fn parse_measurement(output: &str) -> Result<Measurement> {
 
 fn validator_identity(
     signer: &PrivateKeySigner,
-    consensus_bls_public: [u8; 48],
-) -> ValidatorNodeHostIdentityV1 {
-    ValidatorNodeHostIdentityV1 {
+    _consensus_bls_public: [u8; 48],
+) -> NodeHostIdentityV1 {
+    let proof_hash = B256::repeat_byte(0xA7);
+    let proof = node_signature(signer, proof_hash).expect("validator test signer");
+    let signature = k256::ecdsa::Signature::from_slice(&proof[..64]).expect("signature");
+    let recovery = k256::ecdsa::RecoveryId::from_byte(proof[64]).expect("recovery id");
+    let reth_p2p_public = k256::ecdsa::VerifyingKey::recover_from_prehash(
+        proof_hash.as_slice(),
+        &signature,
+        recovery,
+    )
+    .expect("recover validator test NodeHost key")
+    .to_encoded_point(true)
+    .as_bytes()
+    .try_into()
+    .expect("compressed NodeHost key");
+    NodeHostIdentityV1 {
         chain_id: CHAIN_ID,
         genesis_hash: GENESIS_HASH,
-        validator: signer.address(),
-        consensus_bls_public,
+        reth_p2p_public,
     }
 }
 

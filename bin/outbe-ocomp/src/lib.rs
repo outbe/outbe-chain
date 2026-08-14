@@ -21,6 +21,8 @@ pub mod lysis_result_adoption;
 pub mod lysis_result_catalog;
 pub mod lysis_scheduler;
 pub mod lysis_shuffle_adoption;
+pub mod nod_materialization;
+pub mod nod_materialization_submitter;
 pub mod nod_proof;
 pub mod public_rpc;
 pub mod result_attestation;

@@ -19,8 +19,9 @@ contract IntexNFT1155SupplyTest is Test {
     address holderA = address(0xA);
     address holderB = address(0xB);
 
-    uint32 constant SERIES_ID = 20260401;
-    uint256 constant TOKEN_ID = uint256(SERIES_ID);
+    uint32 constant SERIES_ID_DAY = 20260401;
+    bytes14 constant SERIES_ID = "20260401-USD-U";
+    uint256 constant TOKEN_ID = uint256(uint112(SERIES_ID));
 
     uint32 constant CALL_PERIOD = uint32(1 days);
 
@@ -34,7 +35,7 @@ contract IntexNFT1155SupplyTest is Test {
 
     function _createSeries(uint32 cap) internal {
         vm.prank(bridger);
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID, cap, CALL_PERIOD));
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, cap, CALL_PERIOD));
     }
 
     // --- Supply cap: createSeries / mint ---
@@ -42,7 +43,7 @@ contract IntexNFT1155SupplyTest is Test {
     function test_CreateSeries_ZeroIssuedCount_Reverts() public {
         vm.prank(bridger);
         vm.expectRevert(IIntexNFT1155.ZeroIssuedIntexCount.selector);
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID, 0, CALL_PERIOD));
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 0, CALL_PERIOD));
     }
 
     function test_Mint_AtCap_Succeeds() public {

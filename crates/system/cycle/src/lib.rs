@@ -15,12 +15,12 @@
 //! orchestrates the daily 5-pool + Metadosis terminal split:
 //!
 //! 1. Compute `day_emission_limit(day_number_since_genesis(prev_day))`.
-//! 2. Allocate over the 6-sink table from `outbe-emissionlimit`.
+//! 2. Allocate over the 5-sink table from `outbe-emissionlimit`.
 //! 3. Validator pool: read `outbe_rewards::api::read_daily_fee_sum_raw`
 //!    and `read_voters_for_day`; if fees ≥ cap or no voters, return
 //!    the validator amount as excess; otherwise call
 //!    `add_topup_for_voters` and treat `fees` as excess.
-//! 4. WAA / SRA / CCA / Merchant: call
+//! 4. WAA / SRA / CCA: call
 //!    `outbe_agentreward::distribute_daily`.
 //! 5. Metadosis terminal credit = metadosis_amount + validator_excess +
 //!    agent_excess, dispatched through

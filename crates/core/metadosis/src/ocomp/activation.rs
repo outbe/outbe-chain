@@ -1,4 +1,5 @@
 use alloy_primitives::{Bytes, B256, U256};
+use outbe_common::WorldwideDay;
 use outbe_compressed_entities::ExecutionScope;
 use outbe_intex::{install_certified_contributor_root, CertifiedContributorRootV1};
 use outbe_lysis::activation_v1::{self, LysisApplyPlanV1, LysisOwnerReceiptsV1};
@@ -268,7 +269,7 @@ fn target_preconditions_changed(
     let nod = NodContract::new(storage.clone()).ocomp_target_projection(wwd)?;
     let contributors = outbe_intex::api::ocomp_contributor_target_projection(
         storage,
-        expected.contributors.series_id,
+        WorldwideDay::new(expected.contributors.series_id),
     )?;
     let metadosis_projection = metadosis.ocomp_pre_admission_projection(wwd)?;
     let intent_id = record.intent.intent_id(limits).map_err(|error| {
@@ -409,6 +410,7 @@ fn apply_certified_result(
     };
     let nod_input = CertifiedNodGenerationV1 {
         binding: binding.clone(),
+        program_semantics_hash: bundle.lysis_program_semantics_hash,
         precondition: plan.nod().precondition().clone(),
         roots: result.roots.clone(),
         counts: plan.nod().exact_counts().clone(),

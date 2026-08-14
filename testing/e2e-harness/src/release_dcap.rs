@@ -17,18 +17,15 @@ use alloy_primitives::B256;
 use alloy_signer::SignerSync as _;
 use alloy_signer_local::PrivateKeySigner;
 use clap::{Parser, ValueEnum};
-use commonware_codec::Encode as _;
-use commonware_cryptography::{bls12381, Signer as _};
 use eyre::{bail, ensure, eyre, Result, WrapErr as _};
 use outbe_evm::tee_attestation_activation::DcapTestnetChainSpecBindingV1;
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
-    DcapCollateralKind, DcapEvidenceV1, EnclaveProfile, NodeIdV1, RegistrationIntentV1,
+    DcapCollateralKind, DcapEvidenceV1, NodeIdV1, RegistrationIntentV1,
 };
 use outbe_tee::dcap_protocol::{DcapPckCaV1, DcapPlatformTcbStatusV1, DcapVerificationOutcomeV1};
 use outbe_tee::node_host::{
-    connect_or_initialize_validator_enclave, load_committed_enclave_manifest_v1,
-    ValidatorNodeHostIdentityV1,
+    connect_or_initialize_node_host_enclave, load_committed_enclave_manifest_v1, NodeHostIdentityV1,
 };
 use rand_core::{OsRng, RngCore as _};
 use serde::{Deserialize, Serialize};
@@ -257,16 +254,20 @@ fn run(cli: Cli) -> Result<()> {
     )?;
 
     let node_signer = random_node_signer()?;
-    let validator = node_signer.address();
-    let consensus_bls_public = valid_bls_public(run_started_at)?;
-    let identity = ValidatorNodeHostIdentityV1 {
+    let reth_p2p_public = node_signer
+        .credential()
+        .verifying_key()
+        .to_encoded_point(true)
+        .as_bytes()
+        .try_into()
+        .map_err(|_| eyre!("NodeHost public key is not SEC1-33"))?;
+    let identity = NodeHostIdentityV1 {
         chain_id: binding.chain_id,
         genesis_hash: binding.genesis_hash,
-        validator,
-        consensus_bls_public,
+        reth_p2p_public,
     };
     let mut client =
-        connect_or_initialize_validator_enclave(&endpoint, &node_data_dir, identity, |hash| {
+        connect_or_initialize_node_host_enclave(&endpoint, &node_data_dir, identity, |hash| {
             node_signature(&node_signer, hash)
         })?;
     let manifest = load_committed_enclave_manifest_v1(&node_data_dir)?;
@@ -283,7 +284,6 @@ fn run(cli: Cli) -> Result<()> {
         operation: AttestationOperationV1::RegisterEnclave,
         attestation_mode: AttestationMode::DcapRequired,
         policy_hash,
-        enclave_profile: EnclaveProfile::Validator,
         node_id: manifest.node_id.clone(),
         enclave_id: manifest
             .enclave_id()
@@ -302,12 +302,8 @@ fn run(cli: Cli) -> Result<()> {
             .map_err(|error| eyre!("derive NodeHost authorization hash: {error}"))?,
     };
     ensure!(
-        intent.node_id
-            == NodeIdV1::Validator {
-                address: validator.into_array(),
-                bls_minpk_public: consensus_bls_public,
-            },
-        "initialized manifest changed the validator identity"
+        intent.node_id == NodeIdV1 { reth_p2p_public },
+        "initialized manifest changed the NodeHost identity"
     );
     let intent_bytes = intent
         .encode_canonical()
@@ -728,15 +724,6 @@ fn node_signature(signer: &PrivateKeySigner, hash: B256) -> Result<[u8; 65], Str
     Ok(bytes)
 }
 
-fn valid_bls_public(seed: u64) -> Result<[u8; 48]> {
-    bls12381::PrivateKey::from_seed(seed)
-        .public_key()
-        .encode()
-        .as_ref()
-        .try_into()
-        .map_err(|_| eyre!("Commonware MinPk public key is not 48 bytes"))
-}
-
 fn random_nonzero_b256() -> Result<B256> {
     for _ in 0..16 {
         let mut bytes = [0_u8; 32];
@@ -1010,7 +997,7 @@ mod tests {
             PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded
         );
         assert_eq!(policy.accepted_qe_tcb_status, QvlTcbStatusV1::UpToDate);
-        assert_eq!(policy.measurement_rules.len(), 2);
+        assert_eq!(policy.measurement_rules.len(), 1);
         assert_eq!(
             policy.measurement_rules[0].mrenclave,
             B256::repeat_byte(0x11)

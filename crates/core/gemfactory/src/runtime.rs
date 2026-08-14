@@ -1,11 +1,13 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
+use outbe_intex::SeriesId;
 use outbe_oracle::api::{coen_rate_for, require_coen_pair};
 use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18;
 
@@ -15,7 +17,7 @@ use crate::constants::{CALL_RATE, FLOOR_RATE, POSITION_VALIDITY_SECONDS, SRA_RAT
 use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::{GemBurned, GemIssued, GemSettled};
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
-use crate::sol_ext::{IIntexNFT1155, IReferenceCurrency, IERC20};
+use crate::sol_ext::{IIntexNFT1155, IERC20};
 
 pub fn mint_gem(
     storage: &StorageHandle<'_>,
@@ -29,9 +31,15 @@ pub fn mint_gem(
         return Err(GemFactoryError::InvalidOwner.into());
     }
 
-    // TODO(multi-currency): only supports gems
-    // currencies are the same. Cross-rate resolution (e.g. issuance=EUR with
-    // reference=USD) needs a chained oracle lookup that's not wired yet
+    // The issuance currency is a label until settlement resolves it, so it only
+    // has to be a real ISO 4217 code — no registry membership. Mirrors
+    // `tributefactory::offer_tribute`.
+    if iso_4217_alpha(issuance_currency).is_none() {
+        return Err(GemFactoryError::InvalidCurrency {
+            currency: issuance_currency,
+        }
+        .into());
+    }
     outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
 
     // Entry/floor/call are measured against the reference currency (the same
@@ -91,7 +99,7 @@ pub fn mint_gem(
 pub fn mint_gem_position(
     storage: &StorageHandle<'_>,
     caller: Address,
-    source_intex_id: u32,
+    source_intex_id: SeriesId,
     amount: U256,
 ) -> Result<U256> {
     if caller.is_zero() {
@@ -149,7 +157,7 @@ pub fn mint_gem_position(
 fn burn_parked_intex(
     storage: &StorageHandle<'_>,
     holder: Address,
-    series_id: u32,
+    series_id: SeriesId,
     amount: U256,
 ) -> Result<U256> {
     let ret = storage.call(
@@ -157,7 +165,7 @@ fn burn_parked_intex(
         U256::ZERO,
         IIntexNFT1155::parkIntexCall {
             holder,
-            seriesId: series_id,
+            seriesId: series_id.into(),
             amount,
         }
         .abi_encode()
@@ -273,17 +281,13 @@ pub fn settle_gem(
         _ => return Err(GemFactoryError::InvalidState.into()),
     }
 
-    // The Cost Amount is paid in the gem's Settlement Currency
-    // Reject any payment asset whose ISO 4217 code differs from it.
+    // The Cost Amount is paid in the gem's Settlement Currency. The asset must
+    // be registered on the vault router as denominating it — a token's own
+    // `isoCode()` is self-reported, registry membership is not.
     let expected =
         settlement_currency_iso(storage, item.issuance_currency, item.reference_currency);
-    let asset_iso = read_iso_code(storage, asset)?;
-    if asset_iso != expected {
-        return Err(GemFactoryError::SettlementCurrencyMismatch {
-            asset: asset_iso,
-            expected,
-        }
-        .into());
+    if !outbe_vaultrouter::api::reference_currency_assets(storage, expected)?.contains(&asset) {
+        return Err(GemFactoryError::SettlementCurrencyMismatch { asset, expected }.into());
     }
 
     gem_api::set_state(storage, gem_id, GemState::Settled)?;
@@ -291,6 +295,10 @@ pub fn settle_gem(
     if !item.cost_amount_minor.is_zero() {
         // The caller pays in `asset`, validated above to match the Settlement
         // Currency.
+        //
+        // TODO(multi-currency): `cost_amount_minor` is denominated in the
+        // reference currency, so when the Settlement Currency resolves to a
+        // different issuance currency the charge has to be converted
         deposit_to_vault(storage, caller, item.cost_amount_minor, asset)?;
     }
 
@@ -346,18 +354,6 @@ fn settlement_currency_iso(
     } else {
         reference_currency
     }
-}
-
-/// Reads the settlement asset's ISO 4217 code via a static
-/// `IReferenceCurrency.isoCode()` sub-call. Reverts `InvalidAsset` on
-/// undecodable data. Mirrors credisfactory's `read_iso_code`.
-fn read_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
-    let ret = storage.staticcall(
-        asset,
-        IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
-    )?;
-    IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
-        .map_err(|_| GemFactoryError::InvalidAsset.into())
 }
 
 pub fn mine_gem_promis(

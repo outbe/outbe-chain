@@ -14,6 +14,7 @@ pub const TEE_REGISTRY_GAS_SCHEDULE_DOMAIN_V1: &[u8] = b"outbe/tee-registry-gas-
 pub const SYSTEM_GAS_SCHEDULE_DOMAIN_V1: &[u8] = b"outbe/system-gas-schedule/v1";
 pub const RESOURCE_SCHEDULE_DOMAIN_V1: &[u8] = b"outbe/resource-schedule/v1";
 pub const NODE_ID_DOMAIN_V1: &[u8] = b"outbe/tee/node-id/v1";
+pub const VALIDATOR_NODE_BINDING_DOMAIN_V1: &[u8] = b"outbe/tee/validator-node-binding/v1";
 pub const REGISTRATION_INTENT_DOMAIN_V1: &[u8] = b"outbe/tee/registration-intent/v1";
 pub const ATTESTATION_EVIDENCE_DOMAIN_V1: &[u8] = b"outbe/tee/attestation-evidence/v1";
 pub const ENCLAVE_ID_DOMAIN_V1: &[u8] = b"outbe/tee/enclave-id/v1";
@@ -21,7 +22,7 @@ pub const INITIALIZATION_MANIFEST_DOMAIN_V1: &[u8] = b"outbe/tee/initialization-
 pub const NODE_HOST_AUTHORIZATION_DOMAIN_V1: &[u8] = b"outbe/tee/node-host-authorization/v1";
 pub const TRANSITION_KEY_READY_PROOF_DOMAIN_V1: &[u8] = b"outbe/tee/transition-key-ready-proof/v1";
 /// Maximum canonical size of one stable NodeHost authorization witness.
-pub const MAX_NODE_HOST_AUTHORIZATION_WITNESS_BYTES: usize = 172;
+pub const MAX_NODE_HOST_AUTHORIZATION_WITNESS_BYTES: usize = 135;
 pub const REPORT_POLICY_DOMAIN_V1: &[u8] = b"outbe/tee/report-policy/v1";
 
 pub const MAX_QUOTE_BYTES: usize = 16 * 1024;
@@ -93,26 +94,6 @@ impl AttestationMode {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
-pub enum EnclaveProfile {
-    Validator = 0x01,
-    FullNode = 0x02,
-}
-
-impl EnclaveProfile {
-    fn decode(value: u8) -> Result<Self, CodecError> {
-        match value {
-            0x01 => Ok(Self::Validator),
-            0x02 => Ok(Self::FullNode),
-            value => Err(CodecError::UnknownDiscriminant {
-                field: "enclave profile",
-                value,
-            }),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
 pub enum AttestationOperationV1 {
     RegisterEnclave = 0x01,
     RenewEnclave = 0x02,
@@ -136,20 +117,14 @@ impl AttestationOperationV1 {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum NodeIdV1 {
-    Validator {
-        address: [u8; 20],
-        bls_minpk_public: [u8; 48],
-    },
-    FullNode {
-        reth_p2p_public: [u8; 33],
-    },
+pub struct NodeIdV1 {
+    pub reth_p2p_public: [u8; 33],
 }
 
 impl NodeIdV1 {
     pub fn encode_canonical(&self) -> Result<Vec<u8>, CodecError> {
         self.validate()?;
-        let mut out = Vec::with_capacity(74);
+        let mut out = Vec::with_capacity(38);
         self.encode_into(&mut out);
         Ok(out)
     }
@@ -167,75 +142,126 @@ impl NodeIdV1 {
 
     fn encode_into(&self, out: &mut Vec<u8>) {
         out.push(PROTOCOL_VERSION_V1);
-        match self {
-            Self::Validator {
-                address,
-                bls_minpk_public,
-            } => {
-                out.push(0x01);
-                put_u32(out, 68);
-                out.extend_from_slice(address);
-                out.extend_from_slice(bls_minpk_public);
-            }
-            Self::FullNode { reth_p2p_public } => {
-                out.push(0x02);
-                put_u32(out, 33);
-                out.extend_from_slice(reth_p2p_public);
-            }
-        }
+        put_u32(out, 33);
+        out.extend_from_slice(&self.reth_p2p_public);
     }
 
     fn decode_from(decoder: &mut Decoder<'_>) -> Result<Self, CodecError> {
         decoder.version("NodeIdV1")?;
-        let kind = decoder.u8()?;
-        let payload_len = decoder.declared_len("node id payload", 68)?;
-        let value = match kind {
-            0x01 => {
-                if payload_len != 68 {
-                    return Err(CodecError::NonCanonical("validator node id length"));
-                }
-                Ok(Self::Validator {
-                    address: decoder.array()?,
-                    bls_minpk_public: decoder.array()?,
-                })
-            }
-            0x02 => {
-                if payload_len != 33 {
-                    return Err(CodecError::NonCanonical("full-node node id length"));
-                }
-                Ok(Self::FullNode {
-                    reth_p2p_public: decoder.array()?,
-                })
-            }
-            value => Err(CodecError::UnknownDiscriminant {
-                field: "node kind",
-                value,
-            }),
-        }?;
+        let payload_len = decoder.declared_len("node id payload", 33)?;
+        if payload_len != 33 {
+            return Err(CodecError::NonCanonical("node id length"));
+        }
+        let value = Self {
+            reth_p2p_public: decoder.array()?,
+        };
         value.validate()?;
         Ok(value)
     }
 
     fn validate(&self) -> Result<(), CodecError> {
-        match self {
-            Self::Validator {
-                address,
-                bls_minpk_public,
-            } if *address != [0; 20] && *bls_minpk_public != [0; 48] => Ok(()),
-            Self::FullNode { reth_p2p_public }
-                if matches!(reth_p2p_public[0], 0x02 | 0x03)
-                    && reth_p2p_public[1..] != [0; 32]
-                    && k256::PublicKey::from_sec1_bytes(reth_p2p_public).is_ok() =>
-            {
-                Ok(())
-            }
-            Self::Validator { .. } => Err(CodecError::NonCanonical(
-                "validator node id contains a zero identity",
-            )),
-            Self::FullNode { .. } => Err(CodecError::NonCanonical(
-                "full-node node id is not canonical compressed secp256k1",
-            )),
+        if matches!(self.reth_p2p_public[0], 0x02 | 0x03)
+            && self.reth_p2p_public[1..] != [0; 32]
+            && k256::PublicKey::from_sec1_bytes(&self.reth_p2p_public).is_ok()
+        {
+            Ok(())
+        } else {
+            Err(CodecError::NonCanonical(
+                "node id is not canonical compressed secp256k1",
+            ))
         }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValidatorNodeBindingV1 {
+    pub chain_id: [u8; 32],
+    pub genesis_hash: B256,
+    pub validator: [u8; 20],
+    pub node_id_hash: B256,
+}
+
+impl ValidatorNodeBindingV1 {
+    pub const CANONICAL_LEN: usize = 1 + 32 + 32 + 20 + 32;
+
+    pub fn encode_canonical(&self) -> Result<Vec<u8>, CodecError> {
+        self.validate()?;
+        let mut out = Vec::with_capacity(Self::CANONICAL_LEN);
+        out.push(PROTOCOL_VERSION_V1);
+        out.extend_from_slice(&self.chain_id);
+        out.extend_from_slice(self.genesis_hash.as_slice());
+        out.extend_from_slice(&self.validator);
+        out.extend_from_slice(self.node_id_hash.as_slice());
+        Ok(out)
+    }
+
+    pub fn decode_canonical(input: &[u8]) -> Result<Self, CodecError> {
+        if input.len() != Self::CANONICAL_LEN {
+            return Err(CodecError::NonCanonical(
+                "validator NodeHost binding length",
+            ));
+        }
+        let mut decoder = Decoder::new(input);
+        decoder.version("ValidatorNodeBindingV1")?;
+        let value = Self {
+            chain_id: decoder.array()?,
+            genesis_hash: B256::from(decoder.array::<32>()?),
+            validator: decoder.array()?,
+            node_id_hash: B256::from(decoder.array::<32>()?),
+        };
+        decoder.finish()?;
+        value.validate()?;
+        Ok(value)
+    }
+
+    pub fn binding_hash(&self) -> Result<B256, CodecError> {
+        Ok(domain_hash(
+            VALIDATOR_NODE_BINDING_DOMAIN_V1,
+            &self.encode_canonical()?,
+        ))
+    }
+
+    pub fn validate_chain_identity(
+        &self,
+        chain_id: [u8; 32],
+        genesis_hash: B256,
+    ) -> Result<(), CodecError> {
+        if self.chain_id != chain_id || self.genesis_hash != genesis_hash {
+            return Err(CodecError::ChainIdentityMismatch);
+        }
+        Ok(())
+    }
+
+    pub fn verify_validator_signature(&self, signature: &[u8; 65]) -> bool {
+        let Ok(hash) = self.binding_hash() else {
+            return false;
+        };
+        crate::tee_signatures::recover_signer(&hash, signature)
+            .map(|recovered| recovered.as_slice() == self.validator)
+            .unwrap_or(false)
+    }
+
+    pub fn verify_node_signature(&self, signature: &[u8; 65]) -> bool {
+        let Ok(hash) = self.binding_hash() else {
+            return false;
+        };
+        crate::tee_signatures::recover_signer_public_key(&hash, signature)
+            .ok()
+            .and_then(|reth_p2p_public| NodeIdV1 { reth_p2p_public }.node_id_hash().ok())
+            == Some(self.node_id_hash)
+    }
+
+    fn validate(&self) -> Result<(), CodecError> {
+        if self.chain_id == [0; 32]
+            || self.genesis_hash.is_zero()
+            || self.validator == [0; 20]
+            || self.node_id_hash.is_zero()
+        {
+            return Err(CodecError::NonCanonical(
+                "validator NodeHost binding contains a zero identity or commitment",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -247,7 +273,6 @@ impl NodeIdV1 {
 pub struct NodeHostAuthorizationWitnessV1 {
     pub chain_id: [u8; 32],
     pub genesis_hash: B256,
-    pub enclave_profile: EnclaveProfile,
     pub node_id: NodeIdV1,
     pub node_host_noise_x25519: [u8; 32],
 }
@@ -258,7 +283,6 @@ impl NodeHostAuthorizationWitnessV1 {
         Ok(Self {
             chain_id: manifest.chain_id,
             genesis_hash: manifest.genesis_hash,
-            enclave_profile: manifest.enclave_profile,
             node_id: manifest.node_id.clone(),
             node_host_noise_x25519: manifest.node_host_noise_x25519,
         })
@@ -270,7 +294,6 @@ impl NodeHostAuthorizationWitnessV1 {
         out.push(PROTOCOL_VERSION_V1);
         out.extend_from_slice(&self.chain_id);
         out.extend_from_slice(self.genesis_hash.as_slice());
-        out.push(self.enclave_profile as u8);
         self.node_id.encode_into(&mut out);
         out.extend_from_slice(&self.node_host_noise_x25519);
         enforce_limit(
@@ -292,7 +315,6 @@ impl NodeHostAuthorizationWitnessV1 {
         let value = Self {
             chain_id: decoder.array()?,
             genesis_hash: B256::from(decoder.array::<32>()?),
-            enclave_profile: EnclaveProfile::decode(decoder.u8()?)?,
             node_id: NodeIdV1::decode_from(&mut decoder)?,
             node_host_noise_x25519: decoder.array()?,
         };
@@ -318,13 +340,7 @@ impl NodeHostAuthorizationWitnessV1 {
                 "NodeHost authorization witness contains a zero identity or commitment",
             ));
         }
-        match (&self.node_id, self.enclave_profile) {
-            (NodeIdV1::Validator { .. }, EnclaveProfile::Validator)
-            | (NodeIdV1::FullNode { .. }, EnclaveProfile::FullNode) => Ok(()),
-            _ => Err(CodecError::NonCanonical(
-                "NodeHost witness node kind does not match enclave profile",
-            )),
-        }
+        Ok(())
     }
 }
 
@@ -335,7 +351,6 @@ impl NodeHostAuthorizationWitnessV1 {
 pub struct EnclaveInitializationManifestV1 {
     pub chain_id: [u8; 32],
     pub genesis_hash: B256,
-    pub enclave_profile: EnclaveProfile,
     pub node_id: NodeIdV1,
     pub initialization_challenge: [u8; 32],
     pub node_host_noise_x25519: [u8; 32],
@@ -351,7 +366,6 @@ impl EnclaveInitializationManifestV1 {
         out.push(PROTOCOL_VERSION_V1);
         out.extend_from_slice(&self.chain_id);
         out.extend_from_slice(self.genesis_hash.as_slice());
-        out.push(self.enclave_profile as u8);
         self.node_id.encode_into(&mut out);
         out.extend_from_slice(&self.initialization_challenge);
         out.extend_from_slice(&self.node_host_noise_x25519);
@@ -367,7 +381,6 @@ impl EnclaveInitializationManifestV1 {
         let value = Self {
             chain_id: decoder.array()?,
             genesis_hash: B256::from(decoder.array::<32>()?),
-            enclave_profile: EnclaveProfile::decode(decoder.u8()?)?,
             node_id: NodeIdV1::decode_from(&mut decoder)?,
             initialization_challenge: decoder.array()?,
             node_host_noise_x25519: decoder.array()?,
@@ -413,18 +426,9 @@ impl EnclaveInitializationManifestV1 {
         let Ok(hash) = self.authorization_hash() else {
             return false;
         };
-        match &self.node_id {
-            NodeIdV1::Validator { address, .. } => {
-                crate::tee_signatures::recover_signer(&hash, signature)
-                    .map(|recovered| recovered.as_slice() == address)
-                    .unwrap_or(false)
-            }
-            NodeIdV1::FullNode { reth_p2p_public } => {
-                crate::tee_signatures::recover_signer_public_key(&hash, signature)
-                    .map(|recovered| &recovered == reth_p2p_public)
-                    .unwrap_or(false)
-            }
-        }
+        crate::tee_signatures::recover_signer_public_key(&hash, signature)
+            .map(|recovered| recovered == self.node_id.reth_p2p_public)
+            .unwrap_or(false)
     }
 
     /// Ensure a requested quote is for this exact initialized identity. Dynamic
@@ -435,7 +439,6 @@ impl EnclaveInitializationManifestV1 {
         intent.validate()?;
         if intent.chain_id != self.chain_id
             || intent.genesis_hash != self.genesis_hash
-            || intent.enclave_profile != self.enclave_profile
             || intent.node_id != self.node_id
             || intent.enclave_id != self.enclave_id()?
             || intent.recipient_x25519 != self.recipient_x25519
@@ -464,13 +467,7 @@ impl EnclaveInitializationManifestV1 {
                 "initialization manifest contains a zero identity or commitment",
             ));
         }
-        match (&self.node_id, self.enclave_profile) {
-            (NodeIdV1::Validator { .. }, EnclaveProfile::Validator)
-            | (NodeIdV1::FullNode { .. }, EnclaveProfile::FullNode) => Ok(()),
-            _ => Err(CodecError::NonCanonical(
-                "node kind does not match enclave profile",
-            )),
-        }
+        Ok(())
     }
 }
 
@@ -481,7 +478,6 @@ pub struct RegistrationIntentV1 {
     pub operation: AttestationOperationV1,
     pub attestation_mode: AttestationMode,
     pub policy_hash: B256,
-    pub enclave_profile: EnclaveProfile,
     pub node_id: NodeIdV1,
     pub enclave_id: B256,
     pub binding_id: B256,
@@ -506,7 +502,6 @@ impl RegistrationIntentV1 {
         out.push(self.operation as u8);
         out.push(self.attestation_mode as u8);
         out.extend_from_slice(self.policy_hash.as_slice());
-        out.push(self.enclave_profile as u8);
         self.node_id.encode_into(&mut out);
         out.extend_from_slice(self.enclave_id.as_slice());
         out.extend_from_slice(self.binding_id.as_slice());
@@ -531,7 +526,6 @@ impl RegistrationIntentV1 {
             operation: AttestationOperationV1::decode(decoder.u8()?)?,
             attestation_mode: AttestationMode::decode(decoder.u8()?)?,
             policy_hash: B256::from(decoder.array::<32>()?),
-            enclave_profile: EnclaveProfile::decode(decoder.u8()?)?,
             node_id: NodeIdV1::decode_from(&mut decoder)?,
             enclave_id: B256::from(decoder.array::<32>()?),
             binding_id: B256::from(decoder.array::<32>()?),
@@ -564,18 +558,9 @@ impl RegistrationIntentV1 {
         let Ok(hash) = self.intent_hash() else {
             return false;
         };
-        match &self.node_id {
-            NodeIdV1::Validator { address, .. } => {
-                crate::tee_signatures::recover_signer(&hash, signature)
-                    .map(|recovered| recovered.as_slice() == address)
-                    .unwrap_or(false)
-            }
-            NodeIdV1::FullNode { reth_p2p_public } => {
-                crate::tee_signatures::recover_signer_public_key(&hash, signature)
-                    .map(|recovered| &recovered == reth_p2p_public)
-                    .unwrap_or(false)
-            }
-        }
+        crate::tee_signatures::recover_signer_public_key(&hash, signature)
+            .map(|recovered| recovered == self.node_id.reth_p2p_public)
+            .unwrap_or(false)
     }
 
     /// Verify that the quote-bound enclave attestation key signed the same
@@ -652,13 +637,7 @@ impl RegistrationIntentV1 {
                 "registration intent contains a zero version or lease",
             ));
         }
-        match (&self.node_id, self.enclave_profile) {
-            (NodeIdV1::Validator { .. }, EnclaveProfile::Validator)
-            | (NodeIdV1::FullNode { .. }, EnclaveProfile::FullNode) => Ok(()),
-            _ => Err(CodecError::NonCanonical(
-                "node kind does not match enclave profile",
-            )),
-        }
+        Ok(())
     }
 }
 
@@ -1173,7 +1152,6 @@ impl PlatformTcbStatusSetV1 {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TeeMeasurementRuleV1 {
-    pub enclave_profile: EnclaveProfile,
     pub mrenclave: B256,
     pub mrsigner: B256,
     pub isv_prod_id: u16,
@@ -1186,7 +1164,6 @@ impl TeeMeasurementRuleV1 {
     fn encode_into(&self, out: &mut Vec<u8>) -> Result<(), CodecError> {
         self.validate()?;
         out.push(PROTOCOL_VERSION_V1);
-        out.push(self.enclave_profile as u8);
         out.extend_from_slice(self.mrenclave.as_slice());
         out.extend_from_slice(self.mrsigner.as_slice());
         put_u16(out, self.isv_prod_id);
@@ -1199,7 +1176,6 @@ impl TeeMeasurementRuleV1 {
     fn decode_from(decoder: &mut Decoder<'_>) -> Result<Self, CodecError> {
         decoder.version("TeeMeasurementRuleV1")?;
         let value = Self {
-            enclave_profile: EnclaveProfile::decode(decoder.u8()?)?,
             mrenclave: B256::from(decoder.array::<32>()?),
             mrsigner: B256::from(decoder.array::<32>()?),
             isv_prod_id: decoder.u16()?,
@@ -1212,7 +1188,7 @@ impl TeeMeasurementRuleV1 {
     }
 
     fn canonical_bytes(&self) -> Result<Vec<u8>, CodecError> {
-        let mut out = Vec::with_capacity(86);
+        let mut out = Vec::with_capacity(85);
         self.encode_into(&mut out)?;
         Ok(out)
     }
@@ -1264,7 +1240,6 @@ impl TeePolicyV1 {
     /// zero and overlapping matches are both fail-closed.
     pub fn measurement_rule_match_count(
         &self,
-        enclave_profile: EnclaveProfile,
         mrenclave: B256,
         mrsigner: B256,
         isv_prod_id: u16,
@@ -1274,8 +1249,7 @@ impl TeePolicyV1 {
         self.measurement_rules
             .iter()
             .filter(|rule| {
-                rule.enclave_profile == enclave_profile
-                    && rule.mrenclave == mrenclave
+                rule.mrenclave == mrenclave
                     && rule.mrsigner == mrsigner
                     && rule.isv_prod_id == isv_prod_id
                     && isv_svn >= rule.minimum_isv_svn
@@ -1941,7 +1915,9 @@ impl TeeRegistryGasScheduleV1 {
                 self.register_fixed,
                 input_charge,
                 qvl,
-                self.secp256k1_verify,
+                // Initial registration authenticates the NodeHost intent and
+                // both sides of the address-to-NodeHost association.
+                checked_mul(self.secp256k1_verify, 3)?,
                 self.ed25519_verify,
             ])?,
             RegistryMutatorV1::RenewEnclave => checked_sum(&[

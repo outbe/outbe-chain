@@ -51,7 +51,7 @@ case "$ACTION" in
     before=$(cast call 0x0000000000000000000000000000000000001101 \
       'totalSupply()(uint256)' --rpc-url "$RPC_URL" | tr -d '[:space:]')
 
-    output=$(./target/debug/outbe-cli --private-key "$key" --rpc-url "$RPC_URL" \
+    output=$(./target/release/outbe-cli --private-key "$key" --rpc-url "$RPC_URL" \
       tribute offer "$worldwide_day" --amount 100 --currency 840 2>&1)
     printf '%s\n' "$output"
     tx_hash=$(printf '%s\n' "$output" | sed -n \

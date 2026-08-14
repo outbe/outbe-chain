@@ -13,7 +13,10 @@ pragma solidity 0.8.30;
 library IntexGas {
     // --- Outbe -> target chain fixed-size messages (TargetRouter handlers) ---
     /// @dev auctionStart creates the series' auction on the target chain.
-    uint256 internal constant AUCTION_STAGE_START = 500_000;
+    /// @notice Fixed head of an AUCTION_STAGE_START, before its price rows.
+    uint256 internal constant AUCTION_STAGE_START_BASE = 500_000;
+    /// @notice Marginal cost of storing one reference-price row on the target.
+    uint256 internal constant AUCTION_STAGE_START_PER_PRICE = 30_000;
     /// @dev Clearing also fires the bids relay back to Outbe (parked on failure), so it runs generously.
     uint256 internal constant AUCTION_STAGE_CLEARING = 2_000_000;
     uint256 internal constant AUCTION_RESULT = 300_000;
@@ -29,8 +32,11 @@ library IntexGas {
 
     uint256 internal constant BIDS_BASE = 1_300_000;
     uint256 internal constant BIDS_PER_ITEM = 160_000;
-    /// @dev createSeries plus handler overhead; the NFT's enumerable-holder mints dominate the per-item cost.
-    uint256 internal constant ISSUANCE_BASE = 600_000;
+    /// @dev Handler overhead only; a message carries several series, so the createSeries cost is
+    ///      per series rather than in the base. The NFT's enumerable-holder mints dominate the
+    ///      per-recipient cost.
+    uint256 internal constant ISSUANCE_BASE = 200_000;
+    uint256 internal constant ISSUANCE_PER_SERIES = 400_000;
     uint256 internal constant ISSUANCE_PER_ITEM = 250_000;
     uint256 internal constant REFUND_BASE = 250_000;
     uint256 internal constant REFUND_PER_ITEM = 150_000;
@@ -43,9 +49,15 @@ library IntexGas {
         return BIDS_BASE + itemCount * BIDS_PER_ITEM;
     }
 
-    /// @notice Destination gas for an ISSUANCE_INSTRUCTIONS with `recipientCount` recipients.
-    function issuance(uint256 recipientCount) internal pure returns (uint256) {
-        return ISSUANCE_BASE + recipientCount * ISSUANCE_PER_ITEM;
+    /// @notice Destination gas for an AUCTION_STAGE_START carrying `priceCount` rows.
+    function auctionStart(uint256 priceCount) internal pure returns (uint256) {
+        return AUCTION_STAGE_START_BASE + priceCount * AUCTION_STAGE_START_PER_PRICE;
+    }
+
+    /// @notice Destination gas for an ISSUANCE_INSTRUCTIONS creating `seriesCount` series and
+    ///         minting to `recipientCount` recipients.
+    function issuance(uint256 seriesCount, uint256 recipientCount) internal pure returns (uint256) {
+        return ISSUANCE_BASE + seriesCount * ISSUANCE_PER_SERIES + recipientCount * ISSUANCE_PER_ITEM;
     }
 
     /// @notice Destination gas for a REFUND_INSTRUCTIONS with `bidderCount` bidders.

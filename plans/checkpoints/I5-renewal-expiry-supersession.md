@@ -36,7 +36,7 @@ persistent NodeHost Noise public key. It excludes the challenge and enclave
 keys. Changing the node, profile, chain or NodeHost key changes the commitment;
 initializing a fresh enclave for that same node does not. The frozen known-answer
 vector is
-`7e9282a26adfb0a997e6c8afbfc453204b98ff499250dec01dc8097164fddb94`.
+`b13eb9d78b874da96d5a8262fcb2ff1237d2be7ee82c127d3138fb47b653e838`.
 
 The Registry stores this stable commitment at append-only slot 47. Slot 46
 stores `lease_started_at`, which makes the final-third decision independent of

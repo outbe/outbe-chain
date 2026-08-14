@@ -1,6 +1,7 @@
 use alloy_primitives::{address, Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_gem::{api as gem_api, GemContract, GemState};
+use outbe_intex::SeriesId;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -61,7 +62,7 @@ fn with_storage<R>(rate_1e18: Option<U256>, f: impl FnOnce(&StorageHandle) -> R)
         outbe_primitives::addresses::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::from(U256::from(PARK_UNITS).to_be_bytes::<32>().to_vec()),
     );
-    // Stub the settlement stablecoins' `isoCode()` (uint16 in a 32-byte word).
+    // Stub the settlement stablecoins' ERC20 returns (a 32-byte word).
     storage.stub_sub_call_at(
         STABLE,
         alloy_primitives::Bytes::from(U256::from(840u64).to_be_bytes::<32>().to_vec()),
@@ -69,6 +70,16 @@ fn with_storage<R>(rate_1e18: Option<U256>, f: impl FnOnce(&StorageHandle) -> R)
     storage.stub_sub_call_at(
         STABLE_EUR,
         alloy_primitives::Bytes::from(U256::from(978u64).to_be_bytes::<32>().to_vec()),
+    );
+    // Stub VaultRouter `referenceCurrencyAssets` as `[STABLE]` for every ISO:
+    // the USD stablecoin is the only registered settlement asset in tests.
+    let mut assets = Vec::with_capacity(96);
+    assets.extend_from_slice(&U256::from(32u64).to_be_bytes::<32>()); // offset
+    assets.extend_from_slice(&U256::from(1u64).to_be_bytes::<32>()); // length
+    assets.extend_from_slice(STABLE.into_word().as_slice());
+    storage.stub_sub_call_at(
+        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        alloy_primitives::Bytes::from(assets),
     );
     StorageHandle::enter(&mut storage, |handle| {
         if let Some(rate) = rate_1e18 {
@@ -255,7 +266,7 @@ fn mint_no_oracle_setup_rejected() {
 }
 
 #[test]
-fn settle_wallet_reverts_without_deployed_vault() {
+fn settle_wallet_settles_with_a_registered_asset() {
     let rate = U256::from(2u64) * one_e18();
     with_storage(Some(rate), |storage| {
         let gem_id = runtime::mint_gem(
@@ -269,12 +280,14 @@ fn settle_wallet_reverts_without_deployed_vault() {
         .unwrap();
         gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
 
-        // STABLE's isoCode (840) matches the gem's settlement currency, so the
-        // currency check passes and settle proceeds to the vault deposit. The
-        // VaultRouter is not stubbed, so that call fails — proving the deposit
-        // path is wired. Real vault interaction is covered by integration tests.
-        let res = runtime::settle_gem(storage, ALICE, gem_id, STABLE);
-        assert!(res.is_err());
+        // STABLE is the router's registered asset for 840, so the settlement
+        // currency check passes and the gem settles. Real vault interaction is
+        // covered by integration tests; here the router is stubbed.
+        runtime::settle_gem(storage, ALICE, gem_id, STABLE).unwrap();
+        assert_eq!(
+            gem_api::get_gem(storage, gem_id).unwrap().unwrap().state,
+            GemState::Settled as u8
+        );
     });
 }
 
@@ -432,7 +445,9 @@ fn statistics_track_mint_count() {
 
 // --- Merchant gems ---
 
-const SOURCE_INTEX_ID: u32 = 7;
+fn source_intex_id() -> SeriesId {
+    SeriesId::pack(WorldwideDay::new(20_260_212), *b"USD", b'U').unwrap()
+}
 
 fn e18_u128() -> u128 {
     10u128.pow(18)
@@ -450,7 +465,7 @@ fn seed_and_park(storage: &StorageHandle, entry: U256, floor: U256, promis_load:
     outbe_intex::api::create_series(
         storage,
         outbe_intex::CreateSeriesParams {
-            series_id: SOURCE_INTEX_ID,
+            series_id: source_intex_id(),
             worldwide_day: WorldwideDay::new(0),
             issued_intex_count: PARK_UNITS as u32,
             promis_load_minor: promis_load,
@@ -464,7 +479,7 @@ fn seed_and_park(storage: &StorageHandle, entry: U256, floor: U256, promis_load:
         },
     )
     .unwrap();
-    runtime::mint_gem_position(storage, ALICE, SOURCE_INTEX_ID, U256::from(PARK_UNITS)).unwrap()
+    runtime::mint_gem_position(storage, ALICE, source_intex_id(), U256::from(PARK_UNITS)).unwrap()
 }
 
 #[test]
@@ -476,7 +491,7 @@ fn mint_gem_position_burns_parks_and_mints_nft() {
         let factory = GemFactoryContract::new(storage.clone());
         let rec = factory.positions.get(id).unwrap().unwrap();
         assert_eq!(rec.merchant, ALICE);
-        assert_eq!(rec.source_intex_id, SOURCE_INTEX_ID);
+        assert_eq!(rec.source_intex_id, source_intex_id());
         assert_eq!(rec.remaining_capacity, capacity);
         assert_eq!(rec.source_entry_price, one_e18());
         assert_eq!(factory.total_intex_parked.read().unwrap(), capacity);
@@ -491,7 +506,8 @@ fn mint_gem_position_burns_parks_and_mints_nft() {
 #[test]
 fn mint_gem_position_unknown_source_rejects() {
     with_storage(None, |storage| {
-        let r = runtime::mint_gem_position(storage, ALICE, SOURCE_INTEX_ID, U256::from(PARK_UNITS));
+        let r =
+            runtime::mint_gem_position(storage, ALICE, source_intex_id(), U256::from(PARK_UNITS));
         assert!(err_msg(r).contains("source intex"));
     });
 }
@@ -578,7 +594,7 @@ fn mint_merchant_gem_after_expiry_rejects() {
             .add_position(&GemPosition {
                 position_id,
                 merchant: ALICE,
-                source_intex_id: SOURCE_INTEX_ID,
+                source_intex_id: source_intex_id(),
                 remaining_capacity: U256::from(100u64) * one_e18(),
                 source_entry_price: one_e18(),
                 source_floor_price: one_e18(),

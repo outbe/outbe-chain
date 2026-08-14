@@ -2,7 +2,7 @@ use alloy_primitives::B256;
 use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::{
     generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
-    intent::{AuctionEntryPriceSource, PreAdmissionEnvelopeV1},
+    intent::{AuctionEntryPriceSource, PreAdmissionEnvelopeV1, ReferenceEntryPriceV1},
     profile::CapacityProfileV1,
     SchemaLimits,
 };
@@ -24,7 +24,7 @@ pub(crate) struct PreAdmissionContext {
     pub capacity_profile: CapacityProfileV1,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PreAdmissionInputs {
     pub tribute: TributePreAdmissionProjection,
     /// Ordered commitment over the day's snapshotted `(owner, league)` pairs,
@@ -62,7 +62,7 @@ pub(crate) fn evaluate_pre_admission(
 ) -> Result<PreAdmissionDecision> {
     let candidate = OCOMP_POC_CANDIDATE_LIMITS_V1;
     let tribute = inputs.tribute;
-    let oracle = inputs.oracle;
+    let oracle = &inputs.oracle;
 
     if !tribute.profile_ready {
         return Ok(PreAdmissionDecision::Deferred(
@@ -159,14 +159,24 @@ pub(crate) fn evaluate_pre_admission(
         return Ok(arithmetic_overflow());
     };
 
-    let auction_entry_price_source = match oracle.auction_entry_price_source {
-        OcompAuctionEntryPriceSource::LastClosedDayVwap => {
-            AuctionEntryPriceSource::LastClosedDayVwap
-        }
-        OcompAuctionEntryPriceSource::CurrentVwapFallback => {
-            AuctionEntryPriceSource::CurrentVwapFallback
-        }
-    };
+    // The oracle already ordered the rows by currency; the envelope commits that order.
+    let auction_entry_prices = oracle
+        .auction_entry_prices
+        .iter()
+        .map(|row| ReferenceEntryPriceV1 {
+            reference_currency: row.reference_currency,
+            entry_price_minor: row.entry_price_minor,
+            source: match row.source {
+                OcompAuctionEntryPriceSource::LastClosedDayVwap => {
+                    AuctionEntryPriceSource::LastClosedDayVwap
+                }
+                OcompAuctionEntryPriceSource::CurrentVwapFallback => {
+                    AuctionEntryPriceSource::CurrentVwapFallback
+                }
+            },
+            source_day: row.source_day,
+        })
+        .collect();
     Ok(PreAdmissionDecision::Eligible(Box::new(
         PreAdmissionEnvelopeV1 {
             chain_id: context.chain_id,
@@ -181,9 +191,7 @@ pub(crate) fn evaluate_pre_admission(
             fidelity_league_snapshot_root: inputs.fidelity_league_snapshot_root,
             oracle_wwd_pair_entries_observed: oracle.wwd_pair_entries,
             active_scurve_entries_observed: oracle.active_scurve_entries,
-            auction_entry_price: oracle.auction_entry_price,
-            auction_entry_price_source,
-            auction_entry_price_source_day: oracle.auction_entry_price_source_day,
+            auction_entry_prices,
             oracle_state_version: oracle.oracle_state_version,
             fidelity_opening_upper_bound: tribute.distinct_owner_count,
             oracle_opening_upper_bound: u32::from(tribute.distinct_reference_currency_count),

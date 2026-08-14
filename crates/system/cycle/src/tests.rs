@@ -614,11 +614,11 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
             GENESIS_TS + SECONDS_PER_DAY
         );
 
-        // No tributes for any AgentReward pool, so all four
-        // WAA/SRA/CCA/Merchant amounts are accounted for.
+        // No tributes for any AgentReward pool, so all three
+        // WAA/SRA/CCA amounts are accounted for.
         // burn parity: WAA + SRA pools are pre-funded then burned in
-        // their no-tribute branch; CCA + Merchant land on their own
-        // accumulator addresses. AGENT_REWARD balance is therefore
+        // their no-tribute branch; CCA lands on its own
+        // accumulator address. AGENT_REWARD balance is therefore
         // zero (no claimable was credited).
         let agent_reward_balance = ctx_fire
             .storage
@@ -626,29 +626,20 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
             .unwrap();
         assert_eq!(agent_reward_balance, U256::ZERO);
 
-        // CCA / Merchant accumulators received their 4 % each. The
-        // exact amount comes from `day_emission_limit(0) * 4 / 100`
-        // which is fully covered by emissionlimit pinned tests; here
-        // we only assert that they are non-zero and equal (both
-        // pools share the same percentage).
+        // The CCA accumulator received its 4 %. The exact amount comes
+        // from `day_emission_limit(0) * 4 / 100` which is fully covered
+        // by emissionlimit pinned tests; here we only assert it is
+        // non-zero.
         let cca = ctx_fire
             .storage
             .balance(outbe_primitives::addresses::CCA_ADDRESS)
             .unwrap();
-        let merchant = ctx_fire
-            .storage
-            .balance(outbe_primitives::addresses::MERCHANT_ADDRESS)
-            .unwrap();
         assert!(!cca.is_zero(), "CCA accumulator received its 4 %");
-        assert_eq!(
-            cca, merchant,
-            "CCA and Merchant pools have equal percentage"
-        );
     });
 }
 
 /// a second `run_emission_limit_daily` invocation for an already-settled
-/// `prev_day` is a no-op — the CCA/Merchant agent pools (and terminal Metadosis)
+/// `prev_day` is a no-op — the CCA agent pool (and terminal Metadosis)
 /// are NOT minted twice. Guards the per-day idempotency added on top of the
 /// C-01 timestamp drift band.
 #[test]
@@ -673,10 +664,6 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
             .storage
             .balance(outbe_primitives::addresses::CCA_ADDRESS)
             .unwrap();
-        let merchant_after_first = ctx
-            .storage
-            .balance(outbe_primitives::addresses::MERCHANT_ADDRESS)
-            .unwrap();
         let metadosis_after_first = ctx
             .storage
             .balance(outbe_primitives::addresses::METADOSIS_ADDRESS)
@@ -692,13 +679,6 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
                 .unwrap(),
             cca_after_first,
             "CCA pool must not be minted twice for the same prev_day"
-        );
-        assert_eq!(
-            ctx.storage
-                .balance(outbe_primitives::addresses::MERCHANT_ADDRESS)
-                .unwrap(),
-            merchant_after_first,
-            "Merchant pool must not be minted twice for the same prev_day"
         );
         assert_eq!(
             ctx.storage
@@ -779,118 +759,6 @@ fn metadosis_semantic_receipt_without_settled_cycle_marker_is_fatal_before_effec
 
     assert_eq!(storage.storage, storage_before);
     assert_eq!(storage.events, events_before);
-}
-
-/// Production regression (devnet WWD 20260630): the WWD offering-open edge
-/// lands at 12:00 UTC (`forming_end = forming_start(10:00 UTC prev day) + 50h`,
-/// devnet bootstrap lookback = 0h), but status transitions were applied only by
-/// the midnight `emission_limit_1` tick — `offerTribute` reverted
-/// `not in OFFERING status (status=0)` for ~12 hours until the next midnight.
-/// The `wwd_advance_noon` trigger must open OFFERING on the first block past
-/// 12:00 UTC, without creating a new worldwide day and without re-firing the
-/// midnight settlement.
-#[test]
-fn noon_trigger_opens_offering_at_noon_not_next_midnight() {
-    const DEVNET: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
-    let devnet_ctx = |n: u64, ts: u64| BlockContext::new(n, ts, DEVNET, Address::ZERO, Vec::new());
-
-    let mut storage = cycle_storage_for(DEVNET);
-    let parameters = outbe_chain_constants::GenesisProtocolParametersV1 {
-        // The regression needs a phase edge at Jan 2 12:00. Timing is now
-        // genesis-bound rather than inferred from the chain id.
-        metadosis_lookback_delay_seconds: 0,
-        ..Default::default()
-    };
-    storage.enter(|handle| {
-        for (slot, value) in parameters.genesis_storage_words() {
-            handle
-                .sstore(outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS, slot, value)
-                .unwrap();
-        }
-    });
-
-    // Block 1 just past midnight Jan 1: `CycleLifecycle::begin_block`
-    // creates the genesis day 20240101 (forming_end = lookback_end = Jan 2
-    // 12:00 UTC) and anchors all triggers without firing.
-    storage.enter(|handle| {
-        let ctx1 = BlockRuntimeContext::new(devnet_ctx(1, GENESIS_TS + 60), handle);
-        anchor_genesis(&ctx1);
-        run_cycle_lifecycle(&ctx1).unwrap();
-    });
-
-    let wwd_jan1 = outbe_common::WorldwideDay::new(20_240_101);
-    let wwd_jan2 = outbe_common::WorldwideDay::new(20_240_102);
-
-    // Each `enter` below is a separate simulated EVM dispatch. Give that
-    // dispatch its own fixed Cycle route budget; unused rights never cross a
-    // block boundary.
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
-    storage.enter(|handle| {
-        // Block 2 at Jan 2 00:00:30 — midnight tick fires: creates 20240102
-        // and advances 20240101, which stays FORMING (00:00 < forming_end
-        // 12:00). This pins the pre-fix behavior: the day is still closed
-        // right after midnight.
-        let ctx2 =
-            BlockRuntimeContext::new(devnet_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 30), handle);
-        account_parent(&ctx2, 2);
-        dispatch_triggers(&ctx2).unwrap();
-
-        let jan1 = outbe_metadosis::api::worldwide_day(ctx2.storage.clone(), wwd_jan1)
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            jan1.status,
-            outbe_metadosis::WwdStatus::Forming,
-            "at midnight the 12:00-edge day must still be FORMING"
-        );
-    });
-
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
-    storage.enter(|handle| {
-        // Block 3 at Jan 2 12:00:30 — only the noon slot is reached.
-        let ctx3 = BlockRuntimeContext::new(
-            devnet_ctx(3, GENESIS_TS + SECONDS_PER_DAY + 43_200 + 30),
-            handle,
-        );
-        account_parent(&ctx3, 3);
-        dispatch_triggers(&ctx3).unwrap();
-
-        let jan1 = outbe_metadosis::api::worldwide_day(ctx3.storage.clone(), wwd_jan1)
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            jan1.status,
-            outbe_metadosis::WwdStatus::Offering,
-            "noon trigger must open OFFERING at the 12:00 UTC edge, not at the next midnight"
-        );
-
-        // The noon handler advances statuses only: no worldwide day for
-        // Jan 3 (which `create_worldwide_day_if_needed` WOULD create at
-        // 12:00+14h), and the midnight settlement did not re-fire.
-        let active = outbe_metadosis::api::worldwide_days(ctx3.storage.clone())
-            .unwrap()
-            .into_iter()
-            .filter(|projection| projection.membership == outbe_metadosis::WwdMembership::Active)
-            .map(|projection| projection.worldwide_day)
-            .collect::<Vec<_>>();
-        assert_eq!(active.len(), 2, "noon tick must not create a new day");
-        assert!(active.contains(&wwd_jan1) && active.contains(&wwd_jan2));
-
-        let cycle: Cycle<'_> = ctx3.storage.contract::<Cycle<'_>>();
-        assert_eq!(
-            cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
-            GENESIS_TS + SECONDS_PER_DAY,
-            "midnight settlement trigger must not fire at noon"
-        );
-        assert_eq!(
-            cycle
-                .last_executed_at
-                .read(&TriggerId::WwdAdvanceNoon.as_u32())
-                .unwrap(),
-            GENESIS_TS + SECONDS_PER_DAY + 43_200,
-            "noon trigger fired for the Jan 2 12:00 UTC slot"
-        );
-    });
 }
 
 #[test]

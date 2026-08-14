@@ -16,10 +16,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TEE_BUILD_SCRIPT = REPO_ROOT / "crates/system/tee/build.rs"
 DOCKERFILE = REPO_ROOT / "Dockerfile.project-toolchain"
+DOCKERIGNORE = REPO_ROOT / ".dockerignore"
 PIN_PATH = REPO_ROOT / "release/project-toolchain-v1.json"
 ELF_SPEC_PATH = REPO_ROOT / "release/reproducible-elf-build-v1.json"
 REPRODUCIBLE_BUILD = REPO_ROOT / "scripts/release/reproducible-build.sh"
 VERIFIER_PATH = REPO_ROOT / "scripts/release/verify_project_toolchain.py"
+APT_SOURCES_PATH = REPO_ROOT / "release/apt/ubuntu.sources"
 
 
 def load_verifier():
@@ -32,6 +34,20 @@ def load_verifier():
 
 
 class ProjectToolchainContractTests(unittest.TestCase):
+    def test_release_context_includes_compile_time_solidity_inputs(self) -> None:
+        imported_domains = set()
+        import_pattern = re.compile(r'"(?:\.\./)+contracts/([^/]+)/')
+        for source in (REPO_ROOT / "crates").rglob("*.rs"):
+            imported_domains.update(
+                import_pattern.findall(source.read_text(encoding="utf-8"))
+            )
+
+        rules = set(DOCKERIGNORE.read_text(encoding="utf-8").splitlines())
+        self.assertTrue(imported_domains)
+        for domain in sorted(imported_domains):
+            self.assertIn(f"!contracts/{domain}", rules)
+            self.assertIn(f"!contracts/{domain}/**", rules)
+
     def test_project_declares_one_version_pin_without_registry_delivery(self) -> None:
         pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
 
@@ -64,6 +80,7 @@ class ProjectToolchainContractTests(unittest.TestCase):
                 "Dockerfile.project-toolchain",
                 "crates/system/tee/build.rs",
                 "rust-toolchain.toml",
+                "release/apt/ubuntu.sources",
                 "release/dcap-native-qvl-v1.json",
                 "release/project-toolchain-v1.json",
                 "release/reproducible-elf-build-v1.json",
@@ -171,6 +188,55 @@ class ProjectToolchainContractTests(unittest.TestCase):
             self.assertRegex(source["sha256"], r"^[0-9a-f]{64}$")
         self.assertIn("--verify-apt-inputs", recipe)
         self.assertIn("--no-download", recipe)
+
+    def test_ubuntu_archive_is_frozen_at_one_snapshot(self) -> None:
+        pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
+        recipe = DOCKERFILE.read_text(encoding="utf-8")
+        sources = APT_SOURCES_PATH.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "COPY release/apt/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources",
+            recipe,
+        )
+        uris = [
+            line.split(":", 1)[1].strip()
+            for line in sources.splitlines()
+            if line.startswith("URIs:")
+        ]
+        self.assertTrue(uris)
+        snapshots = set()
+        for uri in uris:
+            match = re.fullmatch(
+                r"https://snapshot\.ubuntu\.com/ubuntu/(\d{8}T\d{6}Z)", uri
+            )
+            if match is None:
+                self.fail(f"mutable archive URI: {uri}")
+            snapshots.add(match.group(1))
+        self.assertEqual(len(snapshots), 1, "every suite must read one snapshot instant")
+        for line in sources.splitlines():
+            if line.startswith("#"):
+                continue
+            for host in ("archive.ubuntu.com", "security.ubuntu.com", "ports.ubuntu.com"):
+                self.assertNotIn(host, line)
+
+        pinned = {source["path"]: source["sha256"] for source in pin["apt_provenance"]["source_files"]}
+        self.assertEqual(
+            pinned["/etc/apt/sources.list.d/ubuntu.sources"],
+            hashlib.sha256(APT_SOURCES_PATH.read_bytes()).hexdigest(),
+            "the pin must bind the frozen APT sources actually shipped into the image",
+        )
+
+    def test_apt_closure_mismatch_names_the_resolved_packages(self) -> None:
+        verifier = load_verifier()
+        with tempfile.TemporaryDirectory() as directory:
+            deb_dir = Path(directory)
+            (deb_dir / "only_1_amd64.deb").write_bytes(b"payload")
+            ledger, digest, count = verifier.apt_ledger(deb_dir)
+            self.assertEqual(count, 1)
+            self.assertIn("only_1_amd64.deb", ledger)
+            self.assertEqual(
+                digest, hashlib.sha256(ledger.encode("ascii")).hexdigest()
+            )
 
     def test_apt_input_verifier_rejects_package_substitution(self) -> None:
         verifier = load_verifier()

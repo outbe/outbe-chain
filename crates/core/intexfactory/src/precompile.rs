@@ -7,6 +7,7 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
 
+use outbe_intex::SeriesId;
 use outbe_primitives::dispatch::{
     dispatch_call, mutate, mutate_void, mutate_void_payable, reject_value_unless_payable, view,
 };
@@ -43,7 +44,7 @@ pub fn dispatch(
                 settle(c) => mutate_void(c, caller, |sender, c| {
                     runtime::settle(
                         &storage,
-                        c.seriesId,
+                        SeriesId::from(c.seriesId),
                         c.intexHolder,
                         sender,
                         c.amount,
@@ -51,7 +52,7 @@ pub fn dispatch(
                     )
                 }),
                 quoteCostAmount(c) => view(c, |c| {
-                    runtime::quote_cost_amount(&storage, c.seriesId, c.paymentToken)
+                    runtime::quote_cost_amount(&storage, SeriesId::from(c.seriesId), c.paymentToken)
                 }),
                 // Off-chain the holder brute-forces `nonce` so the work hash
                 // SHA256(hex(holder ++ promisAmount ++ seriesId ++ seq) ++ nonce_be8)
@@ -62,10 +63,22 @@ pub fn dispatch(
                         mac: c.mac.0,
                         op_nonce: c.opNonce,
                     };
-                    runtime::mine_promis(&storage, c.seriesId, sender, c.amount, c.nonce, auth)
+                    runtime::mine_promis(
+                        &storage,
+                        SeriesId::from(c.seriesId),
+                        sender,
+                        c.amount,
+                        c.nonce,
+                        auth,
+                    )
                 }),
                 setAuthorizedSettler(c) => mutate_void(c, caller, |sender, c| {
-                    runtime::set_authorized_settler(&storage, sender, c.seriesId, c.settler)
+                    runtime::set_authorized_settler(
+                        &storage,
+                        sender,
+                        SeriesId::from(c.seriesId),
+                        c.settler,
+                    )
                 }),
                 // The only payable selector: credits auction proceeds (msg.value)
                 // from the source chain into the day's pot.

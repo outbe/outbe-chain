@@ -1,13 +1,12 @@
 //! FullNode/follower steps used by `features/fullnode.feature`.
 //! The follower-upstream feature:
-//!   S1  a cold `--upstream` follower syncs a reshared chain to lockstep
+//!   S1  a production FullNode syncs a reshared chain to lockstep
 //!   S1b a follower-of-follower (`--upstream=follower1`) syncs off the first
 //!   S3  a validator killed mid-epoch is restarted and re-locksteps
 //!   S2  warm promotion: follower1's synced datadir restarts as a --validator
 //!
 //! Followers occupy high node slots (14/15), well clear of the committee (0..N)
-//! and the joiner (N); all share validator-0's enclave (slot 0). Each slot owns
-//! its own port block, allocated on first use.
+//! and the joiner (N). Each FullNode owns its enclave and port block.
 
 use std::thread::sleep;
 use std::time::Duration;
@@ -133,15 +132,6 @@ fn drive_past_reshare(world: &mut World) {
     assert!(reshared, "no reshare observed within the window");
 }
 
-/// S1 — launch a cold follower with `--upstream` = committee.
-#[when("a cold follower syncs from the committee")]
-fn cold_follower(world: &mut World) {
-    world
-        .localnet
-        .launch_follower("follower", FOLLOWER1_SLOT, 0, 0)
-        .expect("launch follower1");
-}
-
 #[when("a production FullNode with its own enclave syncs from the committee")]
 fn production_full_node_follower(world: &mut World) {
     world
@@ -172,6 +162,16 @@ fn follower_exact_finality(world: &mut World) {
     assert!(
         wait_finalized_checkpoint_match(&world.rpc, primary, follower, 45),
         "follower never reached the committee finalized checkpoint with matching hash/state root"
+    );
+    assert_eq!(
+        world.rpc.consensus_status_field(follower, "isValidator"),
+        Some("false".to_string()),
+        "FullNode unexpectedly entered validator mode"
+    );
+    assert_eq!(
+        world.rpc.has_threshold_shares(follower),
+        Some(false),
+        "FullNode unexpectedly required participant DKG material"
     );
 }
 
@@ -236,7 +236,7 @@ fn switch_upstream_and_restart_follower(world: &mut World) {
         .expect("stop follower during catch-up");
     world
         .localnet
-        .launch_follower("follower", FOLLOWER1_SLOT, 1, 0)
+        .launch_dcap_full_node("follower", FOLLOWER1_SLOT, 1)
         .expect("restart follower from durable datadir against healthy upstream");
 }
 
@@ -267,7 +267,11 @@ fn chained_follower(world: &mut World) {
     );
     world
         .localnet
-        .launch_follower("follower2", FOLLOWER2_SLOT, FOLLOWER1_SLOT, 0)
+        .provision_full_node_node_host(FOLLOWER2_SLOT)
+        .expect("provision follower2 NodeHost and enclave");
+    world
+        .localnet
+        .launch_dcap_full_node("follower2", FOLLOWER2_SLOT, FOLLOWER1_SLOT)
         .expect("launch follower2");
 }
 
@@ -301,8 +305,8 @@ fn validator_relockstep(world: &mut World) {
     );
 }
 
-/// S2 — warm promotion: stop followers, reuse follower1's synced datadir as the
-/// joiner's, stake, and launch it as a validator.
+/// S2 — stop followers, preserve follower1's complete node identity and local
+/// state, then assign validator role through the ordinary ValidatorSet path.
 #[when("the first follower is promoted to a validator with its warm datadir")]
 fn warm_promotion(world: &mut World) {
     let primary = world.validators.primary_port();
@@ -313,12 +317,16 @@ fn warm_promotion(world: &mut World) {
     sleep(Duration::from_secs(3));
     world
         .localnet
-        .provision_joiner(idx)
-        .expect("provision joiner");
+        .move_role_neutral_node_slot(FOLLOWER1_SLOT, idx)
+        .expect("move the complete role-neutral node slot");
     world
         .localnet
-        .move_datadir("follower/data", &format!("validator-{idx}/data"))
-        .expect("move warm datadir");
+        .provision_existing_node_as_joiner(idx)
+        .expect("register the node's already provisioned EVM/BLS material");
+    world
+        .localnet
+        .restart_joiner_enclave(idx)
+        .expect("restart the moved role-neutral enclave");
 
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner addr");

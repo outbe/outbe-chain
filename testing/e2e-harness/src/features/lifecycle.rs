@@ -29,8 +29,7 @@ fn lockstep_ok(rpc: &Rpc, committee: u16, joiner: u16) -> bool {
     true
 }
 
-/// S1 — submit a tribute offer from the operator; capture the day status first so
-/// the invariant (offer is time-driven, not offer-driven) can be checked.
+/// S1 — submit a tribute offer from the operator.
 #[when(expr = "operator {string} submits a tribute offer")]
 fn submit_offer(world: &mut World, name: String) {
     let primary = world.validators.primary_port();
@@ -41,7 +40,6 @@ fn submit_offer(world: &mut World, name: String) {
         .expect("resolve operator")
         .evm_key()
         .expect("key");
-    world.state.wwd_status_before = world.rpc.wwd_status(primary, &wwd);
     world.state.tribute_tx_hash = world
         .rpc
         // The focused hardware run observed 9-12 seconds between canonical
@@ -54,20 +52,17 @@ fn submit_offer(world: &mut World, name: String) {
     );
 }
 
-/// S1 — supply reached 1 and the worldwide-day status is unchanged by the offer.
-#[then("the committee processes the offer without changing the day status")]
-fn offer_processed_status_unchanged(world: &mut World) {
+/// S1 — supply reached 1 and the canonical Tribute was projected. WWD phase
+/// transitions are independently time-driven and may legitimately occur while
+/// a real-SGX offer waits for inclusion, so this step does not compare phase
+/// snapshots taken on opposite sides of a configured boundary.
+#[then("the committee processes and projects the offer")]
+fn offer_processed_and_projected(world: &mut World) {
     let primary = world.validators.primary_port();
-    let wwd = world.state.wwd.clone().expect("wwd");
     assert_eq!(
         world.rpc.supply(primary).as_deref(),
         Some("1"),
         "supply should be 1"
-    );
-    assert_eq!(
-        world.rpc.wwd_status(primary, &wwd),
-        world.state.wwd_status_before,
-        "day status changed by the offer (should be time-driven)"
     );
     world
         .mongodb
@@ -126,8 +121,8 @@ fn full_node_stakes_confirms(world: &mut World) {
     world.localnet.stop_joiner_full_node(idx);
     world
         .localnet
-        .provision_joiner(idx)
-        .expect("provision synced full-node slot as validator");
+        .provision_existing_node_as_joiner(idx)
+        .expect("register the existing NodeHost as a validator");
     world
         .localnet
         .launch_joiner(idx, &[])
@@ -374,7 +369,7 @@ fn exits_and_demotes(world: &mut World) {
     assert!(
         world.localnet.log_has(
             idx,
-            "demoting to verifier-follower of the resharded committee"
+            "no threshold share for this epoch — running consensus engine in VERIFIER mode"
         ),
         "node did not demote to a verifier-follower"
     );
@@ -396,7 +391,7 @@ fn exits_and_demotes(world: &mut World) {
         .expect("v2 key");
     world.state.tribute_tx_hash = world
         .rpc
-        .offer_until_supply_hash(&v2, &wwd, primary, "3", 5);
+        .offer_until_supply_hash(&v2, &wwd, primary, "3", 20);
     assert!(
         world.state.tribute_tx_hash.is_some(),
         "post-exit offer did not land (supply != 3)"

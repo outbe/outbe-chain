@@ -23,6 +23,7 @@ use outbe_compressed_entities::{
 };
 #[cfg(test)]
 use outbe_lysis::activation_v1::LysisOwnerReceiptsV1;
+use outbe_nod::schema::NodContract;
 #[cfg(test)]
 use outbe_ocomp_protocol::league_snapshot::league_snapshot_key;
 #[cfg(test)]
@@ -35,12 +36,12 @@ use outbe_ocomp_protocol::{
     common::{BoundedBytes, ProofBytes},
     hash::hash_framed,
     intent::{
-        intent_storage_key, ActivationPreconditionsV1, CertifiedParentAccountingMetadataV2,
-        ContributorTargetPreconditionV1, DayType, ExpectedFinalizedIntentBindingV1,
-        FinalizedIntentProofV1, FinalizedIntentVerificationError, FinalizedRequestBindingV1,
-        FrozenMetadosisValuesV1, JobIntentV1, MetadosisAttemptPreconditionV1,
-        MetadosisExpectedStatus, NodTargetPreconditionV1, ParentProofKind, TributeInputBindingV1,
-        VerifiedFinalizedIntentV1,
+        intent_storage_key, ActivationPreconditionsV1, AuctionEntryPriceSource,
+        CertifiedParentAccountingMetadataV2, ContributorTargetPreconditionV1, DayType,
+        ExpectedFinalizedIntentBindingV1, FinalizedIntentProofV1, FinalizedIntentVerificationError,
+        FinalizedRequestBindingV1, FrozenMetadosisValuesV1, JobIntentV1,
+        MetadosisAttemptPreconditionV1, MetadosisExpectedStatus, NodTargetPreconditionV1,
+        ParentProofKind, ReferenceEntryPriceV1, TributeInputBindingV1, VerifiedFinalizedIntentV1,
     },
     profile::{CapacityProfileV1, ProtocolBundleV1},
     receipts::{
@@ -728,15 +729,25 @@ fn request_receipt(bundle_hash: B256) -> RequestBudgetSplitReceiptV1 {
                 bundle_hash,
                 TEST_WWD.value(),
                 U256::from(40),
-                U256::from(9),
+                &test_entry_prices(),
                 TEST_LOGICAL_TIME,
             )
             .unwrap(),
         ),
         carry_over_credit: U256::ZERO,
-        auction_entry_price: U256::from(9),
+        auction_entry_prices: test_entry_prices(),
         logical_anchor: TEST_LOGICAL_TIME,
     }
+}
+
+/// The day's frozen price table used across these fixtures: one dollar row.
+pub(crate) fn test_entry_prices() -> Vec<ReferenceEntryPriceV1> {
+    vec![ReferenceEntryPriceV1 {
+        reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
+        entry_price_minor: U256::from(9),
+        source: AuctionEntryPriceSource::LastClosedDayVwap,
+        source_day: TEST_WWD.value(),
+    }]
 }
 
 fn intent(
@@ -768,7 +779,7 @@ fn intent(
             gratis_supply: U256::from(60),
             lysis_budget: U256::from(60),
             auction_base: U256::from(40),
-            auction_entry_price: U256::from(9),
+            auction_entry_prices: test_entry_prices(),
             request_budget_split_receipt_hash: request_receipt_hash,
         },
         logical_evaluation_height: TEST_REQUEST_HEIGHT,
@@ -1357,6 +1368,10 @@ impl ActivationFixture {
         provider.set_timestamp(U256::from(current_time));
         let scope = begin_activation_scope(&mut provider);
         StorageHandle::enter(&mut provider, |storage| {
+            let nod = NodContract::new(storage.clone());
+            nod.ocomp_materialization_head_sequence.write(1).unwrap();
+            nod.ocomp_materialization_tail_sequence.write(1).unwrap();
+
             if seed_targets {
                 let tribute = TributeContract::new(storage.clone());
                 tribute.ocomp_profile_ready.write(true).unwrap();
@@ -1632,7 +1647,7 @@ impl ActivationFixture {
                 .unwrap()
                 .unwrap();
             let contributor =
-                outbe_intex::api::certified_contributor_generation(&storage, TEST_WWD.value())
+                outbe_intex::api::certified_contributor_generation(&storage, TEST_WWD)
                     .unwrap()
                     .unwrap();
             let tribute = TributeContract::new(storage.clone());

@@ -355,17 +355,17 @@ fn approved_schedule_parity(world: &mut World) {
     }
 }
 
-#[then(expr = "proposal {int} is rejected without a schedule on every validator")]
-fn rejected_without_schedule(world: &mut World, id: u64) {
+#[then(expr = "proposal {int} is errored without a schedule on every validator")]
+fn errored_without_schedule(world: &mut World, id: u64) {
     assert!(
-        world.rpc.wait_vote_status(id, "rejected", 60),
-        "conflicting proposal #{id} did not become rejected"
+        world.rpc.wait_vote_status(id, "error", 60),
+        "conflicting proposal #{id} did not become errored"
     );
     proposal_parity(world, id);
     for port in validator_ports(world) {
         assert!(
             world.rpc.scheduled_update_on(port, id).is_none(),
-            "rejected proposal #{id} created a schedule on RPC {port}"
+            "errored proposal #{id} created a schedule on RPC {port}"
         );
     }
 }

@@ -60,7 +60,7 @@ interface IOriginRouter {
     /// @param sendId Bridge send identifier.
     /// @param seriesId Series identifier.
     /// @param recipientsCount Number of recipients.
-    event IssuanceInstructionsSent(bytes32 indexed sendId, uint32 indexed seriesId, uint256 recipientsCount);
+    event IssuanceInstructionsSent(bytes32 indexed sendId, bytes14 indexed seriesId, uint256 recipientsCount);
 
     /// @notice Emitted when refund instructions are sent to a target chain.
     /// @param sendId Bridge send identifier.
@@ -71,12 +71,12 @@ interface IOriginRouter {
     /// @notice Emitted when a mark-called message is sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param seriesId Series identifier.
-    event MarkCalledSent(bytes32 indexed sendId, uint32 indexed seriesId);
+    event MarkCalledSent(bytes32 indexed sendId, bytes14 indexed seriesId);
 
     /// @notice Emitted when a mark-qualified message is sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param seriesId Series identifier.
-    event MarkQualifiedSent(bytes32 indexed sendId, uint32 indexed seriesId);
+    event MarkQualifiedSent(bytes32 indexed sendId, bytes14 indexed seriesId);
 
     /// @notice Emitted when `wire` updates the `desis` and `intexFactory` dependencies and rotates their roles.
     /// @param desisOld Previous `desis` (zero on first wiring).
@@ -125,6 +125,14 @@ interface IOriginRouter {
         bytes payload;
     }
 
+    /// @notice Entry, floor and call price of one reference currency for a day.
+    struct ReferenceCurrencyPrice {
+        uint16 isoCode;
+        uint64 entryPriceMinor;
+        uint64 floorPriceMinor;
+        uint64 callPriceMinor;
+    }
+
     /// @notice Auction stage start parameters grouped to keep the calldata layout resilient against stack limits.
     struct AuctionStageStartParams {
         uint32 worldwideDay;
@@ -134,20 +142,12 @@ interface IOriginRouter {
         uint32 revealEnd;
         /// @notice End of the issuance stage (UNIX seconds).
         uint32 issuanceEnd;
-        /// @notice Issuance currency (ISO numeric).
-        uint16 issuanceCurrency;
-        /// @notice Reference currency (ISO numeric).
-        uint16 referenceCurrency;
         /// @notice Promis tokens per Intex unit (18 decimals).
         uint128 promisLoadMinor;
         /// @notice Minimum acceptable bid rate (`1e6` fixed-point, % of the escrow basis).
         uint32 minIntexBidRate;
-        /// @notice Per-unit entry price (reference ccy); feeds floor/call.
-        uint64 entryPrice;
-        /// @notice Floor price (payment-token minor units).
-        uint64 floorPriceMinor;
-        /// @notice Call price (payment-token minor units).
-        uint64 callPriceMinor;
+        /// @notice Entry, floor and call price of every currency the day can clear in.
+        ReferenceCurrencyPrice[] prices;
         /// @notice Called→deadline window in seconds (0 = default).
         uint32 callNoticePeriod;
         /// @notice Call-trigger observation window in seconds.
@@ -166,9 +166,7 @@ interface IOriginRouter {
     /// @dev `issuedIntexCount` is the auction-cleared cap that pins `mint` on the destination NFT
     ///      contract. Must equal the auction's cleared count.
     struct IssuanceInstructionsParams {
-        /// @notice Destination chain for this issuance leg (must be in the series' STAGE_START snapshot).
-        uint32 dstChainId;
-        uint32 seriesId;
+        bytes14 seriesId;
         /// @notice Worldwide day the series was derived from (provenance; carried to the destination NFT).
         uint32 worldwideDay;
         uint32 issuedIntexCount;
@@ -264,22 +262,24 @@ interface IOriginRouter {
         uint32 wonBidsCount
     ) external view returns (uint256 fee);
     /// @notice Native fee to send issuance instructions to the target chain in `params.dstChainId`.
-    function quoteSendIssuanceInstructions(IssuanceInstructionsParams calldata params)
+    function quoteSendIssuanceInstructions(uint32 dstChainId, IssuanceInstructionsParams[] calldata series)
         external
         view
         returns (uint256 fee);
-    /// @notice Native fee to send refund instructions to a single target chain.
+    /// @notice Native fee to send one chunk of a day's refund instructions to a single target chain.
     function quoteSendRefundInstructions(
         uint32 dstChainId,
         uint32 worldwideDay,
+        uint16 chunkIndex,
+        uint16 totalChunks,
         address[] calldata bidders,
         uint128[] calldata refundedAmounts,
         uint128[] calldata paidAmounts
     ) external view returns (uint256 fee);
     /// @notice Native fee to broadcast mark-called (summed over the day's snapshot targets).
-    function quoteSendMarkCalled(uint32 seriesId) external view returns (uint256 fee);
+    function quoteSendMarkCalled(bytes14 seriesId, uint32 worldwideDay) external view returns (uint256 fee);
     /// @notice Native fee to broadcast mark-qualified (summed over the day's snapshot targets).
-    function quoteSendMarkQualified(uint32 seriesId) external view returns (uint256 fee);
+    function quoteSendMarkQualified(bytes14 seriesId, uint32 worldwideDay) external view returns (uint256 fee);
 
     // --- Send ---
     /// @notice Broadcast auction stage start to every registered target, snapshotting the target set for the day.
@@ -295,26 +295,29 @@ interface IOriginRouter {
         uint64 auctionClearingRate,
         uint32 wonBidsCount
     ) external payable returns (bytes32 sendId);
-    /// @notice Send issuance instructions to `params.dstChainId`. Empty `recipients` creates the series only.
-    ///         Restricted to `INTEX_FACTORY_ROLE`.
-    function sendIssuanceInstructions(IssuanceInstructionsParams calldata params)
+    /// @notice Send one chain the series of a day it must create and the winners to mint to.
+    ///         Empty `recipients` creates the series only. Restricted to `INTEX_FACTORY_ROLE`.
+    function sendIssuanceInstructions(uint32 dstChainId, IssuanceInstructionsParams[] calldata series)
         external
         payable
         returns (bytes32 sendId);
-    /// @notice Send refund instructions to a single target chain. Restricted to `DESIS_ROLE`.
+    /// @notice Send one chunk of a day's refund instructions to a single target chain.
+    ///         Restricted to `DESIS_ROLE`.
     function sendRefundInstructions(
         uint32 dstChainId,
         uint32 worldwideDay,
+        uint16 chunkIndex,
+        uint16 totalChunks,
         address[] calldata bidders,
         uint128[] calldata refundedAmounts,
         uint128[] calldata paidAmounts
     ) external payable returns (bytes32 sendId);
     /// @notice Broadcast mark-called over the day's snapshot. Restricted to `INTEX_FACTORY_ROLE`.
     /// @dev The settlement deadline is derived on the destination chain from `callNoticePeriod`.
-    function sendMarkCalled(uint32 seriesId) external payable;
+    function sendMarkCalled(bytes14 seriesId, uint32 worldwideDay) external payable;
     /// @notice Broadcast mark-qualified over the day's snapshot, flipping the series to Qualified.
     ///         Restricted to `INTEX_FACTORY_ROLE`.
-    function sendMarkQualified(uint32 seriesId) external payable;
+    function sendMarkQualified(bytes14 seriesId, uint32 worldwideDay) external payable;
 
     /// @notice Permissionless flush of a parked outbound leg.
     function flushPendingSend(uint256 idx) external;

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.28;
 
+import {ReferenceCurrencyPriceLib} from "./helpers/ReferenceCurrencyPriceLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
@@ -36,13 +37,9 @@ contract IntexAuctionScheduleSnapTest is Test {
             issuanceEnd: uint32(block.timestamp + ISSUANCE_OFFSET)
         });
         IIntexAuction.AuctionParams memory p = IIntexAuction.AuctionParams({
-            issuanceCurrency: 840,
-            referenceCurrency: 840,
             promisLoadMinor: 1000,
             minIntexBidRate: 10,
-            entryPriceMinor: 100,
-            floorPriceMinor: 100,
-            callPriceMinor: 100,
+            prices: ReferenceCurrencyPriceLib.onePriced(840, 100, 100, 100),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
             minIntexBidQuantity: 1,
             commitBondMinor: 0

@@ -8,7 +8,7 @@ use std::{
 use alloy_primitives::B256;
 
 use outbe_primitives::tee_attestation_v1::{
-    AttestationMode, EnclaveInitializationManifestV1, EnclaveProfile, RegistrationIntentV1,
+    AttestationMode, EnclaveInitializationManifestV1, RegistrationIntentV1,
 };
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 use rand_core::RngCore as _;
@@ -309,14 +309,11 @@ impl InitializationState {
                 .then_some(())
                 .ok_or("remote session command denied by enclave capability matrix");
         }
-        let profile = self
-            .manifest()
+        self.manifest()
             .map_err(|_| "initialization state unavailable")?
-            .ok_or("enclave is not initialized")?
-            .enclave_profile;
+            .ok_or("enclave is not initialized")?;
         command_allowed_for_environment(
             command_class(request),
-            profile,
             offer_key_ready,
             self.gramine_direct_dev_evidence_allowed,
         )
@@ -418,7 +415,7 @@ impl InitializationState {
 enum CommandClass {
     Never,
     Initialized,
-    ValidatorKeyless,
+    FoundingKeyless,
     KeylessOnboardingArtifact,
     Ready,
     DevSourceSeal,
@@ -442,7 +439,7 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::DkgDealerFinalize { .. }
         | EnclaveRequest::DkgPlayerFinalize { .. }
         | EnclaveRequest::DkgTributeOfferPartial { .. }
-        | EnclaveRequest::DkgFinalizeTributeOffer { .. } => CommandClass::ValidatorKeyless,
+        | EnclaveRequest::DkgFinalizeTributeOffer { .. } => CommandClass::FoundingKeyless,
         EnclaveRequest::IngestDcapOnboardingArtifactV1 { .. } => {
             CommandClass::KeylessOnboardingArtifact
         }
@@ -473,14 +470,13 @@ fn unix_time_seconds() -> Result<u64, &'static str> {
 
 fn command_allowed_for_environment(
     class: CommandClass,
-    profile: EnclaveProfile,
     offer_key_ready: bool,
     gramine_direct_dev_evidence_allowed: bool,
 ) -> Result<(), &'static str> {
     let allowed = match class {
         CommandClass::Never => false,
         CommandClass::Initialized => true,
-        CommandClass::ValidatorKeyless => profile == EnclaveProfile::Validator && !offer_key_ready,
+        CommandClass::FoundingKeyless => !offer_key_ready,
         CommandClass::KeylessOnboardingArtifact => !offer_key_ready,
         CommandClass::Ready => offer_key_ready,
         // The legacy raw delivery is available only to the local authenticated
@@ -493,7 +489,7 @@ fn command_allowed_for_environment(
     };
     allowed
         .then_some(())
-        .ok_or("command denied by enclave profile/state matrix")
+        .ok_or("command denied by enclave state matrix")
 }
 
 fn persist_manifest(
@@ -582,18 +578,16 @@ mod tests {
         challenge: [u8; 32],
     ) -> (EnclaveInitializationManifestV1, [u8; 65]) {
         let signing = SigningKey::from_bytes((&[0x61; 32]).into()).unwrap();
-        let public = signing.verifying_key().to_encoded_point(false);
-        let hash = alloy_primitives::keccak256(&public.as_bytes()[1..]);
-        let mut address = [0u8; 20];
-        address.copy_from_slice(&hash[12..]);
+        let reth_p2p_public = signing
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .unwrap();
         let manifest = EnclaveInitializationManifestV1 {
             chain_id: [0x10; 32],
             genesis_hash: B256::repeat_byte(0x11),
-            enclave_profile: EnclaveProfile::Validator,
-            node_id: NodeIdV1::Validator {
-                address,
-                bls_minpk_public: [0x32; 48],
-            },
+            node_id: NodeIdV1 { reth_p2p_public },
             initialization_challenge: challenge,
             node_host_noise_x25519: [0x42; 32],
             recipient_x25519: keys.tribute_offer_public(),
@@ -819,7 +813,6 @@ mod tests {
                 attestation_mode:
                     outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired,
                 policy_hash: B256::repeat_byte(0x21),
-                enclave_profile: manifest.enclave_profile,
                 node_id: manifest.node_id.clone(),
                 enclave_id: manifest.enclave_id().unwrap(),
                 binding_id: B256::repeat_byte(0x42),
@@ -931,7 +924,6 @@ mod tests {
             operation: AttestationOperationV1::ReplaceEnclaveBinding,
             attestation_mode: AttestationMode::DcapRequired,
             policy_hash: B256::repeat_byte(0x21),
-            enclave_profile: replacement_manifest.enclave_profile,
             node_id: replacement_manifest.node_id.clone(),
             enclave_id: replacement_manifest.enclave_id().unwrap(),
             binding_id: B256::repeat_byte(0x44),
@@ -961,34 +953,28 @@ mod tests {
     }
 
     #[test]
-    fn command_matrix_is_deny_by_default_for_both_profiles_and_readiness_states() {
+    fn command_matrix_depends_on_key_state_and_not_on_node_role() {
         use CommandClass::*;
         let cases = [
-            (Never, [false, false, false, false]),
-            (Initialized, [true, true, true, true]),
-            (ValidatorKeyless, [true, false, false, false]),
-            (KeylessOnboardingArtifact, [true, false, true, false]),
-            (Ready, [false, true, false, true]),
-            (DevSourceSeal, [false, false, false, false]),
-            (DevRecipientIngest, [false, false, false, false]),
+            (Never, [false, false]),
+            (Initialized, [true, true]),
+            (FoundingKeyless, [true, false]),
+            (KeylessOnboardingArtifact, [true, false]),
+            (Ready, [false, true]),
+            (DevSourceSeal, [false, false]),
+            (DevRecipientIngest, [false, false]),
         ];
         for (class, expected) in cases {
             let actual = [
-                command_allowed_for_environment(class, EnclaveProfile::Validator, false, false)
-                    .is_ok(),
-                command_allowed_for_environment(class, EnclaveProfile::Validator, true, false)
-                    .is_ok(),
-                command_allowed_for_environment(class, EnclaveProfile::FullNode, false, false)
-                    .is_ok(),
-                command_allowed_for_environment(class, EnclaveProfile::FullNode, true, false)
-                    .is_ok(),
+                command_allowed_for_environment(class, false, false).is_ok(),
+                command_allowed_for_environment(class, true, false).is_ok(),
             ];
             assert_eq!(actual, expected, "matrix mismatch for {class:?}");
         }
     }
 
     #[test]
-    fn founding_offer_finalization_is_validator_keyless_only() {
+    fn founding_offer_finalization_is_keyless_only() {
         let request = EnclaveRequest::DkgFinalizeTributeOffer {
             ceremony_id: B256::repeat_byte(0x91),
             sealed_partials: Vec::new(),
@@ -996,19 +982,9 @@ mod tests {
             tribute_offer_epoch: 0,
         };
         let class = command_class(&request);
-        assert_eq!(class, CommandClass::ValidatorKeyless);
-        assert!(
-            command_allowed_for_environment(class, EnclaveProfile::Validator, false, false).is_ok()
-        );
-        assert!(
-            command_allowed_for_environment(class, EnclaveProfile::Validator, true, false).is_err()
-        );
-        assert!(
-            command_allowed_for_environment(class, EnclaveProfile::FullNode, false, false).is_err()
-        );
-        assert!(
-            command_allowed_for_environment(class, EnclaveProfile::FullNode, true, false).is_err()
-        );
+        assert_eq!(class, CommandClass::FoundingKeyless);
+        assert!(command_allowed_for_environment(class, false, false).is_ok());
+        assert!(command_allowed_for_environment(class, true, false).is_err());
     }
 
     #[test]
@@ -1021,10 +997,8 @@ mod tests {
             expected_tribute_offer_epoch: 0,
         });
         assert_eq!(purpose_bound, CommandClass::KeylessOnboardingArtifact);
-        for profile in [EnclaveProfile::Validator, EnclaveProfile::FullNode] {
-            assert!(command_allowed_for_environment(purpose_bound, profile, false, false).is_ok());
-            assert!(command_allowed_for_environment(purpose_bound, profile, true, false).is_err());
-        }
+        assert!(command_allowed_for_environment(purpose_bound, false, false).is_ok());
+        assert!(command_allowed_for_environment(purpose_bound, true, false).is_err());
 
         for (raw, expected_class) in [
             (
@@ -1045,10 +1019,8 @@ mod tests {
         ] {
             let class = command_class(&raw);
             assert_eq!(class, expected_class);
-            for profile in [EnclaveProfile::Validator, EnclaveProfile::FullNode] {
-                assert!(command_allowed_for_environment(class, profile, false, false).is_err());
-                assert!(command_allowed_for_environment(class, profile, true, false).is_err());
-            }
+            assert!(command_allowed_for_environment(class, false, false).is_err());
+            assert!(command_allowed_for_environment(class, true, false).is_err());
         }
     }
 
@@ -1064,16 +1036,9 @@ mod tests {
             tribute_offer_epoch: 0,
         });
 
-        assert!(
-            command_allowed_for_environment(seal, EnclaveProfile::Validator, true, true,).is_ok()
-        );
-        assert!(
-            command_allowed_for_environment(seal, EnclaveProfile::FullNode, true, true,).is_ok()
-        );
-        for profile in [EnclaveProfile::Validator, EnclaveProfile::FullNode] {
-            assert!(command_allowed_for_environment(ingest, profile, false, true).is_ok());
-            assert!(command_allowed_for_environment(ingest, profile, true, true).is_err());
-            assert!(command_allowed_for_environment(ingest, profile, false, false).is_err());
-        }
+        assert!(command_allowed_for_environment(seal, true, true).is_ok());
+        assert!(command_allowed_for_environment(ingest, false, true).is_ok());
+        assert!(command_allowed_for_environment(ingest, true, true).is_err());
+        assert!(command_allowed_for_environment(ingest, false, false).is_err());
     }
 }

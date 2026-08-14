@@ -4,7 +4,7 @@
     "deb_closure": {
       "count": 100,
       "format": "sha256sum-lines-sorted-by-filename-v1",
-      "sha256": "a96ae1783cc9e359b14bc7504ba6c395c55eadec51ddec9f3e73e42f5f292af6"
+      "sha256": "8d7207b12ad495b36976ad9d6e6e409a21389a4e7f9ee52f04bad3666f52ad42"
     },
     "source_files": [
       {
@@ -17,7 +17,7 @@
       },
       {
         "path": "/etc/apt/sources.list.d/ubuntu.sources",
-        "sha256": "e32a60144cfc44172c9bfa7fab551793934d166ddc6dfc009c7174d08716d58d"
+        "sha256": "94e2925a468fb6f5c4e66ceb9b15dc02d0596b6eab594d8b3a6ac3572af1dc8f"
       },
       {
         "path": "/usr/share/keyrings/gramine-keyring.gpg",

@@ -1372,6 +1372,13 @@ fn next_consensus_epoch_after_dkg_activation(current_epoch: Epoch) -> Epoch {
     Epoch::new(current_epoch.get().saturating_add(1))
 }
 
+fn next_dkg_cycle_after_restored_target(
+    current_next_cycle: u64,
+    restored_target_cycle: u64,
+) -> u64 {
+    current_next_cycle.max(restored_target_cycle.saturating_add(1))
+}
+
 fn genesis_hash(node: &OutbeFullNode) -> Result<B256> {
     let hash = node
         .provider
@@ -3079,7 +3086,7 @@ where
     // FAILS FAST (node halts via startup error) on timeout or error, rather than
     // proceeding into a permanently un-bootstrapped chain (no offer key on-chain =>
     // offers impossible). Local liveness only — not a consensus rule on imported
-    // blocks. Missing local enclave or validator identity is a startup error,
+    // blocks. Missing local enclave or NodeHost identity is a startup error,
     // never a production fallback.
     let socket = args.tee_enclave_socket.clone().ok_or_else(|| {
         eyre::eyre!("mandatory TEE chain requires --tee-enclave-socket before consensus startup")
@@ -3141,16 +3148,6 @@ where
                 committee.contains(&my_validator),
                 "local validator is absent from the exact OST3 epoch-0 committee snapshot"
             );
-            let encoded_consensus_key = local_consensus_key.encode();
-            let consensus_bls_public: [u8; 48] = encoded_consensus_key
-                .as_ref()
-                .try_into()
-                .map_err(|_| eyre::eyre!("validator consensus public key is not 48 bytes"))?;
-            let node_id = outbe_primitives::tee_attestation_v1::NodeIdV1::Validator {
-                address: my_validator.into_array(),
-                bls_minpk_public: consensus_bls_public,
-            };
-            let numeric_chain_id = node.chain_spec().chain().id();
             let requested_valid_until = node
                 .chain_spec()
                 .genesis
@@ -3168,6 +3165,21 @@ where
                 .to_str()
                 .ok_or_else(|| eyre::eyre!("TEE enclave endpoint is not valid UTF-8"))?
                 .to_owned();
+            let reth_p2p_secret = node
+                .config
+                .network
+                .secret_key(node.data_dir.p2p_secret())
+                .wrap_err("failed to load persistent Reth P2P identity for OST3")?;
+            let node_host_signing =
+                k256::ecdsa::SigningKey::from_slice(reth_p2p_secret.secret_bytes().as_slice())
+                    .map_err(|error| eyre::eyre!("invalid Reth P2P signing key: {error}"))?;
+            let reth_p2p_public = node_host_signing
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()
+                .map_err(|_| eyre::eyre!("Reth P2P public key is not compressed SEC1-33"))?;
+            let node_id = outbe_primitives::tee_attestation_v1::NodeIdV1 { reth_p2p_public };
 
             // Step 1 (TEE DKG → shared offer key) + Step 2 (bootstrap coordination →
             // block-1 payload), under one deadline. Any error or timeout halts.
@@ -3186,20 +3198,9 @@ where
                 .timeout(deadline, async move {
                     let (mut enclave, production_manifest) = match tee_session {
                         crate::args::ResolvedTeeSession::ProductionNodeHost => {
-                            let production = outbe_tee::connect_or_initialize_validator_enclave(
+                            let production = outbe_tee::connect_committed_node_host_enclave(
                                 &endpoint,
                                 &node_data_dir,
-                                outbe_tee::ValidatorNodeHostIdentityV1 {
-                                    chain_id: numeric_chain_id,
-                                    genesis_hash: tee_policy.genesis_hash,
-                                    validator: my_validator,
-                                    consensus_bls_public,
-                                },
-                                |hash| {
-                                    evm_signer
-                                        .sign_hash(&hash)
-                                        .map_err(|error| error.to_string())
-                                },
                             )
                             .map_err(|error| {
                                 eyre::eyre!("production NodeHost reconnect failed: {error}")
@@ -3254,6 +3255,19 @@ where
                             &tee_policy,
                             requested_valid_until,
                             &evm_signer,
+                            |hash| {
+                                use k256::ecdsa::signature::hazmat::PrehashSigner as _;
+                                let (signature, recovery): (
+                                    k256::ecdsa::Signature,
+                                    k256::ecdsa::RecoveryId,
+                                ) = node_host_signing
+                                    .sign_prehash(hash.as_slice())
+                                    .map_err(|error| error.to_string())?;
+                                let mut bytes = [0_u8; 65];
+                                bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
+                                bytes[64] = recovery.to_byte();
+                                Ok(bytes)
+                            },
                         )?;
                     let authority = outbe_primitives::tee_bootstrap_v2::TeeBootstrapAuthorityV2 {
                         policy: tee_policy,
@@ -3314,7 +3328,7 @@ where
             // A restarted active validator must already hold the exact resident
             // offer key committed on-chain. Startup never recovers or replaces a
             // lost key and never falls back to a pre-V1 delivery protocol.
-            let my_validator = proposer_evm_address.ok_or_else(|| {
+            let _my_validator = proposer_evm_address.ok_or_else(|| {
                 eyre::eyre!("active validator consensus startup requires its EVM identity")
             })?;
             let on_chain_offer = validators::read_tee_offer_public_at_latest(&node.provider)
@@ -3323,17 +3337,6 @@ where
                 !on_chain_offer.is_zero(),
                 "mandatory OST3 chain has no on-chain offer key after block 1"
             );
-            let evm_key_path = args
-                .effective_validator_evm_key()?
-                .ok_or_else(|| eyre::eyre!("validator restart requires its EVM signer key"))?;
-            let evm_signer = outbe_primitives::signer::OutbeEvmSigner::from_file(&evm_key_path)
-                .map_err(|error| eyre::eyre!("failed to load validator EVM signer: {error}"))?;
-            let local_consensus_key = signing_key.public_key();
-            let encoded_consensus_key = local_consensus_key.encode();
-            let consensus_bls_public: [u8; 48] = encoded_consensus_key
-                .as_ref()
-                .try_into()
-                .map_err(|_| eyre::eyre!("validator consensus public key is not 48 bytes"))?;
             let node_data_dir = node
                 .config
                 .datadir
@@ -3347,24 +3350,10 @@ where
             let mut enclave = match tee_session {
                 crate::args::ResolvedTeeSession::ProductionNodeHost => {
                     outbe_tee::RuntimeEnclaveClient::Production(
-                        outbe_tee::connect_or_initialize_validator_enclave(
-                            endpoint,
-                            &node_data_dir,
-                            outbe_tee::ValidatorNodeHostIdentityV1 {
-                                chain_id: node.chain_spec().chain().id(),
-                                genesis_hash: tee_policy.genesis_hash,
-                                validator: my_validator,
-                                consensus_bls_public,
-                            },
-                            |hash| {
-                                evm_signer
-                                    .sign_hash(&hash)
-                                    .map_err(|error| error.to_string())
-                            },
-                        )
-                        .map_err(|error| {
-                            eyre::eyre!("production NodeHost reconnect failed: {error}")
-                        })?,
+                        outbe_tee::connect_committed_node_host_enclave(endpoint, &node_data_dir)
+                            .map_err(|error| {
+                                eyre::eyre!("production NodeHost reconnect failed: {error}")
+                            })?,
                     )
                 }
                 crate::args::ResolvedTeeSession::Development => {
@@ -4032,6 +4021,10 @@ where
                 })?
             }
         };
+        let restored_target_dkg_cycle = match &restored {
+            RestoredPendingDkgActivation::Participant(pending) => pending.target.dkg_cycle,
+            RestoredPendingDkgActivation::DealerOnly(pending) => pending.target.dkg_cycle,
+        };
         let exact_carrier_height = find_exact_finalized_preannounce_carrier(
             &node.provider,
             pending_artifact,
@@ -4056,6 +4049,8 @@ where
                     active_epoch == current_epoch,
                     "deferred startup DKG plan changed active epoch"
                 );
+                dkg_cycle =
+                    next_dkg_cycle_after_restored_target(dkg_cycle, restored_target_dkg_cycle);
                 match restored {
                     RestoredPendingDkgActivation::Participant(pending) => {
                         frozen_dkg_target = Some(pending.target.clone());
@@ -4084,7 +4079,7 @@ where
                         RestoredPendingDkgActivation::Participant(pending) => (
                             pending.target,
                             pending.complete.output,
-                            pending.complete.share,
+                            Some(pending.complete.share),
                             pending.boundary_artifact,
                         ),
                         RestoredPendingDkgActivation::DealerOnly(pending) => {
@@ -4486,7 +4481,8 @@ where
                                     vrf_material_version,
                                     &participants,
                                     &target,
-                                    &dkg_complete,
+                                    &dkg_complete.output,
+                                    &dkg_complete.participants,
                                 )?
                             };
 
@@ -5023,7 +5019,7 @@ where
                                     vrf_material_version,
                                 )?;
                             let activated_polynomial = canonical_output.public().clone();
-                            let activated_signing_share = dkg_complete.share;
+                            let activated_signing_share = Some(dkg_complete.share);
                             let next_epoch = next_consensus_epoch_after_dkg_activation(current_epoch);
                             ensure!(
                                 boundary_artifact.epoch == next_epoch.get(),
@@ -5168,20 +5164,14 @@ where
                                 .as_ref()
                                 .map(|pending| pending.target.clone())
                                 .ok_or_else(|| eyre::eyre!("dealer-only activation disappeared while preparing boundary"))?;
-                            let complete = dkg_actor::DkgComplete {
-                                output: canonical_output,
-                                share: None,
-                                participants: target.participants.clone(),
-                            };
                             let boundary_artifact = if let Some(ref keys_dir) = args.keys_dir {
-                                persist_completed_dkg_before_activation(
+                                persist_observed_dkg_boundary_before_activation(
                                     keys_dir,
-                                    &key_backend,
                                     current_epoch,
                                     vrf_material_version,
                                     &participants,
                                     &target,
-                                    &complete,
+                                    &canonical_output,
                                     current_height,
                                 )?
                             } else {
@@ -5190,7 +5180,8 @@ where
                                     vrf_material_version,
                                     &participants,
                                     &target,
-                                    &complete,
+                                    &canonical_output,
+                                    &target.participants,
                                 )?
                             };
                             dkg_manager.note_ceremony_completed(boundary_artifact.clone());
@@ -5497,7 +5488,7 @@ where
                                         outbe_consensus::metrics::record_dkg_status(0);
                                         continue;
                                     }
-                                    let dealer_retry_store = dkg_dealer_retry_store(&args, &key_backend);
+                                    let retry_store = dkg_retry_store(&args, &key_backend)?;
                                     ctx.child("dkg_retry").spawn(move |dkg_ctx| async move {
                                         let result = match role {
                                             LocalDkgRole::DealerAndPlayer => {
@@ -5510,7 +5501,7 @@ where
                                                     round,
                                                     Some(progress_tx),
                                                     Some(finalized_log_rx),
-                                                    dealer_retry_store.clone(),
+                                                    retry_store.clone(),
                                                     dkg_tx,
                                                     dkg_rx,
                                                 )
@@ -5527,7 +5518,7 @@ where
                                                     round,
                                                     Some(progress_tx),
                                                     Some(finalized_log_rx),
-                                                    dealer_retry_store.clone(),
+                                                    retry_store.clone(),
                                                     dkg_tx,
                                                     dkg_rx,
                                                 )
@@ -5543,7 +5534,7 @@ where
                                                     share,
                                                     round,
                                                     progress_tx,
-                                                    dealer_retry_store.clone(),
+                                                    retry_store.clone(),
                                                     dkg_tx,
                                                     dkg_rx,
                                                 )
@@ -5813,7 +5804,7 @@ where
                                     outbe_consensus::metrics::record_dkg_status(0);
                                     continue;
                                 }
-                                let dealer_retry_store = dkg_dealer_retry_store(&args, &key_backend);
+                                let retry_store = dkg_retry_store(&args, &key_backend)?;
                                 ctx.child("dkg_live").spawn(move |dkg_ctx| async move {
                                     let result = match role {
                                         LocalDkgRole::DealerAndPlayer => {
@@ -5826,7 +5817,7 @@ where
                                                 round,
                                                 Some(progress_tx),
                                                 Some(finalized_log_rx),
-                                                dealer_retry_store.clone(),
+                                                retry_store.clone(),
                                                 dkg_tx,
                                                 dkg_rx,
                                             )
@@ -5843,7 +5834,7 @@ where
                                                 round,
                                                 Some(progress_tx),
                                                 Some(finalized_log_rx),
-                                                dealer_retry_store.clone(),
+                                                retry_store.clone(),
                                                 dkg_tx,
                                                 dkg_rx,
                                             )
@@ -5859,7 +5850,7 @@ where
                                                 share,
                                                 round,
                                                 progress_tx,
-                                                dealer_retry_store.clone(),
+                                                retry_store.clone(),
                                                 dkg_tx,
                                                 dkg_rx,
                                             )
@@ -6055,14 +6046,16 @@ const DKG_PENDING_OUTPUT_FILE: &str = "dkg_pending_output.hex";
 const DKG_PENDING_BOUNDARY_FILE: &str = "dkg_pending_boundary.bin";
 const DKG_PENDING_BOUNDARY_TMP_FILE: &str = "dkg_pending_boundary.bin.tmp";
 const DKG_DEALER_RETRY_FILE: &str = "dkg_dealer_retry.hex";
+const DKG_PLAYER_RETRY_FILE: &str = "dkg_player_retry.hex";
 
-fn dkg_dealer_retry_store(
+fn dkg_retry_store(
     args: &ConsensusArgs,
     key_backend: &bls::KeyBackend,
-) -> Option<dkg_actor::DkgDealerRetryStore> {
+) -> Result<dkg_actor::DkgRetryStore> {
     args.keys_dir
         .as_ref()
-        .map(|keys_dir| dkg_actor::DkgDealerRetryStore::in_keys_dir(keys_dir, key_backend.clone()))
+        .map(|keys_dir| dkg_actor::DkgRetryStore::in_keys_dir(keys_dir, key_backend.clone()))
+        .ok_or_else(|| eyre::eyre!("DKG participant recovery requires --consensus.keys-dir"))
 }
 
 fn retire_activated_dkg_retry_state(
@@ -6071,7 +6064,7 @@ fn retire_activated_dkg_retry_state(
 ) -> Result<()> {
     remove_pending_dkg_state(keys_dir);
     clear_pending_dkg_boundary(keys_dir);
-    dkg_actor::DkgDealerRetryStore::in_keys_dir(keys_dir, key_backend.clone())
+    dkg_actor::DkgRetryStore::in_keys_dir(keys_dir, key_backend.clone())
         .clear()
         .wrap_err("failed to retire activated DKG retry state")
 }
@@ -6085,6 +6078,7 @@ const DKG_ALL_FILES: &[&str] = &[
     DKG_PENDING_OUTPUT_FILE,
     DKG_PENDING_BOUNDARY_FILE,
     DKG_DEALER_RETRY_FILE,
+    DKG_PLAYER_RETRY_FILE,
 ];
 
 /// Move DKG key files from legacy location (`consensus/`) to dedicated `keys/` dir.
@@ -6295,13 +6289,14 @@ fn build_completed_dkg_boundary(
     vrf_material_version: u64,
     current_participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
     target: &FrozenDkgTarget,
-    complete: &dkg_actor::DkgComplete,
+    output: &Output<MinSig, bls12381::PublicKey>,
+    completed_participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
 ) -> Result<DkgBoundaryArtifact> {
     let activated_validator_set =
-        validator_set_for_dkg_output_players(&complete.output, &target.validator_set)?;
+        validator_set_for_dkg_output_players(output, &target.validator_set)?;
     let activated_participants = participants_from_validator_set(&activated_validator_set)?;
     ensure!(
-        complete.participants == activated_participants,
+        completed_participants == &activated_participants,
         "completed DKG participant set does not match reconstructed output players"
     );
     let next_epoch = next_consensus_epoch_after_dkg_activation(current_epoch);
@@ -6310,7 +6305,7 @@ fn build_completed_dkg_boundary(
     dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
         epoch: next_epoch,
         validator_set: &activated_validator_set,
-        output: &complete.output,
+        output,
         is_full_dkg: false,
         dkg_cycle: target.dkg_cycle,
         freeze_height: target.freeze_height,
@@ -6338,20 +6333,19 @@ fn persist_completed_dkg_before_activation(
         vrf_material_version,
         current_participants,
         target,
-        complete,
+        &complete.output,
+        &complete.participants,
     )?;
     let next_epoch = next_consensus_epoch_after_dkg_activation(current_epoch);
 
-    if let Some(share) = complete.share.as_ref() {
-        save_pending_dkg_state(
-            keys_dir,
-            share,
-            complete.output.public(),
-            &complete.output,
-            key_backend,
-        )
-        .wrap_err("failed to durably save completed DKG state before activation")?;
-    }
+    save_pending_dkg_state(
+        keys_dir,
+        &complete.share,
+        complete.output.public(),
+        &complete.output,
+        key_backend,
+    )
+    .wrap_err("failed to durably save completed DKG state before activation")?;
     save_pending_dkg_boundary(
         keys_dir,
         &PendingDkgBoundarySnapshot {
@@ -6368,6 +6362,35 @@ fn persist_completed_dkg_before_activation(
         dkg_output_hash = %dkg_manager::dkg_output_hash(&complete.output),
         "persisted completed DKG state before activation"
     );
+    Ok(boundary_artifact)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn persist_observed_dkg_boundary_before_activation(
+    keys_dir: &std::path::Path,
+    current_epoch: Epoch,
+    vrf_material_version: u64,
+    current_participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
+    target: &FrozenDkgTarget,
+    output: &Output<MinSig, bls12381::PublicKey>,
+    completed_at_height: u64,
+) -> Result<DkgBoundaryArtifact> {
+    let boundary_artifact = build_completed_dkg_boundary(
+        current_epoch,
+        vrf_material_version,
+        current_participants,
+        target,
+        output,
+        &target.participants,
+    )?;
+    save_pending_dkg_boundary(
+        keys_dir,
+        &PendingDkgBoundarySnapshot {
+            artifact: boundary_artifact.clone(),
+            completed_at_height,
+        },
+    )
+    .wrap_err("failed to durably save observed DKG boundary before activation")?;
     Ok(boundary_artifact)
 }
 
@@ -6517,7 +6540,7 @@ fn recover_pending_dkg_boundary_snapshot(
         }
         clear_pending_dkg_boundary(storage_dir);
         remove_pending_dkg_state(storage_dir);
-        dkg_actor::DkgDealerRetryStore::in_keys_dir(storage_dir, key_backend.clone())
+        dkg_actor::DkgRetryStore::in_keys_dir(storage_dir, key_backend.clone())
             .clear()
             .wrap_err("failed to retire finalized pending DKG retry state during restart")?;
         info!(
@@ -6618,7 +6641,7 @@ fn restore_pending_dkg_activation(
                 target,
                 complete: dkg_actor::DkgComplete {
                     output: output.clone(),
-                    share: Some(share),
+                    share,
                     participants,
                 },
                 boundary_artifact: snapshot.artifact,
@@ -6785,7 +6808,7 @@ async fn obtain_threshold_material(
                         )?;
                     remove_pending_dkg_state(keys_dir);
                     clear_pending_dkg_boundary(keys_dir);
-                    dkg_actor::DkgDealerRetryStore::in_keys_dir(keys_dir, key_backend.clone())
+                    dkg_actor::DkgRetryStore::in_keys_dir(keys_dir, key_backend.clone())
                         .clear()
                         .wrap_err("failed to retire recovered DKG retry state")?;
                     info!(
@@ -6960,7 +6983,7 @@ async fn obtain_threshold_material(
         0,    // initial: round 0
         None,
         None,
-        dkg_dealer_retry_store(args, key_backend),
+        dkg_retry_store(args, key_backend)?,
         dkg_sender,
         dkg_receiver,
     )
@@ -6968,14 +6991,7 @@ async fn obtain_threshold_material(
     .wrap_err("DKG ceremony failed")?;
 
     let polynomial = dkg_result.output.public().clone();
-    // Genesis bootstrap has NO chain carrier to authenticate a shareless verifier
-    // polynomial, so completing without a share is fatal (a broken founding committee
-    // must not be silently accepted). Only the chain-finalized reshare path may return
-    // `None` → verifier; genesis passes no finalized-log receiver, so A5 keeps finalize
-    // fatal and this is always `Some`.
-    let signing_share = dkg_result.share.ok_or_else(|| {
-        eyre::eyre!("initial genesis DKG completed without a signing share; cannot bootstrap")
-    })?;
+    let signing_share = dkg_result.share;
     info!(
         vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
         "initial DKG ceremony completed; threshold material ready"

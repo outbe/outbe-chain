@@ -2,7 +2,7 @@ use super::*;
 
 use outbe_desis::{AuctionStage, DesisContract};
 use outbe_ocomp_protocol::{
-    intent::DayType,
+    intent::{AuctionEntryPriceSource, DayType, ReferenceEntryPriceV1},
     receipts::{desis_request_brief_hash, BudgetSplitDestination},
 };
 use outbe_primitives::error::PrecompileError;
@@ -11,6 +11,16 @@ use crate::ocomp_budget::{
     apply_fresh_request_budget_effect, validate_replayed_request_budget_effect,
     RequestBudgetEffect, RequestBudgetSplit,
 };
+
+/// The day's frozen price table: one dollar row, as a single-currency day carries.
+fn entry_prices() -> Vec<ReferenceEntryPriceV1> {
+    vec![ReferenceEntryPriceV1 {
+        reference_currency: outbe_oracle::constants::DAY_TYPE_ISO,
+        entry_price_minor: U256::from(2),
+        source: AuctionEntryPriceSource::LastClosedDayVwap,
+        source_day: 20_251_231,
+    }]
+}
 
 #[test]
 fn request_budget_split_is_exact_at_zero_max_and_rejects_over_budget() {
@@ -54,11 +64,11 @@ fn green_request_commits_exact_auction_base_and_canonical_receipt() {
             day_type: DayType::Green,
             day_limit: U256::from(100),
             lysis_budget: U256::from(40),
-            auction_entry_price: U256::from(2),
+            auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
         };
 
-        let receipt = apply_fresh_request_budget_effect(storage.clone(), request)
+        let receipt = apply_fresh_request_budget_effect(storage.clone(), request.clone())
             .expect("GREEN request budget effect");
 
         assert_eq!(receipt.day_limit, U256::from(100));
@@ -73,7 +83,7 @@ fn green_request_commits_exact_auction_base_and_canonical_receipt() {
                     request.protocol_bundle_hash,
                     request.wwd,
                     U256::from(60),
-                    request.auction_entry_price,
+                    &request.auction_entry_prices,
                     request.logical_anchor,
                 )
                 .unwrap()
@@ -111,11 +121,11 @@ fn red_request_skips_desis_and_credits_exact_auction_base() {
             day_type: DayType::Red,
             day_limit: U256::from(100),
             lysis_budget: U256::from(40),
-            auction_entry_price: U256::from(2),
+            auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
         };
 
-        let receipt = apply_fresh_request_budget_effect(storage.clone(), request)
+        let receipt = apply_fresh_request_budget_effect(storage.clone(), request.clone())
             .expect("RED request budget effect");
 
         assert_eq!(receipt.destination, BudgetSplitDestination::CarryOver);
@@ -142,14 +152,14 @@ fn retry_reuses_original_receipt_without_repeating_either_request_effect() {
             day_type: DayType::Green,
             day_limit: U256::from(100),
             lysis_budget: U256::from(40),
-            auction_entry_price: U256::from(2),
+            auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
         };
-        let green_receipt =
-            apply_fresh_request_budget_effect(storage.clone(), green).expect("GREEN first effect");
+        let green_receipt = apply_fresh_request_budget_effect(storage.clone(), green.clone())
+            .expect("GREEN first effect");
         let green_retry = RequestBudgetEffect {
             pending_nonce: 2,
-            ..green
+            ..green.clone()
         };
         assert_eq!(
             validate_replayed_request_budget_effect(green_retry, &green_receipt)
@@ -166,13 +176,13 @@ fn retry_reuses_original_receipt_without_repeating_either_request_effect() {
         let red = RequestBudgetEffect {
             wwd: 20_260_104,
             day_type: DayType::Red,
-            ..green
+            ..green.clone()
         };
-        let red_receipt =
-            apply_fresh_request_budget_effect(storage.clone(), red).expect("RED first effect");
+        let red_receipt = apply_fresh_request_budget_effect(storage.clone(), red.clone())
+            .expect("RED first effect");
         let red_retry = RequestBudgetEffect {
             pending_nonce: 2,
-            ..red
+            ..red.clone()
         };
         assert_eq!(
             validate_replayed_request_budget_effect(red_retry, &red_receipt).expect("RED retry"),
@@ -197,18 +207,18 @@ fn retry_rejects_tampered_or_future_receipts_without_writing() {
             day_type: DayType::Red,
             day_limit: U256::from(100),
             lysis_budget: U256::from(40),
-            auction_entry_price: U256::from(2),
+            auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
         };
-        let receipt = apply_fresh_request_budget_effect(storage.clone(), request).unwrap();
+        let receipt = apply_fresh_request_budget_effect(storage.clone(), request.clone()).unwrap();
         let before = PromisLimitContract::new(storage.clone())
             .get_total_unallocated()
             .unwrap();
 
         let mut tampered = receipt.clone();
-        tampered.auction_entry_price += U256::from(1);
+        tampered.auction_entry_prices[0].entry_price_minor += U256::from(1);
         assert!(matches!(
-            validate_replayed_request_budget_effect(request, &tampered),
+            validate_replayed_request_budget_effect(request.clone(), &tampered),
             Err(PrecompileError::Fatal(_))
         ));
 
@@ -235,7 +245,10 @@ fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
             storage.clone(),
             wwd,
             U256::from(7),
-            U256::from(3),
+            vec![outbe_desis::ReferenceCurrencyPrice {
+                iso_code: 840,
+                entry_price_minor: U256::from(3),
+            }],
             true,
             1_699_920_005,
         )
@@ -250,11 +263,11 @@ fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
             day_type: DayType::Green,
             day_limit: U256::from(100),
             lysis_budget: U256::from(40),
-            auction_entry_price: U256::from(2),
+            auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
         };
 
-        assert!(apply_fresh_request_budget_effect(storage.clone(), request).is_err());
+        assert!(apply_fresh_request_budget_effect(storage.clone(), request.clone()).is_err());
 
         let desis = DesisContract::new(storage.clone());
         assert_eq!(
@@ -285,11 +298,11 @@ fn red_carry_over_overflow_reverts_without_a_partial_request_effect() {
             day_type: DayType::Red,
             day_limit: U256::from(20),
             lysis_budget: U256::from(10),
-            auction_entry_price: U256::from(2),
+            auction_entry_prices: entry_prices(),
             logical_anchor: 1_699_920_005,
         };
 
-        assert!(apply_fresh_request_budget_effect(storage.clone(), request).is_err());
+        assert!(apply_fresh_request_budget_effect(storage.clone(), request.clone()).is_err());
         assert_eq!(
             PromisLimitContract::new(storage.clone())
                 .get_total_unallocated()

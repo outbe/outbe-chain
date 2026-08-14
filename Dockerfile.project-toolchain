@@ -19,6 +19,11 @@ ENV CARGO_HOME=/usr/local/cargo \
 COPY release/project-toolchain-v1.json /opt/outbe/toolchain/project-toolchain-v1.json
 COPY scripts/release/verify_project_toolchain.py /opt/outbe/toolchain/verify_project_toolchain.py
 
+# Freeze the Ubuntu archive at one snapshot instant so the resolved package
+# closure is reproducible; the base image points at the live archive, where the
+# transitive packages that no version pin covers drift on every republish.
+COPY release/apt/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources
+
 RUN apt-get update && \
     apt-get install --download-only --reinstall -y --no-install-recommends \
       build-essential=12.10ubuntu1 \

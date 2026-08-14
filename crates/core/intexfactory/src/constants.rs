@@ -43,18 +43,12 @@ pub const PROCEEDS_FANIN_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 /// Time a series must age past `issued_at` before it can become Qualified.
 pub const QUALIFICATION_PERIOD: u32 = 21 * 24 * 3600;
 
-// TODO remove this constant and fetch reference currencies from the oracle
-/// Reference-currency ISO for the qualifier oracle pair (COEN/840 = 840).
-pub const QUALIFIER_REFERENCE_ISO: u16 = 840;
-
-/// Issuance-currency ISO; fixed to USD (840) until multi-currency lands.
-pub const QUALIFIER_ISSUANCE_ISO: u16 = 840;
-
 /// Bin step (basis points) for the floor-price bin ladder.
 pub const BIN_STEP_BP: u16 = 25;
 
 /// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.
 pub const PRICE_RATE_DEN: u16 = 100;
+
 /// Floor price = entry * 1.08.
 pub const FLOOR_RATE: u16 = 8;
 /// Call price = entry * 2.28; its breach arms a Call Event.
@@ -68,5 +62,18 @@ pub const CALL_WINDOW: u32 = 28 * 24 * 3600;
 /// Call-trigger threshold: how much of the window must be in breach to force-call.
 pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
 
+/// Oracle prices carry 1e18, the wire and the target chains 1e9. Moves with
+/// `PRICE_DECIMALS = 9` in `IntexMetadata`.
+pub const ORACLE_TO_WIRE_SCALE: u64 = 1_000_000_000;
+
 /// Commit-entry bond on the target-chain auction: 100M wCOEN (18-dec minor units).
 pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * 10u128.pow(18);
+
+/// How old a COEN rate may be and still convert a settlement into the issuance currency.
+/// Seconds, not vote periods: those are counted in blocks and stretch under congestion.
+pub const FX_RATE_MAX_AGE_SECONDS: u64 = 6 * 3600;
+
+/// Series one ISSUANCE_INSTRUCTIONS message may carry, and recipients across them.
+/// Mirror the codec's `MAX_SERIES_PER_ISSUANCE` and `MAX_PAYLOAD_ARRAY_LEN`.
+pub const MAX_SERIES_PER_MESSAGE: usize = 8;
+pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 64;

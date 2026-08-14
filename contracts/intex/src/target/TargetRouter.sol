@@ -63,7 +63,7 @@ contract TargetRouter is
     /// @notice An issuance mint parked because a recipient's ERC-1155 receiver hook reverted; retried via
     ///         `flushPendingIssuanceMint`.
     struct PendingIssuanceMint {
-        uint32 seriesId;
+        bytes14 seriesId;
         address recipient;
         uint256 quantity;
         bool exists;
@@ -107,6 +107,15 @@ contract TargetRouter is
         /// @dev Set once the CLEARING for a day has triggered its bids relay, so a redelivered CLEARING never
         ///      re-relays under a fresh generation.
         mapping(uint32 worldwideDay => bool relayed) clearingRelayed;
+        /// @dev Bit per applied refund chunk, so a redelivered one neither re-counts nor
+        ///      completes the day. One word covers `MAX_CHUNKS`.
+        mapping(uint32 worldwideDay => uint256 bitmap) refundChunksApplied;
+        /// @dev Proceeds accrued so far, routed as one transfer once every chunk has arrived:
+        ///      the origin marks a chain paid on first delivery, so a partial sum closes the
+        ///      creator-reward fan-in early.
+        mapping(uint32 worldwideDay => uint128 accrued) refundProceedsAccrued;
+        /// @dev How many of the day's refund chunks have been applied.
+        mapping(uint32 worldwideDay => uint16 applied) refundChunksSeen;
     }
 
     /// @notice A proceeds route parked because its outbound send reverted (e.g. relay float too low); retried
@@ -213,7 +222,7 @@ contract TargetRouter is
     function pendingIssuanceMints(uint256 idx)
         external
         view
-        returns (uint32 seriesId, address recipient, uint256 quantity, bool exists, bool done)
+        returns (bytes14 seriesId, address recipient, uint256 quantity, bool exists, bool done)
     {
         PendingIssuanceMint storage p = _ts().pendingIssuanceMints[idx];
         return (p.seriesId, p.recipient, p.quantity, p.exists, p.done);
@@ -368,9 +377,7 @@ contract TargetRouter is
         uint32 gen = ++$.bidsRelayGeneration[worldwideDay];
 
         if (bidsCount == 0) {
-            _sendOneBidsBatch(
-                worldwideDay, gen, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
-            );
+            _sendOneBidsBatch(worldwideDay, gen, 0, 1, new address[](0), new uint256[](0));
             // Trusted bridge immutable; the flagged write is the erc7201 pointer load.
             // slither-disable-next-line reentrancy-eth
             _sendBidsDone(worldwideDay, gen, 1, 0);
@@ -390,21 +397,17 @@ contract TargetRouter is
             uint256 chunkLen = end - start;
 
             address[] memory bidderAddresses = new address[](chunkLen);
-            uint16[] memory intexQuantities = new uint16[](chunkLen);
-            uint32[] memory intexBidRates = new uint32[](chunkLen);
-            uint32[] memory timestamps = new uint32[](chunkLen);
+            uint256[] memory packedBids = new uint256[](chunkLen);
 
             for (uint256 i = 0; i < chunkLen; i++) {
                 IIntexAuction.SubmittedBidData memory bid = bids[start + i];
                 bidderAddresses[i] = bid.bidderAddress;
-                intexQuantities[i] = bid.intexQuantity;
-                intexBidRates[i] = bid.intexBidRate;
-                timestamps[i] = bid.timestamp;
+                packedBids[i] = BridgeMsgCodec.packBid(
+                    bid.intexQuantity, bid.intexBidRate, bid.timestamp, bid.issuanceCurrency, bid.referenceCurrency
+                );
             }
 
-            _sendOneBidsBatch(
-                worldwideDay, gen, batchIndex, totalBatches, bidderAddresses, intexQuantities, intexBidRates, timestamps
-            );
+            _sendOneBidsBatch(worldwideDay, gen, batchIndex, totalBatches, bidderAddresses, packedBids);
             batchIndex++;
         }
 
@@ -433,20 +436,10 @@ contract TargetRouter is
         uint16 batchIndex,
         uint16 totalBatches,
         address[] memory bidderAddresses,
-        uint16[] memory intexQuantities,
-        uint32[] memory intexBidRates,
-        uint32[] memory timestamps
+        uint256[] memory packedBids
     ) internal returns (bytes32 sendId) {
         bytes memory message = BridgeMsgCodec.encodeBidsBatch(
-            worldwideDay,
-            uint32(block.chainid),
-            relayGeneration,
-            batchIndex,
-            totalBatches,
-            bidderAddresses,
-            intexQuantities,
-            intexBidRates,
-            timestamps
+            worldwideDay, uint32(block.chainid), relayGeneration, batchIndex, totalBatches, bidderAddresses, packedBids
         );
         sendId = _send(OUTBE_CHAIN_ID, message, IntexGas.bidsBatch(bidderAddresses.length));
         emit BidsBatchSent(sendId, worldwideDay, bidderAddresses.length);
@@ -465,48 +458,56 @@ contract TargetRouter is
     /// @notice Decode ISSUANCE_INSTRUCTIONS, create the series, and mint tokens via IntexNFT1155.
     function _handleIssuanceInstructions(uint32 _srcChainId, bytes calldata _message) internal {
         TargetRouterStorage storage $ = _ts();
-        BridgeMsgCodec.IssuanceInstructionsPayload memory payload = BridgeMsgCodec.decodeIssuanceInstructions(_message);
+        BridgeMsgCodec.IssuanceInstructionsPayload[] memory series = BridgeMsgCodec.decodeIssuanceInstructions(_message);
 
-        $.intex
-            .createSeries(
-                IIntexNFT1155.CreateSeriesParams({
-                    seriesId: payload.seriesId,
-                    worldwideDay: payload.worldwideDay,
-                    issuanceCurrency: payload.issuanceCurrency,
-                    referenceCurrency: payload.referenceCurrency,
-                    issuedIntexCount: payload.issuedIntexCount,
-                    promisLoadMinor: payload.promisLoadMinor,
-                    entryPriceMinor: payload.entryPriceMinor,
-                    floorPriceMinor: payload.floorPriceMinor,
-                    callPriceMinor: payload.callPriceMinor,
-                    callTrigger: IIntexNFT1155.IntexCallTrigger({
-                        callWindow: payload.callWindow,
-                        callThreshold: payload.callThreshold,
-                        callNoticePeriod: payload.callNoticePeriod
-                    })
-                })
-            );
-        uint256 recipientsLen = payload.recipients.length;
-        for (uint256 i = 0; i < recipientsLen; i++) {
-            uint256 quantity = payload.quantities[i];
-            if (quantity == 0) continue;
-            address recipient = payload.recipients[i];
-            // Per-recipient self-call: a reverting receiver hook parks only that mint, not the whole batch.
-            try this.mintIssuanceOne(payload.seriesId, recipient, quantity) {}
-            catch (bytes memory reason) {
-                uint256 idx = $.nextPendingIssuanceMintIdx++;
-                $.pendingIssuanceMints[idx] = PendingIssuanceMint({
-                    seriesId: payload.seriesId, recipient: recipient, quantity: quantity, exists: true, done: false
-                });
-                emit IssuanceMintDeferred(idx, payload.seriesId, recipient, reason);
+        for (uint256 s = 0; s < series.length; s++) {
+            BridgeMsgCodec.IssuanceInstructionsPayload memory payload = series[s];
+
+            // Create-if-absent: any of a day's messages may be the first to name a series.
+            if (!$.intex.seriesExists(payload.seriesId)) {
+                $.intex
+                    .createSeries(
+                        IIntexNFT1155.CreateSeriesParams({
+                            seriesId: payload.seriesId,
+                            worldwideDay: payload.worldwideDay,
+                            issuanceCurrency: payload.issuanceCurrency,
+                            referenceCurrency: payload.referenceCurrency,
+                            issuedIntexCount: payload.issuedIntexCount,
+                            promisLoadMinor: payload.promisLoadMinor,
+                            entryPriceMinor: payload.entryPriceMinor,
+                            floorPriceMinor: payload.floorPriceMinor,
+                            callPriceMinor: payload.callPriceMinor,
+                            callTrigger: IIntexNFT1155.IntexCallTrigger({
+                                callWindow: payload.callWindow,
+                                callThreshold: payload.callThreshold,
+                                callNoticePeriod: payload.callNoticePeriod
+                            })
+                        })
+                    );
             }
-        }
 
-        emit IssuanceInstructionsReceived(_srcChainId, payload.seriesId, payload.recipients.length);
+            uint256 recipientsLen = payload.recipients.length;
+            for (uint256 i = 0; i < recipientsLen; i++) {
+                uint256 quantity = payload.quantities[i];
+                if (quantity == 0) continue;
+                address recipient = payload.recipients[i];
+                // Per-recipient self-call: a reverting receiver hook parks only that mint, not the whole batch.
+                try this.mintIssuanceOne(payload.seriesId, recipient, quantity) {}
+                catch (bytes memory reason) {
+                    uint256 idx = $.nextPendingIssuanceMintIdx++;
+                    $.pendingIssuanceMints[idx] = PendingIssuanceMint({
+                        seriesId: payload.seriesId, recipient: recipient, quantity: quantity, exists: true, done: false
+                    });
+                    emit IssuanceMintDeferred(idx, payload.seriesId, recipient, reason);
+                }
+            }
+
+            emit IssuanceInstructionsReceived(_srcChainId, payload.seriesId, recipientsLen);
+        }
     }
 
     /// @notice Self-call shim around a single issuance mint; isolates a reverting recipient hook.
-    function mintIssuanceOne(uint32 seriesId, address to, uint256 quantity) external {
+    function mintIssuanceOne(bytes14 seriesId, address to, uint256 quantity) external {
         if (msg.sender != address(this)) revert NotSelf();
         _ts().intex.mint(to, quantity, seriesId);
     }
@@ -526,10 +527,20 @@ contract TargetRouter is
     function _handleRefundInstructions(uint32 _srcChainId, bytes32 _receiveId, bytes calldata _message) internal {
         (
             uint32 worldwideDay,
+            uint16 chunkIndex,
+            uint16 totalChunks,
             address[] memory bidders,
             uint128[] memory refundedAmounts,
             uint128[] memory paidAmounts
         ) = BridgeMsgCodec.decodeRefundInstructions(_message);
+
+        TargetRouterStorage storage $ = _ts();
+        uint256 bit = 1 << chunkIndex;
+        if ($.refundChunksApplied[worldwideDay] & bit != 0) {
+            // Redelivered: already settled and counted.
+            emit RefundInstructionsReceived(_srcChainId, worldwideDay, 0);
+            return;
+        }
 
         IEscrowAdapter.FinalizationInstruction[] memory instructions =
             new IEscrowAdapter.FinalizationInstruction[](bidders.length);
@@ -540,10 +551,25 @@ contract TargetRouter is
             });
         }
 
-        uint128 totalPaid = _ts().escrowAdapter.finalizeAuction(worldwideDay, _receiveId, instructions);
+        // Counted before settling: the escrow refuses instructions once the day is closed.
+        $.refundChunksApplied[worldwideDay] |= bit;
+        uint16 seen = $.refundChunksSeen[worldwideDay] + 1;
+        $.refundChunksSeen[worldwideDay] = seen;
+        // `>=` rather than `==`: an overshoot would otherwise leave the day's proceeds
+        // accrued in this contract with nothing left to release them.
+        bool completesDay = seen >= totalChunks;
 
-        // Proceeds land here (proceedsRecipient); route them to Outbe for creator payout, parking on failure.
-        if (totalPaid > 0) _routeOrParkProceeds(worldwideDay, totalPaid);
+        uint128 totalPaid = $.escrowAdapter.finalizeAuction(worldwideDay, _receiveId, instructions, completesDay);
+        $.refundProceedsAccrued[worldwideDay] += totalPaid;
+
+        // One transfer per day: the origin counts a chain paid on the first delivery.
+        if (completesDay) {
+            uint128 proceeds = $.refundProceedsAccrued[worldwideDay];
+            if (proceeds > 0) {
+                $.refundProceedsAccrued[worldwideDay] = 0;
+                _routeOrParkProceeds(worldwideDay, proceeds);
+            }
+        }
 
         emit RefundInstructionsReceived(_srcChainId, worldwideDay, bidders.length);
     }
@@ -553,7 +579,7 @@ contract TargetRouter is
     ///      `flushPendingHoldersRelay`; markCalled itself still succeeds.
     function _handleMarkCalled(uint32 _srcChainId, bytes calldata _message) internal {
         TargetRouterStorage storage $ = _ts();
-        uint32 seriesId = BridgeMsgCodec.decodeMarkCalled(_message);
+        bytes14 seriesId = BridgeMsgCodec.decodeMarkCalled(_message);
 
         $.intex.markCalled(seriesId);
 
@@ -600,7 +626,7 @@ contract TargetRouter is
     /// @dev Unlike markCalled, qualifying is a pure status flip (Issued -> Qualified) with no holder
     ///      migration, so there is nothing to bridge back to Outbe.
     function _handleMarkQualified(uint32 _srcChainId, bytes calldata _message) internal {
-        uint32 seriesId = BridgeMsgCodec.decodeMarkQualified(_message);
+        bytes14 seriesId = BridgeMsgCodec.decodeMarkQualified(_message);
 
         _ts().intex.markQualified(seriesId);
 

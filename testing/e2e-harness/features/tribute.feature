@@ -1,4 +1,4 @@
-@tee @gramine-direct @min-validators-4
+@tee @sgx-no-attest @sudo @min-validators-4
 Feature: Tribute admission, projection, and proofs
   One canonical Tribute flow owns successful ingress, projection, presence and
   absence proofs, and duplicate protection. ZK policy branches stay separate
