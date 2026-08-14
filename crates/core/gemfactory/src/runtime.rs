@@ -16,7 +16,7 @@ use crate::constants::{CALL_RATE, FLOOR_RATE, POSITION_VALIDITY_SECONDS, SRA_RAT
 use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::{GemBurned, GemIssued, GemSettled};
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
-use crate::sol_ext::{IIntexNFT1155, IReferenceCurrency, IERC20};
+use crate::sol_ext::{IIntexNFT1155, IERC20};
 
 pub fn mint_gem(
     storage: &StorageHandle<'_>,
@@ -280,17 +280,13 @@ pub fn settle_gem(
         _ => return Err(GemFactoryError::InvalidState.into()),
     }
 
-    // The Cost Amount is paid in the gem's Settlement Currency
-    // Reject any payment asset whose ISO 4217 code differs from it.
+    // The Cost Amount is paid in the gem's Settlement Currency. The asset must
+    // be registered on the vault router as denominating it — a token's own
+    // `isoCode()` is self-reported, registry membership is not.
     let expected =
         settlement_currency_iso(storage, item.issuance_currency, item.reference_currency);
-    let asset_iso = read_iso_code(storage, asset)?;
-    if asset_iso != expected {
-        return Err(GemFactoryError::SettlementCurrencyMismatch {
-            asset: asset_iso,
-            expected,
-        }
-        .into());
+    if !outbe_vaultrouter::api::reference_currency_assets(storage, expected)?.contains(&asset) {
+        return Err(GemFactoryError::SettlementCurrencyMismatch { asset, expected }.into());
     }
 
     gem_api::set_state(storage, gem_id, GemState::Settled)?;
@@ -353,18 +349,6 @@ fn settlement_currency_iso(
     } else {
         reference_currency
     }
-}
-
-/// Reads the settlement asset's ISO 4217 code via a static
-/// `IReferenceCurrency.isoCode()` sub-call. Reverts `InvalidAsset` on
-/// undecodable data. Mirrors credisfactory's `read_iso_code`.
-fn read_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
-    let ret = storage.staticcall(
-        asset,
-        IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
-    )?;
-    IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
-        .map_err(|_| GemFactoryError::InvalidAsset.into())
 }
 
 pub fn mine_gem_promis(
