@@ -91,6 +91,23 @@ sol! {
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IVenueSchedule {
+        struct IntexCallTrigger { uint32 callWindow; uint32 callThreshold; uint32 callNoticePeriod; }
+        struct AuctionSchedule { uint32 commitEnd; uint32 revealEnd; uint32 issuanceEnd; }
+        struct AuctionParams {
+            uint16 issuanceCurrency; uint16 referenceCurrency; uint128 promisLoadMinor;
+            IntexCallTrigger callTrigger; uint32 minIntexBidRate; uint16 minIntexBidQuantity;
+            uint64 entryPriceMinor; uint64 floorPriceMinor; uint64 callPriceMinor; uint128 commitBondMinor;
+        }
+        struct AuctionResult {
+            uint64 auctionClearingRate; uint32 wonBidsCount; uint32 issuedIntexCount; uint128 issuedIntexLoadedPromis;
+        }
+        function auctions(uint32 worldwideDay)
+            external view
+            returns (uint8 worldwideDayState, AuctionSchedule memory schedule, AuctionParams memory params, AuctionResult memory result);
+    }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
     interface IVenueCounts {
         function auctionRunningCounts(uint32 worldwideDay)
             external view returns (uint32 committedBidsCount, uint32 revealedBidsCount);
@@ -241,7 +258,8 @@ fn auction_opens_on_target(world: &mut World) {
         ) {
             assert!(
                 stage < 2,
-                "day {worldwide_day} reached the venue at stage {stage}, past its commit window"
+                "day {worldwide_day} reached the venue at stage {stage}: {}",
+                venue_schedule(&url, contracts.intex_auction, worldwide_day)
             );
             return;
         }
@@ -255,6 +273,23 @@ fn auction_opens_on_target(world: &mut World) {
             day_colour(world, worldwide_day)
         );
         sleep(Duration::from_secs(2));
+    }
+}
+
+fn venue_schedule(url: &str, venue: Address, worldwide_day: u32) -> String {
+    let now = eth::latest_block_timestamp(url).unwrap_or_default();
+    match eth::read_call(
+        url,
+        venue,
+        &IVenueSchedule::auctionsCall {
+            worldwideDay: worldwide_day,
+        },
+    ) {
+        Some(a) => format!(
+            "commitEnd {} revealEnd {} issuanceEnd {} against block time {now}",
+            a.schedule.commitEnd, a.schedule.revealEnd, a.schedule.issuanceEnd
+        ),
+        None => "venue did not report the schedule".to_owned(),
     }
 }
 
