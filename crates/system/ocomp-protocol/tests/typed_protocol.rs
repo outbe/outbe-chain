@@ -1646,9 +1646,17 @@ fn split_budget_and_carry_over_invariants_fail_closed() {
     let mut red_split = green_split;
     red_split.day_type = DayType::Red;
     red_split.destination = BudgetSplitDestination::CarryOver;
-    red_split.desis_brief_hash = None;
     red_split.carry_over_credit = red_split.auction_base;
     red_split.encode_canonical(&LIMITS).unwrap();
+
+    let mut red_without_brief = red_split.clone();
+    red_without_brief.desis_brief_hash = None;
+    assert!(matches!(
+        red_without_brief.encode_canonical(&LIMITS),
+        Err(ProtocolError::InvalidInvariant(
+            "request budget split destination"
+        ))
+    ));
 
     let mut red_to_desis = red_split;
     red_to_desis.destination = BudgetSplitDestination::DesisAuction;
