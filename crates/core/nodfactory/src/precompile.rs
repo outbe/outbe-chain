@@ -80,7 +80,13 @@ fn dispatch_materialization(
 ) -> Result<Bytes> {
     crate::materialization::authorize_materializer(storage.clone(), caller)
         .map_err(crate::materialization::typed_materialization_error)?;
-    let profile = outbe_chain_constants::load_from_storage(storage.clone())?.nod_materialization;
+    let profile = outbe_chain_constants::NodMaterializationProfileV1 {
+        batch_subtree_height: outbe_chain_constants::get_nod_materialization_batch_subtree_height(),
+        retry_interval_blocks: outbe_chain_constants::get_nod_materialization_retry_interval_blocks(
+        ),
+        max_attempts_per_block:
+            outbe_chain_constants::get_nod_materialization_max_attempts_per_block(),
+    };
     let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
     storage.clone().with_checkpoint(|| {
         crate::materialization::consume_materialization_attempt(&storage, profile)

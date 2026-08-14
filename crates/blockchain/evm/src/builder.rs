@@ -245,9 +245,6 @@ mod tests {
 
     use alloy_evm::{block::CommitChanges, RecoveredTx};
     use alloy_primitives::{address, Address, Bytes, StorageKey, StorageValue, B256, U256};
-    use outbe_chain_constants::{
-        GenesisProtocolParametersV1, CHAIN_CONSTANTS_ADDRESS, CHAIN_CONSTANTS_MARKER_CODE,
-    };
     use outbe_compressed_entities::{
         CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, FinalizedMarker,
         ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
@@ -641,14 +638,6 @@ mod tests {
 
     type TestDb = CacheDB<EmptyDBTyped<ProviderError>>;
 
-    fn seed_default_chain_constants(storage: StorageHandle<'_>) {
-        for (slot, value) in GenesisProtocolParametersV1::default().genesis_storage_words() {
-            storage
-                .sstore(CHAIN_CONSTANTS_ADDRESS, slot, value)
-                .expect("test chain constants seed succeeds");
-        }
-    }
-
     fn seed_active_validators(db: &mut TestDb, validators: &[Address]) {
         let chain_spec = test_chain_spec();
         let founders = validators
@@ -676,7 +665,6 @@ mod tests {
         );
         metadosis_genesis.set_block_number(1);
         metadosis_genesis.enter(|storage| {
-            seed_default_chain_constants(storage.clone());
             let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
             storage
                 .sstore(
@@ -692,15 +680,6 @@ mod tests {
                     U256::from_be_slice(root.as_slice()),
                 )
                 .unwrap();
-            // Production reads these from the genesis alloc; the block hooks
-            // treat their absence as fatal.
-            for (slot, value) in outbe_chain_constants::GenesisProtocolParametersV1::default()
-                .genesis_storage_words()
-            {
-                storage
-                    .sstore(outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS, slot, value)
-                    .unwrap();
-            }
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(Address::ZERO).unwrap();
             vs.set_config_max_validators(128).unwrap();
@@ -750,15 +729,6 @@ mod tests {
         }
 
         let marker_code = RevmBytecode::new_legacy([0xef].into());
-        let constants_marker_code = RevmBytecode::new_legacy(CHAIN_CONSTANTS_MARKER_CODE.into());
-        db.insert_account_info(
-            CHAIN_CONSTANTS_ADDRESS,
-            AccountInfo {
-                code_hash: constants_marker_code.hash_slow(),
-                code: Some(constants_marker_code),
-                ..Default::default()
-            },
-        );
         db.insert_account_info(
             outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
             AccountInfo {
@@ -788,15 +758,6 @@ mod tests {
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code.clone()),
-                ..Default::default()
-            },
-        );
-        // Without an account the seeded constant slots read back as zero.
-        db.insert_account_info(
-            outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS,
-            AccountInfo {
-                code_hash: marker_code.hash_slow(),
-                code: Some(marker_code),
                 ..Default::default()
             },
         );
