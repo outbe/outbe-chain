@@ -29,9 +29,7 @@ pub fn mint_gem(
         return Err(GemFactoryError::InvalidOwner.into());
     }
 
-    // TODO(multi-currency): only supports gems
-    // currencies are the same. Cross-rate resolution (e.g. issuance=EUR with
-    // reference=USD) needs a chained oracle lookup that's not wired yet
+
     outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
 
     // Entry/floor/call are measured against the reference currency (the same
