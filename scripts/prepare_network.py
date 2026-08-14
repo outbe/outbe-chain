@@ -449,26 +449,6 @@ def run_seed_genesis(
     subprocess.run(cmd, check=True)
 
 
-def run_constants_genesis(
-    *,
-    chain_binary: str,
-    seeded_genesis: Path,
-    output_genesis: Path,
-) -> None:
-    subprocess.run(
-        [
-            chain_binary,
-            "constants",
-            "genesis",
-            "--input",
-            str(seeded_genesis),
-            "--output",
-            str(output_genesis),
-        ],
-        check=True,
-    )
-
-
 def run_tee_genesis(
     *,
     chain_binary: str,
@@ -1063,7 +1043,6 @@ def main() -> None:
     )
     preseed_path = output_dir / "genesis.prefund.json"
     seeded_genesis_path = output_dir / "genesis.seeded.json"
-    constants_genesis_path = output_dir / "genesis.constants.json"
     ocomp_genesis_path = output_dir / "genesis.ocomp.json"
     genesis_path = output_dir / "genesis.json"
     if genesis_path.exists():
@@ -1077,15 +1056,10 @@ def main() -> None:
         validators=copied_validators_path,
         output_genesis=seeded_genesis_path,
     )
-    run_constants_genesis(
-        chain_binary=args.chain_binary,
-        seeded_genesis=seeded_genesis_path,
-        output_genesis=constants_genesis_path,
-    )
     ocomp_bindings_path = output_dir / "ocomp-bindings-v1.json"
     ocomp_bindings = run_ocomp_bindings(
         chain_binary=args.chain_binary,
-        seeded_genesis=constants_genesis_path,
+        seeded_genesis=seeded_genesis_path,
         validators=copied_validators_path,
         output=ocomp_bindings_path,
     )
@@ -1097,7 +1071,7 @@ def main() -> None:
     protocol_bundle_path = output_dir / "protocol-bundle-v1.ocb1"
     run_ocomp_genesis(
         chain_binary=args.chain_binary,
-        seeded_genesis=constants_genesis_path,
+        seeded_genesis=seeded_genesis_path,
         validators=copied_validators_path,
         registrations_dir=output_dir,
         output_genesis=ocomp_genesis_path,

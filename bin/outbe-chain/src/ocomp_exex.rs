@@ -808,8 +808,14 @@ where
         let head = outbe_nod::NodContract::new(storage.clone())
             .ocomp_materialization_head()
             .wrap_err("read finalized NOD materialization head")?;
-        let profile =
-            outbe_chain_constants::load_from_storage(storage.clone())?.nod_materialization;
+        let profile = outbe_chain_constants::NodMaterializationProfileV1 {
+            batch_subtree_height:
+                outbe_chain_constants::get_nod_materialization_batch_subtree_height(),
+            retry_interval_blocks:
+                outbe_chain_constants::get_nod_materialization_retry_interval_blocks(),
+            max_attempts_per_block:
+                outbe_chain_constants::get_nod_materialization_max_attempts_per_block(),
+        };
         let represented_validator = match self.domain.validator_sender_address() {
             Some(sender) => outbe_validatorset::contract::ValidatorSet::new(storage)
                 .resolve_validator_for_role(

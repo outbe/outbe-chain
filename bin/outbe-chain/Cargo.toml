@@ -9,6 +9,7 @@ build = "build.rs"
 [features]
 default = []
 test-marshal-drop = ["outbe-consensus/test-marshal-drop"]
+test-protocol-overrides = ["outbe-chain-constants/test-protocol-overrides"]
 
 [[bin]]
 name = "outbe-chain"

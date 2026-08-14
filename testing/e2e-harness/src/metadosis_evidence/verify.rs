@@ -610,8 +610,8 @@ fn verify_fresh_artifacts(
     let genesis_path = bundle_root.join(genesis_relative);
     let genesis: serde_json::Value = serde_json::from_slice(&std::fs::read(&genesis_path)?)
         .wrap_err("decode retained fresh genesis")?;
-    let protocol_parameters = GenesisProtocolParametersV1::from_materialized_genesis(&genesis)
-        .wrap_err("read immutable protocol parameters from retained fresh genesis")?;
+    let protocol_parameters = GenesisProtocolParametersV1::from_genesis(&genesis)
+        .wrap_err("read protocol parameters from retained fresh genesis")?;
     let chain_spec = reth_ethereum::cli::chainspec::chain_value_parser(
         genesis_path
             .to_str()
@@ -1071,28 +1071,6 @@ mod tests {
             },
             "ocomp": { "computeVoteWindowBlocks": 120 }
         });
-        let protocol_parameters = GenesisProtocolParametersV1::resolve(
-            genesis["config"].get(outbe_chain_constants::GENESIS_CONFIG_KEY),
-        )
-        .unwrap();
-        let constants_storage = protocol_parameters
-            .genesis_storage_words()
-            .into_iter()
-            .map(|(slot, value)| {
-                (
-                    format!("{slot:#066x}"),
-                    serde_json::json!(format!("{value:#066x}")),
-                )
-            })
-            .collect::<serde_json::Map<_, _>>();
-        genesis["alloc"].as_object_mut().unwrap().insert(
-            format!("{:#x}", outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS),
-            serde_json::json!({
-                "balance": "0x0",
-                "code": "0xef",
-                "storage": constants_storage
-            }),
-        );
         let genesis_path = artifacts.join("genesis.json");
         std::fs::write(&genesis_path, serde_json::to_vec_pretty(&genesis).unwrap()).unwrap();
         let base_spec =

@@ -154,11 +154,11 @@ pub struct EnvCli {
     #[arg(long, value_enum)]
     pub metadosis_p0_case: Option<MetadosisP0Case>,
 
-    /// `outbe-chain` binary. Defaults to `<repo>/target/debug/outbe-chain`.
+    /// `outbe-chain` binary. Defaults to `<repo>/target/release/outbe-chain`.
     #[arg(long)]
     pub chain_bin: Option<PathBuf>,
 
-    /// `outbe-ocomp` binary. Defaults to `<repo>/target/debug/outbe-ocomp`.
+    /// `outbe-ocomp` binary. Defaults to `<repo>/target/release/outbe-ocomp`.
     #[arg(long)]
     pub ocomp_bin: Option<PathBuf>,
 
@@ -168,11 +168,11 @@ pub struct EnvCli {
     #[arg(long)]
     pub upgraded_chain_bin: Option<PathBuf>,
 
-    /// `outbe-cli` binary. Defaults to `<repo>/target/debug/outbe-cli`.
+    /// `outbe-cli` binary. Defaults to `<repo>/target/release/outbe-cli`.
     #[arg(long)]
     pub cli_bin: Option<PathBuf>,
 
-    /// `outbe-keygen` binary. Defaults to `<repo>/target/debug/outbe-keygen`.
+    /// `outbe-keygen` binary. Defaults to `<repo>/target/release/outbe-keygen`.
     #[arg(long)]
     pub keygen_bin: Option<PathBuf>,
 
@@ -259,20 +259,20 @@ impl Environment {
             chain_bin: cli
                 .chain_bin
                 .clone()
-                .unwrap_or_else(|| repo.join("target/debug/outbe-chain")),
+                .unwrap_or_else(|| repo.join("target/release/outbe-chain")),
             ocomp_bin: cli
                 .ocomp_bin
                 .clone()
-                .unwrap_or_else(|| repo.join("target/debug/outbe-ocomp")),
+                .unwrap_or_else(|| repo.join("target/release/outbe-ocomp")),
             upgraded_chain_bin: cli.upgraded_chain_bin.clone(),
             cli_bin: cli
                 .cli_bin
                 .clone()
-                .unwrap_or_else(|| repo.join("target/debug/outbe-cli")),
+                .unwrap_or_else(|| repo.join("target/release/outbe-cli")),
             keygen_bin: cli
                 .keygen_bin
                 .clone()
-                .unwrap_or_else(|| repo.join("target/debug/outbe-keygen")),
+                .unwrap_or_else(|| repo.join("target/release/outbe-keygen")),
             enclave_bin: cli
                 .enclave_bin
                 .clone()

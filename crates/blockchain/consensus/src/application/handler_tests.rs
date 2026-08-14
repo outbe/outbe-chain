@@ -1106,6 +1106,7 @@ fn forfeited_build_does_not_advance_retry_timestamp_source() {
                         Some(proof_key),
                         std::time::SystemTime::now(),
                         outbe_primitives::projection::ExecutionReadBudget::default(),
+                        super::ProposalPayloadTrace::default(),
                     )
                     .await
                     .expect("missing parent proof must forfeit without a handler failure");

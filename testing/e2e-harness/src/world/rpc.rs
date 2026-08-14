@@ -1507,6 +1507,29 @@ impl Rpc {
         }
     }
 
+    /// Whether the local consensus runtime has a private threshold share for
+    /// the currently active DKG material.
+    pub fn has_threshold_shares(&self, port: u16) -> Option<bool> {
+        eth::raw_json(&self.url(port), "outbe_consensusStatus")?
+            .get("hasThresholdShares")?
+            .as_bool()
+    }
+
+    /// Canonical voter-miss counter for `validator` as observed on `port`.
+    pub fn voter_miss_count(&self, port: u16, validator: &str) -> Option<u64> {
+        let value = eth::raw_json_with_params(
+            &self.url(port),
+            "outbe_getSlashInfo",
+            serde_json::json!([validator]),
+        )?;
+        let misses = value.get("voterMissCount")?;
+        misses.as_u64().or_else(|| {
+            misses
+                .as_str()
+                .and_then(|encoded| u64::from_str_radix(encoded.trim_start_matches("0x"), 16).ok())
+        })
+    }
+
     // ---- identity + sends ----------------------------------------------------
 
     /// EOA address for a private key (`0x`-hex).
