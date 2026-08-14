@@ -233,6 +233,15 @@ fn advance_day(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u6
     loop {
         let mut contract = storage.contract::<DesisContract>();
         let stage = contract.read_stage(worldwide_day)?;
+        // An e2e build's windows are minutes and the tick can reach a briefed day
+        // long after the brief, so the windows start where the tick found it.
+        #[cfg(feature = "e2e-test")]
+        if stage == AuctionStage::Briefed {
+            let briefed_at = u64::from(contract.auction_at.read(&worldwide_day)?);
+            if now > briefed_at {
+                contract.auction_at.write(&worldwide_day, ts32(now)?)?;
+            }
+        }
         let anchor = u64::from(contract.auction_at.read(&worldwide_day)?);
         let commit_end = anchor.saturating_add(COMMIT_WINDOW_SECONDS);
         let reveal_end = commit_end.saturating_add(u64::from(REVEAL_WINDOW_SECONDS));
@@ -251,19 +260,6 @@ fn advance_day(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u6
                 return contract.remove_sched_active(worldwide_day);
             }
             AuctionStage::Briefed if now >= anchor => {
-                // An e2e build's windows are minutes, and the tick can reach a
-                // briefed day long after the brief; re-anchor so they start here.
-                #[cfg(feature = "e2e-test")]
-                let (commit_end, reveal_end, issuance_end) = {
-                    contract.auction_at.write(&worldwide_day, ts32(now)?)?;
-                    let commit_end = now.saturating_add(COMMIT_WINDOW_SECONDS);
-                    let reveal_end = commit_end.saturating_add(u64::from(REVEAL_WINDOW_SECONDS));
-                    (
-                        commit_end,
-                        reveal_end,
-                        reveal_end.saturating_add(SETTLEMENT_WINDOW_SECONDS),
-                    )
-                };
                 if let StartOutcome::Retired = start_auction(
                     storage,
                     &mut contract,
