@@ -180,8 +180,8 @@
         },
         {
           "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "bytes14",
+          "internalType": "bytes14"
         },
         {
           "name": "amount",
@@ -216,8 +216,8 @@
           "components": [
             {
               "name": "seriesId",
-              "type": "uint32",
-              "internalType": "uint32"
+              "type": "bytes14",
+              "internalType": "bytes14"
             },
             {
               "name": "worldwideDay",
@@ -352,8 +352,8 @@
       "inputs": [
         {
           "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "bytes14",
+          "internalType": "bytes14"
         },
         {
           "name": "account",
@@ -376,8 +376,8 @@
       "inputs": [
         {
           "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "bytes14",
+          "internalType": "bytes14"
         },
         {
           "name": "offset",
@@ -742,8 +742,8 @@
       "inputs": [
         {
           "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "bytes14",
+          "internalType": "bytes14"
         },
         {
           "name": "holder",
@@ -815,8 +815,8 @@
       "inputs": [
         {
           "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "bytes14",
+          "internalType": "bytes14"
         }
       ],
       "outputs": [
@@ -834,8 +834,8 @@
       "inputs": [
         {
           "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "bytes14",
+          "internalType": "bytes14"
         }
       ],
       "outputs": [],
@@ -847,8 +847,8 @@
       "inputs": [
         {
           "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "bytes14",
+          "internalType": "bytes14"
         }
       ],
       "outputs": [],
@@ -870,8 +870,8 @@
         },
         {
           "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "bytes14",
+          "internalType": "bytes14"
         }
       ],
       "outputs": [],
@@ -907,8 +907,8 @@
         },
         {
           "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "bytes14",
+          "internalType": "bytes14"
         },
         {
           "name": "amount",
@@ -944,8 +944,8 @@
       "inputs": [
         {
           "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "bytes14",
+          "internalType": "bytes14"
         }
       ],
       "outputs": [
@@ -1040,6 +1040,11 @@
               "name": "worldwideDay",
               "type": "uint32",
               "internalType": "uint32"
+            },
+            {
+              "name": "seriesId",
+              "type": "bytes14",
+              "internalType": "bytes14"
             }
           ]
         }
@@ -1246,6 +1251,25 @@
     },
     {
       "type": "function",
+      "name": "seriesExists",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "seriesHolderCount",
       "inputs": [
         {
@@ -1276,8 +1300,8 @@
       "outputs": [
         {
           "name": "",
-          "type": "uint32[]",
-          "internalType": "uint32[]"
+          "type": "bytes14[]",
+          "internalType": "bytes14[]"
         }
       ],
       "stateMutability": "view"
@@ -1306,8 +1330,8 @@
       "inputs": [
         {
           "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "bytes14",
+          "internalType": "bytes14"
         },
         {
           "name": "from",
@@ -1334,8 +1358,8 @@
       "inputs": [
         {
           "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "bytes14",
+          "internalType": "bytes14"
         }
       ],
       "outputs": [
@@ -1391,8 +1415,8 @@
       "inputs": [
         {
           "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "bytes14",
+          "internalType": "bytes14"
         }
       ],
       "outputs": [
@@ -1503,8 +1527,8 @@
       "inputs": [
         {
           "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "bytes14",
+          "internalType": "bytes14"
         }
       ],
       "outputs": [
@@ -1560,9 +1584,9 @@
       "inputs": [
         {
           "name": "seriesId",
-          "type": "uint32",
+          "type": "bytes14",
           "indexed": true,
-          "internalType": "uint32"
+          "internalType": "bytes14"
         },
         {
           "name": "holder",
@@ -1616,9 +1640,9 @@
       "inputs": [
         {
           "name": "seriesId",
-          "type": "uint32",
+          "type": "bytes14",
           "indexed": true,
-          "internalType": "uint32"
+          "internalType": "bytes14"
         },
         {
           "name": "holder",
@@ -1641,9 +1665,9 @@
       "inputs": [
         {
           "name": "seriesId",
-          "type": "uint32",
+          "type": "bytes14",
           "indexed": true,
-          "internalType": "uint32"
+          "internalType": "bytes14"
         },
         {
           "name": "to",
@@ -2187,8 +2211,8 @@
       "inputs": [
         {
           "name": "seriesId",
-          "type": "uint32",
-          "internalType": "uint32"
+          "type": "bytes14",
+          "internalType": "bytes14"
         },
         {
           "name": "attempted",

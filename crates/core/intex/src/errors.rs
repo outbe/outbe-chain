@@ -20,6 +20,8 @@ pub enum IntexError {
     InvalidStateValue(u8),
     #[error("cost amount overflow")]
     CostAmountOverflow,
+    #[error("invalid series id components")]
+    InvalidSeriesId,
 }
 
 impl From<IntexError> for PrecompileError {

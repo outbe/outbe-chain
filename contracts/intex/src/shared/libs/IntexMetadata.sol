@@ -15,13 +15,15 @@ library IntexMetadata {
     string internal constant DESCRIPTION =
         "Intex is the core cross-chain asset of the Outbe network. Each series is born from a Worldwide Day auction held across all connected chains; its transferable Issued tokens settle into soulbound Settled tokens that mine Promis.";
 
-    /// @dev Prices arrive on the 1e18 oracle scale; six fraction digits resolve sub-cent COEN rates.
-    uint8 private constant PRICE_DECIMALS = 18;
+    /// @dev Prices arrive on the 1e9 wire scale, set by `ORACLE_TO_WIRE_SCALE` on the origin
+    ///      side; the two are one decision and must move together. Six fraction digits resolve
+    ///      sub-cent COEN rates.
+    uint8 private constant PRICE_DECIMALS = 9;
     uint8 private constant PRICE_PRECISION = 6;
     /// @dev Scale carried by `promisLoadMinor` (PROMIS * 1e18); unrelated to the price scale above.
     uint256 private constant PROMIS_SCALE = 1e18;
 
-    /// @dev Cost of one Intex in the reference currency, on the same 1e18 scale as the prices;
+    /// @dev Cost of one Intex in the reference currency, on the same 1e9 scale as the prices;
     ///      `promisLoadMinor` carries its own scale, which the divisor removes.
     function _costAmountMinor(IIntexNFT1155.SeriesData memory data) private pure returns (uint256) {
         return (uint256(data.entryPriceMinor) * uint256(data.promisLoadMinor)) / PROMIS_SCALE;
@@ -67,11 +69,9 @@ library IntexMetadata {
         );
     }
 
-    /// @dev `<worldwideDay>-<issuance ccy>-<reference ccy>` — the composite series id format.
+    /// @dev The series id verbatim — it is already the readable `20260212-TRY-U`.
     function _displayId(IIntexNFT1155.SeriesData memory data) private pure returns (string memory) {
-        return string.concat(
-            Strings.toString(data.worldwideDay), "-", _pad3(data.issuanceCurrency), "-", _pad3(data.referenceCurrency)
-        );
+        return string(abi.encodePacked(data.seriesId));
     }
 
     function _buildAttributes(IIntexNFT1155.SeriesData memory data, bool settled, bool expired)
@@ -310,13 +310,6 @@ library IntexMetadata {
 
     function _pad2(uint256 n) private pure returns (string memory) {
         if (n < 10) return string.concat("0", Strings.toString(n));
-        return Strings.toString(n);
-    }
-
-    /// @dev ISO 4217 numeric codes are three digits, zero-padded.
-    function _pad3(uint16 n) private pure returns (string memory) {
-        if (n < 10) return string.concat("00", Strings.toString(n));
-        if (n < 100) return string.concat("0", Strings.toString(n));
         return Strings.toString(n);
     }
 }

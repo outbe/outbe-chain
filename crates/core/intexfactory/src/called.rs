@@ -9,7 +9,9 @@ use std::collections::BTreeMap;
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
+use outbe_intex::SeriesId;
 use outbe_oracle::schema::{OracleContract, PairIndex};
+use outbe_primitives::storage::types::Storable;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
@@ -20,16 +22,17 @@ use outbe_primitives::{
 
 use outbe_intex::IntexState;
 
-use crate::constants::{ORIGIN_ROUTER_ADDRESS, QUALIFIER_REFERENCE_ISO};
+use crate::constants::ORIGIN_ROUTER_ADDRESS;
+use crate::qualified::MAX_SERIES_PER_BLOCK;
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
 use crate::state::QualifiedBinTree;
 
-/// Run the daily Called scan. Returns the number of series force-called.
+/// Run the daily Called scan. Returns the number of series force-called. Each currency is
+/// scanned against its own pair, sharing one [`MAX_SERIES_PER_BLOCK`] budget; one without a
+/// registered or finalized pair is skipped for the run.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
-    let (_, pair_index) =
-        outbe_oracle::api::require_coen_pair(ctx.storage.clone(), QUALIFIER_REFERENCE_ISO)?;
 
     // Most recent fully-closed UTC day (finalized VWAP).
     let last_closed_day = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
@@ -44,17 +47,60 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
 
+    let currencies = outbe_oracle::api::get_all_reference_currencies(ctx)?;
+    if currencies.is_empty() {
+        return Ok(0);
+    }
+    let factory = IntexFactoryContract::new(ctx.storage.clone());
+    let start = factory.call_currency_cursor.read()? as usize % currencies.len();
+
+    let mut budget = MAX_SERIES_PER_BLOCK;
+    let mut called: u32 = 0;
+    let mut resume_at = start;
+    for offset in 0..currencies.len() {
+        let at = (start + offset) % currencies.len();
+        if budget == 0 {
+            // Resume here, so a heavy currency cannot starve the ones behind it.
+            resume_at = at;
+            break;
+        }
+        let iso_code = currencies[at];
+        // No registered pair is an answer; a failed read is not.
+        let pair_index =
+            match outbe_oracle::api::coen_pair_index_opt(ctx.storage.clone(), iso_code)? {
+                Some(index) => index,
+                None => continue,
+            };
+        let (calls, inspected) =
+            call_currency(ctx, &oracle, iso_code, pair_index, last_closed_day, budget)?;
+        called = called.saturating_add(calls);
+        budget = budget.saturating_sub(inspected);
+    }
+    factory.call_currency_cursor.write(resume_at as u32)?;
+    Ok(called)
+}
+
+/// Scans one reference currency's qualified series, visiting at most `budget` of
+/// them. Returns `(called, visited)` so the caller can share one run budget.
+fn call_currency(
+    ctx: &BlockRuntimeContext,
+    oracle: &OracleContract,
+    iso_code: u16,
+    pair_index: PairIndex,
+    last_closed_day: u32,
+    budget: u32,
+) -> Result<(u32, u32)> {
     let last_closed_vwap = match oracle.get_utc_day_vwap_for_pair(last_closed_day, pair_index)? {
         Some(v) if !v.is_zero() => v,
-        _ => return Ok(0),
+        _ => return Ok((0, 0)),
     };
 
-    // Deterministic out-of-range VWAP: skip this daily scan instead of halting the block.
+    // Deterministic out-of-range VWAP: skip this currency instead of halting the block.
     let v_bin = match IntexFactoryContract::price_to_bin(last_closed_vwap) {
         Ok(b) => b,
         Err(e) => {
-            tracing::warn!(target: "outbe::intexfactory", error = ?e, "call scan: vwap out of range, skipping run");
-            return Ok(0);
+            tracing::warn!(target: "outbe::intexfactory", iso_code, error = ?e, "call scan: vwap out of range, skipping currency");
+            return Ok((0, 0));
         }
     };
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
@@ -63,23 +109,36 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     vwaps.seed(last_closed_day, Some(last_closed_vwap));
 
     let mut called: u32 = 0;
-    let mut cursor: u32 = 0;
+    let mut visited: u32 = 0;
+    let mut cursor: u32 = factory.call_scan_cursor.read(&iso_code)?;
     loop {
-        let next = match tree_math::find_first_left_inclusive(&QualifiedBinTree(&factory), cursor)?
-        {
+        if visited >= budget {
+            factory.call_scan_cursor.write(&iso_code, cursor)?;
+            break;
+        }
+        let next = match tree_math::find_first_left_inclusive(
+            &QualifiedBinTree(&factory, iso_code),
+            cursor,
+        )? {
             Some(b) if b <= v_bin => b,
-            _ => break,
+            _ => {
+                // End of the eligible range: the next run sweeps this currency afresh.
+                factory.call_scan_cursor.write(&iso_code, 0)?;
+                break;
+            }
         };
 
         // Snapshot before mutating: try_call removes Called series.
-        let count = factory.qualified_bin_count.read(&next)?;
-        let mut series: Vec<u32> = Vec::with_capacity(count as usize);
+        let count = factory
+            .qualified_bin_count
+            .read(&IntexFactoryContract::scoped(iso_code, next))?;
+        let mut series: Vec<SeriesId> = Vec::with_capacity(count as usize);
         for i in 0..count {
-            series.push(
+            series.push(SeriesId::from_word(
                 factory
                     .qualified_bin_series
-                    .read(&IntexFactoryContract::bin_index_key(next, i))?,
-            );
+                    .read(&IntexFactoryContract::bin_index_key(iso_code, next, i))?,
+            ));
         }
         for series_id in series {
             // Isolate per-series: a deterministic Err rolls back this series' checkpoint and is
@@ -88,7 +147,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
                 try_call(
                     &ctx.storage,
                     &mut factory,
-                    &oracle,
+                    oracle,
                     &mut vwaps,
                     series_id,
                     last_closed_day,
@@ -99,17 +158,21 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
                 Ok(true) => called = called.saturating_add(1),
                 Ok(false) => {}
                 Err(e) => {
-                    tracing::warn!(target: "outbe::intexfactory", series_id, error = ?e, "call scan: skipping series");
+                    tracing::warn!(target: "outbe::intexfactory", series_id = %series_id, error = ?e, "call scan: skipping series");
                 }
             }
         }
+        visited = visited.saturating_add(count);
 
         cursor = match next.checked_add(1) {
             Some(c) if c <= MAX_BIN_ID => c,
-            _ => break,
+            _ => {
+                factory.call_scan_cursor.write(&iso_code, 0)?;
+                break;
+            }
         };
     }
-    Ok(called)
+    Ok((called, visited))
 }
 
 /// Cycle daily-trigger entry: runs the Called scan, discarding the count.
@@ -153,14 +216,11 @@ pub(crate) fn try_call(
     factory: &mut IntexFactoryContract,
     oracle: &OracleContract,
     vwaps: &mut DayVwaps,
-    series_id: u32,
+    series_id: SeriesId,
     last_closed_day: u32,
     now_ts: u64,
 ) -> Result<bool> {
     let series = outbe_intex::api::read_series(storage, series_id)?;
-    if series.reference_currency != QUALIFIER_REFERENCE_ISO {
-        return Ok(false);
-    }
     if series.lifecycle_state()? != IntexState::Qualified {
         return Ok(false);
     }
@@ -196,30 +256,35 @@ pub(crate) fn try_call(
     let called_at = u32::try_from(now_ts)
         .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
     outbe_intex::api::mark_called(storage, series_id, called_at)?;
-    factory.remove_qualified(series_id, trigger)?;
+    factory.remove_qualified(series_id, series.reference_currency, trigger)?;
 
     // Notify the target chain of the Called transition via ERC-7786; best-effort.
     // OriginRouter failure (e.g. exhausted relay float) does not revert the
     // state transition. The target chain can reconcile series state from the origin chain.
-    let _ = notify_called(storage, series_id);
+    let _ = notify_called(storage, series_id, series.worldwide_day.value());
 
     crate::runtime::emit_event(
         storage,
         crate::precompile::IIntexFactory::SeriesCalled {
-            seriesId: series_id,
+            seriesId: series_id.into(),
             calledAt: called_at,
         },
     )?;
     Ok(true)
 }
 
-fn notify_called(storage: &StorageHandle<'_>, series_id: u32) -> Result<()> {
+fn notify_called(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    worldwide_day: u32,
+) -> Result<()> {
     // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
     storage.call(
         ORIGIN_ROUTER_ADDRESS,
         U256::ZERO,
         IOriginRouter::sendMarkCalledCall {
-            seriesId: series_id,
+            seriesId: series_id.into(),
+            worldwideDay: worldwide_day,
         }
         .abi_encode()
         .into(),

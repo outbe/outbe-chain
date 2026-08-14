@@ -120,19 +120,9 @@
         "internalType": "address[]"
       },
       {
-        "name": "intexQuantities",
-        "type": "uint16[]",
-        "internalType": "uint16[]"
-      },
-      {
-        "name": "intexBidRates",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
-      },
-      {
-        "name": "timestamps",
-        "type": "uint32[]",
-        "internalType": "uint32[]"
+        "name": "packedBids",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
       }
     ],
     "outputs": [],
@@ -224,6 +214,19 @@
   {
     "type": "event",
     "name": "AuctionCancelledRedDay",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "AuctionCancelledUnpriced",
     "inputs": [
       {
         "name": "worldwideDay",
@@ -350,6 +353,56 @@
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReferenceCurrencyLetterTaken",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "isoCode",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
+      },
+      {
+        "name": "takenBy",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ReferenceCurrencyOverCap",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "isoCode",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
+      },
+      {
+        "name": "cap",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
       }
     ],
     "anonymous": false

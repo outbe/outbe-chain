@@ -43,16 +43,6 @@
           "internalType": "struct IIntexAuction.AuctionParams",
           "components": [
             {
-              "name": "issuanceCurrency",
-              "type": "uint16",
-              "internalType": "uint16"
-            },
-            {
-              "name": "referenceCurrency",
-              "type": "uint16",
-              "internalType": "uint16"
-            },
-            {
               "name": "promisLoadMinor",
               "type": "uint128",
               "internalType": "uint128"
@@ -90,19 +80,31 @@
               "internalType": "uint16"
             },
             {
-              "name": "entryPriceMinor",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "floorPriceMinor",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "callPriceMinor",
-              "type": "uint64",
-              "internalType": "uint64"
+              "name": "prices",
+              "type": "tuple[]",
+              "internalType": "struct IIntexAuction.ReferenceCurrencyPrice[]",
+              "components": [
+                {
+                  "name": "isoCode",
+                  "type": "uint16",
+                  "internalType": "uint16"
+                },
+                {
+                  "name": "entryPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "floorPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "callPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                }
+              ]
             },
             {
               "name": "commitBondMinor",
@@ -241,16 +243,6 @@
               "internalType": "struct IIntexAuction.AuctionParams",
               "components": [
                 {
-                  "name": "issuanceCurrency",
-                  "type": "uint16",
-                  "internalType": "uint16"
-                },
-                {
-                  "name": "referenceCurrency",
-                  "type": "uint16",
-                  "internalType": "uint16"
-                },
-                {
                   "name": "promisLoadMinor",
                   "type": "uint128",
                   "internalType": "uint128"
@@ -288,19 +280,31 @@
                   "internalType": "uint16"
                 },
                 {
-                  "name": "entryPriceMinor",
-                  "type": "uint64",
-                  "internalType": "uint64"
-                },
-                {
-                  "name": "floorPriceMinor",
-                  "type": "uint64",
-                  "internalType": "uint64"
-                },
-                {
-                  "name": "callPriceMinor",
-                  "type": "uint64",
-                  "internalType": "uint64"
+                  "name": "prices",
+                  "type": "tuple[]",
+                  "internalType": "struct IIntexAuction.ReferenceCurrencyPrice[]",
+                  "components": [
+                    {
+                      "name": "isoCode",
+                      "type": "uint16",
+                      "internalType": "uint16"
+                    },
+                    {
+                      "name": "entryPriceMinor",
+                      "type": "uint64",
+                      "internalType": "uint64"
+                    },
+                    {
+                      "name": "floorPriceMinor",
+                      "type": "uint64",
+                      "internalType": "uint64"
+                    },
+                    {
+                      "name": "callPriceMinor",
+                      "type": "uint64",
+                      "internalType": "uint64"
+                    }
+                  ]
                 },
                 {
                   "name": "commitBondMinor",
@@ -362,6 +366,16 @@
               "name": "timestamp",
               "type": "uint32",
               "internalType": "uint32"
+            },
+            {
+              "name": "issuanceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
+            },
+            {
+              "name": "referenceCurrency",
+              "type": "uint16",
+              "internalType": "uint16"
             }
           ]
         }
@@ -417,16 +431,6 @@
               "internalType": "struct IIntexAuction.AuctionParams",
               "components": [
                 {
-                  "name": "issuanceCurrency",
-                  "type": "uint16",
-                  "internalType": "uint16"
-                },
-                {
-                  "name": "referenceCurrency",
-                  "type": "uint16",
-                  "internalType": "uint16"
-                },
-                {
                   "name": "promisLoadMinor",
                   "type": "uint128",
                   "internalType": "uint128"
@@ -464,19 +468,31 @@
                   "internalType": "uint16"
                 },
                 {
-                  "name": "entryPriceMinor",
-                  "type": "uint64",
-                  "internalType": "uint64"
-                },
-                {
-                  "name": "floorPriceMinor",
-                  "type": "uint64",
-                  "internalType": "uint64"
-                },
-                {
-                  "name": "callPriceMinor",
-                  "type": "uint64",
-                  "internalType": "uint64"
+                  "name": "prices",
+                  "type": "tuple[]",
+                  "internalType": "struct IIntexAuction.ReferenceCurrencyPrice[]",
+                  "components": [
+                    {
+                      "name": "isoCode",
+                      "type": "uint16",
+                      "internalType": "uint16"
+                    },
+                    {
+                      "name": "entryPriceMinor",
+                      "type": "uint64",
+                      "internalType": "uint64"
+                    },
+                    {
+                      "name": "floorPriceMinor",
+                      "type": "uint64",
+                      "internalType": "uint64"
+                    },
+                    {
+                      "name": "callPriceMinor",
+                      "type": "uint64",
+                      "internalType": "uint64"
+                    }
+                  ]
                 },
                 {
                   "name": "commitBondMinor",
@@ -572,6 +588,16 @@
           "name": "bidRate",
           "type": "uint32",
           "internalType": "uint32"
+        },
+        {
+          "name": "issuanceCurrency",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "referenceCurrency",
+          "type": "uint16",
+          "internalType": "uint16"
         },
         {
           "name": "chainId",
@@ -740,6 +766,18 @@
           "type": "uint32",
           "indexed": false,
           "internalType": "uint32"
+        },
+        {
+          "name": "issuanceCurrency",
+          "type": "uint16",
+          "indexed": false,
+          "internalType": "uint16"
+        },
+        {
+          "name": "referenceCurrency",
+          "type": "uint16",
+          "indexed": false,
+          "internalType": "uint16"
         }
       ],
       "anonymous": false
@@ -893,6 +931,17 @@
     },
     {
       "type": "error",
+      "name": "InvalidIssuanceCurrency",
+      "inputs": [
+        {
+          "name": "isoCode",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "InvalidSchedule",
       "inputs": []
     },
@@ -909,6 +958,22 @@
           "name": "promisLoadMinor",
           "type": "uint128",
           "internalType": "uint128"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "ReferenceCurrencyNotPriced",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "isoCode",
+          "type": "uint16",
+          "internalType": "uint16"
         }
       ]
     },

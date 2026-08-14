@@ -4,7 +4,9 @@ use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
 use outbe_primitives::error::Result;
 
-use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract, IntexCallTrigger};
+use crate::schema::{
+    AuctionConfig, AuctionStage, BidData, DesisContract, IntexCallTrigger, ReferenceCurrencyPrice,
+};
 
 impl DesisContract<'_> {
     // --- AuctionStage ---
@@ -27,8 +29,6 @@ impl DesisContract<'_> {
     pub(crate) fn read_auction_config(&self, worldwide_day: WorldwideDay) -> Result<AuctionConfig> {
         let promis_load_minor = self.config_promis_load_minor.read(&worldwide_day)?;
         Ok(AuctionConfig {
-            issuance_currency: self.config_issuance_currency.read(&worldwide_day)? as u16,
-            reference_currency: self.config_reference_currency.read(&worldwide_day)? as u16,
             promis_load_minor: u128::try_from(promis_load_minor)
                 .map_err(|_| crate::DesisError::InvalidWorldwideDay(worldwide_day))?,
             call_trigger: IntexCallTrigger {
@@ -40,8 +40,24 @@ impl DesisContract<'_> {
             min_intex_bid_quantity: self.config_min_bid_quantity.read(&worldwide_day)? as u16,
             commit_bond_minor: u128::try_from(self.config_commit_bond_minor.read(&worldwide_day)?)
                 .map_err(|_| crate::DesisError::InvalidWorldwideDay(worldwide_day))?,
-            entry_price_minor: self.config_entry_price.read(&worldwide_day)?,
+            reference_prices: self.read_reference_prices(worldwide_day)?,
         })
+    }
+
+    pub(crate) fn read_reference_prices(
+        &self,
+        worldwide_day: WorldwideDay,
+    ) -> Result<Vec<ReferenceCurrencyPrice>> {
+        let count = self.reference_price_count.read(&worldwide_day)?;
+        let mut rows = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            let key = Self::reference_price_key(worldwide_day, index);
+            rows.push(ReferenceCurrencyPrice {
+                iso_code: self.reference_price_iso.read(&key)? as u16,
+                entry_price_minor: self.reference_price_entry.read(&key)?,
+            });
+        }
+        Ok(rows)
     }
 
     pub(crate) fn write_auction_config(
@@ -49,10 +65,6 @@ impl DesisContract<'_> {
         worldwide_day: WorldwideDay,
         cfg: &AuctionConfig,
     ) -> Result<()> {
-        self.config_issuance_currency
-            .write(&worldwide_day, u32::from(cfg.issuance_currency))?;
-        self.config_reference_currency
-            .write(&worldwide_day, u32::from(cfg.reference_currency))?;
         self.config_promis_load_minor
             .write(&worldwide_day, U256::from(cfg.promis_load_minor))?;
         self.config_call_window
@@ -67,8 +79,16 @@ impl DesisContract<'_> {
             .write(&worldwide_day, u32::from(cfg.min_intex_bid_quantity))?;
         self.config_commit_bond_minor
             .write(&worldwide_day, U256::from(cfg.commit_bond_minor))?;
-        self.config_entry_price
-            .write(&worldwide_day, cfg.entry_price_minor)
+        self.reference_price_count
+            .write(&worldwide_day, cfg.reference_prices.len() as u32)?;
+        for (index, row) in cfg.reference_prices.iter().enumerate() {
+            let key = Self::reference_price_key(worldwide_day, index as u32);
+            self.reference_price_iso
+                .write(&key, u32::from(row.iso_code))?;
+            self.reference_price_entry
+                .write(&key, row.entry_price_minor)?;
+        }
+        Ok(())
     }
 
     // --- bid storage (per chain) ---
@@ -102,6 +122,8 @@ impl DesisContract<'_> {
             intex_bid_rate: limbs[0] as u32,
             timestamp: limbs[1] as u32,
             intex_quantity: (limbs[1] >> 32) as u16,
+            issuance_currency: (limbs[1] >> 48) as u16,
+            reference_currency: limbs[2] as u16,
         })
     }
 
@@ -114,10 +136,14 @@ impl DesisContract<'_> {
     ) -> Result<()> {
         let key = Self::bid_key(worldwide_day, chain_id, index);
         self.bid_bidder.write(&key, bid.bidder_address)?;
+        // The currency pair rides the free limbs of the same word: no new map and no
+        // attribute-order change.
         let packed = U256::from_limbs([
             u64::from(bid.intex_bid_rate),
-            (u64::from(bid.intex_quantity) << 32) | u64::from(bid.timestamp),
-            0,
+            (u64::from(bid.issuance_currency) << 48)
+                | (u64::from(bid.intex_quantity) << 32)
+                | u64::from(bid.timestamp),
+            u64::from(bid.reference_currency),
             0,
         ]);
         self.bid_packed.write(&key, packed)

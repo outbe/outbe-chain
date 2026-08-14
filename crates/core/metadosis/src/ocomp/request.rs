@@ -221,7 +221,7 @@ fn build_and_commit_request(
 
     let nod_target = NodContract::new(ctx.storage.clone()).ocomp_target_projection(wwd)?;
     let contributor_target =
-        outbe_intex::api::ocomp_contributor_target_projection(&ctx.storage, wwd.value())?;
+        outbe_intex::api::ocomp_contributor_target_projection(&ctx.storage, wwd)?;
 
     let sealed_tribute_projection = if stored_tribute_projection.is_sealed {
         stored_tribute_projection
@@ -285,7 +285,7 @@ fn build_and_commit_request(
         day_type: protocol_day_type,
         day_limit,
         lysis_budget,
-        auction_entry_price: sealed_envelope.auction_entry_price,
+        auction_entry_prices: sealed_envelope.auction_entry_prices.clone(),
         logical_anchor: ctx.block.timestamp,
     };
 
@@ -358,7 +358,7 @@ fn build_and_commit_request(
             gratis_supply: calculation.gratis_supply,
             lysis_budget,
             auction_base: split.auction_base,
-            auction_entry_price: sealed_envelope.auction_entry_price,
+            auction_entry_prices: sealed_envelope.auction_entry_prices.clone(),
             request_budget_split_receipt_hash: receipt_hash,
         },
         logical_evaluation_height: ctx.block.block_number,
@@ -423,7 +423,7 @@ fn build_and_commit_retry(
     let tribute = TributeContract::new(ctx.storage.clone()).pre_admission_projection(wwd)?;
     let nod_target = NodContract::new(ctx.storage.clone()).ocomp_target_projection(wwd)?;
     let contributor_target =
-        outbe_intex::api::ocomp_contributor_target_projection(&ctx.storage, wwd.value())?;
+        outbe_intex::api::ocomp_contributor_target_projection(&ctx.storage, wwd)?;
     if !tribute.is_sealed
         || tribute.sealed_collection_root != exact_collection.root()
         || tribute.sealed_collection_root != previous.intent.sealed_tribute_collection_root
@@ -493,7 +493,7 @@ fn build_and_commit_retry(
         day_type: old_frozen.day_type,
         day_limit: old_frozen.day_limit,
         lysis_budget: old_frozen.lysis_budget,
-        auction_entry_price: old_frozen.auction_entry_price,
+        auction_entry_prices: old_frozen.auction_entry_prices.clone(),
         logical_anchor: receipt.logical_anchor,
     };
     let receipt = validate_replayed_request_budget_effect(effect, &receipt)?;

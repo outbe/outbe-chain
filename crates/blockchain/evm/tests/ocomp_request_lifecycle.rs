@@ -751,7 +751,7 @@ fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal
         assert_eq!(
             IntexContract::new(storage.clone())
                 .contributor_count
-                .read(&prepared.wwd.value())
+                .read(&prepared.wwd)
                 .unwrap(),
             0
         );

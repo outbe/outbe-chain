@@ -12,6 +12,8 @@ use crate::runtime;
 use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract};
 
 const CHAIN_ID: u64 = 1;
+/// ISO code every fixture prices in.
+const REFERENCE_ISO: u16 = 840;
 const WORLDWIDE_DAY: WorldwideDay = WorldwideDay::new(20260101);
 const NEXT_WORLDWIDE_DAY: WorldwideDay = WorldwideDay::new(20260102);
 const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
@@ -58,7 +60,7 @@ fn brief_at(s: &StorageHandle, worldwide_day: WorldwideDay, supply_promis: u128,
             s.clone(),
             worldwide_day,
             U256::from(supply_promis),
-            U256::from(ENTRY_PRICE),
+            entry_price_rows(),
             green,
             NOW,
         )
@@ -119,11 +121,32 @@ fn bids(n: u8, rate: u32) -> Vec<BidData> {
             intex_bid_rate: rate,
             timestamp: i as u32,
             intex_quantity: 1,
+            issuance_currency: REFERENCE_ISO,
+            reference_currency: REFERENCE_ISO,
         })
         .collect()
 }
 
 // --- Auction brief ---
+
+/// The frozen price table an OCOMP request brings: the same single row the
+/// in-process fixtures use, in the wire shape the receipt commits.
+fn frozen_entry_prices() -> Vec<outbe_ocomp_protocol::intent::ReferenceEntryPriceV1> {
+    vec![outbe_ocomp_protocol::intent::ReferenceEntryPriceV1 {
+        reference_currency: REFERENCE_ISO,
+        entry_price_minor: U256::from(ENTRY_PRICE),
+        source: outbe_ocomp_protocol::intent::AuctionEntryPriceSource::LastClosedDayVwap,
+        source_day: WORLDWIDE_DAY.value(),
+    }]
+}
+
+/// The single priced reference currency the fixtures brief with.
+fn entry_price_rows() -> Vec<crate::schema::ReferenceCurrencyPrice> {
+    vec![crate::schema::ReferenceCurrencyPrice {
+        iso_code: REFERENCE_ISO,
+        entry_price_minor: U256::from(ENTRY_PRICE),
+    }]
+}
 
 #[test]
 fn dispatch_auction_brief_records_the_brief() {
@@ -132,7 +155,7 @@ fn dispatch_auction_brief_records_the_brief() {
             s.clone(),
             WORLDWIDE_DAY,
             U256::from(10 * PROMIS_LOAD_MINOR),
-            U256::from(ENTRY_PRICE),
+            entry_price_rows(),
             true,
             NOW,
         )
@@ -158,7 +181,10 @@ fn dispatch_auction_brief_records_the_brief() {
             WORLDWIDE_DAY.value()
         );
         let cfg = contract.read_auction_config(WORLDWIDE_DAY).unwrap();
-        assert_eq!(cfg.entry_price_minor, U256::from(ENTRY_PRICE));
+        assert_eq!(
+            cfg.entry_price_for(REFERENCE_ISO),
+            Some(U256::from(ENTRY_PRICE))
+        );
     });
 }
 
@@ -169,7 +195,7 @@ fn dispatch_auction_brief_records_a_red_day() {
             s.clone(),
             WORLDWIDE_DAY,
             U256::from(PROMIS_LOAD_MINOR),
-            U256::from(ENTRY_PRICE),
+            entry_price_rows(),
             false,
             NOW,
         )
@@ -192,7 +218,7 @@ fn strict_request_auction_base_commits_the_exact_green_brief() {
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::from(7 * PROMIS_LOAD_MINOR),
-            U256::from(ENTRY_PRICE),
+            &frozen_entry_prices(),
             NOW,
             true,
         )
@@ -213,8 +239,8 @@ fn strict_request_auction_base_commits_the_exact_green_brief() {
             contract
                 .read_auction_config(WORLDWIDE_DAY)
                 .unwrap()
-                .entry_price_minor,
-            U256::from(ENTRY_PRICE)
+                .entry_price_for(REFERENCE_ISO),
+            Some(U256::from(ENTRY_PRICE))
         );
     });
 }
@@ -227,7 +253,7 @@ fn strict_request_auction_base_propagates_duplicate_refusal_without_overwrite() 
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::from(7 * PROMIS_LOAD_MINOR),
-            U256::from(ENTRY_PRICE),
+            &frozen_entry_prices(),
             NOW,
             true,
         )
@@ -238,7 +264,7 @@ fn strict_request_auction_base_propagates_duplicate_refusal_without_overwrite() 
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::from(9 * PROMIS_LOAD_MINOR),
-            U256::from(ENTRY_PRICE),
+            &frozen_entry_prices(),
             NOW,
             true,
         )
@@ -261,7 +287,7 @@ fn strict_request_auction_base_rejects_oversized_supply_without_state() {
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::MAX,
-            U256::from(ENTRY_PRICE),
+            &frozen_entry_prices(),
             NOW,
             true,
         )
@@ -286,14 +312,12 @@ fn assert_no_request_brief_state(storage: &StorageHandle<'_>) {
     assert_eq!(
         contract.read_auction_config(WORLDWIDE_DAY).unwrap(),
         AuctionConfig {
-            issuance_currency: 0,
-            reference_currency: 0,
             promis_load_minor: 0,
             call_trigger: Default::default(),
             min_intex_bid_rate: 0,
             min_intex_bid_quantity: 0,
             commit_bond_minor: 0,
-            entry_price_minor: U256::ZERO,
+            reference_prices: vec![],
         }
     );
     assert_eq!(
@@ -317,7 +341,7 @@ fn strict_request_auction_base_rolls_back_every_partial_write_boundary() {
                 B256::repeat_byte(0x41),
                 WORLDWIDE_DAY,
                 U256::from(7 * PROMIS_LOAD_MINOR),
-                U256::from(ENTRY_PRICE),
+                &frozen_entry_prices(),
                 NOW,
                 true,
             )
@@ -339,7 +363,7 @@ fn strict_request_auction_base_rolls_back_every_partial_write_boundary() {
                 B256::repeat_byte(0x41),
                 WORLDWIDE_DAY,
                 U256::from(7 * PROMIS_LOAD_MINOR),
-                U256::from(ENTRY_PRICE),
+                &frozen_entry_prices(),
                 NOW,
                 true,
             )
@@ -364,7 +388,7 @@ fn strict_request_auction_base_never_tops_up_a_live_auction() {
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::from(7 * PROMIS_LOAD_MINOR),
-            U256::from(ENTRY_PRICE),
+            &frozen_entry_prices(),
             NOW,
             true,
         )
@@ -384,7 +408,7 @@ fn strict_request_auction_base_never_tops_up_a_live_auction() {
             B256::repeat_byte(0x41),
             WORLDWIDE_DAY,
             U256::from(9 * PROMIS_LOAD_MINOR),
-            U256::from(ENTRY_PRICE + 1),
+            &frozen_entry_prices(),
             NOW,
             true,
         )
@@ -426,7 +450,7 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
                 s.clone(),
                 WORLDWIDE_DAY,
                 U256::from(10 * PROMIS_LOAD_MINOR),
-                U256::from(ENTRY_PRICE),
+                entry_price_rows(),
                 true,
                 NOW,
             )
@@ -437,7 +461,7 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
             s.clone(),
             WORLDWIDE_DAY,
             U256::from(7 * PROMIS_LOAD_MINOR),
-            U256::from(ENTRY_PRICE),
+            entry_price_rows(),
             true,
             NOW,
         )
@@ -468,7 +492,7 @@ fn dispatch_auction_brief_oversized_supply_returns_typed_full_carry_over() {
                 s.clone(),
                 WORLDWIDE_DAY,
                 U256::MAX,
-                U256::from(ENTRY_PRICE),
+                entry_price_rows(),
                 true,
                 NOW,
             )
@@ -508,7 +532,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
                 storage.clone(),
                 WORLDWIDE_DAY,
                 U256::from(u128::MAX),
-                U256::from(ENTRY_PRICE),
+                entry_price_rows(),
                 true,
                 NOW,
             )
@@ -525,7 +549,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
                 storage.clone(),
                 WORLDWIDE_DAY,
                 supply,
-                U256::from(ENTRY_PRICE),
+                entry_price_rows(),
                 true,
                 NOW,
             )
@@ -561,7 +585,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
             storage.clone(),
             WorldwideDay::new(0),
             U256::MAX,
-            U256::from(ENTRY_PRICE),
+            entry_price_rows(),
             true,
             NOW,
         )
@@ -572,7 +596,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
             storage.clone(),
             WORLDWIDE_DAY,
             U256::MAX,
-            U256::from(ENTRY_PRICE),
+            entry_price_rows(),
             true,
             NOW,
         )
@@ -587,7 +611,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
             storage,
             NEXT_WORLDWIDE_DAY,
             U256::MAX,
-            U256::from(ENTRY_PRICE),
+            entry_price_rows(),
             true,
             late,
         )
@@ -607,7 +631,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
                 storage,
                 WORLDWIDE_DAY,
                 U256::from(7 * PROMIS_LOAD_MINOR),
-                U256::from(ENTRY_PRICE),
+                entry_price_rows(),
                 true,
                 NOW,
             )
@@ -625,7 +649,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
                 storage,
                 WORLDWIDE_DAY,
                 U256::from(7 * PROMIS_LOAD_MINOR),
-                U256::from(ENTRY_PRICE),
+                entry_price_rows(),
                 true,
                 NOW,
             )
@@ -645,7 +669,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
             storage,
             WORLDWIDE_DAY,
             U256::MAX,
-            U256::from(ENTRY_PRICE),
+            entry_price_rows(),
             true,
             NOW,
         )
@@ -667,7 +691,7 @@ fn brief_anchor_at(now: u64) -> u64 {
                 s.clone(),
                 WORLDWIDE_DAY,
                 U256::from(LOAD_MINOR),
-                U256::from(ENTRY_PRICE),
+                entry_price_rows(),
                 true,
                 now,
             )
@@ -704,7 +728,7 @@ fn schedule_starts_a_deferred_brief_at_the_next_midnight() {
                 s.clone(),
                 WORLDWIDE_DAY,
                 U256::from(10 * LOAD_MINOR),
-                U256::from(ENTRY_PRICE),
+                entry_price_rows(),
                 true,
                 noon,
             )
@@ -897,6 +921,8 @@ fn schedule_derives_min_bid_qty_from_prior_clearing() {
                     intex_bid_rate: 200,
                     timestamp: i as u32,
                     intex_quantity: 1,
+                    issuance_currency: REFERENCE_ISO,
+                    reference_currency: REFERENCE_ISO,
                 })
                 .collect(),
         )
@@ -1213,7 +1239,7 @@ fn no_bids_clears_as_no_sale() {
         // Lysis recorded creator rewards for the day before the auction concluded.
         outbe_intex::api::record_contributors(
             &s,
-            WORLDWIDE_DAY.value(),
+            WORLDWIDE_DAY,
             &[(bidder(9), U256::from(100u64))],
         )
         .unwrap();
@@ -1244,7 +1270,7 @@ fn no_bids_clears_as_no_sale() {
         );
         // No series will ever exist for the day, so the contributor map is discarded.
         assert_eq!(
-            outbe_intex::api::contributor_count(&s, WORLDWIDE_DAY.value()).unwrap(),
+            outbe_intex::api::contributor_count(&s, WORLDWIDE_DAY).unwrap(),
             0
         );
     });
@@ -1359,18 +1385,24 @@ fn clearing_uniform_price_is_last_allocated_bid() {
                 intex_bid_rate: 300,
                 timestamp: 0,
                 intex_quantity: 1,
+                issuance_currency: REFERENCE_ISO,
+                reference_currency: REFERENCE_ISO,
             },
             BidData {
                 bidder_address: bidder(1),
                 intex_bid_rate: 200,
                 timestamp: 1,
                 intex_quantity: 1,
+                issuance_currency: REFERENCE_ISO,
+                reference_currency: REFERENCE_ISO,
             },
             BidData {
                 bidder_address: bidder(2),
                 intex_bid_rate: 150,
                 timestamp: 2,
                 intex_quantity: 1,
+                issuance_currency: REFERENCE_ISO,
+                reference_currency: REFERENCE_ISO,
             },
         ];
         runtime::process_bids_batch(
@@ -1406,12 +1438,16 @@ fn clear_bids_below_min_price_skipped() {
                 intex_bid_rate: 50,
                 timestamp: 0,
                 intex_quantity: 1,
+                issuance_currency: REFERENCE_ISO,
+                reference_currency: REFERENCE_ISO,
             },
             BidData {
                 bidder_address: bidder(1),
                 intex_bid_rate: 200,
                 timestamp: 1,
                 intex_quantity: 1,
+                issuance_currency: REFERENCE_ISO,
+                reference_currency: REFERENCE_ISO,
             },
         ];
         runtime::process_bids_batch(
@@ -1444,12 +1480,16 @@ fn clear_refunds_equal_locked_minus_paid() {
                 intex_bid_rate: 300,
                 timestamp: 0,
                 intex_quantity: 1,
+                issuance_currency: REFERENCE_ISO,
+                reference_currency: REFERENCE_ISO,
             },
             BidData {
                 bidder_address: bidder(1),
                 intex_bid_rate: 200,
                 timestamp: 1,
                 intex_quantity: 1,
+                issuance_currency: REFERENCE_ISO,
+                reference_currency: REFERENCE_ISO,
             },
         ];
         runtime::process_bids_batch(
@@ -1495,18 +1535,24 @@ fn clear_rate_escrow_scales_by_basis() {
                 intex_bid_rate: 800_000,
                 timestamp: 0,
                 intex_quantity: 1,
+                issuance_currency: REFERENCE_ISO,
+                reference_currency: REFERENCE_ISO,
             },
             BidData {
                 bidder_address: bidder(1),
                 intex_bid_rate: 600_000,
                 timestamp: 1,
                 intex_quantity: 1,
+                issuance_currency: REFERENCE_ISO,
+                reference_currency: REFERENCE_ISO,
             },
             BidData {
                 bidder_address: bidder(2),
                 intex_bid_rate: 400_000,
                 timestamp: 2,
                 intex_quantity: 1,
+                issuance_currency: REFERENCE_ISO,
+                reference_currency: REFERENCE_ISO,
             },
         ];
         runtime::process_bids_batch(
@@ -1611,6 +1657,8 @@ fn two_chain_bids_merge_and_carry_source_chain() {
                 intex_bid_rate: 300,
                 timestamp: 0,
                 intex_quantity: 1,
+                issuance_currency: REFERENCE_ISO,
+                reference_currency: REFERENCE_ISO,
             }],
         )
         .unwrap();
@@ -1628,6 +1676,8 @@ fn two_chain_bids_merge_and_carry_source_chain() {
                 intex_bid_rate: 200,
                 timestamp: 0,
                 intex_quantity: 1,
+                issuance_currency: REFERENCE_ISO,
+                reference_currency: REFERENCE_ISO,
             }],
         )
         .unwrap();
@@ -1828,11 +1878,238 @@ fn test_iface_id_matches_selector_xor() {
     );
 }
 
+// --- Clearing: one series per currency pair ---
+
+/// Brief `units` of supply against several priced reference currencies and drive
+/// the schedule until the clearing gate is armed.
+fn open_clearing_priced(s: &StorageHandle, units: u128, references: &[u16]) {
+    let rows = references
+        .iter()
+        .map(|&iso_code| crate::schema::ReferenceCurrencyPrice {
+            iso_code,
+            entry_price_minor: U256::from(ENTRY_PRICE) * U256::from(iso_code),
+        })
+        .collect();
+    assert_eq!(
+        crate::api::dispatch_auction_brief(
+            s.clone(),
+            WORLDWIDE_DAY,
+            U256::from(units * LOAD_MINOR),
+            rows,
+            true,
+            NOW,
+        )
+        .unwrap(),
+        AuctionBriefReceipt::Accepted
+    );
+    runtime::schedule_tick(s, NOW).unwrap();
+    runtime::schedule_tick(s, ANCHOR + 86_400).unwrap();
+    arm_clearing(s);
+}
+
+#[test]
+fn clearing_issues_one_series_per_winning_currency_pair() {
+    use outbe_intexfactory::SeriesId;
+
+    let chain = 10u32;
+    with_targets(&[chain], |s| {
+        open_clearing_priced(&s, 4, &[840, 978]);
+
+        // Three winners over two pairs: two price in USD, one in EUR.
+        let mut relayed = bids(3, 200);
+        relayed[2].issuance_currency = 949;
+        relayed[2].reference_currency = 978;
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            chain,
+            1,
+            0,
+            1,
+            relayed,
+        )
+        .unwrap();
+        mark_done(&s, chain, 1, 1, 3);
+
+        let result = clear(&s);
+        assert_eq!(result.issued_intex_count, 3);
+
+        let usd = SeriesId::for_pair(WORLDWIDE_DAY, 840, 840).unwrap();
+        let lira = SeriesId::for_pair(WORLDWIDE_DAY, 949, 978).unwrap();
+        assert_eq!(usd.to_string(), "20260101-USD-U");
+        assert_eq!(lira.to_string(), "20260101-TRY-E");
+
+        // Each series holds only its own winners and its own reference price.
+        let usd_series = outbe_intex::api::read_series(&s, usd).unwrap();
+        let lira_series = outbe_intex::api::read_series(&s, lira).unwrap();
+        assert_eq!(usd_series.issued_intex_count, 2);
+        assert_eq!(lira_series.issued_intex_count, 1);
+        assert_eq!(
+            usd_series.entry_price_minor,
+            U256::from(ENTRY_PRICE) * U256::from(840u16)
+        );
+        assert_eq!(
+            lira_series.entry_price_minor,
+            U256::from(ENTRY_PRICE) * U256::from(978u16)
+        );
+    });
+}
+
+#[test]
+fn a_reference_currency_whose_letter_is_taken_is_dropped_from_the_day() {
+    // CHF and CNY both spell their series `C`. The day keeps the lower code, so the
+    // survivor cannot depend on the order the two brief paths collect prices in.
+    with_storage(|s| {
+        open_clearing_priced(&s, 4, &[756, 156]);
+        let config = s
+            .contract::<DesisContract>()
+            .read_auction_config(WORLDWIDE_DAY)
+            .unwrap();
+        assert_eq!(
+            config
+                .reference_prices
+                .iter()
+                .map(|row| row.iso_code)
+                .collect::<Vec<_>>(),
+            vec![156]
+        );
+        assert!(config.entry_price_for(756).is_none());
+    });
+}
+
+#[test]
+fn clearing_without_winners_discards_the_day_contributor_map() {
+    let chain = 10u32;
+    with_targets(&[chain], |s| {
+        open_clearing(&s, 2);
+        outbe_intex::api::record_contributors(
+            &s,
+            WORLDWIDE_DAY,
+            &[(bidder(1), U256::from(100u64))],
+        )
+        .unwrap();
+
+        // The only chain never reports, so the deadline clears the day with no bids.
+        let deadline = ANCHOR + 2 * 86_400 + crate::constants::BIDS_FANIN_TIMEOUT_SECS;
+        let result = runtime::force_clear(s.clone(), WORLDWIDE_DAY, deadline + 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.issued_intex_count, 0);
+        assert_eq!(
+            outbe_intex::api::contributor_count(&s, WORLDWIDE_DAY).unwrap(),
+            0
+        );
+    });
+}
+
 // --- Config construction ---
 
 #[test]
 fn escrow_basis_is_promis_load() {
     // wCOEN escrow basis = promis_load per Intex; entry no longer drives it.
-    let cfg = AuctionConfig::from_entry_price(U256::from(1_000_000_150_000_000u128));
+    let cfg = AuctionConfig::from_reference_prices(vec![crate::schema::ReferenceCurrencyPrice {
+        iso_code: REFERENCE_ISO,
+        entry_price_minor: U256::from(1_000_000_150_000_000u128),
+    }]);
     assert_eq!(cfg.escrow_basis_minor(), cfg.promis_load_minor);
+}
+
+// --- Refund fan-out chunking ---
+
+#[test]
+fn a_chains_bidders_ship_in_chunks_the_encoder_can_carry() {
+    use crate::constants::{MAX_REFUND_CHUNKS, REFUND_CHUNK_LEN};
+
+    // A chain relays every bidder it took, winners and losers alike, so the set is
+    // bounded by bid intake rather than by supply.
+    assert_eq!(runtime::refund_chunk_count(1).unwrap(), 1);
+    assert_eq!(runtime::refund_chunk_count(REFUND_CHUNK_LEN).unwrap(), 1);
+    assert_eq!(
+        runtime::refund_chunk_count(REFUND_CHUNK_LEN + 1).unwrap(),
+        2
+    );
+
+    // Intake's own ceiling — 64 bids across 256 batches — is exactly what the
+    // arrival set can carry, and one bidder more is refused rather than truncated.
+    let ceiling = REFUND_CHUNK_LEN * MAX_REFUND_CHUNKS;
+    assert_eq!(
+        runtime::refund_chunk_count(ceiling).unwrap(),
+        MAX_REFUND_CHUNKS
+    );
+    assert!(runtime::refund_chunk_count(ceiling + 1).is_err());
+}
+
+// --- Days the oracle could not price ---
+
+#[test]
+fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
+    // An oracle gap prices nothing — the same condition that makes a day red.
+    // Settlement still has to complete, so the day must reach a terminal stage
+    // instead of failing the brief.
+    with_storage(|s| {
+        assert_eq!(
+            crate::api::dispatch_auction_brief(
+                s.clone(),
+                WORLDWIDE_DAY,
+                U256::from(4 * LOAD_MINOR),
+                Vec::new(),
+                true,
+                NOW,
+            )
+            .unwrap(),
+            AuctionBriefReceipt::Accepted
+        );
+
+        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 86_400).unwrap();
+
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            AuctionStage::Cancelled,
+            "an unpriced day ends as a closed record"
+        );
+        assert_eq!(
+            contract.sched_active_count.read().unwrap(),
+            0,
+            "and leaves the schedule"
+        );
+        // It was briefed green, so it holds the day's PROMIS — unlike a red day, which
+        // is briefed with none. Cancelling it must give that supply back.
+        assert_eq!(
+            outbe_promislimit::PromisLimitContract::new(s.clone())
+                .get_total_unallocated()
+                .unwrap(),
+            U256::from(4 * LOAD_MINOR),
+            "an unpriced day returns its supply"
+        );
+    });
+}
+
+// --- Bid intake: the currency pair ---
+
+#[test]
+fn a_relayed_bid_naming_an_unspellable_currency_is_refused_at_intake() {
+    // A code no series id can spell would otherwise surface at clearing, which is the
+    // one place that cannot recover: the day would revert every block until it expired.
+    let chain = 10u32;
+    with_targets(&[chain], |s| {
+        open_clearing(&s, 2);
+        let mut relayed = bids(1, 200);
+        relayed[0].issuance_currency = 1949;
+
+        let err = runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            chain,
+            1,
+            0,
+            1,
+            relayed,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("no series id can spell"), "{err}");
+    });
 }
