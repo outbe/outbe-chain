@@ -109,8 +109,10 @@ sol! {
 
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IParkedWork {
+        struct ParkedSend { uint32 dstChainId; uint64 gasLimit; bool sent; bytes payload; }
         function nextPendingBidsRelayIdx() external view returns (uint256);
-        function nextParkedSendIdx() external view returns (uint256);
+        function parkedSend(uint256 idx) external view returns (ParkedSend memory);
+        function flushPendingSend(uint256 idx) external;
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]
@@ -299,17 +301,43 @@ fn venue_schedule(url: &str, venue: Address, worldwide_day: u32) -> String {
     }
 }
 
-/// Both sides swallow a failed send by parking it, so a non-zero index is the
+/// Both sides swallow a failed send by parking it, so the parked entry is the
 /// only trace of work that never left.
 #[cfg(feature = "ocomp-integration")]
 fn parked_work(url: &str, router: Address, venue_router: Address) -> String {
-    let sends = eth::read_call(url, router, &IParkedWork::nextParkedSendIdxCall {});
     let relays = eth::read_call(
         url,
         venue_router,
         &IParkedWork::nextPendingBidsRelayIdxCall {},
     );
-    format!("origin parked sends {sends:?}, venue parked bid relays {relays:?}")
+    let parked = eth::read_call(
+        url,
+        router,
+        &IParkedWork::parkedSendCall { idx: U256::ZERO },
+    );
+    let parked_note = match parked {
+        Some(send) if !send.payload.is_empty() => {
+            // Retrying a parked send is permissionless, and its revert carries
+            // the reason the router swallowed when it parked.
+            let flush = eth::send_call(
+                url,
+                router,
+                crate::world::forge::DEPLOYER_KEY,
+                &IParkedWork::flushPendingSendCall { idx: U256::ZERO },
+                None,
+            );
+            format!(
+                "origin parked a send to chain {} ({} bytes, gas {}), retry says {:?}",
+                send.dstChainId,
+                send.payload.len(),
+                send.gasLimit,
+                flush.err().map(|error| error.to_string())
+            )
+        }
+        Some(_) => "origin parked nothing".to_owned(),
+        None => "origin did not report parked sends".to_owned(),
+    };
+    format!("{parked_note}, venue parked bid relays {relays:?}")
 }
 
 #[cfg(feature = "ocomp-integration")]
