@@ -340,6 +340,30 @@ fn parked_work(url: &str, router: Address, venue_router: Address) -> String {
     format!("{parked_note}, venue parked bid relays {relays:?}")
 }
 
+/// The venue emits this at the end of every inbound stage handler, so its
+/// absence separates a message that never arrived from one that did nothing.
+#[cfg(feature = "ocomp-integration")]
+fn stages_received(url: &str, venue_router: Address, worldwide_day: u32) -> String {
+    let topic0 =
+        alloy_primitives::keccak256(b"AuctionStageReceived(uint32,uint32,uint8)".as_slice());
+    let day_topic = format!("0x{:064x}", worldwide_day);
+    let logs = eth::raw_json_with_params(
+        url,
+        "eth_getLogs",
+        serde_json::json!([{
+            "fromBlock": "0x0",
+            "toBlock": "latest",
+            "address": format!("{venue_router:?}"),
+            "topics": [format!("{topic0:?}"), serde_json::Value::Null, day_topic],
+        }]),
+    );
+    match logs.as_ref().and_then(|value| value.as_array()) {
+        Some(entries) if entries.is_empty() => "the venue received no inbound stage".to_owned(),
+        Some(entries) => format!("the venue received {} inbound stages", entries.len()),
+        None => "the venue stage log is unreadable".to_owned(),
+    }
+}
+
 #[cfg(feature = "ocomp-integration")]
 fn venue_bid_counts(url: &str, venue: Address, worldwide_day: u32) -> String {
     match eth::read_call(
@@ -535,7 +559,7 @@ fn auction_clears(world: &mut World) {
         assert_ne!(stage, Some(6), "Desis cancelled day {worldwide_day}");
         assert!(
             Instant::now() < deadline,
-            "day {worldwide_day} never cleared on Desis: {}; {}; venue stage {:?}, {}; {}",
+            "day {worldwide_day} never cleared on Desis: {}; {}; venue stage {:?}, {}; {}; {}",
             desis_stage(&url, worldwide_day),
             relayed_bids(&url, worldwide_day, chain_id as u32),
             eth::read_call(
@@ -546,7 +570,8 @@ fn auction_clears(world: &mut World) {
                 },
             ),
             venue_bid_counts(&url, venue, worldwide_day),
-            parked_work(&url, router, venue_router)
+            parked_work(&url, router, venue_router),
+            stages_received(&url, venue_router, worldwide_day)
         );
         sleep(Duration::from_secs(2));
     }
