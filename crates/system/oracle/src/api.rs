@@ -345,21 +345,3 @@ pub fn get_currency_rate(storage: StorageHandle, iso_code: u16) -> Result<U256> 
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     oracle.get_currency_rate(iso_code)
 }
-
-/// Whether `iso_code` is admissible for Credis.
-///
-/// §6 of the Credis product paper: a currency qualifies only when this chain
-/// maintains **both** feeds for it — the COEN daily reference price series (a
-/// registered `COEN/<iso_code>` pair) and the official policy-rate feed. A
-/// position in a currency missing either would be unpriceable: without the pair
-/// its floor and call could never be evaluated, and without the rate its interest
-/// could not accrue.
-///
-/// Non-reverting, so a caller can gate on it rather than catch a revert.
-pub fn is_credis_admissible(storage: StorageHandle, iso_code: u16) -> Result<bool> {
-    let oracle: OracleContract<'_> = OracleContract::new(storage);
-    if oracle.pair_index_of(AddressPair::new_coen_to(iso_code))? == 0 {
-        return Ok(false);
-    }
-    Ok(!oracle.reference_currency_rate.read(&iso_code)?.is_zero())
-}

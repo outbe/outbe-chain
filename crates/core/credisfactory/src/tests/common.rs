@@ -8,6 +8,7 @@
 //! stubbed via `enable_sub_call_stub` (returns `default_success()`).
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
+use alloy_sol_types::SolCall;
 
 use outbe_credis::CredisContract;
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
@@ -334,6 +335,13 @@ pub fn env() -> HashMapStorageProvider {
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
     storage.stub_sub_call_at(VAULT_ROUTER_ADDRESS, zero_word());
+    // A funded reserve vault: `pledge_gratis` refuses to quote against a dry one,
+    // and the address-wide zero word above would decode as `false`.
+    storage.stub_sub_call_at_selector(
+        VAULT_ROUTER_ADDRESS,
+        outbe_vaultrouter::api::IVaultRouter::hasLiquidityCall::SELECTOR,
+        u256_word(U256::from(1u64)),
+    );
     storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
     // Matched funding defaults to satisfied; the tests that exercise §7 override
     // it. The selector stub takes priority over the address-wide `isoCode()` one.

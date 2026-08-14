@@ -960,25 +960,6 @@
   },
   {
     "type": "function",
-    "name": "isCredisAdmissible",
-    "inputs": [
-      {
-        "name": "isoCode",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "admissible",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "isVoteTarget",
     "inputs": [
       {

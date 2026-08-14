@@ -85,7 +85,6 @@ pub fn pledge_gratis(
     max_gratis: U256,
     auth: ModifyAuth,
 ) -> Result<(B256, U256)> {
-    // todo check if there is enough liquidity in the vaults
     if asset.is_zero() {
         return Err(GratisFactoryError::InvalidAsset.into());
     }
@@ -93,15 +92,15 @@ pub fn pledge_gratis(
         return Err(GratisFactoryError::InvalidAmount.into());
     }
 
-    // §6 admissibility: the chain must maintain both feeds for this currency —
-    // the COEN price series and the official policy rate — before a pledge can be
-    // quoted in it. Rejecting here rather than at `requestCredis` means the
-    // pledger never locks collateral against a position that could not be opened.
-    let iso_code = read_iso_code(&storage, asset)?;
-    if !outbe_oracle::api::is_credis_admissible(storage.clone(), iso_code)? {
-        return Err(GratisFactoryError::CurrencyNotAdmissible { iso_code }.into());
+    // The reserve vault is what `requestCredis` draws the credit from. Checking it
+    // here rather than only there means the pledger never locks collateral against
+    // a position the vault could not fund. Liquidity can still drain between the
+    // two calls; the vault's own check at withdraw time remains the authority.
+    if !outbe_vaultrouter::api::has_liquidity(&storage, asset, amount_stables)? {
+        return Err(GratisFactoryError::InsufficientVaultLiquidity { amount_stables }.into());
     }
 
+    let iso_code = read_iso_code(&storage, asset)?;
     let (gratis_amount, entry_rate) =
         convert_stables_to_gratis(storage.clone(), amount_stables, iso_code)?;
     if gratis_amount > max_gratis {

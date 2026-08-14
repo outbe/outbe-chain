@@ -149,9 +149,6 @@ pub fn dispatch(
                     Ok(())
                 })
             }
-            isCredisAdmissible(c) => view(c, |c| {
-                crate::api::is_credis_admissible(oracle.storage.clone(), c.isoCode)
-            }),
             delegateFeederConsent(c) => {
                 reject_value(&value)?;
                 let feeder = c.feeder;

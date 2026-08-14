@@ -257,9 +257,4 @@ interface IOracle {
     ///         be set at genesis, so no new currency feed could come online
     ///         without a hard fork.
     function setCurrencyRate(uint16 isoCode, uint256 rate) external;
-
-    /// @notice True when `isoCode` is admissible for Credis: the chain both
-    ///         prices COEN in that currency (a registered `COEN/<isoCode>` pair)
-    ///         and publishes its official policy rate.
-    function isCredisAdmissible(uint16 isoCode) external view returns (bool admissible);
 }

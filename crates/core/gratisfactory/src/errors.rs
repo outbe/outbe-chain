@@ -1,3 +1,4 @@
+use alloy_primitives::U256;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -16,8 +17,8 @@ pub enum GratisFactoryError {
     OracleConversionOverflow,
     #[error("pledge cost exceeds maxGratis")]
     GratisCapExceeded,
-    #[error("currency {iso_code} is not admissible for credis: it needs both a COEN price pair and an official policy rate")]
-    CurrencyNotAdmissible { iso_code: u16 },
+    #[error("reserve vault for the pledged asset cannot cover {amount_stables} of credit")]
+    InsufficientVaultLiquidity { amount_stables: U256 },
 }
 
 impl From<GratisFactoryError> for PrecompileError {

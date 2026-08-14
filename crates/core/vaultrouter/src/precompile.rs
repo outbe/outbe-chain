@@ -175,6 +175,7 @@ fn dispatch_local(
 
             // --- views over external state ---
             sharesBalance(c) => view(c, |c| runtime::shares_balance(&storage, c.vault)),
+            hasLiquidity(c) => view(c, |c| runtime::has_liquidity(&storage, c.asset, c.amount)),
         }
     })
 }

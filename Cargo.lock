@@ -7861,6 +7861,7 @@ dependencies = [
  "outbe-promis",
  "outbe-tee",
  "outbe-tee-enclave",
+ "outbe-vaultrouter",
  "thiserror 2.0.18",
 ]
 

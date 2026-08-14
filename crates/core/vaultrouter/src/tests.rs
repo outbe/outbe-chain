@@ -18,6 +18,7 @@ use crate::runtime;
 use crate::schema::VaultRouterContract;
 use crate::sol_ext::IReferenceCurrency;
 use crate::sol_ext::IVaultV2;
+use crate::sol_ext::IERC20;
 
 const CHAIN_ID: u64 = 1;
 const USD_ISO_CODE: u16 = 840;
@@ -840,6 +841,69 @@ fn withdraw_happy_path_and_rejects_unknown_target() {
         )
         .unwrap();
         assert_eq!(burned, x);
+    });
+}
+
+/// `hasLiquidity` is the pre-flight form of the same shortfall check `withdraw`
+/// enforces, so the two must never disagree — a pledge cleared by the gate and
+/// then rejected by the withdraw is the failure this pairing rules out.
+#[test]
+fn has_liquidity_answers_for_an_unconfigured_asset_and_tracks_the_withdraw_check() {
+    // A second asset/vault pair whose stubbed vault is one share short, so both
+    // sides of the boundary are reachable without re-pinning a stub mid-test.
+    let short_asset = address!("0x0000000000000000000000000000000000000889");
+    let short_vault = address!("0x0000000000000000000000000000000000000778");
+    let fifty = U256::from(50u64);
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    // Redeeming 50 assets costs 50 shares from either vault; only the first holds
+    // 50, the second holds 49.
+    for v in [vault(), short_vault] {
+        storage.stub_sub_call_at_selector(v, IVaultV2::previewWithdrawCall::SELECTOR, word(fifty));
+        storage.stub_sub_call_at_selector(v, IVaultV2::withdrawCall::SELECTOR, word(fifty));
+    }
+    storage.stub_sub_call_at_selector(vault(), IERC20::balanceOfCall::SELECTOR, word(fifty));
+    storage.stub_sub_call_at_selector(
+        short_vault,
+        IERC20::balanceOfCall::SELECTOR,
+        word(U256::from(49u64)),
+    );
+    storage.enable_sub_call_stub();
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+
+        // No vault for the asset: an answer, not a revert, so a caller can gate.
+        assert!(!runtime::has_liquidity(&storage, asset(), U256::from(1u64)).unwrap());
+
+        let contract = VaultRouterContract::new(storage.clone());
+        contract.asset_vault_set(asset()).insert(vault()).unwrap();
+        contract
+            .asset_vault_set(short_asset)
+            .insert(short_vault)
+            .unwrap();
+        storage
+            .set_code(receiver(), Bytecode::new_raw(vec![0x00u8].into()))
+            .unwrap();
+
+        let withdraws = |a: Address| {
+            runtime::withdraw(
+                storage.clone(),
+                target_account(),
+                a,
+                fifty,
+                receiver(),
+                IVaultRouter::StablesTarget::Credis,
+            )
+        };
+
+        // Exactly the shares held: the boundary is inclusive on both paths.
+        assert!(runtime::has_liquidity(&storage, asset(), fifty).unwrap());
+        assert!(withdraws(asset()).is_ok());
+
+        // One share short: the gate says no and the withdraw agrees.
+        assert!(!runtime::has_liquidity(&storage, short_asset, fifty).unwrap());
+        let err = withdraws(short_asset).unwrap_err();
+        assert!(err.to_string().contains("insufficient shares"), "{err}");
     });
 }
 

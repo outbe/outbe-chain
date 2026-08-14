@@ -371,8 +371,7 @@ pub(crate) fn withdraw(
 
     let vault = first_vault(&storage, asset)?;
 
-    let required_shares = vault_preview_withdraw(&storage, vault, amount)?;
-    let available_shares = erc20_balance_of(&storage, vault, SELF)?;
+    let (required_shares, available_shares) = withdraw_shares(&storage, vault, amount)?;
     if available_shares < required_shares {
         return Err(VaultRouterError::InsufficientSharesForWithdraw {
             available: available_shares,
@@ -406,6 +405,32 @@ pub(crate) fn withdraw(
 /// `sharesBalance`: vault shares currently held by this router.
 pub fn shares_balance(storage: &StorageHandle<'_>, vault: Address) -> Result<U256> {
     erc20_balance_of(storage, vault, SELF)
+}
+
+/// `hasLiquidity`: whether the router holds enough shares to redeem `amount` of
+/// `asset`. An asset with no configured vault has no liquidity, which is an
+/// answer rather than an error — the caller is asking precisely so it can gate.
+pub fn has_liquidity(storage: &StorageHandle<'_>, asset: Address, amount: U256) -> Result<bool> {
+    let contract = VaultRouterContract::new(storage.clone());
+    let Some(vault) = contract.first_vault(asset)? else {
+        return Ok(false);
+    };
+    let (required_shares, available_shares) = withdraw_shares(storage, vault, amount)?;
+    Ok(available_shares >= required_shares)
+}
+
+/// Shares `withdraw` would have to burn to redeem `amount`, paired with the
+/// shares the router actually holds. Shared with [`has_liquidity`] so the gate
+/// and the enforcement can never answer differently.
+fn withdraw_shares(
+    storage: &StorageHandle<'_>,
+    vault: Address,
+    amount: U256,
+) -> Result<(U256, U256)> {
+    Ok((
+        vault_preview_withdraw(storage, vault, amount)?,
+        erc20_balance_of(storage, vault, SELF)?,
+    ))
 }
 
 // ---------------------------------------------------------------------------

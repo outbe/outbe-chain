@@ -127,4 +127,10 @@ interface IVaultRouter {
 
     /// @notice Returns vault shares currently held by this provider.
     function sharesBalance(address vault) external view returns (uint256);
+
+    /// @notice True when the router currently holds enough vault shares to redeem
+    ///         `amount` of `asset` — the same predicate `withdraw` enforces, so a
+    ///         caller can gate on it instead of discovering the shortfall mid-flow.
+    ///         Returns false rather than reverting when `asset` has no vault.
+    function hasLiquidity(address asset, uint256 amount) external view returns (bool sufficient);
 }

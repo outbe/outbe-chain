@@ -37,6 +37,13 @@ fn iso_word(iso: u16) -> Bytes {
     Bytes::from(b)
 }
 
+/// ABI-encoded `bool` return for the vault router's `hasLiquidity` staticcall.
+fn bool_word(value: bool) -> Bytes {
+    let mut b = vec![0u8; 32];
+    b[31] = u8::from(value);
+    Bytes::from(b)
+}
+
 /// The stablecoin a pledge is quoted in.
 fn asset() -> Address {
     address!("0x0888088808880888088808880888088808880888")
@@ -96,12 +103,11 @@ fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
 }
 
 /// Register the COEN/840 pair plus the ISO 840 settlement mapping the pledge
-/// conversion resolves through (the asset's `isoCode()` selects the pair), and
-/// publish the currency's policy rate — §6 admissibility needs both feeds.
+/// conversion resolves through (the asset's `isoCode()` selects the pair).
 fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
     outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
     outbe_oracle::api::set_exchange_rate(
-        storage.clone(),
+        storage,
         Address::ZERO,
         outbe_oracle::api::DAY_TYPE_PAIR,
         rate_1e18,
@@ -109,19 +115,6 @@ fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
         0,
     )
     .unwrap();
-    seed_policy_rate(storage, ASSET_ISO);
-}
-
-/// Publishes an official policy rate for `iso`, the other half of §6
-/// admissibility. Writes the registry entry and the rate directly rather than
-/// going through `setCurrencyRate`, which requires a registered currency.
-fn seed_policy_rate(storage: StorageHandle<'_>, iso: u16) {
-    let oracle = outbe_oracle::schema::OracleContract::new(storage);
-    oracle.reference_currencies.push(iso).unwrap();
-    oracle
-        .reference_currency_rate
-        .write(&iso, U256::from(43_000_000_000_000_000u128))
-        .unwrap();
 }
 
 /// Give `account` a positive Fidelity index so `pledge_gratis` clears the
@@ -142,6 +135,12 @@ fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
 /// confidential gratis), the block time set (so Fidelity reads a non-zero `now`), and
 /// the COEN/840 pair seeded (pledges are priced from it).
 fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
+    with_env_liquidity(true, f)
+}
+
+/// [`with_env`] with the reserve vault's answer to `hasLiquidity` pinned: a
+/// pledge is gated on the vault being able to fund the credit it quotes.
+fn with_env_liquidity<R>(liquid: bool, f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
     test_enclave::install();
     outbe_promis::enclave_client::test_enclave::install();
     fidelity_enclave::install();
@@ -150,6 +149,11 @@ fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
     // `pledge_gratis` staticcalls the asset for its ISO 4217 code before pricing.
     storage.enable_sub_call_stub();
     storage.stub_sub_call_at(asset(), iso_word(ASSET_ISO));
+    storage.stub_sub_call_at_selector(
+        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        outbe_vaultrouter::api::IVaultRouter::hasLiquidityCall::SELECTOR,
+        bool_word(liquid),
+    );
     let out = StorageHandle::enter(&mut storage, |s| {
         seed_oracle(s.clone(), oracle_rate());
         f(s.clone())
@@ -256,12 +260,12 @@ fn pledge_debits_the_oracle_derived_gratis_and_parks_it_in_the_ticket() {
     });
 }
 
-/// `maxGratis` is the pledger's slippage protection: the MAC only covers the stables
-/// figure, so a rate move that makes the credit cost more gratis than they accepted
-/// must revert rather than quietly draining the extra.
+/// A pledge is only worth taking if the reserve vault can actually fund the credit
+/// it quotes. Rejecting on a dry vault here is what stops the pledger locking
+/// collateral against a `requestCredis` that would revert at the vault withdraw.
 #[test]
-fn pledge_rejects_a_currency_without_both_semiosis_feeds() {
-    with_env(|storage| {
+fn pledge_rejects_when_the_reserve_vault_cannot_fund_the_credit() {
+    with_env_liquidity(false, |storage| {
         let seed = pledge_cost();
         outbe_gratis::api::mint(
             storage.clone(),
@@ -272,13 +276,6 @@ fn pledge_rejects_a_currency_without_both_semiosis_feeds() {
         .unwrap();
         seed_fidelity(storage.clone(), alice());
 
-        // §6: drop the policy-rate half of the pair of feeds. The COEN price pair
-        // is still registered, so this isolates admissibility from pricing.
-        outbe_oracle::schema::OracleContract::new(storage.clone())
-            .reference_currency_rate
-            .write(&ASSET_ISO, U256::ZERO)
-            .unwrap();
-
         let err = runtime::pledge_gratis(
             storage.clone(),
             alice(),
@@ -288,32 +285,22 @@ fn pledge_rejects_a_currency_without_both_semiosis_feeds() {
             auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
         )
         .unwrap_err();
-        assert!(err.to_string().contains("not admissible"), "got: {err}");
+        assert!(err.to_string().contains("reserve vault"), "got: {err}");
 
-        // Nothing was locked: the pledger keeps their whole balance.
+        // Nothing was locked: the pledger keeps their whole balance, and no ticket
+        // exists for a position that could not have been funded.
         assert_eq!(view_balance(&storage, alice()), seed);
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
-
-        // Republishing the rate makes the currency admissible again.
-        outbe_oracle::api::set_currency_rate(
-            storage.clone(),
-            Address::ZERO,
-            ASSET_ISO,
-            U256::from(43_000_000_000_000_000u128),
-        )
-        .unwrap();
-        runtime::pledge_gratis(
-            storage.clone(),
-            alice(),
-            pledge_stables(),
-            asset(),
-            U256::MAX,
-            auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
-        )
-        .unwrap();
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+            U256::ZERO
+        );
     });
 }
 
+/// `maxGratis` is the pledger's slippage protection: the MAC only covers the stables
+/// figure, so a rate move that makes the credit cost more gratis than they accepted
+/// must revert rather than quietly draining the extra.
 #[test]
 fn pledge_rejects_when_derived_gratis_exceeds_max() {
     with_env(|storage| {
