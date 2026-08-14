@@ -386,25 +386,39 @@ fn relayed_bids(url: &str, worldwide_day: u32, chain_id: u32) -> String {
 }
 
 /// After a logical-time jump the ratchet lets each block carry up to an hour, so
-/// a minute-long auction window would burn out in seconds. Let that catch-up end.
+/// a minute-long auction window would burn out in seconds. Wait for blocks that
+/// carry ordinary time: a chain that has not resumed yet looks identical to a
+/// settled one if only the clock is sampled.
 #[cfg(feature = "ocomp-integration")]
 #[when("the committee clock settles after the jump")]
 fn committee_clock_settles(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let deadline = Instant::now() + AUCTION_STAGE_TIMEOUT;
-    let mut previous = eth::latest_block_timestamp(&url).expect("committee block timestamp");
+    let mut calm_samples = 0;
+    let mut previous: Option<(u64, u64)> = None;
     loop {
         sleep(Duration::from_secs(6));
-        let current = eth::latest_block_timestamp(&url).expect("committee block timestamp");
-        let step = current.saturating_sub(previous);
-        if step < 120 {
-            return;
+        let height = eth::block_number(&url);
+        let stamp = eth::latest_block_timestamp(&url);
+        if let (Some(height), Some(stamp), Some((last_height, last_stamp))) =
+            (height, stamp, previous)
+        {
+            let blocks = height.saturating_sub(last_height);
+            let seconds = stamp.saturating_sub(last_stamp);
+            if blocks > 0 && seconds / blocks < 120 {
+                calm_samples += 1;
+                if calm_samples >= 2 {
+                    return;
+                }
+            } else {
+                calm_samples = 0;
+            }
         }
+        previous = height.zip(stamp);
         assert!(
             Instant::now() < deadline,
-            "the committee clock is still catching up at {step}s per six seconds"
+            "the committee clock never settled after the jump"
         );
-        previous = current;
     }
 }
 
