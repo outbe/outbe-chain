@@ -39,7 +39,7 @@ docker_cmd() {
 
 network_env() {
   export PORT_OFFSET
-  export OUTBE_CHAIN_BINARY="$ROOT_DIR/target/debug/outbe-chain"
+  export OUTBE_CHAIN_BINARY="$ROOT_DIR/target/release/outbe-chain"
   export OUTBE_PROJECTION_MONGODB_URI="$MONGO_URI"
   export OUTBE_PROJECTION_MONGODB_DATABASE_PREFIX="$DATABASE_PREFIX"
   export OUTBE_TEE_ENCLAVE=1
@@ -108,7 +108,8 @@ case "$ACTION" in
       sudo rm -rf "$STACK_DIR"
     fi
 
-    cargo build -p outbe-chain --bin outbe-chain -p outbe-cli
+    cargo build --release -p outbe-chain --features test-protocol-overrides --bin outbe-chain
+    cargo build --release -p outbe-cli
     cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
 
     ./scripts/localnet-mongo.sh start

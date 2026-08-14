@@ -114,7 +114,7 @@ impl GemContract<'_> {
         // Park unqualified gems in the bin index so the qualifier hook can
         // skip non-candidates without scanning the full population.
         if item.state == GemState::Issued as u8 {
-            self.insert_unqualified(item.gem_id, item.floor_price_minor)?;
+            self.insert_unqualified(item.gem_id, item.floor_price_minor, item.reference_currency)?;
         } else if item.state == GemState::Qualified as u8 {
             // Genesis gems are born Qualified — index them as callable gems.
             self.insert_callable(item.gem_id)?;
@@ -160,7 +160,7 @@ impl GemContract<'_> {
         // Issued is the only state parked in the bin index; any transition
         // out of Issued must clean it up. Idempotent if the gem isn't there.
         if item.state == GemState::Issued as u8 && new_state != GemState::Issued {
-            self.remove_unqualified(gem_id, item.floor_price_minor)?;
+            self.remove_unqualified(gem_id, item.floor_price_minor, item.reference_currency)?;
         }
 
         // Maintain the callable-gem list (membership == Qualified/Called) and
@@ -261,10 +261,21 @@ impl GemContract<'_> {
         price_helper::get_id_from_price(p_128x128, BIN_STEP_BP)
     }
 
-    pub(crate) fn bin_index_key(bin_id: u32, index: u32) -> B256 {
-        let mut buf = [0u8; 8];
-        buf[0..4].copy_from_slice(&bin_id.to_be_bytes());
-        buf[4..8].copy_from_slice(&index.to_be_bytes());
+    /// Namespaces a bin-column key by the gem's reference currency.
+    ///
+    /// Mapping keys are left-padded to 32 bytes before hashing, so a wider
+    /// integer type alone namespaces nothing — the ISO has to occupy real high
+    /// bits. Bin ids are 24-bit and the trie's mid/leaf keys are 16-bit, so the
+    /// low 32 bits always hold `key` unambiguously.
+    pub(crate) const fn scoped(reference_currency: u16, key: u32) -> u64 {
+        ((reference_currency as u64) << 32) | key as u64
+    }
+
+    pub(crate) fn bin_index_key(reference_currency: u16, bin_id: u32, index: u32) -> B256 {
+        let mut buf = [0u8; 10];
+        buf[0..2].copy_from_slice(&reference_currency.to_be_bytes());
+        buf[2..6].copy_from_slice(&bin_id.to_be_bytes());
+        buf[6..10].copy_from_slice(&index.to_be_bytes());
         keccak256(buf)
     }
 
@@ -272,14 +283,18 @@ impl GemContract<'_> {
         &mut self,
         gem_id: U256,
         floor_price_minor: U256,
+        reference_currency: u16,
     ) -> Result<()> {
         let bin_id = Self::price_to_bin(floor_price_minor)?;
         debug_assert!(bin_id <= MAX_BIN_ID);
-        let count = self.unqualified_bin_count.read(&bin_id)?;
-        self.unqualified_bin_gems
-            .write(&Self::bin_index_key(bin_id, count), gem_id)?;
-        self.unqualified_bin_count.write(&bin_id, count + 1)?;
-        tree_math::add(self, bin_id)?;
+        let scoped = Self::scoped(reference_currency, bin_id);
+        let count = self.unqualified_bin_count.read(&scoped)?;
+        self.unqualified_bin_gems.write(
+            &Self::bin_index_key(reference_currency, bin_id, count),
+            gem_id,
+        )?;
+        self.unqualified_bin_count.write(&scoped, count + 1)?;
+        tree_math::add(&CurrencyBins(self, reference_currency), bin_id)?;
         Ok(())
     }
 
@@ -289,15 +304,17 @@ impl GemContract<'_> {
         &mut self,
         gem_id: U256,
         floor_price_minor: U256,
+        reference_currency: u16,
     ) -> Result<()> {
         let bin_id = Self::price_to_bin(floor_price_minor)?;
-        let count = self.unqualified_bin_count.read(&bin_id)?;
+        let scoped = Self::scoped(reference_currency, bin_id);
+        let count = self.unqualified_bin_count.read(&scoped)?;
         if count == 0 {
             return Ok(());
         }
         let mut found: Option<u32> = None;
         for i in 0..count {
-            let key = Self::bin_index_key(bin_id, i);
+            let key = Self::bin_index_key(reference_currency, bin_id, i);
             if self.unqualified_bin_gems.read(&key)? == gem_id {
                 found = Some(i);
                 break;
@@ -307,40 +324,53 @@ impl GemContract<'_> {
             return Ok(());
         };
         let last = count - 1;
-        let last_key = Self::bin_index_key(bin_id, last);
+        let last_key = Self::bin_index_key(reference_currency, bin_id, last);
         if idx != last {
             let last_id = self.unqualified_bin_gems.read(&last_key)?;
-            self.unqualified_bin_gems
-                .write(&Self::bin_index_key(bin_id, idx), last_id)?;
+            self.unqualified_bin_gems.write(
+                &Self::bin_index_key(reference_currency, bin_id, idx),
+                last_id,
+            )?;
         }
         self.unqualified_bin_gems.clear(&last_key)?;
-        self.unqualified_bin_count.write(&bin_id, last)?;
+        self.unqualified_bin_count.write(&scoped, last)?;
         if last == 0 {
-            tree_math::remove(self, bin_id)?;
+            tree_math::remove(&CurrencyBins(self, reference_currency), bin_id)?;
         }
         Ok(())
     }
 }
 
-// Adapter between the contract's three bin-tree storage slots and the
-// `tree_math::BinTreeStorage` trait.
-impl BinTreeStorage for GemContract<'_> {
+// Adapter between one currency's slice of the contract's three bin-tree columns
+// and the `tree_math::BinTreeStorage` trait. Mirrors `nod::state::CurrencyBins`.
+//
+// The trait functions take `&self` — storage writes go through the DSL's
+// interior-mutable `StorageHandle`, so no `&mut` is needed at any call site.
+// Construct the view inline at each `tree_math` call rather than binding it, so
+// it never conflicts with a `&mut GemContract` borrow.
+pub(crate) struct CurrencyBins<'a, 'storage>(pub(crate) &'a GemContract<'storage>, pub(crate) u16);
+
+impl BinTreeStorage for CurrencyBins<'_, '_> {
     fn read_root(&self) -> Result<U256> {
-        self.bin_tree_root.read()
+        self.0.bin_tree_root.read(&self.1)
     }
     fn write_root(&self, value: U256) -> Result<()> {
-        self.bin_tree_root.write(value)
+        self.0.bin_tree_root.write(&self.1, value)
     }
     fn read_mid(&self, key: u32) -> Result<U256> {
-        self.bin_tree_mid.read(&key)
+        self.0.bin_tree_mid.read(&GemContract::scoped(self.1, key))
     }
     fn write_mid(&self, key: u32, value: U256) -> Result<()> {
-        self.bin_tree_mid.write(&key, value)
+        self.0
+            .bin_tree_mid
+            .write(&GemContract::scoped(self.1, key), value)
     }
     fn read_leaf(&self, key: u32) -> Result<U256> {
-        self.bin_tree_leaf.read(&key)
+        self.0.bin_tree_leaf.read(&GemContract::scoped(self.1, key))
     }
     fn write_leaf(&self, key: u32, value: U256) -> Result<()> {
-        self.bin_tree_leaf.write(&key, value)
+        self.0
+            .bin_tree_leaf
+            .write(&GemContract::scoped(self.1, key), value)
     }
 }

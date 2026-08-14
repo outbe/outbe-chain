@@ -4079,7 +4079,7 @@ where
                         RestoredPendingDkgActivation::Participant(pending) => (
                             pending.target,
                             pending.complete.output,
-                            pending.complete.share,
+                            Some(pending.complete.share),
                             pending.boundary_artifact,
                         ),
                         RestoredPendingDkgActivation::DealerOnly(pending) => {
@@ -4481,7 +4481,8 @@ where
                                     vrf_material_version,
                                     &participants,
                                     &target,
-                                    &dkg_complete,
+                                    &dkg_complete.output,
+                                    &dkg_complete.participants,
                                 )?
                             };
 
@@ -5018,7 +5019,7 @@ where
                                     vrf_material_version,
                                 )?;
                             let activated_polynomial = canonical_output.public().clone();
-                            let activated_signing_share = dkg_complete.share;
+                            let activated_signing_share = Some(dkg_complete.share);
                             let next_epoch = next_consensus_epoch_after_dkg_activation(current_epoch);
                             ensure!(
                                 boundary_artifact.epoch == next_epoch.get(),
@@ -5163,20 +5164,14 @@ where
                                 .as_ref()
                                 .map(|pending| pending.target.clone())
                                 .ok_or_else(|| eyre::eyre!("dealer-only activation disappeared while preparing boundary"))?;
-                            let complete = dkg_actor::DkgComplete {
-                                output: canonical_output,
-                                share: None,
-                                participants: target.participants.clone(),
-                            };
                             let boundary_artifact = if let Some(ref keys_dir) = args.keys_dir {
-                                persist_completed_dkg_before_activation(
+                                persist_observed_dkg_boundary_before_activation(
                                     keys_dir,
-                                    &key_backend,
                                     current_epoch,
                                     vrf_material_version,
                                     &participants,
                                     &target,
-                                    &complete,
+                                    &canonical_output,
                                     current_height,
                                 )?
                             } else {
@@ -5185,7 +5180,8 @@ where
                                     vrf_material_version,
                                     &participants,
                                     &target,
-                                    &complete,
+                                    &canonical_output,
+                                    &target.participants,
                                 )?
                             };
                             dkg_manager.note_ceremony_completed(boundary_artifact.clone());
@@ -5492,7 +5488,7 @@ where
                                         outbe_consensus::metrics::record_dkg_status(0);
                                         continue;
                                     }
-                                    let dealer_retry_store = dkg_dealer_retry_store(&args, &key_backend);
+                                    let retry_store = dkg_retry_store(&args, &key_backend)?;
                                     ctx.child("dkg_retry").spawn(move |dkg_ctx| async move {
                                         let result = match role {
                                             LocalDkgRole::DealerAndPlayer => {
@@ -5505,7 +5501,7 @@ where
                                                     round,
                                                     Some(progress_tx),
                                                     Some(finalized_log_rx),
-                                                    dealer_retry_store.clone(),
+                                                    retry_store.clone(),
                                                     dkg_tx,
                                                     dkg_rx,
                                                 )
@@ -5522,7 +5518,7 @@ where
                                                     round,
                                                     Some(progress_tx),
                                                     Some(finalized_log_rx),
-                                                    dealer_retry_store.clone(),
+                                                    retry_store.clone(),
                                                     dkg_tx,
                                                     dkg_rx,
                                                 )
@@ -5538,7 +5534,7 @@ where
                                                     share,
                                                     round,
                                                     progress_tx,
-                                                    dealer_retry_store.clone(),
+                                                    retry_store.clone(),
                                                     dkg_tx,
                                                     dkg_rx,
                                                 )
@@ -5808,7 +5804,7 @@ where
                                     outbe_consensus::metrics::record_dkg_status(0);
                                     continue;
                                 }
-                                let dealer_retry_store = dkg_dealer_retry_store(&args, &key_backend);
+                                let retry_store = dkg_retry_store(&args, &key_backend)?;
                                 ctx.child("dkg_live").spawn(move |dkg_ctx| async move {
                                     let result = match role {
                                         LocalDkgRole::DealerAndPlayer => {
@@ -5821,7 +5817,7 @@ where
                                                 round,
                                                 Some(progress_tx),
                                                 Some(finalized_log_rx),
-                                                dealer_retry_store.clone(),
+                                                retry_store.clone(),
                                                 dkg_tx,
                                                 dkg_rx,
                                             )
@@ -5838,7 +5834,7 @@ where
                                                 round,
                                                 Some(progress_tx),
                                                 Some(finalized_log_rx),
-                                                dealer_retry_store.clone(),
+                                                retry_store.clone(),
                                                 dkg_tx,
                                                 dkg_rx,
                                             )
@@ -5854,7 +5850,7 @@ where
                                                 share,
                                                 round,
                                                 progress_tx,
-                                                dealer_retry_store.clone(),
+                                                retry_store.clone(),
                                                 dkg_tx,
                                                 dkg_rx,
                                             )
@@ -6050,14 +6046,16 @@ const DKG_PENDING_OUTPUT_FILE: &str = "dkg_pending_output.hex";
 const DKG_PENDING_BOUNDARY_FILE: &str = "dkg_pending_boundary.bin";
 const DKG_PENDING_BOUNDARY_TMP_FILE: &str = "dkg_pending_boundary.bin.tmp";
 const DKG_DEALER_RETRY_FILE: &str = "dkg_dealer_retry.hex";
+const DKG_PLAYER_RETRY_FILE: &str = "dkg_player_retry.hex";
 
-fn dkg_dealer_retry_store(
+fn dkg_retry_store(
     args: &ConsensusArgs,
     key_backend: &bls::KeyBackend,
-) -> Option<dkg_actor::DkgDealerRetryStore> {
+) -> Result<dkg_actor::DkgRetryStore> {
     args.keys_dir
         .as_ref()
-        .map(|keys_dir| dkg_actor::DkgDealerRetryStore::in_keys_dir(keys_dir, key_backend.clone()))
+        .map(|keys_dir| dkg_actor::DkgRetryStore::in_keys_dir(keys_dir, key_backend.clone()))
+        .ok_or_else(|| eyre::eyre!("DKG participant recovery requires --consensus.keys-dir"))
 }
 
 fn retire_activated_dkg_retry_state(
@@ -6066,7 +6064,7 @@ fn retire_activated_dkg_retry_state(
 ) -> Result<()> {
     remove_pending_dkg_state(keys_dir);
     clear_pending_dkg_boundary(keys_dir);
-    dkg_actor::DkgDealerRetryStore::in_keys_dir(keys_dir, key_backend.clone())
+    dkg_actor::DkgRetryStore::in_keys_dir(keys_dir, key_backend.clone())
         .clear()
         .wrap_err("failed to retire activated DKG retry state")
 }
@@ -6080,6 +6078,7 @@ const DKG_ALL_FILES: &[&str] = &[
     DKG_PENDING_OUTPUT_FILE,
     DKG_PENDING_BOUNDARY_FILE,
     DKG_DEALER_RETRY_FILE,
+    DKG_PLAYER_RETRY_FILE,
 ];
 
 /// Move DKG key files from legacy location (`consensus/`) to dedicated `keys/` dir.
@@ -6290,13 +6289,14 @@ fn build_completed_dkg_boundary(
     vrf_material_version: u64,
     current_participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
     target: &FrozenDkgTarget,
-    complete: &dkg_actor::DkgComplete,
+    output: &Output<MinSig, bls12381::PublicKey>,
+    completed_participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
 ) -> Result<DkgBoundaryArtifact> {
     let activated_validator_set =
-        validator_set_for_dkg_output_players(&complete.output, &target.validator_set)?;
+        validator_set_for_dkg_output_players(output, &target.validator_set)?;
     let activated_participants = participants_from_validator_set(&activated_validator_set)?;
     ensure!(
-        complete.participants == activated_participants,
+        completed_participants == &activated_participants,
         "completed DKG participant set does not match reconstructed output players"
     );
     let next_epoch = next_consensus_epoch_after_dkg_activation(current_epoch);
@@ -6305,7 +6305,7 @@ fn build_completed_dkg_boundary(
     dkg_manager::build_boundary_artifact(dkg_manager::BoundaryArtifactInput {
         epoch: next_epoch,
         validator_set: &activated_validator_set,
-        output: &complete.output,
+        output,
         is_full_dkg: false,
         dkg_cycle: target.dkg_cycle,
         freeze_height: target.freeze_height,
@@ -6333,20 +6333,19 @@ fn persist_completed_dkg_before_activation(
         vrf_material_version,
         current_participants,
         target,
-        complete,
+        &complete.output,
+        &complete.participants,
     )?;
     let next_epoch = next_consensus_epoch_after_dkg_activation(current_epoch);
 
-    if let Some(share) = complete.share.as_ref() {
-        save_pending_dkg_state(
-            keys_dir,
-            share,
-            complete.output.public(),
-            &complete.output,
-            key_backend,
-        )
-        .wrap_err("failed to durably save completed DKG state before activation")?;
-    }
+    save_pending_dkg_state(
+        keys_dir,
+        &complete.share,
+        complete.output.public(),
+        &complete.output,
+        key_backend,
+    )
+    .wrap_err("failed to durably save completed DKG state before activation")?;
     save_pending_dkg_boundary(
         keys_dir,
         &PendingDkgBoundarySnapshot {
@@ -6363,6 +6362,35 @@ fn persist_completed_dkg_before_activation(
         dkg_output_hash = %dkg_manager::dkg_output_hash(&complete.output),
         "persisted completed DKG state before activation"
     );
+    Ok(boundary_artifact)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn persist_observed_dkg_boundary_before_activation(
+    keys_dir: &std::path::Path,
+    current_epoch: Epoch,
+    vrf_material_version: u64,
+    current_participants: &commonware_utils::ordered::Set<bls12381::PublicKey>,
+    target: &FrozenDkgTarget,
+    output: &Output<MinSig, bls12381::PublicKey>,
+    completed_at_height: u64,
+) -> Result<DkgBoundaryArtifact> {
+    let boundary_artifact = build_completed_dkg_boundary(
+        current_epoch,
+        vrf_material_version,
+        current_participants,
+        target,
+        output,
+        &target.participants,
+    )?;
+    save_pending_dkg_boundary(
+        keys_dir,
+        &PendingDkgBoundarySnapshot {
+            artifact: boundary_artifact.clone(),
+            completed_at_height,
+        },
+    )
+    .wrap_err("failed to durably save observed DKG boundary before activation")?;
     Ok(boundary_artifact)
 }
 
@@ -6512,7 +6540,7 @@ fn recover_pending_dkg_boundary_snapshot(
         }
         clear_pending_dkg_boundary(storage_dir);
         remove_pending_dkg_state(storage_dir);
-        dkg_actor::DkgDealerRetryStore::in_keys_dir(storage_dir, key_backend.clone())
+        dkg_actor::DkgRetryStore::in_keys_dir(storage_dir, key_backend.clone())
             .clear()
             .wrap_err("failed to retire finalized pending DKG retry state during restart")?;
         info!(
@@ -6613,7 +6641,7 @@ fn restore_pending_dkg_activation(
                 target,
                 complete: dkg_actor::DkgComplete {
                     output: output.clone(),
-                    share: Some(share),
+                    share,
                     participants,
                 },
                 boundary_artifact: snapshot.artifact,
@@ -6780,7 +6808,7 @@ async fn obtain_threshold_material(
                         )?;
                     remove_pending_dkg_state(keys_dir);
                     clear_pending_dkg_boundary(keys_dir);
-                    dkg_actor::DkgDealerRetryStore::in_keys_dir(keys_dir, key_backend.clone())
+                    dkg_actor::DkgRetryStore::in_keys_dir(keys_dir, key_backend.clone())
                         .clear()
                         .wrap_err("failed to retire recovered DKG retry state")?;
                     info!(
@@ -6955,7 +6983,7 @@ async fn obtain_threshold_material(
         0,    // initial: round 0
         None,
         None,
-        dkg_dealer_retry_store(args, key_backend),
+        dkg_retry_store(args, key_backend)?,
         dkg_sender,
         dkg_receiver,
     )
@@ -6963,14 +6991,7 @@ async fn obtain_threshold_material(
     .wrap_err("DKG ceremony failed")?;
 
     let polynomial = dkg_result.output.public().clone();
-    // Genesis bootstrap has NO chain carrier to authenticate a shareless verifier
-    // polynomial, so completing without a share is fatal (a broken founding committee
-    // must not be silently accepted). Only the chain-finalized reshare path may return
-    // `None` → verifier; genesis passes no finalized-log receiver, so A5 keeps finalize
-    // fatal and this is always `Some`.
-    let signing_share = dkg_result.share.ok_or_else(|| {
-        eyre::eyre!("initial genesis DKG completed without a signing share; cannot bootstrap")
-    })?;
+    let signing_share = dkg_result.share;
     info!(
         vrf_group_public_key = %vrf_group_public_key_hash(&polynomial),
         "initial DKG ceremony completed; threshold material ready"

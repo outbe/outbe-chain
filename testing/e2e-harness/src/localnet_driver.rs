@@ -218,13 +218,13 @@ impl LocalnetCli {
             data_dir: Some(self.data_dir.clone()),
             evidence_dir: None,
             metadosis_p0_case: None,
-            chain_bin: Some(self.repo.join("target/debug/outbe-chain")),
-            ocomp_bin: Some(self.repo.join("target/debug/outbe-ocomp")),
+            chain_bin: Some(self.repo.join("target/release/outbe-chain")),
+            ocomp_bin: Some(self.repo.join("target/release/outbe-ocomp")),
             upgraded_chain_bin: None,
-            cli_bin: Some(self.repo.join("target/debug/outbe-cli")),
-            keygen_bin: Some(self.repo.join("target/debug/outbe-keygen")),
-            enclave_bin: Some(self.repo.join("target/debug/outbe-tee-enclave")),
-            mock_bin: Some(self.repo.join("target/debug/outbe-tee-enclave-mock")),
+            cli_bin: Some(self.repo.join("target/release/outbe-cli")),
+            keygen_bin: Some(self.repo.join("target/release/outbe-keygen")),
+            enclave_bin: Some(self.repo.join("target/release/outbe-tee-enclave")),
+            mock_bin: Some(self.repo.join("target/release/outbe-tee-enclave-mock")),
             seed: Some(
                 self.seed
                     .clone()

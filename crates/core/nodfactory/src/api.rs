@@ -52,7 +52,13 @@ pub fn materialize_certified_nods(
     limits: &SchemaLimits,
 ) -> Result<NodMaterializationOutcomeV1> {
     crate::materialization::authorize_materializer(storage.clone(), caller)?;
-    let profile = outbe_chain_constants::load_from_storage(storage.clone())?.nod_materialization;
+    let profile = outbe_chain_constants::NodMaterializationProfileV1 {
+        batch_subtree_height: outbe_chain_constants::get_nod_materialization_batch_subtree_height(),
+        retry_interval_blocks: outbe_chain_constants::get_nod_materialization_retry_interval_blocks(
+        ),
+        max_attempts_per_block:
+            outbe_chain_constants::get_nod_materialization_max_attempts_per_block(),
+    };
     crate::materialization::materialize_certified_nods_authorized(
         storage, scope, parent, batch, profile, limits,
     )

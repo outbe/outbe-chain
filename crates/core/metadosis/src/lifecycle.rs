@@ -139,7 +139,7 @@ fn initialize_bootstrap_if_needed(
     ctx: &BlockRuntimeContext,
 ) -> Result<()> {
     if metadosis.get_bootstrap_end_time()? == 0 {
-        let duration = outbe_chain_constants::load(ctx)?.metadosis_bootstrap_duration_seconds;
+        let duration = outbe_chain_constants::get_metadosis_bootstrap_duration_seconds();
         let end_time = ctx.block.timestamp.checked_add(duration).ok_or_else(|| {
             crate::errors::caller_rejection("Metadosis bootstrap end timestamp overflow")
         })?;
@@ -187,7 +187,6 @@ pub(crate) fn create_worldwide_day_for_date(
     }
 
     aggregate.ensure_can_insert_active(wwd)?;
-    let constants = outbe_chain_constants::load(ctx)?;
     let forming_start = wwd.start_timestamp();
     let transition = reduce_outer_wwd(None, OuterWwdEvent::CreateDay)?;
     commit_new_wwd(
@@ -195,10 +194,10 @@ pub(crate) fn create_worldwide_day_for_date(
         wwd,
         NewWwdSchedule {
             forming_start,
-            forming_period_seconds: constants.metadosis_forming_period_seconds,
-            lookback_delay_seconds: constants.metadosis_lookback_delay_seconds,
-            offering_period_seconds: constants.metadosis_offering_period_seconds,
-            waiting_period_seconds: constants.metadosis_waiting_period_seconds,
+            forming_period_seconds: outbe_chain_constants::get_metadosis_forming_period_seconds(),
+            lookback_delay_seconds: outbe_chain_constants::get_metadosis_lookback_delay_seconds(),
+            offering_period_seconds: outbe_chain_constants::get_metadosis_offering_period_seconds(),
+            waiting_period_seconds: outbe_chain_constants::get_metadosis_waiting_period_seconds(),
         },
         &transition,
     )
