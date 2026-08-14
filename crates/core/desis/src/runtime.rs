@@ -251,6 +251,19 @@ fn advance_day(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u6
                 return contract.remove_sched_active(worldwide_day);
             }
             AuctionStage::Briefed if now >= anchor => {
+                // An e2e build's windows are minutes, and the tick can reach a
+                // briefed day long after the brief; re-anchor so they start here.
+                #[cfg(feature = "e2e-test")]
+                let (commit_end, reveal_end, issuance_end) = {
+                    contract.auction_at.write(&worldwide_day, ts32(now)?)?;
+                    let commit_end = now.saturating_add(COMMIT_WINDOW_SECONDS);
+                    let reveal_end = commit_end.saturating_add(u64::from(REVEAL_WINDOW_SECONDS));
+                    (
+                        commit_end,
+                        reveal_end,
+                        reveal_end.saturating_add(SETTLEMENT_WINDOW_SECONDS),
+                    )
+                };
                 if let StartOutcome::Retired = start_auction(
                     storage,
                     &mut contract,
