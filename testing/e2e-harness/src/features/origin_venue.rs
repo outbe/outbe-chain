@@ -465,6 +465,39 @@ fn committee_clock_settles(world: &mut World) {
     }
 }
 
+/// A loopback venue cannot relay its bids from inside the clearing delivery —
+/// that would be a nested send in the same transaction — so it parks the relay
+/// for a permissionless retry. Production has a keeper for this; the run does it
+/// itself.
+#[cfg(feature = "ocomp-integration")]
+fn flush_parked_bid_relays(world: &mut World) {
+    let url = world.rpc.url(world.validators.primary_port());
+    let venue_router = world
+        .state
+        .origin_contracts
+        .clone()
+        .expect("a deploy recorded its addresses")
+        .target_router;
+    let parked = eth::read_call(
+        &url,
+        venue_router,
+        &IParkedWork::nextPendingBidsRelayIdxCall {},
+    )
+    .unwrap_or_default();
+    let mut idx = U256::ZERO;
+    while idx < parked {
+        eth::send_call(
+            &url,
+            venue_router,
+            crate::world::forge::DEPLOYER_KEY,
+            &IParkedWork::flushPendingBidsRelayCall { idx },
+            None,
+        )
+        .unwrap_or_else(|error| panic!("flush the venue's parked bid relay {idx}: {error}"));
+        idx += U256::from(1);
+    }
+}
+
 #[cfg(feature = "ocomp-integration")]
 fn settled_day(world: &World) -> u32 {
     world
@@ -545,6 +578,7 @@ fn bidders_reveal(world: &mut World) {
 #[then("the auction clears and the venue moves past its reveal window")]
 fn auction_clears(world: &mut World) {
     advance_past_window_to_stage(world, 2);
+    flush_parked_bid_relays(world);
 
     let chain_id = world
         .rpc
