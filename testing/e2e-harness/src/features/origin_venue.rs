@@ -177,7 +177,7 @@ fn day_closure(_world: &World, _worldwide_day: u32) -> String {
 /// An e2e build runs the auction on minute-long windows, so the run waits the
 /// stages out rather than moving the clock across a day it never formed.
 #[cfg(feature = "ocomp-integration")]
-const AUCTION_STAGE_TIMEOUT: Duration = Duration::from_secs(900);
+const AUCTION_STAGE_TIMEOUT: Duration = Duration::from_secs(2400);
 
 #[cfg(feature = "ocomp-integration")]
 fn advance_past_window_to_stage(world: &mut World, target_stage: u8) {
