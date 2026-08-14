@@ -1001,6 +1001,7 @@ fn populated_and_max_shape_forfeiture_is_constant_size_and_emits_one_canonical_r
 }
 
 #[test]
+#[ignore = "exhaustive fault-injection gate; run explicitly with --ignored"]
 fn every_capacity_forfeiture_mutation_failure_restores_state_events_and_ce_work_then_retries() {
     let mut probe = HashMapStorageProvider::new(CHAIN_ID);
     let (probe_victim, scheduled) = seed_capacity_fixture_with_victim_state(

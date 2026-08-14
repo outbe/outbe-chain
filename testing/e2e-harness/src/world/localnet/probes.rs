@@ -17,7 +17,9 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use alloy_primitives::B256;
-use eyre::{bail, ensure, Result, WrapErr};
+#[cfg(any(test, feature = "ocomp-integration"))]
+use eyre::bail;
+use eyre::{ensure, Result, WrapErr};
 use serde::Serialize;
 #[cfg(any(test, feature = "ocomp-integration"))]
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};

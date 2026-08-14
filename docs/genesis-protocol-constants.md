@@ -1,22 +1,31 @@
 # Genesis protocol parameters
 
-Outbe stores network-specific but immutable protocol parameters in
-`genesis.json`. LocalNet can therefore exercise the complete protocol in minutes
-without changing production code or state transitions.
+Outbe keeps production and testnet protocol parameters fixed at their canonical
+Rust defaults. Test builds can read shorter timings from `genesis.json` so
+LocalNet and E2E exercise the complete protocol in minutes without changing
+runtime interfaces or state transitions.
 
-## Resolution and storage
+## Resolution and startup ownership
 
-1. `config.outbeProtocol` contains optional overrides.
-2. `outbe-chain constants genesis` resolves every missing field to its canonical
-   default, validates the complete value, and writes it to immutable account
-   `0x000000000000000000000000000000000000ee11`.
-3. The account is covered by the genesis state root and genesis hash.
-4. OCOMP validator registrations and bindings are created only after this step.
-5. Runtime loads and validates the complete record once, then caches the
-   immutable `GenesisProtocolParametersV1` by genesis hash.
+1. A normal build reads the complete profile directly from a compile-time Rust
+   constant. It has no protocol-parameter singleton or initialization-order
+   requirement.
+2. A normal build rejects a genesis containing `config.outbeProtocol`; the key
+   is reserved for test binaries and cannot be silently ignored.
+3. A build with `test-protocol-overrides` resolves optional
+   `config.outbeProtocol` fields over those defaults and validates the complete
+   value before execution startup.
+4. Only that test build installs the resolved `GenesisProtocolParametersV1`
+   once in a process-wide `OnceLock`.
+5. Runtime modules read scalar values through explicit getters such
+   as `get_metadosis_forming_period_seconds()`. They never read protocol
+   parameters from EVM state.
+6. OCOMP genesis tooling enforces the same build policy before it
+   derives the capacity profile.
 
-There is no runtime mutation API and no CLI or environment override. Missing,
-malformed, hash-mismatched, or incompatible materialized storage is fatal.
+There is no runtime mutation API and no CLI or environment override. Malformed
+test configuration is fatal. Production/testnet binaries contain no path that
+uses JSON values and fail startup if the test-only key is present.
 
 ## Supported fields
 
@@ -33,13 +42,17 @@ malformed, hash-mismatched, or incompatible materialized storage is fatal.
 | `nodMaterialization.retryIntervalBlocks` | `u64`, blocks | 30 | nonzero | no-progress wake cadence |
 | `nodMaterialization.maxAttemptsPerBlock` | `u16`, attempts | 1 | nonzero | execution attempt cap |
 
-Unknown fields, unsupported schema versions, overflow, and unsafe values fail
-genesis generation. Missing fields use defaults only in the central resolver;
-consumers cannot observe whether a value was explicit or defaulted.
+With `test-protocol-overrides`, unknown fields, unsupported schema versions,
+overflow, and unsafe values fail genesis parsing. Missing fields use defaults
+only in the central resolver; consumers cannot observe whether a value was
+explicit or defaulted. In a feature build, runtime access before singleton
+initialization fails immediately instead of silently returning defaults.
+Normal builds have no singleton and therefore no such panic path.
 
 ## Production example
 
-Omitting `outbeProtocol` selects and materializes the complete default profile.
+Production and testnet builds always select the complete default profile. Their
+genesis must not contain the test-only `outbeProtocol` key.
 
 ```json
 {
@@ -50,6 +63,9 @@ Omitting `outbeProtocol` selects and materializes the complete default profile.
 ```
 
 ## LocalNet example
+
+The LocalNet/E2E node binary must be built with
+`--features test-protocol-overrides`.
 
 ```json
 {
@@ -89,10 +105,10 @@ The NOD materialization FIFO is initialized in genesis with
 ```text
 base and prefunds
   -> seed_genesis.py (ordinary state seed and optional overrides)
-  -> outbe-chain constants genesis (immutable EE11 record)
   -> OCOMP bindings, keys, and genesis install
   -> TEE genesis policy
+  -> test node ChainSpec parse (resolve overrides and initialize the test singleton)
 ```
 
-Changing any parameter changes the genesis hash. Existing networks cannot adopt
-new values through an Update; a wipe and new genesis are required.
+`outbeProtocol` is test input only. Production and testnet nodes reject it, so a
+test genesis cannot accidentally boot with canonical production constants.

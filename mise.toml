@@ -182,28 +182,31 @@ run = "cargo bench --workspace"
 description = "Bootstrap a fresh dev/mock LocalNet through the canonical Rust E2E harness"
 run = """
 if [ -z "${SEED_FILE:-}" ]; then
-  ./target/debug/outbe-e2e localnet bootstrap --repo . --data-dir "$OUT_DIR" --validators "$VALIDATORS"
+  ./target/release/outbe-e2e localnet bootstrap --repo . --data-dir "$OUT_DIR" --validators "$VALIDATORS"
 else
-  ./target/debug/outbe-e2e localnet bootstrap --repo . --data-dir "$OUT_DIR" --validators "$VALIDATORS" --seed "$SEED_FILE"
+  ./target/release/outbe-e2e localnet bootstrap --repo . --data-dir "$OUT_DIR" --validators "$VALIDATORS" --seed "$SEED_FILE"
 fi
 """
 
 [tasks.localnet-start]
 description = "Start the persistent dev/mock LocalNet owner and wait for all RPCs to advance"
-run = './target/debug/outbe-e2e localnet start --repo . --data-dir "$OUT_DIR" --validators "$VALIDATORS"'
+run = './target/release/outbe-e2e localnet start --repo . --data-dir "$OUT_DIR" --validators "$VALIDATORS"'
 
 [tasks.localnet-stop]
 description = "Stop the exact persistent LocalNet owner in OUT_DIR"
-run = './target/debug/outbe-e2e localnet stop --repo . --data-dir "$OUT_DIR" --validators "$VALIDATORS"'
+run = './target/release/outbe-e2e localnet stop --repo . --data-dir "$OUT_DIR" --validators "$VALIDATORS"'
 
 [tasks.localnet-status]
 description = "Show the owner and every validator RPC height"
-run = './target/debug/outbe-e2e localnet status --repo . --data-dir "$OUT_DIR" --validators "$VALIDATORS"'
+run = './target/release/outbe-e2e localnet status --repo . --data-dir "$OUT_DIR" --validators "$VALIDATORS"'
 
 [tasks.localnet]
-description = "Build debug binaries, bootstrap, and start the dev/mock LocalNet"
+description = "Build release binaries, bootstrap, and start the dev/mock LocalNet"
 run = """
-mise run build
+cargo build --release -p outbe-chain --features test-protocol-overrides --bin outbe-chain
+cargo build --release -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e
+cargo build --release -p outbe-ocomp --bin outbe-ocomp -p outbe-cli --bin outbe-cli -p outbe-keygen --bin outbe-keygen
+cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
 mise run localnet-bootstrap
 mise run localnet-start
 """
@@ -249,19 +252,19 @@ run = "bash ./scripts/localnet-stack.sh clean"
 
 [tasks.localnet-sgx-bootstrap]
 description = "Deferred real-SGX LocalNet bootstrap (tracked by outbe-chain-8lp)"
-run = './target/debug/outbe-e2e localnet-sgx bootstrap --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
+run = './target/release/outbe-e2e localnet-sgx bootstrap --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
 
 [tasks.localnet-sgx-start]
 description = "Deferred real-SGX LocalNet start (tracked by outbe-chain-8lp)"
-run = './target/debug/outbe-e2e localnet-sgx start --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
+run = './target/release/outbe-e2e localnet-sgx start --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
 
 [tasks.localnet-sgx-status]
 description = "Deferred real-SGX LocalNet status (tracked by outbe-chain-8lp)"
-run = './target/debug/outbe-e2e localnet-sgx status --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
+run = './target/release/outbe-e2e localnet-sgx status --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
 
 [tasks.localnet-sgx-stop]
 description = "Deferred real-SGX LocalNet stop (tracked by outbe-chain-8lp)"
-run = './target/debug/outbe-e2e localnet-sgx stop --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
+run = './target/release/outbe-e2e localnet-sgx stop --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
 
 [tasks.tribute-offer]
 description = "Create one encrypted Tribute on the running managed localnet"
@@ -279,10 +282,10 @@ run = "bash ./scripts/tribute-demo-actions.sh show-mongo"
 [tasks.e2e]
 description = "Run all Rust/Cucumber e2e features with a gramine-mock TEE"
 run = """
-cargo build -p outbe-chain --bin outbe-chain
-cargo build --bin outbe-cli --bin outbe-keygen
+cargo build --release -p outbe-chain --features test-protocol-overrides --bin outbe-chain
+cargo build --release --bin outbe-cli --bin outbe-keygen
 cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
-cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee mock --validators 4 --all "$@"
+cargo run --release -p outbe-e2e-harness --bin outbe-e2e -- --tee mock --validators 4 --all "$@"
 """
 
 # Backward-compatible task name; `e2e` is now the canonical Rust harness task.
@@ -338,10 +341,10 @@ run = 'cargo xtask ocomp closure "$@"'
 [tasks.e2e-sgx]
 description = "Run all Rust/Cucumber e2e features on real SGX hardware"
 run = """
-cargo build -p outbe-chain --bin outbe-chain
-cargo build --bin outbe-cli --bin outbe-keygen
+cargo build --release -p outbe-chain --features test-protocol-overrides --bin outbe-chain
+cargo build --release --bin outbe-cli --bin outbe-keygen
 cargo build --release --bin outbe-tee-enclave --features native-dcap
-OUTBE_TEE_IO_TIMEOUT_SECS=120 cargo run -p outbe-e2e-harness --bin outbe-e2e -- --tee real --validators 4 --all "$@"
+OUTBE_TEE_IO_TIMEOUT_SECS=120 cargo run --release -p outbe-e2e-harness --bin outbe-e2e -- --tee real --validators 4 --all "$@"
 """
 
 # ─── SGX / Benchmarks ───────────────────────────────────────────────── #

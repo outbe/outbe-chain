@@ -1351,13 +1351,6 @@ fn prepare_parent(
     let owner = address!("7300000000000000000000000000000000000073");
     let seal = StorageHandle::enter(&mut seed, |storage| {
         seed_ce_genesis(&storage);
-        for (slot, value) in
-            outbe_chain_constants::GenesisProtocolParametersV1::default().genesis_storage_words()
-        {
-            storage
-                .sstore(outbe_chain_constants::CHAIN_CONSTANTS_ADDRESS, slot, value)
-                .unwrap();
-        }
         begin_block(storage.clone(), &scope).unwrap();
 
         let mut validators = ValidatorSet::new(storage.clone());
