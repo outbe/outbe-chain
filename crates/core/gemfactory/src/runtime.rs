@@ -6,6 +6,7 @@ use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E18;
 
@@ -29,7 +30,15 @@ pub fn mint_gem(
         return Err(GemFactoryError::InvalidOwner.into());
     }
 
-
+    // The issuance currency is a label until settlement resolves it, so it only
+    // has to be a real ISO 4217 code — no registry membership. Mirrors
+    // `tributefactory::offer_tribute`.
+    if iso_4217_alpha(issuance_currency).is_none() {
+        return Err(GemFactoryError::InvalidCurrency {
+            currency: issuance_currency,
+        }
+        .into());
+    }
     outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
 
     // Entry/floor/call are measured against the reference currency (the same

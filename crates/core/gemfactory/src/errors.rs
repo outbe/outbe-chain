@@ -56,6 +56,9 @@ pub enum GemFactoryError {
     #[error("issuance currency {iso_code} is not registered")]
     IssuanceCurrencyNotRegistered { iso_code: u16 },
 
+    #[error("{currency} is not an ISO 4217 currency code")]
+    InvalidCurrency { currency: u16 },
+
     #[error("issuance currency {issuance} must equal reference currency {reference}")]
     IssuanceReferenceMismatch { issuance: u16, reference: u16 },
 
