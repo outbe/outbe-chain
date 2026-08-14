@@ -54,15 +54,19 @@ const REFERENCE_AT: usize = 13;
 
 impl SeriesId {
     /// Rejects a day outside eight digits and code bytes outside `A-Z` / `0-9`.
-    pub fn pack(worldwide_day: u32, issuance: [u8; 3], reference: u8) -> Result<Self, IntexError> {
-        if worldwide_day == 0 || worldwide_day > 99_999_999 {
+    pub fn pack(
+        worldwide_day: WorldwideDay,
+        issuance: [u8; 3],
+        reference: u8,
+    ) -> Result<Self, IntexError> {
+        let mut day = worldwide_day.value();
+        if day == 0 || day > 99_999_999 {
             return Err(IntexError::InvalidSeriesId);
         }
         if !issuance.iter().all(|byte| is_code_byte(*byte)) || !is_code_byte(reference) {
             return Err(IntexError::InvalidSeriesId);
         }
         let mut bytes = [b'-'; SERIES_ID_LEN];
-        let mut day = worldwide_day;
         for slot in bytes[..DAY_DIGITS].iter_mut().rev() {
             *slot = b'0' + (day % 10) as u8;
             day /= 10;
@@ -80,10 +84,10 @@ impl SeriesId {
         &self.0
     }
 
-    pub fn worldwide_day(&self) -> u32 {
-        self.0[..DAY_DIGITS].iter().fold(0u32, |acc, byte| {
+    pub fn worldwide_day(&self) -> WorldwideDay {
+        WorldwideDay::new(self.0[..DAY_DIGITS].iter().fold(0u32, |acc, byte| {
             acc * 10 + u32::from(byte.wrapping_sub(b'0'))
-        })
+        }))
     }
 
     /// `949 -> b"949"`, `32 -> b"032"`. ISO 4217 numbers are three digits, and a
@@ -109,7 +113,11 @@ impl SeriesId {
     }
 
     /// The id of the series a day issues for one `(issuance, reference)` pair.
-    pub fn for_pair(worldwide_day: u32, issuance: u16, reference: u16) -> Result<Self, IntexError> {
+    pub fn for_pair(
+        worldwide_day: WorldwideDay,
+        issuance: u16,
+        reference: u16,
+    ) -> Result<Self, IntexError> {
         Self::pack(
             worldwide_day,
             Self::currency_code(issuance)?,
@@ -283,7 +291,7 @@ pub fn cost_amount_minor(
 #[storage_record(exists_field = active)]
 pub struct DistProgress {
     #[key]
-    pub worldwide_day: u32,
+    pub worldwide_day: WorldwideDay,
 
     /// Total native COEN received for that day's distribution.
     #[attribute(order = 0)]
@@ -343,7 +351,7 @@ pub struct IntexContract {
     // Orders 3-23 are keyed by worldwide day, not by series id.
     /// worldwide_day -> number of contributors.
     #[attribute(order = 3)]
-    pub contributor_count: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub contributor_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
     /// keccak256(worldwide_day_be32 ++ index_be32) -> contributor owner.
     #[attribute(order = 4)]
@@ -355,12 +363,12 @@ pub struct IntexContract {
 
     /// worldwide_day -> Σ nominal across all contributors.
     #[attribute(order = 6)]
-    pub contributor_total: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub contributor_total: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
 
     // --- Creator-reward: paginated distribution progress + active set ---
     /// worldwide_day -> in-flight distribution progress.
     #[attribute(order = 7)]
-    pub dist_progress: outbe_primitives::storage::dsl::Map<u32, DistProgress>,
+    pub dist_progress: outbe_primitives::storage::dsl::Map<WorldwideDay, DistProgress>,
 
     /// Number of in-flight distributions (dense active set for the begin-block drain).
     #[attribute(order = 8)]
@@ -372,24 +380,24 @@ pub struct IntexContract {
 
     /// worldwide_day -> (active index + 1); 0 = not active.
     #[attribute(order = 10)]
-    pub active_dist_slot: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub active_dist_slot: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
     // --- Creator-reward: multi-chain proceeds fan-in aggregation ---
     /// worldwide_day -> proceeds accumulated but not yet handed to a distribution round.
     #[attribute(order = 11)]
-    pub proceeds_pot: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub proceeds_pot: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
 
     /// worldwide_day -> deadline after which the pot distributes without the missing chains.
     #[attribute(order = 12)]
-    pub proceeds_deadline: outbe_primitives::storage::dsl::Map<u32, u64>,
+    pub proceeds_deadline: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
 
     /// worldwide_day -> number of winning chains expected to route proceeds.
     #[attribute(order = 13)]
-    pub proceeds_expected_count: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub proceeds_expected_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
     /// worldwide_day -> number of expected chains whose proceeds have arrived.
     #[attribute(order = 14)]
-    pub proceeds_arrived_count: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub proceeds_arrived_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
     /// keccak256(worldwide_day_be32 ++ chain_be32) -> 1 if a winning (expected) chain.
     #[attribute(order = 15)]
@@ -402,7 +410,7 @@ pub struct IntexContract {
     /// worldwide_day -> 1 if the in-flight distribution round should finalize (clear the
     /// contributor map + aggregation state) on completion; 0 = retain for a late top-up.
     #[attribute(order = 17)]
-    pub proceeds_finalize_on_done: outbe_primitives::storage::dsl::Map<u32, u8>,
+    pub proceeds_finalize_on_done: outbe_primitives::storage::dsl::Map<WorldwideDay, u8>,
 
     // Awaiting-proceeds set (dense) for the begin-block deadline sweep.
     #[attribute(order = 18)]
@@ -412,41 +420,41 @@ pub struct IntexContract {
     pub awaiting_proceeds_at: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// worldwide_day -> (awaiting index + 1); 0 = not awaiting.
     #[attribute(order = 20)]
-    pub awaiting_proceeds_slot: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub awaiting_proceeds_slot: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
     /// Certified contributor proof root for one worldwide day.
     #[attribute(order = 21)]
-    pub ocomp_contributor_root: outbe_primitives::storage::dsl::Map<u32, B256>,
+    pub ocomp_contributor_root: outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
 
     /// Packed active selector: series version (low u64), contributor count
     /// (next u32), with all remaining bits reserved as zero.
     #[attribute(order = 22)]
-    pub ocomp_contributor_metadata: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub ocomp_contributor_metadata: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
 
     /// Exact eligible nominal total committed by the certified root.
     #[attribute(order = 23)]
-    pub ocomp_eligible_nominal_total: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub ocomp_eligible_nominal_total: outbe_primitives::storage::dsl::Map<WorldwideDay, U256>,
 
     /// worldwide_day -> number of series created for that day.
     #[attribute(order = 24)]
-    pub day_series_count: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub day_series_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 }
 
 impl IntexContract<'_> {
     /// Composite key for per-day contributor index lists:
     /// `keccak256(worldwide_day_be32 ++ index_be32)`.
-    pub fn contributor_index_key(worldwide_day: u32, index: u32) -> B256 {
+    pub fn contributor_index_key(worldwide_day: WorldwideDay, index: u32) -> B256 {
         let mut buf = [0u8; 8];
-        buf[0..4].copy_from_slice(&worldwide_day.to_be_bytes());
+        buf[0..4].copy_from_slice(&worldwide_day.value().to_be_bytes());
         buf[4..8].copy_from_slice(&index.to_be_bytes());
         keccak256(buf)
     }
 
     /// Composite key for per-(day, chain) proceeds flags:
     /// `keccak256(worldwide_day_be32 ++ chain_be32)`.
-    pub fn proceeds_chain_key(worldwide_day: u32, chain_id: u32) -> B256 {
+    pub fn proceeds_chain_key(worldwide_day: WorldwideDay, chain_id: u32) -> B256 {
         let mut buf = [0u8; 8];
-        buf[0..4].copy_from_slice(&worldwide_day.to_be_bytes());
+        buf[0..4].copy_from_slice(&worldwide_day.value().to_be_bytes());
         buf[4..8].copy_from_slice(&chain_id.to_be_bytes());
         keccak256(buf)
     }
@@ -454,7 +462,7 @@ impl IntexContract<'_> {
     /// Reads the active constant-size contributor proof authority.
     pub fn ocomp_certified_contributor_generation(
         &self,
-        worldwide_day: u32,
+        worldwide_day: WorldwideDay,
     ) -> outbe_primitives::error::Result<Option<CertifiedContributorGenerationProjection>> {
         let contributor_root = self.ocomp_contributor_root.read(&worldwide_day)?;
         let metadata = self.ocomp_contributor_metadata.read(&worldwide_day)?;
@@ -488,7 +496,7 @@ impl IntexContract<'_> {
         }
 
         Ok(Some(CertifiedContributorGenerationProjection {
-            series_id: worldwide_day,
+            series_id: worldwide_day.value(),
             series_version,
             contributor_root,
             contributor_count,

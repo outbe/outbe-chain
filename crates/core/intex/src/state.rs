@@ -5,6 +5,7 @@
 //! touch local storage; orchestration and validation live in `api.rs`.
 
 use alloy_primitives::{Address, U256};
+use outbe_common::WorldwideDay;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::types::Storable;
 
@@ -41,7 +42,7 @@ impl IntexContract<'_> {
     }
 
     /// Whether the day has produced any series yet.
-    pub(crate) fn day_has_series(&self, worldwide_day: u32) -> Result<bool> {
+    pub(crate) fn day_has_series(&self, worldwide_day: WorldwideDay) -> Result<bool> {
         Ok(self.day_series_count.read(&worldwide_day)? != 0)
     }
 
@@ -77,7 +78,7 @@ impl IntexContract<'_> {
     /// series (lysis aggregates per owner upstream).
     pub(crate) fn write_contributors(
         &mut self,
-        worldwide_day: u32,
+        worldwide_day: WorldwideDay,
         contributors: &[(Address, U256)],
     ) -> Result<()> {
         let mut total = U256::ZERO;
@@ -93,17 +94,17 @@ impl IntexContract<'_> {
         Ok(())
     }
 
-    pub(crate) fn read_contributor_count(&self, worldwide_day: u32) -> Result<u32> {
+    pub(crate) fn read_contributor_count(&self, worldwide_day: WorldwideDay) -> Result<u32> {
         self.contributor_count.read(&worldwide_day)
     }
 
-    pub(crate) fn read_contributor_total(&self, worldwide_day: u32) -> Result<U256> {
+    pub(crate) fn read_contributor_total(&self, worldwide_day: WorldwideDay) -> Result<U256> {
         self.contributor_total.read(&worldwide_day)
     }
 
     pub(crate) fn read_contributor_at(
         &self,
-        worldwide_day: u32,
+        worldwide_day: WorldwideDay,
         index: u32,
     ) -> Result<(Address, U256)> {
         let key = Self::contributor_index_key(worldwide_day, index);
@@ -113,7 +114,7 @@ impl IntexContract<'_> {
     }
 
     /// Clear all contributor storage for a series (count, per-index entries, total).
-    pub(crate) fn clear_contributors(&mut self, worldwide_day: u32) -> Result<()> {
+    pub(crate) fn clear_contributors(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
         let count = self.contributor_count.read(&worldwide_day)?;
         for i in 0..count {
             let key = Self::contributor_index_key(worldwide_day, i);
@@ -129,7 +130,10 @@ impl IntexContract<'_> {
     // Creator-reward: paginated distribution progress + active set
     // ---------------------------------------------------------------------
 
-    pub(crate) fn get_dist_progress(&self, worldwide_day: u32) -> Result<Option<DistProgress>> {
+    pub(crate) fn get_dist_progress(
+        &self,
+        worldwide_day: WorldwideDay,
+    ) -> Result<Option<DistProgress>> {
         self.dist_progress.get(worldwide_day)
     }
 
@@ -141,7 +145,7 @@ impl IntexContract<'_> {
         self.dist_progress.update(record)
     }
 
-    pub(crate) fn delete_dist_progress(&mut self, worldwide_day: u32) -> Result<()> {
+    pub(crate) fn delete_dist_progress(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
         self.dist_progress.delete(worldwide_day)
     }
 
@@ -149,17 +153,17 @@ impl IntexContract<'_> {
         self.active_dist_count.read()
     }
 
-    pub(crate) fn read_active_dist_at(&self, index: u32) -> Result<u32> {
-        self.active_dist_at.read(&index)
+    pub(crate) fn read_active_dist_at(&self, index: u32) -> Result<WorldwideDay> {
+        self.active_dist_at.read(&index).map(WorldwideDay::new)
     }
 
     /// Append a series to the active-distribution set (idempotent).
-    pub(crate) fn push_active_dist(&mut self, worldwide_day: u32) -> Result<()> {
+    pub(crate) fn push_active_dist(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
         if self.active_dist_slot.read(&worldwide_day)? != 0 {
             return Ok(());
         }
         let count = self.active_dist_count.read()?;
-        self.active_dist_at.write(&count, worldwide_day)?;
+        self.active_dist_at.write(&count, worldwide_day.value())?;
         // store index + 1 so that 0 unambiguously means "absent".
         self.active_dist_slot.write(&worldwide_day, count + 1)?;
         self.active_dist_count.write(count + 1)?;
@@ -167,7 +171,7 @@ impl IntexContract<'_> {
     }
 
     /// Remove a series from the active-distribution set via swap-remove (idempotent).
-    pub(crate) fn remove_active_dist(&mut self, worldwide_day: u32) -> Result<()> {
+    pub(crate) fn remove_active_dist(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
         let slot1 = self.active_dist_slot.read(&worldwide_day)?;
         if slot1 == 0 {
             return Ok(());
@@ -175,9 +179,9 @@ impl IntexContract<'_> {
         let idx = slot1 - 1;
         let last = self.active_dist_count.read()? - 1;
         if idx != last {
-            let last_series = self.active_dist_at.read(&last)?;
-            self.active_dist_at.write(&idx, last_series)?;
-            self.active_dist_slot.write(&last_series, idx + 1)?;
+            let last_day = WorldwideDay::new(self.active_dist_at.read(&last)?);
+            self.active_dist_at.write(&idx, last_day.value())?;
+            self.active_dist_slot.write(&last_day, idx + 1)?;
         }
         self.active_dist_at.clear(&last)?;
         self.active_dist_slot.clear(&worldwide_day)?;
@@ -190,12 +194,13 @@ impl IntexContract<'_> {
     // ---------------------------------------------------------------------
 
     /// Append a series to the awaiting-proceeds set (idempotent).
-    pub(crate) fn push_awaiting_proceeds(&mut self, worldwide_day: u32) -> Result<()> {
+    pub(crate) fn push_awaiting_proceeds(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
         if self.awaiting_proceeds_slot.read(&worldwide_day)? != 0 {
             return Ok(());
         }
         let count = self.awaiting_proceeds_count.read()?;
-        self.awaiting_proceeds_at.write(&count, worldwide_day)?;
+        self.awaiting_proceeds_at
+            .write(&count, worldwide_day.value())?;
         // store index + 1 so that 0 unambiguously means "absent".
         self.awaiting_proceeds_slot
             .write(&worldwide_day, count + 1)?;
@@ -204,7 +209,7 @@ impl IntexContract<'_> {
     }
 
     /// Remove a series from the awaiting-proceeds set via swap-remove (idempotent).
-    pub(crate) fn remove_awaiting_proceeds(&mut self, worldwide_day: u32) -> Result<()> {
+    pub(crate) fn remove_awaiting_proceeds(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
         let slot1 = self.awaiting_proceeds_slot.read(&worldwide_day)?;
         if slot1 == 0 {
             return Ok(());
@@ -212,9 +217,9 @@ impl IntexContract<'_> {
         let idx = slot1 - 1;
         let last = self.awaiting_proceeds_count.read()? - 1;
         if idx != last {
-            let last_series = self.awaiting_proceeds_at.read(&last)?;
-            self.awaiting_proceeds_at.write(&idx, last_series)?;
-            self.awaiting_proceeds_slot.write(&last_series, idx + 1)?;
+            let last_day = WorldwideDay::new(self.awaiting_proceeds_at.read(&last)?);
+            self.awaiting_proceeds_at.write(&idx, last_day.value())?;
+            self.awaiting_proceeds_slot.write(&last_day, idx + 1)?;
         }
         self.awaiting_proceeds_at.clear(&last)?;
         self.awaiting_proceeds_slot.clear(&worldwide_day)?;

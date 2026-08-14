@@ -1,5 +1,6 @@
 use alloy_primitives::{address, keccak256, Address, U256};
 use alloy_sol_types::SolCall;
+use outbe_common::WorldwideDay;
 use outbe_intex::SeriesId;
 use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
@@ -58,7 +59,7 @@ fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
 
 /// Test ids carry a fixed USD/U pair; only the day varies.
 fn sid(worldwide_day: u32) -> SeriesId {
-    SeriesId::pack(worldwide_day, *b"USD", b'U').unwrap()
+    SeriesId::pack(WorldwideDay::new(worldwide_day), *b"USD", b'U').unwrap()
 }
 
 fn sample(worldwide_day: u32) -> IssuanceParams {
@@ -125,7 +126,12 @@ fn issue_rejects_duplicate_series() {
 fn issue_zero_winners_leaves_the_day_untouched() {
     with_factory(|s| {
         // Lysis recorded contributors for the day, but this group had no winners.
-        outbe_intex::api::record_contributors(&s, 7, &[(holder(), U256::from(100u64))]).unwrap();
+        outbe_intex::api::record_contributors(
+            &s,
+            WorldwideDay::new(7),
+            &[(holder(), U256::from(100u64))],
+        )
+        .unwrap();
         let mut p = sample(7);
         p.issued_intex_count = 0;
         runtime::issue(&s, p).unwrap();
@@ -133,7 +139,10 @@ fn issue_zero_winners_leaves_the_day_untouched() {
         // No series is created, and the day's map is left for its caller to
         // decide on: sibling groups of the same day may still distribute.
         assert!(!outbe_intex::api::series_exists(&s, sid(7)).unwrap());
-        assert_eq!(outbe_intex::api::contributor_count(&s, 7).unwrap(), 1);
+        assert_eq!(
+            outbe_intex::api::contributor_count(&s, WorldwideDay::new(7)).unwrap(),
+            1
+        );
     });
 }
 
@@ -1461,7 +1470,7 @@ fn distribute_pays_contributors_proportionally_with_dust_to_last() {
         let owners = [contrib(1), contrib(2), contrib(3)];
         outbe_intex::api::record_contributors(
             &s,
-            7,
+            WorldwideDay::new(7),
             &[
                 (owners[0], U256::from(100u64)),
                 (owners[1], U256::from(200u64)),
@@ -1470,7 +1479,7 @@ fn distribute_pays_contributors_proportionally_with_dust_to_last() {
         )
         .unwrap();
         // A single winning chain: its arrival completes the fan-in immediately.
-        outbe_intex::api::arm_proceeds(&s, 7, &[10], DEADLINE_FUTURE).unwrap();
+        outbe_intex::api::arm_proceeds(&s, WorldwideDay::new(7), &[10], DEADLINE_FUTURE).unwrap();
         // Simulate the native value arriving on the precompile via distribute{value}.
         let amount = U256::from(1000u64);
         s.increase_balance(INTEX_FACTORY_ADDRESS, amount).unwrap();
@@ -1497,9 +1506,15 @@ fn distribute_pays_contributors_proportionally_with_dust_to_last() {
         assert_eq!(s.balance(owners[2]).unwrap(), U256::from(501u64)); // 1000-166-333
                                                                        // precompile fully drained, progress + contributors cleared.
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
-        assert_eq!(outbe_intex::api::get_progress(&s, 7).unwrap(), None);
+        assert_eq!(
+            outbe_intex::api::get_progress(&s, WorldwideDay::new(7)).unwrap(),
+            None
+        );
         assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 0);
-        assert_eq!(outbe_intex::api::contributor_count(&s, 7).unwrap(), 0);
+        assert_eq!(
+            outbe_intex::api::contributor_count(&s, WorldwideDay::new(7)).unwrap(),
+            0
+        );
     });
 }
 
@@ -1509,14 +1524,15 @@ fn distribute_waits_for_all_winning_chains_then_pays_the_sum() {
         let owners = [contrib(1), contrib(2)];
         outbe_intex::api::record_contributors(
             &s,
-            7,
+            WorldwideDay::new(7),
             &[
                 (owners[0], U256::from(100u64)),
                 (owners[1], U256::from(100u64)),
             ],
         )
         .unwrap();
-        outbe_intex::api::arm_proceeds(&s, 7, &[10, 20], DEADLINE_FUTURE).unwrap();
+        outbe_intex::api::arm_proceeds(&s, WorldwideDay::new(7), &[10, 20], DEADLINE_FUTURE)
+            .unwrap();
 
         // Chain 10 arrives first: pot accumulates, fan-in not complete → no payout yet.
         s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(300u64))
@@ -1530,7 +1546,7 @@ fn distribute_waits_for_all_winning_chains_then_pays_the_sum() {
         )
         .unwrap();
         assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 0);
-        assert!(!outbe_intex::api::proceeds_ready(&s, 7).unwrap());
+        assert!(!outbe_intex::api::proceeds_ready(&s, WorldwideDay::new(7)).unwrap());
 
         // Chain 20 completes the fan-in: one distribution over the summed pot.
         s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(500u64))
@@ -1550,7 +1566,10 @@ fn distribute_waits_for_all_winning_chains_then_pays_the_sum() {
         assert_eq!(s.balance(owners[0]).unwrap(), U256::from(400u64));
         assert_eq!(s.balance(owners[1]).unwrap(), U256::from(400u64));
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
-        assert_eq!(outbe_intex::api::contributor_count(&s, 7).unwrap(), 0);
+        assert_eq!(
+            outbe_intex::api::contributor_count(&s, WorldwideDay::new(7)).unwrap(),
+            0
+        );
     });
 }
 
@@ -1560,14 +1579,15 @@ fn distribute_deadline_forces_partial_payout_then_late_chain_supplements() {
         let owners = [contrib(1), contrib(2)];
         outbe_intex::api::record_contributors(
             &s,
-            7,
+            WorldwideDay::new(7),
             &[
                 (owners[0], U256::from(100u64)),
                 (owners[1], U256::from(100u64)),
             ],
         )
         .unwrap();
-        outbe_intex::api::arm_proceeds(&s, 7, &[10, 20], DEADLINE_FUTURE).unwrap();
+        outbe_intex::api::arm_proceeds(&s, WorldwideDay::new(7), &[10, 20], DEADLINE_FUTURE)
+            .unwrap();
 
         // Only chain 10 arrives before the deadline.
         s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(200u64))
@@ -1583,12 +1603,15 @@ fn distribute_deadline_forces_partial_payout_then_late_chain_supplements() {
         assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 0);
 
         // Past the deadline the sweep pays out what arrived; the map is retained.
-        runtime::try_settle_proceeds(&s, 7, DEADLINE_FUTURE + 1).unwrap();
-        assert!(!outbe_intex::api::proceeds_finalize_on_done(&s, 7).unwrap());
+        runtime::try_settle_proceeds(&s, WorldwideDay::new(7), DEADLINE_FUTURE + 1).unwrap();
+        assert!(!outbe_intex::api::proceeds_finalize_on_done(&s, WorldwideDay::new(7)).unwrap());
         runtime::drain_distributions(&s).unwrap();
         assert_eq!(s.balance(owners[0]).unwrap(), U256::from(100u64));
         assert_eq!(s.balance(owners[1]).unwrap(), U256::from(100u64));
-        assert_eq!(outbe_intex::api::contributor_count(&s, 7).unwrap(), 2); // retained
+        assert_eq!(
+            outbe_intex::api::contributor_count(&s, WorldwideDay::new(7)).unwrap(),
+            2
+        ); // retained
 
         // The straggler arrives: a supplementary payout over the same map, then finalize.
         s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(400u64))
@@ -1605,7 +1628,10 @@ fn distribute_deadline_forces_partial_payout_then_late_chain_supplements() {
         runtime::drain_distributions(&s).unwrap();
         assert_eq!(s.balance(owners[0]).unwrap(), U256::from(300u64)); // +200
         assert_eq!(s.balance(owners[1]).unwrap(), U256::from(300u64));
-        assert_eq!(outbe_intex::api::contributor_count(&s, 7).unwrap(), 0); // finalized
+        assert_eq!(
+            outbe_intex::api::contributor_count(&s, WorldwideDay::new(7)).unwrap(),
+            0
+        ); // finalized
     });
 }
 
@@ -1616,7 +1642,7 @@ fn late_top_up_during_final_round_reaches_creators() {
         let owners = [contrib(1), contrib(2)];
         outbe_intex::api::record_contributors(
             &s,
-            7,
+            WorldwideDay::new(7),
             &[
                 (owners[0], U256::from(100u64)),
                 (owners[1], U256::from(100u64)),
@@ -1625,7 +1651,7 @@ fn late_top_up_during_final_round_reaches_creators() {
         .unwrap();
         // A single winning chain: the first arrival completes the fan-in, so the
         // round runs finalize-on-done (its end clears the contributor map).
-        outbe_intex::api::arm_proceeds(&s, 7, &[10], DEADLINE_FUTURE).unwrap();
+        outbe_intex::api::arm_proceeds(&s, WorldwideDay::new(7), &[10], DEADLINE_FUTURE).unwrap();
         s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(200u64))
             .unwrap();
         runtime::distribute(
@@ -1636,10 +1662,10 @@ fn late_top_up_during_final_round_reaches_creators() {
             U256::from(200u64),
         )
         .unwrap();
-        assert!(outbe_intex::api::proceeds_finalize_on_done(&s, 7).unwrap());
+        assert!(outbe_intex::api::proceeds_finalize_on_done(&s, WorldwideDay::new(7)).unwrap());
 
         // Pay only the first contributor: the round is mid-drain, still active.
-        runtime::pay_chunk(&s, 7, 1).unwrap();
+        runtime::pay_chunk(&s, WorldwideDay::new(7), 1).unwrap();
         assert_eq!(s.balance(owners[0]).unwrap(), U256::from(100u64));
         assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 1);
 
@@ -1659,17 +1685,23 @@ fn late_top_up_during_final_round_reaches_creators() {
 
         // Finishing the round finds the topped-up pot and opens a supplementary
         // round over the same map instead of finalizing (which would strand it).
-        runtime::pay_chunk(&s, 7, 1).unwrap();
+        runtime::pay_chunk(&s, WorldwideDay::new(7), 1).unwrap();
         assert_eq!(s.balance(owners[1]).unwrap(), U256::from(100u64));
-        assert_eq!(outbe_intex::api::contributor_count(&s, 7).unwrap(), 2); // retained
+        assert_eq!(
+            outbe_intex::api::contributor_count(&s, WorldwideDay::new(7)).unwrap(),
+            2
+        ); // retained
         assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 1);
 
         // The supplementary round pays the top-up to the creators, then finalizes.
         runtime::drain_distributions(&s).unwrap();
         assert_eq!(s.balance(owners[0]).unwrap(), U256::from(300u64)); // +200
         assert_eq!(s.balance(owners[1]).unwrap(), U256::from(300u64)); // +200
-        assert_eq!(outbe_intex::api::contributor_count(&s, 7).unwrap(), 0); // finalized
-                                                                            // The money reached creators, never the vault or the burn path.
+        assert_eq!(
+            outbe_intex::api::contributor_count(&s, WorldwideDay::new(7)).unwrap(),
+            0
+        ); // finalized
+           // The money reached creators, never the vault or the burn path.
         assert_eq!(s.balance(VAULT_ROUTER_ADDRESS).unwrap(), U256::ZERO);
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
     });
@@ -1681,7 +1713,7 @@ fn distribute_paginates_across_chunks() {
         let owners = [contrib(1), contrib(2), contrib(3)];
         outbe_intex::api::record_contributors(
             &s,
-            7,
+            WorldwideDay::new(7),
             &[
                 (owners[0], U256::from(100u64)),
                 (owners[1], U256::from(200u64)),
@@ -1691,15 +1723,16 @@ fn distribute_paginates_across_chunks() {
         .unwrap();
         let amount = U256::from(600u64);
         s.increase_balance(INTEX_FACTORY_ADDRESS, amount).unwrap();
-        outbe_intex::api::start_distribution(&s, 7, amount, U256::from(600u64)).unwrap();
+        outbe_intex::api::start_distribution(&s, WorldwideDay::new(7), amount, U256::from(600u64))
+            .unwrap();
 
         // Chunk 1 (limit 2): pays the first two, cursor advances, still active.
-        runtime::pay_chunk(&s, 7, 2).unwrap();
+        runtime::pay_chunk(&s, WorldwideDay::new(7), 2).unwrap();
         assert_eq!(s.balance(owners[0]).unwrap(), U256::from(100u64));
         assert_eq!(s.balance(owners[1]).unwrap(), U256::from(200u64));
         assert_eq!(s.balance(owners[2]).unwrap(), U256::ZERO);
         assert_eq!(
-            outbe_intex::api::get_progress(&s, 7)
+            outbe_intex::api::get_progress(&s, WorldwideDay::new(7))
                 .unwrap()
                 .unwrap()
                 .cursor,
@@ -1708,10 +1741,13 @@ fn distribute_paginates_across_chunks() {
         assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 1);
 
         // Chunk 2: pays the last and finalizes.
-        runtime::pay_chunk(&s, 7, 2).unwrap();
+        runtime::pay_chunk(&s, WorldwideDay::new(7), 2).unwrap();
         assert_eq!(s.balance(owners[2]).unwrap(), U256::from(300u64));
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
-        assert_eq!(outbe_intex::api::get_progress(&s, 7).unwrap(), None);
+        assert_eq!(
+            outbe_intex::api::get_progress(&s, WorldwideDay::new(7)).unwrap(),
+            None
+        );
         assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 0);
     });
 }
@@ -1719,7 +1755,12 @@ fn distribute_paginates_across_chunks() {
 #[test]
 fn distribute_rejects_non_origin_router() {
     with_factory(|s| {
-        outbe_intex::api::record_contributors(&s, 7, &[(contrib(1), U256::from(100u64))]).unwrap();
+        outbe_intex::api::record_contributors(
+            &s,
+            WorldwideDay::new(7),
+            &[(contrib(1), U256::from(100u64))],
+        )
+        .unwrap();
         s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(100u64))
             .unwrap();
         let err = runtime::distribute(&s, holder(), 7.into(), 10, U256::from(100u64)).unwrap_err();
@@ -1745,7 +1786,7 @@ fn distribute_no_contributors_burns() {
 
     StorageHandle::enter(&mut storage, |s| {
         // Armed but no contributors recorded; the single chain completes the fan-in.
-        outbe_intex::api::arm_proceeds(&s, 7, &[10], DEADLINE_FUTURE).unwrap();
+        outbe_intex::api::arm_proceeds(&s, WorldwideDay::new(7), &[10], DEADLINE_FUTURE).unwrap();
         s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(100u64))
             .unwrap();
         runtime::distribute(
@@ -1783,7 +1824,7 @@ fn begin_block_drain_completes_active_distributions() {
         ] {
             outbe_intex::api::record_contributors(
                 &s,
-                sid,
+                WorldwideDay::new(sid),
                 &[
                     (owners[0], U256::from(100u64)),
                     (owners[1], U256::from(200u64)),
@@ -1793,10 +1834,15 @@ fn begin_block_drain_completes_active_distributions() {
             .unwrap();
             s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(600u64))
                 .unwrap();
-            outbe_intex::api::start_distribution(&s, sid, U256::from(600u64), U256::from(600u64))
-                .unwrap();
+            outbe_intex::api::start_distribution(
+                &s,
+                WorldwideDay::new(sid),
+                U256::from(600u64),
+                U256::from(600u64),
+            )
+            .unwrap();
             // Pay only the first contributor, leaving the series active.
-            runtime::pay_chunk(&s, sid, 1).unwrap();
+            runtime::pay_chunk(&s, WorldwideDay::new(sid), 1).unwrap();
         }
         assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 2);
 
@@ -1819,31 +1865,48 @@ fn begin_block_drain_completes_active_distributions() {
 #[test]
 fn begin_block_drain_isolates_failing_series() {
     with_factory(|s| {
-        outbe_intex::api::record_contributors(&s, 7, &[(contrib(1), U256::from(100u64))]).unwrap();
+        outbe_intex::api::record_contributors(
+            &s,
+            WorldwideDay::new(7),
+            &[(contrib(1), U256::from(100u64))],
+        )
+        .unwrap();
         s.increase_balance(INTEX_FACTORY_ADDRESS, U256::from(100u64))
             .unwrap();
-        outbe_intex::api::start_distribution(&s, 7, U256::from(100u64), U256::from(100u64))
-            .unwrap();
+        outbe_intex::api::start_distribution(
+            &s,
+            WorldwideDay::new(7),
+            U256::from(100u64),
+            U256::from(100u64),
+        )
+        .unwrap();
 
         // Series 9 is unfunded: its first transfer fails mid-chunk.
         outbe_intex::api::record_contributors(
             &s,
-            9,
+            WorldwideDay::new(9),
             &[
                 (contrib(2), U256::from(100u64)),
                 (contrib(3), U256::from(500u64)),
             ],
         )
         .unwrap();
-        outbe_intex::api::start_distribution(&s, 9, U256::from(600u64), U256::from(600u64))
-            .unwrap();
+        outbe_intex::api::start_distribution(
+            &s,
+            WorldwideDay::new(9),
+            U256::from(600u64),
+            U256::from(600u64),
+        )
+        .unwrap();
 
         // The drain must not error: the failing series is skipped and rolled back.
         runtime::drain_distributions(&s).unwrap();
 
         assert_eq!(s.balance(contrib(1)).unwrap(), U256::from(100u64));
         assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 1);
-        let p = outbe_intex::api::get_progress(&s, 9).unwrap().unwrap();
+        let p = outbe_intex::api::get_progress(&s, WorldwideDay::new(9))
+            .unwrap()
+            .unwrap();
         assert_eq!(p.cursor, 0);
         assert_eq!(p.paid_so_far, U256::ZERO);
         assert_eq!(s.balance(contrib(2)).unwrap(), U256::ZERO);
@@ -1950,7 +2013,7 @@ const EUR_PAIR_ID: u32 = 2;
 
 fn eur_series(worldwide_day: u32) -> IssuanceParams {
     IssuanceParams {
-        series_id: SeriesId::pack(worldwide_day, *b"EUR", b'E').unwrap(),
+        series_id: SeriesId::pack(WorldwideDay::new(worldwide_day), *b"EUR", b'E').unwrap(),
         reference_currency: EUR_ISO,
         issuance_currency: EUR_ISO,
         ..sample(worldwide_day)

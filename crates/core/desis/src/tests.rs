@@ -1231,7 +1231,7 @@ fn no_bids_clears_as_no_sale() {
         // Lysis recorded creator rewards for the day before the auction concluded.
         outbe_intex::api::record_contributors(
             &s,
-            WORLDWIDE_DAY.value(),
+            WORLDWIDE_DAY,
             &[(bidder(9), U256::from(100u64))],
         )
         .unwrap();
@@ -1262,7 +1262,7 @@ fn no_bids_clears_as_no_sale() {
         );
         // No series will ever exist for the day, so the contributor map is discarded.
         assert_eq!(
-            outbe_intex::api::contributor_count(&s, WORLDWIDE_DAY.value()).unwrap(),
+            outbe_intex::api::contributor_count(&s, WORLDWIDE_DAY).unwrap(),
             0
         );
     });
@@ -1927,8 +1927,8 @@ fn clearing_issues_one_series_per_winning_currency_pair() {
         let result = clear(&s);
         assert_eq!(result.issued_intex_count, 3);
 
-        let usd = SeriesId::for_pair(WORLDWIDE_DAY.value(), 840, 840).unwrap();
-        let lira = SeriesId::for_pair(WORLDWIDE_DAY.value(), 949, 978).unwrap();
+        let usd = SeriesId::for_pair(WORLDWIDE_DAY, 840, 840).unwrap();
+        let lira = SeriesId::for_pair(WORLDWIDE_DAY, 949, 978).unwrap();
         assert_eq!(usd.to_string(), "20260101-USD-U");
         assert_eq!(lira.to_string(), "20260101-TRY-E");
 
@@ -1977,7 +1977,7 @@ fn clearing_without_winners_discards_the_day_contributor_map() {
         open_clearing(&s, 2);
         outbe_intex::api::record_contributors(
             &s,
-            WORLDWIDE_DAY.value(),
+            WORLDWIDE_DAY,
             &[(bidder(1), U256::from(100u64))],
         )
         .unwrap();
@@ -1989,7 +1989,7 @@ fn clearing_without_winners_discards_the_day_contributor_map() {
             .unwrap();
         assert_eq!(result.issued_intex_count, 0);
         assert_eq!(
-            outbe_intex::api::contributor_count(&s, WORLDWIDE_DAY.value()).unwrap(),
+            outbe_intex::api::contributor_count(&s, WORLDWIDE_DAY).unwrap(),
             0
         );
     });

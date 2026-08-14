@@ -207,7 +207,7 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
             .ocomp_target_projection(wwd)
             .unwrap();
         let contributor_target =
-            outbe_intex::api::ocomp_contributor_target_projection(&storage, wwd.value()).unwrap();
+            outbe_intex::api::ocomp_contributor_target_projection(&storage, wwd).unwrap();
         assert_eq!(
             record
                 .intent
@@ -935,7 +935,7 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
         outbe_intex::api::create_series(
             &storage,
             outbe_intex::CreateSeriesParams {
-                series_id: outbe_intex::SeriesId::pack(fixture.wwd.value(), *b"USD", b'U').unwrap(),
+                series_id: outbe_intex::SeriesId::pack(fixture.wwd, *b"USD", b'U').unwrap(),
                 worldwide_day: fixture.wwd,
                 issued_intex_count: 1,
                 promis_load_minor: 1,
@@ -957,8 +957,7 @@ fn nonzero_owner_projections_are_snapshotted_in_the_created_intent() {
         let expected_tribute = tribute.pre_admission_projection(fixture.wwd).unwrap();
         let expected_nod = nod.ocomp_target_projection(fixture.wwd).unwrap();
         let expected_contributors =
-            outbe_intex::api::ocomp_contributor_target_projection(&storage, fixture.wwd.value())
-                .unwrap();
+            outbe_intex::api::ocomp_contributor_target_projection(&storage, fixture.wwd).unwrap();
         assert_ne!(expected_tribute.source_generation, 0);
         assert_ne!(expected_nod.target_generation, 0);
         assert!(!expected_nod.namespace_root_before.is_zero());

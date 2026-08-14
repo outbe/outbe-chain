@@ -1,5 +1,6 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
+use outbe_common::WorldwideDay;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
@@ -23,7 +24,7 @@ fn with_registry<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
 fn certified_contributor_generation_is_absent_before_activation() {
     with_registry(|storage| {
         assert_eq!(
-            api::certified_contributor_generation(&storage, 20_260_725).unwrap(),
+            api::certified_contributor_generation(&storage, WorldwideDay::new(20_260_725)).unwrap(),
             None
         );
     });
@@ -33,7 +34,7 @@ fn certified_contributor_generation_is_absent_before_activation() {
 fn certified_contributor_generation_reads_fail_closed_on_residual_or_malformed_state() {
     for corrupt in 0..6 {
         with_registry(|storage| {
-            let series_id = 20_260_726 + corrupt;
+            let series_id = WorldwideDay::new(20_260_726 + corrupt);
             let intex = crate::IntexContract::new(storage.clone());
             match corrupt {
                 0 => intex
@@ -79,7 +80,7 @@ fn certified_contributor_generation_reads_fail_closed_on_residual_or_malformed_s
                         .unwrap();
                 }
                 5 => {
-                    api::create_series(&storage, sample_params(series_id)).unwrap();
+                    api::create_series(&storage, sample_params(series_id.value())).unwrap();
                     intex
                         .ocomp_contributor_root
                         .write(&series_id, alloy_primitives::B256::repeat_byte(5))
@@ -113,13 +114,13 @@ fn certified_contributor_installation_has_no_public_write_selector() {
 
 /// Test ids carry a fixed USD/U pair; only the day varies.
 fn sid(worldwide_day: u32) -> SeriesId {
-    SeriesId::pack(worldwide_day, *b"USD", b'U').unwrap()
+    SeriesId::pack(WorldwideDay::new(worldwide_day), *b"USD", b'U').unwrap()
 }
 
 fn sample_params(worldwide_day: u32) -> CreateSeriesParams {
     CreateSeriesParams {
         series_id: sid(worldwide_day),
-        worldwide_day: worldwide_day.into(),
+        worldwide_day: WorldwideDay::new(worldwide_day),
         issued_intex_count: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
         entry_price_minor: U256::from(2_000u64),
@@ -430,23 +431,26 @@ fn record_and_read_contributors() {
             (addr(2), U256::from(110u64)),
             (addr(3), U256::from(300u64)),
         ];
-        api::record_contributors(&s, 20_260_401, &contributors).unwrap();
+        api::record_contributors(&s, WorldwideDay::new(20_260_401), &contributors).unwrap();
 
-        assert_eq!(api::contributor_count(&s, 20_260_401).unwrap(), 3);
         assert_eq!(
-            api::contributor_total(&s, 20_260_401).unwrap(),
+            api::contributor_count(&s, WorldwideDay::new(20_260_401)).unwrap(),
+            3
+        );
+        assert_eq!(
+            api::contributor_total(&s, WorldwideDay::new(20_260_401)).unwrap(),
             U256::from(500u64)
         );
         assert_eq!(
-            api::contributor_at(&s, 20_260_401, 0).unwrap(),
+            api::contributor_at(&s, WorldwideDay::new(20_260_401), 0).unwrap(),
             (addr(1), U256::from(90u64))
         );
         assert_eq!(
-            api::contributor_at(&s, 20_260_401, 2).unwrap(),
+            api::contributor_at(&s, WorldwideDay::new(20_260_401), 2).unwrap(),
             (addr(3), U256::from(300u64))
         );
         assert_eq!(
-            api::read_contributors(&s, 20_260_401).unwrap(),
+            api::read_contributors(&s, WorldwideDay::new(20_260_401)).unwrap(),
             contributors
         );
     });
@@ -455,9 +459,14 @@ fn record_and_read_contributors() {
 #[test]
 fn contributors_empty_series_is_zero() {
     with_registry(|s| {
-        assert_eq!(api::contributor_count(&s, 1).unwrap(), 0);
-        assert_eq!(api::contributor_total(&s, 1).unwrap(), U256::ZERO);
-        assert!(api::read_contributors(&s, 1).unwrap().is_empty());
+        assert_eq!(api::contributor_count(&s, WorldwideDay::new(1)).unwrap(), 0);
+        assert_eq!(
+            api::contributor_total(&s, WorldwideDay::new(1)).unwrap(),
+            U256::ZERO
+        );
+        assert!(api::read_contributors(&s, WorldwideDay::new(1))
+            .unwrap()
+            .is_empty());
     });
 }
 
@@ -468,10 +477,23 @@ fn contributors_empty_series_is_zero() {
 #[test]
 fn start_distribution_rejects_duplicate() {
     with_registry(|s| {
-        api::record_contributors(&s, 7, &[(addr(1), U256::from(40u64))]).unwrap();
-        api::start_distribution(&s, 7, U256::from(1000u64), U256::from(40u64)).unwrap();
+        api::record_contributors(&s, WorldwideDay::new(7), &[(addr(1), U256::from(40u64))])
+            .unwrap();
+        api::start_distribution(
+            &s,
+            WorldwideDay::new(7),
+            U256::from(1000u64),
+            U256::from(40u64),
+        )
+        .unwrap();
         // A second open for the same series must not overwrite in-flight progress.
-        assert!(api::start_distribution(&s, 7, U256::from(500u64), U256::from(40u64)).is_err());
+        assert!(api::start_distribution(
+            &s,
+            WorldwideDay::new(7),
+            U256::from(500u64),
+            U256::from(40u64)
+        )
+        .is_err());
     });
 }
 
@@ -480,14 +502,22 @@ fn distribution_progress_lifecycle() {
     with_registry(|s| {
         api::record_contributors(
             &s,
-            7,
+            WorldwideDay::new(7),
             &[(addr(1), U256::from(40u64)), (addr(2), U256::from(60u64))],
         )
         .unwrap();
-        api::start_distribution(&s, 7, U256::from(1000u64), U256::from(100u64)).unwrap();
+        api::start_distribution(
+            &s,
+            WorldwideDay::new(7),
+            U256::from(1000u64),
+            U256::from(100u64),
+        )
+        .unwrap();
 
-        let p = api::get_progress(&s, 7).unwrap().expect("progress exists");
-        assert_eq!(p.worldwide_day, 7);
+        let p = api::get_progress(&s, WorldwideDay::new(7))
+            .unwrap()
+            .expect("progress exists");
+        assert_eq!(p.worldwide_day, WorldwideDay::new(7));
         assert_eq!(p.amount, U256::from(1000u64));
         assert_eq!(p.total_nominal, U256::from(100u64));
         assert_eq!(p.cursor, 0);
@@ -499,19 +529,24 @@ fn distribution_progress_lifecycle() {
         p2.cursor = 1;
         p2.paid_so_far = U256::from(400u64);
         api::save_progress(&s, &p2).unwrap();
-        let p3 = api::get_progress(&s, 7).unwrap().unwrap();
+        let p3 = api::get_progress(&s, WorldwideDay::new(7))
+            .unwrap()
+            .unwrap();
         assert_eq!(p3.cursor, 1);
         assert_eq!(p3.paid_so_far, U256::from(400u64));
 
         // enrolled in the active set
         assert_eq!(api::active_dist_count(&s).unwrap(), 1);
-        assert_eq!(api::active_dist_at(&s, 0).unwrap(), 7);
+        assert_eq!(api::active_dist_at(&s, 0).unwrap(), WorldwideDay::new(7));
 
         // finish: progress, contributors and active entry all gone
-        api::clear_distribution(&s, 7).unwrap();
-        assert_eq!(api::get_progress(&s, 7).unwrap(), None);
-        assert_eq!(api::contributor_count(&s, 7).unwrap(), 0);
-        assert_eq!(api::contributor_total(&s, 7).unwrap(), U256::ZERO);
+        api::clear_distribution(&s, WorldwideDay::new(7)).unwrap();
+        assert_eq!(api::get_progress(&s, WorldwideDay::new(7)).unwrap(), None);
+        assert_eq!(api::contributor_count(&s, WorldwideDay::new(7)).unwrap(), 0);
+        assert_eq!(
+            api::contributor_total(&s, WorldwideDay::new(7)).unwrap(),
+            U256::ZERO
+        );
         assert_eq!(api::active_dist_count(&s).unwrap(), 0);
     });
 }
@@ -520,20 +555,26 @@ fn distribution_progress_lifecycle() {
 fn active_dist_set_swap_remove() {
     with_registry(|s| {
         for sid in [11u32, 22, 33] {
-            api::start_distribution(&s, sid, U256::from(1u64), U256::from(1u64)).unwrap();
+            api::start_distribution(
+                &s,
+                WorldwideDay::new(sid),
+                U256::from(1u64),
+                U256::from(1u64),
+            )
+            .unwrap();
         }
         assert_eq!(api::active_dist_count(&s).unwrap(), 3);
 
         // remove the middle one; swap-remove moves the last into its slot.
-        api::clear_distribution(&s, 22).unwrap();
+        api::clear_distribution(&s, WorldwideDay::new(22)).unwrap();
         assert_eq!(api::active_dist_count(&s).unwrap(), 2);
 
-        let remaining: Vec<u32> = (0..api::active_dist_count(&s).unwrap())
+        let remaining: Vec<WorldwideDay> = (0..api::active_dist_count(&s).unwrap())
             .map(|i| api::active_dist_at(&s, i).unwrap())
             .collect();
-        assert!(remaining.contains(&11));
-        assert!(remaining.contains(&33));
-        assert!(!remaining.contains(&22));
+        assert!(remaining.contains(&WorldwideDay::new(11)));
+        assert!(remaining.contains(&WorldwideDay::new(33)));
+        assert!(!remaining.contains(&WorldwideDay::new(22)));
     });
 }
 
@@ -541,7 +582,7 @@ fn active_dist_set_swap_remove() {
 // composite series id
 // ---------------------------------------------------------------------
 
-const DAY: u32 = 20_260_212;
+const DAY: WorldwideDay = WorldwideDay::new(20_260_212);
 
 #[test]
 fn packs_and_unpacks_every_component() {
@@ -578,8 +619,8 @@ fn numeric_code_zero_pads_and_refuses_a_wider_code() {
 
 #[test]
 fn rejects_a_zero_day_and_lowercase_or_symbol_codes() {
-    assert!(SeriesId::pack(0, *b"USD", b'U').is_err());
-    assert!(SeriesId::pack(100_000_000, *b"USD", b'U').is_err());
+    assert!(SeriesId::pack(WorldwideDay::new(0), *b"USD", b'U').is_err());
+    assert!(SeriesId::pack(WorldwideDay::new(100_000_000), *b"USD", b'U').is_err());
     assert!(SeriesId::pack(DAY, *b"usd", b'U').is_err());
     assert!(SeriesId::pack(DAY, *b"US-", b'U').is_err());
     assert!(SeriesId::pack(DAY, *b"USD", b'u').is_err());
@@ -591,7 +632,7 @@ fn orders_by_day_before_currency() {
     // Dense enumeration and the bin-tree range scans both walk ids in order,
     // so a later day must never sort before an earlier one.
     let early_z = SeriesId::pack(DAY, *b"ZWL", b'Z').unwrap();
-    let late_a = SeriesId::pack(DAY + 1, *b"AED", b'A').unwrap();
+    let late_a = SeriesId::pack(WorldwideDay::new(DAY.value() + 1), *b"AED", b'A').unwrap();
     assert!(early_z < late_a);
 
     let same_day_a = SeriesId::pack(DAY, *b"AED", b'U').unwrap();

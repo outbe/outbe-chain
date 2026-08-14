@@ -5,6 +5,7 @@
 //! user-facing surface (settle / minePromis / setAuthorizedSettler) lives in
 //! the precompile.
 
+use outbe_common::WorldwideDay;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -30,7 +31,10 @@ pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<runtime::IssuanceLeg
 /// Discard a day's contributor map. The clearing engine calls this for a day
 /// that issued nothing at all: with no series anywhere, the recorded creator
 /// rewards can never be distributed.
-pub fn discard_day_contributors(storage: &StorageHandle<'_>, worldwide_day: u32) -> Result<()> {
+pub fn discard_day_contributors(
+    storage: &StorageHandle<'_>,
+    worldwide_day: WorldwideDay,
+) -> Result<()> {
     outbe_intex::api::finalize_proceeds(storage, worldwide_day)
 }
 

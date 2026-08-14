@@ -1642,7 +1642,7 @@ impl ActivationFixture {
                 .unwrap()
                 .unwrap();
             let contributor =
-                outbe_intex::api::certified_contributor_generation(&storage, TEST_WWD.value())
+                outbe_intex::api::certified_contributor_generation(&storage, TEST_WWD)
                     .unwrap()
                     .unwrap();
             let tribute = TributeContract::new(storage.clone());

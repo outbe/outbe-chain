@@ -221,7 +221,7 @@ fn build_and_commit_request(
 
     let nod_target = NodContract::new(ctx.storage.clone()).ocomp_target_projection(wwd)?;
     let contributor_target =
-        outbe_intex::api::ocomp_contributor_target_projection(&ctx.storage, wwd.value())?;
+        outbe_intex::api::ocomp_contributor_target_projection(&ctx.storage, wwd)?;
 
     let sealed_tribute_projection = if stored_tribute_projection.is_sealed {
         stored_tribute_projection
@@ -423,7 +423,7 @@ fn build_and_commit_retry(
     let tribute = TributeContract::new(ctx.storage.clone()).pre_admission_projection(wwd)?;
     let nod_target = NodContract::new(ctx.storage.clone()).ocomp_target_projection(wwd)?;
     let contributor_target =
-        outbe_intex::api::ocomp_contributor_target_projection(&ctx.storage, wwd.value())?;
+        outbe_intex::api::ocomp_contributor_target_projection(&ctx.storage, wwd)?;
     if !tribute.is_sealed
         || tribute.sealed_collection_root != exact_collection.root()
         || tribute.sealed_collection_root != previous.intent.sealed_tribute_collection_root

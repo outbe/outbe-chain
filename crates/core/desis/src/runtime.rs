@@ -811,7 +811,7 @@ fn clear_inner(
 
     if result.issued_intex_count == 0 {
         // No series anywhere, so the day's recorded contributor map can never distribute.
-        outbe_intexfactory::api::discard_day_contributors(&storage, worldwide_day.value())?;
+        outbe_intexfactory::api::discard_day_contributors(&storage, worldwide_day)?;
     } else {
         let mut legs = Vec::new();
         for group in issuance_groups(&result, &config, worldwide_day, snapshot)? {
@@ -1033,7 +1033,7 @@ fn issuance_groups(
                     .ok_or(DesisError::UnpricedReferenceCurrency(reference_currency))?;
                 groups.push(IssuanceParams {
                     series_id: SeriesId::for_pair(
-                        worldwide_day.value(),
+                        worldwide_day,
                         issuance_currency,
                         reference_currency,
                     )?,

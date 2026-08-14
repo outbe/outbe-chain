@@ -138,7 +138,7 @@ fn lysis_inner(
         .iter()
         .map(|contributor| (contributor.owner, contributor.nominal_amount_minor))
         .collect::<Vec<_>>();
-    outbe_intex::api::record_contributors(&storage, u32::from(wwd), &list)?;
+    outbe_intex::api::record_contributors(&storage, wwd, &list)?;
     tribute_contract.consume_lysis_partition(
         wwd,
         u32::try_from(tributes.len()).map_err(|_| {

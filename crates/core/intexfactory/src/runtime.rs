@@ -113,7 +113,7 @@ pub fn issue(storage: &StorageHandle<'_>, params: IssuanceParams) -> Result<Vec<
         .saturating_add(PROCEEDS_FANIN_TIMEOUT_SECS);
     outbe_intex::api::arm_proceeds(
         storage,
-        params.worldwide_day.value(),
+        params.worldwide_day,
         &params.recipient_chains,
         deadline,
     )?;
@@ -295,9 +295,9 @@ pub fn distribute(
     if amount.is_zero() {
         return Err(IntexFactoryError::ZeroAmount.into());
     }
-    outbe_intex::api::credit_proceeds(storage, worldwide_day.value(), src_chain_id, amount)?;
+    outbe_intex::api::credit_proceeds(storage, worldwide_day, src_chain_id, amount)?;
     let now = storage.timestamp()?.to::<u64>();
-    try_settle_proceeds(storage, worldwide_day.value(), now)
+    try_settle_proceeds(storage, worldwide_day, now)
 }
 
 /// Start a distribution round for a series if its proceeds fan-in is satisfied
@@ -306,7 +306,7 @@ pub fn distribute(
 /// sweep can both call it safely.
 pub(crate) fn try_settle_proceeds(
     storage: &StorageHandle<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     now: u64,
 ) -> Result<()> {
     // Never overlap a round that is still paying out.
@@ -360,7 +360,7 @@ pub(crate) fn sweep_proceeds_deadlines(storage: &StorageHandle<'_>, now: u64) ->
     for worldwide_day in worldwide_days {
         let res = storage.with_checkpoint(|| try_settle_proceeds(storage, worldwide_day, now));
         if let Err(e) = res {
-            tracing::warn!(target: "outbe::intexfactory", worldwide_day, error = ?e, "proceeds sweep: skipping series");
+            tracing::warn!(target: "outbe::intexfactory", worldwide_day = worldwide_day.value(), error = ?e, "proceeds sweep: skipping series");
         }
     }
     Ok(())
@@ -370,14 +370,14 @@ pub(crate) fn sweep_proceeds_deadlines(storage: &StorageHandle<'_>, now: u64) ->
 /// destroy the native COEN held by the factory, reducing total supply.
 fn burn_ownerless_proceeds(
     storage: &StorageHandle<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     amount: U256,
 ) -> Result<()> {
     storage.decrease_balance(INTEX_FACTORY_ADDRESS, amount)?;
     emit_event(
         storage,
         crate::precompile::IIntexFactory::ProceedsBurned {
-            worldwideDay: worldwide_day,
+            worldwideDay: worldwide_day.value(),
             amount,
         },
     )
@@ -388,16 +388,20 @@ fn burn_ownerless_proceeds(
 /// full `amount` is paid out exactly. On reaching the last contributor the
 /// distribution is finalized (progress + contributor map cleared). Driven by
 /// the begin-block drain.
-pub(crate) fn pay_chunk(storage: &StorageHandle<'_>, worldwide_day: u32, limit: u32) -> Result<()> {
+pub(crate) fn pay_chunk(
+    storage: &StorageHandle<'_>,
+    worldwide_day: WorldwideDay,
+    limit: u32,
+) -> Result<()> {
     let mut progress = outbe_intex::api::get_progress(storage, worldwide_day)?
-        .ok_or(IntexFactoryError::NoDistribution(worldwide_day))?;
+        .ok_or(IntexFactoryError::NoDistribution(worldwide_day.value()))?;
     let count = outbe_intex::api::contributor_count(storage, worldwide_day)?;
     let end = progress.cursor.saturating_add(limit).min(count);
 
     // A zero denominator would panic on divide; begin-block panics halt the chain (not checkpoint-isolated),
     // so fail as an isolated Err instead.
     if progress.total_nominal.is_zero() {
-        return Err(IntexFactoryError::NoContributors(worldwide_day).into());
+        return Err(IntexFactoryError::NoContributors(worldwide_day.value()).into());
     }
 
     let mut paid = progress.paid_so_far;
@@ -405,15 +409,14 @@ pub(crate) fn pay_chunk(storage: &StorageHandle<'_>, worldwide_day: u32, limit: 
         let (owner, nominal) = outbe_intex::api::contributor_at(storage, worldwide_day, i)?;
         // The final contributor absorbs the rounding remainder so the sum of
         // payouts equals `amount` exactly. checked_mul: isolated Err over a silent wrap.
-        let share = if i == count - 1 {
-            progress.amount - paid
-        } else {
-            progress
-                .amount
-                .checked_mul(nominal)
-                .ok_or(IntexFactoryError::DistributionOverflow(worldwide_day))?
-                / progress.total_nominal
-        };
+        let share =
+            if i == count - 1 {
+                progress.amount - paid
+            } else {
+                progress.amount.checked_mul(nominal).ok_or(
+                    IntexFactoryError::DistributionOverflow(worldwide_day.value()),
+                )? / progress.total_nominal
+            };
         storage.transfer_balance(INTEX_FACTORY_ADDRESS, owner, share)?;
         paid += share;
     }
@@ -426,7 +429,7 @@ pub(crate) fn pay_chunk(storage: &StorageHandle<'_>, worldwide_day: u32, limit: 
         emit_event(
             storage,
             crate::precompile::IIntexFactory::ProceedsDistributed {
-                worldwideDay: worldwide_day,
+                worldwideDay: worldwide_day.value(),
                 amount: progress.amount,
                 contributors: count,
             },
@@ -466,7 +469,7 @@ pub(crate) fn drain_distributions(storage: &StorageHandle<'_>) -> Result<()> {
         // Per-series isolation: Err reverts the series' checkpoint, retried next block.
         let res = storage.with_checkpoint(|| pay_chunk(storage, worldwide_day, DIST_CHUNK_LIMIT));
         if let Err(e) = res {
-            tracing::warn!(target: "outbe::intexfactory", worldwide_day, error = ?e, "distribution drain: skipping series");
+            tracing::warn!(target: "outbe::intexfactory", worldwide_day = worldwide_day.value(), error = ?e, "distribution drain: skipping series");
         }
     }
     Ok(())

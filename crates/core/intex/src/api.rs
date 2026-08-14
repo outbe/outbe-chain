@@ -14,6 +14,7 @@
 //! parameters) belongs to the caller (IntexFactory).
 
 use alloy_primitives::{Address, U256};
+use outbe_common::WorldwideDay;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
@@ -121,7 +122,7 @@ pub fn series_exists(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result
 /// Reads the exact create-only contributor target state for one worldwide day.
 pub fn ocomp_contributor_target_projection(
     storage: &StorageHandle<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
 ) -> Result<OcompContributorTargetProjection> {
     let registry = IntexContract::new(storage.clone());
     let exists = registry.day_has_series(worldwide_day)?;
@@ -161,7 +162,7 @@ pub fn ocomp_contributor_target_projection(
         None => (base_version, legacy_count, legacy_total),
     };
     Ok(OcompContributorTargetProjection {
-        series_id: worldwide_day,
+        series_id: worldwide_day.value(),
         expected_series_version,
         contributor_count,
         contributor_total,
@@ -171,7 +172,7 @@ pub fn ocomp_contributor_target_projection(
 /// Reads the constant-size certified contributor proof authority for a series.
 pub fn certified_contributor_generation(
     storage: &StorageHandle<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
 ) -> Result<Option<CertifiedContributorGenerationProjection>> {
     IntexContract::new(storage.clone()).ocomp_certified_contributor_generation(worldwide_day)
 }
@@ -196,7 +197,7 @@ pub fn series_id_at(storage: &StorageHandle<'_>, index: u64) -> Result<SeriesId>
 /// this path for that exact series identity.
 pub fn record_contributors(
     storage: &StorageHandle<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     contributors: &[(Address, U256)],
 ) -> Result<()> {
     let mut registry = IntexContract::new(storage.clone());
@@ -212,19 +213,19 @@ pub fn record_contributors(
 }
 
 /// Number of contributors recorded for a series (0 if none).
-pub fn contributor_count(storage: &StorageHandle<'_>, worldwide_day: u32) -> Result<u32> {
+pub fn contributor_count(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<u32> {
     IntexContract::new(storage.clone()).read_contributor_count(worldwide_day)
 }
 
 /// Σ of all contributor nominals for a series (the proportionality denominator).
-pub fn contributor_total(storage: &StorageHandle<'_>, worldwide_day: u32) -> Result<U256> {
+pub fn contributor_total(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<U256> {
     IntexContract::new(storage.clone()).read_contributor_total(worldwide_day)
 }
 
 /// `(owner, nominal)` of the contributor at a dense index.
 pub fn contributor_at(
     storage: &StorageHandle<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     index: u32,
 ) -> Result<(Address, U256)> {
     IntexContract::new(storage.clone()).read_contributor_at(worldwide_day, index)
@@ -233,7 +234,7 @@ pub fn contributor_at(
 /// Full contributor list for a series.
 pub fn read_contributors(
     storage: &StorageHandle<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
 ) -> Result<Vec<(Address, U256)>> {
     let registry = IntexContract::new(storage.clone());
     let count = registry.read_contributor_count(worldwide_day)?;
@@ -249,7 +250,7 @@ pub fn read_contributors(
 /// begin-block hook drains.
 pub fn start_distribution(
     storage: &StorageHandle<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     amount: U256,
     total_nominal: U256,
 ) -> Result<()> {
@@ -268,7 +269,7 @@ pub fn start_distribution(
 /// In-flight distribution progress for a series; `None` when none is open.
 pub fn get_progress(
     storage: &StorageHandle<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
 ) -> Result<Option<DistProgress>> {
     IntexContract::new(storage.clone()).get_dist_progress(worldwide_day)
 }
@@ -280,7 +281,7 @@ pub fn save_progress(storage: &StorageHandle<'_>, progress: &DistProgress) -> Re
 
 /// Finish a distribution: drop the progress record, the active-set entry, and
 /// the (now spent) contributor list.
-pub fn clear_distribution(storage: &StorageHandle<'_>, worldwide_day: u32) -> Result<()> {
+pub fn clear_distribution(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<()> {
     let mut registry = IntexContract::new(storage.clone());
     registry.delete_dist_progress(worldwide_day)?;
     registry.remove_active_dist(worldwide_day)?;
@@ -291,7 +292,10 @@ pub fn clear_distribution(storage: &StorageHandle<'_>, worldwide_day: u32) -> Re
 /// progress record and the active-set entry only. Used by the multi-chain
 /// proceeds flow, which decides separately whether to retain the map for a
 /// later top-up ([`finalize_proceeds`]) or clear it.
-pub fn finish_distribution_round(storage: &StorageHandle<'_>, worldwide_day: u32) -> Result<()> {
+pub fn finish_distribution_round(
+    storage: &StorageHandle<'_>,
+    worldwide_day: WorldwideDay,
+) -> Result<()> {
     let mut registry = IntexContract::new(storage.clone());
     registry.delete_dist_progress(worldwide_day)?;
     registry.remove_active_dist(worldwide_day)
@@ -303,7 +307,7 @@ pub fn active_dist_count(storage: &StorageHandle<'_>) -> Result<u32> {
 }
 
 /// `worldwide_day` of the active distribution at a dense index.
-pub fn active_dist_at(storage: &StorageHandle<'_>, index: u32) -> Result<u32> {
+pub fn active_dist_at(storage: &StorageHandle<'_>, index: u32) -> Result<WorldwideDay> {
     IntexContract::new(storage.clone()).read_active_dist_at(index)
 }
 
@@ -316,7 +320,7 @@ pub fn active_dist_at(storage: &StorageHandle<'_>, index: u32) -> Result<u32> {
 /// expected set accumulates into their union.
 pub fn arm_proceeds(
     storage: &StorageHandle<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     winning_chains: &[u32],
     deadline: u64,
 ) -> Result<()> {
@@ -342,7 +346,7 @@ pub fn arm_proceeds(
 /// for completeness while still summing every amount.
 pub fn credit_proceeds(
     storage: &StorageHandle<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     src_chain_id: u32,
     amount: U256,
 ) -> Result<()> {
@@ -365,21 +369,21 @@ pub fn credit_proceeds(
 }
 
 /// Every expected winning chain has routed its proceeds.
-pub fn proceeds_ready(storage: &StorageHandle<'_>, worldwide_day: u32) -> Result<bool> {
+pub fn proceeds_ready(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<bool> {
     let registry = IntexContract::new(storage.clone());
     let expected = registry.proceeds_expected_count.read(&worldwide_day)?;
     Ok(expected > 0 && registry.proceeds_arrived_count.read(&worldwide_day)? == expected)
 }
 
 /// Fan-in deadline for a series (0 if never armed).
-pub fn proceeds_deadline(storage: &StorageHandle<'_>, worldwide_day: u32) -> Result<u64> {
+pub fn proceeds_deadline(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<u64> {
     IntexContract::new(storage.clone())
         .proceeds_deadline
         .read(&worldwide_day)
 }
 
 /// Read and clear the accumulated pot (handed to a distribution round).
-pub fn take_proceeds_pot(storage: &StorageHandle<'_>, worldwide_day: u32) -> Result<U256> {
+pub fn take_proceeds_pot(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<U256> {
     let registry = IntexContract::new(storage.clone());
     let pot = registry.proceeds_pot.read(&worldwide_day)?;
     registry.proceeds_pot.write(&worldwide_day, U256::ZERO)?;
@@ -390,7 +394,7 @@ pub fn take_proceeds_pot(storage: &StorageHandle<'_>, worldwide_day: u32) -> Res
 /// completion (all expected chains in) or retain its map for a later top-up.
 pub fn set_proceeds_finalize_on_done(
     storage: &StorageHandle<'_>,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
     finalize: bool,
 ) -> Result<()> {
     IntexContract::new(storage.clone())
@@ -399,7 +403,10 @@ pub fn set_proceeds_finalize_on_done(
 }
 
 /// Whether the in-flight round finalizes the series on completion.
-pub fn proceeds_finalize_on_done(storage: &StorageHandle<'_>, worldwide_day: u32) -> Result<bool> {
+pub fn proceeds_finalize_on_done(
+    storage: &StorageHandle<'_>,
+    worldwide_day: WorldwideDay,
+) -> Result<bool> {
     Ok(IntexContract::new(storage.clone())
         .proceeds_finalize_on_done
         .read(&worldwide_day)?
@@ -410,7 +417,7 @@ pub fn proceeds_finalize_on_done(storage: &StorageHandle<'_>, worldwide_day: u32
 /// drop it from the awaiting set, and clear the (now spent) contributor map.
 /// The per-(series, chain) flags are left as harmless dead entries — a series id
 /// (the worldwide day) never recurs.
-pub fn finalize_proceeds(storage: &StorageHandle<'_>, worldwide_day: u32) -> Result<()> {
+pub fn finalize_proceeds(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay) -> Result<()> {
     let mut registry = IntexContract::new(storage.clone());
     registry.proceeds_pot.clear(&worldwide_day)?;
     registry.proceeds_deadline.clear(&worldwide_day)?;
@@ -429,8 +436,9 @@ pub fn awaiting_proceeds_count(storage: &StorageHandle<'_>) -> Result<u32> {
 }
 
 /// `worldwide_day` awaiting proceeds at a dense index.
-pub fn awaiting_proceeds_at(storage: &StorageHandle<'_>, index: u32) -> Result<u32> {
+pub fn awaiting_proceeds_at(storage: &StorageHandle<'_>, index: u32) -> Result<WorldwideDay> {
     IntexContract::new(storage.clone())
         .awaiting_proceeds_at
         .read(&index)
+        .map(WorldwideDay::new)
 }

@@ -434,7 +434,7 @@ fn statistics_track_mint_count() {
 // --- Merchant gems ---
 
 fn source_intex_id() -> SeriesId {
-    SeriesId::pack(20_260_212, *b"USD", b'U').unwrap()
+    SeriesId::pack(WorldwideDay::new(20_260_212), *b"USD", b'U').unwrap()
 }
 
 fn e18_u128() -> u128 {
