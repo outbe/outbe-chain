@@ -275,7 +275,7 @@ library BridgeMsgCodec {
         uint32 _issuanceEnd,
         uint128 _promisLoadMinor,
         uint32 _minIntexBidRate,
-        IOriginRouter.ReferencePrice[] memory _prices,
+        IOriginRouter.ReferenceCurrencyPrice[] memory _prices,
         uint32 _callNoticePeriod,
         uint32 _callWindow,
         uint32 _callThreshold,
@@ -415,7 +415,7 @@ library BridgeMsgCodec {
             }),
             minIntexBidRate: uint32(bytes4(_msg[34:38])),
             minIntexBidQuantity: uint16(bytes2(_msg[50:52])),
-            prices: new IIntexAuction.ReferencePrice[](0),
+            prices: new IIntexAuction.ReferenceCurrencyPrice[](0),
             commitBondMinor: uint128(bytes16(_msg[52:68]))
         });
 
@@ -423,7 +423,11 @@ library BridgeMsgCodec {
     }
 
     /// @notice Every priced row the message carries.
-    function _referencePrices(bytes calldata _msg) private pure returns (IIntexAuction.ReferencePrice[] memory rows) {
+    function _referencePrices(bytes calldata _msg)
+        private
+        pure
+        returns (IIntexAuction.ReferenceCurrencyPrice[] memory rows)
+    {
         uint256 count = uint8(_msg[69]);
         // Re-checked inbound: more rows than the quoted gas covers would revert and redeliver.
         if (count > MAX_REFERENCE_PRICES) {
@@ -432,10 +436,10 @@ library BridgeMsgCodec {
         if (_msg.length != MIN_LEN_AUCTION_STAGE_START + count * REFERENCE_PRICE_LEN) {
             revert InvalidPayloadLength(MSG_AUCTION_STAGE_START, _msg.length, MIN_LEN_AUCTION_STAGE_START);
         }
-        rows = new IIntexAuction.ReferencePrice[](count);
+        rows = new IIntexAuction.ReferenceCurrencyPrice[](count);
         for (uint256 i = 0; i < count; ++i) {
             uint256 at = MIN_LEN_AUCTION_STAGE_START + i * REFERENCE_PRICE_LEN;
-            rows[i] = IIntexAuction.ReferencePrice({
+            rows[i] = IIntexAuction.ReferenceCurrencyPrice({
                 isoCode: uint16(bytes2(_msg[at:at + 2])),
                 entryPriceMinor: uint64(bytes8(_msg[at + 2:at + 10])),
                 floorPriceMinor: uint64(bytes8(_msg[at + 10:at + 18])),

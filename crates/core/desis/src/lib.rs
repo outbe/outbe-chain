@@ -22,5 +22,5 @@ pub use errors::DesisError;
 pub use hooks::DesisLifecycle;
 pub use runtime::tick_schedule;
 pub use schema::{
-    AuctionConfig, AuctionStage, BidData, ClearingResult, DesisContract, ReferencePrice,
+    AuctionConfig, AuctionStage, BidData, ClearingResult, DesisContract, ReferenceCurrencyPrice,
 };

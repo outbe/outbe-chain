@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {ReferencePriceLib} from "../helpers/ReferencePriceLib.sol";
+import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
@@ -118,7 +118,7 @@ contract UpgradeDrillTest is CrossChainTest {
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
             promisLoadMinor: 1000,
             minIntexBidRate: 1,
-            prices: ReferencePriceLib.onePriced(840, 1, 1, 1),
+            prices: ReferenceCurrencyPriceLib.onePriced(840, 1, 1, 1),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
             minIntexBidQuantity: 1,
             commitBondMinor: 0
@@ -181,7 +181,7 @@ contract UpgradeDrillTest is CrossChainTest {
 
         // Freeze the day's target snapshot, then drop the peer so the clearing leg parks.
         IOriginRouter.AuctionStageStartParams memory p;
-        p.prices = ReferencePriceLib.one(840, 1, 2, 3);
+        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 2, 3);
         p.worldwideDay = day;
         p.dayState = 1;
         vm.prank(address(desisMock));

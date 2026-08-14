@@ -2,7 +2,7 @@
 pragma solidity 0.8.30;
 
 import {BidPackLib} from "../helpers/BidPackLib.sol";
-import {ReferencePriceLib} from "../helpers/ReferencePriceLib.sol";
+import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
@@ -94,7 +94,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     ///      snapshot-membership check. The mock bridge records the broadcast without delivering it.
     function _freezeSnapshot(uint32 day) internal {
         IOriginRouter.AuctionStageStartParams memory p;
-        p.prices = ReferencePriceLib.one(840, 1, 2, 3);
+        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 2, 3);
         p.worldwideDay = day;
         p.dayState = 1;
         vm.prank(address(desis));

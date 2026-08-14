@@ -3,7 +3,7 @@
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
-use outbe_desis::ReferencePrice;
+use outbe_desis::ReferenceCurrencyPrice;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::Result,
@@ -300,7 +300,7 @@ fn resolve_reference_entry_prices(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
     wwd: WorldwideDay,
-) -> Result<Vec<ReferencePrice>> {
+) -> Result<Vec<ReferenceCurrencyPrice>> {
     let last_closed = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
     let storage = metadosis.storage.clone();
     let mut rows = Vec::new();
@@ -311,7 +311,7 @@ fn resolve_reference_entry_prices(
             Err(_) => None,
         };
         match priced {
-            Some(entry_price_minor) => rows.push(ReferencePrice {
+            Some(entry_price_minor) => rows.push(ReferenceCurrencyPrice {
                 iso_code,
                 entry_price_minor,
             }),

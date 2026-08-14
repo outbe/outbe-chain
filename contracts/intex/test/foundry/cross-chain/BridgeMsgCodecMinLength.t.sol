@@ -29,8 +29,9 @@ contract BridgeMsgCodecMinLengthTest is Test {
 
     function test_StageStartFloorIsADayWithNoPricedCurrency() public view {
         // A day the oracle could price in nothing is cancelled, and its message carries no rows.
-        bytes memory smallest =
-            this.encodeStageStart(new IOriginRouter.ReferencePrice[](0), uint8(IIntexAuction.WorldwideDayState.Red));
+        bytes memory smallest = this.encodeStageStart(
+            new IOriginRouter.ReferenceCurrencyPrice[](0), uint8(IIntexAuction.WorldwideDayState.Red)
+        );
         assertEq(smallest.length, BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START, "stage start floor");
 
         (, IIntexAuction.WorldwideDayState dayState,, IIntexAuction.AuctionParams memory params) =
@@ -41,11 +42,13 @@ contract BridgeMsgCodecMinLengthTest is Test {
 
     function test_ALiveDayMustPriceSomething() public {
         vm.expectRevert(BridgeMsgCodec.MissingReferencePrices.selector);
-        this.encodeStageStart(new IOriginRouter.ReferencePrice[](0), uint8(IIntexAuction.WorldwideDayState.Green));
+        this.encodeStageStart(
+            new IOriginRouter.ReferenceCurrencyPrice[](0), uint8(IIntexAuction.WorldwideDayState.Green)
+        );
     }
 
     /// External so the encoder runs one call deep, as a real send does.
-    function encodeStageStart(IOriginRouter.ReferencePrice[] calldata rows, uint8 dayState)
+    function encodeStageStart(IOriginRouter.ReferenceCurrencyPrice[] calldata rows, uint8 dayState)
         external
         pure
         returns (bytes memory)

@@ -126,7 +126,7 @@ interface IOriginRouter {
     }
 
     /// @notice Entry, floor and call price of one reference currency for a day.
-    struct ReferencePrice {
+    struct ReferenceCurrencyPrice {
         uint16 isoCode;
         uint64 entryPriceMinor;
         uint64 floorPriceMinor;
@@ -147,7 +147,7 @@ interface IOriginRouter {
         /// @notice Minimum acceptable bid rate (`1e6` fixed-point, % of the escrow basis).
         uint32 minIntexBidRate;
         /// @notice Entry, floor and call price of every currency the day can clear in.
-        ReferencePrice[] prices;
+        ReferenceCurrencyPrice[] prices;
         /// @notice Called→deadline window in seconds (0 = default).
         uint32 callNoticePeriod;
         /// @notice Call-trigger observation window in seconds.

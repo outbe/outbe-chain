@@ -13,7 +13,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
 use crate::runtime;
-use crate::schema::ReferencePrice;
+use crate::schema::ReferenceCurrencyPrice;
 
 /// Apply a GREEN day's immutable `auction_base` and return the canonical hash
 /// committed by `RequestBudgetSplitReceiptV1`.
@@ -43,7 +43,7 @@ pub fn apply_request_auction_base(
             supply_u128,
             auction_entry_prices
                 .iter()
-                .map(|row| ReferencePrice {
+                .map(|row| ReferenceCurrencyPrice {
                     iso_code: row.reference_currency,
                     entry_price_minor: row.entry_price_minor,
                 })

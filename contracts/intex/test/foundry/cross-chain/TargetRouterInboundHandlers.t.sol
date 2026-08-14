@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {ReferencePriceLib} from "../helpers/ReferencePriceLib.sol";
+import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
@@ -310,7 +310,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
             promisLoadMinor: PROMIS_LOAD_MINOR,
             minIntexBidRate: 60e6,
-            prices: ReferencePriceLib.onePriced(840, ENTRY_PRICE, FLOOR_PRICE_MINOR, ENTRY_PRICE),
+            prices: ReferenceCurrencyPriceLib.onePriced(840, ENTRY_PRICE, FLOOR_PRICE_MINOR, ENTRY_PRICE),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
             minIntexBidQuantity: 1,
             commitBondMinor: 0

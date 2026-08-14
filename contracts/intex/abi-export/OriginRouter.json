@@ -455,7 +455,7 @@
             {
               "name": "prices",
               "type": "tuple[]",
-              "internalType": "struct IOriginRouter.ReferencePrice[]",
+              "internalType": "struct IOriginRouter.ReferenceCurrencyPrice[]",
               "components": [
                 {
                   "name": "isoCode",
@@ -918,7 +918,7 @@
             {
               "name": "prices",
               "type": "tuple[]",
-              "internalType": "struct IOriginRouter.ReferencePrice[]",
+              "internalType": "struct IOriginRouter.ReferenceCurrencyPrice[]",
               "components": [
                 {
                   "name": "isoCode",

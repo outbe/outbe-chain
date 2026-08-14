@@ -2895,7 +2895,7 @@ fn technical_desis_refusal_rolls_back_the_metadosis_cycle_command() {
                 storage.clone(),
                 wwd,
                 U256::from(1_u8),
-                vec![outbe_desis::ReferencePrice {
+                vec![outbe_desis::ReferenceCurrencyPrice {
                     iso_code: 840,
                     entry_price_minor: U256::from(1_u8),
                 }],

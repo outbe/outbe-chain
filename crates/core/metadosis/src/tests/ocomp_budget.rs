@@ -245,7 +245,7 @@ fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
             storage.clone(),
             wwd,
             U256::from(7),
-            vec![outbe_desis::ReferencePrice {
+            vec![outbe_desis::ReferenceCurrencyPrice {
                 iso_code: 840,
                 entry_price_minor: U256::from(3),
             }],

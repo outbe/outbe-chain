@@ -163,7 +163,7 @@
             {
               "name": "prices",
               "type": "tuple[]",
-              "internalType": "struct IIntexAuction.ReferencePrice[]",
+              "internalType": "struct IIntexAuction.ReferenceCurrencyPrice[]",
               "components": [
                 {
                   "name": "isoCode",
@@ -281,7 +281,7 @@
             {
               "name": "prices",
               "type": "tuple[]",
-              "internalType": "struct IIntexAuction.ReferencePrice[]",
+              "internalType": "struct IIntexAuction.ReferenceCurrencyPrice[]",
               "components": [
                 {
                   "name": "isoCode",
@@ -587,7 +587,7 @@
                 {
                   "name": "prices",
                   "type": "tuple[]",
-                  "internalType": "struct IIntexAuction.ReferencePrice[]",
+                  "internalType": "struct IIntexAuction.ReferenceCurrencyPrice[]",
                   "components": [
                     {
                       "name": "isoCode",
@@ -775,7 +775,7 @@
                 {
                   "name": "prices",
                   "type": "tuple[]",
-                  "internalType": "struct IIntexAuction.ReferencePrice[]",
+                  "internalType": "struct IIntexAuction.ReferenceCurrencyPrice[]",
                   "components": [
                     {
                       "name": "isoCode",

@@ -21,7 +21,7 @@ use crate::constants::{
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
 use crate::schema::{
-    AuctionConfig, AuctionStage, BidData, ClearingResult, DesisContract, ReferencePrice,
+    AuctionConfig, AuctionStage, BidData, ClearingResult, DesisContract, ReferenceCurrencyPrice,
 };
 use crate::sol_ext::IOriginRouter;
 
@@ -36,7 +36,7 @@ pub fn record_brief(
     storage: StorageHandle<'_>,
     worldwide_day: WorldwideDay,
     supply_promis: u128,
-    reference_prices: Vec<ReferencePrice>,
+    reference_prices: Vec<ReferenceCurrencyPrice>,
     is_green: bool,
     now: u64,
 ) -> Result<()> {
@@ -86,7 +86,7 @@ pub(crate) fn record_preflighted_brief(
     storage: StorageHandle<'_>,
     worldwide_day: WorldwideDay,
     supply_promis: u128,
-    reference_prices: Vec<ReferencePrice>,
+    reference_prices: Vec<ReferenceCurrencyPrice>,
     is_green: bool,
     anchor: u32,
 ) -> Result<()> {
@@ -114,12 +114,12 @@ pub(crate) fn record_preflighted_brief(
 fn choose_reference_prices(
     contract: &mut DesisContract<'_>,
     worldwide_day: WorldwideDay,
-    mut rows: Vec<ReferencePrice>,
-) -> Result<Vec<ReferencePrice>> {
+    mut rows: Vec<ReferenceCurrencyPrice>,
+) -> Result<Vec<ReferenceCurrencyPrice>> {
     rows.sort_by_key(|row| row.iso_code);
 
     let letter_of = |iso_code: u16| SeriesId::currency_code(iso_code).map(|code| code[0]).ok();
-    let mut kept: Vec<ReferencePrice> = Vec::with_capacity(rows.len());
+    let mut kept: Vec<ReferenceCurrencyPrice> = Vec::with_capacity(rows.len());
     for row in rows {
         let Some(letter) = letter_of(row.iso_code) else {
             continue;
@@ -191,7 +191,7 @@ fn send_stage_start(
     for row in &config.reference_prices {
         let floor = outbe_intexfactory::marked_up(row.entry_price_minor, iparams.floor_rate)?;
         let call = outbe_intexfactory::marked_up(row.entry_price_minor, iparams.call_rate)?;
-        prices.push(IOriginRouter::ReferencePrice {
+        prices.push(IOriginRouter::ReferenceCurrencyPrice {
             isoCode: row.iso_code,
             entryPriceMinor: outbe_intexfactory::to_wire_price(row.entry_price_minor)?,
             floorPriceMinor: outbe_intexfactory::to_wire_price(floor)?,

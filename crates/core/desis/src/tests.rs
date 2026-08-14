@@ -141,8 +141,8 @@ fn frozen_entry_prices() -> Vec<outbe_ocomp_protocol::intent::ReferenceEntryPric
 }
 
 /// The single priced reference currency the fixtures brief with.
-fn entry_price_rows() -> Vec<crate::schema::ReferencePrice> {
-    vec![crate::schema::ReferencePrice {
+fn entry_price_rows() -> Vec<crate::schema::ReferenceCurrencyPrice> {
+    vec![crate::schema::ReferenceCurrencyPrice {
         iso_code: REFERENCE_ISO,
         entry_price_minor: U256::from(ENTRY_PRICE),
     }]
@@ -1877,7 +1877,7 @@ fn test_iface_id_matches_selector_xor() {
 fn open_clearing_priced(s: &StorageHandle, units: u128, references: &[u16]) {
     let rows = references
         .iter()
-        .map(|&iso_code| crate::schema::ReferencePrice {
+        .map(|&iso_code| crate::schema::ReferenceCurrencyPrice {
             iso_code,
             entry_price_minor: U256::from(ENTRY_PRICE) * U256::from(iso_code),
         })
@@ -2000,7 +2000,7 @@ fn clearing_without_winners_discards_the_day_contributor_map() {
 #[test]
 fn escrow_basis_is_promis_load() {
     // wCOEN escrow basis = promis_load per Intex; entry no longer drives it.
-    let cfg = AuctionConfig::from_reference_prices(vec![crate::schema::ReferencePrice {
+    let cfg = AuctionConfig::from_reference_prices(vec![crate::schema::ReferenceCurrencyPrice {
         iso_code: REFERENCE_ISO,
         entry_price_minor: U256::from(1_000_000_150_000_000u128),
     }]);

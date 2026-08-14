@@ -53,7 +53,7 @@ pub struct IntexCallTrigger {
 
 /// Entry price of one reference currency, captured at the brief.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReferencePrice {
+pub struct ReferenceCurrencyPrice {
     pub iso_code: u16,
     /// Per-unit entry price (1e18 oracle scale); floor and call derive from it.
     pub entry_price_minor: U256,
@@ -73,7 +73,7 @@ pub struct AuctionConfig {
     /// Commit-entry bond (payment-token 18-dec minor units); 0 disables the bond.
     pub commit_bond_minor: u128,
     /// One row per reference currency the oracle could price for this day.
-    pub reference_prices: Vec<ReferencePrice>,
+    pub reference_prices: Vec<ReferenceCurrencyPrice>,
 }
 
 impl AuctionConfig {
@@ -83,7 +83,7 @@ impl AuctionConfig {
     /// `min_intex_bid_quantity` and `commit_bond_minor` are left at their defaults
     /// here and populated at auction start (`start_auction`), where the genesis
     /// `IntexParams` and the prior-clearing count are in reach.
-    pub fn from_reference_prices(reference_prices: Vec<ReferencePrice>) -> Self {
+    pub fn from_reference_prices(reference_prices: Vec<ReferenceCurrencyPrice>) -> Self {
         Self {
             promis_load_minor: PROMIS_LOAD.saturating_mul(SCALE_1E18_U128),
             call_trigger: IntexCallTrigger::default(),

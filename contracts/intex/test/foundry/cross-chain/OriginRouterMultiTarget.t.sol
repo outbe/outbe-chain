@@ -2,7 +2,7 @@
 pragma solidity 0.8.30;
 
 import {BidPackLib} from "../helpers/BidPackLib.sol";
-import {ReferencePriceLib} from "../helpers/ReferencePriceLib.sol";
+import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
@@ -39,7 +39,7 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
     }
 
     function _params(uint32 day) internal pure returns (IOriginRouter.AuctionStageStartParams memory p) {
-        p.prices = ReferencePriceLib.one(840, 1, 2, 3);
+        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 2, 3);
         p.worldwideDay = day;
         p.dayState = 1;
     }

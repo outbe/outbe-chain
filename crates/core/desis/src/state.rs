@@ -5,7 +5,7 @@ use outbe_common::WorldwideDay;
 use outbe_primitives::error::Result;
 
 use crate::schema::{
-    AuctionConfig, AuctionStage, BidData, DesisContract, IntexCallTrigger, ReferencePrice,
+    AuctionConfig, AuctionStage, BidData, DesisContract, IntexCallTrigger, ReferenceCurrencyPrice,
 };
 
 impl DesisContract<'_> {
@@ -47,12 +47,12 @@ impl DesisContract<'_> {
     pub(crate) fn read_reference_prices(
         &self,
         worldwide_day: WorldwideDay,
-    ) -> Result<Vec<ReferencePrice>> {
+    ) -> Result<Vec<ReferenceCurrencyPrice>> {
         let count = self.reference_price_count.read(&worldwide_day)?;
         let mut rows = Vec::with_capacity(count as usize);
         for index in 0..count {
             let key = Self::reference_price_key(worldwide_day, index);
-            rows.push(ReferencePrice {
+            rows.push(ReferenceCurrencyPrice {
                 iso_code: self.reference_price_iso.read(&key)? as u16,
                 entry_price_minor: self.reference_price_entry.read(&key)?,
             });

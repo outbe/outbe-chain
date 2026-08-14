@@ -66,7 +66,7 @@ interface IIntexAuction {
     }
 
     /// @notice Entry, floor and call price of one reference currency for a day.
-    struct ReferencePrice {
+    struct ReferenceCurrencyPrice {
         uint16 isoCode;
         uint64 entryPriceMinor;
         uint64 floorPriceMinor;
@@ -85,7 +85,7 @@ interface IIntexAuction {
         uint16 minIntexBidQuantity;
         /// @notice One row per currency the day can clear in; the bid's reference
         ///         currency must appear here.
-        ReferencePrice[] prices;
+        ReferenceCurrencyPrice[] prices;
         /// @notice Entry bond (payment-token minor units) taken at `commitBid` and returned on
         ///         reveal/cancel; 0 disables the bond.
         uint128 commitBondMinor;

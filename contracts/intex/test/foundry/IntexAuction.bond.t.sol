@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {ReferencePriceLib} from "./helpers/ReferencePriceLib.sol";
+import {ReferenceCurrencyPriceLib} from "./helpers/ReferenceCurrencyPriceLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {IERC6909} from "@openzeppelin/contracts/interfaces/IERC6909.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
@@ -88,7 +88,7 @@ contract IntexAuctionBondTest is Test {
         return IIntexAuction.AuctionParams({
             promisLoadMinor: PROMIS_LOAD_MINOR,
             minIntexBidRate: 1,
-            prices: ReferencePriceLib.onePriced(840, ENTRY_PRICE, 100, 200),
+            prices: ReferenceCurrencyPriceLib.onePriced(840, ENTRY_PRICE, 100, 200),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
             minIntexBidQuantity: 1,
             commitBondMinor: bond

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {ReferencePriceLib} from "../helpers/ReferencePriceLib.sol";
+import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
@@ -96,7 +96,7 @@ contract OriginRouterTest is CrossChainTest {
             issuanceEnd: uint32(block.timestamp + 7200),
             promisLoadMinor: 1000,
             minIntexBidRate: 50e6,
-            prices: ReferencePriceLib.one(840, 100e6, 50e6, 25e6),
+            prices: ReferenceCurrencyPriceLib.one(840, 100e6, 50e6, 25e6),
             callNoticePeriod: 0,
             callWindow: 0,
             callThreshold: 0,

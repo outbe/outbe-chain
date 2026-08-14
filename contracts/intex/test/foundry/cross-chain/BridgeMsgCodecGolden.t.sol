@@ -2,7 +2,7 @@
 pragma solidity 0.8.30;
 
 import {BidPackLib} from "../helpers/BidPackLib.sol";
-import {ReferencePriceLib} from "../helpers/ReferencePriceLib.sol";
+import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
@@ -20,7 +20,7 @@ contract BridgeMsgCodecGoldenTest is Test {
             0xDDEEFF00,
             0x0102030405060708090A0B0C0D0E0F10,
             0x1A2B3C4D,
-            ReferencePriceLib.one(0xD1D2, 0x1122334455667788, 0x99AABBCCDDEEFF00, 0xA1B2C3D4E5F60718),
+            ReferenceCurrencyPriceLib.one(0xD1D2, 0x1122334455667788, 0x99AABBCCDDEEFF00, 0xA1B2C3D4E5F60718),
             0xCAFEBABE,
             0x5678,
             0x9ABC,
@@ -96,7 +96,7 @@ contract BridgeMsgCodecGoldenTest is Test {
                 0xDDEEFF00,
                 0x0102030405060708090A0B0C0D0E0F10,
                 0x1A2B3C4D,
-                ReferencePriceLib.one(0xD1D2, 0x1122334455667788, 0x99AABBCCDDEEFF00, 0xA1B2C3D4E5F60718),
+                ReferenceCurrencyPriceLib.one(0xD1D2, 0x1122334455667788, 0x99AABBCCDDEEFF00, 0xA1B2C3D4E5F60718),
                 0xCAFEBABE,
                 0x5678,
                 0x9ABC,

@@ -441,7 +441,7 @@ contract IntexAuction is
     }
 
     /// @dev Reverts unless the day carries a price for `isoCode`.
-    function _requirePriced(IIntexAuction.ReferencePrice[] storage rows, uint32 worldwideDay, uint16 isoCode)
+    function _requirePriced(IIntexAuction.ReferenceCurrencyPrice[] storage rows, uint32 worldwideDay, uint16 isoCode)
         private
         view
     {
