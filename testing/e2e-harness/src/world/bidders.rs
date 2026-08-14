@@ -19,12 +19,22 @@ sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IAuctionBids {
         function commitBid(uint32 worldwideDay, bytes32 commitHash) external;
-        function revealBid(uint32 worldwideDay, uint16 quantity, uint32 bidRate, uint64 chainId, bytes memory signature)
-            external;
+        function revealBid(
+            uint32 worldwideDay,
+            uint16 quantity,
+            uint32 bidRate,
+            uint16 issuanceCurrency,
+            uint16 referenceCurrency,
+            uint64 chainId,
+            bytes memory signature
+        ) external;
     }
 }
 
 const BIDDER_NATIVE_WEI: u128 = 1_000_000_000_000_000_000;
+
+/// The single-currency day both the issuance and reference sides carry.
+const DAY_CURRENCY: u16 = 840;
 
 #[derive(Clone, Debug)]
 pub struct Bidder {
@@ -93,7 +103,8 @@ pub fn fund(
 
 fn bid_digest(auction: Address, chain_id: u64, worldwide_day: u32, bidder: &Bidder) -> B256 {
     let type_hash = keccak256(
-        b"RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate)".as_slice(),
+        b"RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
+            .as_slice(),
     );
     let struct_hash = keccak256(
         (
@@ -102,6 +113,8 @@ fn bid_digest(auction: Address, chain_id: u64, worldwide_day: u32, bidder: &Bidd
             bidder.address,
             bidder.quantity,
             bidder.bid_rate,
+            DAY_CURRENCY,
+            DAY_CURRENCY,
         )
             .abi_encode(),
     );
@@ -182,6 +195,8 @@ pub fn reveal(
                 worldwideDay: worldwide_day,
                 quantity: bidder.quantity,
                 bidRate: bidder.bid_rate,
+                issuanceCurrency: DAY_CURRENCY,
+                referenceCurrency: DAY_CURRENCY,
                 chainId: chain_id,
                 signature: signature.into(),
             },
