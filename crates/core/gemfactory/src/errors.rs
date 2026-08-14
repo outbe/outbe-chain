@@ -44,8 +44,11 @@ pub enum GemFactoryError {
     #[error("invalid asset")]
     InvalidAsset,
 
-    #[error("settlement asset iso {asset} does not match settlement currency {expected}")]
-    SettlementCurrencyMismatch { asset: u16, expected: u16 },
+    #[error("settlement asset {asset} is not registered for settlement currency {expected}")]
+    SettlementCurrencyMismatch {
+        asset: alloy_primitives::Address,
+        expected: u16,
+    },
 
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
@@ -55,6 +58,9 @@ pub enum GemFactoryError {
 
     #[error("issuance currency {iso_code} is not registered")]
     IssuanceCurrencyNotRegistered { iso_code: u16 },
+
+    #[error("{currency} is not an ISO 4217 currency code")]
+    InvalidCurrency { currency: u16 },
 
     #[error("issuance currency {issuance} must equal reference currency {reference}")]
     IssuanceReferenceMismatch { issuance: u16, reference: u16 },

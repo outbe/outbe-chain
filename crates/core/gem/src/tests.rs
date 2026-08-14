@@ -1,5 +1,7 @@
 use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
+use outbe_oracle::schema::OracleContract;
+use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::math::tree_math;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -147,23 +149,23 @@ fn qualify_respects_state_and_floor() {
         let floor = U256::from(540_000_000_000_000_000u128);
 
         // Rate equals floor (strict `>`) — must NOT qualify.
-        assert!(!gem.qualify(gem_id, T_NOW, floor).unwrap());
+        assert!(!gem.qualify(gem_id, T_NOW, 840, floor).unwrap());
 
         // Rate below floor.
         assert!(!gem
-            .qualify(gem_id, T_NOW, floor - U256::from(1u64))
+            .qualify(gem_id, T_NOW, 840, floor - U256::from(1u64))
             .unwrap());
 
         // Rate strictly above floor — qualifies.
         assert!(gem
-            .qualify(gem_id, T_NOW, floor + U256::from(1u64))
+            .qualify(gem_id, T_NOW, 840, floor + U256::from(1u64))
             .unwrap());
         let after = gem.get_gem(gem_id).unwrap().unwrap();
         assert_eq!(after.state, GemState::Qualified as u8);
 
         // Second qualify is a no-op (already qualified).
         assert!(!gem
-            .qualify(gem_id, T_NOW, floor + U256::from(1u64))
+            .qualify(gem_id, T_NOW, 840, floor + U256::from(1u64))
             .unwrap());
     });
 }
@@ -175,14 +177,19 @@ fn add_gem_parks_issued_in_bin_tree() {
         let gem = GemContract::new(storage.clone());
         let floor = U256::from(540_000_000_000_000_000u128);
         let bin = GemContract::price_to_bin(floor).unwrap();
-        assert_eq!(gem.unqualified_bin_count.read(&bin).unwrap(), 1);
+        assert_eq!(
+            gem.unqualified_bin_count
+                .read(&GemContract::scoped(840, bin))
+                .unwrap(),
+            1
+        );
         assert_eq!(
             gem.unqualified_bin_gems
-                .read(&GemContract::bin_index_key(bin, 0))
+                .read(&GemContract::bin_index_key(840, bin, 0))
                 .unwrap(),
             gem_id
         );
-        assert!(tree_math::contains(&gem, bin).unwrap());
+        assert!(tree_math::contains(&crate::state::CurrencyBins(&gem, 840), bin).unwrap());
     });
 }
 
@@ -195,10 +202,15 @@ fn qualify_removes_from_bin_tree() {
         let bin = GemContract::price_to_bin(floor).unwrap();
 
         assert!(gem
-            .qualify(gem_id, T_NOW, floor + U256::from(1u64))
+            .qualify(gem_id, T_NOW, 840, floor + U256::from(1u64))
             .unwrap());
-        assert_eq!(gem.unqualified_bin_count.read(&bin).unwrap(), 0);
-        assert!(!tree_math::contains(&gem, bin).unwrap());
+        assert_eq!(
+            gem.unqualified_bin_count
+                .read(&GemContract::scoped(840, bin))
+                .unwrap(),
+            0
+        );
+        assert!(!tree_math::contains(&crate::state::CurrencyBins(&gem, 840), bin).unwrap());
     });
 }
 
@@ -211,8 +223,13 @@ fn add_gem_qualified_initial_state_skips_bin_tree() {
         let _gem_id = api::add_gem(storage, p.clone()).unwrap();
         let gem = GemContract::new(storage.clone());
         let bin = GemContract::price_to_bin(p.floor_price_minor).unwrap();
-        assert_eq!(gem.unqualified_bin_count.read(&bin).unwrap(), 0);
-        assert!(!tree_math::contains(&gem, bin).unwrap());
+        assert_eq!(
+            gem.unqualified_bin_count
+                .read(&GemContract::scoped(840, bin))
+                .unwrap(),
+            0
+        );
+        assert!(!tree_math::contains(&crate::state::CurrencyBins(&gem, 840), bin).unwrap());
     });
 }
 
@@ -231,13 +248,202 @@ fn scan_skips_bins_above_rate() {
         let rate = U256::from(500_000_000_000_000_000u128);
 
         // Direct qualify call on low gem: passes (floor 0.1 < rate 0.5).
-        assert!(gem.qualify(low_id, T_NOW, rate).unwrap());
+        assert!(gem.qualify(low_id, T_NOW, 840, rate).unwrap());
 
         // High gem stays Issued (rate 0.5 < floor 0.9). It must still be
         // in its bin and the bin must still be set in the trie.
         let high_bin = GemContract::price_to_bin(high.floor_price_minor).unwrap();
-        assert_eq!(gem.unqualified_bin_count.read(&high_bin).unwrap(), 1);
-        assert!(tree_math::contains(&gem, high_bin).unwrap());
+        assert_eq!(
+            gem.unqualified_bin_count
+                .read(&GemContract::scoped(840, high_bin))
+                .unwrap(),
+            1
+        );
+        assert!(tree_math::contains(&crate::state::CurrencyBins(&gem, 840), high_bin).unwrap());
+    });
+}
+
+const EUR: u16 = 978;
+
+/// Registers `iso_code` as a reference currency, and its `COEN/<iso>` pair when
+/// `rate` is given. Returns the pair index, or 0 when no pair was registered.
+fn seed_currency(storage: &StorageHandle, iso_code: u16, rate: Option<U256>) -> u32 {
+    let oracle = OracleContract::new(storage.clone());
+    oracle.reference_currencies.push(iso_code).unwrap();
+    let Some(rate) = rate else {
+        return 0;
+    };
+    let index =
+        outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(iso_code))
+            .unwrap();
+    oracle.exchange_rate.write(&index, rate).unwrap();
+    index
+}
+
+fn block_ctx<'s>(storage: &StorageHandle<'s>) -> outbe_primitives::block::BlockRuntimeContext<'s> {
+    outbe_primitives::block::BlockRuntimeContext::new(
+        outbe_primitives::block::BlockContext::empty_for_tests(1, T_NOW, 1),
+        storage.clone(),
+    )
+}
+
+fn eur_gem(storage: &StorageHandle) -> U256 {
+    let mut p = sample_params(BOB);
+    p.reference_currency = EUR;
+    api::add_gem(storage, p).unwrap()
+}
+
+/// The bin ladder is shared across currencies, so both gems below sit in the
+/// same bin: each must be promoted only by its own currency's rate.
+#[test]
+fn scan_qualifies_each_currency_against_its_own_rate() {
+    with_storage(|storage| {
+        let usd_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
+        let eur_id = eur_gem(storage);
+        let floor = sample_params(ALICE).floor_price_minor;
+        assert_eq!(
+            GemContract::price_to_bin(floor).unwrap(),
+            GemContract::price_to_bin(sample_params(BOB).floor_price_minor).unwrap()
+        );
+
+        seed_currency(storage, 840, Some(floor + U256::from(1u64)));
+        seed_currency(storage, EUR, Some(floor - U256::from(1u64)));
+
+        crate::hooks::scan_and_qualify(&block_ctx(storage)).unwrap();
+        assert_eq!(
+            api::get_gem(storage, usd_id).unwrap().unwrap().state,
+            GemState::Qualified as u8
+        );
+        assert_eq!(
+            api::get_gem(storage, eur_id).unwrap().unwrap().state,
+            GemState::Issued as u8
+        );
+    });
+}
+
+/// A registry entry whose COEN pair is unregistered must skip that currency for
+/// the block, not halt the scan for the currencies that are priced.
+#[test]
+fn scan_skips_a_currency_without_a_priced_pair() {
+    with_storage(|storage| {
+        let usd_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
+        let eur_id = eur_gem(storage);
+        let floor = sample_params(ALICE).floor_price_minor;
+
+        seed_currency(storage, 840, Some(floor + U256::from(1u64)));
+        seed_currency(storage, EUR, None);
+
+        crate::hooks::scan_and_qualify(&block_ctx(storage)).unwrap();
+        assert_eq!(
+            api::get_gem(storage, usd_id).unwrap().unwrap().state,
+            GemState::Qualified as u8
+        );
+        assert_eq!(
+            api::get_gem(storage, eur_id).unwrap().unwrap().state,
+            GemState::Issued as u8
+        );
+    });
+}
+
+/// A sweep cut short by the budget must resume from its persisted bin cursor.
+#[test]
+fn qualify_resumes_from_the_bin_cursor_after_the_budget_runs_out() {
+    with_storage(|storage| {
+        let mut low = sample_params(ALICE);
+        low.floor_price_minor = U256::from(100_000_000_000_000_000u128);
+        let low_id = api::add_gem(storage, low).unwrap();
+        let mut high = sample_params(BOB);
+        high.floor_price_minor = U256::from(200_000_000_000_000_000u128);
+        let high_id = api::add_gem(storage, high).unwrap();
+
+        let rate = U256::from(500_000_000_000_000_000u128);
+        let ctx = block_ctx(storage);
+
+        // Budget of one: only the lower bin is drained this block.
+        assert_eq!(
+            crate::hooks::qualify_with_rate(&ctx, 840, rate, 1).unwrap(),
+            1
+        );
+        assert_eq!(
+            api::get_gem(storage, high_id).unwrap().unwrap().state,
+            GemState::Issued as u8
+        );
+        assert!(
+            GemContract::new(storage.clone())
+                .qualify_scan_cursor
+                .read(&840)
+                .unwrap()
+                > 0
+        );
+
+        // Next block picks up where it stopped, then resets for a fresh sweep.
+        assert_eq!(
+            crate::hooks::qualify_with_rate(&ctx, 840, rate, 256).unwrap(),
+            1
+        );
+        for id in [low_id, high_id] {
+            assert_eq!(
+                api::get_gem(storage, id).unwrap().unwrap().state,
+                GemState::Qualified as u8
+            );
+        }
+        assert_eq!(
+            GemContract::new(storage.clone())
+                .qualify_scan_cursor
+                .read(&840)
+                .unwrap(),
+            0
+        );
+    });
+}
+
+/// `callable_gems` mixes currencies, so the call scan must read each gem's
+/// breaches off its own `COEN/<iso>` VWAP window.
+#[test]
+fn call_scan_reads_each_gem_own_pair_window() {
+    with_storage(|storage| {
+        let usd_id = qualified_gem(storage);
+        let mut p = sample_params(BOB);
+        p.reference_currency = EUR;
+        p.issued_at = T_NOW - 100 * 86_400;
+        let eur_id = api::add_gem(storage, p).unwrap();
+        api::set_state(storage, eur_id, GemState::Qualified).unwrap();
+
+        let rate = U256::from(600_000_000_000_000_000u128);
+        seed_currency(storage, 840, Some(rate));
+        let eur_pair = seed_currency(storage, EUR, Some(rate));
+
+        // Only the EUR pair breaches: the USD pair has no published VWAPs.
+        let breach = api::get_gem(storage, eur_id)
+            .unwrap()
+            .unwrap()
+            .call_price_minor
+            + U256::from(1u64);
+        let oracle = OracleContract::new(storage.clone());
+        let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
+        let mut day = last_closed_day;
+        for _ in 0..(crate::constants::CALL_THRESHOLD / 86_400) {
+            oracle
+                .utc_day_vwap_value
+                .get_nested(&day)
+                .write(&eur_pair, breach)
+                .unwrap();
+            day = previous_date_key(day);
+        }
+        oracle
+            .utc_day_vwap_last_finalized
+            .write(last_closed_day)
+            .unwrap();
+
+        assert_eq!(crate::hooks::scan_and_call(&block_ctx(storage)).unwrap(), 1);
+        assert_eq!(
+            api::get_gem(storage, eur_id).unwrap().unwrap().state,
+            GemState::Called as u8
+        );
+        assert_eq!(
+            api::get_gem(storage, usd_id).unwrap().unwrap().state,
+            GemState::Qualified as u8
+        );
     });
 }
 

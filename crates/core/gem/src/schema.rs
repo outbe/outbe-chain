@@ -126,17 +126,22 @@ pub struct GemContract {
     pub gem_index: outbe_primitives::storage::dsl::Map<U256, u32>,
 
     // --- Unqualified-gem bin index (PancakeSwap LB-style 3-level radix-256 trie) ---
+    //
+    // A floor price is only comparable to the COEN rate of its own reference
+    // currency, so every column here is namespaced by ISO code and each currency
+    // walks an independent trie. See `state::CurrencyBins`.
     #[attribute(order = 6)]
-    pub bin_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    pub bin_tree_root: outbe_primitives::storage::dsl::Map<u16, U256>,
 
+    // Keyed by `state::scoped(iso, trie key)`.
     #[attribute(order = 7)]
-    pub bin_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
 
     #[attribute(order = 8)]
-    pub bin_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
 
     #[attribute(order = 9)]
-    pub unqualified_bin_count: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub unqualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
 
     #[attribute(order = 10)]
     pub unqualified_bin_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
@@ -151,6 +156,11 @@ pub struct GemContract {
 
     #[attribute(order = 12)]
     pub callable_gem_index: outbe_primitives::storage::dsl::Map<U256, u32>,
+
+    /// Next bin the qualify scan visits, per reference currency. Non-zero only
+    /// while a sweep was cut short by the per-block budget.
+    #[attribute(order = 13)]
+    pub qualify_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 }
 
 impl GemContract<'_> {
