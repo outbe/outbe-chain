@@ -22,6 +22,7 @@ pub mod payload;
 pub mod projection;
 pub mod protocol_schedule;
 pub mod reshare_artifact;
+pub mod runtime_audit_v1;
 pub mod signer;
 pub mod slashing_journal;
 pub mod stablecoin;

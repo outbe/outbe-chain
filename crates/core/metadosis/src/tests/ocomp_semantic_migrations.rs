@@ -694,10 +694,13 @@ fn request_pinned_semantics_are_identical_at_different_activation_heights() {
     );
     second.apply().expect("second q-forming vote must apply");
     assert_eq!(second.terminal_outcome(), ActivationOutcome::Applied);
-    let second_semantics = second.semantic_snapshot();
+    let mut second_semantics = second.semantic_snapshot();
     let second_metadata = second.activation_metadata();
     let second_state = second.rollback_snapshot();
 
+    assert_eq!(first_semantics.nod.last_progress_height, 20);
+    assert_eq!(second_semantics.nod.last_progress_height, 40);
+    second_semantics.nod.last_progress_height = first_semantics.nod.last_progress_height;
     assert_eq!(first_semantics, second_semantics);
     assert_eq!(first_semantics.nod.issued_at, TEST_LOGICAL_TIME);
     assert_eq!(

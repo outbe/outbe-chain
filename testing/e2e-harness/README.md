@@ -168,8 +168,8 @@ Actually executing a scenario needs a Linux box with `sudo` + `docker` + `gramin
 (same prerequisites as `mise run e2e`). First build the binaries the steps call:
 
 ```sh
-cargo build -p outbe-chain --bin outbe-chain
-cargo build --bin outbe-cli
+cargo build --release -p outbe-chain --features test-protocol-overrides --bin outbe-chain
+cargo build --release --bin outbe-cli
 cargo build --release -p outbe-tee-enclave --bin outbe-tee-enclave
 cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
 ```
@@ -179,10 +179,10 @@ Then, e.g.:
 ```sh
 # Omit --projection-mongodb-uri to use the harness-owned replica set.
 # Through the mock enclave on an isolated GramineDirectDev chain.
-cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
+cargo run --release -p outbe-e2e-harness --bin outbe-e2e -- \
   --tee mock --validators 4
 # a fully-capable box: everything must run (unmet ⇒ fail, not skip)
-cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
+cargo run --release -p outbe-e2e-harness --bin outbe-e2e -- \
   --tee mock --validators 4 --all
 ```
 
@@ -197,10 +197,10 @@ After integration with the current node/Supervisor/worker transport, run the
 focused process lanes:
 
 ```sh
-cargo run --locked -p outbe-e2e-harness --features ocomp-integration \
+cargo run --locked --release -p outbe-e2e-harness --features ocomp-integration \
   --bin outbe-e2e -- --tee mock --validators 4 --all \
   --tags '@ocomp-dynamic-admission'
-cargo run --locked -p outbe-e2e-harness --features ocomp-integration \
+cargo run --locked --release -p outbe-e2e-harness --features ocomp-integration \
   --bin outbe-e2e -- --tee mock --validators 4 --all \
   --tags '@ocomp-dynamic-overlap'
 ```
@@ -289,7 +289,7 @@ for their deployment topology.
 Run only ZeroFee's native Alloy EIP-7702 set-code and sponsorship vertical slice:
 
 ```sh
-cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
+cargo run --release -p outbe-e2e-harness --bin outbe-e2e -- \
   --tee mock --validators 4 --all \
   --input testing/e2e-harness/features/zerofee.feature
 ```
@@ -311,7 +311,7 @@ captured and only printed if a setup step fails.
 an immutable bundle/image/sealed-state fixture, not validators or MongoDB:
 
 ```bash
-cargo run -p outbe-e2e-harness --bin outbe-release-sgx-e2e -- \
+cargo run --release -p outbe-e2e-harness --bin outbe-release-sgx-e2e -- \
   --image 'ghcr.io/outbe/outbe-tee-enclave-testnet@sha256:<64-hex-digest>' \
   --bundle /tmp/extracted-signed-sgx-bundle \
   --evidence /tmp/hardware-sgx.json
@@ -365,7 +365,7 @@ untracked file is a release failure; the harness never synthesizes a replacement
 Run the complete Tribute compressed-entity feature (happy path and edge cases):
 
 ```sh
-cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
+cargo run --release -p outbe-e2e-harness --bin outbe-e2e -- \
   --tee gramine-direct \
   --validators 4 \
   --input 'testing/e2e-harness/features/tribute.feature'
@@ -374,7 +374,7 @@ cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
 Run only the creation happy path:
 
 ```sh
-cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
+cargo run --release -p outbe-e2e-harness --bin outbe-e2e -- \
   --tee gramine-direct \
   --validators 4 \
   --name "One public Tribute has complete projection and duplicate protection"

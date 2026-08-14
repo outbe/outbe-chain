@@ -92,10 +92,10 @@ fn canonical_ocomp_base_fixture_has_only_bootstrap_authorities() {
     );
     assert_genesis_epoch_matches_validator_set(&genesis);
     assert_eq!(
-        outbe_chain_constants::GenesisProtocolParametersV1::from_materialized_genesis(&genesis)
-            .expect("canonical base genesis materializes immutable chain constants"),
+        outbe_chain_constants::GenesisProtocolParametersV1::from_genesis(&genesis)
+            .expect("canonical base genesis resolves protocol parameters"),
         outbe_chain_constants::GenesisProtocolParametersV1::default(),
-        "canonical fixture without explicit overrides must materialize production defaults"
+        "canonical fixture without explicit overrides must resolve production defaults"
     );
 
     for forbidden in ["data", "logs", "ocomp", "tee", "node.log", "enclave.log"] {
@@ -155,8 +155,8 @@ fn canonical_final_artifacts_are_complete_hash_bound_and_node_loadable() {
         serde_json::from_slice(&fs::read(&genesis_path).unwrap()).unwrap();
     assert_genesis_epoch_matches_validator_set(&genesis);
     assert_eq!(
-        outbe_chain_constants::GenesisProtocolParametersV1::from_materialized_genesis(&genesis)
-            .expect("canonical Final genesis materializes immutable chain constants"),
+        outbe_chain_constants::GenesisProtocolParametersV1::from_genesis(&genesis)
+            .expect("canonical Final genesis resolves protocol parameters"),
         outbe_chain_constants::GenesisProtocolParametersV1::default(),
         "Final artifact must preserve the base fixture's chain constants"
     );

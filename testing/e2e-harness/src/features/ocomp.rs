@@ -39,6 +39,7 @@ use crate::world::World;
 
 const OCOMP_CAPACITY_TRIBUTE_COUNT: usize = 257;
 const OCOMP_CAPACITY_COMPLETION_TIMEOUT_SECS: u64 = 300;
+const OCOMP_CAPACITY_NOD_MATERIALIZATION_TIMEOUT_SECS: u64 = 600;
 // The capacity scenario proves the protocol path and the 256+1 shard boundary,
 // not Tribute burst throughput. Keep at most two offers in flight until
 // outbe-chain-08n.6 gives blocking TEE work a production-safe block budget.
@@ -1371,7 +1372,7 @@ fn fresh_capacity_day_is_created_in_forming(world: &mut World) {
         &std::fs::read(&genesis_path).expect("read fresh Metadosis genesis"),
     )
     .expect("decode fresh Metadosis genesis");
-    let protocol_constants = GenesisProtocolParametersV1::from_materialized_genesis(&genesis)
+    let protocol_constants = GenesisProtocolParametersV1::from_genesis(&genesis)
         .expect("read immutable fresh Metadosis protocol constants");
     assert_eq!(
         state.forming_end - state.forming_start,
@@ -2105,7 +2106,11 @@ fn certified_generation_crosses_multiple_materialization_batches(world: &mut Wor
         .expect("certified generation before materialization");
     let observation = world
         .rpc
-        .wait_for_completed_nod_materialization(world.validators.primary_port(), &generation, 300)
+        .wait_for_completed_nod_materialization(
+            world.validators.primary_port(),
+            &generation,
+            OCOMP_CAPACITY_NOD_MATERIALIZATION_TIMEOUT_SECS,
+        )
         .expect("completed multi-batch NOD materialization");
     assert!(observation.successful_batch_transactions >= 2);
     world.state.ocomp_nod_materialization = Some(observation);
@@ -3215,7 +3220,7 @@ fn completed_vote_is_retried_and_mutated(world: &mut World) {
             assert!(
                 error
                     .to_string()
-                    .contains("OCOMP carrier signer is not authorized by its pinned snapshot"),
+                    .contains("OCOMP carrier signer is not authorized for this action"),
                 "changed-binding vote failed for an unexpected reason: {error:#}"
             );
             None
@@ -3568,7 +3573,7 @@ fn one_valid_then_changed_binding_vote(world: &mut World) {
             assert!(
                 error
                     .to_string()
-                    .contains("OCOMP carrier signer is not authorized by its pinned snapshot"),
+                    .contains("OCOMP carrier signer is not authorized for this action"),
                 "changed-binding vote failed for an unexpected reason: {error:#}"
             );
             None

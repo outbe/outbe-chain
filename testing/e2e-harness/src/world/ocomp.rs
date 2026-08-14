@@ -783,7 +783,7 @@ impl OcompTopology {
     /// Prepare two independently scheduled public jobs around one real DKG
     /// membership boundary. The shortened epoch is still above the normative
     /// snapshot-retention lower bound; the compute-and-vote deadline comes from
-    /// the same immutable genesis constants record used by production.
+    /// the test-only genesis override selected by the E2E node build.
     #[cfg(feature = "ocomp-integration")]
     pub fn prepare_dynamic_membership_fork_install(&self) -> Result<OcompDynamicMembershipForkV1> {
         let genesis_path = self.cfg.dir.join("genesis.json");
@@ -1309,9 +1309,7 @@ impl OcompTopology {
         let base_spec = parse_outbe_chain_spec(&genesis_path)?;
         let base_genesis_hash = base_spec.genesis_hash();
         let protocol_constants =
-            outbe_chain_constants::GenesisProtocolParametersV1::from_materialized_genesis(
-                &genesis,
-            )?;
+            outbe_chain_constants::GenesisProtocolParametersV1::from_genesis(&genesis)?;
         let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
         let install = measurement_fork_install(
             chain_id,
@@ -2702,6 +2700,19 @@ fn schedule_dynamic_membership_days(
                 );
             }
         }
+        let oracle_key = find_alloc_address_key(alloc, ORACLE_ADDRESS)?
+            .ok_or_else(|| eyre::eyre!("generated genesis has no Oracle account"))?;
+        let oracle_words = alloc
+            .get(&oracle_key)
+            .and_then(|account| account.get("storage"))
+            .and_then(serde_json::Value::as_object)
+            .ok_or_else(|| eyre::eyre!("Oracle genesis account has no storage object"))?;
+        for (slot, value) in oracle_words {
+            provider.storage.insert(
+                (ORACLE_ADDRESS, parse_hex_word(slot)?),
+                parse_storage_word(value)?,
+            );
+        }
     }
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -2727,7 +2738,31 @@ fn schedule_dynamic_membership_days(
                 current_vwap: first.current_vwap,
             })
             .apply(storage.clone())?;
-        outbe_tribute::TributeContract::new(storage).unseal_day(second_worldwide_day)
+        outbe_tribute::TributeContract::new(storage.clone()).unseal_day(second_worldwide_day)?;
+
+        let pair = outbe_oracle::api::DAY_TYPE_PAIR;
+        let price = outbe_oracle::api::day_type_pair_vwap(storage.clone(), first_worldwide_day)?
+            .filter(|price| !price.is_zero())
+            .ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::Fatal(
+                    "dynamic OCOMP genesis is missing its seeded Oracle VWAP".into(),
+                )
+            })?;
+        let snapshot_time = second_worldwide_day.start_timestamp();
+        let volume = U256::from(1_000_000_000_000_000_000_u128);
+        outbe_oracle::schema::OracleContract::new(storage.clone())
+            .write_snapshot(snapshot_time, &[(pair, price, volume)])?;
+        if !outbe_oracle::api::store_worldwide_day_vwap_snapshot(
+            storage,
+            second_worldwide_day,
+            snapshot_time,
+            snapshot_time + 1,
+        )? {
+            return Err(outbe_primitives::error::PrecompileError::Fatal(
+                "dynamic OCOMP second-day Oracle VWAP snapshot is empty".into(),
+            ));
+        }
+        Ok(())
     })?;
 
     let alloc = genesis
@@ -2736,6 +2771,7 @@ fn schedule_dynamic_membership_days(
         .ok_or_else(|| eyre::eyre!("generated genesis has no alloc object"))?;
     for (address, label) in [
         (METADOSIS_ADDRESS, "Metadosis"),
+        (ORACLE_ADDRESS, "Oracle"),
         (TRIBUTE_ADDRESS, "Tribute"),
     ] {
         let account_key = match find_alloc_address_key(alloc, address)? {
@@ -3452,10 +3488,7 @@ mod tests {
     use crate::internal::proc::ChildGuard;
     use alloy_primitives::B256;
     #[cfg(feature = "ocomp-integration")]
-    use outbe_chain_constants::{
-        GenesisProtocolParametersV1, CHAIN_CONSTANTS_ADDRESS, CHAIN_CONSTANTS_MARKER_CODE,
-        GENESIS_CONFIG_KEY,
-    };
+    use outbe_chain_constants::GENESIS_CONFIG_KEY;
     #[cfg(feature = "ocomp-integration")]
     use outbe_metadosis::{WwdDayType, WwdStatus};
 
@@ -4326,18 +4359,21 @@ mod tests {
         let tribute_key = find_alloc_address_key(alloc, TRIBUTE_ADDRESS)
             .unwrap()
             .unwrap();
+        let oracle_key = find_alloc_address_key(alloc, ORACLE_ADDRESS)
+            .unwrap()
+            .unwrap();
         let mut provider = HashMapStorageProvider::new(genesis_chain_id(&genesis).unwrap());
-        for (slot, value) in alloc[&metadosis_key]["storage"].as_object().unwrap() {
-            provider.storage.insert(
-                (METADOSIS_ADDRESS, parse_hex_word(slot).unwrap()),
-                parse_storage_word(value).unwrap(),
-            );
-        }
-        for (slot, value) in alloc[&tribute_key]["storage"].as_object().unwrap() {
-            provider.storage.insert(
-                (TRIBUTE_ADDRESS, parse_hex_word(slot).unwrap()),
-                parse_storage_word(value).unwrap(),
-            );
+        for (address, account_key) in [
+            (METADOSIS_ADDRESS, metadosis_key),
+            (ORACLE_ADDRESS, oracle_key),
+            (TRIBUTE_ADDRESS, tribute_key),
+        ] {
+            for (slot, value) in alloc[&account_key]["storage"].as_object().unwrap() {
+                provider.storage.insert(
+                    (address, parse_hex_word(slot).unwrap()),
+                    parse_storage_word(value).unwrap(),
+                );
+            }
         }
         StorageHandle::enter(&mut provider, |storage| {
             let days = outbe_metadosis::api::worldwide_days(storage.clone()).unwrap();
@@ -4364,6 +4400,14 @@ mod tests {
                 .unwrap();
             assert!(second_totals.initialized);
             assert!(!second_totals.is_sealed);
+            for worldwide_day in [prepared.first_worldwide_day, prepared.second_worldwide_day] {
+                assert!(
+                    outbe_oracle::api::coen_pair_price(storage.clone(), 840, worldwide_day)
+                        .unwrap()
+                        .is_some_and(|price| !price.is_zero()),
+                    "dynamic OCOMP fixture must price COEN/840 for {worldwide_day}"
+                );
+            }
         });
         assert!(prepared.first_processing_time < prepared.second_processing_time);
         assert_eq!(prepared.fork.install.founder_registrations.len(), 4);
@@ -4557,22 +4601,6 @@ mod tests {
         let mut genesis = serde_json::to_value(&spec.genesis).unwrap();
         genesis["config"][outbe_node::ocomp::fork::EPOCH_LENGTH_BLOCKS_GENESIS_KEY] =
             serde_json::json!(OCOMP_TEST_EPOCH_LENGTH_BLOCKS);
-        let parameters = GenesisProtocolParametersV1::default();
-        let storage = parameters
-            .genesis_storage_words()
-            .into_iter()
-            .map(|(slot, value)| {
-                (
-                    format!("0x{slot:064x}"),
-                    serde_json::Value::String(format!("0x{value:064x}")),
-                )
-            })
-            .collect::<serde_json::Map<_, _>>();
-        genesis["alloc"][format!("{CHAIN_CONSTANTS_ADDRESS:#x}")] = serde_json::json!({
-            "balance": "0x0",
-            "code": format!("0x{}", hex::encode(CHAIN_CONSTANTS_MARKER_CODE)),
-            "storage": storage,
-        });
         std::fs::write(
             topology.cfg.dir.join("genesis.json"),
             serde_json::to_vec_pretty(&genesis).unwrap(),
@@ -4623,24 +4651,6 @@ mod tests {
                 "advanceIntervalSeconds": 10
             },
             "ocomp": { "computeVoteWindowBlocks": vote_window_blocks }
-        });
-        let parameters =
-            GenesisProtocolParametersV1::resolve(genesis["config"].get(GENESIS_CONFIG_KEY))
-                .unwrap();
-        let storage = parameters
-            .genesis_storage_words()
-            .into_iter()
-            .map(|(slot, value)| {
-                (
-                    format!("0x{slot:064x}"),
-                    serde_json::Value::String(format!("0x{value:064x}")),
-                )
-            })
-            .collect::<serde_json::Map<_, _>>();
-        genesis["alloc"][format!("{CHAIN_CONSTANTS_ADDRESS:#x}")] = serde_json::json!({
-            "balance": "0x0",
-            "code": format!("0x{}", hex::encode(CHAIN_CONSTANTS_MARKER_CODE)),
-            "storage": storage,
         });
         genesis["alloc"][format!("{METADOSIS_ADDRESS:#x}")] = serde_json::json!({
             "balance": "0x0",

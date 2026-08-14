@@ -283,9 +283,6 @@ impl Localnet {
         self.patch_felony(tuning)?;
         // Step 2d: opt-in lifecycle timing for claim/accounting E2E scenarios.
         self.patch_staking_timing(tuning)?;
-        // Step 2e: resolve optional protocol timings into immutable genesis
-        // storage before OCOMP registrations bind the genesis hash.
-        self.materialize_protocol_constants()?;
         Ok(())
     }
 
@@ -450,24 +447,6 @@ impl Localnet {
             .arg("--output")
             .arg(&genesis);
         self.run_setup(&mut cmd, "seed_genesis.py")
-    }
-
-    fn materialize_protocol_constants(&self) -> Result<()> {
-        let genesis = self.cfg.dir.join("genesis.json");
-        let generated = self.cfg.dir.join("genesis.constants.json");
-        let original = self.cfg.dir.join("genesis.pre-constants.json");
-        let mut command = Command::new(&self.cfg.bin_chain);
-        command
-            .arg("constants")
-            .arg("genesis")
-            .arg("--input")
-            .arg(&genesis)
-            .arg("--output")
-            .arg(&generated);
-        self.run_setup(&mut command, "outbe-chain constants genesis")?;
-        fs::rename(&genesis, &original)?;
-        fs::rename(&generated, &genesis)?;
-        Ok(())
     }
 
     /// Lower the SlashIndicator felony thresholds so downtime slashing triggers
