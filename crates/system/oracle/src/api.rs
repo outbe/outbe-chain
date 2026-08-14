@@ -32,12 +32,21 @@ pub enum OcompAuctionEntryPriceSource {
 /// `oracle_state_version` reuses the authoritative monotonic snapshot stream
 /// index: every exchange-rate snapshot advances it, while the WWD and S-curve
 /// counters identify the exact derived collections read for this day.
+/// One reference currency's frozen auction entry price.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OcompReferenceEntryPrice {
+    pub reference_currency: u16,
+    pub entry_price_minor: U256,
+    pub source: OcompAuctionEntryPriceSource,
+    pub source_day: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OcompOraclePreAdmissionProjection {
     pub profile_ready: bool,
-    pub auction_entry_price: U256,
-    pub auction_entry_price_source: OcompAuctionEntryPriceSource,
-    pub auction_entry_price_source_day: u32,
+    /// One row per priced reference currency, ascending by currency; an unpriced
+    /// currency is absent rather than zero.
+    pub auction_entry_prices: Vec<OcompReferenceEntryPrice>,
     pub oracle_state_version: u64,
     /// Registered pairs, i.e. the upper bound on the day-VWAP entries an
     /// opening proof can be asked to cover. Now that the WorldwideDay VWAP
@@ -106,6 +115,14 @@ pub fn coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option
     }
     let stored = oracle.exchange_rate.read(&index)?;
     Ok((!stored.is_zero()).then_some(stored))
+}
+
+/// Registry index of the `COEN/<iso_code>` pair, or `None` when it was never registered.
+/// Unlike [`require_coen_pair`], which collapses both into an error.
+pub fn coen_pair_index_opt(storage: StorageHandle, iso_code: u16) -> Result<Option<PairIndex>> {
+    let oracle: OracleContract<'_> = OracleContract::new(storage);
+    let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
+    Ok((index != 0).then_some(index))
 }
 
 pub fn get_exchange_rate(storage: StorageHandle, base: Address, quote: Address) -> Result<U256> {
@@ -183,9 +200,9 @@ pub fn get_worldwide_day_vwap_for_pair(
     oracle.get_worldwide_day_vwap_for_pair(worldwide_day, index)
 }
 
-/// Selects the already-stored auction entry price and returns only O(1)
-/// authenticated collection counts. This path never invokes calculation or
-/// enumerates Oracle records.
+/// Selects the already-stored auction entry prices and the authenticated collection counts;
+/// never invokes calculation. One price per reference currency, so the read walks the
+/// registry; only the day-type currency keeps the current-VWAP fallback.
 pub fn ocomp_pre_admission_projection(
     storage: StorageHandle,
     worldwide_day: WorldwideDay,
@@ -200,7 +217,7 @@ pub fn ocomp_pre_admission_projection(
         .then(|| oracle.ocomp_day_type_vwap_by_utc_day.read(&last_closed_day))
         .transpose()?
         .filter(|value| !value.is_zero());
-    let (auction_entry_price, auction_entry_price_source, source_day) =
+    let (day_type_price, day_type_source, day_type_source_day) =
         if let Some(vwap) = last_closed_vwap {
             (
                 vwap,
@@ -214,6 +231,34 @@ pub fn ocomp_pre_admission_projection(
                 worldwide_day.value(),
             )
         };
+    let mut auction_entry_prices = vec![OcompReferenceEntryPrice {
+        reference_currency: DAY_TYPE_ISO,
+        entry_price_minor: day_type_price,
+        source: day_type_source,
+        source_day: day_type_source_day,
+    }];
+    for iso_code in oracle.reference_currencies.read_all()? {
+        if iso_code == DAY_TYPE_ISO {
+            continue;
+        }
+        let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
+        if index == 0 {
+            continue;
+        }
+        if let Some(vwap) = oracle
+            .get_utc_day_vwap_for_pair(last_closed_day, index)?
+            .filter(|value| !value.is_zero())
+        {
+            auction_entry_prices.push(OcompReferenceEntryPrice {
+                reference_currency: iso_code,
+                entry_price_minor: vwap,
+                source: OcompAuctionEntryPriceSource::LastClosedDayVwap,
+                source_day: last_closed_day,
+            });
+        }
+    }
+    // Hashed in order, so the order is part of the day's identity.
+    auction_entry_prices.sort_by_key(|row| row.reference_currency);
     let scurve_count = oracle.scurve_count.read()?;
     let scurve_oldest = oracle.scurve_oldest_idx.read()?;
     let active_scurve_entries = scurve_count
@@ -222,9 +267,7 @@ pub fn ocomp_pre_admission_projection(
 
     Ok(OcompOraclePreAdmissionProjection {
         profile_ready,
-        auction_entry_price,
-        auction_entry_price_source,
-        auction_entry_price_source_day: source_day,
+        auction_entry_prices,
         oracle_state_version: oracle.ocomp_state_version.read()?,
         wwd_pair_entries: oracle.pair_count.read()?,
         active_scurve_entries,

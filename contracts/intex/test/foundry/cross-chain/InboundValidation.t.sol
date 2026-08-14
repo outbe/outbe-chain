@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
@@ -85,7 +86,7 @@ contract InboundValidationTest is CrossChainTest {
         bytes memory packet =
             abi.encodePacked(BridgeMsgCodec.BODY_VERSION_V1, BridgeMsgCodec.MSG_MARK_CALLED, truncatedSeriesId);
         vm.expectRevert(
-            abi.encodeWithSelector(BridgeMsgCodec.InvalidPayloadLength.selector, BridgeMsgCodec.MSG_MARK_CALLED, 5, 6)
+            abi.encodeWithSelector(BridgeMsgCodec.InvalidPayloadLength.selector, BridgeMsgCodec.MSG_MARK_CALLED, 5, 20)
         );
         _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
     }
@@ -136,7 +137,7 @@ contract InboundValidationTest is CrossChainTest {
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS,
-            abi.encode(uint32(42), bidders, refundedAmounts, paidAmounts)
+            abi.encode(uint32(42), uint16(0), uint16(1), bidders, refundedAmounts, paidAmounts)
         );
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -160,12 +161,12 @@ contract InboundValidationTest is CrossChainTest {
 
     /// @notice Reverse of the previous test: a msgType that the codec knows but OM does not accept
     ///         (e.g. MARK_CALLED) fails the length assertion first because the codec's
-    ///         `minLengthFor(MARK_CALLED)` returns 6, and our 2-byte packet trips `InvalidPayloadLength` before
+    ///         `minLengthFor(MARK_CALLED)` returns 20, and our 2-byte packet trips `InvalidPayloadLength` before
     ///         the else-branch is reached. This pins the order: length is asserted before the msgType-set check.
     function test_OM_CodecKnownButHandlerUnknown_RevertsInvalidPayloadLength() public {
         bytes memory packet = hex"0108"; // bodyVersion + MARK_CALLED (8): codec-known, OM doesn't accept
         vm.expectRevert(
-            abi.encodeWithSelector(BridgeMsgCodec.InvalidPayloadLength.selector, BridgeMsgCodec.MSG_MARK_CALLED, 2, 6)
+            abi.encodeWithSelector(BridgeMsgCodec.InvalidPayloadLength.selector, BridgeMsgCodec.MSG_MARK_CALLED, 2, 20)
         );
         _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), packet);
     }
@@ -173,9 +174,7 @@ contract InboundValidationTest is CrossChainTest {
     function test_OM_BodySrcChainIdMismatch_RevertsSrcChainIdBodyMismatch() public {
         // Build a well-formed BIDS_BATCH whose body-srcChainId (0xDEAD) disagrees with the
         // authenticated source chainId (BNB_CHAIN_ID = 1) → SrcChainIdBodyMismatch.
-        bytes memory packet = BridgeMsgCodec.encodeBidsBatch(
-            42, 0xDEAD, 1, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
-        );
+        bytes memory packet = BridgeMsgCodec.encodeBidsBatch(42, 0xDEAD, 1, 0, 1, new address[](0), new uint256[](0));
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.SrcChainIdBodyMismatch.selector, BNB_CHAIN_ID, 0xDEAD));
         _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), packet);
     }
@@ -183,9 +182,8 @@ contract InboundValidationTest is CrossChainTest {
     function test_OM_ShortBidsBatch_RevertsInvalidPayloadLength() public {
         // Empty-arrays BIDS_BATCH. Send a one-byte-short packet (truncate the last byte of the trailing
         // length word) to trip the per-type minimum-length check.
-        bytes memory full = BridgeMsgCodec.encodeBidsBatch(
-            42, BNB_CHAIN_ID, 1, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
-        );
+        bytes memory full =
+            BridgeMsgCodec.encodeBidsBatch(42, BNB_CHAIN_ID, 1, 0, 1, new address[](0), new uint256[](0));
         bytes memory truncated = new bytes(full.length - 1);
         for (uint256 i = 0; i < truncated.length; i++) {
             truncated[i] = full[i];

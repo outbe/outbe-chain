@@ -281,15 +281,21 @@ interface IEscrowAdapter {
 
     // --- Bridge Finalization ---
 
-    /// @notice Finalize a series escrow with per-bidder refund/payout instructions.
+    /// @notice Finalize part of a day's escrow with per-bidder refund/payout instructions.
+    /// @dev Called once per arriving set of a day's bidders. A lock leaves `Locked` on its
+    ///      first instruction, so no bidder settles twice; `completesDay` closes the day.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param receiveId Inbound bridge message id that carried the refund instructions; threaded into the
     ///        emitted events so an indexer can attribute each fund movement to its source packet.
     /// @param instructions Array of finalization instructions per bidder.
+    /// @param completesDay Whether this set is the last of the day's bidders.
     /// @return totalPaid Proceeds transferred to the caller for cross-chain routing to creators.
-    function finalizeAuction(uint32 worldwideDay, bytes32 receiveId, FinalizationInstruction[] calldata instructions)
-        external
-        returns (uint128 totalPaid);
+    function finalizeAuction(
+        uint32 worldwideDay,
+        bytes32 receiveId,
+        FinalizationInstruction[] calldata instructions,
+        bool completesDay
+    ) external returns (uint128 totalPaid);
 
     // --- Recovery ---
 

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
+import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -12,6 +14,7 @@ import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
 import {IERC7786TokenReceiver} from "@contracts/origin/interfaces/IERC7786TokenReceiver.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
@@ -23,6 +26,9 @@ import {MockERC20} from "@test-mocks/MockERC20.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 
 /// @dev Desis precompile stand-in that records the relayed bid intake.
+uint16 constant ISSUANCE_CCY = 840;
+uint16 constant REFERENCE_CCY = 840;
+
 contract RecordingDesis {
     uint32 public lastDay;
     uint32 public lastSrcChainId;
@@ -47,18 +53,17 @@ contract RecordingDesis {
         uint16, /* batchIndex */
         uint16 totalBatches,
         address[] calldata bidderAddresses,
-        uint16[] calldata intexQuantities,
-        uint32[] calldata intexBidRates,
-        uint32[] calldata /* timestamps */
+        uint256[] calldata packedBids
     ) external {
         lastDay = worldwideDay;
         lastSrcChainId = srcChainId;
         lastGeneration = relayGeneration;
         lastTotalBatches = totalBatches;
         for (uint256 i = 0; i < bidderAddresses.length; i++) {
+            (uint16 q, uint32 r,,,) = BridgeMsgCodec.unpackBid(packedBids[i]);
             bidders.push(bidderAddresses[i]);
-            quantities.push(intexQuantities[i]);
-            rates.push(intexBidRates[i]);
+            quantities.push(q);
+            rates.push(r);
         }
     }
 
@@ -138,8 +143,9 @@ contract LocalLoopbackTest is Test {
     uint32 internal constant DAY = 20260714;
     uint128 internal constant PROMIS_LOAD_MINOR = 1000;
 
-    bytes32 internal constant REVEAL_BID_TYPEHASH =
-        keccak256("RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate)");
+    bytes32 internal constant REVEAL_BID_TYPEHASH = keccak256(
+        "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
+    );
 
     MockERC7786Bridge internal bridge;
     OriginRouter internal origin;
@@ -220,19 +226,16 @@ contract LocalLoopbackTest is Test {
         p.commitEnd = uint32(startTs + 100);
         p.revealEnd = uint32(startTs + 200);
         p.issuanceEnd = uint32(startTs + 300);
-        p.issuanceCurrency = 840;
-        p.referenceCurrency = 840;
         p.promisLoadMinor = PROMIS_LOAD_MINOR;
         p.minIntexBidRate = 600_000;
-        p.entryPrice = 1e13;
-        p.floorPriceMinor = 100;
-        p.callPriceMinor = 200;
+        p.prices = ReferenceCurrencyPriceLib.one(840, 1e4, 100, 200);
         p.minIntexBidQuantity = 1;
         p.dayState = 1;
     }
 
     function _sig(address bidder, uint16 qty, uint32 rate, uint256 pk) internal view returns (bytes memory) {
-        bytes32 structHash = keccak256(abi.encode(REVEAL_BID_TYPEHASH, DAY, bidder, qty, rate));
+        bytes32 structHash =
+            keccak256(abi.encode(REVEAL_BID_TYPEHASH, DAY, bidder, qty, rate, ISSUANCE_CCY, REFERENCE_CCY));
         bytes32 domainSeparator = keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
@@ -250,7 +253,7 @@ contract LocalLoopbackTest is Test {
     function _commitAndReveal(address bidder, uint16 qty, uint32 rate, uint256 pk) internal {
         bytes memory signature = _sig(bidder, qty, rate, pk);
         vm.prank(bidder);
-        auction.revealBid(DAY, qty, rate, uint64(block.chainid), signature);
+        auction.revealBid(DAY, qty, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), signature);
     }
 
     function test_FullWalk_OriginAsTarget() public {
@@ -310,7 +313,7 @@ contract LocalLoopbackTest is Test {
         paid[0] = 21_000;
         paid[1] = 14_000;
         vm.prank(address(desis));
-        origin.sendRefundInstructions(local, DAY, bidders, refunded, paid);
+        origin.sendRefundInstructions(local, DAY, 0, 1, bidders, refunded, paid);
 
         assertEq(
             uint8(escrow.getBidLock(DAY, iba1).status), uint8(IEscrowAdapter.LockStatus.Finalized), "iba1 not final"
@@ -330,27 +333,26 @@ contract LocalLoopbackTest is Test {
         uint256[] memory amounts = new uint256[](2);
         amounts[0] = 30;
         amounts[1] = 20;
+        IOriginRouter.IssuanceInstructionsParams[] memory issuance = new IOriginRouter.IssuanceInstructionsParams[](1);
+        issuance[0] = IOriginRouter.IssuanceInstructionsParams({
+            seriesId: CreateSeriesLib.seriesId(DAY),
+            worldwideDay: DAY,
+            issuedIntexCount: 50,
+            promisLoadMinor: PROMIS_LOAD_MINOR,
+            entryPriceMinor: 1e13,
+            floorPriceMinor: 100,
+            callNoticePeriod: 0,
+            issuanceCurrency: 840,
+            referenceCurrency: 840,
+            callWindow: 30,
+            callThreshold: 21,
+            callPriceMinor: 200,
+            recipients: winners,
+            quantities: amounts
+        });
         vm.prank(address(factory));
-        origin.sendIssuanceInstructions(
-            IOriginRouter.IssuanceInstructionsParams({
-                dstChainId: local,
-                seriesId: DAY,
-                worldwideDay: DAY,
-                issuedIntexCount: 50,
-                promisLoadMinor: PROMIS_LOAD_MINOR,
-                entryPriceMinor: 1e13,
-                floorPriceMinor: 100,
-                callNoticePeriod: 0,
-                issuanceCurrency: 840,
-                referenceCurrency: 840,
-                callWindow: 30,
-                callThreshold: 21,
-                callPriceMinor: 200,
-                recipients: winners,
-                quantities: amounts
-            })
-        );
-        uint256 tokenId = intex.issuedTokenId(DAY);
+        origin.sendIssuanceInstructions(local, issuance);
+        uint256 tokenId = intex.issuedTokenId(CreateSeriesLib.seriesId(DAY));
         assertEq(intex.balanceOf(iba1, tokenId), 30, "iba1 mint");
         assertEq(intex.balanceOf(iba2, tokenId), 20, "iba2 mint");
 

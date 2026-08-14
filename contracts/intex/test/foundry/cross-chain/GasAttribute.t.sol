@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
@@ -44,16 +45,19 @@ contract GasAttributeTest is CrossChainTest {
 
     function test_fixedMessage_carriesTypeGas() public {
         IOriginRouter.AuctionStageStartParams memory p;
+        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 2, 3);
         p.worldwideDay = 42;
         p.dayState = 1;
+        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 2, 3);
         vm.prank(desis);
         outbe.sendAuctionStageStart(p);
-        _assertLastGas(IntexGas.AUCTION_STAGE_START);
+        _assertLastGas(IntexGas.auctionStart(1));
     }
 
     function test_variableMessage_gasScalesWithItemCount() public {
         // Freeze day 42's snapshot so the addressed refund send passes membership.
         IOriginRouter.AuctionStageStartParams memory sp;
+        sp.prices = ReferenceCurrencyPriceLib.one(840, 1, 2, 3);
         sp.worldwideDay = 42;
         sp.dayState = 1;
         vm.prank(desis);
@@ -67,7 +71,7 @@ contract GasAttributeTest is CrossChainTest {
 
     function _assertRefundGas(uint256 n) internal {
         vm.prank(desis);
-        outbe.sendRefundInstructions(BNB_CHAIN_ID, 42, new address[](n), new uint128[](n), new uint128[](n));
+        outbe.sendRefundInstructions(BNB_CHAIN_ID, 42, 0, 1, new address[](n), new uint128[](n), new uint128[](n));
         _assertLastGas(IntexGas.refund(n));
     }
 
@@ -75,6 +79,7 @@ contract GasAttributeTest is CrossChainTest {
         // The quote path builds the same attribute; the mock returns a flat fee, so this simply confirms the
         // quote signature compiles and returns without reverting under the gas attribute.
         IOriginRouter.AuctionStageStartParams memory p;
+        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 2, 3);
         p.worldwideDay = 7;
         p.dayState = 1;
         outbe.quoteSendAuctionStageStart(p);

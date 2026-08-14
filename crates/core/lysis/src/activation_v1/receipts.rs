@@ -255,7 +255,7 @@ fn verify_request_receipt(
             && receipt.day_limit == expected.day_limit
             && receipt.lysis_budget == expected.lysis_budget
             && receipt.auction_base == expected.auction_base
-            && receipt.auction_entry_price == expected.auction_entry_price
+            && receipt.auction_entry_prices == expected.auction_entry_prices
             && receipt.logical_anchor == expected.logical_anchor,
         "Lysis request receipt fields",
     )?;
@@ -266,7 +266,7 @@ fn verify_request_receipt(
                     expected.protocol_bundle_hash,
                     expected.wwd,
                     expected.auction_base,
-                    expected.auction_entry_price,
+                    &expected.auction_entry_prices,
                     expected.logical_anchor,
                 )?),
             "Lysis request Desis brief",

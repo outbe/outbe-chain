@@ -95,7 +95,7 @@ contract EscrowAdapterInvariantsTest is Test {
             bidder: bidderB, refundedAmount: LOCK_B / 2, paidAmount: LOCK_B - LOCK_B / 2
         });
         vm.prank(bridger);
-        escrow.finalizeAuction(s1, bytes32(uint256(0x5151)), s1Instructions);
+        escrow.finalizeAuction(s1, bytes32(uint256(0x5151)), s1Instructions, true);
         _assertSeriesInvariant(s1, bidders);
         _assertSeriesInvariant(s2, bidders);
 
@@ -104,7 +104,7 @@ contract EscrowAdapterInvariantsTest is Test {
         s2Instructions[0] =
             IEscrowAdapter.FinalizationInstruction({bidder: bidderC, refundedAmount: 0, paidAmount: LOCK_C});
         vm.prank(bridger);
-        escrow.finalizeAuction(s2, bytes32(uint256(0x5252)), s2Instructions);
+        escrow.finalizeAuction(s2, bytes32(uint256(0x5252)), s2Instructions, true);
         _assertSeriesInvariant(s1, bidders);
         _assertSeriesInvariant(s2, bidders);
     }

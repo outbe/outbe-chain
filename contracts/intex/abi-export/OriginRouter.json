@@ -443,16 +443,6 @@
               "internalType": "uint32"
             },
             {
-              "name": "issuanceCurrency",
-              "type": "uint16",
-              "internalType": "uint16"
-            },
-            {
-              "name": "referenceCurrency",
-              "type": "uint16",
-              "internalType": "uint16"
-            },
-            {
               "name": "promisLoadMinor",
               "type": "uint128",
               "internalType": "uint128"
@@ -463,19 +453,31 @@
               "internalType": "uint32"
             },
             {
-              "name": "entryPrice",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "floorPriceMinor",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "callPriceMinor",
-              "type": "uint64",
-              "internalType": "uint64"
+              "name": "prices",
+              "type": "tuple[]",
+              "internalType": "struct IOriginRouter.ReferenceCurrencyPrice[]",
+              "components": [
+                {
+                  "name": "isoCode",
+                  "type": "uint16",
+                  "internalType": "uint16"
+                },
+                {
+                  "name": "entryPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "floorPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "callPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                }
+              ]
             },
             {
               "name": "callNoticePeriod",
@@ -524,19 +526,19 @@
       "name": "quoteSendIssuanceInstructions",
       "inputs": [
         {
-          "name": "params",
-          "type": "tuple",
-          "internalType": "struct IOriginRouter.IssuanceInstructionsParams",
+          "name": "dstChainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "series",
+          "type": "tuple[]",
+          "internalType": "struct IOriginRouter.IssuanceInstructionsParams[]",
           "components": [
             {
-              "name": "dstChainId",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
-            {
               "name": "seriesId",
-              "type": "uint32",
-              "internalType": "uint32"
+              "type": "bytes14",
+              "internalType": "bytes14"
             },
             {
               "name": "worldwideDay",
@@ -621,6 +623,11 @@
       "inputs": [
         {
           "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        },
+        {
+          "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -640,6 +647,11 @@
       "inputs": [
         {
           "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        },
+        {
+          "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -666,6 +678,16 @@
           "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
+        },
+        {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "totalChunks",
+          "type": "uint16",
+          "internalType": "uint16"
         },
         {
           "name": "bidders",
@@ -884,16 +906,6 @@
               "internalType": "uint32"
             },
             {
-              "name": "issuanceCurrency",
-              "type": "uint16",
-              "internalType": "uint16"
-            },
-            {
-              "name": "referenceCurrency",
-              "type": "uint16",
-              "internalType": "uint16"
-            },
-            {
               "name": "promisLoadMinor",
               "type": "uint128",
               "internalType": "uint128"
@@ -904,19 +916,31 @@
               "internalType": "uint32"
             },
             {
-              "name": "entryPrice",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "floorPriceMinor",
-              "type": "uint64",
-              "internalType": "uint64"
-            },
-            {
-              "name": "callPriceMinor",
-              "type": "uint64",
-              "internalType": "uint64"
+              "name": "prices",
+              "type": "tuple[]",
+              "internalType": "struct IOriginRouter.ReferenceCurrencyPrice[]",
+              "components": [
+                {
+                  "name": "isoCode",
+                  "type": "uint16",
+                  "internalType": "uint16"
+                },
+                {
+                  "name": "entryPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "floorPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                },
+                {
+                  "name": "callPriceMinor",
+                  "type": "uint64",
+                  "internalType": "uint64"
+                }
+              ]
             },
             {
               "name": "callNoticePeriod",
@@ -959,19 +983,19 @@
       "name": "sendIssuanceInstructions",
       "inputs": [
         {
-          "name": "params",
-          "type": "tuple",
-          "internalType": "struct IOriginRouter.IssuanceInstructionsParams",
+          "name": "dstChainId",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "series",
+          "type": "tuple[]",
+          "internalType": "struct IOriginRouter.IssuanceInstructionsParams[]",
           "components": [
             {
-              "name": "dstChainId",
-              "type": "uint32",
-              "internalType": "uint32"
-            },
-            {
               "name": "seriesId",
-              "type": "uint32",
-              "internalType": "uint32"
+              "type": "bytes14",
+              "internalType": "bytes14"
             },
             {
               "name": "worldwideDay",
@@ -1085,6 +1109,11 @@
       "inputs": [
         {
           "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        },
+        {
+          "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -1098,6 +1127,11 @@
       "inputs": [
         {
           "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        },
+        {
+          "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
         }
@@ -1118,6 +1152,16 @@
           "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
+        },
+        {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "totalChunks",
+          "type": "uint16",
+          "internalType": "uint16"
         },
         {
           "name": "bidders",
@@ -1479,9 +1523,9 @@
         },
         {
           "name": "seriesId",
-          "type": "uint32",
+          "type": "bytes14",
           "indexed": true,
-          "internalType": "uint32"
+          "internalType": "bytes14"
         },
         {
           "name": "recipientsCount",
@@ -1504,9 +1548,9 @@
         },
         {
           "name": "seriesId",
-          "type": "uint32",
+          "type": "bytes14",
           "indexed": true,
-          "internalType": "uint32"
+          "internalType": "bytes14"
         }
       ],
       "anonymous": false
@@ -1523,9 +1567,9 @@
         },
         {
           "name": "seriesId",
-          "type": "uint32",
+          "type": "bytes14",
           "indexed": true,
-          "internalType": "uint32"
+          "internalType": "bytes14"
         }
       ],
       "anonymous": false
@@ -1892,17 +1936,7 @@
           "internalType": "uint256"
         },
         {
-          "name": "quantities",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "rates",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "timestamps",
+          "name": "packedBids",
           "type": "uint256",
           "internalType": "uint256"
         }
@@ -1943,6 +1977,11 @@
     {
       "type": "error",
       "name": "EmptyArray",
+      "inputs": []
+    },
+    {
+      "type": "error",
+      "name": "EmptyIssuanceBatch",
       "inputs": []
     },
     {
@@ -2005,6 +2044,22 @@
     },
     {
       "type": "error",
+      "name": "InvalidRefundChunk",
+      "inputs": [
+        {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "totalChunks",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "IssuanceArrayLengthMismatch",
       "inputs": [
         {
@@ -2018,6 +2073,43 @@
           "internalType": "uint256"
         }
       ]
+    },
+    {
+      "type": "error",
+      "name": "IssuanceBatchTooLarge",
+      "inputs": [
+        {
+          "name": "count",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "max",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "IssuanceSeriesBatchTooLarge",
+      "inputs": [
+        {
+          "name": "count",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "max",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "MissingReferencePrices",
+      "inputs": []
     },
     {
       "type": "error",

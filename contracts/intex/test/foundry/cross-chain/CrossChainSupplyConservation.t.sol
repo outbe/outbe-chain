@@ -21,8 +21,9 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
     uint32 private constant A_CHAIN_ID = 1;
     uint32 private constant B_CHAIN_ID = 2;
 
-    uint32 private constant SERIES_ID = 20260401;
-    uint256 private constant TOKEN_ID = uint256(SERIES_ID);
+    uint32 private constant SERIES_ID_DAY = 20260401;
+    bytes14 private constant SERIES_ID = "20260401-USD-U";
+    uint256 private constant TOKEN_ID = uint256(uint112(SERIES_ID));
     uint32 private constant ISSUED_INTEX_COUNT = 10_000;
 
     IntexNFT1155 private tokenA;
@@ -49,8 +50,8 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         adapterA.setRemoteMessenger(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapterB)));
         adapterB.setRemoteMessenger(A_CHAIN_ID, _interop(A_CHAIN_ID, address(adapterA)));
 
-        tokenA.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
-        tokenB.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
+        tokenA.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_INTEX_COUNT, 0));
+        tokenB.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_INTEX_COUNT, 0));
 
         tokenA.markQualified(SERIES_ID);
         tokenB.markQualified(SERIES_ID);
@@ -94,9 +95,10 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         // Pick a fresh series that exists on A but not on B: the inbound crosschainMint reverts
         // NonexistentToken and the transfer parks on B. Tokens are burned on A but not yet
         // minted on B — the missing amount lives in failedCrosschainMints.
-        uint32 parkSeries = 20260601;
-        uint256 parkTokenId = uint256(parkSeries);
-        tokenA.createSeries(CreateSeriesLib.params(parkSeries, ISSUED_INTEX_COUNT, 0));
+        uint32 parkDay = 20260601;
+        bytes14 parkSeries = "20260601-USD-U";
+        uint256 parkTokenId = uint256(uint112(parkSeries));
+        tokenA.createSeries(CreateSeriesLib.params(parkDay, ISSUED_INTEX_COUNT, 0));
         tokenA.markQualified(parkSeries);
 
         uint256 minted = 100;
@@ -120,7 +122,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
         // Fix the destination cause and retry — parked moves into B.totalSupply with no
         // change to the global sum.
-        tokenB.createSeries(CreateSeriesLib.params(parkSeries, ISSUED_INTEX_COUNT, 0));
+        tokenB.createSeries(CreateSeriesLib.params(parkDay, ISSUED_INTEX_COUNT, 0));
         tokenB.markQualified(parkSeries);
         adapterB.retryCrosschainMint(receiveId, 0);
 
@@ -134,9 +136,10 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
     function test_ReclaimToSource_ReMintsHolderOnOriginAndConservesSupply() public {
         // A series that exists on A but not B: bridging A→B parks on B (crosschainMint reverts).
-        uint32 parkSeries = 20260601;
-        uint256 parkTokenId = uint256(parkSeries);
-        tokenA.createSeries(CreateSeriesLib.params(parkSeries, ISSUED_INTEX_COUNT, 0));
+        uint32 parkDay = 20260601;
+        bytes14 parkSeries = "20260601-USD-U";
+        uint256 parkTokenId = uint256(uint112(parkSeries));
+        tokenA.createSeries(CreateSeriesLib.params(parkDay, ISSUED_INTEX_COUNT, 0));
         tokenA.markQualified(parkSeries);
 
         uint256 minted = 100;

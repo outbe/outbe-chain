@@ -1,49 +1,53 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.28;
 
+import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
+import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
 /// @dev Thin external wrapper around the `internal pure` encoders so the per-encoder revert paths
 ///      can be asserted via `vm.expectRevert` from a test contract.
 contract BridgeMsgCodecHardeningHarness {
     function encodeBidsBatch(
-        uint32 seriesId,
+        uint32 worldwideDay,
         uint32 srcChainId,
         uint32 relayGeneration,
         uint16 batchIndex,
         uint16 totalBatches,
         address[] calldata bidders,
-        uint16[] calldata quantities,
-        uint32[] calldata rates,
-        uint32[] calldata timestamps
+        uint256[] calldata packedBids
     ) external pure returns (bytes memory) {
         return BridgeMsgCodec.encodeBidsBatch(
-            seriesId, srcChainId, relayGeneration, batchIndex, totalBatches, bidders, quantities, rates, timestamps
+            worldwideDay, srcChainId, relayGeneration, batchIndex, totalBatches, bidders, packedBids
         );
     }
 
-    function encodeIssuanceInstructions(BridgeMsgCodec.IssuanceInstructionsPayload calldata payload)
+    function encodeIssuanceInstructions(BridgeMsgCodec.IssuanceInstructionsPayload[] calldata series)
         external
         pure
         returns (bytes memory)
     {
-        return BridgeMsgCodec.encodeIssuanceInstructions(payload);
+        return BridgeMsgCodec.encodeIssuanceInstructions(series);
     }
 
     function encodeRefundInstructions(
-        uint32 seriesId,
+        uint32 worldwideDay,
+        uint16 chunkIndex,
+        uint16 totalChunks,
         address[] calldata bidders,
         uint128[] calldata refundedAmounts,
         uint128[] calldata paidAmounts
     ) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeRefundInstructions(seriesId, bidders, refundedAmounts, paidAmounts);
+        return BridgeMsgCodec.encodeRefundInstructions(
+            worldwideDay, chunkIndex, totalChunks, bidders, refundedAmounts, paidAmounts
+        );
     }
 
     function decodeRefundInstructions(bytes calldata m)
         external
         pure
-        returns (uint32, address[] memory, uint128[] memory, uint128[] memory)
+        returns (uint32, uint16, uint16, address[] memory, uint128[] memory, uint128[] memory)
     {
         return BridgeMsgCodec.decodeRefundInstructions(m);
     }
@@ -51,17 +55,7 @@ contract BridgeMsgCodecHardeningHarness {
     function decodeBidsBatch(bytes calldata m)
         external
         pure
-        returns (
-            uint32,
-            uint32,
-            uint32,
-            uint16,
-            uint16,
-            address[] memory,
-            uint16[] memory,
-            uint32[] memory,
-            uint32[] memory
-        )
+        returns (uint32, uint32, uint32, uint16, uint16, address[] memory, uint256[] memory)
     {
         return BridgeMsgCodec.decodeBidsBatch(m);
     }
@@ -69,7 +63,7 @@ contract BridgeMsgCodecHardeningHarness {
     function decodeIssuanceInstructions(bytes calldata m)
         external
         pure
-        returns (BridgeMsgCodec.IssuanceInstructionsPayload memory)
+        returns (BridgeMsgCodec.IssuanceInstructionsPayload[] memory)
     {
         return BridgeMsgCodec.decodeIssuanceInstructions(m);
     }
@@ -98,12 +92,8 @@ contract BridgeMsgCodecHardeningTest is Test {
         uint32[] memory rates = new uint32[](2);
         uint32[] memory timestamps = new uint32[](2);
 
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                BridgeMsgCodec.BidsArrayLengthMismatch.selector, uint256(2), uint256(1), uint256(2), uint256(2)
-            )
-        );
-        harness.encodeBidsBatch(1, 1, 1, 0, 1, bidders, quantities, rates, timestamps);
+        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.BidsArrayLengthMismatch.selector, uint256(2), uint256(1)));
+        harness.encodeBidsBatch(1, 1, 1, 0, 1, bidders, BidPackLib.pack(quantities, rates, timestamps));
     }
 
     function test_encodeIssuanceInstructions_arrayLengthMismatch_reverts() public {
@@ -115,7 +105,7 @@ contract BridgeMsgCodecHardeningTest is Test {
         quantities[0] = 1;
 
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload = BridgeMsgCodec.IssuanceInstructionsPayload({
-            seriesId: 1,
+            seriesId: "20260212-TRY-U",
             worldwideDay: 2,
             issuedIntexCount: 1,
             promisLoadMinor: 1,
@@ -133,7 +123,7 @@ contract BridgeMsgCodecHardeningTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(BridgeMsgCodec.IssuanceArrayLengthMismatch.selector, uint256(2), uint256(1))
         );
-        harness.encodeIssuanceInstructions(payload);
+        harness.encodeIssuanceInstructions(IssuanceBatchLib.one(payload));
     }
 
     function test_encodeRefundInstructions_arrayLengthMismatch_reverts() public {
@@ -150,7 +140,7 @@ contract BridgeMsgCodecHardeningTest is Test {
                 BridgeMsgCodec.RefundArrayLengthMismatch.selector, uint256(2), uint256(1), uint256(2)
             )
         );
-        harness.encodeRefundInstructions(1, bidders, refundedAmounts, paidAmounts);
+        harness.encodeRefundInstructions(1, 0, 1, bidders, refundedAmounts, paidAmounts);
     }
 
     // --- decodeRefundInstructions over-cap symmetric with BIDS / ISSUANCE ---
@@ -172,7 +162,7 @@ contract BridgeMsgCodecHardeningTest is Test {
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS,
-            abi.encode(uint32(42), bidders, refundedAmounts, paidAmounts)
+            abi.encode(uint32(42), uint16(0), uint16(1), bidders, refundedAmounts, paidAmounts)
         );
 
         vm.expectRevert(

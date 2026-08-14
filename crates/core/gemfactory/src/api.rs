@@ -1,4 +1,5 @@
 use alloy_primitives::{Address, U256};
+use outbe_intex::SeriesId;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -26,7 +27,7 @@ pub fn mint_gem(
 pub fn mint_gem_position(
     storage: &StorageHandle<'_>,
     caller: Address,
-    source_intex_id: u32,
+    source_intex_id: SeriesId,
     amount: U256,
 ) -> Result<U256> {
     runtime::mint_gem_position(storage, caller, source_intex_id, amount)

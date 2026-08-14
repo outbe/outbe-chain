@@ -83,8 +83,9 @@ contract IntexNFT1155BridgeReentrancyTest is CrossChainTest {
     IntexNFT1155Bridge private adapterB;
 
     address private user = address(0x1);
-    uint32 private constant SERIES_ID = 20260401;
-    uint256 private constant TOKEN_ID = uint256(SERIES_ID);
+    uint32 private constant SERIES_ID_DAY = 20260401;
+    bytes14 private constant SERIES_ID = "20260401-USD-U";
+    uint256 private constant TOKEN_ID = uint256(uint112(SERIES_ID));
     uint256 private constant AMOUNT = 100;
     uint32 private constant ISSUED_INTEX_COUNT = 10_000;
 
@@ -105,8 +106,8 @@ contract IntexNFT1155BridgeReentrancyTest is CrossChainTest {
         adapterA.setRemoteMessenger(bChainId, _interop(bChainId, address(adapterB)));
         adapterB.setRemoteMessenger(aChainId, _interop(aChainId, address(adapterA)));
 
-        tokenA.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
-        tokenB.createSeries(CreateSeriesLib.params(SERIES_ID, ISSUED_INTEX_COUNT, 0));
+        tokenA.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_INTEX_COUNT, 0));
+        tokenB.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_INTEX_COUNT, 0));
 
         tokenA.markQualified(SERIES_ID);
         tokenB.markQualified(SERIES_ID);

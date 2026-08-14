@@ -38,6 +38,10 @@ interface IIntexAuction {
         uint16 intexQuantity;
         /// @notice Timestamp assigned at reveal (ordering only).
         uint32 timestamp;
+        /// @notice Declared issuance currency (ISO numeric).
+        uint16 issuanceCurrency;
+        /// @notice Reference currency the bid prices in (ISO numeric).
+        uint16 referenceCurrency;
     }
 
     /// @notice Auction schedule — stage-end timestamps.
@@ -61,13 +65,16 @@ interface IIntexAuction {
         uint32 callNoticePeriod;
     }
 
-    /// @notice Auction input parameters, stored per auction. Field order mirrors the spec
-    ///         (single-currency: flat entry/floor/call stand in for the `referencePrices[]` slot).
+    /// @notice Entry, floor and call price of one reference currency for a day.
+    struct ReferenceCurrencyPrice {
+        uint16 isoCode;
+        uint64 entryPriceMinor;
+        uint64 floorPriceMinor;
+        uint64 callPriceMinor;
+    }
+
+    /// @notice Auction input parameters, stored per auction.
     struct AuctionParams {
-        /// @notice Issuance currency (ISO numeric); single USD (840) until multi-currency.
-        uint16 issuanceCurrency;
-        /// @notice Reference currency (ISO numeric); single USD (840) until multi-currency.
-        uint16 referenceCurrency;
         /// @notice Promis tokens per Intex unit (18 decimals).
         uint128 promisLoadMinor;
         /// @notice Call-trigger parameters (window/threshold/period).
@@ -76,12 +83,9 @@ interface IIntexAuction {
         uint32 minIntexBidRate;
         /// @notice Minimum quantity per bid (Intex units).
         uint16 minIntexBidQuantity;
-        /// @notice Per-unit entry price (reference ccy); feeds floor/call.
-        uint64 entryPriceMinor;
-        /// @notice Floor price (reference ccy).
-        uint64 floorPriceMinor;
-        /// @notice Call price (reference ccy).
-        uint64 callPriceMinor;
+        /// @notice One row per currency the day can clear in; the bid's reference
+        ///         currency must appear here.
+        ReferenceCurrencyPrice[] prices;
         /// @notice Entry bond (payment-token minor units) taken at `commitBid` and returned on
         ///         reveal/cancel; 0 disables the bond.
         uint128 commitBondMinor;
@@ -139,7 +143,14 @@ interface IIntexAuction {
     /// @param bidder Bidder address.
     /// @param quantity Revealed Intex quantity.
     /// @param bidRate Revealed bid rate (`1e6` fixed-point, % of the escrow basis).
-    event BidRevealed(uint32 indexed worldwideDay, address indexed bidder, uint16 indexed quantity, uint32 bidRate);
+    event BidRevealed(
+        uint32 indexed worldwideDay,
+        address indexed bidder,
+        uint16 indexed quantity,
+        uint32 bidRate,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency
+    );
 
     /// @notice Emitted on `cancelCommit` after the bidder withdraws their commit during the commit stage.
     /// @param worldwideDay Worldwide day (yyyymmdd).
@@ -197,6 +208,10 @@ interface IIntexAuction {
     error InvalidSchedule();
     /// @notice `auctionStart` requires a final Green or Red day state.
     error InvalidDayState();
+    /// @notice The day does not carry a price for this reference currency.
+    error ReferenceCurrencyNotPriced(uint32 worldwideDay, uint16 isoCode);
+    /// @notice The declared issuance currency is not a three-digit ISO code.
+    error InvalidIssuanceCurrency(uint16 isoCode);
     /// @notice Commit hash must be non-zero.
     error InvalidCommitHash();
     /// @notice Chain id mismatch between the caller-supplied value and `block.chainid`.
@@ -279,11 +294,21 @@ interface IIntexAuction {
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @param quantity Requested quantity (Intex units).
     /// @param bidRate Bid rate (`1e6` fixed-point, % of the escrow basis).
+    /// @param issuanceCurrency Declared issuance currency (ISO numeric); only its three-digit range
+    ///                         is checked, since the network keeps no list of issuance currencies.
+    /// @param referenceCurrency Reference currency the bid prices in; must be one the day carries.
     /// @param chainId Chain id; must equal `block.chainid` (belt-and-braces; the EIP-712 domain
     ///                already binds it inside the signature).
     /// @param signature 65-byte ECDSA signature over the EIP-712 `RevealBid` typed data.
-    function revealBid(uint32 worldwideDay, uint16 quantity, uint32 bidRate, uint64 chainId, bytes memory signature)
-        external;
+    function revealBid(
+        uint32 worldwideDay,
+        uint16 quantity,
+        uint32 bidRate,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint64 chainId,
+        bytes memory signature
+    ) external;
 
     /// @notice Permissionless commit-bond claim for a bidder who committed but never revealed.
     ///         A cancelled (red-day) auction releases immediately; otherwise the bond is claimable

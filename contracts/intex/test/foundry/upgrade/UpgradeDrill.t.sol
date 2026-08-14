@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
@@ -59,7 +60,7 @@ contract UpgradeDrillTest is CrossChainTest {
 
         vm.startPrank(admin);
         nft.createSeries(CreateSeriesLib.params(7, 100, 0));
-        nft.mint(holder, 3, 7);
+        nft.mint(holder, 3, CreateSeriesLib.seriesId(7));
         vm.stopPrank();
 
         IntexNFT1155V2 newImpl = new IntexNFT1155V2();
@@ -67,9 +68,10 @@ contract UpgradeDrillTest is CrossChainTest {
         nft.upgradeToAndCall(address(newImpl), "");
 
         _assertUpgraded(address(nft), address(newImpl));
-        assertEq(nft.balanceOf(holder, 7), 3, "balance lost");
-        assertEq(nft.totalSupply(7), 3, "supply lost");
-        (,,,,,,,, uint32 issuedAt,,,, IIntexNFT1155.IntexState state) = nft.seriesData(7);
+        assertEq(nft.balanceOf(holder, nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "balance lost");
+        assertEq(nft.totalSupply(nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "supply lost");
+        (,,,,,,,, uint32 issuedAt,,,, IIntexNFT1155.IntexState state) =
+            nft.seriesData(nft.issuedTokenId(CreateSeriesLib.seriesId(7)));
         assertGt(issuedAt, 0, "series record lost");
         assertEq(uint8(state), uint8(IIntexNFT1155.IntexState.Issued), "state lost");
         assertTrue(nft.hasRole(nft.RELAYER_ROLE(), admin), "role lost");
@@ -88,7 +90,7 @@ contract UpgradeDrillTest is CrossChainTest {
 
         vm.startPrank(admin);
         nft.createSeries(CreateSeriesLib.params(7, 100, 0));
-        nft.mint(holder, 3, 7);
+        nft.mint(holder, 3, CreateSeriesLib.seriesId(7));
         vm.stopPrank();
 
         IntexNFT1155V2Reinit newImpl = new IntexNFT1155V2Reinit();
@@ -99,8 +101,8 @@ contract UpgradeDrillTest is CrossChainTest {
         assertEq(address(uint160(uint256(implSlot))), address(newImpl), "implementation not swapped");
         uint256 migratedFlag = uint256(vm.load(address(nft), _V2_REINIT_SLOT));
         assertEq(migratedFlag, UPGRADE_PROBE, "reinitializer did not run");
-        assertEq(nft.balanceOf(holder, 7), 3, "balance lost across reinit");
-        assertEq(nft.totalSupply(7), 3, "supply lost across reinit");
+        assertEq(nft.balanceOf(holder, nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "balance lost across reinit");
+        assertEq(nft.totalSupply(nft.issuedTokenId(CreateSeriesLib.seriesId(7))), 3, "supply lost across reinit");
     }
 
     function test_Drill_IntexAuction() public {
@@ -114,13 +116,9 @@ contract UpgradeDrillTest is CrossChainTest {
             issuanceEnd: uint32(block.timestamp + 3 hours)
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
-            issuanceCurrency: 840,
-            referenceCurrency: 840,
             promisLoadMinor: 1000,
             minIntexBidRate: 1,
-            entryPriceMinor: 1,
-            floorPriceMinor: 1,
-            callPriceMinor: 1,
+            prices: ReferenceCurrencyPriceLib.onePriced(840, 1, 1, 1),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
             minIntexBidQuantity: 1,
             commitBondMinor: 0
@@ -183,6 +181,7 @@ contract UpgradeDrillTest is CrossChainTest {
 
         // Freeze the day's target snapshot, then drop the peer so the clearing leg parks.
         IOriginRouter.AuctionStageStartParams memory p;
+        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 2, 3);
         p.worldwideDay = day;
         p.dayState = 1;
         vm.prank(address(desisMock));

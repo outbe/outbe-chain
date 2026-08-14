@@ -266,7 +266,7 @@ contract EscrowAdapterTest is Test {
             IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
 
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
 
         // Check bidder received refund
         assertEq(paymentToken.balanceOf(bidder1), bidderBalanceBefore + LOCK_AMOUNT);
@@ -296,7 +296,7 @@ contract EscrowAdapterTest is Test {
         instructions[0] =
             IEscrowAdapter.FinalizationInstruction({bidder: bidder2, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
     }
 
     function test_OmittedBidder_RevertsBeforeAbandon() public {
@@ -354,7 +354,7 @@ contract EscrowAdapterTest is Test {
         emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, worldwideDay1, 0, LOCK_AMOUNT, 1);
 
         vm.prank(bridger);
-        uint128 routed = escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        uint128 routed = escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
 
         // Proceeds handed to the configured recipient for cross-chain routing, not the caller.
         assertEq(routed, LOCK_AMOUNT);
@@ -387,7 +387,7 @@ contract EscrowAdapterTest is Test {
         emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, worldwideDay1, refundedAmount, paidAmount, 1);
 
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
 
         // Bidder refunded their portion; proceeds handed to the configured recipient.
         assertEq(paymentToken.balanceOf(bidder1), bidderBalanceBefore + refundedAmount);
@@ -415,7 +415,7 @@ contract EscrowAdapterTest is Test {
         emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, worldwideDay1, LOCK_AMOUNT * 2, LOCK_AMOUNT, 2);
 
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
 
         // All escrow drained for the series.
         (, bool isFinalized, uint128 totalLocked) = escrow.getAuctionStatus(worldwideDay1);
@@ -432,7 +432,7 @@ contract EscrowAdapterTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroValue.selector, "instructions"));
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
     }
 
     function test_FinalizeAuction_AlreadyFinalized() public {
@@ -444,12 +444,12 @@ contract EscrowAdapterTest is Test {
             IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
 
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
 
         // Try to finalize again
         vm.expectRevert(IEscrowAdapter.AlreadyFinalized.selector);
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
     }
 
     function test_FinalizeAuction_ZeroBidder_EmitsBidderRefundFailed() public {
@@ -465,7 +465,7 @@ contract EscrowAdapterTest is Test {
         vm.expectEmit(true, true, true, false);
         emit IEscrowAdapter.BidderRefundFailed(RECEIVE_ID, worldwideDay1, address(0), "");
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
 
         // bidder1's lock is still recoverable via retryFinalize (relayer) / claimRefund.
         IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay1, bidder1);
@@ -482,7 +482,7 @@ contract EscrowAdapterTest is Test {
         vm.expectEmit(true, true, true, false);
         emit IEscrowAdapter.BidderRefundFailed(RECEIVE_ID, worldwideDay1, bidder1, "");
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
     }
 
     function test_FinalizeAuction_OneFailure_OthersSucceed() public {
@@ -510,7 +510,7 @@ contract EscrowAdapterTest is Test {
         vm.expectEmit(true, true, true, false);
         emit IEscrowAdapter.BidderRefundFailed(RECEIVE_ID, worldwideDay1, bidder1, "");
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
 
         // bidder1's lock unchanged (still Locked); bidder2's finalized + refunded.
         assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Locked));
@@ -534,7 +534,7 @@ contract EscrowAdapterTest is Test {
         vm.expectEmit(true, true, true, false);
         emit IEscrowAdapter.BidderRefundFailed(RECEIVE_ID, worldwideDay1, bidder1, "");
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
 
         // Lock remains active for recovery.
         IEscrowAdapter.BidLock memory lock = escrow.getBidLock(worldwideDay1, bidder1);
@@ -554,7 +554,7 @@ contract EscrowAdapterTest is Test {
         vm.expectEmit(true, false, false, true, address(escrow));
         emit IEscrowAdapter.FinalizationNoOp(worldwideDay1, 1);
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
     }
 
     function test_FinalizeAuction_OnlyBridgeRole() public {
@@ -567,15 +567,15 @@ contract EscrowAdapterTest is Test {
 
         vm.expectRevert();
         vm.prank(outsider);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
 
         vm.expectRevert();
         vm.prank(admin);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
 
         vm.expectRevert();
         vm.prank(auction);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
     }
 
     // --- IAllocator Tests ---
@@ -669,7 +669,7 @@ contract EscrowAdapterTest is Test {
         emit IEscrowAdapter.FundsRefunded(RECEIVE_ID, worldwideDay1, bidder1, LOCK_AMOUNT);
 
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
     }
 
     function test_Events_AuctionEscrowFinalized() public {
@@ -685,7 +685,7 @@ contract EscrowAdapterTest is Test {
         emit IEscrowAdapter.AuctionEscrowFinalized(RECEIVE_ID, worldwideDay1, LOCK_AMOUNT / 2, LOCK_AMOUNT / 2, 1);
 
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
     }
 
     // --- Payment Token Rotation Tests ---
@@ -809,7 +809,7 @@ contract EscrowAdapterTest is Test {
             paidAmount: LOCK_AMOUNT - 1 // mismatch, fails inside try/catch
         });
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
 
         // The pre-finalize window (lockedAt + UNFINALIZED_REFUND_DELAY) has elapsed, but the
         // series is finalized, so the finalizedAt-anchored post-finalize gate governs and blocks.
@@ -831,7 +831,7 @@ contract EscrowAdapterTest is Test {
             IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: 0, paidAmount: LOCK_AMOUNT - 1});
         uint32 finalizedAt = uint32(block.timestamp);
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
 
         vm.warp(finalizedAt + escrow.POST_FINALIZE_REFUND_DELAY());
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.SplitNotRecorded.selector, worldwideDay1, bidder1));
@@ -850,7 +850,7 @@ contract EscrowAdapterTest is Test {
             paidAmount: LOCK_AMOUNT - 1 // mismatch
         });
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
 
         // Relayer retries with the correct split.
         vm.prank(bridger);
@@ -885,7 +885,7 @@ contract EscrowAdapterTest is Test {
             IEscrowAdapter.FinalizationInstruction({bidder: bidder2, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
 
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
 
         // bidder1 stayed Locked; bidder2 finalized.
         assertEq(uint8(escrow.getBidLock(worldwideDay1, bidder1).status), uint8(IEscrowAdapter.LockStatus.Locked));
@@ -930,7 +930,7 @@ contract EscrowAdapterTest is Test {
             IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: LOCK_AMOUNT, paidAmount: 0});
 
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
 
         vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
         vm.prank(bridger);
@@ -945,7 +945,7 @@ contract EscrowAdapterTest is Test {
         instructions[0] =
             IEscrowAdapter.FinalizationInstruction({bidder: bidder1, refundedAmount: 0, paidAmount: LOCK_AMOUNT - 1});
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
 
         // Now bidder1 sits in Locked (the iteration failed on amount mismatch). Outsider can't retry.
         vm.expectRevert();
@@ -983,7 +983,7 @@ contract EscrowAdapterTest is Test {
         emit IEscrowAdapter.AuctionEscrowFinalized(packet, worldwideDay1, LOCK_AMOUNT, LOCK_AMOUNT, 2);
 
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, packet, instructions);
+        escrow.finalizeAuction(worldwideDay1, packet, instructions, true);
     }
 
     /// @dev A relayer retry is its own inbound packet: `retryFinalize` must stamp the retry's RECEIVE_ID
@@ -1003,7 +1003,7 @@ contract EscrowAdapterTest is Test {
         vm.expectEmit(true, true, true, false);
         emit IEscrowAdapter.BidderRefundFailed(originalPacket, worldwideDay1, bidder1, "");
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, originalPacket, instructions);
+        escrow.finalizeAuction(worldwideDay1, originalPacket, instructions, true);
 
         // Relayer retries under a distinct bridge message id; the retry events must carry retryPacket.
         IEscrowAdapter.FinalizationInstruction memory fixInst =

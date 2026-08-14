@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {BidPackLib} from "../helpers/BidPackLib.sol";
+import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
@@ -37,6 +39,7 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
     }
 
     function _params(uint32 day) internal pure returns (IOriginRouter.AuctionStageStartParams memory p) {
+        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 2, 3);
         p.worldwideDay = day;
         p.dayState = 1;
     }
@@ -167,9 +170,7 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
     function test_inbound_bids_rejectNonSnapshotSource() public {
         _fireStart(DAY); // snapshot = {TARGET_A, TARGET_B}; chain 9 is a registered peer but not a target
         origin.setRemoteMessenger(9, _interop(9, address(0x9999)));
-        bytes memory batch = BridgeMsgCodec.encodeBidsBatch(
-            DAY, 9, 1, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
-        );
+        bytes memory batch = BridgeMsgCodec.encodeBidsBatch(DAY, 9, 1, 0, 1, new address[](0), new uint256[](0));
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.NotSeriesTarget.selector, DAY, uint32(9)));
         _deliver(9, address(0x9999), address(origin), batch);
 

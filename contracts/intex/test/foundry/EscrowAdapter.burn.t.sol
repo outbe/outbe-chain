@@ -59,7 +59,7 @@ contract EscrowAdapterBurnTest is Test {
             bidder: bidder1, refundedAmount: refundPortion, paidAmount: paidPortion
         });
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions);
+        escrow.finalizeAuction(worldwideDay1, RECEIVE_ID, instructions, true);
         compact.setForcedWithdrawalShouldFail(false);
     }
 

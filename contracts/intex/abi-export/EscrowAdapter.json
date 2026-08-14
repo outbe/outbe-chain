@@ -399,6 +399,11 @@
               "internalType": "uint128"
             }
           ]
+        },
+        {
+          "name": "completesDay",
+          "type": "bool",
+          "internalType": "bool"
         }
       ],
       "outputs": [
