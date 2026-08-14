@@ -3,6 +3,7 @@
 
 pub mod api;
 pub mod errors;
+pub mod lifecycle;
 pub mod precompile;
 pub mod runtime;
 pub mod schema;

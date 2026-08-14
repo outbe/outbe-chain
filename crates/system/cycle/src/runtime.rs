@@ -10,7 +10,7 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::schema::Cycle;
 use crate::state::{accounting_gate_blocks, EvmAccountingProgress};
-use crate::triggers::{active_triggers, next_fire_at};
+use crate::triggers::{active_triggers, latest_slot_at_or_before, next_fire_at};
 use crate::ICycle;
 
 /// Dispatches every active trigger whose `next_fire_at` is `<=
@@ -62,6 +62,16 @@ pub fn dispatch_triggers(
         if block_ts < scheduled_at {
             continue;
         }
+
+        // A level-triggered handler reads current state, so working a backlog off
+        // one slot per block would repeat identical work and make a second block
+        // at the same timestamp differ from the first. Settle on the newest
+        // elapsed slot and fire once.
+        let scheduled_at = if spec.coalesce_missed_slots {
+            latest_slot_at_or_before(spec.period_seconds, spec.start_offset_seconds, block_ts)
+        } else {
+            scheduled_at
+        };
 
         // refuse to fire a gated trigger until Phase 1
         // has accounted the parent block. Under the V2 reorder

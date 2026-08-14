@@ -18,8 +18,13 @@ use outbe_tee_enclave::gratis::{
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
 
+use outbe_credis::constants::PLEDGE_QUOTE_TTL_SECS;
+use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
+use outbe_vaultrouter::api::IVaultRouter;
+
 use crate::precompile::{dispatch, IGratisFactory};
 use crate::runtime;
+use crate::schema::GratisFactoryContract;
 
 const CHAIN_ID: u64 = 1;
 const CREATED_AT: u64 = 1_700_000_000;
@@ -37,10 +42,12 @@ fn iso_word(iso: u16) -> Bytes {
     Bytes::from(b)
 }
 
-/// ABI-encoded `bool` return for the vault router's `hasLiquidity` staticcall.
-fn bool_word(value: bool) -> Bytes {
+/// ABI-encoded `uint256` return — the shares the vault router's reservation calls
+/// report burning or minting. The value is not asserted anywhere; the real share
+/// arithmetic is covered by `outbe_vaultrouter::tests`.
+fn shares_word() -> Bytes {
     let mut b = vec![0u8; 32];
-    b[31] = u8::from(value);
+    b[31] = 1;
     Bytes::from(b)
 }
 
@@ -117,6 +124,35 @@ fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
     .unwrap();
 }
 
+fn advance_to(storage: &StorageHandle<'_>, timestamp: u64) {
+    storage.set_block_timestamp(U256::from(timestamp)).unwrap();
+}
+
+/// Mints exactly one pledge's worth of gratis to `account`, seeds its fidelity and
+/// pledges once. `mint_nonce` is the account's current op-nonce; the pledge takes
+/// the next one. Returns the pledge handle.
+fn pledge_once(storage: &StorageHandle<'_>, account: Address, mint_nonce: u64) -> B256 {
+    let seed = pledge_cost();
+    outbe_gratis::api::mint(
+        storage.clone(),
+        account,
+        seed,
+        auth(GratisOp::Mint, account, seed, mint_nonce),
+    )
+    .unwrap();
+    seed_fidelity(storage.clone(), account);
+    runtime::pledge_gratis(
+        storage.clone(),
+        account,
+        pledge_stables(),
+        asset(),
+        U256::MAX,
+        auth(GratisOp::Pledge, account, pledge_stables(), mint_nonce + 1),
+    )
+    .unwrap()
+    .0
+}
+
 /// Give `account` a positive Fidelity index so `pledge_gratis` clears the
 /// eligibility gate.
 fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
@@ -135,12 +171,19 @@ fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
 /// confidential gratis), the block time set (so Fidelity reads a non-zero `now`), and
 /// the COEN/840 pair seeded (pledges are priced from it).
 fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
-    with_env_liquidity(true, f)
+    with_env_reservable(true, f)
 }
 
-/// [`with_env`] with the reserve vault's answer to `hasLiquidity` pinned: a
-/// pledge is gated on the vault being able to fund the credit it quotes.
-fn with_env_liquidity<R>(liquid: bool, f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
+/// [`with_env`] with the vault router's `reserve` either answering or not. A
+/// pledge claims its credit out of the vault, so a router that cannot answer is
+/// the "vault could not fund this" case.
+///
+/// `HashMapStorageProvider` cannot stub a reverting sub-call, so `reservable:
+/// false` simply leaves `reserve` unstubbed: it returns empty returndata, the api
+/// helper fails to decode, and `pledge_gratis` sees the same `Err` a revert would
+/// produce. `returnReservation` stays stubbed either way — unpledge and the sweep
+/// give assets back regardless of how the pledge went.
+fn with_env_reservable<R>(reservable: bool, f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
     test_enclave::install();
     outbe_promis::enclave_client::test_enclave::install();
     fidelity_enclave::install();
@@ -150,10 +193,17 @@ fn with_env_liquidity<R>(liquid: bool, f: impl FnOnce(StorageHandle<'_>) -> R) -
     storage.enable_sub_call_stub();
     storage.stub_sub_call_at(asset(), iso_word(ASSET_ISO));
     storage.stub_sub_call_at_selector(
-        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
-        outbe_vaultrouter::api::IVaultRouter::hasLiquidityCall::SELECTOR,
-        bool_word(liquid),
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::returnReservationCall::SELECTOR,
+        shares_word(),
     );
+    if reservable {
+        storage.stub_sub_call_at_selector(
+            VAULT_ROUTER_ADDRESS,
+            IVaultRouter::reserveCall::SELECTOR,
+            shares_word(),
+        );
+    }
     let out = StorageHandle::enter(&mut storage, |s| {
         seed_oracle(s.clone(), oracle_rate());
         f(s.clone())
@@ -260,12 +310,13 @@ fn pledge_debits_the_oracle_derived_gratis_and_parks_it_in_the_ticket() {
     });
 }
 
-/// A pledge is only worth taking if the reserve vault can actually fund the credit
-/// it quotes. Rejecting on a dry vault here is what stops the pledger locking
-/// collateral against a `requestCredis` that would revert at the vault withdraw.
+/// A pledge that cannot claim its credit out of the vault must leave nothing
+/// behind. The whole point of reserving at pledge time is that the pledger never
+/// locks collateral against a `requestCredis` the vault could not fund, so a failed
+/// reservation has to take the ticket down with it.
 #[test]
-fn pledge_rejects_when_the_reserve_vault_cannot_fund_the_credit() {
-    with_env_liquidity(false, |storage| {
+fn a_pledge_whose_reservation_fails_locks_nothing() {
+    with_env_reservable(false, |storage| {
         let seed = pledge_cost();
         outbe_gratis::api::mint(
             storage.clone(),
@@ -276,7 +327,7 @@ fn pledge_rejects_when_the_reserve_vault_cannot_fund_the_credit() {
         .unwrap();
         seed_fidelity(storage.clone(), alice());
 
-        let err = runtime::pledge_gratis(
+        assert!(runtime::pledge_gratis(
             storage.clone(),
             alice(),
             pledge_stables(),
@@ -284,17 +335,160 @@ fn pledge_rejects_when_the_reserve_vault_cannot_fund_the_credit() {
             U256::MAX,
             auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
         )
-        .unwrap_err();
-        assert!(err.to_string().contains("reserve vault"), "got: {err}");
+        .is_err());
 
-        // Nothing was locked: the pledger keeps their whole balance, and no ticket
-        // exists for a position that could not have been funded.
+        // The pledger keeps their whole balance and nothing is queued for a sweep.
         assert_eq!(view_balance(&storage, alice()), seed);
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         assert_eq!(
             outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
             U256::ZERO
         );
+        assert_eq!(
+            GratisFactoryContract::new(storage.clone())
+                .pledge_queue
+                .len()
+                .unwrap(),
+            0
+        );
+    });
+}
+
+/// The pledge queue is the sweep's only input, so a pledge must land on it and a
+/// spend must not: `requestCredis` clears the quote, which turns the queue entry
+/// into a tombstone rather than removing it.
+#[test]
+fn a_pledge_is_queued_for_expiry_and_a_spend_tombstones_it() {
+    with_env(|storage| {
+        let handle = pledge_once(&storage, alice(), 0);
+        let contract = GratisFactoryContract::new(storage.clone());
+
+        assert_eq!(contract.pledge_queue.len().unwrap(), 1);
+        assert_eq!(contract.pledge_queue.front().unwrap(), Some(handle));
+        assert_eq!(
+            contract.pledge_quoted_at.read(&handle).unwrap(),
+            CREATED_AT,
+            "the quote timestamp doubles as the reservation deadline"
+        );
+
+        // What credisfactory does when the ticket is spent.
+        crate::api::clear_pledge_quote(storage.clone(), handle).unwrap();
+
+        // Still queued, but now a tombstone: the sweep must drop it without
+        // touching the router, since the reservation is already released.
+        assert_eq!(contract.pledge_queue.len().unwrap(), 1);
+        assert_eq!(crate::lifecycle::sweep_expired(&storage, 8).unwrap(), 0);
+        assert_eq!(contract.pledge_queue.len().unwrap(), 0);
+    });
+}
+
+/// Before the TTL elapses the head is not due, and the sweep must stop at it
+/// rather than walk the queue — that early break is what keeps a scheduled sweep
+/// cheap when nothing has expired.
+#[test]
+fn the_sweep_leaves_a_live_quote_alone() {
+    with_env(|storage| {
+        let handle = pledge_once(&storage, alice(), 0);
+        let contract = GratisFactoryContract::new(storage.clone());
+
+        advance_to(&storage, CREATED_AT + PLEDGE_QUOTE_TTL_SECS);
+        assert_eq!(
+            crate::lifecycle::sweep_expired(&storage, 8).unwrap(),
+            0,
+            "the deadline is inclusive; equality is not yet expired"
+        );
+        assert_eq!(contract.pledge_queue.len().unwrap(), 1);
+        assert_eq!(contract.pledge_quoted_at.read(&handle).unwrap(), CREATED_AT);
+    });
+}
+
+/// The documented boundary of this feature: expiry returns the vault credit and
+/// clears the quote, but the GRATIS stays in the ticket. If that ever changes
+/// silently — an unauthenticated enclave unpledge slipping in — this test fails.
+#[test]
+fn expiry_returns_the_credit_but_leaves_the_collateral_pledged() {
+    with_env(|storage| {
+        let handle = pledge_once(&storage, alice(), 0);
+        let contract = GratisFactoryContract::new(storage.clone());
+        let after_pledge = view_balance(&storage, alice());
+
+        advance_to(&storage, CREATED_AT + PLEDGE_QUOTE_TTL_SECS + 1);
+        assert_eq!(crate::lifecycle::sweep_expired(&storage, 8).unwrap(), 1);
+
+        // Quote gone, queue drained, and the sweep is idempotent.
+        assert_eq!(contract.pledge_quoted_at.read(&handle).unwrap(), 0);
+        assert_eq!(contract.pledge_queue.len().unwrap(), 0);
+        assert_eq!(crate::lifecycle::sweep_expired(&storage, 8).unwrap(), 0);
+
+        // The collateral did NOT come back. Recovering it is the pledger's own
+        // `unpledgeGratis` call; see the todo in `crate::lifecycle`.
+        assert_eq!(view_balance(&storage, alice()), after_pledge);
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+            pledge_cost(),
+            "the ticket still holds the gratis"
+        );
+
+        // And that call still works after expiry — the ticket outlives the quote.
+        runtime::unpledge_gratis(
+            storage.clone(),
+            alice(),
+            pledge_stables(),
+            handle,
+            auth(GratisOp::Unpledge, alice(), pledge_stables(), 2),
+        )
+        .unwrap();
+        assert_eq!(
+            view_balance(&storage, alice()),
+            after_pledge + pledge_cost()
+        );
+    });
+}
+
+/// The queue drains oldest-first and honours its budget, so a backlog cannot
+/// starve the newest pledges of a later sweep.
+#[test]
+fn the_sweep_drains_in_order_within_its_budget() {
+    with_env(|storage| {
+        let seed = pledge_cost() * U256::from(3u64);
+        outbe_gratis::api::mint(
+            storage.clone(),
+            alice(),
+            seed,
+            auth(GratisOp::Mint, alice(), seed, 0),
+        )
+        .unwrap();
+        seed_fidelity(storage.clone(), alice());
+
+        let mut handles = Vec::new();
+        for nonce in 1..=3u64 {
+            handles.push(
+                runtime::pledge_gratis(
+                    storage.clone(),
+                    alice(),
+                    pledge_stables(),
+                    asset(),
+                    U256::MAX,
+                    auth(GratisOp::Pledge, alice(), pledge_stables(), nonce),
+                )
+                .unwrap()
+                .0,
+            );
+        }
+        let contract = GratisFactoryContract::new(storage.clone());
+        assert_eq!(contract.pledge_queue.len().unwrap(), 3);
+
+        advance_to(&storage, CREATED_AT + PLEDGE_QUOTE_TTL_SECS + 1);
+
+        assert_eq!(crate::lifecycle::sweep_expired(&storage, 2).unwrap(), 2);
+        assert_eq!(contract.pledge_queue.len().unwrap(), 1);
+        // The two oldest went; the survivor is the last pledged.
+        assert_eq!(contract.pledge_quoted_at.read(&handles[0]).unwrap(), 0);
+        assert_eq!(contract.pledge_quoted_at.read(&handles[1]).unwrap(), 0);
+        assert_eq!(contract.pledge_queue.front().unwrap(), Some(handles[2]));
+
+        assert_eq!(crate::lifecycle::sweep_expired(&storage, 2).unwrap(), 1);
+        assert_eq!(contract.pledge_queue.len().unwrap(), 0);
     });
 }
 

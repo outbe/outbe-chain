@@ -8,8 +8,8 @@
   pledge handle to open a position
 - **Topology/services:** Finalizing network with an attested TEE enclave, a
   registered `COEN/<iso>` oracle pair carrying both a live spot rate and a
-  published policy rate, a funded per-currency reserve vault, and the Cycle daily
-  trigger running
+  published policy rate, a funded per-currency reserve vault whose router lists
+  both factories as liquidity targets, and the Cycle triggers running
 - **Referenced ADRs:** ADR-C-GRT-001, ADR-C-GRT-002, ADR-C-GRT-003, ADR-C-FID-001,
   ADR-C-CRD-001, ADR-C-VLT-001, ADR-S-ORC-001
 - **Supersedes:** The pre-TEE revision of this document, which described a
@@ -104,11 +104,18 @@ admissibility flag:
 | Requirement | Enforced by | When |
 |---|---|---|
 | a registered `COEN/<iso>` pair | `coenRateFor` reverts without it | `pledgeGratis`, at pricing |
-| a reserve vault holding enough `asset` | `IVaultRouter.hasLiquidity(asset, amountStables)` | `pledgeGratis`, before the ticket is sealed |
+| a reserve vault holding enough `asset` | `IVaultRouter.reserve` reverts on a share shortfall | `pledgeGratis`, as the credit is claimed |
 | a non-zero policy rate for `iso` | `getCurrencyRate` reverts without it | `requestCredis`, when the rate is pinned |
 
 Genesis seeds USD/840; any other currency needs `registerPair`, a vault added via
 `addVault`, plus a system-only `setCurrencyRate`.
+
+> **Operational prerequisite.** GratisFactory (`0x2003`) must be registered as a
+> vault-router **liquidity target** — `addLiquidityTarget(GRATIS_FACTORY_ADDRESS,
+> StablesTarget.Credis)`, an owner call — exactly as CredisFactory already is.
+> Taking assets out of a vault is what that registry authorizes, and `pledgeGratis`
+> now does so. Nothing in this repository registers targets; it is a deployment
+> runbook step, and until it is done every `pledgeGratis` reverts.
 
 ---
 
@@ -123,19 +130,16 @@ Genesis seeds USD/840; any other currency needs `registerPair`, a vault added vi
 **Preconditions**
 
 1. `asset != 0` and `amountStables != 0`.
-2. `IVaultRouter.hasLiquidity(asset, amountStables)` — the reserve vault holds
-   enough shares to fund the credit `requestCredis` will draw. Checking it here
-   means the pledger never locks collateral against a position the vault could not
-   fund. Liquidity can still drain between the two calls; the vault's own check at
-   withdraw time stays the authority.
-3. The asset self-reports an ISO 4217 code via `IReferenceCurrency.isoCode()`.
-4. `(mac, opNonce)` is a valid Gratis modify authorization: `opNonce` equals the
+2. The asset self-reports an ISO 4217 code via `IReferenceCurrency.isoCode()`.
+3. `(mac, opNonce)` is a valid Gratis modify authorization: `opNonce` equals the
    caller's current `IGratis.opNonceOf(caller)`, and the MAC binds
    `amountStables` under the caller's modify key.
-5. The caller's confidential Gratis balance covers the derived cost.
-6. Fidelity eligibility: the enclave-returned league is not `u16::MAX`.
-7. `gratis_cost <= maxGratis` — the caller's slippage cap, authenticated by their
+4. The caller's confidential Gratis balance covers the derived cost.
+5. Fidelity eligibility: the enclave-returned league is not `u16::MAX`.
+6. `gratis_cost <= maxGratis` — the caller's slippage cap, authenticated by their
    transaction signature rather than the MAC.
+7. The reserve vault can cover `amountStables` — enforced by taking it, not by
+   testing for it. See **the claim** below.
 
 **Pricing.** The cost is derived here and nowhere else:
 
@@ -146,6 +150,17 @@ gratis_cost = ceil(amountStables × 1e12 × 1e18 / spot_rate)
 rounded **up**, so the collateral always covers the credit. `spot_rate` is
 `COEN/<iso>` at this block. This is the quote the pledger accepts.
 
+**The claim.** The credit is *reserved*, not merely checked. `pledgeGratis` calls
+`IVaultRouter.reserve(pledgeHandle, asset, amountStables)`, which redeems the assets
+out of the reserve vault into the router's own custody, wired to the handle. A
+liquidity check here would not survive the gap to `requestCredis` — any other
+withdrawal can take the same shares in the meantime — so the pledge holds the assets
+instead. This is what makes the delivery a guarantee rather than a hope.
+
+The debit and the claim are **atomic**: `pledge_gratis` wraps them in one storage
+checkpoint, so a vault that cannot pay leaves the pledger with their full balance
+and no ticket. A pledger debited without a claim is the exact failure this removes.
+
 **State transition**
 
 | | in | out |
@@ -154,8 +169,12 @@ rounded **up**, so the collateral always covers the credit. `spot_rate` is
 | `pledged_ct[pledger]` | `Q` | `Q` — **unchanged**; the amount is parked in the ticket, not the pledged ledger |
 | pledge ticket | absent | sealed record holding `{stables_amount, gratis_amount, asset, entry_rate}` and the pledger EOA |
 | `pledge_quoted_at[handle]` | 0 | `block.timestamp` |
+| `pledge_queue` | `[…]` | `[…, handle]` — appended; the TTL is constant, so insertion order is expiry order |
+| vault shares held by the router | `S` | `S − previewWithdraw(amountStables)` |
+| `reservationOf(handle)` | `(0, 0)` | `(asset, amountStables)` in router custody |
 
-**Outputs.** `pledgeHandle`, `gratis_cost`, and a `GratisPledged` event.
+**Outputs.** `pledgeHandle`, `gratis_cost`, a `GratisPledged` event, and the
+router's `ReservationCreated`.
 
 > **Privacy boundary.** `amountStables`, `gratisAmount` and the handle are all
 > public — calldata and event. Only *cumulative balances* are encrypted. What the
@@ -171,9 +190,52 @@ authorization binds the ticket to the named bundle.
 ### Step 1-alt — `unpledgeGratis`
 
 If the pledge is never spent, `unpledgeGratis(amountStables, handle, mac, opNonce)`
-returns the full collateral to `balance_ct[pledger]`, deletes the ticket, and
-clears the quote timestamp. `amountStables` must match the figure sealed in the
-ticket.
+returns the full collateral to `balance_ct[pledger]`, deletes the ticket, clears the
+quote timestamp, and **returns the reservation to the vault** — the credit is no
+longer owed to anyone, so it goes back to earning rather than waiting for the sweep.
+`amountStables` must match the figure sealed in the ticket.
+
+The queue entry is left behind as a tombstone; the sweep drops it on sight. This
+call works before **and** after the quote expires: the ticket outlives the quote,
+which is what makes it the pledger's recovery path (see Step 1-exp).
+
+### Step 1-exp — the quote lapses
+
+Driven by Cycle trigger 6 (`pledge_reservation_sweep`, every 300s) or by anyone
+calling `IGratisFactory.sweepExpiredPledges(max)`.
+
+**Preconditions**
+
+1. `pledge_quoted_at[head] != 0` — a zero is a spent/unpledged tombstone, popped
+   and skipped without touching the router.
+2. `now > pledge_quoted_at[head] + PLEDGE_QUOTE_TTL_SECS` — strictly after; the
+   deadline itself is still live.
+
+The queue is walked from the head only. `PLEDGE_QUOTE_TTL_SECS` is a constant, so
+insertion order **is** expiry order: a head that is not yet due ends the run, which
+is why a scheduled sweep with nothing to do costs two storage reads.
+
+**State transition**
+
+| | in | out |
+|---|---|---|
+| `reservationOf(handle)` | `(asset, amount)` | `(0, 0)` — deposited back into the vault |
+| `pledge_quoted_at[handle]` | `t` | 0 — the quote can never be exercised |
+| `pledge_queue` | `[handle, …]` | `[…]` |
+| pledge ticket | present | **present — unchanged** |
+| `balance_ct[pledger]` | `B` | `B` — **unchanged** |
+
+> **The collateral is not released.** Expiry returns the *stablecoin claim*; the
+> pledger's GRATIS stays in the ticket until they call `unpledgeGratis` themselves.
+> `PledgeQuoteExpired(pledgeHandle, quotedAt)` is emitted so a client can detect the
+> lapse and prompt them. Automating it would need a new unauthenticated
+> `GratisOp::ExpirePledge`, because `Unpledge` is an owner op gated on a MAC derived
+> from a key that never leaves the enclave — a postcard wire change, an
+> `inputs_canonical_hash` extension, and a new MRENCLAVE.
+
+A handle whose vault deposit fails is popped anyway rather than blocking the head
+forever; its assets stay in router custody and stay recoverable through the
+permissionless `returnReservation`.
 
 ---
 
@@ -214,10 +276,16 @@ policy rate belongs to the loan rather than to the collateral.
 |---|---|---|
 | pledge ticket | sealed record | deleted |
 | `pledged_ct[pledger]` | `Q` | `Q + G` — the collateral lands in the pledger's **own** ledger; there is no escrow account |
-| `pledge_quoted_at[handle]` | `t` | cleared |
+| `pledge_quoted_at[handle]` | `t` | cleared — which tombstones the queue entry |
 | position | absent | `Position` (below) |
-| `IERC20(asset)` | vault holds `P` | `smartAccount` holds `+P` |
+| `reservationOf(handle)` | `(asset, P)` | `(0, 0)` — released, not re-withdrawn |
+| `IERC20(asset)` | router custody holds `P` | `smartAccount` holds `+P` |
 | CCA day units | `u` | `u + unit` (see §8.3 rules) |
+
+**The delivery cannot fail for want of liquidity.** `requestCredis` calls
+`releaseReservation(pledgeHandle, smartAccount)`, handing over assets the pledge
+already took out of the vault. There is no vault withdrawal at this step and so no
+race with other borrowers — that was the whole point of reserving at Step 1.
 
 The created position:
 
@@ -446,7 +514,8 @@ authorization is single-use), the one-shot pledge ticket, and
 | is the owner blocked? | `ICredis.hasCalledPosition(smartAccount)` |
 | pledger's confidential balances | `IGratis.balanceOf` / `pledgedOf`, decrypted with the view key |
 | agent standing | `ICca.canOriginate` / `multiplierOf` |
-| can this asset fund a pledge right now? | `IVaultRouter.hasLiquidity(asset, amount)` |
+| is my credit still held for me? | `IVaultRouter.reservationOf(pledgeHandle)` |
+| can this asset fund a pledge right now? | `IVaultRouter.hasLiquidity(asset, amount)` — a preflight; it checks, it does not claim |
 
 Events are the audit trail; storage reads are authoritative if they disagree.
 
@@ -465,6 +534,13 @@ Events are the audit trail; storage reads are authoritative if they disagree.
   reaches the same conclusion.
 - **A cold oracle** blocks nothing that was already latched: the on-demand latch
   uses a non-reverting read and simply declines to latch.
+- **The expiry sweep is level-triggered and idempotent.** Trigger 6 sets
+  `coalesce_missed_slots`, so a gap resolves to one run at the newest elapsed slot
+  rather than a per-slot backlog — re-walking the same queue N times would be
+  wasted work, and would make two blocks at one timestamp differ. Every other
+  trigger keeps the one-slot-per-block catch-up, where each slot is its own event.
+- **A reservation is never stranded.** `returnReservation` is permissionless, so a
+  handle the sweep could not unwind stays recoverable by anyone.
 
 ## E2E scenario matrix
 
@@ -480,7 +556,10 @@ Events are the audit trail; storage reads are authoritative if they disagree.
 | PFS-003-08 | §8.4 agent accountability | void penalizes; repayment restores; quarantine blocks origination | `cca::tests`, `credisfactory::tests::e2e` |
 | PFS-003-09 | multi-currency | two positions latch/call off their own daily series | `credisfactory::tests::called` |
 | PFS-003-10 | localnet client path | `1-pledge-gratis` → `3-request-credis` → settle | GAP — the example script is still named `5-user-pays-anadosis.ts` |
-| PFS-003-11 | dry reserve vault | `pledgeGratis` rejects and locks nothing; the router's gate and its withdraw check agree at the share boundary | `gratisfactory::tests`, `vaultrouter::tests` |
+| PFS-003-11 | dry reserve vault | `pledgeGratis` locks nothing — no debit, no ticket, no queue entry; a reservation cannot exceed the vault's shares | `gratisfactory::tests`, `vaultrouter::tests` |
+| PFS-003-12 | a claim is held, delivered once, and gated | `reserve` → `releaseReservation` delivers exactly once; double-release and double-reserve reject; both legs answer to the liquidity-target registry | `vaultrouter::tests` |
+| PFS-003-13 | quote lapses unspent | credit returns to the vault, quote cleared, `PledgeQuoteExpired` emitted, **ticket and collateral untouched**, and `unpledgeGratis` still works afterwards | `gratisfactory::tests` |
+| PFS-003-14 | sweep ordering and budget | live head ends the run; a spent handle is a tombstone; a backlog drains oldest-first within `max` | `gratisfactory::tests` |
 
 ## Open questions and technical debt
 
@@ -505,5 +584,12 @@ Events are the audit trail; storage reads are authoritative if they disagree.
    defence.
 7. **Amounts are public.** Only identity is protected. Do not over-claim amount
    privacy in client-facing docs.
+7b. **Expiry does not return the pledger's collateral.** The sweep frees the vault
+   credit; recovering the GRATIS is a manual `unpledgeGratis`. Automating it needs
+   an unauthenticated enclave op and a new MRENCLAVE — see Step 1-exp.
+7c. **A live quote parks vault liquidity.** Reserved assets earn nothing for the
+   quote's life, and cheap pledges could hold liquidity 15 minutes at a time. The
+   GRATIS cost is the only deterrent today; a per-account cap on live reservations
+   is the upgrade path if that proves insufficient.
 8. **All §10 TBDs ship as placeholder constants:** quote TTL 15 min, position cap
    16, dust guard $100, recovery $1,000/step, policy-rate factor ×1.

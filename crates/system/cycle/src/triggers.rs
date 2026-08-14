@@ -23,6 +23,7 @@ pub enum TriggerId {
     AuctionAdvance = 3,
     GemCallDaily = 4,
     CredisCallDaily = 5,
+    PledgeReservationSweep = 6,
 }
 
 impl TriggerId {
@@ -53,6 +54,18 @@ pub struct TriggerSpec {
     /// without consulting [`outbe_primitives::accounting_progress::AccountingProgressView`].
     /// Default for the canonical emission-limit trigger is `true`.
     pub requires_accounting_window: bool,
+    /// When `false` (the default for every event-shaped trigger), a missed slot
+    /// is worked off one per block: `last_executed_at` advances to the slot that
+    /// fired, so a gap of N slots takes N blocks to drain. That is correct when
+    /// each slot is a distinct event — a day's emission is not the next day's.
+    ///
+    /// When `true`, the trigger jumps straight to the newest elapsed slot and
+    /// fires once. Set it for **level-triggered** work, where the handler reads
+    /// current state and the only thing a missed slot means is "run again": a
+    /// backlog is redundant work, and draining it one block at a time would make
+    /// two blocks at the same timestamp differ. Only sub-daily periods can
+    /// realistically accumulate a backlog at all.
+    pub coalesce_missed_slots: bool,
     /// Handler invoked when a slot fires. Failure rolls back the
     /// trigger's checkpoint and leaves `last_executed_at` unchanged.
     pub handler: TriggerHandler,
@@ -66,6 +79,7 @@ pub enum TriggerHandler {
     AuctionAdvance,
     GemCallDaily,
     CredisCallDaily,
+    PledgeReservationSweep,
 }
 
 impl TriggerHandler {
@@ -79,7 +93,8 @@ impl TriggerHandler {
             Self::IntexDaily
             | Self::AuctionAdvance
             | Self::GemCallDaily
-            | Self::CredisCallDaily => 0,
+            | Self::CredisCallDaily
+            | Self::PledgeReservationSweep => 0,
         }
     }
 
@@ -100,6 +115,7 @@ impl TriggerHandler {
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
             Self::GemCallDaily => outbe_gem::hooks::run_call_daily(ctx),
             Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
+            Self::PledgeReservationSweep => outbe_gratisfactory::lifecycle::run_sweep(ctx),
         }
     }
 }
@@ -116,7 +132,7 @@ pub fn metadosis_mutation_lease_budget_per_tick() -> u8 {
 
 /// Active trigger table. Order is informational only — the dispatcher
 /// fires triggers independently per slot.
-pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 6] {
+pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 7] {
     let production_default = outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS;
     let (wwd_period_seconds, wwd_start_offset_seconds) =
         if metadosis_advance_interval_seconds == production_default {
@@ -138,6 +154,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             // firing, otherwise validator-pool top-ups and daily-fee reads would
             // race the parent-finalization tx.
             requires_accounting_window: true,
+            coalesce_missed_slots: false,
             handler: TriggerHandler::EmissionLimitDaily,
         },
         TriggerSpec {
@@ -148,6 +165,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             // Reads finalized oracle VWAP history and marks series Called; no
             // dependency on the parent block's settlement accounting.
             requires_accounting_window: false,
+            coalesce_missed_slots: false,
             handler: TriggerHandler::IntexDaily,
         },
         TriggerSpec {
@@ -162,6 +180,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             // settlement accounting. Day creation and READY settlement stay
             // on the midnight `emission_limit_1` trigger.
             requires_accounting_window: false,
+            coalesce_missed_slots: false,
             handler: TriggerHandler::WwdAdvanceNoon,
         },
         TriggerSpec {
@@ -172,6 +191,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             // Gated like emission_limit_1 so the brief it writes and this start
             // land in the same slot.
             requires_accounting_window: true,
+            coalesce_missed_slots: false,
             handler: TriggerHandler::AuctionAdvance,
         },
         TriggerSpec {
@@ -182,6 +202,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             // Reads finalized oracle VWAP history to force-call / forfeit-burn gems;
             // no dependency on the parent block's settlement accounting.
             requires_accounting_window: false,
+            coalesce_missed_slots: false,
             handler: TriggerHandler::GemCallDaily,
         },
         TriggerSpec {
@@ -192,14 +213,40 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             // Reads finalized oracle VWAP history to latch, call and void credis
             // positions; no dependency on the parent block's settlement accounting.
             requires_accounting_window: false,
+            coalesce_missed_slots: false,
             handler: TriggerHandler::CredisCallDaily,
+        },
+        TriggerSpec {
+            id: TriggerId::PledgeReservationSweep.as_u32(),
+            label: "pledge_reservation_sweep",
+            // The pledge quote TTL is 15 minutes, so a daily slot would strand
+            // vault liquidity for a day. Five minutes bounds the lateness well
+            // inside the TTL without making this a per-tick cost.
+            period_seconds: 300,
+            start_offset_seconds: 0,
+            // Walks its own FIFO and returns assets to the vault; reads no
+            // oracle history and no parent-block settlement accounting.
+            requires_accounting_window: false,
+            // Level-triggered: the handler walks whatever is expired right now,
+            // so a missed slot means "run again", never "run twice".
+            coalesce_missed_slots: true,
+            handler: TriggerHandler::PledgeReservationSweep,
         },
     ]
 }
 
-pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 6] =
+pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 7] =
     active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
 pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &ACTIVE_TRIGGER_ARRAY;
+
+/// Newest slot at or before `ts`. Used only by coalescing triggers, to skip the
+/// backlog a short period would otherwise accumulate one block at a time.
+pub fn latest_slot_at_or_before(period: u64, offset: u64, ts: u64) -> u64 {
+    if ts < offset {
+        return offset;
+    }
+    offset + ((ts - offset) / period) * period
+}
 
 /// Returns the next slot strictly greater than `last_executed_at`.
 /// Pure function: same `(period, offset, last)` tuple always returns
@@ -224,6 +271,49 @@ pub fn next_fire_at(period: u64, offset: u64, last_executed_at: u64) -> u64 {
 mod protocol_parameter_tests {
     use super::*;
 
+    /// The two schedulers must disagree in exactly one way: after a gap, the
+    /// event-shaped one owes every missed slot while the level-triggered one owes
+    /// only the newest. Both must then agree that the slot just fired is done, or
+    /// a second block at the same timestamp would fire again.
+    #[test]
+    fn coalescing_settles_a_backlog_the_stepwise_schedule_would_walk() {
+        const PERIOD: u64 = 300;
+        let anchor = 1_704_068_100;
+        let now = anchor + PERIOD * 12;
+
+        // Stepwise: one slot per block, so twelve blocks to catch up.
+        assert_eq!(next_fire_at(PERIOD, 0, anchor), anchor + PERIOD);
+        // Coalescing: straight to the newest elapsed slot.
+        assert_eq!(latest_slot_at_or_before(PERIOD, 0, now), now);
+
+        // Having fired at `now`, neither schedule fires again at `now`.
+        assert!(next_fire_at(PERIOD, 0, now) > now);
+
+        // A timestamp mid-slot settles on the slot that has actually opened.
+        assert_eq!(latest_slot_at_or_before(PERIOD, 0, now + 1), now);
+        assert_eq!(latest_slot_at_or_before(PERIOD, 0, now + PERIOD - 1), now);
+
+        // Offsets are honoured, and a timestamp before the first slot cannot
+        // resolve to a slot that never opened.
+        assert_eq!(latest_slot_at_or_before(86_400, 43_200, 43_199), 43_200);
+        assert_eq!(latest_slot_at_or_before(86_400, 43_200, 129_599), 43_200);
+        assert_eq!(latest_slot_at_or_before(86_400, 43_200, 129_600), 129_600);
+    }
+
+    /// Coalescing is opt-in: every trigger that predates it must keep working a
+    /// backlog off one slot per block, since each of their slots is its own event.
+    #[test]
+    fn only_the_pledge_sweep_coalesces() {
+        for spec in ACTIVE_TRIGGERS {
+            assert_eq!(
+                spec.coalesce_missed_slots,
+                spec.id == TriggerId::PledgeReservationSweep.as_u32(),
+                "{} changed its backlog semantics",
+                spec.label
+            );
+        }
+    }
+
     #[test]
     fn only_wwd_advancement_uses_the_genesis_interval() {
         let configured = active_triggers(10);
@@ -242,6 +332,14 @@ mod protocol_parameter_tests {
         assert!(matches!(
             configured[5].handler,
             TriggerHandler::CredisCallDaily
+        ));
+        // The pledge sweep is the one sub-daily trigger: a 15-minute quote TTL
+        // cannot wait for a daily slot without stranding vault liquidity.
+        assert_eq!(configured[6].period_seconds, 300);
+        assert_eq!(configured[6].start_offset_seconds, 0);
+        assert!(matches!(
+            configured[6].handler,
+            TriggerHandler::PledgeReservationSweep
         ));
 
         let defaults =

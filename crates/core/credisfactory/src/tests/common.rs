@@ -335,13 +335,20 @@ pub fn env() -> HashMapStorageProvider {
     storage.set_block_number(BLOCK_NUMBER);
     storage.enable_sub_call_stub();
     storage.stub_sub_call_at(VAULT_ROUTER_ADDRESS, zero_word());
-    // A funded reserve vault: `pledge_gratis` refuses to quote against a dry one,
-    // and the address-wide zero word above would decode as `false`.
-    storage.stub_sub_call_at_selector(
-        VAULT_ROUTER_ADDRESS,
-        outbe_vaultrouter::api::IVaultRouter::hasLiquidityCall::SELECTOR,
-        u256_word(U256::from(1u64)),
-    );
+    // A funded reserve vault. `pledge_gratis` claims its credit up front and
+    // `request_credis` delivers that claim, so both legs must answer; the
+    // address-wide zero word above is a valid `uint256` for either.
+    for selector in [
+        outbe_vaultrouter::api::IVaultRouter::reserveCall::SELECTOR,
+        outbe_vaultrouter::api::IVaultRouter::releaseReservationCall::SELECTOR,
+        outbe_vaultrouter::api::IVaultRouter::returnReservationCall::SELECTOR,
+    ] {
+        storage.stub_sub_call_at_selector(
+            VAULT_ROUTER_ADDRESS,
+            selector,
+            u256_word(pledge_stables()),
+        );
+    }
     storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
     // Matched funding defaults to satisfied; the tests that exercise §7 override
     // it. The selector stub takes priority over the address-wide `isoCode()` one.

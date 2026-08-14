@@ -20,6 +20,7 @@ outbe-intexfactory.workspace = true
 outbe-desis.workspace = true
 outbe-gem.workspace = true
 outbe-credisfactory.workspace = true
+outbe-gratisfactory.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 tracing.workspace = true

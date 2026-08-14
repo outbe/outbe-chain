@@ -50,6 +50,9 @@ pub fn dispatch(
                     emit_pledged(&storage, sender, &c, gratis_amount, handle)?;
                     Ok(handle)
                 }),
+                sweepExpiredPledges(c) => {
+                    view(c, |c| crate::lifecycle::sweep_expired(&storage, c.max))
+                }
                 unpledgeGratis(c) => mutate_void(c, caller, |sender, c| {
                     let auth = ModifyAuth {
                         mac: c.mac.0,

@@ -13,8 +13,11 @@ outbe-promis.workspace = true
 outbe-fidelity.workspace = true
 # Prices the credis loan at pledge time (COEN/840 → gratis collateral).
 outbe-oracle.workspace = true
-# Rejects a pledge the reserve vault could not fund at `requestCredis`.
+# Holds the pledged credit in vault-router custody until `requestCredis` or expiry.
 outbe-vaultrouter.workspace = true
+# `PLEDGE_QUOTE_TTL_SECS` — the reservation and the quote share one deadline.
+outbe-credis.workspace = true
+tracing.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true

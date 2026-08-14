@@ -58,6 +58,71 @@ pub fn has_liquidity(storage: &StorageHandle<'_>, asset: Address, amount: U256) 
         .map_err(|_| PrecompileError::Revert("hasLiquidity undecodable".into()))
 }
 
+/// `reserve`: pull `amount` of `asset` out of its reserve vault into the router's
+/// own custody under `id`, so it is guaranteed available to a later
+/// [`release_reservation`]. Returns the burned shares.
+pub fn reserve(
+    storage: &StorageHandle<'_>,
+    id: B256,
+    asset: Address,
+    amount: U256,
+) -> Result<U256> {
+    let ret = storage.call(
+        VAULT_ROUTER_ADDRESS,
+        U256::ZERO,
+        IVaultRouter::reserveCall { id, asset, amount }
+            .abi_encode()
+            .into(),
+    )?;
+    IVaultRouter::reserveCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("reserve undecodable".into()))
+}
+
+/// `releaseReservation`: deliver the assets held under `id` into `receiver`,
+/// returning the amount delivered.
+pub fn release_reservation(
+    storage: &StorageHandle<'_>,
+    id: B256,
+    receiver: Address,
+) -> Result<U256> {
+    let ret = storage.call(
+        VAULT_ROUTER_ADDRESS,
+        U256::ZERO,
+        IVaultRouter::releaseReservationCall { id, receiver }
+            .abi_encode()
+            .into(),
+    )?;
+    IVaultRouter::releaseReservationCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("releaseReservation undecodable".into()))
+}
+
+/// `returnReservation`: deposit the assets held under `id` back into their vault,
+/// returning the shares minted back. Permissionless.
+pub fn return_reservation(storage: &StorageHandle<'_>, id: B256) -> Result<U256> {
+    let ret = storage.call(
+        VAULT_ROUTER_ADDRESS,
+        U256::ZERO,
+        IVaultRouter::returnReservationCall { id }
+            .abi_encode()
+            .into(),
+    )?;
+    IVaultRouter::returnReservationCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("returnReservation undecodable".into()))
+}
+
+/// `reservationOf`: the asset and amount held under `id`, zeroes when none.
+/// Read-only, so this uses a staticcall.
+pub fn reservation_of(storage: &StorageHandle<'_>, id: B256) -> Result<(Address, U256)> {
+    let ret = storage.staticcall(
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::reservationOfCall { id }.abi_encode().into(),
+    )?;
+    let decoded = IVaultRouter::reservationOfCall::abi_decode_returns(&ret).map_err(
+        |_| -> PrecompileError { PrecompileError::Revert("reservationOf undecodable".into()) },
+    )?;
+    Ok((decoded.asset, decoded.amount))
+}
+
 /// `withdraw`: redeem `amount` of `asset` from its reserve vault and top
 /// it up into `receiver` via an EVM sub-call to the vault router, returning the
 /// burned shares.

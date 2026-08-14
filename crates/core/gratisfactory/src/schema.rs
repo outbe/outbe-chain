@@ -25,4 +25,12 @@ pub struct GratisFactoryContract {
     /// ticket is spent or unpledged, so a non-zero entry means "live quote".
     #[attribute(order = 0)]
     pub pledge_quoted_at: outbe_primitives::storage::dsl::Map<B256, u64>,
+
+    /// Handles with a vault reservation to unwind, in the order they were
+    /// pledged. The TTL is a constant, so insertion order **is** expiry order and
+    /// the queue needs no timestamp of its own: the head's deadline is
+    /// `pledge_quoted_at[head] + PLEDGE_QUOTE_TTL_SECS`. A head whose quote reads
+    /// zero was already spent or unpledged and is popped as a tombstone.
+    #[attribute(order = 1)]
+    pub pledge_queue: outbe_primitives::storage::dsl::Deque<B256>,
 }
