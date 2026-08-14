@@ -23,6 +23,7 @@ Feature: Multichain auction from a settled day
     When all 257 capacity owners submit one encrypted Tribute each
     Then all validators observe exactly 257 public Tributes for the capacity day
     When the committee logical clock reaches the public capacity processing time
+    And the committee clock settles after the jump
     Then Metadosis creates one finalized JobIntent from that public Tribute
     And the auction for that day opens on the target chain
     When two bidders commit their bids

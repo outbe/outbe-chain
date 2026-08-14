@@ -338,6 +338,29 @@ fn relayed_bids(url: &str, worldwide_day: u32, chain_id: u32) -> String {
     }
 }
 
+/// After a logical-time jump the ratchet lets each block carry up to an hour, so
+/// a minute-long auction window would burn out in seconds. Let that catch-up end.
+#[cfg(feature = "ocomp-integration")]
+#[when("the committee clock settles after the jump")]
+fn committee_clock_settles(world: &mut World) {
+    let url = world.rpc.url(world.validators.primary_port());
+    let deadline = Instant::now() + AUCTION_STAGE_TIMEOUT;
+    let mut previous = eth::latest_block_timestamp(&url).expect("committee block timestamp");
+    loop {
+        sleep(Duration::from_secs(6));
+        let current = eth::latest_block_timestamp(&url).expect("committee block timestamp");
+        let step = current.saturating_sub(previous);
+        if step < 120 {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the committee clock is still catching up at {step}s per six seconds"
+        );
+        previous = current;
+    }
+}
+
 #[cfg(feature = "ocomp-integration")]
 fn settled_day(world: &World) -> u32 {
     world
