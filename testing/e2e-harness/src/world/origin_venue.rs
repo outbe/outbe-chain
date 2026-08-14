@@ -19,6 +19,8 @@ pub(crate) const DESIS: &str = "0x0000000000000000000000000000000000001016";
 const INTEX_FACTORY: &str = "0x0000000000000000000000000000000000001015";
 const SYSTEM_CALLER: &str = "0xff00000000000000000000000000000000000001";
 
+const RELAY_FLOAT_WEI: u128 = 1_000_000_000_000_000_000;
+
 /// Addresses one origin-side deploy produced.
 #[derive(Clone, Debug)]
 pub struct OriginContracts {
@@ -176,6 +178,17 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64) -> Result<OriginContracts> 
         wcoen,
     };
     wire(&intex, &contracts, url, chain_id)?;
+
+    // Both routers pay the bridge fee from their own float when a chain-native
+    // module triggers the send.
+    for router in [contracts.origin_router, contracts.target_router] {
+        crate::internal::eth::send_value(
+            url,
+            router,
+            forge::DEPLOYER_KEY,
+            alloy_primitives::U256::from(RELAY_FLOAT_WEI),
+        )?;
+    }
     Ok(contracts)
 }
 
