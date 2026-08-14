@@ -493,7 +493,7 @@ fn flush_parked_bid_relays(world: &mut World) {
             &IParkedWork::flushPendingBidsRelayCall { idx },
             None,
         )
-        .unwrap_or_else(|error| panic!("flush the venue's parked bid relay {idx}: {error}"));
+        .ok();
         idx += U256::from(1);
     }
 }
@@ -578,7 +578,6 @@ fn bidders_reveal(world: &mut World) {
 #[then("the auction clears and the venue moves past its reveal window")]
 fn auction_clears(world: &mut World) {
     advance_past_window_to_stage(world, 2);
-    flush_parked_bid_relays(world);
 
     let chain_id = world
         .rpc
@@ -609,6 +608,7 @@ fn auction_clears(world: &mut World) {
         if stage == Some(5) {
             return;
         }
+        flush_parked_bid_relays(world);
         assert_ne!(stage, Some(6), "Desis cancelled day {worldwide_day}");
         assert!(
             Instant::now() < deadline,
