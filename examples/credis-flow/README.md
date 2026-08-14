@@ -87,7 +87,8 @@ environment name by editing `DEFAULT_ENV` at the top of `utils.ts`.
 src/
 ├── 0-info.ts                   Print current state of all actors
 ├── 0-setup-native.ts           Fund user + CCA with native COEN
-├── 0-setup-erc20.ts            Mint / move ERC20 into user + vault router
+├── 0-setup-erc20.ts            Authorize the Credis precompiles on the vault
+│                               router, then mint / move ERC20 into user + vault
 ├── 0-setup-gratis.ts           Mine seeded gem → Promis → confidential Gratis
 ├── confidential.ts             Client-side TEE crypto (key fetch, decrypt, MAC)
 ├── 1-pledge-gratis.ts          User pledges for N stables of credit → pledge handle
@@ -188,6 +189,9 @@ npx tsx src/0-info.ts outbe-peira
 
 # Setup
 npx tsx src/0-setup-native.ts
+# Registers GratisFactory + CredisFactory as vault-router liquidity targets
+# (idempotent, and required before any pledge: pledgeGratis reserves the credit
+# out of the vault), then tops up user and vault ERC20 balances.
 npx tsx src/0-setup-erc20.ts
 # Bootstrap confidential Gratis for the user. Gratis AND Promis are both
 # TEE-encrypted at rest, so neither can be plaintext-seeded at genesis — instead

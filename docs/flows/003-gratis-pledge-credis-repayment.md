@@ -110,12 +110,16 @@ admissibility flag:
 Genesis seeds USD/840; any other currency needs `registerPair`, a vault added via
 `addVault`, plus a system-only `setCurrencyRate`.
 
-> **Operational prerequisite.** GratisFactory (`0x2003`) must be registered as a
-> vault-router **liquidity target** — `addLiquidityTarget(GRATIS_FACTORY_ADDRESS,
-> StablesTarget.Credis)`, an owner call — exactly as CredisFactory already is.
-> Taking assets out of a vault is what that registry authorizes, and `pledgeGratis`
-> now does so. Nothing in this repository registers targets; it is a deployment
-> runbook step, and until it is done every `pledgeGratis` reverts.
+> **Operational prerequisite.** Both Credis precompiles must be registered as
+> vault-router **liquidity targets** — `addLiquidityTarget(addr,
+> StablesTarget.Credis)`, an owner call. GratisFactory (`0x2003`) reserves the
+> credit at pledge time and CredisFactory (`0x1009`) releases that reservation at
+> `requestCredis`; taking assets out of a vault is exactly what that registry
+> authorizes. Until both are registered, `pledgeGratis` reverts.
+>
+> Genesis does not seed them. On localnet, `0-setup-erc20.ts` registers both
+> idempotently before its balance top-up; any other deployment needs the same two
+> owner calls in its runbook.
 
 ---
 
