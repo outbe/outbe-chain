@@ -111,6 +111,7 @@ sol! {
     interface IParkedWork {
         struct ParkedSend { uint32 dstChainId; uint64 gasLimit; bool sent; bytes payload; }
         function nextPendingBidsRelayIdx() external view returns (uint256);
+        function flushPendingBidsRelay(uint256 idx) external;
         function parkedSend(uint256 idx) external view returns (ParkedSend memory);
         function flushPendingSend(uint256 idx) external;
     }
@@ -337,7 +338,25 @@ fn parked_work(url: &str, router: Address, venue_router: Address) -> String {
         Some(_) => "origin parked nothing".to_owned(),
         None => "origin did not report parked sends".to_owned(),
     };
-    format!("{parked_note}, venue parked bid relays {relays:?}")
+    let relay_note = match relays {
+        Some(count) if count > U256::ZERO => {
+            // Retrying a parked relay is permissionless, and its revert carries
+            // the reason the venue swallowed when it parked.
+            let flush = eth::send_call(
+                url,
+                venue_router,
+                crate::world::forge::DEPLOYER_KEY,
+                &IParkedWork::flushPendingBidsRelayCall { idx: U256::ZERO },
+                None,
+            );
+            format!(
+                "venue parked {count} bid relays, retry says {:?}",
+                flush.err().map(|error| error.to_string())
+            )
+        }
+        _ => format!("venue parked bid relays {relays:?}"),
+    };
+    format!("{parked_note}, {relay_note}")
 }
 
 /// The venue emits this at the end of every inbound stage handler, so its
