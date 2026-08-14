@@ -294,6 +294,10 @@ pub fn settle_gem(
     if !item.cost_amount_minor.is_zero() {
         // The caller pays in `asset`, validated above to match the Settlement
         // Currency.
+        //
+        // TODO(multi-currency): `cost_amount_minor` is denominated in the
+        // reference currency, so when the Settlement Currency resolves to a
+        // different issuance currency the charge has to be converted
         deposit_to_vault(storage, caller, item.cost_amount_minor, asset)?;
     }
 
