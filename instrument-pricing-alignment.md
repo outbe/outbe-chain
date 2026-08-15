@@ -84,14 +84,19 @@ Two storage models are in play and they behave very differently when you add a f
 ### 1.1 The three prices
 
 Every instrument carries the same three prices, all denominated in the instrument's
-**reference currency** (ISO 4217 numeric), all on the oracle's 1e18 scale, all frozen at
-issuance:
+**reference currency** (ISO 4217 numeric), all frozen at issuance:
 
 | Price | Meaning | Derivation |
 |---|---|---|
 | **Entry Price** | The COEN/`<reference>` rate observed at issuance. The anchor from which the other two derive. | Read from the Oracle at issuance. |
 | **Floor Price** | The level whose upward breach **qualifies** the instrument. | `entry × (100 + FLOOR_RATE) / 100` |
 | **Call Price** | The level whose sustained upward breach **force-calls** the instrument. | `entry × (100 + CALL_RATE) / 100` |
+
+**Scale is not global — see §1.5.** Each reference currency defines *two* denominations: a
+minor-unit scale for amounts (USD → 2 digits) and a rate scale for the COEN/currency
+quote (USD → 6 digits). The three prices above are *rates* and live at the rate scale;
+`cost_amount` and settlement figures are *amounts* and live at the minor-unit scale.
+Neither is defined anywhere in the repo today, which is defect **S-01**.
 
 `FLOOR_RATE` and `CALL_RATE` are **percentage-point markups over entry**, matching the
 convention already in the code (`crates/core/intexfactory/src/constants.rs:40-45`,
@@ -171,8 +176,9 @@ Credis inherits it.
 For every instrument record, in every currency:
 
 1. `entry_price_minor > 0`
-2. `floor_price_minor == entry_price_minor * (100 + FLOOR_RATE) / 100`
-3. `call_price_minor == entry_price_minor * (100 + CALL_RATE) / 100`
+2. `floor_price_minor == entry_price_minor * (100 + FLOOR_RATE) / 100`, **rounded per the
+   rule fixed in §1.5.1** — not by whichever division happens to be written
+3. `call_price_minor == entry_price_minor * (100 + CALL_RATE) / 100`, same rounding rule
 4. `entry_price_minor < floor_price_minor < call_price_minor`
 5. `call_rate` stored on the record equals the instrument's `CALL_RATE` constant at the
    time of issuance, and re-deriving the call price from the stored `entry_price_minor`
@@ -182,8 +188,106 @@ For every instrument record, in every currency:
 7. `call_threshold <= call_window`.
 8. Every price field present in the Rust record is also present on the corresponding
    Solidity view struct in `contracts/precompiles/src/`.
+9. Every reference currency has **both** denominations registered — `d_amount` and
+   `d_rate` (§1.5) — and no instrument can be issued in a currency missing either.
+10. Every field's scale is the one §1.5 assigns to its kind, and the field's name says so:
+    `_minor` only for genuine minor units, `_scaled` for fixed-point.
 
 Invariant 5 is the one that is *silently violated today by stored data* — see D-01.
+
+### 1.5 Scale and denomination model (normative)
+
+Two different quantities are being measured and they do **not** share a scale. Every
+reference currency must define both.
+
+| | Symbol | What it scales | USD | Example others |
+|---|---|---|---|---|
+| **Amount denomination** | `amount_scale(iso)` = 10^`d_amount(iso)` | Quantities *of the currency* — cost, settlement, payout | **2** (cents) | JPY 0, KWD 3, BHD 3 |
+| **Rate denomination** | `rate_scale(iso)` = 10^`d_rate(iso)` | The COEN/`<iso>` **quote** — entry, floor, call, VWAP | **6** | per-currency, registered |
+
+`d_amount` follows the ISO 4217 minor-unit exponent. `d_rate` is a protocol parameter per
+currency, not an ISO value — it is the precision at which the protocol quotes and
+compares COEN against that currency.
+
+#### Which field is which
+
+| Field | Kind | Scale |
+|---|---|---|
+| `entry_price_minor`, `floor_price_minor`, `call_price_minor` | rate | `rate_scale(reference_currency)` |
+| Oracle daily VWAP, current COEN rate | rate | `rate_scale(reference_currency)` |
+| `cost_amount_minor` | amount | `amount_scale(issuance_currency)` |
+| Settlement / payout figures | amount | the **payment token's** `decimals()` |
+| `<x>_load_minor` (Gem, Gratis, Promis loads) | protocol-token amount | that token's decimals (18) — **not** a fiat scale |
+
+Three distinct scales therefore meet in one formula, and mixing them is the failure mode
+this section exists to prevent:
+
+```
+cost_amount = entry_price × load × amount_scale(issuance)
+              ÷ ( rate_scale(reference) × token_scale(load) )
+```
+
+#### Rules
+
+1. **Markups are dimensionless.** `floor = entry × 108/100` and
+   `call = entry × (100 + CALL_RATE)/100` preserve whatever scale `entry` is in, so the
+   WP-0 `marked_up` helper needs no scale parameter. This is the one piece of the
+   pricing arithmetic that is already scale-safe.
+2. **Never compare across scales.** A VWAP and a call price may only be compared after
+   both are at `rate_scale` of the *same* currency. The existing per-ISO namespacing of
+   the bin tries (`crates/core/gem/src/state.rs:270-272`) is the same invariant one level
+   down; extend it, do not weaken it.
+3. **Convert at boundaries, once.** Every conversion happens at a named boundary — oracle
+   ingest, ABI read, cross-chain wire, settlement in a payment token — and nowhere else.
+   No implicit rescaling inside pricing arithmetic.
+4. **Rounding direction is declared, not incidental.** See the decision in §1.5.1.
+5. **`_minor` means the currency's minor unit.** Today it does not (S-02). Any field that
+   is fixed-point rather than minor-unit must be named `_scaled`, not `_minor`.
+
+#### 1.5.1 Internal representation — decide before implementing
+
+The repo currently hardcodes `SCALE_1E18` (`crates/blockchain/primitives/src/units.rs:14`)
+for every price everywhere. Two ways to introduce per-currency scale:
+
+| | **Option A — store at per-currency scale** | **Option B — register scales, keep 1e18 internal (recommended)** |
+|---|---|---|
+| Stored value | `entry_price` at `rate_scale(iso)` | `entry_price` at 1e18 |
+| Registry role | defines storage | defines every I/O boundary + rounding |
+| Blast radius | every price field, all bin math, Lysis canonical encoding (**semantics hash**), genesis, all four ABIs | a new registry + conversion at ~4 named boundaries |
+| Precision in the 21-of-28 comparison | limited to `d_rate` | full |
+
+**Option B is recommended, and one finding makes it close to forced.**
+`price_to_bin` → `convert_decimal_price_to_128x128(price_18dec)`
+(`crates/blockchain/primitives/src/math/price_helper.rs:76-78`) hardcodes `PRECISION = 1e18`
+— the parameter is *named* `price_18dec`. Every qualification scan and Intex's call scan
+route prices through it (`gem/state.rs:256-262`, `nod/src/hooks.rs:127`,
+`intexfactory/called.rs:99`). Feed it a USD price at 6 dp under Option A and it lands ~12
+orders of magnitude off in the bin ladder, **silently mis-qualifying every instrument** —
+no error, just wrong bins. Option A therefore additionally requires making `price_to_bin`
+scale-aware and rebuilding every existing bin index. Option B leaves the ladder untouched.
+
+Under Option B the registry is still mandatory — it is the only place that knows USD is
+2/6 — it simply governs conversion and rounding rather than storage.
+
+**Open decision — rounding of derived prices.** A call price derived as `entry × 2.28`
+carries digits below `d_rate`. Rounding it **down** makes calls marginally easier to
+trigger; **up** makes them harder; not rounding leaves the threshold more precise than
+any quotable rate. This is economically meaningful at the margin and must be chosen
+deliberately, per price:
+
+* `floor_price` — round **down** (easier to qualify) or **up** (harder)?
+* `call_price` — round **down** (easier to call) or **up** (harder)?
+* `cost_amount` — `derived_cost_amount` already rounds **up** via `div_ceil`
+  (`crates/core/intexfactory/src/runtime.rs:259`), i.e. in the protocol's favour. Keep
+  and apply uniformly.
+
+Recommendation: round derived *thresholds* (floor, call) **up** — an instrument is never
+called on a price movement smaller than the currency can quote — and keep amounts
+rounding **up** as they already do. State the choice in the ADR; do not leave it to
+whichever `/` happens to be written.
+
+---
+
 
 ---
 
@@ -320,6 +424,11 @@ Each defect has a stable ID used by the work plan in §4.
 | **D-11** | Low | `ADR-C-GEM-001` (`docs/adr/core/ADR-C-GEM-001-gem-ledger.md:26-36`) documents the lifecycle as `Issued → Qualified → Settled → Burned` and states *"Burn is allowed only from Settled"*. The implemented lifecycle includes `Qualified → Called → forfeit-burn` (`crates/core/gem/src/runtime.rs:90-106`). The ADR is stale and contradicts the code. |
 | **D-12** | Low | `crates/core/nod/src/schema.rs:168` names `tests::nod_contract_slot_layout_is_pinned` as the tripwire protecting the Nod slot layout, but **no such test exists** anywhere in the workspace (`grep -rn nod_contract_slot_layout_is_pinned --include='*.rs' crates/` returns only that doc comment). WP-3 appends fields to Nod storage with no layout guard in place. Write the test before WP-3b, modelled on `crates/core/gem/src/tests.rs:517`. |
 | **D-13** | **Medium** | The Gem **daily call scan is unbounded**. `crates/core/gem/src/hooks.rs:150-157` materializes every id in `callable_gems` into a `Vec` and iterates all of them with no per-block budget and no resumable cursor. Gem's *qualify* scan is bounded (`MAX_GEM_QUALIFICATIONS_PER_BLOCK = 256`, `hooks.rs:40`) and Intex bounds **both** its scans (`MAX_SERIES_PER_BLOCK = 256`, `call_scan_cursor`, `call_currency_cursor`). The daily trigger's system transaction therefore grows without limit as the callable-gem population grows. Independent of this alignment work; fix it here so the pattern copied into the new Nod and Credis scans is the bounded one. See §8.3 A-20b. |
+| **S-01** | **High** | **No per-currency scale is defined anywhere in the repo.** The oracle's reference-currency registry is a bare `StorageVec<u16>` of ISO codes plus `Mapping<u16, U256>` of rates (`crates/system/oracle/src/schema.rs:202,226`) — no amount denomination, no rate denomination. `outbe_primitives::stablecoin` carries `ISO_4217_NUMERIC_CODES` and `ISO_4217_ALPHA` but **no minor-unit exponent table** (`crates/blockchain/primitives/src/stablecoin.rs:36-72`). Every price is hardcoded to `SCALE_1E18` (`crates/blockchain/primitives/src/units.rs:14`). There is nowhere to look up "USD is 2 for amounts, 6 for the COEN rate". See §1.5. |
+| **S-02** | **High** | **The `_minor` suffix is inaccurate on every price field.** `_minor` should mean "in the currency's minor unit" — USD cents, 2 digits. In practice `entry_price_minor`, `floor_price_minor`, `call_price_minor` and `cost_amount_minor` are all 1e18 fixed-point. The field names assert a denomination the values do not have, across all four instruments and all four ABIs. Either rename to `_scaled`, or convert the values to genuine minor units; do not leave the name contradicting the value. |
+| **S-03** | Medium | **Scale conversion happens at exactly one site and only for Intex.** `derived_cost_amount(entry, load, payment_decimals)` computes `exp = 36 - payment_decimals` and divides (`crates/core/intexfactory/src/runtime.rs:249-261`), reading the token's own `decimals()` via `erc20_decimals` (`:636`). Gem divides by a flat `SCALE_1E18` (`gemfactory/src/runtime.rs:443-450`), Nod takes `cost_amount_minor` from Lysis at 1e18, and Credis pins a 1e18 `currency_rate`. So three of the four never convert into the issuance currency's actual denomination at all, and the one that does derives it from the payment token rather than from a currency registry. |
+| **S-04** | Medium | **The bin ladder hardcodes 1e18 and would silently mis-qualify under a per-currency price scale.** `convert_decimal_price_to_128x128(price_18dec)` uses `PRECISION = 1e18` (`crates/blockchain/primitives/src/math/price_helper.rs:76-78`; the parameter is named `price_18dec`). Every qualification scan and Intex's call scan feed prices through it (`gem/state.rs:256-262`, `nod/src/hooks.rs:127`, `intexfactory/called.rs:99`). A 6-dp price would land ~12 orders of magnitude off in the ladder with no error raised. This is the constraint that makes §1.5.1 Option B the recommended route. |
+| **S-05** | Medium | **Rounding direction for derived prices is undeclared.** `floor` and `call` derive from `entry` by a markup and carry digits below any plausible rate denomination. `marked_up` truncates (`intexfactory/runtime.rs:240-245`), `derived_cost_amount` rounds up via `div_ceil` (`:259`), and `lysis::calc_floor_price` truncates with an unchecked multiply (`lysis/constants.rs:6-8`). Rounding a call price down makes calls marginally easier to trigger and up makes them harder — an economically meaningful choice currently decided by whichever `/` was written. See §1.5.1. |
 | **N-01** | Medium | `IGem.GemData` drops the `Minor` suffix every other interface uses — bare `entryPrice` / `floorPrice` / `costAmount` / `gemLoad` (`contracts/precompiles/src/IGem.sol:5-17`) against `entryPriceMinor` etc. in `IIntex`, `INod` and `ICredis`. Breaking ABI rename; see §9.3 and R-01. |
 | **N-02** | Medium | `INod.NodData` exposes the entry price as **`costOfGratisMinor`** — `crates/core/nod/src/precompile.rs:145` reads `costOfGratisMinor: bucket.entry_price_minor`. The same quantity is emitted as `entryPriceMinor` by `INodFactory.NodIssued` (`crates/core/nodfactory/src/runtime.rs:85`), so one value is spelled two ways across Nod's own ABI. `cost_of_gratis_minor` is not a field on `NodItemState` at all; it survives only in Lysis as the oracle VWAP input to `cost_amount_minor`. See §9.3 and R-02. |
 | **L-01** | **Medium** | The callable set is built two structurally different ways, and this — not the missing budget alone — is the root of D-13. Intex indexes Qualified series in a **price-keyed LB bin trie** and its daily scan walks only bins at or below the day's VWAP bin (`crates/core/intexfactory/src/called.rs:119-129`), so a series whose call price is above today's VWAP is never read. Gem keeps a **dense list** and visits every callable gem daily (`crates/core/gem/src/hooks.rs:150-157`). The two differ in complexity class: work proportional to the *breached* population versus the *entire callable* population. Port Intex's structure to Gem; build the new Nod and Credis callable sets the same way. See §9.7. |
@@ -420,6 +529,134 @@ call rate.
 
 **Verify:** `mise run check && mise run lint && cargo nextest run -p outbe-common`. All
 existing instrument tests must still pass unchanged — this package is pure refactor.
+
+### WP-0b — Per-currency scale registry *(fixes S-01…S-05)*
+
+**Read §1.5 first, and settle §1.5.1 (Option A vs B, and rounding) before writing code.**
+This package assumes **Option B**: register the scales, keep 1e18 internal, convert at
+named boundaries. Under Option A the storage and Lysis-encoding work from WP-3d expands
+substantially and every bin index must be rebuilt.
+
+Do this **before WP-1…WP-4**: the invariant tests in §6 assert exact price equalities, and
+their expected values depend on the rounding rule chosen here.
+
+#### WP-0b.1 — ISO 4217 minor-unit table
+
+`crates/blockchain/primitives/src/stablecoin.rs` already carries `ISO_4217_NUMERIC_CODES`
+and `ISO_4217_ALPHA` as positionally aligned slices, pinned to a dated snapshot
+(`ISO_4217_SNAPSHOT_PUBLISHED`, `ISO_4217_SNAPSHOT_SHA256`). Add a third aligned slice:
+
+```rust
+/// ISO 4217 minor-unit exponents, positionally aligned with
+/// [`ISO_4217_NUMERIC_CODES`]. USD => 2, JPY => 0, KWD => 3.
+pub const ISO_4217_MINOR_UNITS: &[u8] = &[ /* … */ ];
+
+const _: () = assert!(ISO_4217_MINOR_UNITS.len() == ISO_4217_NUMERIC_CODES.len());
+
+/// Minor-unit exponent for an ISO 4217 numeric code.
+pub fn iso_4217_minor_units(iso_code: u16) -> Option<u8> { /* binary_search, as iso_4217_alpha */ }
+```
+
+Mirror the existing `const _: () = assert!` length check at `:72` and extend whatever
+regenerates the snapshot so the three slices cannot drift apart.
+
+#### WP-0b.2 — Rate denomination in the oracle registry
+
+`d_rate` is a **protocol parameter, not an ISO value**, so it belongs with the
+reference-currency registry rather than the static table. The registry today is
+`reference_currencies: StorageVec<u16>` plus `reference_currency_rate: Mapping<u16, U256>`
+(`crates/system/oracle/src/schema.rs:202,226`). Add:
+
+```rust
+/// Quote precision for the COEN/<iso> pair, in decimal digits. USD => 6.
+/// Registered per reference currency; distinct from the currency's ISO
+/// minor-unit exponent, which scales amounts rather than the quote.
+#[attribute(order = /* next free */)]
+pub reference_currency_rate_decimals: Mapping<u16, u8>,
+```
+
+Append-only per §5.1. Seed it wherever reference currencies are registered
+(`crates/system/oracle/src/genesis.rs`) and reject registration of a currency without a
+rate denomination — an unset entry reading as `0` would mean "integer COEN rate", which is
+never intended and would round every price to a whole unit.
+
+#### WP-0b.3 — Accessors in `outbe_common::pricing`
+
+Alongside the WP-0 helpers:
+
+```rust
+/// Amount denomination: 10^d_amount(iso). USD => 100.
+pub fn amount_scale(iso_code: u16) -> Result<U256>;
+/// Rate denomination: 10^d_rate(iso). USD => 1_000_000.
+pub fn rate_scale(storage: &StorageHandle<'_>, iso_code: u16) -> Result<U256>;
+
+/// Internal fixed-point scale. Every stored price is at this scale under Option B.
+pub const INTERNAL_PRICE_SCALE: U256 = SCALE_1E18;
+
+/// Rate at `rate_scale(iso)` -> internal 1e18.
+pub fn rate_to_internal(storage: &StorageHandle<'_>, iso: u16, v: U256) -> Result<U256>;
+/// Internal 1e18 -> rate at `rate_scale(iso)`, rounding per §1.5.1.
+pub fn internal_to_rate(storage: &StorageHandle<'_>, iso: u16, v: U256) -> Result<U256>;
+/// Internal 1e18 amount -> the currency's minor units.
+pub fn internal_to_amount(iso: u16, v: U256) -> Result<U256>;
+/// Internal 1e18 amount -> a payment token's minor units (token decimals, not ISO).
+pub fn internal_to_token(v: U256, token_decimals: u8) -> Result<U256>;
+```
+
+`amount_scale` is pure (static ISO table); `rate_scale` needs storage (registry). Keep
+that asymmetry visible in the signatures rather than forcing both through storage.
+
+#### WP-0b.4 — Apply the rounding decision
+
+Once §1.5.1 is settled, make it explicit at each derivation and delete the incidental
+behaviour:
+
+* `pricing::marked_up` — thresholds; currently truncates.
+* `pricing::floor_price` — currently truncates (`lysis::calc_floor_price`, and unchecked).
+* `derived_cost_amount` — already `div_ceil`; keep, and document that amounts round up in
+  the protocol's favour.
+
+Add a test per rule asserting the direction on a value that does not divide evenly. A
+truncating threshold and a ceiling threshold differ by one minor unit, which is exactly
+the margin a call turns on.
+
+#### WP-0b.5 — Convert at the boundaries, and only there
+
+Four named boundaries. Each gets one conversion call and a comment naming the scale on
+both sides:
+
+| Boundary | Direction | Helper |
+|---|---|---|
+| Oracle ingest (rate published) | `rate_scale(iso)` → internal | `rate_to_internal` |
+| ABI / RPC read (`getGemStatus`, `seriesData`, `nodData`, `getPosition`) | internal → `rate_scale(iso)` / `amount_scale(iso)` | `internal_to_rate` / `internal_to_amount` |
+| Cross-chain wire (Intex) | internal → wire | existing `to_wire_price`, `ORACLE_TO_WIRE_SCALE = 1e9`, `PRICE_DECIMALS = 9` |
+| Settlement in a payment token | internal → token minor units | `internal_to_token` (today's `derived_cost_amount`) |
+
+Intex's wire scale (1e9) is a **third** scale, independent of both denominations, fixed by
+the cross-chain codec (`contracts/intex/src/shared/libs/IntexMetadata.sol:21`,
+`crates/core/intexfactory/src/constants.rs:54-56`). Leave it alone — but note it now has
+to survive a round trip through the rate denomination without loss, so
+`d_rate(iso) <= 9` must hold for any currency Intex issues in. Assert it at registration.
+
+`PRICE_PRECISION = 6` in `IntexMetadata.sol:22` is a **display** precision, coincidentally
+equal to the USD rate denomination. Do not conflate them — one is a UI concern, the other
+is consensus.
+
+#### WP-0b.6 — Naming (S-02)
+
+Decide and apply uniformly: either rename every fixed-point field `_scaled`
+(`entry_price_scaled`), or convert the stored values to genuine minor units. Under
+Option B the values stay fixed-point, so the rename is the honest fix — and it touches
+every record, every ABI struct and the MCP decoders, so it belongs with the R-01/R-02
+ABI renames in §9.11 rather than as a separate pass.
+
+**Verify:** `cargo nextest run -p outbe-primitives -p outbe-common -p outbe-oracle`, plus
+a test asserting `iso_4217_minor_units(840) == Some(2)`, `iso_4217_minor_units(392) == Some(0)`
+(JPY), `iso_4217_minor_units(414) == Some(3)` (KWD), and that a reference currency cannot
+be registered without a rate denomination.
+
+---
+
 
 ---
 
@@ -1081,6 +1318,11 @@ substitutes an index instead (`seed_genesis.py:700-708`).
 | **A-31** | Prices on the 1e18 oracle scale | ✅ | ✅ | ✅ | ✅ | — |
 | **A-32** | Cross-chain wire scale | — | 1e9 via `ORACLE_TO_WIRE_SCALE` | — | — | Intex-only, correct |
 | **A-33** | Prices comparable only within one reference currency; bin columns namespaced by ISO | ✅ | ✅ | ✅ | ❌ | WP-4b |
+| **A-49** | Amount denomination `d_amount(iso)` registered (USD → 2) | ❌ | ❌ | ❌ | ❌ | **WP-0b.1** — nowhere in the repo (S-01) |
+| **A-50** | Rate denomination `d_rate(iso)` registered (USD → 6) | ❌ | ❌ | ❌ | ❌ | **WP-0b.2** — nowhere in the repo (S-01) |
+| **A-51** | Field name matches actual denomination | ❌ `_minor` on 1e18 values | ❌ | ❌ | ❌ | WP-0b.6 (S-02) |
+| **A-52** | Conversion happens only at named boundaries | ❌ none | ⚠️ one site, `derived_cost_amount`, keyed off the **token**'s decimals not the currency's | ❌ flat `/SCALE_1E18` | ❌ 1e18 `currency_rate` | WP-0b.5 (S-03) |
+| **A-53** | Rounding direction declared per derived price | ⚠️ truncates, unchecked | ⚠️ truncates; amounts `div_ceil` | ⚠️ truncates | — | WP-0b.4 (S-05) |
 
 ### 8.6 Naming and types
 
@@ -1125,7 +1367,13 @@ A-09, A-10, A-13, A-18, A-20, A-24, A-33, A-37, A-38, A-43, A-44, A-45, A-46.
 **Must be decided rather than fixed:**
 A-13 (one qualification rule), A-17b (Intex terminal state), A-25 (call granularity —
 recommend accepting the divergence), A-35 (cost stored vs derived), A-36 (Intex `u32`
-timestamps).
+timestamps), **§1.5.1 internal representation (Option A vs B) and the rounding direction
+for derived prices — decide these first, they change the expected values in every pricing
+test.**
+
+**Scale — blocking, and upstream of everything else:**
+A-49, A-50, A-51, A-52, A-53 (defects S-01…S-05). No per-currency denomination exists
+anywhere in the repo today; WP-0b lands before WP-1…WP-4.
 
 **Cosmetic, worth doing while the code is open:**
 A-34, A-42, A-47, A-48.
@@ -1361,8 +1609,12 @@ state error as `PositionCompleted`, which is a state name rather than a violatio
 
 State these in `ADR-C-PRC-001` (WP-5.5) so future instruments inherit them:
 
-1. **Rust attributes** carry the `_minor` suffix for any value in minor units.
-   **Solidity fields** carry the matching `Minor` suffix. No exceptions (fixes N-01).
+1. **A suffix names the denomination, and must be true of the value.** `_minor` / `Minor`
+   only for values in the currency's minor unit (§1.5); `_scaled` / `Scaled` for
+   fixed-point values at `INTERNAL_PRICE_SCALE`. Applying the suffix consistently but
+   wrongly is what produced S-02 — every price today is `_minor` and none of them are.
+   Fix the denomination question first (WP-0b.6), then apply the suffix rule uniformly
+   (fixes N-01).
 2. **Prices** are `entry_price_minor`, `floor_price_minor`, `call_price_minor`. No
    instrument-specific synonym for a shared concept (fixes N-02).
 3. **Call terms** are `call_rate`, `call_window`, `call_threshold`,
