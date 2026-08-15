@@ -22,7 +22,11 @@ can be re-verified rather than trusted.
 Read sections in order. Section 1 is normative (what must be true when the work is
 done). Section 2 is the audit (what is true now). Section 3 is the defect register.
 Section 4 is the executable plan. Section 7 records two decisions that were taken outside
-the codebase and cannot be re-derived from it — **read it before Section 4.**
+the codebase and cannot be re-derived from it — **read it before Section 4.** Section 8 is
+the exhaustive alignment checklist: every axis on which the four rights must agree, 48
+numbered items, each with its current status per instrument and the required action. If
+you want the full list of what must be addressed rather than an execution order, start
+there.
 
 ### 0.1 Environment bootstrap
 
@@ -312,6 +316,8 @@ Each defect has a stable ID used by the work plan in §4.
 | **D-10** | Low | Lifecycle-state representation diverges: Nod uses two independent booleans (`is_qualified` on the bucket, `is_settled` on the item), Credis has no state at all, Gem has a 4-state enum, Intex a 3-state enum (no `Settled`). |
 | **D-11** | Low | `ADR-C-GEM-001` (`docs/adr/core/ADR-C-GEM-001-gem-ledger.md:26-36`) documents the lifecycle as `Issued → Qualified → Settled → Burned` and states *"Burn is allowed only from Settled"*. The implemented lifecycle includes `Qualified → Called → forfeit-burn` (`crates/core/gem/src/runtime.rs:90-106`). The ADR is stale and contradicts the code. |
 | **D-12** | Low | `crates/core/nod/src/schema.rs:168` names `tests::nod_contract_slot_layout_is_pinned` as the tripwire protecting the Nod slot layout, but **no such test exists** anywhere in the workspace (`grep -rn nod_contract_slot_layout_is_pinned --include='*.rs' crates/` returns only that doc comment). WP-3 appends fields to Nod storage with no layout guard in place. Write the test before WP-3b, modelled on `crates/core/gem/src/tests.rs:517`. |
+| **D-13** | **Medium** | The Gem **daily call scan is unbounded**. `crates/core/gem/src/hooks.rs:150-157` materializes every id in `callable_gems` into a `Vec` and iterates all of them with no per-block budget and no resumable cursor. Gem's *qualify* scan is bounded (`MAX_GEM_QUALIFICATIONS_PER_BLOCK = 256`, `hooks.rs:40`) and Intex bounds **both** its scans (`MAX_SERIES_PER_BLOCK = 256`, `call_scan_cursor`, `call_currency_cursor`). The daily trigger's system transaction therefore grows without limit as the callable-gem population grows. Independent of this alignment work; fix it here so the pattern copied into the new Nod and Credis scans is the bounded one. See §8.3 A-20b. |
+| **D-14** | Medium | **Intex has no origin-chain forfeit.** Gem forfeit-burns a Called record once the notice period lapses (`crates/core/gem/src/runtime.rs:90-106`). Intex marks Called, notifies the target chain (`crates/core/intexfactory/src/called.rs:264,276-293`) and stops — the only burns in `intexfactory` are `burn_ownerless_proceeds`, unrelated creator-reward dust. Forfeit is computed and applied target-side (`contracts/intex/src/shared/libs/IntexMetadata.sol:41`, IntexNFT1155 `burnSettled`). This may be correct by construction, since Intex holders are ERC-1155 balances on other chains, but it is currently undocumented and undecided. See §8.2 A-17b. |
 
 ---
 
@@ -951,6 +957,177 @@ sequencing and the fate of the existing debt schedule are decided elsewhere. It 
 the pricing and call surface the rewritten Credis **must** expose, so the rewrite can be
 checked against it. If you are the agent doing the rewrite, WP-4 is your acceptance
 criteria for the pricing half of the job, not your design.
+
+## 8. Full alignment checklist
+
+§2.1 compares the four on *price fields alone*. This section is the exhaustive list: every
+axis on which Nod, Intex, Gem and Credis must agree to be one instrument, with each one's
+current position and the required action.
+
+**The rights set is exactly these four.** Verified by inspection — `gratis`, `promis`,
+`tribute` and `fidelity` carry no entry/floor/call price and no Qualified/Called
+lifecycle in their schemas, so they are not rights and are out of scope. Promis is the
+payload a right yields on mining; Gratis and Tribute are inputs; Fidelity is a cohort
+ledger.
+
+Legend: ✅ aligned · ⚠️ partial or divergent · ❌ absent · — not applicable
+
+---
+
+### 8.1 Economic terms
+
+| # | Axis | Nod | Intex | Gem | Credis | Action |
+|---|---|---|---|---|---|---|
+| **A-01** | `entry_price_minor` on the record | ⚠️ bucket only (`nod/schema.rs:94`) | ✅ `:222` | ✅ `:47` | ✅ `:68` | WP-3a: add to `NodItemState` |
+| **A-02** | `floor_price_minor` on the record | ✅ `:50` | ✅ `:225` | ✅ `:53` | ❌ | WP-4a |
+| **A-03** | `call_price_minor` on the record | ❌ | ✅ `:228` | ✅ `:70` | ❌ | WP-3b, WP-4a |
+| **A-04** | Floor rate = **8** (1.08×) | ✅ `lysis/constants.rs:4` | ✅ `intexfactory/constants.rs:42` | ✅ `gemfactory/constants.rs:3` | ❌ | WP-0 shared constant |
+| **A-05** | Call rate constant | ❌ needs **256** | ⚠️ 128 correct but **not stored** | ⚠️ 128 in factory, **228** in seeder + fixture | ❌ needs **64** | WP-1, WP-2, WP-3b, WP-4a |
+| **A-06** | `call_window` = 28 d | ❌ | ✅ | ✅ | ❌ | WP-3b, WP-4a |
+| **A-07** | `call_threshold` = 21 d | ❌ | ✅ | ✅ | ❌ | WP-3b, WP-4a |
+| **A-08** | `call_notice_period` = 7 d | ❌ | ✅ | ✅ | ❌ | WP-3b, WP-4a |
+| **A-09** | All terms **snapshotted at issuance** | — | ⚠️ window/threshold/notice yes, `call_rate` no | ✅ all seven | — | WP-2 |
+| **A-10** | One markup helper | ⚠️ `lysis::calc_floor_price`, unchecked multiply | ⚠️ `marked_up`, `u16` | ⚠️ `derived_floor`/`derived_call_price`, `u64` | — | WP-0 (D-08) |
+
+### 8.2 Lifecycle model
+
+| # | Axis | Nod | Intex | Gem | Credis | Action |
+|---|---|---|---|---|---|---|
+| **A-11** | State enum `Issued/Qualified/Called/Settled` | ❌ two bools: `is_qualified` (bucket), `is_settled` (item) | ⚠️ 3 states, **no `Settled`** | ✅ all 4 | ❌ none | WP-3c, WP-4a; decide Intex `Settled` |
+| **A-12** | Qualify on **strict** `rate > floor` | ✅ `nod/hooks.rs:6-8` | ✅ `qualified.rs:190` | ✅ `gem/runtime.rs:27` | ❌ | WP-4b |
+| **A-13** | Maturity gate before qualifying | none | ⚠️ **21 d** `QUALIFICATION_PERIOD` | none | — | **D-07 — pick one rule** (WP-5.4) |
+| **A-14** | Qualification is a monotonic latch | ✅ | ✅ | ✅ | — | WP-4b preserve |
+| **A-15** | Call on 21 breach days in **any** 28-day window | ❌ | ✅ | ✅ | ❌ | WP-3e, WP-4c |
+| **A-16** | Breaches **recomputed** each run, never accumulated | — | ✅ | ✅ | — | WP-3e, WP-4c preserve (§1.2) |
+| **A-17** | Notice lapse → forfeit | ❌ | ⚠️ **no origin-chain forfeit** — delegated to the target chain (`IntexMetadata.sol:41`, IntexNFT1155 `burnSettled`) | ✅ `gem/runtime.rs:90-106` | ❌ | WP-3e, WP-4d; **decide Intex** (A-17b) |
+| **A-18** | Lifecycle timestamps | ⚠️ `issued_at` only | ⚠️ `issued_at`, `called_at` | ✅ all four | ⚠️ `created_at` only, and misnamed | Add `qualified_at`/`settled_at`; rename Credis to `issued_at` |
+
+**A-17b — Intex forfeit is a real asymmetry, not an oversight to paper over.** Gem
+forfeit-burns on the origin chain. Intex marks Called, notifies the target chain
+(`intexfactory/called.rs:264,276-293`) and stops; the only burns in `intexfactory` are
+`burn_ownerless_proceeds`, which is unrelated creator-reward dust. Because Intex holders
+live in an ERC-1155 on target chains (A-25), the origin ledger has nothing to burn.
+**Decide explicitly:** either accept that Intex's terminal step is cross-chain by
+construction and document it as a permitted divergence, or add an origin-side terminal
+state. Do not silently leave it undecided.
+
+### 8.3 Scan infrastructure
+
+| # | Axis | Nod | Intex | Gem | Credis | Action |
+|---|---|---|---|---|---|---|
+| **A-19** | Daily call trigger registered | ❌ | ✅ `TriggerId=1` | ✅ `TriggerId=4` | ❌ | WP-3e: append `=5`, `=6` |
+| **A-20** | Call scan has per-block budget + resumable cursor | ❌ | ✅ `MAX_SERIES_PER_BLOCK=256`, `call_scan_cursor`, `call_currency_cursor` | ❌ **unbounded** — see A-20b | ❌ | **New: bound the Gem call scan** |
+| **A-21** | Oracle watermark guard, skip if VWAP unfinalized | — | ✅ `called.rs:44-48` | ✅ `hooks.rs:142-146` | — | WP-3e, WP-4c copy |
+| **A-22** | Per-record `with_checkpoint` isolation | — | ✅ `called.rs:146` | ✅ `hooks.rs:182` | — | WP-3e, WP-4c copy |
+| **A-23** | Callable index (Qualified ∪ Called) | ❌ | ✅ qualified bin tree | ✅ `callable_gems` + index | ❌ | WP-3e, WP-4c |
+| **A-24** | Unqualified bin index (LB radix-256 trie) | ✅ | ✅ | ✅ | ❌ linear sweep | WP-4b |
+
+**A-20b — the Gem daily call scan is unbounded.** `gem/hooks.rs:150-157` reads
+`callable_gems.len()` and materializes **every** id into a `Vec`, then iterates all of
+them with no budget and no cursor. Gem's *qualify* scan is bounded
+(`MAX_GEM_QUALIFICATIONS_PER_BLOCK = 256`); its *call* scan is not. Intex bounds both.
+This is a liveness risk that grows with the gem population, independent of this
+alignment work — as the callable set grows the daily trigger's system transaction grows
+without limit. Port Intex's budget-plus-cursor pattern, and do **not** copy the unbounded
+shape into the new Nod and Credis scans.
+
+### 8.4 Identity, ownership and granularity — the structural axis
+
+| # | Axis | Nod | Intex | Gem | Credis |
+|---|---|---|---|---|---|
+| **A-25** | What the record *is* | item per holder, but **qualification is per bucket** `(wwd, floor, ref_ccy)` | **a series** — per `(day, issuance, reference)`; **no owner field at all** | item per holder | position per holder |
+| **A-26** | Owner field + dense enumeration | ✅ in the compressed-entity store | ❌ none — holders live in IntexNFT1155 on target chains | ✅ `owner_gem_counts` / `owner_gem_ids` / `all_gem_ids` / `gem_index` | ✅ `address_position_counts` / `address_position_ids` |
+| **A-27** | ID derivation | Poseidon(owner, wwd) → `EntityId36` | 14 ASCII bytes, `20260212-TRY-U` | keccak(`"gem"` ‖ owner ‖ load ‖ **block number**) | keccak(commitment ‖ smart_account) |
+| **A-28** | Transferable | no transfer surface | ✅ ERC-1155, cross-chain | ❌ explicitly `NonTransferable` (`gem/precompile.rs:47-49`) | no transfer surface |
+
+**A-25 is the deepest divergence in this document and it is not a defect to fix — it is a
+boundary to decide.** Gem and Credis are per-holder records. Nod is a per-holder item
+whose *qualification* is decided at bucket granularity. Intex is a per-day series with no
+owner, whose holders are ERC-1155 balances on other chains. So "call the instrument"
+means three different blast radii:
+
+* **Gem, Credis** — call one holder's record.
+* **Nod** — qualification lands on a whole bucket; a call must be decided per item
+  (`called_at` and the notice deadline are per holder) even though qualification is not.
+  WP-3c already recommends this split; it is the correct resolution.
+* **Intex** — calling a series calls **every holder of that series at once**, across every
+  target chain.
+
+Prices and trigger parameters align across all four regardless. Granularity does not, and
+forcing it to would mean redesigning Intex's cross-chain model. **Recommendation: declare
+A-25 a permitted divergence, document it in the new pricing ADR, and require only that the
+*price terms and trigger arithmetic* be identical.** What differs is the set of holders a
+single call resolves, not the condition that fires it.
+
+A-27: four different id schemes, each keyed on that instrument's natural identity. Leave
+them. One thing to note rather than change — Gem's id mixes in the issuing **block
+number**, so it is not reproducible from `(owner, load)` alone; the genesis seeder
+substitutes an index instead (`seed_genesis.py:700-708`).
+
+### 8.5 Currency and scale
+
+| # | Axis | Nod | Intex | Gem | Credis | Action |
+|---|---|---|---|---|---|---|
+| **A-29** | `reference_currency` on the record | ✅ | ✅ | ✅ | ❌ **only `issuance_currency`** | WP-4a — required for the oracle pair |
+| **A-30** | `issuance_currency` on the record | ✅ | ✅ | ✅ | ✅ | — |
+| **A-31** | Prices on the 1e18 oracle scale | ✅ | ✅ | ✅ | ✅ | — |
+| **A-32** | Cross-chain wire scale | — | 1e9 via `ORACLE_TO_WIRE_SCALE` | — | — | Intex-only, correct |
+| **A-33** | Prices comparable only within one reference currency; bin columns namespaced by ISO | ✅ | ✅ | ✅ | ❌ | WP-4b |
+
+### 8.6 Naming and types
+
+| # | Axis | Nod | Intex | Gem | Credis | Action |
+|---|---|---|---|---|---|---|
+| **A-34** | Load field | `gratis_load_minor` | `promis_load_minor` (`u128` in params, `U256` in storage) | `gem_load_minor` | `credis_principal` | Four names for one role. Converge on `<x>_load_minor`, or document the naming rule. |
+| **A-35** | Cost field | ✅ stored `cost_amount_minor` | ⚠️ **derived**, `fn cost_amount_minor()` | ✅ stored | ❌ absent | Decide stored vs derived, apply uniformly |
+| **A-36** | Timestamp width | `u64` | ⚠️ **`u32`** — `issued_at`, `called_at`; reverts past 2106 (`intexfactory/runtime.rs:43-44`, `called.rs:256-257`) | `u64` | `u64` | Widen Intex to `u64`, or document the 2106 bound as accepted |
+
+### 8.7 External surfaces
+
+| # | Axis | Nod | Intex | Gem | Credis | Action |
+|---|---|---|---|---|---|---|
+| **A-37** | Solidity view struct mirrors the Rust record | ❌ no entry, no call fields | ⚠️ missing `callRate` | ❌ no call fields | ❌ no floor, no call | WP-5.1 (D-06) |
+| **A-38** | Lifecycle events | ⚠️ `NodBucketQualified` only | ⚠️ `SeriesCalled`, `SeriesIssued` | ✅ `GemQualified` / `GemCalled` / `GemBurned` | ⚠️ `PositionCreated` / `AnadosisPaid` / `CollateralBurned` | Uniform `<X>Qualified` / `<X>Called` / `<X>Forfeited` / `<X>Settled` |
+| **A-39** | ABI JSON regenerated and committed | — | — | — | — | `mise run export-abi`, WP-5.2 |
+| **A-40** | MCP tool surfaces all three prices | ❌ | ✅ `mcp/src/tools/intex.ts:293-295` | ❌ | ❌ | WP-5.3 |
+| **A-41** | Genesis seeder support | ❌ not seeded | ❌ not seeded | ✅ `seed_gems` | ❌ not seeded | Only Gem needs the D-01 fix now; add others if genesis seeding is extended |
+| **A-42** | Factory write surface shape | `settleNod` / `mineGratis` | `settle` / `minePromis` | `settleGem` / `mineGemPromis` | `requestCredis` / `anadosis` | Credis's will change with the rewrite; converge naming then |
+
+### 8.8 Assurance
+
+| # | Axis | Status | Action |
+|---|---|---|---|
+| **A-43** | Storage-layout pin test | Gem ✅ (`gem/tests.rs:517`); Nod ❌ — `nod/schema.rs:168` names a test that **does not exist** (D-12); Intex, Credis: none found | Write the Nod test **before** WP-3b; add Intex and Credis pins |
+| **A-44** | Pricing-invariant test per instrument | none exist | §6 — one per instrument, asserting §1.4 invariants 1-7 |
+| **A-45** | Call-behaviour test per instrument | Gem ✅ (`gem/tests.rs:425,535-589`); Intex partial; Nod, Credis ❌ | §6 — the five-case battery, including the not-most-recent-window case |
+| **A-46** | Cross-instrument constants test | none | §6 — pin the §1.3 table verbatim |
+| **A-47** | ADR accuracy | `ADR-C-GEM-001` stale (D-11); no ADR covers pricing as a cross-instrument concern | WP-5.5 — write `ADR-C-PRC-001` as the single normative source, link all four |
+| **A-48** | Protocol constants documented | `docs/genesis-protocol-constants.md` contains **no pricing constants at all** — which is why D-01 survived | WP-5.5 — add the §1.3 table |
+
+---
+
+### 8.9 Summary — what must be addressed
+
+**Must change to satisfy the stated requirement (blocking):**
+A-01, A-02, A-03, A-05, A-06, A-07, A-08, A-11, A-12, A-15, A-17, A-19, A-23, A-29.
+
+**Must change for the four to be genuinely one instrument (strongly recommended):**
+A-09, A-10, A-13, A-18, A-20, A-24, A-33, A-37, A-38, A-43, A-44, A-45, A-46.
+
+**Must be decided rather than fixed:**
+A-13 (one qualification rule), A-17b (Intex terminal state), A-25 (call granularity —
+recommend accepting the divergence), A-35 (cost stored vs derived), A-36 (Intex `u32`
+timestamps).
+
+**Cosmetic, worth doing while the code is open:**
+A-34, A-42, A-47, A-48.
+
+**Found while compiling this list, not part of the alignment ask, fix anyway:**
+A-20b (the Gem call scan is unbounded) and A-43/D-12 (the Nod layout pin test is
+referenced but absent). Both are latent risks that this work would otherwise walk past.
+
+---
+
 
 ---
 
