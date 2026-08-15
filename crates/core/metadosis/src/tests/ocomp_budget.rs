@@ -112,7 +112,7 @@ fn green_request_commits_exact_auction_base_and_canonical_receipt() {
 }
 
 #[test]
-fn red_request_skips_desis_and_credits_exact_auction_base() {
+fn red_request_briefs_desis_without_supply_and_credits_exact_auction_base() {
     with_storage(|storage| {
         let request = RequestBudgetEffect {
             protocol_bundle_hash: B256::repeat_byte(0x41),
@@ -129,10 +129,11 @@ fn red_request_skips_desis_and_credits_exact_auction_base() {
             .expect("RED request budget effect");
 
         assert_eq!(receipt.destination, BudgetSplitDestination::CarryOver);
-        assert_eq!(receipt.desis_brief_hash, None);
+        assert!(receipt.desis_brief_hash.is_some());
         assert_eq!(receipt.carry_over_credit, U256::from(60));
         let desis = DesisContract::new(storage.clone());
-        assert_eq!(desis.auction_stage.read(&request.wwd.into()).unwrap(), 0);
+        assert_eq!(desis.auction_stage.read(&request.wwd.into()).unwrap(), 1);
+        assert_eq!(desis.brief_green.read(&request.wwd.into()).unwrap(), 0);
         assert_eq!(
             PromisLimitContract::new(storage)
                 .get_total_unallocated()

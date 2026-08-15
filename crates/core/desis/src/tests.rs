@@ -220,6 +220,7 @@ fn strict_request_auction_base_commits_the_exact_green_brief() {
             U256::from(7 * PROMIS_LOAD_MINOR),
             &frozen_entry_prices(),
             NOW,
+            true,
         )
         .expect("strict request brief");
 
@@ -254,6 +255,7 @@ fn strict_request_auction_base_propagates_duplicate_refusal_without_overwrite() 
             U256::from(7 * PROMIS_LOAD_MINOR),
             &frozen_entry_prices(),
             NOW,
+            true,
         )
         .unwrap();
 
@@ -264,6 +266,7 @@ fn strict_request_auction_base_propagates_duplicate_refusal_without_overwrite() 
             U256::from(9 * PROMIS_LOAD_MINOR),
             &frozen_entry_prices(),
             NOW,
+            true,
         )
         .is_err());
 
@@ -286,6 +289,7 @@ fn strict_request_auction_base_rejects_oversized_supply_without_state() {
             U256::MAX,
             &frozen_entry_prices(),
             NOW,
+            true,
         )
         .is_err());
 
@@ -339,6 +343,7 @@ fn strict_request_auction_base_rolls_back_every_partial_write_boundary() {
                 U256::from(7 * PROMIS_LOAD_MINOR),
                 &frozen_entry_prices(),
                 NOW,
+                true,
             )
         });
         assert!(result.is_ok());
@@ -360,6 +365,7 @@ fn strict_request_auction_base_rolls_back_every_partial_write_boundary() {
                 U256::from(7 * PROMIS_LOAD_MINOR),
                 &frozen_entry_prices(),
                 NOW,
+                true,
             )
         });
         assert!(
@@ -384,6 +390,7 @@ fn strict_request_auction_base_never_tops_up_a_live_auction() {
             U256::from(7 * PROMIS_LOAD_MINOR),
             &frozen_entry_prices(),
             NOW,
+            true,
         )
         .unwrap();
         runtime::schedule_tick(&storage, NOW).unwrap();
@@ -403,6 +410,7 @@ fn strict_request_auction_base_never_tops_up_a_live_auction() {
             U256::from(9 * PROMIS_LOAD_MINOR),
             &frozen_entry_prices(),
             NOW,
+            true,
         )
         .is_err());
 
