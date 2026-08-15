@@ -24,9 +24,12 @@ done). Section 2 is the audit (what is true now). Section 3 is the defect regist
 Section 4 is the executable plan. Section 7 records two decisions that were taken outside
 the codebase and cannot be re-derived from it — **read it before Section 4.** Section 8 is
 the exhaustive alignment checklist: every axis on which the four rights must agree, 48
-numbered items, each with its current status per instrument and the required action. If
-you want the full list of what must be addressed rather than an execution order, start
-there.
+numbered items, each with its current status per instrument and the required action.
+Section 9 is the **symbol-level** list underneath it — every type, attribute, constant,
+function, storage column, event and error the four use for the same concept, what each
+calls it today, the canonical name, and a mechanical rename map (R-01…R-17). If you want
+the full list of what must be addressed rather than an execution order, start at Section 8
+and read Section 9 alongside it.
 
 ### 0.1 Environment bootstrap
 
@@ -317,6 +320,11 @@ Each defect has a stable ID used by the work plan in §4.
 | **D-11** | Low | `ADR-C-GEM-001` (`docs/adr/core/ADR-C-GEM-001-gem-ledger.md:26-36`) documents the lifecycle as `Issued → Qualified → Settled → Burned` and states *"Burn is allowed only from Settled"*. The implemented lifecycle includes `Qualified → Called → forfeit-burn` (`crates/core/gem/src/runtime.rs:90-106`). The ADR is stale and contradicts the code. |
 | **D-12** | Low | `crates/core/nod/src/schema.rs:168` names `tests::nod_contract_slot_layout_is_pinned` as the tripwire protecting the Nod slot layout, but **no such test exists** anywhere in the workspace (`grep -rn nod_contract_slot_layout_is_pinned --include='*.rs' crates/` returns only that doc comment). WP-3 appends fields to Nod storage with no layout guard in place. Write the test before WP-3b, modelled on `crates/core/gem/src/tests.rs:517`. |
 | **D-13** | **Medium** | The Gem **daily call scan is unbounded**. `crates/core/gem/src/hooks.rs:150-157` materializes every id in `callable_gems` into a `Vec` and iterates all of them with no per-block budget and no resumable cursor. Gem's *qualify* scan is bounded (`MAX_GEM_QUALIFICATIONS_PER_BLOCK = 256`, `hooks.rs:40`) and Intex bounds **both** its scans (`MAX_SERIES_PER_BLOCK = 256`, `call_scan_cursor`, `call_currency_cursor`). The daily trigger's system transaction therefore grows without limit as the callable-gem population grows. Independent of this alignment work; fix it here so the pattern copied into the new Nod and Credis scans is the bounded one. See §8.3 A-20b. |
+| **N-01** | Medium | `IGem.GemData` drops the `Minor` suffix every other interface uses — bare `entryPrice` / `floorPrice` / `costAmount` / `gemLoad` (`contracts/precompiles/src/IGem.sol:5-17`) against `entryPriceMinor` etc. in `IIntex`, `INod` and `ICredis`. Breaking ABI rename; see §9.3 and R-01. |
+| **N-02** | Medium | `INod.NodData` exposes the entry price as **`costOfGratisMinor`** — `crates/core/nod/src/precompile.rs:145` reads `costOfGratisMinor: bucket.entry_price_minor`. The same quantity is emitted as `entryPriceMinor` by `INodFactory.NodIssued` (`crates/core/nodfactory/src/runtime.rs:85`), so one value is spelled two ways across Nod's own ABI. `cost_of_gratis_minor` is not a field on `NodItemState` at all; it survives only in Lysis as the oracle VWAP input to `cost_amount_minor`. See §9.3 and R-02. |
+| **L-01** | **Medium** | The callable set is built two structurally different ways, and this — not the missing budget alone — is the root of D-13. Intex indexes Qualified series in a **price-keyed LB bin trie** and its daily scan walks only bins at or below the day's VWAP bin (`crates/core/intexfactory/src/called.rs:119-129`), so a series whose call price is above today's VWAP is never read. Gem keeps a **dense list** and visits every callable gem daily (`crates/core/gem/src/hooks.rs:150-157`). The two differ in complexity class: work proportional to the *breached* population versus the *entire callable* population. Port Intex's structure to Gem; build the new Nod and Credis callable sets the same way. See §9.7. |
+| **L-02** | Low | Scan-cursor granularity differs. Nod's `unqualified_bin_scan_cursor` resumes *within* a bin; Gem's and Intex's `qualify_scan_cursor` resume at bin boundaries and process whole bins atomically, overshooting the per-block budget when a bin exceeds the remaining allowance (`crates/core/gem/src/hooks.rs:58-60`). Nod's is finer-grained and cannot starve a large tail bin. Pick one and record the rationale. See §9.7. |
+| **N-03** | Low | `GemBurned` is declared on **two** interfaces (`contracts/precompiles/src/IGem.sol:47`, `IGemFactory.sol:50`) and carries two meanings — forfeit-burn after the notice period lapses (`crates/core/gem/src/runtime.rs:100-104`) and post-mining burn. A consumer cannot distinguish a forfeit from a settled burn. Split into `GemForfeited` and `GemBurned`. `IIntexFactory.Settled` is likewise the only unprefixed lifecycle event beside `SeriesIssued` / `SeriesQualified` / `SeriesCalled`. See §9.8, R-03, R-04. |
 | **D-14** | Medium | **Intex has no origin-chain forfeit.** Gem forfeit-burns a Called record once the notice period lapses (`crates/core/gem/src/runtime.rs:90-106`). Intex marks Called, notifies the target chain (`crates/core/intexfactory/src/called.rs:264,276-293`) and stops — the only burns in `intexfactory` are `burn_ownerless_proceeds`, unrelated creator-reward dust. Forfeit is computed and applied target-side (`contracts/intex/src/shared/libs/IntexMetadata.sol:41`, IntexNFT1155 `burnSettled`). This may be correct by construction, since Intex holders are ERC-1155 balances on other chains, but it is currently undocumented and undecided. See §8.2 A-17b. |
 
 ---
@@ -1125,6 +1133,281 @@ A-34, A-42, A-47, A-48.
 **Found while compiling this list, not part of the alignment ask, fix anyway:**
 A-20b (the Gem call scan is unbounded) and A-43/D-12 (the Nod layout pin test is
 referenced but absent). Both are latent risks that this work would otherwise walk past.
+
+## 9. Symbol-level conformance — names and logic
+
+§8 lists the *axes*. This section lists the **actual identifiers**: every type, attribute,
+constant, function, storage column, event and error the four rights use for the same
+concept, what each calls it today, and the canonical name to converge on.
+
+Rule of thumb used throughout: **Gem's record attributes** are the naming reference (they
+are complete and already `_minor`-suffixed); **Intex's scan structure** is the logic
+reference (it is the only one that bounds and prunes both scans).
+
+---
+
+### 9.1 Rust type names
+
+| Role | Nod | Intex | Gem | Credis | Canonical |
+|---|---|---|---|---|---|
+| Ledger contract | `NodContract` | `IntexContract` | `GemContract` | `CredisContract` | ✅ consistent |
+| Record | `NodItemState` | `SeriesRecord` | `GemData` | `Position` | **`<X>Data`** (Gem) |
+| Aggregate record | `NodBucketState` | — | — | `Anadosis` | n/a |
+| Issuance params | `NodIssueParams` | `CreateSeriesParams` | `GemAddParams` | *(9 positional args)* | **`<X>IssueParams`** |
+| Lifecycle state | ❌ none | `IntexState` | `GemState` | ❌ none | **`<X>State`** |
+| Call-trigger group | ❌ | `IntexCallTrigger` | *(flat fields)* | ❌ | `<X>CallTrigger` or flat — pick one |
+| Identifier | `EntityId36` | `SeriesId` | `U256` | `U256` | leave (natural keys differ) |
+
+Credis creating a position through nine positional arguments
+(`crates/core/credis/src/runtime.rs:64-75`) rather than a params struct is the outlier.
+The rewrite should adopt `CredisIssueParams`.
+
+### 9.2 Record attribute names
+
+Canonical column = the name all four should carry after alignment.
+
+| Canonical attribute | Nod | Intex | Gem | Credis |
+|---|---|---|---|---|
+| `entry_price_minor` | ⚠️ on bucket only | ✅ | ✅ | ✅ |
+| `floor_price_minor` | ✅ | ✅ | ✅ | ❌ add |
+| `call_price_minor` | ❌ add | ✅ | ✅ | ❌ add |
+| `call_rate` | ❌ add | ❌ add | ✅ | ❌ add |
+| `call_window` | ❌ add | ✅ | ✅ | ❌ add |
+| `call_threshold` | ❌ add | ✅ | ✅ | ❌ add |
+| `call_notice_period` | ❌ add | ✅ | ✅ | ❌ add |
+| `issued_at` | ✅ | ✅ | ✅ | ⚠️ **`created_at`** — rename |
+| `qualified_at` | ❌ add | ❌ add | ✅ | ❌ add |
+| `called_at` | ❌ add | ✅ | ✅ | ❌ add |
+| `settled_at` | ❌ add | ❌ add | ✅ | ❌ add |
+| `state` | ❌ `is_qualified` (bucket) + `is_settled` (item) | ✅ | ✅ | ❌ add |
+| `issuance_currency` | ✅ | ✅ | ✅ | ✅ |
+| `reference_currency` | ✅ | ✅ | ✅ | ❌ add |
+| `owner` | ✅ | ❌ ownerless series (A-25) | ✅ | ⚠️ **`smart_account`** |
+| `cost_amount_minor` | ✅ | ⚠️ derived, `fn cost_amount_minor()` | ✅ | ❌ |
+| `<x>_load_minor` | `gratis_load_minor` | `promis_load_minor` | `gem_load_minor` | ⚠️ **`credis_principal`** |
+
+**Load naming.** Nod / Intex name the load after *what it yields* (gratis, promis); Gem
+names it after *itself*. Credis calls it a principal. Pick one rule and state it in the
+ADR — the mechanical choice is `<instrument>_load_minor` everywhere, matching Gem.
+
+**Owner naming.** Credis's `smart_account` is the owner slot under a different name.
+Rename to `owner` in the rewrite, or document why the account abstraction makes it
+distinct.
+
+### 9.3 Solidity struct and field names
+
+| Interface | Struct | Price field spelling |
+|---|---|---|
+| `IGem` | `GemData` | ⚠️ **`entryPrice`, `floorPrice`, `costAmount`, `gemLoad`** — no `Minor` suffix |
+| `IIntex` | `SeriesData` | ✅ `entryPriceMinor`, `floorPriceMinor`, `callPriceMinor`, `costAmountMinor`, `promisLoadMinor` |
+| `INod` | `NodData` | ⚠️ `floorPriceMinor`, `gratisLoadMinor`, `costAmountMinor` — but see below |
+| `ICredis` | `Position` | ⚠️ mixed: `entryPriceMinor` but `totalGratisAmount`, `credisPrincipal` |
+
+**Two concrete naming defects here.**
+
+**N-01 — Gem's ABI drops the `Minor` suffix.** Three of four interfaces use
+`<field>Minor`; `IGem.GemData` uses bare `entryPrice` / `floorPrice` / `costAmount`
+(`contracts/precompiles/src/IGem.sol:5-17`). Renaming to `entryPriceMinor` etc. is a
+**breaking ABI change** for anything decoding `getGemStatus`. Land it in the same commit
+as the call-field additions from WP-5.1, since that struct is changing anyway, and
+regenerate `abi-export/IGem.json`.
+
+**N-02 — Nod's ABI calls the entry price `costOfGratisMinor`.**
+`crates/core/nod/src/precompile.rs:145` reads `costOfGratisMinor: bucket.entry_price_minor`
+— it is literally the entry price under another name. Meanwhile `INodFactory.NodIssued`
+emits the *same quantity* as `entryPriceMinor`
+(`crates/core/nodfactory/src/runtime.rs:85`). So Nod's own ABI surface spells one value
+two ways across two interfaces. `cost_of_gratis_minor` exists nowhere on `NodItemState`;
+it survives only in Lysis as the oracle VWAP input to `cost_amount_minor`. Rename the
+ABI field to `entryPriceMinor` as part of WP-3a.
+
+### 9.4 Constants — names and homes
+
+| Concept | Nod | Intex | Gem | Credis |
+|---|---|---|---|---|
+| Floor rate | `lysis::FLOOR_RATE_PERCENT` | `intexfactory::FLOOR_RATE` | `gemfactory::FLOOR_RATE` | ❌ |
+| Call rate | ❌ | `intexfactory::CALL_RATE` | `gemfactory::CALL_RATE` | ❌ |
+| Call window | ❌ | `intexfactory::CALL_WINDOW` | **`gem::CALL_WINDOW`** | ❌ |
+| Call threshold | ❌ | `intexfactory::CALL_THRESHOLD` | **`gem::CALL_THRESHOLD`** | ❌ |
+| Notice period | ❌ | `intexfactory::CALL_NOTICE_PERIOD` | **`gem::CALL_NOTICE_PERIOD`** | ❌ |
+| Rate denominator | ❌ | `intexfactory::PRICE_RATE_DEN` | *(inline `100`)* | ❌ |
+| Per-block budget | `MAX_BUCKET_QUALIFICATIONS_PER_BLOCK` | `MAX_SERIES_PER_BLOCK` | `MAX_GEM_QUALIFICATIONS_PER_BLOCK` | `MAX_CREDIS_EXPIRY_SCANS_PER_BLOCK` |
+
+Three naming problems:
+
+* **`FLOOR_RATE_PERCENT` vs `FLOOR_RATE`** — same value, two names, and Lysis's is the one
+  with the unchecked multiply (D-08).
+* **Constants live in different crates.** Gem splits them: window / threshold / notice in
+  the **ledger** crate (`outbe_gem::constants`), rates in the **factory**
+  (`outbe_gemfactory::constants`). Intex puts all six in the **factory**. WP-0 resolves
+  this by hoisting every shared value into `outbe_common::pricing` and leaving thin
+  re-exports.
+* **Four spellings of the per-block budget.** Converge on
+  `MAX_<INSTRUMENT>_<SCAN>_PER_BLOCK`, e.g. `MAX_GEM_QUALIFICATIONS_PER_BLOCK` /
+  `MAX_GEM_CALLS_PER_BLOCK`. Gem currently has no call budget at all (D-13).
+
+Gem also uses `u64` for `FLOOR_RATE` / `CALL_RATE` while Intex uses `u16`; the shared
+constants are `u16`.
+
+### 9.5 Lifecycle function names
+
+| Operation | Nod | Intex | Gem | Credis | Canonical |
+|---|---|---|---|---|---|
+| Create | `api::add_nod` | `api::create_series` | `api::add_gem` | `create_position` | **`api::issue_<x>`** |
+| Qualify one | `qualify_bucket` | `try_qualify` | `qualify` | ❌ | **`try_qualify`** |
+| Mark qualified | *(implicit)* | `api::mark_qualified` | `set_state(Qualified)` | ❌ | **`mark_qualified`** |
+| Evaluate call | ❌ | `try_call` | `trigger_call` | ❌ | **`try_call`** |
+| Mark called | ❌ | `api::mark_called` | `mark_called` | ❌ | ✅ `mark_called` |
+| Forfeit | ❌ | ❌ (target-chain, D-14) | `forfeit` | ❌ | **`forfeit`** |
+| Settle | `api::settle_nod` | *(factory `settle`)* | `set_state(Settled)` | `pay_anadosis` | **`api::settle_<x>`** |
+| Burn | `api::remove_nod` | ❌ | `api::burn` | `expire_position` | **`api::burn_<x>`** |
+| Read one | `api::get_item` | `api::read_series` / `get_series` | `api::get_gem` | `get_position` | **`api::get_<x>`** |
+
+Intex exposing **both** `read_series` (reverts if absent) and `get_series` (returns
+`Option`) is the one distinction worth keeping — propagate it as `read_<x>` / `get_<x>`
+rather than flattening it.
+
+Gem drives Qualified and Settled through the generic `set_state` while Intex has named
+`mark_qualified` / `mark_called`. Named transitions are safer — `set_state` accepts any
+enum value and `ADR-C-GEM-001:41-43` already flags that it "must enforce the transition
+graph rather than accept arbitrary enum movement".
+
+### 9.6 Scan and hook function names
+
+| Role | Nod | Intex | Gem | Credis | Canonical |
+|---|---|---|---|---|---|
+| Qualify sweep | `qualify_nods` | `scan_and_qualify` | `scan_and_qualify` | ❌ | **`scan_and_qualify`** |
+| Per-currency qualify | `qualify_buckets_with_rate` | `qualify_currency` | `qualify_with_rate` | ❌ | **`qualify_currency`** |
+| Call sweep | ❌ | `scan_and_call` | `scan_and_call` | ❌ | **`scan_and_call`** |
+| Per-currency call | ❌ | `call_currency` | *(none — see 9.7)* | ❌ | **`call_currency`** |
+| Daily trigger entry | ❌ | `called::run_daily` | `hooks::run_call_daily` | ❌ | **`run_call_daily`** |
+| Expiry sweep | ❌ | ❌ | ❌ | `scan_and_expire` | superseded by rewrite |
+
+`qualify_nods` is the odd one out; `run_daily` is too generic once a crate has more than
+one daily trigger.
+
+### 9.7 Storage columns — and the logic divergence behind them
+
+| Role | Nod | Intex | Gem |
+|---|---|---|---|
+| Unqualified bin trie | `bin_tree_root/mid/leaf` | `bin_tree_root/mid/leaf` | `bin_tree_root/mid/leaf` |
+| Unqualified bin members | `unqualified_bin_buckets` | `unqualified_bin_series` | `unqualified_bin_gems` |
+| Unqualified bin count | `unqualified_bin_count` | `unqualified_bin_count` | `unqualified_bin_count` |
+| Qualify cursor | `unqualified_bin_scan_cursor` *(within-bin)* | `qualify_scan_cursor` *(bin-level)* | `qualify_scan_cursor` *(bin-level)* |
+| **Callable set** | ❌ | **`qualified_bin_tree_root/mid/leaf` + `qualified_bin_count` + `qualified_bin_series`** — a second LB trie keyed by **call price** | **`callable_gems` (dense `List`) + `callable_gem_index`** |
+| Call cursor | ❌ | `call_scan_cursor` + `call_currency_cursor` | ❌ **none** |
+
+**L-01 — the callable set is represented two structurally different ways, and this is
+the root cause of D-13.** Intex indexes Qualified series in a **price-keyed bin trie**, so
+its daily scan walks only bins at or below the day's VWAP bin
+(`crates/core/intexfactory/src/called.rs:119-129`, `Some(b) if b <= v_bin`) — a series
+whose call price is above today's VWAP is never even read. Gem keeps a **dense list** and
+visits every callable gem every day (`crates/core/gem/src/hooks.rs:150-157`), regardless
+of price.
+
+So the two implementations differ in **complexity class**, not just in naming: Intex does
+work proportional to the *breached* population, Gem to the *entire callable* population.
+Port Intex's structure to Gem, and build Nod's and Credis's new callable sets the same
+way. Do not copy `callable_gems`.
+
+**L-02 — cursor granularity differs.** Nod's `unqualified_bin_scan_cursor` resumes
+*within* a bin; Gem's and Intex's `qualify_scan_cursor` resume *at bin boundaries* and
+process whole bins atomically. Nod's is finer-grained and cannot starve a large tail bin;
+Gem and Intex overshoot their budget when a bin is larger than the remaining allowance
+(documented at `crates/core/gem/src/hooks.rs:58-60`). Pick one and say why in the ADR.
+
+### 9.8 Event names
+
+| Transition | Nod | Intex | Gem | Credis | Canonical |
+|---|---|---|---|---|---|
+| Issued | `NodIssued` (factory) | `SeriesIssued` (factory) | `GemIssued` (factory) | `PositionCreated` / `CredisRequested` | **`<X>Issued`** |
+| Qualified | ⚠️ `NodBucketQualified` (bucket-level) | `SeriesQualified` | `GemQualified` | ❌ | **`<X>Qualified`** |
+| Called | ❌ | `SeriesCalled` | `GemCalled` | ❌ | **`<X>Called`** |
+| Settled | `NodSettled` | ⚠️ **`Settled`** — unprefixed | `GemSettled` | `AnadosisPaid` | **`<X>Settled`** |
+| Forfeited | ❌ | ❌ | ⚠️ `GemBurned` — reused for forfeit *and* mining burn | `CollateralBurned` | **`<X>Forfeited`**, distinct from `<X>Burned` |
+| Burned | `NodBurned` | — | `GemBurned` | — | `<X>Burned` |
+
+Three defects:
+
+* **`IIntexFactory.Settled`** is the only unprefixed lifecycle event, sitting beside
+  `SeriesIssued` / `SeriesQualified` / `SeriesCalled`.
+* **`GemBurned` is declared on two interfaces** — `IGem.sol:47` and `IGemFactory.sol:50` —
+  and carries two meanings: forfeit-burn after notice lapse
+  (`crates/core/gem/src/runtime.rs:100-104`) and post-mining burn. A consumer cannot tell
+  a forfeit from a settled burn. Split into `GemForfeited` and `GemBurned`.
+* **Nod emits qualification at bucket granularity only**, so no per-holder event exists
+  to observe. WP-3c's per-item Called must come with a per-item `NodQualified`.
+
+### 9.9 Error variant names
+
+| Condition | Nod | Intex | Gem | Credis | Canonical |
+|---|---|---|---|---|---|
+| Not found | `NodNotFound` | `SeriesNotFound` | `GemNotFound` | `PositionNotFound` | ✅ `<X>NotFound` |
+| Already exists | `NodFactoryError::NodAlreadyExists` | ❌ | ⚠️ `AlreadyExists` | `PositionAlreadyExists` | **`<X>AlreadyExists`** |
+| Wrong state | ❌ | ✅ `InvalidState { expected, actual }` | ⚠️ `InvalidState` *(unit)* | ⚠️ `PositionCompleted` | **`InvalidState { expected, actual }`** |
+| Bad state byte | ❌ | `InvalidStateValue(u8)` | ❌ | ❌ | **`InvalidStateValue(u8)`** |
+| Floor not met | ❌ | ❌ | `FloorPriceNotMet` | ❌ | `FloorPriceNotMet` |
+| Index OOB | `IndexOutOfBounds` | ❌ | `IndexOutOfBounds` | ❌ | ✅ |
+| Oracle down | ❌ | ❌ | `OracleUnavailable` | ❌ | `OracleUnavailable` |
+| Overflow | ❌ | `CostAmountOverflow` | ❌ *(factory `Overflow`)* | ❌ | `<Field>Overflow` |
+
+Intex's `InvalidState { expected, actual }` is strictly the best of these — it tells the
+caller *what* was expected. Gem's unit `InvalidState` should adopt it. Credis encodes a
+state error as `PositionCompleted`, which is a state name rather than a violation.
+
+---
+
+### 9.10 Canonical naming rules
+
+State these in `ADR-C-PRC-001` (WP-5.5) so future instruments inherit them:
+
+1. **Rust attributes** carry the `_minor` suffix for any value in minor units.
+   **Solidity fields** carry the matching `Minor` suffix. No exceptions (fixes N-01).
+2. **Prices** are `entry_price_minor`, `floor_price_minor`, `call_price_minor`. No
+   instrument-specific synonym for a shared concept (fixes N-02).
+3. **Call terms** are `call_rate`, `call_window`, `call_threshold`,
+   `call_notice_period` — all snapshotted onto the record at issuance.
+4. **Lifecycle timestamps** are `issued_at`, `qualified_at`, `called_at`, `settled_at`;
+   `u64` seconds.
+5. **State** is a single `state: u8` decoded through `<X>State`, never a pair of booleans.
+6. **Transitions** are named — `mark_qualified`, `mark_called`, `forfeit` — not a generic
+   `set_state`.
+7. **Scans** are `scan_and_<verb>` at the top, `<verb>_currency` per currency, and the
+   Cycle entry point is `run_<verb>_daily`.
+8. **Events** are `<Instrument><Transition>` with the instrument prefix always present.
+9. **Errors** are `<Instrument><Condition>`; wrong-state carries `{ expected, actual }`.
+10. **Shared constants** live in `outbe_common::pricing`; crate-local names are
+    re-exports, never independent definitions.
+
+### 9.11 Mechanical rename map
+
+Pure renames, no behaviour change. Each is independently landable.
+
+| # | From | To | Scope |
+|---|---|---|---|
+| R-01 | `IGem.GemData.entryPrice` / `.floorPrice` / `.costAmount` / `.gemLoad` | `…Minor` | **breaking ABI**; bundle with WP-5.1 |
+| R-02 | `INod.NodData.costOfGratisMinor` | `entryPriceMinor` | **breaking ABI**; bundle with WP-3a |
+| R-03 | `IIntexFactory.Settled` | `SeriesSettled` | breaking ABI |
+| R-04 | `GemBurned` (forfeit path) | `GemForfeited` | breaking ABI; disambiguates two meanings |
+| R-05 | `Position.created_at` | `issued_at` | Credis rewrite |
+| R-06 | `Position.smart_account` | `owner` | Credis rewrite |
+| R-07 | `credis_principal` | `credis_load_minor` | Credis rewrite |
+| R-08 | `lysis::FLOOR_RATE_PERCENT` | `common::pricing::FLOOR_RATE` | WP-0 |
+| R-09 | `nod::hooks::qualify_nods` | `scan_and_qualify` | WP-3 |
+| R-10 | `nod::qualify_buckets_with_rate` | `qualify_currency` | WP-3 |
+| R-11 | `gem::qualify_with_rate` | `qualify_currency` | WP-1 |
+| R-12 | `gem::trigger_call` | `try_call` | WP-1 |
+| R-13 | `intexfactory::called::run_daily` | `run_call_daily` | WP-2 |
+| R-14 | `GemError::AlreadyExists` | `GemAlreadyExists` | WP-1 |
+| R-15 | `GemError::InvalidState` (unit) | `InvalidState { expected, actual }` | WP-1 |
+| R-16 | `gemfactory` `FLOOR_RATE`/`CALL_RATE` `u64` | `u16` | WP-0 |
+| R-17 | `api::add_gem` / `add_nod` / `create_series` | `api::issue_<x>` | all WPs |
+
+R-01 through R-04 change published ABIs. Land each with `mise run export-abi` in the same
+commit, and update `mcp/src/tools/*.ts` decoders together.
+
+---
+
 
 ---
 
