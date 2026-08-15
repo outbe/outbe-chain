@@ -875,11 +875,30 @@ document reads them as **percentage-point markups over entry**, so 64 → ×1.64
   `crates/core/gemfactory/src/constants.rs:5-7`), and the requested Intex/Gem values are
   *identical* to what is already there — strong evidence the same convention is meant.
 * It matches `FLOOR_RATE = 8` → ×1.08.
-* The literal reading (64% → ×0.64) would place the Credis call price **below** its floor
-  price (×1.08) and below entry, making the call trigger fire immediately and permanently.
-  That is incoherent with the mechanism.
+* Under the literal reading (64% → ×0.64) the Credis call price sits **below** its own
+  floor price (×1.08) and below entry. Since qualification requires the rate to exceed
+  the floor, and qualification is a monotonic latch, the call condition
+  (`vwap > 0.64 × entry`) would then be *strictly implied* by the condition that made the
+  instrument callable in the first place. The price test stops discriminating: avoiding a
+  call would require COEN to fall **36% below the issuance rate** and stay there for at
+  least 8 of any 28 days. The trigger degenerates from a price trigger into a ~21-day
+  timer.
 
-No action needed unless someone intended the other reading.
+> **Correction.** An earlier draft of this section claimed ×0.64 would make the call fire
+> "immediately and permanently". That is wrong. `crates/core/gem/src/runtime.rs:66-68`
+> breaks the breach walk at `day < issued_day`, so no instrument can accumulate 21 breach
+> days until it is at least 21 days old, whatever the price does — and missing oracle days
+> do not count as breaches (`:69-73`), delaying it further. The defect in the ×0.64
+> reading is the broken `entry < floor < call` ordering (invariant 4), not the timing.
+
+**But see §7.2 — there is a coherent reading of ×0.64 that this document initially
+dismissed too quickly.** For a *collateralized loan*, a call priced **below** entry is a
+margin call: the COEN-denominated collateral loses value, so the lender calls the loan.
+That is standard finance and it is the natural direction for Credis specifically, whereas
+Gem/Nod/Intex are Promis-bearing instruments called away on the *upside*. If that is the
+intent, Credis's call is not the same mechanism with a different rate — it is a
+comparison in the opposite direction (`vwap < call_price`), and WP-4c must invert its
+breach test. Resolve this together with §7.2 before implementing the Credis call scan.
 
 ### 7.2 What does a **Called Credis position** actually do?
 
@@ -898,6 +917,30 @@ the alternatives are materially different products:
 | **A (WP-4d default)** | 7-day notice to clear the outstanding balance; then the existing collateral burn. Reuses tested code. |
 | **B** | Called accelerates *all* remaining installments to immediately due, then notice, then burn. |
 | **C** | Called is informational only — recorded and emitted, no forced settlement. Prices align, mechanism does not. |
+
+### 7.3 Which *direction* does the Credis call trigger compare?
+
+Orthogonal to §7.2, and it must be settled first because it determines the rate's meaning.
+
+Gem, Nod and Intex are Promis-bearing instruments called away when COEN **rises**: the
+call price is above entry and the breach test is `vwap > call_price`
+(`crates/core/gem/src/runtime.rs:71`, `crates/core/intexfactory/src/called.rs:245`).
+
+Credis is a loan against COEN-denominated Gratis collateral. The standard trigger for
+that shape is a **margin call on the downside** — the collateral falls, the lender calls
+the loan — which would put the call price *below* entry and invert the test to
+`vwap < call_price`.
+
+| | Call price | Breach test | Rate reading |
+|---|---|---|---|
+| **Upside (matches the other three)** | 1.64 × entry | `vwap > call_price` | 64 = +64 pp markup |
+| **Downside margin call** | 0.64 × entry | `vwap < call_price` | 64 = 64% of entry |
+
+The request framed all four as *"same instruments … call rate is different"*, which points
+at the upside reading — a different mechanism is not a different rate. This document is
+written against that reading throughout. If the downside reading is intended, §1.1,
+§1.2, §1.4 invariant 4 and WP-4c all need Credis-specific carve-outs, and the shared
+`marked_up` helper from WP-0 does not apply to it.
 
 This affects borrowers' obligations and cannot be inferred from the codebase. **Do not
 ship WP-4d without an explicit answer.** WP-4a through WP-4c (the prices, the record
