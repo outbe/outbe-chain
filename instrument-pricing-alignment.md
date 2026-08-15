@@ -21,7 +21,8 @@ can be re-verified rather than trusted.
 
 Read sections in order. Section 1 is normative (what must be true when the work is
 done). Section 2 is the audit (what is true now). Section 3 is the defect register.
-Section 4 is the executable plan. Section 7 lists the one decision that needs a human.
+Section 4 is the executable plan. Section 7 records two decisions that were taken outside
+the codebase and cannot be re-derived from it — **read it before Section 4.**
 
 ### 0.1 Environment bootstrap
 
@@ -92,7 +93,7 @@ convention already in the code (`crates/core/intexfactory/src/constants.rs:40-45
 
 > **Read this before touching any number.** `128` does **not** mean "×1.28". It means
 > "+128 percentage points", i.e. ×2.28. Confusing the two is the root cause of defect
-> **D-01** below. See §7 for the one place this reading still needs human confirmation.
+> **D-01** below. This reading is confirmed, not assumed — see §7.1.
 
 ### 1.2 The call trigger
 
@@ -113,6 +114,34 @@ they are **snapshotted onto each record at issuance** so a later constant change
 re-term a live instrument. `crates/core/gem/src/runtime.rs:47-85` is the reference
 implementation of the trigger; `crates/core/intexfactory/src/called.rs:214-274` is the
 second.
+
+#### "21 days in **any** 28-day window"
+
+The requirement is *any* 28-day window, not only the one ending today. A daily scan over
+the trailing 28 days satisfies this exactly, provided two properties hold — both already
+true of the reference implementation, and both easy to break:
+
+1. **Breach counts are recomputed from oracle history on every run, never accumulated.**
+   `crates/core/gem/src/hooks.rs:129-133` and `crates/core/intexfactory/src/called.rs:1-6`
+   both state this explicitly. A persisted counter would answer a different question.
+2. **The scan runs every day.** The window ending on day `D` is evaluated exactly once,
+   on day `D+1`. Run daily, the trailing window sweeps across every contiguous 28-day
+   window in turn, so "≥21 breaches in some 28-day window" ≡ "on some day, the trailing
+   window had ≥21 breaches".
+
+A skipped run therefore drops one window from evaluation. Both scans skip when the oracle
+watermark lags (`crates/core/gem/src/hooks.rs:142-146`,
+`crates/core/intexfactory/src/called.rs:44-48`). In practice a breach pattern strong
+enough to hit 21/28 persists into the next day's window too, so only the knife-edge case —
+exactly 21 breaches in exactly one window — can be missed. Worth knowing; not worth
+adding backfill machinery for.
+
+**Minimum age before a call is possible: ~21 days.** The walk terminates at
+`day < issued_day` (`crates/core/gem/src/runtime.rs:66-68`), so an instrument younger
+than the threshold cannot accumulate 21 countable days whatever the price does. Days with
+no finalized VWAP are not breaches either (`:69-73`), which delays it further. This is
+correct behaviour, not a bug — but it means no test can observe a call without advancing
+the clock at least 21 days past issuance.
 
 ### 1.3 Per-instrument parameters
 
@@ -246,7 +275,7 @@ artifact (`crates/core/lysis/src/program_v1/artifacts.rs:700-703`). Nod's floor 
 computed as `entry × 1.08` by `calc_floor_price` (`crates/core/lysis/src/constants.rs:4-8`).
 The value is available at issuance; it is simply dropped on the floor for the item record.
 
-#### Credis — a different shape entirely
+#### Credis — a different shape today, being rewritten as a right
 
 `Position` (`crates/core/credis/src/schema.rs:16-69`) is a ten-installment debt schedule:
 principal, outstanding amounts, a pinned `currency_rate`, and `entry_price_minor`.
@@ -257,7 +286,11 @@ an outstanding balance (`crates/core/credisfactory/src/lifecycle.rs:42-75`,
 `crates/core/credisfactory/src/runtime.rs:202`). That is a time trigger, not a price
 trigger; it is not the mechanism in §1.2.
 
-Credis is the largest delta and the one carrying a genuine design question — see §7.
+**This shape is going away.** Credis is scheduled to be rewritten as a *right* of the same
+kind as Nod, Intex and Gem — not a loan (§7.2). The audit above therefore describes code
+with a limited remaining life. WP-4 is written as a conformance specification for the
+rewritten instrument rather than a patch to the schema above; do not implement pricing
+against today's `Position`.
 
 ---
 
@@ -269,7 +302,7 @@ Each defect has a stable ID used by the work plan in §4.
 |---|---|---|
 | **D-01** | **High** | Gem `call_rate` is written as `228` by the genesis seeder (`scripts/seed_genesis.py:770`) and the test fixture (`crates/core/gem/src/tests.rs:33`), but as `128` by GemFactory (`crates/core/gemfactory/src/runtime.rs:61,224`). Under the field's own documented formula (`crates/core/gem/src/schema.rs:82-86`) `228` means ×3.28, so seeded gems carry a rate that contradicts their own stored call price. Invariant 5 violated in production genesis data. |
 | **D-02** | **High** | Nod has no call price, no call rate, no call window/threshold/notice, no `called_at`, no Called state and no daily call scan. Required: `CALL_RATE = 256`. |
-| **D-03** | **High** | Credis has no floor price, no call price, no call parameters, no qualification state and no daily call scan. Required: `CALL_RATE = 64`. |
+| **D-03** | **High** | Credis has no floor price, no call price, no call parameters, no qualification state and no daily call scan. Required: `CALL_RATE = 64` (call price 1.64 × entry, upside). Closed by the Credis rewrite (§7.2); WP-4 is that rewrite's conformance spec, not a patch to today's schema. |
 | **D-04** | Medium | `NodItemState` has no `entry_price_minor`; the value exists at issuance and in the certified artifact but is folded only into `NodBucketState`. The item cannot re-derive its own floor or call price. |
 | **D-05** | Medium | Intex derives the call price from `IntexParams::call_rate` but never snapshots the rate onto `SeriesRecord`, so a series' rate is not auditable from its record and a config change silently detaches history. |
 | **D-06** | Medium | Solidity view structs are out of sync with the Rust records. `IGem.GemData` (`contracts/precompiles/src/IGem.sol:5-17`) omits every call field. `INod.NodData` (`contracts/precompiles/src/INod.sol:38-51`) omits `entryPriceMinor` and every call field. `ICredis.Position` (`contracts/precompiles/src/ICredis.sol:18-33`) omits floor and call. `IIntex.SeriesData` omits `callRate`. |
@@ -607,107 +640,107 @@ hash changed.
 
 ---
 
-### WP-4 — Credis: add the price triple and the call lifecycle *(fixes D-03)*
+### WP-4 — Credis: conform the rewritten instrument to the shared model *(fixes D-03)*
 
-**Read §7 before starting this package.** Credis is a debt schedule, not a Promis-bearing
-NFT, so "what a Called Credis position *does*" is a product decision. The plan below
-implements the mechanically-consistent default: **Called accelerates the position into
-the existing expiry path.** If §7 is answered differently, only WP-4d changes.
+**Read §7.2 first.** Credis is being rewritten from a ten-installment debt schedule into a
+*right* of the same kind as Nod, Intex and Gem. This work package is **not** a plan to
+bolt prices onto the existing `Position` / `Anadosis` model — that model is superseded by
+the rewrite. It is the **conformance specification** for the pricing and call surface the
+rewritten Credis must expose.
 
-#### WP-4a — Prices on the record
+Sequencing: if the rewrite has not started, hand this section to whoever does it. If the
+rewrite has landed, use this section as a checklist against the result. Do not implement
+WP-4 against today's `crates/core/credis` — the work would be discarded.
 
-`crates/core/credis/src/schema.rs` — `Position` uses orders `0..=7` and `9..=13`;
-**order 8 is an unused gap, leave it alone** and append from 14:
+#### WP-4a — Record fields
 
-```rust
-/// Price floor: `entry_price_minor * 1.08`. Its upward breach qualifies
-/// the position for call evaluation.
-#[attribute(order = 14, default = 0)]
-pub floor_price_minor: U256,
+The rewritten Credis record carries the same pricing and call group as `GemData`
+(`crates/core/gem/src/schema.rs:33-105`), which is the cleanest reference:
 
-/// Call price: `entry_price_minor * (100 + call_rate) / 100` (64 => 1.64x).
-#[attribute(order = 15, default = 0)]
-pub call_price_minor: U256,
+| Field | Type | Value at issuance |
+|---|---|---|
+| `entry_price_minor` | `U256` | COEN/`<reference>` rate at issuance |
+| `floor_price_minor` | `U256` | `pricing::floor_price(entry)` → 1.08 × entry |
+| `call_price_minor` | `U256` | `pricing::marked_up(entry, CREDIS_CALL_RATE)` → **1.64 × entry** |
+| `call_rate` | `u16` | `64` |
+| `call_window` | `u32` | `28 * 86_400` |
+| `call_threshold` | `u32` | `21 * 86_400` |
+| `call_notice_period` | `u32` | `7 * 86_400` |
+| `called_at` | `u64` | `0` until Called |
+| `state` | `u8` | `CredisState::Issued` |
 
-/// Call-price markup percent, snapshotted at issuance (64 for Credis).
-#[attribute(order = 16, default = 0)]
-pub call_rate: u16,
+All derived through the WP-0 helpers — no literal rates at the call site.
 
-#[attribute(order = 17, default = 0)]
-pub call_window: u32,
-#[attribute(order = 18, default = 0)]
-pub call_threshold: u32,
-#[attribute(order = 19, default = 0)]
-pub call_notice_period: u32,
-#[attribute(order = 20, default = 0)]
-pub called_at: u64,
-/// Lifecycle state; decode via `CredisState`.
-#[attribute(order = 21, default = 0)]
-pub state: u8,
-```
+`CredisState { Issued = 0, Qualified = 1, Called = 2, Settled = 3 }`, mirroring `GemState`
+(`crates/core/gem/src/schema.rs:5-12`).
 
-Add a `CredisState { Issued = 0, Qualified = 1, Called = 2, Settled = 3 }` enum mirroring
-`GemState`.
+**Reference currency.** Today's Credis stores only `issuance_currency`
+(`crates/core/credis/src/schema.rs:56-57`), derived from the disbursed asset's `isoCode()`.
+The call scan needs a COEN/`<reference>` oracle pair, so the rewritten record must carry
+`reference_currency: u16` as a first-class field like the other three
+(`crates/core/gem/src/schema.rs:58-59`, `crates/core/nod/src/schema.rs:61-62`). Do not
+reuse `issuance_currency` as if it were the reference currency.
 
-Populate in `CredisContract::create_position`
-(`crates/core/credis/src/runtime.rs:63-102`), deriving from the existing
-`entry_price_minor: rate` parameter:
-
-```rust
-let floor_price_minor = outbe_common::pricing::floor_price(rate)?;
-let call_price_minor = outbe_common::pricing::marked_up(
-    rate, outbe_common::pricing::CREDIS_CALL_RATE,
-)?;
-```
-
-**Reference-currency caveat.** Credis stores `issuance_currency`
-(`crates/core/credis/src/schema.rs:56-57`) derived from the disbursed asset's
-`isoCode()`, but the other three instruments price against a **reference currency**.
-The daily call scan needs a COEN/`<reference>` oracle pair. Add a
-`reference_currency: u16` field and populate it, or document that Credis pins
-reference == issuance. Do not silently reuse `issuance_currency` as if it were the
-reference currency.
+**Storage layout.** A fresh contract is not bound by the append-only rule in §5.1 —
+declare the fields in whatever order reads best. If the rewrite instead migrates the
+existing schema in place, §5.1 binds: `Position` uses orders `0..=7` and `9..=13`, order 8
+is an unused gap, append from 14.
 
 #### WP-4b — Qualification
 
-Add a begin-block qualifier promoting `Issued → Qualified` when the COEN rate for the
-position's reference currency strictly exceeds `floor_price_minor`. The cheapest correct
-implementation reuses the existing bounded cursor sweep in
-`crates/core/credisfactory/src/lifecycle.rs:42-75` (`MAX_CREDIS_EXPIRY_SCANS_PER_BLOCK`,
-`expiry_scan_cursor`) rather than building a new bin trie. If the position population is
-expected to grow large, port the LB bin index from
-`crates/core/gem/src/state.rs:254-341` instead — the `ponytail` comment at
-`crates/core/credisfactory/src/lifecycle.rs:35-37` already flags the scan as O(n).
+`Issued → Qualified` when the COEN rate for the record's `reference_currency` **strictly
+exceeds** `floor_price_minor`. Strict comparison, matching
+`crates/core/gem/src/runtime.rs:27-29` and the note at `crates/core/nod/src/hooks.rs:6-8`
+(a record priced exactly at the rate stays unqualified). Monotonic latch — no path back
+to Issued.
+
+Subject to the D-07 resolution in WP-5: if Option B is chosen, Credis also gates on a
+21-day maturity period. Under the recommended Option A there is no time gate.
+
+Implementation: reuse the bounded-cursor sweep pattern already in
+`crates/core/credisfactory/src/lifecycle.rs:42-75`, or port the LB bin index from
+`crates/core/gem/src/state.rs:254-341` if the population is expected to be large. The
+`ponytail` comment at `crates/core/credisfactory/src/lifecycle.rs:35-37` already flags the
+existing sweep as O(n).
 
 #### WP-4c — Daily call scan
 
-Add `scan_and_call` in `crates/core/credisfactory`, structurally identical to
-`crates/core/gem/src/hooks.rs:133-193`. Register `TriggerId::CredisCallDaily = 6` per
-WP-3e (both new triggers land in the same array widening).
+Structurally identical to `crates/core/gem/src/hooks.rs:133-193` and
+`crates/core/gem/src/runtime.rs:47-106`. Copy the shape rather than inventing one:
 
-#### WP-4d — What Called *means* for a position
+* Visit only the callable index (records in Qualified or Called).
+* Guard on `utc_day_vwap_last_finalized` and skip the run if the watermark lags
+  (`crates/core/gem/src/hooks.rs:142-146`).
+* Cache one VWAP window per reference currency across the pass (`:163`, `:201-224`).
+* Recompute breach counts from oracle history every run — **never accumulate a counter**
+  (§1.2, "any 28-day window").
+* Breach test is `vwap > call_price_minor` — **upside**, like the other three (§7.2).
+* Isolate each record in a `with_checkpoint` so one bad record cannot halt the scan
+  (`:182-190`).
 
-Default design, pending §7:
+Register `TriggerId::CredisCallDaily = 6` per WP-3e; both new triggers land in the same
+array widening.
+
+#### WP-4d — Called and forfeit
+
+Same terminal path as the other rights, now that Credis is not debt:
 
 * `Qualified → Called` stamps `called_at` and emits `PositionCalled`.
-* The holder has `CALL_NOTICE_PERIOD` (7 days) to settle the **outstanding anadosis
-  balance**, which is exactly the existing `pay_anadosis` path.
-* If `now > called_at + call_notice_period` and `outstanding_anadosis_amount > 0`,
-  invoke the **existing** `runtime::expire_position`
-  (`crates/core/credisfactory/src/runtime.rs:202`) — the collateral burn already
-  implemented for time-expiry. This reuses a tested path rather than inventing a second
-  forfeit mechanism.
-* A position that reaches zero outstanding balance transitions to `Settled` and leaves
-  the callable index.
+* The holder has `CALL_NOTICE_PERIOD` (7 days) from `called_at` to settle.
+* Past `called_at + call_notice_period` unsettled, the record is forfeited — mirroring
+  `GemContract::forfeit` (`crates/core/gem/src/runtime.rs:90-106`).
+* Settlement transitions to `Settled` and leaves the callable index.
+
+What "settle" and "forfeit" move — which balances, which vaults, whether the existing
+collateral-burn path at `crates/core/credisfactory/src/runtime.rs:202` survives the
+rewrite — is part of the rewrite's design, not this document (§7.2 scope boundary). The
+*trigger* and its *timing* are specified here; the *effect* is specified there.
 
 #### WP-4e — Events and view surface
 
-Add `PositionCalled(uint256 indexed positionId, uint64 calledAt)` to
-`contracts/precompiles/src/ICredis.sol` alongside the existing `CollateralBurned`
-(`:10`), and extend `ICredis.Position` per WP-5.
-
-**Verify:** `cargo nextest run -p outbe-credis -p outbe-credisfactory -p outbe-cycle`, and
-run the flow example under `examples/credis-flow/`.
+`contracts/precompiles/src/ICredis.sol` gains `PositionCalled(uint256 indexed positionId,
+uint64 calledAt)` and a forfeit event alongside the existing `CollateralBurned` (`:10`),
+and its record struct gains the full price triple and call group per WP-5.
 
 ---
 
@@ -824,7 +857,8 @@ crates/core/intex/src/tests.rs    :: intex_pricing_invariants
 crates/core/nod/tests/pricing.rs  :: nod_pricing_invariants      (new file; Nod's unit
                                      tests live in crates/core/nod/src/adr006_tests.rs
                                      and its integration tests in crates/core/nod/tests/)
-crates/core/credis/src/tests.rs   :: credis_pricing_invariants
+crates/core/credis/src/tests.rs   :: credis_pricing_invariants  (or wherever the
+                                     rewritten Credis lands — see §7.2)
 ```
 
 Each must assert, for its instrument:
@@ -832,6 +866,19 @@ Each must assert, for its instrument:
 `entry < floor < call`, `call_window == 28 * 86_400`,
 `call_threshold == 21 * 86_400`, `call_notice_period == 7 * 86_400`,
 and the stored `call_rate` re-derives the stored `call_price_minor`.
+
+**Call-trigger behaviour tests** — one per instrument, and note the timing floor from
+§1.2: a call cannot be observed until the clock advances **at least 21 days past
+issuance**, because the breach walk terminates at `day < issued_day`. Each must cover:
+
+* 20 breach days in the window → **not** called (below threshold).
+* 21 breach days → called; `called_at` stamped; leaves the qualified set.
+* 21 breach days spread across a window that is *not* the most recent one, with the scan
+  run daily throughout → called on the day after that window closed. This is the test
+  that pins "any 28-day window" (§1.2) and the one that fails if a future refactor
+  replaces the recompute-from-history design with an accumulated counter.
+* Called + notice period elapsed, unsettled → forfeited.
+* Called + settled inside the notice period → `Settled`, not forfeited.
 
 **Cross-instrument test** — add a single test (suggested home:
 `crates/core/common/src/tests.rs`) asserting the §1.3 table verbatim:
@@ -860,92 +907,50 @@ assert_eq!(FLOOR_RATE, 8);
 
 ---
 
-## 7. Open decision — needs a human
+## 7. Resolved decisions
 
-**Everything else in this document is mechanical. This is not.**
+Both questions this document originally left open have now been answered. They are
+recorded here because **the answers are not derivable from the codebase** — an agent that
+re-derives them from first principles will get them wrong, as an earlier draft of this
+document did.
 
-### 7.1 Confirm the rate convention (blocks nothing, but verify before merge)
+### 7.1 Rate convention — percentage-point markup over entry ✅ **decided**
 
-The requested rates were given as "64% for credis, 128% intex, 256% nod, 128% gem". This
-document reads them as **percentage-point markups over entry**, so 64 → ×1.64,
-128 → ×2.28, 256 → ×3.56. Rationale:
+`64 / 128 / 256` are **markups**, not multipliers: 64 → ×1.64, 128 → ×2.28, 256 → ×3.56.
+The same convention as the existing `FLOOR_RATE = 8` → ×1.08.
 
-* It matches the existing `CALL_RATE = 128` semantics already implemented and documented
-  for Intex and Gem (`crates/core/intexfactory/src/constants.rs:44-45`,
-  `crates/core/gemfactory/src/constants.rs:5-7`), and the requested Intex/Gem values are
-  *identical* to what is already there — strong evidence the same convention is meant.
-* It matches `FLOOR_RATE = 8` → ×1.08.
-* Under the literal reading (64% → ×0.64) the Credis call price sits **below** its own
-  floor price (×1.08) and below entry. Since qualification requires the rate to exceed
-  the floor, and qualification is a monotonic latch, the call condition
-  (`vwap > 0.64 × entry`) would then be *strictly implied* by the condition that made the
-  instrument callable in the first place. The price test stops discriminating: avoiding a
-  call would require COEN to fall **36% below the issuance rate** and stay there for at
-  least 8 of any 28 days. The trigger degenerates from a price trigger into a ~21-day
-  timer.
+Requirement as stated: *"price of coen must be higher than entry 64% for 21 days in any 28
+window."* So for Credis: `call_price = entry × 1.64`, breach test `vwap > call_price`,
+threshold 21 days in any 28-day window — §1.2 applies unmodified, including the
+"any window" semantics spelled out there.
 
-> **Correction.** An earlier draft of this section claimed ×0.64 would make the call fire
-> "immediately and permanently". That is wrong. `crates/core/gem/src/runtime.rs:66-68`
-> breaks the breach walk at `day < issued_day`, so no instrument can accumulate 21 breach
-> days until it is at least 21 days old, whatever the price does — and missing oracle days
-> do not count as breaches (`:69-73`), delaying it further. The defect in the ×0.64
-> reading is the broken `entry < floor < call` ordering (invariant 4), not the timing.
+This confirms the reading for all four instruments and matches the `CALL_RATE = 128`
+already implemented for Intex and Gem (`crates/core/intexfactory/src/constants.rs:44-45`,
+`crates/core/gemfactory/src/constants.rs:5-7`). Nothing in §1 changes. Invariant 4
+(`entry < floor < call`) holds for every instrument, Credis included.
 
-**But see §7.2 — there is a coherent reading of ×0.64 that this document initially
-dismissed too quickly.** For a *collateralized loan*, a call priced **below** entry is a
-margin call: the COEN-denominated collateral loses value, so the lender calls the loan.
-That is standard finance and it is the natural direction for Credis specifically, whereas
-Gem/Nod/Intex are Promis-bearing instruments called away on the *upside*. If that is the
-intent, Credis's call is not the same mechanism with a different rate — it is a
-comparison in the opposite direction (`vwap < call_price`), and WP-4c must invert its
-breach test. Resolve this together with §7.2 before implementing the Credis call scan.
+### 7.2 Credis is a right, not debt ✅ **decided**
 
-### 7.2 What does a **Called Credis position** actually do?
+**Credis is scheduled to be rewritten.** After the rewrite it is the same kind of
+instrument as Nod, Intex and Gem — a *right* — not a loan. Everything in this document
+applies to it unchanged: the same three prices, qualification on a floor breach, the same
+21-of-28 call trigger, and the same notice-then-forfeit terminal path. Only the rate
+differs (64).
 
-Credis is structurally unlike the other three. Gem, Nod and Intex are Promis-bearing
-instruments where Called → unsettled → forfeit-burn of the load. Credis is a
-ten-installment debt schedule with pledged Gratis collateral and an existing *time-based*
-expiry burn (`crates/core/credisfactory/src/runtime.rs:202`).
+Three things from the earlier draft are now void:
 
-Adding a price-triggered call to a debt instrument means: **a rise in the COEN price
-accelerates the borrower's repayment obligation.** WP-4d proposes the conservative
-reading — Called starts a 7-day notice, after which the *existing* expiry path runs. But
-the alternatives are materially different products:
+* The question "what does a Called *debt position* do?" dissolves — there is no borrower
+  obligation to accelerate, and no lender.
+* The downside margin-call reading (former §7.3) is **rejected**. Credis calls on the
+  upside, `vwap > call_price`, exactly like the other three.
+* WP-4 no longer bolts price fields onto the `Position` / `Anadosis` installment
+  schedule. It is now a conformance specification for the rewritten Credis.
 
-| Option | Behaviour on Called |
-|---|---|
-| **A (WP-4d default)** | 7-day notice to clear the outstanding balance; then the existing collateral burn. Reuses tested code. |
-| **B** | Called accelerates *all* remaining installments to immediately due, then notice, then burn. |
-| **C** | Called is informational only — recorded and emitted, no forced settlement. Prices align, mechanism does not. |
-
-### 7.3 Which *direction* does the Credis call trigger compare?
-
-Orthogonal to §7.2, and it must be settled first because it determines the rate's meaning.
-
-Gem, Nod and Intex are Promis-bearing instruments called away when COEN **rises**: the
-call price is above entry and the breach test is `vwap > call_price`
-(`crates/core/gem/src/runtime.rs:71`, `crates/core/intexfactory/src/called.rs:245`).
-
-Credis is a loan against COEN-denominated Gratis collateral. The standard trigger for
-that shape is a **margin call on the downside** — the collateral falls, the lender calls
-the loan — which would put the call price *below* entry and invert the test to
-`vwap < call_price`.
-
-| | Call price | Breach test | Rate reading |
-|---|---|---|---|
-| **Upside (matches the other three)** | 1.64 × entry | `vwap > call_price` | 64 = +64 pp markup |
-| **Downside margin call** | 0.64 × entry | `vwap < call_price` | 64 = 64% of entry |
-
-The request framed all four as *"same instruments … call rate is different"*, which points
-at the upside reading — a different mechanism is not a different rate. This document is
-written against that reading throughout. If the downside reading is intended, §1.1,
-§1.2, §1.4 invariant 4 and WP-4c all need Credis-specific carve-outs, and the shared
-`marked_up` helper from WP-0 does not apply to it.
-
-This affects borrowers' obligations and cannot be inferred from the codebase. **Do not
-ship WP-4d without an explicit answer.** WP-4a through WP-4c (the prices, the record
-fields, the qualification) are safe to land first under any option — they are pure
-additions with no behavioural consequence until the call scan acts on them.
+**Scope boundary.** This document does *not* specify the Credis rewrite — its scope,
+sequencing and the fate of the existing debt schedule are decided elsewhere. It specifies
+the pricing and call surface the rewritten Credis **must** expose, so the rewrite can be
+checked against it. If you are the agent doing the rewrite, WP-4 is your acceptance
+criteria for the pricing half of the job, not your design.
 
 ---
 
