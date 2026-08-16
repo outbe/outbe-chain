@@ -47,7 +47,9 @@ pub enum IntexFactoryError {
     NoDistribution(u32),
     #[error("distribution payout math overflow for series {0}")]
     DistributionOverflow(u32),
-    #[error("currency {iso} day {worldwide_day} is indexed in bin {expected}, series priced into {got}")]
+    #[error(
+        "currency {iso} day {worldwide_day} is indexed in bin {expected}, series priced into {got}"
+    )]
     GroupBinMismatch {
         iso: u16,
         worldwide_day: outbe_common::WorldwideDay,

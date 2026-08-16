@@ -16,10 +16,12 @@ use outbe_primitives::{
 
 use outbe_intex::IntexState;
 
-use crate::constants::ORIGIN_ROUTER_ADDRESS;
+use crate::constants::{
+    MAX_GROUP_DECISIONS_PER_SWEEP, MAX_SERIES_ACTIONS_PER_SWEEP, ORIGIN_ROUTER_ADDRESS,
+};
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
-use crate::state::UnqualifiedBinTree;
+use crate::state::{Group, UnqualifiedBinTree};
 
 pub struct IntexLifecycle;
 
@@ -41,12 +43,9 @@ impl BlockLifecycle for IntexLifecycle {
     }
 }
 
-/// Max series visited per begin-block qualify scan; the cursor resumes the rest next block.
-pub(crate) const MAX_SERIES_PER_BLOCK: u32 = 256;
-
 /// Number of series promoted Issued -> Qualified this block. Every reference currency is
-/// scanned against its own rate, sharing one [`MAX_SERIES_PER_BLOCK`] budget; an unpriced
-/// one is skipped for the block rather than halting it.
+/// scanned against its own rate, sharing one [`ScanBudget`]; an unpriced one is skipped
+/// for the block rather than halting it.
 pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
     let currencies = get_all_reference_currencies(ctx)?;
     if currencies.is_empty() {
@@ -55,12 +54,12 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
     let factory = IntexFactoryContract::new(ctx.storage.clone());
     let start = factory.qualify_currency_cursor.read()? as usize % currencies.len();
 
-    let mut budget = MAX_SERIES_PER_BLOCK;
+    let mut budget = ScanBudget::new();
     let mut promoted: u32 = 0;
     let mut resume_at = start;
     for offset in 0..currencies.len() {
         let at = (start + offset) % currencies.len();
-        if budget == 0 {
+        if budget.is_spent() {
             // Resume here, so a heavy currency cannot starve the ones behind it.
             resume_at = at;
             break;
@@ -68,29 +67,28 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
         let Some(rate) = coen_rate_for_opt(ctx.storage.clone(), currencies[at])? else {
             continue;
         };
-        let (qualified, inspected) = qualify_currency(ctx, currencies[at], rate, budget)?;
-        promoted = promoted.saturating_add(qualified);
-        budget = budget.saturating_sub(inspected);
+        promoted =
+            promoted.saturating_add(qualify_currency(ctx, currencies[at], rate, &mut budget)?);
     }
     factory.qualify_currency_cursor.write(resume_at as u32)?;
     Ok(promoted)
 }
 
-/// Qualifies one reference currency's series, visiting at most `budget` of them.
-/// Returns `(promoted, visited)` so the caller can share one per-block budget.
+/// Qualifies one reference currency's groups, drawing on the shared `budget`.
+/// Returns how many series were promoted.
 fn qualify_currency(
     ctx: &BlockRuntimeContext,
     iso_code: u16,
     rate: U256,
-    budget: u32,
-) -> Result<(u32, u32)> {
+    budget: &mut ScanBudget,
+) -> Result<u32> {
     let now = ctx.block.timestamp;
     // Deterministic out-of-range rate: skip this currency instead of halting the block.
     let r_bin = match IntexFactoryContract::price_to_bin(rate) {
         Ok(b) => b,
         Err(e) => {
             tracing::warn!(target: "outbe::intexfactory", iso_code, error = ?e, "qualify scan: rate out of range, skipping currency");
-            return Ok((0, 0));
+            return Ok(0);
         }
     };
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
@@ -98,16 +96,10 @@ fn qualify_currency(
 
     let mut promoted: u32 = 0;
     // Cap per-block work and resume next block from a persisted bin cursor: the scan
-    // no longer scales with the active-series population. A series qualifies within one full sweep
-    // (bounded lag); the resulting state is unchanged. Whole bins are processed atomically, so the
-    // cursor is bin-granular (no within-bin index that removal-shifts could desync).
-    let mut processed: u32 = 0;
+    // no longer scales with the active-series population. A group qualifies within one full
+    // sweep (bounded lag); the resulting state is unchanged.
     let mut cursor: u32 = factory.qualify_scan_cursor.read(&iso_code)?;
-    loop {
-        if processed >= budget {
-            factory.qualify_scan_cursor.write(&iso_code, cursor)?;
-            break;
-        }
+    'bins: loop {
         let next = match tree_math::find_first_left_inclusive(
             &UnqualifiedBinTree(&factory, iso_code),
             cursor,
@@ -120,35 +112,40 @@ fn qualify_currency(
             }
         };
 
-        // Snapshot the bin before mutating: qualify() removes on success.
-        let mut series: Vec<SeriesId> = Vec::new();
+        // Snapshot the bin before mutating: a qualified group leaves it.
         for worldwide_day in factory.unqualified_groups_in_bin(iso_code, next)? {
-            series.extend(factory.unqualified_group_members(iso_code, worldwide_day)?);
-        }
-        let count = series.len() as u32;
-        for series_id in series {
-            // Isolate per-series: a deterministic Err rolls back this series' checkpoint and is
-            // skipped (logged), so one bad series cannot halt the block. Infra errors that recur
-            // every series still surface via the structural reads above, which keep `?`.
+            let group = factory.unqualified_group(iso_code, worldwide_day)?;
+            if !budget.admits(group.members.len() as u32) {
+                // Stop before the group, leaving the cursor on its bin: the groups
+                // already qualified are gone from it, so the next slice resumes here
+                // without redoing them.
+                factory.qualify_scan_cursor.write(&iso_code, next)?;
+                break 'bins;
+            }
+            budget.spend_decision();
+            // Isolate per-group: a deterministic Err rolls back the group's checkpoint and is
+            // skipped (logged), so one bad group cannot halt the block. Infra errors that recur
+            // every group still surface via the structural reads above, which keep `?`.
             let res = ctx.storage.with_checkpoint(|| {
-                try_qualify(
+                try_qualify_group(
                     &ctx.storage,
                     &mut factory,
-                    series_id,
+                    &group,
                     qualification_period,
                     now,
                     rate,
                 )
             });
             match res {
-                Ok(true) => promoted = promoted.saturating_add(1),
-                Ok(false) => {}
+                Ok(applied) => {
+                    budget.spend_actions(applied);
+                    promoted = promoted.saturating_add(applied);
+                }
                 Err(e) => {
-                    tracing::warn!(target: "outbe::intexfactory", series_id = %series_id, error = ?e, "qualify scan: skipping series");
+                    tracing::warn!(target: "outbe::intexfactory", iso_code, worldwide_day = %worldwide_day, error = ?e, "qualify scan: skipping group");
                 }
             }
         }
-        processed = processed.saturating_add(count);
 
         cursor = match next.checked_add(1) {
             Some(c) if c <= MAX_BIN_ID => c,
@@ -159,50 +156,97 @@ fn qualify_currency(
             }
         };
     }
-    Ok((promoted, processed))
+    Ok(promoted)
 }
 
-/// Qualify one series if Issued, past its qualification period, and `rate` exceeds its floor.
-pub(crate) fn try_qualify(
+/// Work one scan may do, split by cost: deciding a group is a single read,
+/// applying it writes once per series and sends its notice.
+pub(crate) struct ScanBudget {
+    decisions: u32,
+    actions: u32,
+}
+
+impl ScanBudget {
+    pub(crate) fn new() -> Self {
+        Self {
+            decisions: MAX_GROUP_DECISIONS_PER_SWEEP,
+            actions: MAX_SERIES_ACTIONS_PER_SWEEP,
+        }
+    }
+
+    pub(crate) fn is_spent(&self) -> bool {
+        self.decisions == 0 || self.actions == 0
+    }
+
+    /// Groups transition whole, so one is taken on only when all of it fits. A
+    /// group wider than the entire allowance would stall the scan forever, so it
+    /// runs once the actions are otherwise untouched.
+    pub(crate) fn admits(&self, members: u32) -> bool {
+        self.decisions > 0
+            && (members <= self.actions || self.actions == MAX_SERIES_ACTIONS_PER_SWEEP)
+    }
+
+    pub(crate) fn spend_decision(&mut self) {
+        self.decisions = self.decisions.saturating_sub(1);
+    }
+
+    pub(crate) fn spend_actions(&mut self, series: u32) {
+        self.actions = self.actions.saturating_sub(series);
+    }
+}
+
+/// Qualify a whole `(reference currency, worldwide day)` group. Every series of
+/// one day in one reference currency is issued by the same clearing with the
+/// same floor, so one read of the group decides all of them. Returns how many
+/// series were promoted.
+pub(crate) fn try_qualify_group(
     storage: &StorageHandle<'_>,
     factory: &mut IntexFactoryContract,
-    series_id: SeriesId,
+    group: &Group,
     qualification_period: u32,
     now: u64,
     rate: U256,
-) -> Result<bool> {
-    let series = outbe_intex::api::read_series(storage, series_id)?;
+) -> Result<u32> {
+    let Some(&first) = group.members.first() else {
+        return Ok(0);
+    };
+    let series = outbe_intex::api::read_series(storage, first)?;
     if series.lifecycle_state()? != IntexState::Issued {
-        return Ok(false);
+        return Ok(0);
     }
     let qualifies_at = u64::from(series.issued_at).saturating_add(u64::from(qualification_period));
     if now <= qualifies_at {
-        return Ok(false);
+        return Ok(0);
     }
-    let floor = series.floor_price_minor;
-    if rate <= floor {
-        return Ok(false);
+    if rate <= series.floor_price_minor {
+        return Ok(0);
     }
-    outbe_intex::api::mark_qualified(storage, series_id)?;
-    factory.remove_unqualified(series_id, series.reference_currency)?;
-    factory.insert_qualified(
-        series_id,
-        series.reference_currency,
+
+    for &series_id in &group.members {
+        outbe_intex::api::mark_qualified(storage, series_id)?;
+    }
+    factory.remove_unqualified_group(group.iso_code, group.worldwide_day)?;
+    factory.insert_qualified_group(
+        group.iso_code,
+        group.worldwide_day,
         series.call_price_minor,
+        &group.members,
     )?;
 
-    // Notify the target chain of the Qualified transition via ERC-7786; best-effort.
-    // OriginRouter failure (e.g. exhausted relay float) does not revert the
-    // state transition. The target chain can reconcile series state from the origin chain.
-    let _ = notify_qualified(storage, series_id, series.worldwide_day.value());
+    for &series_id in &group.members {
+        // Notify the target chain of the Qualified transition via ERC-7786; best-effort.
+        // OriginRouter failure (e.g. exhausted relay float) does not revert the
+        // state transition. The target chain can reconcile series state from the origin chain.
+        let _ = notify_qualified(storage, series_id, group.worldwide_day.value());
 
-    crate::runtime::emit_event(
-        storage,
-        crate::precompile::IIntexFactory::SeriesQualified {
-            seriesId: series_id.into(),
-        },
-    )?;
-    Ok(true)
+        crate::runtime::emit_event(
+            storage,
+            crate::precompile::IIntexFactory::SeriesQualified {
+                seriesId: series_id.into(),
+            },
+        )?;
+    }
+    Ok(group.members.len() as u32)
 }
 
 fn notify_qualified(

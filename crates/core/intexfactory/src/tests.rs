@@ -62,6 +62,21 @@ fn sid(worldwide_day: u32) -> SeriesId {
     SeriesId::pack(WorldwideDay::new(worldwide_day), *b"USD", b'U').unwrap()
 }
 
+/// Qualify one day's group in the reference currency; returns how many series moved.
+fn qualify_day(
+    s: &StorageHandle<'_>,
+    f: &mut IntexFactoryContract,
+    worldwide_day: u32,
+    qualification_period: u32,
+    now: u64,
+    rate: U256,
+) -> u32 {
+    let group = f
+        .unqualified_group(REFERENCE_ISO, WorldwideDay::new(worldwide_day))
+        .unwrap();
+    qualified::try_qualify_group(s, f, &group, qualification_period, now, rate).unwrap()
+}
+
 fn sample(worldwide_day: u32) -> IssuanceParams {
     IssuanceParams {
         series_id: sid(worldwide_day),
@@ -560,14 +575,16 @@ fn insert_remove_unqualified_roundtrip() {
                 .unwrap(),
             2
         );
-        f.remove_unqualified(sid(11), REFERENCE_ISO).unwrap();
+        f.remove_unqualified_group(REFERENCE_ISO, WorldwideDay::new(11))
+            .unwrap();
         assert_eq!(
             f.unqualified_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             1
         );
-        f.remove_unqualified(sid(22), REFERENCE_ISO).unwrap();
+        f.remove_unqualified_group(REFERENCE_ISO, WorldwideDay::new(22))
+            .unwrap();
         assert_eq!(
             f.unqualified_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
@@ -587,30 +604,34 @@ fn try_qualify_gates_qualification_floor_and_latches() {
         let mature = ISSUED_AT as u64 + 21 * DAY + 1;
 
         // Immature -> false.
-        assert!(!qualified::try_qualify(
-            &s,
-            &mut f,
-            sid(7),
-            QUALIFICATION_PERIOD,
-            immature,
-            floor + U256::from(1)
-        )
-        .unwrap());
+        assert_eq!(
+            qualify_day(
+                &s,
+                &mut f,
+                7,
+                QUALIFICATION_PERIOD,
+                immature,
+                floor + U256::from(1)
+            ),
+            0
+        );
         // Mature but rate == floor (strict >) -> false.
-        assert!(
-            !qualified::try_qualify(&s, &mut f, sid(7), QUALIFICATION_PERIOD, mature, floor)
-                .unwrap()
+        assert_eq!(
+            qualify_day(&s, &mut f, 7, QUALIFICATION_PERIOD, mature, floor),
+            0
         );
         // Mature + rate > floor -> qualifies, latched, removed from bin.
-        assert!(qualified::try_qualify(
-            &s,
-            &mut f,
-            sid(7),
-            QUALIFICATION_PERIOD,
-            mature,
-            floor + U256::from(1)
-        )
-        .unwrap());
+        assert_eq!(
+            qualify_day(
+                &s,
+                &mut f,
+                7,
+                QUALIFICATION_PERIOD,
+                mature,
+                floor + U256::from(1)
+            ),
+            1
+        );
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
@@ -626,15 +647,17 @@ fn try_qualify_gates_qualification_floor_and_latches() {
             0
         );
         // Already Qualified -> false.
-        assert!(!qualified::try_qualify(
-            &s,
-            &mut f,
-            sid(7),
-            QUALIFICATION_PERIOD,
-            mature,
-            floor + U256::from(1)
-        )
-        .unwrap());
+        assert_eq!(
+            qualify_day(
+                &s,
+                &mut f,
+                7,
+                QUALIFICATION_PERIOD,
+                mature,
+                floor + U256::from(1)
+            ),
+            0
+        );
     });
 }
 
@@ -703,15 +726,16 @@ fn qualify_series<'a>(
     let mut f = IntexFactoryContract::new(s.clone());
     let mature = ISSUED_AT as u64 + 21 * DAY + 1;
     let floor = U256::from(EXPECTED_FLOOR);
-    assert!(qualified::try_qualify(
-        s,
-        &mut f,
-        sid(id),
-        QUALIFICATION_PERIOD,
-        mature,
-        floor + U256::from(1)
-    )
-    .unwrap());
+    assert!(
+        qualify_day(
+            s,
+            &mut f,
+            id,
+            QUALIFICATION_PERIOD,
+            mature,
+            floor + U256::from(1)
+        ) == 1
+    );
     f
 }
 
@@ -792,8 +816,10 @@ fn insert_remove_qualified_roundtrip() {
         let mut f = IntexFactoryContract::new(s.clone());
         let trigger = U256::from(EXPECTED_TRIGGER);
         let bin = IntexFactoryContract::price_to_bin(trigger).unwrap();
-        f.insert_qualified(sid(11), REFERENCE_ISO, trigger).unwrap();
-        f.insert_qualified(sid(22), REFERENCE_ISO, trigger).unwrap();
+        f.insert_qualified_group(REFERENCE_ISO, WorldwideDay::new(11), trigger, &[sid(11)])
+            .unwrap();
+        f.insert_qualified_group(REFERENCE_ISO, WorldwideDay::new(22), trigger, &[sid(22)])
+            .unwrap();
         assert_eq!(
             f.qualified_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
@@ -1003,15 +1029,17 @@ fn qualify_survives_router_failure() {
         seed_issued(&s, 7);
         let mut f = IntexFactoryContract::new(s.clone());
         let mature = ISSUED_AT as u64 + 21 * DAY + 1;
-        assert!(qualified::try_qualify(
-            &s,
-            &mut f,
-            sid(7),
-            QUALIFICATION_PERIOD,
-            mature,
-            U256::from(EXPECTED_FLOOR) + U256::from(1)
-        )
-        .unwrap());
+        assert_eq!(
+            qualify_day(
+                &s,
+                &mut f,
+                7,
+                QUALIFICATION_PERIOD,
+                mature,
+                U256::from(EXPECTED_FLOOR) + U256::from(1)
+            ),
+            1
+        );
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
@@ -1036,8 +1064,13 @@ fn call_survives_router_failure() {
         seed_issued(&s, 7);
         outbe_intex::api::mark_qualified(&s, sid(7)).unwrap();
         let mut f = IntexFactoryContract::new(s.clone());
-        f.insert_qualified(sid(7), REFERENCE_ISO, U256::from(EXPECTED_TRIGGER))
-            .unwrap();
+        f.insert_qualified_group(
+            REFERENCE_ISO,
+            WorldwideDay::new(7),
+            U256::from(EXPECTED_TRIGGER),
+            &[sid(7)],
+        )
+        .unwrap();
 
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
@@ -1314,7 +1347,7 @@ fn scan_caps_work_per_block_and_resumes_via_cursor() {
 
         // Two distinct bins: the first holds exactly MAX_SERIES_PER_BLOCK entries, the second a few.
         // Bogus ids (no series record) are per-series skipped but still count toward the cap.
-        let cap = qualified::MAX_SERIES_PER_BLOCK;
+        let cap = crate::constants::MAX_GROUP_DECISIONS_PER_SWEEP;
         let f1 = U256::from(EXPECTED_FLOOR);
         let f2 = U256::from(EXPECTED_FLOOR) * U256::from(4);
         {
@@ -1415,15 +1448,17 @@ fn config_dev_profile_drives_issuance_and_qualification() {
         // The dev qualification period elapses long before the 21-day prod one.
         let rate = r.floor_price_minor + U256::from(1);
         let after_qualification = ISSUED_AT as u64 + u64::from(dev.qualification_period) + 1;
-        assert!(qualified::try_qualify(
-            &s,
-            &mut f,
-            sid(7),
-            dev.qualification_period,
-            after_qualification,
-            rate
-        )
-        .unwrap());
+        assert_eq!(
+            qualify_day(
+                &s,
+                &mut f,
+                7,
+                dev.qualification_period,
+                after_qualification,
+                rate
+            ),
+            1
+        );
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
@@ -2121,7 +2156,7 @@ fn a_currency_cut_off_by_the_budget_is_scanned_first_next_block() {
         // record are skipped per series but still count against it.
         {
             let mut factory = IntexFactoryContract::new(s.clone());
-            for id in 1..=qualified::MAX_SERIES_PER_BLOCK {
+            for id in 1..=crate::constants::MAX_GROUP_DECISIONS_PER_SWEEP {
                 factory
                     .insert_unqualified(sid(id), REFERENCE_ISO, U256::from(EXPECTED_FLOOR))
                     .unwrap();

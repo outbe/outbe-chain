@@ -26,3 +26,5 @@ pub use schema::{IntexFactoryContract, IssuanceParams};
 mod tests;
 #[cfg(test)]
 mod tests_group_index;
+#[cfg(test)]
+mod tests_group_scans;

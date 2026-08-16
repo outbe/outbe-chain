@@ -100,7 +100,7 @@ fn a_member_priced_into_another_bin_is_refused() {
 }
 
 #[test]
-fn the_last_member_takes_the_group_out_of_the_bin() {
+fn removing_the_group_clears_its_members_and_its_bin() {
     with_factory(|s| {
         let mut f = IntexFactoryContract::new(s.clone());
         let floor = U256::from(FLOOR);
@@ -108,22 +108,26 @@ fn the_last_member_takes_the_group_out_of_the_bin() {
             .unwrap();
         f.insert_unqualified(sid(20260212, b"EUR"), ISO, floor)
             .unwrap();
+        f.insert_unqualified(sid(20260213, b"USD"), ISO, floor)
+            .unwrap();
 
-        // Swap-and-pop leaves the surviving member reachable.
-        f.remove_unqualified(sid(20260212, b"USD"), ISO).unwrap();
+        f.remove_unqualified_group(ISO, WorldwideDay::new(20260212))
+            .unwrap();
+
+        // Swap-and-pop keeps the untouched day reachable.
         assert_eq!(bin_count(&f, floor_bin()), 1);
         assert_eq!(
-            f.unqualified_group_members(ISO, WorldwideDay::new(20260212))
-                .unwrap(),
-            vec![sid(20260212, b"EUR")]
+            f.unqualified_groups_in_bin(ISO, floor_bin()).unwrap(),
+            vec![WorldwideDay::new(20260213)]
         );
-
-        f.remove_unqualified(sid(20260212, b"EUR"), ISO).unwrap();
-        assert_eq!(bin_count(&f, floor_bin()), 0);
         assert!(f
             .unqualified_group_members(ISO, WorldwideDay::new(20260212))
             .unwrap()
             .is_empty());
+
+        f.remove_unqualified_group(ISO, WorldwideDay::new(20260213))
+            .unwrap();
+        assert_eq!(bin_count(&f, floor_bin()), 0);
         assert!(f
             .unqualified_groups_in_bin(ISO, floor_bin())
             .unwrap()
@@ -132,14 +136,14 @@ fn the_last_member_takes_the_group_out_of_the_bin() {
 }
 
 #[test]
-fn removing_an_absent_series_is_a_no_op() {
+fn removing_an_unindexed_group_is_a_no_op() {
     with_factory(|s| {
         let mut f = IntexFactoryContract::new(s.clone());
         f.insert_unqualified(sid(20260212, b"USD"), ISO, U256::from(FLOOR))
             .unwrap();
 
-        f.remove_unqualified(sid(20260212, b"EUR"), ISO).unwrap();
-        f.remove_unqualified(sid(20260213, b"USD"), ISO).unwrap();
+        f.remove_unqualified_group(ISO, WorldwideDay::new(20260213))
+            .unwrap();
 
         assert_eq!(bin_count(&f, floor_bin()), 1);
         assert_eq!(
@@ -151,16 +155,37 @@ fn removing_an_absent_series_is_a_no_op() {
 }
 
 #[test]
+fn indexing_a_group_twice_is_refused() {
+    with_factory(|s| {
+        let mut f = IntexFactoryContract::new(s.clone());
+        let day = WorldwideDay::new(20260212);
+        let trigger = U256::from(FLOOR);
+        f.insert_qualified_group(ISO, day, trigger, &[sid(20260212, b"USD")])
+            .unwrap();
+
+        let err = f
+            .insert_qualified_group(ISO, day, trigger, &[sid(20260212, b"EUR")])
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("already indexed"),
+            "unexpected error: {err}"
+        );
+    });
+}
+
+#[test]
 fn the_two_indexes_and_the_currencies_stay_apart() {
     with_factory(|s| {
         let mut f = IntexFactoryContract::new(s.clone());
         let floor = U256::from(FLOOR);
         let series = sid(20260212, b"USD");
         f.insert_unqualified(series, ISO, floor).unwrap();
-        f.insert_qualified(series, ISO, floor).unwrap();
+        f.insert_qualified_group(ISO, WorldwideDay::new(20260212), floor, &[series])
+            .unwrap();
         f.insert_unqualified(series, 978, floor).unwrap();
 
-        f.remove_unqualified(series, ISO).unwrap();
+        f.remove_unqualified_group(ISO, WorldwideDay::new(20260212))
+            .unwrap();
 
         assert_eq!(bin_count(&f, floor_bin()), 0);
         assert_eq!(

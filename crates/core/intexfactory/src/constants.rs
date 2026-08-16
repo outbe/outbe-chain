@@ -35,6 +35,12 @@ pub const QUALIFICATION_PERIOD: u32 = 21 * 24 * 3600;
 /// Bin step (basis points) for the floor-price bin ladder.
 pub const BIN_STEP_BP: u16 = 25;
 
+/// Work one lifecycle scan may do. A decision is a read of a group's first
+/// member and covers the whole group; an action is one series' lifecycle write
+/// with its index move and its notice, so the two are budgeted apart.
+pub(crate) const MAX_GROUP_DECISIONS_PER_SWEEP: u32 = 256;
+pub(crate) const MAX_SERIES_ACTIONS_PER_SWEEP: u32 = 256;
+
 /// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.
 pub const PRICE_RATE_DEN: u16 = 100;
 

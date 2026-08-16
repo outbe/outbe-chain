@@ -106,13 +106,15 @@ impl IntexFactoryContract<'_> {
         )
     }
 
-    pub(crate) fn remove_unqualified(
+    pub(crate) fn remove_unqualified_group(
         &mut self,
-        series_id: SeriesId,
         reference_currency: u16,
+        worldwide_day: WorldwideDay,
     ) -> Result<()> {
-        self.unqualified_index(reference_currency)
-            .remove(&UnqualifiedBinTree(&*self, reference_currency), series_id)
+        self.unqualified_index(reference_currency).remove_group(
+            &UnqualifiedBinTree(&*self, reference_currency),
+            worldwide_day,
+        )
     }
 
     pub(crate) fn unqualified_groups_in_bin(
@@ -133,19 +135,33 @@ impl IntexFactoryContract<'_> {
             .members(worldwide_day)
     }
 
+    pub(crate) fn unqualified_group(
+        &self,
+        reference_currency: u16,
+        worldwide_day: WorldwideDay,
+    ) -> Result<Group> {
+        Ok(Group {
+            iso_code: reference_currency,
+            worldwide_day,
+            members: self.unqualified_group_members(reference_currency, worldwide_day)?,
+        })
+    }
+
     // --- qualified-series bin index (by call_price_minor) ---
 
-    pub(crate) fn insert_qualified(
+    pub(crate) fn insert_qualified_group(
         &mut self,
-        series_id: SeriesId,
         reference_currency: u16,
+        worldwide_day: WorldwideDay,
         trigger_price: U256,
+        members: &[SeriesId],
     ) -> Result<()> {
         let bin_id = Self::price_to_bin(trigger_price)?;
-        self.qualified_index(reference_currency).insert(
+        self.qualified_index(reference_currency).insert_group(
             &QualifiedBinTree(&*self, reference_currency),
-            series_id,
+            worldwide_day,
             bin_id,
+            members,
         )
     }
 
@@ -201,6 +217,14 @@ impl<'storage> IntexFactoryContract<'storage> {
     }
 }
 
+/// One day's series in one reference currency: the unit a lifecycle decision is
+/// taken over, since all of them share the inputs it reads.
+pub(crate) struct Group {
+    pub(crate) iso_code: u16,
+    pub(crate) worldwide_day: WorldwideDay,
+    pub(crate) members: Vec<SeriesId>,
+}
+
 /// One currency's two-level index: price bins hold worldwide-day groups, and
 /// each group holds the series that share its decision inputs.
 struct GroupIndex<'storage> {
@@ -243,7 +267,8 @@ impl GroupIndex<'_> {
         let mut members = Vec::with_capacity(count as usize);
         for index in 0..count {
             members.push(SeriesId::from_word(
-                self.group_members.read(&self.member_key(worldwide_day, index))?,
+                self.group_members
+                    .read(&self.member_key(worldwide_day, index))?,
             ));
         }
         Ok(members)
@@ -252,12 +277,7 @@ impl GroupIndex<'_> {
     /// Append `series_id` to its day's group, creating the group in `bin_id` when
     /// it is the first member. A later member priced into another bin would split
     /// the group's single decision in two, so it is refused loudly.
-    fn insert(
-        &self,
-        tree: &impl BinTreeStorage,
-        series_id: SeriesId,
-        bin_id: u32,
-    ) -> Result<()> {
+    fn insert(&self, tree: &impl BinTreeStorage, series_id: SeriesId, bin_id: u32) -> Result<()> {
         let worldwide_day = series_id.worldwide_day();
         let group_key = self.group_key(worldwide_day);
         let count = self.group_count.read(&group_key)?;
@@ -292,7 +312,10 @@ impl GroupIndex<'_> {
         }
         let mut found: Option<u32> = None;
         for index in 0..count {
-            if self.group_members.read(&self.member_key(worldwide_day, index))? == series_id.to_word()
+            if self
+                .group_members
+                .read(&self.member_key(worldwide_day, index))?
+                == series_id.to_word()
             {
                 found = Some(index);
                 break;
@@ -303,7 +326,9 @@ impl GroupIndex<'_> {
         };
         let last = count - 1;
         if idx != last {
-            let last_id = self.group_members.read(&self.member_key(worldwide_day, last))?;
+            let last_id = self
+                .group_members
+                .read(&self.member_key(worldwide_day, last))?;
             self.group_members
                 .write(&self.member_key(worldwide_day, idx), last_id)?;
         }
@@ -315,6 +340,52 @@ impl GroupIndex<'_> {
             self.detach(tree, worldwide_day, bin_id)?;
         }
         Ok(())
+    }
+
+    /// Index a whole group at once: its members and its place in `bin_id`.
+    fn insert_group(
+        &self,
+        tree: &impl BinTreeStorage,
+        worldwide_day: WorldwideDay,
+        bin_id: u32,
+        members: &[SeriesId],
+    ) -> Result<()> {
+        if members.is_empty() {
+            return Ok(());
+        }
+        let group_key = self.group_key(worldwide_day);
+        if self.group_count.read(&group_key)? != 0 {
+            return Err(IntexFactoryError::GroupAlreadyIndexed {
+                iso: self.iso,
+                worldwide_day,
+            }
+            .into());
+        }
+        self.attach(tree, worldwide_day, bin_id)?;
+        for (index, series_id) in members.iter().enumerate() {
+            self.group_members.write(
+                &self.member_key(worldwide_day, index as u32),
+                series_id.to_word(),
+            )?;
+        }
+        self.group_count.write(&group_key, members.len() as u32)?;
+        Ok(())
+    }
+
+    /// Drop a whole group: its members and its place in the bin.
+    fn remove_group(&self, tree: &impl BinTreeStorage, worldwide_day: WorldwideDay) -> Result<()> {
+        let group_key = self.group_key(worldwide_day);
+        let count = self.group_count.read(&group_key)?;
+        if count == 0 {
+            return Ok(());
+        }
+        for index in 0..count {
+            self.group_members
+                .clear(&self.member_key(worldwide_day, index))?;
+        }
+        self.group_count.write(&group_key, 0)?;
+        let bin_id = self.group_bin.read(&group_key)?;
+        self.detach(tree, worldwide_day, bin_id)
     }
 
     /// Register the group in `bin_id` and set the bin's trie bit.
@@ -329,7 +400,8 @@ impl GroupIndex<'_> {
         self.bin_groups
             .write(&self.bin_key(bin_id, count), worldwide_day.value())?;
         self.bin_count.write(&scoped, count + 1)?;
-        self.group_bin.write(&self.group_key(worldwide_day), bin_id)?;
+        self.group_bin
+            .write(&self.group_key(worldwide_day), bin_id)?;
         tree_math::add(tree, bin_id)?;
         Ok(())
     }
@@ -360,7 +432,8 @@ impl GroupIndex<'_> {
         let last = count - 1;
         if idx != last {
             let last_day = self.bin_groups.read(&self.bin_key(bin_id, last))?;
-            self.bin_groups.write(&self.bin_key(bin_id, idx), last_day)?;
+            self.bin_groups
+                .write(&self.bin_key(bin_id, idx), last_day)?;
         }
         self.bin_groups.clear(&self.bin_key(bin_id, last))?;
         self.bin_count.write(&scoped, last)?;

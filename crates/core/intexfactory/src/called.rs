@@ -21,14 +21,13 @@ use outbe_primitives::{
 
 use outbe_intex::IntexState;
 
-use crate::constants::ORIGIN_ROUTER_ADDRESS;
-use crate::qualified::MAX_SERIES_PER_BLOCK;
+use crate::constants::{MAX_SERIES_ACTIONS_PER_SWEEP, ORIGIN_ROUTER_ADDRESS};
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
 use crate::state::QualifiedBinTree;
 
 /// Run the daily Called scan. Returns the number of series force-called. Each currency is
-/// scanned against its own pair, sharing one [`MAX_SERIES_PER_BLOCK`] budget; one without a
+/// scanned against its own pair, sharing one [`MAX_SERIES_ACTIONS_PER_SWEEP`] budget; one without a
 /// registered or finalized pair is skipped for the run.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
@@ -53,7 +52,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let factory = IntexFactoryContract::new(ctx.storage.clone());
     let start = factory.call_currency_cursor.read()? as usize % currencies.len();
 
-    let mut budget = MAX_SERIES_PER_BLOCK;
+    let mut budget = MAX_SERIES_ACTIONS_PER_SWEEP;
     let mut called: u32 = 0;
     let mut resume_at = start;
     for offset in 0..currencies.len() {
