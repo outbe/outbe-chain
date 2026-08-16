@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
@@ -144,9 +145,9 @@ contract IntexCallFlowTest is CrossChainTest {
         }
 
         // 1. OriginRouter sends MARK_CALLED → BSC. Record the payload for hand-delivery.
-        uint256 fee = originRouter.quoteSendMarkCalled(seriesId, worldwideDay);
+        uint256 fee = originRouter.quoteSendMarkCalled(worldwideDay, MarkBatchLib.one(seriesId));
         vm.prank(intexFactory);
-        originRouter.sendMarkCalled{value: fee}(seriesId, worldwideDay);
+        originRouter.sendMarkCalled{value: fee}(worldwideDay, MarkBatchLib.one(seriesId));
         bytes memory markCalledPayload = bridge.lastPayload();
 
         // 2. Deliver MARK_CALLED → TargetRouter._handleMarkCalled. If holders exist, this fires the

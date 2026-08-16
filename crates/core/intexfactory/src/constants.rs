@@ -72,3 +72,7 @@ pub const FX_RATE_MAX_AGE_SECONDS: u64 = 6 * 3600;
 /// Mirror the codec's `MAX_SERIES_PER_ISSUANCE` and `MAX_PAYLOAD_ARRAY_LEN`.
 pub const MAX_SERIES_PER_MESSAGE: usize = 8;
 pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 64;
+
+/// Series one MARK_CALLED or MARK_QUALIFIED message may carry. Mirrors the
+/// codec's `MAX_SERIES_PER_MARK`; a wider group is sent in several messages.
+pub const MAX_SERIES_PER_MARK: usize = 8;

@@ -20,9 +20,11 @@ library IntexGas {
     /// @dev Clearing also fires the bids relay back to Outbe (parked on failure), so it runs generously.
     uint256 internal constant AUCTION_STAGE_CLEARING = 2_000_000;
     uint256 internal constant AUCTION_RESULT = 300_000;
-    /// @dev markCalled flips state and snapshots holders for the migration bridge.
-    uint256 internal constant MARK_CALLED = 500_000;
-    uint256 internal constant MARK_QUALIFIED = 200_000;
+    /// @dev markCalled flips state and snapshots holders for the migration bridge, once per series.
+    uint256 internal constant MARK_CALLED_BASE = 100_000;
+    uint256 internal constant MARK_CALLED_PER_SERIES = 500_000;
+    uint256 internal constant MARK_QUALIFIED_BASE = 100_000;
+    uint256 internal constant MARK_QUALIFIED_PER_SERIES = 200_000;
     /// @dev Destination hook for composed proceeds: WCOEN unwrap + IntexFactory distribute registration.
     uint256 internal constant PROCEEDS_COMPOSE = 300_000;
 
@@ -58,6 +60,18 @@ library IntexGas {
     ///         minting to `recipientCount` recipients.
     function issuance(uint256 seriesCount, uint256 recipientCount) internal pure returns (uint256) {
         return ISSUANCE_BASE + seriesCount * ISSUANCE_PER_SERIES + recipientCount * ISSUANCE_PER_ITEM;
+    }
+
+    /// @notice Destination gas for a MARK_CALLED carrying `seriesCount` series. Each one flips
+    ///         state and fans its holders out to the migration bridge, so the marginal is the
+    ///         whole of a single-series call.
+    function markCalled(uint256 seriesCount) internal pure returns (uint256) {
+        return MARK_CALLED_BASE + seriesCount * MARK_CALLED_PER_SERIES;
+    }
+
+    /// @notice Destination gas for a MARK_QUALIFIED carrying `seriesCount` series.
+    function markQualified(uint256 seriesCount) internal pure returns (uint256) {
+        return MARK_QUALIFIED_BASE + seriesCount * MARK_QUALIFIED_PER_SERIES;
     }
 
     /// @notice Destination gas for a REFUND_INSTRUCTIONS with `bidderCount` bidders.

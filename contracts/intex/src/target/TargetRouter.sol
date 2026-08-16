@@ -599,18 +599,24 @@ contract TargetRouter is
         emit RefundInstructionsReceived(_srcChainId, worldwideDay, bidders.length);
     }
 
-    /// @notice Decode MARK_CALLED and apply it, parking the series if it will not take the mark yet.
+    /// @notice Decode MARK_CALLED and apply it to every series it carries, parking the ones that
+    ///         will not take the mark yet.
     function _handleMarkCalled(uint32 _srcChainId, bytes calldata _message) internal {
-        bytes14 seriesId = BridgeMsgCodec.decodeMarkCalled(_message);
-        _applyMark(_srcChainId, seriesId, BridgeMsgCodec.MSG_MARK_CALLED);
+        (, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(_message);
+        for (uint256 i = 0; i < seriesIds.length; ++i) {
+            _applyMark(_srcChainId, seriesIds[i], BridgeMsgCodec.MSG_MARK_CALLED);
+        }
     }
 
-    /// @notice Decode MARK_QUALIFIED and apply it, parking the series if it will not take the mark yet.
+    /// @notice Decode MARK_QUALIFIED and apply it to every series it carries, parking the ones that
+    ///         will not take the mark yet.
     /// @dev Unlike markCalled, qualifying is a pure status flip (Issued -> Qualified) with no holder
     ///      migration, so there is nothing to bridge back to Outbe.
     function _handleMarkQualified(uint32 _srcChainId, bytes calldata _message) internal {
-        bytes14 seriesId = BridgeMsgCodec.decodeMarkQualified(_message);
-        _applyMark(_srcChainId, seriesId, BridgeMsgCodec.MSG_MARK_QUALIFIED);
+        (, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkQualified(_message);
+        for (uint256 i = 0; i < seriesIds.length; ++i) {
+            _applyMark(_srcChainId, seriesIds[i], BridgeMsgCodec.MSG_MARK_QUALIFIED);
+        }
     }
 
     /// @notice Apply one lifecycle mark through its self-call shim, parking it on revert.

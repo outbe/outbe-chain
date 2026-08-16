@@ -5,6 +5,7 @@
 
 use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
+use outbe_common::WorldwideDay;
 use outbe_intex::SeriesId;
 use outbe_oracle::api::{coen_rate_for_opt, get_all_reference_currencies};
 use outbe_primitives::{
@@ -17,7 +18,8 @@ use outbe_primitives::{
 use outbe_intex::IntexState;
 
 use crate::constants::{
-    MAX_GROUP_DECISIONS_PER_SWEEP, MAX_SERIES_ACTIONS_PER_SWEEP, ORIGIN_ROUTER_ADDRESS,
+    MAX_GROUP_DECISIONS_PER_SWEEP, MAX_SERIES_ACTIONS_PER_SWEEP, MAX_SERIES_PER_MARK,
+    ORIGIN_ROUTER_ADDRESS,
 };
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
@@ -236,12 +238,12 @@ pub(crate) fn try_qualify_group(
         &group.members,
     )?;
 
-    for &series_id in &group.members {
-        // Notify the target chain of the Qualified transition via ERC-7786; best-effort.
-        // OriginRouter failure (e.g. exhausted relay float) does not revert the
-        // state transition. The target chain can reconcile series state from the origin chain.
-        let _ = notify_qualified(storage, series_id, group.worldwide_day.value());
+    // Notify the target chains of the Qualified transition via ERC-7786; best-effort.
+    // OriginRouter failure (e.g. exhausted relay float) does not revert the
+    // state transition. The target chain can reconcile series state from the origin chain.
+    let _ = notify_qualified(storage, group.worldwide_day, &group.members);
 
+    for &series_id in &group.members {
         crate::runtime::emit_event(
             storage,
             crate::precompile::IIntexFactory::SeriesQualified {
@@ -252,21 +254,24 @@ pub(crate) fn try_qualify_group(
     Ok(group.members.len() as u32)
 }
 
+/// One message per group, split only where the wire's cap forces it.
 fn notify_qualified(
     storage: &StorageHandle<'_>,
-    series_id: SeriesId,
-    worldwide_day: u32,
+    worldwide_day: WorldwideDay,
+    members: &[SeriesId],
 ) -> Result<()> {
-    // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
-    storage.call(
-        ORIGIN_ROUTER_ADDRESS,
-        U256::ZERO,
-        IOriginRouter::sendMarkQualifiedCall {
-            seriesId: series_id.into(),
-            worldwideDay: worldwide_day,
-        }
-        .abi_encode()
-        .into(),
-    )?;
+    for chunk in members.chunks(MAX_SERIES_PER_MARK) {
+        // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
+        storage.call(
+            ORIGIN_ROUTER_ADDRESS,
+            U256::ZERO,
+            IOriginRouter::sendMarkQualifiedCall {
+                worldwideDay: worldwide_day.value(),
+                seriesIds: chunk.iter().map(|id| (*id).into()).collect(),
+            }
+            .abi_encode()
+            .into(),
+        )?;
+    }
     Ok(())
 }

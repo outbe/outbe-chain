@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
@@ -57,7 +58,7 @@ contract TargetRouterMarkParkTest is CrossChainTest {
     }
 
     function test_qualifiedMarkForAnUnknownSeriesIsParked() public {
-        _deliver(BridgeMsgCodec.encodeMarkQualified(SERIES_ID, WORLDWIDE_DAY));
+        _deliver(BridgeMsgCodec.encodeMarkQualified(WORLDWIDE_DAY, MarkBatchLib.one(SERIES_ID)));
 
         assertEq(bnbRouter.nextPendingMarkIdx(), 1, "one mark parked");
         (bytes14 seriesId, uint8 msgType, bool exists, bool done) = bnbRouter.pendingMarks(0);
@@ -68,7 +69,7 @@ contract TargetRouterMarkParkTest is CrossChainTest {
     }
 
     function test_flushAppliesTheParkedQualifiedMark() public {
-        _deliver(BridgeMsgCodec.encodeMarkQualified(SERIES_ID, WORLDWIDE_DAY));
+        _deliver(BridgeMsgCodec.encodeMarkQualified(WORLDWIDE_DAY, MarkBatchLib.one(SERIES_ID)));
         _createSeries();
 
         bnbRouter.flushPendingMark(0);
@@ -82,7 +83,7 @@ contract TargetRouterMarkParkTest is CrossChainTest {
     function test_aMarkTheSeriesTakesIsNotParked() public {
         _createSeries();
 
-        _deliver(BridgeMsgCodec.encodeMarkQualified(SERIES_ID, WORLDWIDE_DAY));
+        _deliver(BridgeMsgCodec.encodeMarkQualified(WORLDWIDE_DAY, MarkBatchLib.one(SERIES_ID)));
 
         assertEq(bnbRouter.nextPendingMarkIdx(), 0, "nothing parked");
         IIntexNFT1155.SeriesData memory data = intex.readData(SERIES_ID);
@@ -93,9 +94,9 @@ contract TargetRouterMarkParkTest is CrossChainTest {
     ///         parks rather than rejecting the message.
     function test_aMarkTheSeriesRefusesIsParked() public {
         _createSeries();
-        _deliver(BridgeMsgCodec.encodeMarkCalled(SERIES_ID, WORLDWIDE_DAY));
+        _deliver(BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, MarkBatchLib.one(SERIES_ID)));
 
-        _deliver(BridgeMsgCodec.encodeMarkCalled(SERIES_ID, WORLDWIDE_DAY));
+        _deliver(BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, MarkBatchLib.one(SERIES_ID)));
 
         assertEq(bnbRouter.nextPendingMarkIdx(), 1, "the repeat was parked");
         (bytes14 seriesId, uint8 msgType,,) = bnbRouter.pendingMarks(0);
@@ -104,7 +105,7 @@ contract TargetRouterMarkParkTest is CrossChainTest {
     }
 
     function test_flushingATwiceFlushedSlotIsRefused() public {
-        _deliver(BridgeMsgCodec.encodeMarkQualified(SERIES_ID, WORLDWIDE_DAY));
+        _deliver(BridgeMsgCodec.encodeMarkQualified(WORLDWIDE_DAY, MarkBatchLib.one(SERIES_ID)));
         _createSeries();
         bnbRouter.flushPendingMark(0);
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {Vm} from "forge-std/Vm.sol";
 
@@ -217,7 +218,7 @@ contract PatternADeferTest is CrossChainTest {
     // ---------------------------------------------------------------
 
     function _markCalledPacket() internal pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeMarkCalled(SERIES_ID, SERIES_ID_DAY);
+        return BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, MarkBatchLib.one(SERIES_ID));
     }
 
     // A holder set larger than MAX_BATCH_SIZE is split across multiple systemMultiSend chunks, so a big
