@@ -12,12 +12,14 @@ use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, times
 
 use crate::called;
 use crate::constants::{
-    CALL_RATE, FLOOR_RATE, MAX_RECIPIENTS_PER_MESSAGE, MAX_SERIES_PER_MESSAGE, QUALIFICATION_PERIOD,
+    CALL_RATE, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE, MAX_RECIPIENTS_PER_MESSAGE,
+    MAX_SERIES_PER_MESSAGE, QUALIFICATION_PERIOD,
 };
 use crate::precompile::{self, IIntexFactory};
 use crate::qualified;
 use crate::runtime;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
+use crate::state::Group;
 
 /// ISO code every fixture prices in.
 const REFERENCE_ISO: u16 = 840;
@@ -60,6 +62,31 @@ fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
 /// Test ids carry a fixed USD/U pair; only the day varies.
 fn sid(worldwide_day: u32) -> SeriesId {
     SeriesId::pack(WorldwideDay::new(worldwide_day), *b"USD", b'U').unwrap()
+}
+
+/// Force-call one group against the protocol call window; how many series moved.
+fn call_group(
+    s: &StorageHandle<'_>,
+    f: &mut IntexFactoryContract,
+    oracle: &OracleContract,
+    pair: AddressPair,
+    group: &Group,
+    last_closed_day: u32,
+    now_ts: u64,
+) -> u32 {
+    let mut vwaps = called::DayVwaps::new(oracle.pair_index_of(pair).unwrap());
+    let secs_per_day = DAY as u32;
+    let Some(window) = called::call_window(
+        oracle,
+        &mut vwaps,
+        last_closed_day,
+        CALL_WINDOW / secs_per_day,
+        CALL_THRESHOLD / secs_per_day,
+    )
+    .unwrap() else {
+        return 0;
+    };
+    called::try_call_group(s, f, oracle, &mut vwaps, group, &window, now_ts).unwrap()
 }
 
 /// Qualify one day's group in the reference currency; returns how many series moved.
@@ -826,14 +853,16 @@ fn insert_remove_qualified_roundtrip() {
                 .unwrap(),
             2
         );
-        f.remove_qualified(sid(11), REFERENCE_ISO).unwrap();
+        f.remove_qualified_group(REFERENCE_ISO, WorldwideDay::new(11))
+            .unwrap();
         assert_eq!(
             f.qualified_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             1
         );
-        f.remove_qualified(sid(22), REFERENCE_ISO).unwrap();
+        f.remove_qualified_group(REFERENCE_ISO, WorldwideDay::new(22))
+            .unwrap();
         assert_eq!(
             f.qualified_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
@@ -855,16 +884,13 @@ fn try_call_marks_called_when_threshold_met() {
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         fill_days(&oracle, last_closed_day, pair, 30, breach);
 
-        assert!(called::try_call(
-            &s,
-            &mut f,
-            &oracle,
-            &mut called::DayVwaps::new(oracle.pair_index_of(pair).unwrap()),
-            sid(7),
-            last_closed_day,
-            scan_ts
-        )
-        .unwrap());
+        let group = f
+            .qualified_group(REFERENCE_ISO, WorldwideDay::new(7))
+            .unwrap();
+        assert_eq!(
+            call_group(&s, &mut f, &oracle, pair, &group, last_closed_day, scan_ts),
+            1
+        );
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
@@ -903,16 +929,13 @@ fn try_call_skips_when_below_threshold() {
             d = previous_date_key(d);
         }
 
-        assert!(!called::try_call(
-            &s,
-            &mut f,
-            &oracle,
-            &mut called::DayVwaps::new(oracle.pair_index_of(pair).unwrap()),
-            sid(7),
-            last_closed_day,
-            scan_ts
-        )
-        .unwrap());
+        let group = f
+            .qualified_group(REFERENCE_ISO, WorldwideDay::new(7))
+            .unwrap();
+        assert_eq!(
+            call_group(&s, &mut f, &oracle, pair, &group, last_closed_day, scan_ts),
+            0
+        );
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
@@ -962,16 +985,15 @@ fn try_call_excludes_pre_issuance_days() {
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         fill_days(&oracle, last_closed_day, pair, 30, breach);
 
-        assert!(!called::try_call(
-            &s,
-            &mut f,
-            &oracle,
-            &mut called::DayVwaps::new(oracle.pair_index_of(pair).unwrap()),
-            sid(8),
-            last_closed_day,
-            scan_ts
-        )
-        .unwrap());
+        let group = Group {
+            iso_code: REFERENCE_ISO,
+            worldwide_day: WorldwideDay::new(8),
+            members: vec![sid(8)],
+        };
+        assert_eq!(
+            call_group(&s, &mut f, &oracle, pair, &group, last_closed_day, scan_ts),
+            0
+        );
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(8))
                 .unwrap()
@@ -1084,16 +1106,13 @@ fn call_survives_router_failure() {
             U256::from(EXPECTED_TRIGGER) + U256::from(1),
         );
 
-        assert!(called::try_call(
-            &s,
-            &mut f,
-            &oracle,
-            &mut called::DayVwaps::new(oracle.pair_index_of(pair).unwrap()),
-            sid(7),
-            last_closed_day,
-            scan_ts
-        )
-        .unwrap());
+        let group = f
+            .qualified_group(REFERENCE_ISO, WorldwideDay::new(7))
+            .unwrap();
+        assert_eq!(
+            call_group(&s, &mut f, &oracle, pair, &group, last_closed_day, scan_ts),
+            1
+        );
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()

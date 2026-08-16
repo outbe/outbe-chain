@@ -165,13 +165,13 @@ impl IntexFactoryContract<'_> {
         )
     }
 
-    pub(crate) fn remove_qualified(
+    pub(crate) fn remove_qualified_group(
         &mut self,
-        series_id: SeriesId,
         reference_currency: u16,
+        worldwide_day: WorldwideDay,
     ) -> Result<()> {
         self.qualified_index(reference_currency)
-            .remove(&QualifiedBinTree(&*self, reference_currency), series_id)
+            .remove_group(&QualifiedBinTree(&*self, reference_currency), worldwide_day)
     }
 
     pub(crate) fn qualified_groups_in_bin(
@@ -190,6 +190,18 @@ impl IntexFactoryContract<'_> {
     ) -> Result<Vec<SeriesId>> {
         self.qualified_index(reference_currency)
             .members(worldwide_day)
+    }
+
+    pub(crate) fn qualified_group(
+        &self,
+        reference_currency: u16,
+        worldwide_day: WorldwideDay,
+    ) -> Result<Group> {
+        Ok(Group {
+            iso_code: reference_currency,
+            worldwide_day,
+            members: self.qualified_group_members(reference_currency, worldwide_day)?,
+        })
     }
 }
 
@@ -298,47 +310,6 @@ impl GroupIndex<'_> {
         self.group_members
             .write(&self.member_key(worldwide_day, count), series_id.to_word())?;
         self.group_count.write(&group_key, count + 1)?;
-        Ok(())
-    }
-
-    /// Remove one series from its group (swap-and-pop); the group's last member
-    /// takes the group with it. No-op if absent.
-    fn remove(&self, tree: &impl BinTreeStorage, series_id: SeriesId) -> Result<()> {
-        let worldwide_day = series_id.worldwide_day();
-        let group_key = self.group_key(worldwide_day);
-        let count = self.group_count.read(&group_key)?;
-        if count == 0 {
-            return Ok(());
-        }
-        let mut found: Option<u32> = None;
-        for index in 0..count {
-            if self
-                .group_members
-                .read(&self.member_key(worldwide_day, index))?
-                == series_id.to_word()
-            {
-                found = Some(index);
-                break;
-            }
-        }
-        let Some(idx) = found else {
-            return Ok(());
-        };
-        let last = count - 1;
-        if idx != last {
-            let last_id = self
-                .group_members
-                .read(&self.member_key(worldwide_day, last))?;
-            self.group_members
-                .write(&self.member_key(worldwide_day, idx), last_id)?;
-        }
-        self.group_members
-            .clear(&self.member_key(worldwide_day, last))?;
-        self.group_count.write(&group_key, last)?;
-        if last == 0 {
-            let bin_id = self.group_bin.read(&group_key)?;
-            self.detach(tree, worldwide_day, bin_id)?;
-        }
         Ok(())
     }
 
