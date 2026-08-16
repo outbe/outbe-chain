@@ -7,7 +7,6 @@ use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
 use outbe_oracle::api::{coen_rate_for_opt, get_all_reference_currencies};
-use outbe_primitives::storage::types::Storable;
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
@@ -122,17 +121,11 @@ fn qualify_currency(
         };
 
         // Snapshot the bin before mutating: qualify() removes on success.
-        let count = factory
-            .unqualified_bin_count
-            .read(&IntexFactoryContract::scoped(iso_code, next))?;
-        let mut series: Vec<SeriesId> = Vec::with_capacity(count as usize);
-        for i in 0..count {
-            series.push(SeriesId::from_word(
-                factory
-                    .unqualified_bin_series
-                    .read(&IntexFactoryContract::bin_index_key(iso_code, next, i))?,
-            ));
+        let mut series: Vec<SeriesId> = Vec::new();
+        for worldwide_day in factory.unqualified_groups_in_bin(iso_code, next)? {
+            series.extend(factory.unqualified_group_members(iso_code, worldwide_day)?);
         }
+        let count = series.len() as u32;
         for series_id in series {
             // Isolate per-series: a deterministic Err rolls back this series' checkpoint and is
             // skipped (logged), so one bad series cannot halt the block. Infra errors that recur
@@ -191,7 +184,7 @@ pub(crate) fn try_qualify(
         return Ok(false);
     }
     outbe_intex::api::mark_qualified(storage, series_id)?;
-    factory.remove_unqualified(series_id, series.reference_currency, floor)?;
+    factory.remove_unqualified(series_id, series.reference_currency)?;
     factory.insert_qualified(
         series_id,
         series.reference_currency,

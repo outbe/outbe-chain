@@ -11,7 +11,6 @@ use alloy_primitives::U256;
 use alloy_sol_types::SolCall;
 use outbe_intex::SeriesId;
 use outbe_oracle::schema::{OracleContract, PairIndex};
-use outbe_primitives::storage::types::Storable;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
@@ -129,17 +128,11 @@ fn call_currency(
         };
 
         // Snapshot before mutating: try_call removes Called series.
-        let count = factory
-            .qualified_bin_count
-            .read(&IntexFactoryContract::scoped(iso_code, next))?;
-        let mut series: Vec<SeriesId> = Vec::with_capacity(count as usize);
-        for i in 0..count {
-            series.push(SeriesId::from_word(
-                factory
-                    .qualified_bin_series
-                    .read(&IntexFactoryContract::bin_index_key(iso_code, next, i))?,
-            ));
+        let mut series: Vec<SeriesId> = Vec::new();
+        for worldwide_day in factory.qualified_groups_in_bin(iso_code, next)? {
+            series.extend(factory.qualified_group_members(iso_code, worldwide_day)?);
         }
+        let count = series.len() as u32;
         for series_id in series {
             // Isolate per-series: a deterministic Err rolls back this series' checkpoint and is
             // skipped (logged); structural reads above keep `?` so infra errors still propagate.
@@ -256,7 +249,7 @@ pub(crate) fn try_call(
     let called_at = u32::try_from(now_ts)
         .map_err(|_| PrecompileError::Revert("block timestamp exceeds u32".into()))?;
     outbe_intex::api::mark_called(storage, series_id, called_at)?;
-    factory.remove_qualified(series_id, series.reference_currency, trigger)?;
+    factory.remove_qualified(series_id, series.reference_currency)?;
 
     // Notify the target chain of the Called transition via ERC-7786; best-effort.
     // OriginRouter failure (e.g. exhausted relay float) does not revert the

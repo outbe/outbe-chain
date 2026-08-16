@@ -53,12 +53,12 @@ pub struct IntexFactoryContract {
     pub bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
     #[attribute(order = 5)]
     pub bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
-    /// `scoped(iso, bin_id)` -> count of series in the bin.
+    /// `scoped(iso, bin_id)` -> count of groups in the bin.
     #[attribute(order = 6)]
     pub unqualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
-    /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> series_id.
+    /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> group's worldwide day.
     #[attribute(order = 7)]
-    pub unqualified_bin_series: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub unqualified_bin_groups: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     // Qualified-series bin index (by call_price_minor) for the daily
     // Called scan. A series moves here from the unqualified index on qualify.
@@ -68,12 +68,12 @@ pub struct IntexFactoryContract {
     pub qualified_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
     #[attribute(order = 10)]
     pub qualified_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
-    /// `scoped(iso, bin_id)` -> count of series in the bin.
+    /// `scoped(iso, bin_id)` -> count of groups in the bin.
     #[attribute(order = 11)]
     pub qualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
-    /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> series_id.
+    /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> group's worldwide day.
     #[attribute(order = 12)]
-    pub qualified_bin_series: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub qualified_bin_groups: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     // Genesis parameter-profile selector (0 = prod, 1 = dev); see crate::config.
     #[attribute(order = 13)]
@@ -94,6 +94,27 @@ pub struct IntexFactoryContract {
     // lowest bins every day and never reaches the series above them.
     #[attribute(order = 17)]
     pub call_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
+
+    // Group members. A lifecycle decision reads only fields a whole
+    // (reference currency, worldwide day) pair shares, so the bins above index
+    // groups and each group lists its own series. Keyed by `scoped(iso, day)`.
+    #[attribute(order = 18)]
+    pub unqualified_group_count: outbe_primitives::storage::dsl::Map<u64, u32>,
+    /// `keccak256(iso_be16 ++ worldwide_day_be32 ++ index_be32)` -> series_id word.
+    #[attribute(order = 19)]
+    pub unqualified_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
+    /// `scoped(iso, worldwide_day)` -> the bin holding the group; valid while it has members.
+    #[attribute(order = 20)]
+    pub unqualified_group_bin: outbe_primitives::storage::dsl::Map<u64, u32>,
+
+    #[attribute(order = 21)]
+    pub qualified_group_count: outbe_primitives::storage::dsl::Map<u64, u32>,
+    /// `keccak256(iso_be16 ++ worldwide_day_be32 ++ index_be32)` -> series_id word.
+    #[attribute(order = 22)]
+    pub qualified_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
+    /// `scoped(iso, worldwide_day)` -> the bin holding the group; valid while it has members.
+    #[attribute(order = 23)]
+    pub qualified_group_bin: outbe_primitives::storage::dsl::Map<u64, u32>,
 }
 
 impl IntexFactoryContract<'_> {

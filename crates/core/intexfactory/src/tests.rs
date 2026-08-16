@@ -560,14 +560,14 @@ fn insert_remove_unqualified_roundtrip() {
                 .unwrap(),
             2
         );
-        f.remove_unqualified(sid(11), REFERENCE_ISO, floor).unwrap();
+        f.remove_unqualified(sid(11), REFERENCE_ISO).unwrap();
         assert_eq!(
             f.unqualified_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             1
         );
-        f.remove_unqualified(sid(22), REFERENCE_ISO, floor).unwrap();
+        f.remove_unqualified(sid(22), REFERENCE_ISO).unwrap();
         assert_eq!(
             f.unqualified_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
@@ -800,14 +800,14 @@ fn insert_remove_qualified_roundtrip() {
                 .unwrap(),
             2
         );
-        f.remove_qualified(sid(11), REFERENCE_ISO, trigger).unwrap();
+        f.remove_qualified(sid(11), REFERENCE_ISO).unwrap();
         assert_eq!(
             f.qualified_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             1
         );
-        f.remove_qualified(sid(22), REFERENCE_ISO, trigger).unwrap();
+        f.remove_qualified(sid(22), REFERENCE_ISO).unwrap();
         assert_eq!(
             f.qualified_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
