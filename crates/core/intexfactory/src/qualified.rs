@@ -31,6 +31,9 @@ impl BlockLifecycle for IntexLifecycle {
 
     fn begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
         scan_and_qualify(ctx)?;
+        // A call sweep the daily trigger could not finish in one go carries on
+        // here, block by block, rather than waiting a day for the next trigger.
+        crate::called::run_call_slice(ctx)?;
         // Drain in-flight payouts first, then start rounds for any series whose
         // proceeds fan-in deadline has passed.
         crate::runtime::drain_distributions(&ctx.storage)?;

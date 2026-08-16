@@ -27,9 +27,8 @@ use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
 use crate::state::{Group, QualifiedBinTree};
 
-/// Run the daily Called scan. Returns the number of series force-called. Each currency is
-/// scanned against its own pair, sharing one [`MAX_SERIES_ACTIONS_PER_SWEEP`] budget; one without a
-/// registered or finalized pair is skipped for the run.
+/// Open a Called sweep over the day the Oracle has just finalized and run its
+/// first slice. Returns the number of series force-called in that slice.
 pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
 
@@ -46,21 +45,39 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
         return Ok(0);
     }
 
-    let currencies = outbe_oracle::api::get_all_reference_currencies(ctx)?;
-    if currencies.is_empty() {
+    let factory = IntexFactoryContract::new(ctx.storage.clone());
+    factory.call_sweep_day.write(last_closed_day)?;
+    run_call_slice(ctx)
+}
+
+/// Advance an open sweep by one slice, or do nothing when none is in flight.
+/// The sweep stays pinned to the day it opened on, so a mass call spread over
+/// several blocks decides every group against the same finalized prices.
+/// Returns the number of series force-called.
+pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
+    let factory = IntexFactoryContract::new(ctx.storage.clone());
+    let pinned_day = factory.call_sweep_day.read()?;
+    if pinned_day == 0 {
         return Ok(0);
     }
-    let factory = IntexFactoryContract::new(ctx.storage.clone());
+    let currencies = outbe_oracle::api::get_all_reference_currencies(ctx)?;
+    if currencies.is_empty() {
+        factory.call_sweep_day.write(0)?;
+        return Ok(0);
+    }
+    let oracle = OracleContract::new(ctx.storage.clone());
     let start = factory.call_currency_cursor.read()? as usize % currencies.len();
 
     let mut budget = ScanBudget::new();
     let mut called: u32 = 0;
     let mut resume_at = start;
+    let mut swept = true;
     for offset in 0..currencies.len() {
         let at = (start + offset) % currencies.len();
         if budget.is_spent() {
             // Resume here, so a heavy currency cannot starve the ones behind it.
             resume_at = at;
+            swept = false;
             break;
         }
         let iso_code = currencies[at];
@@ -70,21 +87,22 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
                 Some(index) => index,
                 None => continue,
             };
-        called = called.saturating_add(call_currency(
-            ctx,
-            &oracle,
-            iso_code,
-            pair_index,
-            last_closed_day,
-            &mut budget,
-        )?);
+        let (calls, finished) =
+            call_currency(ctx, &oracle, iso_code, pair_index, pinned_day, &mut budget)?;
+        called = called.saturating_add(calls);
+        swept &= finished;
     }
     factory.call_currency_cursor.write(resume_at as u32)?;
+    if swept {
+        // Nothing left to walk: the next daily trigger opens a fresh sweep.
+        factory.call_sweep_day.write(0)?;
+    }
     Ok(called)
 }
 
 /// Scans one reference currency's qualified groups, drawing on the shared
-/// `budget`. Returns how many series were called.
+/// `budget`. Returns how many series were called and whether the currency was
+/// walked to the end of its eligible range.
 fn call_currency(
     ctx: &BlockRuntimeContext,
     oracle: &OracleContract,
@@ -92,7 +110,7 @@ fn call_currency(
     pair_index: PairIndex,
     last_closed_day: u32,
     budget: &mut ScanBudget,
-) -> Result<u32> {
+) -> Result<(u32, bool)> {
     let mut factory = IntexFactoryContract::new(ctx.storage.clone());
     let params = crate::config::read(&factory)?;
     let secs_per_day = SECONDS_PER_DAY as u32;
@@ -107,7 +125,7 @@ fn call_currency(
     )?
     else {
         // Too few priced days for any trigger to be breached often enough.
-        return Ok(0);
+        return Ok((0, true));
     };
 
     // Every trigger below `p_star` is breached often enough, so the eligible
@@ -117,11 +135,12 @@ fn call_currency(
         Ok(b) => b,
         Err(e) => {
             tracing::warn!(target: "outbe::intexfactory", iso_code, error = ?e, "call scan: window price out of range, skipping currency");
-            return Ok(0);
+            return Ok((0, true));
         }
     };
 
     let mut called: u32 = 0;
+    let mut finished = true;
     let mut cursor: u32 = factory.call_scan_cursor.read(&iso_code)?;
     'bins: loop {
         let next = match tree_math::find_first_left_inclusive(
@@ -144,6 +163,7 @@ fn call_currency(
                 // already called are gone from it, so the next slice resumes here
                 // without redoing them.
                 factory.call_scan_cursor.write(&iso_code, next)?;
+                finished = false;
                 break 'bins;
             }
             budget.spend_decision();
@@ -179,10 +199,10 @@ fn call_currency(
             }
         };
     }
-    Ok(called)
+    Ok((called, finished))
 }
 
-/// Cycle daily-trigger entry: runs the Called scan, discarding the count.
+/// Cycle daily-trigger entry: opens the day's Called sweep, discarding the count.
 pub fn run_daily(ctx: &BlockRuntimeContext) -> Result<()> {
     scan_and_call(ctx)?;
     Ok(())

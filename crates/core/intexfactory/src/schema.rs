@@ -115,6 +115,12 @@ pub struct IntexFactoryContract {
     /// `scoped(iso, worldwide_day)` -> the bin holding the group; valid while it has members.
     #[attribute(order = 23)]
     pub qualified_group_bin: outbe_primitives::storage::dsl::Map<u64, u32>,
+
+    // UTC day an unfinished call sweep is pinned to, so its later slices decide
+    // against the same finalized prices the daily trigger opened it with. 0 = no
+    // sweep in flight; a date key is never 0.
+    #[attribute(order = 24)]
+    pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl IntexFactoryContract<'_> {
