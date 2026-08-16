@@ -94,6 +94,17 @@ pub struct IntexFactoryContract {
     // lowest bins every day and never reaches the series above them.
     #[attribute(order = 17)]
     pub call_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
+
+    // Qualified notices waiting for the `intex_qualify_notify` trigger to send
+    // them: the sweep that qualifies runs in a block hook, which cannot call
+    // contracts. Head and tail reset to 0 whenever the queue drains empty.
+    #[attribute(order = 18)]
+    pub qualify_notify_head: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 19)]
+    pub qualify_notify_tail: outbe_primitives::storage::dsl::Value<u32>,
+    /// Queue index -> series awaiting its Qualified notice.
+    #[attribute(order = 20)]
+    pub qualify_notify_at: outbe_primitives::storage::dsl::Map<u32, SeriesId>,
 }
 
 impl IntexFactoryContract<'_> {

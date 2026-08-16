@@ -10,7 +10,7 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::schema::Cycle;
 use crate::state::{accounting_gate_blocks, EvmAccountingProgress};
-use crate::triggers::{active_triggers, next_fire_at};
+use crate::triggers::{active_triggers, last_fire_at, next_fire_at};
 use crate::ICycle;
 
 /// Dispatches every active trigger whose `next_fire_at` is `<=
@@ -82,16 +82,24 @@ pub fn dispatch_triggers(
             continue;
         }
 
+        // A poll records the latest due slot, so a gap costs one firing rather
+        // than one per missed slot.
+        let recorded_at = if spec.coalesces_backlog {
+            last_fire_at(spec.period_seconds, spec.start_offset_seconds, block_ts)
+        } else {
+            scheduled_at
+        };
+
         let result = ctx.storage.with_checkpoint(|| {
             spec.handler.run(ctx, scope, parent)?;
             let mut cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();
-            cycle.last_executed_at.write(&spec.id, scheduled_at)?;
+            cycle.last_executed_at.write(&spec.id, recorded_at)?;
             cycle
                 .last_executed_block_number
                 .write(&spec.id, block_number)?;
             cycle.emit(ICycle::CycleTriggerExecuted {
                 id: spec.id,
-                scheduledAt: scheduled_at,
+                scheduledAt: recorded_at,
                 blockTimestamp: block_ts,
                 blockNumber: block_number,
             })?;
