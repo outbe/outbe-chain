@@ -23,6 +23,7 @@ pub enum TriggerId {
     AuctionAdvance = 3,
     GemCallDaily = 4,
     AuctionClearing = 5,
+    IntexQualifyNotify = 6,
 }
 
 impl TriggerId {
@@ -70,6 +71,7 @@ pub enum TriggerHandler {
     AuctionAdvance,
     GemCallDaily,
     AuctionClearing,
+    IntexQualifyNotify,
 }
 
 impl TriggerHandler {
@@ -83,7 +85,8 @@ impl TriggerHandler {
             Self::IntexDaily
             | Self::AuctionAdvance
             | Self::GemCallDaily
-            | Self::AuctionClearing => 0,
+            | Self::AuctionClearing
+            | Self::IntexQualifyNotify => 0,
         }
     }
 
@@ -104,6 +107,9 @@ impl TriggerHandler {
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
             Self::GemCallDaily => outbe_gem::hooks::run_call_daily(ctx),
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
+            Self::IntexQualifyNotify => {
+                outbe_intexfactory::qualified::drain_qualify_notices(ctx)
+            }
         }
     }
 }
@@ -120,7 +126,7 @@ pub fn metadosis_mutation_lease_budget_per_tick() -> u8 {
 
 /// Active trigger table. Order is informational only — the dispatcher
 /// fires triggers independently per slot.
-pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 6] {
+pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 7] {
     let production_default = outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS;
     let (wwd_period_seconds, wwd_start_offset_seconds) =
         if metadosis_advance_interval_seconds == production_default {
@@ -207,10 +213,21 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             coalesces_backlog: false,
             handler: TriggerHandler::GemCallDaily,
         },
+        TriggerSpec {
+            id: TriggerId::IntexQualifyNotify.as_u32(),
+            label: "intex_qualify_notify",
+            period_seconds: 600,
+            start_offset_seconds: 0,
+            // Drains a queue the qualify sweep filled; reads no accounting state.
+            requires_accounting_window: false,
+            // A poll has nothing to replay: a gap collapses to one drain.
+            coalesces_backlog: true,
+            handler: TriggerHandler::IntexQualifyNotify,
+        },
     ]
 }
 
-pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 6] =
+pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 7] =
     active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
 pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &ACTIVE_TRIGGER_ARRAY;
 

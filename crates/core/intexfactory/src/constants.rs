@@ -35,6 +35,10 @@ pub const QUALIFICATION_PERIOD: u32 = 21 * 24 * 3600;
 /// Bin step (basis points) for the floor-price bin ladder.
 pub const BIN_STEP_BP: u16 = 25;
 
+/// Qualified notices sent per `intex_qualify_notify` firing. Each one is a
+/// bridge dispatch per target chain, so the bound stays far below the scan's.
+pub const QUALIFY_NOTIFY_CHUNK_LIMIT: u32 = 32;
+
 /// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.
 pub const PRICE_RATE_DEN: u16 = 100;
 

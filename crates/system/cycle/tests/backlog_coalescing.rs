@@ -50,11 +50,12 @@ fn a_timestamp_before_the_first_slot_yields_the_offset() {
 }
 
 #[test]
-fn only_the_clearing_poll_coalesces() {
+fn only_the_polls_coalesce() {
     for spec in ACTIVE_TRIGGERS {
+        let is_poll = spec.id == TriggerId::AuctionClearing.as_u32()
+            || spec.id == TriggerId::IntexQualifyNotify.as_u32();
         assert_eq!(
-            spec.coalesces_backlog,
-            spec.id == TriggerId::AuctionClearing.as_u32(),
+            spec.coalesces_backlog, is_poll,
             "{} must not change its backlog policy",
             spec.label
         );
