@@ -70,6 +70,16 @@ contract TargetRouter is
         bool done;
     }
 
+    /// @notice A lifecycle mark parked because IntexNFT1155 would not take it — most often the series has
+    ///         not landed here yet. Retried via `flushPendingMark`. One slot serves both marks: `msgType`
+    ///         says which, so the two do not each need their own park.
+    struct PendingMark {
+        bytes14 seriesId;
+        uint8 msgType;
+        bool exists;
+        bool done;
+    }
+
     /// @custom:storage-location erc7201:outbe.intex.TargetRouter
     struct TargetRouterStorage {
         /// @dev Auction contract that originates outbound bids and receives inbound stage transitions.
@@ -116,6 +126,10 @@ contract TargetRouter is
         mapping(uint32 worldwideDay => uint128 accrued) refundProceedsAccrued;
         /// @dev How many of the day's refund chunks have been applied.
         mapping(uint32 worldwideDay => uint16 applied) refundChunksSeen;
+        /// @dev Parked lifecycle marks awaiting permissionless retry, keyed by enqueue index.
+        mapping(uint256 idx => PendingMark) pendingMarks;
+        /// @dev Next index to assign in `pendingMarks`; also the count ever enqueued.
+        uint256 nextPendingMarkIdx;
     }
 
     /// @notice A proceeds route parked because its outbound send reverted (e.g. relay float too low); retried
@@ -231,6 +245,17 @@ contract TargetRouter is
     /// @notice Next index to assign in `pendingIssuanceMints`.
     function nextPendingIssuanceMintIdx() external view returns (uint256) {
         return _ts().nextPendingIssuanceMintIdx;
+    }
+
+    /// @notice Parked lifecycle mark at `idx`.
+    function pendingMarks(uint256 idx) external view returns (bytes14 seriesId, uint8 msgType, bool exists, bool done) {
+        PendingMark storage p = _ts().pendingMarks[idx];
+        return (p.seriesId, p.msgType, p.exists, p.done);
+    }
+
+    /// @notice Next index to assign in `pendingMarks`.
+    function nextPendingMarkIdx() external view returns (uint256) {
+        return _ts().nextPendingMarkIdx;
     }
 
     // --- Admin ---
@@ -574,12 +599,73 @@ contract TargetRouter is
         emit RefundInstructionsReceived(_srcChainId, worldwideDay, bidders.length);
     }
 
-    /// @notice Decode MARK_CALLED, apply it to IntexNFT1155, then bridge all series holders to Outbe.
+    /// @notice Decode MARK_CALLED and apply it, parking the series if it will not take the mark yet.
+    function _handleMarkCalled(uint32 _srcChainId, bytes calldata _message) internal {
+        bytes14 seriesId = BridgeMsgCodec.decodeMarkCalled(_message);
+        _applyMark(_srcChainId, seriesId, BridgeMsgCodec.MSG_MARK_CALLED);
+    }
+
+    /// @notice Decode MARK_QUALIFIED and apply it, parking the series if it will not take the mark yet.
+    /// @dev Unlike markCalled, qualifying is a pure status flip (Issued -> Qualified) with no holder
+    ///      migration, so there is nothing to bridge back to Outbe.
+    function _handleMarkQualified(uint32 _srcChainId, bytes calldata _message) internal {
+        bytes14 seriesId = BridgeMsgCodec.decodeMarkQualified(_message);
+        _applyMark(_srcChainId, seriesId, BridgeMsgCodec.MSG_MARK_QUALIFIED);
+    }
+
+    /// @notice Apply one lifecycle mark through its self-call shim, parking it on revert.
+    /// @dev A series the target has not seen yet (or already moved past) reverts in IntexNFT1155.
+    ///      Parking it keeps that from rejecting the inbound message, and `flushPendingMark` applies
+    ///      it once the series lands.
+    function _applyMark(uint32 _srcChainId, bytes14 _seriesId, uint8 _msgType) internal {
+        // solhint-disable-next-line no-empty-blocks
+        try this.applyMarkOne(_seriesId, _msgType) {}
+        catch (bytes memory reason) {
+            TargetRouterStorage storage $ = _ts();
+            uint256 idx = $.nextPendingMarkIdx++;
+            $.pendingMarks[idx] = PendingMark({seriesId: _seriesId, msgType: _msgType, exists: true, done: false});
+            emit MarkDeferred(idx, _seriesId, _msgType, reason);
+            return;
+        }
+        if (_msgType == BridgeMsgCodec.MSG_MARK_CALLED) {
+            emit MarkCalledReceived(_srcChainId, _seriesId);
+        } else {
+            emit MarkQualifiedReceived(_srcChainId, _seriesId);
+        }
+    }
+
+    /// @notice Self-call shim around a single lifecycle mark; isolates a series that will not take it.
+    /// @param seriesId Series the mark applies to.
+    /// @param msgType Codec message type: MARK_CALLED or MARK_QUALIFIED.
+    function applyMarkOne(bytes14 seriesId, uint8 msgType) external {
+        if (msg.sender != address(this)) revert NotSelf();
+        if (msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED) {
+            _ts().intex.markQualified(seriesId);
+            return;
+        }
+        _markCalledAndMigrate(seriesId);
+    }
+
+    /// @notice Permissionless retry of a previously deferred lifecycle mark.
+    /// @param idx Index of the parked mark to flush.
+    function flushPendingMark(uint256 idx) external nonReentrant {
+        PendingMark storage p = _ts().pendingMarks[idx];
+        if (!p.exists) revert NoSuchPendingMark(idx);
+        if (p.done) revert AlreadyFlushed(idx);
+        p.done = true;
+        if (p.msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED) {
+            _ts().intex.markQualified(p.seriesId);
+        } else {
+            _markCalledAndMigrate(p.seriesId);
+        }
+        emit MarkFlushed(idx, p.seriesId, p.msgType);
+    }
+
+    /// @notice Apply markCalled to IntexNFT1155, then bridge all series holders to Outbe.
     /// @dev On bridge failure the holders+amounts snapshot is parked for retry via
     ///      `flushPendingHoldersRelay`; markCalled itself still succeeds.
-    function _handleMarkCalled(uint32 _srcChainId, bytes calldata _message) internal {
+    function _markCalledAndMigrate(bytes14 seriesId) internal {
         TargetRouterStorage storage $ = _ts();
-        bytes14 seriesId = BridgeMsgCodec.decodeMarkCalled(_message);
 
         $.intex.markCalled(seriesId);
 
@@ -618,19 +704,6 @@ contract TargetRouter is
                 }
             }
         }
-
-        emit MarkCalledReceived(_srcChainId, seriesId);
-    }
-
-    /// @notice Decode MARK_QUALIFIED and apply it to IntexNFT1155.
-    /// @dev Unlike markCalled, qualifying is a pure status flip (Issued -> Qualified) with no holder
-    ///      migration, so there is nothing to bridge back to Outbe.
-    function _handleMarkQualified(uint32 _srcChainId, bytes calldata _message) internal {
-        bytes14 seriesId = BridgeMsgCodec.decodeMarkQualified(_message);
-
-        _ts().intex.markQualified(seriesId);
-
-        emit MarkQualifiedReceived(_srcChainId, seriesId);
     }
 
     /// @notice Self-call shim around `_doBridgeSeriesHolders`. Only callable by this contract itself.
