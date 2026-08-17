@@ -607,6 +607,50 @@ fn calculate_vwap_treats_zero_volume_as_one_scaled_unit() {
 }
 
 #[test]
+fn calculate_vwap_uses_the_six_decimal_sentinel_for_zero_volume_coen840() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
+
+        // This rate fits when multiplied by the COEN/840 sentinel (1e6), but
+        // overflows against the generic decimal18 sentinel. The public result
+        // therefore pins the pair-specific weight, not merely equal averaging.
+        let rate = U256::MAX / COEN840_SCALE;
+        oracle
+            .write_snapshot(1_000, &[(pair_key(COEN, usd()), rate, U256::ZERO)])
+            .unwrap();
+
+        assert_eq!(
+            oracle
+                .calculate_vwap(pair_key(COEN, usd()), 0, 2_000)
+                .unwrap(),
+            rate
+        );
+    });
+}
+
+#[test]
+fn calculate_vwap_returns_a_six_decimal_coen840_price() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
+        oracle
+            .write_snapshot(1_000, &[(pair_key(COEN, usd()), coen840(100), coen840(2))])
+            .unwrap();
+        oracle
+            .write_snapshot(2_000, &[(pair_key(COEN, usd()), coen840(200), coen840(1))])
+            .unwrap();
+
+        assert_eq!(
+            oracle
+                .calculate_vwap(pair_key(COEN, usd()), 0, 3_000)
+                .unwrap(),
+            U256::from(133_333_333u64)
+        );
+    });
+}
+
+#[test]
 fn calculate_vwap_isolates_each_pair_within_one_snapshot() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());

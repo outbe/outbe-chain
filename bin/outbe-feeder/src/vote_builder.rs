@@ -83,15 +83,14 @@ pub fn encode_vote(prices: &[AggregatedPrice], _config: &FeederConfig) -> Vec<u8
 mod tests {
     use super::*;
     use alloy_primitives::U256;
-    use outbe_primitives::units::{Units, SCALE_1E18};
 
     #[test]
     fn test_encode_vote_produces_calldata() {
         let prices = vec![AggregatedPrice {
             base: "COEN".to_string(),
             quote: "840".to_string(),
-            price: SCALE_1E18 + SCALE_1E18 / U256::from(2u64), // 1.5
-            volume: U256::in_units(10000u128),
+            price: U256::from(1_500_000u64),
+            volume: U256::from(10_000_000_000u64),
         }];
         let config = crate::config::FeederConfig {
             chain: crate::config::ChainConfig {
@@ -115,5 +114,12 @@ mod tests {
         let calldata = encode_vote(&prices, &config);
         // submitVote selector is first 4 bytes
         assert!(calldata.len() > 4);
+        let decoded = IOracle::submitVoteCall::abi_decode(&calldata).unwrap();
+        let expected_quote: Address = AssetType::IsoCurrency(840).into();
+        assert_eq!(decoded.tuples.len(), 1);
+        assert_eq!(decoded.tuples[0].base, Address::ZERO);
+        assert_eq!(decoded.tuples[0].quote, expected_quote);
+        assert_eq!(decoded.tuples[0].exchangeRate, U256::from(1_500_000u64));
+        assert_eq!(decoded.tuples[0].volume, U256::from(10_000_000_000u64));
     }
 }

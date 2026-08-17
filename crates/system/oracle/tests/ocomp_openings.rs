@@ -11,6 +11,13 @@ use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 
+const COEN840_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
+const FIXED18_SCALE: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
+
+fn scaled(whole: u64, scale: U256) -> U256 {
+    U256::from(whole) * scale
+}
+
 fn slot_word(storage: &StorageHandle<'_>, slot: B256) -> U256 {
     storage
         .sload(ORACLE_ADDRESS, U256::from_be_bytes(slot.0))
@@ -31,17 +38,23 @@ fn seed_oracle(storage: &StorageHandle<'_>, day: WorldwideDay) -> (AddressPair, 
     oracle.worldwide_day_vwap_exists.write(&day, true).unwrap();
     // Keyed by the registry index written above, not by a per-day ordinal.
     let wwd_values = oracle.worldwide_day_vwap_value.get_nested(&day);
-    wwd_values.write(&1, U256::from(100)).unwrap();
-    wwd_values.write(&2, U256::from(200)).unwrap();
+    wwd_values.write(&1, scaled(100, COEN840_SCALE)).unwrap();
+    wwd_values.write(&2, scaled(200, FIXED18_SCALE)).unwrap();
     oracle.scurve_count.write(4).unwrap();
     oracle.scurve_oldest_idx.write(2).unwrap();
     let target_day = outbe_oracle::scurve::truncate_to_day(day.to_timestamp_utc());
     oracle.scurve_pair.write_pair(&2, usd_pair).unwrap();
     oracle.scurve_peak_day.write(&2, target_day).unwrap();
-    oracle.scurve_peak_price.write(&2, U256::from(300)).unwrap();
+    oracle
+        .scurve_peak_price
+        .write(&2, scaled(300, COEN840_SCALE))
+        .unwrap();
     oracle.scurve_pair.write_pair(&3, eur_pair).unwrap();
     oracle.scurve_peak_day.write(&3, target_day).unwrap();
-    oracle.scurve_peak_price.write(&3, U256::from(400)).unwrap();
+    oracle
+        .scurve_peak_price
+        .write(&3, scaled(400, FIXED18_SCALE))
+        .unwrap();
     (usd_pair, eur_pair)
 }
 
@@ -94,21 +107,21 @@ fn oracle_opening_plan_reads_the_exact_raw_slots_used_by_runtime_semantics() {
                 U256::from(1),   // wwd_vwap_exists
                 // One value word per subject pair, at its registry index — the
                 // pair itself no longer has to be opened alongside it.
-                U256::from(100), // wwd_vwap_value[1]
-                U256::from(200), // wwd_vwap_value[2]
-                U256::from(4),   // scurve_count
-                U256::from(2),   // scurve_oldest
+                scaled(100, COEN840_SCALE), // wwd_vwap_value[1]
+                scaled(200, FIXED18_SCALE), // wwd_vwap_value[2]
+                U256::from(4),              // scurve_count
+                U256::from(2),              // scurve_oldest
                 // (pair base, pair quote, peak day, peak price) per entry. COEN
                 // is the zero address; an ISO code encodes as 0x0cc<bcd>, so 840
                 // is 0xcc840 == 837_696 and 978 is 0xcc978 == 838_008.
                 U256::ZERO,
                 U256::from(0xcc840),
                 U256::from(target_day),
-                U256::from(300),
+                scaled(300, COEN840_SCALE),
                 U256::ZERO,
                 U256::from(0xcc978),
                 U256::from(target_day),
-                U256::from(400),
+                scaled(400, FIXED18_SCALE),
             ]
         );
 
@@ -130,6 +143,8 @@ fn oracle_opening_plan_reads_the_exact_raw_slots_used_by_runtime_semantics() {
                 Some(runtime_vwap.max(runtime_scurve))
             );
         }
+        assert_eq!(evaluated.entry_price(840), Some(scaled(300, COEN840_SCALE)));
+        assert_eq!(evaluated.entry_price(978), Some(scaled(400, FIXED18_SCALE)));
 
         let mut reordered = raw_slots;
         reordered.swap(0, 1);
@@ -238,7 +253,7 @@ fn oracle_opening_prices_a_pair_registered_after_the_day_was_written() {
 
         let evaluated = evaluate_oracle_opening_v1(day, &[826, 840, 978], &raw_slots).unwrap();
         assert_eq!(evaluated.entry_price(826), Some(U256::ZERO));
-        assert_eq!(evaluated.entry_price(840), Some(U256::from(300)));
-        assert_eq!(evaluated.entry_price(978), Some(U256::from(400)));
+        assert_eq!(evaluated.entry_price(840), Some(scaled(300, COEN840_SCALE)));
+        assert_eq!(evaluated.entry_price(978), Some(scaled(400, FIXED18_SCALE)));
     });
 }

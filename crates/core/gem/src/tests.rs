@@ -2,6 +2,7 @@ use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::address_pair::AddressPair;
+use outbe_primitives::math::constants::REAL_ID_SHIFT;
 use outbe_primitives::math::tree_math;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -38,6 +39,14 @@ fn sample_params(owner: Address) -> GemAddParams {
         initial_state: GemState::Issued,
         issued_at: T_NOW,
     }
+}
+
+#[test]
+fn coen840_one_maps_to_the_center_price_bin_at_six_decimals() {
+    assert_eq!(
+        GemContract::price_to_bin(U256::from(1_000_000u64)).unwrap(),
+        REAL_ID_SHIFT as u32
+    );
 }
 
 #[test]

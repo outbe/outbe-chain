@@ -500,16 +500,52 @@ fn get_daily_close(oracle: &OracleContract, pair: AddressPair, day_start: u64) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_primitives::units::Units;
+
+    const COEN840_SCALE: u64 = 1_000_000;
+
+    fn price6(whole: u64) -> U256 {
+        U256::from(whole) * U256::from(COEN840_SCALE)
+    }
 
     #[test]
     fn test_coefficients_boundary_values() {
-        // First coefficient should be exactly 1.0 (1e18)
-        assert_eq!(COEFFICIENTS[0], SCALE_1E18);
-        // Last coefficient should be exactly 0.92 (920e15)
-        assert_eq!(COEFFICIENTS[127], U256::from(920_000_000_000_000_000u64));
+        // COEN/840 coefficients use the same six-decimal denominator as prices.
+        assert_eq!(COEFFICIENTS[0], U256::from(1_000_000u64));
+        // Last coefficient is exactly 0.92.
+        assert_eq!(COEFFICIENTS[127], U256::from(920_000u64));
         // Center (64) should be ~0.95998
-        assert_eq!(COEFFICIENTS[64], U256::from(959_980_090_212_813_386u64));
+        assert_eq!(COEFFICIENTS[64], U256::from(959_980u64));
+    }
+
+    #[test]
+    fn coen840_coefficients_and_products_match_reference_vector() {
+        let vector: serde_json::Value =
+            serde_json::from_str(include_str!("../testdata/coen840-scurve-v1.json")).unwrap();
+        assert_eq!(vector["pair"], "COEN/840");
+        assert_eq!(vector["coefficientScale"], COEN840_SCALE.to_string());
+        assert_eq!(vector["rounding"], "floor");
+
+        let coefficients = vector["coefficients"].as_array().unwrap();
+        assert_eq!(coefficients.len(), PERIOD);
+        for (index, expected) in coefficients.iter().enumerate() {
+            let expected = expected.as_str().unwrap().parse::<u64>().unwrap();
+            assert_eq!(
+                COEFFICIENTS[index],
+                U256::from(expected),
+                "coefficient[{index}]"
+            );
+        }
+
+        for pin in vector["productPins"].as_array().unwrap() {
+            let index = pin["index"].as_u64().unwrap() as usize;
+            let peak = pin["peakPrice"].as_str().unwrap().parse::<u64>().unwrap();
+            let expected = pin["expected"].as_str().unwrap().parse::<u64>().unwrap();
+            assert_eq!(
+                compute_scurve_value(U256::from(peak), index),
+                U256::from(expected),
+                "product pin {index}"
+            );
+        }
     }
 
     #[test]
@@ -528,14 +564,14 @@ mod tests {
 
     #[test]
     fn test_compute_scurve_value() {
-        let peak_price = U256::in_units(100); // 100.0
+        let peak_price = price6(100);
 
         // Day 0: value = 100 * 1.0 = 100
         assert_eq!(compute_scurve_value(peak_price, 0), peak_price);
 
         // Day 127: value = 100 * 0.92 = 92
         let day_127_value = compute_scurve_value(peak_price, 127);
-        assert_eq!(day_127_value, U256::in_units(92));
+        assert_eq!(day_127_value, price6(92));
 
         // Day 128+: returns zero
         assert_eq!(compute_scurve_value(peak_price, 128), U256::ZERO);
@@ -545,12 +581,12 @@ mod tests {
     #[test]
     fn test_compute_scurve_value_precision() {
         // Test with a non-round peak price
-        let peak = U256::from(18_343_660_000_000_000_000_000u128); // 18343.66
+        let peak = U256::from(18_343_660_000u64); // 18343.66 on the COEN/840 scale
         let val_day1 = compute_scurve_value(peak, 1);
         // Expected: 18343.66 * 0.999960180425626732 = ~18342.93 (approx)
         // The exact value depends on integer truncation
         assert!(val_day1 < peak);
-        assert!(val_day1 > U256::in_units(18342));
+        assert!(val_day1 > price6(18_342));
     }
 
     #[test]
@@ -575,7 +611,7 @@ mod tests {
             // Store an S-curve entry. Use day-aligned timestamps.
             let pair = register_test_pair(&mut oracle);
             let peak_day = truncate_to_day(1_000_000);
-            let peak_price = U256::in_units(500);
+            let peak_price = price6(500);
 
             store_scurve_entry(&mut oracle, pair, peak_day, peak_price).unwrap();
             assert_eq!(oracle.scurve_count.read().unwrap(), 1);
@@ -587,7 +623,7 @@ mod tests {
             // Query value at peak_day + 127 days → should be ~92% of peak
             let far_future = peak_day + 127 * DAY_SECONDS;
             let val_127 = get_max_active_scurve_value(&oracle, pair, far_future).unwrap();
-            assert_eq!(val_127, U256::in_units(460)); // 500 * 0.92 = 460
+            assert_eq!(val_127, price6(460)); // 500 * 0.92 = 460
 
             // Query value at peak_day + 128 days → should be zero (expired)
             let expired = peak_day + 128 * DAY_SECONDS;
@@ -608,11 +644,11 @@ mod tests {
 
             // Two peaks for the same pair, day-aligned
             let peak1_day = truncate_to_day(1_000_000);
-            let peak1_price = U256::in_units(100);
+            let peak1_price = price6(100);
             store_scurve_entry(&mut oracle, pair, peak1_day, peak1_price).unwrap();
 
             let peak2_day = peak1_day + 10 * DAY_SECONDS;
-            let peak2_price = U256::in_units(200);
+            let peak2_price = price6(200);
             store_scurve_entry(&mut oracle, pair, peak2_day, peak2_price).unwrap();
 
             // At peak2_day, both are active.
@@ -620,7 +656,7 @@ mod tests {
             // Peak2 at day_index=0: 200 * coeff[0] = 200
             // Max should be 200
             let val = get_max_active_scurve_value(&oracle, pair, peak2_day).unwrap();
-            assert_eq!(val, U256::in_units(200));
+            assert_eq!(val, price6(200));
         });
     }
 
@@ -652,7 +688,7 @@ mod tests {
         rate: U256,
     ) {
         oracle
-            .write_snapshot(day_start + 80_000, &[(pair, rate, U256::in_units(1))])
+            .write_snapshot(day_start + 80_000, &[(pair, rate, price6(1))])
             .unwrap();
     }
 
@@ -673,19 +709,16 @@ mod tests {
             let d2 = d0 - 2 * DAY_SECONDS; // peak
             let d3 = d0 - 3 * DAY_SECONDS;
 
-            write_daily_close(&mut oracle, pair, d3, U256::in_units(100));
-            write_daily_close(&mut oracle, pair, d2, U256::in_units(120));
-            write_daily_close(&mut oracle, pair, d1, U256::in_units(110));
+            write_daily_close(&mut oracle, pair, d3, price6(100));
+            write_daily_close(&mut oracle, pair, d2, price6(120));
+            write_daily_close(&mut oracle, pair, d1, price6(110));
             // intentionally NO D0 data — the fix must not depend on it
 
             process_daily_scurve(&mut oracle, pair, d0).unwrap();
 
             assert_eq!(oracle.scurve_count.read().unwrap(), 1);
             assert_eq!(oracle.scurve_peak_day.read(&0).unwrap(), d2);
-            assert_eq!(
-                oracle.scurve_peak_price.read(&0).unwrap(),
-                U256::in_units(120)
-            );
+            assert_eq!(oracle.scurve_peak_price.read(&0).unwrap(), price6(120));
         });
     }
 
@@ -706,20 +739,17 @@ mod tests {
             let d2 = d0 - 2 * DAY_SECONDS;
             let d3 = d0 - 3 * DAY_SECONDS;
 
-            write_daily_close(&mut oracle, pair, d3, U256::in_units(100));
-            write_daily_close(&mut oracle, pair, d2, U256::in_units(120));
-            write_daily_close(&mut oracle, pair, d1, U256::in_units(110));
+            write_daily_close(&mut oracle, pair, d3, price6(100));
+            write_daily_close(&mut oracle, pair, d2, price6(120));
+            write_daily_close(&mut oracle, pair, d1, price6(110));
             // A spurious current-day tick that the old code would have consumed.
-            write_daily_close(&mut oracle, pair, d0, U256::in_units(999));
+            write_daily_close(&mut oracle, pair, d0, price6(999));
 
             process_daily_scurve(&mut oracle, pair, d0).unwrap();
 
             assert_eq!(oracle.scurve_count.read().unwrap(), 1);
             assert_eq!(oracle.scurve_peak_day.read(&0).unwrap(), d2);
-            assert_eq!(
-                oracle.scurve_peak_price.read(&0).unwrap(),
-                U256::in_units(120)
-            );
+            assert_eq!(oracle.scurve_peak_price.read(&0).unwrap(), price6(120));
         });
     }
 
@@ -739,9 +769,9 @@ mod tests {
             let d3 = d0 - 3 * DAY_SECONDS;
 
             // Monotonic rising: no local max at D-2.
-            write_daily_close(&mut oracle, pair, d3, U256::in_units(100));
-            write_daily_close(&mut oracle, pair, d2, U256::in_units(110));
-            write_daily_close(&mut oracle, pair, d1, U256::in_units(120));
+            write_daily_close(&mut oracle, pair, d3, price6(100));
+            write_daily_close(&mut oracle, pair, d2, price6(110));
+            write_daily_close(&mut oracle, pair, d1, price6(120));
 
             process_daily_scurve(&mut oracle, pair, d0).unwrap();
 
@@ -764,8 +794,8 @@ mod tests {
             let d1 = d0 - DAY_SECONDS;
             let d2 = d0 - 2 * DAY_SECONDS;
 
-            write_daily_close(&mut oracle, pair, d2, U256::in_units(100));
-            write_daily_close(&mut oracle, pair, d1, U256::in_units(120));
+            write_daily_close(&mut oracle, pair, d2, price6(100));
+            write_daily_close(&mut oracle, pair, d1, price6(120));
             // D-3 missing
 
             process_daily_scurve(&mut oracle, pair, d0).unwrap();

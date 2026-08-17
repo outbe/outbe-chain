@@ -287,6 +287,52 @@ mod tests {
     use crate::provider::mock::MockProvider;
     use outbe_primitives::units::{Units, SCALE_1E18};
 
+    const COEN840_SCALE: u128 = 1_000_000;
+
+    struct CoenTickerProvider {
+        price: f64,
+        volume: f64,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for CoenTickerProvider {
+        fn name(&self) -> &str {
+            "coen_ticker"
+        }
+
+        async fn get_ticker_prices(
+            &self,
+            pairs: &[(String, String)],
+        ) -> eyre::Result<HashMap<String, TickerPrice>> {
+            let mut prices = HashMap::new();
+            if pairs
+                .iter()
+                .any(|(base, quote)| base == "COEN" && quote == "840")
+            {
+                prices.insert(
+                    "COEN/840".to_string(),
+                    TickerPrice {
+                        price: self.price,
+                        volume: self.volume,
+                    },
+                );
+            }
+            Ok(prices)
+        }
+    }
+
+    async fn aggregate_coen_ticker(price: f64, volume: f64) -> Vec<AggregatedPrice> {
+        let providers: Vec<Box<dyn Provider>> =
+            vec![Box::new(CoenTickerProvider { price, volume })];
+        let config = test_config(vec![CurrencyPairConfig {
+            base: "COEN".into(),
+            quote: "840".into(),
+            chain_denom: None,
+            providers: vec!["coen_ticker".into()],
+        }]);
+        fetch_and_aggregate(&providers, &config).await.unwrap()
+    }
+
     #[test]
     fn test_compute_vwap_fixed() {
         let prices = vec![(100.0, 1000.0), (200.0, 2000.0), (300.0, 3000.0)];
@@ -545,11 +591,18 @@ mod tests {
 
         let coen = results.iter().find(|p| p.base == "COEN").unwrap();
         let eth = results.iter().find(|p| p.base == "ETH").unwrap();
-        let coen_price = coen.price.to::<u128>() as f64 / SCALE_1E18_U128 as f64;
+        let coen_price = coen.price.to::<u128>() as f64 / COEN840_SCALE as f64;
         let eth_price = eth.price.to::<u128>() as f64 / SCALE_1E18_U128 as f64;
 
         assert_eq!(coen.quote, "840");
         assert_eq!(eth.quote, "840");
+        assert_eq!(coen.price, U256::from(COEN840_SCALE));
+        assert_eq!(
+            coen.volume,
+            U256::from(1_000u64) * U256::from(COEN840_SCALE)
+        );
+        assert_eq!(eth.price, U256::from(2_500u64) * SCALE_1E18);
+        assert_eq!(eth.volume, U256::from(1_000u64) * SCALE_1E18);
         assert!(
             (coen_price - 1.0).abs() < f64::EPSILON,
             "COEN used the wrong provider price: {coen_price}"
@@ -558,5 +611,26 @@ mod tests {
             (eth_price - 2500.0).abs() < f64::EPSILON,
             "ETH used the wrong provider price: {eth_price}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_coen840_rejects_positive_price_below_one_price_unit() {
+        assert!(aggregate_coen_ticker(0.000_000_4, 1.0).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_coen840_clamps_positive_subunit_volume_to_one_unit() {
+        let prices = aggregate_coen_ticker(1.0, 0.000_000_4).await;
+        assert_eq!(prices.len(), 1);
+        assert_eq!(prices[0].price, U256::from(COEN840_SCALE));
+        assert_eq!(prices[0].volume, U256::ONE);
+    }
+
+    #[tokio::test]
+    async fn test_coen840_preserves_real_zero_volume() {
+        let prices = aggregate_coen_ticker(1.0, 0.0).await;
+        assert_eq!(prices.len(), 1);
+        assert_eq!(prices[0].price, U256::from(COEN840_SCALE));
+        assert_eq!(prices[0].volume, U256::ZERO);
     }
 }

@@ -4913,7 +4913,7 @@ mod tests {
                 storage.clone(),
                 Address::ZERO,
                 outbe_oracle::api::DAY_TYPE_PAIR,
-                U256::from(1_000_000_000_000_000_000u128),
+                U256::from(1_000_000u64),
                 0,
                 0,
             )
@@ -5027,7 +5027,7 @@ mod tests {
                 storage.clone(),
                 Address::ZERO,
                 outbe_oracle::api::DAY_TYPE_PAIR,
-                U256::from(1_000_000_000_000_000_000u128),
+                U256::from(1_000_000u64),
                 0,
                 0,
             )
@@ -5385,8 +5385,8 @@ mod tests {
             tuples: vec![outbe_oracle::precompile::IOracle::ExchangeRateTuple {
                 base: outbe_oracle::api::COEN_ASSET,
                 quote: outbe_oracle::api::currency_address(840),
-                exchangeRate: U256::from(1_000_000_000_000_000_000u128),
-                volume: U256::from(10_000_000_000_000_000_000_000u128),
+                exchangeRate: U256::from(1_000_000u64),
+                volume: U256::from(10_000_000_000u64),
             }],
         }
         .abi_encode();
@@ -10973,7 +10973,7 @@ mod tests {
             storage,
             Address::ZERO,
             outbe_oracle::api::DAY_TYPE_PAIR,
-            U256::from(1_000_000_000_000_000_000u128),
+            U256::from(1_000_000u64),
             0,
             0,
         )
@@ -11029,7 +11029,7 @@ mod tests {
             storage,
             Address::ZERO,
             outbe_oracle::api::DAY_TYPE_PAIR,
-            U256::from(1_000_000_000_000_000_000u128),
+            U256::from(1_000_000u64),
             0,
             0,
         )

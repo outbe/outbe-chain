@@ -8,6 +8,7 @@ use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
     addresses::COMPRESSED_ENTITIES_ADDRESS,
     error::{PrecompileError, Result},
+    math::constants::REAL_ID_SHIFT,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 
@@ -48,6 +49,14 @@ fn item(owner: Address) -> NodItemState {
         issued_at: 1_752_534_000,
         is_settled: false,
     }
+}
+
+#[test]
+fn coen840_one_maps_to_the_center_price_bin_at_six_decimals() {
+    assert_eq!(
+        NodContract::price_to_bin(U256::from(1_000_000u64)).unwrap(),
+        REAL_ID_SHIFT as u32
+    );
 }
 
 #[test]

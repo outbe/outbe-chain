@@ -18,7 +18,7 @@ contract IntexNFT1155MetadataTest is Test {
     uint32 internal constant CAP = 10_000;
     uint32 internal constant CALL_PERIOD = 14 days;
 
-    // A COEN rate of 0.001 on the 1e9 wire scale, with the protocol's 1.08x floor and 2.28x call.
+    // One 840-unit per COEN on the 1e6 wire scale, with the protocol's 1.08x floor and 2.28x call.
     uint64 internal constant ENTRY_PRICE = 1e6;
     uint64 internal constant FLOOR_PRICE = (ENTRY_PRICE * 108) / 100;
     uint64 internal constant CALL_PRICE = (ENTRY_PRICE * 228) / 100;
@@ -67,10 +67,10 @@ contract IntexNFT1155MetadataTest is Test {
         _assertContains(json, "{\"trait_type\":\"Worldwide Day\",\"value\":20260622,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Issuance Currency\",\"value\":840,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Reference Currency\",\"value\":840,\"display_type\":\"number\"}");
-        // Six fraction digits with trailing zeros trimmed, decoded from the 1e9 wire scale.
-        _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":0.001,\"display_type\":\"number\"}");
-        _assertContains(json, "{\"trait_type\":\"Floor Price\",\"value\":0.00108,\"display_type\":\"number\"}");
-        _assertContains(json, "{\"trait_type\":\"Call Price\",\"value\":0.00228,\"display_type\":\"number\"}");
+        // Six fraction digits with trailing zeros trimmed, decoded from the 1e6 wire scale.
+        _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":1,\"display_type\":\"number\"}");
+        _assertContains(json, "{\"trait_type\":\"Floor Price\",\"value\":1.08,\"display_type\":\"number\"}");
+        _assertContains(json, "{\"trait_type\":\"Call Price\",\"value\":2.28,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Promis Load\",\"value\":100000,\"display_type\":\"number\"}");
         assertFalse(json.contains("\"Called At\""), "no call rows before markCalled");
         assertFalse(json.contains("\"Call Deadline\""), "no call rows before markCalled");
@@ -156,7 +156,7 @@ contract IntexNFT1155MetadataTest is Test {
         );
         _assertContains(json, "{\"trait_type\":\"Token Status\",\"value\":\"Settled\"}");
         _assertContains(json, "{\"trait_type\":\"Worldwide Day\",\"value\":20260622,\"display_type\":\"number\"}");
-        _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":0.001,\"display_type\":\"number\"}");
+        _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":1,\"display_type\":\"number\"}");
         assertFalse(json.contains("Series State"), "lifecycle is final for the Settled class");
         assertFalse(json.contains("\"Called At\""), "no call rows on Settled");
         bytes memory svg = json.decodeSvg();
@@ -206,8 +206,8 @@ contract IntexNFT1155MetadataTest is Test {
         bytes memory svg = _json(iTok).decodeSvg();
         assertTrue(svg.contains("INTEX SERIES"), "header");
         assertTrue(svg.contains(bytes(abi.encodePacked(SERIES_ID))), "composite id");
-        assertTrue(svg.contains(">0.001</text>"), "entry price");
-        assertTrue(svg.contains(">0.00228</text>"), "call price");
+        assertTrue(svg.contains(">1</text>"), "entry price");
+        assertTrue(svg.contains(">2.28</text>"), "call price");
         assertTrue(svg.contains(">100,000</text>"), "promis load as whole units with separators");
         assertFalse(svg.contains("Call Deadline"), "no deadline row before call");
     }
@@ -216,15 +216,15 @@ contract IntexNFT1155MetadataTest is Test {
         IIntexNFT1155.SeriesData memory data;
         data.worldwideDay = SERIES_ID_DAY;
         data.issuedAt = 1;
-        data.entryPriceMinor = 12e9; // whole units render without a decimal point
-        data.floorPriceMinor = 1e3; // smallest value the six-digit precision keeps
-        data.callPriceMinor = 1_234_567; // truncated to six digits
+        data.entryPriceMinor = 12e6; // whole units render without a decimal point
+        data.floorPriceMinor = 1; // smallest representable six-decimal value
+        data.callPriceMinor = 1_234; // 0.001234 on the six-decimal wire
         bytes memory json = MetadataTestLib.decodeJsonDataUri(IntexMetadata.tokenURI(data, block.timestamp));
         _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":12,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Floor Price\",\"value\":0.000001,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Call Price\",\"value\":0.001234,\"display_type\":\"number\"}");
 
-        data.entryPriceMinor = 1e2; // below the precision floor
+        data.entryPriceMinor = 0;
         json = MetadataTestLib.decodeJsonDataUri(IntexMetadata.tokenURI(data, block.timestamp));
         _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":0,\"display_type\":\"number\"}");
     }

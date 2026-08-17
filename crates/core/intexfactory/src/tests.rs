@@ -6,6 +6,7 @@ use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+use outbe_primitives::math::constants::REAL_ID_SHIFT;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
@@ -190,6 +191,27 @@ fn floor_and_call_derivation() {
         runtime::marked_up(one, CALL_RATE).unwrap(),
         U256::from(2_280_000_000_000_000_000u64)
     );
+}
+
+#[test]
+fn coen840_one_maps_to_the_center_price_bin_at_six_decimals() {
+    assert_eq!(
+        IntexFactoryContract::price_to_bin(U256::from(1_000_000u64)).unwrap(),
+        REAL_ID_SHIFT as u32
+    );
+}
+
+#[test]
+fn coen840_wire_price_preserves_the_six_decimal_integer() {
+    assert_eq!(
+        runtime::to_wire_price(U256::from(1_234_567u64)).unwrap(),
+        1_234_567
+    );
+    assert_eq!(
+        runtime::to_wire_price(U256::from(u64::MAX)).unwrap(),
+        u64::MAX
+    );
+    assert!(runtime::to_wire_price(U256::from(u64::MAX) + U256::ONE).is_err());
 }
 
 // ---------------------------------------------------------------------
