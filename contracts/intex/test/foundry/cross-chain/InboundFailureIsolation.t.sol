@@ -26,10 +26,12 @@ contract InboundFailureIsolationTest is CrossChainTest {
 
     address internal admin = address(this);
 
-    uint32 internal constant SERIES_GOOD = 20260201;
-    uint32 internal constant SERIES_BAD = 20260202;
-    uint256 internal constant TOKEN_GOOD = uint256(SERIES_GOOD);
-    uint256 internal constant TOKEN_BAD = uint256(SERIES_BAD);
+    uint32 internal constant SERIES_GOOD_DAY = 20260201;
+    bytes14 internal constant SERIES_GOOD = "20260201-USD-U";
+    uint32 internal constant SERIES_BAD_DAY = 20260202;
+    bytes14 internal constant SERIES_BAD = "20260202-USD-U";
+    uint256 internal constant TOKEN_GOOD = uint256(uint112(SERIES_GOOD));
+    uint256 internal constant TOKEN_BAD = uint256(uint112(SERIES_BAD));
 
     function setUp() public {
         _setUpBridge();
@@ -42,7 +44,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         nftBridgeOutbe.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(nftBridgeBnb)));
 
         // Two series: one Issued (crosschainMint succeeds), one not (crosschainMint reverts on state check).
-        intex.createSeries(CreateSeriesLib.params(SERIES_GOOD, 10_000, 0));
+        intex.createSeries(CreateSeriesLib.params(SERIES_GOOD_DAY, 10_000, 0));
         intex.markQualified(SERIES_GOOD);
         // SERIES_BAD intentionally not created — `intex.crosschainMint` will revert on lookup.
 
@@ -130,7 +132,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         assertTrue(existsBefore, "bad item parked");
 
         // Fix upstream: create SERIES_BAD now so crosschainMint can succeed.
-        intex.createSeries(CreateSeriesLib.params(SERIES_BAD, 10_000, 0));
+        intex.createSeries(CreateSeriesLib.params(SERIES_BAD_DAY, 10_000, 0));
         intex.markQualified(SERIES_BAD);
 
         // Anyone can retry — no auth gate.
@@ -153,7 +155,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         _deliverInbound(packet);
 
         // Fix upstream + retry once.
-        intex.createSeries(CreateSeriesLib.params(SERIES_BAD, 10_000, 0));
+        intex.createSeries(CreateSeriesLib.params(SERIES_BAD_DAY, 10_000, 0));
         intex.markQualified(SERIES_BAD);
         nftBridgeBnb.retryCrosschainMint(receiveId, 1);
 

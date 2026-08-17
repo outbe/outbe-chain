@@ -48,7 +48,7 @@ contract EscrowAdapterProceedsTest is Test {
 
         vm.expectRevert(IEscrowAdapter.ProceedsRecipientNotSet.selector);
         vm.prank(bridger);
-        escrow.finalizeAuction(worldwideDay1, GUID, instructions);
+        escrow.finalizeAuction(worldwideDay1, GUID, instructions, true);
     }
 
     function test_SetProceedsRecipient_OnlyAdmin() public {

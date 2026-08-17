@@ -24,7 +24,7 @@ contract MockEscrowAdapter {
         totalPaidToReturn = v;
     }
 
-    function finalizeAuction(uint32, bytes32, IEscrowAdapter.FinalizationInstruction[] calldata)
+    function finalizeAuction(uint32, bytes32, IEscrowAdapter.FinalizationInstruction[] calldata, bool)
         external
         view
         returns (uint128)
@@ -100,14 +100,14 @@ contract TargetRouterProceedsTest is CrossChainTest {
         target.setProceedsRoute(address(tokenBridge), originRouter);
     }
 
-    function _deliverRefund(uint32 seriesId) internal {
+    function _deliverRefund(uint32 worldwideDay) internal {
         address[] memory bidders = new address[](1);
         uint128[] memory refunded = new uint128[](1);
         uint128[] memory paid = new uint128[](1);
         bidders[0] = bidder;
         refunded[0] = 0;
         paid[0] = AMOUNT;
-        bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(seriesId, bidders, refunded, paid);
+        bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(worldwideDay, 0, 1, bidders, refunded, paid);
         _deliver(OUTBE_CHAIN_ID, originSender, address(target), packet);
     }
 

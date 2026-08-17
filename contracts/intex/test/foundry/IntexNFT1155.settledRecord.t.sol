@@ -10,7 +10,8 @@ import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 /// @dev `createSeries` must copy the full immutable series identity into the Settled record;
 ///      the record has no public reader, so slots are compared raw via `vm.load`.
 contract IntexNFT1155SettledRecordTest is Test {
-    uint32 internal constant SERIES_ID = 20260622;
+    uint32 internal constant SERIES_ID_DAY = 20260622;
+    bytes14 internal constant SERIES_ID = "20260622-USD-U";
     uint32 internal constant CAP = 10_000;
     uint32 internal constant CALL_PERIOD = 14 days;
 
@@ -33,7 +34,7 @@ contract IntexNFT1155SettledRecordTest is Test {
     function setUp() public {
         nft = DeployProxy.intexNFT1155(admin, bridger);
         vm.prank(bridger);
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID, CAP, CALL_PERIOD));
+        nft.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, CAP, CALL_PERIOD));
         (iTok, sTok) = nft.tokenIds(SERIES_ID);
     }
 

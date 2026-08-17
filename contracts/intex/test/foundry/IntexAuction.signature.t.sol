@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {ReferenceCurrencyPriceLib} from "./helpers/ReferenceCurrencyPriceLib.sol";
 import {Test, Vm} from "forge-std/Test.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
@@ -11,6 +12,9 @@ import {MockAuctionEscrow} from "@test-mocks/MockAuctionEscrow.sol";
 ///         cross-instance replay protection, malleability rejection, the new commit-side
 ///         and chainId guards, the golden typed-data digest, and the indexer events.
 contract AuctionSignatureTest is Test {
+    uint16 internal constant ISSUANCE_CCY = 840;
+    uint16 internal constant REFERENCE_CCY = 840;
+
     IntexAuction internal auction;
     MockAuctionEscrow internal escrow;
 
@@ -22,8 +26,9 @@ contract AuctionSignatureTest is Test {
     address internal iba1;
     address internal iba2;
 
-    bytes32 internal constant REVEAL_BID_TYPEHASH =
-        keccak256("RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate)");
+    bytes32 internal constant REVEAL_BID_TYPEHASH = keccak256(
+        "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
+    );
     bytes32 internal constant EIP712_DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
@@ -63,7 +68,7 @@ contract AuctionSignatureTest is Test {
     }
 
     function _structHash(uint32 worldwideDay, address bidder, uint16 qty, uint32 rate) internal pure returns (bytes32) {
-        return keccak256(abi.encode(REVEAL_BID_TYPEHASH, worldwideDay, bidder, qty, rate));
+        return keccak256(abi.encode(REVEAL_BID_TYPEHASH, worldwideDay, bidder, qty, rate, ISSUANCE_CCY, REFERENCE_CCY));
     }
 
     function _digest(
@@ -102,13 +107,9 @@ contract AuctionSignatureTest is Test {
             issuanceEnd: uint32(block.timestamp + ISSUANCE_OFFSET)
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
-            issuanceCurrency: 840,
-            referenceCurrency: 840,
             promisLoadMinor: 1000,
             minIntexBidRate: 10,
-            entryPriceMinor: 100,
-            floorPriceMinor: 100,
-            callPriceMinor: 100,
+            prices: ReferenceCurrencyPriceLib.onePriced(840, 100, 100, 100),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
             minIntexBidQuantity: 1,
             commitBondMinor: 0
@@ -150,7 +151,7 @@ contract AuctionSignatureTest is Test {
         uint64 wrongChain = uint64(block.chainid + 1);
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.WrongChain.selector, block.chainid, uint256(wrongChain)));
         vm.prank(iba1);
-        auction.revealBid(worldwideDay, 5, 50, wrongChain, sig);
+        auction.revealBid(worldwideDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, wrongChain, sig);
     }
 
     function test_revealBid_revertsAfterChainidFlip() public {
@@ -170,7 +171,7 @@ contract AuctionSignatureTest is Test {
         vm.chainId(newChain);
         vm.expectRevert(IIntexAuction.RevealHashMismatch.selector);
         vm.prank(iba1);
-        auction.revealBid(worldwideDay, 5, 50, uint64(newChain), sig);
+        auction.revealBid(worldwideDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(newChain), sig);
     }
 
     // --- Cross-chain replay (B1.5) ---
@@ -190,7 +191,7 @@ contract AuctionSignatureTest is Test {
         // separator on this chain differs from the one used to sign — recovery fails.
         vm.expectRevert(IIntexAuction.RevealHashMismatch.selector);
         vm.prank(iba1);
-        auction.revealBid(worldwideDay, 5, 50, uint64(block.chainid), crossChainSig);
+        auction.revealBid(worldwideDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), crossChainSig);
     }
 
     // --- Cross-instance replay (B1.5) ---
@@ -213,13 +214,9 @@ contract AuctionSignatureTest is Test {
             issuanceEnd: uint32(block.timestamp + ISSUANCE_OFFSET)
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
-            issuanceCurrency: 840,
-            referenceCurrency: 840,
             promisLoadMinor: 1000,
             minIntexBidRate: 10,
-            entryPriceMinor: 100,
-            floorPriceMinor: 100,
-            callPriceMinor: 100,
+            prices: ReferenceCurrencyPriceLib.onePriced(840, 100, 100, 100),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
             minIntexBidQuantity: 1,
             commitBondMinor: 0
@@ -240,7 +237,7 @@ contract AuctionSignatureTest is Test {
         // wrong signer.
         vm.expectRevert(IIntexAuction.RevealHashMismatch.selector);
         vm.prank(iba1);
-        other.revealBid(worldwideDay, 5, 50, uint64(block.chainid), sigForAuction);
+        other.revealBid(worldwideDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sigForAuction);
     }
 
     // --- Signature malleability (B1.5) ---
@@ -266,7 +263,7 @@ contract AuctionSignatureTest is Test {
         bytes4 invalidS = bytes4(keccak256("ECDSAInvalidSignatureS(bytes32)"));
         vm.expectRevert(abi.encodeWithSelector(invalidS, mallS));
         vm.prank(iba1);
-        auction.revealBid(worldwideDay, 5, 50, uint64(block.chainid), malleable);
+        auction.revealBid(worldwideDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), malleable);
     }
 
     // --- Garbage signature (zero-address recovery) (B1.5) ---
@@ -285,7 +282,7 @@ contract AuctionSignatureTest is Test {
         bytes4 invalidLen = bytes4(keccak256("ECDSAInvalidSignatureLength(uint256)"));
         vm.expectRevert(abi.encodeWithSelector(invalidLen, uint256(64)));
         vm.prank(iba1);
-        auction.revealBid(worldwideDay, 5, 50, uint64(block.chainid), truncated);
+        auction.revealBid(worldwideDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), truncated);
     }
 
     function test_revealBid_revertsOnAllZeroSignature() public {
@@ -303,7 +300,7 @@ contract AuctionSignatureTest is Test {
         // call must revert; we only assert it does.
         vm.expectRevert();
         vm.prank(iba1);
-        auction.revealBid(worldwideDay, 5, 50, uint64(block.chainid), zeroes);
+        auction.revealBid(worldwideDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), zeroes);
     }
 
     // --- Golden digest snapshot (B1.5) ---
@@ -317,15 +314,21 @@ contract AuctionSignatureTest is Test {
     ///        bidder            = 0x..00abcd
     ///        quantity          = 5
     ///        bidRate           = 1100
+    ///        issuanceCurrency  = 840
+    ///        referenceCurrency = 840
     function test_eip712_goldenDigest() public pure {
         address vc = 0x000000000000000000000000000000000000cafE;
         address bidder = 0x000000000000000000000000000000000000ABcD;
-        bytes32 expected = 0xe1855751c617ab5e006fbbca06a1d811196fd8a457fe20f788d6af02c632faa6;
+        bytes32 expected = 0xdcb1a612bff25a4e281245ff212f41aa908bc240455f7ef28044d81c65d41d69;
 
         bytes32 domain = keccak256(
             abi.encode(EIP712_DOMAIN_TYPEHASH, keccak256(bytes("IntexAuction")), keccak256(bytes("1")), uint256(56), vc)
         );
-        bytes32 structH = keccak256(abi.encode(REVEAL_BID_TYPEHASH, uint32(20260108), bidder, uint16(5), uint32(1100)));
+        bytes32 structH = keccak256(
+            abi.encode(
+                REVEAL_BID_TYPEHASH, uint32(20260108), bidder, uint16(5), uint32(1100), ISSUANCE_CCY, REFERENCE_CCY
+            )
+        );
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", domain, structH));
 
         assertEq(digest, expected, "typed-data digest drift");
@@ -368,8 +371,8 @@ contract AuctionSignatureTest is Test {
         _enterReveal(worldwideDay);
 
         vm.expectEmit(true, true, false, true);
-        emit IIntexAuction.BidRevealed(worldwideDay, iba1, 5, 50);
+        emit IIntexAuction.BidRevealed(worldwideDay, iba1, 5, 50, ISSUANCE_CCY, REFERENCE_CCY);
         vm.prank(iba1);
-        auction.revealBid(worldwideDay, 5, 50, uint64(block.chainid), sig);
+        auction.revealBid(worldwideDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
     }
 }

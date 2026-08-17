@@ -29,8 +29,7 @@ pub fn dispatch_triggers(
 ) -> Result<()> {
     let block_ts = ctx.block.timestamp;
     let block_number = ctx.block.block_number;
-    let protocol_constants = outbe_chain_constants::load(ctx)?;
-    let triggers = active_triggers(protocol_constants.metadosis_advance_interval_seconds);
+    let triggers = active_triggers(outbe_chain_constants::get_metadosis_advance_interval_seconds());
 
     for spec in &triggers {
         let cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();

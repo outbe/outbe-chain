@@ -9,30 +9,34 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_promislimit::PromisLimitContract;
 
-use outbe_intexfactory::constants::{QUALIFIER_ISSUANCE_ISO, QUALIFIER_REFERENCE_ISO};
+use outbe_intexfactory::schema::IssuanceParams;
+use outbe_intexfactory::SeriesId;
 
 use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
-    DAY_STATE_RED, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, RATE_SCALE,
-    REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
+    DAY_STATE_RED, MAX_REFERENCE_PRICES, MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS,
+    ORIGIN_ROUTER_ADDRESS, RATE_SCALE, REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS,
+    SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
-use crate::schema::{AuctionConfig, AuctionStage, BidData, ClearingResult, DesisContract};
+use crate::schema::{
+    AuctionConfig, AuctionStage, BidData, ClearingResult, DesisContract, ReferenceCurrencyPrice,
+};
 use crate::sol_ext::IOriginRouter;
 
 // ---------------------------------------------------------------------------
 // Auction lifecycle
 // ---------------------------------------------------------------------------
 
-/// Record the day's auction brief: supply (raw PROMIS), entry price and day
-/// type. The schedule anchors to the midnight of `now`, or the next one when
+/// Record the day's auction brief: supply (raw PROMIS), the per-reference entry
+/// prices and the day type. The schedule anchors to the midnight of `now`, or the next one when
 /// too little of the commit window would remain.
 pub fn record_brief(
     storage: StorageHandle<'_>,
     worldwide_day: WorldwideDay,
     supply_promis: u128,
-    entry_price: U256,
+    reference_prices: Vec<ReferenceCurrencyPrice>,
     is_green: bool,
     now: u64,
 ) -> Result<()> {
@@ -41,7 +45,7 @@ pub fn record_brief(
         storage,
         worldwide_day,
         supply_promis,
-        entry_price,
+        reference_prices,
         is_green,
         anchor,
     )
@@ -82,12 +86,16 @@ pub(crate) fn record_preflighted_brief(
     storage: StorageHandle<'_>,
     worldwide_day: WorldwideDay,
     supply_promis: u128,
-    entry_price: U256,
+    reference_prices: Vec<ReferenceCurrencyPrice>,
     is_green: bool,
     anchor: u32,
 ) -> Result<()> {
     let mut contract = storage.contract::<DesisContract>();
-    contract.write_auction_config(worldwide_day, &AuctionConfig::from_entry_price(entry_price))?;
+    let reference_prices = choose_reference_prices(&mut contract, worldwide_day, reference_prices)?;
+    contract.write_auction_config(
+        worldwide_day,
+        &AuctionConfig::from_reference_prices(reference_prices),
+    )?;
     contract.write_stage(worldwide_day, AuctionStage::Briefed)?;
     contract
         .pending_supply_promis
@@ -98,6 +106,43 @@ pub(crate) fn record_preflighted_brief(
     contract.auction_at.write(&worldwide_day, anchor)?;
     contract.push_sched_active(worldwide_day)?;
     Ok(())
+}
+
+/// The currencies a day will actually price: one per series-id letter, at most
+/// `MAX_REFERENCE_PRICES`. Ordered by currency first, so the two brief paths — which
+/// collect prices in different orders — resolve a day to the same table.
+fn choose_reference_prices(
+    contract: &mut DesisContract<'_>,
+    worldwide_day: WorldwideDay,
+    mut rows: Vec<ReferenceCurrencyPrice>,
+) -> Result<Vec<ReferenceCurrencyPrice>> {
+    rows.sort_by_key(|row| row.iso_code);
+
+    let letter_of = |iso_code: u16| SeriesId::currency_code(iso_code).map(|code| code[0]).ok();
+    let mut kept: Vec<ReferenceCurrencyPrice> = Vec::with_capacity(rows.len());
+    for row in rows {
+        let Some(letter) = letter_of(row.iso_code) else {
+            continue;
+        };
+        if let Some(taken) = kept.iter().find(|k| letter_of(k.iso_code) == Some(letter)) {
+            contract.emit(IDesis::ReferenceCurrencyLetterTaken {
+                worldwideDay: worldwide_day.into(),
+                isoCode: row.iso_code,
+                takenBy: taken.iso_code,
+            })?;
+            continue;
+        }
+        if kept.len() == MAX_REFERENCE_PRICES {
+            contract.emit(IDesis::ReferenceCurrencyOverCap {
+                worldwideDay: worldwide_day.into(),
+                isoCode: row.iso_code,
+                cap: MAX_REFERENCE_PRICES as u8,
+            })?;
+            continue;
+        }
+        kept.push(row);
+    }
+    Ok(kept)
 }
 
 /// Fold the prior-clearing bid floor and the genesis profile into the config,
@@ -142,26 +187,25 @@ fn send_stage_start(
     issuance_end: u32,
     day_state: u8,
 ) -> Result<()> {
-    let floor_price = outbe_intexfactory::marked_up(config.entry_price_minor, iparams.floor_rate)?;
-    let call_price = outbe_intexfactory::marked_up(config.entry_price_minor, iparams.call_rate)?;
-    let entry_price_u64 = u64::try_from(config.entry_price_minor)
-        .map_err(|_| PrecompileError::Revert("entry price exceeds u64".into()))?;
-    let floor_price_u64 = u64::try_from(floor_price)
-        .map_err(|_| PrecompileError::Revert("floor price exceeds u64".into()))?;
-    let call_price_u64 = u64::try_from(call_price)
-        .map_err(|_| PrecompileError::Revert("call price exceeds u64".into()))?;
+    let mut prices = Vec::with_capacity(config.reference_prices.len());
+    for row in &config.reference_prices {
+        let floor = outbe_intexfactory::marked_up(row.entry_price_minor, iparams.floor_rate)?;
+        let call = outbe_intexfactory::marked_up(row.entry_price_minor, iparams.call_rate)?;
+        prices.push(IOriginRouter::ReferenceCurrencyPrice {
+            isoCode: row.iso_code,
+            entryPriceMinor: outbe_intexfactory::to_wire_price(row.entry_price_minor)?,
+            floorPriceMinor: outbe_intexfactory::to_wire_price(floor)?,
+            callPriceMinor: outbe_intexfactory::to_wire_price(call)?,
+        });
+    }
     let stage_params = IOriginRouter::AuctionStageStartParams {
         worldwideDay: worldwide_day.into(),
         commitEnd: commit_end,
         revealEnd: reveal_end,
         issuanceEnd: issuance_end,
-        issuanceCurrency: config.issuance_currency,
-        referenceCurrency: config.reference_currency,
         promisLoadMinor: config.promis_load_minor,
         minIntexBidRate: config.min_intex_bid_rate,
-        entryPrice: entry_price_u64,
-        floorPriceMinor: floor_price_u64,
-        callPriceMinor: call_price_u64,
+        prices,
         callNoticePeriod: iparams.call_notice_period,
         callWindow: iparams.call_window,
         callThreshold: iparams.call_threshold,
@@ -293,7 +337,11 @@ fn start_auction(
     contract.write_auction_config(worldwide_day, &config)?;
     let (commit, reveal, issuance) = (ts32(commit_end)?, ts32(reveal_end)?, ts32(issuance_end)?);
 
-    if contract.brief_green.read(&worldwide_day)? == 0 {
+    // A day nobody could price cannot hold an auction, and ends as a red day does — but
+    // unlike a red day it was briefed with supply, which has to go back.
+    let unpriced = config.reference_prices.is_empty();
+    let red = contract.brief_green.read(&worldwide_day)? == 0;
+    if unpriced || red {
         send_stage_start(
             storage,
             worldwide_day,
@@ -305,9 +353,16 @@ fn start_auction(
             DAY_STATE_RED,
         )?;
         contract.write_stage(worldwide_day, AuctionStage::Cancelled)?;
-        contract.emit(IDesis::AuctionCancelledRedDay {
-            worldwideDay: worldwide_day.into(),
-        })?;
+        if unpriced {
+            contract.emit(IDesis::AuctionCancelledUnpriced {
+                worldwideDay: worldwide_day.into(),
+            })?;
+            refund_unsold_supply(storage, contract, worldwide_day)?;
+        } else {
+            contract.emit(IDesis::AuctionCancelledRedDay {
+                worldwideDay: worldwide_day.into(),
+            })?;
+        }
         contract.remove_sched_active(worldwide_day)?;
         return Ok(StartOutcome::Retired);
     }
@@ -433,6 +488,18 @@ pub fn process_bids_batch(
         return Err(PrecompileError::Revert(
             "processBidsBatch: invalid batch index/total".into(),
         ));
+    }
+    // Checked here because clearing cannot recover from it: an unspellable code would
+    // otherwise surface as a day whose clearing reverts every block.
+    if let Some(bad) = bids.iter().find(|bid| {
+        SeriesId::currency_code(bid.issuance_currency).is_err()
+            || SeriesId::currency_code(bid.reference_currency).is_err()
+    }) {
+        return Err(DesisError::UnspellableBidCurrency(
+            bad.issuance_currency,
+            bad.reference_currency,
+        )
+        .into());
     }
     let mut contract = storage.contract::<DesisContract>();
 
@@ -742,22 +809,17 @@ fn clear_inner(
         PromisLimitContract::new(storage.clone()).add_to_total_unallocated(unused_promis)?;
     }
 
-    // Hand issuance to IntexFactory. A zero-winner clearing creates no series;
-    // issue() then only discards the day's never-to-distribute creator rewards.
-    let params = outbe_intexfactory::schema::IssuanceParams {
-        series_id: derive_series_id(worldwide_day),
-        worldwide_day,
-        issued_intex_count: result.issued_intex_count,
-        promis_load_minor: config.promis_load_minor,
-        entry_price_minor: config.entry_price_minor,
-        issuance_currency: QUALIFIER_ISSUANCE_ISO,
-        reference_currency: QUALIFIER_REFERENCE_ISO,
-        recipients: result.winners.clone(),
-        quantities: result.winner_quantities.clone(),
-        recipient_chains: result.winner_chains.clone(),
-        snapshot_chains: snapshot.to_vec(),
-    };
-    outbe_intexfactory::api::issue(&storage, params)?;
+    if result.issued_intex_count == 0 {
+        // No series anywhere, so the day's recorded contributor map can never distribute.
+        outbe_intexfactory::api::discard_day_contributors(&storage, worldwide_day)?;
+    } else {
+        let mut legs = Vec::new();
+        for group in issuance_groups(&result, &config, worldwide_day, snapshot)? {
+            legs.extend(outbe_intexfactory::api::issue(&storage, group)?);
+        }
+
+        outbe_intexfactory::api::send_issuance(&storage, legs)?;
+    }
 
     // Send AUCTION_RESULT to every snapshot chain; skipped/zero-winner chains get
     // wonBidsCount 0 so their local auction still completes.
@@ -782,8 +844,7 @@ fn clear_inner(
         )?;
     }
 
-    // Send REFUND_INSTRUCTIONS per included chain with bidders (winners and losers alike);
-    // a skipped chain's bidders reclaim on their own chain via the escrow timeout path.
+    // A skipped chain's bidders reclaim through the escrow timeout path instead.
     for &chain_id in included {
         let mut bidders = Vec::new();
         let mut refunded = Vec::new();
@@ -798,19 +859,25 @@ fn clear_inner(
         if bidders.is_empty() {
             continue;
         }
-        storage.call(
-            ORIGIN_ROUTER_ADDRESS,
-            U256::ZERO,
-            IOriginRouter::sendRefundInstructionsCall {
-                dstChainId: chain_id,
-                worldwideDay: worldwide_day.into(),
-                bidders,
-                refundedAmounts: refunded,
-                paidAmounts: paid,
-            }
-            .abi_encode()
-            .into(),
-        )?;
+        let total_chunks = refund_chunk_count(bidders.len())?;
+        for (chunk_index, start) in (0..bidders.len()).step_by(REFUND_CHUNK_LEN).enumerate() {
+            let end = (start + REFUND_CHUNK_LEN).min(bidders.len());
+            storage.call(
+                ORIGIN_ROUTER_ADDRESS,
+                U256::ZERO,
+                IOriginRouter::sendRefundInstructionsCall {
+                    dstChainId: chain_id,
+                    worldwideDay: worldwide_day.into(),
+                    chunkIndex: chunk_index as u16,
+                    totalChunks: total_chunks as u16,
+                    bidders: bidders[start..end].to_vec(),
+                    refundedAmounts: refunded[start..end].to_vec(),
+                    paidAmounts: paid[start..end].to_vec(),
+                }
+                .abi_encode()
+                .into(),
+            )?;
+        }
     }
 
     Ok(result)
@@ -853,6 +920,7 @@ fn calculate_clearing(
     let mut winners: Vec<Address> = Vec::with_capacity(len);
     let mut winner_quantities: Vec<alloy_primitives::U256> = Vec::with_capacity(len);
     let mut winner_chains: Vec<u32> = Vec::with_capacity(len);
+    let mut winner_currencies: Vec<(u16, u16)> = Vec::with_capacity(len);
     let mut won_by_index: Vec<u32> = vec![0u32; len];
 
     let escrow_basis = config.escrow_basis_minor();
@@ -877,6 +945,7 @@ fn calculate_clearing(
             winners.push(bid.bidder_address);
             winner_quantities.push(alloy_primitives::U256::from(allocated));
             winner_chains.push(*chain_id);
+            winner_currencies.push((bid.issuance_currency, bid.reference_currency));
             won_by_index[i] = allocated;
             total_allocated += allocated;
             clearing_rate = bid.intex_bid_rate;
@@ -918,6 +987,7 @@ fn calculate_clearing(
         winners,
         winner_quantities,
         winner_chains,
+        winner_currencies,
         all_bidders,
         refunded_amounts,
         paid_amounts,
@@ -929,9 +999,67 @@ fn calculate_clearing(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// The single point where a series id is derived from the day; identity until multi-currency (then 1 -> N).
-fn derive_series_id(worldwide_day: WorldwideDay) -> u32 {
-    worldwide_day.value()
+/// How many REFUND_INSTRUCTIONS messages one chain's bidders take. Bounded by the
+/// codec's arrival set, which is one 256-bit word wide.
+pub(crate) fn refund_chunk_count(bidders: usize) -> Result<usize> {
+    let chunks = bidders.div_ceil(REFUND_CHUNK_LEN);
+    if chunks > MAX_REFUND_CHUNKS {
+        return Err(DesisError::RefundFanOutTooLarge(bidders).into());
+    }
+    Ok(chunks)
+}
+
+/// One issuance per distinct winning `(issuance, reference)` pair, in the order
+/// the pairs first appear in the ranking. Each group carries its own reference
+/// currency's entry price, which is what floor and call derive from.
+fn issuance_groups(
+    result: &ClearingResult,
+    config: &AuctionConfig,
+    worldwide_day: WorldwideDay,
+    snapshot: &[u32],
+) -> Result<Vec<IssuanceParams>> {
+    let mut groups: Vec<IssuanceParams> = Vec::new();
+    for (i, &(issuance_currency, reference_currency)) in result.winner_currencies.iter().enumerate()
+    {
+        let at = match groups.iter().position(|g| {
+            (g.issuance_currency, g.reference_currency) == (issuance_currency, reference_currency)
+        }) {
+            Some(at) => at,
+            None => {
+                // Reveal only accepts a reference the day priced, so a winner
+                // without a row means the day's table and its bids disagree.
+                let entry_price_minor = config
+                    .entry_price_for(reference_currency)
+                    .ok_or(DesisError::UnpricedReferenceCurrency(reference_currency))?;
+                groups.push(IssuanceParams {
+                    series_id: SeriesId::for_pair(
+                        worldwide_day,
+                        issuance_currency,
+                        reference_currency,
+                    )?,
+                    worldwide_day,
+                    issued_intex_count: 0,
+                    promis_load_minor: config.promis_load_minor,
+                    entry_price_minor,
+                    issuance_currency,
+                    reference_currency,
+                    recipients: Vec::new(),
+                    quantities: Vec::new(),
+                    recipient_chains: Vec::new(),
+                    snapshot_chains: snapshot.to_vec(),
+                });
+                groups.len() - 1
+            }
+        };
+
+        let quantity = result.winner_quantities[i];
+        let group = &mut groups[at];
+        group.issued_intex_count += quantity.saturating_to::<u32>();
+        group.recipients.push(result.winners[i]);
+        group.quantities.push(quantity);
+        group.recipient_chains.push(result.winner_chains[i]);
+    }
+    Ok(groups)
 }
 
 fn require_origin_router(caller: Address) -> Result<()> {

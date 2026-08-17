@@ -43,7 +43,7 @@ interface ITargetRouter {
     /// @param srcChainId Source chainId the message was authenticated against.
     /// @param seriesId Series identifier.
     /// @param recipientsCount Number of recipients.
-    event IssuanceInstructionsReceived(uint32 indexed srcChainId, uint32 indexed seriesId, uint256 recipientsCount);
+    event IssuanceInstructionsReceived(uint32 indexed srcChainId, bytes14 indexed seriesId, uint256 recipientsCount);
 
     /// @notice Emitted when refund instructions are received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
@@ -54,12 +54,12 @@ interface ITargetRouter {
     /// @notice Emitted when a mark-called message is received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
     /// @param seriesId Series identifier.
-    event MarkCalledReceived(uint32 indexed srcChainId, uint32 indexed seriesId);
+    event MarkCalledReceived(uint32 indexed srcChainId, bytes14 indexed seriesId);
 
     /// @notice Emitted when a mark-qualified message is received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
     /// @param seriesId Series identifier.
-    event MarkQualifiedReceived(uint32 indexed srcChainId, uint32 indexed seriesId);
+    event MarkQualifiedReceived(uint32 indexed srcChainId, bytes14 indexed seriesId);
 
     /// @notice Emitted when the outbound bids relay from `_handleAuctionStageClearing` reverts and
     ///         the worldwideDay is parked for later retry via `flushPendingBidsRelay`.
@@ -96,9 +96,9 @@ interface ITargetRouter {
     event HoldersRelayFlushed(uint256 indexed idx, uint256 indexed tokenId);
 
     /// @notice Emitted when an issuance mint is parked after a recipient's ERC-1155 hook reverts.
-    event IssuanceMintDeferred(uint256 indexed idx, uint32 indexed seriesId, address indexed recipient, bytes reason);
+    event IssuanceMintDeferred(uint256 indexed idx, bytes14 indexed seriesId, address indexed recipient, bytes reason);
     /// @notice Emitted when `flushPendingIssuanceMint` successfully retries a parked mint.
-    event IssuanceMintFlushed(uint256 indexed idx, uint32 indexed seriesId);
+    event IssuanceMintFlushed(uint256 indexed idx, bytes14 indexed seriesId);
 
     /// @notice Emitted when `sweepNative` transfers native tokens out of the contract.
     /// @param to Recipient of the swept native balance.

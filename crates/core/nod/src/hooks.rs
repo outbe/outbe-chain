@@ -2,7 +2,7 @@
 //!
 //! Mirrors the Cosmos reference (`x/nod/abci.go::EndBlocker` +
 //! `x/nod/keeper/qualification.go::QualifyBucketsByOracleRate`): every
-//! block, read the current COEN/840 exchange rate from the oracle and
+//! block, read each reference currency's current COEN rate from the oracle and
 //! promote any unqualified bucket whose `floor_price_minor < rate`. The
 //! comparison is strict — a bucket priced exactly at the rate stays
 //! unqualified until the rate moves strictly above its floor.

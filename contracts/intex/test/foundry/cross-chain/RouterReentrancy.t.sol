@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {BidPackLib} from "../helpers/BidPackLib.sol";
+import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -83,17 +85,7 @@ contract ReentrancyProbeDesis {
         return interfaceId == type(IDesis).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 
-    function processBidsBatch(
-        uint32,
-        uint32,
-        uint32,
-        uint16,
-        uint16,
-        address[] calldata,
-        uint16[] calldata,
-        uint32[] calldata,
-        uint32[] calldata
-    ) external {
+    function processBidsBatch(uint32, uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata) external {
         observed = true;
         guardHeld = reentryGuarded(bridge, srcChainId, peer, router);
     }
@@ -138,7 +130,7 @@ contract RouterReentrancyTest is CrossChainTest {
         bnbRouter.wire(address(probeAuction), address(probeAuction), address(probeAuction), address(probeAuction));
 
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
-            42, 100, 200, 300, 840, 840, 1e18, 5e6, 7e6, 11e6, 4e6, 5, 6, 7, 3, 9e18, 1
+            42, 100, 200, 300, 1e18, 5e6, ReferenceCurrencyPriceLib.one(840, 7e6, 11e6, 4e6), 5, 6, 7, 3, 9e18, 1
         );
 
         _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
@@ -155,14 +147,14 @@ contract RouterReentrancyTest is CrossChainTest {
         // Freeze day 42's snapshot with BNB so its bids pass the inbound membership check.
         outbeRouter.addTarget(BNB_CHAIN_ID);
         IOriginRouter.AuctionStageStartParams memory p;
+        p.prices = ReferenceCurrencyPriceLib.one(840, 1, 2, 3);
         p.worldwideDay = 42;
         p.dayState = 1;
         vm.prank(address(probeDesis));
         outbeRouter.sendAuctionStageStart(p);
 
-        bytes memory packet = BridgeMsgCodec.encodeBidsBatch(
-            42, BNB_CHAIN_ID, 1, 0, 1, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
-        );
+        bytes memory packet =
+            BridgeMsgCodec.encodeBidsBatch(42, BNB_CHAIN_ID, 1, 0, 1, new address[](0), new uint256[](0));
 
         _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), packet);
 

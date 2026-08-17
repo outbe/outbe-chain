@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {BidPackLib} from "../helpers/BidPackLib.sol";
+import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
+import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
 /// @dev Golden-value and per-field round-trip coverage for BridgeMsgCodec encode/decode.
 contract BridgeMsgCodecGoldenTest is Test {
@@ -15,13 +18,9 @@ contract BridgeMsgCodecGoldenTest is Test {
             0x55667788,
             0x99AABBCC,
             0xDDEEFF00,
-            0xC1C2,
-            0xD1D2,
             0x0102030405060708090A0B0C0D0E0F10,
             0x1A2B3C4D,
-            0x1122334455667788,
-            0x99AABBCCDDEEFF00,
-            0xA1B2C3D4E5F60718,
+            ReferenceCurrencyPriceLib.one(0xD1D2, 0x1122334455667788, 0x99AABBCCDDEEFF00, 0xA1B2C3D4E5F60718),
             0xCAFEBABE,
             0x5678,
             0x9ABC,
@@ -31,9 +30,9 @@ contract BridgeMsgCodecGoldenTest is Test {
         );
         assertEq(
             encoded,
-            hex"0103112233445566778899aabbccddeeff00c1c2d1d20102030405060708090a0b0c0d0e0f101a2b3c4d112233445566778899aabbccddeeff00a1b2c3d4e5f60718cafebabe0000567800009abcabcdf1f2f3f4f5f6f7f8f9fafbfcfdfeff0101"
+            hex"0103112233445566778899aabbccddeeff000102030405060708090a0b0c0d0e0f101a2b3c4dcafebabe0000567800009abcabcdf1f2f3f4f5f6f7f8f9fafbfcfdfeff010101d1d2112233445566778899aabbccddeeff00a1b2c3d4e5f60718"
         );
-        assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START);
+        assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_AUCTION_STAGE_START + BridgeMsgCodec.REFERENCE_PRICE_LEN);
     }
 
     function test_Golden_AuctionStageClearing() public pure {
@@ -48,11 +47,17 @@ contract BridgeMsgCodecGoldenTest is Test {
     }
 
     function test_Golden_MarkCalled() public pure {
-        assertEq(BridgeMsgCodec.encodeMarkCalled(0x11223344), hex"010811223344");
+        // [ver=01][type=08][seriesId="20260212-TRY-U"][wwd=01352574]
+        assertEq(
+            BridgeMsgCodec.encodeMarkCalled("20260212-TRY-U", 20260212), hex"010832303236303231322d5452592d5501352574"
+        );
     }
 
     function test_Golden_MarkQualified() public pure {
-        assertEq(BridgeMsgCodec.encodeMarkQualified(0x11223344), hex"010911223344");
+        assertEq(
+            BridgeMsgCodec.encodeMarkQualified("20260212-TRY-U", 20260212),
+            hex"010932303236303231322d5452592d5501352574"
+        );
     }
 
     function test_Golden_BidsDone() public pure {
@@ -89,13 +94,9 @@ contract BridgeMsgCodecGoldenTest is Test {
                 0x55667788,
                 0x99AABBCC,
                 0xDDEEFF00,
-                0xC1C2,
-                0xD1D2,
                 0x0102030405060708090A0B0C0D0E0F10,
                 0x1A2B3C4D,
-                0x1122334455667788,
-                0x99AABBCCDDEEFF00,
-                0xA1B2C3D4E5F60718,
+                ReferenceCurrencyPriceLib.one(0xD1D2, 0x1122334455667788, 0x99AABBCCDDEEFF00, 0xA1B2C3D4E5F60718),
                 0xCAFEBABE,
                 0x5678,
                 0x9ABC,
@@ -109,13 +110,12 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(schedule.commitEnd, 0x55667788, "commitEnd");
         assertEq(schedule.revealEnd, 0x99AABBCC, "revealEnd");
         assertEq(schedule.issuanceEnd, 0xDDEEFF00, "issuanceEnd");
-        assertEq(params.issuanceCurrency, 0xC1C2, "issuanceCurrency");
-        assertEq(params.referenceCurrency, 0xD1D2, "referenceCurrency");
+        assertEq(params.prices[0].isoCode, 0xD1D2, "priceIsoCode");
         assertEq(params.promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
         assertEq(params.minIntexBidRate, 0x1A2B3C4D, "minIntexBidRate");
-        assertEq(params.entryPriceMinor, 0x1122334455667788, "entryPrice");
-        assertEq(params.floorPriceMinor, 0x99AABBCCDDEEFF00, "floorPriceMinor");
-        assertEq(params.callPriceMinor, 0xA1B2C3D4E5F60718, "callPriceMinor");
+        assertEq(params.prices[0].entryPriceMinor, 0x1122334455667788, "entryPrice");
+        assertEq(params.prices[0].floorPriceMinor, 0x99AABBCCDDEEFF00, "floorPriceMinor");
+        assertEq(params.prices[0].callPriceMinor, 0xA1B2C3D4E5F60718, "callPriceMinor");
         assertEq(params.callTrigger.callNoticePeriod, 0xCAFEBABE, "callNoticePeriod");
         assertEq(params.callTrigger.callWindow, 0x5678, "callWindow");
         assertEq(params.callTrigger.callThreshold, 0x9ABC, "callThreshold");
@@ -154,12 +154,16 @@ contract BridgeMsgCodecGoldenTest is Test {
             uint16 batchIndex,
             uint16 totalBatches,
             address[] memory dBidders,
-            uint16[] memory dQuantities,
-            uint32[] memory dRates,
-            uint32[] memory dTimestamps
+            uint256[] memory dPacked
         ) = this.exposedDecodeBidsBatch(
             BridgeMsgCodec.encodeBidsBatch(
-                0x11223344, 0x0000ABCD, 0x0000002A, 0x0000, 0x0001, bidders, quantities, rates, timestamps
+                0x11223344,
+                0x0000ABCD,
+                0x0000002A,
+                0x0000,
+                0x0001,
+                bidders,
+                BidPackLib.pack(quantities, rates, timestamps)
             )
         );
 
@@ -171,19 +175,20 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(dBidders.length, 2, "bidders len");
         assertEq(dBidders[0], address(0xA11CE), "bidders[0]");
         assertEq(dBidders[1], address(0xB0B), "bidders[1]");
-        assertEq(dQuantities[0], 0x1111, "quantities[0]");
-        assertEq(dQuantities[1], 0x2222, "quantities[1]");
-        assertEq(dRates[0], 0x33333333, "rates[0]");
-        assertEq(dRates[1], 0x44444444, "rates[1]");
-        assertEq(dTimestamps[0], 0x55555555, "timestamps[0]");
-        assertEq(dTimestamps[1], 0x66666666, "timestamps[1]");
+        // Every scalar survives the one-word packing, the currency pair included.
+        for (uint256 i = 0; i < 2; ++i) {
+            (uint16 q, uint32 r, uint32 ts, uint16 iso, uint16 ref) = BridgeMsgCodec.unpackBid(dPacked[i]);
+            assertEq(q, quantities[i], "quantity");
+            assertEq(r, rates[i], "rate");
+            assertEq(ts, timestamps[i], "timestamp");
+            assertEq(iso, 840, "issuanceCurrency");
+            assertEq(ref, 840, "referenceCurrency");
+        }
     }
 
     function test_RoundTrip_BidsBatch_MidBatch_RelayGenerationOne() public view {
-        (,, uint32 relayGeneration, uint16 batchIndex, uint16 totalBatches,,,,) = this.exposedDecodeBidsBatch(
-            BridgeMsgCodec.encodeBidsBatch(
-                7, 30101, 1, 0, 2, new address[](0), new uint16[](0), new uint32[](0), new uint32[](0)
-            )
+        (,, uint32 relayGeneration, uint16 batchIndex, uint16 totalBatches,,) = this.exposedDecodeBidsBatch(
+            BridgeMsgCodec.encodeBidsBatch(7, 30101, 1, 0, 2, new address[](0), new uint256[](0))
         );
         assertEq(batchIndex, 0, "batchIndex");
         assertEq(totalBatches, 2, "totalBatches");
@@ -201,9 +206,19 @@ contract BridgeMsgCodecGoldenTest is Test {
         paid[0] = 0x3333333333333333;
         paid[1] = 0x4444444444444444;
 
-        (uint32 worldwideDay, address[] memory dBidders, uint128[] memory dRefunded, uint128[] memory dPaid) = this.exposedDecodeRefundInstructions(
-            BridgeMsgCodec.encodeRefundInstructions(0x77665544, bidders, refunded, paid)
+        (
+            uint32 worldwideDay,
+            uint16 chunkIndex,
+            uint16 totalChunks,
+            address[] memory dBidders,
+            uint128[] memory dRefunded,
+            uint128[] memory dPaid
+        ) = this.exposedDecodeRefundInstructions(
+            BridgeMsgCodec.encodeRefundInstructions(0x77665544, 0, 1, bidders, refunded, paid)
         );
+
+        assertEq(chunkIndex, 0, "chunkIndex");
+        assertEq(totalChunks, 1, "totalChunks");
 
         assertEq(worldwideDay, 0x77665544, "worldwideDay");
         assertEq(dBidders[0], address(0xA11CE), "bidders[0]");
@@ -223,7 +238,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         quantities[1] = 0xBEEF;
 
         BridgeMsgCodec.IssuanceInstructionsPayload memory p;
-        p.seriesId = 0x11223344;
+        p.seriesId = "20260212-TRY-U";
         p.worldwideDay = 0x55555555; // distinct from seriesId so a field swap can't pass
         p.issuedIntexCount = 0x55667788;
         p.promisLoadMinor = 0x0102030405060708090A0B0C0D0E0F10;
@@ -238,10 +253,11 @@ contract BridgeMsgCodecGoldenTest is Test {
         p.recipients = recipients;
         p.quantities = quantities;
 
-        BridgeMsgCodec.IssuanceInstructionsPayload memory d =
-            this.exposedDecodeIssuanceInstructions(BridgeMsgCodec.encodeIssuanceInstructions(p));
+        BridgeMsgCodec.IssuanceInstructionsPayload memory d = this.exposedDecodeIssuanceInstructions(
+            BridgeMsgCodec.encodeIssuanceInstructions(IssuanceBatchLib.one(p))
+        )[0];
 
-        assertEq(d.seriesId, 0x11223344, "seriesId");
+        assertEq(d.seriesId, bytes14("20260212-TRY-U"), "seriesId");
         assertEq(d.worldwideDay, 0x55555555, "worldwideDay");
         assertEq(d.issuedIntexCount, 0x55667788, "issuedIntexCount");
         assertEq(d.promisLoadMinor, 0x0102030405060708090A0B0C0D0E0F10, "promisLoadMinor");
@@ -263,8 +279,14 @@ contract BridgeMsgCodecGoldenTest is Test {
         assertEq(
             this.exposedDecodeAuctionStageClearing(BridgeMsgCodec.encodeAuctionStageClearing(0x0A0B0C0D)), 0x0A0B0C0D
         );
-        assertEq(this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled(0x0A0B0C0D)), 0x0A0B0C0D);
-        assertEq(this.exposedDecodeMarkQualified(BridgeMsgCodec.encodeMarkQualified(0x0A0B0C0D)), 0x0A0B0C0D);
+        assertEq(
+            this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled("20260212-TRY-U", 20260212)),
+            bytes14("20260212-TRY-U")
+        );
+        assertEq(
+            this.exposedDecodeMarkQualified(BridgeMsgCodec.encodeMarkQualified("20260212-TRY-U", 20260212)),
+            bytes14("20260212-TRY-U")
+        );
     }
 
     // External calldata wrappers for the internal decoders.
@@ -277,11 +299,11 @@ contract BridgeMsgCodecGoldenTest is Test {
         return BridgeMsgCodec.decodeAuctionStageClearing(p);
     }
 
-    function exposedDecodeMarkCalled(bytes calldata p) external pure returns (uint32) {
+    function exposedDecodeMarkCalled(bytes calldata p) external pure returns (bytes14) {
         return BridgeMsgCodec.decodeMarkCalled(p);
     }
 
-    function exposedDecodeMarkQualified(bytes calldata p) external pure returns (uint32) {
+    function exposedDecodeMarkQualified(bytes calldata p) external pure returns (bytes14) {
         return BridgeMsgCodec.decodeMarkQualified(p);
     }
 
@@ -292,17 +314,7 @@ contract BridgeMsgCodecGoldenTest is Test {
     function exposedDecodeBidsBatch(bytes calldata p)
         external
         pure
-        returns (
-            uint32,
-            uint32,
-            uint32,
-            uint16,
-            uint16,
-            address[] memory,
-            uint16[] memory,
-            uint32[] memory,
-            uint32[] memory
-        )
+        returns (uint32, uint32, uint32, uint16, uint16, address[] memory, uint256[] memory)
     {
         return BridgeMsgCodec.decodeBidsBatch(p);
     }
@@ -310,7 +322,7 @@ contract BridgeMsgCodecGoldenTest is Test {
     function exposedDecodeRefundInstructions(bytes calldata p)
         external
         pure
-        returns (uint32, address[] memory, uint128[] memory, uint128[] memory)
+        returns (uint32, uint16, uint16, address[] memory, uint128[] memory, uint128[] memory)
     {
         return BridgeMsgCodec.decodeRefundInstructions(p);
     }
@@ -318,7 +330,7 @@ contract BridgeMsgCodecGoldenTest is Test {
     function exposedDecodeIssuanceInstructions(bytes calldata p)
         external
         pure
-        returns (BridgeMsgCodec.IssuanceInstructionsPayload memory)
+        returns (BridgeMsgCodec.IssuanceInstructionsPayload[] memory)
     {
         return BridgeMsgCodec.decodeIssuanceInstructions(p);
     }

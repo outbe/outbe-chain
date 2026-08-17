@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {ReferenceCurrencyPriceLib} from "./helpers/ReferenceCurrencyPriceLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
@@ -8,6 +9,9 @@ import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {MockAuctionEscrow} from "@test-mocks/MockAuctionEscrow.sol";
 
 contract AuctionTest is Test {
+    uint16 internal constant ISSUANCE_CCY = 840;
+    uint16 internal constant REFERENCE_CCY = 840;
+
     IntexAuction auction;
     MockAuctionEscrow escrow;
 
@@ -24,8 +28,9 @@ contract AuctionTest is Test {
     address outsider; // Derived from outsiderPrivateKey
 
     // EIP-712 typehash mirrors `IntexAuction.REVEAL_BID_TYPEHASH`.
-    bytes32 internal constant REVEAL_BID_TYPEHASH =
-        keccak256("RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate)");
+    bytes32 internal constant REVEAL_BID_TYPEHASH = keccak256(
+        "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
+    );
 
     uint32 internal constant RATE_SCALE = 1_000_000;
     // wCOEN escrow: the per-Intex escrow basis is PROMIS_LOAD_MINOR (constant COEN), so the lock is
@@ -71,13 +76,9 @@ contract AuctionTest is Test {
         returns (IIntexAuction.AuctionParams memory)
     {
         return IIntexAuction.AuctionParams({
-            issuanceCurrency: 840,
-            referenceCurrency: 840,
             promisLoadMinor: PROMIS_LOAD_MINOR,
             minIntexBidRate: minIntexBidRate,
-            entryPriceMinor: entryPrice,
-            floorPriceMinor: 100,
-            callPriceMinor: 200,
+            prices: ReferenceCurrencyPriceLib.onePriced(840, entryPrice, 100, 200),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
             minIntexBidQuantity: minIntexBidQuantity,
             commitBondMinor: 0
@@ -117,7 +118,9 @@ contract AuctionTest is Test {
         view
         returns (bytes memory)
     {
-        bytes32 structHash = keccak256(abi.encode(REVEAL_BID_TYPEHASH, worldwideDay, sender, qty, rate));
+        bytes32 structHash = keccak256(
+            abi.encode(REVEAL_BID_TYPEHASH, worldwideDay, sender, qty, rate, ISSUANCE_CCY, REFERENCE_CCY)
+        );
         bytes32 domainSeparator = keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
@@ -142,7 +145,7 @@ contract AuctionTest is Test {
     function _reveal(uint32 worldwideDay, address bidder, uint16 qty, uint32 rate, uint256 privateKey) internal {
         bytes memory signature = _createSignature(worldwideDay, bidder, qty, rate, privateKey);
         vm.prank(bidder);
-        auction.revealBid(worldwideDay, qty, rate, uint64(block.chainid), signature);
+        auction.revealBid(worldwideDay, qty, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), signature);
     }
 
     function test_Lifecycle_FullFlow() public {
@@ -811,20 +814,20 @@ contract AuctionTest is Test {
         bytes memory sig = _createSignature(worldwideDay, iba1, 0, 20, iba1PrivateKey);
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "quantity/bidRate"));
         vm.prank(iba1);
-        auction.revealBid(worldwideDay, 0, 20, uint64(block.chainid), sig);
+        auction.revealBid(worldwideDay, 0, 20, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
 
         // Zero bidRate
         sig = _createSignature(worldwideDay, iba1, 10, 0, iba1PrivateKey);
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "quantity/bidRate"));
         vm.prank(iba1);
-        auction.revealBid(worldwideDay, 10, 0, uint64(block.chainid), sig);
+        auction.revealBid(worldwideDay, 10, 0, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
 
         // Wrong chainId — caller's chainId param does not match block.chainid -> WrongChain.
         uint64 wrongChainId = 999;
         sig = _createSignature(worldwideDay, iba1, 10, 20, iba1PrivateKey);
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.WrongChain.selector, block.chainid, uint256(wrongChainId)));
         vm.prank(iba1);
-        auction.revealBid(worldwideDay, 10, 20, wrongChainId, sig);
+        auction.revealBid(worldwideDay, 10, 20, ISSUANCE_CCY, REFERENCE_CCY, wrongChainId, sig);
     }
 
     function test_StartClearingStage_AlreadyClearing() public {
@@ -869,7 +872,7 @@ contract AuctionTest is Test {
         bytes memory sig = _createSignature(worldwideDay, iba1, 10, 20, iba1PrivateKey);
         vm.expectRevert(IIntexAuction.BidNotFound.selector);
         vm.prank(iba2);
-        auction.revealBid(worldwideDay, 10, 20, uint64(block.chainid), sig);
+        auction.revealBid(worldwideDay, 10, 20, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
     }
 
     /// @dev Reentrancy probe: arm the escrow mock to call back into `revealBid` during
@@ -885,14 +888,15 @@ contract AuctionTest is Test {
         _enterRevealStage(worldwideDay, startTs);
 
         bytes memory sig = _createSignature(worldwideDay, iba1, 10, 20, iba1PrivateKey);
-        bytes memory reentrantCall =
-            abi.encodeCall(IIntexAuction.revealBid, (worldwideDay, 10, 20, uint64(block.chainid), sig));
+        bytes memory reentrantCall = abi.encodeCall(
+            IIntexAuction.revealBid, (worldwideDay, 10, 20, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig)
+        );
         escrow.armReentry(auction, reentrantCall);
 
         bytes4 reentrancyGuard = bytes4(keccak256("ReentrancyGuardReentrantCall()"));
         vm.expectRevert(reentrancyGuard);
         vm.prank(iba1);
-        auction.revealBid(worldwideDay, 10, 20, uint64(block.chainid), sig);
+        auction.revealBid(worldwideDay, 10, 20, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
 
         // Tx unwound: no reveal recorded, no bid pushed.
         assertFalse(auction.revealedBidsByBidder(worldwideDay, iba1));

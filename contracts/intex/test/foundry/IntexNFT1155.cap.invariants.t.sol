@@ -12,11 +12,11 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 ///      hold. A burn frees cap room, so totalSupply moves both ways while staying `≤ cap`.
 contract NFT1155CapHandler is Test {
     IntexNFT1155 internal intex;
-    uint32 internal seriesId;
+    bytes14 internal seriesId;
     uint256 internal tokenId;
     address[] internal bidders;
 
-    constructor(IntexNFT1155 _intex, uint32 _seriesId, address[] memory _bidders) {
+    constructor(IntexNFT1155 _intex, bytes14 _seriesId, address[] memory _bidders) {
         intex = _intex;
         seriesId = _seriesId;
         tokenId = _intex.issuedTokenId(_seriesId);
@@ -45,12 +45,13 @@ contract IntexNFT1155CapInvariantTest is StdInvariant, Test {
     address internal admin = address(this);
     address[] internal bidders;
 
-    uint32 internal constant SERIES_ID = 20250101;
+    uint32 internal constant SERIES_ID_DAY = 20250101;
+    bytes14 internal constant SERIES_ID = "20250101-USD-U";
     uint32 internal constant CAP = 10_000;
 
     function setUp() public {
         intex = DeployProxy.intexNFT1155(admin, admin);
-        intex.createSeries(CreateSeriesLib.params(SERIES_ID, CAP, 0));
+        intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, CAP, 0));
 
         bidders.push(address(0xB1));
         bidders.push(address(0xB2));
