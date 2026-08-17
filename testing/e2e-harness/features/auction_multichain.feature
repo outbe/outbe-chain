@@ -31,3 +31,5 @@ Feature: Multichain auction from a settled day
     Then three matching validator domains atomically apply Lysis and create the Nod
     When those bidders reveal their bids once the venue is revealing
     Then the auction clears and the venue moves past its reveal window
+    And the cleared day mints the Intex on the target chain
+    And the escrow settles the day and returns what the bids did not buy

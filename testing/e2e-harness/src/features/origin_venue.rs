@@ -629,3 +629,182 @@ fn auction_clears(world: &mut World) {
         sleep(Duration::from_secs(2));
     }
 }
+
+sol! {
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IIssuedSeries {
+        function seriesExists(bytes14 seriesId) external view returns (bool);
+        function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
+        function balanceOf(address account, uint256 id) external view returns (uint256);
+    }
+}
+
+sol! {
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IPaymentToken {
+        function balanceOf(address account) external view returns (uint256);
+    }
+}
+
+/// The series the target chain was told to issue, read back from its own log so
+/// the identifier comes from the chain rather than from a rebuilt guess.
+#[cfg(feature = "ocomp-integration")]
+fn issued_series(url: &str, venue_router: Address) -> Option<alloy_primitives::FixedBytes<14>> {
+    let topic0 = alloy_primitives::keccak256(
+        b"IssuanceInstructionsReceived(uint32,bytes14,uint256)".as_slice(),
+    );
+    let logs = eth::raw_json_with_params(
+        url,
+        "eth_getLogs",
+        serde_json::json!([{
+            "fromBlock": "0x0",
+            "toBlock": "latest",
+            "address": format!("{venue_router:?}"),
+            "topics": [format!("{topic0:?}")],
+        }]),
+    )?;
+    let topic = logs
+        .as_array()?
+        .first()?
+        .get("topics")?
+        .as_array()?
+        .get(2)?
+        .as_str()?;
+    let word: alloy_primitives::B256 = topic.parse().ok()?;
+    Some(alloy_primitives::FixedBytes::<14>::from_slice(&word.0[..14]))
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn deferred_mints(url: &str, venue_router: Address) -> usize {
+    let topic0 = alloy_primitives::keccak256(
+        b"IssuanceMintDeferred(uint256,bytes14,address,bytes)".as_slice(),
+    );
+    eth::raw_json_with_params(
+        url,
+        "eth_getLogs",
+        serde_json::json!([{
+            "fromBlock": "0x0",
+            "toBlock": "latest",
+            "address": format!("{venue_router:?}"),
+            "topics": [format!("{topic0:?}")],
+        }]),
+    )
+    .as_ref()
+    .and_then(|value| value.as_array())
+    .map_or(0, Vec::len)
+}
+
+#[cfg(feature = "ocomp-integration")]
+#[then("the cleared day mints the Intex on the target chain")]
+fn issuance_mints_intex(world: &mut World) {
+    let contracts = world
+        .state
+        .origin_contracts
+        .clone()
+        .expect("a deploy recorded its addresses");
+    let bidders = world.state.auction_bidders.clone();
+    let url = world.rpc.url(world.validators.primary_port());
+    let worldwide_day = settled_day(world);
+
+    let deadline = Instant::now() + AUCTION_STAGE_TIMEOUT;
+    let series = loop {
+        if let Some(series) = issued_series(&url, contracts.target_router) {
+            break series;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "day {worldwide_day} cleared but the target chain never received issuance instructions"
+        );
+        sleep(Duration::from_secs(2));
+    };
+
+    let exists = eth::read_call(
+        &url,
+        contracts.intex_nft,
+        &IIssuedSeries::seriesExistsCall { seriesId: series },
+    )
+    .expect("ask the collection whether the series exists");
+    assert!(exists, "series {series} was instructed but never created");
+
+    let token_id = eth::read_call(
+        &url,
+        contracts.intex_nft,
+        &IIssuedSeries::issuedTokenIdCall { seriesId: series },
+    )
+    .expect("derive the token id of the issued series");
+
+    let minted: U256 = bidders
+        .iter()
+        .map(|bidder| {
+            eth::read_call(
+                &url,
+                contracts.intex_nft,
+                &IIssuedSeries::balanceOfCall {
+                    account: bidder.address,
+                    id: token_id,
+                },
+            )
+            .expect("read a bidder's Intex balance")
+        })
+        .sum();
+    assert!(
+        !minted.is_zero(),
+        "series {series} exists but no bidder holds any Intex ({} mints were deferred)",
+        deferred_mints(&url, contracts.target_router)
+    );
+}
+
+#[cfg(feature = "ocomp-integration")]
+#[then("the escrow settles the day and returns what the bids did not buy")]
+fn escrow_refunds_the_rest(world: &mut World) {
+    let contracts = world
+        .state
+        .origin_contracts
+        .clone()
+        .expect("a deploy recorded its addresses");
+    let url = world.rpc.url(world.validators.primary_port());
+    let worldwide_day = settled_day(world);
+    let topic0 = alloy_primitives::keccak256(
+        b"RefundInstructionsReceived(uint32,uint32,uint256)".as_slice(),
+    );
+    let day_topic = format!("0x{worldwide_day:064x}");
+
+    let deadline = Instant::now() + AUCTION_STAGE_TIMEOUT;
+    loop {
+        let received = eth::raw_json_with_params(
+            &url,
+            "eth_getLogs",
+            serde_json::json!([{
+                "fromBlock": "0x0",
+                "toBlock": "latest",
+                "address": format!("{:?}", contracts.target_router),
+                "topics": [format!("{topic0:?}"), serde_json::Value::Null, day_topic],
+            }]),
+        )
+        .as_ref()
+        .and_then(|value| value.as_array())
+        .is_some_and(|entries| !entries.is_empty());
+        if received {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "day {worldwide_day} cleared but the escrow never received refund instructions"
+        );
+        sleep(Duration::from_secs(2));
+    }
+
+    // Settlement either pays a bid or gives it back, so the day leaves nothing behind.
+    let held = eth::read_call(
+        &url,
+        contracts.payment_token,
+        &IPaymentToken::balanceOfCall {
+            account: contracts.escrow,
+        },
+    )
+    .expect("read what the escrow still holds");
+    assert!(
+        held.is_zero(),
+        "escrow still holds {held} of the payment token after settling day {worldwide_day}"
+    );
+}
