@@ -17,6 +17,7 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
+import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 
 /// @dev One day's series in one reference currency travel as a single mark message: the origin
 ///      broadcasts one payload per target, and the target applies every series it carries.
@@ -25,6 +26,7 @@ contract MarkBatchWireTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 
     uint32 internal constant WORLDWIDE_DAY = 20250101;
+    bytes4 internal constant GAS_SELECTOR = bytes4(keccak256("executionGasLimit(uint256)"));
     bytes14 internal constant USD_SERIES = "20250101-USD-U";
     bytes14 internal constant EUR_SERIES = "20250101-EUR-U";
 
@@ -110,17 +112,26 @@ contract MarkBatchWireTest is CrossChainTest {
         assertEq(parked, EUR_SERIES, "the missing series parked");
     }
 
-    /// @dev The mock bridge quotes zero whatever the gas limit, so the batch's effect on the
-    ///      quote is checked where it is decided: the destination-gas formula behind it.
-    function test_theDestinationGasGrowsWithTheBatch() public view {
-        assertEq(IntexGas.markCalled(2) - IntexGas.markCalled(1), IntexGas.MARK_CALLED_PER_SERIES, "called marginal");
-        assertEq(
-            IntexGas.markQualified(2) - IntexGas.markQualified(1),
-            IntexGas.MARK_QUALIFIED_PER_SERIES,
-            "qualified marginal"
-        );
-        // The quote itself still accepts a batch and prices the whole day's group.
-        outbeRouter.quoteSendMarkCalled(WORLDWIDE_DAY, MarkBatchLib.two(USD_SERIES, EUR_SERIES));
+    /// @dev The destination gas the router buys has to follow the batch it is sending, not the
+    ///      message type: a batch relayed on a single series' budget runs out on arrival.
+    function test_theSendBuysDestinationGasForTheWholeBatch() public {
+        vm.startPrank(intexFactory);
+        outbeRouter.sendMarkQualified(WORLDWIDE_DAY, MarkBatchLib.one(USD_SERIES));
+        _assertLastGas(IntexGas.markQualified(1));
+
+        outbeRouter.sendMarkQualified(WORLDWIDE_DAY, MarkBatchLib.two(USD_SERIES, EUR_SERIES));
+        _assertLastGas(IntexGas.markQualified(2));
+
+        outbeRouter.sendMarkCalled(WORLDWIDE_DAY, MarkBatchLib.two(USD_SERIES, EUR_SERIES));
+        _assertLastGas(IntexGas.markCalled(2));
+        vm.stopPrank();
+    }
+
+    /// @dev The last recorded send carries exactly one executionGasLimit attribute equal to `expectedGas`.
+    function _assertLastGas(uint256 expectedGas) internal view {
+        bytes[] memory attrs = bridge.getLastAttributes();
+        assertEq(attrs.length, 1, "expected one attribute");
+        assertEq(attrs[0], abi.encodeWithSelector(GAS_SELECTOR, expectedGas), "gas attribute mismatch");
     }
 
     function test_anOverSizedBatchIsRefusedAtTheSend() public {
@@ -138,7 +149,13 @@ contract MarkBatchWireTest is CrossChainTest {
 
     function test_onlyTheFactoryMaySendAMarkBatch() public {
         bytes14[] memory batch = MarkBatchLib.one(USD_SERIES);
-        vm.expectRevert();
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                address(this),
+                outbeRouter.INTEX_FACTORY_ROLE()
+            )
+        );
         outbeRouter.sendMarkQualified(WORLDWIDE_DAY, batch);
     }
 }

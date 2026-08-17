@@ -67,11 +67,29 @@ fn fill_window(oracle: &OracleContract, latest: u32, pair: AddressPair, value: U
     }
 }
 
-/// A Qualified series of its own day, all sharing one call trigger.
 fn seed_called_candidate(s: &StorageHandle<'_>, worldwide_day: u32) {
+    seed_candidate_at(s, worldwide_day, ISSUED_AT, TRIGGER)
+}
+
+fn seed_young_candidate_at(
+    s: &StorageHandle<'_>,
+    worldwide_day: u32,
+    issued_at: u32,
+    trigger: u64,
+) {
+    seed_candidate_at(s, worldwide_day, issued_at, trigger)
+}
+
+/// A Qualified series of its own day, carrying `trigger` as its call price.
+fn seed_candidate_at(
+    s: &StorageHandle<'_>,
+    worldwide_day: u32,
+    issued_at: u32,
+    trigger_minor: u64,
+) {
     let series_id =
         SeriesId::for_pair(WorldwideDay::new(worldwide_day), 840, REFERENCE_ISO).unwrap();
-    let trigger = U256::from(TRIGGER);
+    let trigger = U256::from(trigger_minor);
     outbe_intex::api::create_series(
         s,
         outbe_intex::CreateSeriesParams {
@@ -87,7 +105,7 @@ fn seed_called_candidate(s: &StorageHandle<'_>, worldwide_day: u32) {
                 call_threshold: 21 * DAY as u32,
                 call_notice_period: 7 * DAY as u32,
             },
-            issued_at: ISSUED_AT,
+            issued_at,
             issuance_currency: 840,
             reference_currency: REFERENCE_ISO,
         },
@@ -375,6 +393,96 @@ fn a_bin_of_undecided_groups_does_not_stall_the_sweep() {
                 .unwrap(),
             0,
             "the sweep closed instead of restarting on the same groups"
+        );
+    });
+}
+
+/// A price the bin ladder cannot hold skips its currency instead of halting the
+/// block — the scan runs in `begin_block`, where an error is not survivable.
+#[test]
+fn a_window_price_out_of_range_skips_the_currency() {
+    with_factory(|s| {
+        let oracle = OracleContract::new(s.clone());
+        let pair = setup_pair(&oracle);
+        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        // Priced days enough to reach the threshold, at a price no bin covers.
+        fill_window(&oracle, last_closed_day, pair, U256::MAX);
+        seed_called_candidate(&s, 20260101);
+
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+            s.clone(),
+        );
+        assert_eq!(called::scan_and_call(&ctx).unwrap(), 0, "nothing is called");
+        assert_eq!(called_count(&s, 20260101..20260102), 0);
+        assert_eq!(
+            IntexFactoryContract::new(s.clone())
+                .call_sweep_day
+                .read()
+                .unwrap(),
+            0,
+            "the sweep closed rather than retrying a currency it cannot price"
+        );
+    });
+}
+
+/// A group the previous sweep left behind its cursor has to be walked again when
+/// the next day opens, or a day's worth of calls is skipped in silence.
+#[test]
+fn a_new_sweep_walks_the_bins_the_last_one_stopped_above() {
+    with_factory(|s| {
+        let oracle = OracleContract::new(s.clone());
+        let pair = setup_pair(&oracle);
+        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER * 4));
+
+        // Below the budget-stop: issued inside the window, so it decides against a
+        // call today however loud the days were.
+        let young = 20260001;
+        seed_young_candidate_at(&s, young, (scan_ts - 5 * DAY) as u32, TRIGGER);
+        // Above it: enough mature groups at a higher trigger to spend every action.
+        for day in 20260101..20260101 + MAX_CALL_ACTIONS_PER_SWEEP + 1 {
+            seed_candidate_at(&s, day, ISSUED_AT, TRIGGER * 2);
+        }
+
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+            s.clone(),
+        );
+        assert_eq!(
+            called::scan_and_call(&ctx).unwrap(),
+            MAX_CALL_ACTIONS_PER_SWEEP,
+            "the slice stops on its action budget"
+        );
+        assert_ne!(
+            IntexFactoryContract::new(s.clone())
+                .call_scan_cursor
+                .read(&REFERENCE_ISO)
+                .unwrap(),
+            0,
+            "the cursor stands above the young group's bin"
+        );
+
+        // Twenty days on, the young group's own window reaches the threshold. The
+        // day's trigger has to find it, which it only does from a reset cursor.
+        let later_ts = scan_ts + 20 * DAY;
+        let later_day = previous_date_key(timestamp_to_date_key(later_ts));
+        fill_window(&oracle, later_day, pair, U256::from(TRIGGER * 4));
+        let later = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(2, later_ts, CHAIN_ID),
+            s.clone(),
+        );
+        called::scan_and_call(&later).unwrap();
+        for _ in 0..4 {
+            called::run_call_slice(&later).unwrap();
+        }
+
+        assert_eq!(
+            called_count(&s, young..young + 1),
+            1,
+            "the group below the old cursor was called"
         );
     });
 }
