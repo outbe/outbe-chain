@@ -846,3 +846,45 @@ fn escrow_refunds_the_rest(world: &mut World) {
         "escrow still holds {held} of the payment token after settling day {worldwide_day}"
     );
 }
+
+/// One Intex costs 100k Promis, so the capacity fixture's six-wei Tribute can
+/// never back a whole one and its day clears empty. Same owners, same count,
+/// priced so the day actually issues.
+#[cfg(feature = "ocomp-integration")]
+const ISSUING_TRIBUTE_AMOUNT: &str = "10000";
+
+#[cfg(feature = "ocomp-integration")]
+#[when(expr = "{int} capacity owners each submit a Tribute large enough to issue an Intex")]
+fn owners_submit_issuing_tributes(world: &mut World, count: usize) {
+    let private_keys = world.state.ocomp_capacity_tribute_private_keys.clone();
+    assert!(
+        private_keys.len() >= count,
+        "capacity fixture retained only {} funded owners, expected at least {count}",
+        private_keys.len()
+    );
+    let worldwide_day = world
+        .state
+        .wwd
+        .clone()
+        .expect("capacity WorldwideDay is set");
+
+    let mut transaction_hashes = Vec::with_capacity(count);
+    for private_key in &private_keys[..count] {
+        let transaction_hash = world
+            .rpc
+            .tribute_offer_with_params(
+                private_key,
+                &worldwide_day,
+                ISSUING_TRIBUTE_AMOUNT,
+                840,
+                false,
+            )
+            .expect("a capacity owner returned no Tribute tx hash");
+        assert!(
+            world.rpc.wait_successful_receipt(&transaction_hash, 240),
+            "Tribute transaction did not succeed: {transaction_hash}"
+        );
+        transaction_hashes.push(transaction_hash);
+    }
+    world.state.ocomp_capacity_tribute_tx_hashes = transaction_hashes;
+}
