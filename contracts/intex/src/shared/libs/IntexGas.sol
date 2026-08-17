@@ -20,10 +20,10 @@ library IntexGas {
     /// @dev Clearing also fires the bids relay back to Outbe (parked on failure), so it runs generously.
     uint256 internal constant AUCTION_STAGE_CLEARING = 2_000_000;
     uint256 internal constant AUCTION_RESULT = 300_000;
-    /// @dev markCalled flips state and migrates the series' holders, which costs about 100k each:
-    ///      measured at 3.25M for 32 holders, the realistic ceiling, and this leaves headroom over it.
+    /// @dev markCalled flips state and migrates the series' holders, measured at 72k plus about 99k
+    ///      each: this covers the ~30 a series realistically has, and a wider one is re-delivered.
     uint256 internal constant MARK_CALLED_BASE = 100_000;
-    uint256 internal constant MARK_CALLED_PER_SERIES = 4_000_000;
+    uint256 internal constant MARK_CALLED_PER_SERIES = 3_000_000;
     uint256 internal constant MARK_QUALIFIED_BASE = 100_000;
     uint256 internal constant MARK_QUALIFIED_PER_SERIES = 200_000;
     /// @dev Destination hook for composed proceeds: WCOEN unwrap + IntexFactory distribute registration.
