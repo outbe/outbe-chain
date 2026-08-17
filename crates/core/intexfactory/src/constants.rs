@@ -16,6 +16,11 @@ pub use outbe_primitives::addresses::INTEX_NFT1155_ADDRESS;
 /// CREATE3 proxy, salt "outbe-intex:OriginRouter:v2.0.0".
 pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x67129C422bDC2c8984DbF381B6ec4515fE2BbD29");
 
+/// A payout e2e credits proceeds without deploying the router, so a throwaway
+/// build also accepts Hardhat account #0 as their source.
+#[cfg(feature = "e2e-test")]
+pub const PROCEEDS_TEST_SENDER: Address = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+
 /// minePromis PoW difficulty: required leading zero bytes of the work hash.
 pub const POW_DIFFICULTY: usize = 1;
 

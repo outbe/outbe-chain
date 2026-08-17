@@ -3,9 +3,12 @@
 //! Reads the two precompile views the payout path publishes: the contributor
 //! authority Lysis installs, and the payout round proceeds open.
 
+use std::thread::sleep;
+use std::time::{Duration, Instant};
+
 use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::sol;
-use cucumber::then;
+use cucumber::{then, when};
 
 use crate::internal::eth;
 use crate::world::World;
@@ -120,4 +123,105 @@ fn no_payout_round_before_proceeds(world: &mut World) {
         round.amount.is_zero() && round.contributorCount == 0 && round.paidLeafCount == 0,
         "day {day} opened a payout round without proceeds: {round:?}"
     );
+}
+
+sol! {
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IIntexFactoryProceeds {
+        function armProceedsForTest(uint32 worldwideDay, uint32[] chains, uint64 deadline) external;
+        function distribute(uint32 worldwideDay, uint32 srcChainId) external payable;
+    }
+}
+
+/// Hardhat account #0 — the sender a throwaway build accepts as the proceeds
+/// source, since the production one is a contract nobody can sign for.
+const PROCEEDS_SENDER_KEY: &str =
+    "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+const PROCEEDS_SENDER: Address = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
+/// Comfortably above the contributor count, so no leaf floors to nothing.
+const PROCEEDS_WEI: u128 = 1_000_000_000_000_000;
+const PROCEEDS_GAS_WEI: u128 = 100_000_000_000_000_000;
+
+#[when("the day's auction proceeds arrive from one chain")]
+fn proceeds_arrive(world: &mut World) {
+    let day = worldwide_day(world);
+    let port = world.validators.primary_port();
+    let url = world.rpc.url(port);
+    let chain_id = u32::try_from(world.rpc.chain_id(port).expect("committee chain id"))
+        .expect("chain id fits u32");
+    let funder = world
+        .state
+        .ocomp_capacity_tribute_private_keys
+        .first()
+        .cloned()
+        .expect("capacity fixture funded its owners");
+
+    // Genesis funds only validators, so the accepted sender starts empty.
+    eth::send_value(
+        &url,
+        PROCEEDS_SENDER,
+        &funder,
+        U256::from(PROCEEDS_GAS_WEI + PROCEEDS_WEI),
+    )
+    .expect("fund the proceeds sender");
+
+    // Issuance arms this in production; a payout scenario runs no auction.
+    let deadline = u64::MAX;
+    eth::send_call(
+        &url,
+        INTEX_FACTORY_ADDR,
+        &funder,
+        &IIntexFactoryProceeds::armProceedsForTestCall {
+            worldwideDay: day,
+            chains: vec![chain_id],
+            deadline,
+        },
+        None,
+    )
+    .expect("arm the day's proceeds fan-in");
+
+    eth::send_call(
+        &url,
+        INTEX_FACTORY_ADDR,
+        PROCEEDS_SENDER_KEY,
+        &IIntexFactoryProceeds::distributeCall {
+            worldwideDay: day,
+            srcChainId: chain_id,
+        },
+        Some(U256::from(PROCEEDS_WEI)),
+    )
+    .expect("credit the day's proceeds");
+}
+
+#[then("every certified contributor is paid their share")]
+fn contributors_are_paid(world: &mut World) {
+    let day = worldwide_day(world);
+    let url = world.rpc.url(world.validators.primary_port());
+    let deadline = Instant::now() + Duration::from_secs(600);
+    loop {
+        let round = eth::read_call(
+            &url,
+            INTEX_FACTORY_ADDR,
+            &IIntexFactoryContributorRound::contributorPayoutRoundCall { worldwideDay: day },
+        )
+        .expect("read the payout round");
+        assert!(
+            round.contributorCount > 0,
+            "day {day} never opened a payout round for its proceeds"
+        );
+        if round.paidLeafCount >= round.contributorCount {
+            assert!(
+                round.paidSoFar > U256::ZERO,
+                "every leaf is marked paid but nothing left the pot"
+            );
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "day {day} stalled at {} of {} contributors paid",
+            round.paidLeafCount,
+            round.contributorCount
+        );
+        sleep(Duration::from_secs(3));
+    }
 }

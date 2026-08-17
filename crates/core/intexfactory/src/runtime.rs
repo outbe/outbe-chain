@@ -290,7 +290,12 @@ pub fn distribute(
     src_chain_id: u32,
     amount: U256,
 ) -> Result<()> {
-    if caller != ORIGIN_ROUTER_ADDRESS {
+    #[cfg(not(feature = "e2e-test"))]
+    let from_router = caller == ORIGIN_ROUTER_ADDRESS;
+    #[cfg(feature = "e2e-test")]
+    let from_router =
+        caller == ORIGIN_ROUTER_ADDRESS || caller == crate::constants::PROCEEDS_TEST_SENDER;
+    if !from_router {
         return Err(IntexFactoryError::NotOriginRouter.into());
     }
     if amount.is_zero() {

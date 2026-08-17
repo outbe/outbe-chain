@@ -26,6 +26,17 @@ sol!(
     "../../../contracts/precompiles/src/IIntexFactory.sol"
 );
 
+// Arming the proceeds fan-in is production work of the issuance leg, which a
+// payout e2e never reaches: it runs no auction, so it issues nothing. This
+// stages that one precondition and exists only in a throwaway build.
+#[cfg(feature = "e2e-test")]
+sol! {
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IIntexFactoryTestArming {
+        function armProceedsForTest(uint32 worldwideDay, uint32[] chains, uint64 deadline) external;
+    }
+}
+
 pub fn dispatch(
     storage: StorageHandle<'_>,
     data: &[u8],
@@ -35,6 +46,16 @@ pub fn dispatch(
     // IntexFactory is a payable route, so the boundary credits value to this
     // address; every selector the module has not published refuses it here.
     reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
+    #[cfg(feature = "e2e-test")]
+    if let Ok(call) = IIntexFactoryTestArming::armProceedsForTestCall::abi_decode(data) {
+        outbe_intex::api::arm_proceeds(
+            &storage,
+            call.worldwideDay.into(),
+            &call.chains,
+            call.deadline,
+        )?;
+        return Ok(Bytes::new());
+    }
     dispatch_call(
         data,
         IIntexFactory::IIntexFactoryCalls::abi_decode,
