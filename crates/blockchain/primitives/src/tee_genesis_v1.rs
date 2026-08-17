@@ -151,7 +151,7 @@ pub fn initial_tee_policy_v1(
         accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
         accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
         minimum_lease: 3_600,
-        maximum_lease: 604_800,
+        maximum_lease: 2_592_000,
         collateral_margin: 3_600,
         resource_schedule_hash,
         measurement_rules: vec![measurement_rule],
@@ -270,6 +270,7 @@ mod tests {
             PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded
         );
         assert_eq!(policy.accepted_qe_tcb_status, QvlTcbStatusV1::UpToDate);
+        assert_eq!(policy.maximum_lease, 30 * 24 * 60 * 60);
     }
 
     #[test]
