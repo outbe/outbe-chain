@@ -217,7 +217,9 @@ impl BootstrapProfile {
                 "TESTNET_OCOMP_VOTE_WINDOW_BLOCKS" => {
                     profile.ocomp_vote_window_blocks = parsed()?;
                 }
-                other => bail!("unsupported localnet tuning key {other}"),
+                other => {
+                    bail!("unsupported localnet tuning key {other}");
+                }
             }
         }
         profile.validate_timing()?;

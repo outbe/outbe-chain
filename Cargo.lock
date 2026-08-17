@@ -7526,7 +7526,6 @@ dependencies = [
  "commonware-codec",
  "commonware-consensus",
  "commonware-cryptography",
- "commonware-math",
  "commonware-utils",
  "cucumber",
  "eyre",

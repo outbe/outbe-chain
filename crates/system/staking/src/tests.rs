@@ -126,10 +126,10 @@ fn test_stake_with_six_decimal_coen_fixture() {
         assert_eq!(s.get_stake(validator).unwrap(), U256::from(amount));
         assert_eq!(s.get_total_staked().unwrap(), U256::from(amount));
         let validators = ValidatorSet::new(storage);
-        assert_eq!(
-            validators.val_status.read(&validator).unwrap(),
-            status::PENDING
-        );
+        assert!(matches!(
+            validators.validator_lifecycle(validator).unwrap(),
+            ValidatorLifecycle::WaitingForStake(_)
+        ));
     });
 }
 

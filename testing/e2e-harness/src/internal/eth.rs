@@ -632,7 +632,7 @@ pub(crate) fn send_call_outcome<C: SolCall>(
             .to(to)
             .input(Bytes::from(data).into())
             .gas_limit(REVERT_FRIENDLY_GAS_LIMIT)
-            .max_fee_per_gas(GAS_PRICE_WEI)
+            .max_fee_per_gas(GAS_PRICE_UNITS)
             .max_priority_fee_per_gas(0);
         if let Some(v) = value {
             tx = tx.value(v);
@@ -679,7 +679,7 @@ pub(crate) fn send_prepared_calls_outcomes(
                 .input(call.data.into())
                 .nonce(nonce)
                 .gas_limit(REVERT_FRIENDLY_GAS_LIMIT)
-                .max_fee_per_gas(GAS_PRICE_WEI)
+                .max_fee_per_gas(GAS_PRICE_UNITS)
                 .max_priority_fee_per_gas(0);
             if let Some(value) = call.value {
                 tx = tx.value(value);

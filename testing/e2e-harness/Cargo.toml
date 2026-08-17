@@ -123,7 +123,6 @@ bytes.workspace = true
 commonware-codec.workspace = true
 commonware-consensus = { workspace = true, optional = true }
 commonware-cryptography.workspace = true
-commonware-math.workspace = true
 commonware-utils.workspace = true
 blst.workspace = true
 k256 = { workspace = true, optional = true }
