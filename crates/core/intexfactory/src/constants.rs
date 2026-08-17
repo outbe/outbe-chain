@@ -45,6 +45,10 @@ pub(crate) const MAX_SERIES_ACTIONS_PER_SWEEP: u32 = 256;
 /// outbound message rather than a write, and the block pays for it.
 pub(crate) const MAX_CALL_ACTIONS_PER_SWEEP: u32 = 32;
 
+/// Qualified notices sent per `intex_qualify_notify` firing. Each one is a
+/// bridge dispatch per target chain, so the bound stays far below the scan's.
+pub const QUALIFY_NOTIFY_CHUNK_LIMIT: u32 = 32;
+
 /// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.
 pub const PRICE_RATE_DEN: u16 = 100;
 

@@ -19,7 +19,7 @@ use outbe_intex::IntexState;
 
 use crate::constants::{
     MAX_CALL_ACTIONS_PER_SWEEP, MAX_GROUP_DECISIONS_PER_SWEEP, MAX_SERIES_ACTIONS_PER_SWEEP,
-    MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS,
+    MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS, QUALIFY_NOTIFY_CHUNK_LIMIT,
 };
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
@@ -247,10 +247,11 @@ pub(crate) fn try_qualify_group(
         &group.members,
     )?;
 
-    // Notify the target chains of the Qualified transition via ERC-7786; best-effort.
-    // OriginRouter failure (e.g. exhausted relay float) does not revert the
-    // state transition. The target chain can reconcile series state from the origin chain.
-    let _ = notify_qualified(storage, group.worldwide_day, &group.members);
+    // This sweep runs in a block hook, which cannot call contracts: the notices
+    // leave from the `intex_qualify_notify` cycle trigger instead.
+    for &series_id in &group.members {
+        enqueue_qualify_notice(factory, series_id)?;
+    }
 
     for &series_id in &group.members {
         crate::runtime::emit_event(
@@ -261,6 +262,52 @@ pub(crate) fn try_qualify_group(
         )?;
     }
     Ok(group.members.len() as u32)
+}
+
+fn enqueue_qualify_notice(factory: &mut IntexFactoryContract, series_id: SeriesId) -> Result<()> {
+    let tail = factory.qualify_notify_tail.read()?;
+    factory.qualify_notify_at.write(&tail, series_id)?;
+    factory.qualify_notify_tail.write(tail.saturating_add(1))?;
+    Ok(())
+}
+
+/// Cycle-trigger entry: send the queued Qualified notices, at most
+/// [`QUALIFY_NOTIFY_CHUNK_LIMIT`] per firing.
+pub fn drain_qualify_notices(ctx: &BlockRuntimeContext) -> Result<()> {
+    let storage = ctx.storage.clone();
+    let factory = IntexFactoryContract::new(storage.clone());
+    let head = factory.qualify_notify_head.read()?;
+    let tail = factory.qualify_notify_tail.read()?;
+    if head >= tail {
+        return Ok(());
+    }
+    let stop = tail.min(head.saturating_add(QUALIFY_NOTIFY_CHUNK_LIMIT));
+    for index in head..stop {
+        let series_id = factory.qualify_notify_at.read(&index)?;
+        factory.qualify_notify_at.clear(&index)?;
+        // Best-effort, as it was when the sweep sent it inline: a dropped notice
+        // leaves the target chain to reconcile series state from the origin.
+        if let Err(error) = storage.with_checkpoint(|| notify_if_qualified(&storage, series_id)) {
+            tracing::warn!(target: "outbe::intexfactory", %series_id, error = ?error, "qualify notice: dropping");
+        }
+    }
+    if stop == tail {
+        factory.qualify_notify_head.write(0)?;
+        factory.qualify_notify_tail.write(0)?;
+    } else {
+        factory.qualify_notify_head.write(stop)?;
+    }
+    Ok(())
+}
+
+/// A series that already moved past Qualified would be refused by the target,
+/// which takes Issued -> Called directly. Sending it anyway only burns float.
+fn notify_if_qualified(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<()> {
+    let series = outbe_intex::api::read_series(storage, series_id)?;
+    if series.lifecycle_state()? != IntexState::Qualified {
+        return Ok(());
+    }
+    notify_qualified(storage, series.worldwide_day, &[series_id])
 }
 
 /// One message per group, split only where the wire's cap forces it.

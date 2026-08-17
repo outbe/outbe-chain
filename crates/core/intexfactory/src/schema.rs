@@ -133,6 +133,17 @@ pub struct IntexFactoryContract {
     /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> group's worldwide day.
     #[attribute(order = 26)]
     pub qualified_bin_groups: outbe_primitives::storage::dsl::Map<B256, u32>,
+
+    // Qualified notices waiting for the `intex_qualify_notify` trigger to send
+    // them: the sweep that qualifies runs in a block hook, which cannot call
+    // contracts. Head and tail reset to 0 whenever the queue drains empty.
+    #[attribute(order = 27)]
+    pub qualify_notify_head: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 28)]
+    pub qualify_notify_tail: outbe_primitives::storage::dsl::Value<u32>,
+    /// Queue index -> series awaiting its Qualified notice.
+    #[attribute(order = 29)]
+    pub qualify_notify_at: outbe_primitives::storage::dsl::Map<u32, SeriesId>,
 }
 
 impl IntexFactoryContract<'_> {
