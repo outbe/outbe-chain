@@ -1,5 +1,6 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
+use outbe_intex::SeriesId;
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate, mutate_void, view};
 use outbe_primitives::error::Result;
 
@@ -28,7 +29,12 @@ pub fn dispatch(
         use IGemFactory::IGemFactoryCalls::*;
         match call {
             mintGemPosition(c) => mutate(c, caller, |sender, c| {
-                runtime::mint_gem_position(&storage, sender, c.sourceIntexId, c.amount)
+                runtime::mint_gem_position(
+                    &storage,
+                    sender,
+                    SeriesId::from(c.sourceIntexId),
+                    c.amount,
+                )
             }),
             mintMerchantGem(c) => mutate(c, caller, |sender, c| {
                 runtime::mint_merchant_gem(&storage, sender, c.positionId, c.owner, c.gemLoad)

@@ -103,10 +103,7 @@ fn write_bindings(args: &OcompBindingsArgs) -> eyre::Result<()> {
             .wrap_err_with(|| format!("read input genesis {}", args.input.display()))?,
     )
     .wrap_err("decode input genesis JSON")?;
-    let _protocol_constants =
-        outbe_chain_constants::GenesisProtocolParametersV1::from_materialized_genesis(
-            &input_genesis,
-        )?;
+    let _protocol_constants = selected_protocol_parameters(&input_genesis)?;
     let validator_identity_hashes = validator_identities(&args.validators)?;
     let document = OcompBindingsDocumentV1 {
         schema_version: 1,
@@ -136,10 +133,7 @@ fn generate_genesis(args: &OcompGenesisArgs) -> eyre::Result<()> {
             .wrap_err_with(|| format!("read input genesis {}", args.input.display()))?,
     )
     .wrap_err("decode input genesis JSON")?;
-    let protocol_constants =
-        outbe_chain_constants::GenesisProtocolParametersV1::from_materialized_genesis(
-            &input_genesis,
-        )?;
+    let protocol_constants = selected_protocol_parameters(&input_genesis)?;
     let validator_identity_hashes = validator_identities(&args.validators)?;
     let protocol_bundle = measurement_protocol_bundle();
     let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
@@ -404,6 +398,19 @@ fn measurement_capacity_profile(result_deadline_blocks: u64) -> CapacityProfileV
     }
 }
 
+fn selected_protocol_parameters(
+    genesis: &serde_json::Value,
+) -> eyre::Result<outbe_chain_constants::GenesisProtocolParametersV1> {
+    let config = genesis
+        .get("config")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| eyre::eyre!("input genesis config must be a JSON object"))?;
+    outbe_chain_constants::GenesisProtocolParametersV1::select_for_build(
+        config.get(outbe_chain_constants::GENESIS_CONFIG_KEY),
+    )
+    .map_err(Into::into)
+}
+
 fn measurement_protocol_bundle() -> ProtocolBundleV1 {
     let hash = B256::repeat_byte;
     ProtocolBundleV1 {
@@ -513,6 +520,38 @@ mod tests {
         let signature: Signature = key.sign_prehash(digest.as_slice()).unwrap();
         registration.proof_of_possession = signature.to_bytes().into();
         registration
+    }
+
+    #[cfg(not(feature = "test-protocol-overrides"))]
+    #[test]
+    fn production_ocomp_profile_rejects_genesis_overrides() {
+        let genesis = serde_json::json!({
+            "config": {
+                "outbeProtocol": {
+                    "ocomp": { "computeVoteWindowBlocks": 120 }
+                }
+            }
+        });
+
+        let error = selected_protocol_parameters(&genesis).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("supported only by test-protocol-overrides builds"));
+    }
+
+    #[cfg(feature = "test-protocol-overrides")]
+    #[test]
+    fn test_ocomp_profile_uses_genesis_override() {
+        let genesis = serde_json::json!({
+            "config": {
+                "outbeProtocol": {
+                    "ocomp": { "computeVoteWindowBlocks": 120 }
+                }
+            }
+        });
+
+        let selected = selected_protocol_parameters(&genesis).unwrap();
+        assert_eq!(selected.ocomp_compute_vote_window_blocks, 120);
     }
 
     #[test]

@@ -39,7 +39,8 @@ contract TargetRouterTest is CrossChainTest {
     // Stand-in Desis recipient that advertises `IDesis` via ERC-165 — declared in setUp().
     address private desis;
 
-    uint32 private constant SERIES_ID = 20250115; // yyyymmdd format
+    uint32 private constant SERIES_ID_DAY = 20250115;
+    bytes14 private constant SERIES_ID = "20250115-USD-U"; // yyyymmdd format
 
     function setUp() public {
         _setUpBridge();

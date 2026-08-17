@@ -58,8 +58,6 @@ contract OriginRouter is
         /// @dev 1-based index in `targetChainIds` (0 = absent); 1-based disambiguates the first target under swap-pop.
         mapping(uint32 chainId => uint256 indexPlus1) targetIndexPlus1;
         /// @dev Per-day target snapshot frozen at STAGE_START; the day's sends fan out over this, not the live registry.
-        ///      Keyed by `worldwideDay`. The issuance/mark sends index it by `seriesId`, which lands on the same slot
-        ///      only while `seriesId == worldwideDay`; a multi-currency series allocator must map seriesId → worldwideDay here.
         mapping(uint32 worldwideDay => uint32[] chainIds) seriesTargets;
         /// @dev Outbound legs that failed to dispatch, awaiting a permissionless flush.
         mapping(uint256 idx => ParkedSend) parkedSends;
@@ -256,7 +254,9 @@ contract OriginRouter is
 
     /// @inheritdoc IOriginRouter
     function quoteSendAuctionStageStart(AuctionStageStartParams calldata params) external view returns (uint256) {
-        return _broadcastFee(_os().targetChainIds, _encodeAuctionStageStart(params), IntexGas.AUCTION_STAGE_START);
+        return _broadcastFee(
+            _os().targetChainIds, _encodeAuctionStageStart(params), IntexGas.auctionStart(params.prices.length)
+        );
     }
 
     /// @inheritdoc IOriginRouter
@@ -284,11 +284,19 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function quoteSendIssuanceInstructions(IssuanceInstructionsParams calldata params) external view returns (uint256) {
+    function quoteSendIssuanceInstructions(uint32 dstChainId, IssuanceInstructionsParams[] calldata series)
+        external
+        view
+        returns (uint256)
+    {
+        uint256 recipients;
+        for (uint256 i = 0; i < series.length; i++) {
+            recipients += series[i].recipients.length;
+        }
         return _quoteFee(
-            params.dstChainId,
-            BridgeMsgCodec.encodeIssuanceInstructions(_toCodecPayload(params)),
-            IntexGas.issuance(params.recipients.length)
+            dstChainId,
+            BridgeMsgCodec.encodeIssuanceInstructions(_toCodecPayloads(series)),
+            IntexGas.issuance(series.length, recipients)
         );
     }
 
@@ -296,27 +304,36 @@ contract OriginRouter is
     function quoteSendRefundInstructions(
         uint32 dstChainId,
         uint32 worldwideDay,
+        uint16 chunkIndex,
+        uint16 totalChunks,
         address[] calldata bidders,
         uint128[] calldata refundedAmounts,
         uint128[] calldata paidAmounts
     ) external view returns (uint256) {
         return _quoteFee(
             dstChainId,
-            BridgeMsgCodec.encodeRefundInstructions(worldwideDay, bidders, refundedAmounts, paidAmounts),
+            BridgeMsgCodec.encodeRefundInstructions(
+                worldwideDay, chunkIndex, totalChunks, bidders, refundedAmounts, paidAmounts
+            ),
             IntexGas.refund(bidders.length)
         );
     }
 
     /// @inheritdoc IOriginRouter
-    function quoteSendMarkCalled(uint32 seriesId) external view returns (uint256) {
-        return
-            _broadcastFee(_seriesOrRegistry(seriesId), BridgeMsgCodec.encodeMarkCalled(seriesId), IntexGas.MARK_CALLED);
+    function quoteSendMarkCalled(bytes14 seriesId, uint32 worldwideDay) external view returns (uint256) {
+        return _broadcastFee(
+            _seriesOrRegistry(worldwideDay),
+            BridgeMsgCodec.encodeMarkCalled(seriesId, worldwideDay),
+            IntexGas.MARK_CALLED
+        );
     }
 
     /// @inheritdoc IOriginRouter
-    function quoteSendMarkQualified(uint32 seriesId) external view returns (uint256) {
+    function quoteSendMarkQualified(bytes14 seriesId, uint32 worldwideDay) external view returns (uint256) {
         return _broadcastFee(
-            _seriesOrRegistry(seriesId), BridgeMsgCodec.encodeMarkQualified(seriesId), IntexGas.MARK_QUALIFIED
+            _seriesOrRegistry(worldwideDay),
+            BridgeMsgCodec.encodeMarkQualified(seriesId, worldwideDay),
+            IntexGas.MARK_QUALIFIED
         );
     }
 
@@ -336,7 +353,7 @@ contract OriginRouter is
         $.seriesTargets[params.worldwideDay] = snapshot; // freeze the fan-out set for the whole day
         bytes memory payload = _encodeAuctionStageStart(params);
         for (uint256 i = 0; i < snapshot.length; ++i) {
-            bytes32 sendId = _sendOrPark(snapshot[i], payload, IntexGas.AUCTION_STAGE_START);
+            bytes32 sendId = _sendOrPark(snapshot[i], payload, IntexGas.auctionStart(params.prices.length));
             emit AuctionStageSent(sendId, params.worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
         }
     }
@@ -370,28 +387,43 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function sendIssuanceInstructions(IssuanceInstructionsParams calldata params)
+    function sendIssuanceInstructions(uint32 dstChainId, IssuanceInstructionsParams[] calldata series)
         external
         payable
         onlyRole(INTEX_FACTORY_ROLE)
         returns (bytes32 sendId)
     {
         // Empty `recipients` is valid: a snapshot chain with no local winners still needs the series created.
-        uint256 len = params.recipients.length;
-        if (len != params.quantities.length) revert ArrayLengthMismatch();
-        _requireSeriesTarget(params.seriesId, params.dstChainId);
+        uint256 recipients = _requireIssuanceBatch(dstChainId, series);
         sendId = _sendOrPark(
-            params.dstChainId,
-            BridgeMsgCodec.encodeIssuanceInstructions(_toCodecPayload(params)),
-            IntexGas.issuance(len)
+            dstChainId,
+            BridgeMsgCodec.encodeIssuanceInstructions(_toCodecPayloads(series)),
+            IntexGas.issuance(series.length, recipients)
         );
-        emit IssuanceInstructionsSent(sendId, params.seriesId, len);
+        emit IssuanceInstructionsSent(sendId, series[0].seriesId, recipients);
+    }
+
+    /// @dev Validates a batch and returns its total recipient count. Every series in a message
+    ///      must belong to a day this chain is a target of; the codec bounds the counts.
+    function _requireIssuanceBatch(uint32 dstChainId, IssuanceInstructionsParams[] calldata series)
+        private
+        view
+        returns (uint256 recipients)
+    {
+        if (series.length == 0) revert EmptyArray();
+        for (uint256 i = 0; i < series.length; i++) {
+            if (series[i].recipients.length != series[i].quantities.length) revert ArrayLengthMismatch();
+            _requireSeriesTarget(series[i].worldwideDay, dstChainId);
+            recipients += series[i].recipients.length;
+        }
     }
 
     /// @inheritdoc IOriginRouter
     function sendRefundInstructions(
         uint32 dstChainId,
         uint32 worldwideDay,
+        uint16 chunkIndex,
+        uint16 totalChunks,
         address[] calldata bidders,
         uint128[] calldata refundedAmounts,
         uint128[] calldata paidAmounts
@@ -402,17 +434,19 @@ contract OriginRouter is
         _requireSeriesTarget(worldwideDay, dstChainId);
         sendId = _sendOrPark(
             dstChainId,
-            BridgeMsgCodec.encodeRefundInstructions(worldwideDay, bidders, refundedAmounts, paidAmounts),
+            BridgeMsgCodec.encodeRefundInstructions(
+                worldwideDay, chunkIndex, totalChunks, bidders, refundedAmounts, paidAmounts
+            ),
             IntexGas.refund(len)
         );
         emit RefundInstructionsSent(sendId, worldwideDay, len);
     }
 
     /// @inheritdoc IOriginRouter
-    function sendMarkCalled(uint32 seriesId) external payable onlyRole(INTEX_FACTORY_ROLE) {
-        uint32[] memory snapshot = _os().seriesTargets[seriesId];
+    function sendMarkCalled(bytes14 seriesId, uint32 worldwideDay) external payable onlyRole(INTEX_FACTORY_ROLE) {
+        uint32[] memory snapshot = _os().seriesTargets[worldwideDay];
         if (snapshot.length == 0) revert NoTargets();
-        bytes memory payload = BridgeMsgCodec.encodeMarkCalled(seriesId);
+        bytes memory payload = BridgeMsgCodec.encodeMarkCalled(seriesId, worldwideDay);
         for (uint256 i = 0; i < snapshot.length; ++i) {
             bytes32 sendId = _sendOrPark(snapshot[i], payload, IntexGas.MARK_CALLED);
             emit MarkCalledSent(sendId, seriesId);
@@ -420,10 +454,10 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function sendMarkQualified(uint32 seriesId) external payable onlyRole(INTEX_FACTORY_ROLE) {
-        uint32[] memory snapshot = _os().seriesTargets[seriesId];
+    function sendMarkQualified(bytes14 seriesId, uint32 worldwideDay) external payable onlyRole(INTEX_FACTORY_ROLE) {
+        uint32[] memory snapshot = _os().seriesTargets[worldwideDay];
         if (snapshot.length == 0) revert NoTargets();
-        bytes memory payload = BridgeMsgCodec.encodeMarkQualified(seriesId);
+        bytes memory payload = BridgeMsgCodec.encodeMarkQualified(seriesId, worldwideDay);
         for (uint256 i = 0; i < snapshot.length; ++i) {
             bytes32 sendId = _sendOrPark(snapshot[i], payload, IntexGas.MARK_QUALIFIED);
             emit MarkQualifiedSent(sendId, seriesId);
@@ -476,9 +510,7 @@ contract OriginRouter is
             uint16 batchIndex,
             uint16 totalBatches,
             address[] memory bidderAddresses,
-            uint16[] memory intexQuantities,
-            uint32[] memory intexBidRates,
-            uint32[] memory timestamps
+            uint256[] memory packedBids
         ) = BridgeMsgCodec.decodeBidsBatch(payload);
 
         if (bodySrcChainId != srcChainId) revert SrcChainIdBodyMismatch(srcChainId, bodySrcChainId);
@@ -488,15 +520,7 @@ contract OriginRouter is
 
         IDesis(_os().desis)
             .processBidsBatch(
-                worldwideDay,
-                srcChainId,
-                relayGeneration,
-                batchIndex,
-                totalBatches,
-                bidderAddresses,
-                intexQuantities,
-                intexBidRates,
-                timestamps
+                worldwideDay, srcChainId, relayGeneration, batchIndex, totalBatches, bidderAddresses, packedBids
             );
 
         emit BidsBatchReceived(srcChainId, worldwideDay, bidderAddresses.length);
@@ -523,13 +547,9 @@ contract OriginRouter is
             p.commitEnd,
             p.revealEnd,
             p.issuanceEnd,
-            p.issuanceCurrency,
-            p.referenceCurrency,
             p.promisLoadMinor,
             p.minIntexBidRate,
-            p.entryPrice,
-            p.floorPriceMinor,
-            p.callPriceMinor,
+            p.prices,
             p.callNoticePeriod,
             p.callWindow,
             p.callThreshold,
@@ -537,6 +557,17 @@ contract OriginRouter is
             p.commitBondMinor,
             p.dayState
         );
+    }
+
+    function _toCodecPayloads(IssuanceInstructionsParams[] calldata series)
+        private
+        pure
+        returns (BridgeMsgCodec.IssuanceInstructionsPayload[] memory payloads)
+    {
+        payloads = new BridgeMsgCodec.IssuanceInstructionsPayload[](series.length);
+        for (uint256 i = 0; i < series.length; i++) {
+            payloads[i] = _toCodecPayload(series[i]);
+        }
     }
 
     function _toCodecPayload(IssuanceInstructionsParams calldata p)

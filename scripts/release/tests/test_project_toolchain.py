@@ -16,6 +16,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TEE_BUILD_SCRIPT = REPO_ROOT / "crates/system/tee/build.rs"
 DOCKERFILE = REPO_ROOT / "Dockerfile.project-toolchain"
+DOCKERIGNORE = REPO_ROOT / ".dockerignore"
 PIN_PATH = REPO_ROOT / "release/project-toolchain-v1.json"
 ELF_SPEC_PATH = REPO_ROOT / "release/reproducible-elf-build-v1.json"
 REPRODUCIBLE_BUILD = REPO_ROOT / "scripts/release/reproducible-build.sh"
@@ -33,6 +34,20 @@ def load_verifier():
 
 
 class ProjectToolchainContractTests(unittest.TestCase):
+    def test_release_context_includes_compile_time_solidity_inputs(self) -> None:
+        imported_domains = set()
+        import_pattern = re.compile(r'"(?:\.\./)+contracts/([^/]+)/')
+        for source in (REPO_ROOT / "crates").rglob("*.rs"):
+            imported_domains.update(
+                import_pattern.findall(source.read_text(encoding="utf-8"))
+            )
+
+        rules = set(DOCKERIGNORE.read_text(encoding="utf-8").splitlines())
+        self.assertTrue(imported_domains)
+        for domain in sorted(imported_domains):
+            self.assertIn(f"!contracts/{domain}", rules)
+            self.assertIn(f"!contracts/{domain}/**", rules)
+
     def test_project_declares_one_version_pin_without_registry_delivery(self) -> None:
         pin = json.loads(PIN_PATH.read_text(encoding="utf-8"))
 

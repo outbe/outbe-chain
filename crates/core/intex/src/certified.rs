@@ -5,6 +5,7 @@
 
 use alloy_primitives::{B256, U256};
 use alloy_sol_types::SolEvent;
+use outbe_common::WorldwideDay;
 use outbe_ocomp_protocol::{
     intent::ContributorTargetPreconditionV1,
     receipts::{
@@ -45,8 +46,10 @@ pub fn install_certified_contributor_root(
 ) -> Result<ContributorReceiptV1> {
     validate_input(capability, input)?;
 
-    let current =
-        api::ocomp_contributor_target_projection(storage, input.precondition.worldwide_day)?;
+    let current = api::ocomp_contributor_target_projection(
+        storage,
+        WorldwideDay::new(input.precondition.worldwide_day),
+    )?;
     if current.expected_series_version != input.precondition.expected_series_version {
         return Err(revert("certified contributor target version changed"));
     }
@@ -56,7 +59,7 @@ pub fn install_certified_contributor_root(
 
     let intex = IntexContract::new(storage.clone());
     if intex
-        .ocomp_certified_contributor_generation(input.precondition.worldwide_day)?
+        .ocomp_certified_contributor_generation(WorldwideDay::new(input.precondition.worldwide_day))?
         .is_some()
     {
         return Err(revert("certified contributor root cannot be overwritten"));
@@ -98,22 +101,25 @@ pub fn install_certified_contributor_root(
         eligible_nominal_total: input.eligible_nominal_total,
     };
     storage.with_checkpoint(|| {
-        intex
-            .ocomp_contributor_root
-            .write(&installed.worldwide_day, installed.contributor_root)?;
-        intex
-            .ocomp_eligible_nominal_total
-            .write(&installed.worldwide_day, installed.eligible_nominal_total)?;
+        intex.ocomp_contributor_root.write(
+            &WorldwideDay::new(installed.worldwide_day),
+            installed.contributor_root,
+        )?;
+        intex.ocomp_eligible_nominal_total.write(
+            &WorldwideDay::new(installed.worldwide_day),
+            installed.eligible_nominal_total,
+        )?;
         // Metadata contains the version selector and switches only after the
         // root and total are durable.
-        intex
-            .ocomp_contributor_metadata
-            .write(&installed.worldwide_day, installed.metadata_word())?;
+        intex.ocomp_contributor_metadata.write(
+            &WorldwideDay::new(installed.worldwide_day),
+            installed.metadata_word(),
+        )?;
         storage.emit_event(
             INTEX_ADDRESS,
             IIntex::CertifiedContributorRootInstalled {
                 activationCallId: input.binding.activation_call_id,
-                seriesId: input.precondition.worldwide_day,
+                worldwideDay: input.precondition.worldwide_day,
                 seriesVersionBefore: input.precondition.expected_series_version,
                 seriesVersionAfter: next_version,
                 contributorCount: input.contributor_count,
@@ -163,8 +169,10 @@ fn revert(reason: &'static str) -> PrecompileError {
 
 #[cfg(test)]
 mod tests {
+    use crate::schema::SeriesId;
     use alloy_primitives::{Address, LogData};
     use alloy_sol_types::SolEvent;
+
     use outbe_ocomp_protocol::{
         common::EntityId36,
         profile::poc_schema_limits,
@@ -225,7 +233,8 @@ mod tests {
             series_id: u32,
         ) -> Option<CertifiedContributorGenerationProjection> {
             StorageHandle::enter(self, |storage| {
-                api::certified_contributor_generation(&storage, series_id).unwrap()
+                api::certified_contributor_generation(&storage, WorldwideDay::new(series_id))
+                    .unwrap()
             })
         }
     }
@@ -373,6 +382,11 @@ mod tests {
         }
     }
 
+    /// Test ids carry a fixed USD/U pair; only the day varies.
+    fn test_sid(worldwide_day: u32) -> SeriesId {
+        SeriesId::pack(WorldwideDay::new(worldwide_day), *b"USD", b'U').unwrap()
+    }
+
     fn input(worldwide_day: u32, call: u8) -> CertifiedContributorRootV1 {
         CertifiedContributorRootV1 {
             binding: binding(call),
@@ -460,11 +474,15 @@ mod tests {
         let (series_exists, legacy_contributors, target) =
             StorageHandle::enter(&mut provider, |storage| {
                 (
-                    api::series_exists(&storage, input.precondition.worldwide_day).unwrap(),
-                    api::read_contributors(&storage, input.precondition.worldwide_day).unwrap(),
+                    api::series_exists(&storage, test_sid(input.precondition.worldwide_day)).unwrap(),
+                    api::read_contributors(
+                        &storage,
+                        WorldwideDay::new(input.precondition.worldwide_day),
+                    )
+                    .unwrap(),
                     api::ocomp_contributor_target_projection(
                         &storage,
-                        input.precondition.worldwide_day,
+                        WorldwideDay::new(input.precondition.worldwide_day),
                     )
                     .unwrap(),
                 )
@@ -535,7 +553,7 @@ mod tests {
             api::create_series(
                 &storage,
                 crate::CreateSeriesParams {
-                    series_id,
+                    series_id: test_sid(series_id),
                     worldwide_day: series_id.into(),
                     issued_intex_count: 1,
                     promis_load_minor: 1,
@@ -582,7 +600,7 @@ mod tests {
         let record_result = StorageHandle::enter(&mut provider, |storage| {
             api::record_contributors(
                 &storage,
-                value.precondition.worldwide_day,
+                WorldwideDay::new(value.precondition.worldwide_day),
                 &legacy_contributors,
             )
         });
@@ -594,7 +612,7 @@ mod tests {
             api::create_series(
                 &storage,
                 crate::CreateSeriesParams {
-                    series_id: value.precondition.worldwide_day,
+                    series_id: test_sid(value.precondition.worldwide_day),
                     worldwide_day: value.precondition.worldwide_day.into(),
                     issued_intex_count: 1,
                     promis_load_minor: 1,
@@ -612,17 +630,21 @@ mod tests {
                 },
             )
             .unwrap();
-            assert!(api::series_exists(&storage, value.precondition.worldwide_day).unwrap());
-            assert!(
-                api::read_contributors(&storage, value.precondition.worldwide_day)
-                    .unwrap()
-                    .is_empty()
-            );
+            assert!(api::series_exists(&storage, test_sid(value.precondition.worldwide_day)).unwrap());
+            assert!(api::read_contributors(
+                &storage,
+                WorldwideDay::new(value.precondition.worldwide_day)
+            )
+            .unwrap()
+            .is_empty());
             assert_eq!(
-                api::certified_contributor_generation(&storage, value.precondition.worldwide_day)
-                    .unwrap()
-                    .unwrap()
-                    .series_version,
+                api::certified_contributor_generation(
+                    &storage,
+                    WorldwideDay::new(value.precondition.worldwide_day)
+                )
+                .unwrap()
+                .unwrap()
+                .series_version,
                 1
             );
         });

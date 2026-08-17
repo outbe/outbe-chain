@@ -21,7 +21,7 @@ pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 /// Interface ID probed by `OriginRouter.wire` — `type(IDesis).interfaceId` of the
 /// router-facing interface in contracts/intex/src/origin/interfaces/IDesis.sol
 /// (XOR of its 4 function selectors).
-pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = [0xce, 0xe6, 0x92, 0x32];
+pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = [0xf7, 0x8d, 0x15, 0x19];
 
 sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
@@ -39,12 +39,7 @@ pub fn dispatch(
         use IDesis::IDesisCalls::*;
         match call {
             processBidsBatch(c) => mutate_void(c, caller, |sender, c| {
-                let bids = bids_from_sol_arrays(
-                    &c.bidderAddresses,
-                    &c.intexQuantities,
-                    &c.intexBidRates,
-                    &c.timestamps,
-                )?;
+                let bids = bids_from_sol_arrays(&c.bidderAddresses, &c.packedBids)?;
                 runtime::process_bids_batch(
                     storage.clone(),
                     sender,
@@ -101,24 +96,28 @@ pub fn dispatch(
     })
 }
 
-fn bids_from_sol_arrays(
-    bidders: &[Address],
-    quantities: &[u16],
-    rates: &[u32],
-    timestamps: &[u32],
-) -> Result<Vec<BidData>> {
-    let len = bidders.len();
-    if len != quantities.len() || len != rates.len() || len != timestamps.len() {
+/// Mirrors `BridgeMsgCodec.packBid`: one word per bid, low bits up —
+/// reference(16) | issuance(16) | timestamp(32) | rate(32) | quantity(16).
+fn bids_from_sol_arrays(bidders: &[Address], packed: &[U256]) -> Result<Vec<BidData>> {
+    if bidders.len() != packed.len() {
         return Err(outbe_primitives::error::PrecompileError::Revert(
             "processBidsBatch: array length mismatch".into(),
         ));
     }
-    Ok((0..len)
-        .map(|i| BidData {
-            bidder_address: bidders[i],
-            intex_quantity: quantities[i],
-            intex_bid_rate: rates[i],
-            timestamp: timestamps[i],
+    Ok(bidders
+        .iter()
+        .zip(packed)
+        .map(|(bidder, word)| {
+            let limbs = word.as_limbs();
+            let low = limbs[0];
+            BidData {
+                bidder_address: *bidder,
+                reference_currency: low as u16,
+                issuance_currency: (low >> 16) as u16,
+                timestamp: (low >> 32) as u32,
+                intex_bid_rate: (limbs[1]) as u32,
+                intex_quantity: (limbs[1] >> 32) as u16,
+            }
         })
         .collect())
 }

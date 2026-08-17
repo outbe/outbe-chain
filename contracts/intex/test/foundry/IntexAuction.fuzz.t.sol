@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {ReferenceCurrencyPriceLib} from "./helpers/ReferenceCurrencyPriceLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
@@ -9,6 +10,9 @@ import {MockAuctionEscrow} from "@test-mocks/MockAuctionEscrow.sol";
 
 /// @dev Property tests for the reveal lock-amount overflow guard and the clearing sanity bounds.
 contract IntexAuctionFuzzTest is Test {
+    uint16 internal constant ISSUANCE_CCY = 840;
+    uint16 internal constant REFERENCE_CCY = 840;
+
     IntexAuction internal auction;
     MockAuctionEscrow internal escrow;
 
@@ -20,8 +24,9 @@ contract IntexAuctionFuzzTest is Test {
     address internal iba1;
     address internal iba2;
 
-    bytes32 internal constant REVEAL_BID_TYPEHASH =
-        keccak256("RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate)");
+    bytes32 internal constant REVEAL_BID_TYPEHASH = keccak256(
+        "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
+    );
     bytes32 internal constant EIP712_DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
@@ -62,7 +67,7 @@ contract IntexAuctionFuzzTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.BidRateAboveMax.selector, rate));
         vm.prank(iba1);
-        auction.revealBid(worldwideDay, quantity, rate, uint64(block.chainid), sig);
+        auction.revealBid(worldwideDay, quantity, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
     }
 
     function test_Fuzz_RevealBid_ValidProductLocksExactAmount(uint256 qSeed, uint256 rSeed) public {
@@ -77,7 +82,7 @@ contract IntexAuctionFuzzTest is Test {
         _enterReveal(worldwideDay);
 
         vm.prank(iba1);
-        auction.revealBid(worldwideDay, quantity, rate, uint64(block.chainid), sig);
+        auction.revealBid(worldwideDay, quantity, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
 
         assertEq(escrow.lockedFunds(worldwideDay, iba1), expected, "locked == qty * escrow_basis * rate / RATE_SCALE");
     }
@@ -143,7 +148,9 @@ contract IntexAuctionFuzzTest is Test {
         view
         returns (bytes memory)
     {
-        bytes32 structHash = keccak256(abi.encode(REVEAL_BID_TYPEHASH, worldwideDay, bidder, qty, rate));
+        bytes32 structHash = keccak256(
+            abi.encode(REVEAL_BID_TYPEHASH, worldwideDay, bidder, qty, rate, ISSUANCE_CCY, REFERENCE_CCY)
+        );
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", _domainSeparator(), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
         return abi.encodePacked(r, s, v);
@@ -156,13 +163,9 @@ contract IntexAuctionFuzzTest is Test {
             issuanceEnd: uint32(block.timestamp + ISSUANCE_OFFSET)
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
-            issuanceCurrency: 840,
-            referenceCurrency: 840,
             promisLoadMinor: PROMIS_LOAD_MINOR,
             minIntexBidRate: MIN_RATE,
-            entryPriceMinor: ENTRY_PRICE,
-            floorPriceMinor: 100,
-            callPriceMinor: 200,
+            prices: ReferenceCurrencyPriceLib.onePriced(840, ENTRY_PRICE, 100, 200),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
             minIntexBidQuantity: MIN_QTY,
             commitBondMinor: 0
@@ -188,9 +191,9 @@ contract IntexAuctionFuzzTest is Test {
         _commit(worldwideDay, iba2, s2);
         _enterReveal(worldwideDay);
         vm.prank(iba1);
-        auction.revealBid(worldwideDay, 5, 50, uint64(block.chainid), s1);
+        auction.revealBid(worldwideDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), s1);
         vm.prank(iba2);
-        auction.revealBid(worldwideDay, 5, 50, uint64(block.chainid), s2);
+        auction.revealBid(worldwideDay, 5, 50, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), s2);
         vm.warp(block.timestamp + 120);
         return 2;
     }

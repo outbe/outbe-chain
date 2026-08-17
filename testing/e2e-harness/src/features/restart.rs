@@ -3,6 +3,7 @@
 //! enclave container stays up) must resume signing from the persisted share
 //! WITHOUT a fresh DKG ceremony.
 
+use std::path::Path;
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -54,6 +55,17 @@ fn lockstep_ok(rpc: &Rpc, committee: u16, joiner: u16) -> bool {
         }
     }
     false
+}
+
+fn wait_for_dkg_retry_snapshot(keys_dir: impl AsRef<Path>, validator: usize, file: &str) {
+    let snapshot = keys_dir.as_ref().join(file);
+    for _ in 0..1_800 {
+        if snapshot.exists() {
+            return;
+        }
+        sleep(Duration::from_millis(100));
+    }
+    panic!("validator-{validator} did not persist {file} before the restart crash point");
 }
 
 /// Bring a joiner to ACTIVE with a persisted (keys-dir) share (s4:13-30).
@@ -386,6 +398,7 @@ fn restart_joiner_during_dkg(world: &mut World) {
         sleep(Duration::from_millis(100));
     }
     assert!(ceremony_started, "joiner's DKG ceremony never started");
+    wait_for_dkg_retry_snapshot(&keys, idx, "dkg_player_retry.hex");
     assert!(
         !world
             .localnet
@@ -452,6 +465,11 @@ fn interrupted_dkg_retries_without_partial_activation(world: &mut World) {
         share_promoted,
         "retried DKG did not promote the joiner's share after activation"
     );
+    assert_eq!(
+        world.rpc.has_threshold_shares(joiner_port),
+        Some(true),
+        "ACTIVE joiner has no current private threshold share"
+    );
     assert!(
         world
             .localnet
@@ -459,7 +477,11 @@ fn interrupted_dkg_retries_without_partial_activation(world: &mut World) {
         "joiner enclave did not recover its sealed state during DKG restart"
     );
 
-    let target = world.rpc.head(primary).unwrap_or_default() + 3;
+    let voter_misses_before = world
+        .rpc
+        .voter_miss_count(primary, &addr)
+        .expect("joiner voter-miss count after activation");
+    let target = world.rpc.head(primary).unwrap_or_default() + 5;
     let mut ports = world.validators.committee_ports();
     ports.push(joiner_port);
     for port in ports {
@@ -467,6 +489,11 @@ fn interrupted_dkg_retries_without_partial_activation(world: &mut World) {
         assert_eq!(world.rpc.active_count(port), Some(5));
         assert_eq!(world.rpc.epoch_on(port), Some(expected_epoch));
     }
+    assert_eq!(
+        world.rpc.voter_miss_count(primary, &addr),
+        Some(voter_misses_before),
+        "ACTIVE joiner accumulated voter misses after DKG recovery"
+    );
 }
 
 /// Restart at the earliest durable join checkpoint: registration, P2P identity
@@ -634,22 +661,9 @@ fn restart_active_validator_during_reshare(world: &mut World) {
     assert_eq!(world.rpc.validator_status(primary, &addr), Some(1));
     assert!(!world.rpc.is_participant(primary, &addr));
     assert_eq!(world.rpc.active_count(primary), Some(4));
-    let retry_snapshot = world
-        .localnet
-        .scenario_dir()
-        .join("validator-3/data/keys/dkg_dealer_retry.hex");
-    let mut retry_snapshot_persisted = false;
-    for _ in 0..100 {
-        if retry_snapshot.exists() {
-            retry_snapshot_persisted = true;
-            break;
-        }
-        sleep(Duration::from_millis(50));
-    }
-    assert!(
-        retry_snapshot_persisted,
-        "active dealer did not persist its retry transcript before restart"
-    );
+    let incumbent_keys = world.localnet.scenario_dir().join("validator-3/data/keys");
+    wait_for_dkg_retry_snapshot(&incumbent_keys, 3, "dkg_dealer_retry.hex");
+    wait_for_dkg_retry_snapshot(&incumbent_keys, 3, "dkg_player_retry.hex");
     world.state.marker_height = world.rpc.head(primary);
     world.state.marker_count = world
         .rpc
@@ -672,6 +686,15 @@ fn active_restart_reshare_converges(world: &mut World) {
     let idx = world.validators.joiner_index();
     let joiner_port = world.validators.http_port(idx);
     let addr = world.state.joiner_addr.clone().expect("joiner address");
+    let restarted_key = world
+        .validators
+        .get(3)
+        .evm_key()
+        .expect("restarted validator key");
+    let restarted_addr = world
+        .rpc
+        .address_of(&restarted_key)
+        .expect("restarted validator address");
     let marker = world.state.marker_height.expect("restart height");
     let old_epoch = world.state.marker_count.expect("restart epoch");
 
@@ -721,6 +744,25 @@ fn active_restart_reshare_converges(world: &mut World) {
             .localnet
             .log_has(3, "restoring durable DKG dealer transcript"),
         "restarted active dealer did not restore the interrupted DKG transcript"
+    );
+    assert_eq!(
+        world.rpc.has_threshold_shares(restarted),
+        Some(true),
+        "restarted ACTIVE validator has no current private threshold share"
+    );
+    let voter_misses_before = world
+        .rpc
+        .voter_miss_count(primary, &restarted_addr)
+        .expect("restarted validator voter-miss count after activation");
+    let voting_target = world.rpc.head(primary).unwrap_or_default() + 5;
+    assert!(
+        world.rpc.wait_block(primary, voting_target, 60).is_some(),
+        "committee did not continue after restarted validator activation"
+    );
+    assert_eq!(
+        world.rpc.voter_miss_count(primary, &restarted_addr),
+        Some(voter_misses_before),
+        "restarted ACTIVE validator accumulated voter misses after DKG recovery"
     );
     assert!(
         lockstep_ok(&world.rpc, primary, restarted),

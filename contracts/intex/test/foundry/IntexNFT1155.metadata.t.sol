@@ -13,13 +13,13 @@ import {MetadataTestLib} from "./helpers/MetadataTestLib.sol";
 contract IntexNFT1155MetadataTest is Test {
     using MetadataTestLib for bytes;
 
-    uint32 internal constant SERIES_ID = 20260622;
+    uint32 internal constant SERIES_ID_DAY = 20260622;
+    bytes14 internal constant SERIES_ID = "20260622-USD-U";
     uint32 internal constant CAP = 10_000;
     uint32 internal constant CALL_PERIOD = 14 days;
-    string internal constant DISPLAY_ID = "20260622-840-840";
 
-    // A COEN rate of 0.001 on the 1e18 oracle scale, with the protocol's 1.08x floor and 2.28x call.
-    uint64 internal constant ENTRY_PRICE = 1e15;
+    // A COEN rate of 0.001 on the 1e9 wire scale, with the protocol's 1.08x floor and 2.28x call.
+    uint64 internal constant ENTRY_PRICE = 1e6;
     uint64 internal constant FLOOR_PRICE = (ENTRY_PRICE * 108) / 100;
     uint64 internal constant CALL_PRICE = (ENTRY_PRICE * 228) / 100;
     uint128 internal constant PROMIS_LOAD = 100_000e18;
@@ -38,7 +38,7 @@ contract IntexNFT1155MetadataTest is Test {
         bytes32 settlementRole = token.SETTLEMENT_ROLE();
         vm.prank(admin);
         token.grantRole(settlementRole, bridger);
-        IIntexNFT1155.CreateSeriesParams memory params = CreateSeriesLib.params(SERIES_ID, CAP, CALL_PERIOD);
+        IIntexNFT1155.CreateSeriesParams memory params = CreateSeriesLib.params(SERIES_ID_DAY, CAP, CALL_PERIOD);
         params.entryPriceMinor = ENTRY_PRICE;
         params.floorPriceMinor = FLOOR_PRICE;
         params.callPriceMinor = CALL_PRICE;
@@ -60,14 +60,14 @@ contract IntexNFT1155MetadataTest is Test {
 
     function test_uri_IssuedToken_RendersIdentity() public view {
         bytes memory json = _json(iTok);
-        _assertContains(json, string.concat("\"name\":\"Intex Series ", DISPLAY_ID, "\","));
+        _assertContains(json, string.concat("\"name\":\"Intex Series ", string(abi.encodePacked(SERIES_ID)), "\","));
         _assertContains(json, string.concat("\"description\":\"", IntexMetadata.DESCRIPTION, "\""));
         _assertContains(json, "{\"trait_type\":\"Token Status\",\"value\":\"Issued\"}");
         _assertContains(json, "{\"trait_type\":\"Series State\",\"value\":\"Issued\"}");
         _assertContains(json, "{\"trait_type\":\"Worldwide Day\",\"value\":20260622,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Issuance Currency\",\"value\":840,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Reference Currency\",\"value\":840,\"display_type\":\"number\"}");
-        // Six fraction digits with trailing zeros trimmed, decoded from the 1e18 oracle scale.
+        // Six fraction digits with trailing zeros trimmed, decoded from the 1e9 wire scale.
         _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":0.001,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Floor Price\",\"value\":0.00108,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Call Price\",\"value\":0.00228,\"display_type\":\"number\"}");
@@ -151,7 +151,9 @@ contract IntexNFT1155MetadataTest is Test {
         token.settle(SERIES_ID, user, user2, 3);
 
         bytes memory json = _json(sTok);
-        _assertContains(json, string.concat("\"name\":\"Intex Series ", DISPLAY_ID, " - Settled\","));
+        _assertContains(
+            json, string.concat("\"name\":\"Intex Series ", string(abi.encodePacked(SERIES_ID)), " - Settled\",")
+        );
         _assertContains(json, "{\"trait_type\":\"Token Status\",\"value\":\"Settled\"}");
         _assertContains(json, "{\"trait_type\":\"Worldwide Day\",\"value\":20260622,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":0.001,\"display_type\":\"number\"}");
@@ -164,7 +166,9 @@ contract IntexNFT1155MetadataTest is Test {
 
     function test_uri_SettledToken_RendersBeforeAnySettle() public view {
         bytes memory json = _json(sTok);
-        _assertContains(json, string.concat("\"name\":\"Intex Series ", DISPLAY_ID, " - Settled\","));
+        _assertContains(
+            json, string.concat("\"name\":\"Intex Series ", string(abi.encodePacked(SERIES_ID)), " - Settled\",")
+        );
         _assertContains(json, "{\"trait_type\":\"Token Status\",\"value\":\"Settled\"}");
     }
 
@@ -179,14 +183,16 @@ contract IntexNFT1155MetadataTest is Test {
         assertEq(IntexMetadata.tokenURI(legacy, block.timestamp), token.contractURI());
     }
 
-    function test_tokenURI_ZeroPadsCurrencies() public view {
+    /// @dev A currency the oracle has no letters for keeps its digits in the id.
+    function test_tokenURI_RendersTheNumericFallbackId() public view {
         IIntexNFT1155.SeriesData memory data;
-        data.worldwideDay = SERIES_ID;
-        data.issuanceCurrency = 8;
-        data.referenceCurrency = 84;
+        data.worldwideDay = SERIES_ID_DAY;
+        data.seriesId = "20260622-949-U";
+        data.issuanceCurrency = 949;
+        data.referenceCurrency = 840;
         data.issuedAt = 1;
         bytes memory json = MetadataTestLib.decodeJsonDataUri(IntexMetadata.tokenURI(data, block.timestamp));
-        _assertContains(json, "\"name\":\"Intex Series 20260622-008-084\",");
+        _assertContains(json, "\"name\":\"Intex Series 20260622-949-U\",");
     }
 
     function test_contractURI_CollectionDocument() public view {
@@ -199,7 +205,7 @@ contract IntexNFT1155MetadataTest is Test {
     function test_svg_FormatsHumanValues() public view {
         bytes memory svg = _json(iTok).decodeSvg();
         assertTrue(svg.contains("INTEX SERIES"), "header");
-        assertTrue(svg.contains(bytes(DISPLAY_ID)), "composite id");
+        assertTrue(svg.contains(bytes(abi.encodePacked(SERIES_ID))), "composite id");
         assertTrue(svg.contains(">0.001</text>"), "entry price");
         assertTrue(svg.contains(">0.00228</text>"), "call price");
         assertTrue(svg.contains(">100,000</text>"), "promis load as whole units with separators");
@@ -208,17 +214,17 @@ contract IntexNFT1155MetadataTest is Test {
 
     function test_tokenURI_TrimsFractionAndKeepsWholeAmounts() public view {
         IIntexNFT1155.SeriesData memory data;
-        data.worldwideDay = SERIES_ID;
+        data.worldwideDay = SERIES_ID_DAY;
         data.issuedAt = 1;
-        data.entryPriceMinor = 12e18; // whole units render without a decimal point
-        data.floorPriceMinor = 1e12; // smallest value the six-digit precision keeps
-        data.callPriceMinor = 1_234_567_890_123_456; // truncated to six digits
+        data.entryPriceMinor = 12e9; // whole units render without a decimal point
+        data.floorPriceMinor = 1e3; // smallest value the six-digit precision keeps
+        data.callPriceMinor = 1_234_567; // truncated to six digits
         bytes memory json = MetadataTestLib.decodeJsonDataUri(IntexMetadata.tokenURI(data, block.timestamp));
         _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":12,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Floor Price\",\"value\":0.000001,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Call Price\",\"value\":0.001234,\"display_type\":\"number\"}");
 
-        data.entryPriceMinor = 1e11; // below the precision floor
+        data.entryPriceMinor = 1e2; // below the precision floor
         json = MetadataTestLib.decodeJsonDataUri(IntexMetadata.tokenURI(data, block.timestamp));
         _assertContains(json, "{\"trait_type\":\"Entry Price\",\"value\":0,\"display_type\":\"number\"}");
     }

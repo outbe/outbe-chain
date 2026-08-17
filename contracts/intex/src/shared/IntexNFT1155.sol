@@ -20,7 +20,7 @@ import {IntexMetadata} from "./libs/IntexMetadata.sol";
  * @dev Series lifecycle: Issued -> Qualified -> Called.
  *      Expiry is not an on-chain state: it is derived from `calledAt + callNoticePeriod`
  *      against the clock (settle/bridge gates, metadata rendering).
- * @dev Each series has two token ids: issued = `uint256(seriesId)`,
+ * @dev Each series has two token ids: issued = `uint112(seriesId)`,
  *      settled = `keccak256("SETTLED", seriesId)`.
  */
 contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgradeable, IIntexNFT1155 {
@@ -68,7 +68,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         /// @dev Whether address is in seriesHolders[tokenId].
         mapping(uint256 tokenId => mapping(address holder => bool isHolder)) isSeriesHolder;
         /// @dev Series ids issued per worldwide day.
-        mapping(uint32 worldwideDay => uint32[] seriesIds) seriesOfDay;
+        mapping(uint32 worldwideDay => bytes14[] seriesIds) seriesOfDay;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexNFT1155")) - 1)) & ~bytes32(uint256(0xff))
@@ -149,19 +149,19 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function worldwideDayOf(uint32 seriesId) external view returns (uint32) {
-        return _s().seriesData[uint256(seriesId)].worldwideDay;
+    function worldwideDayOf(bytes14 seriesId) external view returns (uint32) {
+        return _s().seriesData[_issuedTokenId(seriesId)].worldwideDay;
     }
 
     /// @inheritdoc IIntexNFT1155
-    function seriesIdsByWorldwideDay(uint32 worldwideDay) external view returns (uint32[] memory) {
+    function seriesIdsByWorldwideDay(uint32 worldwideDay) external view returns (bytes14[] memory) {
         return _s().seriesOfDay[worldwideDay];
     }
 
     /// @inheritdoc IIntexNFT1155
     function createSeries(IIntexNFT1155.CreateSeriesParams calldata params) external onlyRole(RELAYER_ROLE) {
         IntexNFT1155Storage storage $ = _s();
-        uint256 iTok = uint256(params.seriesId);
+        uint256 iTok = _issuedTokenId(params.seriesId);
 
         if ($.seriesData[iTok].issuedAt != 0) {
             revert TokenAlreadyExists(iTok);
@@ -189,7 +189,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             totalSupply: 0,
             status: IIntexNFT1155.IntexStatus.Issued,
             state: IIntexNFT1155.IntexState.Issued,
-            worldwideDay: params.worldwideDay
+            worldwideDay: params.worldwideDay,
+            seriesId: params.seriesId
         });
         $.seriesData[iTok] = seed;
 
@@ -209,13 +210,13 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function mint(address to, uint256 quantity, uint32 seriesId) external onlyRole(RELAYER_ROLE) {
+    function mint(address to, uint256 quantity, bytes14 seriesId) external onlyRole(RELAYER_ROLE) {
         if (to == address(0)) {
             revert ZeroAddress("to", to);
         }
 
         IntexNFT1155Storage storage $ = _s();
-        uint256 tokenId = uint256(seriesId);
+        uint256 tokenId = _issuedTokenId(seriesId);
         IIntexNFT1155.SeriesData storage data = $.seriesData[tokenId];
         if (data.issuedAt == 0) {
             revert NonexistentToken(tokenId);
@@ -249,8 +250,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function markQualified(uint32 seriesId) external onlyRole(RELAYER_ROLE) {
-        uint256 tokenId = uint256(seriesId);
+    function markQualified(bytes14 seriesId) external onlyRole(RELAYER_ROLE) {
+        uint256 tokenId = _issuedTokenId(seriesId);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.issuedAt == 0) {
             revert NonexistentToken(tokenId);
@@ -269,8 +270,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function markCalled(uint32 seriesId) external onlyRole(RELAYER_ROLE) {
-        uint256 tokenId = uint256(seriesId);
+    function markCalled(bytes14 seriesId) external onlyRole(RELAYER_ROLE) {
+        uint256 tokenId = _issuedTokenId(seriesId);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.issuedAt == 0) {
             revert NonexistentToken(tokenId);
@@ -360,8 +361,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         uint256 newTotal = uint256(data.totalSupply) + amount;
         // Only the Issued path reaches here: the status guard above already rejected Settled ids.
         if (newTotal > data.issuedIntexCount) {
-            // forge-lint: disable-next-line(unsafe-typecast) -- Issued tokenId == uint256(seriesId)
-            revert SupplyCapExceeded(uint32(tokenId), newTotal, data.issuedIntexCount);
+            revert SupplyCapExceeded(bytes14(uint112(tokenId)), newTotal, data.issuedIntexCount);
         }
 
         // CEI ok: write totalSupply before _mint (see mint()). Cast is safe because the cap
@@ -372,13 +372,13 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function settle(uint32 seriesId, address from, address to, uint256 amount) external onlyRole(SETTLEMENT_ROLE) {
+    function settle(bytes14 seriesId, address from, address to, uint256 amount) external onlyRole(SETTLEMENT_ROLE) {
         if (from == address(0)) revert ZeroAddress("from", from);
         if (to == address(0)) revert ZeroAddress("to", to);
         if (amount == 0) revert ZeroAmount();
 
         IntexNFT1155Storage storage $ = _s();
-        uint256 iTok = uint256(seriesId);
+        uint256 iTok = _issuedTokenId(seriesId);
         IIntexNFT1155.SeriesData storage data = $.seriesData[iTok];
         if (data.issuedAt == 0) revert NonexistentToken(iTok);
 
@@ -411,12 +411,12 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function burnSettled(address holder, uint32 seriesId, uint256 amount) external onlyRole(PROMIS_ROLE) {
+    function burnSettled(address holder, bytes14 seriesId, uint256 amount) external onlyRole(PROMIS_ROLE) {
         if (holder == address(0)) revert ZeroAddress("holder", holder);
         if (amount == 0) revert ZeroAmount();
 
         IntexNFT1155Storage storage $ = _s();
-        uint256 iTok = uint256(seriesId);
+        uint256 iTok = _issuedTokenId(seriesId);
         IIntexNFT1155.SeriesData storage iData = $.seriesData[iTok];
         // Series must exist; we look up via the Issued id storage.
         if (iData.issuedAt == 0) revert NonexistentToken(iTok);
@@ -441,11 +441,11 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function parkIntex(address holder, uint32 seriesId, uint256 amount) external onlyRole(GEM_ROLE) returns (uint256) {
+    function parkIntex(address holder, bytes14 seriesId, uint256 amount) external onlyRole(GEM_ROLE) returns (uint256) {
         if (holder == address(0)) revert ZeroAddress("holder", holder);
         if (amount == 0) revert ZeroAmount();
 
-        uint256 iTok = uint256(seriesId);
+        uint256 iTok = _issuedTokenId(seriesId);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[iTok];
         if (data.issuedAt == 0) revert NonexistentToken(iTok);
 
@@ -462,22 +462,32 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function issuedTokenId(uint32 seriesId) external pure returns (uint256) {
-        return uint256(seriesId);
+    function seriesExists(bytes14 seriesId) external view returns (bool) {
+        return _s().seriesData[_issuedTokenId(seriesId)].issuedAt != 0;
     }
 
     /// @inheritdoc IIntexNFT1155
-    function settledTokenId(uint32 seriesId) external pure returns (uint256) {
+    function issuedTokenId(bytes14 seriesId) external pure returns (uint256) {
+        return _issuedTokenId(seriesId);
+    }
+
+    /// @inheritdoc IIntexNFT1155
+    function settledTokenId(bytes14 seriesId) external pure returns (uint256) {
         return _settledTokenId(seriesId);
     }
 
     /// @inheritdoc IIntexNFT1155
-    function tokenIds(uint32 seriesId) external pure returns (uint256 issued, uint256 settled) {
-        return (uint256(seriesId), _settledTokenId(seriesId));
+    function tokenIds(bytes14 seriesId) external pure returns (uint256 issued, uint256 settled) {
+        return (_issuedTokenId(seriesId), _settledTokenId(seriesId));
+    }
+
+    /// @dev Pure helper used internally and exposed via `issuedTokenId`.
+    function _issuedTokenId(bytes14 seriesId) private pure returns (uint256) {
+        return uint256(uint112(seriesId));
     }
 
     /// @dev Pure helper used internally and exposed via `settledTokenId`.
-    function _settledTokenId(uint32 seriesId) internal pure returns (uint256) {
+    function _settledTokenId(bytes14 seriesId) internal pure returns (uint256) {
         return uint256(keccak256(abi.encodePacked(_SETTLED_DOMAIN, seriesId)));
     }
 
@@ -487,9 +497,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function readData(uint32 seriesId) external view returns (IIntexNFT1155.SeriesData memory) {
+    function readData(bytes14 seriesId) external view returns (IIntexNFT1155.SeriesData memory) {
         IntexNFT1155Storage storage $ = _s();
-        uint256 tokenId = uint256(seriesId);
+        uint256 tokenId = _issuedTokenId(seriesId);
         // `issuedAt == 0` is the canonical existence sentinel for seriesData entries.
         // slither-disable-next-line incorrect-equality
         if ($.seriesData[tokenId].issuedAt == 0) {
@@ -499,12 +509,12 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function holderBalances(uint32 seriesId, address holder)
+    function holderBalances(bytes14 seriesId, address holder)
         external
         view
         returns (IIntexNFT1155.HolderBalances memory)
     {
-        uint256 iTok = uint256(seriesId);
+        uint256 iTok = _issuedTokenId(seriesId);
         uint256 sTok = _settledTokenId(seriesId);
         return IIntexNFT1155.HolderBalances({
             issued: uint32(balanceOf(holder, iTok)), settled: uint32(balanceOf(holder, sTok))
@@ -512,7 +522,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function getIssuedHoldersWithBalances(uint32 seriesId, uint256 offset, uint256 limit)
+    function getIssuedHoldersWithBalances(bytes14 seriesId, uint256 offset, uint256 limit)
         external
         view
         returns (
@@ -524,7 +534,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     {
         if (limit == 0) revert ZeroLimit();
 
-        uint256 iTok = uint256(seriesId);
+        uint256 iTok = _issuedTokenId(seriesId);
         uint256 sTok = _settledTokenId(seriesId);
 
         address[] storage allHolders = _s().seriesHolders[iTok];
@@ -558,8 +568,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function getAuctionWonCount(uint32 seriesId, address account) external view returns (uint16) {
-        return _s().auctionWonCount[uint256(seriesId)][account];
+    function getAuctionWonCount(bytes14 seriesId, address account) external view returns (uint16) {
+        return _s().auctionWonCount[_issuedTokenId(seriesId)][account];
     }
 
     /// @inheritdoc IIntexNFT1155

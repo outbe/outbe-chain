@@ -5,7 +5,8 @@ use crate::{
     error::ProtocolError,
     hash::hash_framed,
     intent::{
-        ContributorTargetPreconditionV1, DayType, NodTargetPreconditionV1, TributeInputBindingV1,
+        ContributorTargetPreconditionV1, DayType, NodTargetPreconditionV1, ReferenceEntryPriceV1,
+        TributeInputBindingV1,
     },
     registry::HashDomain,
     schema::{
@@ -100,7 +101,7 @@ wire_struct! {
         pub destination: BudgetSplitDestination,
         pub desis_brief_hash: Option<B256>,
         pub carry_over_credit: U256,
-        pub auction_entry_price: U256,
+        pub auction_entry_prices: Vec<ReferenceEntryPriceV1>,
         pub logical_anchor: u64,
     }
     validate = validate_request_budget_split_receipt;
@@ -389,18 +390,26 @@ pub fn empty_apply_event_summary_hash() -> Result<B256, ProtocolError> {
     hash_framed(HashDomain::ApplyEventSummary, &[])
 }
 
+/// Canonical hash of the auction brief a request applies. The price table is
+/// length-prefixed and hashed in the order given, which the caller keeps ascending.
 pub fn desis_request_brief_hash(
     protocol_bundle_hash: B256,
     wwd: u32,
     auction_base: U256,
-    auction_entry_price: U256,
+    auction_entry_prices: &[ReferenceEntryPriceV1],
     logical_anchor: u64,
 ) -> Result<B256, ProtocolError> {
-    let mut payload = Vec::with_capacity(108);
+    let mut payload = Vec::with_capacity(84 + auction_entry_prices.len() * 39);
     payload.extend_from_slice(protocol_bundle_hash.as_slice());
     payload.extend_from_slice(&wwd.to_be_bytes());
     payload.extend_from_slice(&auction_base.to_be_bytes::<32>());
-    payload.extend_from_slice(&auction_entry_price.to_be_bytes::<32>());
+    payload.extend_from_slice(&(auction_entry_prices.len() as u16).to_be_bytes());
+    for row in auction_entry_prices {
+        payload.extend_from_slice(&row.reference_currency.to_be_bytes());
+        payload.extend_from_slice(&row.entry_price_minor.to_be_bytes::<32>());
+        payload.push(row.source as u8);
+        payload.extend_from_slice(&row.source_day.to_be_bytes());
+    }
     payload.extend_from_slice(&logical_anchor.to_be_bytes());
     hash_framed(HashDomain::DesisRequestBrief, &payload)
 }
@@ -419,7 +428,7 @@ impl RequestBudgetSplitReceiptV1 {
             && self.carry_over_credit == U256::ZERO;
         let red = self.day_type == DayType::Red
             && self.destination == BudgetSplitDestination::CarryOver
-            && self.desis_brief_hash.is_none()
+            && self.desis_brief_hash.is_some()
             && self.carry_over_credit == self.auction_base;
         require(green || red, "request budget split destination")
     }

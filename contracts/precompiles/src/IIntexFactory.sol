@@ -12,13 +12,13 @@ interface IIntexFactory {
     /// @notice Settle `amount` Issued Intexes of `seriesId` held by
     ///         `intexHolder`. Caller must be the holder or its authorized
     ///         settler. Allowed in Qualified (voluntary) and Called (forced).
-    ///         `paymentToken` must be registered with the vault router under the
-    ///         series' reference currency.
-    function settle(uint32 seriesId, address intexHolder, uint256 amount, address paymentToken) external;
+    ///         `paymentToken` must be registered with the vault router under either of the
+    ///         series' currencies; the issuance one converts through COEN and needs fresh rates.
+    function settle(bytes14 seriesId, address intexHolder, uint256 amount, address paymentToken) external;
 
     /// @notice Per-Intex cost of settling `seriesId` in `paymentToken`, in that
     ///         token's minor units. Reverts if the series does not accept it.
-    function quoteCostAmount(uint32 seriesId, address paymentToken) external view returns (uint256 costAmountMinor);
+    function quoteCostAmount(bytes14 seriesId, address paymentToken) external view returns (uint256 costAmountMinor);
 
     /// @notice Burn settled Intexes and mint confidential Promis, gated by
     ///         off-chain proof of work. Caller is the holder. Authorized by the
@@ -27,12 +27,12 @@ interface IIntexFactory {
     ///         op-nonce (fetch via `outbe_deriveKeys` + `IPromis.opNonceOf`) and the
     ///         bound amount is `promis_load_minor * amount`. Returns the minted
     ///         Promis amount.
-    function minePromis(uint32 seriesId, uint256 amount, uint256 nonce, bytes32 mac, uint64 opNonce)
+    function minePromis(bytes14 seriesId, uint256 amount, uint256 nonce, bytes32 mac, uint64 opNonce)
         external
         returns (uint256 promisAmount);
 
     /// @notice Authorize `settler` to settle the caller's position in `seriesId`.
-    function setAuthorizedSettler(uint32 seriesId, address settler) external;
+    function setAuthorizedSettler(bytes14 seriesId, address settler) external;
 
     /// @notice Credit auction proceeds (native COEN, sent as msg.value) from
     ///         `srcChainId` into the day's pot. Callable only by the OriginRouter.
@@ -87,27 +87,27 @@ interface IIntexFactory {
     function contributorPaidWord(uint32 worldwideDay, uint32 wordIndex) external view returns (uint256);
 
     /// @notice A new series was created from a cleared auction.
-    event SeriesIssued(uint32 indexed seriesId, uint32 issuedIntexCount, uint256 entryPrice);
+    event SeriesIssued(bytes14 indexed seriesId, uint32 issuedIntexCount, uint256 entryPrice);
 
     /// @notice `amount` Issued Intexes of `seriesId` were settled.
-    event Settled(uint32 indexed seriesId, address indexed intexHolder, address indexed settler, uint256 amount);
+    event Settled(bytes14 indexed seriesId, address indexed intexHolder, address indexed settler, uint256 amount);
 
     /// @notice Settled Intexes were burned and `promisAmount` Promis minted.
-    event PromisMined(uint32 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount);
+    event PromisMined(bytes14 indexed seriesId, address indexed holder, uint256 amount, uint256 promisAmount);
 
     /// @notice The series qualified (Issued → Qualified).
-    event SeriesQualified(uint32 indexed seriesId);
+    event SeriesQualified(bytes14 indexed seriesId);
 
     /// @notice The series was force-called (Qualified → Called).
-    event SeriesCalled(uint32 indexed seriesId, uint32 calledAt);
+    event SeriesCalled(bytes14 indexed seriesId, uint32 calledAt);
 
-    /// @notice Auction proceeds for `seriesId` were fully paid out to
-    ///         `contributors` tribute owners, totalling `amount` native COEN.
-    event ProceedsDistributed(uint32 indexed seriesId, uint256 amount, uint32 contributors);
+    /// @notice The day's auction proceeds were fully paid out to `contributors`
+    ///         tribute owners, totalling `amount` native COEN.
+    event ProceedsDistributed(uint32 indexed worldwideDay, uint256 amount, uint32 contributors);
 
-    /// @notice Ownerless proceeds for `seriesId` (no contributors recorded) were
+    /// @notice Ownerless proceeds for the day (no contributors recorded) were
     ///         burned instead of being distributed.
-    event ProceedsBurned(uint32 indexed seriesId, uint256 amount);
+    event ProceedsBurned(uint32 indexed worldwideDay, uint256 amount);
 
     /// @notice Proceeds for `worldwideDay` are collected and its payout round is
     ///         open: `amount` native COEN is now split across `contributorCount`

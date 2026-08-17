@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {ReferenceCurrencyPriceLib} from "./helpers/ReferenceCurrencyPriceLib.sol";
 import {Test} from "forge-std/Test.sol";
 import {IERC6909} from "@openzeppelin/contracts/interfaces/IERC6909.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
@@ -15,6 +16,9 @@ import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 ///      commit takes the bond, reveal/cancel return it, and a no-reveal waits out
 ///      `UNREVEALED_BOND_LOCK_PERIOD`.
 contract IntexAuctionBondTest is Test {
+    uint16 internal constant ISSUANCE_CCY = 840;
+    uint16 internal constant REFERENCE_CCY = 840;
+
     IntexAuction auction;
     EscrowAdapter escrow;
     MockTheCompact compact;
@@ -27,8 +31,9 @@ contract IntexAuctionBondTest is Test {
     uint256 iba1PrivateKey = 0x100;
     address iba1;
 
-    bytes32 internal constant REVEAL_BID_TYPEHASH =
-        keccak256("RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate)");
+    bytes32 internal constant REVEAL_BID_TYPEHASH = keccak256(
+        "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
+    );
 
     uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e18;
     uint64 internal constant ENTRY_PRICE = 1e13;
@@ -81,13 +86,9 @@ contract IntexAuctionBondTest is Test {
 
     function _params(uint128 bond) internal pure returns (IIntexAuction.AuctionParams memory) {
         return IIntexAuction.AuctionParams({
-            issuanceCurrency: 840,
-            referenceCurrency: 840,
             promisLoadMinor: PROMIS_LOAD_MINOR,
             minIntexBidRate: 1,
-            entryPriceMinor: ENTRY_PRICE,
-            floorPriceMinor: 100,
-            callPriceMinor: 200,
+            prices: ReferenceCurrencyPriceLib.onePriced(840, ENTRY_PRICE, 100, 200),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
             minIntexBidQuantity: 1,
             commitBondMinor: bond
@@ -95,7 +96,8 @@ contract IntexAuctionBondTest is Test {
     }
 
     function _signature() internal view returns (bytes memory) {
-        bytes32 structHash = keccak256(abi.encode(REVEAL_BID_TYPEHASH, worldwideDay, iba1, QTY, RATE));
+        bytes32 structHash =
+            keccak256(abi.encode(REVEAL_BID_TYPEHASH, worldwideDay, iba1, QTY, RATE, ISSUANCE_CCY, REFERENCE_CCY));
         bytes32 domainSeparator = keccak256(
             abi.encode(
                 keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
@@ -177,7 +179,7 @@ contract IntexAuctionBondTest is Test {
         _enterRevealStage();
 
         vm.prank(iba1);
-        auction.revealBid(worldwideDay, QTY, RATE, uint64(block.chainid), _signature());
+        auction.revealBid(worldwideDay, QTY, RATE, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), _signature());
 
         // Bond came back, the bid escrow went out — net position is just the bid lock.
         assertEq(paymentToken.balanceOf(iba1), 1000e18 - LOCK_AMOUNT, "net = bid lock only");
@@ -197,7 +199,7 @@ contract IntexAuctionBondTest is Test {
 
         _enterRevealStage();
         vm.prank(iba1);
-        auction.revealBid(worldwideDay, QTY, RATE, uint64(block.chainid), _signature());
+        auction.revealBid(worldwideDay, QTY, RATE, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), _signature());
 
         assertEq(paymentToken.balanceOf(iba1), BOND - LOCK_AMOUNT, "bond funded the bid");
         assertEq(escrow.getBidLock(worldwideDay, iba1).lockedAmount, LOCK_AMOUNT, "bid lock recorded");
@@ -246,7 +248,7 @@ contract IntexAuctionBondTest is Test {
         _commit();
         _enterRevealStage();
         vm.prank(iba1);
-        auction.revealBid(worldwideDay, QTY, RATE, uint64(block.chainid), _signature());
+        auction.revealBid(worldwideDay, QTY, RATE, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), _signature());
 
         vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD());
         vm.prank(outsider);

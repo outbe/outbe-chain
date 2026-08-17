@@ -28,9 +28,7 @@ interface IDesis {
         uint16 batchIndex,
         uint16 totalBatches,
         address[] calldata bidderAddresses,
-        uint16[] calldata intexQuantities,
-        uint32[] calldata intexBidRates,
-        uint32[] calldata timestamps
+        uint256[] calldata packedBids
     ) external;
 
     /// @notice Per-chain completeness marker: the source relayed `totalBatches`/`totalBids` for this day/generation.
@@ -60,10 +58,19 @@ interface IDesis {
     /// @notice The chain missed the fan-in deadline; the clearing excluded its bids.
     event ChainSkipped(uint32 indexed worldwideDay, uint32 indexed srcChainId);
     event AuctionCancelledRedDay(uint32 indexed worldwideDay);
+    /// @notice The day was cancelled because the oracle could price none of its reference
+    /// currencies, so no bid could have been measured against anything.
+    event AuctionCancelledUnpriced(uint32 indexed worldwideDay);
+    /// @notice The day dropped a reference currency because it already prices as many as the
+    /// auction start message can carry.
+    event ReferenceCurrencyOverCap(uint32 indexed worldwideDay, uint16 indexed isoCode, uint8 cap);
     event AuctionOverdue(uint32 indexed worldwideDay);
     event AuctionCleared(uint32 indexed worldwideDay, uint32 issuedIntexCount, uint32 clearingRate, uint64 totalDemand);
     event AuctionClearedEmpty(uint32 indexed worldwideDay, uint64 totalDemand);
     event UnusedSupplyReported(uint32 indexed worldwideDay, uint256 unusedPromis);
+    /// @notice The day dropped a reference currency because `takenBy` already claimed
+    /// the letter a series id spells it with; no bid may price in it for this day.
+    event ReferenceCurrencyLetterTaken(uint32 indexed worldwideDay, uint16 indexed isoCode, uint16 indexed takenBy);
     /// @notice The only committed auction-brief rejection. Technical and
     /// invariant failures revert instead of being converted to business state.
     /// `reasonCode == 1` means the supply exceeds Desis' uint128 auction domain.

@@ -29,6 +29,10 @@ and bonded value becomes claimable only after the correct delay and slash effect
 - **Expected response:** Validator/staking statuses, committee/share snapshots, participation/reward receipts, unbonding payouts, or jail/slash/reporter-reward records.
 - **Response measures:** Only ready validators with valid shares become active; participation and offenses settle once; exit/punishment removes the validator at the next committee transition; bonded value, claims, fees and slash/reward deltas conserve.
 - **Failure guarantee:** Failed DKG or replay leaves no partial committee, membership, share, reward, claim, jail or slash effect; restart resumes solely from committed state.
+- **DKG restart guarantee:** A target Player persists each accepted dealer input
+  before acknowledging it. A restarted target reconstructs the same Player and
+  private share before activation; public-output-only FullNodes and non-target
+  validators never enter the participant completion path.
 
 ## Preconditions and canonical inputs
 
@@ -117,7 +121,10 @@ artifact retry either commits the same boundary once or restores all snapshots a
 membership. Metadata replay is fingerprint-idempotent. Fee/day settlement and
 offense processing use intent-bound guards. Restart reconstructs pending set change,
 DKG ceremony, unsettled escrows, epoch counters and unbonding claims solely from
-committed state. A partial cross-module result is never accepted.
+committed state. In-flight Player inputs acknowledged to dealers are secret local
+recovery state and are replayed only for their exact ceremony. A participant DKG
+result without a private share is not a completed activation input. A partial
+cross-module result is never accepted.
 
 ## E2E scenario matrix
 
@@ -131,7 +138,7 @@ committed state. A partial cross-module result is never accepted.
 | PFS-006-06 | downtime felony | active validator crosses configured miss threshold | kill validator and process offense | one jail/slash with exact bonded/burn/supply deltas; continued downtime cannot punish twice; chain remains live | `@pfs-006-06` live-node |
 | PFS-006-07 | duplicate evidence | one authenticated offense already processed | resubmit same canonical evidence | no second punishment/reporter reward | documentation-only: evidence construction/submission absent |
 | PFS-006-08 | unjail and rejoin | jailed validator topped up and cooldown elapsed | unjail, confirm and reshare | PENDING then ACTIVE with fresh share; no stale share reuse | documentation-only: slashing/time control absent |
-| PFS-006-09 | crash boundaries | operation poised at registration, in-flight DKG, completed-DKG/pre-activation, active-share and reshare checkpoints | crash node/enclave or full committee and restart | committed state is recovered; no premature/duplicate activation; sealed state and finalization survive | six `@pfs-006-09` live-node scenarios |
+| PFS-006-09 | crash boundaries | operation poised at registration, in-flight DKG, completed-DKG/pre-activation, active-share and reshare checkpoints | crash node/enclave or full committee and restart | acknowledged Player inputs are replayed; every restarted target ACTIVE validator has current threshold material and votes; FullNodes remain public-output verifiers; no premature/duplicate activation | six `@pfs-006-09` live-node scenarios |
 | PFS-006-10 | cleanup and re-registration | inactive validator with no bonded/live claims | clean indexes then register identity again | no stale pubkey/cooldown/index; exactly one live record | documentation-only: maturity/cleanup fixture absent |
 
 ## Open questions and technical debt

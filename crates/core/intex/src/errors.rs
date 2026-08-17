@@ -28,6 +28,8 @@ pub enum IntexError {
     CertifiedRoundExists(u32),
     #[error("cost amount overflow")]
     CostAmountOverflow,
+    #[error("invalid series id components")]
+    InvalidSeriesId,
 }
 
 impl From<IntexError> for PrecompileError {

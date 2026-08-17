@@ -12,7 +12,7 @@ interface IIntex {
     ///         There is deliberately no matching public installation selector.
     event CertifiedContributorRootInstalled(
         bytes32 indexed activationCallId,
-        uint32 indexed seriesId,
+        uint32 indexed worldwideDay,
         uint64 seriesVersionBefore,
         uint64 seriesVersionAfter,
         uint32 contributorCount,
@@ -22,7 +22,7 @@ interface IIntex {
     );
 
     struct SeriesData {
-        uint32 seriesId;
+        bytes14 seriesId;
         uint256 promisLoadMinor;
         uint256 entryPriceMinor;
         uint256 floorPriceMinor;
@@ -42,16 +42,16 @@ interface IIntex {
 
     /// @notice Full identity + lifecycle record for a series. Reverts if the
     ///         series does not exist.
-    function seriesData(uint32 seriesId) external view returns (SeriesData memory);
+    function seriesData(bytes14 seriesId) external view returns (SeriesData memory);
 
     /// @notice Whether a series exists.
-    function seriesExists(uint32 seriesId) external view returns (bool);
+    function seriesExists(bytes14 seriesId) external view returns (bool);
 
     /// @notice Number of series ever created (dense-enumeration length).
     function totalSeries() external view returns (uint64);
 
     /// @notice The series id at a dense-enumeration index.
-    function seriesAt(uint64 index) external view returns (uint32);
+    function seriesAt(uint64 index) external view returns (bytes14);
 
     /// @notice Certified contributor authority for one day, as quorum installed it.
     ///         All fields are zero when no generation exists.

@@ -8,7 +8,15 @@ Dockerfile
 target
 data
 contracts/*
+!contracts/crosschain
+!contracts/crosschain/**
+!contracts/intex
+!contracts/intex/**
 !contracts/precompiles
 !contracts/precompiles/**
+!contracts/smart-account
+!contracts/smart-account/**
+!contracts/tokens
+!contracts/tokens/**
 .serena
 docs

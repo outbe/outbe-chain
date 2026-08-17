@@ -18,7 +18,8 @@ pub use certified::{install_certified_contributor_root, CertifiedContributorRoot
 pub use errors::IntexError;
 pub use schema::{
     cost_amount_minor, CertifiedContributorGenerationProjection, CertifiedPayoutRound,
-    CreateSeriesParams, DistProgress, IntexCallTrigger, IntexContract, IntexState, SeriesRecord,
+    CreateSeriesParams, DistProgress, IntexCallTrigger, IntexContract, IntexState, SeriesId,
+    SeriesRecord, SERIES_ID_LEN,
 };
 
 #[cfg(test)]

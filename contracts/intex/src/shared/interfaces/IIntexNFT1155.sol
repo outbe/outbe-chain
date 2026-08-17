@@ -75,11 +75,11 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint32 issuedIntexCount;
         /// @notice Promis tokens per Intex unit (18 decimals).
         uint128 promisLoadMinor;
-        /// @notice Per-unit entry price (reference ccy, 1e18 oracle scale).
+        /// @notice Per-unit entry price (reference ccy, 1e9 wire scale).
         uint64 entryPriceMinor;
-        /// @notice Floor price (reference ccy, 1e18 oracle scale).
+        /// @notice Floor price (reference ccy, 1e9 wire scale).
         uint64 floorPriceMinor;
-        /// @notice Call price (reference ccy, 1e18 oracle scale).
+        /// @notice Call price (reference ccy, 1e9 wire scale).
         uint64 callPriceMinor;
         /// @notice Forced-call trigger (window/threshold/period).
         IntexCallTrigger callTrigger;
@@ -93,8 +93,10 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         IntexStatus status;
         /// @notice Current series lifecycle state.
         IntexState state;
-        /// @notice Worldwide day whose tributes fed this series (== seriesId until multi-currency allocation).
+        /// @notice Worldwide day whose tributes fed this series.
         uint32 worldwideDay;
+        /// @notice Series identifier — the readable id this record belongs to.
+        bytes14 seriesId;
     }
 
     // --- Events ---
@@ -130,19 +132,19 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param seriesId Series identifier.
     /// @param to Recipient of the newly minted Settled tokens.
     /// @param amount Amount of Issued burned and Settled minted.
-    event IntexSettled(uint32 indexed seriesId, address indexed to, uint256 amount);
+    event IntexSettled(bytes14 indexed seriesId, address indexed to, uint256 amount);
 
     /// @notice Emitted when Settled Intex are consumed to mine Promis.
     /// @param seriesId Series identifier.
     /// @param holder Holder whose Settled tokens were burned.
     /// @param amount Amount of Settled tokens burned.
-    event IntexCompleted(uint32 indexed seriesId, address indexed holder, uint256 amount);
+    event IntexCompleted(bytes14 indexed seriesId, address indexed holder, uint256 amount);
 
     /// @notice Emitted when Issued Intex are burned on parking in the Gem Factory.
     /// @param seriesId Series identifier.
     /// @param holder Holder whose Issued tokens were burned.
     /// @param amount Amount of Issued tokens burned.
-    event IntexParked(uint32 indexed seriesId, address indexed holder, uint256 amount);
+    event IntexParked(bytes14 indexed seriesId, address indexed holder, uint256 amount);
 
     // --- Errors ---
 
@@ -177,7 +179,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     ///         (`calledAt + callNoticePeriod`) has passed.
     error SettleAfterDeadline(uint256 tokenId, uint32 deadline);
     /// @notice A mint or batch sum would push `totalSupply` past `issuedIntexCount`.
-    error SupplyCapExceeded(uint32 seriesId, uint256 attempted, uint256 cap);
+    error SupplyCapExceeded(bytes14 seriesId, uint256 attempted, uint256 cap);
     /// @notice Pagination was invoked with a zero page limit (`getIssuedHoldersWithBalances`).
     error ZeroLimit();
 
@@ -187,7 +189,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @dev `worldwideDay` is the day the series was derived from; it is the provenance key
     ///      (`seriesOfDay`), stored verbatim rather than inferred from `seriesId`.
     struct CreateSeriesParams {
-        uint32 seriesId;
+        bytes14 seriesId;
         uint32 worldwideDay;
         uint16 issuanceCurrency;
         uint16 referenceCurrency;
@@ -207,15 +209,15 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param to Recipient of the minted Issued tokens.
     /// @param quantity Amount to mint (bounded by `type(uint16).max` and the series supply cap).
     /// @param seriesId Series identifier.
-    function mint(address to, uint256 quantity, uint32 seriesId) external;
+    function mint(address to, uint256 quantity, bytes14 seriesId) external;
 
     /// @notice Mark a series as Qualified (Issued -> Qualified).
     /// @param seriesId Series identifier.
-    function markQualified(uint32 seriesId) external;
+    function markQualified(bytes14 seriesId) external;
 
     /// @notice Mark a series as Called (Issued/Qualified -> Called).
     /// @param seriesId Series identifier.
-    function markCalled(uint32 seriesId) external;
+    function markCalled(bytes14 seriesId) external;
 
     /// @notice Burn `amount` Issued Intex from `from` and mint the same `amount` of Settled Intex to `to`.
     /// @dev Settlement-contract entry point under SETTLEMENT_ROLE. Series must be Qualified or Called.
@@ -223,14 +225,14 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param from Holder whose Issued tokens are burned.
     /// @param to Recipient of the newly minted Settled tokens.
     /// @param amount Amount of Issued burned and Settled minted.
-    function settle(uint32 seriesId, address from, address to, uint256 amount) external;
+    function settle(bytes14 seriesId, address from, address to, uint256 amount) external;
 
     /// @notice Burn `amount` Settled Intex from `holder`.
     /// @dev Promis-facade entry point under PROMIS_ROLE.
     /// @param holder Holder whose Settled tokens are burned.
     /// @param seriesId Series identifier.
     /// @param amount Amount of Settled tokens to burn.
-    function burnSettled(address holder, uint32 seriesId, uint256 amount) external;
+    function burnSettled(address holder, bytes14 seriesId, uint256 amount) external;
 
     /// @notice Burn `amount` Issued Intex from `holder` when the tokens are parked in the Gem Factory.
     /// @dev Gem-factory entry point under GEM_ROLE. Only allowed while the series is tradable
@@ -240,35 +242,40 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param seriesId Series identifier.
     /// @param amount Amount of Issued tokens to burn.
     /// @return The amount of burned tokens.
-    function parkIntex(address holder, uint32 seriesId, uint256 amount) external returns (uint256);
+    function parkIntex(address holder, bytes14 seriesId, uint256 amount) external returns (uint256);
 
     // --- Reads ---
 
-    /// @notice Issued token id for a series (= `uint256(seriesId)`). Pure helper.
+    /// @notice Whether the series has been created here.
+    /// @param seriesId Series identifier.
+    /// @return True once `createSeries` has run for it.
+    function seriesExists(bytes14 seriesId) external view returns (bool);
+
+    /// @notice Issued token id for a series (= `uint256(uint112(seriesId))`). Pure helper.
     /// @param seriesId Series identifier.
     /// @return The Issued token id.
-    function issuedTokenId(uint32 seriesId) external pure returns (uint256);
+    function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
 
     /// @notice Settled (soulbound) token id for a series (= `keccak256("SETTLED", seriesId)`). Pure helper.
     /// @param seriesId Series identifier.
     /// @return The Settled token id.
-    function settledTokenId(uint32 seriesId) external pure returns (uint256);
+    function settledTokenId(bytes14 seriesId) external pure returns (uint256);
 
     /// @notice Worldwide day whose tributes fed the series (0 if the series does not exist).
     /// @param seriesId Series identifier.
     /// @return The worldwide day (yyyymmdd).
-    function worldwideDayOf(uint32 seriesId) external view returns (uint32);
+    function worldwideDayOf(bytes14 seriesId) external view returns (uint32);
 
     /// @notice Series ids issued for a worldwide day.
     /// @param worldwideDay Worldwide day (yyyymmdd).
     /// @return The series ids of that day.
-    function seriesIdsByWorldwideDay(uint32 worldwideDay) external view returns (uint32[] memory);
+    function seriesIdsByWorldwideDay(uint32 worldwideDay) external view returns (bytes14[] memory);
 
     /// @notice Both token ids for a series in one call.
     /// @param seriesId Series identifier.
     /// @return issued The Issued token id.
     /// @return settled The Settled token id.
-    function tokenIds(uint32 seriesId) external pure returns (uint256 issued, uint256 settled);
+    function tokenIds(bytes14 seriesId) external pure returns (uint256 issued, uint256 settled);
 
     /// @notice Token classification (Issued/Settled) for a token id.
     /// @param tokenId Token id to classify.
@@ -278,13 +285,13 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Read series data by series id.
     /// @param seriesId Series identifier.
     /// @return The full series data for the Issued token id.
-    function readData(uint32 seriesId) external view returns (SeriesData memory);
+    function readData(bytes14 seriesId) external view returns (SeriesData memory);
 
     /// @notice Issued and Settled balances for a holder in a given series.
     /// @param seriesId Series identifier.
     /// @param holder Holder address to read.
     /// @return The holder's Issued and Settled balance pair.
-    function holderBalances(uint32 seriesId, address holder) external view returns (HolderBalances memory);
+    function holderBalances(bytes14 seriesId, address holder) external view returns (HolderBalances memory);
 
     /// @notice Paginated slice of Issued-token holders for a series, with both their Issued
     ///         and Settled balances surfaced in one call.
@@ -299,7 +306,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @return issuedBalances Issued balances parallel to `holders`.
     /// @return settledBalances Settled balances parallel to `holders` (read at the same block).
     /// @return total Length of `_seriesHolders[issuedTokenId]` at call time.
-    function getIssuedHoldersWithBalances(uint32 seriesId, uint256 offset, uint256 limit)
+    function getIssuedHoldersWithBalances(bytes14 seriesId, uint256 offset, uint256 limit)
         external
         view
         returns (
@@ -327,7 +334,7 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param seriesId Series identifier.
     /// @param account Address to read.
     /// @return The amount won at auction for `account` in the series.
-    function getAuctionWonCount(uint32 seriesId, address account) external view returns (uint16);
+    function getAuctionWonCount(bytes14 seriesId, address account) external view returns (uint16);
 
     // --- Enumerable reads ---
 

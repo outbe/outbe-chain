@@ -199,11 +199,9 @@ fn later_nod_failure_rolls_back_the_complete_lysis_attempt() {
             2
         );
         assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
-        assert!(
-            outbe_intex::api::read_contributors(&storage, u32::from(wwd))
-                .unwrap()
-                .is_empty()
-        );
+        assert!(outbe_intex::api::read_contributors(&storage, wwd)
+            .unwrap()
+            .is_empty());
     });
     assert!(storage.get_events(NOD_ADDRESS).is_empty());
 }
@@ -1094,7 +1092,7 @@ fn lysis_records_contributors_aggregated_by_owner() {
         // owner's nominal, under the series id (== the worldwide day).
         let series_id = u32::from(wwd);
         assert_eq!(
-            outbe_intex::api::read_contributors(&storage, series_id).unwrap(),
+            outbe_intex::api::read_contributors(&storage, WorldwideDay::new(series_id)).unwrap(),
             vec![
                 (owner_a, U256::in_units(100u64)),
                 (owner_b, U256::in_units(200u64)),
@@ -1102,7 +1100,7 @@ fn lysis_records_contributors_aggregated_by_owner() {
             ]
         );
         assert_eq!(
-            outbe_intex::api::contributor_total(&storage, series_id).unwrap(),
+            outbe_intex::api::contributor_total(&storage, WorldwideDay::new(series_id)).unwrap(),
             U256::in_units(600u64)
         );
 
@@ -1184,7 +1182,7 @@ fn lysis_omits_excluded_owners_from_contributor_map() {
 
         let series_id = u32::from(wwd);
         assert_eq!(
-            outbe_intex::api::read_contributors(&storage, series_id).unwrap(),
+            outbe_intex::api::read_contributors(&storage, WorldwideDay::new(series_id)).unwrap(),
             vec![
                 (owner_a, U256::in_units(100u64)),
                 (owner_c, U256::in_units(300u64)),
@@ -1192,12 +1190,12 @@ fn lysis_omits_excluded_owners_from_contributor_map() {
             "opted-out owner must be absent from the contributor map"
         );
         assert_eq!(
-            outbe_intex::api::contributor_total(&storage, series_id).unwrap(),
+            outbe_intex::api::contributor_total(&storage, WorldwideDay::new(series_id)).unwrap(),
             U256::in_units(400u64),
             "contributor total must exclude the opted-out owner's nominal"
         );
         assert_eq!(
-            outbe_intex::api::contributor_count(&storage, series_id).unwrap(),
+            outbe_intex::api::contributor_count(&storage, WorldwideDay::new(series_id)).unwrap(),
             2
         );
         end_block(storage, &scope).unwrap();

@@ -163,6 +163,16 @@ fn follower_exact_finality(world: &mut World) {
         wait_finalized_checkpoint_match(&world.rpc, primary, follower, 45),
         "follower never reached the committee finalized checkpoint with matching hash/state root"
     );
+    assert_eq!(
+        world.rpc.consensus_status_field(follower, "isValidator"),
+        Some("false".to_string()),
+        "FullNode unexpectedly entered validator mode"
+    );
+    assert_eq!(
+        world.rpc.has_threshold_shares(follower),
+        Some(false),
+        "FullNode unexpectedly required participant DKG material"
+    );
 }
 
 #[when("the follower loses its only upstream while the committee advances")]

@@ -20,8 +20,9 @@ contract BridgeRecipientValidationTest is CrossChainTest {
 
     address private admin = address(this);
     address private user = address(0x1);
-    uint32 private constant SERIES_ID = 20260401;
-    uint256 private constant TOKEN_ID = uint256(SERIES_ID);
+    uint32 private constant SERIES_ID_DAY = 20260401;
+    bytes14 private constant SERIES_ID = "20260401-USD-U";
+    uint256 private constant TOKEN_ID = uint256(uint112(SERIES_ID));
     uint256 private constant AMOUNT = 100;
 
     /// @dev A bytes32 with a bit set above the low 160 — not a canonical left-padded address.
@@ -37,7 +38,7 @@ contract BridgeRecipientValidationTest is CrossChainTest {
         token.grantRole(token.RELAYER_ROLE(), address(adapter));
         adapter.setRemoteMessenger(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapter)));
 
-        token.createSeries(CreateSeriesLib.params(SERIES_ID, 10_000, 0));
+        token.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
         token.markQualified(SERIES_ID);
         token.mint(user, AMOUNT, SERIES_ID);
     }

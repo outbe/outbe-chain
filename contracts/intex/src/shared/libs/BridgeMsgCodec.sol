@@ -2,12 +2,13 @@
 pragma solidity 0.8.30;
 
 import {IIntexAuction} from "../../target/interfaces/IIntexAuction.sol";
+import {IOriginRouter} from "../../origin/interfaces/IOriginRouter.sol";
 
 /// @title BridgeMsgCodec
 /// @author Outbe
 /// @notice Library for encoding and decoding bridge messages between the target chains and Outbe.
 /// @dev Auction messages (stages, bids, result, refunds) are keyed by `worldwideDay`; series messages
-///      (issuance, mark) are keyed by `seriesId` (both uint32, equal in value while one series per day).
+///      (issuance, mark) are keyed by `seriesId` and carry their day alongside it.
 /// @dev Wire layout: `[bodyVersion(1)][msgType(1)][body]`. `bodyVersion` lets the format
 ///      evolve independently of `msgType`; decoders reject unknown versions.
 library BridgeMsgCodec {
@@ -38,6 +39,13 @@ library BridgeMsgCodec {
     ///      live.
     uint16 internal constant MAX_PAYLOAD_ARRAY_LEN = 64;
 
+    /// @notice Series one ISSUANCE_INSTRUCTIONS message may carry. With `MAX_PAYLOAD_ARRAY_LEN`
+    ///         recipients split across them the worst case stays inside the 10_000-byte send cap.
+    uint16 internal constant MAX_SERIES_PER_ISSUANCE = 8;
+
+    /// @notice Chunks one day's fan-out may span; keeps a receiver's arrival set in one word.
+    uint16 internal constant MAX_CHUNKS = 256;
+
     /// @notice Fixed-point scale for bid/clearing rates (`1e6` = 100%). Shared with the Outbe
     ///         `RATE_SCALE` and `IntexAuction`; escrow math is `qty * escrowBasis * rate / RATE_SCALE`.
     uint32 internal constant RATE_SCALE = 1_000_000;
@@ -46,26 +54,31 @@ library BridgeMsgCodec {
     // Header is fixed at 2 bytes: [bodyVersion(1)][msgType(1)].
     uint16 internal constant HEADER_LEN = 2;
 
-    // encodePacked messages have a tight upper bound that equals the lower bound.
-    uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 97;
+    // Fixed head of AUCTION_STAGE_START; the price rows follow it.
+    uint16 internal constant MIN_LEN_AUCTION_STAGE_START = 70;
+    /// @notice Bytes per reference-price row: [iso(2)][entry(8)][floor(8)][call(8)].
+    uint16 internal constant REFERENCE_PRICE_LEN = 26;
+    /// @notice The oracle's reference list is short; a day may not exceed this.
+    uint8 internal constant MAX_REFERENCE_PRICES = 6;
     uint16 internal constant MIN_LEN_AUCTION_STAGE_CLEARING = 6;
     uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
-    uint16 internal constant MIN_LEN_MARK_CALLED = 6;
-    uint16 internal constant MIN_LEN_MARK_QUALIFIED = 6;
+    uint16 internal constant MIN_LEN_MARK_CALLED = 20;
+    uint16 internal constant MIN_LEN_MARK_QUALIFIED = 20;
     // BIDS_DONE: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][relayGeneration(4)][totalBatches(2)][totalBids(4)]
     uint16 internal constant MIN_LEN_BIDS_DONE = 20;
 
     // abi.encode payloads have variable length. The minimum corresponds to all
     // dynamic arrays being empty:
-    //   BIDS_BATCH(uint32, uint32, uint32, uint16, uint16, t[]×4):
-    //     5 static head words + 4 dynamic head offsets + 4 empty length words = 13×32 = 416
-    //   REFUND_INSTRUCTIONS(uint32, address[], uint64[], uint64[]):
-    //     1 static head word + 3 dynamic offsets + 3 empty length words = 7×32 = 224
-    //   ISSUANCE_INSTRUCTIONS(struct with 12 static + 2 dynamic, dynamic struct):
-    //     outer offset(32) + 12 static + 2 inner offsets + 2 empty length words = 17×32 = 544
-    uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 416;
-    uint16 internal constant MIN_LEN_REFUND_INSTRUCTIONS = HEADER_LEN + 224;
-    uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 544;
+    //   BIDS_BATCH(uint32, uint32, uint32, uint16, uint16, address[], uint256[]):
+    //     5 static head words + 2 dynamic head offsets + 2 empty length words = 9×32 = 288
+    //   REFUND_INSTRUCTIONS(uint32, uint16, uint16, address[], uint64[], uint64[]):
+    //     3 static head words + 3 dynamic offsets + 3 empty length words = 9×32 = 288
+    //   ISSUANCE_INSTRUCTIONS(dynamic array of a struct with 12 static + 2 dynamic fields):
+    //     array offset(32) + array length(32) + one element's offset(32) + 12 static
+    //     + 2 inner offsets + 2 empty length words = 19×32 = 608
+    uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 288;
+    uint16 internal constant MIN_LEN_REFUND_INSTRUCTIONS = HEADER_LEN + 288;
+    uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 608;
 
     /// @notice Per-message cap on inbound BIDS_BATCH entries. Bounds the crosschainMint/storage loop the
     ///         receiver runs so one oversized batch cannot exceed the inbound gas limit and stall
@@ -110,10 +123,8 @@ library BridgeMsgCodec {
 
     /// @notice BIDS_BATCH parallel arrays decoded to unequal lengths.
     /// @param bidders Length of the bidder-addresses array.
-    /// @param quantities Length of the intex-quantities array.
-    /// @param rates Length of the intex-bid-rates array.
-    /// @param timestamps Length of the timestamps array.
-    error BidsArrayLengthMismatch(uint256 bidders, uint256 quantities, uint256 rates, uint256 timestamps);
+    /// @param packedBids Length of the packed-bid array.
+    error BidsArrayLengthMismatch(uint256 bidders, uint256 packedBids);
 
     /// @notice ISSUANCE_INSTRUCTIONS parallel arrays decoded to unequal lengths.
     /// @param recipients Length of the recipients array.
@@ -129,6 +140,15 @@ library BridgeMsgCodec {
     /// @param count Decoded number of bidders.
     /// @param max Maximum permitted bidders per message.
     error RefundBatchTooLarge(uint256 count, uint256 max);
+    /// @notice A live day was encoded without a single reference price to bid against.
+    error MissingReferencePrices();
+    /// @notice An ISSUANCE_INSTRUCTIONS message carried no series at all.
+    error EmptyIssuanceBatch();
+    /// @notice An ISSUANCE_INSTRUCTIONS message carried more series than one may hold.
+    error IssuanceSeriesBatchTooLarge(uint256 count, uint256 max);
+    /// @notice The refund chunk header is inconsistent: no chunks claimed, more than
+    ///         `MAX_CHUNKS`, or an index outside the claimed count.
+    error InvalidRefundChunk(uint16 chunkIndex, uint16 totalChunks);
 
     /// @notice An outbound payload array exceeds `MAX_PAYLOAD_ARRAY_LEN`.
     /// @dev Fail-fast on the source chain so the relayer learns before any bridge fee is burned.
@@ -174,10 +194,8 @@ library BridgeMsgCodec {
     /// @param _relayGeneration The flush generation stamp the receiver uses to replace re-flushed sets.
     /// @param _batchIndex Index of this batch within the flush (0-based).
     /// @param _totalBatches Total number of batches in this flush (the receiver waits for all of them).
-    /// @param _bidderAddresses The bidder addresses (parallel with the other three arrays).
-    /// @param _intexQuantities The intex quantities per bidder.
-    /// @param _intexBidRates The intex bid rates per bidder (`1e6` fixed-point, % of the escrow basis).
-    /// @param _timestamps The bid timestamps per bidder.
+    /// @param _bidderAddresses The bidder addresses (parallel with `_packedBids`).
+    /// @param _packedBids One [`packBid`] word per bidder: quantity, rate, timestamp and the pair.
     /// @return The wire-encoded BIDS_BATCH message.
     function encodeBidsBatch(
         uint32 _worldwideDay,
@@ -186,55 +204,63 @@ library BridgeMsgCodec {
         uint16 _batchIndex,
         uint16 _totalBatches,
         address[] memory _bidderAddresses,
-        uint16[] memory _intexQuantities,
-        uint32[] memory _intexBidRates,
-        uint32[] memory _timestamps
+        uint256[] memory _packedBids
     ) internal pure returns (bytes memory) {
         // Decoder rejects parallel-array mismatch with BidsArrayLengthMismatch; fail-fast at the
         // source so a sender-side bug aborts before paying the bridge fee.
-        if (
-            _bidderAddresses.length != _intexQuantities.length || _bidderAddresses.length != _intexBidRates.length
-                || _bidderAddresses.length != _timestamps.length
-        ) {
-            revert BidsArrayLengthMismatch(
-                _bidderAddresses.length, _intexQuantities.length, _intexBidRates.length, _timestamps.length
-            );
+        if (_bidderAddresses.length != _packedBids.length) {
+            revert BidsArrayLengthMismatch(_bidderAddresses.length, _packedBids.length);
         }
         requireMaxArrayLen(_bidderAddresses.length, MAX_PAYLOAD_ARRAY_LEN);
         return abi.encodePacked(
             BODY_VERSION_V1,
             MSG_BIDS_BATCH,
             abi.encode(
-                _worldwideDay,
-                _srcChainId,
-                _relayGeneration,
-                _batchIndex,
-                _totalBatches,
-                _bidderAddresses,
-                _intexQuantities,
-                _intexBidRates,
-                _timestamps
+                _worldwideDay, _srcChainId, _relayGeneration, _batchIndex, _totalBatches, _bidderAddresses, _packedBids
             )
         );
     }
 
+    /// @notice Packs one bid's scalars into a single word: 64 bytes per bid rather than 128.
+    /// @dev Layout, low bits up: [referenceCurrency(16)][issuanceCurrency(16)][timestamp(32)]
+    ///      [bidRate(32)][quantity(16)].
+    function packBid(
+        uint16 _quantity,
+        uint32 _bidRate,
+        uint32 _timestamp,
+        uint16 _issuanceCurrency,
+        uint16 _referenceCurrency
+    ) internal pure returns (uint256) {
+        return uint256(_referenceCurrency) | (uint256(_issuanceCurrency) << 16) | (uint256(_timestamp) << 32)
+            | (uint256(_bidRate) << 64) | (uint256(_quantity) << 96);
+    }
+
+    /// @notice Inverse of [`packBid`].
+    function unpackBid(uint256 _packed)
+        internal
+        pure
+        returns (uint16 quantity, uint32 bidRate, uint32 timestamp, uint16 issuanceCurrency, uint16 referenceCurrency)
+    {
+        referenceCurrency = uint16(_packed);
+        issuanceCurrency = uint16(_packed >> 16);
+        timestamp = uint32(_packed >> 32);
+        bidRate = uint32(_packed >> 64);
+        quantity = uint16(_packed >> 96);
+    }
+
     /// @notice Encodes AUCTION_STAGE_START message.
-    /// @dev encodePacked layout (97 bytes), field order mirrors the Outbe `sol_ext` struct:
+    /// @dev encodePacked layout, 70 bytes of head plus 26 per priced currency:
     ///      [bodyVersion(1)][msgType(1)][worldwideDay(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
-    ///      [issuanceCurrency(2)][referenceCurrency(2)][promisLoadMinor(16)][minIntexBidRate(4)][entryPrice(8)][floorPriceMinor(8)]
-    ///      [callPriceMinor(8)][callNoticePeriod(4)][callWindow(4)][callThreshold(4)][minIntexBidQuantity(2)]
-    ///      [commitBondMinor(16)][dayState(1)]
+    ///      [promisLoadMinor(16)][minIntexBidRate(4)][callNoticePeriod(4)][callWindow(4)]
+    ///      [callThreshold(4)][minIntexBidQuantity(2)][commitBondMinor(16)][dayState(1)][priceCount(1)]
+    ///      then [isoCode(2)][entryPrice(8)][floorPrice(8)][callPrice(8)] per currency.
     /// @param _worldwideDay The worldwide day (yyyymmdd).
     /// @param _commitEnd The commit-stage end timestamp.
     /// @param _revealEnd The reveal-stage end timestamp.
     /// @param _issuanceEnd The issuance-stage end timestamp.
-    /// @param _issuanceCurrency The issuance currency (ISO numeric).
-    /// @param _referenceCurrency The reference currency (ISO numeric).
     /// @param _promisLoadMinor The Promis load (minor units) for the series.
     /// @param _minIntexBidRate The minimum acceptable intex bid rate (`1e6` fixed-point).
-    /// @param _entryPrice The per-unit entry price (reference ccy); feeds floor/call.
-    /// @param _floorPriceMinor The floor price (minor units).
-    /// @param _callPriceMinor The call price (minor units).
+    /// @param _prices Entry, floor and call price of every currency the day can clear in.
     /// @param _callNoticePeriod The Called→deadline window in seconds (0 = default).
     /// @param _callWindow The call-trigger observation window in seconds.
     /// @param _callThreshold The call-trigger threshold in seconds.
@@ -247,13 +273,9 @@ library BridgeMsgCodec {
         uint32 _commitEnd,
         uint32 _revealEnd,
         uint32 _issuanceEnd,
-        uint16 _issuanceCurrency,
-        uint16 _referenceCurrency,
         uint128 _promisLoadMinor,
         uint32 _minIntexBidRate,
-        uint64 _entryPrice,
-        uint64 _floorPriceMinor,
-        uint64 _callPriceMinor,
+        IOriginRouter.ReferenceCurrencyPrice[] memory _prices,
         uint32 _callNoticePeriod,
         uint32 _callWindow,
         uint32 _callThreshold,
@@ -261,7 +283,24 @@ library BridgeMsgCodec {
         uint128 _commitBondMinor,
         uint8 _dayState
     ) internal pure returns (bytes memory) {
-        // Split into two packed halves: 18 packed args in one call is too deep for the IR
+        if (_prices.length > MAX_REFERENCE_PRICES) {
+            revert PayloadArrayTooLong(_prices.length, MAX_REFERENCE_PRICES);
+        }
+        // A live day must price something to bid against; a cancelled one is a closed record.
+        if (_prices.length == 0 && _dayState != uint8(IIntexAuction.WorldwideDayState.Red)) {
+            revert MissingReferencePrices();
+        }
+        bytes memory rows = abi.encodePacked(uint8(_prices.length));
+        for (uint256 i = 0; i < _prices.length; ++i) {
+            rows = abi.encodePacked(
+                rows,
+                _prices[i].isoCode,
+                _prices[i].entryPriceMinor,
+                _prices[i].floorPriceMinor,
+                _prices[i].callPriceMinor
+            );
+        }
+        // Split into packed halves: this many packed args in one call is too deep for the IR
         // pipeline. Concatenation of encodePacked results is byte-identical to a single call.
         return abi.encodePacked(
             abi.encodePacked(
@@ -271,20 +310,16 @@ library BridgeMsgCodec {
                 _commitEnd,
                 _revealEnd,
                 _issuanceEnd,
-                _issuanceCurrency,
-                _referenceCurrency,
                 _promisLoadMinor,
                 _minIntexBidRate
             ),
-            _entryPrice,
-            _floorPriceMinor,
-            _callPriceMinor,
             _callNoticePeriod,
             _callWindow,
             _callThreshold,
             _minIntexBidQuantity,
             _commitBondMinor,
-            _dayState
+            _dayState,
+            rows
         );
     }
 
@@ -321,7 +356,7 @@ library BridgeMsgCodec {
     ///      pins it on `SeriesData` and `IntexNFT1155.mint` rejects any mint
     ///      that would push `totalSupply` past it.
     struct IssuanceInstructionsPayload {
-        uint32 seriesId;
+        bytes14 seriesId;
         /// @notice Worldwide day the series was derived from — carried so the destination records real provenance.
         uint32 worldwideDay;
         uint32 issuedIntexCount;
@@ -343,9 +378,8 @@ library BridgeMsgCodec {
     ///         Kept `external` so the struct construction lives in the linked library, off the
     ///         router's runtime size (EIP-170). Mirrors `encodeAuctionStageStart`'s layout:
     ///         [bodyVersion(1)][msgType(1)][worldwideDay(4)][commitEnd(4)][revealEnd(4)][issuanceEnd(4)]
-    ///         [issuanceCurrency(2)][referenceCurrency(2)][promisLoadMinor(16)][minIntexBidRate(4)]
-    ///         [entryPrice(8)][floorPriceMinor(8)][callPriceMinor(8)][callNoticePeriod(4)]
-    ///         [callWindow(4)][callThreshold(4)][minIntexBidQuantity(2)][commitBondMinor(16)][dayState(1)]
+    ///         [promisLoadMinor(16)][minIntexBidRate(4)][callNoticePeriod(4)][callWindow(4)]
+    ///         [callThreshold(4)][minIntexBidQuantity(2)][commitBondMinor(16)][dayState(1)][priceCount(1)]
     /// @param _msg The wire-encoded AUCTION_STAGE_START message.
     /// @return worldwideDay The worldwide day (yyyymmdd).
     /// @return dayState The final worldwide-day state (Green or Red).
@@ -361,10 +395,10 @@ library BridgeMsgCodec {
             IIntexAuction.AuctionParams memory params
         )
     {
-        _assertExactLength(_msg, MSG_AUCTION_STAGE_START, MIN_LEN_AUCTION_STAGE_START);
+        _assertMinLength(_msg, MSG_AUCTION_STAGE_START, MIN_LEN_AUCTION_STAGE_START);
         _assertBodyVersion(_msg);
         worldwideDay = uint32(bytes4(_msg[2:6]));
-        uint8 rawDayState = uint8(_msg[96]);
+        uint8 rawDayState = uint8(_msg[68]);
         if (rawDayState > uint8(IIntexAuction.WorldwideDayState.Red)) revert IIntexAuction.InvalidDayState();
         dayState = IIntexAuction.WorldwideDayState(rawDayState);
         schedule = IIntexAuction.AuctionSchedule({
@@ -373,40 +407,80 @@ library BridgeMsgCodec {
             issuanceEnd: uint32(bytes4(_msg[14:18]))
         });
         params = IIntexAuction.AuctionParams({
-            issuanceCurrency: uint16(bytes2(_msg[18:20])),
-            referenceCurrency: uint16(bytes2(_msg[20:22])),
-            promisLoadMinor: uint128(bytes16(_msg[22:38])),
+            promisLoadMinor: uint128(bytes16(_msg[18:34])),
             callTrigger: IIntexAuction.IntexCallTrigger({
-                callWindow: uint32(bytes4(_msg[70:74])),
-                callThreshold: uint32(bytes4(_msg[74:78])),
-                callNoticePeriod: uint32(bytes4(_msg[66:70]))
+                callWindow: uint32(bytes4(_msg[42:46])),
+                callThreshold: uint32(bytes4(_msg[46:50])),
+                callNoticePeriod: uint32(bytes4(_msg[38:42]))
             }),
-            minIntexBidRate: uint32(bytes4(_msg[38:42])),
-            minIntexBidQuantity: uint16(bytes2(_msg[78:80])),
-            entryPriceMinor: uint64(bytes8(_msg[42:50])),
-            floorPriceMinor: uint64(bytes8(_msg[50:58])),
-            callPriceMinor: uint64(bytes8(_msg[58:66])),
-            commitBondMinor: uint128(bytes16(_msg[80:96]))
+            minIntexBidRate: uint32(bytes4(_msg[34:38])),
+            minIntexBidQuantity: uint16(bytes2(_msg[50:52])),
+            prices: new IIntexAuction.ReferenceCurrencyPrice[](0),
+            commitBondMinor: uint128(bytes16(_msg[52:68]))
         });
+
+        params.prices = _referencePrices(_msg);
     }
 
-    /// @notice Encodes ISSUANCE_INSTRUCTIONS message.
-    /// @dev Reverts `PayloadArrayTooLong` if `_payload.recipients` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
-    /// @param _payload The issuance instructions payload to encode.
+    /// @notice Every priced row the message carries.
+    function _referencePrices(bytes calldata _msg)
+        private
+        pure
+        returns (IIntexAuction.ReferenceCurrencyPrice[] memory rows)
+    {
+        uint256 count = uint8(_msg[69]);
+        // Re-checked inbound: more rows than the quoted gas covers would revert and redeliver.
+        if (count > MAX_REFERENCE_PRICES) {
+            revert PayloadArrayTooLong(count, MAX_REFERENCE_PRICES);
+        }
+        if (_msg.length != MIN_LEN_AUCTION_STAGE_START + count * REFERENCE_PRICE_LEN) {
+            revert InvalidPayloadLength(MSG_AUCTION_STAGE_START, _msg.length, MIN_LEN_AUCTION_STAGE_START);
+        }
+        rows = new IIntexAuction.ReferenceCurrencyPrice[](count);
+        for (uint256 i = 0; i < count; ++i) {
+            uint256 at = MIN_LEN_AUCTION_STAGE_START + i * REFERENCE_PRICE_LEN;
+            rows[i] = IIntexAuction.ReferenceCurrencyPrice({
+                isoCode: uint16(bytes2(_msg[at:at + 2])),
+                entryPriceMinor: uint64(bytes8(_msg[at + 2:at + 10])),
+                floorPriceMinor: uint64(bytes8(_msg[at + 10:at + 18])),
+                callPriceMinor: uint64(bytes8(_msg[at + 18:at + 26]))
+            });
+        }
+    }
+
+    /// @notice Encodes ISSUANCE_INSTRUCTIONS message: the series a chain receives from one day.
+    /// @dev Capped at `MAX_SERIES_PER_ISSUANCE` series and `MAX_PAYLOAD_ARRAY_LEN` recipients;
+    ///      a larger set is split by the sender.
+    /// @param _series The per-series issuance payloads carried by this message.
     /// @return The wire-encoded ISSUANCE_INSTRUCTIONS message.
-    function encodeIssuanceInstructions(IssuanceInstructionsPayload memory _payload)
+    function encodeIssuanceInstructions(IssuanceInstructionsPayload[] memory _series)
         internal
         pure
         returns (bytes memory)
     {
-        if (_payload.recipients.length != _payload.quantities.length) {
-            revert IssuanceArrayLengthMismatch(_payload.recipients.length, _payload.quantities.length);
-        }
-        requireMaxArrayLen(_payload.recipients.length, MAX_PAYLOAD_ARRAY_LEN);
-        return abi.encodePacked(BODY_VERSION_V1, MSG_ISSUANCE_INSTRUCTIONS, abi.encode(_payload));
+        _assertIssuanceLimits(_series);
+        return abi.encodePacked(BODY_VERSION_V1, MSG_ISSUANCE_INSTRUCTIONS, abi.encode(_series));
     }
 
-    /// @notice Encodes REFUND_INSTRUCTIONS message.
+    /// @dev Per-series array parity, plus the series and recipient counts of the message.
+    function _assertIssuanceLimits(IssuanceInstructionsPayload[] memory _series) private pure {
+        if (_series.length == 0) revert EmptyIssuanceBatch();
+        if (_series.length > MAX_SERIES_PER_ISSUANCE) {
+            revert IssuanceSeriesBatchTooLarge(_series.length, MAX_SERIES_PER_ISSUANCE);
+        }
+        uint256 recipients;
+        for (uint256 i = 0; i < _series.length; i++) {
+            if (_series[i].recipients.length != _series[i].quantities.length) {
+                revert IssuanceArrayLengthMismatch(_series[i].recipients.length, _series[i].quantities.length);
+            }
+            recipients += _series[i].recipients.length;
+        }
+        if (recipients > MAX_PAYLOAD_ARRAY_LEN) {
+            revert IssuanceBatchTooLarge(recipients, MAX_PAYLOAD_ARRAY_LEN);
+        }
+    }
+
+    /// @notice Encodes one chunk of a day's REFUND_INSTRUCTIONS.
     /// @dev Reverts `PayloadArrayTooLong` if `_bidders` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
     /// @param _worldwideDay The worldwide day (yyyymmdd).
     /// @param _bidders The bidder addresses (parallel with `_refundedAmounts` and `_paidAmounts`).
@@ -415,6 +489,8 @@ library BridgeMsgCodec {
     /// @return The wire-encoded REFUND_INSTRUCTIONS message.
     function encodeRefundInstructions(
         uint32 _worldwideDay,
+        uint16 _chunkIndex,
+        uint16 _totalChunks,
         address[] memory _bidders,
         uint128[] memory _refundedAmounts,
         uint128[] memory _paidAmounts
@@ -423,29 +499,34 @@ library BridgeMsgCodec {
             revert RefundArrayLengthMismatch(_bidders.length, _refundedAmounts.length, _paidAmounts.length);
         }
         requireMaxArrayLen(_bidders.length, MAX_PAYLOAD_ARRAY_LEN);
+        if (_totalChunks == 0 || _totalChunks > MAX_CHUNKS || _chunkIndex >= _totalChunks) {
+            revert InvalidRefundChunk(_chunkIndex, _totalChunks);
+        }
         return abi.encodePacked(
             BODY_VERSION_V1,
             MSG_REFUND_INSTRUCTIONS,
-            abi.encode(_worldwideDay, _bidders, _refundedAmounts, _paidAmounts)
+            abi.encode(_worldwideDay, _chunkIndex, _totalChunks, _bidders, _refundedAmounts, _paidAmounts)
         );
     }
 
     /// @notice Encodes MARK_CALLED message.
     /// @dev The settlement deadline is derived locally on the destination chain
     ///      from the series `callNoticePeriod` and the moment markCalled is applied.
-    ///      encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][seriesId(4)]
+    ///      encodePacked layout (20 bytes): [bodyVersion(1)][msgType(1)][seriesId(14)][worldwideDay(4)]
     /// @param _seriesId The auction series identifier.
+    /// @param _worldwideDay The worldwide day the series was derived from.
     /// @return The wire-encoded MARK_CALLED message.
-    function encodeMarkCalled(uint32 _seriesId) internal pure returns (bytes memory) {
-        return abi.encodePacked(BODY_VERSION_V1, MSG_MARK_CALLED, _seriesId);
+    function encodeMarkCalled(bytes14 _seriesId, uint32 _worldwideDay) internal pure returns (bytes memory) {
+        return abi.encodePacked(BODY_VERSION_V1, MSG_MARK_CALLED, _seriesId, _worldwideDay);
     }
 
     /// @notice Encodes MARK_QUALIFIED message.
-    /// @dev encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][seriesId(4)]
+    /// @dev encodePacked layout (20 bytes): [bodyVersion(1)][msgType(1)][seriesId(14)][worldwideDay(4)]
     /// @param _seriesId The auction series identifier.
+    /// @param _worldwideDay The worldwide day the series was derived from.
     /// @return The wire-encoded MARK_QUALIFIED message.
-    function encodeMarkQualified(uint32 _seriesId) internal pure returns (bytes memory) {
-        return abi.encodePacked(BODY_VERSION_V1, MSG_MARK_QUALIFIED, _seriesId);
+    function encodeMarkQualified(bytes14 _seriesId, uint32 _worldwideDay) internal pure returns (bytes memory) {
+        return abi.encodePacked(BODY_VERSION_V1, MSG_MARK_QUALIFIED, _seriesId, _worldwideDay);
     }
 
     // --- Decoding ---
@@ -500,6 +581,12 @@ library BridgeMsgCodec {
         if (_msg.length != _expected) revert InvalidPayloadLength(_msgType, _msg.length, _expected);
     }
 
+    /// @dev Asserts a variable-width payload carries at least its fixed head; the
+    ///      exact length is checked against the row count once that head is read.
+    function _assertMinLength(bytes calldata _msg, uint8 _msgType, uint16 _minimum) private pure {
+        if (_msg.length < _minimum) revert InvalidPayloadLength(_msgType, _msg.length, _minimum);
+    }
+
     /// @notice Decodes BIDS_BATCH message.
     /// @dev Reverts `UnsupportedBodyVersion` on a stale version byte,
     ///      `BidsArrayLengthMismatch` if the four parallel arrays differ in length, and
@@ -510,10 +597,8 @@ library BridgeMsgCodec {
     /// @return relayGeneration The flush generation stamp the receiver uses to replace re-flushed sets.
     /// @return batchIndex Index of this batch within the flush (0-based).
     /// @return totalBatches Total number of batches in this flush (the receiver waits for all of them).
-    /// @return bidderAddresses The bidder addresses (parallel with the other three arrays).
-    /// @return intexQuantities The intex quantities per bidder.
-    /// @return intexBidRates The intex bid rates per bidder (`1e6` fixed-point, % of the escrow basis).
-    /// @return timestamps The bid timestamps per bidder.
+    /// @return bidderAddresses The bidder addresses (parallel with `packedBids`).
+    /// @return packedBids One [`packBid`] word per bidder.
     function decodeBidsBatch(bytes calldata _msg)
         internal
         pure
@@ -524,9 +609,7 @@ library BridgeMsgCodec {
             uint16 batchIndex,
             uint16 totalBatches,
             address[] memory bidderAddresses,
-            uint16[] memory intexQuantities,
-            uint32[] memory intexBidRates,
-            uint32[] memory timestamps
+            uint256[] memory packedBids
         )
     {
         // Match the fixed-length decoders' typed empty-payload revert (mirrors readHeader and the
@@ -534,26 +617,12 @@ library BridgeMsgCodec {
         // than an out-of-bounds Panic(0x32) on `_msg[0]`.
         if (_msg.length < HEADER_LEN) revert InvalidPayloadLength(MSG_BIDS_BATCH, _msg.length, HEADER_LEN);
         _assertBodyVersion(_msg);
-        (
-            worldwideDay,
-            srcChainId,
-            relayGeneration,
-            batchIndex,
-            totalBatches,
-            bidderAddresses,
-            intexQuantities,
-            intexBidRates,
-            timestamps
-        ) = abi.decode(_msg[2:], (uint32, uint32, uint32, uint16, uint16, address[], uint16[], uint32[], uint32[]));
-        // The four arrays are indexed in lockstep downstream; unequal lengths would index out of
+        (worldwideDay, srcChainId, relayGeneration, batchIndex, totalBatches, bidderAddresses, packedBids) =
+            abi.decode(_msg[2:], (uint32, uint32, uint32, uint16, uint16, address[], uint256[]));
+        // The two arrays are indexed in lockstep downstream; unequal lengths would index out of
         // bounds and panic inside the ordered lane. Reject with a typed error instead.
-        if (
-            bidderAddresses.length != intexQuantities.length || bidderAddresses.length != intexBidRates.length
-                || bidderAddresses.length != timestamps.length
-        ) {
-            revert BidsArrayLengthMismatch(
-                bidderAddresses.length, intexQuantities.length, intexBidRates.length, timestamps.length
-            );
+        if (bidderAddresses.length != packedBids.length) {
+            revert BidsArrayLengthMismatch(bidderAddresses.length, packedBids.length);
         }
         // Cap the batch so the receiver's crosschainMint/storage loop cannot exceed the inbound gas limit.
         if (bidderAddresses.length > MAX_BIDS_BATCH) revert BidsBatchTooLarge(bidderAddresses.length, MAX_BIDS_BATCH);
@@ -597,11 +666,11 @@ library BridgeMsgCodec {
     ///      `IssuanceArrayLengthMismatch` if `recipients` and `quantities` differ in length, and
     ///      `IssuanceBatchTooLarge` if `recipients` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
     /// @param _msg The wire-encoded ISSUANCE_INSTRUCTIONS message.
-    /// @return payload The decoded issuance instructions payload.
+    /// @return series The decoded per-series issuance payloads.
     function decodeIssuanceInstructions(bytes calldata _msg)
         external
         pure
-        returns (IssuanceInstructionsPayload memory payload)
+        returns (IssuanceInstructionsPayload[] memory series)
     {
         if (_msg.length < HEADER_LEN) {
             revert InvalidPayloadLength(MSG_ISSUANCE_INSTRUCTIONS, _msg.length, HEADER_LEN);
@@ -609,21 +678,14 @@ library BridgeMsgCodec {
         _assertBodyVersion(_msg);
         // Decode in a dedicated frame so the struct ABI-decoder's locals don't share this
         // function's stack — keeps the 14-field payload within bounds under via_ir.
-        payload = _decodeIssuancePayload(_msg[2:]);
-        // `recipients` and `quantities` are indexed in lockstep when minting; unequal lengths would
-        // index out of bounds and panic inside the ordered lane. Reject with a typed error instead.
-        if (payload.recipients.length != payload.quantities.length) {
-            revert IssuanceArrayLengthMismatch(payload.recipients.length, payload.quantities.length);
-        }
-        // Cap the recipient count so the receiver's mint loop cannot exceed the inbound gas limit.
-        if (payload.recipients.length > MAX_PAYLOAD_ARRAY_LEN) {
-            revert IssuanceBatchTooLarge(payload.recipients.length, MAX_PAYLOAD_ARRAY_LEN);
-        }
+        series = _decodeIssuancePayload(_msg[2:]);
+        // Re-checked inbound against a bad peer, as every variable-length decode here is.
+        _assertIssuanceLimits(series);
     }
 
-    /// @dev Isolated frame for the `IssuanceInstructionsPayload` ABI decode (via_ir stack relief).
-    function _decodeIssuancePayload(bytes calldata _body) private pure returns (IssuanceInstructionsPayload memory) {
-        return abi.decode(_body, (IssuanceInstructionsPayload));
+    /// @dev Isolated frame for the `IssuanceInstructionsPayload[]` ABI decode (via_ir stack relief).
+    function _decodeIssuancePayload(bytes calldata _body) private pure returns (IssuanceInstructionsPayload[] memory) {
+        return abi.decode(_body, (IssuanceInstructionsPayload[]));
     }
 
     /// @notice Decodes REFUND_INSTRUCTIONS message.
@@ -631,6 +693,8 @@ library BridgeMsgCodec {
     ///      `RefundArrayLengthMismatch` if the three parallel arrays differ in length.
     /// @param _msg The wire-encoded REFUND_INSTRUCTIONS message.
     /// @return worldwideDay The worldwide day (yyyymmdd).
+    /// @return chunkIndex Position of this chunk in the chain-day's run of refunds.
+    /// @return totalChunks How many chunks the chain-day's refunds span.
     /// @return bidders The bidder addresses (parallel with `refundedAmounts` and `paidAmounts`).
     /// @return refundedAmounts The amount refunded to each bidder.
     /// @return paidAmounts The amount paid by each bidder.
@@ -639,6 +703,8 @@ library BridgeMsgCodec {
         pure
         returns (
             uint32 worldwideDay,
+            uint16 chunkIndex,
+            uint16 totalChunks,
             address[] memory bidders,
             uint128[] memory refundedAmounts,
             uint128[] memory paidAmounts
@@ -648,8 +714,11 @@ library BridgeMsgCodec {
             revert InvalidPayloadLength(MSG_REFUND_INSTRUCTIONS, _msg.length, HEADER_LEN);
         }
         _assertBodyVersion(_msg);
-        (worldwideDay, bidders, refundedAmounts, paidAmounts) =
-            abi.decode(_msg[2:], (uint32, address[], uint128[], uint128[]));
+        (worldwideDay, chunkIndex, totalChunks, bidders, refundedAmounts, paidAmounts) =
+            abi.decode(_msg[2:], (uint32, uint16, uint16, address[], uint128[], uint128[]));
+        if (totalChunks == 0 || totalChunks > MAX_CHUNKS || chunkIndex >= totalChunks) {
+            revert InvalidRefundChunk(chunkIndex, totalChunks);
+        }
         // The three arrays are indexed in lockstep downstream; unequal lengths would index
         // out of bounds and panic inside the ordered lane. Reject with a typed error instead.
         if (bidders.length != refundedAmounts.length || bidders.length != paidAmounts.length) {
@@ -664,25 +733,25 @@ library BridgeMsgCodec {
     }
 
     /// @notice Decodes MARK_CALLED message.
-    /// @dev encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][seriesId(4)]
-    ///      Reverts `InvalidPayloadLength` unless exactly 6 bytes, then `UnsupportedBodyVersion`.
+    /// @dev encodePacked layout (20 bytes): [bodyVersion(1)][msgType(1)][seriesId(14)][worldwideDay(4)]
+    ///      Reverts `InvalidPayloadLength` unless exactly 20 bytes, then `UnsupportedBodyVersion`.
     /// @param _msg The wire-encoded MARK_CALLED message.
     /// @return seriesId The auction series identifier.
-    function decodeMarkCalled(bytes calldata _msg) internal pure returns (uint32 seriesId) {
+    function decodeMarkCalled(bytes calldata _msg) internal pure returns (bytes14 seriesId) {
         _assertExactLength(_msg, MSG_MARK_CALLED, MIN_LEN_MARK_CALLED);
         _assertBodyVersion(_msg);
-        seriesId = uint32(bytes4(_msg[2:6]));
+        seriesId = bytes14(_msg[2:16]);
     }
 
     /// @notice Decodes MARK_QUALIFIED message.
-    /// @dev encodePacked layout (6 bytes): [bodyVersion(1)][msgType(1)][seriesId(4)]
-    ///      Reverts `InvalidPayloadLength` unless exactly 6 bytes, then `UnsupportedBodyVersion`.
+    /// @dev encodePacked layout (20 bytes): [bodyVersion(1)][msgType(1)][seriesId(14)][worldwideDay(4)]
+    ///      Reverts `InvalidPayloadLength` unless exactly 20 bytes, then `UnsupportedBodyVersion`.
     /// @param _msg The wire-encoded MARK_QUALIFIED message.
     /// @return seriesId The auction series identifier.
-    function decodeMarkQualified(bytes calldata _msg) internal pure returns (uint32 seriesId) {
+    function decodeMarkQualified(bytes calldata _msg) internal pure returns (bytes14 seriesId) {
         _assertExactLength(_msg, MSG_MARK_QUALIFIED, MIN_LEN_MARK_QUALIFIED);
         _assertBodyVersion(_msg);
-        seriesId = uint32(bytes4(_msg[2:6]));
+        seriesId = bytes14(_msg[2:16]);
     }
 
     // --- Validation helpers ---

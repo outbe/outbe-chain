@@ -64,12 +64,20 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
         )
         .unwrap();
         assert!(closed.profile_ready);
-        assert_eq!(closed.auction_entry_price, last_closed_price);
+        // The day-type currency is always present; other reference currencies join
+        // it only when their own pair closed.
+        assert_eq!(closed.auction_entry_prices.len(), 1);
+        let day_type_row = &closed.auction_entry_prices[0];
         assert_eq!(
-            closed.auction_entry_price_source,
+            day_type_row.reference_currency,
+            crate::constants::DAY_TYPE_ISO
+        );
+        assert_eq!(day_type_row.entry_price_minor, last_closed_price);
+        assert_eq!(
+            day_type_row.source,
             crate::api::OcompAuctionEntryPriceSource::LastClosedDayVwap
         );
-        assert_eq!(closed.auction_entry_price_source_day, last_closed);
+        assert_eq!(day_type_row.source_day, last_closed);
         assert_eq!(closed.oracle_state_version, 5);
         // The opening bound is now the registry size, not a per-day entry count.
         assert_eq!(closed.wwd_pair_entries, registered_pairs);
@@ -85,12 +93,13 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
         )
         .unwrap();
         assert!(fallback.profile_ready);
-        assert_eq!(fallback.auction_entry_price, U256::from(99));
+        let fallback_row = &fallback.auction_entry_prices[0];
+        assert_eq!(fallback_row.entry_price_minor, U256::from(99));
         assert_eq!(
-            fallback.auction_entry_price_source,
+            fallback_row.source,
             crate::api::OcompAuctionEntryPriceSource::CurrentVwapFallback
         );
-        assert_eq!(fallback.auction_entry_price_source_day, next_wwd.value());
+        assert_eq!(fallback_row.source_day, next_wwd.value());
         assert_eq!(fallback.oracle_state_version, 5);
         // Registry-derived, so it does not drop to zero on a day with no snapshot.
         assert_eq!(fallback.wwd_pair_entries, registered_pairs);
