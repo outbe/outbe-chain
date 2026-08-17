@@ -61,3 +61,19 @@ pub fn day_originators(
 ) -> Result<Vec<(Address, U256)>> {
     CcaContract::new(storage).day_originators(day)
 }
+
+/// The weights the day's CCA pool is split on: origination units with the §8.4
+/// multiplier applied, zero weights dropped. This is what `agentreward` reads to
+/// run the capped distribution.
+pub fn day_reward_weights(
+    storage: StorageHandle<'_>,
+    day: WorldwideDay,
+) -> Result<Vec<(Address, U256)>> {
+    CcaContract::new(storage).day_reward_weights(day)
+}
+
+/// Clears the day's units after its pool has been distributed, so the day
+/// cannot be paid a second time.
+pub fn settle_day(storage: StorageHandle<'_>, day: WorldwideDay) -> Result<()> {
+    CcaContract::new(storage).settle_day(day)
+}

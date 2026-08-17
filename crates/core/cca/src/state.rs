@@ -67,6 +67,24 @@ impl CcaContract<'_> {
         self.day_cca_count.read(&day)
     }
 
+    /// Drops a day's units and its dense agent index once that day's pool has
+    /// been distributed. Mirrors the WAA/SRA clear: a settled day must not be
+    /// payable twice, and the index would otherwise grow without bound.
+    pub(crate) fn clear_day_units(&mut self, day: WorldwideDay) -> Result<()> {
+        let count = self.read_day_cca_count(day)?;
+        for index in 0..count {
+            let index_key = CcaContract::day_index_key(day, index);
+            let cca = self.day_ccas.read(&index_key)?;
+            if cca.is_zero() {
+                continue;
+            }
+            self.day_units
+                .write(&CcaContract::day_unit_key(day, cca), U256::ZERO)?;
+            self.day_ccas.write(&index_key, Address::ZERO)?;
+        }
+        self.day_cca_count.write(&day, 0)
+    }
+
     pub(crate) fn read_day_cca_at(&self, day: WorldwideDay, index: u32) -> Result<Address> {
         self.day_ccas.read(&CcaContract::day_index_key(day, index))
     }

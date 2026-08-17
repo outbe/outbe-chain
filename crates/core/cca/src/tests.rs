@@ -460,6 +460,52 @@ fn the_multiplier_is_not_folded_into_the_recorded_units() {
 }
 
 #[test]
+fn reward_weights_fold_the_multiplier_into_the_days_units() {
+    with_registered(|mut cca| {
+        cca.record_origination(agent(), owner(), principal(), day(1))
+            .unwrap();
+        assert_eq!(
+            cca.day_reward_weights(day(1)).unwrap(),
+            vec![(agent(), MULTIPLIER_ONE)],
+            "an unpenalized agent weighs exactly its units"
+        );
+
+        // m = 0.9 must move the weight, not the recorded units.
+        cca.record_void(agent(), MULTIPLIER_ONE).unwrap();
+        assert_eq!(
+            cca.day_originators(day(1)).unwrap(),
+            vec![(agent(), MULTIPLIER_ONE)],
+            "the penalty does not rewrite history"
+        );
+        assert_eq!(
+            cca.day_reward_weights(day(1)).unwrap(),
+            vec![(agent(), U256::from(900_000_000_000_000_000u64))]
+        );
+    });
+}
+
+#[test]
+fn settling_a_day_leaves_nothing_to_pay_twice() {
+    with_registered(|mut cca| {
+        cca.record_origination(agent(), owner(), principal(), day(1))
+            .unwrap();
+        cca.record_origination(agent(), other_owner(), principal(), day(2))
+            .unwrap();
+
+        cca.settle_day(day(1)).unwrap();
+        assert!(cca.day_reward_weights(day(1)).unwrap().is_empty());
+        assert!(cca.day_originators(day(1)).unwrap().is_empty());
+        assert_eq!(cca.origination_units(day(1), agent()).unwrap(), U256::ZERO);
+
+        // Settling one day must not touch another.
+        assert_eq!(
+            cca.day_reward_weights(day(2)).unwrap(),
+            vec![(agent(), MULTIPLIER_ONE)]
+        );
+    });
+}
+
+#[test]
 fn an_unregistered_address_weighs_neutrally() {
     with_cca(|cca| {
         assert_eq!(cca.multiplier_of(other_agent()).unwrap(), MULTIPLIER_ONE);

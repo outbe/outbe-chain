@@ -246,4 +246,34 @@ impl CcaContract<'_> {
         }
         Ok(out)
     }
+
+    /// The day's origination units with the §8.4 multiplier folded in —
+    /// `units × m` — which is the weight the CCA pool is split on.
+    ///
+    /// Applying `m` here rather than at origination is the whole point of
+    /// keeping the two apart: an agent that voided or repaid between opening the
+    /// position and the payout is paid on the standing it actually has when the
+    /// pool is split, not on a weight frozen a day earlier.
+    ///
+    /// A zero weight is dropped. It cannot receive a share either way, and
+    /// leaving it in would let an agent that earned nothing payable still count
+    /// as a participant in the cap arithmetic.
+    pub fn day_reward_weights(&self, day: WorldwideDay) -> Result<Vec<(Address, U256)>> {
+        let mut out = Vec::new();
+        for (cca, units) in self.day_originators(day)? {
+            let weight = units
+                .checked_mul(self.multiplier_of(cca)?)
+                .ok_or(CcaError::ArithmeticOverflow)?
+                / MULTIPLIER_ONE;
+            if !weight.is_zero() {
+                out.push((cca, weight));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Drops the day's units once its pool has been paid out.
+    pub fn settle_day(&mut self, day: WorldwideDay) -> Result<()> {
+        self.clear_day_units(day)
+    }
 }

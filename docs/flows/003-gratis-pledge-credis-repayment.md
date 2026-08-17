@@ -520,6 +520,8 @@ authorization is single-use), the one-shot pledge ticket, and
 | is the owner blocked? | `ICredis.hasCalledPosition(smartAccount)` |
 | pledger's confidential balances | `IGratis.balanceOf` / `pledgedOf`, decrypted with the view key |
 | agent standing | `ICca.canOriginate` / `multiplierOf` |
+| what did the agent earn today? | `ICca.originationUnits(worldwideDay, cca)` — raw units, before the multiplier; cleared once the day's pool is paid |
+| what can the agent withdraw? | `IAgentReward.getClaimableBalance(cca)` — the CCA pool pays into the same claimable balance as WAA/SRA |
 | is my credit still held for me? | `IVaultRouter.reservationOf(pledgeHandle)` |
 | can this asset fund a pledge right now? | `IVaultRouter.hasLiquidity(asset, amount)` — a preflight; it checks, it does not claim |
 
@@ -576,10 +578,14 @@ Events are the audit trail; storage reads are authoritative if they disagree.
    again on the same address, and voids that land after the exit find nothing to
    penalize. The bond gating `register()` and the §8.2 haircut pricing the exit
    are what close both halves.
-2. **The CCA reward pool is still a pure accumulator.** `PoolKind::Cca` credits
-   `CCA_ADDRESS` rather than distributing against the origination units this flow
-   records. The 32%-capped distribution and the activation sweep to Metadosis are
-   not implemented.
+2. **The per-unit reward ceiling does not exist.** §8.3 asks for a cap on what a
+   single origination unit can be worth, so a thin early day cannot make one
+   origination worth a fortune. The paper leaves the number TBD and none is
+   invented here, so on a day with one originator the 32% cap is the only thing
+   between it and a third of the pool. The rest of §8.3 — the capped pro-rata
+   split on `units × multiplier`, the redistribution, the residue to Metadosis,
+   and the one-time pre-activation sink sweep — is implemented in
+   `PoolKind::Cca`.
 3. **No downside resolution.** A position whose price never reaches the floor waits
    forever — nothing forces closure on depreciation. Deferred by decision, but it
    also means no CCA penalty can fire in a flat or falling market.

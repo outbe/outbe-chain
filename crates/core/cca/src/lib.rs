@@ -12,10 +12,12 @@
 //! penalized multiplier and re-registering fresh. The accountability arithmetic
 //! below is complete; its economic teeth are not.
 //!
-//! The reward distribution is likewise separate: this crate records the units an
-//! agent earned each day and the multiplier that weights them, but the pool
-//! split (the 32% cap, the redistribution, the residue to Metadosis) belongs to
-//! `outbe_agentreward`.
+//! The reward distribution lives next door: this crate owns the units an agent
+//! earned each day and the multiplier that weights them, and exposes the product
+//! of the two through [`api::day_reward_weights`]. Splitting the pool on those
+//! weights — the 32% cap, the redistribution, the residue to Metadosis — is
+//! `outbe_agentreward`'s `PoolKind::Cca`, which also calls
+//! [`api::settle_day`] once a day is paid.
 
 pub mod api;
 pub mod constants;

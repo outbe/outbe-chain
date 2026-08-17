@@ -43,6 +43,12 @@ pub struct AgentRewardContract {
     // slot 6: SRA address list — key = keccak(day, index), value = address
     #[attribute(order = 6)]
     pub sra_addresses: outbe_primitives::storage::dsl::Map<B256, Address>,
+
+    /// slot 7: whether the one-time pre-activation CCA sink sweep has run.
+    /// Set on the first distributing day and never cleared — the sink is not
+    /// credited afterwards, so a second sweep would drain live balances.
+    #[attribute(order = 7)]
+    pub cca_sink_swept: outbe_primitives::storage::dsl::Value<bool>,
 }
 
 impl AgentRewardContract<'_> {
