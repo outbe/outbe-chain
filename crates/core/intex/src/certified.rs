@@ -59,7 +59,9 @@ pub fn install_certified_contributor_root(
 
     let intex = IntexContract::new(storage.clone());
     if intex
-        .ocomp_certified_contributor_generation(WorldwideDay::new(input.precondition.worldwide_day))?
+        .ocomp_certified_contributor_generation(WorldwideDay::new(
+            input.precondition.worldwide_day,
+        ))?
         .is_some()
     {
         return Err(revert("certified contributor root cannot be overwritten"));
@@ -474,7 +476,8 @@ mod tests {
         let (series_exists, legacy_contributors, target) =
             StorageHandle::enter(&mut provider, |storage| {
                 (
-                    api::series_exists(&storage, test_sid(input.precondition.worldwide_day)).unwrap(),
+                    api::series_exists(&storage, test_sid(input.precondition.worldwide_day))
+                        .unwrap(),
                     api::read_contributors(
                         &storage,
                         WorldwideDay::new(input.precondition.worldwide_day),
@@ -630,7 +633,9 @@ mod tests {
                 },
             )
             .unwrap();
-            assert!(api::series_exists(&storage, test_sid(value.precondition.worldwide_day)).unwrap());
+            assert!(
+                api::series_exists(&storage, test_sid(value.precondition.worldwide_day)).unwrap()
+            );
             assert!(api::read_contributors(
                 &storage,
                 WorldwideDay::new(value.precondition.worldwide_day)

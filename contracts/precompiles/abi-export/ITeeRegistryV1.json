@@ -14,7 +14,76 @@
   },
   {
     "type": "function",
-    "name": "fullNodeEnclaveBinding",
+    "name": "isBootstrapped",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isNodeHostEnclaveReady",
+    "inputs": [
+      {
+        "name": "rethP2pPrefix",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "rethP2pX",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isValidatorEnclaveReady",
+    "inputs": [
+      {
+        "name": "validator",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "keyEpoch",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "nodeHostEnclaveBinding",
     "inputs": [
       {
         "name": "rethP2pPrefix",
@@ -160,75 +229,6 @@
   },
   {
     "type": "function",
-    "name": "isBootstrapped",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "isFullNodeEnclaveReady",
-    "inputs": [
-      {
-        "name": "rethP2pPrefix",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "rethP2pX",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "isValidatorEnclaveReady",
-    "inputs": [
-      {
-        "name": "validator",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "keyEpoch",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "policyHash",
     "inputs": [],
     "outputs": [
@@ -256,6 +256,21 @@
       },
       {
         "name": "enclaveSignature",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "validatorNodeBinding",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "validatorSignature",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "nodeBindingSignature",
         "type": "bytes",
         "internalType": "bytes"
       }
@@ -758,6 +773,25 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ValidatorNodeHostBoundV1",
+    "inputs": [
+      {
+        "name": "validator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "nodeIdHash",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false

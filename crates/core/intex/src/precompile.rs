@@ -43,9 +43,9 @@ pub fn dispatch(
             seriesAt(c) => view(c, |c| Ok(registry.read_series_id_at(c.index)?.into())),
             certifiedContributorGeneration(c) => view(c, |c| {
                 Ok(to_abi_generation(
-                    registry.ocomp_certified_contributor_generation(outbe_common::WorldwideDay::new(
-                        c.worldwideDay,
-                    ))?,
+                    registry.ocomp_certified_contributor_generation(
+                        outbe_common::WorldwideDay::new(c.worldwideDay),
+                    )?,
                 ))
             }),
         }

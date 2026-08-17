@@ -2048,15 +2048,24 @@ fn install_generation_with_total(
     let registry = outbe_intex::IntexContract::new(storage.clone());
     registry
         .ocomp_contributor_root
-        .write(&outbe_common::WorldwideDay::new(WWD), contributor_root(leaves))
+        .write(
+            &outbe_common::WorldwideDay::new(WWD),
+            contributor_root(leaves),
+        )
         .unwrap();
     registry
         .ocomp_eligible_nominal_total
-        .write(&outbe_common::WorldwideDay::new(WWD), eligible_nominal_total)
+        .write(
+            &outbe_common::WorldwideDay::new(WWD),
+            eligible_nominal_total,
+        )
         .unwrap();
     registry
         .ocomp_contributor_metadata
-        .write(&outbe_common::WorldwideDay::new(WWD), metadata_word(1, count))
+        .write(
+            &outbe_common::WorldwideDay::new(WWD),
+            metadata_word(1, count),
+        )
         .unwrap();
 }
 
@@ -2092,7 +2101,13 @@ fn abi_leaves(leaves: &[ContributorLeafData]) -> Vec<IIntexFactory::ContributorL
 
 /// Arms the fan-in and delivers the whole pot from one winning chain.
 fn deliver_proceeds(storage: &StorageHandle<'_>, amount: U256) {
-    outbe_intex::api::arm_proceeds(storage, outbe_common::WorldwideDay::new(WWD), &[CHAIN], DEADLINE_FUTURE).unwrap();
+    outbe_intex::api::arm_proceeds(
+        storage,
+        outbe_common::WorldwideDay::new(WWD),
+        &[CHAIN],
+        DEADLINE_FUTURE,
+    )
+    .unwrap();
     storage
         .increase_balance(INTEX_FACTORY_ADDRESS, amount)
         .unwrap();
@@ -2586,7 +2601,12 @@ fn day_without_contributor_authority_holds_the_pot_until_the_deadline() {
         // The root arrives late; the preserved pot now funds the round.
         let leaves = population(300);
         install_generation(&s, &leaves);
-        runtime::try_settle_proceeds(&s, outbe_common::WorldwideDay::new(WWD), DEADLINE_FUTURE - 1).unwrap();
+        runtime::try_settle_proceeds(
+            &s,
+            outbe_common::WorldwideDay::new(WWD),
+            DEADLINE_FUTURE - 1,
+        )
+        .unwrap();
 
         let round = outbe_intex::api::certified_payout_round(&s, WWD)
             .unwrap()
