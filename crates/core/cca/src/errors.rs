@@ -10,8 +10,6 @@ pub enum CcaError {
     NotRegistered,
     #[error("cca is already registered")]
     AlreadyRegistered,
-    #[error("cca is not permitted to originate")]
-    CannotOriginate,
     #[error("invalid cca state value: {0}")]
     InvalidStateValue(u8),
     #[error("invalid cca address")]
