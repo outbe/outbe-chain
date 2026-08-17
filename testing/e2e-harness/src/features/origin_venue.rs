@@ -498,6 +498,54 @@ fn flush_parked_bid_relays(world: &mut World) {
     }
 }
 
+/// The loopback adapter delivers inside the send and swallows a failure: it
+/// parks the delivery with the revert reason and still reports the send as
+/// done. That reason is the only place a refused message explains itself.
+#[cfg(feature = "ocomp-integration")]
+fn parked_deliveries(world: &World) -> String {
+    let url = world.rpc.url(world.validators.primary_port());
+    let Some(contracts) = world.state.origin_contracts.clone() else {
+        return "no deploy recorded".to_owned();
+    };
+    let topic0 = alloy_primitives::keccak256(b"DeliveryParked(uint256,bytes)".as_slice());
+    let logs = eth::raw_json_with_params(
+        &url,
+        "eth_getLogs",
+        serde_json::json!([{
+            "fromBlock": "0x0",
+            "toBlock": "latest",
+            "address": format!("{:?}", contracts.loopback),
+            "topics": [format!("{topic0:?}")],
+        }]),
+    );
+    match logs.as_ref().and_then(|value| value.as_array()) {
+        Some(entries) if entries.is_empty() => "no delivery was parked".to_owned(),
+        Some(entries) => {
+            let reasons: Vec<String> = entries
+                .iter()
+                .filter_map(|entry| entry.get("data")?.as_str())
+                .map(|data| {
+                    let bytes = alloy_primitives::hex::decode(data.trim_start_matches("0x"))
+                        .unwrap_or_default();
+                    let text: String = bytes
+                        .iter()
+                        .map(|b| {
+                            if b.is_ascii_graphic() || *b == b' ' {
+                                *b as char
+                            } else {
+                                '.'
+                            }
+                        })
+                        .collect();
+                    format!("{data} ({text})")
+                })
+                .collect();
+            format!("{} parked deliveries: {}", entries.len(), reasons.join(" | "))
+        }
+        None => "the adapter log is unreadable".to_owned(),
+    }
+}
+
 /// Did Desis get as far as handing the refunds to the router? Separates "the
 /// clearing never sent them" from "the target chain refused them".
 #[cfg(feature = "ocomp-integration")]
@@ -889,9 +937,10 @@ fn escrow_refunds_the_rest(world: &mut World) {
         assert!(
             Instant::now() < deadline,
             "day {worldwide_day} cleared but the escrow never received refund instructions \
-             (sent by Desis: {}; {} origin sends are parked)",
+             (sent by Desis: {}; {} origin sends are parked; {})",
             refunds_were_sent(world, worldwide_day),
-            parked_origin_sends(world)
+            parked_origin_sends(world),
+            parked_deliveries(world)
         );
         sleep(Duration::from_secs(2));
     }
