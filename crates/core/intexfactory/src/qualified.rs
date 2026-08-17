@@ -8,6 +8,7 @@ use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_intex::SeriesId;
 use outbe_oracle::api::{coen_rate_for_opt, get_all_reference_currencies};
+use outbe_primitives::storage::types::Storable;
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
@@ -18,8 +19,8 @@ use outbe_primitives::{
 use outbe_intex::IntexState;
 
 use crate::constants::{
-    MAX_CALL_ACTIONS_PER_SWEEP, MAX_GROUP_DECISIONS_PER_SWEEP, MAX_SERIES_ACTIONS_PER_SWEEP,
-    MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS, QUALIFY_NOTIFY_CHUNK_LIMIT,
+    MAX_GROUP_DECISIONS_PER_SWEEP, MAX_SERIES_ACTIONS_PER_SWEEP, MAX_SERIES_PER_MARK,
+    NOTIFY_CHUNK_LIMIT, ORIGIN_ROUTER_ADDRESS,
 };
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
@@ -179,10 +180,6 @@ impl ScanBudget {
         Self::new(MAX_SERIES_ACTIONS_PER_SWEEP)
     }
 
-    pub(crate) fn for_call() -> Self {
-        Self::new(MAX_CALL_ACTIONS_PER_SWEEP)
-    }
-
     fn new(actions: u32) -> Self {
         Self {
             decisions: MAX_GROUP_DECISIONS_PER_SWEEP,
@@ -247,11 +244,16 @@ pub(crate) fn try_qualify_group(
         &group.members,
     )?;
 
-    // This sweep runs in a block hook, which cannot call contracts: the notices
-    // leave from the `intex_qualify_notify` cycle trigger instead.
-    for &series_id in &group.members {
-        enqueue_qualify_notice(factory, series_id)?;
-    }
+    // This sweep runs in a block hook, which cannot call contracts: the notice
+    // leaves from the `intex_notify` cycle trigger instead.
+    enqueue_notice(
+        factory,
+        NOTICE_QUALIFIED,
+        U256::from(IntexFactoryContract::scoped(
+            group.iso_code,
+            group.worldwide_day.value(),
+        )),
+    )?;
 
     for &series_id in &group.members {
         crate::runtime::emit_event(
@@ -264,50 +266,70 @@ pub(crate) fn try_qualify_group(
     Ok(group.members.len() as u32)
 }
 
-fn enqueue_qualify_notice(factory: &mut IntexFactoryContract, series_id: SeriesId) -> Result<()> {
-    let tail = factory.qualify_notify_tail.read()?;
-    factory.qualify_notify_at.write(&tail, series_id)?;
-    factory.qualify_notify_tail.write(tail.saturating_add(1))?;
+/// A notice carrying a whole Qualified group, read back from the index it sits in.
+pub const NOTICE_QUALIFIED: u8 = 0;
+/// A notice carrying one Called series, which its group no longer holds.
+pub const NOTICE_CALLED: u8 = 1;
+
+pub(crate) fn enqueue_notice(
+    factory: &mut IntexFactoryContract,
+    kind: u8,
+    entry: U256,
+) -> Result<()> {
+    let tail = factory.notify_tail.read()?;
+    factory.notify_at.write(&tail, entry)?;
+    factory.notify_kind.write(&tail, kind)?;
+    factory.notify_tail.write(tail.saturating_add(1))?;
     Ok(())
 }
 
-/// Cycle-trigger entry: send the queued Qualified notices, at most
-/// [`QUALIFY_NOTIFY_CHUNK_LIMIT`] per firing.
-pub fn drain_qualify_notices(ctx: &BlockRuntimeContext) -> Result<()> {
+/// Cycle-trigger entry: send the queued notices, at most [`NOTIFY_CHUNK_LIMIT`]
+/// per firing. This is where every outbound mark leaves from — the scans that
+/// queue them run in a block hook, which cannot call contracts.
+pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     let storage = ctx.storage.clone();
     let factory = IntexFactoryContract::new(storage.clone());
-    let head = factory.qualify_notify_head.read()?;
-    let tail = factory.qualify_notify_tail.read()?;
+    let head = factory.notify_head.read()?;
+    let tail = factory.notify_tail.read()?;
     if head >= tail {
         return Ok(());
     }
-    let stop = tail.min(head.saturating_add(QUALIFY_NOTIFY_CHUNK_LIMIT));
+    let stop = tail.min(head.saturating_add(NOTIFY_CHUNK_LIMIT));
     for index in head..stop {
-        let series_id = factory.qualify_notify_at.read(&index)?;
-        factory.qualify_notify_at.clear(&index)?;
+        let kind = factory.notify_kind.read(&index)?;
+        let entry = factory.notify_at.read(&index)?;
+        factory.notify_at.clear(&index)?;
+        factory.notify_kind.clear(&index)?;
         // Best-effort, as it was when the sweep sent it inline: a dropped notice
         // leaves the target chain to reconcile series state from the origin.
-        if let Err(error) = storage.with_checkpoint(|| notify_if_qualified(&storage, series_id)) {
-            tracing::warn!(target: "outbe::intexfactory", %series_id, error = ?error, "qualify notice: dropping");
+        if let Err(error) = storage.with_checkpoint(|| send_notice(&storage, kind, entry)) {
+            tracing::warn!(target: "outbe::intexfactory", kind, error = ?error, "notice: dropping");
         }
     }
     if stop == tail {
-        factory.qualify_notify_head.write(0)?;
-        factory.qualify_notify_tail.write(0)?;
+        factory.notify_head.write(0)?;
+        factory.notify_tail.write(0)?;
     } else {
-        factory.qualify_notify_head.write(stop)?;
+        factory.notify_head.write(stop)?;
     }
     Ok(())
 }
 
-/// A series that already moved past Qualified would be refused by the target,
-/// which takes Issued -> Called directly. Sending it anyway only burns float.
-fn notify_if_qualified(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<()> {
-    let series = outbe_intex::api::read_series(storage, series_id)?;
-    if series.lifecycle_state()? != IntexState::Qualified {
+fn send_notice(storage: &StorageHandle<'_>, kind: u8, entry: U256) -> Result<()> {
+    if kind == NOTICE_CALLED {
+        let series_id = SeriesId::from_word(entry);
+        return crate::called::notify_called(storage, series_id.worldwide_day(), &[series_id]);
+    }
+    // A group that has since been called is gone from the index, and a Called
+    // series would refuse the Qualified mark anyway — so an empty read is the
+    // answer, not an error.
+    let (iso_code, worldwide_day) = IntexFactoryContract::unscoped(entry.to::<u64>());
+    let factory = IntexFactoryContract::new(storage.clone());
+    let members = factory.qualified_group_members(iso_code, worldwide_day)?;
+    if members.is_empty() {
         return Ok(());
     }
-    notify_qualified(storage, series.worldwide_day, &[series_id])
+    notify_qualified(storage, worldwide_day, &members)
 }
 
 /// One message per group, split only where the wire's cap forces it.

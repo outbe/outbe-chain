@@ -134,16 +134,21 @@ pub struct IntexFactoryContract {
     #[attribute(order = 26)]
     pub qualified_bin_groups: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    // Qualified notices waiting for the `intex_qualify_notify` trigger to send
-    // them: the sweep that qualifies runs in a block hook, which cannot call
-    // contracts. Head and tail reset to 0 whenever the queue drains empty.
+    // Lifecycle notices waiting for the `intex_notify` trigger to send them: the
+    // scans run in a block hook, which cannot call contracts. Head and tail reset
+    // to 0 whenever the queue drains empty.
     #[attribute(order = 27)]
-    pub qualify_notify_head: outbe_primitives::storage::dsl::Value<u32>,
+    pub notify_head: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 28)]
-    pub qualify_notify_tail: outbe_primitives::storage::dsl::Value<u32>,
-    /// Queue index -> series awaiting its Qualified notice.
+    pub notify_tail: outbe_primitives::storage::dsl::Value<u32>,
+    /// Queue index -> `scoped(iso, day)` for a Qualified group, or the series word
+    /// for a Called one: a called group leaves the index, so its notice carries the
+    /// series itself while a qualified one is still readable from the index.
     #[attribute(order = 29)]
-    pub qualify_notify_at: outbe_primitives::storage::dsl::Map<u32, SeriesId>,
+    pub notify_at: outbe_primitives::storage::dsl::Map<u32, U256>,
+    /// Queue index -> which mark the notice carries; see `NOTICE_QUALIFIED`.
+    #[attribute(order = 30)]
+    pub notify_kind: outbe_primitives::storage::dsl::Map<u32, u8>,
 }
 
 impl IntexFactoryContract<'_> {
@@ -158,6 +163,14 @@ impl IntexFactoryContract<'_> {
     /// Namespace a bin-index column by the reference currency its prices are in.
     pub(crate) const fn scoped(reference_currency: u16, key: u32) -> u64 {
         ((reference_currency as u64) << 32) | key as u64
+    }
+
+    /// Inverse of [`Self::scoped`] for a key that is a worldwide day.
+    pub(crate) const fn unscoped(scoped: u64) -> (u16, WorldwideDay) {
+        (
+            (scoped >> 32) as u16,
+            WorldwideDay::new((scoped & 0xffff_ffff) as u32),
+        )
     }
 
     /// Composite key for `mine_seq`: `keccak256(series_id ++ holder)`.

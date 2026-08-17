@@ -41,7 +41,10 @@ fn a_slot_boundary_records_itself() {
     let boundary = 1_700_000_400_u64;
     assert_eq!(boundary % PERIOD, 0);
     assert_eq!(last_fire_at(PERIOD, OFFSET, boundary), boundary);
-    assert_eq!(last_fire_at(PERIOD, OFFSET, boundary + PERIOD - 1), boundary);
+    assert_eq!(
+        last_fire_at(PERIOD, OFFSET, boundary + PERIOD - 1),
+        boundary
+    );
 }
 
 #[test]
@@ -53,7 +56,7 @@ fn a_timestamp_before_the_first_slot_yields_the_offset() {
 fn only_the_polls_coalesce() {
     for spec in ACTIVE_TRIGGERS {
         let is_poll = spec.id == TriggerId::AuctionClearing.as_u32()
-            || spec.id == TriggerId::IntexQualifyNotify.as_u32();
+            || spec.id == TriggerId::IntexNotify.as_u32();
         assert_eq!(
             spec.coalesces_backlog, is_poll,
             "{} must not change its backlog policy",

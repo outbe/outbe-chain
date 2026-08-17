@@ -12,7 +12,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
 use crate::called;
-use crate::constants::{MAX_CALL_ACTIONS_PER_SWEEP, MAX_GROUP_DECISIONS_PER_SWEEP};
+use crate::constants::{MAX_GROUP_DECISIONS_PER_SWEEP, MAX_SERIES_ACTIONS_PER_SWEEP};
 use crate::schema::IntexFactoryContract;
 
 const CHAIN_ID: u64 = 1;
@@ -145,7 +145,7 @@ fn a_sweep_wider_than_one_run_finishes_over_the_next_blocks() {
         fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER + 1));
 
         // One group per day, half again as many as one slice may move.
-        let groups = MAX_CALL_ACTIONS_PER_SWEEP + MAX_CALL_ACTIONS_PER_SWEEP / 2;
+        let groups = MAX_SERIES_ACTIONS_PER_SWEEP + MAX_SERIES_ACTIONS_PER_SWEEP / 2;
         let days = 20260101..20260101 + groups;
         for day in days.clone() {
             seed_called_candidate(&s, day);
@@ -158,7 +158,7 @@ fn a_sweep_wider_than_one_run_finishes_over_the_next_blocks() {
 
         // The daily trigger opens the sweep and takes what it can.
         let first = called::scan_and_call(&ctx).unwrap();
-        assert_eq!(first, MAX_CALL_ACTIONS_PER_SWEEP);
+        assert_eq!(first, MAX_SERIES_ACTIONS_PER_SWEEP);
         assert_ne!(
             IntexFactoryContract::new(s.clone())
                 .call_sweep_day
@@ -216,7 +216,7 @@ fn a_sweep_that_runs_past_midnight_keeps_deciding_against_its_own_day() {
             U256::from(TRIGGER),
         );
 
-        let groups = MAX_CALL_ACTIONS_PER_SWEEP + 1;
+        let groups = MAX_SERIES_ACTIONS_PER_SWEEP + 1;
         let days = 20260101..20260101 + groups;
         for day in days.clone() {
             seed_called_candidate(&s, day);
@@ -228,7 +228,7 @@ fn a_sweep_that_runs_past_midnight_keeps_deciding_against_its_own_day() {
         );
         assert_eq!(
             called::scan_and_call(&ctx).unwrap(),
-            MAX_CALL_ACTIONS_PER_SWEEP
+            MAX_SERIES_ACTIONS_PER_SWEEP
         );
 
         // The next slice lands after midnight. Pinned to the day it opened on,
@@ -443,7 +443,7 @@ fn a_new_sweep_walks_the_bins_the_last_one_stopped_above() {
         let young = 20260001;
         seed_young_candidate_at(&s, young, (scan_ts - 5 * DAY) as u32, TRIGGER);
         // Above it: enough mature groups at a higher trigger to spend every action.
-        for day in 20260101..20260101 + MAX_CALL_ACTIONS_PER_SWEEP + 1 {
+        for day in 20260101..20260101 + MAX_SERIES_ACTIONS_PER_SWEEP + 1 {
             seed_candidate_at(&s, day, ISSUED_AT, TRIGGER * 2);
         }
 
@@ -453,7 +453,7 @@ fn a_new_sweep_walks_the_bins_the_last_one_stopped_above() {
         );
         assert_eq!(
             called::scan_and_call(&ctx).unwrap(),
-            MAX_CALL_ACTIONS_PER_SWEEP,
+            MAX_SERIES_ACTIONS_PER_SWEEP,
             "the slice stops on its action budget"
         );
         assert_ne!(

@@ -12,6 +12,7 @@ use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_intex::SeriesId;
 use outbe_oracle::schema::{OracleContract, PairIndex};
+use outbe_primitives::storage::types::Storable;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
@@ -73,7 +74,7 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
     let start = factory.call_currency_cursor.read()? as usize % currencies.len();
 
-    let mut budget = ScanBudget::for_call();
+    let mut budget = ScanBudget::for_qualify();
     let mut called: u32 = 0;
     let mut resume_at = start;
     let mut swept = true;
@@ -374,10 +375,16 @@ pub(crate) fn try_call_group(
     }
     factory.remove_qualified_group(group.iso_code, group.worldwide_day)?;
 
-    // Notify the target chains of the Called transition via ERC-7786; best-effort.
-    // OriginRouter failure (e.g. exhausted relay float) does not revert the
-    // state transition. The target chain can reconcile series state from the origin chain.
-    let _ = notify_called(storage, group.worldwide_day, &group.members);
+    // A slice of this sweep runs in a block hook, which cannot call contracts, so
+    // the notices leave from the `intex_notify` cycle trigger. One per series: the
+    // group is gone from the index by the time they are sent.
+    for &series_id in &group.members {
+        crate::qualified::enqueue_notice(
+            factory,
+            crate::qualified::NOTICE_CALLED,
+            series_id.to_word(),
+        )?;
+    }
 
     for &series_id in &group.members {
         crate::runtime::emit_event(
@@ -394,7 +401,7 @@ pub(crate) fn try_call_group(
 /// One series per message, unlike the Qualified notice: applying a Called mark
 /// migrates the target's holders, an unbounded cost the origin cannot price, so
 /// sharing a budget would take a whole group down with one heavy series.
-fn notify_called(
+pub(crate) fn notify_called(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
     members: &[SeriesId],
