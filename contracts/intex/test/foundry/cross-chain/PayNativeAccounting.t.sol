@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
@@ -245,7 +246,7 @@ contract PayNativeAccountingTest is CrossChainTest {
             OUTBE_CHAIN_ID,
             address(outbeRouter),
             address(bnbRouter),
-            BridgeMsgCodec.encodeMarkCalled(SERIES_ID, SERIES_ID_DAY)
+            BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, MarkBatchLib.one(SERIES_ID))
         );
     }
 

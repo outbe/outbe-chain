@@ -23,7 +23,7 @@ pub enum TriggerId {
     AuctionAdvance = 3,
     GemCallDaily = 4,
     AuctionClearing = 5,
-    IntexQualifyNotify = 6,
+    IntexNotify = 6,
 }
 
 impl TriggerId {
@@ -71,7 +71,7 @@ pub enum TriggerHandler {
     AuctionAdvance,
     GemCallDaily,
     AuctionClearing,
-    IntexQualifyNotify,
+    IntexNotify,
 }
 
 impl TriggerHandler {
@@ -86,7 +86,7 @@ impl TriggerHandler {
             | Self::AuctionAdvance
             | Self::GemCallDaily
             | Self::AuctionClearing
-            | Self::IntexQualifyNotify => 0,
+            | Self::IntexNotify => 0,
         }
     }
 
@@ -107,9 +107,7 @@ impl TriggerHandler {
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
             Self::GemCallDaily => outbe_gem::hooks::run_call_daily(ctx),
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
-            Self::IntexQualifyNotify => {
-                outbe_intexfactory::qualified::drain_qualify_notices(ctx)
-            }
+            Self::IntexNotify => outbe_intexfactory::qualified::drain_notices(ctx),
         }
     }
 }
@@ -214,15 +212,15 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             handler: TriggerHandler::GemCallDaily,
         },
         TriggerSpec {
-            id: TriggerId::IntexQualifyNotify.as_u32(),
-            label: "intex_qualify_notify",
+            id: TriggerId::IntexNotify.as_u32(),
+            label: "intex_notify",
             period_seconds: 600,
             start_offset_seconds: 0,
             // Drains a queue the qualify sweep filled; reads no accounting state.
             requires_accounting_window: false,
             // A poll has nothing to replay: a gap collapses to one drain.
             coalesces_backlog: true,
-            handler: TriggerHandler::IntexQualifyNotify,
+            handler: TriggerHandler::IntexNotify,
         },
     ]
 }

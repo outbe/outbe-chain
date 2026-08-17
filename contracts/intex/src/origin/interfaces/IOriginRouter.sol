@@ -277,9 +277,12 @@ interface IOriginRouter {
         uint128[] calldata paidAmounts
     ) external view returns (uint256 fee);
     /// @notice Native fee to broadcast mark-called (summed over the day's snapshot targets).
-    function quoteSendMarkCalled(bytes14 seriesId, uint32 worldwideDay) external view returns (uint256 fee);
+    function quoteSendMarkCalled(uint32 worldwideDay, bytes14[] calldata seriesIds) external view returns (uint256 fee);
     /// @notice Native fee to broadcast mark-qualified (summed over the day's snapshot targets).
-    function quoteSendMarkQualified(bytes14 seriesId, uint32 worldwideDay) external view returns (uint256 fee);
+    function quoteSendMarkQualified(uint32 worldwideDay, bytes14[] calldata seriesIds)
+        external
+        view
+        returns (uint256 fee);
 
     // --- Send ---
     /// @notice Broadcast auction stage start to every registered target, snapshotting the target set for the day.
@@ -312,12 +315,14 @@ interface IOriginRouter {
         uint128[] calldata refundedAmounts,
         uint128[] calldata paidAmounts
     ) external payable returns (bytes32 sendId);
-    /// @notice Broadcast mark-called over the day's snapshot. Restricted to `INTEX_FACTORY_ROLE`.
-    /// @dev The settlement deadline is derived on the destination chain from `callNoticePeriod`.
-    function sendMarkCalled(bytes14 seriesId, uint32 worldwideDay) external payable;
-    /// @notice Broadcast mark-qualified over the day's snapshot, flipping the series to Qualified.
+    /// @notice Broadcast mark-called for one day's series over its snapshot. A batch is one day's
+    ///         series in one reference currency, which share the decision that called them.
     ///         Restricted to `INTEX_FACTORY_ROLE`.
-    function sendMarkQualified(bytes14 seriesId, uint32 worldwideDay) external payable;
+    /// @dev The settlement deadline is derived on the destination chain from `callNoticePeriod`.
+    function sendMarkCalled(uint32 worldwideDay, bytes14[] calldata seriesIds) external payable;
+    /// @notice Broadcast mark-qualified for one day's series over its snapshot, flipping them to
+    ///         Qualified. Restricted to `INTEX_FACTORY_ROLE`.
+    function sendMarkQualified(uint32 worldwideDay, bytes14[] calldata seriesIds) external payable;
 
     /// @notice Permissionless flush of a parked outbound leg.
     function flushPendingSend(uint256 idx) external;

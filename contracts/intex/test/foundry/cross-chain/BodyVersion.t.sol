@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {Test} from "forge-std/Test.sol";
@@ -43,10 +44,10 @@ contract BodyVersionTest is Test {
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_AUCTION_RESULT, "auctionResult.msgType");
         assertEq(encoded.length, 22, "auctionResult.length");
 
-        encoded = BridgeMsgCodec.encodeMarkCalled("20260212-TRY-U", 20260212);
+        encoded = BridgeMsgCodec.encodeMarkCalled(20260212, MarkBatchLib.one("20260212-TRY-U"));
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "markCalled.version");
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_MARK_CALLED, "markCalled.msgType");
-        assertEq(encoded.length, 20, "markCalled.length");
+        assertEq(encoded.length, BridgeMsgCodec.MIN_LEN_MARK_CALLED, "markCalled.length");
 
         encoded = BridgeMsgCodec.encodeRefundInstructions(1, 0, 1, new address[](0), new uint128[](0), new uint128[](0));
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "refund.version");
@@ -101,7 +102,7 @@ contract BodyVersionTest is Test {
     }
 
     function test_BridgeCodec_MarkCalled_RoundTrip() public view {
-        bytes memory packet = BridgeMsgCodec.encodeMarkCalled("20260212-TRY-U", 20260212);
+        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(20260212, MarkBatchLib.one("20260212-TRY-U"));
         bytes14 seriesId = this.exposedDecodeMarkCalled(packet);
         assertEq(seriesId, bytes14("20260212-TRY-U"));
     }
@@ -125,7 +126,7 @@ contract BodyVersionTest is Test {
     }
 
     function test_BridgeCodec_UnknownBodyVersion_MarkCalled_Reverts() public {
-        bytes memory packet = BridgeMsgCodec.encodeMarkCalled("20260212-TRY-U", 20260212);
+        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(20260212, MarkBatchLib.one("20260212-TRY-U"));
         packet[0] = 0xAA;
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnsupportedBodyVersion.selector, 0xAA));
         this.exposedDecodeMarkCalled(packet);
@@ -270,7 +271,8 @@ contract BodyVersionTest is Test {
     }
 
     function exposedDecodeMarkCalled(bytes calldata p) external pure returns (bytes14) {
-        return BridgeMsgCodec.decodeMarkCalled(p);
+        (, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(p);
+        return seriesIds[0];
     }
 
     function exposedDecodeRefundInstructions(bytes calldata p)
