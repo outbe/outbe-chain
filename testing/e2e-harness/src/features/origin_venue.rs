@@ -498,6 +498,37 @@ fn flush_parked_bid_relays(world: &mut World) {
     }
 }
 
+/// Clearing fires the auction result, the issuance instructions and the refunds
+/// back to back. A router that cannot pay the bridge fee parks the tail of that
+/// burst instead of reverting, so a parked send is the first thing to look at
+/// when a message never lands. Counting only: a run must not need a nudge.
+#[cfg(feature = "ocomp-integration")]
+fn parked_origin_sends(world: &World) -> u32 {
+    let url = world.rpc.url(world.validators.primary_port());
+    let Some(contracts) = world.state.origin_contracts.clone() else {
+        return 0;
+    };
+    let mut parked = 0;
+    for idx in 0..64u64 {
+        let Some(send) = eth::read_call(
+            &url,
+            contracts.origin_router,
+            &IParkedWork::parkedSendCall {
+                idx: U256::from(idx),
+            },
+        ) else {
+            break;
+        };
+        if send.dstChainId == 0 {
+            break;
+        }
+        if !send.sent {
+            parked += 1;
+        }
+    }
+    parked
+}
+
 #[cfg(feature = "ocomp-integration")]
 fn settled_day(world: &World) -> u32 {
     world
@@ -827,7 +858,9 @@ fn escrow_refunds_the_rest(world: &mut World) {
         }
         assert!(
             Instant::now() < deadline,
-            "day {worldwide_day} cleared but the escrow never received refund instructions"
+            "day {worldwide_day} cleared but the escrow never received refund instructions \
+             ({} origin sends are parked)",
+            parked_origin_sends(world)
         );
         sleep(Duration::from_secs(2));
     }
