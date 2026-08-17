@@ -184,20 +184,6 @@ pub fn set_exchange_rate(
     oracle.set_exchange_rate(caller, pair, rate, block_number, timestamp)
 }
 
-/// Publishes a currency's official annual policy rate, 1e18 scaled (system-only,
-/// `Address::ZERO` caller). The ISO code must already be a registered reference
-/// currency, and the rate must be non-zero — zero is the "no rate published"
-/// sentinel [`get_currency_rate`] reads.
-pub fn set_currency_rate(
-    storage: StorageHandle,
-    caller: Address,
-    iso_code: u16,
-    rate: U256,
-) -> Result<()> {
-    let mut oracle: OracleContract<'_> = OracleContract::new(storage);
-    oracle.set_currency_rate(caller, iso_code, rate)
-}
-
 /// Stored WorldwideDay VWAP for the pair registered under `index`, or `None`
 /// when the day has no snapshot or that pair had no data in it. Callers get the
 /// index from [`require_coen_pair`] or [`register_pair`].

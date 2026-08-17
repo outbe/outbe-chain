@@ -6,10 +6,10 @@ use outbe_primitives::address_pair::AddressPair;
 /// Genesis seed for the USD (ISO 840) official annual policy rate — the Fed
 /// funds rate — at 1e18 scale (3.63%).
 ///
-/// This is a bootstrap placeholder, not a live figure: the rate a chain runs with
-/// comes from its genesis config, and `setCurrencyRate` republishes it whenever
-/// the central bank moves. Credis pins whatever is published here on a position
-/// at opening and holds it for the position's life.
+/// This is a bootstrap placeholder, not a live figure: the rate a chain runs
+/// with comes from its genesis config, and keeping it current is the oracle
+/// feeders' job. Credis pins whatever is published here on a position at
+/// opening and holds it for the position's life.
 pub const DEFAULT_USD_POLICY_RATE: U256 = U256::from_limbs([36_300_000_000_000_000u64, 0, 0, 0]);
 
 /// Maximum number of snapshots to retain (approximately 1 year at 2-block vote

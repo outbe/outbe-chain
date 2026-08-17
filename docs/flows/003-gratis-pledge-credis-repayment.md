@@ -108,7 +108,9 @@ admissibility flag:
 | a non-zero policy rate for `iso` | `getCurrencyRate` reverts without it | `requestCredis`, when the rate is pinned |
 
 Genesis seeds USD/840; any other currency needs `registerPair`, a vault added via
-`addVault`, plus a system-only `setCurrencyRate`.
+`addVault`, and a policy rate in `reference_currency_rate`. There is no setter for
+that rate — genesis seeds it and the oracle feeders own keeping it current, so a
+currency whose feed is not yet wired can be priced at pledge but not drawn.
 
 > **Operational prerequisite.** Both Credis precompiles must be registered as
 > vault-router **liquidity targets** — `addLiquidityTarget(addr,
@@ -578,8 +580,12 @@ Events are the audit trail; storage reads are authoritative if they disagree.
    forever — nothing forces closure on depreciation. Deferred by decision, but it
    also means no CCA penalty can fire in a flat or falling market.
 4. **A 0% policy rate is unrepresentable.** Zero doubles as the "no rate published"
-   sentinel, so `setCurrencyRate` rejects it — wrong for the ECB 2016–2022 and the
-   BoJ. Needs an explicit presence flag beside the rate.
+   sentinel in `getCurrencyRate` — wrong for the ECB 2016–2022 and the BoJ. Needs
+   an explicit presence flag beside the rate.
+4b. **Only genesis writes the policy rate.** No feeder path populates
+   `reference_currency_rate` today, so a central-bank move cannot land without a
+   restart from a new genesis. The feed belongs in `outbe-feeder` beside the
+   `COEN/<iso>` price votes.
 5. **Missing-data days in the call streak** (§11.3) reset rather than pause the
    count. Placeholder, not a decision.
 6. **`releaseToEoa` and `burnPledged` are unauthenticated at the enclave boundary.**

@@ -10,7 +10,6 @@ interface IOracle {
     event VoteTargetDeactivated(address indexed base, address indexed quote);
     event VoteTargetActivated(address indexed base, address indexed quote);
     event ExchangeRateSet(address indexed base, address indexed quote, uint256 rate);
-    event CurrencyRateSet(uint16 indexed isoCode, uint256 rate);
 
     // Events — block hooks (emitted during tally/slash/S-curve processing)
     event ExchangeRateUpdated(address indexed base, address indexed quote, uint256 rate, uint64 blockNumber);
@@ -250,11 +249,4 @@ interface IOracle {
     ///         which Credis pins on a position at opening. Reverts if the code is
     ///         not a registered reference currency or carries no rate.
     function getCurrencyRate(uint16 isoCode) external view returns (uint256 rate);
-
-    /// @notice Publishes a currency's official annual policy rate (system-only,
-    ///         `Address::ZERO` caller), 1e18 scaled. The ISO code must already be
-    ///         a registered reference currency. Without this the rate could only
-    ///         be set at genesis, so no new currency feed could come online
-    ///         without a hard fork.
-    function setCurrencyRate(uint16 isoCode, uint256 rate) external;
 }
