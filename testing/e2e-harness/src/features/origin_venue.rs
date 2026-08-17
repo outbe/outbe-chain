@@ -498,6 +498,36 @@ fn flush_parked_bid_relays(world: &mut World) {
     }
 }
 
+/// Did Desis get as far as handing the refunds to the router? Separates "the
+/// clearing never sent them" from "the target chain refused them".
+#[cfg(feature = "ocomp-integration")]
+fn refunds_were_sent(world: &World, worldwide_day: u32) -> bool {
+    let url = world.rpc.url(world.validators.primary_port());
+    let Some(contracts) = world.state.origin_contracts.clone() else {
+        return false;
+    };
+    let topic0 = alloy_primitives::keccak256(
+        b"RefundInstructionsSent(bytes32,uint32,uint256)".as_slice(),
+    );
+    eth::raw_json_with_params(
+        &url,
+        "eth_getLogs",
+        serde_json::json!([{
+            "fromBlock": "0x0",
+            "toBlock": "latest",
+            "address": format!("{:?}", contracts.origin_router),
+            "topics": [
+                format!("{topic0:?}"),
+                serde_json::Value::Null,
+                format!("0x{worldwide_day:064x}"),
+            ],
+        }]),
+    )
+    .as_ref()
+    .and_then(|value| value.as_array())
+    .is_some_and(|entries| !entries.is_empty())
+}
+
 /// Clearing fires the auction result, the issuance instructions and the refunds
 /// back to back. A router that cannot pay the bridge fee parks the tail of that
 /// burst instead of reverting, so a parked send is the first thing to look at
@@ -859,7 +889,8 @@ fn escrow_refunds_the_rest(world: &mut World) {
         assert!(
             Instant::now() < deadline,
             "day {worldwide_day} cleared but the escrow never received refund instructions \
-             ({} origin sends are parked)",
+             (sent by Desis: {}; {} origin sends are parked)",
+            refunds_were_sent(world, worldwide_day),
             parked_origin_sends(world)
         );
         sleep(Duration::from_secs(2));
