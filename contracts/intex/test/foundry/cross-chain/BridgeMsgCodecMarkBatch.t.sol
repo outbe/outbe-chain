@@ -63,7 +63,11 @@ contract BridgeMsgCodecMarkBatchTest is Test {
         (, bytes14[] memory ids) = this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, batch));
 
         assertEq(ids.length, max, "the cap round-trips");
-        assertEq(ids[max - 1], batch[max - 1], "the last series survives");
+        for (uint256 i = 0; i < max; ++i) {
+            // Distinct ids, so this pins the order and not just the count.
+            assertEq(ids[i], batch[i], "series survives in place");
+            if (i > 0) assertTrue(batch[i] != batch[i - 1], "the fixture ids differ");
+        }
     }
 
     function test_theHeaderNamesTheMessageType() public view {

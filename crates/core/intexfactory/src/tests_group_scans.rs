@@ -202,18 +202,18 @@ fn an_empty_group_decides_nothing() {
 #[test]
 fn the_budget_takes_groups_whole() {
     let mut budget = ScanBudget::new();
-    assert!(budget.admits(2));
+    assert!(budget.admits_actions(2));
     budget.spend_decision();
     budget.spend_actions(2);
 
     // What is left still fits a small group.
-    assert!(budget.admits(MAX_SERIES_ACTIONS_PER_SWEEP - 2));
+    assert!(budget.admits_actions(MAX_SERIES_ACTIONS_PER_SWEEP - 2));
     // One series wider than the remainder waits for the next slice.
-    assert!(!budget.admits(MAX_SERIES_ACTIONS_PER_SWEEP - 1));
+    assert!(!budget.admits_actions(MAX_SERIES_ACTIONS_PER_SWEEP - 1));
 
     // A group wider than the whole allowance would stall forever, so an
     // untouched budget takes it on.
-    assert!(ScanBudget::new().admits(MAX_SERIES_ACTIONS_PER_SWEEP + 1));
+    assert!(ScanBudget::new().admits_actions(MAX_SERIES_ACTIONS_PER_SWEEP + 1));
 }
 
 #[test]
@@ -221,12 +221,17 @@ fn the_budget_stops_when_either_half_runs_out() {
     let mut budget = ScanBudget::new();
     budget.spend_actions(MAX_SERIES_ACTIONS_PER_SWEEP);
     assert!(budget.is_spent());
-    assert!(!budget.admits(1));
+    assert!(!budget.admits_actions(1));
 
     let mut budget = ScanBudget::new();
     for _ in 0..crate::constants::MAX_GROUP_DECISIONS_PER_SWEEP {
         budget.spend_decision();
     }
-    assert!(budget.is_spent());
-    assert!(!budget.admits(1));
+    assert!(
+        budget.is_spent(),
+        "spent decisions stop the scan between bins"
+    );
+    // Deciding costs no actions, so a group still fits: what bounds an
+    // undecided bin is the boundary check, not this one.
+    assert!(budget.admits_actions(1));
 }

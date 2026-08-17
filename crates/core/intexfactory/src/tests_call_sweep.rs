@@ -297,3 +297,85 @@ fn a_sweep_that_fits_in_one_run_closes_at_once() {
         );
     });
 }
+
+/// A young series: issued inside the window, so its truncated window cannot hold
+/// the threshold however loud the days were.
+fn seed_young_candidate(s: &StorageHandle<'_>, worldwide_day: u32, issued_at: u32) {
+    let series_id =
+        SeriesId::for_pair(WorldwideDay::new(worldwide_day), 840, REFERENCE_ISO).unwrap();
+    let trigger = U256::from(TRIGGER);
+    outbe_intex::api::create_series(
+        s,
+        outbe_intex::CreateSeriesParams {
+            series_id,
+            worldwide_day: WorldwideDay::new(worldwide_day),
+            issued_intex_count: 100,
+            promis_load_minor: 1_000_000_000_000_000_000,
+            entry_price_minor: trigger,
+            floor_price_minor: trigger,
+            call_price_minor: trigger,
+            call_trigger: outbe_intex::IntexCallTrigger {
+                call_window: WINDOW_DAYS * DAY as u32,
+                call_threshold: 21 * DAY as u32,
+                call_notice_period: 7 * DAY as u32,
+            },
+            issued_at,
+            issuance_currency: 840,
+            reference_currency: REFERENCE_ISO,
+        },
+    )
+    .unwrap();
+    outbe_intex::api::mark_qualified(s, series_id).unwrap();
+    IntexFactoryContract::new(s.clone())
+        .insert_qualified_group(
+            REFERENCE_ISO,
+            WorldwideDay::new(worldwide_day),
+            trigger,
+            &[series_id],
+        )
+        .unwrap();
+}
+
+/// A bin can hold more groups than one run decides. When none of them transitions
+/// there is nothing to shrink the bin, so the sweep has to walk past it on its own
+/// budget rather than restarting on the same groups forever.
+#[test]
+fn a_bin_of_undecided_groups_does_not_stall_the_sweep() {
+    with_factory(|s| {
+        let oracle = OracleContract::new(s.clone());
+        let pair = setup_pair(&oracle);
+        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER + 1));
+
+        // All issued five days ago: every one is visited, decided, and left alone.
+        let young_at = (scan_ts - 5 * DAY) as u32;
+        let groups = MAX_GROUP_DECISIONS_PER_SWEEP + 1;
+        for day in 20260101..20260101 + groups {
+            seed_young_candidate(&s, day, young_at);
+        }
+
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+            s.clone(),
+        );
+        assert_eq!(
+            called::scan_and_call(&ctx).unwrap(),
+            0,
+            "none is due a call"
+        );
+
+        // The next slices must reach the end of the range and close the sweep.
+        for _ in 0..4 {
+            called::run_call_slice(&ctx).unwrap();
+        }
+        assert_eq!(
+            IntexFactoryContract::new(s.clone())
+                .call_sweep_day
+                .read()
+                .unwrap(),
+            0,
+            "the sweep closed instead of restarting on the same groups"
+        );
+    });
+}

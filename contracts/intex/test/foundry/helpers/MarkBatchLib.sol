@@ -16,11 +16,14 @@ library MarkBatchLib {
         batch[1] = second;
     }
 
-    /// @notice A batch of `count` series, each id derived from `prefix` by its index.
+    /// @notice A batch of `count` distinct series, each id derived from `prefix` by
+    ///         its index. The index goes into the id's own low bits — widening to
+    ///         `bytes32` first would place it past the 14th byte and truncate away,
+    ///         leaving every id identical.
     function sized(bytes14 prefix, uint256 count) internal pure returns (bytes14[] memory batch) {
         batch = new bytes14[](count);
         for (uint256 i = 0; i < count; ++i) {
-            batch[i] = bytes14(bytes32(prefix) | bytes32(uint256(i + 1)));
+            batch[i] = bytes14(uint112(prefix) ^ uint112(i + 1));
         }
     }
 }

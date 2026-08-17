@@ -105,6 +105,11 @@ fn qualify_currency(
     // sweep (bounded lag); the resulting state is unchanged.
     let mut cursor: u32 = factory.qualify_scan_cursor.read(&iso_code)?;
     'bins: loop {
+        if budget.is_spent() {
+            // Between bins, so the next slice resumes at a bin it has not opened.
+            factory.qualify_scan_cursor.write(&iso_code, cursor)?;
+            break;
+        }
         let next = match tree_math::find_first_left_inclusive(
             &UnqualifiedBinTree(&factory, iso_code),
             cursor,
@@ -120,7 +125,7 @@ fn qualify_currency(
         // Snapshot the bin before mutating: a qualified group leaves it.
         for worldwide_day in factory.unqualified_groups_in_bin(iso_code, next)? {
             let group = factory.unqualified_group(iso_code, worldwide_day)?;
-            if !budget.admits(group.members.len() as u32) {
+            if !budget.admits_actions(group.members.len() as u32) {
                 // Stop before the group, leaving the cursor on its bin: the groups
                 // already qualified are gone from it, so the next slice resumes here
                 // without redoing them.
@@ -186,9 +191,14 @@ impl ScanBudget {
     /// Groups transition whole, so one is taken on only when all of it fits. A
     /// group wider than the entire allowance would stall the scan forever, so it
     /// runs once the actions are otherwise untouched.
-    pub(crate) fn admits(&self, members: u32) -> bool {
-        self.decisions > 0
-            && (members <= self.actions || self.actions == MAX_SERIES_ACTIONS_PER_SWEEP)
+    ///
+    /// Only the actions are asked. A transition removes its group from the bin,
+    /// so stopping on them resumes past the work already done; decisions leave
+    /// the bin as it was, so stopping on them mid-bin would restart on the same
+    /// groups for as long as they keep deciding against a move. They are spent
+    /// all the same, and bound the scan at the next bin boundary.
+    pub(crate) fn admits_actions(&self, members: u32) -> bool {
+        members <= self.actions || self.actions == MAX_SERIES_ACTIONS_PER_SWEEP
     }
 
     pub(crate) fn spend_decision(&mut self) {

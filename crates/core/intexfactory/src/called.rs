@@ -48,6 +48,13 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 
     let factory = IntexFactoryContract::new(ctx.storage.clone());
     factory.call_sweep_day.write(last_closed_day)?;
+    // A sweep still in flight is superseded rather than continued: its cursors
+    // stand mid-range, and carrying them into the new day would let the new sweep
+    // call itself done over bins it never walked.
+    factory.call_currency_cursor.write(0)?;
+    for iso_code in outbe_oracle::api::get_all_reference_currencies(ctx)? {
+        factory.call_scan_cursor.write(&iso_code, 0)?;
+    }
     run_call_slice(ctx)
 }
 
@@ -144,6 +151,12 @@ fn call_currency(
     let mut finished = true;
     let mut cursor: u32 = factory.call_scan_cursor.read(&iso_code)?;
     'bins: loop {
+        if budget.is_spent() {
+            // Between bins, so the next slice resumes at a bin it has not opened.
+            factory.call_scan_cursor.write(&iso_code, cursor)?;
+            finished = false;
+            break;
+        }
         let next = match tree_math::find_first_left_inclusive(
             &QualifiedBinTree(&factory, iso_code),
             cursor,
@@ -159,7 +172,7 @@ fn call_currency(
         // Snapshot the bin before mutating: a called group leaves it.
         for worldwide_day in factory.qualified_groups_in_bin(iso_code, next)? {
             let group = factory.qualified_group(iso_code, worldwide_day)?;
-            if !budget.admits(group.members.len() as u32) {
+            if !budget.admits_actions(group.members.len() as u32) {
                 // Stop before the group, leaving the cursor on its bin: the groups
                 // already called are gone from it, so the next slice resumes here
                 // without redoing them.
@@ -245,17 +258,8 @@ pub(crate) struct CallWindow {
     /// "breached on at least `threshold` days" are the same statement, so a
     /// whole group's decision is this one comparison.
     pub(crate) p_star: U256,
-}
-
-impl CallWindow {
-    /// The window's first day.
-    fn first_day(&self) -> u32 {
-        let mut day = self.last_day;
-        for _ in 1..self.days {
-            day = previous_date_key(day);
-        }
-        day
-    }
+    /// The window's first day; a group issued on or before it sees the whole window.
+    pub(crate) first_day: u32,
 }
 
 /// Reads the window's finalized VWAPs and takes its `threshold`-th largest.
@@ -283,11 +287,16 @@ pub(crate) fn call_window(
         return Ok(None);
     }
     priced.sort_unstable_by(|a, b| b.cmp(a));
+    let mut first_day = last_day;
+    for _ in 1..days {
+        first_day = previous_date_key(first_day);
+    }
     Ok(Some(CallWindow {
         last_day,
         days,
         threshold,
         p_star: priced[threshold as usize - 1],
+        first_day,
     }))
 }
 
@@ -345,14 +354,18 @@ pub(crate) fn try_call_group(
     }
 
     let issued_day = timestamp_to_date_key(u64::from(series.issued_at));
-    let breached = if issued_day <= window.first_day()
+    let breached = if issued_day <= window.first_day
         && group_days == window.days
         && group_threshold == window.threshold
     {
         trigger < window.p_star
     } else {
-        // The group sees a shorter window than the scan's — it was issued inside
+        // The group sees a different window than the scan's — it was issued inside
         // it, or under different call parameters — so its own days are counted.
+        // The eligible bin range is drawn from the scan's parameters, so a group
+        // whose stored ones are wider is only reached while its trigger stays under
+        // `p_star`; that only parts on a chain restarted onto another profile, which
+        // no runtime setter can do.
         count_breaches(
             oracle,
             vwaps,

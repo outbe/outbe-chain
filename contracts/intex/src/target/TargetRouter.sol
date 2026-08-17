@@ -73,6 +73,10 @@ contract TargetRouter is
     /// @notice A lifecycle mark parked because IntexNFT1155 would not take it — most often the series has
     ///         not landed here yet. Retried via `flushPendingMark`. One slot serves both marks: `msgType`
     ///         says which, so the two do not each need their own park.
+    /// @dev A mark a later one superseded (a parked Qualified once Called took the series straight from
+    ///      Issued) stays parked and its flush keeps reverting. The slot is inert and the series is in the
+    ///      state the origin meant it to reach, so it is left standing rather than closed silently — a
+    ///      flush that reverts is the honest report that the two chains disagree about that series.
     struct PendingMark {
         bytes14 seriesId;
         uint8 msgType;
