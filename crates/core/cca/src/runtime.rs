@@ -52,17 +52,18 @@ impl CcaContract<'_> {
         Ok(())
     }
 
-    /// Retires an agent. Its existing positions are unaffected — they settle or
-    /// void on their own terms, and a void still penalizes the record.
+    /// Retires an agent and releases the identity: the presence flag is cleared,
+    /// so the address stops resolving to a record and is free to register again.
     ///
-    /// The §8.2 exit haircut on a penalized multiplier belongs to the bond and
-    /// is not applied here.
+    /// Exit is total. Positions the agent originated still settle or void on
+    /// their own terms, but with no record left there is no standing for either
+    /// to move, and a re-registration starts over at an unpenalized multiplier.
+    /// §8.2 is what prices that exit — a haircut on the bond. Until the bond
+    /// lands, leaving and coming back clean costs nothing.
     pub fn deregister(&mut self, cca: Address) -> Result<()> {
         let mut record = self.load_cca(cca)?;
-        if record.registration_state()? == CcaState::Deregistered {
-            return Err(CcaError::NotRegistered.into());
-        }
         record.state = CcaState::Deregistered as u8;
+        record.registered = false;
         self.update_cca_record(&record)?;
         self.emit(ICca::CcaDeregistered { cca })?;
         Ok(())
@@ -136,8 +137,8 @@ impl CcaContract<'_> {
     /// A fully unpaid void costs the whole 10% step; a void of a 25% remainder
     /// costs a quarter of it. The cut is multiplicative, so repeated voids
     /// compound downward and the multiplier can approach zero without ever
-    /// going negative. A void by an agent that is no longer registered is
-    /// ignored — there is no record left to penalize.
+    /// going negative. A void by an agent that never registered — or that has
+    /// since deregistered — is ignored: there is no record to penalize.
     pub fn record_void(&mut self, cca: Address, unpaid_share: U256) -> Result<()> {
         let Some(mut record) = self.ccas.get(cca)? else {
             return Ok(());

@@ -40,8 +40,10 @@ interface ICca {
     /// @notice Register `msg.sender` as a CCA, starting at an unpenalized multiplier.
     function register() external;
 
-    /// @notice Retire `msg.sender`. Its open positions are unaffected and still
-    ///         penalize the record if they void.
+    /// @notice Retire `msg.sender`, releasing the identity. The record stops
+    ///         existing, so the address may register again — starting over at an
+    ///         unpenalized multiplier. Open positions still settle or void, but
+    ///         with no record left neither moves any standing.
     function deregister() external;
 
     function getCca(address cca) external view returns (Cca memory);

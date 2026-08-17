@@ -22,6 +22,7 @@ const MAPPING = {
   IGemFactory: "precompiles/abi-export/IGemFactory.json",
   ICredis: "precompiles/abi-export/ICredis.json",
   ICredisFactory: "precompiles/abi-export/ICredisFactory.json",
+  ICca: "precompiles/abi-export/ICca.json",
   IFidelity: "precompiles/abi-export/IFidelity.json",
   IVaultRouter: "precompiles/abi-export/IVaultRouter.json",
   SmartAccountFactory: "smart-account/abi-export/SmartAccountFactory.json",

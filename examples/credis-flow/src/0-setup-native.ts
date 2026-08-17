@@ -1,16 +1,19 @@
 /**
  * 0-setup-native.ts
  *
- * Ensures user and CCA have sufficient native (COEN) balances.
+ * Ensures user and CCA have sufficient native (COEN) balances, and that the CCA
+ * is registered as an origination agent.
  *
  *   1. Ensure user has native balance (10 COEN if zero)
  *   2. Ensure CCA has native balance (5 COEN if < 5 COEN)
+ *   3. Register the CCA so it may originate positions
  *
  * Usage: npx tsx src/0-setup-native.ts [envName]
  */
 
 import { ethers, Wallet } from "ethers";
-import { DEFAULT_ENV, loadEnv, requireEnv } from "./utils.js";
+import { ICca__factory } from "./contracts/index.js";
+import { DEFAULT_CCA_REGISTRY_ADDRESS, DEFAULT_ENV, loadEnv, requireEnv } from "./utils.js";
 
 const CCA_MIN_NATIVE = ethers.parseEther("5");      // 5 COEN
 const USER_FUND_NATIVE = ethers.parseEther("10");    // 10 COEN
@@ -22,6 +25,8 @@ const rpcUrl = requireEnv("RPC_URL", envPath);
 const ownerPrivateKey = requireEnv("PRIVATE_KEY", envPath);
 const userAddress = requireEnv("USER_ADDRESS", envPath);
 const ccaAddress = requireEnv("CCA_ADDRESS", envPath);
+const ccaPrivateKey = requireEnv("CCA_PRIVATE_KEY", envPath);
+const ccaRegistryAddress = process.env["CCA_REGISTRY_ADDRESS"] || DEFAULT_CCA_REGISTRY_ADDRESS;
 
 async function main() {
   const provider = new ethers.JsonRpcProvider(rpcUrl);
@@ -60,6 +65,39 @@ async function main() {
     console.log(`    Funded CCA with 5 COEN (tx: ${tx.hash})`);
   } else {
     console.log("    Sufficient — skipping");
+  }
+
+  // ── Step 3: Register the CCA ──────────────────────────────────────────────
+
+  // `requestCredis` rejects a caller that is not a registered agent, so without
+  // this the whole flow stops at step 3. Registration is permissionless and the
+  // agent signs for itself, which is why it follows the funding above.
+  console.log("\n[3] Checking CCA registration...");
+  const ccaWallet = new Wallet(ccaPrivateKey, provider);
+  if (ccaWallet.address.toLowerCase() !== ccaAddress.toLowerCase()) {
+    throw new Error(
+      `CCA_PRIVATE_KEY is for ${ccaWallet.address}, but CCA_ADDRESS is ${ccaAddress}`,
+    );
+  }
+
+  // `getCca` reverts for an unregistered agent; `canOriginate` is false for both
+  // that and for a quarantined one, so the two are separated here — re-running
+  // register() on a quarantined agent would just revert "already registered".
+  const registry = ICca__factory.connect(ccaRegistryAddress, ccaWallet);
+  const isRegistered = await registry.getCca(ccaAddress).then(() => true, () => false);
+
+  if (!isRegistered) {
+    const tx = await registry.register();
+    await tx.wait();
+    console.log(`    Registered CCA (tx: ${tx.hash})`);
+  } else if (await registry.canOriginate(ccaAddress)) {
+    console.log("    Already registered — skipping");
+  } else {
+    const multiplier = await registry.multiplierOf(ccaAddress);
+    throw new Error(
+      `CCA ${ccaAddress} is registered but quarantined (multiplier ` +
+        `${ethers.formatEther(multiplier)} < 0.5); requestCredis will reject it`,
+    );
   }
 
   console.log("\n=== Setup Native complete ===");

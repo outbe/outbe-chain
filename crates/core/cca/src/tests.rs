@@ -77,18 +77,49 @@ fn registration_is_permissionless_and_starts_unpenalized() {
 }
 
 #[test]
-fn deregistering_stops_origination_but_keeps_the_record() {
+fn deregistering_releases_the_identity_for_re_registration() {
     with_registered(|mut cca| {
         cca.deregister(agent()).unwrap();
         assert!(!cca.can_originate(agent()).unwrap());
-
-        // The record survives so a later void still has something to penalize.
-        let record = cca.get_cca(agent()).unwrap();
-        assert_eq!(record.registration_state().unwrap(), CcaState::Deregistered);
-        assert_eq!(record.multiplier, MULTIPLIER_ONE);
+        assert!(cca.get_cca(agent()).is_err(), "the record stops existing");
 
         assert!(cca.deregister(agent()).is_err(), "already deregistered");
         assert!(cca.deregister(other_agent()).is_err(), "never registered");
+
+        // The address is not burned: the same agent can come back.
+        cca.register(agent(), REGISTERED_AT + 100).unwrap();
+        assert!(cca.can_originate(agent()).unwrap());
+        let record = cca.get_cca(agent()).unwrap();
+        assert_eq!(record.registration_state().unwrap(), CcaState::Active);
+        assert_eq!(record.registered_at, REGISTERED_AT + 100);
+    });
+}
+
+/// Exit is total, and that cuts both ways: leaving discards the penalty the
+/// agent was carrying, so re-registration is a clean slate. §8.2's exit haircut
+/// on the bond is what is supposed to price this; the bond does not exist yet,
+/// so today the round trip is free. Pinned as a test because it is a decision,
+/// not an accident — if the bond lands and this stays free, that is the bug.
+#[test]
+fn leaving_and_returning_discards_a_penalty() {
+    with_registered(|mut cca| {
+        cca.record_void(agent(), MULTIPLIER_ONE).unwrap();
+        assert_eq!(
+            cca.multiplier_of(agent()).unwrap(),
+            U256::from(900_000_000_000_000_000u64)
+        );
+
+        cca.deregister(agent()).unwrap();
+        // A void that lands after the exit has no record to bite.
+        cca.record_void(agent(), MULTIPLIER_ONE).unwrap();
+
+        cca.register(agent(), REGISTERED_AT + 100).unwrap();
+        assert_eq!(
+            cca.multiplier_of(agent()).unwrap(),
+            MULTIPLIER_ONE,
+            "a returning agent starts over, exactly like a fresh address would"
+        );
+        assert_eq!(cca.get_cca(agent()).unwrap().recovery_progress, U256::ZERO);
     });
 }
 
@@ -166,9 +197,9 @@ fn quarantine_blocks_origination_below_half() {
 #[test]
 fn a_void_by_an_unregistered_agent_is_ignored() {
     with_cca(|mut cca| {
-        // Positions outlive deregistration, so a void can arrive for an agent
-        // that never registered on this chain state. It must not revert the
-        // void itself, which is a collateral operation.
+        // Positions outlive both registration and exit, so a void can arrive
+        // for an agent with no record. It must not revert the void itself,
+        // which is a collateral operation.
         cca.record_void(other_agent(), MULTIPLIER_ONE).unwrap();
         assert_eq!(cca.multiplier_of(other_agent()).unwrap(), MULTIPLIER_ONE);
     });

@@ -571,7 +571,11 @@ Events are the audit trail; storage reads are authoritative if they disagree.
 
 1. **The CCA bond does not exist.** §8.1/§8.2 — dynamic requirement, delegated
    senior layer, 21/128-day cooldowns, exit haircut. Until it lands, registration
-   is free and the §8.4 penalty has no economic teeth.
+   is free and the §8.4 penalty has no economic teeth: `deregister` releases the
+   record, so an agent clears a penalized multiplier by leaving and registering
+   again on the same address, and voids that land after the exit find nothing to
+   penalize. The bond gating `register()` and the §8.2 haircut pricing the exit
+   are what close both halves.
 2. **The CCA reward pool is still a pure accumulator.** `PoolKind::Cca` credits
    `CCA_ADDRESS` rather than distributing against the origination units this flow
    records. The 32%-capped distribution and the activation sweep to Metadosis are

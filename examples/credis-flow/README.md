@@ -86,7 +86,7 @@ environment name by editing `DEFAULT_ENV` at the top of `utils.ts`.
 ```
 src/
 ├── 0-info.ts                   Print current state of all actors
-├── 0-setup-native.ts           Fund user + CCA with native COEN
+├── 0-setup-native.ts           Fund user + CCA with native COEN, register the CCA
 ├── 0-setup-erc20.ts            Authorize the Credis precompiles on the vault
 │                               router, then mint / move ERC20 into user + vault
 ├── 0-setup-gratis.ts           Mine seeded gem → Promis → confidential Gratis
@@ -188,6 +188,8 @@ npx tsx src/0-info.ts                                   # default env: local-ret
 npx tsx src/0-info.ts outbe-peira
 
 # Setup
+# Funds user and CCA with native COEN, then registers the CCA (idempotent, and
+# required before any draw: requestCredis rejects an unregistered agent).
 npx tsx src/0-setup-native.ts
 # Registers GratisFactory + CredisFactory as vault-router liquidity targets
 # (idempotent, and required before any pledge: pledgeGratis reserves the credit
