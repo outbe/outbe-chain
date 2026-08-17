@@ -29,16 +29,11 @@ const FIELD_PLEDGED: u8 = 1;
 /// blob or a pledge ticket sealed under the same state key + handle.
 const FIELD_EOA: u8 = 2;
 
-/// Sealed-EOA blob: `nonce(12) ‖ ChaCha20Poly1305(Address 20B)` = 48 bytes. Written once
-/// at `ConsumePledge` and stored on the Credis position; the nonce is carried in the blob
-/// so `open_eoa_ct` needs no handle at settlement/void time.
+/// Sealed-EOA blob: `nonce(12) ‖ ChaCha20Poly1305(Address 20B)` = 48 bytes..
 const EOA_CT_LEN: usize = 12 + 20 + 16;
 
 /// PledgeLockTicket plaintext:
 /// `stables(32) ‖ owner(20) ‖ gratis(32) ‖ asset(20) ‖ entry_rate(32)` = 136 bytes.
-/// The ticket only exists between `Pledge` and its consumption
-/// (`ConsumePledge`/`Unpledge`); the active credis schedule (installments,
-/// outstanding collateral) is tracked on-chain by the Credis position, not here.
 const RECORD_PLAINTEXT_LEN: usize = 32 + 20 + 32 + 20 + 32;
 
 const SPEND_BIND_TAG: &[u8] = b"outbe/gratis/credis-bind/v1";
