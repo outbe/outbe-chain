@@ -486,3 +486,89 @@ fn a_new_sweep_walks_the_bins_the_last_one_stopped_above() {
         );
     });
 }
+
+const SECOND_ISO: u16 = 978;
+const SECOND_PAIR_ID: u32 = 2;
+
+fn setup_second_pair(oracle: &OracleContract) -> AddressPair {
+    let pair = AddressPair::new_coen_to(SECOND_ISO);
+    oracle.pair_to_index.write(&pair, SECOND_PAIR_ID).unwrap();
+    oracle.pair_count.write(SECOND_PAIR_ID).unwrap();
+    oracle
+        .pair_by_index
+        .write_pair(&SECOND_PAIR_ID, pair)
+        .unwrap();
+    oracle.vote_target.write(&pair, true).unwrap();
+    oracle.reference_currencies.push(SECOND_ISO).unwrap();
+    pair
+}
+
+/// Seeds one callable group of `iso`, priced so its trigger sits under the window.
+fn seed_candidate_for(s: &StorageHandle<'_>, iso: u16, worldwide_day: u32) {
+    let series_id = SeriesId::for_pair(WorldwideDay::new(worldwide_day), 840, iso).unwrap();
+    let trigger = U256::from(TRIGGER);
+    outbe_intex::api::create_series(
+        s,
+        outbe_intex::CreateSeriesParams {
+            series_id,
+            worldwide_day: WorldwideDay::new(worldwide_day),
+            issued_intex_count: 100,
+            promis_load_minor: 1_000_000_000_000_000_000,
+            entry_price_minor: trigger,
+            floor_price_minor: trigger,
+            call_price_minor: trigger,
+            call_trigger: outbe_intex::IntexCallTrigger {
+                call_window: WINDOW_DAYS * DAY as u32,
+                call_threshold: 21 * DAY as u32,
+                call_notice_period: 7 * DAY as u32,
+            },
+            issued_at: ISSUED_AT,
+            issuance_currency: 840,
+            reference_currency: iso,
+        },
+    )
+    .unwrap();
+    outbe_intex::api::mark_qualified(s, series_id).unwrap();
+    IntexFactoryContract::new(s.clone())
+        .insert_qualified_group(iso, WorldwideDay::new(worldwide_day), trigger, &[series_id])
+        .unwrap();
+}
+
+/// A budget that gives out inside the last currency of the rotation must resume
+/// there, not back at the first: the ones already closed would eat the next
+/// slice's allowance before it ever reached the one that was cut off.
+#[test]
+fn a_slice_resumes_at_the_currency_it_gave_out_on() {
+    with_factory(|s| {
+        let oracle = OracleContract::new(s.clone());
+        let first = setup_pair(&oracle);
+        let second = setup_second_pair(&oracle);
+        let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        fill_window(&oracle, last_closed_day, first, U256::from(TRIGGER + 1));
+        fill_window(&oracle, last_closed_day, second, U256::from(TRIGGER + 1));
+
+        // The first currency is small; the second holds more than one slice can move.
+        seed_candidate_for(&s, REFERENCE_ISO, 20260101);
+        for day in 20260201..20260201 + MAX_SERIES_ACTIONS_PER_SWEEP + 1 {
+            seed_candidate_for(&s, SECOND_ISO, day);
+        }
+
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+            s.clone(),
+        );
+        called::scan_and_call(&ctx).unwrap();
+
+        // The rotation is [840, 978]; it gave out on the last one, so that is where
+        // the cursor stands.
+        assert_eq!(
+            IntexFactoryContract::new(s.clone())
+                .call_currency_cursor
+                .read()
+                .unwrap(),
+            1,
+            "the cursor points at the currency that did not finish"
+        );
+    });
+}

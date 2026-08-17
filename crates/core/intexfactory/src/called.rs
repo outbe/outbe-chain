@@ -76,13 +76,17 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
 
     let mut budget = ScanBudget::for_qualify();
     let mut called: u32 = 0;
+    // The first currency left unfinished, so the next slice picks up where this one
+    // gave out rather than re-walking the ones already closed behind it.
     let mut resume_at = start;
+    let mut resumed = false;
     let mut swept = true;
     for offset in 0..currencies.len() {
         let at = (start + offset) % currencies.len();
         if budget.is_spent() {
-            // Resume here, so a heavy currency cannot starve the ones behind it.
-            resume_at = at;
+            if !resumed {
+                resume_at = at;
+            }
             swept = false;
             break;
         }
@@ -96,6 +100,10 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
         let (calls, finished) =
             call_currency(ctx, &oracle, iso_code, pair_index, pinned_day, &mut budget)?;
         called = called.saturating_add(calls);
+        if !finished && !resumed {
+            resume_at = at;
+            resumed = true;
+        }
         swept &= finished;
     }
     factory.call_currency_cursor.write(resume_at as u32)?;
