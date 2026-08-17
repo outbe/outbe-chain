@@ -694,6 +694,37 @@ fn deferred_mints(url: &str, venue_router: Address) -> usize {
     .map_or(0, Vec::len)
 }
 
+/// Whether Desis issued anything at all. Absent issuance means one of two very
+/// different things, and only the clearing event tells them apart.
+#[cfg(feature = "ocomp-integration")]
+fn cleared_empty(url: &str, worldwide_day: u32) -> Option<bool> {
+    let desis: Address = origin_venue::DESIS.parse().ok()?;
+    let day_topic = format!("0x{worldwide_day:064x}");
+    let seen = |signature: &[u8]| {
+        let topic0 = alloy_primitives::keccak256(signature);
+        eth::raw_json_with_params(
+            url,
+            "eth_getLogs",
+            serde_json::json!([{
+                "fromBlock": "0x0",
+                "toBlock": "latest",
+                "address": format!("{desis:?}"),
+                "topics": [format!("{topic0:?}"), day_topic],
+            }]),
+        )
+        .as_ref()
+        .and_then(|value| value.as_array())
+        .is_some_and(|entries| !entries.is_empty())
+    };
+    if seen(b"AuctionClearedEmpty(uint32,uint64)".as_slice()) {
+        return Some(true);
+    }
+    if seen(b"AuctionCleared(uint32,uint32,uint32,uint64)".as_slice()) {
+        return Some(false);
+    }
+    None
+}
+
 #[cfg(feature = "ocomp-integration")]
 #[then("the cleared day mints the Intex on the target chain")]
 fn issuance_mints_intex(world: &mut World) {
@@ -705,6 +736,13 @@ fn issuance_mints_intex(world: &mut World) {
     let bidders = world.state.auction_bidders.clone();
     let url = world.rpc.url(world.validators.primary_port());
     let worldwide_day = settled_day(world);
+
+    assert_ne!(
+        cleared_empty(&url, worldwide_day),
+        Some(true),
+        "day {worldwide_day} cleared empty: the day's supply bought no whole Intex, so there is \
+         nothing to issue and this scenario cannot cover minting"
+    );
 
     let deadline = Instant::now() + AUCTION_STAGE_TIMEOUT;
     let series = loop {
