@@ -286,9 +286,8 @@ impl GroupIndex<'_> {
         Ok(members)
     }
 
-    /// Append `series_id` to its day's group, creating the group in `bin_id` when
-    /// it is the first member. A later member priced into another bin would split
-    /// the group's single decision in two, so it is refused loudly.
+    /// Append `series_id` to its day's group, creating it in `bin_id` when first.
+    /// A member priced into another bin would split the group's decision: refused.
     fn insert(&self, tree: &impl BinTreeStorage, series_id: SeriesId, bin_id: u32) -> Result<()> {
         let worldwide_day = series_id.worldwide_day();
         let group_key = self.group_key(worldwide_day);

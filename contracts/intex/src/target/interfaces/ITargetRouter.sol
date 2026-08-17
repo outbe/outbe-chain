@@ -103,8 +103,8 @@ interface ITargetRouter {
     /// @notice Emitted when a lifecycle mark is parked because the series would not take it yet.
     /// @param idx Index of the parked mark slot.
     /// @param seriesId Series the mark was meant for.
-    /// @param msgType Codec message type of the mark (MARK_CALLED or MARK_QUALIFIED).
-    /// @param reason Raw revert bytes from IntexNFT1155 (e.g. the series has not landed here yet).
+    /// @param msgType Codec message type: MARK_CALLED or MARK_QUALIFIED.
+    /// @param reason Raw revert bytes from IntexNFT1155.
     event MarkDeferred(uint256 indexed idx, bytes14 indexed seriesId, uint8 indexed msgType, bytes reason);
     /// @notice Emitted when `flushPendingMark` successfully applies a parked mark.
     event MarkFlushed(uint256 indexed idx, bytes14 indexed seriesId, uint8 indexed msgType);

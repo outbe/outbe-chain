@@ -12,7 +12,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
 use crate::called;
-use crate::constants::MAX_GROUP_DECISIONS_PER_SWEEP;
+use crate::constants::{MAX_CALL_ACTIONS_PER_SWEEP, MAX_GROUP_DECISIONS_PER_SWEEP};
 use crate::schema::IntexFactoryContract;
 
 const CHAIN_ID: u64 = 1;
@@ -126,8 +126,8 @@ fn a_sweep_wider_than_one_run_finishes_over_the_next_blocks() {
         // Every window day above the trigger: all of them are due a call.
         fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER + 1));
 
-        // One group per day, half again as many as a single run decides.
-        let groups = MAX_GROUP_DECISIONS_PER_SWEEP + MAX_GROUP_DECISIONS_PER_SWEEP / 2;
+        // One group per day, half again as many as one slice may move.
+        let groups = MAX_CALL_ACTIONS_PER_SWEEP + MAX_CALL_ACTIONS_PER_SWEEP / 2;
         let days = 20260101..20260101 + groups;
         for day in days.clone() {
             seed_called_candidate(&s, day);
@@ -140,7 +140,7 @@ fn a_sweep_wider_than_one_run_finishes_over_the_next_blocks() {
 
         // The daily trigger opens the sweep and takes what it can.
         let first = called::scan_and_call(&ctx).unwrap();
-        assert_eq!(first, MAX_GROUP_DECISIONS_PER_SWEEP);
+        assert_eq!(first, MAX_CALL_ACTIONS_PER_SWEEP);
         assert_ne!(
             IntexFactoryContract::new(s.clone())
                 .call_sweep_day
@@ -198,7 +198,7 @@ fn a_sweep_that_runs_past_midnight_keeps_deciding_against_its_own_day() {
             U256::from(TRIGGER),
         );
 
-        let groups = MAX_GROUP_DECISIONS_PER_SWEEP + 1;
+        let groups = MAX_CALL_ACTIONS_PER_SWEEP + 1;
         let days = 20260101..20260101 + groups;
         for day in days.clone() {
             seed_called_candidate(&s, day);
@@ -210,7 +210,7 @@ fn a_sweep_that_runs_past_midnight_keeps_deciding_against_its_own_day() {
         );
         assert_eq!(
             called::scan_and_call(&ctx).unwrap(),
-            MAX_GROUP_DECISIONS_PER_SWEEP
+            MAX_CALL_ACTIONS_PER_SWEEP
         );
 
         // The next slice lands after midnight. Pinned to the day it opened on,
@@ -336,9 +336,8 @@ fn seed_young_candidate(s: &StorageHandle<'_>, worldwide_day: u32, issued_at: u3
         .unwrap();
 }
 
-/// A bin can hold more groups than one run decides. When none of them transitions
-/// there is nothing to shrink the bin, so the sweep has to walk past it on its own
-/// budget rather than restarting on the same groups forever.
+/// Nothing shrinks a bin whose groups all decide against a move, so the sweep has
+/// to walk past it rather than restart on them forever.
 #[test]
 fn a_bin_of_undecided_groups_does_not_stall_the_sweep() {
     with_factory(|s| {

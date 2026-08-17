@@ -22,7 +22,7 @@ use outbe_primitives::{
 
 use outbe_intex::IntexState;
 
-use crate::constants::{MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS};
+use crate::constants::ORIGIN_ROUTER_ADDRESS;
 use crate::qualified::ScanBudget;
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
@@ -48,8 +48,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 
     let factory = IntexFactoryContract::new(ctx.storage.clone());
     factory.call_sweep_day.write(last_closed_day)?;
-    // A sweep still in flight is superseded rather than continued: its cursors
-    // stand mid-range, and carrying them into the new day would let the new sweep
+    // A sweep in flight is superseded: its mid-range cursors would let the new one
     // call itself done over bins it never walked.
     factory.call_currency_cursor.write(0)?;
     for iso_code in outbe_oracle::api::get_all_reference_currencies(ctx)? {
@@ -58,10 +57,8 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     run_call_slice(ctx)
 }
 
-/// Advance an open sweep by one slice, or do nothing when none is in flight.
-/// The sweep stays pinned to the day it opened on, so a mass call spread over
-/// several blocks decides every group against the same finalized prices.
-/// Returns the number of series force-called.
+/// Advance an open sweep by one slice, pinned to the day it opened on so blocks
+/// of it decide against the same prices. Returns how many series were called.
 pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     let factory = IntexFactoryContract::new(ctx.storage.clone());
     let pinned_day = factory.call_sweep_day.read()?;
@@ -76,7 +73,7 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     let oracle = OracleContract::new(ctx.storage.clone());
     let start = factory.call_currency_cursor.read()? as usize % currencies.len();
 
-    let mut budget = ScanBudget::new();
+    let mut budget = ScanBudget::for_call();
     let mut called: u32 = 0;
     let mut resume_at = start;
     let mut swept = true;
@@ -108,9 +105,8 @@ pub fn run_call_slice(ctx: &BlockRuntimeContext) -> Result<u32> {
     Ok(called)
 }
 
-/// Scans one reference currency's qualified groups, drawing on the shared
-/// `budget`. Returns how many series were called and whether the currency was
-/// walked to the end of its eligible range.
+/// Scans one currency's qualified groups on the shared `budget`. Returns the calls
+/// made and whether its eligible range was walked to the end.
 fn call_currency(
     ctx: &BlockRuntimeContext,
     oracle: &OracleContract,
@@ -136,9 +132,8 @@ fn call_currency(
         return Ok((0, true));
     };
 
-    // Every trigger below `p_star` is breached often enough, so the eligible
-    // range ends at its bin. Deterministic out-of-range price: skip this
-    // currency instead of halting the block.
+    // Every trigger below `p_star` is breached often enough, so the range ends at
+    // its bin. An out-of-range price skips the currency rather than halting.
     let p_bin = match IntexFactoryContract::price_to_bin(window.p_star) {
         Ok(b) => b,
         Err(e) => {
@@ -173,9 +168,7 @@ fn call_currency(
         for worldwide_day in factory.qualified_groups_in_bin(iso_code, next)? {
             let group = factory.qualified_group(iso_code, worldwide_day)?;
             if !budget.admits_actions(group.members.len() as u32) {
-                // Stop before the group, leaving the cursor on its bin: the groups
-                // already called are gone from it, so the next slice resumes here
-                // without redoing them.
+                // Called groups have left this bin, so resuming on it redoes nothing.
                 factory.call_scan_cursor.write(&iso_code, next)?;
                 finished = false;
                 break 'bins;
@@ -254,17 +247,15 @@ pub(crate) struct CallWindow {
     /// Window length and required breach count, both in whole days.
     pub(crate) days: u32,
     pub(crate) threshold: u32,
-    /// The `threshold`-th largest VWAP of the window. `trigger < p_star` and
-    /// "breached on at least `threshold` days" are the same statement, so a
-    /// whole group's decision is this one comparison.
+    /// The `threshold`-th largest VWAP: `trigger < p_star` and "breached on at
+    /// least `threshold` days" are one statement, so a group decides by comparison.
     pub(crate) p_star: U256,
     /// The window's first day; a group issued on or before it sees the whole window.
     pub(crate) first_day: u32,
 }
 
-/// Reads the window's finalized VWAPs and takes its `threshold`-th largest.
-/// `None` when fewer days carry a price than the threshold requires: no trigger
-/// can be breached often enough, so the currency has nothing to call.
+/// The window's `threshold`-th largest finalized VWAP. `None` when too few days
+/// carry a price for any trigger to be breached often enough.
 pub(crate) fn call_window(
     oracle: &OracleContract,
     vwaps: &mut DayVwaps,
@@ -325,9 +316,8 @@ fn count_breaches(
     Ok(breaches)
 }
 
-/// Force-call a whole `(reference currency, worldwide day)` group: one day's
-/// series in one reference currency carry the same trigger, issue time and call
-/// parameters, so one read decides all of them. Returns how many were called.
+/// Force-call a whole group: its series share trigger, issue time and call
+/// parameters, so one read decides them all. Returns how many were called.
 pub(crate) fn try_call_group(
     storage: &StorageHandle<'_>,
     factory: &mut IntexFactoryContract,
@@ -360,12 +350,9 @@ pub(crate) fn try_call_group(
     {
         trigger < window.p_star
     } else {
-        // The group sees a different window than the scan's — it was issued inside
-        // it, or under different call parameters — so its own days are counted.
-        // The eligible bin range is drawn from the scan's parameters, so a group
-        // whose stored ones are wider is only reached while its trigger stays under
-        // `p_star`; that only parts on a chain restarted onto another profile, which
-        // no runtime setter can do.
+        // A shorter window than the scan's — issued inside it, or different stored
+        // parameters — so its own days are counted. Wider stored parameters are only
+        // reached under `p_star`; only a profile change on a live chain parts them.
         count_breaches(
             oracle,
             vwaps,
@@ -404,13 +391,15 @@ pub(crate) fn try_call_group(
     Ok(group.members.len() as u32)
 }
 
-/// One message per group, split only where the wire's cap forces it.
+/// One series per message, unlike the Qualified notice: applying a Called mark
+/// migrates the target's holders, an unbounded cost the origin cannot price, so
+/// sharing a budget would take a whole group down with one heavy series.
 fn notify_called(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
     members: &[SeriesId],
 ) -> Result<()> {
-    for chunk in members.chunks(MAX_SERIES_PER_MARK) {
+    for chunk in members.chunks(1) {
         // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
         storage.call(
             ORIGIN_ROUTER_ADDRESS,

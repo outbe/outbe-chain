@@ -70,13 +70,10 @@ contract TargetRouter is
         bool done;
     }
 
-    /// @notice A lifecycle mark parked because IntexNFT1155 would not take it — most often the series has
-    ///         not landed here yet. Retried via `flushPendingMark`. One slot serves both marks: `msgType`
-    ///         says which, so the two do not each need their own park.
-    /// @dev A mark a later one superseded (a parked Qualified once Called took the series straight from
-    ///      Issued) stays parked and its flush keeps reverting. The slot is inert and the series is in the
-    ///      state the origin meant it to reach, so it is left standing rather than closed silently — a
-    ///      flush that reverts is the honest report that the two chains disagree about that series.
+    /// @notice A lifecycle mark IntexNFT1155 would not take, most often because the series has not
+    ///         landed yet. Retried via `flushPendingMark`; `msgType` says which mark it was.
+    /// @dev A mark a later one superseded stays parked and its flush keeps reverting — an inert slot,
+    ///      left standing because a reverting flush reports the disagreement rather than hiding it.
     struct PendingMark {
         bytes14 seriesId;
         uint8 msgType;
@@ -612,10 +609,8 @@ contract TargetRouter is
         }
     }
 
-    /// @notice Decode MARK_QUALIFIED and apply it to every series it carries, parking the ones that
-    ///         will not take the mark yet.
-    /// @dev Unlike markCalled, qualifying is a pure status flip (Issued -> Qualified) with no holder
-    ///      migration, so there is nothing to bridge back to Outbe.
+    /// @notice Decode MARK_QUALIFIED and apply it to every series it carries, parking the rest.
+    /// @dev A pure status flip, so unlike markCalled there is nothing to bridge back to Outbe.
     function _handleMarkQualified(uint32 _srcChainId, bytes calldata _message) internal {
         (, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkQualified(_message);
         for (uint256 i = 0; i < seriesIds.length; ++i) {
@@ -624,9 +619,7 @@ contract TargetRouter is
     }
 
     /// @notice Apply one lifecycle mark through its self-call shim, parking it on revert.
-    /// @dev A series the target has not seen yet (or already moved past) reverts in IntexNFT1155.
-    ///      Parking it keeps that from rejecting the inbound message, and `flushPendingMark` applies
-    ///      it once the series lands.
+    /// @dev Parking keeps a series the target has not seen from rejecting the whole message.
     function _applyMark(uint32 _srcChainId, bytes14 _seriesId, uint8 _msgType) internal {
         // solhint-disable-next-line no-empty-blocks
         try this.applyMarkOne(_seriesId, _msgType) {}
@@ -644,7 +637,7 @@ contract TargetRouter is
         }
     }
 
-    /// @notice Self-call shim around a single lifecycle mark; isolates a series that will not take it.
+    /// @notice Self-call shim around one lifecycle mark; isolates a series that will not take it.
     /// @param seriesId Series the mark applies to.
     /// @param msgType Codec message type: MARK_CALLED or MARK_QUALIFIED.
     function applyMarkOne(bytes14 seriesId, uint8 msgType) external {

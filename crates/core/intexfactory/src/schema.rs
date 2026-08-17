@@ -100,9 +100,8 @@ pub struct IntexFactoryContract {
     #[attribute(order = 17)]
     pub call_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    // Group members. A lifecycle decision reads only fields a whole
-    // (reference currency, worldwide day) pair shares, so the bins above index
-    // groups and each group lists its own series. Keyed by `scoped(iso, day)`.
+    // Group members, keyed by `scoped(iso, day)`: a decision reads only fields the
+    // whole (reference currency, worldwide day) pair shares.
     #[attribute(order = 18)]
     pub unqualified_group_count: outbe_primitives::storage::dsl::Map<u64, u32>,
     /// `keccak256(iso_be16 ++ worldwide_day_be32 ++ index_be32)` -> series_id word.
@@ -122,14 +121,12 @@ pub struct IntexFactoryContract {
     pub qualified_group_bin: outbe_primitives::storage::dsl::Map<u64, u32>,
 
     // UTC day an unfinished call sweep is pinned to, so its later slices decide
-    // against the same finalized prices the daily trigger opened it with. 0 = no
-    // sweep in flight; a date key is never 0.
+    // against the prices it opened with. 0 = none in flight; a date key is never 0.
     #[attribute(order = 24)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
 
-    // The bins' own contents. They sit past the group columns because orders 7 and
-    // 12 carried series ids: read as a worldwide day, a leftover word is too wide
-    // for the type and would fault the scan rather than return a bad value.
+    // Past the group columns because orders 7 and 12 carried series ids: a leftover
+    // word is too wide for a worldwide day and would fault the scan, not misread.
     /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> group's worldwide day.
     #[attribute(order = 25)]
     pub unqualified_bin_groups: outbe_primitives::storage::dsl::Map<B256, u32>,

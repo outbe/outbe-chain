@@ -1,6 +1,5 @@
-//! The call decision read from the window's price rather than walked per series:
 //! `trigger < p_star` and "breached on at least `threshold` days" are the same
-//! statement, so these check that they stay the same statement.
+//! statement; these check that they stay the same statement.
 
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
@@ -167,9 +166,8 @@ fn a_trigger_equal_to_the_window_price_is_not_breached() {
     });
 }
 
-/// The scan used to take candidates from the bins under yesterday's price, so a
-/// series that had already breached often enough went unseen once the price
-/// dipped below its trigger. The window price is blind to that dip.
+/// Candidates used to come from the bins under yesterday's price, so a series that
+/// had breached enough went unseen once the price dipped. P* is blind to the dip.
 #[test]
 fn a_group_still_calls_after_the_price_falls_back_under_its_trigger() {
     with_oracle(|s| {

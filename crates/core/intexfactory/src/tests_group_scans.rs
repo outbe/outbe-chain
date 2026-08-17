@@ -201,7 +201,7 @@ fn an_empty_group_decides_nothing() {
 
 #[test]
 fn the_budget_takes_groups_whole() {
-    let mut budget = ScanBudget::new();
+    let mut budget = ScanBudget::for_qualify();
     assert!(budget.admits_actions(2));
     budget.spend_decision();
     budget.spend_actions(2);
@@ -213,17 +213,17 @@ fn the_budget_takes_groups_whole() {
 
     // A group wider than the whole allowance would stall forever, so an
     // untouched budget takes it on.
-    assert!(ScanBudget::new().admits_actions(MAX_SERIES_ACTIONS_PER_SWEEP + 1));
+    assert!(ScanBudget::for_qualify().admits_actions(MAX_SERIES_ACTIONS_PER_SWEEP + 1));
 }
 
 #[test]
 fn the_budget_stops_when_either_half_runs_out() {
-    let mut budget = ScanBudget::new();
+    let mut budget = ScanBudget::for_qualify();
     budget.spend_actions(MAX_SERIES_ACTIONS_PER_SWEEP);
     assert!(budget.is_spent());
     assert!(!budget.admits_actions(1));
 
-    let mut budget = ScanBudget::new();
+    let mut budget = ScanBudget::for_qualify();
     for _ in 0..crate::constants::MAX_GROUP_DECISIONS_PER_SWEEP {
         budget.spend_decision();
     }

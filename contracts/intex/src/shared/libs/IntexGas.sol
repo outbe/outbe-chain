@@ -20,9 +20,10 @@ library IntexGas {
     /// @dev Clearing also fires the bids relay back to Outbe (parked on failure), so it runs generously.
     uint256 internal constant AUCTION_STAGE_CLEARING = 2_000_000;
     uint256 internal constant AUCTION_RESULT = 300_000;
-    /// @dev markCalled flips state and snapshots holders for the migration bridge, once per series.
+    /// @dev markCalled flips state and migrates the series' holders, which costs about 100k each:
+    ///      measured at 3.25M for 32 holders, the realistic ceiling, and this leaves headroom over it.
     uint256 internal constant MARK_CALLED_BASE = 100_000;
-    uint256 internal constant MARK_CALLED_PER_SERIES = 500_000;
+    uint256 internal constant MARK_CALLED_PER_SERIES = 4_000_000;
     uint256 internal constant MARK_QUALIFIED_BASE = 100_000;
     uint256 internal constant MARK_QUALIFIED_PER_SERIES = 200_000;
     /// @dev Destination hook for composed proceeds: WCOEN unwrap + IntexFactory distribute registration.
@@ -62,9 +63,8 @@ library IntexGas {
         return ISSUANCE_BASE + seriesCount * ISSUANCE_PER_SERIES + recipientCount * ISSUANCE_PER_ITEM;
     }
 
-    /// @notice Destination gas for a MARK_CALLED carrying `seriesCount` series. Each one flips
-    ///         state and fans its holders out to the migration bridge, so the marginal is the
-    ///         whole of a single-series call.
+    /// @notice Destination gas for a MARK_CALLED carrying `seriesCount` series. Each flips state and
+    ///         fans its holders out, so a batch multiplies a cost no destination block would take.
     function markCalled(uint256 seriesCount) internal pure returns (uint256) {
         return MARK_CALLED_BASE + seriesCount * MARK_CALLED_PER_SERIES;
     }

@@ -44,8 +44,7 @@ library BridgeMsgCodec {
     uint16 internal constant MAX_SERIES_PER_ISSUANCE = 8;
 
     /// @notice Series one MARK_CALLED or MARK_QUALIFIED message may carry. A batch is one day's
-    ///         series in one reference currency, so it is short; the cap bounds the destination
-    ///         work per message, which for MARK_CALLED includes each series' holder migration.
+    ///         series in one reference currency, so it is short; the cap bounds destination work.
     uint16 internal constant MAX_SERIES_PER_MARK = 8;
 
     /// @notice Chunks one day's fan-out may span; keeps a receiver's arrival set in one word.
@@ -525,9 +524,8 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes MARK_CALLED message for one day's batch of series.
-    /// @dev The settlement deadline is derived locally on the destination chain
-    ///      from the series `callNoticePeriod` and the moment markCalled is applied.
-    ///      Layout: [bodyVersion(1)][msgType(1)] ++ abi.encode(worldwideDay, seriesIds)
+    /// @dev Layout: [bodyVersion(1)][msgType(1)] ++ abi.encode(worldwideDay, seriesIds). The
+    ///      settlement deadline is derived on the destination from `callNoticePeriod`.
     /// @param _worldwideDay The worldwide day the series were derived from.
     /// @param _seriesIds The auction series identifiers, 1..`MAX_SERIES_PER_MARK` of them.
     /// @return The wire-encoded MARK_CALLED message.
@@ -539,7 +537,7 @@ library BridgeMsgCodec {
     /// @notice Encodes MARK_QUALIFIED message for one day's batch of series.
     /// @dev Layout: [bodyVersion(1)][msgType(1)] ++ abi.encode(worldwideDay, seriesIds)
     /// @param _worldwideDay The worldwide day the series were derived from.
-    /// @param _seriesIds The auction series identifiers, 1..`MAX_SERIES_PER_MARK` of them.
+    /// @param _seriesIds The auction series identifiers, at most `MAX_SERIES_PER_MARK`.
     /// @return The wire-encoded MARK_QUALIFIED message.
     function encodeMarkQualified(uint32 _worldwideDay, bytes14[] memory _seriesIds)
         internal
@@ -763,8 +761,7 @@ library BridgeMsgCodec {
 
     /// @notice Decodes MARK_CALLED message.
     /// @dev Reverts `InvalidPayloadLength` below the one-series minimum, then
-    ///      `UnsupportedBodyVersion`, then the batch bounds — re-checked inbound as every
-    ///      variable-length decode here is.
+    ///      `UnsupportedBodyVersion`, then the batch bounds, re-checked inbound.
     /// @param _msg The wire-encoded MARK_CALLED message.
     /// @return worldwideDay The worldwide day the series were derived from.
     /// @return seriesIds The auction series identifiers.

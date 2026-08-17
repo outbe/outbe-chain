@@ -18,8 +18,8 @@ use outbe_primitives::{
 use outbe_intex::IntexState;
 
 use crate::constants::{
-    MAX_GROUP_DECISIONS_PER_SWEEP, MAX_SERIES_ACTIONS_PER_SWEEP, MAX_SERIES_PER_MARK,
-    ORIGIN_ROUTER_ADDRESS,
+    MAX_CALL_ACTIONS_PER_SWEEP, MAX_GROUP_DECISIONS_PER_SWEEP, MAX_SERIES_ACTIONS_PER_SWEEP,
+    MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS,
 };
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
@@ -59,7 +59,7 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<u32> {
     let factory = IntexFactoryContract::new(ctx.storage.clone());
     let start = factory.qualify_currency_cursor.read()? as usize % currencies.len();
 
-    let mut budget = ScanBudget::new();
+    let mut budget = ScanBudget::for_qualify();
     let mut promoted: u32 = 0;
     let mut resume_at = start;
     for offset in 0..currencies.len() {
@@ -126,16 +126,13 @@ fn qualify_currency(
         for worldwide_day in factory.unqualified_groups_in_bin(iso_code, next)? {
             let group = factory.unqualified_group(iso_code, worldwide_day)?;
             if !budget.admits_actions(group.members.len() as u32) {
-                // Stop before the group, leaving the cursor on its bin: the groups
-                // already qualified are gone from it, so the next slice resumes here
-                // without redoing them.
+                // Qualified groups have left this bin, so resuming on it redoes nothing.
                 factory.qualify_scan_cursor.write(&iso_code, next)?;
                 break 'bins;
             }
             budget.spend_decision();
-            // Isolate per-group: a deterministic Err rolls back the group's checkpoint and is
-            // skipped (logged), so one bad group cannot halt the block. Infra errors that recur
-            // every group still surface via the structural reads above, which keep `?`.
+            // Per-group isolation: a deterministic Err rolls back and is logged, so one bad
+            // group cannot halt the block; the structural reads above keep `?`.
             let res = ctx.storage.with_checkpoint(|| {
                 try_qualify_group(
                     &ctx.storage,
@@ -174,13 +171,23 @@ fn qualify_currency(
 pub(crate) struct ScanBudget {
     decisions: u32,
     actions: u32,
+    actions_full: u32,
 }
 
 impl ScanBudget {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn for_qualify() -> Self {
+        Self::new(MAX_SERIES_ACTIONS_PER_SWEEP)
+    }
+
+    pub(crate) fn for_call() -> Self {
+        Self::new(MAX_CALL_ACTIONS_PER_SWEEP)
+    }
+
+    fn new(actions: u32) -> Self {
         Self {
             decisions: MAX_GROUP_DECISIONS_PER_SWEEP,
-            actions: MAX_SERIES_ACTIONS_PER_SWEEP,
+            actions,
+            actions_full: actions,
         }
     }
 
@@ -188,17 +195,11 @@ impl ScanBudget {
         self.decisions == 0 || self.actions == 0
     }
 
-    /// Groups transition whole, so one is taken on only when all of it fits. A
-    /// group wider than the entire allowance would stall the scan forever, so it
-    /// runs once the actions are otherwise untouched.
-    ///
-    /// Only the actions are asked. A transition removes its group from the bin,
-    /// so stopping on them resumes past the work already done; decisions leave
-    /// the bin as it was, so stopping on them mid-bin would restart on the same
-    /// groups for as long as they keep deciding against a move. They are spent
-    /// all the same, and bound the scan at the next bin boundary.
+    /// Whole groups only. A transition shrinks its bin, so stopping on actions
+    /// resumes past the work done; stopping on decisions would restart on the
+    /// same groups, so they bound the scan at the next bin boundary instead.
     pub(crate) fn admits_actions(&self, members: u32) -> bool {
-        members <= self.actions || self.actions == MAX_SERIES_ACTIONS_PER_SWEEP
+        members <= self.actions || self.actions == self.actions_full
     }
 
     pub(crate) fn spend_decision(&mut self) {
@@ -210,10 +211,8 @@ impl ScanBudget {
     }
 }
 
-/// Qualify a whole `(reference currency, worldwide day)` group. Every series of
-/// one day in one reference currency is issued by the same clearing with the
-/// same floor, so one read of the group decides all of them. Returns how many
-/// series were promoted.
+/// Qualify a whole group: one clearing issued the day with one floor, so a single
+/// read decides every member. Returns how many were promoted.
 pub(crate) fn try_qualify_group(
     storage: &StorageHandle<'_>,
     factory: &mut IntexFactoryContract,

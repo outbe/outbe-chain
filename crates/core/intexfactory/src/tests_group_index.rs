@@ -204,10 +204,8 @@ fn the_two_indexes_and_the_currencies_stay_apart() {
     });
 }
 
-/// A chain that carried the old index has series ids standing where the bins kept
-/// their contents. A series id is far wider than a worldwide day, so reading one
-/// back as a group would fault the scan rather than return a wrong answer — the
-/// columns the old layout wrote are reserved, not reused.
+/// The old index left series ids where the bins kept their contents; far too wide
+/// for a worldwide day, so those columns are reserved rather than reused.
 #[test]
 fn a_legacy_bin_word_is_never_read_as_a_group() {
     with_factory(|s| {
