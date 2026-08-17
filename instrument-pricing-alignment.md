@@ -176,9 +176,9 @@ Credis inherits it.
 For every instrument record, in every currency:
 
 1. `entry_price_minor > 0`
-2. `floor_price_minor == entry_price_minor * (100 + FLOOR_RATE) / 100`, **rounded per the
-   rule fixed in §1.5.1** — not by whichever division happens to be written
-3. `call_price_minor == entry_price_minor * (100 + CALL_RATE) / 100`, same rounding rule
+2. `floor_price_minor == div_ceil(entry_price_minor * (100 + FLOOR_RATE), 100)` — **ceiling**
+   division, per §1.5.2
+3. `call_price_minor == div_ceil(entry_price_minor * (100 + CALL_RATE), 100)` — same
 4. `entry_price_minor < floor_price_minor < call_price_minor`
 5. `call_rate` stored on the record equals the instrument's `CALL_RATE` constant at the
    time of issuance, and re-deriving the call price from the stored `entry_price_minor`
@@ -244,47 +244,59 @@ cost_amount = entry_price × load × amount_scale(issuance)
 5. **`_minor` means the currency's minor unit.** Today it does not (S-02). Any field that
    is fixed-point rather than minor-unit must be named `_scaled`, not `_minor`.
 
-#### 1.5.1 Internal representation — decide before implementing
+#### 1.5.1 Internal representation — ✅ **decided: Option B**
 
-The repo currently hardcodes `SCALE_1E18` (`crates/blockchain/primitives/src/units.rs:14`)
-for every price everywhere. Two ways to introduce per-currency scale:
+**Prices are stored at a single internal fixed-point scale of 1e18. Per-currency
+denominations are registered and govern conversion at boundaries, not storage.**
 
-| | **Option A — store at per-currency scale** | **Option B — register scales, keep 1e18 internal (recommended)** |
+| | Decision |
+|---|---|
+| Stored value | `entry`/`floor`/`call` at `INTERNAL_PRICE_SCALE = 1e18`, unchanged from today |
+| `d_amount(iso)` | registered — ISO 4217 minor-unit exponent (USD → 2) |
+| `d_rate(iso)` | registered — protocol quote precision for COEN/`<iso>` (USD → 6) |
+| Registry role | governs conversion at the four boundaries in WP-0b.5, and rounding |
+| Bin ladder | **untouched** — stays on 1e18 |
+
+The alternative — storing at per-currency scale — was rejected because `price_to_bin` →
+`convert_decimal_price_to_128x128(price_18dec)` hardcodes `PRECISION = 1e18`
+(`crates/blockchain/primitives/src/math/price_helper.rs:76-78`) and every qualification
+scan plus Intex's call scan route prices through it (`gem/state.rs:256-262`,
+`nod/src/hooks.rs:127`, `intexfactory/called.rs:99`). A 6-dp price would land ~12 orders
+of magnitude off in the ladder with no error raised. Option A would have required making
+the ladder scale-aware and rebuilding every existing bin index; Option B leaves it alone.
+
+#### 1.5.2 Rounding — ✅ **decided: thresholds up, amounts up**
+
+Every derived value rounds **up**. Uniformly, with no exceptions:
+
+| Derived value | Rounding | Effect |
 |---|---|---|
-| Stored value | `entry_price` at `rate_scale(iso)` | `entry_price` at 1e18 |
-| Registry role | defines storage | defines every I/O boundary + rounding |
-| Blast radius | every price field, all bin math, Lysis canonical encoding (**semantics hash**), genesis, all four ABIs | a new registry + conversion at ~4 named boundaries |
-| Precision in the 21-of-28 comparison | limited to `d_rate` | full |
+| `floor_price` | **up** (`div_ceil`) | qualification is never triggered by a movement smaller than the arithmetic supports |
+| `call_price` | **up** (`div_ceil`) | a call is never triggered by a sub-unit movement |
+| `cost_amount` | **up** (`div_ceil`) | in the protocol's favour — already the behaviour at `intexfactory/runtime.rs:259` |
+| `internal_to_token` at settlement | **up** | same, and it decides a real transfer amount |
+| `internal_to_rate` / `internal_to_amount` at ABI read | **up** | consistent with the above; presentational only, see below |
 
-**Option B is recommended, and one finding makes it close to forced.**
-`price_to_bin` → `convert_decimal_price_to_128x128(price_18dec)`
-(`crates/blockchain/primitives/src/math/price_helper.rs:76-78`) hardcodes `PRECISION = 1e18`
-— the parameter is *named* `price_18dec`. Every qualification scan and Intex's call scan
-route prices through it (`gem/state.rs:256-262`, `nod/src/hooks.rs:127`,
-`intexfactory/called.rs:99`). Feed it a USD price at 6 dp under Option A and it lands ~12
-orders of magnitude off in the bin ladder, **silently mis-qualifying every instrument** —
-no error, just wrong bins. Option A therefore additionally requires making `price_to_bin`
-scale-aware and rebuilding every existing bin index. Option B leaves the ladder untouched.
+So `marked_up` must **round up**, not truncate. It currently truncates
+(`crates/core/intexfactory/src/runtime.rs:240-245`), as does
+`lysis::calc_floor_price` (`crates/core/lysis/src/constants.rs:6-8`, additionally with an
+unchecked multiply). Both change under WP-0b.4. `derived_cost_amount` already uses
+`div_ceil` and is the shape to copy.
 
-Under Option B the registry is still mandatory — it is the only place that knows USD is
-2/6 — it simply governs conversion and rounding rather than storage.
+**Which rounding is consensus-critical, and which is not.** Under Option B this
+distinction matters and should be stated in the ADR:
 
-**Open decision — rounding of derived prices.** A call price derived as `entry × 2.28`
-carries digits below `d_rate`. Rounding it **down** makes calls marginally easier to
-trigger; **up** makes them harder; not rounding leaves the threshold more precise than
-any quotable rate. This is economically meaningful at the margin and must be chosen
-deliberately, per price:
+* **Consensus-critical** — the markup derivation at internal scale (it fixes the stored
+  `floor_price` / `call_price` that the daily scan compares against), and
+  `internal_to_token` at settlement (it fixes a real transfer amount).
+* **Presentational** — `internal_to_rate` / `internal_to_amount` at the ABI boundary. A
+  reader sees a rounded figure; the comparison that fires a call uses the internal value.
+  Round up anyway for consistency, but a change here is not a consensus change.
 
-* `floor_price` — round **down** (easier to qualify) or **up** (harder)?
-* `call_price` — round **down** (easier to call) or **up** (harder)?
-* `cost_amount` — `derived_cost_amount` already rounds **up** via `div_ceil`
-  (`crates/core/intexfactory/src/runtime.rs:259`), i.e. in the protocol's favour. Keep
-  and apply uniformly.
-
-Recommendation: round derived *thresholds* (floor, call) **up** — an instrument is never
-called on a price movement smaller than the currency can quote — and keep amounts
-rounding **up** as they already do. State the choice in the ADR; do not leave it to
-whichever `/` happens to be written.
+**Blast radius.** Switching `marked_up` from truncation to `div_ceil` shifts newly derived
+prices by at most 1 wei at 1e18 scale. Records already issued keep their stored values —
+prices are frozen at issuance — so no migration is required. Test fixtures carrying exact
+expected values may move by 1; update them rather than special-casing the helper.
 
 ---
 
@@ -428,7 +440,7 @@ Each defect has a stable ID used by the work plan in §4.
 | **S-02** | **High** | **The `_minor` suffix is inaccurate on every price field.** `_minor` should mean "in the currency's minor unit" — USD cents, 2 digits. In practice `entry_price_minor`, `floor_price_minor`, `call_price_minor` and `cost_amount_minor` are all 1e18 fixed-point. The field names assert a denomination the values do not have, across all four instruments and all four ABIs. Either rename to `_scaled`, or convert the values to genuine minor units; do not leave the name contradicting the value. |
 | **S-03** | Medium | **Scale conversion happens at exactly one site and only for Intex.** `derived_cost_amount(entry, load, payment_decimals)` computes `exp = 36 - payment_decimals` and divides (`crates/core/intexfactory/src/runtime.rs:249-261`), reading the token's own `decimals()` via `erc20_decimals` (`:636`). Gem divides by a flat `SCALE_1E18` (`gemfactory/src/runtime.rs:443-450`), Nod takes `cost_amount_minor` from Lysis at 1e18, and Credis pins a 1e18 `currency_rate`. So three of the four never convert into the issuance currency's actual denomination at all, and the one that does derives it from the payment token rather than from a currency registry. |
 | **S-04** | Medium | **The bin ladder hardcodes 1e18 and would silently mis-qualify under a per-currency price scale.** `convert_decimal_price_to_128x128(price_18dec)` uses `PRECISION = 1e18` (`crates/blockchain/primitives/src/math/price_helper.rs:76-78`; the parameter is named `price_18dec`). Every qualification scan and Intex's call scan feed prices through it (`gem/state.rs:256-262`, `nod/src/hooks.rs:127`, `intexfactory/called.rs:99`). A 6-dp price would land ~12 orders of magnitude off in the ladder with no error raised. This is the constraint that makes §1.5.1 Option B the recommended route. |
-| **S-05** | Medium | **Rounding direction for derived prices is undeclared.** `floor` and `call` derive from `entry` by a markup and carry digits below any plausible rate denomination. `marked_up` truncates (`intexfactory/runtime.rs:240-245`), `derived_cost_amount` rounds up via `div_ceil` (`:259`), and `lysis::calc_floor_price` truncates with an unchecked multiply (`lysis/constants.rs:6-8`). Rounding a call price down makes calls marginally easier to trigger and up makes them harder — an economically meaningful choice currently decided by whichever `/` was written. See §1.5.1. |
+| **S-05** | Medium | **Rounding direction for derived prices is undeclared.** `floor` and `call` derive from `entry` by a markup and carry digits below any plausible rate denomination. `marked_up` truncates (`intexfactory/runtime.rs:240-245`), `derived_cost_amount` rounds up via `div_ceil` (`:259`), and `lysis::calc_floor_price` truncates with an unchecked multiply (`lysis/constants.rs:6-8`). Rounding a call price down makes calls marginally easier to trigger and up makes them harder — an economically meaningful choice currently decided by whichever `/` was written. **Resolved: round up everywhere** (§1.5.2); `marked_up` and `calc_floor_price` move to `div_ceil`, `derived_cost_amount` already does. |
 | **N-01** | Medium | `IGem.GemData` drops the `Minor` suffix every other interface uses — bare `entryPrice` / `floorPrice` / `costAmount` / `gemLoad` (`contracts/precompiles/src/IGem.sol:5-17`) against `entryPriceMinor` etc. in `IIntex`, `INod` and `ICredis`. Breaking ABI rename; see §9.3 and R-01. |
 | **N-02** | Medium | `INod.NodData` exposes the entry price as **`costOfGratisMinor`** — `crates/core/nod/src/precompile.rs:145` reads `costOfGratisMinor: bucket.entry_price_minor`. The same quantity is emitted as `entryPriceMinor` by `INodFactory.NodIssued` (`crates/core/nodfactory/src/runtime.rs:85`), so one value is spelled two ways across Nod's own ABI. `cost_of_gratis_minor` is not a field on `NodItemState` at all; it survives only in Lysis as the oracle VWAP input to `cost_amount_minor`. See §9.3 and R-02. |
 | **L-01** | **Medium** | The callable set is built two structurally different ways, and this — not the missing budget alone — is the root of D-13. Intex indexes Qualified series in a **price-keyed LB bin trie** and its daily scan walks only bins at or below the day's VWAP bin (`crates/core/intexfactory/src/called.rs:119-129`), so a series whose call price is above today's VWAP is never read. Gem keeps a **dense list** and visits every callable gem daily (`crates/core/gem/src/hooks.rs:150-157`). The two differ in complexity class: work proportional to the *breached* population versus the *entire callable* population. Port Intex's structure to Gem; build the new Nod and Credis callable sets the same way. See §9.7. |
@@ -486,11 +498,16 @@ call rate.
    pub const GEM_CALL_RATE: u16 = 128;
    pub const NOD_CALL_RATE: u16 = 256;
 
-   /// `entry * (100 + rate) / 100`, checked.
+   /// `entry * (100 + rate) / 100`, checked, **rounded up** (§1.5.2).
+   ///
+   /// Ceiling division is deliberate: a derived threshold must never be
+   /// breachable by a movement smaller than the arithmetic supports. Note this
+   /// differs from the truncating behaviour it replaces in
+   /// `intexfactory::runtime::marked_up`.
    pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
        entry_price
            .checked_mul(U256::from(PRICE_RATE_DEN + rate))
-           .map(|v| v / U256::from(PRICE_RATE_DEN))
+           .map(|v| v.div_ceil(U256::from(PRICE_RATE_DEN)))
            .ok_or_else(|| PrecompileError::Revert("marked-up price overflow".into()))
    }
 
@@ -501,8 +518,9 @@ call rate.
    ```
 
    Add unit tests asserting `marked_up(1e18, 8) == 1.08e18`, `(_, 64) == 1.64e18`,
-   `(_, 128) == 2.28e18`, `(_, 256) == 3.56e18`, and that `U256::MAX` returns `Err`
-   rather than panicking.
+   `(_, 128) == 2.28e18`, `(_, 256) == 3.56e18`; that a value which does **not** divide
+   evenly rounds **up** by exactly one (e.g. `marked_up(1, 8) == 2`, since
+   `1 × 108 / 100 = 1.08`); and that `U256::MAX` returns `Err` rather than panicking.
 
 2. Re-point the existing call sites at the shared helper, keeping the old names as
    deprecated re-exports where they are part of a crate's public API:
@@ -513,9 +531,12 @@ call rate.
      `derived_call_price` bodies with `common::pricing` calls. Note their current rate
      constants are `u64`; the shared ones are `u16`.
    * `crates/core/lysis/src/constants.rs:6-8` — `calc_floor_price` currently uses an
-     **unchecked** `*`, which panics on overflow where the other two return `Err`.
-     Delegate to `pricing::floor_price`. This changes a panic into a `Result`; adjust the
-     Lysis call site at `crates/core/lysis/src/program_v1/execute.rs:14` accordingly.
+     **unchecked** `*` and truncates, so it both panics on overflow where the other two
+     return `Err` *and* rounds the wrong way under §1.5.2. Delegate to
+     `pricing::floor_price`. This changes a panic into a `Result`; adjust the Lysis call
+     site at `crates/core/lysis/src/program_v1/execute.rs:14` accordingly. Because Nod
+     floor prices are reproduced off-chain, this rounding change moves the **Lysis program
+     semantics hash** — fold it into the WP-3d hash bump rather than shipping two.
    * `crates/core/intexfactory/src/constants.rs:40-52` — keep the `CALL_RATE`,
      `FLOOR_RATE`, `CALL_WINDOW`, `CALL_THRESHOLD`, `CALL_NOTICE_PERIOD`,
      `PRICE_RATE_DEN` names as re-exports of the shared values so
@@ -532,13 +553,12 @@ existing instrument tests must still pass unchanged — this package is pure ref
 
 ### WP-0b — Per-currency scale registry *(fixes S-01…S-05)*
 
-**Read §1.5 first, and settle §1.5.1 (Option A vs B, and rounding) before writing code.**
-This package assumes **Option B**: register the scales, keep 1e18 internal, convert at
-named boundaries. Under Option A the storage and Lysis-encoding work from WP-3d expands
-substantially and every bin index must be rebuilt.
+**Read §1.5 first.** Both decisions it once deferred are now settled: **Option B**
+(register the scales, keep 1e18 internal, convert at named boundaries) and **round
+everything up** (§1.5.2). No further input is needed to execute this package.
 
-Do this **before WP-1…WP-4**: the invariant tests in §6 assert exact price equalities, and
-their expected values depend on the rounding rule chosen here.
+Do this **before WP-1…WP-4**: the invariant tests in §6 assert exact price equalities and
+their expected values follow the rounding rule applied here.
 
 #### WP-0b.1 — ISO 4217 minor-unit table
 
@@ -606,19 +626,30 @@ pub fn internal_to_token(v: U256, token_decimals: u8) -> Result<U256>;
 `amount_scale` is pure (static ISO table); `rate_scale` needs storage (registry). Keep
 that asymmetry visible in the signatures rather than forcing both through storage.
 
-#### WP-0b.4 — Apply the rounding decision
+#### WP-0b.4 — Round everything up
 
-Once §1.5.1 is settled, make it explicit at each derivation and delete the incidental
-behaviour:
+Per §1.5.2, every derived value rounds up. Make it explicit at each site and delete the
+incidental behaviour:
 
-* `pricing::marked_up` — thresholds; currently truncates.
-* `pricing::floor_price` — currently truncates (`lysis::calc_floor_price`, and unchecked).
-* `derived_cost_amount` — already `div_ceil`; keep, and document that amounts round up in
-  the protocol's favour.
+| Site | Today | Change |
+|---|---|---|
+| `pricing::marked_up` (WP-0) | truncates | **`div_ceil`** |
+| `pricing::floor_price` | truncates, and `lysis::calc_floor_price` multiplies unchecked | **`div_ceil`**, checked |
+| `derived_cost_amount` (`intexfactory/runtime.rs:249-261`) | `div_ceil` | ✅ keep — this is the shape to copy |
+| `internal_to_token`, `internal_to_rate`, `internal_to_amount` (WP-0b.3) | new | **`div_ceil`** |
 
-Add a test per rule asserting the direction on a value that does not divide evenly. A
-truncating threshold and a ceiling threshold differ by one minor unit, which is exactly
-the margin a call turns on.
+Add a test per site asserting the direction on a value that does **not** divide evenly —
+`marked_up(1, 8) == 2`, not `1`. A truncating threshold and a ceiling threshold differ by
+one unit, which is exactly the margin a call turns on.
+
+Two consequences to carry into other packages rather than handling here:
+
+* **Lysis semantics hash.** Nod floor prices are reproduced off-chain, so changing
+  `calc_floor_price`'s rounding moves the program semantics hash. Fold it into the WP-3d
+  bump; do not ship two.
+* **Existing records are unaffected.** Prices are frozen at issuance, so already-issued
+  Gem and Intex records keep their stored values and no migration is needed. Only fixtures
+  with exact expected values move, by at most 1.
 
 #### WP-0b.5 — Convert at the boundaries, and only there
 
@@ -1113,10 +1144,14 @@ crates/core/credis/src/tests.rs   :: credis_pricing_invariants  (or wherever the
 ```
 
 Each must assert, for its instrument:
-`floor == entry * 108/100`, `call == entry * (100 + CALL_RATE)/100`,
-`entry < floor < call`, `call_window == 28 * 86_400`,
-`call_threshold == 21 * 86_400`, `call_notice_period == 7 * 86_400`,
-and the stored `call_rate` re-derives the stored `call_price_minor`.
+`floor == div_ceil(entry * 108, 100)`, `call == div_ceil(entry * (100 + CALL_RATE), 100)`
+— **ceiling**, per §1.5.2 — plus `entry < floor < call`, `call_window == 28 * 86_400`,
+`call_threshold == 21 * 86_400`, `call_notice_period == 7 * 86_400`, and that the stored
+`call_rate` re-derives the stored `call_price_minor`.
+
+At least one case per instrument must use an `entry` that does **not** divide evenly, so
+the test distinguishes ceiling from truncation. A test written only against round numbers
+passes under either rule and pins nothing.
 
 **Call-trigger behaviour tests** — one per instrument, and note the timing floor from
 §1.2: a call cannot be observed until the clock advances **at least 21 days past
@@ -1202,6 +1237,28 @@ sequencing and the fate of the existing debt schedule are decided elsewhere. It 
 the pricing and call surface the rewritten Credis **must** expose, so the rewrite can be
 checked against it. If you are the agent doing the rewrite, WP-4 is your acceptance
 criteria for the pricing half of the job, not your design.
+
+### 7.3 Scale representation and rounding ✅ **decided**
+
+Recorded in full at §1.5.1 and §1.5.2; summarised here so the three decisions sit
+together.
+
+1. **Per-currency denominations are mandatory.** Every reference currency registers both
+   `d_amount` (ISO minor unit — USD → 2) and `d_rate` (COEN quote precision — USD → 6).
+   Neither exists in the repo today (S-01). WP-0b builds the registry.
+2. **Option B — 1e18 stays the internal scale.** The registry governs conversion at the
+   four boundaries in WP-0b.5 and the rounding in §1.5.2; it does not change what is
+   stored. Storing at per-currency scale was rejected: `price_to_bin` hardcodes 1e18
+   (S-04), so it would have meant a scale-aware ladder and a rebuild of every bin index.
+3. **Everything rounds up.** Thresholds (`floor_price`, `call_price`) and amounts
+   (`cost_amount`, settlement transfers) alike. `marked_up` and `calc_floor_price` change
+   from truncation to `div_ceil`; `derived_cost_amount` already does this and is the shape
+   to copy.
+
+Consequences already folded into the plan: the `marked_up` code in WP-0 uses `div_ceil`;
+WP-0b.4 lists every site to change; the §6 invariant tests assert ceiling division and
+require at least one non-evenly-dividing case per instrument; and the Lysis rounding
+change rides the WP-3d semantics-hash bump rather than shipping its own.
 
 ## 8. Full alignment checklist
 
@@ -1367,9 +1424,7 @@ A-09, A-10, A-13, A-18, A-20, A-24, A-33, A-37, A-38, A-43, A-44, A-45, A-46.
 **Must be decided rather than fixed:**
 A-13 (one qualification rule), A-17b (Intex terminal state), A-25 (call granularity —
 recommend accepting the divergence), A-35 (cost stored vs derived), A-36 (Intex `u32`
-timestamps), **§1.5.1 internal representation (Option A vs B) and the rounding direction
-for derived prices — decide these first, they change the expected values in every pricing
-test.**
+timestamps). *Scale representation and rounding are no longer open — see §7.3.*
 
 **Scale — blocking, and upstream of everything else:**
 A-49, A-50, A-51, A-52, A-53 (defects S-01…S-05). No per-currency denomination exists
