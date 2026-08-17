@@ -9,6 +9,7 @@ import type { Abi } from "viem";
  * Solidity. Each ABI is used whole; the registry does not filter it.
  */
 import IAgentReward from "../../contracts/precompiles/abi-export/IAgentReward.json";
+import ICca from "../../contracts/precompiles/abi-export/ICca.json";
 import ICredis from "../../contracts/precompiles/abi-export/ICredis.json";
 import IFidelity from "../../contracts/precompiles/abi-export/IFidelity.json";
 import IGem from "../../contracts/precompiles/abi-export/IGem.json";
@@ -32,6 +33,7 @@ const asAbi = (json: unknown): Abi => json as Abi;
 
 export const PRECOMPILE_ABI = {
   IAgentReward: asAbi(IAgentReward),
+  ICca: asAbi(ICca),
   ICredis: asAbi(ICredis),
   IFidelity: asAbi(IFidelity),
   IGem: asAbi(IGem),

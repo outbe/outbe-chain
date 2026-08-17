@@ -109,6 +109,33 @@ pub fn pledge(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> B256 {
     handle
 }
 
+/// Pledge `amount_stables` of credit for `who`. Unlike [`pledge`] this does not
+/// pin the gratis cost, so a test can ask for an amount above the §8.3 dust
+/// guard — the standard [`pledge_stables`] fixture is only $2.00.
+pub fn pledge_amount(
+    storage: &StorageHandle<'_>,
+    who: Address,
+    amount_stables: U256,
+    nonce: u64,
+) -> B256 {
+    let (handle, _) = gf::pledge_gratis(
+        storage.clone(),
+        who,
+        amount_stables,
+        asset(),
+        U256::MAX,
+        auth(GratisOp::Pledge, who, amount_stables, nonce),
+    )
+    .unwrap();
+    handle
+}
+
+/// Gratis that `amount_stables` of credit costs at the seeded rate:
+/// `stables × 1e12 × 1e18 / 2e18`.
+pub fn gratis_for(amount_stables: U256) -> U256 {
+    amount_stables * U256::from(500_000_000_000u64)
+}
+
 /// Pledge and open a position for alice, originated by [`cca`].
 pub fn open(storage: &StorageHandle<'_>, nonce: u64) -> U256 {
     open_for(storage, alice(), nonce)
@@ -361,7 +388,8 @@ pub fn bootstrap(storage: &StorageHandle<'_>, amount: U256) {
     bootstrap_for(storage, alice(), amount);
 }
 
-/// Mints `amount` gratis to `who` and seeds the fidelity + oracle state a pledge needs.
+/// Mints `amount` gratis to `who` and seeds the fidelity + oracle state a pledge
+/// needs, plus the CCA registration `requestCredis` gates on.
 pub fn bootstrap_for(storage: &StorageHandle<'_>, who: Address, amount: U256) {
     outbe_gratis::api::mint(
         storage.clone(),
@@ -372,6 +400,20 @@ pub fn bootstrap_for(storage: &StorageHandle<'_>, who: Address, amount: U256) {
     .unwrap();
     seed_fidelity(storage.clone(), who);
     seed_oracle(storage.clone(), oracle_rate());
+    register_cca(storage, cca());
+}
+
+/// Registers `agent` so it clears the §8.4 origination gate. Idempotent.
+pub fn register_cca(storage: &StorageHandle<'_>, agent: Address) {
+    let mut registry = outbe_cca::CcaContract::new(storage.clone());
+    if !registry.can_originate(agent).unwrap() {
+        registry.register(agent, now_of(storage)).unwrap();
+    }
+}
+
+/// The originating agent's performance multiplier, 1e18 scaled.
+pub fn cca_multiplier(storage: &StorageHandle<'_>, agent: Address) -> U256 {
+    outbe_cca::api::multiplier_of(storage.clone(), agent).unwrap()
 }
 
 pub fn teardown() {

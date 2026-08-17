@@ -316,6 +316,153 @@ fn a_stale_pledge_quote_cannot_be_exercised() {
 }
 
 #[test]
+fn only_a_registered_agent_out_of_quarantine_may_originate() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost() * U256::from(2u64));
+        let handle = pledge(&storage, alice(), 1);
+        let spend = credis_spend_auth(alice(), handle, alice());
+
+        // bob never registered.
+        let err =
+            runtime::request_credis(storage.clone(), bob(), alice(), handle, spend).unwrap_err();
+        assert!(err.to_string().contains("not permitted"), "got: {err}");
+
+        // The registered agent can. The ticket survived the rejection above
+        // because the gate runs before anything is consumed.
+        runtime::request_credis(storage.clone(), cca(), alice(), handle, spend).unwrap();
+
+        // Drive the agent into quarantine (§8.4): seven full voids take the
+        // multiplier from 1 to 0.9^7 = 0.478, below the 0.5 floor.
+        {
+            let mut registry = outbe_cca::CcaContract::new(storage.clone());
+            for _ in 0..7 {
+                registry
+                    .record_void(cca(), outbe_cca::constants::MULTIPLIER_ONE)
+                    .unwrap();
+            }
+        }
+        assert!(cca_multiplier(&storage, cca()) < outbe_cca::constants::ORIGINATION_FLOOR);
+
+        let handle = pledge(&storage, alice(), 2);
+        let spend = credis_spend_auth(alice(), handle, alice());
+        let err =
+            runtime::request_credis(storage.clone(), cca(), alice(), handle, spend).unwrap_err();
+        assert!(err.to_string().contains("not permitted"), "got: {err}");
+    });
+    teardown();
+}
+
+#[test]
+fn originating_credits_the_agent_with_the_days_units() {
+    // $500, comfortably over the §8.3 dust guard.
+    let credit = U256::from(500_000_000u64);
+    let mut storage = env();
+    set_matched_funds(&mut storage, credit);
+    StorageHandle::enter(&mut storage, |storage| {
+        // Three pledges: the dust-sized one plus two at `credit`.
+        bootstrap(
+            &storage,
+            gratis_for(credit) * U256::from(2u64) + pledge_cost(),
+        );
+        let day = outbe_common::WorldwideDay::from_timestamp(CREATED_AT);
+
+        // The harness's standard $2.00 position is below the dust guard, so it
+        // earns nothing at all.
+        open(&storage, 1);
+        assert!(
+            outbe_cca::api::day_originators(storage.clone(), day)
+                .unwrap()
+                .is_empty(),
+            "a dust-sized credit pays the agent nothing"
+        );
+
+        // A credit over the guard earns a whole unit — it is this owner's first
+        // qualifying position for this agent.
+        let handle = pledge_amount(&storage, alice(), credit, 2);
+        let spend = credis_spend_auth(alice(), handle, alice());
+        runtime::request_credis(storage.clone(), cca(), alice(), handle, spend).unwrap();
+        assert_eq!(
+            outbe_cca::api::day_originators(storage.clone(), day).unwrap(),
+            vec![(cca(), outbe_cca::constants::MULTIPLIER_ONE)]
+        );
+
+        // A second qualifying position for the same owner on the same day adds
+        // nothing: at most one unit per owner per day.
+        let handle = pledge_amount(&storage, alice(), credit, 3);
+        let spend = credis_spend_auth(alice(), handle, alice());
+        runtime::request_credis(storage.clone(), cca(), alice(), handle, spend).unwrap();
+        assert_eq!(
+            outbe_cca::api::day_originators(storage.clone(), day).unwrap(),
+            vec![(cca(), outbe_cca::constants::MULTIPLIER_ONE)]
+        );
+    });
+    teardown();
+}
+
+#[test]
+fn a_void_penalizes_the_originating_agent_and_repayment_restores_it() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let position_id = open(&storage, 1);
+        assert_eq!(
+            cca_multiplier(&storage, cca()),
+            outbe_cca::constants::MULTIPLIER_ONE
+        );
+
+        // Let the whole position void: the unpaid share is 100%, so the agent
+        // takes the full 10% step.
+        let called_at = now_of(&storage);
+        {
+            let mut credis = CredisContract::new(storage.clone());
+            assert!(credis.mark_settleable(position_id).unwrap());
+            assert!(credis.mark_called(position_id, called_at).unwrap());
+        }
+        let lapsed = called_at + 14 * DAY;
+        advance_to(&storage, lapsed);
+        finalize_through(&storage, lapsed);
+        assert_eq!(scan(&storage, lapsed), 1);
+
+        assert_eq!(
+            cca_multiplier(&storage, cca()),
+            U256::from(900_000_000_000_000_000u64),
+            "a fully unpaid void costs the whole penalty step"
+        );
+
+        // A second position that repays restores the multiplier in steps: the
+        // agent's road back is its book paying, not more origination.
+        bootstrap_for(&storage, bob(), pledge_cost());
+        let handle = pledge(&storage, bob(), 1);
+        let spend = credis_spend_auth(bob(), handle, bob());
+        let (second, _) =
+            runtime::request_credis(storage.clone(), cca(), bob(), handle, spend).unwrap();
+        assert_eq!(
+            cca_multiplier(&storage, cca()),
+            U256::from(900_000_000_000_000_000u64),
+            "origination alone restores nothing"
+        );
+
+        set_coen_rate(&storage, above_floor());
+        settle_principal(&storage, bob(), second, pledge_stables());
+        // $2.00 settled is far below the $1,000 recovery unit, so nothing has
+        // been earned back yet — but it is banked.
+        assert_eq!(
+            cca_multiplier(&storage, cca()),
+            U256::from(900_000_000_000_000_000u64)
+        );
+        assert_eq!(
+            outbe_cca::CcaContract::new(storage.clone())
+                .get_cca(cca())
+                .unwrap()
+                .recovery_progress,
+            pledge_stables()
+        );
+    });
+    teardown();
+}
+
+#[test]
 fn request_credis_rejects_zero_smart_account() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));

@@ -7236,6 +7236,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-cca"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "outbe-common",
+ "outbe-macros",
+ "outbe-primitives",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "outbe-chain"
 version = "0.1.0"
 dependencies = [
@@ -7425,6 +7437,8 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-cca",
+ "outbe-common",
  "outbe-credis",
  "outbe-fidelity",
  "outbe-gratis",
@@ -7668,6 +7682,7 @@ dependencies = [
  "k256 0.13.4",
  "outbe-accounting",
  "outbe-agentreward",
+ "outbe-cca",
  "outbe-chain-constants",
  "outbe-common",
  "outbe-compressed-entities",

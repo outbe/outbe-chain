@@ -10,6 +10,10 @@ pub enum CredisFactoryError {
     InvalidSmartAccount,
     #[error("settlement amount is zero")]
     InvalidAmount,
+    #[error(
+        "cca is not permitted to originate: it must be registered, active, and out of quarantine"
+    )]
+    CcaCannotOriginate,
     #[error("owner has an unresolved called position")]
     OwnerHasCalledPosition,
     #[error("asset isoCode() call returned undecodable data")]

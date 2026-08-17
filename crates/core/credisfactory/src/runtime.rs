@@ -2,6 +2,7 @@
 
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
+use outbe_common::WorldwideDay;
 
 use outbe_credis::constants::{BP_DEN, PLEDGE_QUOTE_TTL_SECS, POLICY_RATE_FACTOR_BP};
 use outbe_credis::{CredisContract, CredisState, OpenPositionParams};
@@ -51,6 +52,13 @@ pub fn request_credis(
     // Block timestamp is read from the execution frame rather than threaded in
     // by the caller.
     let current_time = storage.timestamp()?.to::<u64>();
+
+    // §8.4: the originating agent must be registered, active, and out of
+    // quarantine. Checked before anything is consumed so a quarantined agent
+    // cannot burn a pledger's ticket.
+    if !outbe_cca::api::can_originate(storage.clone(), caller)? {
+        return Err(CredisFactoryError::CcaCannotOriginate.into());
+    }
 
     // An owner with an unresolved call cannot open new positions.
     {
@@ -116,6 +124,17 @@ pub fn request_credis(
         collateral: terms.gratis_amount,
         originated_at: current_time,
     })?;
+
+    // Credit the agent with the day's origination units (§8.3). Keyed by
+    // worldwide day because that is the day the emission cycle pays on, not the
+    // plain UTC day the price path runs against.
+    outbe_cca::api::record_origination(
+        storage.clone(),
+        caller,
+        smart_account,
+        terms.stables_amount,
+        WorldwideDay::from_timestamp(current_time),
+    )?;
 
     // Deliver the stablecoin the pledge already claimed. `pledgeGratis` pulled it
     // out of the vault into router custody under this handle, so there is no vault
@@ -222,6 +241,10 @@ pub fn settle(
         )?;
     }
 
+    // §8.4 recovery: repaid principal — not interest, and not origination volume —
+    // is what restores the originating agent's standing.
+    outbe_cca::api::record_settlement(storage.clone(), settlement.cca, settlement.principal_paid)?;
+
     Ok(paid)
 }
 
@@ -290,6 +313,10 @@ pub fn void_remainder(storage: StorageHandle<'_>, position_id: U256) -> Result<(
     // The equivalent value is deposited 1:1 into the Promis Reserve.
     outbe_promislimit::PromisLimitContract::new(storage.clone())
         .add_to_total_unallocated(void.gratis_burned)?;
+
+    // §8.4 penalty, scaled by how much of the principal went unpaid: the agent's
+    // failure is a book abandoned at the moment it had to respond.
+    outbe_cca::api::record_void(storage.clone(), void.cca, void.unpaid_share)?;
 
     Ok(())
 }

@@ -13,6 +13,8 @@ outbe-gratis.workspace = true
 # The pledge quote's age lives beside the ticket in gratisfactory storage; the
 # TTL that judges it is a Credis parameter, so the check happens here.
 outbe-gratisfactory.workspace = true
+outbe-cca.workspace = true
+outbe-common.workspace = true
 outbe-fidelity.workspace = true
 outbe-promislimit.workspace = true
 outbe-vaultrouter.workspace = true

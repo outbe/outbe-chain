@@ -74,7 +74,13 @@ pub const PROMIS_LIMIT_ADDRESS: Address = address!("0x00000000000000000000000000
 /// at UTC midnight. See epic, Phase 5.
 pub const CYCLE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001010");
 
+/// Accumulator for the daily CCA emission sink. A plain balance holder, not a
+/// precompile — the CCA program's own state lives at [`CCA_REGISTRY_ADDRESS`].
 pub const CCA_ADDRESS: Address = address!("0x0000000000000000000000000000000000001011");
+
+/// Credis Card Agent registry precompile: registration, the performance
+/// multiplier, and the per-day origination units the CCA reward pool pays on.
+pub const CCA_REGISTRY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001019");
 
 // ---------------------------------------------------------------------------
 // Validator infrastructure precompiles (0xEE00 range)

@@ -150,11 +150,12 @@ pub mod marker_addresses {
     use alloy_primitives::Address;
     use outbe_primitives::addresses::*;
 
-    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 36] = [
+    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 37] = [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
         CREDIS_ADDRESS,
         CREDIS_FACTORY_ADDRESS,
+        CCA_REGISTRY_ADDRESS,
         PROMIS_ADDRESS,
         // PromisFactory is a live stateful precompile (in
         // `outbe_precompile_addresses`) and is NOT genesis-seeded, so this

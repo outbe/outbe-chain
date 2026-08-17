@@ -26,6 +26,7 @@ outbe-desis.workspace = true
 outbe-vaultrouter.workspace = true
 outbe-credis.workspace = true
 outbe-credisfactory.workspace = true
+outbe-cca.workspace = true
 outbe-tributefactory.workspace = true
 outbe-governance.workspace = true
 outbe-stablecoinpolicy.workspace = true
