@@ -56,9 +56,12 @@ pub struct IntexFactoryContract {
     /// `scoped(iso, bin_id)` -> count of groups in the bin.
     #[attribute(order = 6)]
     pub unqualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
-    /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> group's worldwide day.
-    #[attribute(order = 7)]
-    pub unqualified_bin_groups: outbe_primitives::storage::dsl::Map<B256, u32>,
+    /// Held series ids while the bin indexed series; a group's worldwide day is
+    /// narrower than that word, so the column is reserved rather than reused.
+    #[attribute(order = 7, deprecated = true)]
+    pub unqualified_bin_series_legacy: outbe_primitives::storage::dsl::Deprecated<
+        outbe_primitives::storage::dsl::Value<'storage, U256>,
+    >,
 
     // Qualified-series bin index (by call_price_minor) for the daily
     // Called scan. A series moves here from the unqualified index on qualify.
@@ -71,9 +74,11 @@ pub struct IntexFactoryContract {
     /// `scoped(iso, bin_id)` -> count of groups in the bin.
     #[attribute(order = 11)]
     pub qualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
-    /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> group's worldwide day.
-    #[attribute(order = 12)]
-    pub qualified_bin_groups: outbe_primitives::storage::dsl::Map<B256, u32>,
+    /// Reserved for the same reason as its unqualified twin at order 7.
+    #[attribute(order = 12, deprecated = true)]
+    pub qualified_bin_series_legacy: outbe_primitives::storage::dsl::Deprecated<
+        outbe_primitives::storage::dsl::Value<'storage, U256>,
+    >,
 
     // Genesis parameter-profile selector (0 = prod, 1 = dev); see crate::config.
     #[attribute(order = 13)]
@@ -121,6 +126,16 @@ pub struct IntexFactoryContract {
     // sweep in flight; a date key is never 0.
     #[attribute(order = 24)]
     pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+
+    // The bins' own contents. They sit past the group columns because orders 7 and
+    // 12 carried series ids: read as a worldwide day, a leftover word is too wide
+    // for the type and would fault the scan rather than return a bad value.
+    /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> group's worldwide day.
+    #[attribute(order = 25)]
+    pub unqualified_bin_groups: outbe_primitives::storage::dsl::Map<B256, u32>,
+    /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> group's worldwide day.
+    #[attribute(order = 26)]
+    pub qualified_bin_groups: outbe_primitives::storage::dsl::Map<B256, u32>,
 }
 
 impl IntexFactoryContract<'_> {
