@@ -130,3 +130,13 @@ pub const fn stablecoin_v1_budget_for_measurement(measured_gas: u64) -> Option<u
     };
     rounded.checked_mul(budgets.gas_rounding_quantum)
 }
+
+#[cfg(test)]
+mod denomination_tests {
+    use super::*;
+
+    #[test]
+    fn stablecoin_create_bond_is_one_million_six_decimal_coen() {
+        assert_eq!(STABLECOIN_CREATE_BOND, U256::from(1_000_000_000_000u64));
+    }
+}

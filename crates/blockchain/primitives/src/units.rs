@@ -56,3 +56,24 @@ impl Units<u64> for U256 {
         U256::from(value) * SCALE_1E18
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_coen_uses_six_decimal_units() {
+        let one_coen = U256::from(1_000_000u64);
+
+        assert_eq!(ONE_UNIT, U256::ONE);
+        assert_eq!(ONE_COEN, one_coen);
+        assert_eq!(NATIVE_TOKEN_DECIMALS, 6);
+        assert_eq!(
+            U256::in_units(U256::from(2u64)),
+            one_coen * U256::from(2u64)
+        );
+        assert_eq!(U256::in_units(2u128), one_coen * U256::from(2u64));
+        assert_eq!(U256::in_units(2i32), one_coen * U256::from(2u64));
+        assert_eq!(U256::in_units(2u64), one_coen * U256::from(2u64));
+    }
+}

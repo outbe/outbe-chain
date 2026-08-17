@@ -351,6 +351,17 @@ fn run_dispatch(call: Bytes, caller: Address) -> outbe_primitives::error::Result
 }
 
 #[test]
+fn metadata_uses_six_decimal_gratis_units() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        let gratis = crate::Gratis::new(storage);
+        assert_eq!(gratis.name(), "gratis");
+        assert_eq!(gratis.symbol(), "GRATIS");
+        assert_eq!(gratis.decimals(), 6);
+    });
+}
+
+#[test]
 fn precompile_transfer_reverts() {
     let call = Bytes::from(
         IGratis::IGratisCalls::transfer(IGratis::transferCall {

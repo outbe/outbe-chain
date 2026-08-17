@@ -201,7 +201,7 @@ fn bounds_preserve_governance_capacity_and_pin_atomic_batch_edges() {
     assert_eq!(STABLECOIN_LIST_PAGE_CAP + 1, 101);
     assert_eq!(
         STABLECOIN_CREATE_BOND,
-        U256::from(1_000_000u64) * U256::from(10u64).pow(U256::from(18u64))
+        U256::from(1_000_000u64) * U256::from(10u64).pow(U256::from(6u64))
     );
 }
 

@@ -296,7 +296,7 @@ fn metadata_and_layout() {
         let p = crate::Promis::new(storage.clone());
         assert_eq!(p.name(), "promis");
         assert_eq!(p.symbol(), "PROMIS");
-        assert_eq!(p.decimals(), 18);
+        assert_eq!(p.decimals(), 6);
         // Layout: total_supply@0, slot 1 reserved (old plaintext balances),
         // balance_ct@2, op_nonce@3.
         assert_eq!(p.total_supply.slot(), U256::ZERO);
