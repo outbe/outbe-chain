@@ -1,14 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
-/// @title ICredis — read surface of the credis position ledger.
-/// @notice A credis position lives on the COEN price path, not on a calendar:
-///         there are no installments, no due dates and no maturity. Settlement
-///         unlocks permanently the first time the live COEN price (in the
-///         position's currency) exceeds `floorPrice`; a sustained breach of
-///         `callPrice` opens a fixed settlement window, after which any
-///         remainder is voided. Interest is not accrued per block — it is
-///         computed at settlement from the days elapsed since `lastSettledAt`.
 interface ICredis {
     /// @notice Lifecycle state of a position, mirroring the Rust `CredisState`.
     ///         `Open -> Settleable -> (Called) -> Settled | Void`.
@@ -18,6 +10,41 @@ interface ICredis {
         Called,
         Settled,
         Void
+    }
+
+    struct Position {
+        uint256 positionId;
+        address smartAccount;
+        address cca;
+        address asset;
+        /// ISO 4217 numeric code of the position's currency, from the disbursed asset.
+        uint16 issuanceCurrency;
+        // Pledger EOA ciphertext (not an address). The enclave recovers
+        // the plaintext EOA on-chain via a RevealOwner round-trip.
+        bytes eoaCiphertext;
+        /// P — the stablecoin amount disbursed. Never changes.
+        uint256 principal;
+        /// P_out — decreases with each settlement; the position closes at zero.
+        uint256 outstanding;
+        /// G — the pledged Gratis, valued 1:1 against principal at the entry price.
+        uint256 collateral;
+        /// The share of G still locked. Released principal-proportionally.
+        uint256 collateralLocked;
+        /// r — the annual policy rate of the currency, 1e18 scaled, fixed at opening.
+        uint256 policyRate;
+        /// P_0 — the COEN price in the position's currency, quoted at pledge time.
+        uint256 entryPrice;
+        /// P_0 + 8%. Crossing it latches the position settleable, permanently.
+        uint256 floorPrice;
+        /// P_0 + 32%. A sustained breach triggers the call.
+        uint256 callPrice;
+        uint64 originatedAt;
+        /// Anchor of the interest day count: origination until the first settlement.
+        uint64 lastSettledAt;
+        /// 0 until the position is called.
+        uint64 calledAt;
+        /// See {State}.
+        uint8 state;
     }
 
     /// @notice A position opened against a confidential Gratis pledge.
@@ -63,41 +90,6 @@ interface ICredis {
         uint256 principalWrittenOff,
         uint256 interestWrittenOff
     );
-
-    struct Position {
-        uint256 positionId;
-        address smartAccount;
-        address cca;
-        address asset;
-        /// ISO 4217 numeric code of the position's currency, from the disbursed asset.
-        uint16 issuanceCurrency;
-        // Pledger EOA ciphertext (not an address). The enclave recovers
-        // the plaintext EOA on-chain via a RevealOwner round-trip.
-        bytes eoaCiphertext;
-        /// P — the stablecoin amount disbursed. Never changes.
-        uint256 principal;
-        /// P_out — decreases with each settlement; the position closes at zero.
-        uint256 outstanding;
-        /// G — the pledged Gratis, valued 1:1 against principal at the entry price.
-        uint256 collateral;
-        /// The share of G still locked. Released principal-proportionally.
-        uint256 collateralLocked;
-        /// r — the annual policy rate of the currency, 1e18 scaled, fixed at opening.
-        uint256 policyRate;
-        /// P_0 — the COEN price in the position's currency, quoted at pledge time.
-        uint256 entryPrice;
-        /// P_0 + 8%. Crossing it latches the position settleable, permanently.
-        uint256 floorPrice;
-        /// P_0 + 32%. A sustained breach triggers the call.
-        uint256 callPrice;
-        uint64 originatedAt;
-        /// Anchor of the interest day count: origination until the first settlement.
-        uint64 lastSettledAt;
-        /// 0 until the position is called.
-        uint64 calledAt;
-        /// See {State}.
-        uint8 state;
-    }
 
     function getPosition(uint256 positionId) external view returns (Position memory);
 

@@ -48,7 +48,7 @@ pub const GEM_FACTORY_ADDRESS: Address = address!("0x000000000000000000000000000
 /// Credis precompile address.
 pub const CREDIS_ADDRESS: Address = address!("0x000000000000000000000000000000000000100A");
 
-/// Credis factory precompile address (write/orchestrator: requestCredis, settle).
+/// Credis factory precompile address.
 pub const CREDIS_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001009");
 
 /// Tribute factory precompile address.
