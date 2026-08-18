@@ -10,50 +10,64 @@ pub const NATIVE_TOKEN_SYMBOL: &str = "COEN";
 /// Base denomination.
 pub const BASE_DENOM: &str = "unit";
 
-/// Scale factor equal to `10^18`.
+/// Independent 18-decimal fixed-point scale.
+///
+/// This is not a token denomination. Dimensionless protocols that explicitly
+/// own an FP18 contract may keep using it after the native-token cutover.
 pub const SCALE_1E18: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 pub const SCALE_1E18_U128: u128 = 1_000_000_000_000_000_000;
 
+/// Raw units in one whole COEN.
+pub const UNITS_PER_COEN: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
+/// Raw units in one whole GRATIS.
+pub const UNITS_PER_GRATIS: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
+/// Raw units in one whole PROMIS.
+pub const UNITS_PER_PROMIS: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
+/// Raw units in one whole WCOEN.
+pub const UNITS_PER_WCOEN: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
+/// Integer scale of a COEN/840 Oracle price.
+pub const COEN840_PRICE_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
+
 /// One whole coen, expressed in the on-chain `U256` representation.
-pub const ONE_COEN: U256 = SCALE_1E18;
+pub const ONE_COEN: U256 = UNITS_PER_COEN;
 
 /// The smallest representable on-chain amount (1 unit).
 pub const ONE_UNIT: U256 = U256::ONE;
 
 /// Number of decimal places.
-pub const NATIVE_TOKEN_DECIMALS: u8 = 18;
+pub const NATIVE_TOKEN_DECIMALS: u8 = 6;
 
-/// Conversion from a whole-unit count into the scaled on-chain `U256`.
+/// Conversion from a whole-COEN count into native on-chain `unit`.
 ///
-/// Implementations multiply the supplied whole-unit value by
-/// [`SCALE_1E18`]. The trait is generic over the input type so callers can
+/// Implementations multiply the supplied whole-COEN value by
+/// [`UNITS_PER_COEN`]. The trait is generic over the input type so callers can
 /// pass any of the natural integer types without an explicit cast.
 pub trait Units<T>: Sized {
-    /// Returns `value * 10^18` as a `U256`.
+    /// Returns `value * 1_000_000` as a `U256`.
     fn in_units(value: T) -> U256;
 }
 
 impl Units<U256> for U256 {
     fn in_units(value: U256) -> U256 {
-        value * SCALE_1E18
+        value * UNITS_PER_COEN
     }
 }
 
 impl Units<u128> for U256 {
     fn in_units(value: u128) -> U256 {
-        U256::from(value) * SCALE_1E18
+        U256::from(value) * UNITS_PER_COEN
     }
 }
 
 impl Units<i32> for U256 {
     fn in_units(value: i32) -> U256 {
-        U256::from(value) * SCALE_1E18
+        U256::from(value) * UNITS_PER_COEN
     }
 }
 
 impl Units<u64> for U256 {
     fn in_units(value: u64) -> U256 {
-        U256::from(value) * SCALE_1E18
+        U256::from(value) * UNITS_PER_COEN
     }
 }
 
