@@ -392,7 +392,7 @@ feat(economics): convert Tribute and GRATIS lifecycle to six decimals
 - Lysis `program_v1/execute.rs`;
 - Lysis `program_v1/phases.rs`;
 - NOD state/hooks;
-- GEM state/runtime;
+- GEM state/hooks;
 - GemFactory runtime.
 
 Действия:
@@ -716,14 +716,20 @@ P3:
 - `crates/core/lysis/src/algorithm.rs`;
 - `crates/core/lysis/src/program_v1/{execute,phases,types}.rs`;
 - `crates/core/lysis/src/runtime.rs` — unit comments/interface adaptation only;
-- `crates/core/nod/src/{schema,state}.rs`;
-- `crates/core/gem/src/state.rs`;
+- `crates/core/nod/src/{hooks,schema,state}.rs`;
+- `crates/core/gem/src/{hooks,state}.rs`;
 - `crates/core/gemfactory/src/runtime.rs`.
 
 User-approved P3 re-plan after the `ZERO_COST` blocker: `types.rs` разрешён
 только для внутреннего `ProgramErrorV1::ZeroCost { ordinal }`. Это расширяет
 typed Rust error surface, но не меняет ABI, wire/state layouts, OCOMP codecs,
 frozen vectors или экономическую семантику P3.
+
+User-approved P3 re-plan after the pair-scale audit: `nod/hooks.rs` и
+`gem/hooks.rs` разрешены для передачи уже существующего `reference_currency`
+в currency-aware price-bin boundary. Для ISO 840 используется P6 adapter, для
+остальных ISO сохраняется существующий generic FP18 adapter. Generic Oracle,
+vendor `price_helper`, ABI и state layouts не меняются.
 
 P4:
 
