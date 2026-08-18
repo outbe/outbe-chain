@@ -23,7 +23,7 @@ export interface RevealBidParams {
   worldwideDay: number;
   bidder: Address;
   quantity: number;
-  /** Bid rate, 1e6 fixed-point (% of strike); RATE_SCALE = 1_000_000 = 100%. Fits uint32. */
+  /** Bid rate, scale-1e6 fixed-point (% of strike); 1_000_000 = 100%. Fits uint32. */
   bidRate: number;
   /** Declared issuance currency (ISO 4217 numeric). */
   issuanceCurrency: number;

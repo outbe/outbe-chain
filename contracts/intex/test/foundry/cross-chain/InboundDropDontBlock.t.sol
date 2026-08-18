@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
@@ -110,34 +111,36 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // TargetRouter — premature MARK_CALLED reverts, then redeliver succeeds
+    // TargetRouter — premature MARK_CALLED parks, then flushes once the series lands
     // ---------------------------------------------------------------
 
-    /// @notice MARK_CALLED for a series the BNB intex has never seen reverts deterministically
-    ///         (`NonexistentToken`) — the bridge rolls back rather than swallowing it.
-    function test_TM_PrematureMarkCalled_Reverts() public {
-        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(SERIES_ID, SERIES_ID_DAY);
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, uint256(uint112(SERIES_ID))));
+    /// @notice MARK_CALLED for a series the BNB intex has never seen is parked rather than rejected:
+    ///         a batch carries several series, and one of them missing must not reject the message.
+    function test_TM_PrematureMarkCalled_Parks() public {
+        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, MarkBatchLib.one(SERIES_ID));
         _deliverToTM(packet);
+
+        (bytes14 seriesId,, bool exists, bool done) = bnbRouter.pendingMarks(0);
+        assertEq(seriesId, SERIES_ID, "the mark was parked for its series");
+        assertTrue(exists, "the parked slot exists");
+        assertFalse(done, "the parked slot is still open");
     }
 
-    /// @notice After the prerequisite (the series) lands, re-delivering the same MARK_CALLED succeeds and the
-    ///         series flips to Called — the transport-redelivery model resolves the out-of-order arrival.
-    function test_TM_MarkCalledRedeliverySucceedsAfterSeriesLands() public {
-        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(SERIES_ID, SERIES_ID_DAY);
+    /// @notice Once the prerequisite (the series) lands, flushing the parked mark applies it and the
+    ///         series flips to Called — the out-of-order arrival resolves without a redelivery.
+    function test_TM_ParkedMarkCalledFlushesAfterSeriesLands() public {
+        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, MarkBatchLib.one(SERIES_ID));
 
-        // Premature: no series yet → revert.
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, uint256(uint112(SERIES_ID))));
+        // Premature: no series yet → parked.
         _deliverToTM(packet);
 
         // Prerequisite lands (the ISSUANCE that would have created the series).
         intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
 
-        // Redelivery of the identical message now succeeds.
-        _deliverToTM(packet);
+        bnbRouter.flushPendingMark(0);
 
         IIntexNFT1155.SeriesData memory data = intex.readData(SERIES_ID);
-        assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Called), "series flipped to Called on redelivery");
+        assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Called), "series flipped to Called on flush");
     }
 
     // ---------------------------------------------------------------

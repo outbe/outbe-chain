@@ -218,17 +218,17 @@ mod tests {
             .unwrap();
     }
 
-    /// Seeds COEN/840 oracle pair at `rate_1e18`. Required because
+    /// Seeds COEN/840 oracle pair at `rate_6`. Required because
     /// `add_topup_for_voters` → `mint_gem` resolves `coen_rate` for floor
     /// price + entry_price at mint time.
-    fn seed_oracle(ctx: &BlockRuntimeContext, rate_1e18: U256) {
+    fn seed_oracle(ctx: &BlockRuntimeContext, rate_6: U256) {
         outbe_oracle::api::register_pair(ctx.storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
         outbe_oracle::api::set_exchange_rate(
             ctx.storage.clone(),
             Address::ZERO,
             outbe_oracle::api::DAY_TYPE_PAIR,
-            rate_1e18,
+            rate_6,
             0,
             0,
         )
@@ -238,8 +238,8 @@ mod tests {
         oracle.reference_currencies.push(840u16).unwrap();
     }
 
-    fn one_e18() -> U256 {
-        outbe_primitives::units::SCALE_1E18
+    fn one_coen840() -> U256 {
+        U256::from(1_000_000u64)
     }
 
     /// Collects all gem loads owned by `voter` from the gem entity store.
@@ -361,7 +361,7 @@ mod tests {
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
             bootstrap_genesis(&ctx);
-            seed_oracle(&ctx, U256::from(2u64) * one_e18());
+            seed_oracle(&ctx, U256::from(2u64) * one_coen840());
 
             // counts 1 + 3 = 4; topup 400 → VAL_X 100, VAL_Y 300.
             let voters = vec![(VAL_X, 1u64), (VAL_Y, 3u64)];
@@ -383,7 +383,7 @@ mod tests {
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
             bootstrap_genesis(&ctx);
-            seed_oracle(&ctx, U256::from(2u64) * one_e18());
+            seed_oracle(&ctx, U256::from(2u64) * one_coen840());
 
             // Day 0: within the 21-day genesis window → Genesis gem (Qualified).
             let voters = vec![(VAL_X, 1u64)];

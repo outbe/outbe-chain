@@ -22,7 +22,7 @@ use serde::{
 use serde_json::{json, Map, Number, Value};
 use sha2::{Digest, Sha256};
 
-const SCALE_DECIMAL: &str = "1000000000000000000";
+const SCALE_DECIMAL: &str = "1000000";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -368,6 +368,14 @@ fn fraction_table(
     total_nominal: &BigUint,
     allocation: &BigUint,
 ) -> Result<Vec<Value>, ReferenceFailure> {
+    Ok(fraction_table_with_projection(tributes, total_nominal, allocation)?.0)
+}
+
+fn fraction_table_with_projection(
+    tributes: &[CorpusTribute],
+    total_nominal: &BigUint,
+    allocation: &BigUint,
+) -> Result<(Vec<Value>, BigUint, BigUint), ReferenceFailure> {
     let unit = scale();
     let mut groups = BTreeMap::<u16, Vec<usize>>::new();
     for (ordinal, tribute) in tributes.iter().enumerate() {
@@ -382,13 +390,15 @@ fn fraction_table(
     }
     let mut shares = Vec::with_capacity(groups.len());
     let mut populations = Vec::with_capacity(groups.len());
+    let mut group_nominals = Vec::with_capacity(groups.len());
     for ordinals in groups.values() {
         let mut group_nominal = BigUint::zero();
         for ordinal in ordinals {
             group_nominal = wrap_u256(group_nominal + decimal(&tributes[*ordinal].nominal)?);
         }
-        shares.push(wrap_u256(group_nominal * &unit) / total_nominal);
+        shares.push(wrap_u256(&group_nominal * &unit) / total_nominal);
         populations.push(ordinals.len());
+        group_nominals.push(group_nominal);
     }
     let mut share_sum = BigUint::zero();
     for value in &shares {
@@ -401,8 +411,25 @@ fn fraction_table(
     }
     let target = wrap_u256(allocation * &unit) / total_nominal;
     let maximum = wrap_u256(&target * 2_u8);
-    let fractions = distribution(&shares, &populations, tributes.len(), &target, &maximum)?;
-    Ok(groups
+    let mut fractions = distribution(&shares, &populations, tributes.len(), &target, &maximum)?;
+    let raw_projected = group_nominals
+        .iter()
+        .zip(&fractions)
+        .fold(BigUint::zero(), |sum, (nominal, fraction)| {
+            sum + wrap_u256(nominal * fraction) / &unit
+        });
+    if raw_projected > *allocation {
+        for fraction in &mut fractions {
+            *fraction = wrap_u256(&*fraction * allocation) / &raw_projected;
+        }
+    }
+    let normalized_projected = group_nominals
+        .iter()
+        .zip(&fractions)
+        .fold(BigUint::zero(), |sum, (nominal, fraction)| {
+            sum + wrap_u256(nominal * fraction) / &unit
+        });
+    let table = groups
         .keys()
         .zip(shares)
         .zip(populations)
@@ -415,7 +442,8 @@ fn fraction_table(
                 "fraction": fraction.to_string(),
             })
         })
-        .collect())
+        .collect();
+    Ok((table, raw_projected, normalized_projected))
 }
 
 fn validate_and_sort(input: &CorpusInput) -> Result<Vec<CorpusTribute>, ReferenceFailure> {
@@ -582,6 +610,9 @@ fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
             return Err(ReferenceFailure::ordinal("FIDELITY_MISMATCH", ordinal));
         }
         let cost = wrap_u256(&entry_price * &load) / &unit;
+        if cost.is_zero() {
+            return Err(ReferenceFailure::ordinal("ZERO_COST", ordinal));
+        }
         if !tribute.nod_target_available || owner_is_zero(&tribute.owner) {
             return Err(ReferenceFailure::ordinal("INVALID_NOD_TARGET", ordinal));
         }
@@ -931,7 +962,29 @@ mod tests {
     fn frozen_corpus_is_reference_reproducible() {
         let report = check(&default_vectors_path(), &default_manifest_path()).unwrap();
         assert_eq!(report.status, "PASS", "{report:?}");
-        assert_eq!(report.case_count, 15);
+        assert_eq!(report.case_count, 16);
+    }
+
+    #[test]
+    fn six_decimal_projection_normalization_has_the_frozen_eight_unit_dust() {
+        let case = load_cases(&default_vectors_path())
+            .unwrap()
+            .into_iter()
+            .find(|case| case.case_id == "fifteen-league-normalization")
+            .unwrap();
+        let tributes = validate_and_sort(&case.input).unwrap();
+        let total_nominal = tributes
+            .iter()
+            .map(|tribute| decimal(&tribute.nominal).unwrap())
+            .sum::<BigUint>();
+        let allocation = decimal(&case.input.gratis_allocation).unwrap();
+        let (_, raw, normalized) =
+            fraction_table_with_projection(&tributes, &total_nominal, &allocation).unwrap();
+
+        assert_eq!(allocation, BigUint::from(4_800_000u64));
+        assert_eq!(raw, BigUint::from(4_800_034u64));
+        assert_eq!(normalized, BigUint::from(4_799_992u64));
+        assert_eq!(allocation - normalized, BigUint::from(8u64));
     }
 
     #[test]

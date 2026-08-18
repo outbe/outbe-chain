@@ -1,0 +1,6 @@
+# MCP Oracle presentation re-freeze approved on 2026-08-18.
+# Frozen at test commit ef0680c0 with the previously approved MCP native formatting plumbing applied, but without Oracle call-context routing.
+# Typecheck passed; nine unrelated MCP tests passed and the two corrected public-view tests failed only on scale routing.
+test_stage	test	expected_new_behavior	actual_pre_implementation_behavior	production_owner	production_stage
+MCP-recovery	mcp::denomination.test.ts::MCP Oracle views apply six decimals from the real call context	direct and reverse COEN/ISO spot, canonical VWAP, getCoenExchangeRateFor and getCurrencyRate preserve raw integers and render with scale 1e6	COEN/ISO raw 1234567 renders as 0.000000000001234567 because view supplies no Oracle market context	mcp/src/format.ts + mcp/src/tools/util.ts	native-economics
+MCP-recovery	mcp::denomination.test.ts::MCP Oracle aggregate views format each market row independently	parallel COEN/ISO rows render with scale 1e6 while generic rows retain scale 1e18 and every raw integer is unchanged	first aggregate raw 1234567 renders as 0.000000000001234567 because all rows use the generic scale	mcp/src/format.ts + mcp/src/tools/util.ts	native-economics

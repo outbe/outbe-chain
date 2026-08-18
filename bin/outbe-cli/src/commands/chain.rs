@@ -173,7 +173,11 @@ async fn status(client: &(impl Rpc + Sync)) -> Result<()> {
 
 async fn balance(client: &(impl Rpc + Sync), address: Address) -> Result<()> {
     let bal = client.eth_get_balance(address).await?;
-    println!("Balance of {:?}: {} COEN", address, super::format_unit(bal));
+    println!(
+        "Balance of {:?}: {} COEN",
+        address,
+        super::format_coen_amount(bal)
+    );
     Ok(())
 }
 
@@ -314,13 +318,16 @@ mod tests {
         let mock = MockRpc {
             block_number: Ok(100),
             chain_id: Ok(1337),
-            gas_price: Ok(U256::from(1_000_000_000u64)),
+            gas_price: Ok(U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE)),
             ..Default::default()
         };
         let ci = fetch_chain_info(&mock).await.unwrap();
         assert_eq!(ci.block, 100);
         assert_eq!(ci.chain_id, 1337);
-        assert_eq!(ci.gas_price, U256::from(1_000_000_000u64));
+        assert_eq!(
+            ci.gas_price,
+            U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE)
+        );
     }
 
     #[tokio::test]
@@ -331,7 +338,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_balance_returns_value() {
-        let one_coen = U256::from(10u64).pow(U256::from(18));
+        let one_coen = U256::from(1_000_000u64);
         let mock = MockRpc {
             balance: Ok(one_coen),
             ..Default::default()

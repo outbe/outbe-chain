@@ -36,10 +36,10 @@ contract IntexAuctionFuzzTest is Test {
 
     uint16 internal constant MIN_QTY = 1;
     uint32 internal constant MIN_RATE = 10;
-    uint32 internal constant RATE_SCALE = 1_000_000;
-    uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e18;
-    // Escrow basis == promis_load per Intex; lock = qty * ESCROW_BASIS * rate / RATE_SCALE.
-    uint64 internal constant ENTRY_PRICE = 1e19;
+    uint32 internal constant SCALE_1E6 = 1_000_000;
+    uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e6;
+    // Escrow basis == promis_load per Intex; lock = qty * ESCROW_BASIS * rate / 1e6.
+    uint64 internal constant ENTRY_PRICE = 1e6;
     uint128 internal constant ESCROW_BASIS = PROMIS_LOAD_MINOR;
 
     function setUp() public {
@@ -57,7 +57,7 @@ contract IntexAuctionFuzzTest is Test {
 
     function test_Fuzz_RevealBid_RejectsRateAboveMax(uint256 qSeed, uint256 rSeed) public {
         uint16 quantity = uint16(bound(qSeed, MIN_QTY, type(uint16).max));
-        uint32 rate = uint32(bound(rSeed, uint256(RATE_SCALE) + 1, type(uint32).max));
+        uint32 rate = uint32(bound(rSeed, uint256(SCALE_1E6) + 1, type(uint32).max));
 
         uint32 worldwideDay = 20260201;
         _start(worldwideDay);
@@ -72,8 +72,8 @@ contract IntexAuctionFuzzTest is Test {
 
     function test_Fuzz_RevealBid_ValidProductLocksExactAmount(uint256 qSeed, uint256 rSeed) public {
         uint16 quantity = uint16(bound(qSeed, MIN_QTY, type(uint16).max));
-        uint32 rate = uint32(bound(rSeed, MIN_RATE, RATE_SCALE));
-        uint128 expected = uint128(uint256(quantity) * ESCROW_BASIS * rate / RATE_SCALE);
+        uint32 rate = uint32(bound(rSeed, MIN_RATE, SCALE_1E6));
+        uint128 expected = uint128(uint256(quantity) * ESCROW_BASIS * rate / SCALE_1E6);
 
         uint32 worldwideDay = 20260202;
         _start(worldwideDay);
@@ -84,7 +84,7 @@ contract IntexAuctionFuzzTest is Test {
         vm.prank(iba1);
         auction.revealBid(worldwideDay, quantity, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
 
-        assertEq(escrow.lockedFunds(worldwideDay, iba1), expected, "locked == qty * escrow_basis * rate / RATE_SCALE");
+        assertEq(escrow.lockedFunds(worldwideDay, iba1), expected, "locked == qty * escrow_basis * rate / 1e6");
     }
 
     function test_Fuzz_ExecuteClearing_BoundsMatchPredicate(uint32 issued, uint256 rateSeed, uint256 wonSeed) public {

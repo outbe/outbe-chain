@@ -20,9 +20,8 @@ use outbe_protocol::{OutbeV1, Suite};
 use outbe_protocol_derive::Entity;
 use outbe_tee::protocol::{EncryptedTributeOffer, TributeZkExpectedHashes};
 
+use crate::compute::CanonicalAmount;
 use crate::payload::TributeInputPayload;
-
-const ATTO_PER_BASE: u64 = 1_000_000_000_000_000_000;
 
 #[derive(Entity)]
 struct TributeDraftClaim {
@@ -42,26 +41,16 @@ struct TributeDraftClaim {
     su_ids: Vec<B256>,
 }
 
-pub fn derive_expected_hashes(
+pub(crate) fn derive_expected_hashes(
     offer: &EncryptedTributeOffer,
     payload: &TributeInputPayload,
+    amount: &CanonicalAmount,
 ) -> Result<Option<TributeZkExpectedHashes>, String> {
     let Some(context) = &offer.zk_context else {
         return Ok(None);
     };
 
     let id = parse_b256(&payload.tribute_draft_id, "tribute_draft_id")?;
-    let base = payload
-        .amount_base
-        .parse::<u64>()
-        .map_err(|_| "amount_base must be a canonical u64 for ZK verification".to_string())?;
-    let atto = payload
-        .amount_atto
-        .parse::<u64>()
-        .map_err(|_| "amount_atto must be a canonical u64 for ZK verification".to_string())?;
-    if atto >= ATTO_PER_BASE {
-        return Err("amount_atto must be less than 1e18 for ZK verification".to_string());
-    }
     let su_ids = payload
         .su_hashes
         .iter()
@@ -75,8 +64,8 @@ pub fn derive_expected_hashes(
         derived_owner: context.derived_owner,
         worldwide_day: offer.worldwide_day.into(),
         currency: offer.tribute_currency,
-        base,
-        atto,
+        base: amount.base,
+        atto: amount.atto,
         su_ids,
     };
     let nft_hash = <TributeDraftClaim as EntityTrait<OutbeV1>>::entity_hash(&draft)

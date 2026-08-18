@@ -622,14 +622,14 @@
       "name": "quoteSendMarkCalled",
       "inputs": [
         {
-          "name": "seriesId",
-          "type": "bytes14",
-          "internalType": "bytes14"
-        },
-        {
           "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
+        },
+        {
+          "name": "seriesIds",
+          "type": "bytes14[]",
+          "internalType": "bytes14[]"
         }
       ],
       "outputs": [
@@ -646,14 +646,14 @@
       "name": "quoteSendMarkQualified",
       "inputs": [
         {
-          "name": "seriesId",
-          "type": "bytes14",
-          "internalType": "bytes14"
-        },
-        {
           "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
+        },
+        {
+          "name": "seriesIds",
+          "type": "bytes14[]",
+          "internalType": "bytes14[]"
         }
       ],
       "outputs": [
@@ -1108,14 +1108,14 @@
       "name": "sendMarkCalled",
       "inputs": [
         {
-          "name": "seriesId",
-          "type": "bytes14",
-          "internalType": "bytes14"
-        },
-        {
           "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
+        },
+        {
+          "name": "seriesIds",
+          "type": "bytes14[]",
+          "internalType": "bytes14[]"
         }
       ],
       "outputs": [],
@@ -1126,14 +1126,14 @@
       "name": "sendMarkQualified",
       "inputs": [
         {
-          "name": "seriesId",
-          "type": "bytes14",
-          "internalType": "bytes14"
-        },
-        {
           "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
+        },
+        {
+          "name": "seriesIds",
+          "type": "bytes14[]",
+          "internalType": "bytes14[]"
         }
       ],
       "outputs": [],
@@ -1986,6 +1986,11 @@
     },
     {
       "type": "error",
+      "name": "EmptyMarkBatch",
+      "inputs": []
+    },
+    {
+      "type": "error",
       "name": "FailedCall",
       "inputs": []
     },
@@ -2093,6 +2098,22 @@
     {
       "type": "error",
       "name": "IssuanceSeriesBatchTooLarge",
+      "inputs": [
+        {
+          "name": "count",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "max",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "MarkBatchTooLarge",
       "inputs": [
         {
           "name": "count",

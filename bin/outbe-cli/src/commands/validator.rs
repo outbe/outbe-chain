@@ -256,7 +256,7 @@ async fn list(
             i + 1,
             row.addr,
             status_label(row.status),
-            super::format_unit(row.stake),
+            super::format_coen_amount(row.stake),
         );
     }
 
@@ -278,7 +278,10 @@ async fn info(client: &(impl Rpc + Sync), address: Address) -> Result<()> {
         v.status,
         status_label(v.status)
     );
-    println!("Stake:                {} COEN", super::format_unit(v.stake));
+    println!(
+        "Stake:                {} COEN",
+        super::format_coen_amount(v.stake)
+    );
     println!("Slash Count:          {}", v.slashCount);
     println!("Missed Blocks:        {}", v.missedBlocks);
     println!("Missed Votes:         {}", v.missedVotes);

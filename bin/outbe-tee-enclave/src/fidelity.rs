@@ -642,7 +642,7 @@ mod tests {
                 (
                     t["ts"].as_u64().unwrap(),
                     t["kind"].as_str().unwrap() == "deposit",
-                    t["amount_e18"].as_str().unwrap().parse::<U256>().unwrap(),
+                    t["amount_units"].as_str().unwrap().parse::<U256>().unwrap(),
                 )
             })
             .collect();

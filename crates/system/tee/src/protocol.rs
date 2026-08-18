@@ -77,7 +77,8 @@ pub struct EncryptedTributeOffer {
     /// excluded from Intex issuance.
     pub exclude_from_intex_issuance: bool,
     /// Nominal COEN price for `COEN/<tribute_currency>` at `worldwide_day`,
-    /// 1e18 scaled, resolved by the node from committed Oracle state.
+    /// Rate in the ISO stablecoin domain (scale 1e6), resolved by the node from
+    /// committed Oracle state.
     pub tribute_price_minor: U256,
     /// Public ZK claim context supplied only for registered L2 networks with
     /// ZK verification enabled. The owner is the first public input embedded
@@ -234,8 +235,8 @@ pub struct PledgeTerms {
     pub gratis_amount: U256,
     /// The stablecoin the credis is disbursed in.
     pub asset: Address,
-    /// COEN/stablecoin rate (1e18) the conversion used; pinned as the Credis
-    /// position's `entry_price_minor`.
+    /// COEN/ISO rate (scale 1e6) used for the conversion; pinned as the Credis
+    /// position's `entry_price_minor` without changing the field shape.
     pub entry_rate: U256,
 }
 

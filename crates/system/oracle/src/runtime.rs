@@ -7,13 +7,14 @@ use outbe_common::WorldwideDay;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::error::Result;
+use outbe_primitives::math::reference_price::is_coen_iso_market;
 use outbe_primitives::time::{date_key_to_utc_timestamp, SECONDS_PER_DAY};
 use std::collections::BTreeSet;
 
-use crate::constants::DAY_TYPE_PAIR;
+use crate::constants::{zero_volume_weight, DAY_TYPE_PAIR};
 use crate::errors::{OracleError, OracleOcompError};
 use crate::precompile::IOracle;
-use crate::schema::{OracleContract, SCALE_1E18};
+use crate::schema::OracleContract;
 
 /// `(pairs, values, lookbacks)` — one row per active vote-target pair, each
 /// carrying the orientation it was registered in.
@@ -173,8 +174,17 @@ impl OracleContract<'_> {
             let pv = day_pv.read(&day).unwrap_or(U256::ZERO);
             let vol = day_vol.read(&day).unwrap_or(U256::ZERO);
             if !pv.is_zero() {
-                pv_total = pv_total.saturating_add(pv);
-                vol_total = vol_total.saturating_add(vol);
+                if is_coen_iso_market(pair) {
+                    pv_total = pv_total
+                        .checked_add(pv)
+                        .ok_or(OracleError::VwapOverflow("daily sum accumulation"))?;
+                    vol_total = vol_total
+                        .checked_add(vol)
+                        .ok_or(OracleError::VwapOverflow("daily volume sum"))?;
+                } else {
+                    pv_total = pv_total.saturating_add(pv);
+                    vol_total = vol_total.saturating_add(vol);
+                }
             }
             day += 86_400;
         }
@@ -188,7 +198,7 @@ impl OracleContract<'_> {
     /// Calculates VWAP for a specific pair over a time range.
     ///
     /// VWAP = sum(price_i * volume_i) / sum(volume_i)
-    /// All values at 1e18 scale.
+    /// Values remain in the pair's canonical scale.
     pub fn calculate_vwap(
         &self,
         pair: AddressPair,
@@ -242,7 +252,11 @@ impl OracleContract<'_> {
 
                 let rate = rate_map.read(&p)?;
                 let volume = volume_map.read(&p)?;
-                let vol = if volume.is_zero() { SCALE_1E18 } else { volume };
+                let vol = if volume.is_zero() {
+                    zero_volume_weight(pair)
+                } else {
+                    volume
+                };
 
                 price_volume_sum = price_volume_sum
                     .checked_add(

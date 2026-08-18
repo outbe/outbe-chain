@@ -3,7 +3,7 @@ use base64::Engine;
 use outbe_primitives::error::Result;
 use outbe_primitives::math::{
     constants::MAX_BIN_ID,
-    price_helper,
+    reference_price,
     tree_math::{self, BinTreeStorage},
 };
 
@@ -257,8 +257,7 @@ impl GemContract<'_> {
         if price.is_zero() {
             return Ok(0);
         }
-        let p_128x128 = price_helper::convert_decimal_price_to_128x128(price)?;
-        price_helper::get_id_from_price(p_128x128, BIN_STEP_BP)
+        reference_price::coen_iso_price_to_bin_id(price, BIN_STEP_BP)
     }
 
     /// Namespaces a bin-column key by the gem's reference currency.

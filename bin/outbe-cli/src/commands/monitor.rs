@@ -116,7 +116,7 @@ async fn watch_tick(client: &(impl Rpc + Sync)) -> Result<()> {
     println!("=== Outbe Network Monitor ===");
     println!(
         "Block: {block}  |  Epoch: {epoch}  |  Active: {count}  |  Staked: {} COEN",
-        super::format_unit(total)
+        super::format_coen_amount(total)
     );
     println!();
     println!(
@@ -146,7 +146,7 @@ async fn watch_tick(client: &(impl Rpc + Sync)) -> Result<()> {
                     i + 1,
                     addr,
                     status_str,
-                    super::format_unit(detail.stake),
+                    super::format_coen_amount(detail.stake),
                     detail.missedBlocks,
                     detail.missedVotes,
                 );

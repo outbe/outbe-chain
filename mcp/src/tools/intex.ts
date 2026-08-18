@@ -147,10 +147,10 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
     return { txHash: hash, status: r.status, blockNumber: r.blockNumber.toString(), gasUsed: r.gasUsed.toString() };
   }
 
-  // A bid is a RATE: the fraction of the per-Intex strike (promis_load, in wCOEN)
-  // the bidder will pay, as 1e6 fixed-point. Payment-token meta (wCOEN, 18 dec) is
+  // A bid is a RATE: the fraction of the per-Intex strike (promis_load, in WCOEN)
+  // the bidder will pay, as 1e6 fixed-point. Payment-token meta (WCOEN, 6 dec) is
   // cached per network so outputs can name the token and size the escrow lock.
-  const RATE_SCALE = 1_000_000n;
+  const SCALE_1E6 = 1_000_000n;
   const metaCache = new Map<string, { decimals: number; symbol: string }>();
   async function paymentMeta(n: Network): Promise<{ decimals: number; symbol: string }> {
     const cached = metaCache.get(n.name);
@@ -239,7 +239,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   /** Bid rate as a fraction of strike ("0.8" = 80%) to the uint32 1e6 fixed-point the contract expects. */
   function toBidRate(rate: string): bigint {
     const raw = parseUnits(rate, 6);
-    if (raw < 0n || raw > RATE_SCALE) throw new Error(`bid rate ${rate} must be 0..1 (0-100% of strike)`);
+    if (raw < 0n || raw > SCALE_1E6) throw new Error(`bid rate ${rate} must be 0..1 (0-100% of strike)`);
     return raw;
   }
 
@@ -289,16 +289,15 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         network: n.name,
         seriesId: fromSeriesId(d.seriesId as unknown as Hex),
         // scales per crates/core/intex/src/schema.rs (SeriesRecord):
-        promisLoad: { raw: d.promisLoadMinor.toString(), value: formatUnits(u256(d.promisLoadMinor), 18) }, // Promis per intex, 18 dec
-        entryPrice: { raw: d.entryPriceMinor.toString(), value: formatUnits(u256(d.entryPriceMinor), 18), scale: "1e18 oracle (reference ccy)" },
-        floorPrice: { raw: d.floorPriceMinor.toString(), value: formatUnits(u256(d.floorPriceMinor), 18), scale: "1e18 oracle" },
-        callPrice: { raw: d.callPriceMinor.toString(), value: formatUnits(u256(d.callPriceMinor), 18), scale: "1e18 oracle" },
+        promisLoad: { raw: d.promisLoadMinor.toString(), value: formatUnits(u256(d.promisLoadMinor), 6) },
+        entryPrice: { raw: d.entryPriceMinor.toString(), value: formatUnits(u256(d.entryPriceMinor), 6), scale: "1e6 ISO stable-unit" },
+        floorPrice: { raw: d.floorPriceMinor.toString(), value: formatUnits(u256(d.floorPriceMinor), 6), scale: "1e6 ISO stable-unit" },
+        callPrice: { raw: d.callPriceMinor.toString(), value: formatUnits(u256(d.callPriceMinor), 6), scale: "1e6 ISO stable-unit" },
         issuedIntexCount: Number(d.issuedIntexCount),
-        costAmount: { raw: d.costAmountMinor.toString(), value: formatUnits(u256(d.costAmountMinor), 18), scale: "1e18 oracle (reference ccy)" },
+        costAmount: { raw: d.costAmountMinor.toString(), value: formatUnits(u256(d.costAmountMinor), 6), scale: "1e6 ISO stable-unit" },
         callWindow: Number(d.callWindow),
         callThreshold: Number(d.callThreshold),
         callNoticePeriod: Number(d.callNoticePeriod),
-        // 6 dec: implied by the entry(1e18) * load(1e18) / 1e30 derivation.
         issuanceCurrency: Number(d.issuanceCurrency), // ISO 4217 numeric
         referenceCurrency: Number(d.referenceCurrency),
         worldwideDay: Number(d.worldwideDay),
@@ -487,7 +486,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         },
         paymentToken: { symbol: meta.symbol, decimals: dec },
         params: {
-          // strike basis: per-Intex promis_load in the payment token (wCOEN). Escrow lock = qty * this * rate / 1e6.
+          // strike basis: per-Intex promis_load in the payment token (WCOEN). Escrow lock = qty * this * rate / 1e6.
           promisLoadMinor: { raw: d.params.promisLoadMinor.toString(), value: formatUnits(d.params.promisLoadMinor, dec) },
           callTrigger: {
             callWindow: d.params.callTrigger.callWindow,
@@ -499,7 +498,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           minIntexBidQuantity: Number(d.params.minIntexBidQuantity),
           // entry bond pulled at commit and returned at reveal/cancel; 0 = no bond.
           commitBondMinor: { raw: d.params.commitBondMinor.toString(), value: formatUnits(d.params.commitBondMinor, dec) },
-          // A bid's reference currency must appear here. Prices are on the 1e9 wire scale.
+          // A bid's reference currency must appear here. Prices are ISO stable-units (1e6).
           prices: d.params.prices.map((row) => ({
             isoCode: Number(row.isoCode),
             entryPriceMinor: row.entryPriceMinor.toString(),
@@ -750,7 +749,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "auction_bid_reveal",
     "Reveal a committed Intex bid: re-derives the same signature from (worldwideDay, quantity, rate, currencies) " +
-      "and submits revealBid; the escrow then locks quantity * strike * rate / RATE_SCALE in wCOEN, where strike is " +
+      "and submits revealBid; the escrow then locks quantity * strike * rate / 1e6 in WCOEN, where strike is " +
       "the auction's promis_load. The reference currency must be one the day prices, the issuance currency any " +
       "1..999 code. Auto-approves the escrow first if the allowance is short. Requires OUTBE_PRIVATE_KEY.",
     {
@@ -768,8 +767,8 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       const { decimals: dec, symbol } = await paymentMeta(n);
       const bidRate = toBidRate(rate);
 
-      // Escrow lock = quantity * strike * bidRate / RATE_SCALE, where strike is the auction's
-      // per-Intex promisLoadMinor (wCOEN). Read it so the auto-approve covers exactly the lock.
+      // Escrow lock = quantity * strike * bidRate / 1e6, where strike is the auction's
+      // per-Intex promisLoadMinor (WCOEN). Read it so the auto-approve covers exactly the lock.
       const info = (await n.client.readContract({
         address: addr(n, "auction"),
         abi: AUCTION_ABI,
@@ -777,7 +776,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         args: [worldwideDay],
       })) as { params: { promisLoadMinor: bigint; commitBondMinor: bigint } };
       const strike = info.params.promisLoadMinor;
-      const lockAmount = (BigInt(quantity) * strike * bidRate) / RATE_SCALE;
+      const lockAmount = (BigInt(quantity) * strike * bidRate) / SCALE_1E6;
       const lockHuman = formatUnits(lockAmount, dec);
       const token = addr(n, "paymentToken");
       const escrow = addr(n, "escrow");
@@ -1175,7 +1174,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         functionName: "balanceOf",
         args: [who],
       })) as bigint;
-      return ok({ network: n.name, account: who, balance: { raw: bal.toString(), value: formatUnits(bal, 18) } });
+      return ok({ network: n.name, account: who, balance: { raw: bal.toString(), value: formatUnits(bal, 6) } });
     }),
   );
 }

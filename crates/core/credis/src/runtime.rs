@@ -9,7 +9,7 @@ use alloy_primitives::{Address, U256};
 
 use outbe_primitives::error::Result;
 use outbe_primitives::time::SECONDS_PER_DAY;
-use outbe_primitives::units::SCALE_1E18;
+use outbe_primitives::units::SCALE_1E6_U256;
 
 use crate::constants::{
     CALL_RATE_PCT, CALL_WINDOW_SECS, DAYS_PER_YEAR, FLOOR_RATE_PCT, PRICE_RATE_DEN,

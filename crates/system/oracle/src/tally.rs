@@ -1,7 +1,8 @@
 //! Oracle tally algorithm: weighted median, standard deviation, reward band.
 //!
 //! Ported from Cosmos SDK `x/oracle/tally.go` and `x/oracle/types/ballot.go`.
-//! All arithmetic uses U256 fixed-point with 1e18 scale factor.
+//! Rates and volumes remain in each pair's canonical scale. Dimensionless
+//! reward/validity ratios and the unchanged generic cross-rate use FP18.
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
@@ -10,7 +11,7 @@ use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::error::Result;
 
 use crate::errors::OracleError;
-use outbe_primitives::units::Units;
+use outbe_primitives::units::SCALE_1E6_U256;
 
 use crate::precompile::IOracle;
 use crate::schema::{OracleContract, PairIndex, SCALE_1E18};
@@ -23,9 +24,9 @@ pub const MAX_ORACLE_SLASH_WINDOW_VALIDATORS: usize = 128;
 /// A single vote entry in a ballot for one trading pair.
 #[derive(Clone, Debug)]
 pub struct VoteForTally {
-    /// Exchange rate (1e18 scaled).
+    /// Exchange rate in the pair's canonical scale.
     pub exchange_rate: U256,
-    /// Volume (1e18 scaled).
+    /// Volume in the pair's canonical scale.
     pub volume: U256,
     /// Validator address.
     pub voter: Address,
@@ -94,7 +95,8 @@ pub fn weighted_median(ballot: &[VoteForTally]) -> U256 {
 ///
 /// Formula: sqrt(sum((rate_i - median)^2) / count)
 /// Uses integer sqrt (Newton's method) for determinism.
-/// All values at 1e18 scale, so squared deviations are at 1e36 scale.
+/// The result remains in the ballot's rate scale; squared deviations use the
+/// square of that scale.
 pub fn standard_deviation(ballot: &[VoteForTally], median: U256) -> U256 {
     if ballot.is_empty() {
         return U256::ZERO;
@@ -110,9 +112,8 @@ pub fn standard_deviation(ballot: &[VoteForTally], median: U256) -> U256 {
         } else {
             median - vote.exchange_rate
         };
-        // deviation^2 (at 1e36 scale since each operand is 1e18)
-        // To keep the result at 1e18 scale after sqrt, we need variance at 1e36.
-        // Since deviation is already at 1e18, deviation^2 is at 1e36. Good.
+        // Squaring and then taking the integer square root preserves the
+        // ballot's own rate scale.
         // On overflow: return ZERO (deterministic fallback — base_spread is used instead).
         let sq = match deviation.checked_mul(deviation) {
             Some(v) => v,
@@ -124,10 +125,10 @@ pub fn standard_deviation(ballot: &[VoteForTally], median: U256) -> U256 {
         };
     }
 
-    // variance = sum_sq / count (at 1e36 scale)
+    // variance = sum_sq / count (at the square of the rate scale)
     let variance = sum_sq / count;
 
-    // sqrt(variance) → result at 1e18 scale (sqrt of 1e36 = 1e18)
+    // sqrt(variance) → result in the original rate scale
     isqrt(variance)
 }
 
@@ -156,10 +157,10 @@ pub fn tally_pair(
     let median = weighted_median(ballot);
     let std_dev = standard_deviation(ballot, median);
 
-    // reward_spread = max(std_dev, median * reward_band / 2 / 1e18)
-    // reward_band is at 1e18 scale, so median * reward_band gives 1e36.
-    // Divide by 2 * 1e18 to get back to 1e18.
-    let base_spread = median.checked_mul(reward_band).unwrap_or(U256::MAX) / (U256::in_units(2u64));
+    // reward_spread = max(std_dev, median * reward_band / (2 * FP18)).
+    // The reward band is dimensionless FP18; the result stays in median scale.
+    let base_spread =
+        median.checked_mul(reward_band).unwrap_or(U256::MAX) / (U256::from(2u64) * SCALE_1E18);
     let reward_spread = if std_dev > base_spread {
         std_dev
     } else {
@@ -211,8 +212,8 @@ pub fn to_cross_rate(
 
             match ref_rate {
                 Some(r) if !r.is_zero() && !vote.exchange_rate.is_zero() => {
-                    // cross_rate = ref_rate * 1e18 / vote_rate
-                    // Both are at 1e18 scale, so ref * 1e18 / vote = cross at 1e18
+                    // Both market rates have the same pair-owned scale, which
+                    // cancels. The resulting cross-rate is a dimensionless FP18 ratio.
                     let cross = r
                         .checked_mul(SCALE_1E18)
                         .unwrap_or(U256::ZERO)
@@ -318,9 +319,9 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
             .iter()
             .find(|v| v.validator_address == voter)
             .map(|v| {
-                // Use stake as power. Convert U256 to u64 by dividing by 1e18.
+                // Use stake as power, converted from raw COEN units to whole COEN.
                 // This gives units in whole tokens as consensus power.
-                (v.stake / SCALE_1E18).saturating_to::<u64>()
+                (v.stake / SCALE_1E6_U256).saturating_to::<u64>()
             })
             .unwrap_or(0);
 
@@ -411,7 +412,8 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
         let cross_median = tally_pair(&mut cross_ballot, reward_band, &mut claims);
 
         // Convert cross-rate median back to actual rate:
-        // actual_rate = reference_median * 1e18 / cross_median
+        // The dimensionless FP18 cross-rate cancels SCALE_1E18 here, restoring
+        // the reference market's scale (1e6 for a COEN/ISO rate, otherwise pair-owned).
         if !cross_median.is_zero() && !ref_median.is_zero() {
             let actual_rate = ref_median
                 .checked_mul(SCALE_1E18)
@@ -510,7 +512,7 @@ pub fn slash_and_reset_counters(oracle: &mut OracleContract, _timestamp: u64) ->
         }
 
         // valid_rate = success * 1e18 / total
-        let valid_rate = U256::in_units(success) / U256::from(total);
+        let valid_rate = U256::from(success) * SCALE_1E18 / U256::from(total);
 
         if valid_rate < min_valid {
             let storage = oracle.storage.clone();
@@ -565,6 +567,10 @@ pub fn slash_and_reset_counters(oracle: &mut OracleContract, _timestamp: u64) ->
 mod tests {
     use super::*;
 
+    fn fixed18(whole: u64) -> U256 {
+        U256::from(whole) * SCALE_1E18
+    }
+
     #[test]
     fn test_isqrt() {
         assert_eq!(isqrt(U256::ZERO), U256::ZERO);
@@ -585,12 +591,12 @@ mod tests {
     #[test]
     fn test_weighted_median_single() {
         let ballot = vec![VoteForTally {
-            exchange_rate: U256::in_units(100u64),
+            exchange_rate: fixed18(100u64),
             volume: SCALE_1E18,
             voter: Address::new([1u8; 20]),
             power: 10,
         }];
-        assert_eq!(weighted_median(&ballot), U256::in_units(100u64));
+        assert_eq!(weighted_median(&ballot), fixed18(100u64));
     }
 
     #[test]
@@ -600,25 +606,25 @@ mod tests {
         // Cumsum: 10 (<30), 30 (>=30) → median = 200
         let ballot = vec![
             VoteForTally {
-                exchange_rate: U256::in_units(100u64),
+                exchange_rate: fixed18(100u64),
                 volume: SCALE_1E18,
                 voter: Address::new([1u8; 20]),
                 power: 10,
             },
             VoteForTally {
-                exchange_rate: U256::in_units(200u64),
+                exchange_rate: fixed18(200u64),
                 volume: SCALE_1E18,
                 voter: Address::new([2u8; 20]),
                 power: 20,
             },
             VoteForTally {
-                exchange_rate: U256::in_units(300u64),
+                exchange_rate: fixed18(300u64),
                 volume: SCALE_1E18,
                 voter: Address::new([3u8; 20]),
                 power: 30,
             },
         ];
-        assert_eq!(weighted_median(&ballot), U256::in_units(200u64));
+        assert_eq!(weighted_median(&ballot), fixed18(200u64));
     }
 
     #[test]
@@ -627,25 +633,25 @@ mod tests {
         // Cumsum: 10 (<15), 20 (>=15) → median = 200
         let ballot = vec![
             VoteForTally {
-                exchange_rate: U256::in_units(100u64),
+                exchange_rate: fixed18(100u64),
                 volume: SCALE_1E18,
                 voter: Address::new([1u8; 20]),
                 power: 10,
             },
             VoteForTally {
-                exchange_rate: U256::in_units(200u64),
+                exchange_rate: fixed18(200u64),
                 volume: SCALE_1E18,
                 voter: Address::new([2u8; 20]),
                 power: 10,
             },
             VoteForTally {
-                exchange_rate: U256::in_units(300u64),
+                exchange_rate: fixed18(300u64),
                 volume: SCALE_1E18,
                 voter: Address::new([3u8; 20]),
                 power: 10,
             },
         ];
-        assert_eq!(weighted_median(&ballot), U256::in_units(200u64));
+        assert_eq!(weighted_median(&ballot), fixed18(200u64));
     }
 
     #[test]
@@ -659,19 +665,19 @@ mod tests {
         // All same rate → std dev = 0
         let ballot = vec![
             VoteForTally {
-                exchange_rate: U256::in_units(100u64),
+                exchange_rate: fixed18(100u64),
                 volume: SCALE_1E18,
                 voter: Address::new([1u8; 20]),
                 power: 10,
             },
             VoteForTally {
-                exchange_rate: U256::in_units(100u64),
+                exchange_rate: fixed18(100u64),
                 volume: SCALE_1E18,
                 voter: Address::new([2u8; 20]),
                 power: 10,
             },
         ];
-        let median = U256::in_units(100u64);
+        let median = fixed18(100u64);
         assert_eq!(standard_deviation(&ballot, median), U256::ZERO);
     }
 
@@ -693,9 +699,9 @@ mod tests {
         // Rates: 8e18, 12e18. Median = 10e18 (assume given).
         // Deviations: 2e18, 2e18. Squared: 4e36, 4e36.
         // Variance = 8e36/2 = 4e36. StdDev = sqrt(4e36) = 2e18.
-        let rate_a = U256::in_units(8u64);
-        let rate_b = U256::in_units(12u64);
-        let median = U256::in_units(10u64);
+        let rate_a = fixed18(8u64);
+        let rate_b = fixed18(12u64);
+        let median = fixed18(10u64);
         let ballot = vec![
             VoteForTally {
                 exchange_rate: rate_a,
@@ -711,7 +717,7 @@ mod tests {
             },
         ];
         let std_dev = standard_deviation(&ballot, median);
-        assert_eq!(std_dev, U256::in_units(2u64));
+        assert_eq!(std_dev, fixed18(2u64));
     }
 
     #[test]
@@ -760,19 +766,19 @@ mod tests {
 
         let mut ballot = vec![
             VoteForTally {
-                exchange_rate: U256::in_units(100u64),
+                exchange_rate: fixed18(100u64),
                 volume: SCALE_1E18,
                 voter: addr1,
                 power: 10,
             },
             VoteForTally {
-                exchange_rate: U256::in_units(101u64),
+                exchange_rate: fixed18(101u64),
                 volume: SCALE_1E18,
                 voter: addr2,
                 power: 20,
             },
             VoteForTally {
-                exchange_rate: U256::in_units(200u64),
+                exchange_rate: fixed18(200u64),
                 volume: SCALE_1E18,
                 voter: addr3,
                 power: 10,
@@ -787,7 +793,7 @@ mod tests {
         ];
 
         let median = tally_pair(&mut ballot, reward_band, &mut claims);
-        assert_eq!(median, U256::in_units(101u64));
+        assert_eq!(median, fixed18(101u64));
 
         // Voters 1 and 2 should have won, voter 3 should have missed
         assert_eq!(claims[0].1.win_count, 1); // addr1: rate 100, in range
@@ -804,21 +810,18 @@ mod tests {
         let addr2 = Address::new([2u8; 20]);
 
         // Reference pair votes (e.g., ETH/USD): voter1=2000, voter2=2010
-        let reference_votes = vec![
-            (addr1, U256::in_units(2000u64)),
-            (addr2, U256::in_units(2010u64)),
-        ];
+        let reference_votes = vec![(addr1, fixed18(2000u64)), (addr2, fixed18(2010u64))];
 
         // Current pair votes (e.g., BTC/USD): voter1=40000, voter2=40200
         let ballot = vec![
             VoteForTally {
-                exchange_rate: U256::in_units(40000u64),
+                exchange_rate: fixed18(40000u64),
                 volume: SCALE_1E18,
                 voter: addr1,
                 power: 10,
             },
             VoteForTally {
-                exchange_rate: U256::in_units(40200u64),
+                exchange_rate: fixed18(40200u64),
                 volume: SCALE_1E18,
                 voter: addr2,
                 power: 10,
@@ -839,5 +842,24 @@ mod tests {
             cross[1].exchange_rate,
             U256::from(50_000_000_000_000_000u128)
         ); // 0.05e18 (exact due to integer division)
+    }
+
+    #[test]
+    fn cross_rate_keeps_a_dimensionless_fp18_ratio_for_p6_coen_iso_inputs() {
+        let voter = Address::new([1u8; 20]);
+        let reference_votes = vec![(voter, U256::from(2_000_000u64))];
+        let ballot = vec![VoteForTally {
+            exchange_rate: U256::from(4_000_000u64),
+            volume: U256::from(1_000_000u64),
+            voter,
+            power: 10,
+        }];
+
+        let cross = to_cross_rate(&ballot, &reference_votes);
+
+        assert_eq!(
+            cross[0].exchange_rate,
+            U256::from(500_000_000_000_000_000u64)
+        );
     }
 }

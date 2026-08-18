@@ -10,6 +10,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PREPARE_NETWORK = REPO_ROOT / "scripts" / "prepare_network.py"
+BOOTSTRAP_TESTNET = REPO_ROOT / "scripts" / "bootstrap-testnet.sh"
 SEED = REPO_ROOT / "scripts" / "seed-testnet-lowstake.json"
 
 
@@ -27,6 +28,23 @@ def project_binary(name: str) -> Path:
 
 
 class PrepareNetworkTests(unittest.TestCase):
+    def test_prefund_cli_names_raw_coen_units_without_legacy_aliases(self) -> None:
+        result = subprocess.run(
+            ["python3", str(PREPARE_NETWORK), "--help"],
+            cwd=REPO_ROOT,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+        )
+        self.assertIn("--prefund-coen-units", result.stdout)
+        self.assertNotIn("--prefund-wei", result.stdout)
+        self.assertNotIn("--prefund-units", result.stdout)
+
+    def test_fresh_network_entrypoints_share_canonical_epoch_default(self) -> None:
+        wrapper = BOOTSTRAP_TESTNET.read_text()
+        self.assertIn('TESTNET_EPOCH_LENGTH_BLOCKS:-300', wrapper)
+        self.assertNotIn('TESTNET_EPOCH_LENGTH_BLOCKS:-120', wrapper)
+
     def test_existing_founders_accept_matching_private_identities(self) -> None:
         chain = project_binary("outbe-chain")
         keygen = project_binary("outbe-keygen")
@@ -300,6 +318,7 @@ class PrepareNetworkTests(unittest.TestCase):
 
             genesis = json.loads((output / "genesis.json").read_text())
             self.assertEqual(genesis["config"]["chainId"], 54322345)
+            self.assertEqual(genesis["config"]["epochLengthBlocks"], 300)
             tee_manifest = json.dumps(genesis["config"]["teeAttestationV1"])
             self.assertIn("11" * 32, tee_manifest)
             self.assertIn("22" * 32, tee_manifest)
@@ -354,10 +373,13 @@ class PrepareNetworkTests(unittest.TestCase):
 
             genesis = json.loads((output / "genesis.json").read_text())
             config = genesis["config"]
+            self.assertEqual(config["epochLengthBlocks"], 300)
             self.assertIn("ocompForkInstallV1", config)
             self.assertIn("metadosisStorageLayoutV1", config)
             self.assertIn("teeAttestationV1", config)
             self.assertTrue((output / "protocol-bundle-v1.ocb1").is_file())
+            funded = genesis["alloc"]["4fe927ab711793954b3a29969ecd4a60d6d265d0"]
+            self.assertEqual(int(funded["balance"], 16), 1_000_000_000)
             self.assertFalse(
                 (output / "polynomial.hex").exists(),
                 "fresh founders must run the interactive genesis DKG, not consume a centralized bootstrap polynomial",

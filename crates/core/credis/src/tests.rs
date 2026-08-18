@@ -199,6 +199,116 @@ fn worked_example_ledger_closes_exactly() {
         assert_eq!(p.lifecycle_state().unwrap(), CredisState::Called);
         assert_eq!(settlement_deadline(&p), at(472), "14-day window");
 
+#[test]
+fn create_position_preserves_staged_six_decimal_rate_rounding_and_remainder() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage.clone());
+        let principal = U256::from(3_000_000u64);
+        let rate = U256::from(43_000u64);
+        let position_id = credis
+            .create_position(
+                test_commitment(),
+                alice(),
+                eoa_ct(),
+                asset(),
+                840,
+                rate,
+                principal,
+                U256::from(2_000_000u64),
+                U256::from(1_000_000u64),
+                CREATED_AT,
+            )
+            .unwrap();
+
+        let position = credis.get_position(position_id).unwrap();
+        assert_eq!(position.currency_rate, rate);
+        assert_eq!(position.total_anadosis_amount, U256::from(3_107_499u64));
+
+        for n in 1..NUMBER_OF_ANADOSIS {
+            assert_eq!(
+                credis.get_anadosis(position_id, n).unwrap().anadosis_amount,
+                U256::from(310_749u64)
+            );
+        }
+        assert_eq!(
+            credis
+                .get_anadosis(position_id, NUMBER_OF_ANADOSIS)
+                .unwrap()
+                .anadosis_amount,
+            U256::from(310_758u64)
+        );
+    });
+}
+
+#[test]
+fn create_position_allows_positive_rate_that_rounds_to_zero_interest() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage.clone());
+        let position_id = credis
+            .create_position(
+                test_commitment(),
+                alice(),
+                eoa_ct(),
+                asset(),
+                840,
+                U256::ONE,
+                U256::ONE,
+                U256::ZERO,
+                U256::ZERO,
+                CREATED_AT,
+            )
+            .unwrap();
+        assert_eq!(
+            credis
+                .get_position(position_id)
+                .unwrap()
+                .total_anadosis_amount,
+            U256::ONE
+        );
+    });
+}
+
+#[test]
+fn create_position_rejects_currency_rate_overflow_before_writing() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage.clone());
+        let err = credis
+            .create_position(
+                test_commitment(),
+                alice(),
+                eoa_ct(),
+                asset(),
+                840,
+                U256::MAX,
+                U256::from(1_000_000u64),
+                U256::ZERO,
+                U256::ZERO,
+                CREATED_AT,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("positive"), "got: {err}");
+        assert!(credis.get_all_positions().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn create_position_zero_rate_matches_principal() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage.clone());
+        let principal = U256::from(1_234u64);
+        let position_id = credis
+            .create_position(
+                test_commitment(),
+                alice(),
+                eoa_ct(),
+                asset(),
+                840,
+                U256::ZERO,
+                principal,
+                U256::ZERO,
+                U256::ZERO,
+                CREATED_AT,
+            )
         // --- Day 465: partial settlement of $400 while called. --------------
         let second = credis
             .settle(id, U256::from(400_000_000u64), at(465))

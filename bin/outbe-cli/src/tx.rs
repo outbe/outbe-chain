@@ -12,12 +12,12 @@ use crate::rpc::Rpc;
 /// base fee, but the begin-zone system txs (and offer decryption) make blocks bursty,
 /// so the base fee can climb several steps before the tx lands — leaving a tx priced
 /// exactly at the read-time base fee rejected as `gas price is less than basefee`.
-/// The chain is ZeroFee, so over-pricing costs the sender nothing; a `2x` headroom
-/// plus a 1-gwei floor (well above observed localnet base fees) keeps txs admittable.
+/// The chain is ZeroFee, so over-pricing costs the sender nothing. A `2x`
+/// headroom plus the protocol's raw `unit/gas` floor keeps txs admittable.
 pub(crate) fn buffered_gas_price(suggested: U256) -> U256 {
     suggested
         .saturating_mul(U256::from(2))
-        .max(U256::from(1_000_000_000u64))
+        .max(U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE))
 }
 
 /// Transaction signer backed by a secp256k1 private key.
@@ -261,6 +261,7 @@ fn encode_length(len: usize) -> Vec<u8> {
 mod tests {
     use super::*;
     use crate::rpc::mock::{ExpectedRpcCall, RecordedRpcCall, RecordedRpcResponse, RecordingRpc};
+    use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 
     // --- encode_length ---
 
@@ -454,6 +455,16 @@ mod tests {
 
     fn gas_price() -> U256 {
         U256::from(9u64)
+    }
+
+    #[test]
+    fn buffered_gas_price_uses_native_unit_protocol_floor() {
+        let protocol_floor = U256::from(MIN_PROTOCOL_BASE_FEE);
+        assert_eq!(buffered_gas_price(U256::ZERO), protocol_floor);
+        assert_eq!(
+            buffered_gas_price(protocol_floor),
+            protocol_floor * U256::from(2)
+        );
     }
 
     fn expected_raw_tx(signer: &TxSigner, gas_estimate: u64) -> Vec<u8> {

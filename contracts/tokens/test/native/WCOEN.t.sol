@@ -19,42 +19,48 @@ contract RevertingReceiver {
 }
 
 contract WCOENTest is Test {
+    uint256 internal constant COEN_UNIT = 1_000_000;
+
     WCOEN internal token;
 
     function setUp() public {
         token = new WCOEN();
     }
 
+    function test_Metadata_UsesSixDecimals() public view {
+        assertEq(token.decimals(), 6);
+    }
+
     function test_DepositAndWithdraw_UpdateSupply() public {
         address alice = makeAddr("alice");
 
-        vm.deal(alice, 2 ether);
+        vm.deal(alice, 2 * COEN_UNIT);
         vm.prank(alice);
-        token.deposit{value: 2 ether}();
+        token.deposit{value: 2 * COEN_UNIT}();
 
-        assertEq(token.balanceOf(alice), 2 ether);
-        assertEq(token.totalSupply(), 2 ether);
-        assertEq(address(token).balance, 2 ether);
+        assertEq(token.balanceOf(alice), 2 * COEN_UNIT);
+        assertEq(token.totalSupply(), 2 * COEN_UNIT);
+        assertEq(address(token).balance, 2 * COEN_UNIT);
 
         vm.prank(alice);
-        token.withdraw(1 ether);
+        token.withdraw(COEN_UNIT);
 
-        assertEq(token.balanceOf(alice), 1 ether);
-        assertEq(token.totalSupply(), 1 ether);
-        assertEq(address(token).balance, 1 ether);
+        assertEq(token.balanceOf(alice), COEN_UNIT);
+        assertEq(token.totalSupply(), COEN_UNIT);
+        assertEq(address(token).balance, COEN_UNIT);
     }
 
     function test_Receive_DepositsNativeCoin() public {
         address alice = makeAddr("alice");
 
-        vm.deal(alice, 1 ether);
+        vm.deal(alice, COEN_UNIT);
         vm.prank(alice);
-        (bool success,) = address(token).call{value: 1 ether}("");
+        (bool success,) = address(token).call{value: COEN_UNIT}("");
 
         assertTrue(success);
-        assertEq(token.balanceOf(alice), 1 ether);
-        assertEq(token.totalSupply(), 1 ether);
-        assertEq(address(token).balance, 1 ether);
+        assertEq(token.balanceOf(alice), COEN_UNIT);
+        assertEq(token.totalSupply(), COEN_UNIT);
+        assertEq(address(token).balance, COEN_UNIT);
     }
 
     function testFuzz_DepositAndWithdraw_RestoresSupply(address account, uint256 amount) public {
@@ -78,27 +84,27 @@ contract WCOENTest is Test {
     function test_Withdraw_SucceedsForContractRecipient() public {
         StorageWritingReceiver recipient = new StorageWritingReceiver();
 
-        vm.deal(address(recipient), 1 ether);
+        vm.deal(address(recipient), COEN_UNIT);
         vm.prank(address(recipient));
-        token.deposit{value: 1 ether}();
+        token.deposit{value: COEN_UNIT}();
 
         vm.prank(address(recipient));
-        token.withdraw(1 ether);
+        token.withdraw(COEN_UNIT);
 
-        assertEq(recipient.received(), 1 ether);
+        assertEq(recipient.received(), COEN_UNIT);
         assertEq(token.balanceOf(address(recipient)), 0);
     }
 
     function test_RevertWhen_WithdrawSendFails() public {
         RevertingReceiver recipient = new RevertingReceiver();
 
-        vm.deal(address(recipient), 1 ether);
+        vm.deal(address(recipient), COEN_UNIT);
         vm.prank(address(recipient));
-        token.deposit{value: 1 ether}();
+        token.deposit{value: COEN_UNIT}();
 
         vm.prank(address(recipient));
-        vm.expectRevert(abi.encodeWithSelector(WCOEN.NativeTransferFailed.selector, address(recipient), 1 ether));
-        token.withdraw(1 ether);
+        vm.expectRevert(abi.encodeWithSelector(WCOEN.NativeTransferFailed.selector, address(recipient), COEN_UNIT));
+        token.withdraw(COEN_UNIT);
     }
 
     function test_IncreaseDecreaseAllowance() public {

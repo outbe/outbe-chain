@@ -1059,7 +1059,8 @@ fn test_emission_sink_writes_metadosis_limit_for_worldwide_day() {
         // (UTC+14 keyed) for the block timestamp, not a separate UTC-date-key map.
         let wwd = outbe_common::WorldwideDay::from_timestamp(timestamp);
 
-        crate::emission_sink::apply(&ctx, U256::from(123u64)).unwrap();
+        let day_limit = U256::from(500_000_000u64);
+        crate::emission_sink::apply(&ctx, day_limit).unwrap();
 
         let metadosis = MetadosisContract::new(storage);
         assert_eq!(
@@ -1069,7 +1070,7 @@ fn test_emission_sink_writes_metadosis_limit_for_worldwide_day() {
                 .metadosis_limit_amount()
                 .read()
                 .unwrap(),
-            U256::from(123u64)
+            day_limit
         );
         // A neighboring day is untouched.
         assert_eq!(

@@ -3,77 +3,77 @@
     {
       "ts": 1725184800,
       "kind": "deposit",
-      "amount_e18": "200000000000000000"
+      "amount_units": "200000"
     },
     {
       "ts": 1733054400,
       "kind": "deposit",
-      "amount_e18": "3000000000000000000"
+      "amount_units": "3000000"
     },
     {
       "ts": 1740823200,
       "kind": "deposit",
-      "amount_e18": "10000000000000000000"
+      "amount_units": "10000000"
     },
     {
       "ts": 1744279200,
       "kind": "deposit",
-      "amount_e18": "2000000000000000000"
+      "amount_units": "2000000"
     },
     {
       "ts": 1745143200,
       "kind": "withdraw",
-      "amount_e18": "1000000000000000000"
+      "amount_units": "1000000"
     },
     {
       "ts": 1746871200,
       "kind": "deposit",
-      "amount_e18": "2200000000000000256"
+      "amount_units": "2200000"
     },
     {
       "ts": 1747735200,
       "kind": "withdraw",
-      "amount_e18": "1400000000000000000"
+      "amount_units": "1400000"
     },
     {
       "ts": 1749549600,
       "kind": "deposit",
-      "amount_e18": "2000000000000000000"
+      "amount_units": "2000000"
     },
     {
       "ts": 1750413600,
       "kind": "withdraw",
-      "amount_e18": "1300000000000000000"
+      "amount_units": "1300000"
     },
     {
       "ts": 1752577200,
       "kind": "withdraw",
-      "amount_e18": "10000000000000000000"
+      "amount_units": "10000000"
     },
     {
       "ts": 1753898400,
       "kind": "deposit",
-      "amount_e18": "8000000000000000000"
+      "amount_units": "8000000"
     },
     {
       "ts": 1758391200,
       "kind": "deposit",
-      "amount_e18": "15000000000000000000"
+      "amount_units": "15000000"
     },
     {
       "ts": 1758564000,
       "kind": "withdraw",
-      "amount_e18": "15000000000000000000"
+      "amount_units": "15000000"
     },
     {
       "ts": 1793556000,
       "kind": "deposit",
-      "amount_e18": "20000000000000000000"
+      "amount_units": "20000000"
     },
     {
       "ts": 1825092000,
       "kind": "deposit",
-      "amount_e18": "1000000000000000000"
+      "amount_units": "1000000"
     }
   ],
   "samples": [

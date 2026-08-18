@@ -54,7 +54,7 @@ Explicit conflict resolutions:
    by the production Lysis path. Their comments and the old “8%/16%” wording do
    not define Lysis V1.
 2. Production `compute_fi_fraction_map` derives
-   `f = gratis_allocation * 10^18 / total_nominal` and `fmax = 2 * f`.
+   `f = gratis_allocation * 1_000_000 / total_nominal` and `fmax = 2 * f`.
    Regression cases at 5%, 30% and 32% confirm that there is no 8%/16% clamp.
 3. Small-budget rounding is not “fixed” by skipping a Tribute or redistributing
    dust. The first zero or over-budget `gratis_load` invalidates the whole local
@@ -158,9 +158,10 @@ artifact completion order are not semantic inputs.
 
 ## 5. Frozen arithmetic
 
-All unsigned values are `U256`; fixed-point scale `S = 10^18`. Every division
-rounds down. Signed `I256` division in the distribution calculation truncates
-toward zero.
+All unsigned values are `U256`; the Lysis fraction/share/root scale is
+`S = 1_000_000`. Every division rounds down. Signed `I256` division in the
+distribution calculation truncates toward zero. Fidelity/RCFI remains its own
+dimensionless `10^18` contract and is not the Lysis denominator.
 
 ### 5.1 Metadosis allocation
 
@@ -218,7 +219,20 @@ For multiple leagues, Lysis V1 preserves the exact integer implementation in
 - negative fractions clamp to zero;
 - if weighted expenditure exceeds `f`, every fraction is scaled down
   proportionally with floor division;
+- after that distribution, Lysis projects each group load as
+  `floor(group_nominal * fraction / 1_000_000)`; if their sum exceeds the
+  allocation, it scales every fraction once more by
+  `floor(fraction * allocation / projected)`;
 - no later rounding-up redistributes unused Gratis.
+
+The frozen six-decimal normalization regression is:
+
+```text
+allocation = 4_800_000
+raw projected load = 4_800_034
+normalized load = 4_799_992
+dust = 8
+```
 
 The reference implementation must independently reproduce the operation order,
 including `fp_root`’s floor root, wide intermediate and checked narrowing. A

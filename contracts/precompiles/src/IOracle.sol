@@ -26,6 +26,8 @@ interface IOracle {
     /// @dev `base` and `quote` must match the direction the pair was registered
     ///      in. The storage key is order-independent, so a flipped quote would
     ///      otherwise submit an uninverted rate for the same pair; it reverts.
+    ///      COEN/ISO rates and COEN volumes use six decimals. Generic pairs keep
+    ///      their existing decimal18 contract.
     struct ExchangeRateTuple {
         address base;
         address quote;
@@ -36,8 +38,9 @@ interface IOracle {
     /// @notice Returns the current exchange rate for a market, quoted in the
     ///         caller's direction.
     /// @dev Only the canonical orientation (`base < quote` by address) is
-    ///      stored, so quoting the market backwards returns the reciprocal
-    ///      `1e36 / rate`. An unpublished rate is `0` from either side. Reverts
+    ///      stored, so quoting the market backwards returns `scale^2 / rate`:
+    ///      `1e12 / rate` for COEN/ISO and `1e36 / rate` for generic pairs. An
+    ///      unpublished rate is `0` from either side. Reverts
     ///      if the market is not registered. Unlike the other pair-scoped reads,
     ///      this one accepts either direction — a spot rate is the only value
     ///      here that has a well-defined inverse.
@@ -45,6 +48,7 @@ interface IOracle {
 
     /// @notice `getExchangeRate` for `COEN/<isoCode>`. COEN is the zero address
     ///         and so always sorts first: this is never the inverted direction.
+    ///         Every ISO reference currency uses the six-decimal COEN/ISO contract.
     function getCoenExchangeRateFor(uint16 isoCode) external view returns (uint256 rate);
 
     /// @notice `getExchangeRate` plus when the rate was last written. The block
@@ -55,16 +59,16 @@ interface IOracle {
         view
         returns (uint256 rate, uint64 lastBlock, uint64 lastTimestamp);
 
-    /// @notice Returns VWAP for a pair over a lookback period in seconds from current block timestamp.
+    /// @notice Returns VWAP in the pair's canonical scale over a lookback period.
     function getVwap(address base, address quote, uint64 lookbackSeconds) external view returns (uint256 vwap);
 
-    /// @notice Returns VWAP for a pair over an explicit time range.
+    /// @notice Returns VWAP in the pair's canonical scale for an explicit range.
     function getVwapForTimeRange(address base, address quote, uint64 startTime, uint64 endTime)
         external
         view
         returns (uint256 vwap);
 
-    /// @notice Returns the maximum active S-curve value for a pair at the given timestamp.
+    /// @notice Returns the maximum active S-curve value in the pair's scale.
     function getScurveValue(address base, address quote, uint64 timestamp) external view returns (uint256 value);
 
     /// @notice Returns oracle parameters.
@@ -244,7 +248,7 @@ interface IOracle {
     /// @notice Returns all registered reference currencies as ISO 4217 numeric codes.
     function getReferenceCurrencies() external view returns (uint16[] memory isoCodes);
 
-    /// @notice Returns the annualized currency rate (1e18 scaled) for an ISO
+    /// @notice Returns the annualized currency rate (scale 1e6) for an ISO
     ///         4217 code. Reverts if the code is not a registered reference
     ///         currency or carries no rate.
     function getCurrencyRate(uint16 isoCode) external view returns (uint256 rate);

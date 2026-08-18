@@ -76,7 +76,7 @@ contract ERC7786TokenBridgeTest is Test {
     }
 
     function test_WCOEN_OutbeToBNB_LockAndMint() public {
-        uint256 amount = 2 ether;
+        uint256 amount = 2e6;
         vm.deal(sourceAddr, amount);
 
         vm.startPrank(sourceAddr);
@@ -91,7 +91,7 @@ contract ERC7786TokenBridgeTest is Test {
     }
 
     function test_WCOEN_BNBToOutbe_BurnAndUnlock() public {
-        uint256 amount = 2 ether;
+        uint256 amount = 2e6;
         vm.deal(sourceAddr, amount);
 
         vm.startPrank(sourceAddr);
@@ -101,11 +101,11 @@ contract ERC7786TokenBridgeTest is Test {
         vm.stopPrank();
 
         vm.prank(targetAddr);
-        bnbWcoenBridge.send(OUTBE, sourceAddr, 1 ether);
+        bnbWcoenBridge.send(OUTBE, sourceAddr, 1e6);
 
-        assertEq(bnbWcoen.balanceOf(targetAddr), 1 ether);
-        assertEq(outbeWcoen.balanceOf(sourceAddr), 1 ether);
-        assertEq(outbeWcoen.balanceOf(address(outbeWcoenBridge)), 1 ether);
+        assertEq(bnbWcoen.balanceOf(targetAddr), 1e6);
+        assertEq(outbeWcoen.balanceOf(sourceAddr), 1e6);
+        assertEq(outbeWcoen.balanceOf(address(outbeWcoenBridge)), 1e6);
     }
 
     function test_Quote_DelegatesToBridge() public {
@@ -180,7 +180,7 @@ contract ERC7786TokenBridgeTest is Test {
 
     function _setUpWcoenRoute() internal {
         outbeWcoen = new NativeWCOEN();
-        bnbWcoen = new SyntheticWCOEN("Wrapped COEN", "WCOEN", 18, address(this));
+        bnbWcoen = new SyntheticWCOEN("Wrapped COEN", "WCOEN", 6, address(this));
 
         outbeWcoenBridge = new ERC7786TokenBridge(
             address(outbeWcoen), address(outbeGateway), address(this), ERC7786TokenBridge.TokenBridgeMode.LockUnlock

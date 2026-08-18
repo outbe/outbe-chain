@@ -1,9 +1,25 @@
 import importlib.util
+import json
 import pathlib
 import unittest
 
 
 MODULE_PATH = pathlib.Path(__file__).with_name("seed_genesis.py")
+REPO_ROOT = MODULE_PATH.parents[1]
+SEED_PROFILES = {
+    "seed-testnet-lowstake.json": {
+        "min_stake": "1000000000",
+        "validator_stake": "100000000000",
+    },
+    "seed-testnet.json": {
+        "min_stake": "100000000000",
+        "validator_stake": "100000000000",
+    },
+    "churn-seed.json": {
+        "min_stake": "1000000000",
+        "validator_stake": "1000000000",
+    },
+}
 SPEC = importlib.util.spec_from_file_location("seed_genesis", MODULE_PATH)
 seed_genesis = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
@@ -11,6 +27,61 @@ SPEC.loader.exec_module(seed_genesis)
 
 
 class ProtocolConstantsSeedTests(unittest.TestCase):
+    def test_checked_in_genesis_fixtures_use_scale6_native_balances(self):
+        node_fixture = json.loads(
+            (REPO_ROOT / "crates/blockchain/node/tests/assets/genesis.json").read_text()
+        )
+        node_balances = [entry["balance"] for entry in node_fixture["alloc"].values()]
+        self.assertEqual(node_balances.count("0xe8d4a51000"), 21)
+        self.assertEqual(set(node_balances), {"0x0", "0xe8d4a51000"})
+
+        fixture_root = REPO_ROOT / "testing/e2e-harness/fixtures/ocomp-final-v1"
+        base = json.loads((fixture_root / "base/genesis.json").read_text())
+        final = json.loads((fixture_root / "artifacts/genesis-final.json").read_text())
+        self.assertEqual(base["config"]["epochLengthBlocks"], 300)
+        self.assertNotIn("ocompForkInstallV1", base["config"])
+        self.assertIn("ocompForkInstallV1", final["config"])
+        self.assertEqual(base["alloc"], final["alloc"])
+
+        balances = [entry["balance"] for entry in base["alloc"].values()]
+        self.assertEqual(balances.count("0x2540be400"), 4)
+        self.assertEqual(balances.count("0x3b9aca00"), 2)
+        self.assertEqual(balances.count("0x5d21dba000"), 1)
+        self.assertEqual(set(balances), {"0x0", "0x2540be400", "0x3b9aca00", "0x5d21dba000"})
+
+        release = json.loads((REPO_ROOT / "release/testnet-genesis.json").read_text())
+        self.assertEqual(release["alloc"], {})
+
+    def test_checked_in_seed_profiles_use_six_decimal_monetary_units(self):
+        for filename, staking_expected in SEED_PROFILES.items():
+            with self.subTest(filename=filename):
+                seed = json.loads(MODULE_PATH.with_name(filename).read_text())
+
+                self.assertEqual(set(seed["balance"].values()), {"1000000000"})
+                self.assertEqual(seed["gems"][0]["gem_load"], "1000000000")
+                day = seed["metadosis"]["worldwide_days"][0]
+                self.assertEqual(day["current_vwap"], "1000000")
+                self.assertEqual(day["day_limit"], "500000000")
+                self.assertEqual(seed["staking"]["min_stake"], staking_expected["min_stake"])
+                self.assertEqual(
+                    seed["staking"]["genesis_validator_stake"],
+                    staking_expected["validator_stake"],
+                )
+                self.assertEqual(seed["oracle"]["pairs"][0]["initial_rate"], "1000000")
+                self.assertEqual(seed["oracle"]["scurve_seeds"][0]["peak_price"], "1000000")
+
+                for nod in seed.get("nods", []):
+                    self.assertEqual(nod["gratis_load"], "100000")
+                    self.assertEqual(nod["floor_price"], "540000")
+
+    def test_default_usd_currency_rate_uses_scale_1e6_in_slot_60(self):
+        storage = seed_genesis.StorageBuilder()
+
+        seed_genesis.seed_oracle(storage, {})
+
+        slot = seed_genesis.mapping_key(seed_genesis.u32_bytes(840), 60)
+        self.assertEqual(storage.entries[slot], seed_genesis.hex32(36_300))
+
     def test_optional_seed_profile_is_copied_to_genesis_config(self):
         genesis = {"config": {"chainId": 1}, "alloc": {}}
         profile = {
