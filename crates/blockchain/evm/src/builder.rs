@@ -709,7 +709,7 @@ mod tests {
                 storage.clone(),
                 Address::ZERO,
                 outbe_oracle::api::DAY_TYPE_PAIR,
-                U256::from(1_000_000_000_000_000_000u128),
+                U256::from(1_000_000u64),
                 0,
                 0,
             )

@@ -454,7 +454,7 @@ pub mod mock {
         const TX_HASH: &str = "0xdeadbeef";
 
         // `eth_gasPrice` returns `suggested`; `send_tx` signs with the buffered price.
-        let suggested = U256::from(1_000_000_000u64);
+        let suggested = U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE);
         let gas_price = crate::tx::buffered_gas_price(suggested);
         let signer = TxSigner::new(private_key)?;
         let gas_limit = GAS_ESTIMATE + GAS_ESTIMATE / 5;
@@ -980,17 +980,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_rpc_client_get_balance_sends_exact_body_and_decodes_u256() {
-        let (url, body_rx) = serve_rpc_once(
-            "200 OK",
-            r#"{"jsonrpc":"2.0","result":"0xde0b6b3a7640000","id":1}"#,
-        )
-        .await;
+        let (url, body_rx) =
+            serve_rpc_once("200 OK", r#"{"jsonrpc":"2.0","result":"0xf4240","id":1}"#).await;
         let client = RpcClient::new(&url);
         let address = address!("0x1111111111111111111111111111111111111111");
 
         let balance = client.eth_get_balance(address).await.unwrap();
 
-        assert_eq!(balance, U256::from(1_000_000_000_000_000_000u128));
+        assert_eq!(balance, U256::from(1_000_000u64));
         let body: Value = serde_json::from_str(&body_rx.await.unwrap()).unwrap();
         assert_eq!(
             body,
@@ -1204,7 +1201,7 @@ mod tests {
     #[tokio::test]
     async fn test_rpc_client_quantity_wrappers_send_exact_bodies_and_decode() {
         let (url, mut body_rx) = serve_rpc_sequence([
-            r#"{"jsonrpc":"2.0","result":"0x3b9aca00","id":1}"#,
+            r#"{"jsonrpc":"2.0","result":"0x7","id":1}"#,
             r#"{"jsonrpc":"2.0","result":"0x7","id":2}"#,
         ])
         .await;
@@ -1213,7 +1210,7 @@ mod tests {
 
         assert_eq!(
             client.eth_gas_price().await.unwrap(),
-            U256::from(1_000_000_000u64)
+            U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE)
         );
         assert_eq!(client.eth_get_transaction_count(address).await.unwrap(), 7);
 

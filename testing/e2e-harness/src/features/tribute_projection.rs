@@ -55,7 +55,7 @@ fn submit_duplicate_offer(world: &mut World) {
         // The first offer uses amount=100 and exclude=false. Change both
         // fields here: the second transaction must still collide because the
         // canonical Tribute identity is `(owner, worldwide_day)`.
-        .tribute_offer_with_params(&key, &wwd, "777", 840, true)
+        .tribute_offer_with_params(&key, &wwd, "777", "0", 840, true)
         .expect("replayed offerTribute returned transaction hash");
     world.state.duplicate_tribute_tx_hash = Some(tx_hash);
 }

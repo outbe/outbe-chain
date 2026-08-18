@@ -75,7 +75,7 @@ interface IIntexAuction {
 
     /// @notice Auction input parameters, stored per auction.
     struct AuctionParams {
-        /// @notice Promis tokens per Intex unit (18 decimals).
+        /// @notice PROMIS-units per Intex unit (1e6).
         uint128 promisLoadMinor;
         /// @notice Call-trigger parameters (window/threshold/period).
         IntexCallTrigger callTrigger;
@@ -186,11 +186,11 @@ interface IIntexAuction {
     error RevealHashMismatch();
     /// @notice Bid rate is below `minIntexBidRate`.
     error BidBelowMinIntexBidRate();
-    /// @notice Bid rate exceeds 100% of the escrow basis (`RATE_SCALE`).
+    /// @notice Bid rate exceeds 100% of the escrow basis (scale `1e6`).
     error BidRateAboveMax(uint32 bidRate);
     /// @notice Bid quantity is below `minIntexBidQuantity`.
     error BidBelowMinIntexBidQuantity();
-    /// @notice `quantity * escrowBasis * bidRate / RATE_SCALE` exceeds the uint128 lock-amount range.
+    /// @notice `quantity * escrowBasis * bidRate / 1e6` exceeds the uint128 lock-amount range.
     error BidAmountOverflow(uint16 quantity, uint32 bidRate);
     /// @notice `issuedIntexCount * promisLoadMinor` exceeds the uint128 loaded-Promis range.
     error IssuedPromisOverflow(uint32 issuedIntexCount, uint128 promisLoadMinor);

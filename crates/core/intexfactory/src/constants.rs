@@ -6,6 +6,7 @@
 //! "outbe-intex:<Name>:v2.0.0") — stable across chains and redeploys.
 
 use alloy_primitives::{address, Address};
+use outbe_primitives::units::SCALE_1E6_U128;
 
 /// IntexNFT1155 on Outbe (balance ledger: settle / burnSettled / balanceOf).
 /// CREATE3 proxy, salt "outbe-intex:IntexNFT1155:v2.0.0". Canonical definition
@@ -51,12 +52,8 @@ pub const CALL_WINDOW: u32 = 28 * 24 * 3600;
 /// Call-trigger threshold: how much of the window must be in breach to force-call.
 pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
 
-/// Oracle prices carry 1e18, the wire and the target chains 1e9. Moves with
-/// `PRICE_DECIMALS = 9` in `IntexMetadata`.
-pub const ORACLE_TO_WIRE_SCALE: u64 = 1_000_000_000;
-
-/// Commit-entry bond on the target-chain auction: 100M wCOEN (18-dec minor units).
-pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * 10u128.pow(18);
+/// Commit-entry bond on the target-chain auction: 100M WCOEN in WCOEN-units.
+pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * SCALE_1E6_U128;
 
 /// How old a COEN rate may be and still convert a settlement into the issuance currency.
 /// Seconds, not vote periods: those are counted in blocks and stretch under congestion.

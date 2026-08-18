@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 pub struct GenesisSnapshot {
     /// Unix timestamp of the snapshot.
     pub timestamp: u64,
-    /// Entries as `(base, quote, rate_1e18, volume_1e18)`.
+    /// Entries as `(base, quote, rate, volume)` in each pair's canonical scale.
     pub entries: Vec<(Address, Address, U256, U256)>,
 }
 
@@ -32,7 +32,7 @@ pub struct GenesisScurveEntry {
     pub quote: Address,
     /// UTC midnight timestamp of the peak day.
     pub peak_day: u64,
-    /// Peak price at 1e18 scale.
+    /// Peak price in the COEN/840 S-Curve's six-decimal scale.
     pub peak_price: U256,
 }
 
@@ -41,12 +41,12 @@ pub struct GenesisScurveEntry {
 pub struct GenesisAggregateVote {
     /// Validator address that owns this pending vote.
     pub validator: Address,
-    /// Entries as `(base, quote, rate_1e18, volume_1e18)`.
+    /// Entries as `(base, quote, rate, volume)` in each pair's canonical scale.
     pub entries: Vec<(Address, Address, U256, U256)>,
 }
 
 /// A reference currency for genesis import/export: an ISO 4217 numeric code
-/// plus its annualized currency rate (1e18 scaled). The currency rate is
+/// plus its annualized currency rate (scale `1e6`). The currency rate is
 /// read by the Credis Factory at issuance and pinned onto the Anadosis
 /// schedule. Currencies used purely as pricing references (no credis) may carry
 /// a zero rate.
@@ -54,13 +54,15 @@ pub struct GenesisAggregateVote {
 pub struct ReferenceCurrency {
     /// ISO 4217 numeric code (e.g., 840 = USD).
     pub iso_code: u16,
-    /// Annualized currency rate at 1e18 scale (e.g., 0.043 -> 43e15).
+    /// Annualized currency rate at scale `1e6` (e.g., 0.043 -> 43_000).
     pub currency_rate: U256,
 }
 
 /// Configurable genesis parameters for the Oracle contract.
 ///
-/// All `U256` values use the 1e18 scale factor (`SCALE_1E18`).
+/// Dimensionless policy fields retain FP18. COEN/ISO pair rates, volumes and
+/// snapshots use six decimals; the COEN/840 S-Curve uses the same rate scale 1e6.
+/// Generic non-ISO pair data retains its existing contract.
 pub struct OracleGenesisConfig {
     /// Vote period in blocks (default: 2).
     pub vote_period: u64,
@@ -77,12 +79,12 @@ pub struct OracleGenesisConfig {
     /// Trading pairs to register at genesis as `(base, quote)` asset addresses.
     /// The direction given here is the direction reads must be quoted in.
     pub pairs: Vec<(Address, Address)>,
-    /// Initial exchange rates as `(base, quote, rate_1e18)`.
+    /// Initial exchange rates as `(base, quote, rate)` in each pair's scale.
     pub initial_rates: Vec<(Address, Address, U256)>,
     /// Feeder delegations as `(validator, feeder)`.
     pub feeder_delegations: Vec<(Address, Address)>,
-    /// Reference currencies with their annualized currency rate (1e18
-    /// scaled). These ISO 4217 codes identify currencies valid for off-chain
+    /// Reference currencies with their annualized currency rate (scale `1e6`).
+    /// These ISO 4217 codes identify currencies valid for off-chain
     /// pricing references; the currency rate is read by the Credis Factory
     /// at issuance. Pre-filled at genesis with USD (840) at the current SOFR.
     pub reference_currencies: Vec<ReferenceCurrency>,

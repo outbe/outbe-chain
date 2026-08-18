@@ -185,6 +185,9 @@ pub enum ProgramErrorV1 {
     ZeroGratisLoad {
         ordinal: usize,
     },
+    ZeroCost {
+        ordinal: usize,
+    },
     GratisLoadExceedsRemaining {
         ordinal: usize,
     },
@@ -248,6 +251,9 @@ impl fmt::Display for ProgramErrorV1 {
             Self::Arithmetic { message } => write!(formatter, "Lysis V1 arithmetic: {message}"),
             Self::ZeroGratisLoad { ordinal } => {
                 write!(formatter, "Lysis V1 zero Gratis load at {ordinal}")
+            }
+            Self::ZeroCost { ordinal } => {
+                write!(formatter, "Lysis V1 zero monetary cost at {ordinal}")
             }
             Self::GratisLoadExceedsRemaining { ordinal } => write!(
                 formatter,

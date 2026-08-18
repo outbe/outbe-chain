@@ -10,7 +10,9 @@ import {
   createWalletClient,
   defineChain,
   encodeFunctionData,
+  formatUnits,
   http,
+  parseUnits,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import type { ContractEntry } from "./registry.js";
@@ -21,6 +23,28 @@ export interface Ctx {
   publicClient: PublicClient;
   walletClient?: WalletClient;
   account?: ReturnType<typeof privateKeyToAccount>;
+}
+
+export function nativeCurrencyForChainId(id: number): Chain["nativeCurrency"] {
+  if (id === 424_242 || id === 54_322_345) {
+    return { name: "COEN", symbol: "COEN", decimals: 6 };
+  }
+  if (id === 56 || id === 97) {
+    return { name: "BNB", symbol: "BNB", decimals: 18 };
+  }
+  // External EVM/LZ domains retain the pre-cutover 18-decimal native boundary.
+  return { name: "Ether", symbol: "ETH", decimals: 18 };
+}
+
+export function parseNativeAmount(chain: Pick<Chain, "nativeCurrency">, value: string): bigint {
+  return parseUnits(value, chain.nativeCurrency.decimals);
+}
+
+export function formatNativeAmount(
+  chain: Pick<Chain, "nativeCurrency">,
+  value: bigint,
+): string {
+  return formatUnits(value, chain.nativeCurrency.decimals);
 }
 
 /**
@@ -38,7 +62,7 @@ export async function createCtx(rpcUrl: string, privateKey?: string): Promise<Ct
   const chain = defineChain({
     id,
     name: `outbe-${id}`,
-    nativeCurrency: { name: "COEN", symbol: "COEN", decimals: 18 },
+    nativeCurrency: nativeCurrencyForChainId(id),
     rpcUrls: { default: { http: [rpcUrl] } },
   });
 

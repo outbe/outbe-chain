@@ -86,7 +86,7 @@ const OUTBE_ONLY = {
  *  and every target; enabling a new target = adding it here + its wCOEN below. */
 const AUCTION_LIVE = new Set(["bsc-testnet"]);
 
-/** wCOEN — the auction's payment token (18 decimals), per chain. */
+/** WCOEN — the auction's six-decimal payment token, per chain. */
 const PAYMENT_TOKEN: Record<string, Address> = {
   "bsc-testnet": a("0x2FCC92D751086AFeECEaE0f3AC133B27E8F0D57c"),
 };

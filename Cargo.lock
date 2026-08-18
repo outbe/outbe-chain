@@ -7586,6 +7586,7 @@ dependencies = [
  "alloy-primitives",
  "outbe-metadosis",
  "outbe-primitives",
+ "serde_json",
  "tracing",
 ]
 
@@ -8228,6 +8229,7 @@ dependencies = [
 name = "outbe-operator"
 version = "0.1.0"
 dependencies = [
+ "alloy-eips 2.0.4",
  "alloy-primitives",
  "alloy-sol-types",
  "eyre",
@@ -8256,6 +8258,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-staking",
  "outbe-validatorset",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 

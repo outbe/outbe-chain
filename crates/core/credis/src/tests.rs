@@ -122,10 +122,10 @@ fn create_position_populates_all_10_anadosis_records() {
 fn create_position_applies_currency_rate_to_total_debt() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage.clone());
-        // BRD example: principal 1000, currency rate 4.5% (45e15), term 10
+        // BRD example: principal 1000, currency rate 4.5% (45_000 at scale 1e6), term 10
         // months -> total_debt = 1000 * (1 + 0.045 * 10/12) = 1037.5 -> 1037.
         let principal = U256::from(1000u64);
-        let rate = U256::from(45_000_000_000_000_000u128); // 0.045 @ 1e18
+        let rate = U256::from(45_000u64);
         let entry_price = U256::from(250u64); // native→stable price pinned at issuance
         let position_id = credis
             .create_position(
@@ -156,6 +156,98 @@ fn create_position_applies_currency_rate_to_total_debt() {
             sum += credis.get_anadosis(position_id, n).unwrap().anadosis_amount;
         }
         assert_eq!(sum, U256::from(1037u64));
+    });
+}
+
+#[test]
+fn create_position_preserves_staged_six_decimal_rate_rounding_and_remainder() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage.clone());
+        let principal = U256::from(3_000_000u64);
+        let rate = U256::from(43_000u64);
+        let position_id = credis
+            .create_position(
+                test_commitment(),
+                alice(),
+                eoa_ct(),
+                asset(),
+                840,
+                rate,
+                principal,
+                U256::from(2_000_000u64),
+                U256::from(1_000_000u64),
+                CREATED_AT,
+            )
+            .unwrap();
+
+        let position = credis.get_position(position_id).unwrap();
+        assert_eq!(position.currency_rate, rate);
+        assert_eq!(position.total_anadosis_amount, U256::from(3_107_499u64));
+
+        for n in 1..NUMBER_OF_ANADOSIS {
+            assert_eq!(
+                credis.get_anadosis(position_id, n).unwrap().anadosis_amount,
+                U256::from(310_749u64)
+            );
+        }
+        assert_eq!(
+            credis
+                .get_anadosis(position_id, NUMBER_OF_ANADOSIS)
+                .unwrap()
+                .anadosis_amount,
+            U256::from(310_758u64)
+        );
+    });
+}
+
+#[test]
+fn create_position_allows_positive_rate_that_rounds_to_zero_interest() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage.clone());
+        let position_id = credis
+            .create_position(
+                test_commitment(),
+                alice(),
+                eoa_ct(),
+                asset(),
+                840,
+                U256::ONE,
+                U256::ONE,
+                U256::ZERO,
+                U256::ZERO,
+                CREATED_AT,
+            )
+            .unwrap();
+        assert_eq!(
+            credis
+                .get_position(position_id)
+                .unwrap()
+                .total_anadosis_amount,
+            U256::ONE
+        );
+    });
+}
+
+#[test]
+fn create_position_rejects_currency_rate_overflow_before_writing() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage.clone());
+        let err = credis
+            .create_position(
+                test_commitment(),
+                alice(),
+                eoa_ct(),
+                asset(),
+                840,
+                U256::MAX,
+                U256::from(1_000_000u64),
+                U256::ZERO,
+                U256::ZERO,
+                CREATED_AT,
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("positive"), "got: {err}");
+        assert!(credis.get_all_positions().unwrap().is_empty());
     });
 }
 

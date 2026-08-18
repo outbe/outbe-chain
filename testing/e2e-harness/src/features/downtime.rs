@@ -39,8 +39,7 @@ fn validator_starts_active(world: &mut World, name: String) {
         .rpc
         .stake_on(port, &addr)
         .expect("read victim stake before top-up");
-    let top_up = alloy_primitives::U256::from(100u64)
-        * alloy_primitives::U256::from(1_000_000_000_000_000_000u128);
+    let top_up = alloy_primitives::U256::from(100_000_000u64);
     let top_up_tx = world.rpc.stake(&key, 100).expect("top up victim stake");
     assert!(
         world.rpc.wait_successful_receipt(&top_up_tx, 20),

@@ -23,13 +23,19 @@ use alloy_primitives::{Address, B256, U256};
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use outbe_poseidon::{Poseidon, PoseidonHasher};
+use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_tee::protocol::WorldwideDay;
-
-/// 10^18 fixed-point scale, identical to `outbe_primitives::units::SCALE_1E18`.
-pub const SCALE_1E18: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 
 /// Circom Poseidon permutation max width.
 const MAX_POSEIDON_INPUTS: usize = 12;
+
+/// Canonical Tribute amount parsed once before the ZK/non-ZK paths diverge.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CanonicalAmount {
+    pub(crate) base: u64,
+    pub(crate) atto: u64,
+    pub(crate) amount_minor: U256,
+}
 
 /// Poseidon-BN254 over N BE-encoded field elements packed into `input`
 /// (multiple of 32 bytes). Byte-identical to
@@ -101,116 +107,152 @@ pub fn compute_token_id(
     Ok(B256::from(poseidon_hash(&buf)?))
 }
 
-/// `nominal = amount_minor * 1e18 / tribute_price_minor`. Caller guarantees a
-/// non-zero price. Overflow -> reject reason.
-pub fn compute_nominal(amount_minor: U256, tribute_price_minor: U256) -> Result<U256, String> {
-    let scaled = amount_minor
-        .checked_mul(SCALE_1E18)
-        .ok_or_else(|| "nominal amount overflow".to_string())?;
-    Ok(scaled / tribute_price_minor)
+/// `nominal = floor(amount_minor * 1_000_000 / tribute_price_minor)` for the
+/// six-decimal COEN/ISO contract. Overflow and a positive result rounded to
+/// zero reject the offer.
+pub(crate) fn compute_nominal(
+    amount_minor: U256,
+    tribute_price_minor: U256,
+) -> Result<U256, String> {
+    compute_nominal_at_scale(amount_minor, tribute_price_minor, SCALE_1E6_U256)
 }
 
-/// Parse `amount_base` (decimal string, up to 18 fractional digits) plus
-/// `amount_atto` (integer minor units) into a `U256` minor amount.
-///
-/// Replicates host `normalize_amount` exactly on valid inputs, but uses checked
-/// arithmetic so an overflow rejects the offer instead of panicking.
-pub fn normalize_amount(base_amount: &str, atto_amount: &str) -> Result<U256, String> {
-    let base_minor = if let Some(dot_pos) = base_amount.find('.') {
-        let int_part = &base_amount[..dot_pos];
-        let frac_part = &base_amount[dot_pos + 1..];
+fn compute_nominal_at_scale(
+    amount_minor: U256,
+    tribute_price_minor: U256,
+    price_scale: U256,
+) -> Result<U256, String> {
+    if tribute_price_minor.is_zero() {
+        return Err("nominal price is zero".to_string());
+    }
+    let scaled = amount_minor
+        .checked_mul(price_scale)
+        .ok_or_else(|| "nominal amount overflow".to_string())?;
+    let nominal = scaled / tribute_price_minor;
+    if !amount_minor.is_zero() && nominal.is_zero() {
+        return Err("nominal amount rounds to zero".to_string());
+    }
+    Ok(nominal)
+}
 
-        if frac_part.len() > 18 {
-            return Err("base amount has too many decimals".to_string());
-        }
+fn parse_canonical_u64(value: &str, field: &'static str) -> Result<u64, String> {
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|_| format!("{field} must be a canonical u64"))?;
+    if parsed.to_string() != value {
+        return Err(format!("{field} must be a canonical u64"));
+    }
+    Ok(parsed)
+}
 
-        let int_val = if int_part.is_empty() {
-            U256::ZERO
-        } else {
-            U256::from(
-                int_part
-                    .parse::<u128>()
-                    .map_err(|_| "invalid base amount format".to_string())?,
-            )
-        };
-
-        let frac_val = if frac_part.is_empty() {
-            U256::ZERO
-        } else {
-            let parsed = U256::from(
-                frac_part
-                    .parse::<u128>()
-                    .map_err(|_| "invalid base amount format".to_string())?,
-            );
-            // exponent is 0..=18, so 10^exp <= 10^18 < 2^256 — no overflow.
-            parsed * U256::from(10).pow(U256::from(18 - frac_part.len() as u32))
-        };
-
-        int_val
-            .checked_mul(SCALE_1E18)
-            .ok_or_else(|| "base amount overflow".to_string())?
-            .checked_add(frac_val)
-            .ok_or_else(|| "base amount overflow".to_string())?
-    } else {
-        U256::from(
-            base_amount
-                .parse::<u128>()
-                .map_err(|_| "invalid base amount format".to_string())?,
-        )
-        .checked_mul(SCALE_1E18)
-        .ok_or_else(|| "base amount overflow".to_string())?
-    };
-
-    let atto_minor = U256::from(
-        atto_amount
-            .parse::<u128>()
-            .map_err(|_| "invalid atto amount format".to_string())?,
-    );
-
-    base_minor
-        .checked_add(atto_minor)
-        .ok_or_else(|| "amount overflow".to_string())
+/// Parse the existing `amount_base`/`amount_atto` wire fields into the canonical
+/// six-decimal Tribute amount. `amount_base` is a whole unsigned `u64` and the
+/// legacy-named `amount_atto` field is the raw remainder `0..999_999`.
+pub(crate) fn parse_canonical_amount(
+    base_amount: &str,
+    atto_amount: &str,
+) -> Result<CanonicalAmount, String> {
+    let base = parse_canonical_u64(base_amount, "amount_base")?;
+    let atto = parse_canonical_u64(atto_amount, "amount_atto")?;
+    if U256::from(atto) >= SCALE_1E6_U256 {
+        return Err("amount_atto must be less than 1000000".to_string());
+    }
+    let amount_minor = U256::from(base)
+        .checked_mul(SCALE_1E6_U256)
+        .and_then(|value| value.checked_add(U256::from(atto)))
+        .ok_or_else(|| "amount overflow".to_string())?;
+    Ok(CanonicalAmount {
+        base,
+        atto,
+        amount_minor,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    struct CanonicalAmountCases {
+        accepted_base: Vec<String>,
+        rejected_base: Vec<String>,
+        accepted_atto: Vec<String>,
+        rejected_atto: Vec<String>,
+    }
+
+    fn canonical_amount_cases() -> CanonicalAmountCases {
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/tribute/canonical-amounts-v1.json"
+        )))
+        .unwrap()
+    }
+
+    fn parse_amount_minor(base: &str, atto: &str) -> Result<U256, String> {
+        Ok(parse_canonical_amount(base, atto)?.amount_minor)
+    }
 
     #[test]
-    fn normalize_integer_and_atto() {
+    fn normalize_canonical_base_and_atto_to_six_decimal_units() {
+        let cases = canonical_amount_cases();
+        for base in cases.accepted_base {
+            assert!(
+                parse_amount_minor(&base, "0").is_ok(),
+                "rejected canonical base {base:?}"
+            );
+        }
+        for atto in cases.accepted_atto {
+            assert!(
+                parse_amount_minor("1", &atto).is_ok(),
+                "rejected canonical atto {atto:?}"
+            );
+        }
         assert_eq!(
-            normalize_amount("100", "0").unwrap(),
-            U256::from(100u64) * SCALE_1E18
+            parse_amount_minor("1", "500000").unwrap(),
+            U256::from(1_500_000u64)
         );
-        assert_eq!(normalize_amount("0", "5").unwrap(), U256::from(5u64));
-    }
-
-    #[test]
-    fn normalize_fractional() {
-        // 1.5 -> 1e18 + 5e17
-        let expected = SCALE_1E18 + U256::from(5u64) * U256::from(10u64).pow(U256::from(17u32));
-        assert_eq!(normalize_amount("1.5", "0").unwrap(), expected);
-        // smallest unit: 0.000000000000000001 -> 1
         assert_eq!(
-            normalize_amount("0.000000000000000001", "0").unwrap(),
-            U256::from(1u64)
+            parse_amount_minor("100", "0").unwrap(),
+            U256::from(100u64) * SCALE_1E6_U256
+        );
+        assert_eq!(
+            parse_amount_minor(&u64::MAX.to_string(), "999999").unwrap(),
+            U256::from(u64::MAX) * SCALE_1E6_U256 + U256::from(999_999u64)
         );
     }
 
     #[test]
-    fn normalize_rejects_too_many_decimals() {
-        assert!(normalize_amount("0.0000000000000000001", "0").is_err());
+    fn normalize_rejects_noncanonical_base_in_both_amount_fields() {
+        let cases = canonical_amount_cases();
+        for base in cases.rejected_base {
+            assert!(
+                parse_amount_minor(&base, "0").is_err(),
+                "non-canonical amount_base {base:?} was accepted"
+            );
+        }
+        for atto in cases.rejected_atto {
+            assert!(
+                parse_amount_minor("1", &atto).is_err(),
+                "non-canonical amount_atto {atto:?} was accepted"
+            );
+        }
     }
 
     #[test]
-    fn nominal_division() {
-        // amount=100e18, price=2e18 -> 100e18 * 1e18 / 2e18 = 50e18
-        let amount = U256::from(100u64) * SCALE_1E18;
-        let price = U256::from(2u64) * SCALE_1E18;
+    fn nominal_division_uses_the_coen_iso_six_decimal_scale() {
+        // amount=100 COEN, price=2.0 -> 50 COEN, all expressed as raw units.
+        let amount = U256::from(100u64) * SCALE_1E6_U256;
+        let price = U256::from(2u64) * SCALE_1E6_U256;
         assert_eq!(
             compute_nominal(amount, price).unwrap(),
-            U256::from(50u64) * SCALE_1E18
+            U256::from(50u64) * SCALE_1E6_U256
         );
+    }
+
+    #[test]
+    fn positive_nominal_that_rounds_to_zero_is_rejected() {
+        assert!(compute_nominal(U256::ONE, U256::from(2_000_000u64)).is_err());
     }
 
     const DRAFT_A: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";

@@ -31,11 +31,11 @@ contract BridgeableERC20StableTest is Test {
     }
 
     function test_MetadataAndDecimals_AreConstructorConfigured() public {
-        BridgeableERC20 wcoen = new BridgeableERC20("Wrapped COEN", "WCOEN", 18, address(this));
+        BridgeableERC20 customToken = new BridgeableERC20("Custom Token", "CUSTOM", 18, address(this));
 
-        assertEq(wcoen.name(), "Wrapped COEN");
-        assertEq(wcoen.symbol(), "WCOEN");
-        assertEq(wcoen.decimals(), 18);
+        assertEq(customToken.name(), "Custom Token");
+        assertEq(customToken.symbol(), "CUSTOM");
+        assertEq(customToken.decimals(), 18);
     }
 
     function test_SupportsERC7802() public view {

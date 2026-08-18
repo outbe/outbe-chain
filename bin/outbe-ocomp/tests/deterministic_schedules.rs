@@ -639,7 +639,8 @@ fn raw_fidelity_opening(
 fn raw_oracle_opening(day: WorldwideDay, finalized_state_root: B256) -> RawContractOpeningProofV1 {
     let plan = oracle_opening_slot_plan_v1(day, &[840, 978], 2, &[1, 2], 0, 0)
         .expect("deterministic Oracle slot plan");
-    let scale = U256::from(1_000_000_000_000_000_000_u64);
+    let coen840_price = U256::from(1_000_000_u64);
+    let generic_price_scale = U256::from(1_000_000_000_000_000_000_u64);
     let values = [
         U256::from(2),   // reference_currencies length
         U256::from(840), // reference_currencies[0]
@@ -648,10 +649,10 @@ fn raw_oracle_opening(day: WorldwideDay, finalized_state_root: B256) -> RawContr
         U256::from(2),   // pair_index[COEN/978]
         U256::from(1),   // wwd_vwap_exists
         // One value word per subject pair, at its registry index.
-        scale,                 // wwd_vwap_value[1]
-        scale * U256::from(2), // wwd_vwap_value[2]
-        U256::ZERO,            // scurve_count
-        U256::ZERO,            // scurve_oldest
+        coen840_price,                       // wwd_vwap_value[1]
+        generic_price_scale * U256::from(2), // wwd_vwap_value[2]
+        U256::ZERO,                          // scurve_count
+        U256::ZERO,                          // scurve_oldest
     ];
     assert_eq!(plan.slots.len(), values.len());
     RawContractOpeningProofV1 {

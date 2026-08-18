@@ -18,6 +18,7 @@ use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_promislimit::PromisLimitContract;
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
 use outbe_tee_enclave::gratis::{
@@ -31,18 +32,14 @@ use crate::tests::common::*;
 /// Issuance currency (ISO 4217) reported by `asset()`'s stubbed `isoCode()`.
 const ISSUANCE_ISO: u16 = 840;
 
-/// currency rate seeded for USD in these e2e tests (4.30 %, 1e18 scaled).
+/// Currency rate seeded for USD in these e2e tests (4.30 %, scale 1e6).
 fn refi_rate() -> U256 {
-    U256::from(43_000_000_000_000_000u128)
+    U256::from(43_000u64)
 }
 
-fn one_e18() -> U256 {
-    U256::from(10u64).pow(U256::from(18u64))
-}
-
-/// COEN/840 rate these tests seed: 2.0, 1e18-scaled.
+/// COEN/840 rate these tests seed: 2.0 at scale 1e6 in the ISO stablecoin domain.
 fn oracle_rate() -> U256 {
-    U256::from(2u64) * one_e18()
+    U256::from(2u64) * SCALE_1E6_U256
 }
 
 /// Credit a pledge asks for: $2.00 in 6-decimal minor units. At [`oracle_rate`] that
@@ -51,9 +48,9 @@ fn pledge_stables() -> U256 {
     U256::from(2_000_000u64)
 }
 
-/// Gratis collateral [`pledge_stables`] costs: `2e6 * 1e12 * 1e18 / 2e18 = 1e18`.
+/// GRATIS collateral [`pledge_stables`] costs: `2e6 * 1e6 / 2e6 = 1e6`.
 fn pledge_cost() -> U256 {
-    one_e18()
+    SCALE_1E6_U256
 }
 
 /// Pledge [`pledge_stables`] of credit for `who` at op-nonce `nonce` (uncapped), and
@@ -76,13 +73,13 @@ fn chain_b256() -> B256 {
     B256::from(U256::from(CHAIN_ID))
 }
 
-fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
+fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
     outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
     outbe_oracle::api::set_exchange_rate(
         storage.clone(),
         Address::ZERO,
         outbe_oracle::api::DAY_TYPE_PAIR,
-        rate_1e18,
+        coen_iso_rate,
         0,
         0,
     )
@@ -179,7 +176,7 @@ fn env() -> HashMapStorageProvider {
 fn full_pledge_request_pay_unlock_flow() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let pledge_amount = one_e18();
+        let pledge_amount = pledge_cost();
         let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
 
         // Mine + pledge. Alice is both the pledger EOA and the smart account here.
@@ -223,10 +220,10 @@ fn full_pledge_request_pay_unlock_flow() {
         assert_eq!(position.currency_rate, refi_rate());
         assert_eq!(position.issuance_currency, ISSUANCE_ISO);
         let multiplier =
-            one_e18() + refi_rate() * U256::from(NUMBER_OF_ANADOSIS) / U256::from(12u64);
+            SCALE_1E6_U256 + refi_rate() * U256::from(NUMBER_OF_ANADOSIS) / U256::from(12u64);
         assert_eq!(
             position.total_anadosis_amount,
-            amount_stables * multiplier / one_e18()
+            amount_stables * multiplier / SCALE_1E6_U256
         );
         assert_eq!(position.total_gratis_amount, pledge_amount);
 
@@ -259,7 +256,7 @@ fn full_pledge_request_pay_unlock_flow() {
 fn pay_anadosis_unlocks_one_installment() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let pledge_amount = one_e18();
+        let pledge_amount = pledge_cost();
         let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
 
         outbe_gratis::api::mint(
@@ -295,7 +292,7 @@ fn pay_anadosis_unlocks_one_installment() {
 fn pay_anadosis_spans_installments_and_caps_at_outstanding() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let pledge_amount = one_e18();
+        let pledge_amount = pledge_cost();
 
         outbe_gratis::api::mint(
             storage.clone(),
@@ -375,7 +372,7 @@ fn pay_anadosis_spans_installments_and_caps_at_outstanding() {
 fn request_credis_rejects_overdue_anadosis() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let amount = one_e18();
+        let amount = pledge_cost();
         outbe_gratis::api::mint(
             storage.clone(),
             alice(),
@@ -431,7 +428,7 @@ fn request_credis_rejects_zero_smart_account() {
 fn pay_anadosis_accepts_third_party_payer() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let pledge_amount = one_e18();
+        let pledge_amount = pledge_cost();
         let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
 
         outbe_gratis::api::mint(
@@ -480,7 +477,7 @@ fn pay_anadosis_accepts_third_party_payer() {
 fn expiry_sweep_burns_outstanding_collateral() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let pledge_amount = one_e18();
+        let pledge_amount = pledge_cost();
         let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
 
         outbe_gratis::api::mint(

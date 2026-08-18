@@ -87,7 +87,7 @@ fn handshake_and_offer_roundtrip_over_uds() {
 
     // Encrypted ProcessTributeOfferBatch decrypts + prices the offer in the enclave.
     let owner = Address::repeat_byte(0xAB);
-    let price = U256::from(2u64) * U256::from(1_000_000_000_000_000_000u64); // 2.0
+    let price = U256::from(2_000_000u64); // 2.0 COEN/840
     let offer = encrypt_offer(tribute_offer_public, owner, price);
     match client
         .request(&EnclaveRequest::ProcessTributeOfferBatch {
@@ -99,11 +99,8 @@ fn handshake_and_offer_roundtrip_over_uds() {
             assert_eq!(results.len(), 1);
             assert_eq!(results[0].status, TributeOfferStatus::Created);
             assert_eq!(results[0].owner, owner);
-            // 100 / 2.0 = 50 (nominal), in 1e18 minor units.
-            assert_eq!(
-                results[0].nominal_amount_minor,
-                U256::from(50u64) * U256::from(1_000_000_000_000_000_000u64)
-            );
+            assert_eq!(results[0].issuance_amount_minor, U256::from(100_000_000u64));
+            assert_eq!(results[0].nominal_amount_minor, U256::from(50_000_000u64));
         }
         other => panic!("unexpected response: {other:?}"),
     }
@@ -240,7 +237,7 @@ fn transport_throughput_offers_per_sec() {
 
     // Pre-build a batch of distinct offers (client-side encryption is not part of
     // the enclave throughput we are measuring).
-    let price = U256::from(2u64) * U256::from(1_000_000_000_000_000_000u64);
+    let price = U256::from(2_000_000u64);
     let batch: Vec<EncryptedTributeOffer> = (0..BATCH)
         .map(|i| {
             let mut o = [0u8; 20];

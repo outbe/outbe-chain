@@ -73,13 +73,13 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         /// @notice Auction-cleared cap on the Issued mint quantity. Set once at `createSeries`,
         ///         never mutated; `mint` rejects pushing `totalSupply` past it.
         uint32 issuedIntexCount;
-        /// @notice Promis tokens per Intex unit (18 decimals).
+        /// @notice PROMIS-units per Intex unit (1e6).
         uint128 promisLoadMinor;
-        /// @notice Per-unit entry price (reference ccy, 1e9 wire scale).
+        /// @notice Per-unit entry price in ISO stable-units (1e6).
         uint64 entryPriceMinor;
-        /// @notice Floor price (reference ccy, 1e9 wire scale).
+        /// @notice Floor price in ISO stable-units (1e6).
         uint64 floorPriceMinor;
-        /// @notice Call price (reference ccy, 1e9 wire scale).
+        /// @notice Call price in ISO stable-units (1e6).
         uint64 callPriceMinor;
         /// @notice Forced-call trigger (window/threshold/period).
         IntexCallTrigger callTrigger;

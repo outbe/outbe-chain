@@ -105,7 +105,7 @@ async fn info(client: &(impl Rpc + Sync)) -> Result<()> {
     println!("Active Validators:  {}", ei.active_count);
     println!(
         "Total Staked:       {} COEN",
-        super::format_unit(ei.total_staked)
+        super::format_coen_amount(ei.total_staked)
     );
     Ok(())
 }
@@ -383,7 +383,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_epoch_info_returns_correct_values() {
-        let staked = U256::from(1000u64) * U256::from(10u64).pow(U256::from(18));
+        let staked = U256::from(1_000_000_000u64);
         let mock = epoch_info_mock(5, 1700000000, 1234, 3, staked);
 
         let result = fetch_epoch_info(&mock).await.unwrap();

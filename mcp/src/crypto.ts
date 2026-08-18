@@ -54,6 +54,16 @@ export interface OfferPayload {
   amount_base: string;
 }
 
+const U64_MAX = 18_446_744_073_709_551_615n;
+
+/** Return one canonical lexical u64 suitable for Tribute `amount_base`. */
+export function canonicalAmountBase(value: string): string {
+  if (!/^(0|[1-9][0-9]*)$/.test(value) || BigInt(value) > U64_MAX) {
+    throw new Error("amount_base must be a canonical unsigned u64");
+  }
+  return value;
+}
+
 /**
  * Build the plaintext JSON payload (fresh draft id + su hash per offer).
  * `worldwide_day` and `currency` are cleartext `offerTribute` arguments, not
@@ -64,7 +74,7 @@ export function buildPayload(p: OfferPayload): Uint8Array {
   const obj = {
     creator: p.creator,
     tribute_draft_id: hex32(),
-    amount_base: p.amount_base,
+    amount_base: canonicalAmountBase(p.amount_base),
     amount_atto: "0",
     su_hashes: [hex32()],
     wallet_addresses: [] as string[],

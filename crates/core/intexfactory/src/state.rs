@@ -5,7 +5,7 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_intex::SeriesId;
 use outbe_primitives::error::Result;
 use outbe_primitives::math::{
-    price_helper,
+    reference_price,
     tree_math::{self, BinTreeStorage},
 };
 use outbe_primitives::storage::dsl::Map;
@@ -63,13 +63,12 @@ impl IntexFactoryContract<'_> {
 
     // --- unqualified-series bin index (by floor_price_minor) ---
 
-    /// Map an 18-decimal price to its LB-style bin id (bounded by the codec).
+    /// Map a six-decimal COEN/ISO price to its LB-style bin id (bounded by the codec).
     pub fn price_to_bin(price: U256) -> Result<u32> {
         if price.is_zero() {
             return Ok(0);
         }
-        let p = price_helper::convert_decimal_price_to_128x128(price)?;
-        price_helper::get_id_from_price(p, BIN_STEP_BP)
+        reference_price::coen_iso_price_to_bin_id(price, BIN_STEP_BP)
     }
 
     pub(crate) fn bin_index_key(reference_currency: u16, bin_id: u32, index: u32) -> B256 {

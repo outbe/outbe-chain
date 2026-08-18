@@ -1560,7 +1560,7 @@ impl Rpc {
 
     /// Submit a tribute offer for worldwide-day `wwd` from `key`; returns tx hash if any.
     pub fn tribute_offer(&self, key: &str, wwd: &str) -> Option<String> {
-        self.tribute_offer_with_params(key, wwd, "100", 840, false)
+        self.tribute_offer_with_params(key, wwd, "100", "0", 840, false)
     }
 
     /// Submit a Tribute offer with explicit business fields. This is used by
@@ -1570,7 +1570,8 @@ impl Rpc {
         &self,
         key: &str,
         wwd: &str,
-        amount: &str,
+        amount_base: &str,
+        amount_atto: &str,
         currency: u16,
         exclude_from_intex_issuance: bool,
     ) -> Option<String> {
@@ -1584,7 +1585,9 @@ impl Rpc {
             "offer".to_owned(),
             wwd.to_owned(),
             "--amount".to_owned(),
-            amount.to_owned(),
+            amount_base.to_owned(),
+            "--amount-atto".to_owned(),
+            amount_atto.to_owned(),
             "--currency".to_owned(),
             currency.to_string(),
         ];
@@ -1594,7 +1597,7 @@ impl Rpc {
         let out = self.sh().cli(args.iter().map(String::as_str)).ok()?;
         let tx_hash = parse::extract_tx_hash(&out)?;
         eprintln!(
-            "E2E_TRIBUTE_TIMELINE stage=submitted wall_ms={} cli_elapsed_ms={} tx={tx_hash} owner={} wwd={wwd} amount={amount} currency={currency} exclude={exclude_from_intex_issuance}",
+            "E2E_TRIBUTE_TIMELINE stage=submitted wall_ms={} cli_elapsed_ms={} tx={tx_hash} owner={} wwd={wwd} amount_base={amount_base} amount_atto={amount_atto} currency={currency} exclude={exclude_from_intex_issuance}",
             unix_time_millis(),
             started.elapsed().as_millis(),
             self.address_of(key).unwrap_or_else(|| "unknown".to_owned()),
@@ -2705,7 +2708,7 @@ impl Rpc {
             &self.cfg.rpc0,
             zerofee_key(state),
             addresses::AGENT_REWARD_ADDR,
-            1_000_000_000,
+            1,
         )?);
         state.zerofee_balance_after_paid = eth::balance(&self.cfg.rpc0, zerofee_address(state));
         Ok(())

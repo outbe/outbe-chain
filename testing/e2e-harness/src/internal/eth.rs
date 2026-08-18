@@ -17,7 +17,9 @@ use std::future::Future;
 use std::sync::mpsc::sync_channel;
 use std::sync::OnceLock;
 
-use alloy_eips::{eip7702::Authorization, BlockId, BlockNumberOrTag};
+use alloy_eips::{
+    eip1559::MIN_PROTOCOL_BASE_FEE, eip7702::Authorization, BlockId, BlockNumberOrTag,
+};
 use alloy_network::{EthereumWallet, TransactionBuilder7702};
 use alloy_primitives::{Address, Bytes, TxHash, B256, U256};
 use alloy_provider::{Provider, ProviderBuilder};
@@ -28,8 +30,8 @@ use alloy_sol_types::{sol, SolCall};
 use eyre::{eyre, Result};
 use tokio::runtime::Runtime;
 
-/// Legacy-style gas price used by the old `cast send --gas-price` calls (1 gwei).
-const GAS_PRICE_WEI: u128 = 1_000_000_000;
+/// Canonical Outbe native fee floor, expressed directly in COEN unit per gas.
+const GAS_PRICE_UNITS: u128 = MIN_PROTOCOL_BASE_FEE as u128;
 
 // Precompile ABI surface the harness reads/writes, generated from the canonical
 // Solidity sources so the harness exercises the same selectors the node
@@ -492,7 +494,7 @@ pub(crate) fn send_call<C: SolCall>(
         let mut tx = TransactionRequest::default()
             .to(to)
             .input(Bytes::from(data).into())
-            .max_fee_per_gas(GAS_PRICE_WEI)
+            .max_fee_per_gas(GAS_PRICE_UNITS)
             .max_priority_fee_per_gas(0);
         if let Some(v) = value {
             tx = tx.value(v);
@@ -533,7 +535,7 @@ pub(crate) fn send_calldata(
             .to(to)
             .input(Bytes::from(calldata).into())
             .gas_limit(gas_limit)
-            .max_fee_per_gas(GAS_PRICE_WEI)
+            .max_fee_per_gas(GAS_PRICE_UNITS)
             .max_priority_fee_per_gas(0);
         let pending = tokio::time::timeout(
             std::time::Duration::from_secs(10),
@@ -561,7 +563,7 @@ pub(crate) fn send_value(url: &str, to: Address, key: &str, value: U256) -> Resu
         let tx = TransactionRequest::default()
             .to(to)
             .value(value)
-            .max_fee_per_gas(GAS_PRICE_WEI)
+            .max_fee_per_gas(GAS_PRICE_UNITS)
             .max_priority_fee_per_gas(0);
         let pending = provider.send_transaction(tx).await?;
         let receipt = pending.get_receipt().await?;
@@ -663,7 +665,7 @@ pub(crate) fn install_delegation_with_overrides(
             .to(authority)
             .nonce(tx_nonce)
             .gas_limit(100_000)
-            .max_fee_per_gas(GAS_PRICE_WEI)
+            .max_fee_per_gas(GAS_PRICE_UNITS)
             .max_priority_fee_per_gas(0)
             .with_authorization_list(vec![signed]);
         let pending = provider.send_transaction(tx).await?;
@@ -694,7 +696,7 @@ pub(crate) fn send_reward_call(
         let provider = ProviderBuilder::new()
             .wallet(wallet)
             .connect_http(url.parse()?);
-        let max_fee = GAS_PRICE_WEI;
+        let max_fee = GAS_PRICE_UNITS;
         let tx = TransactionRequest::default()
             .to(to)
             .input(Bytes::from(data).into())
@@ -719,9 +721,9 @@ pub(crate) fn address_of(key: &str) -> Option<Address> {
     Some(signer.address())
 }
 
-/// `amount` whole COEN in the chain's 18-decimal native base units.
+/// `amount` whole COEN in the chain's six-decimal native units.
 pub(crate) fn coen(amount: u64) -> U256 {
-    U256::from(amount) * U256::from(1_000_000_000_000_000_000u128)
+    U256::from(amount) * U256::from(1_000_000u64)
 }
 
 #[cfg(test)]
@@ -742,7 +744,7 @@ mod tests {
 
     #[test]
     fn coen_scales_to_base_units() {
-        assert_eq!(coen(1), U256::from(1_000_000_000_000_000_000u128));
+        assert_eq!(coen(1), U256::from(1_000_000u64));
         assert_eq!(coen(0), U256::ZERO);
     }
 }

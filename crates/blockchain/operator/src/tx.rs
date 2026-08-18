@@ -16,7 +16,7 @@ use zeroize::Zeroizing;
 pub fn buffered_gas_price(suggested: U256) -> U256 {
     suggested
         .saturating_mul(U256::from(2))
-        .max(U256::from(1_000_000_000_u64))
+        .max(U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -230,6 +230,17 @@ fn length_prefix(short: u8, long: u8, length: usize) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
+
+    #[test]
+    fn buffered_gas_price_uses_native_unit_protocol_floor() {
+        let protocol_floor = U256::from(MIN_PROTOCOL_BASE_FEE);
+        assert_eq!(buffered_gas_price(U256::ZERO), protocol_floor);
+        assert_eq!(
+            buffered_gas_price(protocol_floor),
+            protocol_floor * U256::from(2)
+        );
+    }
 
     #[test]
     fn exact_inputs_produce_exact_raw_transaction_and_hash() {
