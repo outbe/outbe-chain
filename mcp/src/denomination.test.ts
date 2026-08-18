@@ -20,7 +20,7 @@ import {
   formatNativeAmount,
   parseNativeAmount,
 } from "./chain.js";
-import { formatParam, humanizeReturn } from "./format.js";
+import { coenIsoMarketDecimals, formatParam, humanizeReturn } from "./format.js";
 import { humanizeOrder } from "./intent/format.js";
 import { resolveContract } from "./registry.js";
 import { registerSignTools } from "./tools/sign.js";
@@ -117,6 +117,34 @@ test("MCP formats Credis and Oracle annual rates with six decimals", () => {
     formatParam({ name: "rate", type: "uint256" } as AbiParameter, 43_000_000_000_000_000n),
     { raw: "43000000000000000", value: "0.043" },
   );
+});
+
+test("MCP formats every COEN ISO Oracle view rate with scale 1e6", () => {
+  const getExchangeRate = {
+    type: "function",
+    name: "getExchangeRate",
+    stateMutability: "view",
+    inputs: [
+      { name: "base", type: "address" },
+      { name: "quote", type: "address" },
+    ],
+    outputs: [{ name: "rate", type: "uint256" }],
+  } as AbiFunction;
+  const coen = "0x0000000000000000000000000000000000000000";
+  const iso840 = "0x00000000000000000000000000000000000cc840";
+  const erc20 = "0x1111111111111111111111111111111111111111";
+
+  const coenIsoDecimals = coenIsoMarketDecimals(coen, iso840);
+  assert.equal(coenIsoDecimals, 6);
+  assert.deepEqual(humanizeReturn(getExchangeRate, 1_234_567n, coenIsoDecimals), {
+    rate: { raw: "1234567", value: "1.234567" },
+  });
+
+  const genericDecimals = coenIsoMarketDecimals(erc20, iso840);
+  assert.equal(genericDecimals, undefined);
+  assert.deepEqual(humanizeReturn(getExchangeRate, 1_000_000_000_000_000_000n), {
+    rate: { raw: "1000000000000000000", value: "1" },
+  });
 });
 
 test("MCP signed COEN inputs convert whole amounts to six-decimal units", async () => {
