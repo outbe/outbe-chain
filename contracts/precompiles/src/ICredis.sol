@@ -60,7 +60,7 @@ interface ICredis {
         uint256 collateral;
         /// The share of G still locked. Released principal-proportionally.
         uint256 collateralLocked;
-        /// r — the annual policy rate of the currency, 1e18 scaled, fixed at opening.
+        /// r — the annual policy rate of the currency, scale 1e6, fixed at opening.
         uint256 policyRate;
         /// P_0 — the COEN price in the position's currency, quoted at pledge time.
         uint256 entryPrice;

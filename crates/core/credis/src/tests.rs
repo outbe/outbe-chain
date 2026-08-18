@@ -3,6 +3,7 @@ use alloy_sol_types::SolCall;
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::units::SCALE_1E6_U256;
 
 use crate::constants::{CALL_RATE_PCT, FLOOR_RATE_PCT};
 use crate::errors::CredisError;
@@ -25,15 +26,15 @@ const ORIGINATED_AT: u64 = 1_700_000_000;
 const PRINCIPAL: u64 = 1_000_000_000;
 /// G = 2,000 COEN units.
 fn collateral() -> U256 {
-    U256::from(2_000u64) * U256::from(10u64).pow(U256::from(18u64))
+    U256::from(2_000u64) * SCALE_1E6_U256
 }
-/// P₀ = $0.50, 1e18 oracle scale.
+/// P₀ = $0.50, scale 1e6.
 fn entry_price() -> U256 {
-    U256::from(500_000_000_000_000_000u64)
+    U256::from(500_000u64)
 }
-/// r = 4% annual, 1e18 scaled.
+/// r = 4% annual, scale 1e6.
 fn policy_rate() -> U256 {
-    U256::from(40_000_000_000_000_000u64)
+    U256::from(40_000u64)
 }
 
 fn alice() -> Address {
@@ -116,8 +117,8 @@ fn open_position_seals_floor_and_call_from_the_entry_price() {
         let p = credis.get_position(id).unwrap();
 
         // $0.50 + 8% = $0.54; $0.50 + 32% = $0.66.
-        assert_eq!(p.floor_price, U256::from(540_000_000_000_000_000u64));
-        assert_eq!(p.call_price, U256::from(660_000_000_000_000_000u64));
+        assert_eq!(p.floor_price, U256::from(540_000u64));
+        assert_eq!(p.call_price, U256::from(660_000u64));
         assert_eq!(
             p.floor_price,
             marked_up(entry_price(), FLOOR_RATE_PCT).unwrap()
@@ -179,18 +180,12 @@ fn worked_example_ledger_closes_exactly() {
         assert_eq!(first.principal_paid, U256::from(389_041_095u64));
         assert_eq!(first.total_paid, U256::from(400_000_000u64));
         // ΔG = 2000e18 × 389_041_095 / 1e9 = 778.08219 COEN
-        assert_eq!(
-            first.gratis_released,
-            U256::from(778_082_190_000_000_000_000u128)
-        );
+        assert_eq!(first.gratis_released, U256::from(778_082_190u64));
         assert!(!first.closed);
 
         let p = credis.get_position(id).unwrap();
         assert_eq!(p.outstanding, U256::from(610_958_905u64));
-        assert_eq!(
-            p.collateral_locked,
-            U256::from(1_221_917_810_000_000_000_000u128)
-        );
+        assert_eq!(p.collateral_locked, U256::from(1_221_917_810u64));
         assert_eq!(p.last_settled_at, at(100), "accrual restarts");
 
         // --- Day 458: the call. ---------------------------------------------
@@ -199,116 +194,6 @@ fn worked_example_ledger_closes_exactly() {
         assert_eq!(p.lifecycle_state().unwrap(), CredisState::Called);
         assert_eq!(settlement_deadline(&p), at(472), "14-day window");
 
-#[test]
-fn create_position_preserves_staged_six_decimal_rate_rounding_and_remainder() {
-    with_credis(|storage| {
-        let mut credis = CredisContract::new(storage.clone());
-        let principal = U256::from(3_000_000u64);
-        let rate = U256::from(43_000u64);
-        let position_id = credis
-            .create_position(
-                test_commitment(),
-                alice(),
-                eoa_ct(),
-                asset(),
-                840,
-                rate,
-                principal,
-                U256::from(2_000_000u64),
-                U256::from(1_000_000u64),
-                CREATED_AT,
-            )
-            .unwrap();
-
-        let position = credis.get_position(position_id).unwrap();
-        assert_eq!(position.currency_rate, rate);
-        assert_eq!(position.total_anadosis_amount, U256::from(3_107_499u64));
-
-        for n in 1..NUMBER_OF_ANADOSIS {
-            assert_eq!(
-                credis.get_anadosis(position_id, n).unwrap().anadosis_amount,
-                U256::from(310_749u64)
-            );
-        }
-        assert_eq!(
-            credis
-                .get_anadosis(position_id, NUMBER_OF_ANADOSIS)
-                .unwrap()
-                .anadosis_amount,
-            U256::from(310_758u64)
-        );
-    });
-}
-
-#[test]
-fn create_position_allows_positive_rate_that_rounds_to_zero_interest() {
-    with_credis(|storage| {
-        let mut credis = CredisContract::new(storage.clone());
-        let position_id = credis
-            .create_position(
-                test_commitment(),
-                alice(),
-                eoa_ct(),
-                asset(),
-                840,
-                U256::ONE,
-                U256::ONE,
-                U256::ZERO,
-                U256::ZERO,
-                CREATED_AT,
-            )
-            .unwrap();
-        assert_eq!(
-            credis
-                .get_position(position_id)
-                .unwrap()
-                .total_anadosis_amount,
-            U256::ONE
-        );
-    });
-}
-
-#[test]
-fn create_position_rejects_currency_rate_overflow_before_writing() {
-    with_credis(|storage| {
-        let mut credis = CredisContract::new(storage.clone());
-        let err = credis
-            .create_position(
-                test_commitment(),
-                alice(),
-                eoa_ct(),
-                asset(),
-                840,
-                U256::MAX,
-                U256::from(1_000_000u64),
-                U256::ZERO,
-                U256::ZERO,
-                CREATED_AT,
-            )
-            .unwrap_err();
-        assert!(err.to_string().contains("positive"), "got: {err}");
-        assert!(credis.get_all_positions().unwrap().is_empty());
-    });
-}
-
-#[test]
-fn create_position_zero_rate_matches_principal() {
-    with_credis(|storage| {
-        let mut credis = CredisContract::new(storage.clone());
-        let principal = U256::from(1_234u64);
-        let position_id = credis
-            .create_position(
-                test_commitment(),
-                alice(),
-                eoa_ct(),
-                asset(),
-                840,
-                U256::ZERO,
-                principal,
-                U256::ZERO,
-                U256::ZERO,
-                CREATED_AT,
-            )
         // --- Day 465: partial settlement of $400 while called. --------------
         let second = credis
             .settle(id, U256::from(400_000_000u64), at(465))
@@ -316,29 +201,20 @@ fn create_position_zero_rate_matches_principal() {
         // d = 365 exactly, so I = P_out × 4%.
         assert_eq!(second.interest, U256::from(24_438_357u64));
         assert_eq!(second.principal_paid, U256::from(375_561_643u64));
-        assert_eq!(
-            second.gratis_released,
-            U256::from(751_123_286_000_000_000_000u128)
-        );
+        assert_eq!(second.gratis_released, U256::from(751_123_286u64));
 
         let p = credis.get_position(id).unwrap();
         assert_eq!(p.outstanding, U256::from(235_397_262u64));
-        assert_eq!(
-            p.collateral_locked,
-            U256::from(470_794_524_000_000_000_000u128)
-        );
+        assert_eq!(p.collateral_locked, U256::from(470_794_524u64));
 
         // --- Day 472: the window lapses. ------------------------------------
         let void = credis.void_remainder(id, at(472)).unwrap();
-        assert_eq!(
-            void.gratis_burned,
-            U256::from(470_794_524_000_000_000_000u128)
-        );
+        assert_eq!(void.gratis_burned, U256::from(470_794_524u64));
         assert_eq!(void.principal_written_off, U256::from(235_397_262u64));
         // 7 days of interest on the remainder — never collected.
         assert_eq!(void.interest_written_off, U256::from(180_579u64));
-        // Unpaid fraction 235_397_262 / 1_000_000_000 = 23.5397262%.
-        assert_eq!(void.unpaid_share, U256::from(235_397_262_000_000_000u64));
+        // Unpaid fraction 235_397_262 / 1_000_000_000 = 23.5397262%, at scale 1e6.
+        assert_eq!(void.unpaid_share, U256::from(235_397u64));
         assert_eq!(void.cca, cca());
         assert_eq!(void.eoa_ct, eoa_ct());
 
@@ -549,13 +425,13 @@ fn interest_rounds_up_and_collateral_release_rounds_down() {
             "interest rounds up, favoring the protocol"
         );
 
-        // A principal payment of 1 minor unit is worth 2e21/1e9 = 2e12 gratis
-        // exactly; 1 unit less than that must floor strictly below.
+        // G/P = 2e9/1e9 = 2, so each minor unit of principal frees exactly 2
+        // gratis units and the floored release is exact here.
         let paid = credis
             .settle(id, U256::from(109_590u64) + U256::from(3u64), at(1))
             .unwrap();
         assert_eq!(paid.principal_paid, U256::from(3u64));
-        assert_eq!(paid.gratis_released, U256::from(6_000_000_000_000u64));
+        assert_eq!(paid.gratis_released, U256::from(6u64));
     });
 }
 
@@ -727,11 +603,7 @@ fn a_fully_unpaid_void_burns_all_collateral_and_scores_a_full_unpaid_share() {
         let void = credis.void_remainder(id, at(24)).unwrap();
         assert_eq!(void.gratis_burned, collateral());
         assert_eq!(void.principal_written_off, U256::from(PRINCIPAL));
-        assert_eq!(
-            void.unpaid_share,
-            U256::from(10u64).pow(U256::from(18u64)),
-            "100% unpaid"
-        );
+        assert_eq!(void.unpaid_share, SCALE_1E6_U256, "100% unpaid");
     });
 }
 
@@ -898,8 +770,8 @@ fn precompile_get_position_returns_the_full_record() {
         assert_eq!(decoded.principal, U256::from(PRINCIPAL));
         assert_eq!(decoded.collateral, collateral());
         assert_eq!(decoded.entryPrice, entry_price());
-        assert_eq!(decoded.floorPrice, U256::from(540_000_000_000_000_000u64));
-        assert_eq!(decoded.callPrice, U256::from(660_000_000_000_000_000u64));
+        assert_eq!(decoded.floorPrice, U256::from(540_000u64));
+        assert_eq!(decoded.callPrice, U256::from(660_000u64));
         assert_eq!(decoded.policyRate, policy_rate());
         assert_eq!(decoded.state, CredisState::Settleable as u8);
         assert_eq!(decoded.eoaCiphertext.to_vec(), eoa_ct());

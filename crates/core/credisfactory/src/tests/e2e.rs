@@ -38,13 +38,12 @@ const ISSUANCE_ISO: u16 = 840;
 
 const DAY: u64 = 86_400;
 
-/// Policy rate seeded for USD in these e2e tests (4.30 %, 1e18 scaled).
+/// Policy rate seeded for USD in these e2e tests (4.30 %, scale 1e6).
 fn policy_rate() -> U256 {
     U256::from(43_000u64)
 }
 
-
-/// COEN/840 rate these tests seed: 2.0 at scale 1e6 in the ISO stablecoin domain. This is the entry price of
+/// COEN/840 rate these tests seed: 2.0 at scale 1e6. This is the entry price of
 /// every position opened here, so floor = 2.16 and call = 2.64.
 fn oracle_rate() -> U256 {
     U256::from(2u64) * SCALE_1E6_U256
@@ -52,7 +51,7 @@ fn oracle_rate() -> U256 {
 
 /// A price above every position's floor (2.16), so the settlement latch trips.
 fn above_floor() -> U256 {
-    U256::from(2_200_000_000_000_000_000u64)
+    U256::from(2_200_000u64)
 }
 
 /// Credit a pledge asks for: $2.00 in 6-decimal minor units. At [`oracle_rate`] that
@@ -61,7 +60,7 @@ fn pledge_stables() -> U256 {
     U256::from(2_000_000u64)
 }
 
-/// GRATIS collateral [`pledge_stables`] costs: `2e6 * 1e6 / 2e6 = 1e6`.
+/// Gratis collateral [`pledge_stables`] costs: `2e6 * 1e6 / 2e6 = 1e6`.
 fn pledge_cost() -> U256 {
     SCALE_1E6_U256
 }
@@ -97,7 +96,7 @@ fn chain_b256() -> B256 {
 
 fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
     outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
-    set_coen_rate(&storage, rate_1e18);
+    set_coen_rate(&storage, coen_iso_rate);
     let oracle = OracleContract::new(storage);
     oracle
         .reference_currency_rate
@@ -106,7 +105,7 @@ fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
 }
 
 /// Re-publishes the COEN/840 rate — how these tests move the price across a floor.
-fn set_coen_rate(storage: &StorageHandle<'_>, rate_1e18: U256) {
+fn set_coen_rate(storage: &StorageHandle<'_>, coen_iso_rate: U256) {
     outbe_oracle::api::set_exchange_rate(
         storage.clone(),
         Address::ZERO,
@@ -219,7 +218,7 @@ fn bootstrap(storage: &StorageHandle<'_>, amount: U256) {
         amount,
         auth(GratisOp::Mint, alice(), amount, 0),
     )
-        .unwrap();
+    .unwrap();
     seed_fidelity(storage.clone(), alice());
     seed_oracle(storage.clone(), oracle_rate());
 }
@@ -230,22 +229,10 @@ fn teardown() {
 }
 
 #[test]
-fn full_pledge_request_pay_unlock_flow() {
+fn request_credis_seals_the_position_geometry_from_the_pledge_quote() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let pledge_amount = pledge_cost();
-        let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
-
-        // Mine + pledge. Alice is both the pledger EOA and the smart account here.
-        outbe_gratis::api::mint(
-            storage.clone(),
-            alice(),
-            pledge_amount,
-            auth(GratisOp::Mint, alice(), pledge_amount, 0),
-        )
-        .unwrap();
-        seed_fidelity(storage.clone(), alice());
-        seed_oracle(storage.clone(), oracle_rate());
+        bootstrap(&storage, pledge_cost());
         let handle = pledge(&storage, alice(), 1);
         // Pledge parks the amount in the ticket: balance drained, pledged ledger 0.
         assert_eq!(view_balance(&storage, alice()), U256::ZERO);
@@ -272,21 +259,16 @@ fn full_pledge_request_pay_unlock_flow() {
             outbe_gratis::api::reveal_owner(storage.clone(), &position.eoa_ct).unwrap(),
             alice()
         );
-        assert_eq!(position.credis_principal, amount_stables);
-        // The entry price is the rate the PLEDGE was quoted at, not a later read.
-        assert_eq!(position.entry_price_minor, oracle_rate());
-        assert_eq!(position.currency_rate, refi_rate());
-        assert_eq!(position.issuance_currency, ISSUANCE_ISO);
-        let multiplier =
-            SCALE_1E6_U256 + refi_rate() * U256::from(NUMBER_OF_ANADOSIS) / U256::from(12u64);
-        assert_eq!(
-            position.total_anadosis_amount,
-            amount_stables * multiplier / SCALE_1E6_U256
-        );
-        assert_eq!(
-            position.call_price,
-            U256::from(2_640_000_000_000_000_000u64)
-        );
+
+        assert_eq!(position.principal, amount_stables);
+        assert_eq!(position.outstanding, amount_stables);
+        assert_eq!(position.collateral, pledge_cost());
+        assert_eq!(position.collateral_locked, pledge_cost());
+        // The entry price is the rate the PLEDGE was quoted at, not a later read;
+        // floor and call derive from it, so the whole geometry follows the quote.
+        assert_eq!(position.entry_price, oracle_rate());
+        assert_eq!(position.floor_price, U256::from(2_160_000u64));
+        assert_eq!(position.call_price, U256::from(2_640_000u64));
         assert_eq!(position.policy_rate, policy_rate());
         assert_eq!(position.issuance_currency, ISSUANCE_ISO);
         assert_eq!(position.lifecycle_state().unwrap(), CredisState::Open);
@@ -299,8 +281,6 @@ fn full_pledge_request_pay_unlock_flow() {
 fn settle_is_rejected_until_the_price_crosses_the_floor() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let pledge_amount = pledge_cost();
-        let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
         bootstrap(&storage, pledge_cost());
         let position_id = open(&storage, 1);
 
@@ -345,7 +325,6 @@ fn settle_is_rejected_until_the_price_crosses_the_floor() {
 fn settlement_releases_collateral_proportionally_and_closes_without_dust() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let pledge_amount = pledge_cost();
         bootstrap(&storage, pledge_cost());
         let position_id = open(&storage, 1);
         set_coen_rate(&storage, above_floor());
@@ -394,8 +373,6 @@ fn settlement_releases_collateral_proportionally_and_closes_without_dust() {
 fn settle_takes_only_what_the_position_needs() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let amount = pledge_cost();
-        outbe_gratis::api::mint(
         bootstrap(&storage, pledge_cost());
         let position_id = open(&storage, 1);
         set_coen_rate(&storage, above_floor());
@@ -498,64 +475,12 @@ fn request_credis_rejects_zero_smart_account() {
 }
 
 #[test]
-fn pay_anadosis_accepts_third_party_payer() {
-    let mut storage = env();
-    StorageHandle::enter(&mut storage, |storage| {
-        let pledge_amount = pledge_cost();
-        let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
-
-        outbe_gratis::api::mint(
-            storage.clone(),
-            alice(),
-            pledge_amount,
-            auth(GratisOp::Mint, alice(), pledge_amount, 0),
-        )
-        .unwrap();
-        seed_fidelity(storage.clone(), alice());
-        seed_oracle(storage.clone(), oracle_rate());
-        let handle = pledge(&storage, alice(), 1);
-        let spend = credis_spend_auth(alice(), handle, alice());
-        let (position_id, _) =
-            runtime::request_credis(storage.clone(), alice(), alice(), handle, spend).unwrap();
-
-        // bob is not the position's smart account, but anyone may pay it down.
-        let owed = CredisContract::new(storage.clone())
-            .get_next_anadosis(position_id)
-            .unwrap()
-            .unwrap()
-            .unpaid_amount;
-        let paid = runtime::pay_anadosis(storage.clone(), bob(), position_id, owed).unwrap();
-        assert_eq!(paid, owed);
-        assert_eq!(
-            CredisContract::new(storage.clone())
-                .get_position(position_id)
-                .unwrap()
-                .next_anadosis_number,
-            2,
-            "third-party payment advances the schedule"
-        );
-
-        // The freed collateral goes to the ORIGINAL pledger, never to the payer — this
-        // is what makes an open payer safe without an access check.
-        assert_eq!(view_balance(&storage, alice()), installment);
-        assert_eq!(view_pledged(&storage, alice()), pledge_amount - installment);
-        assert_eq!(view_balance(&storage, bob()), U256::ZERO);
-        assert_eq!(view_pledged(&storage, bob()), U256::ZERO);
-    });
-    fidelity_enclave::uninstall();
-    test_enclave::uninstall();
-}
-
-#[test]
-fn expiry_sweep_burns_outstanding_collateral() {
 fn void_sweep_burns_only_the_unpaid_share() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let position_id = open(&storage, 1);
         set_coen_rate(&storage, above_floor());
-        let pledge_amount = pledge_cost();
-        let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
 
         // Settle half the principal, reclaiming half the collateral.
         advance_to(&storage, CREATED_AT + 30 * DAY);

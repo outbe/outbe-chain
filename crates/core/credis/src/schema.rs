@@ -91,12 +91,12 @@ pub struct Position {
     #[attribute(order = 8)]
     pub collateral_locked: U256,
 
-    /// `r` — the currency's annual official policy rate (1e18 scaled) times the
+    /// `r` — the currency's annual official policy rate (scale `1e6`) times the
     /// policy-rate factor, pinned at opening for the position's life.
     #[attribute(order = 9)]
     pub policy_rate: U256,
 
-    /// `P₀` — COEN price in the position's currency (1e18 oracle scale), quoted
+    /// `P₀` — COEN price in the position's currency (scale `1e6`), quoted
     /// at pledge time and carried in from the pledge ticket.
     #[attribute(order = 10)]
     pub entry_price: U256,

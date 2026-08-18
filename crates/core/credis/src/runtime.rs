@@ -70,7 +70,7 @@ pub struct Void {
     pub interest_written_off: U256,
     pub smart_account: Address,
     pub cca: Address,
-    /// Unpaid share of the original principal, 1e18 scaled. Scales the
+    /// Unpaid share of the original principal, scale `1e6`. Scales the
     /// originating CCA's penalty.
     pub unpaid_share: U256,
     /// Sealed pledger EOA — the caller opens it to key the confidential ledgers.
@@ -115,8 +115,9 @@ impl CredisContract<'_> {
             .and_then(|v| v.checked_mul(U256::from(days)))
             .ok_or(CredisError::ArithmeticOverflow)?;
         // Non-zero by construction: both factors are compile-time constants.
+        // The scale must match `policy_rate`, which the oracle publishes at 1e6.
         let denominator = U256::from(DAYS_PER_YEAR)
-            .checked_mul(SCALE_1E18)
+            .checked_mul(SCALE_1E6_U256)
             .ok_or(CredisError::ArithmeticOverflow)?;
         Ok(numerator.div_ceil(denominator))
     }
@@ -330,8 +331,10 @@ impl CredisContract<'_> {
         let gratis_burned = position.collateral_locked;
         let principal_written_off = position.outstanding;
         let interest_written_off = Self::accrued_interest(&position, now)?;
+        // A dimensionless fraction of the original principal, carried at the
+        // protocol's 1e6 fixed-point scale.
         let unpaid_share = principal_written_off
-            .checked_mul(SCALE_1E18)
+            .checked_mul(SCALE_1E6_U256)
             .ok_or(CredisError::ArithmeticOverflow)?
             / position.principal;
 
