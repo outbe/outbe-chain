@@ -16,7 +16,7 @@ import {
   parseUnits,
 } from "viem";
 import { z } from "zod";
-import { type Ctx, createCtx } from "../chain.js";
+import { type Ctx, createCtx, formatNativeAmount } from "../chain.js";
 import { handler, ok } from "./util.js";
 import {
   DEFAULT_FILL_DEADLINE_SECONDS,
@@ -109,7 +109,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
   }
 
   async function readDecimals(n: Network, token: Address): Promise<number> {
-    if (isNative(token)) return 18;
+    if (isNative(token)) return n.chain.nativeCurrency.decimals;
     try {
       const d = await n.client.readContract({ address: token, abi: ERC20_ABI, functionName: "decimals" });
       return Number(d);
@@ -122,7 +122,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
   async function balanceOf(n: Network, token: Address, account: Address) {
     if (isNative(token)) {
       const bal = await n.client.getBalance({ address: account });
-      return { account, network: n.name, token, balance: { raw: bal.toString(), value: formatUnits(bal, 18) } };
+      return { account, network: n.name, token, balance: { raw: bal.toString(), value: formatNativeAmount(n.chain, bal) } };
     }
     const [decimals, bal] = await Promise.all([
       readDecimals(n, token),
@@ -414,7 +414,7 @@ export function registerIntentTools(server: McpServer, ctx: Ctx): void {
         txHash: hash,
         refundNetwork: destNet.name,
         sameChain,
-        lzFee: { raw: value.toString(), value: formatUnits(value, 18) },
+        lzFee: { raw: value.toString(), value: formatNativeAmount(destNet.chain, value) },
         recipient: bytes32ToAddress(order.sender),
       };
       if (a.wait === false) return ok({ ...meta, status: "submitted" });

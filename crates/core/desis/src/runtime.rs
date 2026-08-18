@@ -7,6 +7,7 @@ use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_primitives::units::SCALE_1E6_U64;
 use outbe_promislimit::PromisLimitContract;
 
 use outbe_intexfactory::schema::IssuanceParams;
@@ -15,8 +16,7 @@ use outbe_intexfactory::SeriesId;
 use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
     DAY_STATE_RED, MAX_REFERENCE_PRICES, MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS,
-    ORIGIN_ROUTER_ADDRESS, RATE_SCALE, REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS,
-    SETTLEMENT_WINDOW_SECONDS,
+    ORIGIN_ROUTER_ADDRESS, REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -898,18 +898,18 @@ fn sort_bids(bids: &mut [(u32, BidData)]) {
 }
 
 /// Escrow amount for `qty` Intexes at `rate` (1e6 fixed-point) against the
-/// per-Intex escrow basis: `qty * basis * rate / RATE_SCALE`, saturating to u128
+/// per-Intex escrow basis: `qty * basis * rate / 1_000_000`, saturating to u128
 /// (large six-decimal WCOEN amounts can exceed u64).
 fn rate_lock(qty: u64, basis: u128, rate: u32) -> u128 {
     let amount = U256::from(qty)
         .saturating_mul(U256::from(basis))
         .saturating_mul(U256::from(rate))
-        / U256::from(RATE_SCALE);
+        / U256::from(SCALE_1E6_U64);
     u128::try_from(amount).unwrap_or(u128::MAX)
 }
 
 /// Uniform-rate clearing: allocate sorted bids until `supply` runs out; the
-/// clearing rate is the last allocated bid's. lock/pay = qty * escrow_basis * rate / RATE_SCALE.
+/// clearing rate is the last allocated bid's. lock/pay uses the shared scale-1e6 denominator.
 fn calculate_clearing(
     bids: &[(u32, BidData)],
     config: &AuctionConfig,
@@ -961,7 +961,7 @@ fn calculate_clearing(
         all_bidders.push(bid.bidder_address);
         bidder_chains.push(*chain_id);
 
-        // locked = quantity * escrow_basis * rate / RATE_SCALE (escrowed at bid time).
+        // locked = quantity * escrow_basis * rate / 1_000_000 (escrowed at bid time).
         let locked = rate_lock(
             u64::from(bid.intex_quantity),
             escrow_basis,

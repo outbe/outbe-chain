@@ -12,12 +12,12 @@ use crate::rpc::Rpc;
 /// base fee, but the begin-zone system txs (and offer decryption) make blocks bursty,
 /// so the base fee can climb several steps before the tx lands — leaving a tx priced
 /// exactly at the read-time base fee rejected as `gas price is less than basefee`.
-/// The chain is ZeroFee, so over-pricing costs the sender nothing; a `2x` headroom
-/// plus a 1-gwei floor (well above observed localnet base fees) keeps txs admittable.
+/// The chain is ZeroFee, so over-pricing costs the sender nothing. A `2x`
+/// headroom plus the protocol's raw `unit/gas` floor keeps txs admittable.
 pub(crate) fn buffered_gas_price(suggested: U256) -> U256 {
     suggested
         .saturating_mul(U256::from(2))
-        .max(U256::from(1_000_000_000u64))
+        .max(U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE))
 }
 
 /// Transaction signer backed by a secp256k1 private key.

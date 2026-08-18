@@ -46,9 +46,8 @@ library BridgeMsgCodec {
     /// @notice Chunks one day's fan-out may span; keeps a receiver's arrival set in one word.
     uint16 internal constant MAX_CHUNKS = 256;
 
-    /// @notice Fixed-point scale for bid/clearing rates (`1e6` = 100%). Shared with the Outbe
-    ///         `RATE_SCALE` and `IntexAuction`; escrow math is `qty * escrowBasis * rate / RATE_SCALE`.
-    uint32 internal constant RATE_SCALE = 1_000_000;
+    /// @notice Numeric fixed-point scale for bid/clearing rates (`1e6` = 100%).
+    uint32 internal constant SCALE_1E6 = 1_000_000;
 
     // --- Minimum encoded lengths ---
     // Header is fixed at 2 bytes: [bodyVersion(1)][msgType(1)].

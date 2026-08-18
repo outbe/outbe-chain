@@ -1509,7 +1509,7 @@ fn clear_refunds_equal_locked_minus_paid() {
         .unwrap();
         mark_done(&s, SRC_CHAIN, 1, 1, 2);
         let result = clear(&s);
-        // escrow basis = promis_load; lock/pay = qty * basis * rate / RATE_SCALE.
+        // escrow basis = promis_load; lock/pay = qty * basis * rate / 1_000_000.
         // Winner (rate 300): paid at clearing 300, refund 0. Loser (rate 200): refund = its lock.
         let w_idx = result
             .all_bidders
@@ -1530,7 +1530,7 @@ fn clear_refunds_equal_locked_minus_paid() {
 
 #[test]
 fn clear_rate_escrow_scales_by_basis() {
-    // escrow basis != RATE_SCALE, so this exercises the * basis / RATE_SCALE.
+    // escrow basis != 1_000_000, so this exercises the scaled division.
     with_storage(|s| {
         open_clearing(&s, 2);
         let rate_bids = vec![

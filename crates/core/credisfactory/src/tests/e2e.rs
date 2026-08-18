@@ -73,13 +73,13 @@ fn chain_b256() -> B256 {
     B256::from(U256::from(CHAIN_ID))
 }
 
-fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
+fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
     outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
     outbe_oracle::api::set_exchange_rate(
         storage.clone(),
         Address::ZERO,
         outbe_oracle::api::DAY_TYPE_PAIR,
-        rate_1e18,
+        coen_iso_rate,
         0,
         0,
     )

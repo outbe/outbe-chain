@@ -19,8 +19,8 @@ pub const STABLECOIN_V1_SUPPORTED_NETWORKS: [&str; 2] = [
 pub const STABLECOIN_V1_MAINNET_STATUS: &str =
     "unsupported-until-chain-id-fresh-genesis-and-release-gates-are-frozen";
 
-/// Exact StablecoinCreate proposal bond: 1,000,000 COEN at 18 decimals.
-pub const STABLECOIN_CREATE_BOND: U256 = uint!(1_000_000_000_000_000_000_000_000_U256);
+/// Exact StablecoinCreate proposal bond: 1,000,000 COEN in six-decimal `unit`.
+pub const STABLECOIN_CREATE_BOND: U256 = uint!(1_000_000_000_000_U256);
 
 /// Public bonded proposals may consume at most one quarter of Vote's 64-slot
 /// global pending index, preserving 48 slots for validator governance.

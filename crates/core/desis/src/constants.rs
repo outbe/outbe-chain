@@ -10,10 +10,6 @@ pub const BID_QUANTITY_FLOOR_BPS: u32 = 400;
 /// PROMIS load: 100k PROMIS per 1 Intex (scale 1e6 PROMIS-units on the wire).
 pub const PROMIS_LOAD: u128 = 100_000;
 
-/// Fixed-point scale for bid rates: 1_000_000 = 100% of the escrow basis. Must match the
-/// target chain (`BridgeMsgCodec` / `IntexAuction`).
-pub const RATE_SCALE: u32 = 1_000_000;
-
 /// Bid fan-in deadline: clearing proceeds without chains that have not reported
 /// BIDS_DONE within this window after the clearing stage starts. A repair window
 /// for parked legs; must stay under 24h so the deadline clear lands the same UTC

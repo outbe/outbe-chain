@@ -215,7 +215,7 @@ STABLECOIN_POLICY_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee10"
 STABLECOIN_ADDRESS_PREFIX = "53c0"
 OUTBE_SYSTEM_TX_ADDRESS = "ff00000000000000000000000000000000000001"
 
-MIN_STAKE = 100_000 * 10**18
+MIN_STAKE = 100_000 * 10**6
 DEFAULT_UNBONDING_PERIOD = 21 * 24 * 3600
 DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS = 151_200
 # ~1 hour at a ~3s block (40 min at 2s … 2.7 h at 8s). The epoch is the cadence
@@ -797,7 +797,7 @@ def seed_gems(storage: StorageBuilder, gems: list):
 def seed_coen(alloc: dict, balances: dict):
     """
     native EVM token alloc layout:
-      alloc[addr].balance: U256 wei
+      alloc[addr].balance: U256 COEN unit
     """
     for addr, amount_str in balances.items():
         amount = parse_int(amount_str)
@@ -1434,15 +1434,15 @@ def seed_oracle(storage: StorageBuilder, config: dict):
             )  # scurve_peak_price
 
     # Reference currencies (slot 55) with their annualized currency rate
-    # (slot 60, mapping(iso_code => rate) 1e18 scaled). Default: USD (840) at the
-    # current SOFR (~4.30 %). The currency rate is read by the Credis Factory
+    # (slot 60, mapping(iso_code => rate), scale 1e6). Default: USD (840) at the
+    # configured USD reference rate (3.63%). The currency rate is read by the Credis Factory
     # at issuance; the live data feed is out of scope (governance-updated).
     # Reference-currency codes are stored as a StorageVec<u16>: length at slot 55,
     # data at keccak256(55) + index. Both slots are verified by the
     # `test_reference_currencies_slot_parity` / `test_reference_currency_rate_slot_parity`
     # tests in `crates/system/oracle/src/tests.rs`; keep these constants in sync
     # with the macro-assigned layout if `OracleContract` field order changes.
-    DEFAULT_USD_CURRENCY_RATE = 36_300_000_000_000_000  # 3.63% at 1e18 scale
+    DEFAULT_USD_CURRENCY_RATE = 36_300  # 3.63% at scale 1e6
     reference_currencies = config.get(
         "reference_currencies",
         [{"iso_code": 840, "currency_rate": DEFAULT_USD_CURRENCY_RATE}],

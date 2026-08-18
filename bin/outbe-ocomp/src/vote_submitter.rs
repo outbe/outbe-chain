@@ -52,7 +52,7 @@ const RPC_TIMEOUT: Duration = Duration::from_secs(10);
 ///
 /// ZeroFee waives the canonical execution debit, but a compromised RPC must
 /// still be unable to induce the supervisor to sign an unbounded fee promise.
-pub const MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS: u128 = 1_000_000_000_000;
+pub const MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS: u128 = MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS * 2;
 
 #[derive(Clone, Debug)]
 pub struct VoteSubmissionConfigV1 {

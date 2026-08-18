@@ -162,8 +162,8 @@ async fn info(client: &(impl Rpc + Sync), address: Address) -> Result<()> {
     let si = fetch_staking_info(client, address).await?;
 
     println!("Validator:    {:?}", address);
-    println!("Stake:        {} COEN", super::format_unit(si.stake));
-    println!("Total Staked: {} COEN", super::format_unit(si.total));
+    println!("Stake:        {} COEN", super::format_coen_amount(si.stake));
+    println!("Total Staked: {} COEN", super::format_coen_amount(si.total));
 
     if !si.total.is_zero() && !si.stake.is_zero() {
         let pct = (si.stake * U256::from(10000)) / si.total;
@@ -218,14 +218,17 @@ async fn stats(client: &(impl Rpc + Sync)) -> Result<()> {
     println!("=== Staking Statistics ===");
     println!(
         "Total Staked:       {} COEN",
-        super::format_unit(ss.total_staked)
+        super::format_coen_amount(ss.total_staked)
     );
     println!("Total Validators:   {}", ss.total_count);
     println!("Active Validators:  {}", ss.active_count);
 
     if ss.active_count > 0 && !ss.total_staked.is_zero() {
         let avg = ss.total_staked / U256::from(ss.active_count);
-        println!("Avg Stake (active): {} COEN", super::format_unit(avg));
+        println!(
+            "Avg Stake (active): {} COEN",
+            super::format_coen_amount(avg)
+        );
     }
 
     Ok(())

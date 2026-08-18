@@ -105,7 +105,7 @@ async fn info(client: &(impl Rpc + Sync)) -> Result<()> {
     println!("Active Validators:  {}", ei.active_count);
     println!(
         "Total Staked:       {} COEN",
-        super::format_unit(ei.total_staked)
+        super::format_coen_amount(ei.total_staked)
     );
     Ok(())
 }

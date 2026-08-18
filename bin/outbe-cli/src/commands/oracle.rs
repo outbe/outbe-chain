@@ -37,6 +37,18 @@ fn show_asset(address: Address) -> String {
     }
 }
 
+fn format_oracle_market_quantity(
+    base: Address,
+    quote: Address,
+    value: alloy_primitives::U256,
+) -> String {
+    match (AssetType::from(base), AssetType::from(quote)) {
+        (AssetType::Native, AssetType::IsoCurrency(_))
+        | (AssetType::IsoCurrency(_), AssetType::Native) => super::format_coen_amount(value),
+        _ => super::format_generic_fp18(value),
+    }
+}
+
 #[derive(Subcommand)]
 pub enum OracleCmd {
     /// Show exchange rate for a pair
@@ -314,7 +326,10 @@ async fn rate(client: &(impl Rpc + Sync), base: Address, quote: Address) -> Resu
     let ret = IOracle::getExchangeRateDataCall::abi_decode_returns(&result)?;
 
     println!("=== Exchange Rate: {base}/{quote} ===");
-    println!("Rate:      {} (1e18)", super::format_unit(ret.rate));
+    println!(
+        "Rate:      {}",
+        format_oracle_market_quantity(base, quote, ret.rate)
+    );
     println!("Block:     {}", ret.lastBlock);
     println!("Timestamp: {}", ret.lastTimestamp);
     Ok(())
@@ -347,7 +362,7 @@ async fn rates(client: &(impl Rpc + Sync)) -> Result<()> {
             "{:<10} {:<10} {:<20} {:<12} {:<12}",
             base,
             quote,
-            super::format_unit(ret.rate),
+            format_oracle_market_quantity(pair.base, pair.quote, ret.rate),
             ret.lastBlock,
             ret.lastTimestamp
         );
@@ -371,7 +386,7 @@ async fn vwap(
     println!(
         "VWAP {base}/{quote} ({}s lookback): {}",
         seconds,
-        super::format_unit(ret)
+        format_oracle_market_quantity(base, quote, ret)
     );
     Ok(())
 }
@@ -393,7 +408,7 @@ async fn vwap_range(
     let ret = IOracle::getVwapForTimeRangeCall::abi_decode_returns(&result)?;
     println!(
         "VWAP {base}/{quote} ({start_time}..{end_time}): {}",
-        super::format_unit(ret)
+        format_oracle_market_quantity(base, quote, ret)
     );
     Ok(())
 }
@@ -414,7 +429,7 @@ async fn twap(
     println!(
         "TWAP {base}/{quote} ({}s lookback): {}",
         seconds,
-        super::format_unit(ret)
+        format_oracle_market_quantity(base, quote, ret)
     );
     Ok(())
 }
@@ -440,7 +455,7 @@ async fn twaps(client: &(impl Rpc + Sync), seconds: u64) -> Result<()> {
             "{:<10} {:<10} {:<20} {:<12}",
             show_asset(*base),
             show_asset(*quote),
-            super::format_unit(*twap),
+            format_oracle_market_quantity(*base, *quote, *twap),
             lookback
         );
     }
@@ -451,7 +466,10 @@ async fn day_vwap(client: &(impl Rpc + Sync), base: Address, quote: Address) -> 
     let call = IOracle::getDayVwapCall { base, quote };
     let result = client.eth_call(ORACLE_ADDR, &call.abi_encode()).await?;
     let ret = IOracle::getDayVwapCall::abi_decode_returns(&result)?;
-    println!("Day VWAP {base}/{quote}: {}", super::format_unit(ret));
+    println!(
+        "Day VWAP {base}/{quote}: {}",
+        format_oracle_market_quantity(base, quote, ret)
+    );
     Ok(())
 }
 
@@ -484,7 +502,7 @@ async fn worldwide_day_vwap(
             "{:<10} {:<10} {:<20} {:<12}",
             show_asset(*base),
             show_asset(*quote),
-            super::format_unit(*vwap),
+            format_oracle_market_quantity(*base, *quote, *vwap),
             lookback
         );
     }
@@ -498,15 +516,18 @@ async fn params(client: &(impl Rpc + Sync)) -> Result<()> {
 
     println!("=== Oracle Parameters ===");
     println!("Vote Period:        {} blocks", ret.votePeriod);
-    println!("Reward Band:        {}", super::format_unit(ret.rewardBand));
+    println!(
+        "Reward Band:        {}",
+        super::format_generic_fp18(ret.rewardBand)
+    );
     println!("Slash Window:       {} blocks", ret.slashWindow);
     println!(
         "Min Valid/Window:   {}",
-        super::format_unit(ret.minValidPerWindow)
+        super::format_generic_fp18(ret.minValidPerWindow)
     );
     println!(
         "Slash Fraction:     {}",
-        super::format_unit(ret.slashFraction)
+        super::format_generic_fp18(ret.slashFraction)
     );
     println!("Lookback Duration:  {}s", ret.lookbackDuration);
     println!("Enabled:            {}", ret.enabled);
@@ -606,8 +627,8 @@ async fn snapshot_history(
         println!(
             "{:<12} {:<20} {:<20}",
             timestamp,
-            super::format_unit(*rate),
-            super::format_unit(*volume)
+            format_oracle_market_quantity(base, quote, *rate),
+            format_oracle_market_quantity(base, quote, *volume)
         );
     }
     Ok(())
@@ -638,8 +659,8 @@ async fn all_snapshot_history(client: &(impl Rpc + Sync), count: u32) -> Result<
             timestamp,
             show_asset(*base),
             show_asset(*quote),
-            super::format_unit(*rate),
-            super::format_unit(*volume)
+            format_oracle_market_quantity(*base, *quote, *rate),
+            format_oracle_market_quantity(*base, *quote, *volume)
         );
     }
     Ok(())
@@ -697,8 +718,8 @@ async fn vote(client: &(impl Rpc + Sync), validator: Address) -> Result<()> {
             "{:<10} {:<10} {:<20} {:<20}",
             show_asset(*base),
             show_asset(*quote),
-            super::format_unit(*rate),
-            super::format_unit(*vol)
+            format_oracle_market_quantity(*base, *quote, *rate),
+            format_oracle_market_quantity(*base, *quote, *vol)
         );
     }
     Ok(())
@@ -720,7 +741,7 @@ async fn scurve(
     let ret = IOracle::getScurveValueCall::abi_decode_returns(&result)?;
     println!(
         "S-curve value {base}/{quote} at {timestamp}: {}",
-        super::format_unit(ret)
+        format_oracle_market_quantity(base, quote, ret)
     );
     Ok(())
 }
@@ -745,8 +766,8 @@ async fn scurve_entries(client: &(impl Rpc + Sync), base: Address, quote: Addres
         println!(
             "{:<12} {:<20} {:<20}",
             peak_day,
-            super::format_unit(*peak_price),
-            super::format_unit(*current_value)
+            format_oracle_market_quantity(base, quote, *peak_price),
+            format_oracle_market_quantity(base, quote, *current_value)
         );
     }
     Ok(())
@@ -778,8 +799,8 @@ async fn scurve_values(
         println!(
             "{:<12} {:<20} {:<20}",
             peak_day,
-            super::format_unit(*peak_price),
-            super::format_unit(*value)
+            format_oracle_market_quantity(base, quote, *peak_price),
+            format_oracle_market_quantity(base, quote, *value)
         );
     }
     Ok(())
@@ -807,7 +828,7 @@ async fn all_scurve(client: &(impl Rpc + Sync)) -> Result<()> {
             show_asset(*base),
             show_asset(*quote),
             peak_day,
-            super::format_unit(*peak_price)
+            format_oracle_market_quantity(*base, *quote, *peak_price)
         );
     }
     Ok(())
@@ -826,7 +847,11 @@ async fn all_scurve_for_pair(
     println!("{:<12} {:<20}", "PeakDay", "PeakPrice");
     println!("{}", "-".repeat(34));
     for (peak_day, peak_price) in ret.peakDays.iter().zip(ret.peakPrices.iter()) {
-        println!("{:<12} {:<20}", peak_day, super::format_unit(*peak_price));
+        println!(
+            "{:<12} {:<20}",
+            peak_day,
+            format_oracle_market_quantity(base, quote, *peak_price)
+        );
     }
     Ok(())
 }
@@ -847,7 +872,7 @@ async fn nominal_price(
     let ret = IOracle::getNominalPriceCall::abi_decode_returns(&result)?;
     println!(
         "Nominal price {base}/{quote} at {timestamp}: {}",
-        super::format_unit(ret)
+        format_oracle_market_quantity(base, quote, ret)
     );
     Ok(())
 }
@@ -868,9 +893,18 @@ async fn nominal_components(
     let ret = IOracle::getNominalPriceComponentsCall::abi_decode_returns(&result)?;
 
     println!("=== Nominal Price Components: {base}/{quote} at {timestamp} ===");
-    println!("Nominal:   {}", super::format_unit(ret.nominalPrice));
-    println!("VWAP:      {}", super::format_unit(ret.vwap));
-    println!("MaxCurve:  {}", super::format_unit(ret.maxScurve));
+    println!(
+        "Nominal:   {}",
+        format_oracle_market_quantity(base, quote, ret.nominalPrice)
+    );
+    println!(
+        "VWAP:      {}",
+        format_oracle_market_quantity(base, quote, ret.vwap)
+    );
+    println!(
+        "MaxCurve:  {}",
+        format_oracle_market_quantity(base, quote, ret.maxScurve)
+    );
     println!("Source:    {}", ret.source);
     Ok(())
 }

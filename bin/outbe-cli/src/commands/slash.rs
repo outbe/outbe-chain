@@ -314,7 +314,7 @@ async fn history(client: &(impl Rpc + Sync), limit: usize) -> Result<()> {
                 block,
                 "EVIDENCE",
                 format_topic_addr(validator),
-                super::format_unit(slashed),
+                super::format_coen_amount(slashed),
                 format_topic_addr(submitter),
             );
         }

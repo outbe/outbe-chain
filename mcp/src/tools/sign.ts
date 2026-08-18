@@ -152,7 +152,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
     "Stake COEN to a validator. Requires OUTBE_PRIVATE_KEY.",
     { validator: addr, amount: coen, wait: z.boolean().optional() },
     handler(({ validator, amount, wait }) =>
-      submit(ctx, "staking", "stake", [validator, parseUnits(amount, 18)], GAS_DEFAULT, wait ?? true),
+      submit(ctx, "staking", "stake", [validator, parseUnits(amount, 6)], GAS_DEFAULT, wait ?? true),
     ),
   );
 
@@ -161,7 +161,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
     "Unstake COEN (starts unbonding). Requires OUTBE_PRIVATE_KEY.",
     { amount: coen, wait: z.boolean().optional() },
     handler(({ amount, wait }) =>
-      submit(ctx, "staking", "unstake", [parseUnits(amount, 18)], GAS_DEFAULT, wait ?? true),
+      submit(ctx, "staking", "unstake", [parseUnits(amount, 6)], GAS_DEFAULT, wait ?? true),
     ),
   );
 
@@ -182,7 +182,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
     "Claim AgentReward balance. amount in COEN. Requires OUTBE_PRIVATE_KEY.",
     { amount: coen, wait: z.boolean().optional() },
     handler(({ amount, wait }) =>
-      submit(ctx, "agentreward", "claimReward", [parseUnits(amount, 18)], GAS_DEFAULT, wait ?? true),
+      submit(ctx, "agentreward", "claimReward", [parseUnits(amount, 6)], GAS_DEFAULT, wait ?? true),
     ),
   );
 
@@ -199,7 +199,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "oracle_vote_submit",
     "Submit oracle exchange-rate votes. `tuples`: [{base, quote, exchangeRate, volume}] with rate/volume as " +
-      "integer minor strings (COEN/ISO uses P6; generic pairs keep their existing scale). " +
+      "integer minor strings (COEN/ISO rates use scale 1e6; generic pairs keep their existing scale). " +
       "Requires OUTBE_PRIVATE_KEY (validator).",
     {
       tuples: z

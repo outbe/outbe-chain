@@ -103,7 +103,9 @@ const OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS: u64 = 120;
 #[cfg(feature = "ocomp-integration")]
 pub(crate) const OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS: u64 = 3_600;
 #[cfg(feature = "ocomp-integration")]
-pub(crate) const OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE: &str = "0.000000000000000006";
+pub(crate) const OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE: &str = "0";
+#[cfg(feature = "ocomp-integration")]
+pub(crate) const OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO: &str = "6";
 #[cfg(feature = "ocomp-integration")]
 const OCOMP_DYNAMIC_FIRST_OFFERING_AFTER_GENESIS_SECS: u64 = 180;
 #[cfg(feature = "ocomp-integration")]
@@ -2961,7 +2963,7 @@ fn schedule_public_measurement_day(
             1,
             genesis_timestamp,
         )?;
-        let day_limit = U256::from(500) * outbe_primitives::units::SCALE_1E18;
+        let day_limit = U256::from(500) * outbe_primitives::units::SCALE_1E6_U256;
         let report = FreshDevnetGenesisBuilder::new()
             .seed_active_worldwide_day(GenesisWorldwideDay {
                 worldwide_day,
@@ -4290,13 +4292,27 @@ mod tests {
             assert_eq!(scurve, U256::ZERO);
             let current_rate = outbe_oracle::api::coen_rate_for(storage, 840).unwrap();
             assert_eq!(current_rate, entry_price * U256::from(2));
-            let scale = U256::from(1_000_000u64);
+            let scale = outbe_primitives::units::SCALE_1E6_U256;
             assert_eq!(day.metadosis_limit_amount, U256::from(500) * scale);
-            let issuance =
-                outbe_tee_enclave::compute::normalize_amount(OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE, "0")
-                    .unwrap();
-            let nominal =
-                outbe_tee_enclave::compute::compute_nominal(issuance, day.current_vwap).unwrap();
+            assert_eq!(OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE, "0");
+            assert_eq!(OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO, "6");
+            let amount_base = U256::from(
+                OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE
+                    .parse::<u64>()
+                    .expect("canonical amount_base"),
+            );
+            let amount_atto = U256::from(
+                OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO
+                    .parse::<u64>()
+                    .expect("canonical amount_atto"),
+            );
+            assert!(amount_atto < scale);
+            let issuance = amount_base
+                .checked_mul(scale)
+                .and_then(|value| value.checked_add(amount_atto))
+                .expect("canonical Tribute amount");
+            assert_eq!(issuance, U256::from(6));
+            let nominal = issuance * scale / day.current_vwap;
             for population in [10_u64, 257] {
                 let total_nominal = nominal * U256::from(population);
                 let allocation = total_nominal * U256::from(32) / U256::from(100);

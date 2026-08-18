@@ -16,7 +16,7 @@ use zeroize::Zeroizing;
 pub fn buffered_gas_price(suggested: U256) -> U256 {
     suggested
         .saturating_mul(U256::from(2))
-        .max(U256::from(1_000_000_000_u64))
+        .max(U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -52,11 +52,8 @@ pub const CALL_WINDOW: u32 = 28 * 24 * 3600;
 /// Call-trigger threshold: how much of the window must be in breach to force-call.
 pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
 
-/// Six-decimal scale used by WCOEN wire/config values in this module.
-pub const WCOEN_UNIT_SCALE: u128 = SCALE_1E6_U128;
-
 /// Commit-entry bond on the target-chain auction: 100M WCOEN in WCOEN-units.
-pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * WCOEN_UNIT_SCALE;
+pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * SCALE_1E6_U128;
 
 /// How old a COEN rate may be and still convert a settlement into the issuance currency.
 /// Seconds, not vote periods: those are counted in blocks and stretch under congestion.

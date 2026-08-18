@@ -30,6 +30,7 @@ use outbe_primitives::{
     consensus_metadata::CertifiedParentAccountingMetadata,
     error::{PrecompileError, Result as OutbeResult},
     hook_events::partition_hook_events,
+    payload::validate_outbe_withdrawals,
     reshare_artifact::{
         decode_outbe_block_artifacts, CompressedEntitiesRootArtifact, ConsensusHeaderArtifact,
         ExecutionSummaryArtifact,
@@ -1636,14 +1637,15 @@ where
     ///
     /// The resulting EIP-7685 requests are retained for [`BlockExecutor::finish`],
     /// which assembles the result without invoking the upstream phase again.
-    fn apply_ethereum_post_execution_before_ocomp_terminal(
-        &mut self,
-    ) -> Result<(), BlockExecutionError> {
+    fn apply_outbe_ethereum_post_execution(&mut self) -> Result<(), BlockExecutionError> {
         if self.ethereum_post_execution_requests.is_some() {
             return Err(BlockExecutionError::msg(
                 "standard Ethereum post-execution changes already applied",
             ));
         }
+
+        validate_outbe_withdrawals(self.inner.ctx.withdrawals.as_deref())
+            .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
 
         let requests = if self
             .inner
@@ -1668,7 +1670,7 @@ where
             self.inner.spec,
             self.inner.evm.block(),
             self.inner.ctx.ommers,
-            self.inner.ctx.withdrawals.as_deref(),
+            None,
         );
 
         if self
@@ -1798,7 +1800,7 @@ where
         // active, so its failure path can retire the WWD Tribute partition as
         // the last CE mutation. The sole committed seal follows the terminal
         // decision.
-        self.apply_ethereum_post_execution_before_ocomp_terminal()?;
+        self.apply_outbe_ethereum_post_execution()?;
         self.preview_compressed_entities()?;
 
         let phase_context = PreloadedSystemTxContext {
@@ -3126,6 +3128,9 @@ where
     type Result = EthTxResult<E::HaltReason, reth_ethereum::TxType>;
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
+        validate_outbe_withdrawals(self.inner.ctx.withdrawals.as_deref())
+            .map_err(|error| BlockExecutionError::msg(error.to_string()))?;
+
         let block_number = self.inner.evm.block().number().saturating_to::<u64>();
         let beneficiary = self.inner.evm.block().beneficiary();
         if self.block_hash.is_some() && block_number > 0 {
@@ -4293,37 +4298,29 @@ where
             current_summary,
         )?;
 
-        // Proposer recording, finalized-parent settlement, slashing, Cycle,
-        // and BoundaryOutcome execute as receipt-visible begin-zone system
-        // transactions in the normal tx loop. In an active OCOMP block,
-        // standard Ethereum post-execution already ran before CE seal and
-        // OSR2, so `finish` must be read-only with respect to state. Calling
-        // `EthBlockExecutor::finish` here would repeat that phase after the
-        // terminal transaction and violate the last-writer invariant.
-        let (evm, result) = if self.ocomp_lifecycle_active {
-            let requests = self
-                .ethereum_post_execution_requests
-                .take()
-                .ok_or_else(|| {
-                    BlockExecutionError::msg(
-                        "active OCOMP block is missing standard Ethereum post-execution output",
-                    )
-                })?;
-            let gas_used = if self.inner.evm.cfg_env().enable_amsterdam_eip8037 {
-                self.inner.max_block_gas_used()
-            } else {
-                self.inner.cumulative_tx_gas_used
-            };
-            let result = BlockExecutionResult {
-                receipts: std::mem::take(&mut self.inner.receipts),
-                requests,
-                gas_used,
-                blob_gas_used: self.inner.blob_gas_used,
-            };
-            (self.inner.evm, result)
+        // OCOMP applies this phase before its terminal request so that the CE
+        // seal remains the final semantic writer. The normal path applies the
+        // same Outbe-owned phase here. Neither path passes withdrawals to the
+        // upstream Ethereum Gwei-to-wei conversion.
+        if !self.ocomp_lifecycle_active {
+            self.apply_outbe_ethereum_post_execution()?;
+        }
+        let requests = self
+            .ethereum_post_execution_requests
+            .take()
+            .ok_or_else(|| BlockExecutionError::msg("missing Outbe post-execution output"))?;
+        let gas_used = if self.inner.evm.cfg_env().enable_amsterdam_eip8037 {
+            self.inner.max_block_gas_used()
         } else {
-            self.inner.finish()?
+            self.inner.cumulative_tx_gas_used
         };
+        let result = BlockExecutionResult {
+            receipts: std::mem::take(&mut self.inner.receipts),
+            requests,
+            gas_used,
+            blob_gas_used: self.inner.blob_gas_used,
+        };
+        let evm = self.inner.evm;
         // Validator/import execution ends before Reth validates receipt and
         // state roots, so it must not publish speculative CE state here. The
         // proposer publishes only after block assembly supplies the final hash;
@@ -4368,7 +4365,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use alloy_consensus::{SignableTransaction as _, Transaction as _, TxEip1559, TxReceipt as _};
-    use alloy_eips::eip2718::Encodable2718;
+    use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718};
     use alloy_evm::{
         eth::{EthBlockExecutionCtx, EthBlockExecutor},
         RecoveredTx as _,
@@ -4682,7 +4679,7 @@ mod tests {
             block_env: BlockEnv {
                 number: U256::from(block_number),
                 gas_limit: outbe_primitives::system_tx::protocol_block_gas_limit(block_number),
-                basefee: 1_000_000_000,
+                basefee: MIN_PROTOCOL_BASE_FEE,
                 beneficiary,
                 timestamp: U256::from(TEST_BLOCK_TIMESTAMP_BASE.saturating_add(block_number)),
                 ..Default::default()
@@ -4838,7 +4835,7 @@ mod tests {
         db.insert_account_info(
             funded,
             AccountInfo {
-                balance: U256::from(1_000_000_000_000_000_000u128),
+                balance: U256::from(1_000_000u64),
                 ..Default::default()
             },
         );
@@ -5314,7 +5311,7 @@ mod tests {
             chain_id: CHAIN_ID,
             nonce: 0,
             gas_limit: 21_000,
-            max_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
             max_priority_fee_per_gas: 0,
             to: TxKind::Call(Address::ZERO),
             value: U256::ZERO,
@@ -5330,7 +5327,7 @@ mod tests {
             chain_id: CHAIN_ID,
             nonce: 0,
             gas_limit: 100_000,
-            max_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
             max_priority_fee_per_gas: 0,
             to: TxKind::Call(OUTBE_SYSTEM_TX_ADDRESS),
             value: U256::ZERO,
@@ -5346,8 +5343,8 @@ mod tests {
             chain_id: CHAIN_ID,
             nonce: 0,
             gas_limit: 21_000,
-            max_fee_per_gas: 2_000_000_000,
-            max_priority_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: (MIN_PROTOCOL_BASE_FEE * 2) as u128,
+            max_priority_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
             to: TxKind::Call(Address::ZERO),
             value: U256::ZERO,
             input: Bytes::new(),
@@ -5363,7 +5360,7 @@ mod tests {
             chain_id: CHAIN_ID,
             nonce: 0,
             gas_limit: 100_000,
-            max_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
             max_priority_fee_per_gas: 0,
             to: TxKind::Call(ORACLE_ADDRESS),
             value: U256::ZERO,
@@ -5395,7 +5392,7 @@ mod tests {
             chain_id: CHAIN_ID,
             nonce: 0,
             gas_limit,
-            max_fee_per_gas: 1_000_000_000,
+            max_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
             max_priority_fee_per_gas: 0,
             to: TxKind::Call(ORACLE_ADDRESS),
             value: U256::ZERO,
@@ -5496,7 +5493,7 @@ mod tests {
         db.insert_account_info(
             recovered.signer(),
             AccountInfo {
-                balance: U256::from(1_000_000_000_000_000_000u128),
+                balance: U256::from(1_000_000u64),
                 ..Default::default()
             },
         );
@@ -5512,7 +5509,7 @@ mod tests {
             block_env: BlockEnv {
                 number: U256::from(1u64),
                 gas_limit: 30_000_000,
-                basefee: 1_000_000_000,
+                basefee: MIN_PROTOCOL_BASE_FEE,
                 beneficiary: REWARDS_ADDRESS,
                 timestamp: U256::from(1u64),
                 ..Default::default()
@@ -5547,7 +5544,7 @@ mod tests {
             tx.max_fee_per_gas(),
             tx.max_priority_fee_per_gas(),
             executor.receipts()[0].cumulative_gas_used,
-            1_000_000_000,
+            u128::from(MIN_PROTOCOL_BASE_FEE),
         );
         assert_eq!(
             executor.current_execution_summary().validator_fee_sum,
@@ -5575,7 +5572,7 @@ mod tests {
         db.insert_account_info(
             oracle_tx.signer(),
             AccountInfo {
-                balance: U256::from(1_000_000_000_000_000_000u128),
+                balance: U256::from(1_000_000u64),
                 ..Default::default()
             },
         );
@@ -5591,7 +5588,7 @@ mod tests {
             block_env: BlockEnv {
                 number: U256::from(1u64),
                 gas_limit: 30_000_000,
-                basefee: 1_000_000_000,
+                basefee: MIN_PROTOCOL_BASE_FEE,
                 beneficiary: OWNER,
                 timestamp: U256::from(1u64),
                 ..Default::default()
@@ -5619,7 +5616,7 @@ mod tests {
         db.insert_account_info(
             reserved_tx.signer(),
             AccountInfo {
-                balance: U256::from(1_000_000_000_000_000_000u128),
+                balance: U256::from(1_000_000u64),
                 ..Default::default()
             },
         );
@@ -5926,11 +5923,8 @@ mod tests {
     }
 
     #[test]
-    fn outbe_post_execution_preserves_non_withdrawal_behavior_and_converts_exact_withdrawals() {
-        use alloy_eips::{
-            eip4895::Withdrawal,
-            eip6110::{DEPOSIT_REQUEST_TYPE, MAINNET_DEPOSIT_CONTRACT_ADDRESS},
-        };
+    fn outbe_post_execution_preserves_behavior_for_absent_or_empty_withdrawals() {
+        use alloy_eips::eip6110::{DEPOSIT_REQUEST_TYPE, MAINNET_DEPOSIT_CONTRACT_ADDRESS};
         use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
 
         const DAO_BALANCE: u128 = 37;
@@ -6045,35 +6039,10 @@ mod tests {
             },
         ];
 
-        let withdrawal_cases = [
-            ("none", None, U256::ZERO),
-            ("empty", Some(Vec::new()), U256::ZERO),
-            (
-                "one-unit",
-                Some(vec![Withdrawal {
-                    index: 0,
-                    validator_index: 0,
-                    address: address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
-                    amount: 1_000,
-                }]),
-                U256::ONE,
-            ),
-            (
-                "one-coen",
-                Some(vec![Withdrawal {
-                    index: 0,
-                    validator_index: 0,
-                    address: address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
-                    amount: 1_000_000_000,
-                }]),
-                U256::from(1_000_000u64),
-            ),
-        ];
+        let withdrawal_cases = [("none", None), ("empty", Some(Vec::new()))];
 
         for case in cases {
-            for (withdrawal_name, withdrawals, expected_withdrawal_balance) in
-                withdrawal_cases.clone()
-            {
+            for (withdrawal_name, withdrawals) in withdrawal_cases.clone() {
                 let run = |ocomp: bool| {
                     let mut state = fixture_state();
                     let config = if ocomp {
@@ -6110,7 +6079,7 @@ mod tests {
                         executor.ocomp_lifecycle_active = true;
                         executor.ocomp_terminal_request_consumed = true;
                         executor
-                            .apply_ethereum_post_execution_before_ocomp_terminal()
+                            .apply_outbe_ethereum_post_execution()
                             .expect("OCOMP post-execution phase succeeds");
                     }
                     let (evm, result) = executor.finish().expect("Outbe result assembly succeeds");
@@ -6154,8 +6123,9 @@ mod tests {
                     case.name
                 );
                 assert_eq!(
-                    ocomp.4, expected_withdrawal_balance,
-                    "{} / {withdrawal_name}: withdrawal credits exact COEN unit",
+                    ocomp.4,
+                    U256::ZERO,
+                    "{} / {withdrawal_name}: absent or empty withdrawals do not credit a balance",
                     case.name,
                 );
                 assert_eq!(
@@ -6303,14 +6273,7 @@ mod tests {
         let evm = config.evm_with_env(&mut state, evm_env);
         let mut ctx =
             execution_ctx_with_tee_bootstrap(Some(5), Bytes::new(), tee_bootstrap.clone());
-        ctx.inner.withdrawals = Some(std::borrow::Cow::Owned(vec![
-            alloy_eips::eip4895::Withdrawal {
-                index: 0,
-                validator_index: 0,
-                address: address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
-                amount: 1_000,
-            },
-        ]));
+        ctx.inner.withdrawals = Some(std::borrow::Cow::Owned(Vec::new()));
         let mut executor = config.create_executor(evm, ctx);
 
         let observed_writes = Arc::new(Mutex::new(Vec::new()));
@@ -9484,7 +9447,7 @@ mod tests {
 
         let proposer = test_evm_signer().address();
         let worldwide_day = WorldwideDay::new(20_241_220);
-        let floor_price_minor = U256::from(500_000_000_000_000_000u128);
+        let floor_price_minor = U256::from(500_000u64);
         let bucket_key = NodContract::bucket_key(worldwide_day, floor_price_minor, 840);
         let seed_state = || {
             let (directory, tree_service) = persistent_test_tree(B256::ZERO);
@@ -9528,7 +9491,7 @@ mod tests {
                         &NodItemState {
                             nod_id: NodContract::generate_nod_id(proposer, worldwide_day).unwrap(),
                             owner: proposer,
-                            gratis_load_minor: U256::from(1_000_000_000_000_000_000u128),
+                            gratis_load_minor: U256::from(1_000_000u64),
                             worldwide_day,
                             league_id: 1,
                             floor_price_minor,
@@ -9539,7 +9502,7 @@ mod tests {
                             issued_at: 1,
                             is_settled: false,
                         },
-                        U256::from(450_000_000_000_000_000u128),
+                        U256::from(450_000_000u64),
                     )
                     .expect("seed compact Nod scheduling state");
                     staged = Some(
@@ -9571,7 +9534,7 @@ mod tests {
                     floor_price_minor,
                     is_qualified: false,
                     total_nods: 1,
-                    entry_price_minor: U256::from(450_000_000_000_000_000u128),
+                    entry_price_minor: U256::from(450_000_000u64),
                     reference_currency: 840,
                 })
                 .expect("seed independent off-chain Nod bucket");
@@ -12604,7 +12567,7 @@ mod tests {
         db.insert_account_info(
             signer,
             AccountInfo {
-                balance: U256::from(10u64.pow(18)),
+                balance: U256::from(2_000_000u64),
                 code_hash: foreign_delegation.hash_slow(),
                 code: Some(foreign_delegation),
                 ..Default::default()
@@ -12624,8 +12587,8 @@ mod tests {
             // small gas) — but because signer's code points to ORACLE,
             // the pre-fee hook leaves it to the normal path. The normal
             // path requires balance to cover `gas_limit * max_fee_per_gas`,
-            // which 1 COEN (1e18 wei) easily covers, so this should
-            // succeed. The key assertion is that NO SponsorshipAuthorized
+            // which 2 COEN (2_000_000 unit) covers at the protocol fee floor,
+            // so this succeeds. The key assertion is that NO SponsorshipAuthorized
             // log is emitted and the counter stays at 0.
             executor
                 .execute_transaction(recovered)
@@ -12655,7 +12618,7 @@ mod tests {
     /// regardless of nonce. EIP-7702 set-code transactions bump the
     /// authority's nonce as part of auth processing (25 k gas per
     /// auth, paid by the sponsor), so a fresh EOA can reach nonce > 0
-    /// without spending any of its own wei. Only positive balance is
+    /// without spending any of its own native balance. Only positive balance is
     /// a real economic gate — the pre-fee hook returns
     /// `FreeTxDailyNoExistingAccount` (code 111) and pushes a
     /// soft-failure receipt.
@@ -12939,8 +12902,8 @@ mod tests {
             chain_id: CHAIN_ID,
             nonce: 0,
             gas_limit: 200_000,
-            max_fee_per_gas: 1_000_000_000,
-            max_priority_fee_per_gas: 1_000_000, // tip > 0 => paying, not sponsored
+            max_fee_per_gas: 14,
+            max_priority_fee_per_gas: 1, // tip > 0 => paying, not sponsored
             to: TxKind::Call(AGENT_REWARD_ADDRESS),
             value: U256::ZERO,
             input: input.into(),
@@ -12955,7 +12918,7 @@ mod tests {
 
         // Delegated to ZEROFEE, funded with 1 COEN so the normal fee
         // path has balance to debit.
-        let initial_balance = U256::from(1_000_000_000_000_000_000u128);
+        let initial_balance = U256::from(3_000_000u64);
         let mut state = State::builder()
             .with_database(cache_db_with_paymaster_account(signer, initial_balance))
             .with_bundle_update()

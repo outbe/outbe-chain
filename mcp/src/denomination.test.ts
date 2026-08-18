@@ -68,6 +68,13 @@ test("BSC chain metadata retains eighteen native decimals", async () => {
   });
 });
 
+test("unknown external EVM chain metadata retains eighteen native decimals", async () => {
+  await withChainIdRpc(42_161, async (rpcUrl) => {
+    const ctx = await createCtx(rpcUrl);
+    assert.deepEqual(ctx.chain.nativeCurrency, { name: "Ether", symbol: "ETH", decimals: 18 });
+  });
+});
+
 test("network-native parsing and formatting follows chain metadata", () => {
   const outbe = { nativeCurrency: { decimals: 6 } } as Chain;
   const bsc = { nativeCurrency: { decimals: 18 } } as Chain;

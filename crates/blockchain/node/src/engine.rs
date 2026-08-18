@@ -3,8 +3,8 @@ use std::sync::Arc;
 use alloy_consensus::BlockHeader as _;
 use alloy_rpc_types_engine::PayloadError;
 use outbe_primitives::{
-    consensus::OUTBE_MAX_EXTRA_DATA_SIZE, OutbeBlock, OutbeExecutionData, OutbeHeader,
-    OutbePayloadAttributes, OutbePayloadTypes, OutbePrimitives,
+    consensus::OUTBE_MAX_EXTRA_DATA_SIZE, payload::validate_outbe_withdrawals, OutbeBlock,
+    OutbeExecutionData, OutbeHeader, OutbePayloadAttributes, OutbePayloadTypes, OutbePrimitives,
 };
 use reth_chainspec::{EthChainSpec, EthereumHardforks, Hardforks};
 use reth_engine_primitives::{EngineApiValidator, PayloadValidator};
@@ -44,6 +44,8 @@ where
         attr: &OutbePayloadAttributes,
         header: &OutbeHeader,
     ) -> Result<(), InvalidPayloadAttributesError> {
+        validate_outbe_withdrawals(attr.inner().withdrawals.as_deref())
+            .map_err(|error| InvalidPayloadAttributesError::InvalidParams(Box::new(error)))?;
         if attr.timestamp_millis() <= header.timestamp_millis() {
             return Err(InvalidPayloadAttributesError::InvalidTimestamp);
         }
@@ -54,6 +56,15 @@ where
         &self,
         payload: OutbeExecutionData,
     ) -> Result<SealedBlock<Self::Block>, NewPayloadError> {
+        validate_outbe_withdrawals(
+            payload
+                .block
+                .body()
+                .withdrawals
+                .as_ref()
+                .map(|withdrawals| withdrawals.0.as_slice()),
+        )
+        .map_err(NewPayloadError::other)?;
         let block = (*payload.block).clone();
         let extra_data = block.header().extra_data();
         if extra_data.len() > OUTBE_MAX_EXTRA_DATA_SIZE {
@@ -74,6 +85,8 @@ where
         version: EngineApiMessageVersion,
         payload_or_attrs: PayloadOrAttributes<'_, OutbeExecutionData, OutbePayloadAttributes>,
     ) -> Result<(), EngineObjectValidationError> {
+        validate_outbe_withdrawals(payload_or_attrs.withdrawals().map(Vec::as_slice))
+            .map_err(EngineObjectValidationError::invalid_params)?;
         validate_version_specific_fields(self.chain_spec(), version, payload_or_attrs)
     }
 
@@ -82,6 +95,8 @@ where
         version: EngineApiMessageVersion,
         attributes: &OutbePayloadAttributes,
     ) -> Result<(), EngineObjectValidationError> {
+        validate_outbe_withdrawals(attributes.inner().withdrawals.as_deref())
+            .map_err(EngineObjectValidationError::invalid_params)?;
         validate_version_specific_fields(
             self.chain_spec(),
             version,

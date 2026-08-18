@@ -1,34 +1,28 @@
 //! Closed-form day emission cap.
 //!
 //! Computes `INITIAL_DAY_EMISSION × exp(-K_SOFT × day_number)` clamped to
-//! `FLOOR_DAY_EMISSION` past `FLOOR_DAY_THRESHOLD`. Uses fixed-point Taylor
-//! expansion (SCALE = 10^18, alternating pos/neg sums in unsigned
-//! U256, saturating subtraction, 32 terms). The legacy per-block
+//! `FLOOR_DAY_EMISSION` past `FLOOR_DAY_THRESHOLD`. Taylor terms are COEN
+//! amounts in six-decimal `unit`, with alternating positive/negative sums in
+//! unsigned U256 and saturating subtraction. The legacy per-block
 //! formula and its precompile view RPC were removed alongside this
 //! day-only entry point.
 //!
 //! No floating point in production OR tests. All comparisons against
 //! reference values are integer-pinned, computed offline once with the
 //! same fixed-point algorithm and committed as literals. Any change to
-//! `K_NUM`/`K_DEN`/`TAYLOR_TERMS`/`SCALE` requires recomputing and
+//! `K_NUM`/`K_DEN`/`TAYLOR_TERMS` requires recomputing and
 //! re-pinning the test expectations.
 
 use alloy_primitives::{uint, U256};
 
-/// Fixed-point scale factor: 10^18 (matches token decimals).
-const SCALE: U256 = uint!(1_000_000_000_000_000_000_U256);
+/// Initial day emission: 2^30 COEN expressed in six-decimal `unit`.
+pub const INITIAL_DAY_EMISSION: U256 = uint!(1_073_741_824_000_000_U256);
 
-/// Initial day emission in base units: 2^30 tokens × 10^18 wei/token.
-/// 2^30 = 1_073_741_824. Product = 1_073_741_824 × 10^18.
-pub const INITIAL_DAY_EMISSION: U256 = uint!(1_073_741_824_000_000_000_000_000_000_U256);
-
-/// Floor day emission in base units: 2^26 tokens × 10^18 wei/token.
-/// 2^26 = 67_108_864. Product = 67_108_864 × 10^18.
-pub const FLOOR_DAY_EMISSION: U256 = uint!(67_108_864_000_000_000_000_000_000_U256);
+/// Floor day emission: 2^26 COEN expressed in six-decimal `unit`.
+pub const FLOOR_DAY_EMISSION: U256 = uint!(67_108_864_000_000_U256);
 
 /// Decay coefficient k_soft = ln(2^4) / 2920 ≈ 9.4952e-4 per day.
-/// Encoded as integer ratio K_NUM / K_DEN. Chosen so that
-/// `K_NUM × max_day × SCALE / K_DEN` fits comfortably in U256.
+/// Encoded as integer ratio K_NUM / K_DEN.
 const K_NUM: U256 = uint!(9_4952_U256);
 const K_DEN: U256 = uint!(100_000_000_U256);
 
@@ -43,25 +37,21 @@ const TAYLOR_TERMS: usize = 32;
 /// Monotonically non-increasing in `day_number`; clamped to `FLOOR_DAY_EMISSION`
 /// for `day_number >= FLOOR_DAY_THRESHOLD`.
 ///
-/// Boundary: `INITIAL_DAY_EMISSION × exp_fp / SCALE` cannot overflow U256 —
-/// `INITIAL_DAY_EMISSION ≈ 1.07e27`, `exp_fp ≤ SCALE = 10^18`, product ≤ 1.07e45,
-/// well below `2^256 ≈ 1.16e77`.
+/// Each recurrence step divides before the next term. At the maximum formula
+/// day, `term × K_NUM × day` remains comfortably within U256.
 pub fn day_emission_limit(day_number: u32) -> U256 {
     if day_number >= FLOOR_DAY_THRESHOLD {
         return FLOOR_DAY_EMISSION;
     }
 
-    // x_fp = (K_NUM × day) / K_DEN, scaled into fixed-point by × SCALE.
-    let n = U256::from(day_number);
-    let x_fp = K_NUM * n * SCALE / K_DEN;
-
-    // Taylor series for exp(-x): 1 - x + x^2/2! - x^3/3! + ...
-    // Track positive and negative sums separately (U256 is unsigned).
-    let mut pos_sum = SCALE; // term 0 = 1.0
+    // Taylor series for INITIAL × exp(-x), directly in COEN `unit`:
+    // INITIAL - INITIAL*x + INITIAL*x^2/2! - ...
+    let day = U256::from(day_number);
+    let mut pos_sum = INITIAL_DAY_EMISSION;
     let mut neg_sum = U256::ZERO;
-    let mut term = SCALE;
+    let mut term = INITIAL_DAY_EMISSION;
     for k in 1..TAYLOR_TERMS {
-        term = term * x_fp / (U256::from(k as u64) * SCALE);
+        term = term * K_NUM * day / (K_DEN * U256::from(k as u64));
         if term.is_zero() {
             break;
         }
@@ -71,9 +61,7 @@ pub fn day_emission_limit(day_number: u32) -> U256 {
             pos_sum += term;
         }
     }
-    let exp_fp = pos_sum.saturating_sub(neg_sum);
-
-    let reward = INITIAL_DAY_EMISSION * exp_fp / SCALE;
+    let reward = pos_sum.saturating_sub(neg_sum);
     if reward < FLOOR_DAY_EMISSION {
         FLOOR_DAY_EMISSION
     } else {

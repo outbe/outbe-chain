@@ -37,8 +37,8 @@
 use alloy_consensus::{BlockHeader as _, Transaction as _};
 use outbe_evm::system_tx::OcompLifecycleActivation;
 use outbe_primitives::{
-    addresses::REWARDS_ADDRESS, OutbeBlock, OutbeBlockBody, OutbeHeader, OutbePrimitives,
-    OutbeReceipt,
+    addresses::REWARDS_ADDRESS, payload::validate_outbe_withdrawals, OutbeBlock, OutbeBlockBody,
+    OutbeHeader, OutbePrimitives, OutbeReceipt,
 };
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_consensus_common::validation::{
@@ -215,6 +215,7 @@ where
         body: &OutbeBlockBody,
         header: &SealedHeader<OutbeHeader>,
     ) -> Result<(), ConsensusError> {
+        validate_outbe_body_withdrawals(body)?;
         validate_system_tx_consensus_boundary_for_activation(
             body,
             header.header(),
@@ -231,6 +232,7 @@ where
         &self,
         block: &SealedBlock<OutbeBlock>,
     ) -> Result<(), ConsensusError> {
+        validate_outbe_body_withdrawals(block.body())?;
         validate_block_transport_size(block)?;
         validate_system_tx_consensus_boundary_for_activation(
             block.body(),
@@ -248,6 +250,7 @@ where
         block: &SealedBlock<OutbeBlock>,
         transaction_root: Option<TransactionRoot>,
     ) -> Result<(), ConsensusError> {
+        validate_outbe_body_withdrawals(block.body())?;
         validate_block_transport_size(block)?;
         validate_system_tx_consensus_boundary_for_activation(
             block.body(),
@@ -260,6 +263,15 @@ where
             transaction_root,
         )
     }
+}
+
+fn validate_outbe_body_withdrawals(body: &OutbeBlockBody) -> Result<(), ConsensusError> {
+    validate_outbe_withdrawals(
+        body.withdrawals
+            .as_ref()
+            .map(|withdrawals| withdrawals.0.as_slice()),
+    )
+    .map_err(|error| consensus_other(error.to_string()))
 }
 
 /// Reject a block whose RLP-encoded size exceeds the consensus P2P transport

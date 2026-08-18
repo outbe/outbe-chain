@@ -27,6 +27,16 @@ fn canonical_amount_base(value: &str) -> std::result::Result<String, String> {
     Ok(value.to_owned())
 }
 
+fn canonical_amount_atto(value: &str) -> std::result::Result<String, String> {
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|_| "amount_atto must be a canonical unsigned u64 below 1000000".to_owned())?;
+    if parsed.to_string() != value || parsed >= 1_000_000 {
+        return Err("amount_atto must be a canonical unsigned u64 below 1000000".to_owned());
+    }
+    Ok(value.to_owned())
+}
+
 #[derive(Subcommand)]
 pub enum TributeCmd {
     /// Show tribute metadata via tokenURI JSON
@@ -65,6 +75,9 @@ pub enum TributeCmd {
         /// Issuance amount in whole units (`amount_base`)
         #[arg(long, default_value = "100", value_parser = canonical_amount_base)]
         amount: String,
+        /// Six-decimal raw remainder (`amount_atto`, 0..999999)
+        #[arg(long, default_value = "0", value_parser = canonical_amount_atto)]
+        amount_atto: String,
         /// ISO 4217 currency code (840 = USD)
         #[arg(long, default_value_t = 840)]
         currency: u16,
@@ -109,6 +122,7 @@ impl TributeCmd {
             Self::Offer {
                 worldwide_day,
                 amount,
+                amount_atto,
                 currency,
                 exclude_from_intex_issuance,
                 zk_merkle_root,
@@ -122,6 +136,7 @@ impl TributeCmd {
                     private_key,
                     worldwide_day,
                     amount,
+                    amount_atto,
                     currency,
                     exclude_from_intex_issuance,
                     &zk_merkle_root,
@@ -264,6 +279,7 @@ async fn offer(
     private_key: Option<&str>,
     worldwide_day: WorldwideDay,
     amount_base: String,
+    amount_atto: String,
     currency: u16,
     exclude_from_intex_issuance: bool,
     zk_merkle_root: &str,
@@ -319,7 +335,7 @@ async fn offer(
         "creator": format!("{creator:?}"),
         "tribute_draft_id": tribute_draft_id,
         "amount_base": amount_base,
-        "amount_atto": "0",
+        "amount_atto": amount_atto,
         "su_hashes": [su_hash],
         "wallet_addresses": [],
         "sra_addresses": [],
@@ -362,7 +378,7 @@ async fn offer(
 
     println!("offerTribute tx: {tx_hash}");
     println!(
-        "  creator={creator:?} worldwide_day={wwd} currency={currency} amount_base={amount_base} exclude_from_intex_issuance={exclude_from_intex_issuance}"
+        "  creator={creator:?} worldwide_day={wwd} currency={currency} amount_base={amount_base} amount_atto={amount_atto} exclude_from_intex_issuance={exclude_from_intex_issuance}"
     );
     println!("Verify once mined: outbe-cli tribute by-owner {creator:?}");
     Ok(())
@@ -492,6 +508,8 @@ mod tests {
     struct CanonicalBaseCases {
         accepted_base: Vec<String>,
         rejected_base: Vec<String>,
+        accepted_atto: Vec<String>,
+        rejected_atto: Vec<String>,
     }
 
     fn canonical_base_cases() -> CanonicalBaseCases {
@@ -625,6 +643,35 @@ mod tests {
                 ])
                 .is_err(),
                 "non-canonical amount_base {noncanonical:?} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn offer_cli_accepts_only_canonical_six_decimal_atto_remainders() {
+        let cases = canonical_base_cases();
+        for canonical in cases.accepted_atto {
+            assert!(TributeHarness::try_parse_from([
+                "tribute",
+                "offer",
+                "20250115",
+                "--amount-atto",
+                &canonical,
+            ])
+            .is_ok());
+        }
+
+        for noncanonical in cases.rejected_atto {
+            assert!(
+                TributeHarness::try_parse_from([
+                    "tribute",
+                    "offer",
+                    "20250115",
+                    "--amount-atto",
+                    &noncanonical,
+                ])
+                .is_err(),
+                "non-canonical amount_atto {noncanonical:?} was accepted"
             );
         }
     }
