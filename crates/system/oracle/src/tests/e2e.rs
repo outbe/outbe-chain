@@ -1240,6 +1240,29 @@ fn get_reference_currencies_precompile_returns_the_seeded_list() {
     });
 }
 
+#[test]
+fn get_currency_rate_precompile_returns_the_raw_six_decimal_annual_rate() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        let config = crate::genesis::OracleGenesisConfig {
+            reference_currencies: vec![ref_cur(840)],
+            ..crate::genesis::OracleGenesisConfig::default_config()
+        };
+        crate::genesis::init_from_genesis(&mut oracle, &config).unwrap();
+        drop(oracle);
+
+        use crate::precompile::IOracle;
+        use alloy_sol_types::SolCall;
+
+        let call = IOracle::getCurrencyRateCall { isoCode: 840 }.abi_encode();
+        let decoded = IOracle::getCurrencyRateCall::abi_decode_returns(
+            &crate::precompile::dispatch(storage, &call, Address::ZERO, U256::ZERO).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(decoded, TEST_RATE);
+    });
+}
+
 // -----------------------------------------------------------------------
 // COEN price lookup (`api::coen_pair_price`)
 // -----------------------------------------------------------------------

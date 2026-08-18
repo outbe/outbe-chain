@@ -55,9 +55,9 @@ pub(super) fn pair_key(base: Address, quote: Address) -> AddressPair {
     AddressPair::from_addresses(base, quote)
 }
 
-/// Test currency rate (4.30 %, 1e18 scaled) used when building
+/// Test currency rate (4.30 %, scale 1e6) used when building
 /// `ReferenceCurrency` genesis entries.
-pub(super) const TEST_RATE: U256 = U256::from_limbs([43_000_000_000_000_000u64, 0, 0, 0]);
+pub(super) const TEST_RATE: U256 = U256::from_limbs([43_000u64, 0, 0, 0]);
 
 /// Builds a `ReferenceCurrency` with the test currency rate.
 pub(super) fn ref_cur(iso_code: u16) -> crate::genesis::ReferenceCurrency {

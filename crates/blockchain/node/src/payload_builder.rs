@@ -770,6 +770,7 @@ mod tests {
         },
         storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag, StorageHandle},
         tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID,
+        units::COEN_ISO_PRICE_SCALE,
     };
     use reth_chainspec::{ChainSpecBuilder, EthereumHardfork, ForkCondition};
     use reth_evm::execute::Executor as _;
@@ -989,16 +990,18 @@ mod tests {
                 ),
                 storage.clone(),
             );
+            // Fork installation validates the required day-type pair, so the
+            // test genesis must register it before installing the profile.
+            outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
+                .expect("oracle pair seed succeeds");
             outbe_metadosis::commands::install_fork_profile(&install_ctx, &install)
                 .expect("fresh-devnet OCOMP profile installs through the production command");
 
-            outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
-                .expect("oracle pair seed succeeds");
             outbe_oracle::api::set_exchange_rate(
                 storage,
                 alloy_primitives::Address::ZERO,
                 outbe_oracle::api::DAY_TYPE_PAIR,
-                U256::from(1_000_000_000_000_000_000u128),
+                COEN_ISO_PRICE_SCALE,
                 0,
                 0,
             )

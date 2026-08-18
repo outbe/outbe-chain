@@ -48,6 +48,14 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
                     self.assertEqual(nod["gratis_load"], "100000")
                     self.assertEqual(nod["floor_price"], "540000")
 
+    def test_default_usd_currency_rate_uses_scale_1e6_in_slot_60(self):
+        storage = seed_genesis.StorageBuilder()
+
+        seed_genesis.seed_oracle(storage, {})
+
+        slot = seed_genesis.mapping_key(seed_genesis.u32_bytes(840), 60)
+        self.assertEqual(storage.entries[slot], seed_genesis.hex32(36_300))
+
     def test_optional_seed_profile_is_copied_to_genesis_config(self):
         genesis = {"config": {"chainId": 1}, "alloc": {}}
         profile = {

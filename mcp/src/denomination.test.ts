@@ -5,6 +5,7 @@ import test from "node:test";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
   type AbiParameter,
+  type AbiFunction,
   type Chain,
   type Hex,
   type PublicClient,
@@ -19,7 +20,7 @@ import {
   formatNativeAmount,
   parseNativeAmount,
 } from "./chain.js";
-import { formatParam } from "./format.js";
+import { formatParam, humanizeReturn } from "./format.js";
 import { humanizeOrder } from "./intent/format.js";
 import { resolveContract } from "./registry.js";
 import { registerSignTools } from "./tools/sign.js";
@@ -87,6 +88,34 @@ test("MCP formats native monetary fields at scale6 and leaves dimensionless FP18
       20_000_000_000_000_000n,
     ),
     { raw: "20000000000000000", value: "0.02" },
+  );
+});
+
+test("MCP formats Credis and Oracle annual rates with six decimals", () => {
+  const position = {
+    name: "position",
+    type: "tuple",
+    internalType: "struct ICredis.Position",
+    components: [{ name: "currencyRate", type: "uint256" }],
+  } as AbiParameter;
+  assert.deepEqual(formatParam(position, { currencyRate: 43_000n }), {
+    currencyRate: { raw: "43000", value: "0.043" },
+  });
+
+  const getCurrencyRate = {
+    type: "function",
+    name: "getCurrencyRate",
+    stateMutability: "view",
+    inputs: [{ name: "isoCode", type: "uint16" }],
+    outputs: [{ name: "rate", type: "uint256" }],
+  } as AbiFunction;
+  assert.deepEqual(humanizeReturn(getCurrencyRate, 43_000n), {
+    rate: { raw: "43000", value: "0.043" },
+  });
+
+  assert.deepEqual(
+    formatParam({ name: "rate", type: "uint256" } as AbiParameter, 43_000_000_000_000_000n),
+    { raw: "43000000000000000", value: "0.043" },
   );
 });
 
