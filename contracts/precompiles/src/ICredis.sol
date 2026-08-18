@@ -2,6 +2,50 @@
 pragma solidity ^0.8.30;
 
 interface ICredis {
+    /// @notice A position opened against a confidential Gratis pledge.
+    /// @param cca The agent that originated the position; it carries the
+    ///        accountability for how the position resolves.
+    event PositionCreated(
+        uint256 indexed positionId,
+        address indexed smartAccount,
+        address indexed cca,
+        uint256 principal,
+        uint256 collateral
+    );
+
+    /// @notice The live price crossed `floorPrice`. This latch is one-way: a
+    ///         later price fall never re-locks the position.
+    event PositionSettleable(uint256 indexed positionId, uint256 floorPrice);
+
+    /// @notice The daily reference price held at or above `callPrice` for the
+    ///         full call streak. Settlement terms are unchanged; the owner has
+    ///         until `settlementDeadline` before the remainder is voided.
+    event PositionCalled(uint256 indexed positionId, uint64 calledAt, uint64 settlementDeadline);
+
+    /// @notice One settlement, applied interest first and principal second.
+    ///         `gratisReleased` went to the original pledger, never to the payer.
+    event SettlementApplied(
+        uint256 indexed positionId,
+        uint256 interestPaid,
+        uint256 principalPaid,
+        uint256 gratisReleased,
+        uint256 outstanding
+    );
+
+    /// @notice Outstanding principal reached zero; all collateral is reclaimed.
+    event PositionSettled(uint256 indexed positionId);
+
+    /// @notice The call window lapsed with principal still outstanding. Only the
+    ///         unpaid share of the collateral is burned; its value is credited to
+    ///         the Promis limit. The written-off amounts are never collected.
+    event PositionVoided(
+        uint256 indexed positionId,
+        address indexed cca,
+        uint256 gratisBurned,
+        uint256 principalWrittenOff,
+        uint256 interestWrittenOff
+    );
+
     /// @notice Lifecycle state of a position, mirroring the Rust `CredisState`.
     ///         `Open -> Settleable -> (Called) -> Settled | Void`.
     enum State {
@@ -46,50 +90,6 @@ interface ICredis {
         /// See {State}.
         uint8 state;
     }
-
-    /// @notice A position opened against a confidential Gratis pledge.
-    /// @param cca The agent that originated the position; it carries the
-    ///        accountability for how the position resolves.
-    event PositionCreated(
-        uint256 indexed positionId,
-        address indexed smartAccount,
-        address indexed cca,
-        uint256 principal,
-        uint256 collateral
-    );
-
-    /// @notice The live price crossed `floorPrice`. This latch is one-way: a
-    ///         later price fall never re-locks the position.
-    event PositionSettleable(uint256 indexed positionId, uint256 floorPrice);
-
-    /// @notice The daily reference price held at or above `callPrice` for the
-    ///         full call streak. Settlement terms are unchanged; the owner has
-    ///         until `settlementDeadline` before the remainder is voided.
-    event PositionCalled(uint256 indexed positionId, uint64 calledAt, uint64 settlementDeadline);
-
-    /// @notice One settlement, applied interest first and principal second.
-    ///         `gratisReleased` went to the original pledger, never to the payer.
-    event SettlementApplied(
-        uint256 indexed positionId,
-        uint256 interestPaid,
-        uint256 principalPaid,
-        uint256 gratisReleased,
-        uint256 outstanding
-    );
-
-    /// @notice Outstanding principal reached zero; all collateral is reclaimed.
-    event PositionSettled(uint256 indexed positionId);
-
-    /// @notice The call window lapsed with principal still outstanding. Only the
-    ///         unpaid share of the collateral is burned; its value is credited to
-    ///         the Promis limit. The written-off amounts are never collected.
-    event PositionVoided(
-        uint256 indexed positionId,
-        address indexed cca,
-        uint256 gratisBurned,
-        uint256 principalWrittenOff,
-        uint256 interestWrittenOff
-    );
 
     function getPosition(uint256 positionId) external view returns (Position memory);
 
