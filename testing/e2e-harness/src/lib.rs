@@ -35,6 +35,7 @@ pub mod world;
 
 mod evidence;
 mod internal;
+mod validator_evidence;
 
 use cucumber::cli;
 use cucumber::writer::Stats;
@@ -163,10 +164,13 @@ pub async fn run() {
             .boxed_local()
         })
         // Tear the localnet down after every scenario (pass or fail) so the
-        // network/enclave containers never outlive the run. Skipped scenarios
-        // build no `World`, so there is nothing to stop.
+        // network/enclave containers never outlive the run. Stop it before the
+        // log audit: a failed boundary can otherwise keep emitting the same
+        // fatal while the audit walks growing files. Skipped scenarios build no
+        // `World`, so there is nothing to stop.
         .after(move |feature, _rule, scenario, event, world| {
             if let Some(world) = world {
+                world.localnet.teardown();
                 let audit = world.localnet.audit_unexpected_logs(
                     world
                         .state
@@ -178,7 +182,6 @@ pub async fn run() {
                 let audit = match audit {
                     Ok(audit) => audit,
                     Err(error) => {
-                        world.localnet.teardown();
                         panic!("E2E log-safety audit could not run: {error:#}");
                     }
                 };
@@ -221,14 +224,11 @@ pub async fn run() {
                     ocomp: &ocomp,
                     ocomp_public: &ocomp_public,
                 }) {
-                    world.localnet.teardown();
                     panic!("E2E evidence write failed: {error:#}");
                 }
                 if let Err(error) = audit.ensure_clean() {
-                    world.localnet.teardown();
                     panic!("E2E log-safety audit failed: {error:#}");
                 }
-                world.localnet.teardown();
             }
             async move {}.boxed_local()
         })
@@ -288,4 +288,65 @@ fn failure_summary(writer: &impl Stats<World>) -> String {
         })
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[cfg(test)]
+mod validator_lifecycle_suite_contract {
+    use std::collections::BTreeSet;
+
+    use cucumber::gherkin::{Feature, GherkinEnv, Scenario};
+
+    const LIFECYCLE_FEATURE: &str =
+        include_str!("../features/validator_lifecycle_consistency.feature");
+
+    fn expanded_examples(scenario: &Scenario) -> usize {
+        if scenario.examples.is_empty() {
+            return 1;
+        }
+        scenario
+            .examples
+            .iter()
+            .map(|examples| {
+                examples
+                    .table
+                    .as_ref()
+                    .map(|table| table.rows.len().saturating_sub(1))
+                    .unwrap_or_default()
+            })
+            .sum()
+    }
+
+    #[test]
+    fn lifecycle_feature_has_exact_public_path_coverage_contract() {
+        let feature =
+            Feature::parse(LIFECYCLE_FEATURE, GherkinEnv::default()).expect("parse lifecycle FSM");
+        let risk_ids = feature
+            .scenarios
+            .iter()
+            .flat_map(|scenario| scenario.tags.iter())
+            .filter(|tag| tag.starts_with("risk-"))
+            .cloned()
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(
+            risk_ids.len(),
+            16,
+            "one scenario group per live checklist ID"
+        );
+        assert!(!LIFECYCLE_FEATURE.contains("@todo"));
+    }
+
+    #[test]
+    fn expected_failure_filter_is_empty() {
+        let feature =
+            Feature::parse(LIFECYCLE_FEATURE, GherkinEnv::default()).expect("parse lifecycle FSM");
+        let selected = feature
+            .scenarios
+            .iter()
+            .filter(|scenario| scenario.tags.iter().any(|tag| tag == "expected-to-fail"))
+            .map(expanded_examples)
+            .sum::<usize>();
+
+        assert_eq!(selected, 0);
+    }
 }

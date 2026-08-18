@@ -338,10 +338,6 @@ mod tests {
                 .ocomp_key_hash_to_validator
                 .write(&key_hash, Address::ZERO)
                 .unwrap();
-            validators
-                .val_join_confirmed
-                .write(&founder, false)
-                .unwrap();
         });
     }
 

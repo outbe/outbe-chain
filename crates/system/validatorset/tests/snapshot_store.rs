@@ -24,7 +24,7 @@ use outbe_validatorset::hooks::{activate_boundary_atomic, BoundaryActivationInpu
 use outbe_validatorset::test_support::activate_validator_via_boundary;
 use outbe_validatorset::{
     clear_committee_snapshot, committee_set_hash_v2, committee_snapshot_key,
-    read_committee_snapshot, read_ocomp_snapshot_extension,
+    read_committee_snapshot, read_committee_snapshot_for_epoch, read_ocomp_snapshot_extension,
     read_ocomp_snapshot_extension_for_binding, read_ocomp_snapshot_member_at, snapshot_identity,
     write_committee_snapshot, CommitteeEntry, CommitteeSnapshot,
 };
@@ -389,8 +389,9 @@ fn shared_test_activation_helper_drives_production_boundary_hook() {
 
         let snapshot_key = activate_validator_via_boundary(&mut vs, validator).unwrap();
 
-        assert_eq!(vs.val_status.read(&validator).unwrap(), 2);
-        assert!(vs.val_has_bls_share.read(&validator).unwrap());
+        let state = vs.validator_state(validator).unwrap();
+        assert!(state.lifecycle().is_active_status());
+        assert!(state.has_bls_share());
         drop(vs);
         assert_eq!(
             read_committee_snapshot(storage.clone(), snapshot_key)
@@ -679,9 +680,11 @@ fn boundary_block_writes_both_outgoing_and_incoming_snapshots_atomically() {
     let incoming_epoch = 10u64;
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_block_number(1);
     StorageHandle::enter(&mut storage, |storage| {
         // Admit OCOMP material for both validators before either one can be
-        // represented by a production committee snapshot.
+        // represented by a production committee snapshot, then recreate the
+        // real outgoing-exit/incoming-join rotation shape.
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner
             .write(address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"))
@@ -689,12 +692,17 @@ fn boundary_block_writes_both_outgoing_and_incoming_snapshots_atomically() {
         vs.set_config_max_validators(10).unwrap();
         admit_ocomp_key(&mut vs, outgoing_addr, &pubkey_filled(0xAA), 0x21);
         admit_ocomp_key(&mut vs, incoming_addr, &pubkey_filled(0xBB), 0x22);
+        vs.activate_validator(outgoing_addr).unwrap();
+        let owner = vs.config_owner.read().unwrap();
+        vs.deactivate_validator(owner, outgoing_addr)
+            .expect("outgoing validator requests exit before freeze");
         drop(vs);
 
         let inputs = BoundaryActivationInputs {
             outgoing: Some((outgoing_epoch, outgoing_snapshot.clone())),
             incoming_epoch,
             incoming: incoming_snapshot.clone(),
+            freeze_height: 1,
             new_active_set: vec![incoming_addr],
             active_set_hash: b256!(
                 "00000000000000000000000000000000000000000000000000000000000000A1"
@@ -724,7 +732,7 @@ fn boundary_block_writes_both_outgoing_and_incoming_snapshots_atomically() {
         // active_consensus_set_hash advanced to the boundary's hash.
         let vs_after = ValidatorSet::new(storage.clone());
         assert_eq!(
-            vs_after.active_consensus_set_hash.read().unwrap(),
+            vs_after.active_consensus_set_hash().unwrap(),
             b256!("00000000000000000000000000000000000000000000000000000000000000A1")
         );
     });
@@ -774,6 +782,7 @@ fn outgoing_epoch_snapshot_remains_available_after_reshare_activation() {
     let incoming_epoch = 18u64;
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_block_number(1);
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner
@@ -783,18 +792,31 @@ fn outgoing_epoch_snapshot_remains_available_after_reshare_activation() {
         admit_ocomp_key(&mut vs, val_a, &pubkey_filled(0x11), 0x31);
         admit_ocomp_key(&mut vs, val_b, &pubkey_filled(0x22), 0x32);
         admit_ocomp_key(&mut vs, val_c, &pubkey_filled(0x33), 0x33);
+        let owner = vs.config_owner.read().unwrap();
+        vs.activate_validator(val_a).unwrap();
+        vs.activate_validator(val_b).unwrap();
+        vs.deactivate_validator(owner, val_a)
+            .expect("val_a requests exit before the first freeze");
         drop(vs);
 
         let inputs = BoundaryActivationInputs {
             outgoing: Some((outgoing_epoch, outgoing_snapshot.clone())),
             incoming_epoch,
             incoming: incoming_snapshot.clone(),
+            freeze_height: 1,
             new_active_set: vec![val_b, val_c],
             active_set_hash: B256::with_last_byte(0xC1),
             tee_expired_target_exclusions: Vec::new(),
         };
         let (out_key, _) =
             activate_boundary_atomic(storage.clone(), &inputs).expect("first activation");
+
+        // val_b is still active after the first rotation. Its exit request is
+        // visible at the next freeze, so the second boundary may exclude it.
+        let mut vs = ValidatorSet::new(storage.clone());
+        vs.deactivate_validator(owner, val_b)
+            .expect("val_b requests exit before the second freeze");
+        drop(vs);
 
         // A second (later) reshare from epoch 18 → 19 that rotates validators.
         let next_outgoing = incoming_snapshot.clone();
@@ -811,6 +833,7 @@ fn outgoing_epoch_snapshot_remains_available_after_reshare_activation() {
             outgoing: Some((incoming_epoch, next_outgoing)),
             incoming_epoch: incoming_epoch + 1,
             incoming: next_incoming,
+            freeze_height: 1,
             new_active_set: vec![val_c],
             active_set_hash: B256::with_last_byte(0xC2),
             tee_expired_target_exclusions: Vec::new(),
@@ -983,12 +1006,11 @@ fn committee_snapshot_slot39_bytes_match_commonware_encode_of_real_polynomial() 
 // 12. Boundary activation rolls back snapshots on artifact rejection.
 //
 // Behavioural test for the AC: drive `activate_boundary_atomic` through the
-// failure path (`activate_reshared_set` rejects because `new_active_set`
-// contains an unregistered validator), then prove that the journal is
-// reverted end-to-end — neither outgoing nor incoming snapshot is reachable,
-// and `active_consensus_set_hash` is unchanged. This turns the previously
-// mechanism-only argument (CheckpointGuard::Drop semantics + exists-last
-// write ordering) into a runtime assertion.
+// fail-closed membership check with an unregistered artifact participant, then
+// prove that the journal is reverted end-to-end — neither outgoing nor incoming
+// snapshot is reachable, and `active_consensus_set_hash` is unchanged. This
+// turns the previously mechanism-only argument (CheckpointGuard::Drop semantics
+// + exists-last write ordering) into a runtime assertion.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1006,10 +1028,16 @@ fn boundary_activation_rolls_back_snapshots_on_failure() {
         vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
     };
     let incoming_snapshot = CommitteeSnapshot {
-        committee: vec![CommitteeEntry {
-            address: unknown_addr,
-            consensus_pubkey: pubkey_filled(0x99),
-        }],
+        committee: vec![
+            CommitteeEntry {
+                address: known_addr,
+                consensus_pubkey: pubkey_filled(0x11),
+            },
+            CommitteeEntry {
+                address: unknown_addr,
+                consensus_pubkey: pubkey_filled(0x99),
+            },
+        ],
         vrf_material_version: 2,
         vrf_group_public_key_bytes: vec![0xBBu8; 96],
         vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
@@ -1021,13 +1049,16 @@ fn boundary_activation_rolls_back_snapshots_on_failure() {
     StorageHandle::enter(&mut storage, |storage| {
         // Admit only the "known" validator. The incoming `new_active_set`
         // intentionally contains `unknown_addr` which is NOT registered, so
-        // `activate_reshared_set` rejects with `PrecompileError::Fatal`.
+        // the validated boundary fails closed before any write commits.
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner
             .write(address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"))
             .unwrap();
         vs.set_config_max_validators(10).unwrap();
         admit_ocomp_key(&mut vs, known_addr, &pubkey_filled(0x11), 0x51);
+        vs.activate_validator(known_addr).unwrap();
+        let before_lifecycle = vs.validator_lifecycle(known_addr).unwrap();
+        let before_active_set_hash = vs.active_consensus_set_hash().unwrap();
         drop(vs);
 
         // Pre-compute the canonical snapshot keys so we can probe them
@@ -1040,16 +1071,18 @@ fn boundary_activation_rolls_back_snapshots_on_failure() {
             outgoing: Some((outgoing_epoch, outgoing_snapshot.clone())),
             incoming_epoch,
             incoming: incoming_snapshot.clone(),
-            new_active_set: vec![unknown_addr],
+            freeze_height: 0,
+            new_active_set: vec![known_addr, unknown_addr],
             active_set_hash: B256::with_last_byte(0xF1),
             tee_expired_target_exclusions: Vec::new(),
         };
 
-        let err = activate_boundary_atomic(storage.clone(), &inputs)
-            .expect_err("activation must reject when new_active_set has an unregistered validator");
+        let err = activate_boundary_atomic(storage.clone(), &inputs).expect_err(
+            "activation must reject an artifact with an unregistered extra participant",
+        );
         let err_msg = format!("{err}");
         assert!(
-            err_msg.contains("certified active set contains unregistered validator"),
+            err_msg.contains("validated boundary participant membership mismatch"),
             "unexpected error kind: {err_msg}",
         );
 
@@ -1073,23 +1106,19 @@ fn boundary_activation_rolls_back_snapshots_on_failure() {
             "incoming snapshot must NOT be reachable after rollback",
         );
 
-        // the validator-set side effects of
-        // `activate_reshared_set` must also be reverted — `active_consensus_set_hash`
-        // stays at its pre-activation value (here B256::ZERO since this is a
-        // fresh state).
+        // ValidatorSet membership/hash state remains byte-for-byte equivalent
+        // to the canonical pre-boundary fixture.
         let vs_after = ValidatorSet::new(storage.clone());
         assert_eq!(
-            vs_after.active_consensus_set_hash.read().unwrap(),
-            B256::ZERO,
+            vs_after.active_consensus_set_hash().unwrap(),
+            before_active_set_hash,
             "active_consensus_set_hash must remain unchanged on rollback",
         );
 
-        // And the previously-existing validator's status is unchanged.
-        let known_status = vs_after.val_status.read(&known_addr).unwrap();
         assert_eq!(
-            known_status,
-            outbe_validatorset::runtime::status::PENDING,
-            "pre-existing validator status must not be affected by the failed activation",
+            vs_after.validator_lifecycle(known_addr).unwrap(),
+            before_lifecycle,
+            "pre-existing validator lifecycle must not be affected by the failed activation",
         );
     });
 }
@@ -1158,5 +1187,46 @@ fn committee_snapshot_prune_ring_retains_recent_and_clears_old_epochs() {
             assert!(read.is_some(), "epoch {epoch} snapshot must be retained");
             assert_eq!(read.unwrap().committee.len(), 1, "epoch {epoch} intact");
         }
+    });
+}
+
+#[test]
+fn committee_snapshot_epoch_lookup_rejects_a_newer_colliding_ring_entry() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        let validator = address!("0x0000000000000000000000000000000000000001");
+        let consensus_pubkey = pubkey_filled(0x11);
+        let mut vs = ValidatorSet::new(storage.clone());
+        vs.config_owner.write(Address::ZERO).unwrap();
+        vs.set_config_max_validators(128).unwrap();
+        admit_ocomp_key(&mut vs, validator, &consensus_pubkey, 0x61);
+        drop(vs);
+
+        let snapshot = CommitteeSnapshot {
+            committee: vec![CommitteeEntry {
+                address: validator,
+                consensus_pubkey,
+            }],
+            vrf_material_version: 0,
+            vrf_group_public_key_bytes: vec![0x22u8; 96],
+            vrf_public_polynomial_hash: B256::ZERO,
+        };
+        let retained_epoch = 7;
+        let colliding_epoch = retained_epoch + outbe_validatorset::COMMITTEE_SNAPSHOT_RETAIN_EPOCHS;
+
+        write_committee_snapshot(storage.clone(), retained_epoch, &snapshot).unwrap();
+        write_committee_snapshot(storage.clone(), colliding_epoch, &snapshot).unwrap();
+
+        assert!(
+            read_committee_snapshot_for_epoch(storage.clone(), retained_epoch)
+                .unwrap()
+                .is_none(),
+            "an evicted epoch must not resolve to the newer snapshot in the same ring slot"
+        );
+        assert_eq!(
+            read_committee_snapshot_for_epoch(storage.clone(), colliding_epoch).unwrap(),
+            Some(snapshot),
+            "the actual retained epoch must remain readable"
+        );
     });
 }

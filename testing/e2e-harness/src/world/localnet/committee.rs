@@ -479,14 +479,17 @@ impl Localnet {
 
     /// The genesis chain id as `0x`-padded 64-hex (enclave seal `--chain-id`).
     pub(super) fn chain_id_hex(&self) -> Result<String> {
+        Ok(format!("0x{:064x}", self.chain_id()?))
+    }
+
+    /// The chain ID from the immutable localnet genesis configuration.
+    pub(super) fn chain_id(&self) -> Result<u64> {
         let g: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(self.cfg.dir.join("genesis.json"))?)?;
-        let id = g
-            .get("config")
+        g.get("config")
             .and_then(|c| c.get("chainId"))
             .and_then(|x| x.as_u64())
-            .ok_or_else(|| eyre::eyre!("no chainId in genesis.json"))?;
-        Ok(format!("0x{id:064x}"))
+            .ok_or_else(|| eyre::eyre!("no chainId in genesis.json"))
     }
 
     /// Resolve the real (non-mock) enclave binary from the build tree.

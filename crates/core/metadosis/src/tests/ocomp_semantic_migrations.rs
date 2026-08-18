@@ -13,7 +13,9 @@ use outbe_primitives::{
 };
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
-use outbe_validatorset::{contract::ValidatorSet, runtime::status as validator_status};
+use outbe_validatorset::{
+    contract::ValidatorSet, runtime::status as validator_status, ValidatorHistory,
+};
 
 use crate::{
     fixture_kernel::{
@@ -80,6 +82,61 @@ fn close_completed_response_window(
         );
         crate::commands::run_ocomp_lifecycle_begin(&ctx)
     })
+}
+
+fn transition_validator_to_status_for_test(
+    validators: &mut ValidatorSet<'_>,
+    validator: Address,
+    target_status: u8,
+    freeze_height: u64,
+) {
+    let survivors: Vec<_> = validators
+        .get_active_consensus_set()
+        .unwrap()
+        .into_iter()
+        .map(|record| record.validator_address)
+        .filter(|address| *address != validator)
+        .collect();
+    let boundary_hash = B256::with_last_byte(target_status.saturating_add(1));
+
+    match target_status {
+        validator_status::REGISTERED => {
+            let record = validators.get_validator(validator).unwrap().unwrap();
+            let owner = validators.config_owner.read().unwrap();
+            validators.deactivate_validator(owner, validator).unwrap();
+            validators
+                .test_activate_validated_boundary_set(&survivors, boundary_hash, freeze_height)
+                .unwrap();
+            validators.complete_unbonding(validator).unwrap();
+            validators
+                .register_validator(owner, validator, &record.consensus_pubkey)
+                .unwrap();
+        }
+        validator_status::PENDING => validators
+            .test_activate_validated_boundary_set_with_expiry_exclusions(
+                &survivors,
+                boundary_hash,
+                freeze_height,
+                &[validator],
+            )
+            .unwrap(),
+        validator_status::EXITING => {
+            let owner = validators.config_owner.read().unwrap();
+            validators.deactivate_validator(owner, validator).unwrap();
+        }
+        validator_status::UNBONDING | validator_status::INACTIVE => {
+            let owner = validators.config_owner.read().unwrap();
+            validators.deactivate_validator(owner, validator).unwrap();
+            validators
+                .test_activate_validated_boundary_set(&survivors, boundary_hash, freeze_height)
+                .unwrap();
+            if target_status == validator_status::INACTIVE {
+                validators.complete_unbonding(validator).unwrap();
+            }
+        }
+        validator_status::JAILED => validators.jail_validator(validator).unwrap(),
+        other => panic!("unsupported fixture target status {other}"),
+    }
 }
 
 #[test]
@@ -373,13 +430,14 @@ fn deadline_records_missing_pending_validator_without_mutating_or_fatal() {
     StorageHandle::enter(&mut fixture.provider, |storage| {
         let mut validators = ValidatorSet::new(storage);
         validators
-            .activate_reshared_set_with_expiry_exclusions(
+            .test_activate_validated_boundary_set_with_expiry_exclusions(
                 &[
                     Address::repeat_byte(0xB1),
                     Address::repeat_byte(0xB2),
                     Address::repeat_byte(0xB3),
                 ],
                 B256::repeat_byte(0x51),
+                finalized.deadline_height - 1,
                 &[Address::repeat_byte(0xB0)],
             )
             .unwrap();
@@ -438,12 +496,28 @@ fn deadline_keeps_every_non_active_missing_status_unchanged() {
             .provider
             .set_block_number(finalized.deadline_height - 1);
         StorageHandle::enter(&mut fixture.provider, |storage| {
-            let validators = ValidatorSet::new(storage);
+            let mut validators = ValidatorSet::new(storage);
+            transition_validator_to_status_for_test(
+                &mut validators,
+                missing,
+                current_status,
+                finalized.deadline_height - 1,
+            );
+            let transitioned = validators.get_validator(missing).unwrap().unwrap();
             validators
-                .val_status
-                .write(&missing, current_status)
+                .test_set_history(
+                    missing,
+                    ValidatorHistory::new(
+                        transitioned.joined_at_height,
+                        (transitioned.deactivated_at_height != 0)
+                            .then_some(transitioned.deactivated_at_height),
+                        7,
+                        transitioned.missed_blocks,
+                        transitioned.missed_votes,
+                        transitioned.blocks_proposed,
+                    ),
+                )
                 .unwrap();
-            validators.val_slash_count.write(&missing, 7).unwrap();
         });
 
         close_completed_response_window(&mut fixture, finalized.deadline_height).unwrap();
@@ -483,10 +557,12 @@ fn deadline_records_missing_removed_validator_without_fatal() {
         .set_block_number(finalized.deadline_height - 1);
     StorageHandle::enter(&mut fixture.provider, |storage| {
         let mut validators = ValidatorSet::new(storage);
-        validators
-            .val_status
-            .write(&removed, validator_status::INACTIVE)
-            .unwrap();
+        transition_validator_to_status_for_test(
+            &mut validators,
+            removed,
+            validator_status::INACTIVE,
+            finalized.deadline_height - 1,
+        );
         assert_eq!(validators.cleanup_inactive_validators(1).unwrap(), 1);
         assert!(validators.get_validator(removed).unwrap().is_none());
     });
@@ -822,14 +898,14 @@ fn historical_vote_participant_resolution_does_not_consult_current_active_status
     let historical_validator = Address::repeat_byte(0xB1);
 
     StorageHandle::enter(&mut fixture.provider, |storage| {
-        let validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        validators
-            .val_status
-            .write(
-                &historical_validator,
-                outbe_validatorset::logic::status::INACTIVE,
-            )
-            .unwrap();
+        let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        let freeze_height = storage.block_number().unwrap();
+        transition_validator_to_status_for_test(
+            &mut validators,
+            historical_validator,
+            validator_status::INACTIVE,
+            freeze_height,
+        );
 
         assert_eq!(
             crate::ocomp::vote::resolve_historical_result_vote_participant(

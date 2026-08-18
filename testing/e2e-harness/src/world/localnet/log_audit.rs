@@ -316,6 +316,27 @@ fn collect_logs(dir: &Path, logs: &mut Vec<PathBuf>) -> Result<()> {
     Ok(())
 }
 
+pub(super) fn first_runtime_log_line_containing(
+    root: &Path,
+    needle: &str,
+) -> Result<Option<String>> {
+    let mut logs = Vec::new();
+    collect_logs(root, &mut logs)?;
+    logs.sort();
+    for path in logs {
+        let content = fs::read_to_string(&path)
+            .wrap_err_with(|| format!("read E2E log {}", path.display()))?;
+        if let Some((index, line)) = content
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains(needle))
+        {
+            return Ok(Some(format!("{}:{}: {}", path.display(), index + 1, line)));
+        }
+    }
+    Ok(None)
+}
+
 fn is_runtime_log(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())

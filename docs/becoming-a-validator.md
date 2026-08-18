@@ -189,8 +189,10 @@ artifacts.
 
 ```sh
 # register the validator (binds your address to your BLS pubkey) -> REGISTERED
+CHAIN_ID=$(cast chain-id --rpc-url http://<rpc>:8545)
 SIG=$(outbe-keygen sign-registration --key /var/lib/outbe/keys/signing-key.hex \
-        --validator-address "$VALIDATOR_ADDR" | grep -oE '[0-9a-f]{120,}' | head -1)
+        --validator-address "$VALIDATOR_ADDR" --chain-id "$CHAIN_ID" \
+        | grep -oE '[0-9a-f]{120,}' | head -1)
 outbe-cli validator register --pubkey "0x$BLS_PUBKEY" --bls-sig "0x$SIG" \
   --private-key "$EVM_KEY" --rpc-url http://<rpc>:8545
 
