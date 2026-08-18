@@ -30,12 +30,12 @@ pub(super) const USDC: Address = address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce360
 pub(super) const ETH: Address = address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 pub(super) const BTC: Address = address!("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599");
 
-/// Canonical COEN/840 price and COEN volume scale after the denomination cutover.
-pub(super) const COEN840_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
+/// Canonical COEN/ISO price and COEN volume scale after the denomination cutover.
+pub(super) const COEN_ISO_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 
-/// Builds a whole COEN/840 price or COEN volume in its canonical six-decimal scale.
-pub(super) fn coen840(whole: u64) -> U256 {
-    U256::from(whole) * COEN840_SCALE
+/// Builds a whole COEN/ISO price or COEN volume in its canonical six-decimal scale.
+pub(super) fn coen_iso(whole: u64) -> U256 {
+    U256::from(whole) * COEN_ISO_SCALE
 }
 
 /// Builds a whole value for an existing generic decimal18 fixture. This does
@@ -86,7 +86,7 @@ pub(super) fn seed_ocomp_oracle_with_snapshot(provider: &mut HashMapStorageProvi
         OracleContract::new(storage)
             .write_snapshot(
                 ATOMIC_DAY_START + 100,
-                &[(pair_key(COEN, usd()), coen840(125), coen840(2))],
+                &[(pair_key(COEN, usd()), coen_iso(125), coen_iso(2))],
             )
             .unwrap();
     });
@@ -99,7 +99,7 @@ pub(super) fn seed_ocomp_oracle_with_scurve(provider: &mut HashMapStorageProvide
             &mut OracleContract::new(storage),
             pair_key(COEN, usd()),
             ATOMIC_DAY_START,
-            coen840(125),
+            coen_iso(125),
         )
         .unwrap();
     });
@@ -125,7 +125,7 @@ pub(super) fn seed_oracle_with_peak_history(
             oracle
                 .write_snapshot(
                     day + 100,
-                    &[(pair_key(COEN, usd()), coen840(price), coen840(2))],
+                    &[(pair_key(COEN, usd()), coen_iso(price), coen_iso(2))],
                 )
                 .unwrap();
         }
@@ -147,7 +147,7 @@ pub(super) fn seed_prefork_oracle_with_snapshot(provider: &mut HashMapStoragePro
         oracle
             .write_snapshot(
                 ATOMIC_DAY_START + 100,
-                &[(pair_key(COEN, usd()), coen840(125), coen840(2))],
+                &[(pair_key(COEN, usd()), coen_iso(125), coen_iso(2))],
             )
             .unwrap();
     });
@@ -156,7 +156,7 @@ pub(super) fn seed_prefork_oracle_with_snapshot(provider: &mut HashMapStoragePro
 pub(super) fn write_snapshot_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
     OracleContract::new(storage).write_snapshot(
         ATOMIC_DAY_START + 100,
-        &[(pair_key(COEN, usd()), coen840(125), coen840(2))],
+        &[(pair_key(COEN, usd()), coen_iso(125), coen_iso(2))],
     )
 }
 
@@ -180,7 +180,7 @@ pub(super) fn store_scurve_mutation(storage: StorageHandle<'_>) -> PrecompileRes
         &mut OracleContract::new(storage),
         pair_key(COEN, usd()),
         ATOMIC_DAY_START,
-        coen840(125),
+        coen_iso(125),
     )
 }
 

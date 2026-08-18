@@ -242,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn nominal_division_uses_the_coen840_six_decimal_scale() {
+    fn nominal_division_uses_the_coen_iso_six_decimal_scale() {
         // amount=100 COEN, price=2.0 -> 50 COEN, all expressed as raw units.
         let amount = U256::from(100u64) * UNITS_PER_COEN;
         let price = U256::from(2u64) * UNITS_PER_COEN;

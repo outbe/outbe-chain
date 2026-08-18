@@ -81,6 +81,7 @@ mod tests {
 
         assert_eq!(ONE_UNIT, U256::ONE);
         assert_eq!(ONE_COEN, one_coen);
+        assert_eq!(COEN_ISO_PRICE_SCALE, one_coen);
         assert_eq!(NATIVE_TOKEN_DECIMALS, 6);
         assert_eq!(
             U256::in_units(U256::from(2u64)),

@@ -1,4 +1,6 @@
 # Frozen against commit 4ddc0e3b on 2026-08-18, before any P1-P5 production change.
+# Amended after user correction: every stablecoin-backed COEN/ISO market is P6;
+# S-Curve/day-type remains specific to COEN/840.
 # Columns are normative. expected_new_behavior is frozen after this checkpoint.
 # Full suites executed: Rust T1-T5 packages with --no-fail-fast; contracts/tokens forge test; contracts/intex forge test; MCP npm test; Python Tribute/genesis tests; Lysis/Fidelity/Emission references; E2E harness with ocomp-integration.
 # Independent references already GREEN: emission vectors, Fidelity golden, Lysis reference corpus generation, Rust compilation, MCP typecheck.
@@ -29,20 +31,25 @@ T1	contracts/intex::IntexAuctionBondTest.setUp	auction stack accepts the 6-decim
 T1	contracts/intex::TargetRouterInboundHandlersTest.setUp	target router stack accepts the 6-decimal WCOEN fixture	setUp reverts PaymentTokenDecimals(6)	contracts/intex/src/EscrowAdapter.sol	P4
 T1	contracts/intex::TargetRouterRefundChunksTest.test_TheRealEscrowSettlesEveryChunkOfADay	refund chunks settle through 6-decimal WCOEN	wire reverts PaymentTokenDecimals(6)	contracts/intex/src/EscrowAdapter.sol	P4
 T1	contracts/intex::UpgradeDrillTest.test_Drill_EscrowAdapter	upgrade drill wires 6-decimal WCOEN	wire reverts PaymentTokenDecimals(6)	contracts/intex/src/EscrowAdapter.sol	P4
-T2	outbe-feeder::aggregator::tests::test_coen840_rejects_positive_price_below_one_price_unit	positive price below 0.000001 is rejected	0.0000004 is accepted after scale18 normalization	bin/outbe-feeder/src/aggregator.rs	P2
-T2	outbe-feeder::aggregator::tests::test_coen840_clamps_positive_subunit_volume_to_one_unit	positive subunit volume becomes 1 unit and price is scale6	price/volume normalization still emits scale18	bin/outbe-feeder/src/aggregator.rs	P2
-T2	outbe-feeder::aggregator::tests::test_coen840_preserves_real_zero_volume	real zero volume remains zero with scale6 price	price remains 1000000000000000000 instead of 1000000	bin/outbe-feeder/src/aggregator.rs	P2
+T2	outbe-feeder::aggregator::tests::test_coen_iso_rejects_positive_price_below_one_price_unit	positive price below 0.000001 is rejected	0.0000004 is accepted after scale18 normalization	bin/outbe-feeder/src/aggregator.rs	P2
+T2	outbe-feeder::aggregator::tests::test_coen_iso_clamps_positive_subunit_volume_to_one_unit	positive subunit volume becomes 1 unit and price is scale6	price/volume normalization still emits scale18	bin/outbe-feeder/src/aggregator.rs	P2
+T2	outbe-feeder::aggregator::tests::test_coen_iso_preserves_real_zero_volume	real zero volume remains zero with scale6 price	price remains 1000000000000000000 instead of 1000000	bin/outbe-feeder/src/aggregator.rs	P2
+T2	outbe-feeder::aggregator::tests::test_every_coen_iso_market_uses_six_decimal_price_and_volume	COEN/978 price and volume are emitted at scale6	COEN/978 falls through to generic scale18 normalization	bin/outbe-feeder/src/aggregator.rs	P2
 T2	outbe-feeder::aggregator::tests::test_feeder_provider_routing_filters_per_pair	COEN/840 routed ticker is 1000000	COEN/840 routed ticker is 1000000000000000000	bin/outbe-feeder/src/aggregator.rs	P2
 T2	outbe-gem::tests::coen840_one_maps_to_the_center_price_bin_at_six_decimals	1000000 maps to center bin 8388608	old FP18 entry maps 1000000 to bin 8377542	price-bin adapter owned by primitives and GEM call site	P1/P3
 T2	outbe-nod::adr006_tests::coen840_one_maps_to_the_center_price_bin_at_six_decimals	1000000 maps to center bin 8388608	old FP18 entry maps 1000000 to bin 8377542	price-bin adapter owned by primitives and NOD call site	P1/P3
-T2	outbe-intexfactory::tests::coen840_one_maps_to_the_center_price_bin_at_six_decimals	1000000 maps to center bin 8388608	old FP18 entry maps 1000000 to bin 8377542	price-bin adapter owned by primitives and IntexFactory call site	P1/P4
-T2	outbe-intexfactory::tests::coen840_wire_price_preserves_the_six_decimal_integer	wire price preserves 1234567	old 1e9 divisor reduces it to 0	crates/core/intexfactory	P4
+T2	outbe-intexfactory::tests::coen_iso_one_maps_to_the_center_price_bin_at_six_decimals	1000000 maps to center bin 8388608	old FP18 entry maps 1000000 to bin 8377542	price-bin adapter owned by primitives and IntexFactory call site	P1/P4
+T2	outbe-intexfactory::tests::coen_iso_wire_price_preserves_the_six_decimal_integer	wire price preserves 1234567	old 1e9 divisor reduces it to 0	crates/core/intexfactory	P4
 T2	outbe-oracle::scurve::tests::coen840_coefficients_and_products_match_reference_vector	128 coefficients and products match scale6 vector	coefficient[0] is 1000000000000000000 instead of 1000000	crates/system/oracle/src/scurve.rs	P2
 T2	outbe-oracle::scurve::tests::test_coefficients_boundary_values	S-Curve boundary coefficient is 1000000	boundary coefficient is 1000000000000000000	crates/system/oracle/src/scurve.rs	P2
 T2	outbe-oracle::tests::e2e::precompile_dispatch_round_trips_an_exchange_rate	reciprocal is scale6 integer 8130	reciprocal is scale18-domain 8130081300813008130081300813	crates/system/oracle	P2
 T2	outbe-oracle::tests::e2e::init_from_genesis_imports_every_custom_config_collection	scale6 COEN/840 genesis pairs and collections initialize	old pair/scale path returns No rate for pair	crates/system/oracle/src/genesis.rs	P2
 T2	outbe-oracle::tests::state::an_unpublished_rate_reads_as_zero_from_either_side	unpublished configured pair reads zero from both sides	old pair path returns No rate for pair	crates/system/oracle/src/state.rs	P2
-T2	outbe-oracle::tests::state::calculate_vwap_uses_the_six_decimal_sentinel_for_zero_volume_coen840	zero-volume sentinel is 1000000 and calculation is bounded	old 1000000000000000000 sentinel causes rate*volume overflow	crates/system/oracle/src/state.rs	P2
+T2	outbe-oracle::constants::tests::every_coen_iso_market_uses_six_decimal_reciprocal_and_zero_volume_scales	COEN/840 and COEN/978 both select scale6	COEN/978 selects generic scale18	crates/system/oracle/src/constants.rs	P2
+T2	outbe-oracle::tests::state::every_coen_iso_backwards_quote_uses_the_six_decimal_reciprocal	COEN/840 and COEN/978 reciprocals both use scale6	COEN/978 reciprocal uses generic scale18	crates/system/oracle/src/state.rs	P2
+T2	outbe-oracle::tests::state::calculate_vwap_uses_the_six_decimal_sentinel_for_zero_volume_coen_iso	zero-volume sentinel is 1000000 for COEN/840 and COEN/978	COEN/978 uses 1000000000000000000 and overflows	crates/system/oracle/src/state.rs	P2
+T2	outbe-oracle::tests::e2e::coen_pair_price_reads_the_matching_coen_pair	COEN/978 VWAP is stored and returned at scale6	COEN/978 still requires scale18 input	crates/system/oracle/src/state.rs	P2
+T2	outbe-oracle::ocomp_openings::oracle_opening_plan_reads_the_exact_raw_slots_used_by_runtime_semantics	COEN/978 opening VWAP is scale6 and only COEN/840 has S-Curve	COEN/978 fixture uses FP18 and an unsupported S-Curve entry	crates/system/oracle/tests/ocomp_openings.rs	P2
 T2	outbe-oracle::tests::state::require_pair_rejects_a_pair_quoted_in_the_wrong_direction	configured COEN/840 direction remains readable and wrong direction rejects	old direction lookup rejects the expected readable side	crates/system/oracle/src/state.rs	P2
 T2	outbe-oracle::tests::state::remove_excess_feeds_clears_only_the_deactivated_pairs_rate	deactivation clears only the intended scale6 pair	old pair path returns No rate for pair	crates/system/oracle/src/state.rs	P2
 T2	contracts/intex::IntexNFT1155MetadataTest.test_svg_FormatsHumanValues	entry price renders from 6 decimals	old 18-decimal metadata formatting produces wrong entry price	contracts/intex/src/IntexMetadata.sol	P4
@@ -55,7 +62,7 @@ T3	scripts.tests.test_tribute_payloads::scripts/tributefactory/offer_tribute.py	
 T3	mcp::crypto.test.ts::tribute payload rejects non-canonical unsigned u64 base values	MCP rejects empty, signed, padded, decimal and overflow base	empty amount_base is accepted	mcp/src/crypto.ts	P3
 T3	outbe-tee-enclave::compute::tests::normalize_canonical_base_and_atto_to_six_decimal_units	1 base plus 500000 atto becomes 1500000 unit	old normalization returns 1000000000000500000	bin/outbe-tee-enclave/src/compute.rs	P3
 T3	outbe-tee-enclave::compute::tests::normalize_rejects_noncanonical_base_in_both_amount_fields	both fields share canonical unsigned parsing	padded amount_base 01 is accepted	bin/outbe-tee-enclave/src/compute.rs	P3
-T3	outbe-tee-enclave::compute::tests::nominal_division_uses_the_coen840_six_decimal_scale	nominal result is 50000000	old 1e18 denominator path returns 50000000000000000000	bin/outbe-tee-enclave/src/compute.rs	P3
+T3	outbe-tee-enclave::compute::tests::nominal_division_uses_the_coen_iso_six_decimal_scale	nominal result is 50000000	old 1e18 denominator path returns 50000000000000000000	bin/outbe-tee-enclave/src/compute.rs	P3
 T3	outbe-tee-enclave::compute::tests::positive_nominal_that_rounds_to_zero_is_rejected	positive economic input producing zero is rejected	zero-result calculation is accepted	bin/outbe-tee-enclave/src/compute.rs	P3
 T3	outbe-tee-enclave::process::tests::batch_creates_tribute_with_correct_economics	tribute nominal is 100000000 unit	old path returns 100000000000000000000	bin/outbe-tee-enclave/src/process.rs	P3
 T3	outbe-tee-enclave::process::tests::non_usd_currency_prices_from_the_offer	nominal is 25000000 unit	old path returns 25000000000000000000	bin/outbe-tee-enclave/src/process.rs	P3
@@ -88,6 +95,7 @@ T4	outbe-desis::tests::clear_refunds_equal_locked_minus_paid	refund is 30000000 
 T4	outbe-desis::tests::clearing_allocates_up_to_supply	three allocations consume supply	old scale path allocates 0	crates/core/desis	P4
 T4	outbe-desis::tests::force_clear_skips_missing_chain_after_deadline	one available chain clears	old scale path clears 0	crates/core/desis	P4
 T4	outbe-desis::tests::clearing_uniform_price_is_last_allocated_bid	uniform price is 200	old scale path yields 0	crates/core/desis	P4
+T4	outbe-intexfactory::tests::the_issuance_currency_settles_through_the_coen_pivot	P6 USD and EUR rates preserve the 0.5 cross-rate and return 500000000000000000 payment units	mixed P6/FP18 production formula returns 1	crates/core/intexfactory	P4
 T4	outbe-desis::tests::schedule_arms_the_clearing_gate_at_reveal_end	clearing gate carries 10 units	old scale path yields 0	crates/core/desis	P4
 T4	outbe-desis::tests::two_chain_bids_merge_and_carry_source_chain	two bids merge with source chain	old scale path yields 0 bids	crates/core/desis	P4
 T4	outbe-desis::tests::schedule_derives_min_bid_qty_from_prior_clearing	minimum bid quantity is 4	old scale path yields 0	crates/core/desis	P4

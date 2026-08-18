@@ -842,4 +842,23 @@ mod tests {
             U256::from(50_000_000_000_000_000u128)
         ); // 0.05e18 (exact due to integer division)
     }
+
+    #[test]
+    fn cross_rate_keeps_a_dimensionless_fp18_ratio_for_p6_coen_iso_inputs() {
+        let voter = Address::new([1u8; 20]);
+        let reference_votes = vec![(voter, U256::from(2_000_000u64))];
+        let ballot = vec![VoteForTally {
+            exchange_rate: U256::from(4_000_000u64),
+            volume: U256::from(1_000_000u64),
+            voter,
+            power: 10,
+        }];
+
+        let cross = to_cross_rate(&ballot, &reference_votes);
+
+        assert_eq!(
+            cross[0].exchange_rate,
+            U256::from(500_000_000_000_000_000u64)
+        );
+    }
 }

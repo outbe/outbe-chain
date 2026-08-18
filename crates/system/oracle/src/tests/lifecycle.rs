@@ -20,12 +20,12 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
             outbe_primitives::time::timestamp_to_date_key(timestamp),
         );
         let last_closed_start = outbe_primitives::time::date_key_to_utc_timestamp(last_closed);
-        let last_closed_price = coen840(125);
+        let last_closed_price = coen_iso(125);
 
         let uninitialized = crate::api::ocomp_pre_admission_projection(
             storage.clone(),
             wwd,
-            coen840(99),
+            coen_iso(99),
             timestamp,
         )
         .unwrap();
@@ -36,7 +36,7 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
         oracle
             .write_snapshot(
                 last_closed_start + 100,
-                &[(pair_key(COEN, usd()), last_closed_price, coen840(1))],
+                &[(pair_key(COEN, usd()), last_closed_price, coen_iso(1))],
             )
             .unwrap();
         oracle
@@ -51,7 +51,7 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
             &mut oracle,
             pair_key(COEN, usd()),
             last_closed_start,
-            coen840(200),
+            coen_iso(200),
         )
         .unwrap();
 
@@ -59,7 +59,7 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
         let closed = crate::api::ocomp_pre_admission_projection(
             storage.clone(),
             wwd,
-            coen840(99),
+            coen_iso(99),
             timestamp,
         )
         .unwrap();
@@ -131,7 +131,7 @@ fn ocomp_state_version_overflow_rejects_before_oracle_mutation() {
         oracle.ocomp_state_version.write(u64::MAX).unwrap();
 
         assert!(oracle
-            .write_snapshot(1_000, &[(pair_key(COEN, usd()), coen840(10), coen840(1))],)
+            .write_snapshot(1_000, &[(pair_key(COEN, usd()), coen_iso(10), coen_iso(1))],)
             .is_err());
         assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 0);
         assert_eq!(oracle.snapshot_pair_count.read(&0).unwrap(), 0);
@@ -190,7 +190,7 @@ fn prefork_oracle_event_failures_preserve_historical_best_effort_mutations() {
                     oracle.pair_index_of(pair_key(COEN, usd())).unwrap(),
                 )
                 .unwrap(),
-            Some(coen840(125))
+            Some(coen_iso(125))
         );
         assert!(!oracle.ocomp_profile_ready.read().unwrap());
     });
@@ -223,7 +223,7 @@ fn scurve_count_overflow_rejects_before_any_owner_write() {
             &mut oracle,
             pair_key(COEN, usd()),
             ATOMIC_DAY_START,
-            coen840(125),
+            coen_iso(125),
         )
         .is_err());
         assert_eq!(oracle.scurve_count.read().unwrap(), u32::MAX);
@@ -611,19 +611,19 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
         oracle
             .write_snapshot(
                 day_1 + 60,
-                &[(pair_key(COEN, usd()), coen840(100), coen840(1))],
+                &[(pair_key(COEN, usd()), coen_iso(100), coen_iso(1))],
             )
             .unwrap();
         oracle
             .write_snapshot(
                 day_2 + 60,
-                &[(pair_key(COEN, usd()), coen840(150), coen840(1))],
+                &[(pair_key(COEN, usd()), coen_iso(150), coen_iso(1))],
             )
             .unwrap();
         oracle
             .write_snapshot(
                 day_3 + 60,
-                &[(pair_key(COEN, usd()), coen840(120), coen840(1))],
+                &[(pair_key(COEN, usd()), coen_iso(120), coen_iso(1))],
             )
             .unwrap();
 
@@ -641,14 +641,14 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
             pair_key(COEN, usd())
         );
         assert_eq!(oracle.scurve_peak_day.read(&0).unwrap(), day_2);
-        assert_eq!(oracle.scurve_peak_price.read(&0).unwrap(), coen840(150));
+        assert_eq!(oracle.scurve_peak_price.read(&0).unwrap(), coen_iso(150));
         assert_eq!(oracle.scurve_last_processed_day.read().unwrap(), day_4);
 
         let active_value =
             crate::scurve::get_max_active_scurve_value(&oracle, pair_key(COEN, usd()), day_4)
                 .unwrap();
         assert!(!active_value.is_zero());
-        assert!(active_value < coen840(150));
+        assert!(active_value < coen_iso(150));
     });
 }
 #[test]
@@ -670,7 +670,7 @@ fn begin_block_finalizes_the_closed_utc_day() {
         oracle
             .write_snapshot(
                 d_start + 1_000,
-                &[(pair_key(COEN, usd()), coen840(170), coen840(1))],
+                &[(pair_key(COEN, usd()), coen_iso(170), coen_iso(1))],
             )
             .unwrap();
 
@@ -687,7 +687,7 @@ fn begin_block_finalizes_the_closed_utc_day() {
             oracle
                 .get_utc_day_vwap_for_pair(day_d, oracle.pair_index_of(coen).unwrap())
                 .unwrap(),
-            Some(coen840(170))
+            Some(coen_iso(170))
         );
         // The in-progress current day is not finalized.
         assert_eq!(
@@ -711,7 +711,7 @@ fn begin_block_finalizes_the_closed_utc_day() {
         oracle
             .write_snapshot(
                 d1_start + 2_000,
-                &[(pair_key(COEN, usd()), coen840(190), coen840(1))],
+                &[(pair_key(COEN, usd()), coen_iso(190), coen_iso(1))],
             )
             .unwrap();
         let ctx3 = BlockRuntimeContext::new(
@@ -724,7 +724,7 @@ fn begin_block_finalizes_the_closed_utc_day() {
             oracle
                 .get_utc_day_vwap_for_pair(day_d1, oracle.pair_index_of(coen).unwrap())
                 .unwrap(),
-            Some(coen840(190))
+            Some(coen_iso(190))
         );
     });
 }

@@ -370,9 +370,10 @@ mod tests {
     use crate::provider::mock::MockProvider;
     use outbe_primitives::units::SCALE_1E18;
 
-    const COEN840_SCALE: u128 = 1_000_000;
+    const COEN_ISO_SCALE: u128 = 1_000_000;
 
     struct CoenTickerProvider {
+        quote: &'static str,
         price: f64,
         volume: f64,
     }
@@ -388,12 +389,13 @@ mod tests {
             pairs: &[(String, String)],
         ) -> eyre::Result<HashMap<String, TickerPrice>> {
             let mut prices = HashMap::new();
+            let key = format!("COEN/{}", self.quote);
             if pairs
                 .iter()
-                .any(|(base, quote)| base == "COEN" && quote == "840")
+                .any(|(base, quote)| base == "COEN" && quote == self.quote)
             {
                 prices.insert(
-                    "COEN/840".to_string(),
+                    key,
                     TickerPrice {
                         price: self.price,
                         volume: self.volume,
@@ -404,12 +406,19 @@ mod tests {
         }
     }
 
-    async fn aggregate_coen_ticker(price: f64, volume: f64) -> Vec<AggregatedPrice> {
-        let providers: Vec<Box<dyn Provider>> =
-            vec![Box::new(CoenTickerProvider { price, volume })];
+    async fn aggregate_coen_iso_ticker(
+        quote: &'static str,
+        price: f64,
+        volume: f64,
+    ) -> Vec<AggregatedPrice> {
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(CoenTickerProvider {
+            quote,
+            price,
+            volume,
+        })];
         let config = test_config(vec![CurrencyPairConfig {
             base: "COEN".into(),
-            quote: "840".into(),
+            quote: quote.into(),
             chain_denom: None,
             providers: vec!["coen_ticker".into()],
         }]);
@@ -674,15 +683,15 @@ mod tests {
 
         let coen = results.iter().find(|p| p.base == "COEN").unwrap();
         let eth = results.iter().find(|p| p.base == "ETH").unwrap();
-        let coen_price = coen.price.to::<u128>() as f64 / COEN840_SCALE as f64;
+        let coen_price = coen.price.to::<u128>() as f64 / COEN_ISO_SCALE as f64;
         let eth_price = eth.price.to::<u128>() as f64 / SCALE_1E18_U128 as f64;
 
         assert_eq!(coen.quote, "840");
         assert_eq!(eth.quote, "840");
-        assert_eq!(coen.price, U256::from(COEN840_SCALE));
+        assert_eq!(coen.price, U256::from(COEN_ISO_SCALE));
         assert_eq!(
             coen.volume,
-            U256::from(1_000u64) * U256::from(COEN840_SCALE)
+            U256::from(1_000u64) * U256::from(COEN_ISO_SCALE)
         );
         assert_eq!(eth.price, U256::from(2_500u64) * SCALE_1E18);
         assert_eq!(eth.volume, U256::from(1_000u64) * SCALE_1E18);
@@ -697,23 +706,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_coen840_rejects_positive_price_below_one_price_unit() {
-        assert!(aggregate_coen_ticker(0.000_000_4, 1.0).await.is_empty());
+    async fn test_coen_iso_rejects_positive_price_below_one_price_unit() {
+        assert!(aggregate_coen_iso_ticker("840", 0.000_000_4, 1.0)
+            .await
+            .is_empty());
     }
 
     #[tokio::test]
-    async fn test_coen840_clamps_positive_subunit_volume_to_one_unit() {
-        let prices = aggregate_coen_ticker(1.0, 0.000_000_4).await;
+    async fn test_coen_iso_clamps_positive_subunit_volume_to_one_unit() {
+        let prices = aggregate_coen_iso_ticker("840", 1.0, 0.000_000_4).await;
         assert_eq!(prices.len(), 1);
-        assert_eq!(prices[0].price, U256::from(COEN840_SCALE));
+        assert_eq!(prices[0].price, U256::from(COEN_ISO_SCALE));
         assert_eq!(prices[0].volume, U256::ONE);
     }
 
     #[tokio::test]
-    async fn test_coen840_preserves_real_zero_volume() {
-        let prices = aggregate_coen_ticker(1.0, 0.0).await;
+    async fn test_coen_iso_preserves_real_zero_volume() {
+        let prices = aggregate_coen_iso_ticker("840", 1.0, 0.0).await;
         assert_eq!(prices.len(), 1);
-        assert_eq!(prices[0].price, U256::from(COEN840_SCALE));
+        assert_eq!(prices[0].price, U256::from(COEN_ISO_SCALE));
         assert_eq!(prices[0].volume, U256::ZERO);
+    }
+
+    #[tokio::test]
+    async fn test_every_coen_iso_market_uses_six_decimal_price_and_volume() {
+        let prices = aggregate_coen_iso_ticker("978", 1.25, 2.5).await;
+        assert_eq!(prices.len(), 1);
+        assert_eq!(prices[0].quote, "978");
+        assert_eq!(prices[0].price, U256::from(1_250_000u64));
+        assert_eq!(prices[0].volume, U256::from(2_500_000u64));
     }
 }

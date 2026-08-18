@@ -134,7 +134,7 @@ fn rejected(reason: String) -> TributeOfferResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::{compute_token_id, SCALE_1E18};
+    use crate::compute::compute_token_id;
     use crate::crypto::{chacha20poly1305_encrypt, hkdf_sha256};
     use outbe_tee::protocol::{TributeZkContext, WorldwideDay};
     use x25519_dalek::{PublicKey, StaticSecret};
@@ -227,8 +227,8 @@ mod tests {
         let owner = Address::repeat_byte(0xE7);
         let mut offer = make_tribute_offer(owner, GOOD_JSON);
         offer.tribute_currency = 978;
-        // Generic Oracle pairs retain their existing decimal-18 rate contract.
-        offer.tribute_price_minor = U256::from(4u64) * SCALE_1E18;
+        // Every stablecoin-backed COEN/ISO rate uses the six-decimal contract.
+        offer.tribute_price_minor = U256::from(4u64) * UNITS_PER_COEN;
 
         let (results, _) = process_tribute_offer_batch(&key(), &[offer]);
         assert_eq!(results[0].status, TributeOfferStatus::Created);
@@ -245,7 +245,7 @@ mod tests {
         usd.tribute_price_minor = U256::from(2u64) * UNITS_PER_COEN;
         let mut eur = make_tribute_offer(Address::repeat_byte(0x0B), GOOD_JSON);
         eur.tribute_currency = 978;
-        eur.tribute_price_minor = U256::from(5u64) * SCALE_1E18;
+        eur.tribute_price_minor = U256::from(5u64) * UNITS_PER_COEN;
 
         let (results, _) = process_tribute_offer_batch(&key(), &[usd, eur]);
         assert_eq!(results[0].status, TributeOfferStatus::Created);

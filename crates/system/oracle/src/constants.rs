@@ -65,10 +65,40 @@ pub(crate) fn zero_volume_weight(pair: AddressPair) -> U256 {
 
 #[cfg(test)]
 mod tests {
-    use super::{AddressPair, DAY_TYPE_ISO, DAY_TYPE_PAIR};
+    use alloy_primitives::{address, U256};
+    use outbe_primitives::asset_type::AssetType;
+
+    use super::{reciprocal_scale, zero_volume_weight, AddressPair, DAY_TYPE_ISO, DAY_TYPE_PAIR};
 
     #[test]
     fn the_day_type_pair_key_is_the_coen_iso_840_pair() {
         assert_eq!(DAY_TYPE_PAIR, AddressPair::new_coen_to(DAY_TYPE_ISO));
+    }
+
+    #[test]
+    fn every_coen_iso_market_uses_six_decimal_reciprocal_and_zero_volume_scales() {
+        for iso in [840, 978] {
+            let pair = AddressPair::new_coen_to(iso);
+            assert_eq!(reciprocal_scale(pair), U256::from(1_000_000u64));
+            assert_eq!(zero_volume_weight(pair), U256::from(1_000_000u64));
+        }
+    }
+
+    #[test]
+    fn non_iso_generic_markets_keep_their_existing_scale() {
+        let token = address!("0x1111111111111111111111111111111111111111");
+        for pair in [
+            AddressPair::from_assets(AssetType::Native, AssetType::ERC20(token)),
+            AddressPair::from_assets(AssetType::ERC20(token), AssetType::IsoCurrency(840)),
+        ] {
+            assert_eq!(
+                reciprocal_scale(pair),
+                U256::from(1_000_000_000_000_000_000u128)
+            );
+            assert_eq!(
+                zero_volume_weight(pair),
+                U256::from(1_000_000_000_000_000_000u128)
+            );
+        }
     }
 }
