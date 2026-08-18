@@ -38,7 +38,10 @@ COEN
 Отдельно:
 
 - Oracle остаётся generic;
-- только COEN/840 feeder, volume, VWAP, S-Curve и их consumers переводятся на шестизначную цену;
+- все рынки `COEN/ISO` используют шестизначные price и COEN-volume, потому что
+  ISO reference currencies принадлежат шестизначному stablecoin domain;
+- S-Curve/day-type остаётся специальной логикой только `COEN/840`, а non-ISO
+  generic Oracle markets сохраняют существующие контракты;
 - Metadosis production math не переписывается, потому что его арифметика scale-neutral;
 - типы `U256/u128/u64`, ABI, wire/state layouts сохраняются;
 - Tribute `base/atto` сохраняются;
@@ -55,7 +58,7 @@ UNITS_PER_COEN
 UNITS_PER_GRATIS
 UNITS_PER_PROMIS
 UNITS_PER_WCOEN
-COEN840_PRICE_SCALE
+COEN_ISO_PRICE_SCALE
 ```
 
 Все равны `1_000_000`, но не подменяют друг друга семантически.
@@ -68,7 +71,7 @@ COEN840_PRICE_SCALE
 
 - `checked_mul_div_floor`;
 - `checked_mul_div_ceil`;
-- COEN/840 price ↔ существующий `128.128 price bin`.
+- COEN/ISO price ↔ существующий `128.128 price bin`.
 
 Vendor/Pancake `price_helper.rs` не переписывается. Для NOD, GEM и INTEX создаётся Outbe-owned шестизначный вход:
 
@@ -109,7 +112,7 @@ Architecture freeze
 → все тесты/reference/goldens
 → подтверждённый RED
 → общие units/math
-→ Oracle COEN/840
+→ Oracle COEN/ISO (S-Curve только COEN/840)
 → Tribute/GRATIS/Lysis/NOD/GEM
 → PROMIS/INTEX/WCOEN
 → Emission/native economics/genesis
@@ -166,10 +169,11 @@ WCOEN raw wrapping = 1:1
 stablecoin bond = 1_000_000 COEN = 1_000_000_000_000 unit
 ```
 
-### Коммит T2 — тестовый контракт Oracle COEN/840
+### Коммиты T2 — тестовый контракт Oracle COEN/ISO
 
 ```text
 test(oracle): define six-decimal COEN840 price contract
+test(oracle): extend six-decimal contract to every COEN ISO market
 ```
 
 Меняются тесты:
@@ -184,12 +188,13 @@ test(oracle): define six-decimal COEN840 price contract
 
 Фиксируется:
 
-- COEN/840 price — `840-unit per COEN`;
+- каждый COEN/ISO price — `ISO stable-unit per COEN`, scale `1_000_000`;
 - COEN volume — COEN `unit`;
 - VWAP возвращает шестизначную цену;
-- COEN/840 sentinel равен `UNITS_PER_COEN`;
+- COEN/ISO sentinel равен `UNITS_PER_COEN`;
 - S-Curve coefficients имеют знаменатель `1_000_000`;
-- generic Oracle пары не меняются;
+- S-Curve/day-type остаётся только у COEN/840;
+- non-ISO generic Oracle пары не меняются;
 - INTEX wire price больше не `10^9`.
 
 Структурные codec golden vectors не меняются.
@@ -345,10 +350,11 @@ refactor(units): establish six-decimal denomination primitives
 - добавляется прямой six-decimal price-bin adapter;
 - vendor `price_helper.rs` не меняется.
 
-### Коммит P2 — Oracle COEN/840
+### Коммиты P2 — Oracle COEN/ISO
 
 ```text
 feat(oracle): convert COEN840 prices and VWAP to six decimals
+feat(oracle): extend six-decimal pricing to every COEN ISO market
 ```
 
 Файлы и области:
@@ -365,16 +371,19 @@ feat(oracle): convert COEN840 prices and VWAP to six decimals
 
 Действия:
 
-- feeder выдаёт pair-specific COEN/840 price и volume в `10^6`;
+- feeder выдаёт price и COEN-volume в `10^6` для каждого `COEN/ISO`;
 - VWAP работает с шестизначной ценой;
 - positive price, округлившийся в zero, отклоняется;
 - positive volume, округлившийся в zero, становится `1 unit`;
 - реальный zero volume остаётся zero;
-- COEN/840 sentinel → `UNITS_PER_COEN`;
+- COEN/ISO sentinel → `UNITS_PER_COEN`;
 - S-Curve coefficients квантуются через `floor(old / 10^12)`;
 - S-Curve result: `floor(peak × coefficient / 1_000_000)`;
-- Oracle больше не передаёт COEN/840 через старый decimal18 price-bin contract; сами consumer-файлы NOD/GEM меняются только в P3, IntexFactory — только в P4;
-- generic cross-rate не переписывается.
+- Oracle больше не передаёт ни один COEN/ISO market через старый decimal18
+  price-bin contract; сами consumer-файлы NOD/GEM меняются только в P3,
+  IntexFactory — только в P4;
+- COEN/840 остаётся единственным владельцем S-Curve/day-type;
+- non-ISO generic cross-rate не переписывается.
 
 ### Коммит P3 — Tribute/GRATIS/Lysis/NOD/GEM
 
@@ -537,7 +546,7 @@ COEN
 - каждый hot file изменён в назначенном production-коммите;
 - тестовые ожидания после RED не подгонялись.
 
-Итог: вся существующая взаимосвязанная экономика scoped-токенов переводится на шестизначные минимальные единицы так, чтобы ни один downstream-модуль больше не интерпретировал эти суммы или COEN/840 цены через исторические `10^18`.
+Итог: вся существующая взаимосвязанная экономика scoped-токенов переводится на шестизначные минимальные единицы так, чтобы ни один downstream-модуль больше не интерпретировал эти суммы или COEN/ISO цены через исторические `10^18`.
 
 ## 9. Architecture freeze record
 
@@ -559,7 +568,8 @@ COEN
 - Tribute issuance/nominal и canonical `amount_base`/`amount_atto`;
 - Gratisfactory stablecoin-to-GRATIS conversion;
 - Lysis fractions, shares, loads, costs и их sequential/OCOMP parity;
-- COEN/840 feeder price/volume, Oracle vote/tally/VWAP/reciprocal/S-Curve и COEN/840 consumers;
+- COEN/ISO feeder price/volume, Oracle vote/tally/VWAP/reciprocal и consumers;
+- COEN/840 S-Curve/day-type;
 - NOD, GEM, Desis, INTEX и IntexFactory quantities, prices, price-bin seams и settlement;
 - EIP-4895 Gwei wire amount to COEN `unit` conversion;
 - Outbe genesis, CLI/MCP/deployment metadata и denomination-dependent artifacts.
@@ -570,7 +580,7 @@ COEN
 - Fidelity/RCFI algorithmic fixed-point; изменяются только fixtures, поля которых являются реальными GRATIS amounts;
 - Credis interest/rate math;
 - Oracle reward/slash bands, vote-validity ratios и остальные независимые dimensionless ratios;
-- generic non-COEN/840 cross-rate redesign и pair-decimals metadata;
+- generic non-ISO market redesign и pair-decimals metadata;
 - decimals самих stablecoin/ERC20 payment tokens;
 - Ethereum, BNB и LayerZero external-native denominations;
 - vendor/Pancake `math/price_helper.rs` и его decimal18 contract;
@@ -587,21 +597,26 @@ COEN
 | GRATIS amount | `1 GRATIS = 1_000_000 GRATIS-unit` | `U256` и существующие encrypted blobs | shape не меняется |
 | PROMIS amount | `1 PROMIS = 1_000_000 PROMIS-unit` | `U256`, Intex load `u128` | widths не меняются |
 | WCOEN amount | `1 WCOEN = 1_000_000 WCOEN-unit` | Solidity `uint256` | wrap/unwrap raw `1:1` |
-| COEN/840 price | `840-unit per COEN`, scale `1_000_000` | Oracle `U256`; INTEX wire `u64` | без промежуточного `10^9` |
-| COEN/840 volume | COEN `unit`, scale `1_000_000` | Oracle vote/snapshot `U256` | zero остаётся zero |
+| COEN/ISO price | `ISO stable-unit per COEN`, scale `1_000_000` | Oracle `U256`; INTEX wire `u64` | без промежуточного `10^9` |
+| COEN/ISO volume | COEN `unit`, scale `1_000_000` | Oracle vote/snapshot `U256` | zero остаётся zero |
 | S-Curve coefficient | `1.0 = 1_000_000` | существующий `U256` table | `floor(old / 10^12)` |
 | Lysis fraction/share/root | `1.0 = 1_000_000` | существующие `U256`; U1024/I256 internals | типы сохраняются |
 | Tribute base | whole unsigned integer | encrypted JSON `String`, ZK `u64` | canonical lexical `u64` |
 | Tribute atto | `0..999_999` | encrypted JSON `String`, ZK `u64` | имя/позиция сохраняются |
 | Tribute issuance/nominal | COEN `unit` | `U256` state/receipt | shape не меняется |
-| INTEX prices | reference minor units, scale `1_000_000` для 840 | Rust `U256`, wire/Solidity `uint64` | checked narrowing only |
+| INTEX prices | ISO reference stable-units, scale `1_000_000` | Rust `U256`, wire/Solidity `uint64` | checked narrowing only |
 | INTEX bid/clearing rate | `1.0 = 1_000_000` | существующий `u64/uint64` | dimensionless, без изменения |
 | External settlement amount | raw payment-token units | `U256/uint256` | decimals `0/6/12/18` читаются у token |
 | Emission | COEN `unit` | `U256` | Taylor terms сразу amount-domain |
 | EIP-4895 amount | Gwei per EIP-4895 | wire `u64` | exact `amount_gwei / 1_000` |
 | Gas price | COEN `unit` per gas | EVM/RPC existing integers | no gwei floor |
 
-Независимый `SCALE_1E18` остаётся только там, где поле действительно является существующим dimensionless contract: Oracle reward/validity ratios, Fidelity/RCFI, Credis rates и неизменяемый vendor price helper. Ни Emission, ни COEN/840 S-Curve, ни Lysis fractions не используют его после cutover.
+Независимый `SCALE_1E18` остаётся только там, где поле действительно является
+существующим dimensionless contract, либо принадлежит сохранённому non-ISO
+generic Oracle market: Oracle reward/validity ratios, Fidelity/RCFI, Credis
+rates, non-ISO generic rates и неизменяемый vendor price helper. Ни Emission,
+ни COEN/ISO prices, ни S-Curve coefficients, ни Lysis fractions не используют
+его после cutover.
 
 Canonical public/state shapes фиксируются без изменений:
 
@@ -617,26 +632,26 @@ Canonical public/state shapes фиксируются без изменений:
 | Владелец | Canonical formula | Rounding/error |
 |---|---|---|
 | Tribute | `amount = checked(base × 1_000_000 + atto)` | non-canonical base/atto и overflow reject |
-| Tribute nominal для COEN/840 | `floor(amount × 1_000_000 / tribute_price)` | positive amount/price с zero result reject |
-| Gratisfactory | `ceil(stable_raw × 1_000_000 / coen840_price)` для canonical six-decimal stable path | collateral rounds in protocol's favour; overflow reject |
+| Tribute nominal для COEN/ISO | `floor(amount × 1_000_000 / tribute_price)` | positive amount/price с zero result reject |
+| Gratisfactory | `ceil(stable_raw × 1_000_000 / coen_iso_price)` | collateral rounds in protocol's favour; overflow reject |
 | Lysis load | `floor(nominal × fraction / 1_000_000)` | zero load для positive obligation reject |
 | Lysis normalization | `projected = Σ floor(group_nominal × fraction / 1_000_000)`; если `projected > allocation`, `fraction = floor(fraction × allocation / projected)` | один owner seam, dust разрешён |
 | Lysis/NOD/GEM cost | `floor(entry_price × load / 1_000_000)` | positive price/load с zero cost reject |
-| COEN/840 VWAP | `floor(Σ(price × volume) / Σvolume)` | checked products/sums; zero total volume follows existing no-data path |
-| COEN/840 reciprocal | `floor(1_000_000² / rate)` | zero rate reject; generic reciprocal не меняется |
+| COEN/ISO VWAP | `floor(Σ(price × volume) / Σvolume)` | checked products/sums; zero total volume follows existing no-data path |
+| COEN/ISO reciprocal | `floor(1_000_000² / rate)` | zero rate reject; non-ISO generic reciprocal не меняется |
 | S-Curve | `floor(peak × coefficient / 1_000_000)` | overflow keeps existing deterministic zero/error policy as frozen by tests |
 | INTEX reference settlement | `ceil(price6 × promis6 × 10^d / 10^12)` | `d=0/6/12/18`, checked, one rounding |
-| INTEX FX settlement | existing price ratio cancels common COEN/840 scale; external decimals applied once | ceil, overflow/unsupported decimals reject |
+| INTEX FX settlement | existing price ratio cancels common COEN/ISO scale; external decimals applied once | ceil, overflow/unsupported decimals reject |
 | Emission | `term₀=INITIAL`; `termₖ=floor(termₖ₋₁×K_NUM×day/(K_DEN×k))`; even add, odd subtract | clamp to floor; monotonic reference sweep |
 | EIP-4895 | `coen_units = amount_gwei / 1_000` | payload reject before state write unless `amount_gwei % 1_000 == 0` |
 | Native fee | `gas_used × effective_gas_price` | checked existing EVM accounting; raw `unit/gas` |
 
-COEN/840 feeder boundary:
+COEN/ISO feeder boundary:
 
 - positive finite provider price that maps below one price unit is rejected;
 - positive finite volume that maps below one COEN unit becomes `1 unit`;
 - actual zero volume stays zero;
-- current COEN/840 zero-volume fallback sentinel becomes `UNITS_PER_COEN`;
+- current COEN/ISO zero-volume fallback sentinel becomes `UNITS_PER_COEN`;
 - provider parsing and aggregation must be deterministic; `f64` may remain at provider ingestion only where existing interfaces require it, but expected integer outputs are frozen by decimal-string/reference tests.
 
 Native gas policy:
@@ -651,10 +666,10 @@ Native gas policy:
 | Инвариант | Единственный production owner |
 |---|---|
 | Token units, native decimals, checked floor/ceil | `crates/blockchain/primitives/src/units.rs` и bounded `math/scaled_math.rs` |
-| COEN/840 ↔ Q128.128 | новый `crates/blockchain/primitives/src/math/reference_price.rs` |
+| COEN/ISO market classification и ↔ Q128.128 | `crates/blockchain/primitives/src/math/reference_price.rs` |
 | Generic LB decimal18 port | существующий `math/price_helper.rs`, read-only |
-| Feeder COEN/840 integer normalization | `bin/outbe-feeder/src/aggregator.rs` |
-| COEN/840 vote/VWAP/reciprocal/S-Curve | `crates/system/oracle` |
+| Feeder COEN/ISO integer normalization | `bin/outbe-feeder/src/aggregator.rs` |
+| COEN/ISO vote/VWAP/reciprocal; COEN/840 S-Curve | `crates/system/oracle` |
 | Tribute canonicalization и nominal | `bin/outbe-tee-enclave/src/compute.rs`; process/ZK только потребляют результат |
 | GRATIS/PROMIS metadata | соответствующий `state.rs` каждого token module |
 | Stablecoin → GRATIS conversion | `crates/core/gratisfactory/src/runtime.rs` |
@@ -676,7 +691,7 @@ Native gas policy:
 | Native account | transfer/paid tx | funded signer | debit value+fee and credit raw COEN units | insufficient/overflow rejects before partial commit | tx replay rules unchanged | balances persist exactly | EIP-1559 timing unchanged |
 | Staking/reward/bond | stake, claim, slash, create stablecoin | existing eligibility rules | same-unit amounts conserved in scale6 | existing authorization/funds errors | nonce/event replay unchanged | queues/liabilities reload raw | unbonding and claim deadlines unchanged |
 | Execution payload | EIP-4895 withdrawals | consensus-validated payload | each exactly representable Gwei amount credits COEN units | non-multiple of 1,000 rejects payload before writes | deterministic per payload | credited balance persists | post-transaction ordering unchanged |
-| Oracle voting | provider aggregate → vote → tally | registered feeder/validator | COEN/840 price and volume stay scale6 through stored rate/VWAP | invalid price, overflow and existing vote errors produce no partial update | same ballot gives same result | snapshots reload raw | vote/day windows unchanged |
+| Oracle voting | provider aggregate → vote → tally | registered feeder/validator | every COEN/ISO price and volume stays scale6 through stored rate/VWAP; non-ISO markets keep their contract | invalid price, overflow and existing vote errors produce no partial update | same ballot gives same result | snapshots reload raw | vote/day windows unchanged |
 | Oracle opening | VWAP/S-Curve read | existing opening state | nominal is `max(VWAP,S-Curve)` in 840 units | no-data/zero follows existing error contract | opening proof remains deterministic | stored values unchanged | WorldwideDay and active-S-Curve windows unchanged |
 | Tribute offering | encrypted offer without/with ZK | existing offering and ZK eligibility | both paths parse one canonical base/atto and emit identical issuance/nominal | lexical, atto-bound, zero, price or proof error rejects before state | duplicate-id rules unchanged | stored Tribute reloads raw | OFFERING deadline unchanged |
 | Gratisfactory | pledge/mine/unpledge | existing authorization/eligibility | stable raw amount converts once to GRATIS units with ceil | cap, oracle, overflow and auth errors leave state unchanged | ticket/nonce replay unchanged | tickets and totals persist | existing pledge lifecycle unchanged |
@@ -701,6 +716,10 @@ P1:
 
 P2:
 
+- `crates/blockchain/primitives/src/units.rs` и
+  `crates/blockchain/primitives/src/math/reference_price.rs` — единственный
+  integration-correction pass: `COEN840` owner names заменяются на `COEN_ISO`,
+  добавляется structural market classifier без pair metadata;
 - `bin/outbe-feeder/src/aggregator.rs`;
 - `bin/outbe-feeder/src/vote_builder.rs`;
 - `crates/system/oracle/src/{api,constants,genesis,openings,runtime,schema,scurve,state,tally}.rs`;
@@ -716,8 +735,8 @@ P3:
 - `crates/core/lysis/src/algorithm.rs`;
 - `crates/core/lysis/src/program_v1/{execute,phases,types}.rs`;
 - `crates/core/lysis/src/runtime.rs` — unit comments/interface adaptation only;
-- `crates/core/nod/src/{hooks,schema,state}.rs`;
-- `crates/core/gem/src/{hooks,state}.rs`;
+- `crates/core/nod/src/{schema,state}.rs`;
+- `crates/core/gem/src/state.rs`;
 - `crates/core/gemfactory/src/runtime.rs`.
 
 User-approved P3 re-plan after the `ZERO_COST` blocker: `types.rs` разрешён
@@ -725,11 +744,11 @@ User-approved P3 re-plan after the `ZERO_COST` blocker: `types.rs` разреш�
 typed Rust error surface, но не меняет ABI, wire/state layouts, OCOMP codecs,
 frozen vectors или экономическую семантику P3.
 
-User-approved P3 re-plan after the pair-scale audit: `nod/hooks.rs` и
-`gem/hooks.rs` разрешены для передачи уже существующего `reference_currency`
-в currency-aware price-bin boundary. Для ISO 840 используется P6 adapter, для
-остальных ISO сохраняется существующий generic FP18 adapter. Generic Oracle,
-vendor `price_helper`, ABI и state layouts не меняются.
+Superseded re-plan: `nod/hooks.rs` и `gem/hooks.rs` были добавлены из-за
+ошибочного предположения, что non-840 ISO markets остаются FP18. Пользователь
+уточнил, что все ISO reference currencies принадлежат шестизначным stablecoin
+domain. Эти hooks снова вне P3 production map и не меняются; NOD/GEM получают
+P6 для любого валидного `reference_currency`.
 
 P4:
 
@@ -774,11 +793,13 @@ T1:
 
 T2:
 
+- inline tests `crates/blockchain/primitives/src/{units,math/reference_price}.rs`
+  для COEN/ISO classification и P6 adapter;
 - inline feeder tests `bin/outbe-feeder/src/{aggregator,vote_builder}.rs`;
 - `crates/system/oracle/src/scurve.rs` test section;
 - новый `crates/system/oracle/testdata/coen840-scurve-v1.json` с 128 canonical coefficients и product pins;
 - `crates/system/oracle/src/tests/{common,e2e,lifecycle,state}.rs`;
-- Oracle-facing tests in `crates/blockchain/{evm,txpool}` and `crates/system/rewards/src/api.rs` where literals represent COEN/840;
+- Oracle-facing tests in `crates/blockchain/{evm,txpool}` and `crates/system/rewards/src/api.rs` where literals represent COEN/ISO;
 - `crates/core/{nod,gem,intexfactory}/src/*tests*` for scale6 price-bin expectations;
 - `crates/system/oracle/tests/ocomp_openings.rs`, если файл существует at T2 audit; отсутствие не создаёт новый файл без public-behaviour case.
 
@@ -835,6 +856,12 @@ RED evidence хранится в `testing/denomination/scale6-red-manifest.tsv`.
 
 Форматирование, generated byte-for-byte rewrite и механическое обновление imports не считаются semantic pass. Изменение expected value после RED всегда считается semantic re-plan, а не integration correction.
 
+User-approved exception after the completed blocker protocol: the rejected
+`840 vs non-840 ISO` model was recorded in an intermediate docs commit, but no
+production code was committed under it. The next architecture commit supersedes
+that model with the canonical `all COEN/ISO = P6` invariant before P3 is
+committed. No NOD/GEM hook production change is permitted by the rejected model.
+
 ### 9.10. Commit map и evidence gates
 
 Один cutover PR содержит следующие commits в строгом порядке:
@@ -848,10 +875,16 @@ RED evidence хранится в `testing/denomination/scale6-red-manifest.tsv`.
 7. `test(denomination): freeze expected scale6 red manifest`;
 8. `refactor(units): establish six-decimal denomination primitives`;
 9. `feat(oracle): convert COEN840 prices and VWAP to six decimals`;
-10. `feat(economics): convert Tribute and GRATIS lifecycle to six decimals`;
-11. `feat(intex): convert PROMIS WCOEN and price wire to six decimals`;
-12. `feat(native): complete COEN six-decimal cutover`;
-13. `chore(denomination): regenerate semantic and genesis artifacts`.
+10. `docs(denomination): extend P3 zero-cost error ownership`;
+11. `docs(denomination): make P3 price bins currency-aware` — superseded by
+    the user correction below; code was not committed under this model;
+12. `docs(denomination): classify every COEN ISO market as scale6`;
+13. `test(oracle): extend six-decimal contract to every COEN ISO market`;
+14. `feat(oracle): extend six-decimal pricing to every COEN ISO market`;
+15. `feat(economics): convert Tribute and GRATIS lifecycle to six decimals`;
+16. `feat(intex): convert PROMIS WCOEN and price wire to six decimals`;
+17. `feat(native): complete COEN six-decimal cutover`;
+18. `chore(denomination): regenerate semantic and genesis artifacts`.
 
 T1–T5 и RED commits намеренно не являются mergeable PR boundaries; production остаётся старым до commit 8. Финальный PR обязан быть GREEN.
 
@@ -865,7 +898,7 @@ T1–T5 и RED commits намеренно не являются mergeable PR bou
 - нужен semantic production path вне раздела 9.7;
 - требуется изменить canonical shape/type/ABI/wire layout;
 - требуется production math Metadosis, Fidelity/RCFI или Credis;
-- generic Oracle нельзя сохранить без pair metadata или глобального scale change;
+- non-ISO generic Oracle нельзя сохранить без pair metadata или глобального scale change;
 - hot file требует третьего semantic pass;
 - frozen test expectation оказывается неверным;
 - review делает текущую архитектуру некорректной;
