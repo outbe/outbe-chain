@@ -244,8 +244,9 @@ interface IOracle {
     /// @notice Returns all registered reference currencies as ISO 4217 numeric codes.
     function getReferenceCurrencies() external view returns (uint16[] memory isoCodes);
 
-    /// @notice Returns the annualized currency rate (1e18 scaled) for an ISO
-    ///         4217 code. Reverts if the code is not a registered reference
-    ///         currency or carries no rate.
+    /// @notice Returns the official annual policy rate (1e18 scaled) for an ISO
+    ///         4217 code — the central bank's published rate for that currency,
+    ///         which Credis pins on a position at opening. Reverts if the code is
+    ///         not a registered reference currency or carries no rate.
     function getCurrencyRate(uint16 isoCode) external view returns (uint256 rate);
 }

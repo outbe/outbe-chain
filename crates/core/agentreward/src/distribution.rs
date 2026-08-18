@@ -9,100 +9,130 @@ const MAX_ADDRESS_SHARE_PCT: u64 = 32;
 /// Maximum redistribution iterations.
 const MAX_REDISTRIBUTION_ITERATIONS: usize = 10;
 
+/// §8.3's per-unit reward ceiling: the most a pool will pay for one unit of
+/// weight, whatever the day's participation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnitCeiling {
+    /// Unbounded — the 32 % per-address cap is the only limit. WAA and SRA
+    /// weigh tribute counts, which carry no per-unit price.
+    None,
+    /// Divide the pool by at least this much weight, so a single unit is never
+    /// worth more than `pool / min_total_weight` however thin the day. Slack
+    /// once real participation passes the floor.
+    MinTotalWeight(U256),
+}
+
+impl UnitCeiling {
+    /// The most `weight` may be paid under this ceiling. Expressing the ceiling
+    /// as a floored denominator means it is the same proportional arithmetic as
+    /// the split itself, so it composes with the 32 % cap and the
+    /// redistribution loop without either needing to know about it.
+    fn limit_for(self, total_pool: U256, weight: U256) -> U256 {
+        match self {
+            // A zero floor would divide by nothing; read it as "no ceiling"
+            // rather than silently zeroing every share.
+            UnitCeiling::None | UnitCeiling::MinTotalWeight(U256::ZERO) => U256::MAX,
+            UnitCeiling::MinTotalWeight(floor) => proportional(total_pool, weight, floor),
+        }
+    }
+}
+
 /// Reward allocated to a single address.
 pub struct AddressReward {
     pub address: Address,
-    pub tribute_count: u64,
+    /// The address's share of the pool before the cap: a tribute count for the
+    /// WAA/SRA pools, `units × multiplier` for the CCA pool.
+    pub weight: U256,
     pub reward_amount: U256,
 }
 
 /// Distributes a pool with a 32% per-address cap and iterative redistribution.
 ///
 /// The algorithm:
-/// 1. Computes proportional shares based on tribute counts.
-/// 2. Caps any individual share at 32% of the total pool.
-/// 3. Redistributes the excess from capped addresses to uncapped ones,
-///    iterating up to `MAX_REDISTRIBUTION_ITERATIONS` times.
+/// 1. Computes proportional shares based on each address's weight.
+/// 2. Clamps each share to that address's limit — 32% of the pool, and for a
+///    pool carrying a [`UnitCeiling`] whichever of that and the per-unit
+///    ceiling binds first.
+/// 3. Redistributes the excess to addresses still below their limit, iterating
+///    up to `MAX_REDISTRIBUTION_ITERATIONS` times.
 ///
-/// Returns `(rewards, remaining_excess)`. The remaining excess is non-zero
-/// only when all addresses are capped and excess cannot be distributed further.
+/// Weights are `U256` because the three pools measure participation
+/// differently: WAA and SRA count tributes, while the CCA pool weighs
+/// 1e18-scaled origination units already multiplied by the agent's performance
+/// multiplier. The split itself is weight-agnostic, so all three share it.
+///
+/// Returns `(rewards, remaining_excess)`. The remaining excess is non-zero when
+/// every address sits at its limit and nothing more can be placed — under a
+/// thin day's per-unit ceiling that is most of the pool, which is the point.
 pub fn calculate_distribution_with_cap(
     total_pool: U256,
-    counts: &[(Address, u64)],
+    weights: &[(Address, U256)],
+    ceiling: UnitCeiling,
 ) -> (Vec<AddressReward>, U256) {
-    if counts.is_empty() || total_pool.is_zero() {
+    if weights.is_empty() || total_pool.is_zero() {
         return (vec![], total_pool);
     }
 
-    let total_tributes: u64 = counts.iter().map(|(_, c)| c).sum();
-    if total_tributes == 0 {
+    let total_weight = weights
+        .iter()
+        .fold(U256::ZERO, |acc, (_, w)| acc.saturating_add(*w));
+    if total_weight.is_zero() {
         return (vec![], total_pool);
     }
 
     // max_share = total_pool * 32 / 100
     let max_share = total_pool * U256::from(MAX_ADDRESS_SHARE_PCT) / U256::from(100u64);
 
-    let mut sorted_counts = counts.to_vec();
-    sorted_counts.sort_by_key(|(addr, _)| *addr);
+    let mut sorted_weights = weights.to_vec();
+    sorted_weights.sort_by_key(|(addr, _)| *addr);
 
-    // Initial proportional allocation with cap applied immediately.
-    // Each entry: (address, tribute_count, current_share, is_capped)
-    let mut shares: Vec<(Address, u64, U256, bool)> = sorted_counts
+    // Initial proportional allocation, clamped to each address's limit.
+    let mut allocations: Vec<Allocation> = sorted_weights
         .iter()
-        .map(|(addr, count)| {
-            let share = total_pool * U256::from(*count) / U256::from(total_tributes);
-            if share > max_share {
-                (*addr, *count, max_share, true)
-            } else {
-                (*addr, *count, share, false)
+        .map(|(address, weight)| {
+            let limit = max_share.min(ceiling.limit_for(total_pool, *weight));
+            Allocation {
+                address: *address,
+                weight: *weight,
+                share: proportional(total_pool, *weight, total_weight).min(limit),
+                limit,
             }
         })
         .collect();
 
     // Calculate the initial excess (pool minus what was distributed).
-    let total_distributed: U256 = shares
+    let total_distributed: U256 = allocations
         .iter()
-        .map(|(_, _, s, _)| *s)
+        .map(|a| a.share)
         .fold(U256::ZERO, |a, b| a + b);
     let mut excess = total_pool.saturating_sub(total_distributed);
 
-    // Iterative redistribution: give excess to uncapped addresses up to their cap.
+    // Iterative redistribution: give excess to addresses below their limit.
     for _ in 0..MAX_REDISTRIBUTION_ITERATIONS {
         if excess.is_zero() {
             break;
         }
-        let available: U256 = shares
+        let available: U256 = allocations
             .iter()
-            .filter(|(_, _, share, capped)| !*capped && *share < max_share)
-            .map(|(_, _, share, _)| max_share.saturating_sub(*share))
+            .map(Allocation::headroom)
             .fold(U256::ZERO, |acc, v| acc + v);
 
         if available.is_zero() {
             break;
         }
 
-        for entry in shares.iter_mut() {
-            let (_, _, ref mut share, ref mut capped) = entry;
-            if *capped || *share >= max_share {
-                continue;
-            }
-
-            let can_receive = max_share.saturating_sub(*share);
+        for allocation in allocations.iter_mut() {
+            let can_receive = allocation.headroom();
             if can_receive.is_zero() {
                 continue;
             }
-
             let proportional = excess * can_receive / available;
             let to_give = can_receive.min(proportional);
             if to_give.is_zero() {
                 continue;
             }
-            *share += to_give;
+            allocation.share += to_give;
             excess -= to_give;
-
-            if *share >= max_share {
-                *capped = true;
-            }
             if excess.is_zero() {
                 break;
             }
@@ -113,22 +143,15 @@ pub fn calculate_distribution_with_cap(
         }
 
         let mut dust_distributed = false;
-        for entry in shares.iter_mut() {
-            let (_, _, ref mut share, ref mut capped) = entry;
-            if *capped || *share >= max_share {
-                continue;
-            }
-            let can_receive = max_share.saturating_sub(*share);
+        for allocation in allocations.iter_mut() {
+            let can_receive = allocation.headroom();
             if can_receive.is_zero() {
                 continue;
             }
             let to_give = can_receive.min(excess);
-            *share += to_give;
+            allocation.share += to_give;
             excess -= to_give;
             dust_distributed = true;
-            if *share >= max_share {
-                *capped = true;
-            }
             if excess.is_zero() {
                 break;
             }
@@ -138,16 +161,55 @@ pub fn calculate_distribution_with_cap(
         }
     }
 
-    let rewards = shares
+    let rewards = allocations
         .into_iter()
-        .map(|(addr, count, share, _)| AddressReward {
-            address: addr,
-            tribute_count: count,
-            reward_amount: share,
+        .map(|a| AddressReward {
+            address: a.address,
+            weight: a.weight,
+            reward_amount: a.share,
         })
         .collect();
 
     (rewards, excess)
+}
+
+/// One address's evolving allocation during the cap/redistribution loop.
+struct Allocation {
+    address: Address,
+    weight: U256,
+    share: U256,
+    /// The most this address may hold: the 32 % per-address cap, further reduced
+    /// by the §8.3 per-unit ceiling where one applies. Being at the limit is
+    /// what "capped" means, so there is no separate flag to keep in sync.
+    limit: U256,
+}
+
+impl Allocation {
+    fn headroom(&self) -> U256 {
+        self.limit.saturating_sub(self.share)
+    }
+}
+
+/// `pool × weight / divisor`.
+///
+/// ponytail: saturating rather than a 512-bit intermediate. A daily pool is
+/// ~1e27 wei and the largest weight ~1e22 (ten thousand 1e18-scaled units), so
+/// the product sits ~1e49 against a U256 ceiling of ~1e77. Widen this if either
+/// grows by 25 orders of magnitude; a plain `*` would panic instead.
+fn proportional(pool: U256, weight: U256, divisor: U256) -> U256 {
+    if divisor.is_zero() {
+        return U256::ZERO;
+    }
+    pool.saturating_mul(weight) / divisor
+}
+
+/// Tribute counts as distribution weights. WAA and SRA weigh participation by
+/// tribute count; the split arithmetic itself does not care which unit it is.
+fn counts_as_weights(counts: Vec<(Address, u64)>) -> Vec<(Address, U256)> {
+    counts
+        .into_iter()
+        .map(|(addr, count)| (addr, U256::from(count)))
+        .collect()
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -173,8 +235,9 @@ pub enum PoolKind {
     /// SRA (signer-of-record-attestation) capped distribution pool. Uses
     /// tribute counts kept in `sra_*` storage fields.
     Sra,
-    /// CCA accumulator. The amount is simply added to `CCA_ADDRESS`'s
-    /// native balance; there is no distribution logic in v1.
+    /// CCA (Credis Card Agent) capped distribution pool. Weighs each agent by
+    /// the origination units it earned that day times its performance
+    /// multiplier, both read from the CCA registry.
     Cca,
 }
 
@@ -183,15 +246,14 @@ pub enum PoolKind {
 /// the correct sub-routine and returns the sum of pool excesses that
 /// should be added to the Metadosis terminal credit.
 ///
-/// Excess accounting (per pool kind):
-/// * `Waa` / `Sra`: 32 %-cap distribution residue, plus the entire pool
-///   when no tributes were recorded for the day (no-tribute case).
-/// * `Cca`: always zero — this pool is a pure accumulator on
-///   `CCA_ADDRESS`.
+/// Excess accounting is the same for all three pools: the 32 %-cap
+/// distribution residue, plus the entire pool when nobody participated
+/// that day. The `Cca` pool additionally carries the one-time
+/// pre-activation sweep the first time it runs.
 ///
-/// Mint/burn parity is enforced inside the WAA/SRA helpers: each pool
+/// Mint/burn parity is enforced inside [`distribute_capped`]: each pool
 /// is minted onto `AGENT_REWARD_ADDRESS` before distribution, and the
-/// undistributed excess (cap or no-tribute) is burned back, so
+/// undistributed excess is burned back, so
 /// `balance(AGENT_REWARD_ADDRESS)` after the call equals the total
 /// claimable credited for that day.
 pub fn distribute_daily(
@@ -201,34 +263,72 @@ pub fn distribute_daily(
 ) -> Result<U256> {
     let mut total_excess = U256::ZERO;
     for (kind, amount) in pools {
-        let excess = match kind {
-            PoolKind::Waa => distribute_capped(ctx, prev_day, PoolKind::Waa, *amount)?,
-            PoolKind::Sra => distribute_capped(ctx, prev_day, PoolKind::Sra, *amount)?,
-            PoolKind::Cca => {
-                accumulate_to_address(ctx, outbe_primitives::addresses::CCA_ADDRESS, *amount)?;
-                U256::ZERO
-            }
-        };
-        total_excess = total_excess.checked_add(excess).ok_or_else(|| {
-            outbe_primitives::error::PrecompileError::Revert(
-                "agentreward distribute_daily overflow".into(),
-            )
-        })?;
+        let mut excess = distribute_capped(ctx, prev_day, *kind, *amount)?;
+        if matches!(kind, PoolKind::Cca) {
+            excess = add(excess, sweep_pre_activation_cca_sink(ctx)?)?;
+        }
+        total_excess = add(total_excess, excess)?;
     }
     Ok(total_excess)
 }
 
-/// Capped pool flow used for both WAA and SRA. Mints the pool onto
-/// `AGENT_REWARD_ADDRESS`, runs the 32 % cap distribution, credits
-/// claimable balances, burns the undistributed excess, clears the
-/// per-pool day index, and returns the excess.
+fn add(left: U256, right: U256) -> Result<U256> {
+    left.checked_add(right).ok_or_else(|| {
+        outbe_primitives::error::PrecompileError::Revert(
+            "agentreward distribute_daily overflow".into(),
+        )
+    })
+}
+
+/// Moves whatever the CCA sink accumulated before this program existed to the
+/// Metadosis sink, once, and returns the amount moved.
+///
+/// §8.3: those balances are not distributed retroactively. `PoolKind::Cca` used
+/// to mint straight onto `CCA_ADDRESS` with nobody able to spend it, so the
+/// balance standing there on the first distributing day is exactly that
+/// pre-activation residue. It is burned here and returned as excess, taking the
+/// same route to Metadosis as any undistributed pool.
+///
+/// The one-shot flag is what makes it a sweep rather than a recurring drain: on
+/// every later day the sink is no longer credited, so this must not run again.
+/// The product paper also names a Merchant sink; no such address exists in this
+/// repository, so there is nothing to sweep for it.
+fn sweep_pre_activation_cca_sink(
+    ctx: &outbe_primitives::block::BlockRuntimeContext,
+) -> Result<U256> {
+    let contract = ctx.contract::<AgentRewardContract>();
+    if contract.cca_sink_swept.read()? {
+        return Ok(U256::ZERO);
+    }
+    contract.cca_sink_swept.write(true)?;
+
+    let sink = outbe_primitives::addresses::CCA_ADDRESS;
+    let accumulated = ctx.storage.balance(sink)?;
+    if accumulated.is_zero() {
+        return Ok(U256::ZERO);
+    }
+    ctx.storage.decrease_balance(sink, accumulated)?;
+    tracing::info!(
+        target: "outbe::agentreward",
+        amount = %accumulated,
+        "swept the pre-activation CCA sink balance to the Metadosis terminal"
+    );
+    Ok(accumulated)
+}
+
+/// Capped pool flow shared by all three pools. Mints the pool onto
+/// `AGENT_REWARD_ADDRESS`, runs the 32 % cap distribution over that pool's
+/// weights, credits claimable balances, burns the undistributed excess, clears
+/// the day's participation record, and returns the excess.
+///
+/// Only the weight source and the clear differ between pools; the money
+/// movement, the cap and the parity burn are identical, so they live here once.
 fn distribute_capped(
     ctx: &outbe_primitives::block::BlockRuntimeContext,
     prev_day: WorldwideDay,
     kind: PoolKind,
     amount: U256,
 ) -> Result<U256> {
-    debug_assert!(matches!(kind, PoolKind::Waa | PoolKind::Sra));
     if amount.is_zero() {
         return Ok(U256::ZERO);
     }
@@ -236,21 +336,28 @@ fn distribute_capped(
     ctx.storage
         .increase_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, amount)?;
 
-    let counts = match kind {
-        PoolKind::Waa => contract.get_all_waa_counts(prev_day)?,
-        PoolKind::Sra => contract.get_all_sra_counts(prev_day)?,
-        _ => unreachable!(),
+    let weights = match kind {
+        PoolKind::Waa => counts_as_weights(contract.get_all_waa_counts(prev_day)?),
+        PoolKind::Sra => counts_as_weights(contract.get_all_sra_counts(prev_day)?),
+        PoolKind::Cca => outbe_cca::api::day_reward_weights(ctx.storage.clone(), prev_day)?,
     };
 
-    if counts.is_empty() {
-        // No tributes — burn the pool we just minted so the pre-funded
+    if weights.is_empty() {
+        // Nobody participated — burn the pool we just minted so the pre-funded
         // balance does not leak onto AGENT_REWARD_ADDRESS.
         ctx.storage
             .decrease_balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS, amount)?;
         return Ok(amount);
     }
 
-    let (rewards, excess) = calculate_distribution_with_cap(amount, &counts);
+    // Only the CCA pool carries a per-unit price, so only it carries §8.3's
+    // ceiling on what one unit can be worth.
+    let ceiling = match kind {
+        PoolKind::Waa | PoolKind::Sra => UnitCeiling::None,
+        PoolKind::Cca => UnitCeiling::MinTotalWeight(outbe_cca::constants::MIN_REWARDED_DAY_WEIGHT),
+    };
+
+    let (rewards, excess) = calculate_distribution_with_cap(amount, &weights, ceiling);
     for r in &rewards {
         if !r.reward_amount.is_zero() {
             contract.add_claimable_reward(r.address, r.reward_amount)?;
@@ -263,21 +370,7 @@ fn distribute_capped(
     match kind {
         PoolKind::Waa => contract.clear_waa_counts(prev_day)?,
         PoolKind::Sra => contract.clear_sra_counts(prev_day)?,
-        _ => unreachable!(),
+        PoolKind::Cca => outbe_cca::api::settle_day(ctx.storage.clone(), prev_day)?,
     }
     Ok(excess)
-}
-
-/// Mints `amount` onto `target`'s native balance. Used for the CCA
-/// pool, which is a plain accumulator in v1 — no distribution logic,
-/// no excess.
-fn accumulate_to_address(
-    ctx: &outbe_primitives::block::BlockRuntimeContext,
-    target: alloy_primitives::Address,
-    amount: U256,
-) -> Result<()> {
-    if !amount.is_zero() {
-        ctx.storage.increase_balance(target, amount)?;
-    }
-    Ok(())
 }

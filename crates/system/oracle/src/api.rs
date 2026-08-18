@@ -352,10 +352,11 @@ pub fn get_max_active_scurve_value(
     scurve::get_max_active_scurve_value(&oracle, pair, scurve_timestamp)
 }
 
-/// Annualized currency rate (1e18 scaled) for an ISO 4217 code, read from the
-/// reference-currency collection. Reverts when the code is not a registered
-/// reference currency or carries no (non-zero) rate. Called by the Credis
-/// Factory at issuance to pin the Anadosis currency rate.
+/// Official annual policy rate (1e18 scaled) for an ISO 4217 code — the central
+/// bank's published rate for that currency — read from the reference-currency
+/// collection. Reverts when the code is not a registered reference currency or
+/// carries no (non-zero) rate. Called by the Credis Factory at issuance to pin
+/// the position's policy rate for its life.
 pub fn get_currency_rate(storage: StorageHandle, iso_code: u16) -> Result<U256> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     oracle.get_currency_rate(iso_code)

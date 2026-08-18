@@ -9,7 +9,7 @@
 //! mutating sub-calls propagate failure by reverting; their boolean return is
 //! not separately decoded.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
 
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
@@ -371,8 +371,7 @@ pub(crate) fn withdraw(
 
     let vault = first_vault(&storage, asset)?;
 
-    let required_shares = vault_preview_withdraw(&storage, vault, amount)?;
-    let available_shares = erc20_balance_of(&storage, vault, SELF)?;
+    let (required_shares, available_shares) = withdraw_shares(&storage, vault, amount)?;
     if available_shares < required_shares {
         return Err(VaultRouterError::InsufficientSharesForWithdraw {
             available: available_shares,
@@ -400,12 +399,169 @@ pub(crate) fn withdraw(
 }
 
 // ---------------------------------------------------------------------------
+// reservations
+// ---------------------------------------------------------------------------
+
+/// `reserve`: redeem `amount` of `asset` out of its vault into this router's own
+/// custody, held under `id` until released or returned.
+///
+/// This is the first half of [`withdraw`] with the delivery deferred. It exists
+/// because a liquidity *check* cannot survive the gap between quoting a loan and
+/// drawing it — another withdrawal can consume the same shares in between. Holding
+/// the assets is the only thing that actually guarantees delivery.
+pub(crate) fn reserve(
+    storage: StorageHandle<'_>,
+    id: B256,
+    asset: Address,
+    amount: U256,
+    target: IVaultRouter::StablesTarget,
+) -> Result<U256> {
+    if matches!(target, IVaultRouter::StablesTarget::Unknown) {
+        return Err(VaultRouterError::InvalidLiquidityTarget.into());
+    }
+    let mut contract = VaultRouterContract::new(storage.clone());
+    if !contract.reservation_assets.read(&id)?.is_zero() {
+        return Err(VaultRouterError::ReservationExists(id).into());
+    }
+
+    let vault = first_vault(&storage, asset)?;
+    let (required_shares, available_shares) = withdraw_shares(&storage, vault, amount)?;
+    if available_shares < required_shares {
+        return Err(VaultRouterError::InsufficientSharesForWithdraw {
+            available: available_shares,
+            required: required_shares,
+        }
+        .into());
+    }
+
+    // Redeem to SELF: the assets sit with the router, not the eventual receiver,
+    // which is not known until release.
+    let burned_shares = vault_withdraw(&storage, vault, amount, SELF, SELF)?;
+
+    contract.reservation_assets.write(&id, asset)?;
+    contract.reservation_amounts.write(&id, amount)?;
+
+    contract.emit(IVaultRouter::ReservationCreated {
+        id,
+        asset,
+        amount,
+        burnedShares: burned_shares,
+    })?;
+
+    Ok(burned_shares)
+}
+
+/// `releaseReservation`: deliver the assets held under `id` into `receiver` (a
+/// token bundle) and delete the reservation. Returns the amount delivered.
+pub(crate) fn release_reservation(
+    storage: StorageHandle<'_>,
+    id: B256,
+    receiver: Address,
+    target: IVaultRouter::StablesTarget,
+) -> Result<U256> {
+    if receiver.is_zero() {
+        return Err(VaultRouterError::ZeroAddress.into());
+    }
+    if matches!(target, IVaultRouter::StablesTarget::Unknown) {
+        return Err(VaultRouterError::InvalidLiquidityTarget.into());
+    }
+    let (asset, amount) = take_reservation(&storage, id)?;
+
+    erc20_approve(&storage, asset, receiver, amount)?;
+    token_bundle_top_up(&storage, receiver, SELF, asset, amount)?;
+
+    let mut contract = VaultRouterContract::new(storage.clone());
+    contract.emit(IVaultRouter::ReservationReleased {
+        id,
+        asset,
+        receiver,
+        amount,
+    })?;
+
+    Ok(amount)
+}
+
+/// `returnReservation`: deposit the assets held under `id` back into their vault
+/// and delete the reservation. Returns the shares minted back.
+///
+/// Permissionless by design — putting assets back can harm nobody, and an expiry
+/// sweep has no natural privileged caller.
+pub(crate) fn return_reservation(storage: StorageHandle<'_>, id: B256) -> Result<U256> {
+    let (asset, amount) = take_reservation(&storage, id)?;
+
+    let vault = first_vault(&storage, asset)?;
+    // `add_vault` already granted the vault an unlimited allowance on the router,
+    // so the deposit needs no fresh approval.
+    let minted_shares = vault_deposit(&storage, vault, amount, SELF)?;
+
+    let mut contract = VaultRouterContract::new(storage.clone());
+    contract.emit(IVaultRouter::ReservationReturned {
+        id,
+        asset,
+        amount,
+        mintedShares: minted_shares,
+    })?;
+
+    Ok(minted_shares)
+}
+
+/// Reads and deletes the reservation under `id`, rejecting an unknown one. Both
+/// consumers delete before their sub-calls, so a re-entrant release can never
+/// spend the same reservation twice.
+fn take_reservation(storage: &StorageHandle<'_>, id: B256) -> Result<(Address, U256)> {
+    let contract = VaultRouterContract::new(storage.clone());
+    let asset = contract.reservation_assets.read(&id)?;
+    if asset.is_zero() {
+        return Err(VaultRouterError::ReservationNotFound(id).into());
+    }
+    let amount = contract.reservation_amounts.read(&id)?;
+    contract.reservation_assets.clear(&id)?;
+    contract.reservation_amounts.clear(&id)?;
+    Ok((asset, amount))
+}
+
+/// `reservationOf`: the asset and amount held under `id`, zeroes when none.
+pub fn reservation_of(storage: &StorageHandle<'_>, id: B256) -> Result<(Address, U256)> {
+    let contract = VaultRouterContract::new(storage.clone());
+    Ok((
+        contract.reservation_assets.read(&id)?,
+        contract.reservation_amounts.read(&id)?,
+    ))
+}
+
+// ---------------------------------------------------------------------------
 // views
 // ---------------------------------------------------------------------------
 
 /// `sharesBalance`: vault shares currently held by this router.
 pub fn shares_balance(storage: &StorageHandle<'_>, vault: Address) -> Result<U256> {
     erc20_balance_of(storage, vault, SELF)
+}
+
+/// `hasLiquidity`: whether the router holds enough shares to redeem `amount` of
+/// `asset`. An asset with no configured vault has no liquidity, which is an
+/// answer rather than an error — the caller is asking precisely so it can gate.
+pub fn has_liquidity(storage: &StorageHandle<'_>, asset: Address, amount: U256) -> Result<bool> {
+    let contract = VaultRouterContract::new(storage.clone());
+    let Some(vault) = contract.first_vault(asset)? else {
+        return Ok(false);
+    };
+    let (required_shares, available_shares) = withdraw_shares(storage, vault, amount)?;
+    Ok(available_shares >= required_shares)
+}
+
+/// Shares `withdraw` would have to burn to redeem `amount`, paired with the
+/// shares the router actually holds. Shared with [`has_liquidity`] so the gate
+/// and the enforcement can never answer differently.
+fn withdraw_shares(
+    storage: &StorageHandle<'_>,
+    vault: Address,
+    amount: U256,
+) -> Result<(U256, U256)> {
+    Ok((
+        vault_preview_withdraw(storage, vault, amount)?,
+        erc20_balance_of(storage, vault, SELF)?,
+    ))
 }
 
 // ---------------------------------------------------------------------------

@@ -614,28 +614,44 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
             GENESIS_TS + SECONDS_PER_DAY
         );
 
-        // No tributes for any AgentReward pool, so all three
-        // WAA/SRA/CCA amounts are accounted for.
-        // burn parity: WAA + SRA pools are pre-funded then burned in
-        // their no-tribute branch; CCA lands on its own
-        // accumulator address. AGENT_REWARD balance is therefore
-        // zero (no claimable was credited).
+        // Nobody participated in any AgentReward pool, so all three
+        // WAA/SRA/CCA amounts are pre-funded, burned back in their
+        // no-participant branch, and returned as excess. AGENT_REWARD
+        // balance is therefore zero (no claimable was credited).
         let agent_reward_balance = ctx_fire
             .storage
             .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
             .unwrap();
         assert_eq!(agent_reward_balance, U256::ZERO);
 
-        // The CCA accumulator received its 4 %. The exact amount comes
-        // from `day_emission_limit(0) * 4 / 100` which is fully covered
-        // by emissionlimit pinned tests; here we only assert it is
-        // non-zero.
-        let cca = ctx_fire
-            .storage
-            .balance(outbe_primitives::addresses::CCA_ADDRESS)
-            .unwrap();
-        assert!(!cca.is_zero(), "CCA accumulator received its 4 %");
+        // The CCA sink is no longer a destination: its 4 % is distributed to
+        // the day's originators, and with none it falls through to Metadosis
+        // like any other undistributed pool.
+        assert_eq!(
+            ctx_fire
+                .storage
+                .balance(outbe_primitives::addresses::CCA_ADDRESS)
+                .unwrap(),
+            U256::ZERO,
+            "the CCA share must not be parked on the sink"
+        );
+
+        // It landed in the terminal instead. The exact amount comes from
+        // `day_emission_limit(0)`, which emissionlimit's pinned tests cover;
+        // here we only assert the day limit formed with a non-zero base.
+        assert!(!metadosis_base_limit(&ctx_fire, 20_240_101).is_zero());
     });
+}
+
+/// The Metadosis base limit formed for `day` — the terminal that every
+/// undistributed emission share is folded into.
+fn metadosis_base_limit(ctx: &BlockRuntimeContext, day: u32) -> U256 {
+    match outbe_metadosis::api::day_limit_formation_receipt(ctx.storage.clone(), day.into())
+        .unwrap()
+    {
+        Some(outbe_metadosis::DayLimitFormationReceipt::Formed(formed)) => formed.base_limit,
+        None => panic!("expected a formed Metadosis day limit for {day}"),
+    }
 }
 
 /// a second `run_emission_limit_daily` invocation for an already-settled
@@ -660,32 +676,29 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
             rewards.daily_settled.read(&20_240_101).unwrap(),
             "first fire must seal prev_day"
         );
-        let cca_after_first = ctx
-            .storage
-            .balance(outbe_primitives::addresses::CCA_ADDRESS)
-            .unwrap();
-        let metadosis_after_first = ctx
-            .storage
-            .balance(outbe_primitives::addresses::METADOSIS_ADDRESS)
-            .unwrap();
-        assert!(!cca_after_first.is_zero(), "first fire credited CCA");
+        // The terminal day limit is the probe: with no pool participants the
+        // whole day's emission is folded into it, so a double-dispatch would
+        // show up here immediately.
+        let base_limit_after_first = metadosis_base_limit(&ctx, 20_240_101);
+        assert!(
+            !base_limit_after_first.is_zero(),
+            "first fire formed the terminal day limit"
+        );
 
         // Second invocation for the SAME prev_day: the idempotency guard sees
         // `daily_settled[20240101] == true` and returns early — no double-mint.
         run_emission_limit_daily(&ctx).unwrap();
         assert_eq!(
-            ctx.storage
-                .balance(outbe_primitives::addresses::CCA_ADDRESS)
-                .unwrap(),
-            cca_after_first,
-            "CCA pool must not be minted twice for the same prev_day"
+            metadosis_base_limit(&ctx, 20_240_101),
+            base_limit_after_first,
+            "terminal Metadosis must not be re-dispatched for the same prev_day"
         );
         assert_eq!(
             ctx.storage
-                .balance(outbe_primitives::addresses::METADOSIS_ADDRESS)
+                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
                 .unwrap(),
-            metadosis_after_first,
-            "terminal Metadosis must not be re-dispatched for the same prev_day"
+            U256::ZERO,
+            "no pool may be minted twice for the same prev_day"
         );
     });
 }

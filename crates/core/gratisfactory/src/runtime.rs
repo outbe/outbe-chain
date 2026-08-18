@@ -19,6 +19,7 @@ use alloy_sol_types::{SolCall, SolEvent};
 
 use crate::errors::GratisFactoryError;
 use crate::precompile::IGratisFactory;
+use crate::schema::GratisFactoryContract;
 use crate::sol_ext::IReferenceCurrency;
 use outbe_fidelity::api::FidelityCohortOp;
 use outbe_gratis::api::{self as gratis, ModifyAuth, PledgeTerms};
@@ -56,9 +57,8 @@ fn read_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
 fn convert_stables_to_gratis(
     storage: StorageHandle<'_>,
     amount_stables: U256,
-    asset: Address,
+    iso_code: u16,
 ) -> Result<(U256, U256)> {
-    let iso_code = read_iso_code(&storage, asset)?;
     let rate = coen_rate_for(storage, iso_code)?;
     let numerator = amount_stables
         .checked_mul(decimals_diff())
@@ -75,8 +75,8 @@ fn convert_stables_to_gratis(
 /// exceeds `max_gratis` — that cap is the pledger's slippage protection, authenticated
 /// by their transaction signature rather than the MAC. Returns
 /// `(pledge_handle, gratis_cost)`; the handle is what the CCA presents at
-/// `requestCredis`. The anadosis installment count lives on the Credis position, not
-/// the pledge.
+/// `requestCredis`. The loan's own terms — the policy rate, the floor and call prices —
+/// are sealed on the Credis position, not on the pledge.
 pub fn pledge_gratis(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -85,7 +85,6 @@ pub fn pledge_gratis(
     max_gratis: U256,
     auth: ModifyAuth,
 ) -> Result<(B256, U256)> {
-    // todo add asset validation and check if it is enought liquidity in the vaults
     if asset.is_zero() {
         return Err(GratisFactoryError::InvalidAsset.into());
     }
@@ -93,8 +92,9 @@ pub fn pledge_gratis(
         return Err(GratisFactoryError::InvalidAmount.into());
     }
 
+    let iso_code = read_iso_code(&storage, asset)?;
     let (gratis_amount, entry_rate) =
-        convert_stables_to_gratis(storage.clone(), amount_stables, asset)?;
+        convert_stables_to_gratis(storage.clone(), amount_stables, iso_code)?;
     if gratis_amount > max_gratis {
         return Err(GratisFactoryError::GratisCapExceeded.into());
     }
@@ -105,18 +105,52 @@ pub fn pledge_gratis(
         entry_rate,
     };
 
-    // Fold a read-only league probe into the pledge round-trip (no separate
-    // fidelity call): the pledge op returns the caller's current league.
     let now = storage.timestamp()?.to::<u64>();
-    let section =
-        outbe_fidelity::api::cohort_section(storage.clone(), caller, FidelityCohortOp::Probe, now)?;
-    let (handle, outcome) =
-        gratis::pledge_with_fidelity(storage, caller, amount_stables, terms, auth, section)?;
-    // todo implement correct fidelity eligibility check on `outcome.league`
-    if outcome.league == u16::MAX {
-        return Err(GratisFactoryError::FidelityNotEligible.into());
-    }
-    Ok((handle, gratis_amount))
+
+    // The collateral debit and the vault claim must stand or fall together: the
+    // reservation is keyed by the pledge handle, so it cannot be taken before the
+    // ticket exists, and a debited pledger holding no claim is the exact failure
+    // this feature removes. The precompile frame would revert anyway; owning the
+    // atomicity here means any cross-module caller gets it too.
+    storage.with_checkpoint(|| {
+        // Fold a read-only league probe into the pledge round-trip (no separate
+        // fidelity call): the pledge op returns the caller's current league.
+        let section = outbe_fidelity::api::cohort_section(
+            storage.clone(),
+            caller,
+            FidelityCohortOp::Probe,
+            now,
+        )?;
+        let (handle, outcome) = gratis::pledge_with_fidelity(
+            storage.clone(),
+            caller,
+            amount_stables,
+            terms,
+            auth,
+            section,
+        )?;
+        // todo implement correct fidelity eligibility check on `outcome.league`
+        if outcome.league == u16::MAX {
+            return Err(GratisFactoryError::FidelityNotEligible.into());
+        }
+
+        // Claim the credit out of the reserve vault into router custody, wired to
+        // this handle. A liquidity *check* here would not survive the gap to
+        // `requestCredis` — another withdrawal can take the same shares in between
+        // — so the pledge holds the assets rather than merely testing for them.
+        // This also subsumes the dry-vault rejection: `reserve` fails on the same
+        // shortfall a check would.
+        outbe_vaultrouter::api::reserve(&storage, handle, asset, amount_stables)?;
+
+        // Stamp the quote so whoever spends the ticket can reject a stale entry
+        // price (§7). The ticket itself is enclave-sealed and cannot carry this
+        // without a TEE wire change; see `crate::schema`. The same timestamp is the
+        // reservation's deadline, which is why the queue stores no time of its own.
+        let contract = GratisFactoryContract::new(storage.clone());
+        contract.pledge_quoted_at.write(&handle, now)?;
+        contract.pledge_queue.push_back(handle)?;
+        Ok((handle, gratis_amount))
+    })
 }
 
 /// Directly unpledge an unspent pledge back to `caller` (e.g. credis rejected).
@@ -129,7 +163,16 @@ pub fn unpledge_gratis(
     pledge_handle: B256,
     auth: ModifyAuth,
 ) -> Result<U256> {
-    gratis::unpledge(storage, caller, amount_stables, pledge_handle, auth)
+    let refunded = gratis::unpledge(storage.clone(), caller, amount_stables, pledge_handle, auth)?;
+    // The credit this pledge claimed is no longer owed to anyone, so it goes back
+    // to the vault to earn rather than sitting idle until the sweep notices.
+    outbe_vaultrouter::api::return_reservation(&storage, pledge_handle)?;
+    // The ticket is gone; its quote can never be exercised again. The queue entry
+    // is left behind as a tombstone — the sweep pops it on sight.
+    GratisFactoryContract::new(storage)
+        .pledge_quoted_at
+        .clear(&pledge_handle)?;
+    Ok(refunded)
 }
 
 /// Mint `amount` gratis to `account` (authorized by the account owner's modify

@@ -27,6 +27,8 @@ interface IVaultRouter {
     error LiquiditySourceNotFound();
     error LiquidityTargetNotFound();
     error InsufficientSharesForWithdraw(uint256 availableShares, uint256 requiredShares);
+    error ReservationExists(bytes32 id);
+    error ReservationNotFound(bytes32 id);
 
     event VaultAdded(uint16 indexed isoCode, address indexed asset, address indexed vault);
     event VaultRemoved(uint16 indexed isoCode, address indexed asset, address indexed vault);
@@ -51,6 +53,10 @@ interface IVaultRouter {
         uint256 burnedShares,
         StablesTarget targetType
     );
+
+    event ReservationCreated(bytes32 indexed id, address indexed asset, uint256 amount, uint256 burnedShares);
+    event ReservationReleased(bytes32 indexed id, address indexed asset, address indexed receiver, uint256 amount);
+    event ReservationReturned(bytes32 indexed id, address indexed asset, uint256 amount, uint256 mintedShares);
 
     /// @notice Returns the number of assets.
     function assetsCount() external view returns (uint256);
@@ -127,4 +133,29 @@ interface IVaultRouter {
 
     /// @notice Returns vault shares currently held by this provider.
     function sharesBalance(address vault) external view returns (uint256);
+
+    /// @notice True when the router currently holds enough vault shares to redeem
+    ///         `amount` of `asset` — the same predicate `withdraw` enforces, so a
+    ///         caller can gate on it instead of discovering the shortfall mid-flow.
+    ///         Returns false rather than reverting when `asset` has no vault.
+    ///         A preflight only: it checks, it does not claim. Use `reserve` to hold.
+    function hasLiquidity(address asset, uint256 amount) external view returns (bool sufficient);
+
+    /// @notice Redeems `amount` of `asset` from its vault and holds it in this
+    ///         router's own custody under `id`, guaranteeing it can later be
+    ///         delivered. The caller (`msg.sender`) must be a registered liquidity
+    ///         target. Reverts if `id` is already reserved or the vault is short.
+    function reserve(bytes32 id, address asset, uint256 amount) external returns (uint256 burnedShares);
+
+    /// @notice Delivers a reservation to `receiver` (a token bundle) and deletes it.
+    ///         The caller (`msg.sender`) must be a registered liquidity target.
+    function releaseReservation(bytes32 id, address receiver) external returns (uint256 amount);
+
+    /// @notice Deposits a reservation back into its vault and deletes it.
+    ///         Permissionless: returning assets to the vault can harm nobody, and
+    ///         that is what lets an expiry sweep or any third party unwind it.
+    function returnReservation(bytes32 id) external returns (uint256 mintedShares);
+
+    /// @notice The asset and amount held under `id`, or `(address(0), 0)` if none.
+    function reservationOf(bytes32 id) external view returns (address asset, uint256 amount);
 }

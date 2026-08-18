@@ -77,6 +77,12 @@ export const CONTRACTS: Record<string, ContractEntry> = {
     abi: ABI.ICredis,
   },
 
+  cca: {
+    address: A("0x0000000000000000000000000000000000001019"),
+    note: "Credis Card Agent registry — registration, multiplier, origination units",
+    abi: ABI.ICca,
+  },
+
   agentreward: {
     address: A("0x000000000000000000000000000000000000100B"),
     note: "Agent reward",

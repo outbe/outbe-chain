@@ -150,11 +150,12 @@ pub mod marker_addresses {
     use alloy_primitives::Address;
     use outbe_primitives::addresses::*;
 
-    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 36] = [
+    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 37] = [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
         CREDIS_ADDRESS,
         CREDIS_FACTORY_ADDRESS,
+        CCA_REGISTRY_ADDRESS,
         PROMIS_ADDRESS,
         // PromisFactory is a live stateful precompile (in
         // `outbe_precompile_addresses`) and is NOT genesis-seeded, so this
@@ -681,9 +682,9 @@ fn run_outbe_pre_execution_hooks_inner(
     // chain reported BIDS_DONE, or the deadline passed).
     <outbe_desis::DesisLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
-    // CREDIS: burn the pledged collateral of positions that still carry an unpaid balance.
-    // Cursor-bounded per block.
-    <outbe_credisfactory::CredisLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
+    // CREDIS has no begin-block work: its price path runs off finalized daily
+    // reference prices, so latch/call/void live in the Cycle daily trigger
+    // (`outbe_credisfactory::called`) rather than a per-block sweep.
 
     Ok(())
 }

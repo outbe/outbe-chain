@@ -1,0 +1,49 @@
+//! Module-local protocol constants for credis positions.
+//!
+//! Values trace to the Credis product paper §10. Those still marked TBD there
+//! carry a placeholder here plus a `ponytail:` note naming what has to be
+//! decided before launch.
+
+/// Denominator for the `*_RATE_PCT` markups below.
+pub const PRICE_RATE_DEN: u16 = 100;
+
+/// Settlement floor: `entry + 8%`. The first time the live COEN price exceeds
+/// it the position latches settleable, permanently.
+pub const FLOOR_RATE_PCT: u16 = 8;
+
+/// Call price: `entry + 32%`. A sustained breach of it arms the call.
+pub const CALL_RATE_PCT: u16 = 32;
+
+/// Length of the sustained breach that calls a position: the official daily
+/// reference price must sit at or above the call price for this many
+/// **consecutive** UTC days. A single day below resets the run, which is why the
+/// scan tests `min(window) >= call_price` rather than counting breach days.
+pub const CALL_STREAK_DAYS: u32 = 21;
+
+/// Settlement window opened by the call. Settlement stays open on unchanged
+/// terms throughout; whatever remains when it lapses is voided.
+pub const CALL_WINDOW_SECS: u64 = 14 * 24 * 60 * 60;
+
+/// Day count convention for interest accrual: simple, ACT/365.
+pub const DAYS_PER_YEAR: u64 = 365;
+
+/// Basis-point multiplier applied to the currency's official policy rate when
+/// pinning a position's `policy_rate` at opening. 10_000 bp = ×1.
+// ponytail: §10 lists the policy-rate factor as TBD and proposes a default of 1.
+// A governance-settable parameter is the upgrade path if it needs retuning
+// without a redeploy.
+pub const POLICY_RATE_FACTOR_BP: u32 = 10_000;
+
+/// Denominator for [`POLICY_RATE_FACTOR_BP`].
+pub const BP_DEN: u32 = 10_000;
+
+/// Cap on how many non-terminal positions one owner may hold at once, per §7.
+// ponytail: §10 leaves the per-account cap TBD. A governance-settable parameter
+// is the upgrade path; until then this is a flat protocol constant.
+pub const MAX_OPEN_POSITIONS_PER_OWNER: u32 = 16;
+
+/// How long a pledge quote stays exercisable. The quote fixes `P₀` and therefore
+/// the whole geometry of the position, so a stale one cannot be spent — §7.
+// ponytail: §10 leaves the quote TTL TBD; 15 minutes is a placeholder wide enough
+// for a CCA round-trip and narrow enough that the entry price is still current.
+pub const PLEDGE_QUOTE_TTL_SECS: u64 = 15 * 60;

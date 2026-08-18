@@ -9,7 +9,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 
 use crate::errors::CredisError;
-use crate::schema::{Anadosis, CredisContract, Position};
+use crate::schema::{CredisContract, Position};
 
 impl CredisContract<'_> {
     // ---------------------------------------------------------------------
@@ -32,29 +32,6 @@ impl CredisContract<'_> {
 
     pub(crate) fn update_position_record(&mut self, position: &Position) -> Result<()> {
         self.positions.update(position)
-    }
-
-    // ---------------------------------------------------------------------
-    // Anadosis CRUD
-    // ---------------------------------------------------------------------
-
-    pub(crate) fn load_anadosis(
-        &self,
-        position_id: U256,
-        anadosis_number: u32,
-    ) -> Result<Anadosis> {
-        let key = CredisContract::anadosis_key(position_id, anadosis_number);
-        self.anadosis_records
-            .get(key)?
-            .ok_or_else(|| CredisError::PositionNotFound.into())
-    }
-
-    pub(crate) fn create_anadosis_record(&mut self, anadosis: &Anadosis) -> Result<()> {
-        self.anadosis_records.create(anadosis)
-    }
-
-    pub(crate) fn update_anadosis_record(&mut self, anadosis: &Anadosis) -> Result<()> {
-        self.anadosis_records.update(anadosis)
     }
 
     // ---------------------------------------------------------------------
@@ -99,5 +76,75 @@ impl CredisContract<'_> {
 
     pub(crate) fn read_position_id_at(&self, index: u64) -> Result<U256> {
         self.position_id_at_index.read(&index)
+    }
+
+    // ---------------------------------------------------------------------
+    // Active-position index (non-terminal positions only)
+    // ---------------------------------------------------------------------
+
+    /// Appends a position to the dense active index and bumps its owner's open
+    /// count. The two move together so the count can never drift from the index.
+    pub(crate) fn insert_active(&mut self, position_id: U256, owner: Address) -> Result<()> {
+        let index = self.active_positions.len()?;
+        self.active_positions.push(position_id)?;
+        self.active_position_index.write(&position_id, index)?;
+        let open = self.open_position_counts.read(&owner)?;
+        self.open_position_counts
+            .write(&owner, open.saturating_add(1))?;
+        Ok(())
+    }
+
+    /// Swap-removes a position from the dense active index and drops its owner's
+    /// open count. Caller guarantees the position is currently listed, i.e. its
+    /// state was non-terminal.
+    pub(crate) fn remove_active(&mut self, position_id: U256, owner: Address) -> Result<()> {
+        let open = self.open_position_counts.read(&owner)?;
+        self.open_position_counts
+            .write(&owner, open.saturating_sub(1))?;
+        let index = self.active_position_index.read(&position_id)?;
+        let last = self
+            .active_positions
+            .len()?
+            .checked_sub(1)
+            .ok_or(CredisError::PositionNotFound)?;
+        if index != last {
+            let moved = self
+                .active_positions
+                .get(last)?
+                .ok_or(CredisError::PositionNotFound)?;
+            self.active_positions.set(index, moved)?;
+            self.active_position_index.write(&moved, index)?;
+        }
+        self.active_positions.pop()?;
+        self.active_position_index.clear(&position_id)?;
+        Ok(())
+    }
+
+    pub(crate) fn read_active_len(&self) -> Result<u32> {
+        self.active_positions.len()
+    }
+
+    pub(crate) fn read_active_at(&self, index: u32) -> Result<Option<U256>> {
+        self.active_positions.get(index)
+    }
+
+    pub(crate) fn read_open_position_count(&self, account: Address) -> Result<u32> {
+        self.open_position_counts.read(&account)
+    }
+
+    // ---------------------------------------------------------------------
+    // Called-position counter
+    // ---------------------------------------------------------------------
+
+    pub(crate) fn bump_called_count(&mut self, account: Address) -> Result<()> {
+        let count = self.called_position_counts.read(&account)?;
+        self.called_position_counts
+            .write(&account, count.saturating_add(1))
+    }
+
+    pub(crate) fn drop_called_count(&mut self, account: Address) -> Result<()> {
+        let count = self.called_position_counts.read(&account)?;
+        self.called_position_counts
+            .write(&account, count.saturating_sub(1))
     }
 }

@@ -3,7 +3,9 @@ use outbe_common::WorldwideDay;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::distribution::{calculate_distribution_with_cap, distribute_daily, PoolKind};
+use crate::distribution::{
+    calculate_distribution_with_cap, distribute_daily, PoolKind, UnitCeiling,
+};
 use crate::schema::AgentRewardContract;
 
 const CHAIN_ID: u64 = 1;
@@ -12,6 +14,14 @@ fn numbered_address(n: u64) -> Address {
     let mut bytes = [0u8; 20];
     bytes[12..].copy_from_slice(&n.to_be_bytes());
     Address::from(bytes)
+}
+
+/// Distribution weights from plain tribute counts — the WAA/SRA call shape.
+fn weights(entries: &[(Address, u64)]) -> Vec<(Address, U256)> {
+    entries
+        .iter()
+        .map(|(addr, count)| (*addr, U256::from(*count)))
+        .collect()
 }
 
 fn with_contract_mut<R>(f: impl FnOnce(StorageHandle, &mut AgentRewardContract) -> R) -> R {
@@ -28,6 +38,7 @@ fn gas_06_agentreward_dense_daily_distribution_completes_and_clears_indexes() {
     let day = WorldwideDay::new(20260525);
     let waa_pool = U256::from(DAILY_ADDRESSES_PER_POOL * 1_000);
     let sra_pool = U256::from(DAILY_ADDRESSES_PER_POOL * 1_000);
+    let cca_pool = U256::from(DAILY_ADDRESSES_PER_POOL * 1_000);
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
@@ -38,22 +49,44 @@ fn gas_06_agentreward_dense_daily_distribution_completes_and_clears_indexes() {
         let mut contract = AgentRewardContract::new(storage.clone());
         let mut waa_addresses = Vec::with_capacity(DAILY_ADDRESSES_PER_POOL as usize);
         let mut sra_addresses = Vec::with_capacity(DAILY_ADDRESSES_PER_POOL as usize);
+        let mut cca_addresses = Vec::with_capacity(DAILY_ADDRESSES_PER_POOL as usize);
+        let mut registry = outbe_cca::CcaContract::new(storage.clone());
 
         for n in 0..DAILY_ADDRESSES_PER_POOL {
             let waa = numbered_address(1 + n);
             let sra = numbered_address(10_000 + n);
+            let cca = numbered_address(20_000 + n);
             contract.increment_waa_tribute(day, waa).unwrap();
             contract.increment_sra_tribute(day, sra).unwrap();
+            registry.register(cca, 1).unwrap();
+            // Two units each: 1024 across the pool, the §8.3 participation
+            // floor, so the per-unit ceiling is slack and this stays a pure
+            // dense-path test.
+            for owner_base in [30_000, 40_000] {
+                registry
+                    .record_origination(
+                        cca,
+                        numbered_address(owner_base + n),
+                        U256::from(1_000_000_000u64),
+                        day,
+                    )
+                    .unwrap();
+            }
             waa_addresses.push(waa);
             sra_addresses.push(sra);
+            cca_addresses.push(cca);
         }
 
         let excess = distribute_daily(
             &ctx,
             day,
-            &[(PoolKind::Waa, waa_pool), (PoolKind::Sra, sra_pool)],
+            &[
+                (PoolKind::Waa, waa_pool),
+                (PoolKind::Sra, sra_pool),
+                (PoolKind::Cca, cca_pool),
+            ],
         )
-        .expect("dense WAA/SRA daily distribution must complete");
+        .expect("dense WAA/SRA/CCA daily distribution must complete");
 
         let contract = AgentRewardContract::new(storage.clone());
         let waa_claimable_total = waa_addresses.iter().fold(U256::ZERO, |total, address| {
@@ -72,16 +105,24 @@ fn gas_06_agentreward_dense_daily_distribution_completes_and_clears_indexes() {
             );
             total + claimable
         });
-        let claimable_total = waa_claimable_total + sra_claimable_total;
+        let cca_claimable_total = cca_addresses.iter().fold(U256::ZERO, |total, address| {
+            let claimable = contract.get_claimable_reward(*address).unwrap();
+            assert!(
+                !claimable.is_zero(),
+                "GAS-06: dense CCA recipient {address} received zero claimable reward"
+            );
+            total + claimable
+        });
+        let claimable_total = waa_claimable_total + sra_claimable_total + cca_claimable_total;
 
         assert_eq!(
             excess,
             U256::ZERO,
-            "GAS-06: equal dense WAA/SRA distributions should have no cap excess"
+            "GAS-06: equal dense WAA/SRA/CCA distributions should have no cap excess"
         );
         assert_eq!(
             claimable_total + excess,
-            waa_pool + sra_pool,
+            waa_pool + sra_pool + cca_pool,
             "GAS-06: dense distribution must conserve pool amount across claimable + excess"
         );
         assert_eq!(
@@ -99,6 +140,12 @@ fn gas_06_agentreward_dense_daily_distribution_completes_and_clears_indexes() {
             contract.get_all_sra_counts(day).unwrap().is_empty(),
             "GAS-06: SRA day index must be cleared after dense distribution"
         );
+        assert!(
+            outbe_cca::api::day_originators(storage.clone(), day)
+                .unwrap()
+                .is_empty(),
+            "GAS-06: CCA day index must be cleared after dense distribution"
+        );
     });
 }
 
@@ -107,12 +154,80 @@ fn gas_06_agentreward_dense_daily_distribution_completes_and_clears_indexes() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn a_unit_ceiling_holds_a_thin_split_down_and_leaves_the_rest_as_excess() {
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let bob = address!("0x2222222222222222222222222222222222222222");
+    let pool = U256::from(1000u64);
+    // Two units present against a floor of ten: each may take a tenth.
+    let ceiling = UnitCeiling::MinTotalWeight(U256::from(10u64));
+
+    let (rewards, excess) =
+        calculate_distribution_with_cap(pool, &weights(&[(alice, 1), (bob, 1)]), ceiling);
+
+    for r in &rewards {
+        assert_eq!(r.reward_amount, U256::from(100u64));
+    }
+    assert_eq!(
+        excess,
+        U256::from(800u64),
+        "the rest returns to the terminal"
+    );
+
+    // Same weights, no ceiling: both run up against the 32 % cap instead.
+    let (rewards, excess) =
+        calculate_distribution_with_cap(pool, &weights(&[(alice, 1), (bob, 1)]), UnitCeiling::None);
+    for r in &rewards {
+        assert_eq!(r.reward_amount, U256::from(320u64));
+    }
+    assert_eq!(excess, U256::from(360u64));
+}
+
+#[test]
+fn a_slack_unit_ceiling_changes_nothing() {
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let bob = address!("0x2222222222222222222222222222222222222222");
+    let pool = U256::from(1000u64);
+    let entries = weights(&[(alice, 9), (bob, 1)]);
+
+    // Ten units present, floor of two: participation is well past the floor, so
+    // the ceiling must not disturb the 32 % cap or its redistribution.
+    let (capped, capped_excess) = calculate_distribution_with_cap(
+        pool,
+        &entries,
+        UnitCeiling::MinTotalWeight(U256::from(2u64)),
+    );
+    let (uncapped, uncapped_excess) =
+        calculate_distribution_with_cap(pool, &entries, UnitCeiling::None);
+
+    assert_eq!(capped_excess, uncapped_excess);
+    for (a, b) in capped.iter().zip(uncapped.iter()) {
+        assert_eq!(a.address, b.address);
+        assert_eq!(a.reward_amount, b.reward_amount);
+    }
+}
+
+#[test]
+fn a_zero_unit_ceiling_reads_as_no_ceiling() {
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let pool = U256::from(1000u64);
+
+    // A misconfigured floor must not divide by zero and pay nobody.
+    let (rewards, excess) = calculate_distribution_with_cap(
+        pool,
+        &weights(&[(alice, 1)]),
+        UnitCeiling::MinTotalWeight(U256::ZERO),
+    );
+    assert_eq!(rewards[0].reward_amount, U256::from(320u64));
+    assert_eq!(excess, U256::from(680u64));
+}
+
+#[test]
 fn test_distribution_single_address() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let pool = U256::from(1000u64);
-    let counts = vec![(alice, 10u64)];
+    let counts = weights(&[(alice, 10)]);
 
-    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts);
+    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts, UnitCeiling::None);
 
     // Single address with 100% of tributes: capped at 32%.
     assert_eq!(rewards.len(), 1);
@@ -134,9 +249,9 @@ fn test_distribution_equal_shares() {
     // 4 addresses with equal tributes, each gets 25%.
     // 25% < 32% cap so no capping; all pool is distributed.
     let pool = U256::from(1000u64);
-    let counts = vec![(alice, 1u64), (bob, 1u64), (carol, 1u64), (dave, 1u64)];
+    let counts = weights(&[(alice, 1), (bob, 1), (carol, 1), (dave, 1)]);
 
-    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts);
+    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts, UnitCeiling::None);
 
     assert_eq!(rewards.len(), 4);
     // Each gets 1000 * 1 / 4 = 250
@@ -156,9 +271,9 @@ fn test_distribution_with_cap() {
     // Excess (58%) is redistributed to Bob who is uncapped; Bob ends up at 32%
     // as well because 68% > 32%. Final excess = 100% - 32% - 32% = 36%.
     let pool = U256::from(1000u64);
-    let counts = vec![(alice, 9u64), (bob, 1u64)];
+    let counts = weights(&[(alice, 9), (bob, 1)]);
 
-    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts);
+    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts, UnitCeiling::None);
 
     assert_eq!(rewards.len(), 2);
 
@@ -182,9 +297,9 @@ fn test_distribution_all_capped() {
     let d = address!("0x4444444444444444444444444444444444444444");
 
     let pool = U256::from(1000u64);
-    let counts = vec![(a, 25u64), (b, 25u64), (c, 25u64), (d, 25u64)];
+    let counts = weights(&[(a, 25), (b, 25), (c, 25), (d, 25)]);
 
-    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts);
+    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts, UnitCeiling::None);
 
     assert_eq!(rewards.len(), 4);
     for r in &rewards {
@@ -203,9 +318,9 @@ fn test_distribution_all_capped_with_excess() {
     let c = address!("0x3333333333333333333333333333333333333333");
 
     let pool = U256::from(300u64);
-    let counts = vec![(a, 1u64), (b, 1u64), (c, 1u64)];
+    let counts = weights(&[(a, 1), (b, 1), (c, 1)]);
 
-    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts);
+    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts, UnitCeiling::None);
 
     assert_eq!(rewards.len(), 3);
     // max_share = 300 * 32 / 100 = 96
@@ -220,9 +335,9 @@ fn test_distribution_all_capped_with_excess() {
 #[test]
 fn test_distribution_empty_counts() {
     let pool = U256::from(1000u64);
-    let counts: Vec<(alloy_primitives::Address, u64)> = vec![];
+    let counts = weights(&[]);
 
-    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts);
+    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts, UnitCeiling::None);
 
     assert!(rewards.is_empty());
     // Full pool returned as excess.
@@ -233,9 +348,9 @@ fn test_distribution_empty_counts() {
 fn test_distribution_zero_pool() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let pool = U256::ZERO;
-    let counts = vec![(alice, 5u64)];
+    let counts = weights(&[(alice, 5)]);
 
-    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts);
+    let (rewards, excess) = calculate_distribution_with_cap(pool, &counts, UnitCeiling::None);
 
     assert!(rewards.is_empty());
     assert_eq!(excess, U256::ZERO);
@@ -458,37 +573,180 @@ mod distribute_daily_tests {
         });
     }
 
+    /// One unit of qualifying principal, comfortably over the §8.3 dust guard.
+    const ORIGINATION_PRINCIPAL: u64 = 1_000_000_000;
+
+    /// Registers `agent` and credits it `count` origination units on `DAY`, one
+    /// per distinct owner so the one-unit-per-owner-per-day rule does not
+    /// collapse them into a single unit.
+    fn seed_originations(ctx: &BlockRuntimeContext, agent: Address, count: u64) {
+        let mut registry = outbe_cca::CcaContract::new(ctx.storage.clone());
+        registry.register(agent, 1).unwrap();
+        for n in 0..count {
+            registry
+                .record_origination(
+                    agent,
+                    numbered_address(50_000 + n),
+                    U256::from(ORIGINATION_PRINCIPAL),
+                    DAY,
+                )
+                .unwrap();
+        }
+    }
+
     #[test]
-    fn cca_simply_accumulates_to_address_no_excess() {
+    fn cca_pool_is_split_pro_rata_across_the_days_originators() {
         run(|ctx| {
+            // Four agents, one unit each: 25 % apiece, under the 32 % cap, so
+            // the whole pool lands as claimable and nothing is left over.
+            // 256 units each: 1024 in total, exactly the §8.3 participation
+            // floor, so the per-unit ceiling is slack and the split is pure
+            // pro-rata.
+            let agents: Vec<Address> = (0..4).map(|n| numbered_address(900 + n)).collect();
+            for agent in &agents {
+                seed_originations(ctx, *agent, 256);
+            }
+
             let excess =
-                distribute_daily(ctx, DAY, &[(PoolKind::Cca, U256::from(400u64))]).unwrap();
+                distribute_daily(ctx, DAY, &[(PoolKind::Cca, U256::from(1000u64))]).unwrap();
+
             assert_eq!(excess, U256::ZERO);
+            let c = AgentRewardContract::new(ctx.storage.clone());
+            for agent in &agents {
+                assert_eq!(c.get_claimable_reward(*agent).unwrap(), U256::from(250u64));
+            }
+            // The sink is no longer a destination: the pool is paid out through
+            // the same claimable path as WAA and SRA.
             assert_eq!(
                 ctx.storage
                     .balance(outbe_primitives::addresses::CCA_ADDRESS)
                     .unwrap(),
-                U256::from(400u64)
+                U256::ZERO
             );
             assert_eq!(
                 ctx.storage
                     .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
                     .unwrap(),
-                U256::ZERO
+                U256::from(1000u64)
+            );
+            // The day is settled, so a second run cannot pay it again.
+            assert!(outbe_cca::api::day_originators(ctx.storage.clone(), DAY)
+                .unwrap()
+                .is_empty());
+        });
+    }
+
+    #[test]
+    fn a_penalized_agent_earns_less_on_the_same_units() {
+        run(|ctx| {
+            let agents: Vec<Address> = (0..4).map(|n| numbered_address(900 + n)).collect();
+            for agent in &agents {
+                seed_originations(ctx, *agent, 256);
+            }
+            // A fully unpaid void takes the first agent to m = 0.9 while its
+            // origination count is unchanged.
+            outbe_cca::api::record_void(
+                ctx.storage.clone(),
+                agents[0],
+                outbe_cca::constants::MULTIPLIER_ONE,
+            )
+            .unwrap();
+
+            distribute_daily(ctx, DAY, &[(PoolKind::Cca, U256::from(1000u64))]).unwrap();
+
+            let c = AgentRewardContract::new(ctx.storage.clone());
+            let penalized = c.get_claimable_reward(agents[0]).unwrap();
+            for agent in &agents[1..] {
+                assert!(
+                    penalized < c.get_claimable_reward(*agent).unwrap(),
+                    "the multiplier has to move the split, not just the record"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn a_thin_day_cannot_make_one_origination_worth_a_fortune() {
+        run(|ctx| {
+            // One agent, one unit, against a pool sized like a real day's 4 %.
+            // Without §8.3's ceiling it would take the 32 % cap — a third of the
+            // day's CCA emission for a single position.
+            let agent = numbered_address(900);
+            seed_originations(ctx, agent, 1);
+            let pool = U256::from(1_024_000u64);
+
+            let excess = distribute_daily(ctx, DAY, &[(PoolKind::Cca, pool)]).unwrap();
+
+            let paid = AgentRewardContract::new(ctx.storage.clone())
+                .get_claimable_reward(agent)
+                .unwrap();
+            assert_eq!(
+                paid,
+                pool / U256::from(1024u64),
+                "one unit is worth pool / MIN_REWARDED_DAY_WEIGHT, not a third of the pool"
+            );
+            assert!(
+                paid < pool * U256::from(32u64) / U256::from(100u64),
+                "the per-unit ceiling has to bind before the 32 % cap does"
+            );
+            // Everything the ceiling withheld goes back to the terminal.
+            assert_eq!(excess, pool - paid);
+            assert_eq!(
+                ctx.storage
+                    .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                    .unwrap(),
+                paid,
+                "burn parity: only what was actually paid stays minted"
             );
         });
     }
 
     #[test]
-    fn cca_accumulates_across_calls() {
+    fn cca_with_no_originations_returns_the_whole_pool() {
         run(|ctx| {
-            distribute_daily(ctx, DAY, &[(PoolKind::Cca, U256::from(100u64))]).unwrap();
-            distribute_daily(ctx, DAY, &[(PoolKind::Cca, U256::from(50u64))]).unwrap();
+            let excess =
+                distribute_daily(ctx, DAY, &[(PoolKind::Cca, U256::from(400u64))]).unwrap();
+            assert_eq!(excess, U256::from(400u64));
+            assert_eq!(
+                ctx.storage
+                    .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                    .unwrap(),
+                U256::ZERO,
+                "the minted pool must be burned back, not stranded"
+            );
+        });
+    }
+
+    #[test]
+    fn the_pre_activation_cca_sink_is_swept_once() {
+        run(|ctx| {
+            // What the old pure-accumulator behaviour left standing at the sink.
+            let stranded = U256::from(5_000u64);
+            ctx.storage
+                .increase_balance(outbe_primitives::addresses::CCA_ADDRESS, stranded)
+                .unwrap();
+
+            // §8.3: it goes to Metadosis, not to the day's originators.
+            let excess = distribute_daily(ctx, DAY, &[(PoolKind::Cca, U256::ZERO)]).unwrap();
+            assert_eq!(excess, stranded);
             assert_eq!(
                 ctx.storage
                     .balance(outbe_primitives::addresses::CCA_ADDRESS)
                     .unwrap(),
-                U256::from(150u64)
+                U256::ZERO
+            );
+
+            // A second day must not drain anything again.
+            ctx.storage
+                .increase_balance(outbe_primitives::addresses::CCA_ADDRESS, U256::from(7u64))
+                .unwrap();
+            let excess = distribute_daily(ctx, DAY, &[(PoolKind::Cca, U256::ZERO)]).unwrap();
+            assert_eq!(excess, U256::ZERO, "the sweep is one-shot");
+            assert_eq!(
+                ctx.storage
+                    .balance(outbe_primitives::addresses::CCA_ADDRESS)
+                    .unwrap(),
+                U256::from(7u64)
             );
         });
     }
@@ -496,7 +754,7 @@ mod distribute_daily_tests {
     #[test]
     fn full_three_pool_dispatch_sums_excesses() {
         run(|ctx| {
-            // Seed only WAA; SRA empty; CCA pure mint.
+            // Seed only WAA; SRA and CCA have no participants.
             let alice = address!("0x1111111111111111111111111111111111111111");
             let mut c = AgentRewardContract::new(ctx.storage.clone());
             c.increment_waa_tribute(DAY, alice).unwrap();
@@ -507,22 +765,16 @@ mod distribute_daily_tests {
                 &[
                     (PoolKind::Waa, U256::from(1000u64)), // alice capped 320 → excess 680
                     (PoolKind::Sra, U256::from(500u64)),  // no tribute → excess 500
-                    (PoolKind::Cca, U256::from(100u64)),  // no excess
+                    (PoolKind::Cca, U256::from(100u64)),  // no originator → excess 100
                 ],
             )
             .unwrap();
 
-            assert_eq!(excess, U256::from(1180u64)); // 680 + 500
+            assert_eq!(excess, U256::from(1280u64)); // 680 + 500 + 100
             let c2 = AgentRewardContract::new(ctx.storage.clone());
             assert_eq!(c2.get_claimable_reward(alice).unwrap(), U256::from(320u64));
-            assert_eq!(
-                ctx.storage
-                    .balance(outbe_primitives::addresses::CCA_ADDRESS)
-                    .unwrap(),
-                U256::from(100u64)
-            );
-            // burn parity: AGENT_REWARD holds exactly alice's
-            // 320 claimable; the SRA no-tribute 500 was burned.
+            // burn parity: AGENT_REWARD holds exactly alice's 320 claimable;
+            // the SRA and CCA no-participant pools were burned back.
             assert_eq!(
                 ctx.storage
                     .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)

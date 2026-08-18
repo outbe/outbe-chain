@@ -3,9 +3,13 @@
 
 pub mod api;
 pub mod errors;
+pub mod lifecycle;
 pub mod precompile;
 pub mod runtime;
+pub mod schema;
 mod sol_ext;
+
+pub use schema::GratisFactoryContract;
 
 #[cfg(test)]
 mod tests;

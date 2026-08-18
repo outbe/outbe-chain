@@ -6,20 +6,20 @@
 //!   position bound to the smart account (storing the pledger EOA), crediting the
 //!   collateral into the pledger's own pledged ledger, and delivers the stablecoin
 //!   loan via the vault sub-call.
-//! - `anadosis` advances the position's installment schedule and releases that
-//!   installment's share of collateral from the pledger's pledged ledger back to its
-//!   balance.
-//! - [`CredisLifecycle`] sweeps expired positions each block, burning the unpaid
-//!   collateral (spec §3.6).
+//! - `settle` applies a payment interest-first and releases the principal-proportional
+//!   share of collateral from the pledger's pledged ledger back to its balance.
+//! - [`called`] is the daily Cycle-triggered price-path scan: it latches positions
+//!   past their floor, calls those whose sustained breach completed, and voids the
+//!   remainder of called positions whose settlement window has lapsed, burning the
+//!   unpaid share of the collateral into the Promis Reserve.
 
+pub mod called;
 pub mod errors;
-pub mod lifecycle;
 pub mod precompile;
 pub mod runtime;
 pub mod schema;
 mod sol_ext;
 
-pub use lifecycle::CredisLifecycle;
 pub use schema::CredisFactoryContract;
 
 #[cfg(test)]

@@ -1282,7 +1282,7 @@ fn genesis_seeds_the_usd_currency_rate() {
         .unwrap();
         assert_eq!(
             oracle.get_currency_rate(840).unwrap(),
-            crate::constants::DEFAULT_USD_CURRENCY_RATE
+            crate::constants::DEFAULT_USD_POLICY_RATE
         );
     });
 }

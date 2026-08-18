@@ -147,7 +147,7 @@ pub fn consume_pledge(
 
 /// Decrypt a position's stored `eoa_ct` blob back to the pledger EOA (read-only, via the
 /// enclave). The caller uses the returned address to key the confidential ledgers at
-/// payAnadosis / expiry without the EOA ever appearing on-chain.
+/// settlement / void without the EOA ever appearing on-chain.
 pub fn reveal_owner(storage: StorageHandle<'_>, eoa_ct: &[u8]) -> Result<Address> {
     runtime::reveal_owner(storage, eoa_ct)
 }

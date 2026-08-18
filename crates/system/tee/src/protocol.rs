@@ -192,9 +192,9 @@ pub enum GratisOp {
     ConsumePledge,
     /// Release `amount` of collateral from the EOA's own pledged ledger back to its
     /// balance (`pledged_total_supply -= amount`). Amount-based (no ticket); the
-    /// on-chain Credis position schedule is the accounting authority.
+    /// on-chain Credis position is the accounting authority.
     ReleaseToEoa,
-    /// Burn `amount` of collateral from the EOA's own pledged ledger at credis expiry
+    /// Burn `amount` of collateral from the EOA's own pledged ledger at credis void
     /// (`total_supply -= amount`; `pledged_total_supply -= amount`). Amount-based (no
     /// ticket); the on-chain Credis position's outstanding balance is the authority.
     BurnPledged,

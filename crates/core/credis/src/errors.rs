@@ -1,7 +1,6 @@
 //! Module-local error types for the Credis position contract.
 //!
-//! Mirrors `outbe-cosmos/x/credis/types/errors.go`. Errors that are not
-//! credis-specific (out-of-gas, generic revert) come from
+//! Errors that are not credis-specific (out-of-gas, generic revert) come from
 //! `outbe_primitives::error::PrecompileError`.
 
 use outbe_primitives::error::PrecompileError;
@@ -14,12 +13,26 @@ pub enum CredisError {
     PositionNotFound,
     #[error("position already exists")]
     PositionAlreadyExists,
-    #[error("position already completed")]
-    PositionCompleted,
+    #[error("position is closed")]
+    PositionClosed,
     #[error("amount must be positive")]
     InvalidAmount,
-    #[error("invalid anadosis number")]
-    InvalidAnadosisNumber,
+    #[error("invalid position state value: {0}")]
+    InvalidStateValue(u8),
+    #[error("position is not settleable yet: the floor price has never been exceeded")]
+    NotSettleable,
+    #[error("payment is below the interest accrued since the last settlement")]
+    PaymentBelowAccruedInterest,
+    #[error("position is not called")]
+    NotCalled,
+    #[error("call window has not lapsed")]
+    CallWindowOpen,
+    #[error("position has no outstanding principal")]
+    NothingOutstanding,
+    #[error("credis arithmetic overflow")]
+    ArithmeticOverflow,
+    #[error("owner already holds the maximum number of open positions")]
+    TooManyOpenPositions,
 }
 
 impl From<CredisError> for PrecompileError {

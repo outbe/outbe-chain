@@ -173,8 +173,26 @@ fn dispatch_local(
                 )
             }),
 
+            // --- reservations (target-gated to take, permissionless to give back) ---
+            reserve(c) => mutate(c, caller, |sender, c| {
+                let target = runtime::registered_liquidity_target(&storage, sender)?;
+                runtime::reserve(storage.clone(), c.id, c.asset, c.amount, target)
+            }),
+            releaseReservation(c) => mutate(c, caller, |sender, c| {
+                let target = runtime::registered_liquidity_target(&storage, sender)?;
+                runtime::release_reservation(storage.clone(), c.id, c.receiver, target)
+            }),
+            returnReservation(c) => mutate(c, caller, |_sender, c| {
+                runtime::return_reservation(storage.clone(), c.id)
+            }),
+            reservationOf(c) => view(c, |c| {
+                let (asset, amount) = runtime::reservation_of(&storage, c.id)?;
+                Ok(IVaultRouter::reservationOfReturn { asset, amount })
+            }),
+
             // --- views over external state ---
             sharesBalance(c) => view(c, |c| runtime::shares_balance(&storage, c.vault)),
+            hasLiquidity(c) => view(c, |c| runtime::has_liquidity(&storage, c.asset, c.amount)),
         }
     })
 }
