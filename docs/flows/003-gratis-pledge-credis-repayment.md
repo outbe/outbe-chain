@@ -578,14 +578,15 @@ Events are the audit trail; storage reads are authoritative if they disagree.
    again on the same address, and voids that land after the exit find nothing to
    penalize. The bond gating `register()` and the §8.2 haircut pricing the exit
    are what close both halves.
-2. **The per-unit reward ceiling does not exist.** §8.3 asks for a cap on what a
-   single origination unit can be worth, so a thin early day cannot make one
-   origination worth a fortune. The paper leaves the number TBD and none is
-   invented here, so on a day with one originator the 32% cap is the only thing
-   between it and a third of the pool. The rest of §8.3 — the capped pro-rata
-   split on `units × multiplier`, the redistribution, the residue to Metadosis,
-   and the one-time pre-activation sink sweep — is implemented in
-   `PoolKind::Cca`.
+2. **The per-unit reward ceiling is a placeholder value, not a decided one.**
+   §8.3 lists the ceiling as TBD. It is implemented as a participation floor —
+   `MIN_REWARDED_DAY_WEIGHT = 1024` units, so one unit is never worth more than
+   `pool / 1024` and the remainder returns to Metadosis — which sidesteps pricing
+   the token but still guesses the volume at which a day pays out in full. The
+   number wants a decision before launch; the mechanism does not. Everything else
+   in §8.3 (the capped pro-rata split on `units × multiplier`, the
+   redistribution, the residue to Metadosis, the one-time pre-activation sink
+   sweep) is implemented in `PoolKind::Cca`.
 3. **No downside resolution.** A position whose price never reaches the floor waits
    forever — nothing forces closure on depreciation. Deferred by decision, but it
    also means no CCA penalty can fire in a flat or falling market.

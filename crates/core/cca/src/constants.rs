@@ -4,7 +4,7 @@
 //! there carry a placeholder here plus a `ponytail:` note naming what has to be
 //! decided before launch.
 
-use alloy_primitives::U256;
+use alloy_primitives::{uint, U256};
 
 /// `m = 1`, the unpenalized multiplier. Also the ceiling: recovery can restore a
 /// multiplier to 1 but never above it.
@@ -34,6 +34,24 @@ pub const RECOVERY_VALUE_UNIT: U256 = U256::from_limbs([1_000_000_000u64, 0, 0, 
 // ponytail: §10 TBD. Too low and units are farmable with trivial positions; too
 // high and legitimate small credits stop paying the agent that sourced them.
 pub const MIN_PRINCIPAL_FOR_UNIT: U256 = U256::from_limbs([100_000_000u64, 0, 0, 0]);
+
+/// The §8.3 per-unit reward ceiling, expressed as the origination weight the
+/// daily CCA pool is divided by at minimum.
+///
+/// A unit is therefore never worth more than `pool / MIN_REWARDED_DAY_WEIGHT`,
+/// however few originations a day carries, and whatever that leaves
+/// undistributed goes back to the Metadosis sink. Once real participation passes
+/// this floor the ceiling is slack and the pool splits purely pro-rata.
+///
+/// 1024 units — a day carrying on the order of a thousand originations is the
+/// point where the pool pays out in full.
+// ponytail: §10 lists this ceiling as TBD. Stating it as a participation floor
+// rather than an absolute COEN figure is what keeps it honest: the day emission
+// shrinks by 16x over 2920 days, so a fixed per-unit price would drift from
+// generous to binding on its own. The knob here is "how many originations make a
+// full day", which is answerable without pricing the token. Governance parameter
+// if it needs to move.
+pub const MIN_REWARDED_DAY_WEIGHT: U256 = uint!(1_024_000_000_000_000_000_000_U256);
 
 /// Cap on the §8.3 repeat-owner halvings. The nth position a CCA opens for the
 /// same owner earns `1 / 2^(n-1)` units; past this many halvings the unit stops
