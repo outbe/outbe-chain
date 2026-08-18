@@ -1,33 +1,34 @@
 import { ethers, Provider, JsonRpcProvider } from 'ethers';
 import { ERC20__factory, Router__factory } from '../typechain';
 import type { Router } from '../typechain';
-import { chains, ROUTER } from '../config';
+import { chains, nativeDecimalsByChainId, ROUTER } from '../config';
 import * as OrderEncoder from './OrderEncoder';
 
 /**
  * Get decimals for a token (native or ERC20)
  * @param tokenAddress Token address (use 0x0 or ZeroAddress for native token)
- * @param provider Ethers provider
- * @returns Number of decimals (defaults to 18 for native or if call fails)
+ * @param provider Ethers provider for the chain the token lives on
+ * @returns Number of decimals
+ * @throws If the chain's native decimals are not configured, or `decimals()` fails
  */
 export async function getTokenDecimals(
   tokenAddress: string,
   provider: Provider
 ): Promise<number> {
-  // Native token always has 18 decimals
+  // Native decimals are not discoverable over RPC and are not the same on every
+  // chain — COEN is six-decimal — so they come from the chain config.
   if (isNativeToken(tokenAddress)) {
-    return 18;
+    const { chainId } = await provider.getNetwork();
+    const decimals = nativeDecimalsByChainId[Number(chainId)];
+    if (decimals === undefined) {
+      throw new Error(`nativeDecimals not configured for chain ${chainId}`);
+    }
+    return decimals;
   }
 
-  // Try to get decimals from ERC20 contract
-  try {
-    const token = ERC20__factory.connect(tokenAddress, provider);
-    const result = await token.decimals();
-    return Number(result) ;
-  } catch {
-    // Default to 18 if decimals() call fails
-    return 18;
-  }
+  const token = ERC20__factory.connect(tokenAddress, provider);
+  const result = await token.decimals();
+  return Number(result);
 }
 
 /**
