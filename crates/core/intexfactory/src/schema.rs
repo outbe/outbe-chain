@@ -14,7 +14,7 @@ pub struct IssuanceParams {
     pub worldwide_day: WorldwideDay,
     pub issued_intex_count: u32,
     pub promis_load_minor: u128,
-    /// Entry price (per-unit, reference currency, 1e18 oracle scale); cost/floor/call derive from it.
+    /// Entry price (per-unit, reference ISO stable-units, 1e6); cost/floor/call derive from it.
     pub entry_price_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,

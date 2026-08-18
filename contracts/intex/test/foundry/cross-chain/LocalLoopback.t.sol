@@ -96,7 +96,7 @@ contract RecordingFactory {
 /// @dev WETH-style wCOEN: ERC20 for the escrow plus a native `withdraw` (paid from its own
 ///      pre-funded balance) for the origin unwrap.
 contract WCOEN is MockERC20 {
-    constructor() MockERC20("Wrapped COEN", "WCOEN", 18) {}
+    constructor() MockERC20("Wrapped COEN", "WCOEN", 6) {}
 
     function withdraw(uint256 wad) external {
         (bool ok,) = payable(msg.sender).call{value: wad}("");

@@ -142,7 +142,7 @@ interface IOriginRouter {
         uint32 revealEnd;
         /// @notice End of the issuance stage (UNIX seconds).
         uint32 issuanceEnd;
-        /// @notice Promis tokens per Intex unit (18 decimals).
+        /// @notice PROMIS-units per Intex unit (1e6).
         uint128 promisLoadMinor;
         /// @notice Minimum acceptable bid rate (`1e6` fixed-point, % of the escrow basis).
         uint32 minIntexBidRate;

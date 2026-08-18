@@ -75,7 +75,7 @@ interface IIntexAuction {
 
     /// @notice Auction input parameters, stored per auction.
     struct AuctionParams {
-        /// @notice Promis tokens per Intex unit (18 decimals).
+        /// @notice PROMIS-units per Intex unit (1e6).
         uint128 promisLoadMinor;
         /// @notice Call-trigger parameters (window/threshold/period).
         IntexCallTrigger callTrigger;

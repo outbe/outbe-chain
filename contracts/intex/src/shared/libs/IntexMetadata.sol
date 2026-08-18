@@ -15,15 +15,13 @@ library IntexMetadata {
     string internal constant DESCRIPTION =
         "Intex is the core cross-chain asset of the Outbe network. Each series is born from a Worldwide Day auction held across all connected chains; its transferable Issued tokens settle into soulbound Settled tokens that mine Promis.";
 
-    /// @dev Prices arrive on the 1e9 wire scale, set by `ORACLE_TO_WIRE_SCALE` on the origin
-    ///      side; the two are one decision and must move together. Six fraction digits resolve
-    ///      sub-cent COEN rates.
-    uint8 private constant PRICE_DECIMALS = 9;
+    /// @dev Every COEN/ISO price arrives directly in six-decimal ISO stable-units.
+    uint8 private constant PRICE_DECIMALS = 6;
     uint8 private constant PRICE_PRECISION = 6;
-    /// @dev Scale carried by `promisLoadMinor` (PROMIS * 1e18); unrelated to the price scale above.
-    uint256 private constant PROMIS_SCALE = 1e18;
+    /// @dev Scale carried by `promisLoadMinor` (PROMIS * 1e6).
+    uint256 private constant PROMIS_SCALE = 1e6;
 
-    /// @dev Cost of one Intex in the reference currency, on the same 1e9 scale as the prices;
+    /// @dev Cost of one Intex in the reference currency, on the same 1e6 scale as the prices;
     ///      `promisLoadMinor` carries its own scale, which the divisor removes.
     function _costAmountMinor(IIntexNFT1155.SeriesData memory data) private pure returns (uint256) {
         return (uint256(data.entryPriceMinor) * uint256(data.promisLoadMinor)) / PROMIS_SCALE;

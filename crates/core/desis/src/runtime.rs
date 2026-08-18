@@ -899,7 +899,7 @@ fn sort_bids(bids: &mut [(u32, BidData)]) {
 
 /// Escrow amount for `qty` Intexes at `rate` (1e6 fixed-point) against the
 /// per-Intex escrow basis: `qty * basis * rate / RATE_SCALE`, saturating to u128
-/// (wCOEN amounts at 18 decimals exceed u64).
+/// (large six-decimal WCOEN amounts can exceed u64).
 fn rate_lock(qty: u64, basis: u128, rate: u32) -> u128 {
     let amount = U256::from(qty)
         .saturating_mul(U256::from(basis))

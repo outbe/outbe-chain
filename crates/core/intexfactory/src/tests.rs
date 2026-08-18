@@ -2288,6 +2288,24 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
 }
 
 #[test]
+fn issuance_currency_settlement_rounds_a_non_divisible_fx_result_up_once() {
+    with_dual_currency_series(EUR_ISO as u64, |s| {
+        let oracle = OracleContract::new(s.clone());
+        publish_rate(
+            &oracle,
+            REFERENCE_ISO,
+            PAIR_ID,
+            U256::from(3u64) * COEN_ISO_RATE_SCALE,
+            0,
+        );
+        publish_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE, 0);
+
+        let cost = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap();
+        assert_eq!(cost, U256::from(333_333_333_333_333_334u64));
+    });
+}
+
+#[test]
 fn an_unpriced_issuance_currency_cannot_be_settled_in() {
     with_dual_currency_series(EUR_ISO as u64, |s| {
         let oracle = OracleContract::new(s.clone());

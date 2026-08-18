@@ -148,7 +148,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   }
 
   // A bid is a RATE: the fraction of the per-Intex strike (promis_load, in wCOEN)
-  // the bidder will pay, as 1e6 fixed-point. Payment-token meta (wCOEN, 18 dec) is
+  // the bidder will pay, as 1e6 fixed-point. Payment-token meta (WCOEN, 6 dec) is
   // cached per network so outputs can name the token and size the escrow lock.
   const RATE_SCALE = 1_000_000n;
   const metaCache = new Map<string, { decimals: number; symbol: string }>();
@@ -289,16 +289,15 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         network: n.name,
         seriesId: fromSeriesId(d.seriesId as unknown as Hex),
         // scales per crates/core/intex/src/schema.rs (SeriesRecord):
-        promisLoad: { raw: d.promisLoadMinor.toString(), value: formatUnits(u256(d.promisLoadMinor), 18) }, // Promis per intex, 18 dec
-        entryPrice: { raw: d.entryPriceMinor.toString(), value: formatUnits(u256(d.entryPriceMinor), 18), scale: "1e18 oracle (reference ccy)" },
-        floorPrice: { raw: d.floorPriceMinor.toString(), value: formatUnits(u256(d.floorPriceMinor), 18), scale: "1e18 oracle" },
-        callPrice: { raw: d.callPriceMinor.toString(), value: formatUnits(u256(d.callPriceMinor), 18), scale: "1e18 oracle" },
+        promisLoad: { raw: d.promisLoadMinor.toString(), value: formatUnits(u256(d.promisLoadMinor), 6) },
+        entryPrice: { raw: d.entryPriceMinor.toString(), value: formatUnits(u256(d.entryPriceMinor), 6), scale: "1e6 ISO stable-unit" },
+        floorPrice: { raw: d.floorPriceMinor.toString(), value: formatUnits(u256(d.floorPriceMinor), 6), scale: "1e6 ISO stable-unit" },
+        callPrice: { raw: d.callPriceMinor.toString(), value: formatUnits(u256(d.callPriceMinor), 6), scale: "1e6 ISO stable-unit" },
         issuedIntexCount: Number(d.issuedIntexCount),
-        costAmount: { raw: d.costAmountMinor.toString(), value: formatUnits(u256(d.costAmountMinor), 18), scale: "1e18 oracle (reference ccy)" },
+        costAmount: { raw: d.costAmountMinor.toString(), value: formatUnits(u256(d.costAmountMinor), 6), scale: "1e6 ISO stable-unit" },
         callWindow: Number(d.callWindow),
         callThreshold: Number(d.callThreshold),
         callNoticePeriod: Number(d.callNoticePeriod),
-        // 6 dec: implied by the entry(1e18) * load(1e18) / 1e30 derivation.
         issuanceCurrency: Number(d.issuanceCurrency), // ISO 4217 numeric
         referenceCurrency: Number(d.referenceCurrency),
         worldwideDay: Number(d.worldwideDay),
@@ -499,7 +498,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           minIntexBidQuantity: Number(d.params.minIntexBidQuantity),
           // entry bond pulled at commit and returned at reveal/cancel; 0 = no bond.
           commitBondMinor: { raw: d.params.commitBondMinor.toString(), value: formatUnits(d.params.commitBondMinor, dec) },
-          // A bid's reference currency must appear here. Prices are on the 1e9 wire scale.
+          // A bid's reference currency must appear here. Prices are ISO stable-units (1e6).
           prices: d.params.prices.map((row) => ({
             isoCode: Number(row.isoCode),
             entryPriceMinor: row.entryPriceMinor.toString(),
@@ -1175,7 +1174,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         functionName: "balanceOf",
         args: [who],
       })) as bigint;
-      return ok({ network: n.name, account: who, balance: { raw: bal.toString(), value: formatUnits(bal, 18) } });
+      return ok({ network: n.name, account: who, balance: { raw: bal.toString(), value: formatUnits(bal, 6) } });
     }),
   );
 }

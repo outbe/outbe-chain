@@ -4,7 +4,7 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::DESIS_ADDRESS;
-use outbe_primitives::units::SCALE_1E18_U128;
+use outbe_primitives::units::UNITS_PER_PROMIS;
 
 use crate::constants::PROMIS_LOAD;
 
@@ -55,14 +55,14 @@ pub struct IntexCallTrigger {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReferenceCurrencyPrice {
     pub iso_code: u16,
-    /// Per-unit entry price (1e18 oracle scale); floor and call derive from it.
+    /// Per-unit entry price in ISO stable-units (1e6); floor and call derive from it.
     pub entry_price_minor: U256,
 }
 
 /// Auction configuration (demand side).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuctionConfig {
-    /// Promis tokens per Intex unit (18 decimals); bounded by uint128.
+    /// PROMIS-units per Intex unit (1e6); bounded by uint128.
     pub promis_load_minor: u128,
     /// Call-trigger parameters sourced from genesis `IntexParams`.
     pub call_trigger: IntexCallTrigger,
@@ -70,7 +70,7 @@ pub struct AuctionConfig {
     pub min_intex_bid_rate: u32,
     /// Minimum bid quantity (Intex units); 4% of the prior series' issued count.
     pub min_intex_bid_quantity: u16,
-    /// Commit-entry bond (payment-token 18-dec minor units); 0 disables the bond.
+    /// Commit-entry bond in six-decimal WCOEN-units; 0 disables the bond.
     pub commit_bond_minor: u128,
     /// One row per reference currency the oracle could price for this day.
     pub reference_prices: Vec<ReferenceCurrencyPrice>,
@@ -78,14 +78,14 @@ pub struct AuctionConfig {
 
 impl AuctionConfig {
     /// Build the demand-side config from the day's per-reference entry prices.
-    /// `promis_load_minor` scales `PROMIS_LOAD` to 18-dec minor units;
+    /// `promis_load_minor` scales `PROMIS_LOAD` to six-decimal PROMIS-units;
     /// `min_intex_bid_rate = 0` means no bid floor. `call_trigger`,
     /// `min_intex_bid_quantity` and `commit_bond_minor` are left at their defaults
     /// here and populated at auction start (`start_auction`), where the genesis
     /// `IntexParams` and the prior-clearing count are in reach.
     pub fn from_reference_prices(reference_prices: Vec<ReferenceCurrencyPrice>) -> Self {
         Self {
-            promis_load_minor: PROMIS_LOAD.saturating_mul(SCALE_1E18_U128),
+            promis_load_minor: (U256::from(PROMIS_LOAD) * UNITS_PER_PROMIS).to::<u128>(),
             call_trigger: IntexCallTrigger::default(),
             min_intex_bid_rate: 0,
             min_intex_bid_quantity: 0,
@@ -281,7 +281,7 @@ pub struct DesisContract {
     /// keccak256(worldwide_day_be32 ++ index_be32) -> reference currency ISO code.
     #[attribute(order = 36)]
     pub reference_price_iso: outbe_primitives::storage::dsl::Map<B256, u32>,
-    /// keccak256(worldwide_day_be32 ++ index_be32) -> entry price (1e18 oracle scale).
+    /// keccak256(worldwide_day_be32 ++ index_be32) -> entry price in ISO stable-units (1e6).
     /// Floor and call derive from it, so only the anchor is stored.
     #[attribute(order = 37)]
     pub reference_price_entry: outbe_primitives::storage::dsl::Map<B256, U256>,

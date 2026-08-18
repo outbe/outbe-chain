@@ -212,7 +212,7 @@ contract EscrowAdapterBondTest is Test {
         _lockBond();
         assertTrue(escrow.hasOutstandingLocks(), "bond counts as outstanding");
 
-        address otherToken = address(new MockERC20("X", "X", 18));
+        address otherToken = address(new MockERC20("X", "X", 6));
         vm.prank(admin);
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.LiveLocksOutstanding.selector, BOND_AMOUNT));
         escrow.wire(auction, address(compact), otherToken);
