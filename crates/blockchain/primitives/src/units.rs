@@ -27,6 +27,8 @@ pub const UNITS_PER_PROMIS: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 pub const UNITS_PER_WCOEN: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 /// Integer scale of every stablecoin-backed COEN/ISO Oracle price.
 pub const COEN_ISO_PRICE_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
+/// Fixed-point scale of the annual ISO currency rate pinned by Credis.
+pub const CREDIS_INTEREST_RATE_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 
 /// One whole coen, expressed in the on-chain `U256` representation.
 pub const ONE_COEN: U256 = UNITS_PER_COEN;

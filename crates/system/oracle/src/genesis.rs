@@ -46,7 +46,7 @@ pub struct GenesisAggregateVote {
 }
 
 /// A reference currency for genesis import/export: an ISO 4217 numeric code
-/// plus its annualized currency rate (1e18 scaled). The currency rate is
+/// plus its annualized currency rate (scale `1e6`). The currency rate is
 /// read by the Credis Factory at issuance and pinned onto the Anadosis
 /// schedule. Currencies used purely as pricing references (no credis) may carry
 /// a zero rate.
@@ -54,7 +54,7 @@ pub struct GenesisAggregateVote {
 pub struct ReferenceCurrency {
     /// ISO 4217 numeric code (e.g., 840 = USD).
     pub iso_code: u16,
-    /// Annualized currency rate at 1e18 scale (e.g., 0.043 -> 43e15).
+    /// Annualized currency rate at scale `1e6` (e.g., 0.043 -> 43_000).
     pub currency_rate: U256,
 }
 
@@ -83,8 +83,8 @@ pub struct OracleGenesisConfig {
     pub initial_rates: Vec<(Address, Address, U256)>,
     /// Feeder delegations as `(validator, feeder)`.
     pub feeder_delegations: Vec<(Address, Address)>,
-    /// Reference currencies with their annualized currency rate (1e18
-    /// scaled). These ISO 4217 codes identify currencies valid for off-chain
+    /// Reference currencies with their annualized currency rate (scale `1e6`).
+    /// These ISO 4217 codes identify currencies valid for off-chain
     /// pricing references; the currency rate is read by the Credis Factory
     /// at issuance. Pre-filled at genesis with USD (840) at the current SOFR.
     pub reference_currencies: Vec<ReferenceCurrency>,

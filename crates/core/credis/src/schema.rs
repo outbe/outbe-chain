@@ -46,7 +46,7 @@ pub struct Position {
     #[attribute(order = 9)]
     pub credis_principal: U256,
 
-    /// Annualized currency rate (1e18 scaled) read from the Oracle and pinned
+    /// Annualized currency rate (scale `1e6`) read from the Oracle and pinned
     /// at issuance for the lifetime of this schedule.
     #[attribute(order = 10)]
     pub currency_rate: U256,

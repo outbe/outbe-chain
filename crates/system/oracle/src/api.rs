@@ -353,7 +353,7 @@ pub fn get_max_active_scurve_value(
     scurve::get_max_active_scurve_value(&oracle, pair, scurve_timestamp)
 }
 
-/// Annualized currency rate (1e18 scaled) for an ISO 4217 code, read from the
+/// Annualized currency rate (scale `1e6`) for an ISO 4217 code, read from the
 /// reference-currency collection. Reverts when the code is not a registered
 /// reference currency or carries no (non-zero) rate. Called by the Credis
 /// Factory at issuance to pin the Anadosis currency rate.

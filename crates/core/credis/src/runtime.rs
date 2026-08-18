@@ -6,7 +6,7 @@
 use alloy_primitives::{Address, U256};
 
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::units::SCALE_1E18;
+use outbe_primitives::units::CREDIS_INTEREST_RATE_SCALE;
 
 use crate::errors::CredisError;
 use crate::precompile::ICredis;
@@ -40,17 +40,24 @@ impl CredisContract<'_> {
     }
 
     /// Total repayable debt for a position: `principal × (1 + rate × TERM / 12)`,
-    /// where `rate` is the annualized currency rate (1e18 scaled) and `TERM`
+    /// where `rate` is the annualized currency rate with scale `1e6` and `TERM`
     /// is [`NUMBER_OF_ANADOSIS`] months. A zero rate yields `total == principal`
     /// (the pre-currency-rate behavior).
     fn total_debt(principal: U256, currency_rate: U256) -> Result<U256> {
         let term = U256::from(NUMBER_OF_ANADOSIS);
-        // multiplier = 1e18 + rate × TERM / 12  (1e18 scaled)
-        let multiplier = SCALE_1E18 + currency_rate * term / U256::from(12u64);
+        // Preserve the existing staged rounding: floor the term rate first,
+        // then floor the scaled principal multiplication.
+        let term_rate = currency_rate
+            .checked_mul(term)
+            .ok_or_else(|| -> PrecompileError { CredisError::InvalidAmount.into() })?
+            / U256::from(12u64);
+        let multiplier = CREDIS_INTEREST_RATE_SCALE
+            .checked_add(term_rate)
+            .ok_or_else(|| -> PrecompileError { CredisError::InvalidAmount.into() })?;
         let scaled = principal
             .checked_mul(multiplier)
             .ok_or_else(|| -> PrecompileError { CredisError::InvalidAmount.into() })?;
-        Ok(scaled / SCALE_1E18)
+        Ok(scaled / CREDIS_INTEREST_RATE_SCALE)
     }
 
     /// Creates a position and returns the derived
@@ -58,8 +65,8 @@ impl CredisContract<'_> {
     ///
     /// `credis_principal` is the disbursed loan amount; the repayment schedule is
     /// sized to `total_debt(principal, currency_rate)` and split across the
-    /// [`NUMBER_OF_ANADOSIS`] monthly installments. `currency_rate` (1e18
-    /// scaled) and `issuance_currency` (ISO 4217) are pinned at issuance.
+    /// [`NUMBER_OF_ANADOSIS`] monthly installments. `currency_rate` (scale
+    /// `1e6`) and `issuance_currency` (ISO 4217) are pinned at issuance.
     #[allow(clippy::too_many_arguments)]
     pub fn create_position(
         &mut self,

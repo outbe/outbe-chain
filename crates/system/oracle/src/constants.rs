@@ -6,8 +6,8 @@ use outbe_primitives::math::reference_price::is_coen_iso_market;
 use outbe_primitives::units::{COEN_ISO_PRICE_SCALE, SCALE_1E18, UNITS_PER_COEN};
 
 /// Genesis seed for the USD (ISO 840) currency rate: the current SOFR
-/// (Secured Overnight Financing Rate) at 1e18 scale.
-pub const DEFAULT_USD_CURRENCY_RATE: U256 = U256::from_limbs([36_300_000_000_000_000u64, 0, 0, 0]);
+/// (Secured Overnight Financing Rate) at scale `1e6`.
+pub const DEFAULT_USD_CURRENCY_RATE: U256 = U256::from_limbs([36_300u64, 0, 0, 0]);
 
 /// Maximum number of snapshots to retain (approximately 1 year at 2-block vote
 /// period with 12-second blocks: ~1.3M snapshots).

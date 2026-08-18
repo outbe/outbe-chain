@@ -223,7 +223,7 @@ pub struct OracleContract {
     // so every day <= this watermark is considered finalized.
     pub utc_day_vwap_last_finalized: Slot<u32>,
 
-    // slot 60: reference-currency currency rates
+    // slot 60: reference-currency annual rates, scale 1e6
     pub reference_currency_rate: Mapping<u16, U256>,
 
     // === OCOMP PoC pre-admission projection (slots 61, 63-64) ===

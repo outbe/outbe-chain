@@ -236,7 +236,7 @@ impl OracleContract<'_> {
         Ok((rate, block, ts))
     }
 
-    /// Annualized currency rate (1e18 scaled) for an ISO 4217 code, as pinned
+    /// Annualized currency rate (scale `1e6`) for an ISO 4217 code, as pinned
     /// on the reference-currency collection at genesis. Reverts when the code is
     /// not a registered reference currency or carries no (non-zero) rate.
     pub fn get_currency_rate(&self, iso_code: u16) -> Result<U256> {
