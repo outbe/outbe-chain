@@ -8,10 +8,9 @@ use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::Result;
+use outbe_primitives::math::reference_price::is_coen_iso_market;
 
-use crate::constants::{
-    is_coen840_pair, reciprocal_scale, zero_volume_weight, MAX_SNAPSHOT_RETENTION_SECONDS,
-};
+use crate::constants::{reciprocal_scale, zero_volume_weight, MAX_SNAPSHOT_RETENTION_SECONDS};
 use crate::errors::OracleError;
 use crate::schema::{OracleContract, PairIndex};
 
@@ -203,7 +202,7 @@ impl OracleContract<'_> {
     // -----------------------------------------------------------------------
 
     /// Returns the current exchange rate in the market's canonical scale,
-    /// quoted in the caller's direction. COEN/840 uses six decimals; generic
+    /// quoted in the caller's direction. COEN/ISO uses six decimals; generic
     /// markets retain their decimal18 contract.
     ///
     /// Only the canonical direction is stored, so quoting the market backwards
@@ -398,7 +397,7 @@ impl OracleContract<'_> {
         entries: &[(AddressPair, U256, U256)],
     ) -> Result<()> {
         let requires_atomic_scale6_write =
-            entries.iter().any(|(pair, _, _)| is_coen840_pair(*pair));
+            entries.iter().any(|(pair, _, _)| is_coen_iso_market(*pair));
         if self.ocomp_profile_ready.read()? || requires_atomic_scale6_write {
             let storage = self.storage.clone();
             storage.with_checkpoint(|| self.write_snapshot_inner(timestamp, entries))
@@ -445,7 +444,7 @@ impl OracleContract<'_> {
             let day_vol = self.daily_vol_sum.get_nested(pair);
             let prev_pv = day_pv.read(&utc_day_ts).unwrap_or(U256::ZERO);
             let prev_vol = day_vol.read(&utc_day_ts).unwrap_or(U256::ZERO);
-            if is_coen840_pair(*pair) {
+            if is_coen_iso_market(*pair) {
                 let pv = rate
                     .checked_mul(vol)
                     .ok_or(OracleError::VwapOverflow("rate * volume"))?;

@@ -64,7 +64,7 @@ pub fn decode_vote_log(calldata: &[u8]) -> eyre::Result<String> {
 /// Encodes aggregated prices into ABI-encoded `submitVote` calldata.
 ///
 /// Prices and volumes are already in the pair's canonical integer scale from
-/// the aggregator: six decimals for COEN/840, existing decimal18 otherwise.
+/// the aggregator: six decimals for COEN/ISO, existing decimal18 otherwise.
 pub fn encode_vote(prices: &[AggregatedPrice], _config: &FeederConfig) -> Vec<u8> {
     let tuples: Vec<IOracle::ExchangeRateTuple> = prices
         .iter()

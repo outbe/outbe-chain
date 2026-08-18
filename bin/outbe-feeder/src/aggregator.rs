@@ -9,7 +9,7 @@
 //!    Volume-Weighted Average Price (VWAP) across providers.
 //!
 //! Final price/volume arithmetic uses the pair's existing integer contract:
-//! COEN/840 uses six-decimal price and COEN-unit volume, while generic pairs
+//! stablecoin-backed COEN/ISO markets use six-decimal price and COEN-unit volume, while generic pairs
 //! retain their decimal18 contract. f64 is only used for provider ingestion
 //! (parsing REST responses) and deviation filtering (σ-based statistical
 //! test), never for final VWAP/TVWAP output.
@@ -18,7 +18,8 @@ use crate::config::FeederConfig;
 use crate::provider::{CandlePrice, Provider, TickerPrice};
 use alloy_primitives::U256;
 use eyre::Result;
-use outbe_primitives::units::{COEN840_PRICE_SCALE, SCALE_1E18_U128, UNITS_PER_COEN};
+use outbe_primitives::stablecoin::iso_4217_alpha;
+use outbe_primitives::units::{COEN_ISO_PRICE_SCALE, SCALE_1E18_U128, UNITS_PER_COEN};
 use std::collections::HashMap;
 
 /// Aggregated price/volume for a single pair in that pair's canonical scale.
@@ -26,9 +27,9 @@ use std::collections::HashMap;
 pub struct AggregatedPrice {
     pub base: String,
     pub quote: String,
-    /// VWAP price: six decimals for COEN/840, existing decimal18 otherwise.
+    /// VWAP price: six decimals for COEN/ISO, existing decimal18 otherwise.
     pub price: U256,
-    /// Total volume: COEN units for COEN/840, existing decimal18 otherwise.
+    /// Total volume: COEN units for COEN/ISO, existing decimal18 otherwise.
     pub volume: U256,
 }
 
@@ -42,17 +43,18 @@ fn f64_to_u256(value: f64) -> U256 {
     U256::from(scaled)
 }
 
-fn is_coen840_pair(base: &str, quote: &str) -> bool {
-    base.eq_ignore_ascii_case("COEN") && quote == "840"
+fn is_coen_iso_pair(base: &str, quote: &str) -> bool {
+    base.eq_ignore_ascii_case("COEN")
+        && quote.parse::<u16>().ok().and_then(iso_4217_alpha).is_some()
 }
 
-/// Converts one positive finite COEN/840 price to its canonical integer scale.
+/// Converts one positive finite COEN/ISO price to its canonical integer scale.
 /// A positive value below the first representable price unit is rejected.
-fn coen840_price(value: f64) -> Option<U256> {
+fn coen_iso_price(value: f64) -> Option<U256> {
     if value <= 0.0 || !value.is_finite() {
         return None;
     }
-    let scale = COEN840_PRICE_SCALE.to::<u128>() as f64;
+    let scale = COEN_ISO_PRICE_SCALE.to::<u128>() as f64;
     let value = U256::from((value * scale) as u128);
     (!value.is_zero()).then_some(value)
 }
@@ -67,16 +69,16 @@ fn coen_volume(value: f64) -> U256 {
     U256::from((value * scale) as u128).max(U256::ONE)
 }
 
-/// COEN/840 weighted average. Zero-volume samples use one whole COEN only as
+/// COEN/ISO weighted average. Zero-volume samples use one whole COEN only as
 /// an internal weight while the emitted aggregate preserves their real zero
 /// volume. All products and sums are checked.
-fn compute_coen840_weighted(prices: &[(f64, f64)]) -> Result<Option<(U256, U256)>> {
+fn compute_coen_iso_weighted(prices: &[(f64, f64)]) -> Result<Option<(U256, U256)>> {
     let mut price_volume_sum = U256::ZERO;
     let mut weight_sum = U256::ZERO;
     let mut volume_sum = U256::ZERO;
 
     for &(price, volume) in prices {
-        let Some(price) = coen840_price(price) else {
+        let Some(price) = coen_iso_price(price) else {
             continue;
         };
         let volume = coen_volume(volume);
@@ -87,10 +89,10 @@ fn compute_coen840_weighted(prices: &[(f64, f64)]) -> Result<Option<(U256, U256)
         };
         let weighted_price = price
             .checked_mul(weight)
-            .ok_or_else(|| eyre::eyre!("COEN/840 price-volume product overflow"))?;
+            .ok_or_else(|| eyre::eyre!("COEN/ISO price-volume product overflow"))?;
         price_volume_sum = price_volume_sum
             .checked_add(weighted_price)
-            .ok_or_else(|| eyre::eyre!("COEN/840 price-volume sum overflow"))?;
+            .ok_or_else(|| eyre::eyre!("COEN/ISO price-volume sum overflow"))?;
         weight_sum = weight_sum
             .checked_add(weight)
             .ok_or_else(|| eyre::eyre!("COEN/840 weight sum overflow"))?;
@@ -183,7 +185,7 @@ pub async fn fetch_and_aggregate(
     for pair_config in &config.currency_pairs {
         let key = format!("{}/{}", pair_config.base, pair_config.quote);
         let threshold = config.deviation_for(&pair_config.base);
-        let is_coen840 = is_coen840_pair(&pair_config.base, &pair_config.quote);
+        let is_coen_iso = is_coen_iso_pair(&pair_config.base, &pair_config.quote);
 
         // --- Try candle TVWAP first ---
         let mut candle_data: Vec<(f64, f64)> = Vec::new();
@@ -201,8 +203,8 @@ pub async fn fetch_and_aggregate(
         }
 
         if !candle_data.is_empty() {
-            let aggregate = if is_coen840 {
-                compute_coen840_weighted(&candle_data)?
+            let aggregate = if is_coen_iso {
+                compute_coen_iso_weighted(&candle_data)?
             } else {
                 Some(compute_tvwap_fixed(&candle_data))
             };
@@ -228,7 +230,7 @@ pub async fn fetch_and_aggregate(
             }
             if let Some(ticker) = tickers.get(&key) {
                 if ticker.price > 0.0 {
-                    let volume = if is_coen840 {
+                    let volume = if is_coen_iso {
                         ticker.volume
                     } else {
                         ticker.volume.max(1.0)
@@ -249,8 +251,8 @@ pub async fn fetch_and_aggregate(
         }
 
         // Compute VWAP in U256 fixed-point
-        let aggregate = if is_coen840 {
-            compute_coen840_weighted(&filtered)?
+        let aggregate = if is_coen_iso {
+            compute_coen_iso_weighted(&filtered)?
         } else {
             Some(compute_vwap_fixed(&filtered))
         };

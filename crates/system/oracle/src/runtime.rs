@@ -7,10 +7,11 @@ use outbe_common::WorldwideDay;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::error::Result;
+use outbe_primitives::math::reference_price::is_coen_iso_market;
 use outbe_primitives::time::{date_key_to_utc_timestamp, SECONDS_PER_DAY};
 use std::collections::BTreeSet;
 
-use crate::constants::{is_coen840_pair, zero_volume_weight, DAY_TYPE_PAIR};
+use crate::constants::{zero_volume_weight, DAY_TYPE_PAIR};
 use crate::errors::{OracleError, OracleOcompError};
 use crate::precompile::IOracle;
 use crate::schema::OracleContract;
@@ -173,7 +174,7 @@ impl OracleContract<'_> {
             let pv = day_pv.read(&day).unwrap_or(U256::ZERO);
             let vol = day_vol.read(&day).unwrap_or(U256::ZERO);
             if !pv.is_zero() {
-                if is_coen840_pair(pair) {
+                if is_coen_iso_market(pair) {
                     pv_total = pv_total
                         .checked_add(pv)
                         .ok_or(OracleError::VwapOverflow("daily sum accumulation"))?;

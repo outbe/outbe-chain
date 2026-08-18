@@ -212,8 +212,8 @@ pub fn to_cross_rate(
 
             match ref_rate {
                 Some(r) if !r.is_zero() && !vote.exchange_rate.is_zero() => {
-                    // cross_rate = ref_rate * 1e18 / vote_rate
-                    // Both are at 1e18 scale, so ref * 1e18 / vote = cross at 1e18
+                    // Both market rates have the same pair-owned scale, which
+                    // cancels. The resulting cross-rate is a dimensionless FP18 ratio.
                     let cross = r
                         .checked_mul(SCALE_1E18)
                         .unwrap_or(U256::ZERO)
@@ -412,7 +412,8 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
         let cross_median = tally_pair(&mut cross_ballot, reward_band, &mut claims);
 
         // Convert cross-rate median back to actual rate:
-        // actual_rate = reference_median * 1e18 / cross_median
+        // The dimensionless FP18 cross-rate cancels SCALE_1E18 here, restoring
+        // the reference market's scale (P6 for COEN/ISO, otherwise pair-owned).
         if !cross_median.is_zero() && !ref_median.is_zero() {
             let actual_rate = ref_median
                 .checked_mul(SCALE_1E18)

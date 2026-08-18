@@ -21,8 +21,8 @@ pub type PairIndex = u32;
 /// Manages exchange rates, validator voting, price snapshots, and VWAP
 /// calculation for whitelisted trading pairs.
 ///
-/// Prices and volumes remain `U256` in each pair's canonical scale. COEN/840
-/// uses six decimals; generic pairs retain their existing decimal18 contract.
+/// Prices and volumes remain `U256` in each pair's canonical scale. COEN/ISO
+/// uses six decimals; generic non-ISO pairs retain their existing contract.
 ///
 /// A pair is an [`AddressPair`]: its two asset addresses in the orientation they
 /// were quoted. As a *key* it sorts (so both directions of a market share one

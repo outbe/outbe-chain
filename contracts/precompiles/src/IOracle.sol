@@ -26,7 +26,7 @@ interface IOracle {
     /// @dev `base` and `quote` must match the direction the pair was registered
     ///      in. The storage key is order-independent, so a flipped quote would
     ///      otherwise submit an uninverted rate for the same pair; it reverts.
-    ///      COEN/840 rates and COEN volumes use six decimals. Generic pairs keep
+    ///      COEN/ISO rates and COEN volumes use six decimals. Generic pairs keep
     ///      their existing decimal18 contract.
     struct ExchangeRateTuple {
         address base;
@@ -39,7 +39,7 @@ interface IOracle {
     ///         caller's direction.
     /// @dev Only the canonical orientation (`base < quote` by address) is
     ///      stored, so quoting the market backwards returns `scale^2 / rate`:
-    ///      `1e12 / rate` for COEN/840 and `1e36 / rate` for generic pairs. An
+    ///      `1e12 / rate` for COEN/ISO and `1e36 / rate` for generic pairs. An
     ///      unpublished rate is `0` from either side. Reverts
     ///      if the market is not registered. Unlike the other pair-scoped reads,
     ///      this one accepts either direction — a spot rate is the only value
@@ -48,7 +48,7 @@ interface IOracle {
 
     /// @notice `getExchangeRate` for `COEN/<isoCode>`. COEN is the zero address
     ///         and so always sorts first: this is never the inverted direction.
-    ///         ISO 840 uses the six-decimal COEN/840 price contract.
+    ///         Every ISO reference currency uses the six-decimal COEN/ISO contract.
     function getCoenExchangeRateFor(uint16 isoCode) external view returns (uint256 rate);
 
     /// @notice `getExchangeRate` plus when the rate was last written. The block

@@ -32,7 +32,7 @@ pub struct GenesisScurveEntry {
     pub quote: Address,
     /// UTC midnight timestamp of the peak day.
     pub peak_day: u64,
-    /// Peak price in the pair's canonical scale (`COEN/840` is six-decimal).
+    /// Peak price in the COEN/840 S-Curve's six-decimal scale.
     pub peak_price: U256,
 }
 
@@ -60,9 +60,9 @@ pub struct ReferenceCurrency {
 
 /// Configurable genesis parameters for the Oracle contract.
 ///
-/// Dimensionless policy fields retain FP18. Pair rates, volumes, snapshots and
-/// S-curve prices use the registered pair's canonical scale; COEN/840 uses six
-/// decimals.
+/// Dimensionless policy fields retain FP18. COEN/ISO pair rates, volumes and
+/// snapshots use six decimals; the COEN/840 S-Curve uses that same P6 scale.
+/// Generic non-ISO pair data retains its existing contract.
 pub struct OracleGenesisConfig {
     /// Vote period in blocks (default: 2).
     pub vote_period: u64,
