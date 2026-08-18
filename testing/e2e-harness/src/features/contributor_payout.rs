@@ -139,8 +139,8 @@ const PROCEEDS_SENDER_KEY: &str =
     "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
 const PROCEEDS_SENDER: Address = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
 /// Comfortably above the contributor count, so no leaf floors to nothing.
-const PROCEEDS_WEI: u128 = 1_000_000_000_000_000;
-const PROCEEDS_GAS_WEI: u128 = 100_000_000_000_000_000;
+const PROCEEDS_UNITS: u128 = 1_000_000;
+const PROCEEDS_GAS_UNITS: u128 = 10_000_000;
 
 #[when("the day's auction proceeds arrive from one chain")]
 fn proceeds_arrive(world: &mut World) {
@@ -161,7 +161,7 @@ fn proceeds_arrive(world: &mut World) {
         &url,
         PROCEEDS_SENDER,
         &funder,
-        U256::from(PROCEEDS_GAS_WEI + PROCEEDS_WEI),
+        U256::from(PROCEEDS_GAS_UNITS + PROCEEDS_UNITS),
     )
     .expect("fund the proceeds sender");
 
@@ -188,7 +188,7 @@ fn proceeds_arrive(world: &mut World) {
             worldwideDay: day,
             srcChainId: chain_id,
         },
-        Some(U256::from(PROCEEDS_WEI)),
+        Some(U256::from(PROCEEDS_UNITS)),
     )
     .expect("credit the day's proceeds");
 }
