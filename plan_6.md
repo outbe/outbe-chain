@@ -76,8 +76,8 @@ COEN_ISO_PRICE_SCALE
 Vendor/Pancake `price_helper.rs` не переписывается. Для NOD, GEM и INTEX создаётся Outbe-owned шестизначный вход:
 
 ```text
-price128 = price6 << 128 / 1_000_000
-price6   = price128 * 1_000_000 >> 128
+price128   = price_units << 128 / 1_000_000
+price_units = price128 * 1_000_000 >> 128
 ```
 
 Специализированные алгоритмы остаются локальными:
@@ -217,8 +217,8 @@ test(economics): define Tribute-to-Lysis six-decimal behavior
 - NOD/GEM/GemFactory cost tests;
 - Fidelity fixtures, содержащие реальные GRATIS amounts.
 - CredisFactory lifecycle consumer tests and TEE GRATIS pledge-ticket fixtures,
-  где `entry_rate` является COEN/ISO price, а collateral/balance — реальными
-  GRATIS amounts. Credis interest math при этом остаётся независимым FP18.
+  где `entry_rate` является COEN/ISO price, collateral/balance — реальными
+  GRATIS amounts, а `currency_rate` является отдельной annual rate (scale `1e6`).
 
 Фиксируется:
 
@@ -239,15 +239,33 @@ test(economics): define Tribute-to-Lysis six-decimal behavior
 User-approved controlled T3 recovery after the CredisFactory blocker:
 
 - `crates/core/credisfactory/src/tests/e2e.rs` переводит только COEN/ISO
-  `oracle_rate`, GRATIS collateral и ledger fixtures на P6;
-- `refi_rate`, `currency_rate` и debt multiplier остаются FP18;
+  `oracle_rate`, GRATIS collateral и ledger fixtures на scale `1e6`;
+- `refi_rate`, `currency_rate` и debt multiplier переводятся на отдельный
+  rate contract со scale `1e6` по последующему user-approved re-freeze;
 - test section `bin/outbe-tee-enclave/src/gratis.rs` переводит только
-  `PledgeTerms.entry_rate` fixtures на P6;
+  `PledgeTerms.entry_rate` fixtures на COEN/ISO price scale `1e6`;
 - `crates/system/tee/src/protocol.rs` меняет только неверный unit comment для
   `PledgeTerms.entry_rate`; тип, codec, ABI и wire/state layout не меняются;
-- production math Credis, CredisFactory, Gratisfactory и Oracle не меняется;
+- production math Credis меняет только fixed-point denominator и literals;
+  порядок двух floor-операций, CredisFactory pass-through, Gratisfactory и
+  repayment lifecycle не меняются;
 - пропущенный test-first контракт фиксируется отдельным late-RED evidence без
   переписывания уже опубликованной истории commits.
+
+User-approved Credis-rate re-freeze supersedes только FP18-утверждения
+предыдущего recovery commit `a144d9c1`:
+
+- annualized ISO currency rate: `1.0 = 1_000_000`;
+- `4.30% = 43_000`, default USD `3.63% = 36_300`;
+- staged formula и текущий порядок rounding сохраняются:
+  `term_rate = floor(rate_units × NUMBER_OF_ANADOSIS / 12)`, затем
+  `total_debt = floor(principal_units × (1_000_000 + term_rate) / 1_000_000)`;
+- объединять два floor в одну операцию запрещено: это было бы изменением
+  кредитного алгоритма, а не denomination cutover;
+- отдельный `CREDIS_INTEREST_RATE_SCALE` владеет знаменателем; равенство
+  числу `COEN_ISO_PRICE_SCALE` не делает эти величины взаимозаменяемыми;
+- Oracle mapping slot, Credis `Position`, ABI `uint256`, field order и codecs
+  не меняются; fresh network записывает только rate values with scale `1e6`.
 
 Регрессия Lysis отдельно закрепляется:
 
@@ -313,7 +331,7 @@ MCP tests отдельно фиксируют обе стороны network boun
 - Outbe native COEN input, balance и native fee используют `6` decimals;
 - BNB/ETH и LayerZero fee на внешней 18-decimal chain сохраняют `18` decimals;
 - generic external intent amounts сохраняют существующий token/domain contract и не
-  переводятся глобально на P6.
+  переводятся глобально на scale `1e6`.
 
 EIP-4895 сохраняет стандартный wire contract: `Withdrawal.amount` остаётся `uint64` в Gwei. Тестами фиксируется точное преобразование в COEN `unit`:
 
@@ -440,6 +458,22 @@ feat(economics): convert Tribute and GRATIS lifecycle to six decimals
 - sequential и OCOMP используют одну семантику;
 - Lysis/NOD/GEM costs считают шестизначные monetary values;
 - zero-result guards применяются по зафиксированной политике.
+
+### Корректирующий коммит P3R — Credis annual rates
+
+```text
+feat(credis): convert interest and reference rates to six decimals
+```
+
+Действия:
+
+- Oracle `reference_currency_rate` хранит и возвращает annual rate (scale `1e6`);
+- default USD rate меняется с FP18 representation на `36_300`;
+- Credis debt formula использует `CREDIS_INTEREST_RATE_SCALE = 1_000_000`;
+- существующие staged floor, installment split, remainder и repayment FSM
+  сохраняются;
+- CredisFactory передаёт Oracle rate без дополнительной конверсии;
+- types, slots, ABI, wire/state layouts и selectors не меняются.
 
 ### Коммит P4 — PROMIS/INTEX/WCOEN
 
@@ -583,7 +617,9 @@ COEN
 - Проверенный исходный commit: `c7a2c63e9049db381d0c5280552c33a17e09e326`.
 - Единственный implementation contract этой ветки: этот файл и goal, который требует его полной реализации.
 - Beads epic: `outbe-chain-0he`; freeze: `outbe-chain-0he.1`; последовательность работ: `outbe-chain-0he.2` … `outbe-chain-0he.14`.
-- Старый graph `outbe-chain-y6w` не является authority для этой ветки: он переводит независимые Fidelity/Credis/Oracle scales и задаёт другой порядок работ.
+- Старый graph `outbe-chain-y6w` не является authority для этой ветки: несмотря
+  на частичное совпадение по Credis rate, он переводит другие независимые
+  scales и задаёт другой scope и порядок работ.
 - Сеть создаётся с нуля. Старые state и wire values не читаются, dual-scale режим отсутствует, activation/migration/compatibility code не добавляется.
 
 ### 9.2. Точный scope и non-goals
@@ -594,6 +630,7 @@ COEN
 - GRATIS, PROMIS и WCOEN monetary amounts и metadata;
 - Tribute issuance/nominal и canonical `amount_base`/`amount_atto`;
 - Gratisfactory stablecoin-to-GRATIS conversion;
+- Credis annual ISO currency rate и debt fixed-point denominator;
 - Lysis fractions, shares, loads, costs и их sequential/OCOMP parity;
 - COEN/ISO feeder price/volume, Oracle vote/tally/VWAP/reciprocal и consumers;
 - COEN/840 S-Curve/day-type;
@@ -605,7 +642,6 @@ COEN
 
 - production math Metadosis; изменяются только его amount/price fixtures и ожидания;
 - Fidelity/RCFI algorithmic fixed-point; изменяются только fixtures, поля которых являются реальными GRATIS amounts;
-- Credis interest/rate math;
 - Oracle reward/slash bands, vote-validity ratios и остальные независимые dimensionless ratios;
 - generic non-ISO market redesign и pair-decimals metadata;
 - decimals самих stablecoin/ERC20 payment tokens;
@@ -626,6 +662,7 @@ COEN
 | WCOEN amount | `1 WCOEN = 1_000_000 WCOEN-unit` | Solidity `uint256` | wrap/unwrap raw `1:1` |
 | COEN/ISO price | `ISO stable-unit per COEN`, scale `1_000_000` | Oracle `U256`; INTEX wire `u64` | без промежуточного `10^9` |
 | COEN/ISO volume | COEN `unit`, scale `1_000_000` | Oracle vote/snapshot `U256` | zero остаётся zero |
+| Credis annual ISO rate | `1.0 = 1_000_000` | Oracle mapping и Credis `U256` | отдельный semantic scale, shape не меняется |
 | S-Curve coefficient | `1.0 = 1_000_000` | существующий `U256` table | `floor(old / 10^12)` |
 | Lysis fraction/share/root | `1.0 = 1_000_000` | существующие `U256`; U1024/I256 internals | типы сохраняются |
 | Tribute base | whole unsigned integer | encrypted JSON `String`, ZK `u64` | canonical lexical `u64` |
@@ -640,8 +677,8 @@ COEN
 
 Независимый `SCALE_1E18` остаётся только там, где поле действительно является
 существующим dimensionless contract, либо принадлежит сохранённому non-ISO
-generic Oracle market: Oracle reward/validity ratios, Fidelity/RCFI, Credis
-rates, non-ISO generic rates и неизменяемый vendor price helper. Ни Emission,
+generic Oracle market: Oracle reward/validity ratios, Fidelity/RCFI,
+non-ISO generic rates и неизменяемый vendor price helper. Ни Emission,
 ни COEN/ISO prices, ни S-Curve coefficients, ни Lysis fractions не используют
 его после cutover.
 
@@ -661,13 +698,14 @@ Canonical public/state shapes фиксируются без изменений:
 | Tribute | `amount = checked(base × 1_000_000 + atto)` | non-canonical base/atto и overflow reject |
 | Tribute nominal для COEN/ISO | `floor(amount × 1_000_000 / tribute_price)` | positive amount/price с zero result reject |
 | Gratisfactory | `ceil(stable_raw × 1_000_000 / coen_iso_price)` | collateral rounds in protocol's favour; overflow reject |
+| Credis debt | `term_rate=floor(rate_units×months/12)`; `debt=floor(principal_units×(1_000_000+term_rate)/1_000_000)` | rate scale `1e6`; два существующих floor сохраняются; overflow/invalid amount reject до записи |
 | Lysis load | `floor(nominal × fraction / 1_000_000)` | zero load для positive obligation reject |
 | Lysis normalization | `projected = Σ floor(group_nominal × fraction / 1_000_000)`; если `projected > allocation`, `fraction = floor(fraction × allocation / projected)` | один owner seam, dust разрешён |
 | Lysis/NOD/GEM cost | `floor(entry_price × load / 1_000_000)` | positive price/load с zero cost reject |
 | COEN/ISO VWAP | `floor(Σ(price × volume) / Σvolume)` | checked products/sums; zero total volume follows existing no-data path |
 | COEN/ISO reciprocal | `floor(1_000_000² / rate)` | zero rate reject; non-ISO generic reciprocal не меняется |
 | S-Curve | `floor(peak × coefficient / 1_000_000)` | overflow keeps existing deterministic zero/error policy as frozen by tests |
-| INTEX reference settlement | `ceil(price6 × promis6 × 10^d / 10^12)` | `d=0/6/12/18`, checked, one rounding |
+| INTEX reference settlement | `ceil(price_units × promis_units × 10^d / 10^12)` | оба входа scale `1e6`; `d=0/6/12/18`, checked, one rounding |
 | INTEX FX settlement | existing price ratio cancels common COEN/ISO scale; external decimals applied once | ceil, overflow/unsupported decimals reject |
 | Emission | `term₀=INITIAL`; `termₖ=floor(termₖ₋₁×K_NUM×day/(K_DEN×k))`; even add, odd subtract | clamp to floor; monotonic reference sweep |
 | EIP-4895 | `coen_units = amount_gwei / 1_000` | payload reject before state write unless `amount_gwei % 1_000 == 0` |
@@ -700,6 +738,8 @@ Native gas policy:
 | Tribute canonicalization и nominal | `bin/outbe-tee-enclave/src/compute.rs`; process/ZK только потребляют результат |
 | GRATIS/PROMIS metadata | соответствующий `state.rs` каждого token module |
 | Stablecoin → GRATIS conversion | `crates/core/gratisfactory/src/runtime.rs` |
+| Credis annual-rate denominator и staged debt rounding | `crates/core/credis/src/runtime.rs`; scale constant в `crates/blockchain/primitives/src/units.rs` |
+| Oracle ISO annual-rate storage/default | `crates/system/oracle` reference-currency state |
 | Lysis fractions/normalization/load/cost | `crates/core/lysis`; sequential и phases вызывают один semantic seam |
 | NOD/GEM price bins и costs | NOD/GEM/GemFactory domain files в P3 |
 | PROMIS load и INTEX wire/settlement | Desis/Intex/IntexFactory domain files в P4 |
@@ -722,9 +762,10 @@ Native gas policy:
 | Oracle opening | VWAP/S-Curve read | existing opening state | nominal is `max(VWAP,S-Curve)` in 840 units | no-data/zero follows existing error contract | opening proof remains deterministic | stored values unchanged | WorldwideDay and active-S-Curve windows unchanged |
 | Tribute offering | encrypted offer without/with ZK | existing offering and ZK eligibility | both paths parse one canonical base/atto and emit identical issuance/nominal | lexical, atto-bound, zero, price or proof error rejects before state | duplicate-id rules unchanged | stored Tribute reloads raw | OFFERING deadline unchanged |
 | Gratisfactory | pledge/mine/unpledge | existing authorization/eligibility | stable raw amount converts once to GRATIS units with ceil | cap, oracle, overflow and auth errors leave state unchanged | ticket/nonce replay unchanged | tickets and totals persist | existing pledge lifecycle unchanged |
+| Credis | request, repay, expire | valid pledge and ISO rate | annual rate (scale `1e6`) is pinned in position; staged scale-`1e6` debt calculation and installments conserve total | zero/missing rate, overflow and existing state errors write nothing | existing position/payment replay rules unchanged | rate, debt and schedule reload raw | existing monthly schedule unchanged |
 | Lysis sequential | finalize allocation | eligible Tribute set | fractions, loads and costs respect allocation with bounded dust | zero/overflow/budget errors abort | same inputs give same actions | results persist raw | existing Lysis boundary unchanged |
 | Lysis OCOMP | plan, phases, reduce, certify, materialize | accepted worker/quorum | byte-equivalent economics to sequential path | invalid receipt/root/amount rejected | receipt/adoption replay rules unchanged | certified artifacts/NOD reload identically | leases and terminal deadlines unchanged |
-| NOD/GEM | issue/qualify/settle | existing owner/qualification | price-bin IDs and monetary fields derive from scale6 adapter | zero/overflow/existing auth errors reject | IDs remain deterministic | buckets/items persist | qualification/settlement windows unchanged |
+| NOD/GEM | issue/qualify/settle | existing owner/qualification | price-bin IDs and monetary fields derive from the price-scale-`1e6` adapter | zero/overflow/existing auth errors reject | IDs remain deterministic | buckets/items persist | qualification/settlement windows unchanged |
 | Desis/INTEX | brief, bridge, auction, settle/refund | existing day/auction status | scale6 prices/load cross existing wire and payment conversion occurs once | unsupported decimals/overflow/state error rejects | message/replay guards unchanged | Rust/Solidity state agrees after restart | commit/reveal/call windows unchanged |
 | WCOEN | deposit/withdraw | holder with native/token balance | exact raw 1:1 mint/burn and native transfer | insufficient balance/transfer failure reverts atomically | ERC20 allowance/nonce semantics unchanged | supply/backing persist | no new deadline |
 | Emission | query/allocate day limit | valid day | monotonic scale6 daily amount, clamped at floor | arithmetic is deterministic and bounded | same day same result | no hidden accumulator | day `>=2920` returns floor |
@@ -768,6 +809,19 @@ P3:
 - `crates/system/tee/src/protocol.rs` — только unit comment для
   `PledgeTerms.entry_rate`; field shape/serde/codec не меняются.
 
+P3R, user-approved Credis-rate correction:
+
+- `crates/blockchain/primitives/src/units.rs` — отдельный
+  `CREDIS_INTEREST_RATE_SCALE = 1_000_000`;
+- `crates/system/oracle/src/{api,constants,genesis,schema,state}.rs` —
+  reference-currency annual rate values/comments only;
+- `crates/core/credis/src/{runtime,schema}.rs` — denominator/comments only;
+- `crates/core/credisfactory/src/runtime.rs` — comments only if required;
+- `contracts/precompiles/src/{IOracle,ICredis}.sol` — declared units/comments only.
+
+`crates/system/oracle/src/precompile.rs` и `crates/core/credis/src/precompile.rs`
+остаются raw `U256` pass-through и semantic production changes не требуют.
+
 User-approved P3 re-plan after the `ZERO_COST` blocker: `types.rs` разрешён
 только для внутреннего `ProgramErrorV1::ZeroCost { ordinal }`. Это расширяет
 typed Rust error surface, но не меняет ABI, wire/state layouts, OCOMP codecs,
@@ -777,7 +831,7 @@ Superseded re-plan: `nod/hooks.rs` и `gem/hooks.rs` были добавлены
 ошибочного предположения, что non-840 ISO markets остаются FP18. Пользователь
 уточнил, что все ISO reference currencies принадлежат шестизначным stablecoin
 domain. Эти hooks снова вне P3 production map и не меняются; NOD/GEM получают
-P6 для любого валидного `reference_currency`.
+price scale `1e6` для любого валидного `reference_currency`.
 
 P4:
 
@@ -827,7 +881,7 @@ T1:
 T2:
 
 - inline tests `crates/blockchain/primitives/src/{units,math/reference_price}.rs`
-  для COEN/ISO classification и P6 adapter;
+  для COEN/ISO classification и price-scale-`1e6` adapter;
 - inline feeder tests `bin/outbe-feeder/src/{aggregator,vote_builder}.rs`;
 - `crates/system/oracle/src/scurve.rs` test section;
 - новый `crates/system/oracle/testdata/coen840-scurve-v1.json` с 128 canonical coefficients и product pins;
@@ -844,7 +898,7 @@ T3:
 - inline/unit/integration tests under `bin/outbe-tee-enclave/{src,tests,benches}` that carry Tribute amounts;
 - `crates/core/{tribute,tributefactory,gratis,gratisfactory}/src/tests.rs` and existing integration tests;
 - `crates/core/credisfactory/src/tests/e2e.rs` as consumer coverage: COEN/ISO
-  entry price and GRATIS monetary fixtures are P6, while Credis interest remains FP18;
+  entry price, GRATIS monetary fixtures и Credis annual rate используют scale `1e6`;
 - test section `bin/outbe-tee-enclave/src/gratis.rs` only for
   `PledgeTerms.entry_rate` fixtures; arbitrary KAT/layout values remain unchanged;
 - `crates/core/lysis/src/tests.rs`, `crates/core/lysis/tests/{planner_reducer_vectors,program_v1_reference}.rs`;
@@ -853,6 +907,20 @@ T3:
 - `crates/core/{nod,gem,gemfactory}/src/*tests*` and OCOMP/NOD materialization tests carrying monetary values;
 - `crates/core/fidelity/reference/decay.py`, `crates/core/fidelity/tests/fixtures/rcfi_golden.json`, `bin/outbe-tee-enclave/src/fidelity.rs` test section — amount fields only, RCFI math unchanged;
 - `outbe-plan/off-chain-poc-lysis-v1-semantics.md`.
+
+T3R, Credis annual rate (scale `1e6`):
+
+- `crates/blockchain/primitives/src/units.rs` tests;
+- `crates/system/oracle/src/tests/{common,e2e,state}.rs`;
+- `crates/core/credis/src/tests.rs` — exact staged-rounding vectors, zero rate,
+  positive rate with zero interest, overflow and stored raw rate;
+- `crates/core/credisfactory/src/tests/e2e.rs` — complete
+  pledge → request → installments → zero lifecycle;
+- `scripts/test_seed_genesis_protocol_constants.py` — default USD rate `36_300`
+  in the existing mapping slot;
+- `mcp/src/denomination.test.ts` — method/owner-aware formatting of Credis and
+  Oracle annual rates with 6 decimals while generic Oracle rate stays unchanged;
+- `testing/denomination/scale6-credis-rate-red.tsv`.
 
 T4:
 
@@ -870,8 +938,8 @@ T5:
 - native amount/fee fixtures in CLI/operator/txpool/staking/rewards/stablecoin tests;
 - `crates/blockchain/node/tests/fee_history_system_gas.rs` and
   `testing/e2e/tests/update_flow_spec.rs` COEN/ISO/native fixtures;
-- `mcp/src/denomination.test.ts`: Outbe native P6 input/output, BSC native P18
-  preservation и unchanged generic external intent representation;
+- `mcp/src/denomination.test.ts`: Outbe native input/output uses 6 decimals,
+  BSC native uses 18 decimals, generic external intent representation remains unchanged;
 - Metadosis lifecycle fixtures only;
 - `scripts/test_seed_genesis_protocol_constants.py`, `scripts/tests/test_prepare_network.py`;
 - `crates/blockchain/node/tests/assets/genesis.json`, `release/testnet-genesis.json`, seed profiles и E2E fixtures as generated expectations.
@@ -883,6 +951,8 @@ Generated artifacts after P5:
 - Lysis vector manifest hashes;
 - fresh genesis/release/E2E generated JSON;
 - denomination-dependent contract metadata.
+- reference-currency slot changes in fresh genesis outputs and dependent OCOMP
+  network/fork bindings; ABI/codec/correctness shape artifacts remain unchanged.
 
 Generated shape registries, codec shape vectors and arbitrary bit-pattern goldens remain unchanged unless the generator produces a byte-identical rewrite.
 
@@ -905,12 +975,22 @@ manifest и история commits не переписываются.
 | `plan_6.md` | architecture freeze | только user-approved re-plan после blocker | blocker |
 | generators | P5 source/config | generated-artifact run | blocker для третьей semantic правки |
 
+User-approved Credis-rate exception to the pass budget:
+
+- `units.rs` получает один узкий pass для отдельного rate-scale constant;
+- Oracle reference-currency files получают один узкий pass только для annual
+  rate representation; COEN/ISO market math повторно не меняется;
+- `mcp/src/format.ts` и `scripts/seed_genesis.py` включают annual rate в текущий
+  незакоммиченный P5 pass;
+- Credis runtime/schema получают первый semantic pass;
+- любые дальнейшие изменения этих seams снова являются blocker.
+
 Форматирование, generated byte-for-byte rewrite и механическое обновление imports не считаются semantic pass. Изменение expected value после RED всегда считается semantic re-plan, а не integration correction.
 
 User-approved exception after the completed blocker protocol: the rejected
 `840 vs non-840 ISO` model was recorded in an intermediate docs commit, but no
 production code was committed under it. The next architecture commit supersedes
-that model with the canonical `all COEN/ISO = P6` invariant before P3 is
+that model with the canonical `all COEN/ISO prices use scale 1e6` invariant before P3 is
 committed. No NOD/GEM hook production change is permitted by the rejected model.
 
 ### 9.10. Commit map и evidence gates
@@ -937,9 +1017,12 @@ committed. No NOD/GEM hook production change is permitted by the rejected model.
 17. `docs(denomination): freeze MCP native network boundary`;
 18. `test(native): cover MCP native network boundary`;
 19. `docs(denomination): add omitted GRATIS CREDIS boundary`;
-20. `test(economics): cover scale6 GRATIS CREDIS integration`;
-21. `feat(native): complete COEN six-decimal cutover`;
-22. `chore(denomination): regenerate semantic and genesis artifacts`.
+20. `docs(denomination): refreeze CREDIS rates at six decimals`;
+21. `test(credis): define six-decimal GRATIS and interest contract`;
+22. `test(denomination): record CREDIS rate RED recovery`;
+23. `feat(credis): convert interest and reference rates to six decimals`;
+24. `feat(native): complete COEN six-decimal cutover`;
+25. `chore(denomination): regenerate semantic and genesis artifacts`.
 
 T1–T5 и RED commits намеренно не являются mergeable PR boundaries; production остаётся старым до commit 8. Финальный PR обязан быть GREEN.
 
@@ -952,7 +1035,8 @@ T1–T5 и RED commits намеренно не являются mergeable PR bou
 - появляется новый invariant или state transition;
 - нужен semantic production path вне раздела 9.7;
 - требуется изменить canonical shape/type/ABI/wire layout;
-- требуется production math Metadosis, Fidelity/RCFI или Credis;
+- требуется production math Metadosis или Fidelity/RCFI либо Credis redesign
+  за пределами утверждённого rate-scale denominator change;
 - non-ISO generic Oracle нельзя сохранить без pair metadata или глобального scale change;
 - hot file требует третьего semantic pass;
 - frozen test expectation оказывается неверным;
