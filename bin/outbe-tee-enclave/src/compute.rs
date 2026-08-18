@@ -175,42 +175,86 @@ pub fn normalize_amount(base_amount: &str, atto_amount: &str) -> Result<U256, St
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::Deserialize;
+
+    const UNITS_PER_COEN: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
+
+    #[derive(Deserialize)]
+    struct CanonicalAmountCases {
+        accepted_base: Vec<String>,
+        rejected_base: Vec<String>,
+        accepted_atto: Vec<String>,
+        rejected_atto: Vec<String>,
+    }
+
+    fn canonical_amount_cases() -> CanonicalAmountCases {
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/tribute/canonical-amounts-v1.json"
+        )))
+        .unwrap()
+    }
 
     #[test]
-    fn normalize_integer_and_atto() {
+    fn normalize_canonical_base_and_atto_to_six_decimal_units() {
+        let cases = canonical_amount_cases();
+        for base in cases.accepted_base {
+            assert!(
+                normalize_amount(&base, "0").is_ok(),
+                "rejected canonical base {base:?}"
+            );
+        }
+        for atto in cases.accepted_atto {
+            assert!(
+                normalize_amount("1", &atto).is_ok(),
+                "rejected canonical atto {atto:?}"
+            );
+        }
+        assert_eq!(
+            normalize_amount("1", "500000").unwrap(),
+            U256::from(1_500_000u64)
+        );
         assert_eq!(
             normalize_amount("100", "0").unwrap(),
-            U256::from(100u64) * SCALE_1E18
+            U256::from(100u64) * UNITS_PER_COEN
         );
-        assert_eq!(normalize_amount("0", "5").unwrap(), U256::from(5u64));
-    }
-
-    #[test]
-    fn normalize_fractional() {
-        // 1.5 -> 1e18 + 5e17
-        let expected = SCALE_1E18 + U256::from(5u64) * U256::from(10u64).pow(U256::from(17u32));
-        assert_eq!(normalize_amount("1.5", "0").unwrap(), expected);
-        // smallest unit: 0.000000000000000001 -> 1
         assert_eq!(
-            normalize_amount("0.000000000000000001", "0").unwrap(),
-            U256::from(1u64)
+            normalize_amount(&u64::MAX.to_string(), "999999").unwrap(),
+            U256::from(u64::MAX) * UNITS_PER_COEN + U256::from(999_999u64)
         );
     }
 
     #[test]
-    fn normalize_rejects_too_many_decimals() {
-        assert!(normalize_amount("0.0000000000000000001", "0").is_err());
+    fn normalize_rejects_noncanonical_base_in_both_amount_fields() {
+        let cases = canonical_amount_cases();
+        for base in cases.rejected_base {
+            assert!(
+                normalize_amount(&base, "0").is_err(),
+                "non-canonical amount_base {base:?} was accepted"
+            );
+        }
+        for atto in cases.rejected_atto {
+            assert!(
+                normalize_amount("1", &atto).is_err(),
+                "non-canonical amount_atto {atto:?} was accepted"
+            );
+        }
     }
 
     #[test]
-    fn nominal_division() {
-        // amount=100e18, price=2e18 -> 100e18 * 1e18 / 2e18 = 50e18
-        let amount = U256::from(100u64) * SCALE_1E18;
-        let price = U256::from(2u64) * SCALE_1E18;
+    fn nominal_division_uses_the_coen840_six_decimal_scale() {
+        // amount=100 COEN, price=2.0 -> 50 COEN, all expressed as raw units.
+        let amount = U256::from(100u64) * UNITS_PER_COEN;
+        let price = U256::from(2u64) * UNITS_PER_COEN;
         assert_eq!(
             compute_nominal(amount, price).unwrap(),
-            U256::from(50u64) * SCALE_1E18
+            U256::from(50u64) * UNITS_PER_COEN
         );
+    }
+
+    #[test]
+    fn positive_nominal_that_rounds_to_zero_is_rejected() {
+        assert!(compute_nominal(U256::ONE, U256::from(2_000_000u64)).is_err());
     }
 
     const DRAFT_A: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";

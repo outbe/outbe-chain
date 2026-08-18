@@ -39,7 +39,7 @@ fn terms(stables: U256, gratis: U256) -> api::PledgeTerms {
         stables_amount: stables,
         gratis_amount: gratis,
         asset: asset(),
-        entry_rate: U256::from(2u64) * U256::from(10u64).pow(U256::from(18u64)),
+        entry_rate: U256::from(2_000_000u64),
     }
 }
 
@@ -109,6 +109,23 @@ fn mine_credits_encrypted_balance() {
             api::total_supply(storage.clone()).unwrap(),
             U256::from(1500u64)
         );
+    });
+}
+
+#[test]
+fn one_whole_gratis_round_trips_as_one_million_raw_units() {
+    with_env(|storage| {
+        let one_gratis = U256::from(1_000_000u64);
+        api::mint(
+            storage.clone(),
+            alice(),
+            one_gratis,
+            auth(GratisOp::Mint, alice(), one_gratis, 0),
+        )
+        .unwrap();
+
+        assert_eq!(view_balance(storage.clone(), alice()), one_gratis);
+        assert_eq!(api::total_supply(storage).unwrap(), one_gratis);
     });
 }
 

@@ -469,7 +469,28 @@ mod tests {
     use super::*;
     use crate::rpc::mock::{call_map, MockRpc};
     use alloy_primitives::address;
+    use clap::Parser;
     use std::collections::HashMap;
+
+    #[derive(Parser)]
+    struct TributeHarness {
+        #[command(subcommand)]
+        command: TributeCmd,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct CanonicalBaseCases {
+        accepted_base: Vec<String>,
+        rejected_base: Vec<String>,
+    }
+
+    fn canonical_base_cases() -> CanonicalBaseCases {
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../testdata/tribute/canonical-amounts-v1.json"
+        )))
+        .unwrap()
+    }
 
     fn sample_token_id() -> Bytes {
         Bytes::from_static(&[0xaa])
@@ -571,5 +592,30 @@ mod tests {
 
         let value = format!("0x{}", "01".repeat(32));
         assert_eq!(offer_hex32(Some(&value), "--su-hash", true).unwrap(), value);
+    }
+
+    #[test]
+    fn offer_cli_accepts_only_canonical_unsigned_whole_base_amounts() {
+        let cases = canonical_base_cases();
+        for canonical in cases.accepted_base {
+            assert!(TributeHarness::try_parse_from([
+                "tribute", "offer", "20250115", "--amount", &canonical,
+            ])
+            .is_ok());
+        }
+
+        for noncanonical in cases.rejected_base {
+            assert!(
+                TributeHarness::try_parse_from([
+                    "tribute",
+                    "offer",
+                    "20250115",
+                    "--amount",
+                    &noncanonical,
+                ])
+                .is_err(),
+                "non-canonical amount_base {noncanonical:?} was accepted"
+            );
+        }
     }
 }

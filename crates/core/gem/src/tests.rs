@@ -26,11 +26,11 @@ fn sample_params(owner: Address) -> GemAddParams {
     GemAddParams {
         owner,
         gem_type: 2, // WALLET
-        gem_load_minor: U256::from(1_000_000_000_000_000_000u128),
-        entry_price_minor: U256::from(500_000_000_000_000_000u128),
-        cost_amount_minor: U256::from(500_000_000_000_000_000u128),
-        floor_price_minor: U256::from(540_000_000_000_000_000u128),
-        call_price_minor: U256::from(1_140_000_000_000_000_000u128),
+        gem_load_minor: U256::from(1_000_000u64),
+        entry_price_minor: U256::from(500_000u64),
+        cost_amount_minor: U256::from(500_000u64),
+        floor_price_minor: U256::from(540_000u64),
+        call_price_minor: U256::from(1_140_000u64),
         call_rate: 228,
         call_window: 28 * 86_400,
         call_threshold: 21 * 86_400,

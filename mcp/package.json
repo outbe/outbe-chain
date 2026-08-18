@@ -37,6 +37,7 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsx src/index.ts",
+    "test": "tsx --test src/**/*.test.ts",
     "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
     "prepublishOnly": "npm run build"

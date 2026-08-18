@@ -145,6 +145,7 @@ mod tests {
     const DRAFT: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
     const DAY: WorldwideDay = WorldwideDay::new(20250115);
     const NEXT_DAY: WorldwideDay = WorldwideDay::new(20250116);
+    const UNITS_PER_COEN: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 
     /// Encrypt a payload the way a client would (ephemeral_secret x tribute_offer_pub).
     /// Day, currencies and price are cleartext offer fields; tests that care mutate
@@ -165,7 +166,7 @@ mod tests {
             tribute_currency: 840,
             reference_currency: 840,
             exclude_from_intex_issuance: false,
-            tribute_price_minor: SCALE_1E18,
+            tribute_price_minor: UNITS_PER_COEN,
             zk_context: None,
         }
     }
@@ -187,6 +188,14 @@ mod tests {
         "su_hashes": ["0x2222222222222222222222222222222222222222222222222222222222222222"]
     }"#;
 
+    const BASE_AND_ATTO_JSON: &str = r#"{
+        "creator": "alice",
+        "tribute_draft_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
+        "amount_base": "1",
+        "amount_atto": "500000",
+        "su_hashes": ["0x2222222222222222222222222222222222222222222222222222222222222222"]
+    }"#;
+
     fn zk_context() -> TributeZkContext {
         TributeZkContext {
             derived_owner: B256::from([0x01; 32]),
@@ -198,16 +207,15 @@ mod tests {
     fn batch_creates_tribute_with_correct_economics() {
         let owner = Address::repeat_byte(0xAB);
         let mut offer = make_tribute_offer(owner, GOOD_JSON);
-        offer.tribute_price_minor = U256::from(2u64) * SCALE_1E18; // 2.0
+        offer.tribute_price_minor = U256::from(2u64) * UNITS_PER_COEN; // 2.0 COEN/840
 
         let (results, hash) = process_tribute_offer_batch(&key(), &[offer]);
         assert_eq!(results.len(), 1);
         let r = &results[0];
         assert_eq!(r.status, TributeOfferStatus::Created);
         assert_eq!(r.owner, owner);
-        assert_eq!(r.issuance_amount_minor, U256::from(100u64) * SCALE_1E18);
-        // 100e18 * 1e18 / 2e18 = 50e18
-        assert_eq!(r.nominal_amount_minor, U256::from(50u64) * SCALE_1E18);
+        assert_eq!(r.issuance_amount_minor, U256::from(100u64) * UNITS_PER_COEN);
+        assert_eq!(r.nominal_amount_minor, U256::from(50u64) * UNITS_PER_COEN);
         assert_eq!(r.token_id, compute_token_id(owner, DAY, DRAFT).unwrap());
         assert_ne!(hash, B256::ZERO);
     }
@@ -219,14 +227,14 @@ mod tests {
         let owner = Address::repeat_byte(0xE7);
         let mut offer = make_tribute_offer(owner, GOOD_JSON);
         offer.tribute_currency = 978;
+        // Generic Oracle pairs retain their existing decimal-18 rate contract.
         offer.tribute_price_minor = U256::from(4u64) * SCALE_1E18;
 
         let (results, _) = process_tribute_offer_batch(&key(), &[offer]);
         assert_eq!(results[0].status, TributeOfferStatus::Created);
-        // 100e18 * 1e18 / 4e18 = 25e18
         assert_eq!(
             results[0].nominal_amount_minor,
-            U256::from(25u64) * SCALE_1E18
+            U256::from(25u64) * UNITS_PER_COEN
         );
     }
 
@@ -234,7 +242,7 @@ mod tests {
     #[test]
     fn one_batch_prices_each_offer_from_its_own_field() {
         let mut usd = make_tribute_offer(Address::repeat_byte(0x01), GOOD_JSON);
-        usd.tribute_price_minor = U256::from(2u64) * SCALE_1E18;
+        usd.tribute_price_minor = U256::from(2u64) * UNITS_PER_COEN;
         let mut eur = make_tribute_offer(Address::repeat_byte(0x0B), GOOD_JSON);
         eur.tribute_currency = 978;
         eur.tribute_price_minor = U256::from(5u64) * SCALE_1E18;
@@ -243,13 +251,28 @@ mod tests {
         assert_eq!(results[0].status, TributeOfferStatus::Created);
         assert_eq!(
             results[0].nominal_amount_minor,
-            U256::from(50u64) * SCALE_1E18
+            U256::from(50u64) * UNITS_PER_COEN
         );
         assert_eq!(results[1].status, TributeOfferStatus::Created);
         assert_eq!(
             results[1].nominal_amount_minor,
-            U256::from(20u64) * SCALE_1E18
+            U256::from(20u64) * UNITS_PER_COEN
         );
+    }
+
+    #[test]
+    fn zk_and_non_zk_share_one_canonical_base_atto_contract() {
+        let plain = make_tribute_offer(Address::repeat_byte(0x31), BASE_AND_ATTO_JSON);
+        let mut zk = make_tribute_offer(Address::repeat_byte(0x32), BASE_AND_ATTO_JSON);
+        zk.zk_context = Some(zk_context());
+
+        let (results, _) = process_tribute_offer_batch(&key(), &[plain, zk]);
+        assert_eq!(results.len(), 2);
+        for result in results {
+            assert_eq!(result.status, TributeOfferStatus::Created);
+            assert_eq!(result.issuance_amount_minor, U256::from(1_500_000u64));
+            assert_eq!(result.nominal_amount_minor, U256::from(1_500_000u64));
+        }
     }
 
     #[test]
@@ -349,20 +372,23 @@ mod tests {
     }
 
     #[test]
-    fn zk_enabled_offer_rejects_noncanonical_atto_amount() {
-        let json = GOOD_JSON.replace(
-            r#""amount_atto": "0""#,
-            r#""amount_atto": "1000000000000000000""#,
-        );
-        let mut offer = make_tribute_offer(Address::repeat_byte(0xAB), &json);
-        offer.zk_context = Some(zk_context());
+    fn zk_and_non_zk_reject_the_same_noncanonical_amounts() {
+        for (needle, replacement) in [
+            (r#""amount_base": "100""#, r#""amount_base": "1.5""#),
+            (r#""amount_base": "100""#, r#""amount_base": "01""#),
+            (r#""amount_atto": "0""#, r#""amount_atto": "1000000""#),
+        ] {
+            let json = GOOD_JSON.replace(needle, replacement);
+            let plain = make_tribute_offer(Address::repeat_byte(0x41), &json);
+            let mut zk = make_tribute_offer(Address::repeat_byte(0x42), &json);
+            zk.zk_context = Some(zk_context());
 
-        let (results, _) = process_tribute_offer_batch(&key(), &[offer]);
-        assert!(matches!(
-            &results[0].status,
-            TributeOfferStatus::Rejected { reason }
-                if reason.contains("amount_atto must be less than 1e18")
-        ));
+            let (results, _) = process_tribute_offer_batch(&key(), &[plain, zk]);
+            assert_eq!(results.len(), 2);
+            assert!(results
+                .iter()
+                .all(|result| matches!(result.status, TributeOfferStatus::Rejected { .. })));
+        }
     }
 
     #[test]
@@ -453,7 +479,9 @@ mod tests {
             (|o: &mut EncryptedTributeOffer| o.worldwide_day = NEXT_DAY) as fn(&mut _),
             |o: &mut EncryptedTributeOffer| o.tribute_currency = 978,
             |o: &mut EncryptedTributeOffer| o.exclude_from_intex_issuance = true,
-            |o: &mut EncryptedTributeOffer| o.tribute_price_minor = U256::from(2u64) * SCALE_1E18,
+            |o: &mut EncryptedTributeOffer| {
+                o.tribute_price_minor = U256::from(2u64) * UNITS_PER_COEN
+            },
         ] {
             let mut other = offers.clone();
             mutate(&mut other[0]);
