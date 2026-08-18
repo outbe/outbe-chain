@@ -20,10 +20,11 @@ import {
   formatNativeAmount,
   parseNativeAmount,
 } from "./chain.js";
-import { coenIsoMarketDecimals, formatParam, humanizeReturn } from "./format.js";
+import { formatParam, humanizeReturn } from "./format.js";
 import { humanizeOrder } from "./intent/format.js";
 import { resolveContract } from "./registry.js";
 import { registerSignTools } from "./tools/sign.js";
+import { view as readHumanizedView } from "./tools/util.js";
 
 async function withChainIdRpc<T>(chainId: number, run: (rpcUrl: string) => Promise<T>): Promise<T> {
   const rpc = createServer(async (request, response) => {
@@ -119,32 +120,120 @@ test("MCP formats Credis and Oracle annual rates with six decimals", () => {
   );
 });
 
-test("MCP formats every COEN ISO Oracle view rate with scale 1e6", () => {
-  const getExchangeRate = {
-    type: "function",
-    name: "getExchangeRate",
-    stateMutability: "view",
-    inputs: [
-      { name: "base", type: "address" },
-      { name: "quote", type: "address" },
-    ],
-    outputs: [{ name: "rate", type: "uint256" }],
-  } as AbiFunction;
+test("MCP Oracle views apply six decimals from the real call context", async () => {
   const coen = "0x0000000000000000000000000000000000000000";
   const iso840 = "0x00000000000000000000000000000000000cc840";
   const erc20 = "0x1111111111111111111111111111111111111111";
+  const invalidIsoLike = "0x00000000000000000000000000000000000cc8a0";
 
-  const coenIsoDecimals = coenIsoMarketDecimals(coen, iso840);
-  assert.equal(coenIsoDecimals, 6);
-  assert.deepEqual(humanizeReturn(getExchangeRate, 1_234_567n, coenIsoDecimals), {
+  const read = async (method: string, args: unknown[], result: unknown) => {
+    const ctx = {
+      rpcUrl: "http://unused.invalid",
+      chain: { id: 54_322_345 } as Chain,
+      publicClient: {
+        readContract: async () => result,
+      } as unknown as PublicClient,
+    } satisfies Ctx;
+    return readHumanizedView(ctx, "oracle", method, args);
+  };
+
+  assert.deepEqual(await read("getExchangeRate", [coen, iso840], 1_234_567n), {
     rate: { raw: "1234567", value: "1.234567" },
   });
-
-  const genericDecimals = coenIsoMarketDecimals(erc20, iso840);
-  assert.equal(genericDecimals, undefined);
-  assert.deepEqual(humanizeReturn(getExchangeRate, 1_000_000_000_000_000_000n), {
-    rate: { raw: "1000000000000000000", value: "1" },
+  assert.deepEqual(await read("getExchangeRate", [iso840, coen], 765_432n), {
+    rate: { raw: "765432", value: "0.765432" },
   });
+  assert.deepEqual(await read("getVwap", [coen, iso840, 3_600], 1_111_111n), {
+    vwap: { raw: "1111111", value: "1.111111" },
+  });
+  assert.deepEqual(await read("getCoenExchangeRateFor", [840], 1_234_567n), {
+    rate: { raw: "1234567", value: "1.234567" },
+  });
+  assert.deepEqual(await read("getCurrencyRate", [840], 43_000n), {
+    rate: { raw: "43000", value: "0.043" },
+  });
+  assert.deepEqual(
+    await read("getExchangeRate", [erc20, iso840], 1_000_000_000_000_000_000n),
+    { rate: { raw: "1000000000000000000", value: "1" } },
+  );
+  assert.deepEqual(
+    await read("getExchangeRate", [coen, invalidIsoLike], 1_000_000_000_000_000_000n),
+    { rate: { raw: "1000000000000000000", value: "1" } },
+  );
+});
+
+test("MCP Oracle aggregate views format each market row independently", async () => {
+  const coen = "0x0000000000000000000000000000000000000000";
+  const iso840 = "0x00000000000000000000000000000000000cc840";
+  const erc20 = "0x1111111111111111111111111111111111111111";
+  const bases = [coen, erc20];
+  const quotes = [iso840, iso840];
+  const scaledValues = [1_234_567n, 2_000_000_000_000_000_000n];
+  const formattedValues = [
+    { raw: "1234567", value: "1.234567" },
+    { raw: "2000000000000000000", value: "2" },
+  ];
+
+  const read = async (method: string, args: unknown[], result: unknown) => {
+    const ctx = {
+      rpcUrl: "http://unused.invalid",
+      chain: { id: 54_322_345 } as Chain,
+      publicClient: {
+        readContract: async () => result,
+      } as unknown as PublicClient,
+    } satisfies Ctx;
+    return (await readHumanizedView(ctx, "oracle", method, args)) as Record<string, unknown>;
+  };
+
+  const aggregateVote = await read("getAggregateVote", [erc20], [
+    true,
+    bases,
+    quotes,
+    scaledValues,
+    scaledValues,
+  ]);
+  assert.deepEqual(aggregateVote.rates, formattedValues);
+  assert.deepEqual(aggregateVote.volumes, formattedValues);
+
+  const snapshotHistory = await read("getAllPriceSnapshotHistory", [2], [
+    [1n, 2n],
+    [100n, 200n],
+    bases,
+    quotes,
+    scaledValues,
+    scaledValues,
+  ]);
+  assert.deepEqual(snapshotHistory.rates, formattedValues);
+  assert.deepEqual(snapshotHistory.volumes, formattedValues);
+
+  const twaps = await read("getTwaps", [3_600], [bases, quotes, scaledValues, [3_600n, 3_600n]]);
+  assert.deepEqual(twaps.twaps, formattedValues);
+
+  const worldwide = await read("getWorldwideDayVwap", [100, 200], [
+    bases,
+    quotes,
+    scaledValues,
+    [100n, 100n],
+  ]);
+  assert.deepEqual(worldwide.vwaps, formattedValues);
+
+  const snapshot = await read("getWorldwideDayVwapSnapshot", [20260818], [
+    100n,
+    200n,
+    bases,
+    quotes,
+    scaledValues,
+    [100n, 100n],
+  ]);
+  assert.deepEqual(snapshot.vwaps, formattedValues);
+
+  const scurve = await read("getAllScurveData", [], [
+    [coen],
+    [iso840],
+    [20260818n],
+    [1_234_567n],
+  ]);
+  assert.deepEqual(scurve.peakPrices, [{ raw: "1234567", value: "1.234567" }]);
 });
 
 test("MCP signed COEN inputs convert whole amounts to six-decimal units", async () => {
