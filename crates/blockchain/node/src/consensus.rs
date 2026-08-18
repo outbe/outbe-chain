@@ -536,8 +536,10 @@ where
 mod tests {
     use super::*;
     use alloy_consensus::Header;
+    use alloy_eips::eip4895::{Withdrawal, Withdrawals};
     use alloy_primitives::{Address, Bloom, B256, B64, U256};
     use reth_chainspec::{ChainSpec, MAINNET};
+    use reth_primitives_traits::Block as _;
 
     fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
         MAINNET.as_ref().clone().map_header(OutbeHeader::new).into()
@@ -673,6 +675,92 @@ mod tests {
         assert!(matches!(
             err,
             ConsensusError::Other(message) if message.to_string().contains("beneficiary must be REWARDS_ADDRESS")
+        ));
+    }
+
+    #[test]
+    fn body_validation_rejects_non_empty_withdrawals() {
+        let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+        let body = OutbeBlockBody {
+            transactions: Vec::new(),
+            ommers: Vec::new(),
+            withdrawals: Some(Withdrawals::new(vec![Withdrawal {
+                index: 0,
+                validator_index: 0,
+                address: Address::ZERO,
+                amount: 1_000,
+            }])),
+        };
+        let header = header(0, 100, 0, B256::ZERO);
+
+        let error = consensus
+            .validate_body_against_header(&body, &header)
+            .expect_err("Outbe must reject every non-empty withdrawals list");
+
+        assert!(matches!(
+            error,
+            ConsensusError::Other(message)
+                if message.to_string().contains("non-empty EIP-4895 withdrawals are unsupported on Outbe")
+        ));
+    }
+
+    #[test]
+    fn pre_execution_rejects_non_empty_withdrawals() {
+        let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+        let sealed_header = header(0, 100, 0, B256::ZERO);
+        let block = OutbeBlock {
+            header: sealed_header.header().clone(),
+            body: OutbeBlockBody {
+                transactions: Vec::new(),
+                ommers: Vec::new(),
+                withdrawals: Some(Withdrawals::new(vec![Withdrawal {
+                    index: 0,
+                    validator_index: 0,
+                    address: Address::ZERO,
+                    amount: u64::MAX,
+                }])),
+            },
+        }
+        .seal_slow();
+
+        let error = consensus
+            .validate_block_pre_execution(&block)
+            .expect_err("Outbe must reject every non-empty withdrawals list");
+
+        assert!(matches!(
+            error,
+            ConsensusError::Other(message)
+                if message.to_string().contains("non-empty EIP-4895 withdrawals are unsupported on Outbe")
+        ));
+    }
+
+    #[test]
+    fn pre_execution_with_tx_root_rejects_non_empty_withdrawals() {
+        let consensus = OutbeBeaconConsensus::new(test_chain_spec());
+        let sealed_header = header(0, 100, 0, B256::ZERO);
+        let block = OutbeBlock {
+            header: sealed_header.header().clone(),
+            body: OutbeBlockBody {
+                transactions: Vec::new(),
+                ommers: Vec::new(),
+                withdrawals: Some(Withdrawals::new(vec![Withdrawal {
+                    index: 0,
+                    validator_index: 0,
+                    address: Address::ZERO,
+                    amount: 0,
+                }])),
+            },
+        }
+        .seal_slow();
+
+        let error = consensus
+            .validate_block_pre_execution_with_tx_root(&block, None)
+            .expect_err("Outbe must reject even a zero-amount non-empty withdrawals list");
+
+        assert!(matches!(
+            error,
+            ConsensusError::Other(message)
+                if message.to_string().contains("non-empty EIP-4895 withdrawals are unsupported on Outbe")
         ));
     }
 

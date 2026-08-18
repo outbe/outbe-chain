@@ -6173,7 +6173,7 @@ mod tests {
     }
 
     #[test]
-    fn nonrepresentable_withdrawal_rejects_before_any_state_write() {
+    fn non_empty_withdrawal_rejects_before_any_state_write() {
         use alloy_eips::eip4895::Withdrawal;
 
         const DAO_BALANCE: u128 = 37;
@@ -6233,26 +6233,21 @@ mod tests {
                 index: 0,
                 validator_index: 0,
                 address: WITHDRAWAL_TARGET,
-                amount: 999,
+                amount: 1_000,
             }]));
             let mut executor = config.create_executor(evm, ctx);
             executor.validate_execution_summary = false;
 
-            let error = if ocomp {
-                executor.ocomp_lifecycle_active = true;
-                executor.ocomp_terminal_request_consumed = true;
-                let error = executor
-                    .apply_ethereum_post_execution_before_ocomp_terminal()
-                    .expect_err("OCOMP path must reject an inexact withdrawal");
-                drop(executor);
+            let error = executor
+                .apply_pre_execution_changes()
+                .expect_err("every non-empty withdrawals list must be rejected pre-state");
+            drop(executor);
+            assert!(
                 error
-            } else {
-                match executor.finish() {
-                    Ok(_) => panic!("normal path must reject an inexact withdrawal"),
-                    Err(error) => error,
-                }
-            };
-            assert!(error.to_string().contains("withdrawal"), "{error}");
+                    .to_string()
+                    .contains("non-empty EIP-4895 withdrawals are unsupported on Outbe"),
+                "{error}"
+            );
 
             assert_eq!(
                 account_balance(
@@ -6273,7 +6268,7 @@ mod tests {
             assert_eq!(
                 account_balance(&mut state, WITHDRAWAL_TARGET),
                 U256::ZERO,
-                "inexact withdrawal must not credit its target"
+                "unsupported withdrawal must not credit its target"
             );
         }
     }

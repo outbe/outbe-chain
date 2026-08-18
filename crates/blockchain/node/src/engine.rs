@@ -117,17 +117,27 @@ mod tests {
     use std::sync::Arc;
 
     use alloy_consensus::{constants::EMPTY_TRANSACTIONS, BlockBody, BlockHeader as _, Header};
+    use alloy_eips::eip4895::{Withdrawal, Withdrawals};
     use alloy_primitives::{Bloom, Bytes, B256, U256};
-    use alloy_rpc_types_engine::PayloadError;
+    use alloy_rpc_types_engine::{PayloadAttributes as EthPayloadAttributes, PayloadError};
     use outbe_primitives::{OutbeExecutionData, OutbeHeader, OutbePayloadAttributes};
     use reth_chainspec::MAINNET;
-    use reth_engine_primitives::PayloadValidator;
-    use reth_payload_primitives::InvalidPayloadAttributesError;
+    use reth_engine_primitives::{EngineApiValidator, PayloadValidator};
+    use reth_payload_primitives::{
+        EngineApiMessageVersion, InvalidPayloadAttributesError, PayloadOrAttributes,
+    };
     use reth_primitives_traits::Block as _;
 
     use super::{OutbeEngineValidator, OUTBE_MAX_EXTRA_DATA_SIZE};
 
     fn payload_with_extra_data_len(extra_len: usize) -> OutbeExecutionData {
+        payload_with_extra_data_and_withdrawals(extra_len, None)
+    }
+
+    fn payload_with_extra_data_and_withdrawals(
+        extra_len: usize,
+        withdrawals: Option<Vec<Withdrawal>>,
+    ) -> OutbeExecutionData {
         let block = outbe_primitives::OutbeBlock {
             header: OutbeHeader::new(Header {
                 parent_hash: B256::ZERO,
@@ -157,7 +167,7 @@ mod tests {
             body: BlockBody {
                 transactions: vec![],
                 ommers: vec![],
-                withdrawals: None,
+                withdrawals: withdrawals.map(Withdrawals::new),
             },
         };
 
@@ -205,6 +215,25 @@ mod tests {
     }
 
     #[test]
+    fn rejects_non_empty_withdrawals_in_execution_payload() {
+        let validator = OutbeEngineValidator::new(MAINNET.clone());
+        let payload = payload_with_extra_data_and_withdrawals(
+            0,
+            Some(vec![Withdrawal {
+                index: 0,
+                validator_index: 0,
+                address: alloy_primitives::Address::ZERO,
+                amount: 1_000,
+            }]),
+        );
+
+        assert!(matches!(
+            validator.convert_payload_to_block(payload).unwrap_err(),
+            reth_payload_primitives::NewPayloadError::Other(_)
+        ));
+    }
+
+    #[test]
     fn validates_payload_attributes_against_header_millis() {
         let validator = OutbeEngineValidator::new(MAINNET.clone());
         let header = header_with_timestamp(100, 900);
@@ -235,6 +264,85 @@ mod tests {
                 .validate_payload_attributes_against_header(&invalid_attrs, &header)
                 .unwrap_err(),
             InvalidPayloadAttributesError::InvalidTimestamp
+        ));
+    }
+
+    #[test]
+    fn rejects_non_empty_withdrawals_in_payload_attributes() {
+        let validator = OutbeEngineValidator::new(MAINNET.clone());
+        let header = header_with_timestamp(100, 900);
+        let attributes = OutbePayloadAttributes::from(EthPayloadAttributes {
+            timestamp: 101,
+            prev_randao: B256::ZERO,
+            suggested_fee_recipient: alloy_primitives::Address::ZERO,
+            withdrawals: Some(vec![Withdrawal {
+                index: 0,
+                validator_index: 0,
+                address: alloy_primitives::Address::ZERO,
+                amount: 1_000,
+            }]),
+            parent_beacon_block_root: None,
+            slot_number: None,
+        });
+
+        assert!(matches!(
+            validator
+                .validate_payload_attributes_against_header(&attributes, &header)
+                .unwrap_err(),
+            InvalidPayloadAttributesError::InvalidParams(_)
+        ));
+    }
+
+    #[test]
+    fn rejects_non_empty_withdrawals_in_well_formed_engine_attributes() {
+        let validator = OutbeEngineValidator::new(MAINNET.clone());
+        let attributes = OutbePayloadAttributes::from(EthPayloadAttributes {
+            timestamp: 2_000_000_000,
+            prev_randao: B256::ZERO,
+            suggested_fee_recipient: alloy_primitives::Address::ZERO,
+            withdrawals: Some(vec![Withdrawal {
+                index: 0,
+                validator_index: 0,
+                address: alloy_primitives::Address::ZERO,
+                amount: 1,
+            }]),
+            parent_beacon_block_root: Some(B256::ZERO),
+            slot_number: None,
+        });
+
+        assert!(matches!(
+            validator
+                .ensure_well_formed_attributes(EngineApiMessageVersion::V3, &attributes)
+                .unwrap_err(),
+            reth_payload_primitives::EngineObjectValidationError::InvalidParams(_)
+        ));
+    }
+
+    #[test]
+    fn version_specific_validation_rejects_non_empty_withdrawals() {
+        let validator = OutbeEngineValidator::new(MAINNET.clone());
+        let attributes = OutbePayloadAttributes::from(EthPayloadAttributes {
+            timestamp: 2_000_000_000,
+            prev_randao: B256::ZERO,
+            suggested_fee_recipient: alloy_primitives::Address::ZERO,
+            withdrawals: Some(vec![Withdrawal {
+                index: 0,
+                validator_index: 0,
+                address: alloy_primitives::Address::ZERO,
+                amount: u64::MAX,
+            }]),
+            parent_beacon_block_root: Some(B256::ZERO),
+            slot_number: None,
+        });
+
+        assert!(matches!(
+            validator
+                .validate_version_specific_fields(
+                    EngineApiMessageVersion::V3,
+                    PayloadOrAttributes::PayloadAttributes(&attributes),
+                )
+                .unwrap_err(),
+            reth_payload_primitives::EngineObjectValidationError::InvalidParams(_)
         ));
     }
 }
