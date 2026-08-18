@@ -714,11 +714,16 @@ P3:
 - `crates/core/gratis/src/state.rs`;
 - `crates/core/gratisfactory/src/runtime.rs`;
 - `crates/core/lysis/src/algorithm.rs`;
-- `crates/core/lysis/src/program_v1/{execute,phases}.rs`;
+- `crates/core/lysis/src/program_v1/{execute,phases,types}.rs`;
 - `crates/core/lysis/src/runtime.rs` — unit comments/interface adaptation only;
 - `crates/core/nod/src/{schema,state}.rs`;
 - `crates/core/gem/src/state.rs`;
 - `crates/core/gemfactory/src/runtime.rs`.
+
+User-approved P3 re-plan after the `ZERO_COST` blocker: `types.rs` разрешён
+только для внутреннего `ProgramErrorV1::ZeroCost { ordinal }`. Это расширяет
+typed Rust error surface, но не меняет ABI, wire/state layouts, OCOMP codecs,
+frozen vectors или экономическую семантику P3.
 
 P4:
 
