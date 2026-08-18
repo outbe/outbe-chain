@@ -112,8 +112,10 @@ pub struct Position {
     #[attribute(order = 13)]
     pub originated_at: u64,
 
-    /// Anchor of the interest day count. Equals `originated_at` until the first
-    /// settlement, then the timestamp of the most recent one.
+    /// Start of the current accrual period. Equals `originated_at` until the
+    /// first settlement, then advances by the whole days each settlement
+    /// charges — not to the settlement timestamp, so a sub-day remainder
+    /// carries forward instead of being discarded.
     #[attribute(order = 14)]
     pub last_settled_at: u64,
 

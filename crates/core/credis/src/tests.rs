@@ -466,6 +466,66 @@ fn accrual_counts_whole_days_only() {
     });
 }
 
+#[test]
+fn dust_settlements_cannot_evade_the_coupon() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage);
+        let id = open_settleable(&mut credis, 1);
+
+        // A dust settlement one second short of a whole day charges no
+        // interest — and so must not consume accrual time either.
+        let dust = credis
+            .settle(id, U256::from(1u64), at(0) + DAY - 1)
+            .unwrap();
+        assert!(dust.interest.is_zero());
+        assert_eq!(dust.principal_paid, U256::from(1u64));
+        assert_eq!(
+            credis.get_position(id).unwrap().last_settled_at,
+            ORIGINATED_AT,
+            "the accrual anchor must not move when no whole day was charged"
+        );
+
+        // Because the anchor stayed put, the clock kept running: repeating the
+        // trick just under the next day boundary now owes a full day of
+        // interest and is rejected. An anchor that jumped to the payment time
+        // would let this repeat forever and never pay a coupon.
+        let err = credis
+            .settle(id, U256::from(1u64), at(1) + DAY - 1)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("below the interest"), "got: {err}");
+
+        // A full year on, the whole coupon is still owed — on the one minor
+        // unit of principal the dust settlement retired:
+        // ceil(999_999_999 × 4%) = 40_000_000.
+        let position = credis.get_position(id).unwrap();
+        assert_eq!(position.outstanding, U256::from(PRINCIPAL - 1));
+        assert_eq!(
+            CredisContract::accrued_interest(&position, at(365)).unwrap(),
+            U256::from(40_000_000u64)
+        );
+    });
+}
+
+#[test]
+fn the_accrual_anchor_advances_by_whole_days_only() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage);
+        let id = open_settleable(&mut credis, 1);
+
+        // Settling 10.5 days in charges 10 days and leaves the half day on the
+        // position, so the anchor lands on day 10 rather than the payment time.
+        let interest =
+            CredisContract::accrued_interest(&credis.get_position(id).unwrap(), at(10) + DAY / 2)
+                .unwrap();
+        credis
+            .settle(id, interest + U256::from(1u64), at(10) + DAY / 2)
+            .unwrap();
+
+        assert_eq!(credis.get_position(id).unwrap().last_settled_at, at(10));
+    });
+}
+
 // ---------------------------------------------------------------------------
 // Latch and call transitions
 // ---------------------------------------------------------------------------

@@ -91,13 +91,21 @@ pub fn settlement_deadline(position: &Position) -> u64 {
 }
 
 impl CredisContract<'_> {
-    /// Interest accrued on the outstanding principal since the last settlement:
+    /// Whole UTC days charged by a settlement at `now`, i.e. the day count the
+    /// interest is computed over and the amount the accrual anchor advances by.
+    /// The sub-day remainder is deliberately not consumed: it stays on the
+    /// position and is charged by a later settlement.
+    fn elapsed_days(position: &Position, now: u64) -> u64 {
+        now.saturating_sub(position.last_settled_at) / SECONDS_PER_DAY
+    }
+
+    /// Interest accrued on the outstanding principal since the accrual anchor:
     /// simple, non-compounding, ACT/365 over **whole** elapsed UTC days.
     ///
     /// Rounded up, because §4 requires rounding to favor the protocol. A
     /// position with nothing outstanding accrues nothing.
     pub fn accrued_interest(position: &Position, now: u64) -> Result<U256> {
-        let days = now.saturating_sub(position.last_settled_at) / SECONDS_PER_DAY;
+        let days = Self::elapsed_days(position, now);
         if days == 0 || position.outstanding.is_zero() || position.policy_rate.is_zero() {
             return Ok(U256::ZERO);
         }
@@ -227,6 +235,7 @@ impl CredisContract<'_> {
             CredisState::Settleable | CredisState::Called => {}
         }
 
+        let days = Self::elapsed_days(&position, now);
         let interest = Self::accrued_interest(&position, now)?;
         if amount < interest {
             return Err(CredisError::PaymentBelowAccruedInterest.into());
@@ -255,8 +264,13 @@ impl CredisContract<'_> {
             .checked_sub(gratis_released)
             .ok_or(CredisError::ArithmeticOverflow)?;
         // Accrual restarts on the reduced principal; no unpaid interest ever
-        // carries between settlements.
-        position.last_settled_at = now;
+        // carries between settlements. The anchor advances by the whole days
+        // actually charged, never to `now`: settling on a sub-day boundary must
+        // not discard the remainder, or repeated dust settlements just under
+        // 24h apart would hold `days` at zero and evade the coupon entirely.
+        position.last_settled_at = position
+            .last_settled_at
+            .saturating_add(days.saturating_mul(SECONDS_PER_DAY));
 
         let closed = position.outstanding.is_zero();
         if closed {
@@ -292,9 +306,12 @@ impl CredisContract<'_> {
     }
 
     /// Voids the remainder of a called position whose settlement window has
-    /// lapsed. Only the unpaid share is written off — `collateral_locked` is by
-    /// construction `G × P_out / P`, so whatever the owner settled they have
-    /// already reclaimed.
+    /// lapsed. Only the unpaid share is written off: every settlement already
+    /// released its proportional share, so whatever the owner settled they have
+    /// already reclaimed. The invariant that holds exactly is
+    /// `Σ released + collateral_locked == G`; because each partial release is
+    /// floored, `collateral_locked >= floor(G × P_out / P)`, with the drift
+    /// always toward the protocol.
     ///
     /// Returns what the caller must burn and credit; the position itself is
     /// closed here.
