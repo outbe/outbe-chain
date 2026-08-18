@@ -8,26 +8,27 @@
 //! 2. If no candles are available, fall back to the original ticker-based
 //!    Volume-Weighted Average Price (VWAP) across providers.
 //!
-//! All price/volume arithmetic uses U256 fixed-point at 1e18 scale
-//! to match on-chain Oracle semantics. f64 is only used for provider
-//! ingestion (parsing REST responses) and deviation filtering (σ-based
-//! statistical test), never for final VWAP/TVWAP output.
+//! Final price/volume arithmetic uses the pair's existing integer contract:
+//! COEN/840 uses six-decimal price and COEN-unit volume, while generic pairs
+//! retain their decimal18 contract. f64 is only used for provider ingestion
+//! (parsing REST responses) and deviation filtering (σ-based statistical
+//! test), never for final VWAP/TVWAP output.
 
 use crate::config::FeederConfig;
 use crate::provider::{CandlePrice, Provider, TickerPrice};
 use alloy_primitives::U256;
 use eyre::Result;
-use outbe_primitives::units::SCALE_1E18_U128;
+use outbe_primitives::units::{COEN840_PRICE_SCALE, SCALE_1E18_U128, UNITS_PER_COEN};
 use std::collections::HashMap;
 
-/// Aggregated price/volume for a single pair (U256 fixed-point at 1e18 scale).
+/// Aggregated price/volume for a single pair in that pair's canonical scale.
 #[derive(Debug, Clone)]
 pub struct AggregatedPrice {
     pub base: String,
     pub quote: String,
-    /// VWAP price at 1e18 scale.
+    /// VWAP price: six decimals for COEN/840, existing decimal18 otherwise.
     pub price: U256,
-    /// Total volume at 1e18 scale.
+    /// Total volume: COEN units for COEN/840, existing decimal18 otherwise.
     pub volume: U256,
 }
 
@@ -39,6 +40,69 @@ fn f64_to_u256(value: f64) -> U256 {
     }
     let scaled = (value * SCALE_1E18_U128 as f64) as u128;
     U256::from(scaled)
+}
+
+fn is_coen840_pair(base: &str, quote: &str) -> bool {
+    base.eq_ignore_ascii_case("COEN") && quote == "840"
+}
+
+/// Converts one positive finite COEN/840 price to its canonical integer scale.
+/// A positive value below the first representable price unit is rejected.
+fn coen840_price(value: f64) -> Option<U256> {
+    if value <= 0.0 || !value.is_finite() {
+        return None;
+    }
+    let scale = COEN840_PRICE_SCALE.to::<u128>() as f64;
+    let value = U256::from((value * scale) as u128);
+    (!value.is_zero()).then_some(value)
+}
+
+/// Converts provider volume into raw COEN units. Real zero stays zero; a
+/// positive subunit observation is represented by the smallest COEN unit.
+fn coen_volume(value: f64) -> U256 {
+    if value <= 0.0 || !value.is_finite() {
+        return U256::ZERO;
+    }
+    let scale = UNITS_PER_COEN.to::<u128>() as f64;
+    U256::from((value * scale) as u128).max(U256::ONE)
+}
+
+/// COEN/840 weighted average. Zero-volume samples use one whole COEN only as
+/// an internal weight while the emitted aggregate preserves their real zero
+/// volume. All products and sums are checked.
+fn compute_coen840_weighted(prices: &[(f64, f64)]) -> Result<Option<(U256, U256)>> {
+    let mut price_volume_sum = U256::ZERO;
+    let mut weight_sum = U256::ZERO;
+    let mut volume_sum = U256::ZERO;
+
+    for &(price, volume) in prices {
+        let Some(price) = coen840_price(price) else {
+            continue;
+        };
+        let volume = coen_volume(volume);
+        let weight = if volume.is_zero() {
+            UNITS_PER_COEN
+        } else {
+            volume
+        };
+        let weighted_price = price
+            .checked_mul(weight)
+            .ok_or_else(|| eyre::eyre!("COEN/840 price-volume product overflow"))?;
+        price_volume_sum = price_volume_sum
+            .checked_add(weighted_price)
+            .ok_or_else(|| eyre::eyre!("COEN/840 price-volume sum overflow"))?;
+        weight_sum = weight_sum
+            .checked_add(weight)
+            .ok_or_else(|| eyre::eyre!("COEN/840 weight sum overflow"))?;
+        volume_sum = volume_sum
+            .checked_add(volume)
+            .ok_or_else(|| eyre::eyre!("COEN/840 volume sum overflow"))?;
+    }
+
+    if weight_sum.is_zero() {
+        return Ok(None);
+    }
+    Ok(Some((price_volume_sum / weight_sum, volume_sum)))
 }
 
 /// Fetches prices from providers, filters outliers, and computes the best
@@ -119,6 +183,7 @@ pub async fn fetch_and_aggregate(
     for pair_config in &config.currency_pairs {
         let key = format!("{}/{}", pair_config.base, pair_config.quote);
         let threshold = config.deviation_for(&pair_config.base);
+        let is_coen840 = is_coen840_pair(&pair_config.base, &pair_config.quote);
 
         // --- Try candle TVWAP first ---
         let mut candle_data: Vec<(f64, f64)> = Vec::new();
@@ -136,16 +201,22 @@ pub async fn fetch_and_aggregate(
         }
 
         if !candle_data.is_empty() {
-            let (tvwap, total_volume) = compute_tvwap_fixed(&candle_data);
-            if !tvwap.is_zero() {
-                tracing::debug!(pair = %key, "using candle TVWAP");
-                results.push(AggregatedPrice {
-                    base: pair_config.base.clone(),
-                    quote: pair_config.quote.clone(),
-                    price: tvwap,
-                    volume: total_volume,
-                });
-                continue;
+            let aggregate = if is_coen840 {
+                compute_coen840_weighted(&candle_data)?
+            } else {
+                Some(compute_tvwap_fixed(&candle_data))
+            };
+            if let Some((tvwap, total_volume)) = aggregate {
+                if !tvwap.is_zero() {
+                    tracing::debug!(pair = %key, "using candle TVWAP");
+                    results.push(AggregatedPrice {
+                        base: pair_config.base.clone(),
+                        quote: pair_config.quote.clone(),
+                        price: tvwap,
+                        volume: total_volume,
+                    });
+                    continue;
+                }
             }
         }
 
@@ -157,7 +228,12 @@ pub async fn fetch_and_aggregate(
             }
             if let Some(ticker) = tickers.get(&key) {
                 if ticker.price > 0.0 {
-                    raw_prices.push((ticker.price, ticker.volume.max(1.0)));
+                    let volume = if is_coen840 {
+                        ticker.volume
+                    } else {
+                        ticker.volume.max(1.0)
+                    };
+                    raw_prices.push((ticker.price, volume));
                 }
             }
         }
@@ -173,7 +249,14 @@ pub async fn fetch_and_aggregate(
         }
 
         // Compute VWAP in U256 fixed-point
-        let (vwap, total_volume) = compute_vwap_fixed(&filtered);
+        let aggregate = if is_coen840 {
+            compute_coen840_weighted(&filtered)?
+        } else {
+            Some(compute_vwap_fixed(&filtered))
+        };
+        let Some((vwap, total_volume)) = aggregate else {
+            continue;
+        };
         if !vwap.is_zero() {
             tracing::debug!(pair = %key, "using ticker VWAP (no candles available)");
             results.push(AggregatedPrice {
@@ -285,7 +368,7 @@ mod tests {
         AccountConfig, ChainConfig, CurrencyPairConfig, FeederConfig, OracleConfig,
     };
     use crate::provider::mock::MockProvider;
-    use outbe_primitives::units::{Units, SCALE_1E18};
+    use outbe_primitives::units::SCALE_1E18;
 
     const COEN840_SCALE: u128 = 1_000_000;
 
@@ -338,12 +421,12 @@ mod tests {
         let prices = vec![(100.0, 1000.0), (200.0, 2000.0), (300.0, 3000.0)];
         let (vwap, volume) = compute_vwap_fixed(&prices);
         // VWAP = (100*1000 + 200*2000 + 300*3000) / (1000 + 2000 + 3000) ≈ 233.33
-        let expected_vwap = U256::in_units(233u128); // floor(233.33) * 1e18
-                                                     // Allow 1 unit tolerance due to fixed-point rounding
+        let expected_vwap = U256::from(233u128) * SCALE_1E18;
+        // Allow 1 unit tolerance due to fixed-point rounding
         assert!(vwap >= expected_vwap);
         assert!(vwap < expected_vwap + SCALE_1E18); // within 1.0
 
-        let expected_volume = U256::in_units(6000u128);
+        let expected_volume = U256::from(6000u128) * SCALE_1E18;
         assert_eq!(volume, expected_volume);
     }
 
@@ -356,12 +439,12 @@ mod tests {
         // Expected TVWAP = (100*3000 + 102*4000 + 101*3500) / (3000+4000+3500)
         //                = (300000 + 408000 + 353500) / 10500
         //                = 1061500 / 10500 ≈ 101.095238
-        let expected_min = U256::in_units(101u128);
-        let expected_max = U256::in_units(102u128);
+        let expected_min = U256::from(101u128) * SCALE_1E18;
+        let expected_max = U256::from(102u128) * SCALE_1E18;
         assert!(tvwap >= expected_min, "tvwap too low: {tvwap}");
         assert!(tvwap < expected_max, "tvwap too high: {tvwap}");
 
-        let expected_volume = U256::in_units(10500u128);
+        let expected_volume = U256::from(10500u128) * SCALE_1E18;
         assert_eq!(total_volume, expected_volume);
     }
 

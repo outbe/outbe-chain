@@ -166,7 +166,7 @@ fn every_pair_read_agrees_on_the_market_whichever_way_it_is_quoted() {
         oracle
             .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
-        let rate = U256::in_units(4u64);
+        let rate = fixed18(4);
         oracle
             .set_exchange_rate(
                 Address::ZERO,
@@ -185,7 +185,7 @@ fn every_pair_read_agrees_on_the_market_whichever_way_it_is_quoted() {
         assert!(oracle.is_vote_target(USDT, COEN).unwrap());
         assert_eq!(
             oracle.get_exchange_rate(USDT, COEN).unwrap(),
-            U256::in_units(1u64) / U256::from(4u64)
+            fixed18(1) / U256::from(4u64)
         );
 
         // Writes stay canonical-only: a backwards quote has no direction-free
@@ -499,25 +499,13 @@ fn write_snapshot_advances_the_ring_buffer_and_feeds_vwap() {
             .unwrap();
 
         // Write 3 snapshots
-        let entries = vec![(
-            pair_key(COEN, USDT),
-            U256::in_units(100u64),
-            U256::in_units(1000u64),
-        )];
+        let entries = vec![(pair_key(COEN, USDT), fixed18(100), fixed18(1000))];
         oracle.write_snapshot(1000, &entries).unwrap();
 
-        let entries2 = vec![(
-            pair_key(COEN, USDT),
-            U256::in_units(200u64),
-            U256::in_units(2000u64),
-        )];
+        let entries2 = vec![(pair_key(COEN, USDT), fixed18(200), fixed18(2000))];
         oracle.write_snapshot(2000, &entries2).unwrap();
 
-        let entries3 = vec![(
-            pair_key(COEN, USDT),
-            U256::in_units(300u64),
-            U256::in_units(3000u64),
-        )];
+        let entries3 = vec![(pair_key(COEN, USDT), fixed18(300), fixed18(3000))];
         oracle.write_snapshot(3000, &entries3).unwrap();
 
         assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 3);
@@ -532,7 +520,7 @@ fn write_snapshot_advances_the_ring_buffer_and_feeds_vwap() {
             .calculate_vwap(pair_key(COEN, USDT), 0, 5000)
             .unwrap();
         // TODO is it correct??
-        let expected = U256::in_units(1_400_000u64) * SCALE_1E18 / (U256::in_units(6_000u64));
+        let expected = fixed18(1_400_000) * SCALE_1E18 / fixed18(6_000);
         assert_eq!(vwap, expected);
     });
 }
@@ -545,26 +533,26 @@ fn calculate_vwap_includes_only_snapshots_inside_the_window() {
             .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
 
-        let entries1 = vec![(pair_key(COEN, USDT), U256::in_units(100u64), SCALE_1E18)];
+        let entries1 = vec![(pair_key(COEN, USDT), fixed18(100), SCALE_1E18)];
         oracle.write_snapshot(1000, &entries1).unwrap();
 
-        let entries2 = vec![(pair_key(COEN, USDT), U256::in_units(200u64), SCALE_1E18)];
+        let entries2 = vec![(pair_key(COEN, USDT), fixed18(200), SCALE_1E18)];
         oracle.write_snapshot(2000, &entries2).unwrap();
 
-        let entries3 = vec![(pair_key(COEN, USDT), U256::in_units(300u64), SCALE_1E18)];
+        let entries3 = vec![(pair_key(COEN, USDT), fixed18(300), SCALE_1E18)];
         oracle.write_snapshot(3000, &entries3).unwrap();
 
         // VWAP from 1500..2500 should only include snapshot at 2000
         let vwap = oracle
             .calculate_vwap(pair_key(COEN, USDT), 1500, 2500)
             .unwrap();
-        assert_eq!(vwap, U256::in_units(200u64));
+        assert_eq!(vwap, fixed18(200));
 
         // VWAP from 2500..3500 should only include snapshot at 3000
         let vwap = oracle
             .calculate_vwap(pair_key(COEN, USDT), 2500, 3500)
             .unwrap();
-        assert_eq!(vwap, U256::in_units(300u64));
+        assert_eq!(vwap, fixed18(300));
     });
 }
 
@@ -588,10 +576,10 @@ fn calculate_vwap_treats_zero_volume_as_one_scaled_unit() {
             .unwrap();
 
         // Zero-volume entries → equal-weight averaging
-        let entries1 = vec![(pair_key(COEN, USDT), U256::in_units(100u64), U256::ZERO)];
+        let entries1 = vec![(pair_key(COEN, USDT), fixed18(100), U256::ZERO)];
         oracle.write_snapshot(1000, &entries1).unwrap();
 
-        let entries2 = vec![(pair_key(COEN, USDT), U256::in_units(200u64), U256::ZERO)];
+        let entries2 = vec![(pair_key(COEN, USDT), fixed18(200), U256::ZERO)];
         oracle.write_snapshot(2000, &entries2).unwrap();
 
         // Equal-weight: (100 + 200) / 2 = 150
@@ -600,8 +588,7 @@ fn calculate_vwap_treats_zero_volume_as_one_scaled_unit() {
             .unwrap();
         // With zero volumes, each gets SCALE_1E18 weight:
         // sum(rate * 1e18) / sum(1e18) = (100*1e18 + 200*1e18) / (2*1e18) = 150
-        let expected = (U256::in_units(100u64) * SCALE_1E18 + U256::in_units(200u64) * SCALE_1E18)
-            / (U256::in_units(2u64));
+        let expected = (fixed18(100) * SCALE_1E18 + fixed18(200) * SCALE_1E18) / fixed18(2);
         assert_eq!(vwap, expected);
     });
 }
@@ -662,16 +649,8 @@ fn calculate_vwap_isolates_each_pair_within_one_snapshot() {
             .unwrap();
 
         let entries = vec![
-            (
-                pair_key(COEN, USDT),
-                U256::in_units(1u64),
-                U256::in_units(100u64),
-            ),
-            (
-                pair_key(ETH, USDT),
-                U256::in_units(2000u64),
-                U256::in_units(50u64),
-            ),
+            (pair_key(COEN, USDT), fixed18(1), fixed18(100)),
+            (pair_key(ETH, USDT), fixed18(2000), fixed18(50)),
         ];
         oracle.write_snapshot(1000, &entries).unwrap();
 
@@ -683,7 +662,7 @@ fn calculate_vwap_isolates_each_pair_within_one_snapshot() {
 
         // VWAP for ETH should be 2000
         let vwap_eth = oracle.calculate_vwap(pair_key(ETH, USDT), 0, 2000).unwrap();
-        assert_eq!(vwap_eth, U256::in_units(2000u64));
+        assert_eq!(vwap_eth, fixed18(2000));
     });
 }
 
@@ -699,14 +678,7 @@ fn bulk_calculators_propagate_argument_errors_instead_of_reporting_no_data() {
             .register_pair(AddressPair::from_addresses(COEN, USDT))
             .unwrap();
         oracle
-            .write_snapshot(
-                1000,
-                &[(
-                    pair_key(COEN, USDT),
-                    U256::in_units(1u64),
-                    U256::in_units(100u64),
-                )],
-            )
+            .write_snapshot(1000, &[(pair_key(COEN, USDT), fixed18(1), fixed18(100))])
             .unwrap();
 
         let err = oracle.calculate_twaps(2000, 0).unwrap_err();
@@ -741,8 +713,8 @@ fn submit_vote_stores_tuples_until_clear_votes_drains_them() {
 
         let validator = Address::new([0x11; 20]);
         register_validator(storage.clone(), validator, U256::in_units(100u64));
-        let rate = U256::in_units(50u64);
-        let volume = U256::in_units(1000u64);
+        let rate = fixed18(50);
+        let volume = fixed18(1000);
 
         // Submit vote
         oracle
@@ -780,8 +752,8 @@ fn submit_vote_rejects_a_duplicated_pair() {
 
         let validator = Address::new([0x11; 20]);
         register_validator(storage.clone(), validator, U256::in_units(100u64));
-        let rate = U256::in_units(50u64);
-        let volume = U256::in_units(1000u64);
+        let rate = fixed18(50);
+        let volume = fixed18(1000);
         // Two tuples naming the same pair: within the pair-count bound, so the
         // dedup scan is what must reject it.
         let err = oracle
@@ -812,8 +784,8 @@ fn submit_vote_reports_a_duplicate_before_an_inactive_vote_target() {
 
         let validator = Address::new([0x11; 20]);
         register_validator(storage.clone(), validator, U256::in_units(100u64));
-        let rate = U256::in_units(50u64);
-        let volume = U256::in_units(1000u64);
+        let rate = fixed18(50);
+        let volume = fixed18(1000);
         // A submission that is both untargeted and duplicated reports the
         // duplicate first — receipt-visible revert text, so the order is pinned.
         let err = oracle
@@ -935,10 +907,10 @@ fn get_aggregate_vote_returns_the_stored_tuples() {
 
         let validator = Address::new([0x11; 20]);
         register_validator(storage.clone(), validator, U256::in_units(100u64));
-        let rate1 = U256::in_units(50u64);
-        let rate2 = U256::in_units(3000u64);
-        let vol1 = U256::in_units(100u64);
-        let vol2 = U256::in_units(200u64);
+        let rate1 = fixed18(50);
+        let rate2 = fixed18(3000);
+        let vol1 = fixed18(100);
+        let vol2 = fixed18(200);
 
         oracle
             .submit_vote(
@@ -1016,7 +988,7 @@ fn delegate_feeder_round_trips_and_revokes_on_the_zero_address() {
 
         // Feeder can submit vote on behalf of validator
         oracle
-            .submit_vote(feeder, &[(COEN, USDT, U256::in_units(50u64), SCALE_1E18)])
+            .submit_vote(feeder, &[(COEN, USDT, fixed18(50), SCALE_1E18)])
             .unwrap();
 
         assert!(oracle.vote_exists.read(&validator).unwrap());

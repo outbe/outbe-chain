@@ -89,7 +89,8 @@ pub fn check_reference_currency_with_storage(storage: StorageHandle, iso_code: u
     Err(OracleError::NotReferenceCurrency { iso_code }.into())
 }
 
-/// Current COEN price to currency `iso_code`, 1e18 scaled.
+/// Current COEN price to currency `iso_code` in the registered pair's scale.
+/// `COEN/840` uses six decimals; generic pairs retain their existing contract.
 ///
 /// Returns errors when `COEN/<iso_code>` is not a registered pair, or
 /// no rates are found.
@@ -150,7 +151,8 @@ pub fn register_pair(storage: StorageHandle, pair: AddressPair) -> Result<PairIn
     oracle.register_pair(pair)
 }
 
-/// Nominal COEN price for `COEN/<iso_code>` at `worldwide_day`, 1e18 scaled:
+/// Nominal COEN price for `COEN/<iso_code>` at `worldwide_day`, in the pair's
+/// canonical scale (`COEN/840` is six-decimal):
 /// `max(WorldwideDay VWAP, highest active S-curve value)`.
 ///
 /// `None` when no `COEN/<iso_code>` pair is registered — the currency is not one

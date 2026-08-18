@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 pub struct GenesisSnapshot {
     /// Unix timestamp of the snapshot.
     pub timestamp: u64,
-    /// Entries as `(base, quote, rate_1e18, volume_1e18)`.
+    /// Entries as `(base, quote, rate, volume)` in each pair's canonical scale.
     pub entries: Vec<(Address, Address, U256, U256)>,
 }
 
@@ -32,7 +32,7 @@ pub struct GenesisScurveEntry {
     pub quote: Address,
     /// UTC midnight timestamp of the peak day.
     pub peak_day: u64,
-    /// Peak price at 1e18 scale.
+    /// Peak price in the pair's canonical scale (`COEN/840` is six-decimal).
     pub peak_price: U256,
 }
 
@@ -41,7 +41,7 @@ pub struct GenesisScurveEntry {
 pub struct GenesisAggregateVote {
     /// Validator address that owns this pending vote.
     pub validator: Address,
-    /// Entries as `(base, quote, rate_1e18, volume_1e18)`.
+    /// Entries as `(base, quote, rate, volume)` in each pair's canonical scale.
     pub entries: Vec<(Address, Address, U256, U256)>,
 }
 
@@ -60,7 +60,9 @@ pub struct ReferenceCurrency {
 
 /// Configurable genesis parameters for the Oracle contract.
 ///
-/// All `U256` values use the 1e18 scale factor (`SCALE_1E18`).
+/// Dimensionless policy fields retain FP18. Pair rates, volumes, snapshots and
+/// S-curve prices use the registered pair's canonical scale; COEN/840 uses six
+/// decimals.
 pub struct OracleGenesisConfig {
     /// Vote period in blocks (default: 2).
     pub vote_period: u64,
@@ -77,7 +79,7 @@ pub struct OracleGenesisConfig {
     /// Trading pairs to register at genesis as `(base, quote)` asset addresses.
     /// The direction given here is the direction reads must be quoted in.
     pub pairs: Vec<(Address, Address)>,
-    /// Initial exchange rates as `(base, quote, rate_1e18)`.
+    /// Initial exchange rates as `(base, quote, rate)` in each pair's scale.
     pub initial_rates: Vec<(Address, Address, U256)>,
     /// Feeder delegations as `(validator, feeder)`.
     pub feeder_delegations: Vec<(Address, Address)>,

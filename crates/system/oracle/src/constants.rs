@@ -2,6 +2,7 @@
 
 use alloy_primitives::U256;
 use outbe_primitives::address_pair::AddressPair;
+use outbe_primitives::units::{COEN840_PRICE_SCALE, SCALE_1E18, UNITS_PER_COEN};
 
 /// Genesis seed for the USD (ISO 840) currency rate: the current SOFR
 /// (Secured Overnight Financing Rate) at 1e18 scale.
@@ -35,6 +36,32 @@ pub const DAY_TYPE_PAIR: AddressPair = AddressPair::new([
     // ISO 840 — the marker plus BCD 840.
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0c, 0xc8, 0x40,
 ]);
+
+/// Whether a market is the exact COEN/840 pair whose price and volume contracts
+/// use six decimals. This is deliberately not generic pair-decimals metadata.
+pub(crate) fn is_coen840_pair(pair: AddressPair) -> bool {
+    pair.same_market(&DAY_TYPE_PAIR)
+}
+
+/// Price scale used only when taking a reciprocal. Generic Oracle markets keep
+/// their existing decimal18 reciprocal contract.
+pub(crate) fn reciprocal_scale(pair: AddressPair) -> U256 {
+    if is_coen840_pair(pair) {
+        COEN840_PRICE_SCALE
+    } else {
+        SCALE_1E18
+    }
+}
+
+/// Weight for an observation whose reported volume is genuinely zero. The
+/// weight does not replace the stored volume.
+pub(crate) fn zero_volume_weight(pair: AddressPair) -> U256 {
+    if is_coen840_pair(pair) {
+        UNITS_PER_COEN
+    } else {
+        SCALE_1E18
+    }
+}
 
 #[cfg(test)]
 mod tests {
