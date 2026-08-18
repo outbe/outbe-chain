@@ -256,13 +256,21 @@ async function printCredisInfo(
   smartAccountAddr: string,
   erc20Meta: TokenMeta,
 ) {
-  const [positions, hasCalled] = await Promise.all([
-    credis.getPositionsByAddress(smartAccountAddr).catch(() => []),
+  const [count, hasCalled] = await Promise.all([
+    credis.balanceOf(smartAccountAddr).catch(() => 0n),
     credis.hasCalledPosition(smartAccountAddr).catch(() => false),
   ]);
 
+  // The ABI enumerates rather than returning an unbounded array, so walk the
+  // owner index one position at a time.
+  const positions = await Promise.all(
+    Array.from({ length: Number(count) }, (_, i) =>
+      credis.positionOfAddressByIndex(smartAccountAddr, i),
+    ),
+  );
+
   console.log(`\n=== Credis Positions (smart account: ${smartAccountAddr}) ===`);
-  console.log(`  Positions:       ${positions.length} (called: ${hasCalled})`);
+  console.log(`  Positions:       ${count} (called: ${hasCalled})`);
 
   for (const p of positions) {
     const interest = await credis.accruedInterest(p.positionId).catch(() => 0n);

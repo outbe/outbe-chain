@@ -156,7 +156,7 @@ pub struct CredisContract {
     #[attribute(order = 2)]
     pub address_position_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    /// Total positions ever created (for getAllPositions iteration).
+    /// Total positions ever created (backs `totalSupply` / `positionByIndex`).
     #[attribute(order = 3)]
     pub total_positions: outbe_primitives::storage::dsl::Value<u64>,
 

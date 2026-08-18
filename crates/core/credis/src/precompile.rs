@@ -5,6 +5,7 @@ use outbe_primitives::dispatch::{dispatch_call, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
 
+use crate::errors::CredisError;
 use crate::schema::CredisContract;
 
 /// Selectors on this precompile that accept native value. The route table binds
@@ -25,17 +26,26 @@ pub fn dispatch(
         let contract = CredisContract::new(storage.clone());
         use ICredis::ICredisCalls::*;
         match call {
+            totalSupply(c) => view(c, |_| Ok(U256::from(contract.total_positions()?))),
             getPosition(c) => view(c, |c| {
                 let position = contract.get_position(c.positionId)?;
                 Ok(abi_position(&position))
             }),
-            getPositionsByAddress(c) => view(c, |c| {
-                let positions = contract.get_positions_by_address(c.smartAccount)?;
-                Ok(positions.iter().map(abi_position).collect())
+            ownerOf(c) => view(c, |c| {
+                let position_id = parse_position_id(&c.positionId)?;
+                Ok(contract.get_position(position_id)?.smart_account)
             }),
-            getAllPositions(c) => view(c, |_| {
-                let positions = contract.get_all_positions()?;
-                Ok(positions.iter().map(abi_position).collect())
+            positionByIndex(c) => view(c, |c| {
+                let index = u64::try_from(c.index).map_err(|_| CredisError::IndexOutOfBounds)?;
+                Ok(abi_position(&contract.position_at(index)?))
+            }),
+            balanceOf(c) => view(c, |c| {
+                Ok(U256::from(contract.position_count_of(c.smartAccount)?))
+            }),
+            positionOfAddressByIndex(c) => view(c, |c| {
+                let index = u32::try_from(c.index).map_err(|_| CredisError::IndexOutOfBounds)?;
+                let position = contract.position_of_address_at(c.smartAccount, index)?;
+                Ok(abi_position(&position))
             }),
             hasCalledPosition(c) => view(c, |c| contract.has_called_position(c.smartAccount)),
             accruedInterest(c) => view(c, |c| {
@@ -43,14 +53,31 @@ pub fn dispatch(
                 let timestamp = contract.storage.timestamp()?.to::<u64>();
                 CredisContract::accrued_interest(&position, timestamp)
             }),
-            credisOf(c) => view(c, |c| contract.get_principal_amount(c.smartAccount)),
-            outstandingOf(c) => view(c, |c| contract.get_outstanding_amount(c.smartAccount)),
+            credisPrincipalAndOutstandingOf(c) => view(c, |c| {
+                let (principal, outstanding) =
+                    contract.principal_and_outstanding_of(c.smartAccount)?;
+                Ok(ICredis::credisPrincipalAndOutstandingOfReturn {
+                    _0: principal,
+                    _1: outstanding,
+                })
+            }),
             supportsInterface(c) => view(c, |c| {
                 let id: [u8; 4] = c.interfaceId.0;
                 Ok(id == ERC165_INTERFACE_ID)
             }),
         }
     })
+}
+
+/// A position id on the wire is the 32-byte big-endian form of the `U256` the
+/// ledger keys by. Anything else is rejected rather than zero-extended, so a
+/// truncated id cannot silently address a different position.
+fn parse_position_id(raw: &Bytes) -> Result<U256> {
+    let bytes: [u8; 32] = raw
+        .as_ref()
+        .try_into()
+        .map_err(|_| CredisError::InvalidPositionId)?;
+    Ok(U256::from_be_bytes(bytes))
 }
 
 fn abi_position(p: &crate::schema::Position) -> ICredis::Position {

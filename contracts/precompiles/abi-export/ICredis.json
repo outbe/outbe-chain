@@ -20,7 +20,26 @@
   },
   {
     "type": "function",
-    "name": "credisOf",
+    "name": "balanceOf",
+    "inputs": [
+      {
+        "name": "smartAccount",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "balance",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "credisPrincipalAndOutstandingOf",
     "inputs": [
       {
         "name": "smartAccount",
@@ -33,111 +52,11 @@
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getAllPositions",
-    "inputs": [],
-    "outputs": [
+      },
       {
         "name": "",
-        "type": "tuple[]",
-        "internalType": "struct ICredis.Position[]",
-        "components": [
-          {
-            "name": "positionId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "smartAccount",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "cca",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "asset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "issuanceCurrency",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "eoaCiphertext",
-            "type": "bytes",
-            "internalType": "bytes"
-          },
-          {
-            "name": "principal",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "outstanding",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateral",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralLocked",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "policyRate",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "entryPrice",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "floorPrice",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "callPrice",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "originatedAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "lastSettledAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "calledAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "state",
-            "type": "uint8",
-            "internalType": "uint8"
-          }
-        ]
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -255,7 +174,7 @@
   },
   {
     "type": "function",
-    "name": "getPositionsByAddress",
+    "name": "hasCalledPosition",
     "inputs": [
       {
         "name": "smartAccount",
@@ -266,8 +185,46 @@
     "outputs": [
       {
         "name": "",
-        "type": "tuple[]",
-        "internalType": "struct ICredis.Position[]",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "ownerOf",
+    "inputs": [
+      {
+        "name": "positionId",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "positionByIndex",
+    "inputs": [
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ICredis.Position",
         "components": [
           {
             "name": "positionId",
@@ -366,38 +323,116 @@
   },
   {
     "type": "function",
-    "name": "hasCalledPosition",
+    "name": "positionOfAddressByIndex",
     "inputs": [
       {
         "name": "smartAccount",
         "type": "address",
         "internalType": "address"
-      }
-    ],
-    "outputs": [
+      },
       {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "outstandingOf",
-    "inputs": [
-      {
-        "name": "smartAccount",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
+        "name": "index",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ICredis.Position",
+        "components": [
+          {
+            "name": "positionId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "smartAccount",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "cca",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "asset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "issuanceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "eoaCiphertext",
+            "type": "bytes",
+            "internalType": "bytes"
+          },
+          {
+            "name": "principal",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "outstanding",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateral",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralLocked",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "policyRate",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "entryPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "floorPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "callPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "originatedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "lastSettledAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "calledAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "state",
+            "type": "uint8",
+            "internalType": "uint8"
+          }
+        ]
       }
     ],
     "stateMutability": "view"
@@ -417,6 +452,19 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "totalSupply",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"

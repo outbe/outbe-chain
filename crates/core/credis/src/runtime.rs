@@ -381,32 +381,46 @@ impl CredisContract<'_> {
         Ok(false)
     }
 
-    /// Sum of `outstanding` across all positions for `account`.
-    pub fn get_outstanding_amount(&self, account: Address) -> Result<U256> {
-        self.sum_over_positions(account, |p| p.outstanding)
-    }
-
-    /// Sum of `principal` across all positions for `account`.
-    pub fn get_principal_amount(&self, account: Address) -> Result<U256> {
-        self.sum_over_positions(account, |p| p.principal)
-    }
-
-    fn sum_over_positions(
-        &self,
-        account: Address,
-        field: impl Fn(&Position) -> U256,
-    ) -> Result<U256> {
-        let mut total = U256::ZERO;
+    /// Sum of `principal` and of `outstanding` across all positions for
+    /// `account`, in one walk of the owner index.
+    pub fn principal_and_outstanding_of(&self, account: Address) -> Result<(U256, U256)> {
+        let mut principal = U256::ZERO;
+        let mut outstanding = U256::ZERO;
         for position in self.get_positions_by_address(account)? {
-            total = total
-                .checked_add(field(&position))
+            principal = principal
+                .checked_add(position.principal)
+                .ok_or(CredisError::ArithmeticOverflow)?;
+            outstanding = outstanding
+                .checked_add(position.outstanding)
                 .ok_or(CredisError::ArithmeticOverflow)?;
         }
-        Ok(total)
+        Ok((principal, outstanding))
     }
 
-    /// All positions for `account`, in insertion order.
-    pub fn get_positions_by_address(&self, account: Address) -> Result<Vec<Position>> {
+    /// How many positions `account` has ever been issued.
+    pub fn position_count_of(&self, account: Address) -> Result<u32> {
+        self.read_address_position_count(account)
+    }
+
+    /// `account`'s `index`-th position, in insertion order.
+    pub fn position_of_address_at(&self, account: Address, index: u32) -> Result<Position> {
+        if index >= self.read_address_position_count(account)? {
+            return Err(CredisError::IndexOutOfBounds.into());
+        }
+        self.load_position(self.read_address_position_id(account, index)?)
+    }
+
+    /// The `index`-th position ever created, in creation order.
+    pub fn position_at(&self, index: u64) -> Result<Position> {
+        if index >= self.read_total_positions()? {
+            return Err(CredisError::IndexOutOfBounds.into());
+        }
+        self.load_position(self.read_position_id_at(index)?)
+    }
+
+    /// All positions for `account`, in insertion order. Unbounded, so it stays
+    /// internal: the ABI enumerates through `position_of_address_at` instead.
+    pub(crate) fn get_positions_by_address(&self, account: Address) -> Result<Vec<Position>> {
         let count = self.read_address_position_count(account)?;
         let mut out = Vec::with_capacity(count as usize);
         for i in 0..count {
@@ -427,18 +441,5 @@ impl CredisContract<'_> {
     /// Position id at global dense-index `index` (`index < total_positions()`).
     pub fn position_id_at(&self, index: u64) -> Result<U256> {
         self.read_position_id_at(index)
-    }
-
-    /// All positions ever created, in creation order.
-    pub fn get_all_positions(&self) -> Result<Vec<Position>> {
-        let total = self.read_total_positions()?;
-        let mut out = Vec::with_capacity(total as usize);
-        for i in 0..total {
-            let position_id = self.read_position_id_at(i)?;
-            if let Some(position) = self.positions.get(position_id)? {
-                out.push(position);
-            }
-        }
-        Ok(out)
     }
 }

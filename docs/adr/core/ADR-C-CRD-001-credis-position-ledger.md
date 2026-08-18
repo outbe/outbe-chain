@@ -62,12 +62,19 @@ throughout the call window, so whatever the owner settled they have already recl
 
 ## Authority and interfaces
 
-The public ABI exposes position reads, per-account position lists, accrued interest, and
-per-account principal/outstanding sums. `accruedInterest` reads the block timestamp from
-storage rather than calldata, so it is deterministic. Opening, latching, calling,
-settling and voiding are privileged internal APIs intended only for CredisFactory. The
-ledger trusts factory-supplied sealed inputs only after validating local representational
-invariants.
+The public ABI is enumerable rather than array-returning: `totalSupply` /
+`positionByIndex` walk the global creation order, `balanceOf` /
+`positionOfAddressByIndex` walk one owner's index, and `getPosition` / `ownerOf` address
+a single position. A caller therefore paginates instead of forcing an unbounded return.
+`ownerOf` takes the position id as its 32-byte big-endian form; any other length is
+rejected rather than zero-extended, so a truncated id cannot silently address a
+different position. An out-of-range index fails rather than returning a zeroed record.
+`accruedInterest` reads the block timestamp from storage rather than calldata, so it is
+deterministic. `credisPrincipalAndOutstandingOf` returns both sums from one walk of the
+owner index, so the two can never be read at different heights. Opening, latching,
+calling, settling and voiding are privileged internal APIs intended only for
+CredisFactory. The ledger trusts factory-supplied sealed inputs only after validating
+local representational invariants.
 
 Settlement is deliberately payable by any caller: the collateral released is owed to the
 pledger recorded on the position, so a payer can never redirect value to themselves.
@@ -162,8 +169,12 @@ accrual state exists and nothing schedules off a position's creation date.
    monotonicity and account indexes over arbitrary terms and bounds.
 8. Add corruption tests for wrong owners, duplicate account entries and impossible
    state/outstanding combinations.
-9. Add pagination and bound account-wide scans; a borrower can otherwise make new-credit
-   validation increasingly expensive.
+9. **Partially resolved 2026-08-18** — the ABI no longer returns unbounded position
+   arrays; callers enumerate through `positionByIndex` /
+   `positionOfAddressByIndex`. The remaining unbounded work is internal:
+   `has_called_position` and `credisPrincipalAndOutstandingOf` still walk every position
+   an account owns, so a borrower can still make new-credit validation increasingly
+   expensive. Bound those with a called-position counter and running per-account totals.
 10. Define stable position-id domain separation beyond pledge-handle uniqueness and add
     collision/reference vectors.
 11. Prove the opening/settlement/void APIs have no caller except CredisFactory.

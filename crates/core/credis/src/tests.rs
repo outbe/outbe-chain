@@ -1,4 +1,4 @@
-use alloy_primitives::{address, keccak256, Address, U256};
+use alloy_primitives::{address, keccak256, Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -678,12 +678,11 @@ fn sums_and_indexes_span_all_of_an_accounts_positions() {
         credis.open_position(params(handle(3), bob())).unwrap();
 
         assert_eq!(
-            credis.get_principal_amount(alice()).unwrap(),
-            U256::from(PRINCIPAL) * U256::from(2u64)
-        );
-        assert_eq!(
-            credis.get_outstanding_amount(alice()).unwrap(),
-            U256::from(PRINCIPAL) * U256::from(2u64)
+            credis.principal_and_outstanding_of(alice()).unwrap(),
+            (
+                U256::from(PRINCIPAL) * U256::from(2u64),
+                U256::from(PRINCIPAL) * U256::from(2u64)
+            )
         );
 
         // Settling one reduces outstanding but never principal.
@@ -691,19 +690,57 @@ fn sums_and_indexes_span_all_of_an_accounts_positions() {
             .settle(first, U256::from(999_999_999_999u64), at(1))
             .unwrap();
         assert_eq!(
-            credis.get_principal_amount(alice()).unwrap(),
-            U256::from(PRINCIPAL) * U256::from(2u64)
-        );
-        assert_eq!(
-            credis.get_outstanding_amount(alice()).unwrap(),
-            U256::from(PRINCIPAL)
+            credis.principal_and_outstanding_of(alice()).unwrap(),
+            (
+                U256::from(PRINCIPAL) * U256::from(2u64),
+                U256::from(PRINCIPAL)
+            )
         );
 
-        assert_eq!(credis.get_positions_by_address(alice()).unwrap().len(), 2);
-        assert_eq!(credis.get_positions_by_address(bob()).unwrap().len(), 1);
+        assert_eq!(credis.position_count_of(alice()).unwrap(), 2);
+        assert_eq!(credis.position_count_of(bob()).unwrap(), 1);
         assert_eq!(credis.total_positions().unwrap(), 3);
-        assert_eq!(credis.get_all_positions().unwrap().len(), 3);
         assert_eq!(credis.position_id_at(0).unwrap(), first);
+
+        // Both enumerations address the same positions, from either end.
+        assert_eq!(credis.position_at(0).unwrap().position_id, first);
+        assert_eq!(
+            credis
+                .position_of_address_at(alice(), 0)
+                .unwrap()
+                .position_id,
+            first
+        );
+        assert_eq!(
+            credis
+                .position_of_address_at(bob(), 0)
+                .unwrap()
+                .smart_account,
+            bob()
+        );
+    });
+}
+
+#[test]
+fn enumeration_rejects_an_out_of_range_index() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage);
+        credis.open_position(params(handle(1), alice())).unwrap();
+
+        // One position exists, so index 1 is past the end of both indexes. An
+        // out-of-range read must fail rather than report a zeroed position.
+        assert!(matches!(
+            credis.position_at(1),
+            Err(e) if e.to_string().contains("index out of bounds")
+        ));
+        assert!(matches!(
+            credis.position_of_address_at(alice(), 1),
+            Err(e) if e.to_string().contains("index out of bounds")
+        ));
+        assert!(matches!(
+            credis.position_of_address_at(bob(), 0),
+            Err(e) if e.to_string().contains("index out of bounds")
+        ));
     });
 }
 
@@ -760,6 +797,114 @@ fn precompile_get_position_returns_the_full_record() {
 }
 
 #[test]
+fn precompile_enumerates_positions_globally_and_per_owner() {
+    with_credis(|storage| {
+        let (first, second) = {
+            let mut credis = CredisContract::new(storage.clone());
+            let first = credis.open_position(params(handle(1), alice())).unwrap();
+            let second = credis.open_position(params(handle(2), bob())).unwrap();
+            (first, second)
+        };
+
+        let call = |data: Vec<u8>| dispatch(storage.clone(), &data, alice(), U256::ZERO).unwrap();
+
+        let out = call(ICredis::totalSupplyCall {}.abi_encode());
+        assert_eq!(
+            ICredis::totalSupplyCall::abi_decode_returns(&out).unwrap(),
+            U256::from(2u64)
+        );
+
+        let out = call(
+            ICredis::balanceOfCall {
+                smartAccount: alice(),
+            }
+            .abi_encode(),
+        );
+        assert_eq!(
+            ICredis::balanceOfCall::abi_decode_returns(&out).unwrap(),
+            U256::from(1u64)
+        );
+
+        // The global index is creation-ordered across owners.
+        let out = call(
+            ICredis::positionByIndexCall {
+                index: U256::from(1u64),
+            }
+            .abi_encode(),
+        );
+        assert_eq!(
+            ICredis::positionByIndexCall::abi_decode_returns(&out)
+                .unwrap()
+                .positionId,
+            second
+        );
+
+        // The per-owner index addresses only that owner's positions.
+        let out = call(
+            ICredis::positionOfAddressByIndexCall {
+                smartAccount: alice(),
+                index: U256::ZERO,
+            }
+            .abi_encode(),
+        );
+        assert_eq!(
+            ICredis::positionOfAddressByIndexCall::abi_decode_returns(&out)
+                .unwrap()
+                .positionId,
+            first
+        );
+
+        // `ownerOf` takes the 32-byte big-endian id; a short id is rejected
+        // rather than zero-extended into a different position.
+        let out = call(
+            ICredis::ownerOfCall {
+                positionId: Bytes::copy_from_slice(&first.to_be_bytes::<32>()),
+            }
+            .abi_encode(),
+        );
+        assert_eq!(
+            ICredis::ownerOfCall::abi_decode_returns(&out).unwrap(),
+            alice()
+        );
+
+        let short = ICredis::ownerOfCall {
+            positionId: Bytes::copy_from_slice(&first.to_be_bytes::<32>()[..31]),
+        }
+        .abi_encode();
+        let err = dispatch(storage.clone(), &short, alice(), U256::ZERO).unwrap_err();
+        assert!(err.to_string().contains("32 bytes"), "got: {err}");
+    });
+}
+
+#[test]
+fn precompile_reports_principal_and_outstanding_together() {
+    with_credis(|storage| {
+        let id = {
+            let mut credis = CredisContract::new(storage.clone());
+            let id = open_settleable(&mut credis, 1);
+            credis.open_position(params(handle(2), alice())).unwrap();
+            // Settle one position in full so the two sums diverge.
+            credis
+                .settle(id, U256::from(999_999_999_999u64), at(1))
+                .unwrap();
+            id
+        };
+        let _ = id;
+
+        let data = ICredis::credisPrincipalAndOutstandingOfCall {
+            smartAccount: alice(),
+        }
+        .abi_encode();
+        let out = dispatch(storage, &data, alice(), U256::ZERO).unwrap();
+        let decoded =
+            ICredis::credisPrincipalAndOutstandingOfCall::abi_decode_returns(&out).unwrap();
+
+        assert_eq!(decoded._0, U256::from(PRINCIPAL) * U256::from(2u64));
+        assert_eq!(decoded._1, U256::from(PRINCIPAL));
+    });
+}
+
+#[test]
 fn precompile_accrued_interest_uses_the_storage_timestamp() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ORIGINATED_AT));
@@ -792,7 +937,7 @@ fn precompile_accrued_interest_uses_the_storage_timestamp() {
 #[test]
 fn precompile_rejects_msg_value() {
     with_credis(|storage| {
-        let data = ICredis::getAllPositionsCall {}.abi_encode();
+        let data = ICredis::totalSupplyCall {}.abi_encode();
         let err = dispatch(storage, &data, alice(), U256::from(1u64)).unwrap_err();
         assert!(err.to_string().to_lowercase().contains("value"));
     });
