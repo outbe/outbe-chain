@@ -1,6 +1,6 @@
 # Frozen against commit 4ddc0e3b on 2026-08-18, before any P1-P5 production change.
 # Amended after user correction: every stablecoin-backed COEN/ISO rate uses scale 1e6;
-# S-Curve/day-type remains specific to COEN/840.
+# Daily S-Curve processing covers every COEN/ISO market; OCOMP day-type remains specific to COEN/840.
 # Amended after user correction: non-empty EIP-4895 withdrawals are unsupported;
 # the superseded exact Gwei/1000 expectations are replaced by the T5R recovery evidence.
 # Amended after final review: the E2E Tribute producer sends canonical base=0,
@@ -53,7 +53,8 @@ T2	outbe-oracle::constants::tests::every_coen_iso_market_uses_six_decimal_recipr
 T2	outbe-oracle::tests::state::every_coen_iso_backwards_quote_uses_the_six_decimal_reciprocal	COEN/840 and COEN/978 reciprocals both use scale6	COEN/978 reciprocal uses generic scale18	crates/system/oracle/src/state.rs	P2
 T2	outbe-oracle::tests::state::calculate_vwap_uses_the_six_decimal_sentinel_for_zero_volume_coen_iso	zero-volume sentinel is 1000000 for COEN/840 and COEN/978	COEN/978 uses 1000000000000000000 and overflows	crates/system/oracle/src/state.rs	P2
 T2	outbe-oracle::tests::e2e::coen_pair_price_reads_the_matching_coen_pair	COEN/978 VWAP is stored and returned at scale6	COEN/978 still requires scale18 input	crates/system/oracle/src/state.rs	P2
-T2	outbe-oracle::ocomp_openings::oracle_opening_plan_reads_the_exact_raw_slots_used_by_runtime_semantics	COEN/978 opening VWAP is scale6 and only COEN/840 has S-Curve	COEN/978 fixture uses FP18 and an unsupported S-Curve entry	crates/system/oracle/tests/ocomp_openings.rs	P2
+T2	outbe-oracle::ocomp_openings::oracle_opening_plan_reads_the_exact_raw_slots_used_by_runtime_semantics	COEN/978 opening VWAP is scale6 while OCOMP day-type remains COEN/840	COEN/978 fixture uses FP18 and an unsupported S-Curve entry	crates/system/oracle/tests/ocomp_openings.rs	P2
+T2R	outbe-oracle::tests::lifecycle::begin_block_scurve_hook_processes_every_coen_iso_and_skips_generic_markets	COEN/840 and COEN/978 daily peaks are recorded while an active generic COEN/ERC20 market is skipped	daily hook records all three peaks because it iterates every active vote-target pair	crates/system/oracle/src/lifecycle.rs	P2 corrective
 T2	outbe-oracle::tests::state::require_pair_rejects_a_pair_quoted_in_the_wrong_direction	configured COEN/840 direction remains readable and wrong direction rejects	old direction lookup rejects the expected readable side	crates/system/oracle/src/state.rs	P2
 T2	outbe-oracle::tests::state::remove_excess_feeds_clears_only_the_deactivated_pairs_rate	deactivation clears only the intended scale6 pair	old pair path returns No rate for pair	crates/system/oracle/src/state.rs	P2
 T2	contracts/intex::IntexNFT1155MetadataTest.test_svg_FormatsHumanValues	entry price renders from 6 decimals	old 18-decimal metadata formatting produces wrong entry price	contracts/intex/src/IntexMetadata.sol	P4

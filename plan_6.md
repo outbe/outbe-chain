@@ -40,9 +40,10 @@ COEN
 - Oracle остаётся generic;
 - все рынки `COEN/ISO` используют шестизначные price и COEN-volume, потому что
   ISO reference currencies принадлежат шестизначному stablecoin domain;
-- VWAP, zero-volume sentinel и S-Curve/day-type остаются специальной логикой
-  только `COEN/840`, а остальные COEN/ISO spot markets и non-ISO generic Oracle
-  markets не получают этот day-type path;
+- VWAP, zero-volume sentinel и S-Curve используют шестизначную семантику для
+  каждого `COEN/ISO`, включая `COEN/840` и `COEN/978`;
+- non-ISO generic Oracle markets сохраняют существующий price/VWAP contract и
+  не участвуют в S-Curve; OCOMP day-type state остаётся только у `COEN/840`;
 - Metadosis production math не переписывается, потому что его арифметика scale-neutral;
 - типы `U256/u128/u64`, ABI, wire/state layouts сохраняются;
 - Tribute `base/atto` сохраняются;
@@ -99,7 +100,7 @@ price_units = price128 * 1_000_000 >> 128
 - Tribute nominal считается как `base × 1_000_000 + atto`;
 - Lysis load и NOD/GEM cost используют один checked `mul_div` со знаменателем
   `1_000_000`;
-- COEN/840 S-Curve считает `floor(peak6 × coefficient6 / 1_000_000)`;
+- COEN/ISO S-Curve считает `floor(peak6 × coefficient6 / 1_000_000)`;
 - Emission Taylor работает сразу с COEN `unit`;
 - Gratisfactory и INTEX выполняют единственную domain conversion с заранее
   зафиксированным floor/ceil.
@@ -149,7 +150,7 @@ dimensionless FP18 contracts перечислены отдельно в разд
 все тесты/reference/goldens
 → подтверждённый RED
 → общие units/math
-→ Oracle COEN/ISO (S-Curve только COEN/840)
+→ Oracle COEN/ISO (S-Curve только для COEN/ISO markets)
 → Tribute/GRATIS/Lysis/NOD/GEM
 → PROMIS/INTEX/WCOEN
 → Emission/native economics/genesis
@@ -228,12 +229,13 @@ test(oracle): extend six-decimal contract to every COEN ISO market
 
 - каждый COEN/ISO price — `ISO stable-unit per COEN`, scale `1_000_000`;
 - COEN volume — COEN `unit`;
-- только COEN/840 VWAP возвращает шестизначную цену;
-- только COEN/840 sentinel использует `SCALE_1E6_U256` как
+- каждый COEN/ISO VWAP возвращает шестизначную цену;
+- каждый COEN/ISO sentinel использует `SCALE_1E6_U256` как
   one-whole-COEN weight;
 - S-Curve coefficients имеют знаменатель `1_000_000`;
-- S-Curve/day-type остаётся только у COEN/840;
-- non-ISO generic Oracle пары не меняются;
+- S-Curve запускается для каждого COEN/ISO и не запускается для non-ISO
+  generic pairs; OCOMP day-type остаётся только у COEN/840;
+- non-ISO generic Oracle price/VWAP пары не меняются;
 - INTEX wire price больше не `10^9`.
 
 Структурные codec golden vectors не меняются.
@@ -478,24 +480,44 @@ feat(oracle): extend six-decimal pricing to every COEN ISO market
 - `oracle/tally.rs`;
 - `oracle/api.rs`;
 - `oracle/genesis.rs`;
+- `oracle/lifecycle.rs`;
 - `oracle/scurve.rs`;
 - `oracle/openings.rs`.
 
 Действия:
 
 - feeder выдаёт price и COEN-volume в `10^6` для каждого `COEN/ISO`;
-- VWAP рассчитывается только для COEN/840 и возвращает шестизначную цену;
+- VWAP каждого COEN/ISO возвращает шестизначную цену;
 - positive price, округлившийся в zero, отклоняется;
 - positive volume, округлившийся в zero, становится `1 unit`;
 - реальный zero volume остаётся zero;
-- только COEN/840 sentinel → `SCALE_1E6_U256`;
+- каждый COEN/ISO sentinel → `SCALE_1E6_U256`;
 - S-Curve coefficients квантуются через `floor(old / 10^12)`;
 - S-Curve result: `floor(peak × coefficient / 1_000_000)`;
 - Oracle больше не передаёт ни один COEN/ISO market через старый decimal18
   price-bin contract; сами consumer-файлы NOD/GEM меняются только в P3,
   IntexFactory — только в P4;
-- COEN/840 остаётся единственным владельцем S-Curve/day-type;
-- non-ISO generic cross-rate не переписывается.
+- daily S-Curve lifecycle обрабатывает каждый COEN/ISO и пропускает non-ISO
+  generic pairs; OCOMP day-type state остаётся только у COEN/840;
+- `store_scurve_entry` и genesis import acceptance не ограничиваются этим
+  corrective slice и сохраняют существующее поведение;
+- non-ISO generic price/VWAP/cross-rate не переписываются.
+
+Corrective P2R после трёхагентного финального аудита и явного уточнения
+пользователя:
+
+```text
+docs(denomination): refreeze COEN ISO S-Curve eligibility
+test(oracle): reject non-ISO markets from daily S-Curve processing
+fix(oracle): restrict daily S-Curve processing to COEN ISO
+```
+
+- один lifecycle behavioral test сначала фиксирует RED: `COEN/840` и
+  `COEN/978` создают peaks, active generic pair — нет;
+- production change ограничен classifier guard в
+  `crates/system/oracle/src/lifecycle.rs`;
+- `store_scurve_entry`, genesis import, ABI, wire/state layouts и S-Curve math
+  являются explicit non-goals этого corrective slice.
 
 ### Коммит P3 — Tribute/GRATIS/Lysis/NOD/GEM
 
@@ -759,7 +781,7 @@ COEN
 - Credis annual ISO currency rate и debt fixed-point denominator;
 - Lysis fractions, shares, loads, costs и их sequential/OCOMP parity;
 - COEN/ISO feeder price/volume, Oracle vote/tally/reciprocal и consumers;
-- COEN/840 VWAP, zero-volume sentinel и S-Curve/day-type;
+- COEN/ISO VWAP, zero-volume sentinel и S-Curve; COEN/840 OCOMP day-type;
 - NOD, GEM, Desis, INTEX и IntexFactory quantities, prices, price-bin seams и settlement;
 - EIP-4895 non-empty-withdrawal rejection before execution/state writes;
 - Outbe genesis, CLI/MCP/deployment metadata и denomination-dependent artifacts.
@@ -830,9 +852,9 @@ Canonical public/state shapes фиксируются без изменений:
 | Lysis load | `floor(nominal × fraction / 1_000_000)` | zero load для positive obligation reject |
 | Lysis normalization | `projected = Σ floor(group_nominal × fraction / 1_000_000)`; если `projected > allocation`, `fraction = floor(fraction × allocation / projected)` | один owner seam, dust разрешён |
 | Lysis/NOD/GEM cost | `floor(entry_price × load / 1_000_000)` | positive price/load с zero cost reject |
-| COEN/840 VWAP | `floor(Σ(price × volume) / Σvolume)` | checked products/sums; zero total volume follows existing no-data path; другие markets не получают VWAP/day-type state |
+| COEN/ISO VWAP | `floor(Σ(price × volume) / Σvolume)` | checked products/sums; zero total volume follows existing no-data path; non-ISO generic VWAP сохраняет существующий contract |
 | COEN/ISO reciprocal | `floor(1_000_000² / rate)` | zero rate reject; non-ISO generic reciprocal не меняется |
-| S-Curve | `floor(peak × coefficient / 1_000_000)` | overflow keeps existing deterministic zero/error policy as frozen by tests |
+| COEN/ISO S-Curve | `floor(peak × coefficient / 1_000_000)` | daily lifecycle skips non-ISO generic pairs; overflow keeps existing deterministic zero/error policy |
 | INTEX reference settlement | `ceil(price_units × promis_units × 10^d / 10^12)` | оба входа scale `1e6`; `d=0/6/12/18`, checked, one rounding |
 | INTEX FX settlement | existing price ratio cancels common COEN/ISO scale; external decimals applied once | ceil, overflow/unsupported decimals reject |
 | Emission | `term₀=INITIAL`; `termₖ=floor(termₖ₋₁×K_NUM×day/(K_DEN×k))`; even add, odd subtract | clamp to floor; monotonic reference sweep |
@@ -844,7 +866,7 @@ COEN/ISO feeder boundary:
 - positive finite provider price that maps below one price unit is rejected;
 - positive finite volume that maps below one COEN unit becomes `1 unit`;
 - actual zero volume stays zero;
-- current COEN/840 zero-volume fallback sentinel becomes `SCALE_1E6_U256`;
+- every COEN/ISO zero-volume fallback sentinel becomes `SCALE_1E6_U256`;
 - provider parsing and aggregation must be deterministic; `f64` may remain at provider ingestion only where existing interfaces require it, but expected integer outputs are frozen by decimal-string/reference tests.
 
 Native gas policy:
@@ -862,7 +884,7 @@ Native gas policy:
 | COEN/ISO market classification и ↔ Q128.128 | `crates/blockchain/primitives/src/math/reference_price.rs` |
 | Generic LB decimal18 port | существующий `math/price_helper.rs`, read-only |
 | Feeder COEN/ISO integer normalization | `bin/outbe-feeder/src/aggregator.rs` |
-| COEN/ISO vote/spot/reciprocal; COEN/840 VWAP/sentinel/S-Curve | `crates/system/oracle` |
+| COEN/ISO vote/spot/VWAP/sentinel/reciprocal/S-Curve; COEN/840 OCOMP day-type | `crates/system/oracle` |
 | Tribute canonicalization и nominal | `bin/outbe-tee-enclave/src/compute.rs`; process/ZK только потребляют результат |
 | GRATIS/PROMIS metadata | соответствующий `state.rs` каждого token module |
 | Stablecoin → GRATIS conversion | `crates/core/gratisfactory/src/runtime.rs` |
@@ -887,8 +909,9 @@ Native gas policy:
 | Native account | transfer/paid tx | funded signer | debit value+fee and credit raw COEN units | insufficient/overflow rejects before partial commit | tx replay rules unchanged | balances persist exactly | EIP-1559 timing unchanged |
 | Staking/reward/bond | stake, claim, slash, create stablecoin | existing eligibility rules | COEN amounts are conserved in COEN-units (`1 COEN = 1_000_000 unit`) | existing authorization/funds errors | nonce/event replay unchanged | queues/liabilities reload raw | unbonding and claim deadlines unchanged |
 | Execution payload | EIP-4895 withdrawals | payload attributes или imported block | `None`/empty не создают effect | любой non-empty list отклоняется до EVM/state writes | одинаковый payload получает одинаковый verdict | после restart policy неизменна, withdrawal state отсутствует | post-transaction ordering не достигается для invalid payload |
-| Oracle voting | provider aggregate → vote → tally | registered feeder/validator | every COEN/ISO spot rate and COEN volume uses scale `1e6`; only COEN/840 enters VWAP/day-type state; non-ISO markets keep their contract | invalid price, overflow and existing vote errors produce no partial update | same ballot gives same result | snapshots reload raw | vote/day windows unchanged |
-| Oracle opening | VWAP/S-Curve read | existing opening state | nominal is `max(VWAP,S-Curve)` in 840 units | no-data/zero follows existing error contract | opening proof remains deterministic | stored values unchanged | WorldwideDay and active-S-Curve windows unchanged |
+| Oracle voting | provider aggregate → vote → tally | registered feeder/validator | every COEN/ISO spot rate, COEN volume, VWAP and zero-volume sentinel uses scale `1e6`; non-ISO markets keep their price/VWAP contract | invalid price, overflow and existing vote errors produce no partial update | same ballot gives same result | snapshots reload raw | vote/day windows unchanged |
+| Oracle S-Curve | UTC day boundary | registered active vote-target pair | every COEN/ISO pair is processed; non-ISO generic pair has no S-Curve effect; COEN/840 remains the OCOMP day-type pair | existing processing/storage error aborts the block exactly as before | same closed-day snapshots give the same peak decision | stored entries and last-processed watermark reload unchanged | existing UTC boundary and expiry windows unchanged |
+| Oracle opening | VWAP/S-Curve read | existing opening state | COEN/ISO nominal is `max(VWAP,S-Curve)` in its ISO stable-units | no-data/zero follows existing error contract | opening proof remains deterministic | stored values unchanged | WorldwideDay and active-S-Curve windows unchanged |
 | Tribute offering | encrypted offer without/with ZK | existing offering and ZK eligibility | both paths parse one canonical base/atto and emit identical issuance/nominal | lexical, atto-bound, zero, price or proof error rejects before state | duplicate-id rules unchanged | stored Tribute reloads raw | OFFERING deadline unchanged |
 | Gratisfactory | pledge/mine/unpledge | existing authorization/eligibility | stable raw amount converts once to GRATIS units with ceil | cap, oracle, overflow and auth errors leave state unchanged | ticket/nonce replay unchanged | tickets and totals persist | existing pledge lifecycle unchanged |
 | Credis | request, repay, expire | valid pledge and ISO rate | annual rate (scale `1e6`) is pinned in position; staged scale-`1e6` debt calculation and installments conserve total | zero/missing rate, overflow and existing state errors write nothing | existing position/payment replay rules unchanged | rate, debt and schedule reload raw | existing monthly schedule unchanged |
@@ -923,6 +946,16 @@ P2:
 - `crates/system/oracle/src/{api,constants,genesis,openings,runtime,schema,scurve,state,tally}.rs`;
 - `contracts/precompiles/src/IOracle.sol` — comments/declared units only;
 - `crates/system/rewards/src/api.rs` — Oracle test-support literals/comments only, не reward production math.
+
+Corrective P2R после финального аудита:
+
+- `crates/system/oracle/src/lifecycle.rs` — единственный production hot file;
+  daily S-Curve iteration добавляет structural `COEN/ISO` classifier guard;
+- `crates/system/oracle/src/tests/lifecycle.rs` — lifecycle behavioral RED/GREEN;
+- `plan_6.md` и `testing/denomination/{scale6-red-manifest.tsv,scale6-coverage-ledger.tsv}` —
+  только синхронизация user-corrected invariant/evidence;
+- `scurve.rs`, `genesis.rs`, store/import acceptance, ABI и state layout остаются
+  read-only в этом slice.
 
 P3:
 
@@ -1188,6 +1221,16 @@ production code was committed under it. The next architecture commit supersedes
 that model with the canonical `all COEN/ISO prices use scale 1e6` invariant before P3 is
 committed. No NOD/GEM hook production change is permitted by the rejected model.
 
+User-approved P2R exception after the three-agent final audit:
+
+- `plan_6.md` receives the required stop-and-replan correction from
+  `COEN/840-only` to `all COEN/ISO` VWAP/sentinel/S-Curve eligibility;
+- previously untouched `crates/system/oracle/src/lifecycle.rs` receives one
+  semantic pass limited to filtering daily S-Curve work by
+  `is_coen_iso_market`;
+- no pass is granted to `scurve.rs`, `genesis.rs`, store/import acceptance or
+  any canonical shape.
+
 ### 9.10. Commit map и evidence gates
 
 Stacked delivery имеет две PR boundaries, совпадающие с существующей историей
@@ -1236,6 +1279,9 @@ stop-triggers, фиксируются отдельными docs commits уже �
 30. `test(denomination): record EIP-4895 rejection RED recovery`;
 31. `feat(native): complete COEN six-decimal cutover`;
 32. `chore(denomination): regenerate semantic and genesis artifacts`.
+33. `docs(denomination): refreeze COEN ISO S-Curve eligibility`;
+34. `test(oracle): reject non-ISO markets from daily S-Curve processing`;
+35. `fix(oracle): restrict daily S-Curve processing to COEN ISO`.
 
 T1–T5 и RED commits внутри PR B намеренно не являются mergeable PR
 boundaries. Ветка становится mergeable только после P2–P5, generated

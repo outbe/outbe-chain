@@ -651,6 +651,56 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
         assert!(active_value < coen_iso(150));
     });
 }
+
+#[test]
+fn begin_block_scurve_hook_processes_every_coen_iso_and_skips_generic_markets() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+
+        let usd_pair = AddressPair::new_coen_to(840);
+        let eur_pair = AddressPair::new_coen_to(978);
+        let generic_pair = AddressPair::from_addresses(COEN, USDT);
+        oracle.register_pair(usd_pair).unwrap();
+        oracle.register_pair(eur_pair).unwrap();
+        oracle.register_pair(generic_pair).unwrap();
+
+        let day_1 = crate::scurve::DAY_SECONDS;
+        let day_2 = 2 * crate::scurve::DAY_SECONDS;
+        let day_3 = 3 * crate::scurve::DAY_SECONDS;
+        let day_4 = 4 * crate::scurve::DAY_SECONDS;
+        for (timestamp, usd_price, eur_price, generic_price) in [
+            (day_1 + 60, coen_iso(100), coen_iso(90), fixed18(2)),
+            (day_2 + 60, coen_iso(150), coen_iso(140), fixed18(3)),
+            (day_3 + 60, coen_iso(120), coen_iso(110), fixed18(2)),
+        ] {
+            oracle
+                .write_snapshot(
+                    timestamp,
+                    &[
+                        (usd_pair, usd_price, coen_iso(1)),
+                        (eur_pair, eur_price, coen_iso(1)),
+                        (generic_pair, generic_price, SCALE_1E18),
+                    ],
+                )
+                .unwrap();
+        }
+
+        let runtime_ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(4, day_4 + 120, 1),
+            storage.clone(),
+        );
+        <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&runtime_ctx).unwrap();
+
+        assert_eq!(oracle.scurve_count.read().unwrap(), 2);
+        assert_eq!(oracle.scurve_pair.read_pair(&0).unwrap(), usd_pair);
+        assert_eq!(oracle.scurve_pair.read_pair(&1).unwrap(), eur_pair);
+        assert_eq!(oracle.scurve_peak_price.read(&0).unwrap(), coen_iso(150));
+        assert_eq!(oracle.scurve_peak_price.read(&1).unwrap(), coen_iso(140));
+        assert_eq!(oracle.scurve_last_processed_day.read().unwrap(), day_4);
+    });
+}
+
 #[test]
 fn begin_block_finalizes_the_closed_utc_day() {
     with_storage(|storage| {
