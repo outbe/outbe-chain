@@ -43,6 +43,10 @@ Feature: Off-chain computation and Metadosis
     Then the completed generation and exact vote replay remain identical
     When a late follower replays the finalized OCOMP request and quorum blocks
     Then runtime traces prove proposal import and historical replay without on-chain calculation
+    And the certified contributor authority for that day is identical on every validator
+    And that day has no open contributor payout round before proceeds arrive
+    When the day's auction proceeds arrive from one chain
+    Then every certified contributor is paid their share
 
   @ocomp-materialization
   Scenario: A certified generation is materialized into user NODs in bounded batches
