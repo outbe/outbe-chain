@@ -292,6 +292,13 @@ test(native): define six-decimal emission and network economics
 - genesis/e2e fixtures;
 - CLI/MCP amount expectations.
 
+MCP tests отдельно фиксируют обе стороны network boundary:
+
+- Outbe native COEN input, balance и native fee используют `6` decimals;
+- BNB/ETH и LayerZero fee на внешней 18-decimal chain сохраняют `18` decimals;
+- generic external intent amounts сохраняют существующий token/domain contract и не
+  переводятся глобально на P6.
+
 EIP-4895 сохраняет стандартный wire contract: `Withdrawal.amount` остаётся `uint64` в Gwei. Тестами фиксируется точное преобразование в COEN `unit`:
 
 ```text
@@ -481,6 +488,10 @@ feat(native): complete COEN six-decimal cutover
 - production Metadosis math не меняется;
 - Outbe metadata → 6 decimals;
 - ETH/BNB/LZ metadata остаются 18;
+- MCP chain metadata и native formatting выбирают decimals по network domain:
+  Outbe `COEN/6`, BSC `BNB/18`; generic external intent amounts не меняются;
+- MCP stake/unstake/AgentReward human-readable COEN inputs преобразуются в
+  `unit` через `parseUnits(..., 6)` только на Outbe-native write boundary;
 - production `1 gwei` assumptions для Outbe устраняются;
 - gas policy фиксируется в native `unit/gas`;
 - EIP-4895 wire semantics сохраняется: `Withdrawal.amount` остаётся в Gwei, но перед balance credit проходит через Outbe-owned exact conversion `coen_units = amount_gwei / 1_000`;
@@ -775,7 +786,11 @@ P5:
 - `bin/outbe-cli/src/{commands/mod,tx}.rs` и denomination-dependent command output;
 - `crates/blockchain/operator/src/tx.rs`;
 - `bin/outbe-ocomp/src/vote_submitter.rs`;
-- `mcp/src/{chain,format}.ts` и `mcp/src/intent/format.ts`;
+- `mcp/src/{chain,format}.ts`, `mcp/src/intent/format.ts`;
+- `mcp/src/tools/sign.ts` только для Outbe-native stake/unstake/AgentReward
+  input conversion;
+- `mcp/src/tools/intent.ts` только для network-aware native decimals; ERC-20
+  decimals, generic external intent amounts и 18-decimal BNB/ETH paths не меняются;
 - `scripts/seed_genesis.py`, `scripts/prepare_network.py`;
 - `contracts/intex/scripts/shared/chains.ts` только один раз в P4; P5 его повторно не меняет;
 - Metadosis production files read-only.
@@ -828,6 +843,8 @@ T5:
 - Emission pins `0,1,365,730,1460,2190,2919,2920` plus full monotonic sweep;
 - EIP-4895 proposer/validator/OCOMP tests in `crates/blockchain/evm/src/executor.rs` and existing EVM integration suites;
 - native amount/fee fixtures in CLI/operator/txpool/staking/rewards/stablecoin tests;
+- `mcp/src/denomination.test.ts`: Outbe native P6 input/output, BSC native P18
+  preservation и unchanged generic external intent representation;
 - Metadosis lifecycle fixtures only;
 - `scripts/test_seed_genesis_protocol_constants.py`, `scripts/tests/test_prepare_network.py`;
 - `crates/blockchain/node/tests/assets/genesis.json`, `release/testnet-genesis.json`, seed profiles и E2E fixtures as generated expectations.
@@ -850,6 +867,7 @@ RED evidence хранится в `testing/denomination/scale6-red-manifest.tsv`.
 |---|---|---|---|
 | inline test+production files (`scurve.rs`, `tally.rs`, `executor.rs`, `day_emission.rs`) | T-stage test section | owning P-stage production | blocker |
 | dedicated production files | owning P-stage | одна integration correction, если gate доказал необходимость | blocker |
+| `mcp/src/tools/sign.ts` | P3 Tribute canonicalization | user-approved P5 native COEN input conversion | blocker |
 | dedicated tests/references/vectors | owning T-stage | исправление test plumbing без изменения frozen expected semantics | blocker |
 | `plan_6.md` | architecture freeze | только user-approved re-plan после blocker | blocker |
 | generators | P5 source/config | generated-artifact run | blocker для третьей semantic правки |
@@ -883,8 +901,10 @@ committed. No NOD/GEM hook production change is permitted by the rejected model.
 14. `feat(oracle): extend six-decimal pricing to every COEN ISO market`;
 15. `feat(economics): convert Tribute and GRATIS lifecycle to six decimals`;
 16. `feat(intex): convert PROMIS WCOEN and price wire to six decimals`;
-17. `feat(native): complete COEN six-decimal cutover`;
-18. `chore(denomination): regenerate semantic and genesis artifacts`.
+17. `docs(denomination): freeze MCP native network boundary`;
+18. `test(native): cover MCP native network boundary`;
+19. `feat(native): complete COEN six-decimal cutover`;
+20. `chore(denomination): regenerate semantic and genesis artifacts`.
 
 T1–T5 и RED commits намеренно не являются mergeable PR boundaries; production остаётся старым до commit 8. Финальный PR обязан быть GREEN.
 
