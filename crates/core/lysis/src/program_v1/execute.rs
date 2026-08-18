@@ -8,9 +8,10 @@ use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::derive_poseidon_entity_id;
 use outbe_nod::NodContract;
-use outbe_primitives::units::SCALE_1E18;
+use outbe_primitives::math::scaled_math::checked_mul_div_floor;
+use outbe_primitives::units::UNITS_PER_GRATIS;
 
-use crate::algorithm::calc_fraction_distribution_fp;
+use crate::algorithm::{calc_fraction_distribution_fp, SCALE};
 use crate::constants::calc_floor_price;
 
 use super::types::{
@@ -223,7 +224,8 @@ impl ProgramExecutionV1 {
             .get(&self.prepared.first_leagues[ordinal])
             .copied()
             .unwrap_or(U256::ZERO);
-        let gratis_load_minor = tribute.nominal_amount_minor * fraction / SCALE_1E18;
+        let gratis_load_minor =
+            calculate_gratis_load(tribute.nominal_amount_minor, fraction, ordinal)?;
         let remaining_after = validate_required_gratis(self.remaining, gratis_load_minor, ordinal)?;
         Ok(PendingNodV1 {
             ordinal,
@@ -274,7 +276,8 @@ impl ProgramExecutionV1 {
                 second: second_league,
             });
         }
-        let cost_amount_minor = entry_price_minor * pending.gratis_load_minor / SCALE_1E18;
+        let cost_amount_minor =
+            calculate_cost(entry_price_minor, pending.gratis_load_minor, ordinal)?;
         let nod_id =
             derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day).map_err(|error| {
                 ProgramErrorV1::Arithmetic {
@@ -395,20 +398,35 @@ pub(crate) fn compute_fraction_map_from_groups(
     let sorted_fis = fi_groups.keys().copied().collect::<Vec<_>>();
     let mut shares = Vec::with_capacity(sorted_fis.len());
     let mut populations = Vec::with_capacity(sorted_fis.len());
+    let mut group_nominals = Vec::with_capacity(sorted_fis.len());
     for league in &sorted_fis {
         let (population, group_nominal) = fi_groups[league];
-        shares.push(group_nominal * SCALE_1E18 / total_interest);
+        shares.push(scaled_floor(group_nominal, SCALE, total_interest)?);
         populations.push(u64::from(population));
+        group_nominals.push(group_nominal);
     }
-    let share_sum = shares.iter().copied().sum::<U256>();
+    let share_sum = shares.iter().copied().try_fold(U256::ZERO, |sum, share| {
+        sum.checked_add(share)
+            .ok_or_else(|| ProgramErrorV1::Arithmetic {
+                message: "Fidelity share sum overflow".to_owned(),
+            })
+    })?;
     if let Some(last) = shares.last_mut() {
-        if share_sum < SCALE_1E18 {
-            *last += SCALE_1E18 - share_sum;
+        if share_sum < SCALE {
+            *last =
+                last.checked_add(SCALE - share_sum)
+                    .ok_or_else(|| ProgramErrorV1::Arithmetic {
+                        message: "Fidelity share remainder overflow".to_owned(),
+                    })?;
         }
     }
-    let f = gratis_allocation * SCALE_1E18 / total_interest;
-    let fmax = f * U256::from(2_u8);
-    let fractions = calc_fraction_distribution_fp(
+    let f = scaled_floor(gratis_allocation, SCALE, total_interest)?;
+    let fmax = f
+        .checked_mul(U256::from(2_u8))
+        .ok_or_else(|| ProgramErrorV1::Arithmetic {
+            message: "maximum Gratis fraction overflow".to_owned(),
+        })?;
+    let mut fractions = calc_fraction_distribution_fp(
         &shares,
         &populations,
         usize::try_from(tribute_count).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
@@ -418,7 +436,63 @@ pub(crate) fn compute_fraction_map_from_groups(
     .map_err(|error| ProgramErrorV1::Arithmetic {
         message: error.to_string(),
     })?;
+
+    // Six-decimal share rounding can make the real group projection exceed the
+    // allocation even when the normalized share-space projection does not. Own
+    // the one real-amount normalization here so sequential and OCOMP consume
+    // exactly the same fraction map.
+    let projected = group_nominals.iter().zip(&fractions).try_fold(
+        U256::ZERO,
+        |sum, (nominal, fraction)| {
+            let load = scaled_floor(*nominal, *fraction, SCALE)?;
+            sum.checked_add(load)
+                .ok_or_else(|| ProgramErrorV1::Arithmetic {
+                    message: "projected Gratis allocation overflow".to_owned(),
+                })
+        },
+    )?;
+    if projected > gratis_allocation {
+        for fraction in &mut fractions {
+            *fraction = scaled_floor(*fraction, gratis_allocation, projected)?;
+        }
+    }
     Ok(sorted_fis.into_iter().zip(fractions).collect())
+}
+
+fn scaled_floor(
+    numerator: U256,
+    multiplier: U256,
+    denominator: U256,
+) -> Result<U256, ProgramErrorV1> {
+    checked_mul_div_floor(numerator, multiplier, denominator).map_err(|error| {
+        ProgramErrorV1::Arithmetic {
+            message: error.to_string(),
+        }
+    })
+}
+
+pub(crate) fn calculate_gratis_load(
+    nominal_amount_minor: U256,
+    fraction: U256,
+    ordinal: usize,
+) -> Result<U256, ProgramErrorV1> {
+    let load = scaled_floor(nominal_amount_minor, fraction, SCALE)?;
+    if load.is_zero() {
+        return Err(ProgramErrorV1::ZeroGratisLoad { ordinal });
+    }
+    Ok(load)
+}
+
+pub(crate) fn calculate_cost(
+    entry_price_minor: U256,
+    gratis_load_minor: U256,
+    ordinal: usize,
+) -> Result<U256, ProgramErrorV1> {
+    let cost = scaled_floor(entry_price_minor, gratis_load_minor, UNITS_PER_GRATIS)?;
+    if cost.is_zero() {
+        return Err(ProgramErrorV1::ZeroCost { ordinal });
+    }
+    Ok(cost)
 }
 
 pub(crate) fn validate_canonical_tributes(

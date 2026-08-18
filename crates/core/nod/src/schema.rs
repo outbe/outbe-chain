@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 /// Input for `NodContract::issue`. `nod_id` is derived inside the contract via
 /// `NodContract::nod_id(owner, worldwide_day)`; `cost_amount_minor` is computed
-/// from `cost_of_gratis_minor * gratis_load_minor / SCALE_1E18`. `issued_at` is
+/// from `cost_of_gratis_minor * gratis_load_minor / UNITS_PER_GRATIS`. `issued_at` is
 /// stamped inside `issue` from the current block timestamp and is not part of
 /// caller inputs.
 #[derive(Debug, Clone, PartialEq)]

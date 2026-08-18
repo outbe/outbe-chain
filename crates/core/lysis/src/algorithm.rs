@@ -1,10 +1,10 @@
 use alloy_primitives::ruint::UintTryTo;
 use alloy_primitives::{Uint, I256, U256};
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::units::{SCALE_1E18, SCALE_1E18_U128};
+use outbe_primitives::units::UNITS_PER_GRATIS;
 
-pub(crate) const SCALE_U128: u128 = SCALE_1E18_U128;
-pub(crate) const SCALE: U256 = SCALE_1E18;
+pub(crate) const SCALE_U128: u128 = 1_000_000;
+pub(crate) const SCALE: U256 = UNITS_PER_GRATIS;
 
 /// Wide integer used solely to hold the worst-case `fp_root` intermediate.
 type U1024 = Uint<1024, 16>;
@@ -52,7 +52,7 @@ fn fp_root(x_fp: U256, _p: u32, q: u32) -> Result<U256> {
         })?;
     }
     // Search bound: a partial power above 2·target means `mid` is too big.
-    // `target ≈ 10^189` so `2·target` sits far inside U1024; saturate defensively.
+    // In-use targets sit far inside U1024; saturate the search bound defensively.
     let target2 = target.saturating_mul(two);
 
     // Binary search for y such that y^q <= target (all in U1024).
@@ -77,7 +77,7 @@ fn fp_root(x_fp: U256, _p: u32, q: u32) -> Result<U256> {
         }
     }
 
-    // The root is small (`≈ 10^18`); narrow it back with a checked conversion
+    // The root is small (`≈ 10^6`); narrow it back with a checked conversion
     // rather than a silent truncation.
     let y: U256 = lo
         .uint_try_to()
@@ -248,7 +248,7 @@ pub fn calc_fraction_distribution_fp(
     // f1[i] = fmax * sum_{j>=i} m[j] * (1 + beta * (Y[j] - E[Y]))
 
     // signed I256 arithmetic throughout — no intermediate scale-down.
-    // All unsigned inputs are ≤ SCALE (10^18), far under I256::MAX (~5.8·10^76),
+    // All unsigned inputs are ≤ SCALE (10^6), far under I256::MAX (~5.8·10^76),
     // so try_from conversions cannot fail in practice; we still return a
     // structured Fatal instead of panicking per CLAUDE.md rules.
     let f_over_fmax = (f_fp * SCALE).checked_div(fmax_fp).unwrap_or(U256::ZERO);

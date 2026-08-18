@@ -17,6 +17,16 @@ const TOKEN_URI_JSON_PREFIX: &str = "data:application/json;utf8,";
 type DayTotalsReturn = <ITribute::getDayTotalsCall as SolCall>::Return;
 type TokenIdsReturn = <ITribute::getTributesByOwnerCall as SolCall>::Return;
 
+fn canonical_amount_base(value: &str) -> std::result::Result<String, String> {
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|_| "amount must be a canonical unsigned u64".to_owned())?;
+    if parsed.to_string() != value {
+        return Err("amount must be a canonical unsigned u64".to_owned());
+    }
+    Ok(value.to_owned())
+}
+
 #[derive(Subcommand)]
 pub enum TributeCmd {
     /// Show tribute metadata via tokenURI JSON
@@ -53,7 +63,7 @@ pub enum TributeCmd {
         /// WorldwideDay (must be in OFFERING status), e.g. 20241220
         worldwide_day: WorldwideDay,
         /// Issuance amount in whole units (`amount_base`)
-        #[arg(long, default_value = "100")]
+        #[arg(long, default_value = "100", value_parser = canonical_amount_base)]
         amount: String,
         /// ISO 4217 currency code (840 = USD)
         #[arg(long, default_value_t = 840)]

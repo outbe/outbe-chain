@@ -2,12 +2,23 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { type Hex, bytesToHex, parseUnits, toBytes } from "viem";
 import { z } from "zod";
 import { type Ctx, sendTx } from "../chain.js";
-import { buildPayload, encryptOffer } from "../crypto.js";
+import { buildPayload, canonicalAmountBase, encryptOffer } from "../crypto.js";
 import { CONTRACTS, resolveContract } from "../registry.js";
 import { handler, ok, view } from "./util.js";
 
 const addr = z.string().describe("0x-prefixed address");
 const coen = z.string().describe("amount in whole COEN, e.g. \"100\" or \"1.5\"");
+const tributeBase = z
+  .string()
+  .refine((value) => {
+    try {
+      canonicalAmountBase(value);
+      return true;
+    } catch {
+      return false;
+    }
+  }, "amount must be a canonical unsigned u64")
+  .describe("whole unsigned COEN amount, canonical u64 string");
 
 const GAS_OFFER = 8_000_000n;
 const GAS_DEFAULT = 3_000_000n;
@@ -46,7 +57,7 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
       "from (caller, worldwide_day), so one tribute per account per day.",
     {
       worldwide_day: z.number().int().optional().describe("YYYYMMDD; default = first OFFERING day"),
-      amount: coen.optional(),
+      amount: tributeBase.optional(),
       currency: z.number().int().optional().describe("ISO 4217 numeric, default 840 (USD)"),
       exclude_from_intex_issuance: z
         .boolean()
@@ -188,7 +199,8 @@ export function registerSignTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "oracle_vote_submit",
     "Submit oracle exchange-rate votes. `tuples`: [{base, quote, exchangeRate, volume}] with rate/volume as " +
-      "integer minor strings (1e18 scale). Requires OUTBE_PRIVATE_KEY (validator).",
+      "integer minor strings (COEN/ISO uses P6; generic pairs keep their existing scale). " +
+      "Requires OUTBE_PRIVATE_KEY (validator).",
     {
       tuples: z
         .array(

@@ -31,7 +31,6 @@ import os
 import random
 import subprocess
 import sys
-from decimal import Decimal, ROUND_DOWN
 
 try:
     from cryptography.hazmat.primitives import hashes, serialization
@@ -68,8 +67,25 @@ def run_cast(*args: str, expect_json: bool = False) -> str | dict:
 
 
 def random_amount_base() -> str:
-    value = Decimal(random.uniform(10, 500)).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
-    return format(value, "f")
+    return str(random.randint(10, 499))
+
+
+def canonical_amount_base(value: str) -> str:
+    if not value or not value.isascii() or not value.isdigit():
+        raise argparse.ArgumentTypeError("amount_base must be a canonical unsigned u64")
+    parsed = int(value)
+    if str(parsed) != value or parsed > 18_446_744_073_709_551_615:
+        raise argparse.ArgumentTypeError("amount_base must be a canonical unsigned u64")
+    return value
+
+
+def canonical_amount_atto(value: str) -> str:
+    if not value or not value.isascii() or not value.isdigit():
+        raise argparse.ArgumentTypeError("amount_atto must be a canonical unsigned remainder")
+    parsed = int(value)
+    if str(parsed) != value or parsed >= 1_000_000:
+        raise argparse.ArgumentTypeError("amount_atto must be between 0 and 999999")
+    return value
 
 
 def random_hex32() -> str:
@@ -157,9 +173,13 @@ def main() -> None:
     parser.add_argument(
         "--amount-base",
         default=None,
-        help="Settlement base amount; defaults to a random decimal in [10,500)",
+        help="Canonical unsigned settlement base amount; defaults to a random integer in [10,500)",
     )
-    parser.add_argument("--amount-atto", default="0", help="Settlement atto amount")
+    parser.add_argument(
+        "--amount-atto",
+        default="0",
+        help="Six-decimal raw remainder in [0,999999] (legacy field name)",
+    )
     parser.add_argument("--currency", default="840", help="ISO currency code")
     parser.add_argument(
         "--gas-limit",
@@ -191,7 +211,10 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    amount_base = args.amount_base or random_amount_base()
+    amount_base = (
+        canonical_amount_base(args.amount_base) if args.amount_base else random_amount_base()
+    )
+    amount_atto = canonical_amount_atto(args.amount_atto)
     sender = sender_from_private_key(args.private_key)
     tee_pubkey, tee_salt = load_tee_config_from_env()
 
@@ -203,7 +226,7 @@ def main() -> None:
         "creator": sender,
         "tribute_draft_id": "0x" + os.urandom(32).hex(),
         "amount_base": amount_base,
-        "amount_atto": args.amount_atto,
+        "amount_atto": amount_atto,
         "su_hashes": [random_hex32(), random_hex32()],
         "wallet_addresses": args.wallet_address,
         "sra_addresses": args.sra_address,

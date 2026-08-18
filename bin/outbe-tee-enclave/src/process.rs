@@ -26,7 +26,7 @@ use alloy_primitives::{Address, B256, U256};
 
 use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus};
 
-use crate::compute::{compute_nominal, compute_token_id, normalize_amount};
+use crate::compute::{compute_nominal, compute_token_id, parse_canonical_amount};
 use crate::crypto::ecdhe_tribute_offer_decrypt;
 use crate::payload::parse_and_validate;
 use crate::zk_claim::derive_expected_hashes;
@@ -73,9 +73,9 @@ fn process_one(
     .map_err(|e| format!("decryption failed: {e}"))?;
 
     let payload = parse_and_validate(&plaintext)?;
-    let zk_expected_hashes = derive_expected_hashes(offer, &payload)?;
-
-    let amount_minor = normalize_amount(&payload.amount_base, &payload.amount_atto)?;
+    let amount = parse_canonical_amount(&payload.amount_base, &payload.amount_atto)?;
+    let zk_expected_hashes = derive_expected_hashes(offer, &payload, &amount)?;
+    let amount_minor = amount.amount_minor;
     if amount_minor.is_zero() {
         return Err("amount must be positive".to_string());
     }
