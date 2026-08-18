@@ -32,8 +32,8 @@ pub fn dispatch(
                 Ok(abi_position(&position))
             }),
             ownerOf(c) => view(c, |c| {
-                let position_id = parse_position_id(&c.positionId)?;
-                Ok(contract.get_position(position_id)?.smart_account)
+                let position = contract.get_position(c.positionId)?;
+                Ok(position.smart_account)
             }),
             positionByIndex(c) => view(c, |c| {
                 let index = u64::try_from(c.index).map_err(|_| CredisError::IndexOutOfBounds)?;
@@ -67,17 +67,6 @@ pub fn dispatch(
             }),
         }
     })
-}
-
-/// A position id on the wire is the 32-byte big-endian form of the `U256` the
-/// ledger keys by. Anything else is rejected rather than zero-extended, so a
-/// truncated id cannot silently address a different position.
-fn parse_position_id(raw: &Bytes) -> Result<U256> {
-    let bytes: [u8; 32] = raw
-        .as_ref()
-        .try_into()
-        .map_err(|_| CredisError::InvalidPositionId)?;
-    Ok(U256::from_be_bytes(bytes))
 }
 
 fn abi_position(p: &crate::schema::Position) -> ICredis::Position {

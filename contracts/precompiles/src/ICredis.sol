@@ -79,7 +79,7 @@ interface ICredis {
 
     function totalSupply() external view returns (uint256);
     function getPosition(uint256 positionId) external view returns (Position memory);
-    function ownerOf(bytes calldata positionId) external view returns (address);
+    function ownerOf(uint256 positionId) external view returns (address);
 
     function positionByIndex(uint256 index) external view returns (Position memory);
 
