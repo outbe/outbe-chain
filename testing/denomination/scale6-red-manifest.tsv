@@ -1,8 +1,12 @@
 # Frozen against commit 4ddc0e3b on 2026-08-18, before any P1-P5 production change.
 # Amended after user correction: every stablecoin-backed COEN/ISO rate uses scale 1e6;
 # S-Curve/day-type remains specific to COEN/840.
+# Amended after user correction: non-empty EIP-4895 withdrawals are unsupported;
+# the superseded exact Gwei/1000 expectations are replaced by the T5R recovery evidence.
+# Amended after final review: the E2E Tribute producer sends canonical base=0,
+# atto=6; it no longer encodes a fraction inside amount_base. Runtime E2E was not launched.
 # Columns are normative. expected_new_behavior is frozen after this checkpoint.
-# Full suites executed: Rust T1-T5 packages with --no-fail-fast; contracts/tokens forge test; contracts/intex forge test; MCP npm test; Python Tribute/genesis tests; Lysis/Fidelity/Emission references; E2E harness with ocomp-integration.
+# Full unit/static suites executed: Rust T1-T5 packages with --no-fail-fast; contracts/tokens forge test; contracts/intex forge test; MCP npm test; Python Tribute/genesis tests; Lysis/Fidelity/Emission references; E2E harness compilation and static tests with ocomp-integration. Runtime E2E was not launched.
 # Independent references already GREEN: emission vectors, Fidelity golden, Lysis reference corpus generation, Rust compilation, MCP typecheck.
 # Unrelated current-tree/environment failures excluded from cutover RED: primitives system_tx NodeHost fixtures; primitives tee_genesis index fixture; EVM independent_body_stores and ocomp_request_lifecycle; OCOMP embedded_supervisor port collision; TEE replacement-candidate resource exhaustion; E2E MongoDB daemon absence; existing OCOMP evidence-ledger count; existing ADR verification fragment.
 test_stage	test	expected_new_behavior	actual_old_behavior	production_owner	production_stage
@@ -57,6 +61,7 @@ T2	contracts/intex::IntexNFT1155MetadataTest.test_tokenURI_TrimsFractionAndKeeps
 T2	contracts/intex::IntexNFT1155MetadataTest.test_uri_IssuedToken_RendersIdentity	issued token renders Entry Price 1 from scale6	token URI omits or misformats the expected Entry Price trait	contracts/intex/src/IntexMetadata.sol	P4
 T2	contracts/intex::IntexNFT1155MetadataTest.test_uri_SettledToken_SuffixAndNoLifecycle	settled token renders Entry Price 1 from scale6	token URI omits or misformats the expected Entry Price trait	contracts/intex/src/IntexMetadata.sol	P4
 T3	outbe-cli::commands::tribute::tests::offer_cli_accepts_only_canonical_unsigned_whole_base_amounts	CLI rejects every noncanonical u64 amount_base	empty amount_base is accepted	bin/outbe-cli/src/commands/tribute.rs	P3
+T3R	outbe-cli::commands::tribute::tests::offer_cli_accepts_only_canonical_six_decimal_atto_remainders	CLI accepts canonical amount_atto below 1000000 and rejects every noncanonical or out-of-range remainder	CLI has no amount_atto argument and always forces the remainder to zero	bin/outbe-cli/src/commands/tribute.rs plus E2E world/rpc producer	P3 final integration correction
 T3	scripts.tests.test_tribute_payloads::scripts/tribute_offer.py	producer defines and applies canonical_amount_base	canonical_amount_base is absent	scripts/tribute_offer.py	P3
 T3	scripts.tests.test_tribute_payloads::scripts/tributefactory/offer_tribute.py	producer defines and applies canonical_amount_base	canonical_amount_base is absent	scripts/tributefactory/offer_tribute.py	P3
 T3	mcp::crypto.test.ts::tribute payload rejects non-canonical unsigned u64 base values	MCP rejects empty, signed, padded, decimal and overflow base	empty amount_base is accepted	mcp/src/crypto.ts	P3
@@ -122,9 +127,8 @@ T5	outbe-ocomp::vote_submitter::tests::signer_fee_cap_is_twice_the_native_protoc
 T5	outbe-emissionlimit::day_emission::tests::pinned_days_match_independent_amount_domain_reference	pins use scale6 amount-domain values	day 0 is 1073741824000000000000000000 vs 1073741824000000	crates/system/emissionlimit/src/day_emission.rs	P5
 T5	outbe-emissionlimit::day_emission::tests::floor_clamp_at_and_beyond_threshold	floor is 67108864000000 COEN-unit	floor is 67108864000000000000000000	crates/system/emissionlimit/src/day_emission.rs	P5
 T5	outbe-emissionlimit::day_emission::tests::production_matches_independent_reference_for_full_range	all days 0..2920 match independent scale6 reference	mismatch begins at day 0 by factor 1000000000000	crates/system/emissionlimit/src/day_emission.rs	P5
-T5	outbe-evm::executor::tests::outbe_post_execution_preserves_non_withdrawal_behavior_and_converts_exact_withdrawals	1000 Gwei credits 1 COEN-unit on normal and OCOMP paths	1000 Gwei credits 1000000000000 via upstream x1e9	crates/blockchain/evm/src/executor.rs	P5
-T5	outbe-evm::executor::tests::nonrepresentable_withdrawal_rejects_before_any_state_write	999 Gwei rejects before DAO beneficiary or target writes	old normal path accepts the inexact withdrawal	crates/blockchain/evm/src/executor.rs	P5
-T5	outbe-e2e-harness::world::ocomp::tests::public_measurement_schedule_seeds_consistent_green_day_and_oracle_vwaps	day limit is 500000000 COEN-unit	day limit is 500000000000000000000	P5 genesis and emission inputs; Metadosis remains read-only	P5
+T5R	outbe-evm::executor::tests::non_empty_withdrawal_rejects_before_any_state_write	any non-empty list rejects before DAO beneficiary or target writes	the superseded exact-conversion helper accepts amount 1000 and reaches later stateful execution	crates/blockchain/primitives/src/payload.rs + crates/blockchain/evm/src/executor.rs	P5
+T5	outbe-e2e-harness::world::ocomp::tests::public_measurement_schedule_seeds_consistent_green_day_and_oracle_vwaps	Tribute input base=0 plus atto=6 means 6 units; day limit is 500000000 COEN-unit	Tribute input encoded a fraction inside amount_base and used removed FP18 helpers; day limit was 500000000000000000000	P5 fixture/genesis/emission inputs; Metadosis production math remains read-only	P5
 T5	scripts.test_seed_genesis_protocol_constants::test_checked_in_seed_profiles_use_six_decimal_monetary_units	all three seed profiles use scale6 balances, stakes, prices and loads	balance is 1000000000000000000000 instead of 1000000000 in every profile	scripts/seed_genesis.py and generated seed profiles	P5/generated
 T5	mcp::denomination.test.ts::Outbe chain metadata declares six native decimals	nativeCurrency.decimals is 6	metadata declares 18	mcp/src/chain.ts	P5
 T5	mcp::denomination.test.ts::MCP formats native monetary fields at scale6 and leaves dimensionless FP18 alone	1500000 balance formats as 1.5 while rewardBand remains FP18	balance formats as 0.0000000000015	mcp/src/format.ts	P5
