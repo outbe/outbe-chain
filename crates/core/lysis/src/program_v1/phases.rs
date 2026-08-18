@@ -6,12 +6,14 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{derive_poseidon_entity_id, EntityId36};
 use outbe_nod::NodContract;
-use outbe_primitives::units::SCALE_1E18;
 
 use crate::constants::calc_floor_price;
 
 use super::{
-    execute::{compute_fraction_map_from_groups, validate_entry_price, validate_required_gratis},
+    execute::{
+        calculate_cost, calculate_gratis_load, compute_fraction_map_from_groups,
+        validate_entry_price, validate_required_gratis,
+    },
     FidelityPhaseV1, LeagueFractionV1, NodActionV1, ObservedTributeV1, ProgramErrorV1,
 };
 
@@ -425,12 +427,11 @@ pub fn amount_map(
             .get(&first_league)
             .copied()
             .unwrap_or(U256::ZERO);
-        let gratis_load_minor = item.tribute.nominal_amount_minor * fraction / SCALE_1E18;
-        if gratis_load_minor.is_zero() {
-            return Err(ProgramErrorV1::ZeroGratisLoad {
-                ordinal: raw_ordinal as usize,
-            });
-        }
+        let gratis_load_minor = calculate_gratis_load(
+            item.tribute.nominal_amount_minor,
+            fraction,
+            raw_ordinal as usize,
+        )?;
         let entry_price_minor = if item.tribute.reference_currency == 840 {
             mandatory_entry_price_840
         } else {
@@ -453,7 +454,8 @@ pub fn amount_map(
         }
         let floor_price_minor =
             calc_floor_price(item.tribute.tribute_price_minor.max(entry_price_minor));
-        let cost_amount_minor = entry_price_minor * gratis_load_minor / SCALE_1E18;
+        let cost_amount_minor =
+            calculate_cost(entry_price_minor, gratis_load_minor, raw_ordinal as usize)?;
         checked_segment_gratis_total = checked_segment_gratis_total
             .checked_add(gratis_load_minor)
             .ok_or_else(|| ProgramErrorV1::Arithmetic {

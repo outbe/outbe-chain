@@ -16,8 +16,8 @@ use outbe_vaultrouter::api::IVaultRouter;
 use crate::config;
 use crate::constants::{
     DIST_CHUNK_LIMIT, FX_RATE_MAX_AGE_SECONDS, INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_MESSAGE,
-    MAX_SERIES_PER_MESSAGE, ORACLE_TO_WIRE_SCALE, ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY,
-    PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS,
+    MAX_SERIES_PER_MESSAGE, ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PRICE_RATE_DEN,
+    PROCEEDS_FANIN_TIMEOUT_SECS,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -230,11 +230,10 @@ pub(crate) fn issuance_legs(params: &IssuanceParams) -> Vec<(u32, Vec<Address>, 
         .collect()
 }
 
-/// Narrows an oracle-scale price for the wire's `u64` on the 1e9 scale. At 1e18 the type
-/// capped prices near 18.44, which stopped the auction once COEN passed roughly 8.
+/// Narrows a six-decimal COEN/ISO price to the wire's existing `u64` shape.
 pub fn to_wire_price(price_minor: U256) -> Result<u64> {
-    u64::try_from(price_minor / U256::from(ORACLE_TO_WIRE_SCALE))
-        .map_err(|_| PrecompileError::Revert("price exceeds the wire scale".into()))
+    u64::try_from(price_minor)
+        .map_err(|_| PrecompileError::Revert("price exceeds the wire type".into()))
 }
 
 /// Applies a markup rate in percentage points: `entry * (100 + rate) / 100`.
@@ -245,20 +244,57 @@ pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
         .ok_or_else(|| PrecompileError::Revert("marked-up price overflow".into()))
 }
 
-/// Per-Intex cost in the payment token's minor units; `entry_price` and `promis_load_minor`
-/// are both 1e18-scaled, so their product carries 1e36. Rounded up, as the issuance route is.
+/// Per-Intex cost in the payment token's minor units. Entry price and PROMIS load are both
+/// six-decimal, so their product carries twelve decimals. Positive sub-units round up.
 pub(crate) fn derived_cost_amount(
     entry_price: U256,
     promis_load_minor: U256,
     payment_decimals: u8,
 ) -> Result<U256> {
-    let exp = 36u32.checked_sub(u32::from(payment_decimals)).ok_or(
-        IntexFactoryError::UnsupportedPaymentDecimals(payment_decimals),
-    )?;
-    entry_price
+    let product = entry_price
         .checked_mul(promis_load_minor)
-        .map(|v| v.div_ceil(U256::from(10u64).pow(U256::from(exp))))
-        .ok_or_else(|| PrecompileError::Revert("cost amount overflow".into()))
+        .ok_or_else(|| PrecompileError::Revert("cost amount overflow".into()))?;
+    product_to_payment_units(product, U256::ONE, U256::ONE, payment_decimals)
+}
+
+/// Converts a price (scale 1e6) x PROMIS load (scale 1e6) product into
+/// payment-token minor units and optionally applies
+/// an ISO/ISO rate. Scaling is cancelled before multiplication where possible and the result is
+/// rounded up exactly once, in favor of the reserve receiving the settlement.
+fn product_to_payment_units(
+    product: U256,
+    rate_numerator: U256,
+    rate_denominator: U256,
+    payment_decimals: u8,
+) -> Result<U256> {
+    const PRODUCT_DECIMALS: u32 = 12;
+    const MAX_PAYMENT_DECIMALS: u8 = 18;
+
+    if payment_decimals > MAX_PAYMENT_DECIMALS {
+        return Err(IntexFactoryError::UnsupportedPaymentDecimals(payment_decimals).into());
+    }
+    if rate_denominator.is_zero() {
+        return Err(PrecompileError::Revert(
+            "settlement rate denominator is zero".into(),
+        ));
+    }
+
+    let mut numerator = product
+        .checked_mul(rate_numerator)
+        .ok_or_else(|| PrecompileError::Revert("settlement conversion overflow".into()))?;
+    let mut denominator = rate_denominator;
+    let payment_decimals = u32::from(payment_decimals);
+    if payment_decimals < PRODUCT_DECIMALS {
+        denominator = denominator
+            .checked_mul(U256::from(10u64).pow(U256::from(PRODUCT_DECIMALS - payment_decimals)))
+            .ok_or_else(|| PrecompileError::Revert("settlement conversion overflow".into()))?;
+    } else if payment_decimals > PRODUCT_DECIMALS {
+        numerator = numerator
+            .checked_mul(U256::from(10u64).pow(U256::from(payment_decimals - PRODUCT_DECIMALS)))
+            .ok_or_else(|| PrecompileError::Revert("settlement conversion overflow".into()))?;
+    }
+
+    Ok(numerator.div_ceil(denominator))
 }
 
 /// Set the dual-wallet authorized settler for `holder`'s position in `series_id`.
@@ -860,26 +896,15 @@ fn cost_in_token(
         );
     }
 
-    // entry_price and promis_load are both 1e18-scaled, so their product carries 1e36.
-    let scaled = series
+    let product = series
         .entry_price_minor
         .checked_mul(series.promis_load_minor)
         .ok_or_else(|| PrecompileError::Revert("cost amount overflow".into()))?;
-    let exp = 36u32.checked_sub(u32::from(payment_decimals)).ok_or(
-        IntexFactoryError::UnsupportedPaymentDecimals(payment_decimals),
-    )?;
 
     let now = storage.timestamp()?.to::<u64>();
     let rate_issuance = fresh_coen_rate(storage, series.issuance_currency, now)?;
     let rate_reference = fresh_coen_rate(storage, series.reference_currency, now)?;
-    let numerator = scaled
-        .checked_mul(rate_issuance)
-        .ok_or_else(|| PrecompileError::Revert("settlement fx overflow".into()))?;
-    let denominator = U256::from(10u64)
-        .pow(U256::from(exp))
-        .checked_mul(rate_reference)
-        .ok_or_else(|| PrecompileError::Revert("settlement fx overflow".into()))?;
-    Ok(numerator.div_ceil(denominator))
+    product_to_payment_units(product, rate_issuance, rate_reference, payment_decimals)
 }
 
 /// The oracle's COEN price in `iso_code`, refused when absent or older than

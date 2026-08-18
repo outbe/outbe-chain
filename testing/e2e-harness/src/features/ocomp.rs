@@ -28,8 +28,8 @@ use crate::world::localnet::StartOpts;
 use crate::world::ocomp::{OcompMeasurementForkV1, OcompProcessFault, OcompProcessRole};
 use crate::world::ocomp::{
     OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS, OCOMP_DYNAMIC_DKG_PREPARE_WINDOW_BLOCKS,
-    OCOMP_DYNAMIC_VOTE_WINDOW_BLOCKS, OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE,
-    OCOMP_TEST_EPOCH_LENGTH_BLOCKS,
+    OCOMP_DYNAMIC_VOTE_WINDOW_BLOCKS, OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO,
+    OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE, OCOMP_TEST_EPOCH_LENGTH_BLOCKS,
 };
 use crate::world::state::{
     MetadosisFinalizedPointV1, MetadosisFreshLifecycleObservationV1, MetadosisTimeControlEpochV1,
@@ -2001,6 +2001,7 @@ fn capacity_owners_submit_public_tributes(world: &mut World, count: usize) {
                             private_key,
                             &worldwide_day,
                             OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE,
+                            OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO,
                             840,
                             false,
                         )

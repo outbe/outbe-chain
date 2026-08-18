@@ -6,6 +6,7 @@
 //! "outbe-intex:<Name>:v2.0.0") — stable across chains and redeploys.
 
 use alloy_primitives::{address, Address};
+use outbe_primitives::units::SCALE_1E6_U128;
 
 /// IntexNFT1155 on Outbe (balance ledger: settle / burnSettled / balanceOf).
 /// CREATE3 proxy, salt "outbe-intex:IntexNFT1155:v2.0.0". Canonical definition
@@ -40,6 +41,15 @@ pub const QUALIFICATION_PERIOD: u32 = 21 * 24 * 3600;
 /// Bin step (basis points) for the floor-price bin ladder.
 pub const BIN_STEP_BP: u16 = 25;
 
+/// Work one lifecycle scan may do: a decision reads a group, an action writes one
+/// series with its index move and notice. Budgeted apart because they differ in cost.
+pub(crate) const MAX_GROUP_DECISIONS_PER_SWEEP: u32 = 256;
+pub(crate) const MAX_SERIES_ACTIONS_PER_SWEEP: u32 = 256;
+
+/// Notices sent per `intex_notify` firing. Each one is a bridge dispatch per
+/// target chain, so the bound stays far below the scan's.
+pub const NOTIFY_CHUNK_LIMIT: u32 = 32;
+
 /// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.
 pub const PRICE_RATE_DEN: u16 = 100;
 
@@ -56,12 +66,8 @@ pub const CALL_WINDOW: u32 = 28 * 24 * 3600;
 /// Call-trigger threshold: how much of the window must be in breach to force-call.
 pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
 
-/// Oracle prices carry 1e18, the wire and the target chains 1e9. Moves with
-/// `PRICE_DECIMALS = 9` in `IntexMetadata`.
-pub const ORACLE_TO_WIRE_SCALE: u64 = 1_000_000_000;
-
-/// Commit-entry bond on the target-chain auction: 100M wCOEN (18-dec minor units).
-pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * 10u128.pow(18);
+/// Commit-entry bond on the target-chain auction: 100M WCOEN in WCOEN-units.
+pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * SCALE_1E6_U128;
 
 /// How old a COEN rate may be and still convert a settlement into the issuance currency.
 /// Seconds, not vote periods: those are counted in blocks and stretch under congestion.
@@ -71,3 +77,7 @@ pub const FX_RATE_MAX_AGE_SECONDS: u64 = 6 * 3600;
 /// Mirror the codec's `MAX_SERIES_PER_ISSUANCE` and `MAX_PAYLOAD_ARRAY_LEN`.
 pub const MAX_SERIES_PER_MESSAGE: usize = 8;
 pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 64;
+
+/// Series one MARK_CALLED or MARK_QUALIFIED message may carry. Mirrors the
+/// codec's `MAX_SERIES_PER_MARK`; a wider group is sent in several messages.
+pub const MAX_SERIES_PER_MARK: usize = 8;

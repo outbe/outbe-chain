@@ -6,18 +6,21 @@ use outbe_oracle::api::AddressPair;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
+use outbe_primitives::math::constants::REAL_ID_SHIFT;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key};
 
 use crate::called;
 use crate::constants::{
-    CALL_RATE, FLOOR_RATE, MAX_RECIPIENTS_PER_MESSAGE, MAX_SERIES_PER_MESSAGE, QUALIFICATION_PERIOD,
+    CALL_RATE, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE, MAX_RECIPIENTS_PER_MESSAGE,
+    MAX_SERIES_PER_MESSAGE, QUALIFICATION_PERIOD,
 };
 use crate::precompile::{self, IIntexFactory};
 use crate::qualified;
 use crate::runtime;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
+use crate::state::Group;
 
 /// ISO code every fixture prices in.
 const REFERENCE_ISO: u16 = 840;
@@ -33,7 +36,7 @@ fn payment_token() -> Address {
 
 const CHAIN_ID: u64 = 1;
 const ISSUED_AT: u32 = 1_700_000_000;
-const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
+const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
 const CALL_NOTICE_PERIOD: u32 = 7 * 24 * 60 * 60;
 
 // COEN clearing price and the floor/trigger derived from it at issuance.
@@ -60,6 +63,46 @@ fn with_factory<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
 /// Test ids carry a fixed USD/U pair; only the day varies.
 fn sid(worldwide_day: u32) -> SeriesId {
     SeriesId::pack(WorldwideDay::new(worldwide_day), *b"USD", b'U').unwrap()
+}
+
+/// Force-call one group against the protocol call window; how many series moved.
+fn call_group(
+    s: &StorageHandle<'_>,
+    f: &mut IntexFactoryContract,
+    oracle: &OracleContract,
+    pair: AddressPair,
+    group: &Group,
+    last_closed_day: u32,
+    now_ts: u64,
+) -> u32 {
+    let mut vwaps = called::DayVwaps::new(oracle.pair_index_of(pair).unwrap());
+    let secs_per_day = DAY as u32;
+    let Some(window) = called::call_window(
+        oracle,
+        &mut vwaps,
+        last_closed_day,
+        CALL_WINDOW / secs_per_day,
+        CALL_THRESHOLD / secs_per_day,
+    )
+    .unwrap() else {
+        return 0;
+    };
+    called::try_call_group(s, f, oracle, &mut vwaps, group, &window, now_ts).unwrap()
+}
+
+/// Qualify one day's group in the reference currency; returns how many series moved.
+fn qualify_day(
+    s: &StorageHandle<'_>,
+    f: &mut IntexFactoryContract,
+    worldwide_day: u32,
+    qualification_period: u32,
+    now: u64,
+    rate: U256,
+) -> u32 {
+    let group = f
+        .unqualified_group(REFERENCE_ISO, WorldwideDay::new(worldwide_day))
+        .unwrap();
+    qualified::try_qualify_group(s, f, &group, qualification_period, now, rate).unwrap()
 }
 
 fn sample(worldwide_day: u32) -> IssuanceParams {
@@ -181,15 +224,36 @@ fn floor_and_call_derivation() {
     assert_eq!(floor, U256::from(EXPECTED_FLOOR));
     assert_eq!(call, U256::from(EXPECTED_TRIGGER));
 
-    let one = U256::from(1_000_000_000_000_000_000u64);
+    let one = U256::from(1_000_000u64);
     assert_eq!(
         runtime::marked_up(one, FLOOR_RATE).unwrap(),
-        U256::from(1_080_000_000_000_000_000u64)
+        U256::from(1_080_000u64)
     );
     assert_eq!(
         runtime::marked_up(one, CALL_RATE).unwrap(),
-        U256::from(2_280_000_000_000_000_000u64)
+        U256::from(2_280_000u64)
     );
+}
+
+#[test]
+fn coen_iso_one_maps_to_the_center_price_bin_at_six_decimals() {
+    assert_eq!(
+        IntexFactoryContract::price_to_bin(U256::from(1_000_000u64)).unwrap(),
+        REAL_ID_SHIFT as u32
+    );
+}
+
+#[test]
+fn coen_iso_wire_price_preserves_the_six_decimal_integer() {
+    assert_eq!(
+        runtime::to_wire_price(U256::from(1_234_567u64)).unwrap(),
+        1_234_567
+    );
+    assert_eq!(
+        runtime::to_wire_price(U256::from(u64::MAX)).unwrap(),
+        u64::MAX
+    );
+    assert!(runtime::to_wire_price(U256::from(u64::MAX) + U256::ONE).is_err());
 }
 
 // ---------------------------------------------------------------------
@@ -197,11 +261,11 @@ fn floor_and_call_derivation() {
 // ---------------------------------------------------------------------
 
 fn entry_price() -> U256 {
-    U256::from(5u64) * U256::from(10u64).pow(U256::from(17u64))
+    U256::from(500_000u64)
 }
 
 fn load_minor() -> U256 {
-    U256::from(100_000u64) * U256::from(10u64).pow(U256::from(18u64))
+    U256::from(100_000u64) * U256::from(1_000_000u64)
 }
 
 #[test]
@@ -224,9 +288,27 @@ fn cost_amount_zero_decimals() {
 }
 
 #[test]
-fn cost_amount_rejects_decimals_above_the_product_scale() {
-    let err = runtime::derived_cost_amount(entry_price(), load_minor(), 37).unwrap_err();
+fn cost_amount_twelve_decimals() {
+    let cost = runtime::derived_cost_amount(entry_price(), load_minor(), 12).unwrap();
+    assert_eq!(cost, U256::from(50_000_000_000_000_000u64));
+}
+
+#[test]
+fn cost_amount_rounds_positive_subunit_payment_up_to_one() {
+    let cost = runtime::derived_cost_amount(U256::ONE, U256::ONE, 0).unwrap();
+    assert_eq!(cost, U256::ONE);
+}
+
+#[test]
+fn cost_amount_rejects_unsupported_payment_decimals() {
+    let err = runtime::derived_cost_amount(entry_price(), load_minor(), 19).unwrap_err();
     assert!(err.to_string().contains("unsupported decimals"), "{err}");
+}
+
+#[test]
+fn cost_amount_rejects_product_overflow() {
+    let err = runtime::derived_cost_amount(U256::MAX, U256::from(2u64), 6).unwrap_err();
+    assert!(err.to_string().to_lowercase().contains("overflow"), "{err}");
 }
 
 fn word(value: u64) -> alloy_primitives::Bytes {
@@ -272,10 +354,17 @@ fn with_payment_token<R>(
 
 #[test]
 fn cost_amount_prices_an_accepted_token() {
-    with_payment_token(1, 840, 18, |s| {
-        let cost = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap();
-        assert_eq!(cost, U256::from(1_000_000u64));
-    });
+    for (decimals, expected) in [
+        (0, U256::ONE),
+        (6, U256::from(1_000_000u64)),
+        (12, U256::from(1_000_000_000_000u64)),
+        (18, U256::from(1_000_000_000_000_000_000u64)),
+    ] {
+        with_payment_token(1, 840, decimals, |s| {
+            let cost = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap();
+            assert_eq!(cost, expected, "payment token decimals {decimals}");
+        });
+    }
 }
 
 #[test]
@@ -317,7 +406,7 @@ fn cost_amount_dispatch() {
         .unwrap();
         assert_eq!(
             IIntexFactory::quoteCostAmountCall::abi_decode_returns(&out).unwrap(),
-            U256::from(1_000_000u64)
+            U256::from(1_000_000_000_000_000_000u64)
         );
     });
 }
@@ -560,14 +649,16 @@ fn insert_remove_unqualified_roundtrip() {
                 .unwrap(),
             2
         );
-        f.remove_unqualified(sid(11), REFERENCE_ISO, floor).unwrap();
+        f.remove_unqualified_group(REFERENCE_ISO, WorldwideDay::new(11))
+            .unwrap();
         assert_eq!(
             f.unqualified_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             1
         );
-        f.remove_unqualified(sid(22), REFERENCE_ISO, floor).unwrap();
+        f.remove_unqualified_group(REFERENCE_ISO, WorldwideDay::new(22))
+            .unwrap();
         assert_eq!(
             f.unqualified_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
@@ -587,30 +678,34 @@ fn try_qualify_gates_qualification_floor_and_latches() {
         let mature = ISSUED_AT as u64 + 21 * DAY + 1;
 
         // Immature -> false.
-        assert!(!qualified::try_qualify(
-            &s,
-            &mut f,
-            sid(7),
-            QUALIFICATION_PERIOD,
-            immature,
-            floor + U256::from(1)
-        )
-        .unwrap());
+        assert_eq!(
+            qualify_day(
+                &s,
+                &mut f,
+                7,
+                QUALIFICATION_PERIOD,
+                immature,
+                floor + U256::from(1)
+            ),
+            0
+        );
         // Mature but rate == floor (strict >) -> false.
-        assert!(
-            !qualified::try_qualify(&s, &mut f, sid(7), QUALIFICATION_PERIOD, mature, floor)
-                .unwrap()
+        assert_eq!(
+            qualify_day(&s, &mut f, 7, QUALIFICATION_PERIOD, mature, floor),
+            0
         );
         // Mature + rate > floor -> qualifies, latched, removed from bin.
-        assert!(qualified::try_qualify(
-            &s,
-            &mut f,
-            sid(7),
-            QUALIFICATION_PERIOD,
-            mature,
-            floor + U256::from(1)
-        )
-        .unwrap());
+        assert_eq!(
+            qualify_day(
+                &s,
+                &mut f,
+                7,
+                QUALIFICATION_PERIOD,
+                mature,
+                floor + U256::from(1)
+            ),
+            1
+        );
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
@@ -626,15 +721,17 @@ fn try_qualify_gates_qualification_floor_and_latches() {
             0
         );
         // Already Qualified -> false.
-        assert!(!qualified::try_qualify(
-            &s,
-            &mut f,
-            sid(7),
-            QUALIFICATION_PERIOD,
-            mature,
-            floor + U256::from(1)
-        )
-        .unwrap());
+        assert_eq!(
+            qualify_day(
+                &s,
+                &mut f,
+                7,
+                QUALIFICATION_PERIOD,
+                mature,
+                floor + U256::from(1)
+            ),
+            0
+        );
     });
 }
 
@@ -703,15 +800,16 @@ fn qualify_series<'a>(
     let mut f = IntexFactoryContract::new(s.clone());
     let mature = ISSUED_AT as u64 + 21 * DAY + 1;
     let floor = U256::from(EXPECTED_FLOOR);
-    assert!(qualified::try_qualify(
-        s,
-        &mut f,
-        sid(id),
-        QUALIFICATION_PERIOD,
-        mature,
-        floor + U256::from(1)
-    )
-    .unwrap());
+    assert!(
+        qualify_day(
+            s,
+            &mut f,
+            id,
+            QUALIFICATION_PERIOD,
+            mature,
+            floor + U256::from(1)
+        ) == 1
+    );
     f
 }
 
@@ -792,22 +890,26 @@ fn insert_remove_qualified_roundtrip() {
         let mut f = IntexFactoryContract::new(s.clone());
         let trigger = U256::from(EXPECTED_TRIGGER);
         let bin = IntexFactoryContract::price_to_bin(trigger).unwrap();
-        f.insert_qualified(sid(11), REFERENCE_ISO, trigger).unwrap();
-        f.insert_qualified(sid(22), REFERENCE_ISO, trigger).unwrap();
+        f.insert_qualified_group(REFERENCE_ISO, WorldwideDay::new(11), trigger, &[sid(11)])
+            .unwrap();
+        f.insert_qualified_group(REFERENCE_ISO, WorldwideDay::new(22), trigger, &[sid(22)])
+            .unwrap();
         assert_eq!(
             f.qualified_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             2
         );
-        f.remove_qualified(sid(11), REFERENCE_ISO, trigger).unwrap();
+        f.remove_qualified_group(REFERENCE_ISO, WorldwideDay::new(11))
+            .unwrap();
         assert_eq!(
             f.qualified_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
                 .unwrap(),
             1
         );
-        f.remove_qualified(sid(22), REFERENCE_ISO, trigger).unwrap();
+        f.remove_qualified_group(REFERENCE_ISO, WorldwideDay::new(22))
+            .unwrap();
         assert_eq!(
             f.qualified_bin_count
                 .read(&IntexFactoryContract::scoped(REFERENCE_ISO, bin))
@@ -829,16 +931,13 @@ fn try_call_marks_called_when_threshold_met() {
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         fill_days(&oracle, last_closed_day, pair, 30, breach);
 
-        assert!(called::try_call(
-            &s,
-            &mut f,
-            &oracle,
-            &mut called::DayVwaps::new(oracle.pair_index_of(pair).unwrap()),
-            sid(7),
-            last_closed_day,
-            scan_ts
-        )
-        .unwrap());
+        let group = f
+            .qualified_group(REFERENCE_ISO, WorldwideDay::new(7))
+            .unwrap();
+        assert_eq!(
+            call_group(&s, &mut f, &oracle, pair, &group, last_closed_day, scan_ts),
+            1
+        );
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
@@ -877,16 +976,13 @@ fn try_call_skips_when_below_threshold() {
             d = previous_date_key(d);
         }
 
-        assert!(!called::try_call(
-            &s,
-            &mut f,
-            &oracle,
-            &mut called::DayVwaps::new(oracle.pair_index_of(pair).unwrap()),
-            sid(7),
-            last_closed_day,
-            scan_ts
-        )
-        .unwrap());
+        let group = f
+            .qualified_group(REFERENCE_ISO, WorldwideDay::new(7))
+            .unwrap();
+        assert_eq!(
+            call_group(&s, &mut f, &oracle, pair, &group, last_closed_day, scan_ts),
+            0
+        );
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
@@ -936,16 +1032,15 @@ fn try_call_excludes_pre_issuance_days() {
         let breach = U256::from(EXPECTED_TRIGGER) + U256::from(1);
         fill_days(&oracle, last_closed_day, pair, 30, breach);
 
-        assert!(!called::try_call(
-            &s,
-            &mut f,
-            &oracle,
-            &mut called::DayVwaps::new(oracle.pair_index_of(pair).unwrap()),
-            sid(8),
-            last_closed_day,
-            scan_ts
-        )
-        .unwrap());
+        let group = Group {
+            iso_code: REFERENCE_ISO,
+            worldwide_day: WorldwideDay::new(8),
+            members: vec![sid(8)],
+        };
+        assert_eq!(
+            call_group(&s, &mut f, &oracle, pair, &group, last_closed_day, scan_ts),
+            0
+        );
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(8))
                 .unwrap()
@@ -1003,15 +1098,17 @@ fn qualify_survives_router_failure() {
         seed_issued(&s, 7);
         let mut f = IntexFactoryContract::new(s.clone());
         let mature = ISSUED_AT as u64 + 21 * DAY + 1;
-        assert!(qualified::try_qualify(
-            &s,
-            &mut f,
-            sid(7),
-            QUALIFICATION_PERIOD,
-            mature,
-            U256::from(EXPECTED_FLOOR) + U256::from(1)
-        )
-        .unwrap());
+        assert_eq!(
+            qualify_day(
+                &s,
+                &mut f,
+                7,
+                QUALIFICATION_PERIOD,
+                mature,
+                U256::from(EXPECTED_FLOOR) + U256::from(1)
+            ),
+            1
+        );
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
@@ -1036,8 +1133,13 @@ fn call_survives_router_failure() {
         seed_issued(&s, 7);
         outbe_intex::api::mark_qualified(&s, sid(7)).unwrap();
         let mut f = IntexFactoryContract::new(s.clone());
-        f.insert_qualified(sid(7), REFERENCE_ISO, U256::from(EXPECTED_TRIGGER))
-            .unwrap();
+        f.insert_qualified_group(
+            REFERENCE_ISO,
+            WorldwideDay::new(7),
+            U256::from(EXPECTED_TRIGGER),
+            &[sid(7)],
+        )
+        .unwrap();
 
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
@@ -1051,16 +1153,13 @@ fn call_survives_router_failure() {
             U256::from(EXPECTED_TRIGGER) + U256::from(1),
         );
 
-        assert!(called::try_call(
-            &s,
-            &mut f,
-            &oracle,
-            &mut called::DayVwaps::new(oracle.pair_index_of(pair).unwrap()),
-            sid(7),
-            last_closed_day,
-            scan_ts
-        )
-        .unwrap());
+        let group = f
+            .qualified_group(REFERENCE_ISO, WorldwideDay::new(7))
+            .unwrap();
+        assert_eq!(
+            call_group(&s, &mut f, &oracle, pair, &group, last_closed_day, scan_ts),
+            1
+        );
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
@@ -1314,7 +1413,7 @@ fn scan_caps_work_per_block_and_resumes_via_cursor() {
 
         // Two distinct bins: the first holds exactly MAX_SERIES_PER_BLOCK entries, the second a few.
         // Bogus ids (no series record) are per-series skipped but still count toward the cap.
-        let cap = qualified::MAX_SERIES_PER_BLOCK;
+        let cap = crate::constants::MAX_GROUP_DECISIONS_PER_SWEEP;
         let f1 = U256::from(EXPECTED_FLOOR);
         let f2 = U256::from(EXPECTED_FLOOR) * U256::from(4);
         {
@@ -1375,6 +1474,14 @@ fn config_defaults_to_prod_when_unset() {
             crate::config::read(&f).unwrap(),
             crate::config::IntexParams::PROD
         );
+        assert_eq!(
+            crate::config::IntexParams::PROD.commit_bond_minor,
+            100_000_000u128 * 1_000_000u128
+        );
+        assert_eq!(
+            crate::config::IntexParams::DEV.commit_bond_minor,
+            100u128 * 1_000_000u128
+        );
     });
 }
 
@@ -1415,15 +1522,17 @@ fn config_dev_profile_drives_issuance_and_qualification() {
         // The dev qualification period elapses long before the 21-day prod one.
         let rate = r.floor_price_minor + U256::from(1);
         let after_qualification = ISSUED_AT as u64 + u64::from(dev.qualification_period) + 1;
-        assert!(qualified::try_qualify(
-            &s,
-            &mut f,
-            sid(7),
-            dev.qualification_period,
-            after_qualification,
-            rate
-        )
-        .unwrap());
+        assert_eq!(
+            qualify_day(
+                &s,
+                &mut f,
+                7,
+                dev.qualification_period,
+                after_qualification,
+                rate
+            ),
+            1
+        );
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
@@ -2252,7 +2361,7 @@ fn a_currency_cut_off_by_the_budget_is_scanned_first_next_block() {
         // record are skipped per series but still count against it.
         {
             let mut factory = IntexFactoryContract::new(s.clone());
-            for id in 1..=qualified::MAX_SERIES_PER_BLOCK {
+            for id in 1..=crate::constants::MAX_GROUP_DECISIONS_PER_SWEEP {
                 factory
                     .insert_unqualified(sid(id), REFERENCE_ISO, U256::from(EXPECTED_FLOOR))
                     .unwrap();
@@ -2331,8 +2440,8 @@ fn with_dual_currency_series<R>(iso: u64, f: impl FnOnce(StorageHandle) -> R) ->
     })
 }
 
-/// The oracle's fixed-point rate scale.
-const SCALE_1E18: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
+/// Every stablecoin-backed COEN/ISO Oracle rate uses six decimals.
+const COEN_ISO_RATE_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 
 /// Publish a COEN rate for `iso_code`, stamped `age` seconds ago.
 fn publish_rate(oracle: &OracleContract, iso_code: u16, pair_id: u32, rate: U256, age: u64) {
@@ -2353,13 +2462,31 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
             &oracle,
             REFERENCE_ISO,
             PAIR_ID,
-            U256::from(2u64) * SCALE_1E18,
+            U256::from(2u64) * COEN_ISO_RATE_SCALE,
             0,
         );
-        publish_rate(&oracle, EUR_ISO, EUR_PAIR_ID, SCALE_1E18, 0);
+        publish_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE, 0);
 
         let cost = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap();
-        assert_eq!(cost, U256::from(500_000u64));
+        assert_eq!(cost, U256::from(500_000_000_000_000_000u64));
+    });
+}
+
+#[test]
+fn issuance_currency_settlement_rounds_a_non_divisible_fx_result_up_once() {
+    with_dual_currency_series(EUR_ISO as u64, |s| {
+        let oracle = OracleContract::new(s.clone());
+        publish_rate(
+            &oracle,
+            REFERENCE_ISO,
+            PAIR_ID,
+            U256::from(3u64) * COEN_ISO_RATE_SCALE,
+            0,
+        );
+        publish_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE, 0);
+
+        let cost = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap();
+        assert_eq!(cost, U256::from(333_333_333_333_333_334u64));
     });
 }
 
@@ -2371,7 +2498,7 @@ fn an_unpriced_issuance_currency_cannot_be_settled_in() {
             &oracle,
             REFERENCE_ISO,
             PAIR_ID,
-            U256::from(2u64) * SCALE_1E18,
+            U256::from(2u64) * COEN_ISO_RATE_SCALE,
             0,
         );
         // No euro pair at all.
@@ -2388,14 +2515,14 @@ fn a_stale_rate_cannot_be_settled_in() {
             &oracle,
             REFERENCE_ISO,
             PAIR_ID,
-            U256::from(2u64) * SCALE_1E18,
+            U256::from(2u64) * COEN_ISO_RATE_SCALE,
             0,
         );
         publish_rate(
             &oracle,
             EUR_ISO,
             EUR_PAIR_ID,
-            SCALE_1E18,
+            COEN_ISO_RATE_SCALE,
             crate::constants::FX_RATE_MAX_AGE_SECONDS + 1,
         );
 
@@ -2703,11 +2830,23 @@ fn late_proceeds_after_an_ownerless_certified_day_burn() {
 }
 
 #[test]
+fn issuance_currency_settlement_rejects_fx_overflow() {
+    with_dual_currency_series(EUR_ISO as u64, |s| {
+        let oracle = OracleContract::new(s.clone());
+        publish_rate(&oracle, REFERENCE_ISO, PAIR_ID, COEN_ISO_RATE_SCALE, 0);
+        publish_rate(&oracle, EUR_ISO, EUR_PAIR_ID, U256::MAX, 0);
+
+        let err = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("overflow"), "{err}");
+    });
+}
+
+#[test]
 fn the_reference_currency_settles_without_reading_any_rate() {
     // No rate is published at all, yet the reference currency still settles.
     with_dual_currency_series(REFERENCE_ISO as u64, |s| {
         let cost = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap();
-        assert_eq!(cost, U256::from(1_000_000u64));
+        assert_eq!(cost, U256::from(1_000_000_000_000_000_000u64));
     });
 }
 

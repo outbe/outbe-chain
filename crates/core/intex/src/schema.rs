@@ -7,6 +7,7 @@ use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::INTEX_ADDRESS;
 use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::storage::types::{Storable, StorableType, StorageKey};
+use outbe_primitives::units::SCALE_1E6_U256;
 use std::fmt;
 
 use crate::errors::IntexError;
@@ -182,14 +183,14 @@ pub struct CreateSeriesParams {
     pub series_id: SeriesId,
     pub worldwide_day: WorldwideDay,
     pub issued_intex_count: u32,
-    /// Promis tokens per Intex unit (18 decimals); bounded by source `uint128`.
+    /// PROMIS-units per Intex unit (1e6); bounded by source `uint128`.
     pub promis_load_minor: u128,
-    /// Entry price (per-unit, reference currency, 1e18 oracle scale). Primary
+    /// Entry price (per-unit, reference ISO stable-units, 1e6). Primary
     /// anchor; cost/floor/call derive from it.
     pub entry_price_minor: U256,
-    /// Price floor (1e18, oracle scale).
+    /// Price floor in reference ISO stable-units (1e6).
     pub floor_price_minor: U256,
-    /// Call price level that arms the forced call (1e18, oracle scale).
+    /// Call price level that arms the forced call, in reference ISO stable-units (1e6).
     pub call_price_minor: U256,
     pub call_trigger: IntexCallTrigger,
     /// Creation timestamp (UNIX seconds); non-zero, doubles as existence sentinel.
@@ -271,8 +272,9 @@ impl SeriesRecord {
     }
 }
 
-/// Cost of one Intex in the reference currency, on the same 1e18 oracle scale as
-/// entry/floor/call. `promis_load_minor` carries its own 1e18, hence the divisor.
+/// Cost of one Intex in reference ISO stable-units (1e6). Entry price and PROMIS load
+/// both use scale 1e6, so removing the PROMIS denominator leaves the
+/// reference-currency price at scale 1e6.
 /// Settling converts this into the chosen token's minor units — see
 /// `intexfactory::runtime::quote_cost_amount`.
 pub fn cost_amount_minor(
@@ -281,7 +283,7 @@ pub fn cost_amount_minor(
 ) -> Result<U256, IntexError> {
     entry_price_minor
         .checked_mul(promis_load_minor)
-        .map(|v| v / U256::from(10u64).pow(U256::from(18u64)))
+        .map(|v| v / SCALE_1E6_U256)
         .ok_or(IntexError::CostAmountOverflow)
 }
 

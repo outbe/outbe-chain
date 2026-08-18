@@ -22,32 +22,32 @@ contract EscrowAdapterDecimalsTest is Test {
         compact = new MockTheCompact();
     }
 
-    function test_wire_acceptsEighteenDecimals() public {
+    function test_wire_acceptsSixDecimals() public {
         MockWCOEN token = new MockWCOEN();
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(token));
         assertEq(address(escrow.paymentToken()), address(token));
     }
 
-    function test_wire_rejectsNonEighteenDecimals() public {
-        MockERC20 token = new MockERC20("Token", "TKN", 6);
+    function test_wire_rejectsNonSixDecimals() public {
+        MockERC20 token = new MockERC20("Token", "TKN", 18);
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.PaymentTokenDecimals.selector, uint8(6)));
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.PaymentTokenDecimals.selector, uint8(18)));
         escrow.wire(auction, address(compact), address(token));
     }
 
-    function test_wire_rejectsNonEighteenDecimalsOnRotation() public {
+    function test_wire_rejectsNonSixDecimalsOnRotation() public {
         MockWCOEN token = new MockWCOEN();
         vm.prank(admin);
         escrow.wire(auction, address(compact), address(token));
 
-        MockERC20 rotated = new MockERC20("Token", "TKN", 6);
+        MockERC20 rotated = new MockERC20("Token", "TKN", 18);
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.PaymentTokenDecimals.selector, uint8(6)));
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.PaymentTokenDecimals.selector, uint8(18)));
         escrow.wire(auction, address(compact), address(rotated));
     }
 
-    function test_paymentTokenDecimals_isEighteen() public view {
-        assertEq(escrow.PAYMENT_TOKEN_DECIMALS(), 18);
+    function test_paymentTokenDecimals_isSix() public view {
+        assertEq(escrow.PAYMENT_TOKEN_DECIMALS(), 6);
     }
 }

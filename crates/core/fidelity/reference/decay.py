@@ -9,7 +9,7 @@ Regenerate the committed fixture with:
 
     python3 reference/decay.py --emit-golden > tests/fixtures/rcfi_golden.json
 
-Amounts are emitted in 1e18 minor units (matching the chain's gratis decimals);
+Amounts are emitted in six-decimal GRATIS units;
 timestamps are UTC unix seconds. RCFI / efficiency / d_age are the float-model
 reference values the Rust integer model is checked against (±1 day / ±1e-3).
 """
@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 
 H_DAYS = 365.0                       # Half-Life
 L_CONST = H_DAYS / math.log(2)       # Limit constant L = H/ln2
-SCALE = 10 ** 18                     # gratis minor units
+AMOUNT_SCALE = 10 ** 6               # GRATIS-unit per whole GRATIS
 
 
 def get_decayed_time(days_passed):
@@ -130,8 +130,8 @@ def emit_golden():
     transactions = []
     for t in txs:
         kind = "deposit" if t["amount"] >= 0 else "withdraw"
-        amount_e18 = round(abs(t["amount"]) * SCALE)
-        transactions.append({"ts": _secs(t["dt"]), "kind": kind, "amount_e18": str(amount_e18)})
+        amount_units = round(abs(t["amount"]) * AMOUNT_SCALE)
+        transactions.append({"ts": _secs(t["dt"]), "kind": kind, "amount_units": str(amount_units)})
 
     samples = []
     for cur in sample_dts:

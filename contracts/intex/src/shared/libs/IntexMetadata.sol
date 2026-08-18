@@ -15,18 +15,16 @@ library IntexMetadata {
     string internal constant DESCRIPTION =
         "Intex is the core cross-chain asset of the Outbe network. Each series is born from a Worldwide Day auction held across all connected chains; its transferable Issued tokens settle into soulbound Settled tokens that mine Promis.";
 
-    /// @dev Prices arrive on the 1e9 wire scale, set by `ORACLE_TO_WIRE_SCALE` on the origin
-    ///      side; the two are one decision and must move together. Six fraction digits resolve
-    ///      sub-cent COEN rates.
-    uint8 private constant PRICE_DECIMALS = 9;
+    /// @dev Every COEN/ISO price arrives directly in six-decimal ISO stable-units.
+    uint8 private constant PRICE_DECIMALS = 6;
     uint8 private constant PRICE_PRECISION = 6;
-    /// @dev Scale carried by `promisLoadMinor` (PROMIS * 1e18); unrelated to the price scale above.
-    uint256 private constant PROMIS_SCALE = 1e18;
+    /// @dev Shared numeric scale carried by six-decimal monetary fields.
+    uint256 private constant SCALE_1E6 = 1e6;
 
-    /// @dev Cost of one Intex in the reference currency, on the same 1e9 scale as the prices;
+    /// @dev Cost of one Intex in the reference currency, on the same 1e6 scale as the prices;
     ///      `promisLoadMinor` carries its own scale, which the divisor removes.
     function _costAmountMinor(IIntexNFT1155.SeriesData memory data) private pure returns (uint256) {
-        return (uint256(data.entryPriceMinor) * uint256(data.promisLoadMinor)) / PROMIS_SCALE;
+        return (uint256(data.entryPriceMinor) * uint256(data.promisLoadMinor)) / SCALE_1E6;
     }
 
     /// @notice Build the `data:application/json;base64,...` URI for a token.
@@ -111,7 +109,7 @@ library IntexMetadata {
             _amountPlain(data.callPriceMinor, PRICE_DECIMALS, PRICE_PRECISION),
             ",\"display_type\":\"number\"},",
             "{\"trait_type\":\"Promis Load\",\"value\":",
-            Strings.toString(data.promisLoadMinor / PROMIS_SCALE),
+            Strings.toString(data.promisLoadMinor / SCALE_1E6),
             ",\"display_type\":\"number\"},",
             "{\"trait_type\":\"Cost Amount\",\"value\":",
             _amountPlain(_costAmountMinor(data), PRICE_DECIMALS, PRICE_PRECISION),
@@ -189,7 +187,7 @@ library IntexMetadata {
             _generateField("Entry Price", _formatAmount(data.entryPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), 265),
             _generateField("Floor Price", _formatAmount(data.floorPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), 310),
             _generateField("Call Price", _formatAmount(data.callPriceMinor, PRICE_DECIMALS, PRICE_PRECISION), 355),
-            _generateField("Promis Load", _formatInteger(data.promisLoadMinor / PROMIS_SCALE), 400)
+            _generateField("Promis Load", _formatInteger(data.promisLoadMinor / SCALE_1E6), 400)
         );
         if (!settled && data.calledAt != 0) {
             uint256 deadline = uint256(data.calledAt) + data.callTrigger.callNoticePeriod;

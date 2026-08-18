@@ -120,7 +120,7 @@ optional `offset` (default 0) / `limit` (default 100, max 1000); it returns
 **Signing (allowlist, need `OUTBE_PRIVATE_KEY`)** — `tribute_offer`, `staking_stake`,
 `staking_unstake`, `staking_unbonded_claim`, `agentreward_claim`,
 `oracle_feeder_delegate`, `oracle_vote_submit`. Amounts are whole COEN strings (`"100"`,
-`"1.5"`), scaled to 1e18 minor units internally. Transactions are EIP-1559 (type 2) with
+`"1.5"`), scaled to six-decimal COEN units internally. Transactions are EIP-1559 (type 2) with
 an explicit gas limit (`tribute_offer` can't be `eth_estimateGas`-simulated because the
 payload is decrypted inside the enclave during execution).
 

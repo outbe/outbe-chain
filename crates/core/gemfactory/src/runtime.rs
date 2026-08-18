@@ -9,7 +9,7 @@ use outbe_primitives::addresses::{
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::SCALE_1E18;
+use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_common::pow;
 
@@ -438,15 +438,24 @@ fn compute_params(
     Ok((cost_amount, floor_price, initial_state))
 }
 
-/// `(entry × load × percent / 100) / SCALE_1E18`. Both `entry` and `load` are
-/// 1e18-scaled minor units; result stays in the same scale.
+/// `floor(entry x load x percent / (100 x SCALE_1E6_U256))`. Entry, load and
+/// result are six-decimal monetary values; the calculation rounds only once.
 fn compute_cost(entry: U256, load: U256, cost_num: u64) -> Result<U256> {
-    let acc = entry
+    let numerator = entry
         .checked_mul(load)
         .ok_or(GemFactoryError::Overflow)?
         .checked_mul(U256::from(cost_num))
         .ok_or(GemFactoryError::Overflow)?;
-    Ok(acc / U256::from(100u64) / SCALE_1E18)
+    let denominator = SCALE_1E6_U256
+        .checked_mul(U256::from(100u64))
+        .ok_or(GemFactoryError::Overflow)?;
+    let cost = numerator / denominator;
+    if !entry.is_zero() && !load.is_zero() && cost.is_zero() {
+        return Err(PrecompileError::Revert(
+            "gem cost rounds to zero".to_owned(),
+        ));
+    }
+    Ok(cost)
 }
 
 /// Floor price = `entry × (100 + FLOOR_RATE) / 100` (8% markup => 1.08x).

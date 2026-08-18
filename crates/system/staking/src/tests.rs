@@ -10,6 +10,7 @@ use crate::hooks;
 
 const CHAIN_ID: u64 = 1;
 const MIN_STAKE: u64 = 1_000;
+const COEN_UNIT: u64 = 1_000_000;
 
 /// Default large balance seeded to callers so transfer_balance succeeds.
 const DEFAULT_BALANCE: u64 = 1_000_000;
@@ -89,6 +90,27 @@ fn test_stake() {
 
         assert_eq!(s.get_stake(validator).unwrap(), amount);
         assert_eq!(s.get_total_staked().unwrap(), amount);
+    });
+}
+
+#[test]
+fn test_stake_with_six_decimal_coen_fixture() {
+    with_staking(|storage, s| {
+        let validator = address!("0x1212121212121212121212121212121212121212");
+        let amount = 100_000u64 * COEN_UNIT;
+
+        register_validator(storage.clone(), validator);
+        s.config_min_stake.write(U256::from(amount)).unwrap();
+        seed_staking_balance(storage.clone(), amount);
+        s.stake(validator, validator, U256::from(amount)).unwrap();
+
+        assert_eq!(s.get_stake(validator).unwrap(), U256::from(amount));
+        assert_eq!(s.get_total_staked().unwrap(), U256::from(amount));
+        let validators = ValidatorSet::new(storage);
+        assert_eq!(
+            validators.val_status.read(&validator).unwrap(),
+            status::PENDING
+        );
     });
 }
 

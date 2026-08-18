@@ -8,26 +8,28 @@
 //! 2. If no candles are available, fall back to the original ticker-based
 //!    Volume-Weighted Average Price (VWAP) across providers.
 //!
-//! All price/volume arithmetic uses U256 fixed-point at 1e18 scale
-//! to match on-chain Oracle semantics. f64 is only used for provider
-//! ingestion (parsing REST responses) and deviation filtering (σ-based
-//! statistical test), never for final VWAP/TVWAP output.
+//! Final price/volume arithmetic uses the pair's existing integer contract:
+//! stablecoin-backed COEN/ISO markets use six-decimal price and COEN-unit volume, while generic pairs
+//! retain their decimal18 contract. f64 is only used for provider ingestion
+//! (parsing REST responses) and deviation filtering (σ-based statistical
+//! test), never for final VWAP/TVWAP output.
 
 use crate::config::FeederConfig;
 use crate::provider::{CandlePrice, Provider, TickerPrice};
 use alloy_primitives::U256;
 use eyre::Result;
-use outbe_primitives::units::SCALE_1E18_U128;
+use outbe_primitives::stablecoin::iso_4217_alpha;
+use outbe_primitives::units::{SCALE_1E18_U128, SCALE_1E6_U128, SCALE_1E6_U256};
 use std::collections::HashMap;
 
-/// Aggregated price/volume for a single pair (U256 fixed-point at 1e18 scale).
+/// Aggregated price/volume for a single pair in that pair's canonical scale.
 #[derive(Debug, Clone)]
 pub struct AggregatedPrice {
     pub base: String,
     pub quote: String,
-    /// VWAP price at 1e18 scale.
+    /// VWAP price: six decimals for COEN/ISO, existing decimal18 otherwise.
     pub price: U256,
-    /// Total volume at 1e18 scale.
+    /// Total volume: COEN units for COEN/ISO, existing decimal18 otherwise.
     pub volume: U256,
 }
 
@@ -39,6 +41,70 @@ fn f64_to_u256(value: f64) -> U256 {
     }
     let scaled = (value * SCALE_1E18_U128 as f64) as u128;
     U256::from(scaled)
+}
+
+fn is_coen_iso_pair(base: &str, quote: &str) -> bool {
+    base.eq_ignore_ascii_case("COEN")
+        && quote.parse::<u16>().ok().and_then(iso_4217_alpha).is_some()
+}
+
+/// Converts one positive finite COEN/ISO price to its canonical integer scale.
+/// A positive value below the first representable price unit is rejected.
+fn coen_iso_price(value: f64) -> Option<U256> {
+    if value <= 0.0 || !value.is_finite() {
+        return None;
+    }
+    let scale = SCALE_1E6_U128 as f64;
+    let value = U256::from((value * scale) as u128);
+    (!value.is_zero()).then_some(value)
+}
+
+/// Converts provider volume into raw COEN units. Real zero stays zero; a
+/// positive subunit observation is represented by the smallest COEN unit.
+fn coen_volume(value: f64) -> U256 {
+    if value <= 0.0 || !value.is_finite() {
+        return U256::ZERO;
+    }
+    let scale = SCALE_1E6_U128 as f64;
+    U256::from((value * scale) as u128).max(U256::ONE)
+}
+
+/// COEN/ISO weighted average. Zero-volume samples use one whole COEN only as
+/// an internal weight while the emitted aggregate preserves their real zero
+/// volume. All products and sums are checked.
+fn compute_coen_iso_weighted(prices: &[(f64, f64)]) -> Result<Option<(U256, U256)>> {
+    let mut price_volume_sum = U256::ZERO;
+    let mut weight_sum = U256::ZERO;
+    let mut volume_sum = U256::ZERO;
+
+    for &(price, volume) in prices {
+        let Some(price) = coen_iso_price(price) else {
+            continue;
+        };
+        let volume = coen_volume(volume);
+        let weight = if volume.is_zero() {
+            SCALE_1E6_U256
+        } else {
+            volume
+        };
+        let weighted_price = price
+            .checked_mul(weight)
+            .ok_or_else(|| eyre::eyre!("COEN/ISO price-volume product overflow"))?;
+        price_volume_sum = price_volume_sum
+            .checked_add(weighted_price)
+            .ok_or_else(|| eyre::eyre!("COEN/ISO price-volume sum overflow"))?;
+        weight_sum = weight_sum
+            .checked_add(weight)
+            .ok_or_else(|| eyre::eyre!("COEN/840 weight sum overflow"))?;
+        volume_sum = volume_sum
+            .checked_add(volume)
+            .ok_or_else(|| eyre::eyre!("COEN/840 volume sum overflow"))?;
+    }
+
+    if weight_sum.is_zero() {
+        return Ok(None);
+    }
+    Ok(Some((price_volume_sum / weight_sum, volume_sum)))
 }
 
 /// Fetches prices from providers, filters outliers, and computes the best
@@ -119,6 +185,7 @@ pub async fn fetch_and_aggregate(
     for pair_config in &config.currency_pairs {
         let key = format!("{}/{}", pair_config.base, pair_config.quote);
         let threshold = config.deviation_for(&pair_config.base);
+        let is_coen_iso = is_coen_iso_pair(&pair_config.base, &pair_config.quote);
 
         // --- Try candle TVWAP first ---
         let mut candle_data: Vec<(f64, f64)> = Vec::new();
@@ -136,16 +203,22 @@ pub async fn fetch_and_aggregate(
         }
 
         if !candle_data.is_empty() {
-            let (tvwap, total_volume) = compute_tvwap_fixed(&candle_data);
-            if !tvwap.is_zero() {
-                tracing::debug!(pair = %key, "using candle TVWAP");
-                results.push(AggregatedPrice {
-                    base: pair_config.base.clone(),
-                    quote: pair_config.quote.clone(),
-                    price: tvwap,
-                    volume: total_volume,
-                });
-                continue;
+            let aggregate = if is_coen_iso {
+                compute_coen_iso_weighted(&candle_data)?
+            } else {
+                Some(compute_tvwap_fixed(&candle_data))
+            };
+            if let Some((tvwap, total_volume)) = aggregate {
+                if !tvwap.is_zero() {
+                    tracing::debug!(pair = %key, "using candle TVWAP");
+                    results.push(AggregatedPrice {
+                        base: pair_config.base.clone(),
+                        quote: pair_config.quote.clone(),
+                        price: tvwap,
+                        volume: total_volume,
+                    });
+                    continue;
+                }
             }
         }
 
@@ -157,7 +230,12 @@ pub async fn fetch_and_aggregate(
             }
             if let Some(ticker) = tickers.get(&key) {
                 if ticker.price > 0.0 {
-                    raw_prices.push((ticker.price, ticker.volume.max(1.0)));
+                    let volume = if is_coen_iso {
+                        ticker.volume
+                    } else {
+                        ticker.volume.max(1.0)
+                    };
+                    raw_prices.push((ticker.price, volume));
                 }
             }
         }
@@ -173,7 +251,14 @@ pub async fn fetch_and_aggregate(
         }
 
         // Compute VWAP in U256 fixed-point
-        let (vwap, total_volume) = compute_vwap_fixed(&filtered);
+        let aggregate = if is_coen_iso {
+            compute_coen_iso_weighted(&filtered)?
+        } else {
+            Some(compute_vwap_fixed(&filtered))
+        };
+        let Some((vwap, total_volume)) = aggregate else {
+            continue;
+        };
         if !vwap.is_zero() {
             tracing::debug!(pair = %key, "using ticker VWAP (no candles available)");
             results.push(AggregatedPrice {
@@ -285,19 +370,74 @@ mod tests {
         AccountConfig, ChainConfig, CurrencyPairConfig, FeederConfig, OracleConfig,
     };
     use crate::provider::mock::MockProvider;
-    use outbe_primitives::units::{Units, SCALE_1E18};
+    use outbe_primitives::units::SCALE_1E18;
+
+    const COEN_ISO_SCALE: u128 = 1_000_000;
+
+    struct CoenTickerProvider {
+        quote: &'static str,
+        price: f64,
+        volume: f64,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for CoenTickerProvider {
+        fn name(&self) -> &str {
+            "coen_ticker"
+        }
+
+        async fn get_ticker_prices(
+            &self,
+            pairs: &[(String, String)],
+        ) -> eyre::Result<HashMap<String, TickerPrice>> {
+            let mut prices = HashMap::new();
+            let key = format!("COEN/{}", self.quote);
+            if pairs
+                .iter()
+                .any(|(base, quote)| base == "COEN" && quote == self.quote)
+            {
+                prices.insert(
+                    key,
+                    TickerPrice {
+                        price: self.price,
+                        volume: self.volume,
+                    },
+                );
+            }
+            Ok(prices)
+        }
+    }
+
+    async fn aggregate_coen_iso_ticker(
+        quote: &'static str,
+        price: f64,
+        volume: f64,
+    ) -> Vec<AggregatedPrice> {
+        let providers: Vec<Box<dyn Provider>> = vec![Box::new(CoenTickerProvider {
+            quote,
+            price,
+            volume,
+        })];
+        let config = test_config(vec![CurrencyPairConfig {
+            base: "COEN".into(),
+            quote: quote.into(),
+            chain_denom: None,
+            providers: vec!["coen_ticker".into()],
+        }]);
+        fetch_and_aggregate(&providers, &config).await.unwrap()
+    }
 
     #[test]
     fn test_compute_vwap_fixed() {
         let prices = vec![(100.0, 1000.0), (200.0, 2000.0), (300.0, 3000.0)];
         let (vwap, volume) = compute_vwap_fixed(&prices);
         // VWAP = (100*1000 + 200*2000 + 300*3000) / (1000 + 2000 + 3000) ≈ 233.33
-        let expected_vwap = U256::in_units(233u128); // floor(233.33) * 1e18
-                                                     // Allow 1 unit tolerance due to fixed-point rounding
+        let expected_vwap = U256::from(233u128) * SCALE_1E18;
+        // Allow 1 unit tolerance due to fixed-point rounding
         assert!(vwap >= expected_vwap);
         assert!(vwap < expected_vwap + SCALE_1E18); // within 1.0
 
-        let expected_volume = U256::in_units(6000u128);
+        let expected_volume = U256::from(6000u128) * SCALE_1E18;
         assert_eq!(volume, expected_volume);
     }
 
@@ -310,12 +450,12 @@ mod tests {
         // Expected TVWAP = (100*3000 + 102*4000 + 101*3500) / (3000+4000+3500)
         //                = (300000 + 408000 + 353500) / 10500
         //                = 1061500 / 10500 ≈ 101.095238
-        let expected_min = U256::in_units(101u128);
-        let expected_max = U256::in_units(102u128);
+        let expected_min = U256::from(101u128) * SCALE_1E18;
+        let expected_max = U256::from(102u128) * SCALE_1E18;
         assert!(tvwap >= expected_min, "tvwap too low: {tvwap}");
         assert!(tvwap < expected_max, "tvwap too high: {tvwap}");
 
-        let expected_volume = U256::in_units(10500u128);
+        let expected_volume = U256::from(10500u128) * SCALE_1E18;
         assert_eq!(total_volume, expected_volume);
     }
 
@@ -545,11 +685,18 @@ mod tests {
 
         let coen = results.iter().find(|p| p.base == "COEN").unwrap();
         let eth = results.iter().find(|p| p.base == "ETH").unwrap();
-        let coen_price = coen.price.to::<u128>() as f64 / SCALE_1E18_U128 as f64;
+        let coen_price = coen.price.to::<u128>() as f64 / COEN_ISO_SCALE as f64;
         let eth_price = eth.price.to::<u128>() as f64 / SCALE_1E18_U128 as f64;
 
         assert_eq!(coen.quote, "840");
         assert_eq!(eth.quote, "840");
+        assert_eq!(coen.price, U256::from(COEN_ISO_SCALE));
+        assert_eq!(
+            coen.volume,
+            U256::from(1_000u64) * U256::from(COEN_ISO_SCALE)
+        );
+        assert_eq!(eth.price, U256::from(2_500u64) * SCALE_1E18);
+        assert_eq!(eth.volume, U256::from(1_000u64) * SCALE_1E18);
         assert!(
             (coen_price - 1.0).abs() < f64::EPSILON,
             "COEN used the wrong provider price: {coen_price}"
@@ -558,5 +705,37 @@ mod tests {
             (eth_price - 2500.0).abs() < f64::EPSILON,
             "ETH used the wrong provider price: {eth_price}"
         );
+    }
+
+    #[tokio::test]
+    async fn test_coen_iso_rejects_positive_price_below_one_price_unit() {
+        assert!(aggregate_coen_iso_ticker("840", 0.000_000_4, 1.0)
+            .await
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_coen_iso_clamps_positive_subunit_volume_to_one_unit() {
+        let prices = aggregate_coen_iso_ticker("840", 1.0, 0.000_000_4).await;
+        assert_eq!(prices.len(), 1);
+        assert_eq!(prices[0].price, U256::from(COEN_ISO_SCALE));
+        assert_eq!(prices[0].volume, U256::ONE);
+    }
+
+    #[tokio::test]
+    async fn test_coen_iso_preserves_real_zero_volume() {
+        let prices = aggregate_coen_iso_ticker("840", 1.0, 0.0).await;
+        assert_eq!(prices.len(), 1);
+        assert_eq!(prices[0].price, U256::from(COEN_ISO_SCALE));
+        assert_eq!(prices[0].volume, U256::ZERO);
+    }
+
+    #[tokio::test]
+    async fn test_every_coen_iso_market_uses_six_decimal_price_and_volume() {
+        let prices = aggregate_coen_iso_ticker("978", 1.25, 2.5).await;
+        assert_eq!(prices.len(), 1);
+        assert_eq!(prices[0].quote, "978");
+        assert_eq!(prices[0].price, U256::from(1_250_000u64));
+        assert_eq!(prices[0].volume, U256::from(2_500_000u64));
     }
 }

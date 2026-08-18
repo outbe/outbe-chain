@@ -19,7 +19,7 @@ contract FeeOnTransferToken is IERC20 {
 
     string public constant name = "Fee Token";
     string public constant symbol = "FEE";
-    uint8 public constant decimals = 18;
+    uint8 public constant decimals = 6;
 
     constructor(uint256 _feeBps) {
         feeBps = _feeBps;

@@ -97,9 +97,9 @@ contract WCOENDeploy is Script {
     }
 
     function _getDecimals() internal view returns (uint8) {
-        uint256 decimals_ = vm.envOr("TOKEN_DECIMALS", uint256(18));
-        if (decimals_ != 18) revert InvalidDecimals(decimals_);
-        return 18;
+        uint256 decimals_ = vm.envOr("TOKEN_DECIMALS", uint256(6));
+        if (decimals_ != 6) revert InvalidDecimals(decimals_);
+        return 6;
     }
 
     function _getSourceTokenSalt() internal pure returns (bytes32) {

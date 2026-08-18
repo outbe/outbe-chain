@@ -53,6 +53,20 @@ pub enum IntexFactoryError {
     BadContributorBatch,
     #[error("contributor payout would exceed the round amount for day {0}")]
     PayoutExceedsRound(u32),
+    #[error(
+        "currency {iso} day {worldwide_day} is indexed in bin {expected}, series priced into {got}"
+    )]
+    GroupBinMismatch {
+        iso: u16,
+        worldwide_day: outbe_common::WorldwideDay,
+        expected: u32,
+        got: u32,
+    },
+    #[error("currency {iso} day {worldwide_day} is already indexed")]
+    GroupAlreadyIndexed {
+        iso: u16,
+        worldwide_day: outbe_common::WorldwideDay,
+    },
 }
 
 impl From<IntexFactoryError> for PrecompileError {

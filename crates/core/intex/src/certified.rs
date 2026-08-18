@@ -396,11 +396,11 @@ mod tests {
                 worldwide_day,
                 expected_series_version: 0,
                 max_contributor_count: 4,
-                max_eligible_nominal_total: U256::from(100_000_000_000_000_000_000_u128),
+                max_eligible_nominal_total: U256::from(100_000_000_u128),
             },
             contributor_root: B256::repeat_byte(31),
             contributor_count: 3,
-            eligible_nominal_total: U256::from(75_000_000_000_000_000_000_u128),
+            eligible_nominal_total: U256::from(75_000_000_u128),
         }
     }
 
@@ -434,11 +434,11 @@ mod tests {
     #[test]
     fn mixed_exclusion_fixture_installs_only_eligible_contributor_commitment() {
         let eligible = [
-            contributor(0, 20_000_000_000_000_000_000),
-            contributor(1, 25_000_000_000_000_000_000),
-            contributor(3, 30_000_000_000_000_000_000),
+            contributor(0, 20_000_000),
+            contributor(1, 25_000_000),
+            contributor(3, 30_000_000),
         ];
-        let excluded = contributor(2, 40_000_000_000_000_000_000);
+        let excluded = contributor(2, 40_000_000);
         let mut provider = ActivationTestProvider::new();
         let mut input = input(20_260_723, 21);
         input.contributor_root = contributor_root(&eligible);
@@ -508,10 +508,7 @@ mod tests {
             .validate_projection(&projection, &poc_schema_limits())
             .unwrap();
         assert_eq!(receipt.contributor_count, 3);
-        assert_eq!(
-            receipt.eligible_nominal_total,
-            U256::from(75_000_000_000_000_000_000_u128)
-        );
+        assert_eq!(receipt.eligible_nominal_total, U256::from(75_000_000_u128));
 
         let events = provider.inner.get_ordered_events();
         assert_eq!(events.len(), 1);
@@ -529,7 +526,7 @@ mod tests {
 
     #[test]
     fn all_excluded_fixture_installs_the_canonical_empty_contributor_commitment() {
-        let excluded = contributor(0, 40_000_000_000_000_000_000);
+        let excluded = contributor(0, 40_000_000);
         let mut provider = ActivationTestProvider::new();
         let mut input = input(20_260_730, 28);
         input.contributor_root = contributor_root(&[]);
@@ -596,10 +593,7 @@ mod tests {
         let state = provider.inner.storage.clone();
         let events = provider.inner.get_ordered_events().to_vec();
 
-        let legacy_contributors = [(
-            Address::repeat_byte(7),
-            U256::from(75_000_000_000_000_000_000_u128),
-        )];
+        let legacy_contributors = [(Address::repeat_byte(7), U256::from(75_000_000_u128))];
         let record_result = StorageHandle::enter(&mut provider, |storage| {
             api::record_contributors(
                 &storage,
@@ -778,7 +772,7 @@ mod tests {
         assert_eq!(
             receipt_hash,
             alloy_primitives::b256!(
-                "8721d55001b4bdc6de3a78644cb6e46b84a36d1f0c2adf4add4636d758c8c534"
+                "a1172d14957d7ef87497a4fa7bc4bf57bc0a9a8e4348b3e8aff858b91cbd0074"
             )
         );
         assert_eq!(

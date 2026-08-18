@@ -75,6 +75,24 @@
     },
     {
       "type": "function",
+      "name": "applyMarkOne",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        },
+        {
+          "name": "msgType",
+          "type": "uint8",
+          "internalType": "uint8"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "auction",
       "inputs": [],
       "outputs": [
@@ -151,6 +169,19 @@
     {
       "type": "function",
       "name": "flushPendingIssuanceMint",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
+      "name": "flushPendingMark",
       "inputs": [
         {
           "name": "idx",
@@ -325,6 +356,19 @@
     },
     {
       "type": "function",
+      "name": "nextPendingMarkIdx",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "nftBridge",
       "inputs": [],
       "outputs": [
@@ -432,6 +476,40 @@
           "name": "quantity",
           "type": "uint256",
           "internalType": "uint256"
+        },
+        {
+          "name": "exists",
+          "type": "bool",
+          "internalType": "bool"
+        },
+        {
+          "name": "done",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "pendingMarks",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        },
+        {
+          "name": "msgType",
+          "type": "uint8",
+          "internalType": "uint8"
         },
         {
           "name": "exists",
@@ -1055,6 +1133,62 @@
     },
     {
       "type": "event",
+      "name": "MarkDeferred",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "indexed": true,
+          "internalType": "bytes14"
+        },
+        {
+          "name": "msgType",
+          "type": "uint8",
+          "indexed": true,
+          "internalType": "uint8"
+        },
+        {
+          "name": "reason",
+          "type": "bytes",
+          "indexed": false,
+          "internalType": "bytes"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "MarkFlushed",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "indexed": true,
+          "internalType": "uint256"
+        },
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "indexed": true,
+          "internalType": "bytes14"
+        },
+        {
+          "name": "msgType",
+          "type": "uint8",
+          "indexed": true,
+          "internalType": "uint8"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
       "name": "MarkQualifiedReceived",
       "inputs": [
         {
@@ -1495,6 +1629,17 @@
     {
       "type": "error",
       "name": "NoSuchPendingIssuanceMint",
+      "inputs": [
+        {
+          "name": "idx",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "NoSuchPendingMark",
       "inputs": [
         {
           "name": "idx",

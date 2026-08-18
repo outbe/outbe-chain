@@ -7,7 +7,6 @@
 pub mod api;
 pub mod constants;
 pub mod errors;
-pub mod hooks;
 pub mod ocomp_budget;
 pub mod precompile;
 pub(crate) mod runtime;
@@ -19,8 +18,7 @@ pub(crate) mod state;
 mod tests;
 
 pub use errors::DesisError;
-pub use hooks::DesisLifecycle;
-pub use runtime::tick_schedule;
+pub use runtime::{tick_gate, tick_schedule};
 pub use schema::{
     AuctionConfig, AuctionStage, BidData, ClearingResult, DesisContract, ReferenceCurrencyPrice,
 };

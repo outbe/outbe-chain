@@ -5,7 +5,7 @@ use outbe_compressed_entities::{
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::math::{
-    price_helper,
+    reference_price,
     tree_math::{self, BinTreeStorage},
 };
 
@@ -266,23 +266,21 @@ impl NodContract<'_> {
 
     // --- Bin index helpers (PancakeSwap LB-style ladder) -------------------
 
-    /// Maps a 1e18-scaled `floor_price_minor` (or oracle rate) to a 24-bit
+    /// Maps a six-decimal `floor_price_minor` (or oracle rate) to a 24-bit
     /// bin id on the LB log-spaced ladder. Saturates to `[0, MAX_BIN_ID]` —
     /// see `lb_math::get_id_from_price` for the deviation from LB's revert.
     pub fn price_to_bin(price_minor: U256) -> Result<u32> {
         if price_minor.is_zero() {
             return Ok(0);
         }
-        let p_128x128 = price_helper::convert_decimal_price_to_128x128(price_minor)?;
-        price_helper::get_id_from_price(p_128x128, BIN_STEP_BP)
+        reference_price::coen_iso_price_to_bin_id(price_minor, BIN_STEP_BP)
     }
 
     /// Inverse of `price_to_bin`: returns the lower edge of bin `bin_id` in
-    /// 1e18-scaled minor units. Diagnostic-only — `bin_to_price_floor` may
+    /// six-decimal minor units. Diagnostic-only — `bin_to_price_floor` may
     /// fail at extreme bin ids whose LB-pow exponent exceeds `2^20`.
     pub fn bin_to_price_floor(bin_id: u32) -> Result<U256> {
-        let p_128x128 = price_helper::get_price_from_id(bin_id, BIN_STEP_BP)?;
-        price_helper::convert_128x128_price_to_decimal(p_128x128)
+        reference_price::bin_id_to_coen_iso_price(bin_id, BIN_STEP_BP)
     }
 
     /// Namespaces a bin-column key by the bucket's reference currency.

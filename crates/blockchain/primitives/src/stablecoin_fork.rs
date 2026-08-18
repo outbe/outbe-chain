@@ -19,8 +19,8 @@ pub const STABLECOIN_V1_SUPPORTED_NETWORKS: [&str; 2] = [
 pub const STABLECOIN_V1_MAINNET_STATUS: &str =
     "unsupported-until-chain-id-fresh-genesis-and-release-gates-are-frozen";
 
-/// Exact StablecoinCreate proposal bond: 1,000,000 COEN at 18 decimals.
-pub const STABLECOIN_CREATE_BOND: U256 = uint!(1_000_000_000_000_000_000_000_000_U256);
+/// Exact StablecoinCreate proposal bond: 1,000,000 COEN in six-decimal `unit`.
+pub const STABLECOIN_CREATE_BOND: U256 = uint!(1_000_000_000_000_U256);
 
 /// Public bonded proposals may consume at most one quarter of Vote's 64-slot
 /// global pending index, preserving 48 slots for validator governance.
@@ -129,4 +129,14 @@ pub const fn stablecoin_v1_budget_for_measurement(measured_gas: u64) -> Option<u
         None => return None,
     };
     rounded.checked_mul(budgets.gas_rounding_quantum)
+}
+
+#[cfg(test)]
+mod denomination_tests {
+    use super::*;
+
+    #[test]
+    fn stablecoin_create_bond_is_one_million_six_decimal_coen() {
+        assert_eq!(STABLECOIN_CREATE_BOND, U256::from(1_000_000_000_000u64));
+    }
 }

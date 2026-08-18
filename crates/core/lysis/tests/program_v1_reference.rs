@@ -9,9 +9,10 @@ use outbe_lysis::program_v1::{
     execute, FidelityPhaseV1, ObservationValueV1, ObservedTributeV1, ProgramErrorV1,
     ProgramInputV1, ProgramResultV1, SemanticObservationV1, TributeInputV1,
 };
-use outbe_primitives::units::SCALE_1E18;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
+
+const SIX_DECIMAL_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -127,7 +128,7 @@ fn group_table(input: &CorpusInput, result: &ProgramResultV1) -> Vec<Value> {
         .map(|(league, (nominal, population))| {
             (
                 *league,
-                *nominal * SCALE_1E18 / result.total_nominal,
+                *nominal * SIX_DECIMAL_SCALE / result.total_nominal,
                 *population,
             )
         })
@@ -136,8 +137,8 @@ fn group_table(input: &CorpusInput, result: &ProgramResultV1) -> Vec<Value> {
         .iter()
         .fold(U256::ZERO, |sum, (_, share, _)| sum + *share);
     if let Some((_, share, _)) = shares.last_mut() {
-        if share_sum < SCALE_1E18 {
-            *share += SCALE_1E18 - share_sum;
+        if share_sum < SIX_DECIMAL_SCALE {
+            *share += SIX_DECIMAL_SCALE - share_sum;
         }
     }
     shares
@@ -271,6 +272,7 @@ fn failure_json(error: ProgramErrorV1) -> Value {
         }
         ProgramErrorV1::Arithmetic { .. } => ("ARITHMETIC", None, None),
         ProgramErrorV1::ZeroGratisLoad { ordinal } => ("ZERO_GRATIS_LOAD", Some(ordinal), None),
+        ProgramErrorV1::ZeroCost { ordinal } => ("ZERO_COST", Some(ordinal), None),
         ProgramErrorV1::GratisLoadExceedsRemaining { ordinal } => {
             ("GRATIS_LOAD_EXCEEDS_REMAINING", Some(ordinal), None)
         }
@@ -351,7 +353,7 @@ fn boundary_record_counts_keep_raw_id_order() {
                         owner,
                         worldwide_day: day,
                         issuance_currency: 840,
-                        nominal_amount_minor: U256::from(1_000_000_u64) * SCALE_1E18,
+                        nominal_amount_minor: U256::from(1_000_000_u64) * SIX_DECIMAL_SCALE,
                         reference_currency: 840,
                         tribute_price_minor: U256::ZERO,
                         exclude_from_intex_issuance: false,
@@ -364,12 +366,12 @@ fn boundary_record_counts_keep_raw_id_order() {
             })
             .collect::<Vec<_>>();
         tributes.reverse();
-        let nominal = U256::from(count) * U256::from(1_000_000_u64) * SCALE_1E18;
+        let nominal = U256::from(count) * U256::from(1_000_000_u64) * SIX_DECIMAL_SCALE;
         let result = execute(ProgramInputV1 {
             worldwide_day: day,
             logical_evaluation_time: 1_784_765_900,
             gratis_allocation: nominal * U256::from(32_u8) / U256::from(100_u8),
-            mandatory_entry_price_840: ObservationValueV1::Value(SCALE_1E18),
+            mandatory_entry_price_840: ObservationValueV1::Value(SIX_DECIMAL_SCALE),
             tributes,
         })
         .expect("31/32/33 bounded shapes execute");

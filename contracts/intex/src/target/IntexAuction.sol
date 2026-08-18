@@ -293,7 +293,7 @@ contract IntexAuction is
         emit BidCommitted(worldwideDay, msg.sender, commitHash);
 
         // Interactions: take the entry bond (CEI — commit state is already recorded; a lock
-        // revert rolls back the whole tx). Requires prior wCOEN approval on the escrow.
+        // revert rolls back the whole tx). Requires prior WCOEN approval on the escrow.
         uint128 bond = a.params.commitBondMinor;
         if (bond > 0) {
             $.escrowContract.lockCommitBond(worldwideDay, msg.sender, bond);
@@ -371,16 +371,16 @@ contract IntexAuction is
         if (quantity == 0 || bidRate == 0) revert ZeroValue("quantity/bidRate");
         if (quantity < a.params.minIntexBidQuantity) revert BidBelowMinIntexBidQuantity();
         if (bidRate < a.params.minIntexBidRate) revert BidBelowMinIntexBidRate();
-        if (bidRate > BridgeMsgCodec.RATE_SCALE) revert BidRateAboveMax(bidRate);
+        if (bidRate > BridgeMsgCodec.SCALE_1E6) revert BidRateAboveMax(bidRate);
         // Issuance is the bidder's own label: only its range is checked, since the network keeps
         // no list of issuance currencies. Reference must be one the day actually prices.
         if (issuanceCurrency == 0 || issuanceCurrency > 999) revert InvalidIssuanceCurrency(issuanceCurrency);
         _requirePriced(a.params.prices, worldwideDay, referenceCurrency);
 
-        // Escrow lock in wCOEN = qty * escrowBasis * rate / RATE_SCALE; escrowBasis = promis_load
+        // Escrow lock in WCOEN = qty * escrowBasis * rate / 1e6; escrowBasis = promis_load
         // per Intex. 256-bit math so an over-range product reverts typed, not via Panic(0x11).
         uint256 escrowBasis = a.params.promisLoadMinor;
-        uint256 lockAmount = uint256(quantity) * escrowBasis * bidRate / BridgeMsgCodec.RATE_SCALE;
+        uint256 lockAmount = uint256(quantity) * escrowBasis * bidRate / BridgeMsgCodec.SCALE_1E6;
         if (lockAmount > type(uint128).max) revert BidAmountOverflow(quantity, bidRate);
 
         // Verify the signature against the stored commit hash.

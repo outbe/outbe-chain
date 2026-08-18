@@ -23,7 +23,7 @@ impl Promis<'_> {
     }
 
     pub fn decimals(&self) -> u8 {
-        18
+        6
     }
 
     // --- Plaintext aggregate (non-attributable) ---

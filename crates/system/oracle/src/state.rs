@@ -8,11 +8,11 @@ use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::error::Result;
+use outbe_primitives::math::reference_price::is_coen_iso_market;
 
-use crate::constants::MAX_SNAPSHOT_RETENTION_SECONDS;
+use crate::constants::{reciprocal_scale, zero_volume_weight, MAX_SNAPSHOT_RETENTION_SECONDS};
 use crate::errors::OracleError;
-use crate::schema::{OracleContract, PairIndex, SCALE_1E18};
-use outbe_primitives::units::ONE_COEN;
+use crate::schema::{OracleContract, PairIndex};
 
 /// `(exists, bases, quotes, rates, volumes)` — pending aggregate vote.
 type AggregateVote = (bool, Vec<Address>, Vec<Address>, Vec<U256>, Vec<U256>);
@@ -30,17 +30,17 @@ type SnapshotHistory = (
 /// `(start_time, end_time, bases, quotes, vwaps, lookbacks)` — stored WWD VWAP snapshot.
 type WorldwideDayVwapSnapshot = (u64, u64, Vec<Address>, Vec<Address>, Vec<U256>, Vec<u64>);
 
-/// The reciprocal of a 1e18-scaled rate, in the same scale.
+/// The reciprocal of a rate, in that market's canonical price scale.
 ///
 /// Zero has no reciprocal and stays zero, so "no rate published" reads the same
-/// from either side of the market instead of dividing by zero. A rate above
-/// `1e36` floors to zero for the same reason it would in Solidity; nothing that
-/// large is a real price.
-fn invert_rate(rate: U256) -> U256 {
+/// from either side of the market instead of dividing by zero. A rate above the
+/// market's `scale^2` floors to zero for the same reason it would in Solidity.
+fn invert_rate(pair: AddressPair, rate: U256) -> U256 {
     if rate.is_zero() {
         U256::ZERO
     } else {
-        SCALE_1E18 * ONE_COEN / rate
+        let scale = reciprocal_scale(pair);
+        scale * scale / rate
     }
 }
 
@@ -201,8 +201,9 @@ impl OracleContract<'_> {
     // Exchange Rate Read/Write
     // -----------------------------------------------------------------------
 
-    /// Returns the current exchange rate for a market (1e18 scaled), quoted in
-    /// the caller's direction.
+    /// Returns the current exchange rate in the market's canonical scale,
+    /// quoted in the caller's direction. COEN/ISO uses six decimals; generic
+    /// markets retain their decimal18 contract.
     ///
     /// Only the canonical direction is stored, so quoting the market backwards
     /// returns the reciprocal. This is the one read that answers either quote
@@ -211,13 +212,10 @@ impl OracleContract<'_> {
         let pair = AddressPair::from_addresses(base, quote);
         let index = self.require_pair_index(pair.to_canonical())?;
         let stored = self.exchange_rate.read(&index)?;
-        if stored == U256::ZERO {
-            return Err(OracleError::NoRateForPair { pair }.into());
-        }
         let rate = if pair.is_canonical() {
             stored
         } else {
-            invert_rate(stored)
+            invert_rate(pair, stored)
         };
         Ok(rate)
     }
@@ -238,7 +236,7 @@ impl OracleContract<'_> {
         Ok((rate, block, ts))
     }
 
-    /// Annualized currency rate (1e18 scaled) for an ISO 4217 code, as pinned
+    /// Annualized currency rate (scale `1e6`) for an ISO 4217 code, as pinned
     /// on the reference-currency collection at genesis. Reverts when the code is
     /// not a registered reference currency or carries no (non-zero) rate.
     pub fn get_currency_rate(&self, iso_code: u16) -> Result<U256> {
@@ -398,7 +396,9 @@ impl OracleContract<'_> {
         timestamp: u64,
         entries: &[(AddressPair, U256, U256)],
     ) -> Result<()> {
-        if self.ocomp_profile_ready.read()? {
+        let requires_atomic_scale6_write =
+            entries.iter().any(|(pair, _, _)| is_coen_iso_market(*pair));
+        if self.ocomp_profile_ready.read()? || requires_atomic_scale6_write {
             let storage = self.storage.clone();
             storage.with_checkpoint(|| self.write_snapshot_inner(timestamp, entries))
         } else {
@@ -436,17 +436,35 @@ impl OracleContract<'_> {
         let utc_day_ts = timestamp - (timestamp % 86_400);
         for (pair, rate, volume) in entries {
             let vol = if volume.is_zero() {
-                SCALE_1E18
+                zero_volume_weight(*pair)
             } else {
                 *volume
             };
-            let pv = rate.checked_mul(vol).unwrap_or(U256::MAX);
             let day_pv = self.daily_pv_sum.get_nested(pair);
             let day_vol = self.daily_vol_sum.get_nested(pair);
             let prev_pv = day_pv.read(&utc_day_ts).unwrap_or(U256::ZERO);
             let prev_vol = day_vol.read(&utc_day_ts).unwrap_or(U256::ZERO);
-            day_pv.write(&utc_day_ts, prev_pv.saturating_add(pv))?;
-            day_vol.write(&utc_day_ts, prev_vol.saturating_add(vol))?;
+            if is_coen_iso_market(*pair) {
+                let pv = rate
+                    .checked_mul(vol)
+                    .ok_or(OracleError::VwapOverflow("rate * volume"))?;
+                day_pv.write(
+                    &utc_day_ts,
+                    prev_pv
+                        .checked_add(pv)
+                        .ok_or(OracleError::VwapOverflow("sum accumulation"))?,
+                )?;
+                day_vol.write(
+                    &utc_day_ts,
+                    prev_vol
+                        .checked_add(vol)
+                        .ok_or(OracleError::VwapOverflow("volume sum"))?,
+                )?;
+            } else {
+                let pv = rate.checked_mul(vol).unwrap_or(U256::MAX);
+                day_pv.write(&utc_day_ts, prev_pv.saturating_add(pv))?;
+                day_vol.write(&utc_day_ts, prev_vol.saturating_add(vol))?;
+            }
         }
 
         // Evict old entries beyond retention window

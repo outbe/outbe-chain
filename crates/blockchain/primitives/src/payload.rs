@@ -16,6 +16,24 @@ use crate::{
     OutbeBlock, OutbeHeader, OutbePrimitives,
 };
 
+/// Outbe does not use EIP-4895 withdrawals as a native-COEN issuance path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("non-empty EIP-4895 withdrawals are unsupported on Outbe")]
+pub struct NonEmptyWithdrawalsError;
+
+/// Accepts an absent or empty EIP-4895 list and rejects every non-empty list.
+///
+/// The Ethereum wire shape remains intact; callers adapt this protocol verdict
+/// into their local Engine, consensus, or execution error domain.
+pub fn validate_outbe_withdrawals(
+    withdrawals: Option<&[Withdrawal]>,
+) -> Result<(), NonEmptyWithdrawalsError> {
+    match withdrawals {
+        Some(withdrawals) if !withdrawals.is_empty() => Err(NonEmptyWithdrawalsError),
+        _ => Ok(()),
+    }
+}
+
 /// RPC payload attributes extended with an encoded millisecond timestamp remainder.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -357,6 +375,28 @@ mod tests {
         assert_eq!(attrs.timestamp(), 42);
         assert_eq!(attrs.timestamp_millis_part(), 123);
         assert_eq!(attrs.timestamp_millis(), 42_123);
+    }
+
+    #[test]
+    fn outbe_withdrawals_allow_only_absent_or_empty_lists() {
+        assert_eq!(validate_outbe_withdrawals(None), Ok(()));
+
+        let empty: [Withdrawal; 0] = [];
+        assert_eq!(validate_outbe_withdrawals(Some(&empty)), Ok(()));
+
+        for amount in [0, 1, 1_000, u64::MAX] {
+            let withdrawals = [Withdrawal {
+                index: 0,
+                validator_index: 0,
+                address: Address::ZERO,
+                amount,
+            }];
+            assert_eq!(
+                validate_outbe_withdrawals(Some(&withdrawals)),
+                Err(NonEmptyWithdrawalsError),
+                "amount {amount} must not affect the non-empty-list verdict"
+            );
+        }
     }
 
     #[test]

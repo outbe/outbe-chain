@@ -38,7 +38,7 @@ fn seed_validator_set(storage: StorageHandle, initial_epoch: u64) {
         storage,
         Address::ZERO,
         outbe_oracle::api::DAY_TYPE_PAIR,
-        U256::from(1_000_000_000_000_000_000u128),
+        U256::from(1_000_000u64),
         0,
         0,
     )

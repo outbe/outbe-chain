@@ -11,25 +11,25 @@ export const OUTBE_CHAINS = {
   outbeDevnet: defineChain({
     id: 424242,
     name: "Outbe Dev",
-    nativeCurrency: { decimals: 18, name: "COEN", symbol: "COEN" },
+    nativeCurrency: { decimals: 6, name: "COEN", symbol: "COEN" },
     rpcUrls: { default: { http: ["https://eth.d.outbe.net"] } },
   }),
   outbePrivnet: defineChain({
     id: 512512,
     name: "Outbe Priv",
-    nativeCurrency: { decimals: 18, name: "COEN", symbol: "COEN" },
+    nativeCurrency: { decimals: 6, name: "COEN", symbol: "COEN" },
     rpcUrls: { default: { http: ["https://eth.p.outbe.net"] } },
   }),
   outbeTestnet: defineChain({
     id: 512215,
     name: "Outbe Testnet",
-    nativeCurrency: { decimals: 18, name: "COEN", symbol: "COEN" },
+    nativeCurrency: { decimals: 6, name: "COEN", symbol: "COEN" },
     rpcUrls: { default: { http: ["https://eth.testnet.outbe.net"] } },
   }),
   outbeTestnetNew: defineChain({
     id: 54322345,
     name: "Outbe Testnet New",
-    nativeCurrency: { decimals: 18, name: "COEN", symbol: "COEN" },
+    nativeCurrency: { decimals: 6, name: "COEN", symbol: "COEN" },
     rpcUrls: { default: { http: ["https://rpc.testnet.outbe.net"] } },
   }),
 } as const;

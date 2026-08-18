@@ -16,7 +16,7 @@ const CHAIN_ID: u64 = 1;
 const REFERENCE_ISO: u16 = 840;
 const WORLDWIDE_DAY: WorldwideDay = WorldwideDay::new(20260101);
 const NEXT_WORLDWIDE_DAY: WorldwideDay = WorldwideDay::new(20260102);
-const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
+const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
 /// The single default target chain the auction fans in from (matches `src_chain_id` in the calls).
 const SRC_CHAIN: u32 = 1;
 /// Block timestamp the tests brief at: just after a midnight, so the brief
@@ -24,7 +24,7 @@ const SRC_CHAIN: u32 = 1;
 const NOW: u64 = 1_699_920_000 + 5;
 const ANCHOR: u64 = NOW - NOW % 86_400;
 const LOAD_MINOR: u128 = crate::constants::PROMIS_LOAD * PROMIS_LOAD_MINOR;
-const ENTRY_PRICE: u128 = 2_000_000_000_000_000; // 2e15 (entry feeds floor/call; escrow basis = promis_load)
+const ENTRY_PRICE: u128 = 2_000_000; // 2.0 on the COEN/840 scale; escrow basis = promis_load
 
 fn bidder(n: u8) -> Address {
     let mut bytes = [0u8; 20];
@@ -773,7 +773,11 @@ fn schedule_starts_a_green_brief() {
             AuctionStage::Started
         );
         let cfg = contract.read_auction_config(WORLDWIDE_DAY).unwrap();
-        assert!(cfg.commit_bond_minor > 0, "profile folded at start");
+        assert_eq!(
+            cfg.commit_bond_minor,
+            100_000_000u128 * 1_000_000u128,
+            "production commit bond is denominated in WCOEN-unit"
+        );
     });
 }
 
@@ -1505,7 +1509,7 @@ fn clear_refunds_equal_locked_minus_paid() {
         .unwrap();
         mark_done(&s, SRC_CHAIN, 1, 1, 2);
         let result = clear(&s);
-        // escrow basis = promis_load; lock/pay = qty * basis * rate / RATE_SCALE.
+        // escrow basis = promis_load; lock/pay = qty * basis * rate / 1_000_000.
         // Winner (rate 300): paid at clearing 300, refund 0. Loser (rate 200): refund = its lock.
         let w_idx = result
             .all_bidders
@@ -1526,7 +1530,7 @@ fn clear_refunds_equal_locked_minus_paid() {
 
 #[test]
 fn clear_rate_escrow_scales_by_basis() {
-    // escrow basis != RATE_SCALE, so this exercises the * basis / RATE_SCALE.
+    // escrow basis != 1_000_000, so this exercises the scaled division.
     with_storage(|s| {
         open_clearing(&s, 2);
         let rate_bids = vec![
@@ -2010,7 +2014,7 @@ fn escrow_basis_is_promis_load() {
     // wCOEN escrow basis = promis_load per Intex; entry no longer drives it.
     let cfg = AuctionConfig::from_reference_prices(vec![crate::schema::ReferenceCurrencyPrice {
         iso_code: REFERENCE_ISO,
-        entry_price_minor: U256::from(1_000_000_150_000_000u128),
+        entry_price_minor: U256::from(1_000_150u64),
     }]);
     assert_eq!(cfg.escrow_basis_minor(), cfg.promis_load_minor);
 }
