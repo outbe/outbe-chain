@@ -129,3 +129,5 @@ T5	scripts.test_seed_genesis_protocol_constants::test_checked_in_seed_profiles_u
 T5	mcp::denomination.test.ts::Outbe chain metadata declares six native decimals	nativeCurrency.decimals is 6	metadata declares 18	mcp/src/chain.ts	P5
 T5	mcp::denomination.test.ts::MCP formats native monetary fields at scale6 and leaves dimensionless FP18 alone	1500000 balance formats as 1.5 while rewardBand remains FP18	balance formats as 0.0000000000015	mcp/src/format.ts	P5
 T5	mcp::denomination.test.ts::MCP signed COEN inputs convert whole amounts to six-decimal units	1.5 encodes as 1500000 for stake, unstake and claim	first checked call encodes 1500000000000000000	mcp/src/tools/sign.ts	P5
+T5	mcp::denomination.test.ts::BSC chain metadata retains eighteen native decimals	BSC chain context declares BNB with 18 decimals	generic createCtx declares COEN with 18 decimals for BSC	mcp/src/chain.ts	P5
+T5	mcp::denomination.test.ts::network-native parsing and formatting follows chain metadata	Outbe native uses P6 while BSC native uses P18	network-aware native conversion helpers are absent	mcp/src/chain.ts and mcp/src/tools/intent.ts	P5

@@ -13,20 +13,29 @@ import {
   zeroHash,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { type Ctx, createCtx } from "./chain.js";
+import {
+  type Ctx,
+  createCtx,
+  formatNativeAmount,
+  parseNativeAmount,
+} from "./chain.js";
 import { formatParam } from "./format.js";
 import { humanizeOrder } from "./intent/format.js";
 import { resolveContract } from "./registry.js";
 import { registerSignTools } from "./tools/sign.js";
 
-test("Outbe chain metadata declares six native decimals", async () => {
+async function withChainIdRpc<T>(chainId: number, run: (rpcUrl: string) => Promise<T>): Promise<T> {
   const rpc = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     const payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as
       | { id: number }
       | { id: number }[];
-    const reply = (item: { id: number }) => ({ jsonrpc: "2.0", id: item.id, result: "0x539" });
+    const reply = (item: { id: number }) => ({
+      jsonrpc: "2.0",
+      id: item.id,
+      result: `0x${chainId.toString(16)}`,
+    });
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify(Array.isArray(payload) ? payload.map(reply) : reply(payload)));
   });
@@ -36,12 +45,35 @@ test("Outbe chain metadata declares six native decimals", async () => {
   try {
     const address = rpc.address();
     assert(address && typeof address === "object");
-    const ctx = await createCtx(`http://127.0.0.1:${address.port}`);
-    assert.equal(ctx.chain.nativeCurrency.decimals, 6);
+    return await run(`http://127.0.0.1:${address.port}`);
   } finally {
     rpc.close();
     await once(rpc, "close");
   }
+}
+
+test("Outbe chain metadata declares six native decimals", async () => {
+  await withChainIdRpc(54_322_345, async (rpcUrl) => {
+    const ctx = await createCtx(rpcUrl);
+    assert.deepEqual(ctx.chain.nativeCurrency, { name: "COEN", symbol: "COEN", decimals: 6 });
+  });
+});
+
+test("BSC chain metadata retains eighteen native decimals", async () => {
+  await withChainIdRpc(97, async (rpcUrl) => {
+    const ctx = await createCtx(rpcUrl);
+    assert.deepEqual(ctx.chain.nativeCurrency, { name: "BNB", symbol: "BNB", decimals: 18 });
+  });
+});
+
+test("network-native parsing and formatting follows chain metadata", () => {
+  const outbe = { nativeCurrency: { decimals: 6 } } as Chain;
+  const bsc = { nativeCurrency: { decimals: 18 } } as Chain;
+
+  assert.equal(parseNativeAmount(outbe, "1.5"), 1_500_000n);
+  assert.equal(formatNativeAmount(outbe, 1_500_000n), "1.5");
+  assert.equal(parseNativeAmount(bsc, "1.5"), 1_500_000_000_000_000_000n);
+  assert.equal(formatNativeAmount(bsc, 1_500_000_000_000_000_000n), "1.5");
 });
 
 test("MCP formats native monetary fields at scale6 and leaves dimensionless FP18 alone", () => {
