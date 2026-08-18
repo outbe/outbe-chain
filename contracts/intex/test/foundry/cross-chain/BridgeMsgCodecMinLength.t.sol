@@ -54,7 +54,7 @@ contract BridgeMsgCodecMinLengthTest is Test {
         returns (bytes memory)
     {
         return BridgeMsgCodec.encodeAuctionStageStart(
-            20_250_101, 100, 200, 300, 1e18, 1e6, rows, 5, 6, 7, 1, 9e18, dayState
+            20_250_101, 100, 200, 300, 1e6, 1e6, rows, 5, 6, 7, 1, 9e6, dayState
         );
     }
 

@@ -35,8 +35,8 @@ contract AuctionTest is Test {
     uint32 internal constant RATE_SCALE = 1_000_000;
     // wCOEN escrow: the per-Intex escrow basis is PROMIS_LOAD_MINOR (constant COEN), so the lock is
     // `qty * PROMIS_LOAD_MINOR * rate / RATE_SCALE`. ENTRY_PRICE feeds only floor/call now.
-    uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e18;
-    uint64 internal constant ENTRY_PRICE = 1e13;
+    uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e6;
+    uint64 internal constant ENTRY_PRICE = 1e6;
 
     // Schedule offsets relative to the auction-start timestamp.
     uint32 constant COMMIT_OFFSET = 100;

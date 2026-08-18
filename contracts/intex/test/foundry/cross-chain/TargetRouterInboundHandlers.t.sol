@@ -35,7 +35,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
     uint32 internal constant WORLDWIDE_DAY = 20250101; // yyyymmdd — the auction day (root)
     bytes14 internal constant SERIES_ID = "20250101-USD-U";
     uint32 internal constant ISSUED_INTEX_COUNT = 100;
-    uint128 internal constant PROMIS_LOAD_MINOR = 1000;
+    uint128 internal constant PROMIS_LOAD_MINOR = 1e6;
     uint64 internal constant ENTRY_PRICE = 100e6;
     uint64 internal constant FLOOR_PRICE_MINOR = 40e6;
     uint16 internal constant REFERENCE_CURRENCY = 840;
@@ -81,7 +81,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         escrow.grantRole(escrow.RELAYER_ROLE(), address(bnbRouter));
 
         // Bidder funds + approve so EscrowAdapter.lockFunds works in the REFUND_INSTRUCTIONS test.
-        paymentToken.mint(bidder, 1e24);
+        paymentToken.mint(bidder, 10_000e6);
         vm.prank(bidder);
         paymentToken.approve(address(escrow), type(uint256).max);
     }

@@ -37,9 +37,9 @@ contract IntexAuctionFuzzTest is Test {
     uint16 internal constant MIN_QTY = 1;
     uint32 internal constant MIN_RATE = 10;
     uint32 internal constant RATE_SCALE = 1_000_000;
-    uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e18;
+    uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e6;
     // Escrow basis == promis_load per Intex; lock = qty * ESCROW_BASIS * rate / RATE_SCALE.
-    uint64 internal constant ENTRY_PRICE = 1e19;
+    uint64 internal constant ENTRY_PRICE = 1e6;
     uint128 internal constant ESCROW_BASIS = PROMIS_LOAD_MINOR;
 
     function setUp() public {

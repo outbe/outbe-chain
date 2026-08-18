@@ -22,7 +22,7 @@ contract IntexNFT1155MetadataTest is Test {
     uint64 internal constant ENTRY_PRICE = 1e6;
     uint64 internal constant FLOOR_PRICE = (ENTRY_PRICE * 108) / 100;
     uint64 internal constant CALL_PRICE = (ENTRY_PRICE * 228) / 100;
-    uint128 internal constant PROMIS_LOAD = 100_000e18;
+    uint128 internal constant PROMIS_LOAD = 100_000e6;
 
     address internal admin = makeAddr("admin");
     address internal bridger = makeAddr("bridger");

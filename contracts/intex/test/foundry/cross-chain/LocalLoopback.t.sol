@@ -141,7 +141,8 @@ contract SyncTokenBridge {
 ///      the walk: the test doubles as the budget check.
 contract LocalLoopbackTest is Test {
     uint32 internal constant DAY = 20260714;
-    uint128 internal constant PROMIS_LOAD_MINOR = 1000;
+    uint128 internal constant PROMIS_LOAD_MINOR = 1e6;
+    uint256 internal constant INITIAL_WCOEN_BALANCE = 100e6;
 
     bytes32 internal constant REVEAL_BID_TYPEHASH = keccak256(
         "RevealBid(uint32 worldwideDay,address bidder,uint16 quantity,uint32 bidRate,uint16 issuanceCurrency,uint16 referenceCurrency)"
@@ -189,7 +190,7 @@ contract LocalLoopbackTest is Test {
         factory = new RecordingFactory();
         wcoen = new WCOEN();
         tokenBridge = new SyncTokenBridge(IERC20(address(wcoen)));
-        vm.deal(address(wcoen), 1e18); // native backing for the unwrap
+        vm.deal(address(wcoen), INITIAL_WCOEN_BALANCE * 2); // native backing for both unwrap paths
 
         escrow = DeployProxy.escrowAdapter(address(this), address(this));
         compact = new MockTheCompact();
@@ -213,8 +214,8 @@ contract LocalLoopbackTest is Test {
         intex.grantRole(intex.RELAYER_ROLE(), address(target));
         escrow.grantRole(escrow.RELAYER_ROLE(), address(target));
 
-        wcoen.mint(iba1, 1e18);
-        wcoen.mint(iba2, 1e18);
+        wcoen.mint(iba1, INITIAL_WCOEN_BALANCE);
+        wcoen.mint(iba2, INITIAL_WCOEN_BALANCE);
         vm.prank(iba1);
         wcoen.approve(address(escrow), type(uint256).max);
         vm.prank(iba2);
@@ -228,7 +229,7 @@ contract LocalLoopbackTest is Test {
         p.issuanceEnd = uint32(startTs + 300);
         p.promisLoadMinor = PROMIS_LOAD_MINOR;
         p.minIntexBidRate = 600_000;
-        p.prices = ReferenceCurrencyPriceLib.one(840, 1e4, 100, 200);
+        p.prices = ReferenceCurrencyPriceLib.one(840, 1e6, 100, 200);
         p.minIntexBidQuantity = 1;
         p.dayState = 1;
     }
@@ -277,8 +278,8 @@ contract LocalLoopbackTest is Test {
         assertEq(uint8(auction.getAuctionStage(DAY)), uint8(IIntexAuction.AuctionStage.RevealingBids), "not revealing");
         _commitAndReveal(iba1, 30, 800_000, iba1Pk);
         _commitAndReveal(iba2, 40, 700_000, iba2Pk);
-        assertEq(uint256(escrow.getBidLock(DAY, iba1).lockedAmount), 24_000, "iba1 lock");
-        assertEq(uint256(escrow.getBidLock(DAY, iba2).lockedAmount), 28_000, "iba2 lock");
+        assertEq(uint256(escrow.getBidLock(DAY, iba1).lockedAmount), 24e6, "iba1 lock");
+        assertEq(uint256(escrow.getBidLock(DAY, iba2).lockedAmount), 28e6, "iba2 lock");
 
         // 4. CLEARING: the delivery itself fires the nested bids relay (BIDS_BATCH + BIDS_DONE)
         //    back through the loopback to the origin — three chained same-tx deliveries.
@@ -307,21 +308,21 @@ contract LocalLoopbackTest is Test {
         bidders[0] = iba1;
         bidders[1] = iba2;
         uint128[] memory refunded = new uint128[](2);
-        refunded[0] = 3_000; // lock 24k − paid 30·1000·0.7
-        refunded[1] = 14_000; // lock 28k − paid 20·1000·0.7
+        refunded[0] = 3e6; // lock 24 WCOEN − paid 30·1·0.7
+        refunded[1] = 14e6; // lock 28 WCOEN − paid 20·1·0.7
         uint128[] memory paid = new uint128[](2);
-        paid[0] = 21_000;
-        paid[1] = 14_000;
+        paid[0] = 21e6;
+        paid[1] = 14e6;
         vm.prank(address(desis));
         origin.sendRefundInstructions(local, DAY, 0, 1, bidders, refunded, paid);
 
         assertEq(
             uint8(escrow.getBidLock(DAY, iba1).status), uint8(IEscrowAdapter.LockStatus.Finalized), "iba1 not final"
         );
-        assertEq(wcoen.balanceOf(iba1), 1e18 - 24_000 + 3_000, "iba1 refund");
-        assertEq(wcoen.balanceOf(iba2), 1e18 - 28_000 + 14_000, "iba2 refund");
+        assertEq(wcoen.balanceOf(iba1), INITIAL_WCOEN_BALANCE - 24e6 + 3e6, "iba1 refund");
+        assertEq(wcoen.balanceOf(iba2), INITIAL_WCOEN_BALANCE - 28e6 + 14e6, "iba2 refund");
         assertEq(factory.calls(), 1, "proceeds not distributed");
-        assertEq(factory.lastValue(), 35_000, "proceeds amount");
+        assertEq(factory.lastValue(), 35e6, "proceeds amount");
         assertEq(factory.lastSrcChainId(), local, "proceeds source chain");
         assertEq(factory.lastDay(), DAY, "proceeds day");
         assertEq(address(origin).balance, 0, "native stranded on origin");
@@ -339,7 +340,7 @@ contract LocalLoopbackTest is Test {
             worldwideDay: DAY,
             issuedIntexCount: 50,
             promisLoadMinor: PROMIS_LOAD_MINOR,
-            entryPriceMinor: 1e13,
+            entryPriceMinor: 1e6,
             floorPriceMinor: 100,
             callNoticePeriod: 0,
             issuanceCurrency: 840,

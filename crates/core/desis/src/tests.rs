@@ -16,7 +16,7 @@ const CHAIN_ID: u64 = 1;
 const REFERENCE_ISO: u16 = 840;
 const WORLDWIDE_DAY: WorldwideDay = WorldwideDay::new(20260101);
 const NEXT_WORLDWIDE_DAY: WorldwideDay = WorldwideDay::new(20260102);
-const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
+const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
 /// The single default target chain the auction fans in from (matches `src_chain_id` in the calls).
 const SRC_CHAIN: u32 = 1;
 /// Block timestamp the tests brief at: just after a midnight, so the brief
@@ -773,7 +773,11 @@ fn schedule_starts_a_green_brief() {
             AuctionStage::Started
         );
         let cfg = contract.read_auction_config(WORLDWIDE_DAY).unwrap();
-        assert!(cfg.commit_bond_minor > 0, "profile folded at start");
+        assert_eq!(
+            cfg.commit_bond_minor,
+            100_000_000u128 * 1_000_000u128,
+            "production commit bond is denominated in WCOEN-unit"
+        );
     });
 }
 

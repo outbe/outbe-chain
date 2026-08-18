@@ -17,6 +17,7 @@ use crate::precompile::{dispatch, IPromisFactory};
 use crate::runtime;
 
 const CHAIN_ID: u64 = 1;
+const UNITS_PER_PROMIS: u64 = 1_000_000;
 
 fn chain_b256() -> B256 {
     B256::from(U256::from(CHAIN_ID))
@@ -81,23 +82,21 @@ fn mine_rejects_zero_amount() {
 #[test]
 fn mine_coen_success_burns_and_mints_native() {
     with_env(|storage| {
+        let one_promis = U256::from(UNITS_PER_PROMIS);
         promis_api::mint(
             storage.clone(),
             alice(),
-            U256::from(100u64),
-            auth(PromisOp::Mint, alice(), U256::from(100u64), 0),
+            one_promis,
+            auth(PromisOp::Mint, alice(), one_promis, 0),
         )
         .unwrap();
 
-        let call = mine_coen_call(
-            U256::from(100u64),
-            &auth(PromisOp::Burn, alice(), U256::from(100u64), 1),
-        );
+        let call = mine_coen_call(one_promis, &auth(PromisOp::Burn, alice(), one_promis, 1));
         dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap();
 
         // Promis burned to zero; native COEN minted 1:1.
         assert_eq!(view_balance(storage.clone(), alice()), U256::ZERO);
-        assert_eq!(storage.balance(alice()).unwrap(), U256::from(100u64));
+        assert_eq!(storage.balance(alice()).unwrap(), one_promis);
     });
 }
 

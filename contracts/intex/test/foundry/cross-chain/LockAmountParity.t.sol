@@ -12,8 +12,8 @@ import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 ///         that locks on BNB stays in the lockable range and Outbe reproduces the exact same value.
 contract LockAmountParityTest is Test {
     uint32 internal constant RATE_SCALE = BridgeMsgCodec.RATE_SCALE;
-    /// @dev Per-Intex escrow basis = promis_load (e.g. 100_000 * 1e18). Exceeds uint64, fits uint128.
-    uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e18;
+    /// @dev Per-Intex escrow basis = promis_load (e.g. 100_000 * 1e6). Fits the existing uint128 wire field.
+    uint128 internal constant PROMIS_LOAD_MINOR = 100_000 * 1e6;
 
     /// @dev Mirrors IntexAuction.revealBid (BNB): 256-bit math, reverts when the product overflows uint128.
     function bnbLockAmount(uint16 quantity, uint128 basis, uint32 rate) external pure returns (uint128) {

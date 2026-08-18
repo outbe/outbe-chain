@@ -16,6 +16,7 @@ use crate::enclave_client::test_enclave;
 use crate::precompile::{dispatch, IPromis};
 
 const CHAIN_ID: u64 = 1;
+const UNITS_PER_PROMIS: u64 = 1_000_000;
 
 fn chain_b256() -> B256 {
     B256::from(U256::from(CHAIN_ID))
@@ -59,7 +60,7 @@ fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
 #[test]
 fn mine_credits_encrypted_balance() {
     with_env(|storage| {
-        let amount = U256::from(1000u64);
+        let amount = U256::from(UNITS_PER_PROMIS);
         api::mint(
             storage.clone(),
             alice(),
@@ -73,7 +74,7 @@ fn mine_credits_encrypted_balance() {
         assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 1);
 
         // Second mine advances the op nonce and accumulates the (hidden) balance.
-        let more = U256::from(500u64);
+        let more = U256::from(UNITS_PER_PROMIS / 2);
         api::mint(
             storage.clone(),
             alice(),
@@ -81,10 +82,13 @@ fn mine_credits_encrypted_balance() {
             auth(PromisOp::Mint, alice(), more, 1),
         )
         .unwrap();
-        assert_eq!(view_balance(storage.clone(), alice()), U256::from(1500u64));
+        assert_eq!(
+            view_balance(storage.clone(), alice()),
+            U256::from(UNITS_PER_PROMIS + UNITS_PER_PROMIS / 2)
+        );
         assert_eq!(
             api::total_supply(storage.clone()).unwrap(),
-            U256::from(1500u64)
+            U256::from(UNITS_PER_PROMIS + UNITS_PER_PROMIS / 2)
         );
     });
 }

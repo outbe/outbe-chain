@@ -11,7 +11,7 @@ use outbe_primitives::storage::types::{Storable, StorageKey};
 
 const CHAIN_ID: u64 = 1;
 const ISSUED_AT: u32 = 1_700_000_000;
-const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
+const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
 const CALL_NOTICE_PERIOD: u32 = 21 * 24 * 60 * 60;
 const ENTRY_PRICE_MINOR: u64 = 2_000_000;
 const FLOOR_PRICE_MINOR: u64 = 1_500_000;

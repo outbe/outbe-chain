@@ -21,7 +21,7 @@ contract BridgeMsgCodecValidationTest is Test {
 
     function test_AuctionStageStart_OverLong_Reverts() public {
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
-            1, 100, 200, 300, 1e18, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 3e6, 4e6), 5, 6, 7, 1, 9e18, 1
+            1, 100, 200, 300, 1e6, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 3e6, 4e6), 5, 6, 7, 1, 9e6, 1
         );
         bytes memory tooLong = abi.encodePacked(packet, hex"00");
         vm.expectRevert(
@@ -52,7 +52,7 @@ contract BridgeMsgCodecValidationTest is Test {
 
     function test_AuctionStageStart_Truncated_RevertsTyped() public {
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
-            1, 100, 200, 300, 1e18, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 3e6, 4e6), 5, 6, 7, 1, 9e18, 1
+            1, 100, 200, 300, 1e6, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 3e6, 4e6), 5, 6, 7, 1, 9e6, 1
         );
         bytes memory truncated = new bytes(packet.length - 1);
         for (uint256 i = 0; i < truncated.length; i++) {
@@ -128,7 +128,7 @@ contract BridgeMsgCodecValidationTest is Test {
     function testFuzz_AuctionStageStart_DayStateByteAboveRed_Reverts(uint8 state) public {
         state = uint8(bound(state, 3, 255));
         bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
-            1, 100, 200, 300, 1e18, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 3e6, 4e6), 5, 6, 7, 1, 9e18, 1
+            1, 100, 200, 300, 1e6, 1e6, ReferenceCurrencyPriceLib.one(840, 2e6, 3e6, 4e6), 5, 6, 7, 1, 9e6, 1
         );
         packet[68] = bytes1(state);
         vm.expectRevert(IIntexAuction.InvalidDayState.selector);
@@ -140,7 +140,7 @@ contract BridgeMsgCodecValidationTest is Test {
     function test_FixedWidth_RoundTrips_StillPass() public view {
         (uint32 s,,,) = BridgeMsgCodec.decodeAuctionParams(
             BridgeMsgCodec.encodeAuctionStageStart(
-                42, 1, 2, 3, 1e18, 1, ReferenceCurrencyPriceLib.one(840, 2, 3, 4e6), 5, 6, 7, 1, 9e18, 1
+                42, 1, 2, 3, 1e6, 1, ReferenceCurrencyPriceLib.one(840, 2, 3, 4e6), 5, 6, 7, 1, 9e6, 1
             )
         );
         assertEq(s, 42, "stageStart");
