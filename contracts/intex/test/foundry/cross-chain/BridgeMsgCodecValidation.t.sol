@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {Test} from "forge-std/Test.sol";
@@ -97,33 +98,35 @@ contract BridgeMsgCodecValidationTest is Test {
         this.exposedDecodeAuctionResult(tooLong);
     }
 
-    function test_MarkCalled_OverLong_Reverts() public {
-        bytes memory tooLong = abi.encodePacked(BridgeMsgCodec.encodeMarkCalled("20260212-TRY-U", 20260212), hex"00");
+    function test_MarkCalled_EmptyBatch_Reverts() public {
+        bytes14[] memory empty = new bytes14[](0);
+        vm.expectRevert(BridgeMsgCodec.EmptyMarkBatch.selector);
+        this.exposedEncodeMarkCalled(20260212, empty);
+    }
+
+    function test_MarkQualified_OverSizedBatch_Reverts() public {
+        uint256 tooMany = BridgeMsgCodec.MAX_SERIES_PER_MARK + 1;
+        bytes14[] memory batch = MarkBatchLib.sized("20260212-TRY-U", tooMany);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BridgeMsgCodec.MarkBatchTooLarge.selector, tooMany, BridgeMsgCodec.MAX_SERIES_PER_MARK
+            )
+        );
+        this.exposedEncodeMarkQualified(20260212, batch);
+    }
+
+    function test_MarkCalled_ShortBody_Reverts() public {
+        bytes memory tooShort = abi.encodePacked(hex"0108", new bytes(64));
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
                 BridgeMsgCodec.MSG_MARK_CALLED,
-                tooLong.length,
+                tooShort.length,
                 BridgeMsgCodec.MIN_LEN_MARK_CALLED
             )
         );
-        this.exposedDecodeMarkCalled(tooLong);
+        this.exposedDecodeMarkCalled(tooShort);
     }
-
-    function test_MarkQualified_OverLong_Reverts() public {
-        bytes memory tooLong = abi.encodePacked(BridgeMsgCodec.encodeMarkQualified("20260212-TRY-U", 20260212), hex"00");
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_MARK_QUALIFIED,
-                tooLong.length,
-                BridgeMsgCodec.MIN_LEN_MARK_QUALIFIED
-            )
-        );
-        this.exposedDecodeMarkQualified(tooLong);
-    }
-
-    // --- the STAGE_START dayState byte decodes strictly (only 0x00 / 0x01 / 0x02) ---
 
     function testFuzz_AuctionStageStart_DayStateByteAboveRed_Reverts(uint8 state) public {
         state = uint8(bound(state, 3, 255));
@@ -148,12 +151,14 @@ contract BridgeMsgCodecValidationTest is Test {
         (uint32 rs,,,) = this.exposedDecodeAuctionResult(BridgeMsgCodec.encodeAuctionResult(9, 1, 1, 1));
         assertEq(rs, 9, "result");
         assertEq(
-            this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled("20260212-TRY-U", 20260212)),
+            this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled(20260212, MarkBatchLib.one("20260212-TRY-U"))),
             bytes14("20260212-TRY-U"),
             "markCalled"
         );
         assertEq(
-            this.exposedDecodeMarkQualified(BridgeMsgCodec.encodeMarkQualified("20260212-TRY-U", 20260212)),
+            this.exposedDecodeMarkQualified(
+                BridgeMsgCodec.encodeMarkQualified(20260212, MarkBatchLib.one("20260212-TRY-U"))
+            ),
             bytes14("20260212-TRY-U"),
             "markQualified"
         );
@@ -277,12 +282,22 @@ contract BridgeMsgCodecValidationTest is Test {
         return BridgeMsgCodec.decodeAuctionResult(p);
     }
 
+    function exposedEncodeMarkCalled(uint32 day, bytes14[] calldata ids) external pure returns (bytes memory) {
+        return BridgeMsgCodec.encodeMarkCalled(day, ids);
+    }
+
+    function exposedEncodeMarkQualified(uint32 day, bytes14[] calldata ids) external pure returns (bytes memory) {
+        return BridgeMsgCodec.encodeMarkQualified(day, ids);
+    }
+
     function exposedDecodeMarkCalled(bytes calldata p) external pure returns (bytes14) {
-        return BridgeMsgCodec.decodeMarkCalled(p);
+        (, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(p);
+        return seriesIds[0];
     }
 
     function exposedDecodeMarkQualified(bytes calldata p) external pure returns (bytes14) {
-        return BridgeMsgCodec.decodeMarkQualified(p);
+        (, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkQualified(p);
+        return seriesIds[0];
     }
 
     function exposedDecodeRefundInstructions(bytes calldata p)
