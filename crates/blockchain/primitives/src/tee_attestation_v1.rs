@@ -1405,7 +1405,7 @@ impl TeePolicyV1 {
             ));
         }
         if self.minimum_lease < 3_600
-            || self.maximum_lease > 604_800
+            || self.maximum_lease > 2_592_000
             || self.minimum_lease > self.maximum_lease
             || self.collateral_margin != 3_600
         {

@@ -907,6 +907,18 @@ fn run_node() -> eyre::Result<()> {
 
     cli.run_with_components::<OutbeNode>(components, async move |builder, args| {
         args.validate()?;
+        info!(
+            target: "outbe::protocol",
+            formingPeriodSeconds = outbe_chain_constants::get_metadosis_forming_period_seconds(),
+            lookbackDelaySeconds = outbe_chain_constants::get_metadosis_lookback_delay_seconds(),
+            offeringPeriodSeconds = outbe_chain_constants::get_metadosis_offering_period_seconds(),
+            waitingPeriodSeconds = outbe_chain_constants::get_metadosis_waiting_period_seconds(),
+            bootstrapDurationSeconds =
+                outbe_chain_constants::get_metadosis_bootstrap_duration_seconds(),
+            advanceIntervalSeconds =
+                outbe_chain_constants::get_metadosis_advance_interval_seconds(),
+            "effective genesis protocol parameters"
+        );
         let tee_attestation_v1 =
             outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
                 builder.config().chain.as_ref(),
