@@ -335,6 +335,17 @@ MCP tests отдельно фиксируют обе стороны network boun
 - generic external intent amounts сохраняют существующий token/domain contract и не
   переводятся глобально на scale `1e6`.
 
+MCP Oracle presentation tests проходят через реальный `tools/util.ts::view`
+boundary и фиксируют:
+
+- direct `COEN/ISO` reads в обеих допустимых ориентациях используют scale `1e6`;
+- canonical COEN/ISO VWAP reads используют scale `1e6`, не добавляя reverse
+  semantics методам, которые её не поддерживают on-chain;
+- `getCoenExchangeRateFor` использует scale `1e6` по semantics самого метода;
+- mixed aggregate responses форматируют каждую aligned row по её `base/quote`;
+- generic non-ISO Oracle values остаются в существующем scale;
+- human-readable presentation никогда не меняет raw integer.
+
 EIP-4895 сохраняет стандартный wire contract: `Withdrawal.amount` остаётся `uint64` в Gwei. Тестами фиксируется точное преобразование в COEN `unit`:
 
 ```text
@@ -544,6 +555,12 @@ feat(native): complete COEN six-decimal cutover
   Outbe `COEN/6`, BSC `BNB/18`; generic external intent amounts не меняются;
 - MCP stake/unstake/AgentReward human-readable COEN inputs преобразуются в
   `unit` через `parseUnits(..., 6)` только на Outbe-native write boundary;
+- MCP Oracle presentation получает resolved contract, method arguments и decoded
+  result в одном call-context adapter: direct `COEN/ISO`, method-owned
+  `getCoenExchangeRateFor` и каждая row mixed aggregate response форматируются
+  с scale `1e6`, а generic non-ISO rows сохраняют существующий scale;
+- presentation adapter не меняет RPC arguments/results, ABI, raw integers,
+  on-chain orientation rules и не вводит pair-decimals metadata;
 - production `1 gwei` assumptions для Outbe устраняются;
 - gas policy фиксируется в native `unit/gas`;
 - EIP-4895 wire semantics сохраняется: `Withdrawal.amount` остаётся в Gwei, но перед balance credit проходит через Outbe-owned exact conversion `coen_units = amount_gwei / 1_000`;
@@ -764,6 +781,7 @@ Native gas policy:
 | Emission amount-domain Taylor | `crates/system/emissionlimit/src/day_emission.rs` |
 | Native fee floors | shared protocol minimum плюс CLI/operator/OCOMP adapters |
 | Fresh-network values | `scripts/seed_genesis.py` и `scripts/prepare_network.py`; generated JSON не редактируется вручную |
+| MCP Oracle presentation scale | `mcp/src/format.ts`; `mcp/src/tools/util.ts` только передаёт resolved Oracle/method/argument context |
 | Lysis/OCOMP hashes | standard `xtask ocomp finalize` generators |
 
 ### 9.6. Transition matrix
@@ -785,6 +803,7 @@ Native gas policy:
 | Desis/INTEX | brief, bridge, auction, settle/refund | existing day/auction status | rates and PROMIS load use scale `1e6` across the existing wire; payment conversion occurs once | unsupported decimals/overflow/state error rejects | message/replay guards unchanged | Rust/Solidity state agrees after restart | commit/reveal/call windows unchanged |
 | WCOEN | deposit/withdraw | holder with native/token balance | exact raw 1:1 mint/burn and native transfer | insufficient balance/transfer failure reverts atomically | ERC20 allowance/nonce semantics unchanged | supply/backing persist | no new deadline |
 | Emission | query/allocate day limit | valid day | monotonic daily amount in COEN-units, clamped at floor | arithmetic is deterministic and bounded | same day same result | no hidden accumulator | day `>=2920` returns floor |
+| MCP Oracle view | direct, method-owned or aggregate read | resolved Oracle contract and valid ABI arguments | COEN/ISO values render at scale `1e6` per pair/row; generic values retain their scale; raw integers are unchanged | invalid arguments/address and existing RPC errors propagate unchanged | read-only result is deterministic | no MCP state | no deadline |
 
 ### 9.7. Разрешённый production file map
 
@@ -875,6 +894,9 @@ P5:
 - `crates/blockchain/operator/src/tx.rs`;
 - `bin/outbe-ocomp/src/vote_submitter.rs`;
 - `mcp/src/{chain,format}.ts`, `mcp/src/intent/format.ts`;
+- `mcp/src/tools/util.ts` — единственный call-context adapter для Oracle
+  presentation scale; только resolved contract/method/arguments/result context,
+  без изменения RPC, ABI, coercion, raw values или error behavior;
 - `mcp/src/tools/sign.ts` только для Outbe-native stake/unstake/AgentReward
   input conversion;
 - `mcp/src/tools/intent.ts` только для network-aware native decimals; ERC-20
@@ -956,6 +978,12 @@ T5:
   `testing/e2e/tests/update_flow_spec.rs` COEN/ISO/native fixtures;
 - `mcp/src/denomination.test.ts`: Outbe native input/output uses 6 decimals,
   BSC native uses 18 decimals, generic external intent representation remains unchanged;
+- `mcp/src/denomination.test.ts`: public `tools/util.ts::view` path covers
+  COEN/ISO direct and reverse spot reads, canonical VWAP, method-owned
+  `getCoenExchangeRateFor`, mixed aggregate rows, generic non-ISO rows,
+  invalid ISO-like addresses and unchanged raw integers;
+- `testing/denomination/scale6-mcp-oracle-view-red.tsv` records the corrected
+  MCP view contract failing against the pre-implementation production path;
 - Metadosis lifecycle fixtures only;
 - `scripts/test_seed_genesis_protocol_constants.py`, `scripts/tests/test_prepare_network.py`;
 - `crates/blockchain/node/tests/assets/genesis.json`, `release/testnet-genesis.json`, seed profiles и E2E fixtures as generated expectations.
@@ -1001,6 +1029,19 @@ User-approved Credis-rate exception to the pass budget:
 - Credis runtime/schema получают первый semantic pass;
 - любые дальнейшие изменения этих seams снова являются blocker.
 
+User-approved MCP Oracle presentation exception after the completed blocker
+protocol:
+
+- `mcp/src/tools/util.ts` получает один semantic pass только как centralized
+  Oracle call-context adapter;
+- `mcp/src/format.ts` завершает свой текущий незакоммиченный native-economics
+  pass method/pair/row-aware presentation logic;
+- `mcp/src/denomination.test.ts` получает один финальный test-contract pass:
+  commit `76d851c1` считается diagnostic helper probe и не заменяет public
+  `view()` coverage;
+- любое дальнейшее расширение MCP production paths или semantic изменение
+  formatter contract снова является blocker.
+
 Форматирование, generated byte-for-byte rewrite и механическое обновление imports не считаются semantic pass. Изменение expected value после RED всегда считается semantic re-plan, а не integration correction.
 
 User-approved exception after the completed blocker protocol: the rejected
@@ -1038,8 +1079,13 @@ committed. No NOD/GEM hook production change is permitted by the rejected model.
 22. `test(denomination): record CREDIS rate RED recovery`;
 23. `feat(credis): convert interest and reference rates to six decimals`;
 24. `refactor(units): use typed six-decimal scale constants`;
-25. `feat(native): complete COEN six-decimal cutover`;
-26. `chore(denomination): regenerate semantic and genesis artifacts`.
+25. `test(mcp): cover six-decimal COEN ISO view rates` — diagnostic helper
+    probe, insufficient as production wiring evidence;
+26. `docs(denomination): refreeze MCP Oracle view presentation`;
+27. `test(mcp): define context-aware Oracle view formatting`;
+28. `test(denomination): record MCP Oracle view RED recovery`;
+29. `feat(native): complete COEN six-decimal cutover`;
+30. `chore(denomination): regenerate semantic and genesis artifacts`.
 
 T1–T5 и RED commits намеренно не являются mergeable PR boundaries; production остаётся старым до commit 8. Финальный PR обязан быть GREEN.
 
