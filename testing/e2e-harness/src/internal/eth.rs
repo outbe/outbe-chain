@@ -513,6 +513,43 @@ pub(crate) fn send_call<C: SolCall>(
     })
 }
 
+/// Sign and send a contract call that must travel the ordinary fee-paying path.
+/// A non-zero priority fee keeps the transaction out of any zero-fee lane, so a
+/// permissionless entry point is exercised as an ordinary sender reaches it.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn send_priced_call<C: SolCall>(
+    url: &str,
+    to: Address,
+    key: &str,
+    call: &C,
+) -> Result<String> {
+    let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
+    let wallet = EthereumWallet::from(signer);
+    let url = url.to_string();
+    let data = call.abi_encode();
+    block_on(async move {
+        let provider = ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_http(url.parse()?);
+        let tx = TransactionRequest::default()
+            .to(to)
+            .input(Bytes::from(data).into())
+            .max_fee_per_gas(GAS_PRICE_UNITS * 4)
+            .max_priority_fee_per_gas(GAS_PRICE_UNITS);
+        let pending = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            provider.send_transaction(tx),
+        )
+        .await
+        .map_err(|_| eyre!("timed out submitting priced call transaction"))??;
+        let receipt =
+            tokio::time::timeout(std::time::Duration::from_secs(30), pending.get_receipt())
+                .await
+                .map_err(|_| eyre!("timed out waiting for priced call receipt"))??;
+        Ok(format!("{:#x}", receipt.transaction_hash))
+    })
+}
+
 /// Sign and send exact calldata through the ordinary public transaction path,
 /// waiting for the mined receipt. This is used by adversarial protocol tests
 /// that must preserve a production ABI envelope while changing its payload.

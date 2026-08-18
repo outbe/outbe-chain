@@ -127,7 +127,7 @@ fn pay_every_chunk(world: &World, day: u32, funder: &str) {
                 nominal: leaf.nominal,
             })
             .collect::<Vec<_>>();
-        eth::send_call(
+        eth::send_priced_call(
             &url,
             INTEX_FACTORY_ADDR,
             funder,
@@ -137,7 +137,6 @@ fn pay_every_chunk(world: &World, day: u32, funder: &str) {
                 leaves: batch,
                 proof,
             },
-            None,
         )
         .expect("pay one contributor chunk");
         start = end;
