@@ -208,10 +208,12 @@ pub fn settle(
 
 /// Latches an Open position whose currency's live COEN price has crossed its floor.
 ///
-/// The block scan owns the one-way latch; this only spares a settler the wait for the
-/// next sweep when the price is above the floor right now. An unpriced currency simply
-/// does not latch here — `coen_rate_for_opt` reports that instead of reverting, so a
-/// cold oracle cannot block a position that the scan already latched.
+/// Settlement is the only production path that latches today, so this is where a
+/// position crosses from Open to Settleable. The latch is one-way once taken. An
+/// unpriced currency simply does not latch here — `coen_rate_for_opt` reports that
+/// instead of reverting, so a cold oracle cannot block an already-latched position.
+/// A crossing that reverses before anyone settles is missed; the daily reference-price
+/// scan closes that gap when it lands.
 fn latch_if_above_floor(
     storage: &StorageHandle<'_>,
     credis: &mut CredisContract<'_>,

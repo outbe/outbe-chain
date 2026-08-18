@@ -37,7 +37,7 @@ const EOA_CT_LEN: usize = 12 + 20 + 16;
 /// PledgeLockTicket plaintext:
 /// `stables(32) ‖ owner(20) ‖ gratis(32) ‖ asset(20) ‖ entry_rate(32)` = 136 bytes.
 /// The ticket only exists between `Pledge` and its consumption
-/// (`ConsumePledge`/`Unpledge`); the active credis schedule (installments,
+/// (`ConsumePledge`/`Unpledge`); the active credis position (outstanding principal,
 /// outstanding collateral) is tracked on-chain by the Credis position, not here.
 const RECORD_PLAINTEXT_LEN: usize = 32 + 20 + 32 + 20 + 32;
 
@@ -544,7 +544,7 @@ fn apply_consume_pledge(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<G
 /// Settlement: release `amount` of collateral from the EOA's OWN pledged ledger back
 /// to its balance (`EOA.pledged -= amount; EOA.balance += amount`). Amount-based (no
 /// ticket): the on-chain Credis position schedule is the accounting authority for the
-/// per-installment amount; the enclave only enforces pledged-ledger sufficiency.
+/// per-settlement amount; the enclave only enforces pledged-ledger sufficiency.
 /// `req.account` is the EOA the host recovered from the position's `eoa_ct` via a prior
 /// `RevealOwner` round-trip — it never appears in calldata or stored plaintext.
 fn apply_release_to_eoa(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
@@ -762,7 +762,7 @@ mod tests {
     }
 
     /// requestCredis consume: the pledge ticket credits the EOA's OWN pledged ledger
-    /// (no escrow), the ticket is deleted, and installments release from that same
+    /// (no escrow), the ticket is deleted, and settlements release from that same
     /// ledger back to the EOA's balance.
     #[test]
     fn pledge_consume_and_release_flow() {
@@ -841,7 +841,7 @@ mod tests {
             GratisOpStatus::Rejected { .. }
         ));
 
-        // Pay 10 installments (amount-based release, 100 each) → drains pledged back
+        // Ten settlements (amount-based release, 100 each) → drains pledged back
         // to balance.
         let mut pledged_blob = credis_res.new_pledged.clone();
         let mut bal_blob = pledged.new_balance.clone();
@@ -958,7 +958,7 @@ mod tests {
         let consumed = apply_op(&sk, &rc);
         assert!(matches!(consumed.status, GratisOpStatus::Applied));
 
-        // Release 3 installments (300), leaving 700 outstanding.
+        // Release across 3 settlements (300), leaving 700 outstanding.
         let mut pledged_blob = consumed.new_pledged.clone();
         let mut bal_blob = pledged.new_balance.clone();
         for _ in 0..3 {

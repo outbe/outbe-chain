@@ -34,9 +34,11 @@ The pool recomputes receiver binding; it never trusts caller-supplied binding as
 authority. Validation and proof verification precede nullifier consumption.
 Consumption commits only if the complete outer transaction succeeds.
 
-Credis installment repayment may append a reclaim commitment at the denomination
-one decade below the original note. The pool records that commitment opaquely; this
-limitation is unresolved below.
+Credis settlement no longer appends a reclaim commitment: collateral is released
+directly to the original pledger's confidential balance in proportion to the principal
+the settlement covered, so there is no reclaim note and no follow-up unpledge. The
+opaque-commitment limitation described below therefore no longer applies to the Credis
+path.
 
 ## Interfaces and authority
 
