@@ -620,7 +620,7 @@ fn constant_time_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_primitives::units::COEN_ISO_PRICE_SCALE;
+    use outbe_primitives::units::SCALE_1E6_U256;
     use outbe_tee::protocol::ModifyAuth;
 
     const CHAIN: B256 = B256::repeat_byte(0xC1);
@@ -674,7 +674,7 @@ mod tests {
             stables_amount: stables,
             gratis_amount: gratis,
             asset: asset(),
-            entry_rate: U256::from(2u64) * COEN_ISO_PRICE_SCALE,
+            entry_rate: U256::from(2u64) * SCALE_1E6_U256,
         }
     }
 
@@ -900,7 +900,7 @@ mod tests {
             owner: alice(),
             gratis_amount: U256::from(1000u64),
             asset: asset(),
-            entry_rate: U256::from(2u64) * COEN_ISO_PRICE_SCALE,
+            entry_rate: U256::from(2u64) * SCALE_1E6_U256,
         };
         let encoded = ticket.encode();
         assert_eq!(encoded.len(), RECORD_PLAINTEXT_LEN);

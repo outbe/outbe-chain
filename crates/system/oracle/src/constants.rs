@@ -3,7 +3,7 @@
 use alloy_primitives::U256;
 use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::math::reference_price::is_coen_iso_market;
-use outbe_primitives::units::{COEN_ISO_PRICE_SCALE, SCALE_1E18, UNITS_PER_COEN};
+use outbe_primitives::units::{SCALE_1E18, SCALE_1E6_U256};
 
 /// Genesis seed for the USD (ISO 840) currency rate: the current SOFR
 /// (Secured Overnight Financing Rate) at scale `1e6`.
@@ -42,7 +42,7 @@ pub const DAY_TYPE_PAIR: AddressPair = AddressPair::new([
 /// their existing decimal18 reciprocal contract.
 pub(crate) fn reciprocal_scale(pair: AddressPair) -> U256 {
     if is_coen_iso_market(pair) {
-        COEN_ISO_PRICE_SCALE
+        SCALE_1E6_U256
     } else {
         SCALE_1E18
     }
@@ -52,7 +52,7 @@ pub(crate) fn reciprocal_scale(pair: AddressPair) -> U256 {
 /// weight does not replace the stored volume.
 pub(crate) fn zero_volume_weight(pair: AddressPair) -> U256 {
     if is_coen_iso_market(pair) {
-        UNITS_PER_COEN
+        SCALE_1E6_U256
     } else {
         SCALE_1E18
     }

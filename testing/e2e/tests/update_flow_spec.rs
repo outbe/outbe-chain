@@ -17,7 +17,7 @@ use outbe_primitives::chain::DEVNET_CHAIN_ID;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::hook_events::partition_hook_events;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-use outbe_primitives::units::COEN_ISO_PRICE_SCALE;
+use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_update::constants::PROTOCOL_VERSION;
 use outbe_update::lifecycle::UpdateLifecycle;
 use outbe_update::payload::encode_schedule_update_json;
@@ -87,7 +87,7 @@ fn seed_oracle_for_pre_exec(storage: StorageHandle) {
         storage,
         Address::ZERO,
         outbe_oracle::api::DAY_TYPE_PAIR,
-        COEN_ISO_PRICE_SCALE,
+        SCALE_1E6_U256,
         0,
         0,
     );

@@ -9,7 +9,7 @@ use outbe_primitives::addresses::{
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::UNITS_PER_GRATIS;
+use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_common::pow;
 
@@ -438,7 +438,7 @@ fn compute_params(
     Ok((cost_amount, floor_price, initial_state))
 }
 
-/// `floor(entry × load × percent / (100 × UNITS_PER_GRATIS))`. Entry, load and
+/// `floor(entry x load x percent / (100 x SCALE_1E6_U256))`. Entry, load and
 /// result are six-decimal monetary values; the calculation rounds only once.
 fn compute_cost(entry: U256, load: U256, cost_num: u64) -> Result<U256> {
     let numerator = entry
@@ -446,7 +446,7 @@ fn compute_cost(entry: U256, load: U256, cost_num: u64) -> Result<U256> {
         .ok_or(GemFactoryError::Overflow)?
         .checked_mul(U256::from(cost_num))
         .ok_or(GemFactoryError::Overflow)?;
-    let denominator = UNITS_PER_GRATIS
+    let denominator = SCALE_1E6_U256
         .checked_mul(U256::from(100u64))
         .ok_or(GemFactoryError::Overflow)?;
     let cost = numerator / denominator;

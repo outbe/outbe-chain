@@ -61,7 +61,7 @@ pub struct ReferenceCurrency {
 /// Configurable genesis parameters for the Oracle contract.
 ///
 /// Dimensionless policy fields retain FP18. COEN/ISO pair rates, volumes and
-/// snapshots use six decimals; the COEN/840 S-Curve uses that same P6 scale.
+/// snapshots use six decimals; the COEN/840 S-Curve uses the same rate scale 1e6.
 /// Generic non-ISO pair data retains its existing contract.
 pub struct OracleGenesisConfig {
     /// Vote period in blocks (default: 2).

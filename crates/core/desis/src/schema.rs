@@ -4,7 +4,7 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::DESIS_ADDRESS;
-use outbe_primitives::units::UNITS_PER_PROMIS;
+use outbe_primitives::units::SCALE_1E6_U256;
 
 use crate::constants::PROMIS_LOAD;
 
@@ -85,7 +85,7 @@ impl AuctionConfig {
     /// `IntexParams` and the prior-clearing count are in reach.
     pub fn from_reference_prices(reference_prices: Vec<ReferenceCurrencyPrice>) -> Self {
         Self {
-            promis_load_minor: (U256::from(PROMIS_LOAD) * UNITS_PER_PROMIS).to::<u128>(),
+            promis_load_minor: (U256::from(PROMIS_LOAD) * SCALE_1E6_U256).to::<u128>(),
             call_trigger: IntexCallTrigger::default(),
             min_intex_bid_rate: 0,
             min_intex_bid_quantity: 0,

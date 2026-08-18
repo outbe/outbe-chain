@@ -770,7 +770,7 @@ mod tests {
         },
         storage::{hashmap::HashMapStorageProvider, MetadosisMutationPurposeTag, StorageHandle},
         tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID,
-        units::COEN_ISO_PRICE_SCALE,
+        units::SCALE_1E6_U256,
     };
     use reth_chainspec::{ChainSpecBuilder, EthereumHardfork, ForkCondition};
     use reth_evm::execute::Executor as _;
@@ -1001,7 +1001,7 @@ mod tests {
                 storage,
                 alloy_primitives::Address::ZERO,
                 outbe_oracle::api::DAY_TYPE_PAIR,
-                COEN_ISO_PRICE_SCALE,
+                SCALE_1E6_U256,
                 0,
                 0,
             )

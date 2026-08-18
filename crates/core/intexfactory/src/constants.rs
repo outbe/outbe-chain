@@ -6,7 +6,7 @@
 //! "outbe-intex:<Name>:v2.0.0") — stable across chains and redeploys.
 
 use alloy_primitives::{address, Address};
-use outbe_primitives::units::UNITS_PER_WCOEN;
+use outbe_primitives::units::SCALE_1E6_U128;
 
 /// IntexNFT1155 on Outbe (balance ledger: settle / burnSettled / balanceOf).
 /// CREATE3 proxy, salt "outbe-intex:IntexNFT1155:v2.0.0". Canonical definition
@@ -52,8 +52,8 @@ pub const CALL_WINDOW: u32 = 28 * 24 * 3600;
 /// Call-trigger threshold: how much of the window must be in breach to force-call.
 pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
 
-/// `u128` projection of the shared WCOEN denomination for the wire/config types in this module.
-pub const WCOEN_UNIT_SCALE: u128 = UNITS_PER_WCOEN.as_limbs()[0] as u128;
+/// Six-decimal scale used by WCOEN wire/config values in this module.
+pub const WCOEN_UNIT_SCALE: u128 = SCALE_1E6_U128;
 
 /// Commit-entry bond on the target-chain auction: 100M WCOEN in WCOEN-units.
 pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * WCOEN_UNIT_SCALE;

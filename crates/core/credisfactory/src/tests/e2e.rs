@@ -18,7 +18,7 @@ use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::{COEN_ISO_PRICE_SCALE, UNITS_PER_GRATIS};
+use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_promislimit::PromisLimitContract;
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
 use outbe_tee_enclave::gratis::{
@@ -32,16 +32,14 @@ use crate::tests::common::*;
 /// Issuance currency (ISO 4217) reported by `asset()`'s stubbed `isoCode()`.
 const ISSUANCE_ISO: u16 = 840;
 
-const CREDIS_INTEREST_RATE_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
-
 /// Currency rate seeded for USD in these e2e tests (4.30 %, scale 1e6).
 fn refi_rate() -> U256 {
     U256::from(43_000u64)
 }
 
-/// COEN/840 price these tests seed: 2.0 in the P6 ISO stablecoin domain.
+/// COEN/840 rate these tests seed: 2.0 at scale 1e6 in the ISO stablecoin domain.
 fn oracle_rate() -> U256 {
-    U256::from(2u64) * COEN_ISO_PRICE_SCALE
+    U256::from(2u64) * SCALE_1E6_U256
 }
 
 /// Credit a pledge asks for: $2.00 in 6-decimal minor units. At [`oracle_rate`] that
@@ -52,7 +50,7 @@ fn pledge_stables() -> U256 {
 
 /// GRATIS collateral [`pledge_stables`] costs: `2e6 * 1e6 / 2e6 = 1e6`.
 fn pledge_cost() -> U256 {
-    UNITS_PER_GRATIS
+    SCALE_1E6_U256
 }
 
 /// Pledge [`pledge_stables`] of credit for `who` at op-nonce `nonce` (uncapped), and
@@ -221,11 +219,11 @@ fn full_pledge_request_pay_unlock_flow() {
         assert_eq!(position.entry_price_minor, oracle_rate());
         assert_eq!(position.currency_rate, refi_rate());
         assert_eq!(position.issuance_currency, ISSUANCE_ISO);
-        let multiplier = CREDIS_INTEREST_RATE_SCALE
-            + refi_rate() * U256::from(NUMBER_OF_ANADOSIS) / U256::from(12u64);
+        let multiplier =
+            SCALE_1E6_U256 + refi_rate() * U256::from(NUMBER_OF_ANADOSIS) / U256::from(12u64);
         assert_eq!(
             position.total_anadosis_amount,
-            amount_stables * multiplier / CREDIS_INTEREST_RATE_SCALE
+            amount_stables * multiplier / SCALE_1E6_U256
         );
         assert_eq!(position.total_gratis_amount, pledge_amount);
 

@@ -9,7 +9,7 @@ use outbe_compressed_entities::{
 use outbe_evm::{OutbeBlockExecutionCtx, OutbeEvmConfig};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_primitives::{
-    addresses::COMPRESSED_ENTITIES_ADDRESS, units::COEN_ISO_PRICE_SCALE, OutbeHeader,
+    addresses::COMPRESSED_ENTITIES_ADDRESS, units::SCALE_1E6_U256, OutbeHeader,
 };
 use reth_ethereum::{
     chainspec::{ChainSpec, EthChainSpec, MAINNET},
@@ -63,7 +63,7 @@ fn execution_db(proposer: Address, parent_root: B256) -> CacheDB<EmptyDBTyped<Pr
             storage,
             Address::ZERO,
             outbe_oracle::api::DAY_TYPE_PAIR,
-            COEN_ISO_PRICE_SCALE,
+            SCALE_1E6_U256,
             0,
             0,
         )

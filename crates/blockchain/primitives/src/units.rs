@@ -17,21 +17,16 @@ pub const BASE_DENOM: &str = "unit";
 pub const SCALE_1E18: U256 = U256::from_limbs([1_000_000_000_000_000_000, 0, 0, 0]);
 pub const SCALE_1E18_U128: u128 = 1_000_000_000_000_000_000;
 
-/// Raw units in one whole COEN.
-pub const UNITS_PER_COEN: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
-/// Raw units in one whole GRATIS.
-pub const UNITS_PER_GRATIS: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
-/// Raw units in one whole PROMIS.
-pub const UNITS_PER_PROMIS: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
-/// Raw units in one whole WCOEN.
-pub const UNITS_PER_WCOEN: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
-/// Integer scale of every stablecoin-backed COEN/ISO Oracle price.
-pub const COEN_ISO_PRICE_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
-/// Fixed-point scale of the annual ISO currency rate pinned by Credis.
-pub const CREDIS_INTEREST_RATE_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
+/// Shared six-decimal integer scale in the representation required by a caller.
+///
+/// The constant owns only the numeric scale. The surrounding field or variable
+/// name must identify whether the value is a token amount, price, rate, or ratio.
+pub const SCALE_1E6_U64: u64 = 1_000_000;
+pub const SCALE_1E6_U128: u128 = 1_000_000;
+pub const SCALE_1E6_U256: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 
 /// One whole coen, expressed in the on-chain `U256` representation.
-pub const ONE_COEN: U256 = UNITS_PER_COEN;
+pub const ONE_COEN: U256 = SCALE_1E6_U256;
 
 /// The smallest representable on-chain amount (1 unit).
 pub const ONE_UNIT: U256 = U256::ONE;
@@ -42,7 +37,7 @@ pub const NATIVE_TOKEN_DECIMALS: u8 = 6;
 /// Conversion from a whole-COEN count into native on-chain `unit`.
 ///
 /// Implementations multiply the supplied whole-COEN value by
-/// [`UNITS_PER_COEN`]. The trait is generic over the input type so callers can
+/// [`SCALE_1E6_U256`]. The trait is generic over the input type so callers can
 /// pass any of the natural integer types without an explicit cast.
 pub trait Units<T>: Sized {
     /// Returns `value * 1_000_000` as a `U256`.
@@ -51,25 +46,25 @@ pub trait Units<T>: Sized {
 
 impl Units<U256> for U256 {
     fn in_units(value: U256) -> U256 {
-        value * UNITS_PER_COEN
+        value * SCALE_1E6_U256
     }
 }
 
 impl Units<u128> for U256 {
     fn in_units(value: u128) -> U256 {
-        U256::from(value) * UNITS_PER_COEN
+        U256::from(value) * SCALE_1E6_U256
     }
 }
 
 impl Units<i32> for U256 {
     fn in_units(value: i32) -> U256 {
-        U256::from(value) * UNITS_PER_COEN
+        U256::from(value) * SCALE_1E6_U256
     }
 }
 
 impl Units<u64> for U256 {
     fn in_units(value: u64) -> U256 {
-        U256::from(value) * UNITS_PER_COEN
+        U256::from(value) * SCALE_1E6_U256
     }
 }
 
@@ -83,7 +78,9 @@ mod tests {
 
         assert_eq!(ONE_UNIT, U256::ONE);
         assert_eq!(ONE_COEN, one_coen);
-        assert_eq!(COEN_ISO_PRICE_SCALE, one_coen);
+        assert_eq!(SCALE_1E6_U64, 1_000_000);
+        assert_eq!(SCALE_1E6_U128, 1_000_000);
+        assert_eq!(SCALE_1E6_U256, one_coen);
         assert_eq!(NATIVE_TOKEN_DECIMALS, 6);
         assert_eq!(
             U256::in_units(U256::from(2u64)),

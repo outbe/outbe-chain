@@ -23,7 +23,7 @@ use alloy_primitives::{Address, B256, U256};
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use outbe_poseidon::{Poseidon, PoseidonHasher};
-use outbe_primitives::units::{COEN_ISO_PRICE_SCALE, UNITS_PER_COEN};
+use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_tee::protocol::WorldwideDay;
 
 /// Circom Poseidon permutation max width.
@@ -114,7 +114,7 @@ pub(crate) fn compute_nominal(
     amount_minor: U256,
     tribute_price_minor: U256,
 ) -> Result<U256, String> {
-    compute_nominal_at_scale(amount_minor, tribute_price_minor, COEN_ISO_PRICE_SCALE)
+    compute_nominal_at_scale(amount_minor, tribute_price_minor, SCALE_1E6_U256)
 }
 
 fn compute_nominal_at_scale(
@@ -154,11 +154,11 @@ pub(crate) fn parse_canonical_amount(
 ) -> Result<CanonicalAmount, String> {
     let base = parse_canonical_u64(base_amount, "amount_base")?;
     let atto = parse_canonical_u64(atto_amount, "amount_atto")?;
-    if U256::from(atto) >= UNITS_PER_COEN {
+    if U256::from(atto) >= SCALE_1E6_U256 {
         return Err("amount_atto must be less than 1000000".to_string());
     }
     let amount_minor = U256::from(base)
-        .checked_mul(UNITS_PER_COEN)
+        .checked_mul(SCALE_1E6_U256)
         .and_then(|value| value.checked_add(U256::from(atto)))
         .ok_or_else(|| "amount overflow".to_string())?;
     Ok(CanonicalAmount {
@@ -214,11 +214,11 @@ mod tests {
         );
         assert_eq!(
             parse_amount_minor("100", "0").unwrap(),
-            U256::from(100u64) * UNITS_PER_COEN
+            U256::from(100u64) * SCALE_1E6_U256
         );
         assert_eq!(
             parse_amount_minor(&u64::MAX.to_string(), "999999").unwrap(),
-            U256::from(u64::MAX) * UNITS_PER_COEN + U256::from(999_999u64)
+            U256::from(u64::MAX) * SCALE_1E6_U256 + U256::from(999_999u64)
         );
     }
 
@@ -242,11 +242,11 @@ mod tests {
     #[test]
     fn nominal_division_uses_the_coen_iso_six_decimal_scale() {
         // amount=100 COEN, price=2.0 -> 50 COEN, all expressed as raw units.
-        let amount = U256::from(100u64) * UNITS_PER_COEN;
-        let price = U256::from(2u64) * UNITS_PER_COEN;
+        let amount = U256::from(100u64) * SCALE_1E6_U256;
+        let price = U256::from(2u64) * SCALE_1E6_U256;
         assert_eq!(
             compute_nominal(amount, price).unwrap(),
-            U256::from(50u64) * UNITS_PER_COEN
+            U256::from(50u64) * SCALE_1E6_U256
         );
     }
 

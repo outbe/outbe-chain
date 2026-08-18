@@ -10,7 +10,7 @@ use crate::asset_type::AssetType;
 use crate::error::Result;
 use crate::math::price_helper;
 use crate::math::uint256x256_math::{mul_shift_round_down, shift_div_round_down};
-use crate::units::COEN_ISO_PRICE_SCALE;
+use crate::units::SCALE_1E6_U256;
 
 const PRICE_BINARY_OFFSET: u8 = 128;
 
@@ -25,12 +25,12 @@ pub fn is_coen_iso_market(pair: AddressPair) -> bool {
 
 /// Converts a six-decimal COEN/ISO price to the existing 128.128 price domain.
 pub fn coen_iso_price_to_128x128(price: U256) -> Result<U256> {
-    shift_div_round_down(price, PRICE_BINARY_OFFSET, COEN_ISO_PRICE_SCALE)
+    shift_div_round_down(price, PRICE_BINARY_OFFSET, SCALE_1E6_U256)
 }
 
 /// Converts an existing 128.128 price to a six-decimal COEN/ISO price.
 pub fn price_128x128_to_coen_iso(price: U256) -> Result<U256> {
-    mul_shift_round_down(price, COEN_ISO_PRICE_SCALE, PRICE_BINARY_OFFSET)
+    mul_shift_round_down(price, SCALE_1E6_U256, PRICE_BINARY_OFFSET)
 }
 
 /// Maps a six-decimal COEN/ISO price to a Liquidity Book bin id.

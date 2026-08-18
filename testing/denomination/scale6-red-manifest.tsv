@@ -1,5 +1,5 @@
 # Frozen against commit 4ddc0e3b on 2026-08-18, before any P1-P5 production change.
-# Amended after user correction: every stablecoin-backed COEN/ISO market is P6;
+# Amended after user correction: every stablecoin-backed COEN/ISO rate uses scale 1e6;
 # S-Curve/day-type remains specific to COEN/840.
 # Columns are normative. expected_new_behavior is frozen after this checkpoint.
 # Full suites executed: Rust T1-T5 packages with --no-fail-fast; contracts/tokens forge test; contracts/intex forge test; MCP npm test; Python Tribute/genesis tests; Lysis/Fidelity/Emission references; E2E harness with ocomp-integration.
@@ -95,7 +95,7 @@ T4	outbe-desis::tests::clear_refunds_equal_locked_minus_paid	refund is 30000000 
 T4	outbe-desis::tests::clearing_allocates_up_to_supply	three allocations consume supply	old scale path allocates 0	crates/core/desis	P4
 T4	outbe-desis::tests::force_clear_skips_missing_chain_after_deadline	one available chain clears	old scale path clears 0	crates/core/desis	P4
 T4	outbe-desis::tests::clearing_uniform_price_is_last_allocated_bid	uniform price is 200	old scale path yields 0	crates/core/desis	P4
-T4	outbe-intexfactory::tests::the_issuance_currency_settles_through_the_coen_pivot	P6 USD and EUR rates preserve the 0.5 cross-rate and return 500000000000000000 payment units	mixed P6/FP18 production formula returns 1	crates/core/intexfactory	P4
+T4	outbe-intexfactory::tests::the_issuance_currency_settles_through_the_coen_pivot	USD and EUR rates (scale 1e6) preserve the 0.5 cross-rate and return 500000000000000000 payment units	mixed rate scales 1e6/1e18 in the production formula return 1	crates/core/intexfactory	P4
 T4	outbe-desis::tests::schedule_arms_the_clearing_gate_at_reveal_end	clearing gate carries 10 units	old scale path yields 0	crates/core/desis	P4
 T4	outbe-desis::tests::two_chain_bids_merge_and_carry_source_chain	two bids merge with source chain	old scale path yields 0 bids	crates/core/desis	P4
 T4	outbe-desis::tests::schedule_derives_min_bid_qty_from_prior_clearing	minimum bid quantity is 4	old scale path yields 0	crates/core/desis	P4
@@ -130,4 +130,4 @@ T5	mcp::denomination.test.ts::Outbe chain metadata declares six native decimals	
 T5	mcp::denomination.test.ts::MCP formats native monetary fields at scale6 and leaves dimensionless FP18 alone	1500000 balance formats as 1.5 while rewardBand remains FP18	balance formats as 0.0000000000015	mcp/src/format.ts	P5
 T5	mcp::denomination.test.ts::MCP signed COEN inputs convert whole amounts to six-decimal units	1.5 encodes as 1500000 for stake, unstake and claim	first checked call encodes 1500000000000000000	mcp/src/tools/sign.ts	P5
 T5	mcp::denomination.test.ts::BSC chain metadata retains eighteen native decimals	BSC chain context declares BNB with 18 decimals	generic createCtx declares COEN with 18 decimals for BSC	mcp/src/chain.ts	P5
-T5	mcp::denomination.test.ts::network-native parsing and formatting follows chain metadata	Outbe native uses P6 while BSC native uses P18	network-aware native conversion helpers are absent	mcp/src/chain.ts and mcp/src/tools/intent.ts	P5
+T5	mcp::denomination.test.ts::network-native parsing and formatting follows chain metadata	Outbe gas token COEN uses 6 decimals; the external BSC gas token BNB remains 18 decimals (WCOEN is a separate 6-decimal ERC-20 covered by T1)	network-aware native conversion helpers are absent	mcp/src/chain.ts and mcp/src/tools/intent.ts	P5

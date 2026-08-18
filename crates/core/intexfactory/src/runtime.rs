@@ -256,7 +256,8 @@ pub(crate) fn derived_cost_amount(
     product_to_payment_units(product, U256::ONE, U256::ONE, payment_decimals)
 }
 
-/// Converts a P6-price × P6-load product into payment-token minor units and optionally applies
+/// Converts a price (scale 1e6) x PROMIS load (scale 1e6) product into
+/// payment-token minor units and optionally applies
 /// an ISO/ISO rate. Scaling is cancelled before multiplication where possible and the result is
 /// rounded up exactly once, in favor of the reserve receiving the settlement.
 fn product_to_payment_units(

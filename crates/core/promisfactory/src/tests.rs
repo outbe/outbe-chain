@@ -8,6 +8,7 @@ use alloy_sol_types::{SolCall, SolInterface};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::units::SCALE_1E6_U64;
 use outbe_promis::api::{self as promis_api, ModifyAuth};
 use outbe_promis::enclave_client::test_enclave;
 use outbe_tee::protocol::PromisOp;
@@ -17,7 +18,6 @@ use crate::precompile::{dispatch, IPromisFactory};
 use crate::runtime;
 
 const CHAIN_ID: u64 = 1;
-const UNITS_PER_PROMIS: u64 = 1_000_000;
 
 fn chain_b256() -> B256 {
     B256::from(U256::from(CHAIN_ID))
@@ -82,7 +82,7 @@ fn mine_rejects_zero_amount() {
 #[test]
 fn mine_coen_success_burns_and_mints_native() {
     with_env(|storage| {
-        let one_promis = U256::from(UNITS_PER_PROMIS);
+        let one_promis = U256::from(SCALE_1E6_U64);
         promis_api::mint(
             storage.clone(),
             alice(),

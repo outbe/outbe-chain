@@ -9,7 +9,7 @@ use outbe_common::WorldwideDay;
 use outbe_compressed_entities::derive_poseidon_entity_id;
 use outbe_nod::NodContract;
 use outbe_primitives::math::scaled_math::checked_mul_div_floor;
-use outbe_primitives::units::UNITS_PER_GRATIS;
+use outbe_primitives::units::SCALE_1E6_U256;
 
 use crate::algorithm::{calc_fraction_distribution_fp, SCALE};
 use crate::constants::calc_floor_price;
@@ -488,7 +488,7 @@ pub(crate) fn calculate_cost(
     gratis_load_minor: U256,
     ordinal: usize,
 ) -> Result<U256, ProgramErrorV1> {
-    let cost = scaled_floor(entry_price_minor, gratis_load_minor, UNITS_PER_GRATIS)?;
+    let cost = scaled_floor(entry_price_minor, gratis_load_minor, SCALE_1E6_U256)?;
     if cost.is_zero() {
         return Err(ProgramErrorV1::ZeroCost { ordinal });
     }

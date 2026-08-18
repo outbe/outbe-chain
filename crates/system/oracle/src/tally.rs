@@ -11,7 +11,7 @@ use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::error::Result;
 
 use crate::errors::OracleError;
-use outbe_primitives::units::UNITS_PER_COEN;
+use outbe_primitives::units::SCALE_1E6_U256;
 
 use crate::precompile::IOracle;
 use crate::schema::{OracleContract, PairIndex, SCALE_1E18};
@@ -321,7 +321,7 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
             .map(|v| {
                 // Use stake as power, converted from raw COEN units to whole COEN.
                 // This gives units in whole tokens as consensus power.
-                (v.stake / UNITS_PER_COEN).saturating_to::<u64>()
+                (v.stake / SCALE_1E6_U256).saturating_to::<u64>()
             })
             .unwrap_or(0);
 
@@ -413,7 +413,7 @@ pub fn run_tally(oracle: &mut OracleContract, block_number: u64, timestamp: u64)
 
         // Convert cross-rate median back to actual rate:
         // The dimensionless FP18 cross-rate cancels SCALE_1E18 here, restoring
-        // the reference market's scale (P6 for COEN/ISO, otherwise pair-owned).
+        // the reference market's scale (1e6 for a COEN/ISO rate, otherwise pair-owned).
         if !cross_median.is_zero() && !ref_median.is_zero() {
             let actual_rate = ref_median
                 .checked_mul(SCALE_1E18)

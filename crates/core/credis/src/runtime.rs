@@ -6,7 +6,7 @@
 use alloy_primitives::{Address, U256};
 
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::units::CREDIS_INTEREST_RATE_SCALE;
+use outbe_primitives::units::SCALE_1E6_U256;
 
 use crate::errors::CredisError;
 use crate::precompile::ICredis;
@@ -51,13 +51,13 @@ impl CredisContract<'_> {
             .checked_mul(term)
             .ok_or_else(|| -> PrecompileError { CredisError::InvalidAmount.into() })?
             / U256::from(12u64);
-        let multiplier = CREDIS_INTEREST_RATE_SCALE
+        let multiplier = SCALE_1E6_U256
             .checked_add(term_rate)
             .ok_or_else(|| -> PrecompileError { CredisError::InvalidAmount.into() })?;
         let scaled = principal
             .checked_mul(multiplier)
             .ok_or_else(|| -> PrecompileError { CredisError::InvalidAmount.into() })?;
-        Ok(scaled / CREDIS_INTEREST_RATE_SCALE)
+        Ok(scaled / SCALE_1E6_U256)
     }
 
     /// Creates a position and returns the derived

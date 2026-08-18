@@ -27,7 +27,7 @@ use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::math::scaled_math::checked_mul_div_ceil;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::UNITS_PER_GRATIS;
+use outbe_primitives::units::SCALE_1E6_U256;
 
 /// Reads the pledged asset's ISO 4217 currency code via a static
 /// `IReferenceCurrency.isoCode()` sub-call, mirroring credisfactory's
@@ -54,7 +54,7 @@ fn convert_stables_to_gratis(
 ) -> Result<(U256, U256)> {
     let iso_code = read_iso_code(&storage, asset)?;
     let rate = coen_rate_for(storage, iso_code)?;
-    let gratis = checked_mul_div_ceil(amount_stables, UNITS_PER_GRATIS, rate).map_err(|_| {
+    let gratis = checked_mul_div_ceil(amount_stables, SCALE_1E6_U256, rate).map_err(|_| {
         let error: PrecompileError = GratisFactoryError::OracleConversionOverflow.into();
         error
     })?;

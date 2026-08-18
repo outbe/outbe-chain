@@ -136,6 +136,7 @@ mod tests {
     use super::*;
     use crate::compute::compute_token_id;
     use crate::crypto::{chacha20poly1305_encrypt, hkdf_sha256};
+    use outbe_primitives::units::SCALE_1E6_U256;
     use outbe_tee::protocol::{TributeZkContext, WorldwideDay};
     use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -145,8 +146,6 @@ mod tests {
     const DRAFT: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
     const DAY: WorldwideDay = WorldwideDay::new(20250115);
     const NEXT_DAY: WorldwideDay = WorldwideDay::new(20250116);
-    const UNITS_PER_COEN: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
-
     /// Encrypt a payload the way a client would (ephemeral_secret x tribute_offer_pub).
     /// Day, currencies and price are cleartext offer fields; tests that care mutate
     /// them on the returned struct.
@@ -166,7 +165,7 @@ mod tests {
             tribute_currency: 840,
             reference_currency: 840,
             exclude_from_intex_issuance: false,
-            tribute_price_minor: UNITS_PER_COEN,
+            tribute_price_minor: SCALE_1E6_U256,
             zk_context: None,
         }
     }
@@ -207,15 +206,15 @@ mod tests {
     fn batch_creates_tribute_with_correct_economics() {
         let owner = Address::repeat_byte(0xAB);
         let mut offer = make_tribute_offer(owner, GOOD_JSON);
-        offer.tribute_price_minor = U256::from(2u64) * UNITS_PER_COEN; // 2.0 COEN/840
+        offer.tribute_price_minor = U256::from(2u64) * SCALE_1E6_U256; // 2.0 COEN/840
 
         let (results, hash) = process_tribute_offer_batch(&key(), &[offer]);
         assert_eq!(results.len(), 1);
         let r = &results[0];
         assert_eq!(r.status, TributeOfferStatus::Created);
         assert_eq!(r.owner, owner);
-        assert_eq!(r.issuance_amount_minor, U256::from(100u64) * UNITS_PER_COEN);
-        assert_eq!(r.nominal_amount_minor, U256::from(50u64) * UNITS_PER_COEN);
+        assert_eq!(r.issuance_amount_minor, U256::from(100u64) * SCALE_1E6_U256);
+        assert_eq!(r.nominal_amount_minor, U256::from(50u64) * SCALE_1E6_U256);
         assert_eq!(r.token_id, compute_token_id(owner, DAY, DRAFT).unwrap());
         assert_ne!(hash, B256::ZERO);
     }
@@ -228,13 +227,13 @@ mod tests {
         let mut offer = make_tribute_offer(owner, GOOD_JSON);
         offer.tribute_currency = 978;
         // Every stablecoin-backed COEN/ISO rate uses the six-decimal contract.
-        offer.tribute_price_minor = U256::from(4u64) * UNITS_PER_COEN;
+        offer.tribute_price_minor = U256::from(4u64) * SCALE_1E6_U256;
 
         let (results, _) = process_tribute_offer_batch(&key(), &[offer]);
         assert_eq!(results[0].status, TributeOfferStatus::Created);
         assert_eq!(
             results[0].nominal_amount_minor,
-            U256::from(25u64) * UNITS_PER_COEN
+            U256::from(25u64) * SCALE_1E6_U256
         );
     }
 
@@ -242,21 +241,21 @@ mod tests {
     #[test]
     fn one_batch_prices_each_offer_from_its_own_field() {
         let mut usd = make_tribute_offer(Address::repeat_byte(0x01), GOOD_JSON);
-        usd.tribute_price_minor = U256::from(2u64) * UNITS_PER_COEN;
+        usd.tribute_price_minor = U256::from(2u64) * SCALE_1E6_U256;
         let mut eur = make_tribute_offer(Address::repeat_byte(0x0B), GOOD_JSON);
         eur.tribute_currency = 978;
-        eur.tribute_price_minor = U256::from(5u64) * UNITS_PER_COEN;
+        eur.tribute_price_minor = U256::from(5u64) * SCALE_1E6_U256;
 
         let (results, _) = process_tribute_offer_batch(&key(), &[usd, eur]);
         assert_eq!(results[0].status, TributeOfferStatus::Created);
         assert_eq!(
             results[0].nominal_amount_minor,
-            U256::from(50u64) * UNITS_PER_COEN
+            U256::from(50u64) * SCALE_1E6_U256
         );
         assert_eq!(results[1].status, TributeOfferStatus::Created);
         assert_eq!(
             results[1].nominal_amount_minor,
-            U256::from(20u64) * UNITS_PER_COEN
+            U256::from(20u64) * SCALE_1E6_U256
         );
     }
 
@@ -480,7 +479,7 @@ mod tests {
             |o: &mut EncryptedTributeOffer| o.tribute_currency = 978,
             |o: &mut EncryptedTributeOffer| o.exclude_from_intex_issuance = true,
             |o: &mut EncryptedTributeOffer| {
-                o.tribute_price_minor = U256::from(2u64) * UNITS_PER_COEN
+                o.tribute_price_minor = U256::from(2u64) * SCALE_1E6_U256
             },
         ] {
             let mut other = offers.clone();

@@ -7,7 +7,7 @@ use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::INTEX_ADDRESS;
 use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::storage::types::{Storable, StorableType, StorageKey};
-use outbe_primitives::units::UNITS_PER_PROMIS;
+use outbe_primitives::units::SCALE_1E6_U256;
 use std::fmt;
 
 use crate::errors::IntexError;
@@ -273,7 +273,8 @@ impl SeriesRecord {
 }
 
 /// Cost of one Intex in reference ISO stable-units (1e6). Entry price and PROMIS load
-/// are both P6, so removing the PROMIS denominator leaves the reference-currency P6 scale.
+/// both use scale 1e6, so removing the PROMIS denominator leaves the
+/// reference-currency price at scale 1e6.
 /// Settling converts this into the chosen token's minor units — see
 /// `intexfactory::runtime::quote_cost_amount`.
 pub fn cost_amount_minor(
@@ -282,7 +283,7 @@ pub fn cost_amount_minor(
 ) -> Result<U256, IntexError> {
     entry_price_minor
         .checked_mul(promis_load_minor)
-        .map(|v| v / UNITS_PER_PROMIS)
+        .map(|v| v / SCALE_1E6_U256)
         .ok_or(IntexError::CostAmountOverflow)
 }
 

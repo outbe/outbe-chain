@@ -8,7 +8,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::error::Result;
-use outbe_primitives::units::COEN_ISO_PRICE_SCALE;
+use outbe_primitives::units::SCALE_1E6_U256;
 
 use crate::errors::OracleError;
 
@@ -187,7 +187,7 @@ pub fn compute_scurve_value(peak_price: U256, day_index: usize) -> U256 {
     peak_price
         .checked_mul(COEFFICIENTS[day_index])
         .unwrap_or(U256::ZERO)
-        / COEN_ISO_PRICE_SCALE
+        / SCALE_1E6_U256
 }
 
 /// Returns the maximum active S-curve value for a pair at a given timestamp.

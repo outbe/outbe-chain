@@ -1,10 +1,10 @@
 use alloy_primitives::ruint::UintTryTo;
 use alloy_primitives::{Uint, I256, U256};
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::units::UNITS_PER_GRATIS;
+use outbe_primitives::units::SCALE_1E6_U256;
 
 pub(crate) const SCALE_U128: u128 = 1_000_000;
-pub(crate) const SCALE: U256 = UNITS_PER_GRATIS;
+pub(crate) const SCALE: U256 = SCALE_1E6_U256;
 
 /// Wide integer used solely to hold the worst-case `fp_root` intermediate.
 type U1024 = Uint<1024, 16>;

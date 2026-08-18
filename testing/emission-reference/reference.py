@@ -8,9 +8,9 @@ import json
 from pathlib import Path
 
 
-UNITS_PER_COEN = 1_000_000
-INITIAL_DAY_EMISSION = (1 << 30) * UNITS_PER_COEN
-FLOOR_DAY_EMISSION = (1 << 26) * UNITS_PER_COEN
+SCALE_1E6 = 1_000_000
+INITIAL_DAY_EMISSION = (1 << 30) * SCALE_1E6
+FLOOR_DAY_EMISSION = (1 << 26) * SCALE_1E6
 FLOOR_DAY_THRESHOLD = 2_920
 K_NUM = 94_952
 K_DEN = 100_000_000
@@ -50,7 +50,7 @@ def build_vectors() -> dict[str, object]:
         "schema": "outbe-emission-scale6-v1",
         "algorithm": "alternating-taylor-amount-domain-floor-v1",
         "constants": {
-            "units_per_coen": str(UNITS_PER_COEN),
+            "units_per_coen": str(SCALE_1E6),
             "initial_day_emission_units": str(INITIAL_DAY_EMISSION),
             "floor_day_emission_units": str(FLOOR_DAY_EMISSION),
             "floor_day_threshold": FLOOR_DAY_THRESHOLD,

@@ -19,7 +19,7 @@ use crate::provider::{CandlePrice, Provider, TickerPrice};
 use alloy_primitives::U256;
 use eyre::Result;
 use outbe_primitives::stablecoin::iso_4217_alpha;
-use outbe_primitives::units::{COEN_ISO_PRICE_SCALE, SCALE_1E18_U128, UNITS_PER_COEN};
+use outbe_primitives::units::{SCALE_1E18_U128, SCALE_1E6_U128, SCALE_1E6_U256};
 use std::collections::HashMap;
 
 /// Aggregated price/volume for a single pair in that pair's canonical scale.
@@ -54,7 +54,7 @@ fn coen_iso_price(value: f64) -> Option<U256> {
     if value <= 0.0 || !value.is_finite() {
         return None;
     }
-    let scale = COEN_ISO_PRICE_SCALE.to::<u128>() as f64;
+    let scale = SCALE_1E6_U128 as f64;
     let value = U256::from((value * scale) as u128);
     (!value.is_zero()).then_some(value)
 }
@@ -65,7 +65,7 @@ fn coen_volume(value: f64) -> U256 {
     if value <= 0.0 || !value.is_finite() {
         return U256::ZERO;
     }
-    let scale = UNITS_PER_COEN.to::<u128>() as f64;
+    let scale = SCALE_1E6_U128 as f64;
     U256::from((value * scale) as u128).max(U256::ONE)
 }
 
@@ -83,7 +83,7 @@ fn compute_coen_iso_weighted(prices: &[(f64, f64)]) -> Result<Option<(U256, U256
         };
         let volume = coen_volume(volume);
         let weight = if volume.is_zero() {
-            UNITS_PER_COEN
+            SCALE_1E6_U256
         } else {
             volume
         };
