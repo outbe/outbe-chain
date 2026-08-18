@@ -1247,6 +1247,14 @@ mod tests {
     const BLOCK_B: B256 = B256::repeat_byte(0x32);
 
     #[test]
+    fn signer_fee_cap_is_twice_the_native_protocol_floor() {
+        assert_eq!(
+            MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
+            MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS * 2
+        );
+    }
+
+    #[test]
     fn public_rpc_preserves_null_result_for_pending_receipt() {
         let response = br#"{"jsonrpc":"2.0","id":7,"result":null}"#;
 

@@ -2749,7 +2749,7 @@ fn schedule_dynamic_membership_days(
                 )
             })?;
         let snapshot_time = second_worldwide_day.start_timestamp();
-        let volume = U256::from(1_000_000_000_000_000_000_u128);
+        let volume = U256::from(1_000_000_u64);
         outbe_oracle::schema::OracleContract::new(storage.clone())
             .write_snapshot(snapshot_time, &[(pair, price, volume)])?;
         if !outbe_oracle::api::store_worldwide_day_vwap_snapshot(
@@ -2897,7 +2897,7 @@ fn schedule_public_measurement_day(
                 "OCOMP public measurement previous VWAP window underflow".into(),
             )
         })?;
-        let volume = U256::from(1_000_000_000_000_000_000_u128);
+        let volume = U256::from(1_000_000_u64);
         let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         let inherited_scurve_expiry = genesis_timestamp
             .checked_add(
@@ -3135,7 +3135,7 @@ fn fund_capacity_tribute_accounts(
     private_keys: &[String],
 ) -> Result<bool> {
     const CAPACITY_OWNER_BALANCE_COEN: u64 = 1_000;
-    const COEN_BASE_UNITS: u64 = 1_000_000_000_000_000_000;
+    const COEN_BASE_UNITS: u64 = 1_000_000;
 
     let alloc = genesis
         .get_mut("alloc")
@@ -4290,7 +4290,7 @@ mod tests {
             assert_eq!(scurve, U256::ZERO);
             let current_rate = outbe_oracle::api::coen_rate_for(storage, 840).unwrap();
             assert_eq!(current_rate, entry_price * U256::from(2));
-            let scale = outbe_primitives::units::SCALE_1E18;
+            let scale = U256::from(1_000_000u64);
             assert_eq!(day.metadosis_limit_amount, U256::from(500) * scale);
             let issuance =
                 outbe_tee_enclave::compute::normalize_amount(OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE, "0")
@@ -4663,13 +4663,13 @@ mod tests {
         oracle_config.initial_rates = vec![(
             day_pair.address1(),
             day_pair.address2(),
-            U256::from(1_000_000_000_000_000_000_u128),
+            U256::from(1_000_000_u64),
         )];
         oracle_config.scurve_entries = vec![outbe_oracle::genesis::GenesisScurveEntry {
             base: day_pair.address1(),
             quote: day_pair.address2(),
             peak_day: worldwide_day.to_timestamp_utc(),
-            peak_price: U256::from(1_000_000_000_000_000_000_u128),
+            peak_price: U256::from(1_000_000_u64),
         }];
         let mut oracle_provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut oracle_provider, |storage| {

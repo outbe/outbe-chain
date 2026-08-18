@@ -358,6 +358,8 @@ class PrepareNetworkTests(unittest.TestCase):
             self.assertIn("metadosisStorageLayoutV1", config)
             self.assertIn("teeAttestationV1", config)
             self.assertTrue((output / "protocol-bundle-v1.ocb1").is_file())
+            funded = genesis["alloc"]["4fe927ab711793954b3a29969ecd4a60d6d265d0"]
+            self.assertEqual(int(funded["balance"], 16), 1_000_000_000)
             self.assertFalse(
                 (output / "polynomial.hex").exists(),
                 "fresh founders must run the interactive genesis DKG, not consume a centralized bootstrap polynomial",

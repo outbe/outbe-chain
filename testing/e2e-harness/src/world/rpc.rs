@@ -2705,7 +2705,7 @@ impl Rpc {
             &self.cfg.rpc0,
             zerofee_key(state),
             addresses::AGENT_REWARD_ADDR,
-            1_000_000_000,
+            1,
         )?);
         state.zerofee_balance_after_paid = eth::balance(&self.cfg.rpc0, zerofee_address(state));
         Ok(())

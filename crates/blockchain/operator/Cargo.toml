@@ -22,6 +22,7 @@ tokio.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+alloy-eips.workspace = true
 tempfile.workspace = true
 
 [lints]

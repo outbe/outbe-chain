@@ -261,6 +261,7 @@ fn encode_length(len: usize) -> Vec<u8> {
 mod tests {
     use super::*;
     use crate::rpc::mock::{ExpectedRpcCall, RecordedRpcCall, RecordedRpcResponse, RecordingRpc};
+    use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 
     // --- encode_length ---
 
@@ -454,6 +455,16 @@ mod tests {
 
     fn gas_price() -> U256 {
         U256::from(9u64)
+    }
+
+    #[test]
+    fn buffered_gas_price_uses_native_unit_protocol_floor() {
+        let protocol_floor = U256::from(MIN_PROTOCOL_BASE_FEE);
+        assert_eq!(buffered_gas_price(U256::ZERO), protocol_floor);
+        assert_eq!(
+            buffered_gas_price(protocol_floor),
+            protocol_floor * U256::from(2)
+        );
     }
 
     fn expected_raw_tx(signer: &TxSigner, gas_estimate: u64) -> Vec<u8> {

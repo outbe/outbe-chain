@@ -275,8 +275,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_staking_info_returns_correct_values() {
-        let stake = U256::from(500u64) * U256::from(10u64).pow(U256::from(18));
-        let total = U256::from(1000u64) * U256::from(10u64).pow(U256::from(18));
+        let stake = U256::from(500_000_000u64);
+        let total = U256::from(1_000_000_000u64);
         let mock = staking_info_mock(stake, total);
         let addr: Address = "0x1111111111111111111111111111111111111111"
             .parse()
@@ -310,7 +310,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_staking_stats_returns_correct_values() {
-        let total = U256::from(3000u64) * U256::from(10u64).pow(U256::from(18));
+        let total = U256::from(3_000_000_000u64);
         let mut map = HashMap::new();
         map.insert(
             (abi::STAKING_ADDR, IStaking::getTotalStakedCall::SELECTOR),
@@ -343,8 +343,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_staking_share_percentage_calculation() {
-        let stake = U256::from(250u64) * U256::from(10u64).pow(U256::from(18));
-        let total = U256::from(1000u64) * U256::from(10u64).pow(U256::from(18));
+        let stake = U256::from(250_000_000u64);
+        let total = U256::from(1_000_000_000u64);
         let mock = staking_info_mock(stake, total);
         let addr: Address = "0x1111111111111111111111111111111111111111"
             .parse()

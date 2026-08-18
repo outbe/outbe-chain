@@ -16,8 +16,8 @@ use crate::{env::TeeMode, internal::proc};
 
 use super::{worldwide_day, Localnet};
 
-/// 10000 COEN (`10000 * 10^18`) as hex — the per-validator liquid balance.
-const VALIDATOR_BALANCE_HEX: &str = "0x21E19E0C9BAB2400000";
+/// 10000 COEN (`10000 * 10^6`) as hex — the per-validator liquid balance.
+const VALIDATOR_BALANCE_HEX: &str = "0x2540be400";
 /// Dev felony threshold (blocks) so downtime slashing is observable on the short
 /// localnet epoch; must stay `<` the epoch length (`bootstrap-testnet.sh:234`).
 const DEV_FELONY_THRESHOLD: u64 = 30;
@@ -583,7 +583,7 @@ fn localnet_ocomp_vote_window_blocks(tuning: &[(&str, String)]) -> u64 {
 fn validator_balance_hex(tuning: &[(&str, String)]) -> String {
     tuned_optional(tuning, "TESTNET_VALIDATOR_BALANCE_COEN").map_or_else(
         || VALIDATOR_BALANCE_HEX.to_owned(),
-        |coen| format!("0x{:x}", u128::from(coen) * 10u128.pow(18)),
+        |coen| format!("0x{:x}", u128::from(coen) * 1_000_000),
     )
 }
 
@@ -764,7 +764,7 @@ mod tests {
             validator_balance_hex(&[("TESTNET_VALIDATOR_BALANCE_COEN", "2100000".to_owned())]);
         assert_eq!(
             u128::from_str_radix(tuned.trim_start_matches("0x"), 16).unwrap(),
-            2_100_000u128 * 10u128.pow(18)
+            2_100_000u128 * 1_000_000
         );
     }
 

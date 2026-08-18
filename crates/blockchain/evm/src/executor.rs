@@ -4421,7 +4421,7 @@ mod tests {
     };
     use reth_ethereum::chainspec::{ChainSpec, ChainSpecBuilder, MAINNET};
     use reth_ethereum::evm::revm::db::State;
-    use reth_ethereum::{evm::RethReceiptBuilder, Receipt};
+    use reth_ethereum::Receipt;
     use reth_evm::{block::BlockExecutor, execute::ProviderError, ConfigureEvm, EvmEnv};
     use reth_primitives_traits::SignedTransaction as _;
     use revm::{
@@ -5926,7 +5926,7 @@ mod tests {
     }
 
     #[test]
-    fn ethereum_post_execution_copy_matches_upstream_behavior_matrix() {
+    fn outbe_post_execution_preserves_non_withdrawal_behavior_and_converts_exact_withdrawals() {
         use alloy_eips::{
             eip4895::Withdrawal,
             eip6110::{DEPOSIT_REQUEST_TYPE, MAINNET_DEPOSIT_CONTRACT_ADDRESS},
@@ -5934,7 +5934,6 @@ mod tests {
         use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
 
         const DAO_BALANCE: u128 = 37;
-        const WITHDRAWAL_AMOUNT_GWEI: u64 = 2;
         const CUMULATIVE_TX_GAS: u64 = 11;
         const REGULAR_GAS: u64 = 17;
         const STATE_GAS: u64 = 23;
@@ -6046,114 +6045,235 @@ mod tests {
             },
         ];
 
-        for case in cases {
-            let run = |copy: bool| {
-                let mut state = fixture_state();
-                let config = OutbeEvmConfig::new(case.chain_spec.clone())
-                    .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(0));
-                let evm_env = EvmEnv {
-                    cfg_env: CfgEnv::new()
-                        .with_chain_id(case.chain_spec.chain().id())
-                        .with_spec_and_mainnet_gas_params(case.spec_id),
-                    block_env: BlockEnv {
-                        number: U256::ZERO,
-                        gas_limit: 30_000_000,
-                        beneficiary: REWARDS_ADDRESS,
-                        timestamp: U256::ZERO,
-                        ..Default::default()
-                    },
-                };
-                let evm = config.evm_with_env(&mut state, evm_env);
-                let mut ctx = execution_ctx(Some(1), Bytes::new());
-                ctx.inner.withdrawals = Some(std::borrow::Cow::Owned(vec![Withdrawal {
+        let withdrawal_cases = [
+            ("none", None, U256::ZERO),
+            ("empty", Some(Vec::new()), U256::ZERO),
+            (
+                "one-unit",
+                Some(vec![Withdrawal {
                     index: 0,
                     validator_index: 0,
                     address: address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
-                    amount: WITHDRAWAL_AMOUNT_GWEI,
-                }]));
+                    amount: 1_000,
+                }]),
+                U256::ONE,
+            ),
+            (
+                "one-coen",
+                Some(vec![Withdrawal {
+                    index: 0,
+                    validator_index: 0,
+                    address: address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
+                    amount: 1_000_000_000,
+                }]),
+                U256::from(1_000_000u64),
+            ),
+        ];
 
-                let result = if copy {
+        for case in cases {
+            for (withdrawal_name, withdrawals, expected_withdrawal_balance) in
+                withdrawal_cases.clone()
+            {
+                let run = |ocomp: bool| {
+                    let mut state = fixture_state();
+                    let config = if ocomp {
+                        OutbeEvmConfig::new(case.chain_spec.clone())
+                            .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(0))
+                    } else {
+                        OutbeEvmConfig::new(case.chain_spec.clone())
+                    };
+                    let evm_env = EvmEnv {
+                        cfg_env: CfgEnv::new()
+                            .with_chain_id(case.chain_spec.chain().id())
+                            .with_spec_and_mainnet_gas_params(case.spec_id),
+                        block_env: BlockEnv {
+                            number: U256::ZERO,
+                            gas_limit: 30_000_000,
+                            beneficiary: REWARDS_ADDRESS,
+                            timestamp: U256::ZERO,
+                            ..Default::default()
+                        },
+                    };
+                    let evm = config.evm_with_env(&mut state, evm_env);
+                    let mut ctx = execution_ctx(Some(1), Bytes::new());
+                    ctx.execute_outbe_block_hooks = false;
+                    ctx.inner.withdrawals = withdrawals.clone().map(std::borrow::Cow::Owned);
+
                     let mut executor = config.create_executor(evm, ctx);
                     executor.inner.receipts = vec![fixture_receipt(case.include_deposit)];
                     executor.inner.cumulative_tx_gas_used = CUMULATIVE_TX_GAS;
                     executor.inner.block_regular_gas_used = REGULAR_GAS;
                     executor.inner.block_state_gas_used = STATE_GAS;
                     executor.inner.blob_gas_used = 5;
-                    executor.ocomp_lifecycle_active = true;
-                    executor.ocomp_terminal_request_consumed = true;
                     executor.validate_execution_summary = false;
-                    executor
-                        .apply_ethereum_post_execution_before_ocomp_terminal()
-                        .expect("copied post-execution phase succeeds");
-                    let (evm, result) = executor.finish().expect("copied result assembly succeeds");
+                    if ocomp {
+                        executor.ocomp_lifecycle_active = true;
+                        executor.ocomp_terminal_request_consumed = true;
+                        executor
+                            .apply_ethereum_post_execution_before_ocomp_terminal()
+                            .expect("OCOMP post-execution phase succeeds");
+                    }
+                    let (evm, result) = executor.finish().expect("Outbe result assembly succeeds");
                     drop(evm);
-                    result
-                } else {
-                    let receipt_builder = RethReceiptBuilder::default();
-                    let mut executor =
-                        EthBlockExecutor::new(evm, ctx.inner, &case.chain_spec, &receipt_builder);
-                    executor.receipts = vec![fixture_receipt(case.include_deposit)];
-                    executor.cumulative_tx_gas_used = CUMULATIVE_TX_GAS;
-                    executor.block_regular_gas_used = REGULAR_GAS;
-                    executor.block_state_gas_used = STATE_GAS;
-                    executor.blob_gas_used = 5;
-                    let (evm, result) = executor.finish().expect("upstream finish succeeds");
-                    drop(evm);
-                    result
+
+                    let root = post_state_root(&state.bundle_state);
+                    let dao_source_balance = balance(
+                        &mut state,
+                        alloy_evm::eth::dao_fork::DAO_HARDFORK_ACCOUNTS[0],
+                    );
+                    let dao_beneficiary_balance = balance(
+                        &mut state,
+                        alloy_evm::eth::dao_fork::DAO_HARDFORK_BENEFICIARY,
+                    );
+                    let withdrawal_balance = balance(
+                        &mut state,
+                        address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
+                    );
+                    (
+                        result,
+                        root,
+                        dao_source_balance,
+                        dao_beneficiary_balance,
+                        withdrawal_balance,
+                    )
                 };
 
-                let root = post_state_root(&state.bundle_state);
-                let dao_source_balance = balance(
-                    &mut state,
-                    alloy_evm::eth::dao_fork::DAO_HARDFORK_ACCOUNTS[0],
+                let ocomp = run(true);
+                let normal = run(false);
+                assert_eq!(
+                    ocomp, normal,
+                    "{} / {withdrawal_name}: proposer, validator and OCOMP execution must agree",
+                    case.name,
                 );
-                let dao_beneficiary_balance = balance(
-                    &mut state,
-                    alloy_evm::eth::dao_fork::DAO_HARDFORK_BENEFICIARY,
+                assert_eq!(ocomp.0.gas_used, case.expected_gas_used, "{}", case.name);
+                assert_eq!(ocomp.2, U256::ZERO, "{}: DAO source drains", case.name);
+                assert_eq!(
+                    ocomp.3,
+                    U256::from(DAO_BALANCE),
+                    "{}: DAO beneficiary receives the drained balance",
+                    case.name
                 );
-                let withdrawal_balance = balance(
-                    &mut state,
-                    address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
+                assert_eq!(
+                    ocomp.4, expected_withdrawal_balance,
+                    "{} / {withdrawal_name}: withdrawal credits exact COEN unit",
+                    case.name,
                 );
-                (
-                    result,
-                    root,
-                    dao_source_balance,
-                    dao_beneficiary_balance,
-                    withdrawal_balance,
-                )
-            };
+                assert_eq!(
+                    ocomp
+                        .0
+                        .requests
+                        .iter()
+                        .any(|request| request.first() == Some(&DEPOSIT_REQUEST_TYPE)),
+                    case.include_deposit,
+                    "{}: Prague deposit request branch is observable",
+                    case.name
+                );
+            }
+        }
+    }
 
-            let copied = run(true);
-            let upstream = run(false);
-            assert_eq!(
-                copied, upstream,
-                "{}: copied phase must remain byte/state equivalent to EthBlockExecutor::finish",
-                case.name
+    #[test]
+    fn nonrepresentable_withdrawal_rejects_before_any_state_write() {
+        use alloy_eips::eip4895::Withdrawal;
+
+        const DAO_BALANCE: u128 = 37;
+        const WITHDRAWAL_TARGET: Address = address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
+
+        fn account_balance(
+            state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
+            address: Address,
+        ) -> U256 {
+            state
+                .basic(address)
+                .expect("post-execution balance is readable")
+                .map_or(U256::ZERO, |account| account.balance)
+        }
+
+        for ocomp in [false, true] {
+            let chain_spec = Arc::new(
+                ChainSpecBuilder::from(&*MAINNET)
+                    .shanghai_activated()
+                    .build()
+                    .map_header(OutbeHeader::new),
             );
-            assert_eq!(copied.0.gas_used, case.expected_gas_used, "{}", case.name);
-            assert_eq!(copied.2, U256::ZERO, "{}: DAO source drains", case.name);
+            let mut database = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+            database.insert_account_info(
+                alloy_evm::eth::dao_fork::DAO_HARDFORK_ACCOUNTS[0],
+                AccountInfo {
+                    balance: U256::from(DAO_BALANCE),
+                    ..Default::default()
+                },
+            );
+            let mut state = State::builder()
+                .with_database(database)
+                .with_bundle_update()
+                .build();
+            let config = if ocomp {
+                OutbeEvmConfig::new(chain_spec.clone())
+                    .with_ocomp_lifecycle_activation(OcompLifecycleActivation::at_block(0))
+            } else {
+                OutbeEvmConfig::new(chain_spec.clone())
+            };
+            let evm_env = EvmEnv {
+                cfg_env: CfgEnv::new()
+                    .with_chain_id(chain_spec.chain().id())
+                    .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
+                block_env: BlockEnv {
+                    number: U256::ZERO,
+                    gas_limit: 30_000_000,
+                    beneficiary: REWARDS_ADDRESS,
+                    timestamp: U256::ZERO,
+                    ..Default::default()
+                },
+            };
+            let evm = config.evm_with_env(&mut state, evm_env);
+            let mut ctx = execution_ctx(Some(0), Bytes::new());
+            ctx.execute_outbe_block_hooks = false;
+            ctx.inner.withdrawals = Some(std::borrow::Cow::Owned(vec![Withdrawal {
+                index: 0,
+                validator_index: 0,
+                address: WITHDRAWAL_TARGET,
+                amount: 999,
+            }]));
+            let mut executor = config.create_executor(evm, ctx);
+            executor.validate_execution_summary = false;
+
+            let error = if ocomp {
+                executor.ocomp_lifecycle_active = true;
+                executor.ocomp_terminal_request_consumed = true;
+                let error = executor
+                    .apply_ethereum_post_execution_before_ocomp_terminal()
+                    .expect_err("OCOMP path must reject an inexact withdrawal");
+                drop(executor);
+                error
+            } else {
+                match executor.finish() {
+                    Ok(_) => panic!("normal path must reject an inexact withdrawal"),
+                    Err(error) => error,
+                }
+            };
+            assert!(error.to_string().contains("withdrawal"), "{error}");
+
             assert_eq!(
-                copied.3,
+                account_balance(
+                    &mut state,
+                    alloy_evm::eth::dao_fork::DAO_HARDFORK_ACCOUNTS[0]
+                ),
                 U256::from(DAO_BALANCE),
-                "{}: DAO beneficiary receives the drained balance",
-                case.name
+                "validation must precede the DAO drain"
             );
             assert_eq!(
-                copied.4,
-                U256::from(WITHDRAWAL_AMOUNT_GWEI) * U256::from(1_000_000_000u64),
-                "{}: withdrawal balance increment executes",
-                case.name
+                account_balance(
+                    &mut state,
+                    alloy_evm::eth::dao_fork::DAO_HARDFORK_BENEFICIARY
+                ),
+                U256::ZERO,
+                "validation must precede any beneficiary credit"
             );
             assert_eq!(
-                copied
-                    .0
-                    .requests
-                    .iter()
-                    .any(|request| request.first() == Some(&DEPOSIT_REQUEST_TYPE)),
-                case.include_deposit,
-                "{}: Prague deposit request branch is observable",
-                case.name
+                account_balance(&mut state, WITHDRAWAL_TARGET),
+                U256::ZERO,
+                "inexact withdrawal must not credit its target"
             );
         }
     }
@@ -6193,7 +6313,7 @@ mod tests {
                 index: 0,
                 validator_index: 0,
                 address: address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
-                amount: 1,
+                amount: 1_000,
             },
         ]));
         let mut executor = config.create_executor(evm, ctx);

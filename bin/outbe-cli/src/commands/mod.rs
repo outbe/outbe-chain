@@ -55,43 +55,42 @@ mod tests {
 
     #[test]
     fn test_format_unit_one_coen() {
-        let one = U256::from(10u64).pow(U256::from(18));
-        assert_eq!(format_unit(one), "1");
+        assert_eq!(format_unit(U256::from(1_000_000u64)), "1");
     }
 
     #[test]
     fn test_format_unit_large_whole() {
-        let val = U256::from(1000u64) * U256::from(10u64).pow(U256::from(18));
+        let val = U256::from(1_000_000_000u64);
         assert_eq!(format_unit(val), "1000");
     }
 
     #[test]
     fn test_format_unit_fractional() {
-        let val = U256::from(1_500_000_000_000_000_000u128);
+        let val = U256::from(1_500_000u64);
         assert_eq!(format_unit(val), "1.5");
     }
 
     #[test]
     fn test_format_unit_pure_fraction() {
-        let val = U256::from(500_000_000_000_000_000u128);
+        let val = U256::from(500_000u64);
         assert_eq!(format_unit(val), "0.5");
     }
 
     #[test]
-    fn test_format_unit_one_wei() {
-        assert_eq!(format_unit(U256::from(1u64)), "0.000000000000000001");
+    fn test_format_unit_one_native_unit() {
+        assert_eq!(format_unit(U256::from(1u64)), "0.000001");
     }
 
     #[test]
     fn test_format_unit_trailing_zeros_trimmed() {
-        let val = U256::from(1_200_000_000_000_000_000u128);
+        let val = U256::from(1_200_000u64);
         assert_eq!(format_unit(val), "1.2");
     }
 
     #[test]
     fn test_format_unit_all_decimal_places() {
-        let val = U256::from(999_999_999_999_999_999u128);
-        assert_eq!(format_unit(val), "0.999999999999999999");
+        let val = U256::from(999_999u64);
+        assert_eq!(format_unit(val), "0.999999");
     }
 
     #[test]
