@@ -216,6 +216,9 @@ test(economics): define Tribute-to-Lysis six-decimal behavior
 - `crates/core/lysis/vectors/lysis-v1`;
 - NOD/GEM/GemFactory cost tests;
 - Fidelity fixtures, содержащие реальные GRATIS amounts.
+- CredisFactory lifecycle consumer tests and TEE GRATIS pledge-ticket fixtures,
+  где `entry_rate` является COEN/ISO price, а collateral/balance — реальными
+  GRATIS amounts. Credis interest math при этом остаётся независимым FP18.
 
 Фиксируется:
 
@@ -232,6 +235,19 @@ test(economics): define Tribute-to-Lysis six-decimal behavior
 - cost делится на `UNITS_PER_GRATIS`;
 - sequential и OCOMP дают одинаковый результат;
 - exact-budget normalization.
+
+User-approved controlled T3 recovery after the CredisFactory blocker:
+
+- `crates/core/credisfactory/src/tests/e2e.rs` переводит только COEN/ISO
+  `oracle_rate`, GRATIS collateral и ledger fixtures на P6;
+- `refi_rate`, `currency_rate` и debt multiplier остаются FP18;
+- test section `bin/outbe-tee-enclave/src/gratis.rs` переводит только
+  `PledgeTerms.entry_rate` fixtures на P6;
+- `crates/system/tee/src/protocol.rs` меняет только неверный unit comment для
+  `PledgeTerms.entry_rate`; тип, codec, ABI и wire/state layout не меняются;
+- production math Credis, CredisFactory, Gratisfactory и Oracle не меняется;
+- пропущенный test-first контракт фиксируется отдельным late-RED evidence без
+  переписывания уже опубликованной истории commits.
 
 Регрессия Lysis отдельно закрепляется:
 
@@ -749,6 +765,8 @@ P3:
 - `crates/core/nod/src/{schema,state}.rs`;
 - `crates/core/gem/src/state.rs`;
 - `crates/core/gemfactory/src/runtime.rs`.
+- `crates/system/tee/src/protocol.rs` — только unit comment для
+  `PledgeTerms.entry_rate`; field shape/serde/codec не меняются.
 
 User-approved P3 re-plan after the `ZERO_COST` blocker: `types.rs` разрешён
 только для внутреннего `ProgramErrorV1::ZeroCost { ordinal }`. Это расширяет
@@ -815,6 +833,9 @@ T2:
 - новый `crates/system/oracle/testdata/coen840-scurve-v1.json` с 128 canonical coefficients и product pins;
 - `crates/system/oracle/src/tests/{common,e2e,lifecycle,state}.rs`;
 - Oracle-facing tests in `crates/blockchain/{evm,txpool}` and `crates/system/rewards/src/api.rs` where literals represent COEN/ISO;
+- Oracle-facing test sections in `crates/blockchain/node/src/payload_builder.rs`
+  and `crates/blockchain/evm/tests/compressed_scope_wiring.rs` where literals
+  represent COEN/ISO;
 - `crates/core/{nod,gem,intexfactory}/src/*tests*` for scale6 price-bin expectations;
 - `crates/system/oracle/tests/ocomp_openings.rs`, если файл существует at T2 audit; отсутствие не создаёт новый файл без public-behaviour case.
 
@@ -822,6 +843,10 @@ T3:
 
 - inline/unit/integration tests under `bin/outbe-tee-enclave/{src,tests,benches}` that carry Tribute amounts;
 - `crates/core/{tribute,tributefactory,gratis,gratisfactory}/src/tests.rs` and existing integration tests;
+- `crates/core/credisfactory/src/tests/e2e.rs` as consumer coverage: COEN/ISO
+  entry price and GRATIS monetary fixtures are P6, while Credis interest remains FP18;
+- test section `bin/outbe-tee-enclave/src/gratis.rs` only for
+  `PledgeTerms.entry_rate` fixtures; arbitrary KAT/layout values remain unchanged;
 - `crates/core/lysis/src/tests.rs`, `crates/core/lysis/tests/{planner_reducer_vectors,program_v1_reference}.rs`;
 - `testing/lysis-v1-reference/src/{lib,main}.rs`;
 - `crates/core/lysis/vectors/lysis-v1/{cases.jsonl,manifest.json}`;
@@ -843,6 +868,8 @@ T5:
 - Emission pins `0,1,365,730,1460,2190,2919,2920` plus full monotonic sweep;
 - EIP-4895 proposer/validator/OCOMP tests in `crates/blockchain/evm/src/executor.rs` and existing EVM integration suites;
 - native amount/fee fixtures in CLI/operator/txpool/staking/rewards/stablecoin tests;
+- `crates/blockchain/node/tests/fee_history_system_gas.rs` and
+  `testing/e2e/tests/update_flow_spec.rs` COEN/ISO/native fixtures;
 - `mcp/src/denomination.test.ts`: Outbe native P6 input/output, BSC native P18
   preservation и unchanged generic external intent representation;
 - Metadosis lifecycle fixtures only;
@@ -860,6 +887,12 @@ Generated artifacts after P5:
 Generated shape registries, codec shape vectors and arbitrary bit-pattern goldens remain unchanged unless the generator produces a byte-identical rewrite.
 
 RED evidence хранится в `testing/denomination/scale6-red-manifest.tsv`. Финальный requirement-to-evidence mapping хранится в `testing/denomination/scale6-coverage-ledger.tsv`. Это evidence artifacts, а не параллельный task tracker; статусы работ остаются только в Beads.
+
+Пропущенный T3 consumer path фиксируется в
+`testing/denomination/scale6-late-red.tsv`: corrected tests запускаются против
+pre-P3 commit `181d3fd2`, actual stale-production results записываются как RED,
+после чего те же tests обязаны быть GREEN на текущей ветке. Исходный RED
+manifest и история commits не переписываются.
 
 ### 9.9. Hot files и semantic-pass budget
 
@@ -903,8 +936,10 @@ committed. No NOD/GEM hook production change is permitted by the rejected model.
 16. `feat(intex): convert PROMIS WCOEN and price wire to six decimals`;
 17. `docs(denomination): freeze MCP native network boundary`;
 18. `test(native): cover MCP native network boundary`;
-19. `feat(native): complete COEN six-decimal cutover`;
-20. `chore(denomination): regenerate semantic and genesis artifacts`.
+19. `docs(denomination): add omitted GRATIS CREDIS boundary`;
+20. `test(economics): cover scale6 GRATIS CREDIS integration`;
+21. `feat(native): complete COEN six-decimal cutover`;
+22. `chore(denomination): regenerate semantic and genesis artifacts`.
 
 T1–T5 и RED commits намеренно не являются mergeable PR boundaries; production остаётся старым до commit 8. Финальный PR обязан быть GREEN.
 
