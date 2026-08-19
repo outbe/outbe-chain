@@ -676,10 +676,6 @@ fn run_outbe_pre_execution_hooks_inner(
     // rate. Reads the same Oracle surface, so it runs after Oracle.
     <outbe_intexfactory::IntexLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
-    // CREDIS has no begin-block work: its price path runs off finalized daily
-    // reference prices, so latch/call/void live in the Cycle daily trigger
-    // (`outbe_credisfactory::called`) rather than a per-block sweep.
-
     Ok(())
 }
 
