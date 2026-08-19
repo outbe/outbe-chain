@@ -2,7 +2,7 @@
 
 End-to-end TypeScript scripts that drive the Credis system on the Outbe chain. Each
 file under `src/` is a standalone runnable that exercises one step of the user / CCA
-flow — from pledging Gratis to repaying anadosis and unpledging.
+flow — from pledging Gratis to settling the Credis position and unpledging.
 
 ### Confidential (TEE) Gratis/Credis design
 
@@ -34,8 +34,9 @@ holder, client-side) can read them.
   it to the bundle with `spendAuth = HMAC(pledgeSecret, "credis-bind" ‖ bundle)`.
   Neither the asset nor the amount is calldata — both are read back out of the ticket,
   so the loan is issued at the price the user accepted rather than a fresh quote.
-  `anadosis(positionId)` pays one installment and **automatically** releases 1/N of
-  the pledged collateral back to the pledger's encrypted balance — no reclaim note,
+  `settle(positionId, amount)` applies a payment interest first and principal
+  second, and **automatically** releases the collateral share proportional to the
+  principal it covered back to the pledger's encrypted balance — no reclaim note,
   no separate unpledge step.
 
 Crypto uses Node's built-in `crypto` (HKDF-SHA256, HMAC-SHA256, ChaCha20-Poly1305)
@@ -96,12 +97,18 @@ src/
 ├── 3-request-credis.ts         CCA calls requestCredis(handle, spendAuth); vault funds enter bundle balance
 ├── 4-cca-simulate-purchase.ts  CCA uses bundle funds via per-token permission
 ├── 4.1-user-sa-withdraw.ts     User withdraws their free (non-bundled) balance
-└── 5-user-pays-anadosis.ts     User repays an installment (batched UserOp); 1/N of the collateral auto-unlocks
+└── 5-user-settles.ts           User settles any amount (batched UserOp); the matching collateral share auto-unlocks
 ```
 
-Collateral unlock is now automatic on each `anadosis` payment (released to the
-pledger's encrypted balance), so the old `6-user-unpledge-gratis.ts` reclaim step
-is gone.
+Collateral unlock is automatic on each `settle` payment (released to the pledger's
+encrypted balance), so the old `6-user-unpledge-gratis.ts` reclaim step is gone.
+
+A position has no installments, no due dates and no maturity: it becomes settleable
+the first time the COEN price exceeds its floor (entry + 8%), and from then on the
+owner — or anyone paying on their behalf — may settle any amount at any time.
+Interest is not accrued per block; it is computed at settlement over the whole UTC
+days elapsed, simple and ACT/365 on the outstanding principal, and is always
+collected before any principal.
 
 ## Installation
 
@@ -214,7 +221,8 @@ npx tsx src/4-cca-simulate-purchase.ts
 # Optional: user withdraws their free balance
 npx tsx src/4.1-user-sa-withdraw.ts 5.5
 
-# User pays the next anadosis on a credis position. Each payment automatically
-# releases 1/N of the collateral back to the pledger's encrypted balance.
-npx tsx src/5-user-pays-anadosis.ts <positionId>
+# User settles a credis position. Defaults to the full payoff (accrued interest +
+# outstanding principal); pass an amount to settle partially. Each payment releases
+# the proportional collateral share back to the pledger's encrypted balance.
+npx tsx src/5-user-settles.ts <positionId> [amount]
 ```

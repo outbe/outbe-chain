@@ -1,7 +1,45 @@
 [
   {
     "type": "function",
-    "name": "credisOf",
+    "name": "accruedInterest",
+    "inputs": [
+      {
+        "name": "positionId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "balanceOf",
+    "inputs": [
+      {
+        "name": "smartAccount",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "balance",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "credisPrincipalAndOutstandingOf",
     "inputs": [
       {
         "name": "smartAccount",
@@ -14,142 +52,11 @@
         "name": "",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getAllPositions",
-    "inputs": [],
-    "outputs": [
+      },
       {
         "name": "",
-        "type": "tuple[]",
-        "internalType": "struct ICredis.Position[]",
-        "components": [
-          {
-            "name": "positionId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "asset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "smartAccount",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "totalAnadosisAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "outstandingAnadosisAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "totalGratisAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "outstandingGratisAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "nextAnadosisNumber",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "createdAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "credisPrincipal",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "entryPriceMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "currencyRate",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "issuanceCurrency",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "eoaCiphertext",
-            "type": "bytes",
-            "internalType": "bytes"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getNextAnadosis",
-    "inputs": [
-      {
-        "name": "positionId",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct ICredis.Anadosis",
-        "components": [
-          {
-            "name": "anadosisNumber",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "dueDate",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "paidAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "anadosisAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "gratisAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "unpaidAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
       }
     ],
     "stateMutability": "view"
@@ -176,59 +83,19 @@
             "internalType": "uint256"
           },
           {
-            "name": "asset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
             "name": "smartAccount",
             "type": "address",
             "internalType": "address"
           },
           {
-            "name": "totalAnadosisAmount",
-            "type": "uint256",
-            "internalType": "uint256"
+            "name": "cca",
+            "type": "address",
+            "internalType": "address"
           },
           {
-            "name": "outstandingAnadosisAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "totalGratisAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "outstandingGratisAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "nextAnadosisNumber",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "createdAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "credisPrincipal",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "entryPriceMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "currencyRate",
-            "type": "uint256",
-            "internalType": "uint256"
+            "name": "asset",
+            "type": "address",
+            "internalType": "address"
           },
           {
             "name": "issuanceCurrency",
@@ -239,6 +106,66 @@
             "name": "eoaCiphertext",
             "type": "bytes",
             "internalType": "bytes"
+          },
+          {
+            "name": "principal",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "outstanding",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateral",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralLocked",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "policyRate",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "entryPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "floorPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "callPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "originatedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "lastSettledAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "calledAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "state",
+            "type": "uint8",
+            "internalType": "uint8"
           }
         ]
       }
@@ -247,149 +174,7 @@
   },
   {
     "type": "function",
-    "name": "getPositionAnadosis",
-    "inputs": [
-      {
-        "name": "positionId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple[]",
-        "internalType": "struct ICredis.Anadosis[]",
-        "components": [
-          {
-            "name": "anadosisNumber",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "dueDate",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "paidAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "anadosisAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "gratisAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "unpaidAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getPositionsByAddress",
-    "inputs": [
-      {
-        "name": "smartAccount",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple[]",
-        "internalType": "struct ICredis.Position[]",
-        "components": [
-          {
-            "name": "positionId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "asset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "smartAccount",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "totalAnadosisAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "outstandingAnadosisAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "totalGratisAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "outstandingGratisAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "nextAnadosisNumber",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "createdAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "credisPrincipal",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "entryPriceMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "currencyRate",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "issuanceCurrency",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "eoaCiphertext",
-            "type": "bytes",
-            "internalType": "bytes"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "hasOverdueAnadosis",
+    "name": "hasCalledPosition",
     "inputs": [
       {
         "name": "smartAccount",
@@ -408,19 +193,246 @@
   },
   {
     "type": "function",
-    "name": "outstandingAnadosisOf",
+    "name": "ownerOf",
     "inputs": [
       {
-        "name": "smartAccount",
-        "type": "address",
-        "internalType": "address"
+        "name": "positionId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
       {
         "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "positionByIndex",
+    "inputs": [
+      {
+        "name": "index",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ICredis.Position",
+        "components": [
+          {
+            "name": "positionId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "smartAccount",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "cca",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "asset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "issuanceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "eoaCiphertext",
+            "type": "bytes",
+            "internalType": "bytes"
+          },
+          {
+            "name": "principal",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "outstanding",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateral",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralLocked",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "policyRate",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "entryPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "floorPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "callPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "originatedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "lastSettledAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "calledAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "state",
+            "type": "uint8",
+            "internalType": "uint8"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "positionOfAddressByIndex",
+    "inputs": [
+      {
+        "name": "smartAccount",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "index",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ICredis.Position",
+        "components": [
+          {
+            "name": "positionId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "smartAccount",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "cca",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "asset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "issuanceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "eoaCiphertext",
+            "type": "bytes",
+            "internalType": "bytes"
+          },
+          {
+            "name": "principal",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "outstanding",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateral",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralLocked",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "policyRate",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "entryPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "floorPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "callPrice",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "originatedAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "lastSettledAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "calledAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "state",
+            "type": "uint8",
+            "internalType": "uint8"
+          }
+        ]
       }
     ],
     "stateMutability": "view"
@@ -445,33 +457,21 @@
     "stateMutability": "view"
   },
   {
-    "type": "event",
-    "name": "AnadosisPaid",
-    "inputs": [
+    "type": "function",
+    "name": "totalSupply",
+    "inputs": [],
+    "outputs": [
       {
-        "name": "positionId",
+        "name": "",
         "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "anadosisNumber",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "anadosisAmount",
-        "type": "uint256",
-        "indexed": false,
         "internalType": "uint256"
       }
     ],
-    "anonymous": false
+    "stateMutability": "view"
   },
   {
     "type": "event",
-    "name": "CollateralBurned",
+    "name": "PositionCalled",
     "inputs": [
       {
         "name": "positionId",
@@ -480,16 +480,16 @@
         "internalType": "uint256"
       },
       {
-        "name": "smartAccount",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
+        "name": "calledAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       },
       {
-        "name": "gratisBurned",
-        "type": "uint256",
+        "name": "settlementDeadline",
+        "type": "uint64",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -511,7 +511,125 @@
         "internalType": "address"
       },
       {
-        "name": "anadosisAmount",
+        "name": "cca",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "principal",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "collateral",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PositionSettleable",
+    "inputs": [
+      {
+        "name": "positionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "floorPrice",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PositionSettled",
+    "inputs": [
+      {
+        "name": "positionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PositionVoided",
+    "inputs": [
+      {
+        "name": "positionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "cca",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "gratisBurned",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "principalWrittenOff",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "interestWrittenOff",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SettlementApplied",
+    "inputs": [
+      {
+        "name": "positionId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "interestPaid",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "principalPaid",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "gratisReleased",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "outstanding",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
