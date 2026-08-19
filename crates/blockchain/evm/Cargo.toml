@@ -37,6 +37,7 @@ outbe-tee.workspace = true
 outbe-vote.workspace = true
 outbe-update.workspace = true
 outbe-agentreward.workspace = true
+outbe-cca.workspace = true
 outbe-metadosis.workspace = true
 outbe-ocomp-protocol.workspace = true
 outbe-validatorset.workspace = true

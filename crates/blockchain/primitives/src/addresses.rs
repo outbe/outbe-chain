@@ -76,6 +76,14 @@ pub const CYCLE_ADDRESS: Address = address!("0x000000000000000000000000000000000
 
 pub const CCA_ADDRESS: Address = address!("0x0000000000000000000000000000000000001011");
 
+/// Credis Card Agent registry precompile: the standing of an agent that
+/// originates Credis positions. Distinct from [`CCA_ADDRESS`], which is a
+/// plain balance accumulator for the daily CCA emission pool.
+///
+/// Currently answers from a stub with no storage of its own; see
+/// `outbe_cca::precompile`.
+pub const CCA_REGISTRY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001019");
+
 // ---------------------------------------------------------------------------
 // Validator infrastructure precompiles (0xEE00 range)
 // ---------------------------------------------------------------------------

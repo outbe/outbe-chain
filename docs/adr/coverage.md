@@ -19,7 +19,7 @@ not create a second authority.
 
 ## Rust workspace packages
 
-The current workspace contains 65 Cargo packages.
+The current workspace contains 66 Cargo packages.
 
 | Cargo package | Physical scope | Primary ADR(s) | Coverage role |
 |---|---|---|---|
@@ -56,6 +56,7 @@ The current workspace contains 65 Cargo packages.
 | `outbe-promisfactory` | `crates/core/promisfactory` | ADR-C-PRM-002, PFS-003 and PFS-004 | Promis conversions |
 | `outbe-promislimit` | `crates/core/promislimit` | ADR-C-PRM-003 | Allocation limit |
 | `outbe-credis` | `crates/core/credis` | ADR-C-CRD-001 | Credis position FSM |
+| `outbe-cca` | `crates/core/cca` | ADR-C-CRD-002 | Credis Card Agent standing; stub answering `Active`, awaiting its own ADR |
 | `outbe-credisfactory` | `crates/core/credisfactory` | ADR-C-CRD-002, PFS-003 | Credis orchestration |
 | `outbe-vaultrouter` | `crates/core/vaultrouter` | ADR-C-VLT-001 | Liquidity authority |
 | `outbe-stablecoin` | `crates/core/stablecoin` | ADR-C-TOK-003 | Dynamic Rust-native stablecoin ledger |
