@@ -110,8 +110,16 @@ async function main() {
   // sealed so it is stored as ciphertext on the position (no EOA↔bundle linkage
   // on-chain); the asset and the disbursed amount were sealed into the same ticket at
   // pledge time, so the loan is issued at the price the user accepted.
+  // The CCA matches the user's collateral one for one in native COEN. The required
+  // amount is the gratis the quote cost, which the ticket recorded at pledge time —
+  // it is not in calldata, because it was sealed into the pledge.
+  const stake = BigInt(ticket.amount);
+  console.log(`CCA stake:      ${stake} (matches the pledged collateral)`);
+
   console.log("\nSending requestCredis(smartAccount, pledgeHandle, spendAuth)...");
-  const tx = await credisFactory.requestCredis(smartAccount, ticket.pledgeHandle, spend);
+  const tx = await credisFactory.requestCredis(smartAccount, ticket.pledgeHandle, spend, {
+    value: stake,
+  });
   console.log(`  TX hash: ${tx.hash}`);
   const receipt = await tx.wait();
   if (!receipt) throw new Error("requestCredis tx receipt missing");
