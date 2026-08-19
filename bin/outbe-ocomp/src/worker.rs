@@ -148,8 +148,6 @@ pub enum WorkerError {
     LeaseCancelled,
     #[error("worker request binding does not match its canonical UnitSpecV1")]
     UnitBindingMismatch,
-    #[error("worker request binding does not match its canonical UnitSpecV1 at check {0}")]
-    UnitBindingMismatchAt(u32),
     #[error("worker request carries the reserved zero plan hash")]
     ZeroPlanHash,
     #[error("worker pinned protocol bundle does not match endpoint identity")]
@@ -1176,7 +1174,7 @@ fn execute_amount_map_unit(
     } = authority;
     require_lease_active(cancelled)?;
     if producer_artifacts.len() != 3 {
-        return Err(WorkerError::UnitBindingMismatchAt(line!()));
+        return Err(WorkerError::UnitBindingMismatch);
     }
     let planner = planner_from_authority(plan, manifest, bundle, limits)?;
     let topology = LysisPlanTopologyV1::new(plan.primary_work_unit_count)?;
@@ -1184,12 +1182,12 @@ fn execute_amount_map_unit(
         .primary_work_unit_count
         .checked_mul(2)
         .and_then(|offset| offset.checked_add(topology.phase_unit_count(UnitPhase::FixedReduce)))
-        .ok_or(WorkerError::UnitBindingMismatchAt(line!()))?;
+        .ok_or(WorkerError::UnitBindingMismatch)?;
     let shard_ordinal = unit_index
         .checked_sub(amount_offset)
-        .ok_or(WorkerError::UnitBindingMismatchAt(line!()))?;
+        .ok_or(WorkerError::UnitBindingMismatch)?;
     if shard_ordinal >= plan.primary_work_unit_count {
-        return Err(WorkerError::UnitBindingMismatchAt(line!()));
+        return Err(WorkerError::UnitBindingMismatch);
     }
     let enumerate_unit_id = exact_unit_output_source(spec, InputPurpose::EnumeratedTributes)?;
     let fidelity_unit_id = exact_unit_output_source(spec, InputPurpose::FidelityPartials)?;
@@ -1218,7 +1216,7 @@ fn execute_amount_map_unit(
             limits,
         )? != spec.clone()
     {
-        return Err(WorkerError::UnitBindingMismatchAt(line!()));
+        return Err(WorkerError::UnitBindingMismatch);
     }
 
     let enumerate_artifact = &producer_artifacts[0];
@@ -1228,16 +1226,16 @@ fn execute_amount_map_unit(
     if enumerated.coverage_root()? != enumerate_header.output_coverage_root
         || enumerate_header.output_coverage_count
             != u32::try_from(enumerated.ordered_records.len())
-                .map_err(|_| WorkerError::UnitBindingMismatchAt(line!()))?
+                .map_err(|_| WorkerError::UnitBindingMismatch)?
     {
-        return Err(WorkerError::UnitBindingMismatchAt(line!()));
+        return Err(WorkerError::UnitBindingMismatch);
     }
 
     let fidelity_spec = planner.fidelity_map_unit_at(shard_ordinal, enumerate_unit_id, limits)?;
     let fidelity_artifact = &producer_artifacts[1];
     fidelity_artifact.validate_against(&fidelity_spec, limits)?;
     if fidelity_artifact.unit_id != fidelity_unit_id {
-        return Err(WorkerError::UnitBindingMismatchAt(line!()));
+        return Err(WorkerError::UnitBindingMismatch);
     }
     let fidelity = decode_fidelity_map_output(fidelity_artifact.phase_payload(limits)?, limits)?;
     let fidelity_header = fidelity_artifact.output_header(limits)?;
@@ -1245,7 +1243,7 @@ fn execute_amount_map_unit(
         || fidelity_header.output_coverage_root != enumerate_header.output_coverage_root
         || fidelity.aggregate.tribute_count != fidelity_header.output_coverage_count
     {
-        return Err(WorkerError::UnitBindingMismatchAt(line!()));
+        return Err(WorkerError::UnitBindingMismatch);
     }
 
     let root_artifact = &producer_artifacts[2];
@@ -1264,20 +1262,20 @@ fn execute_amount_map_unit(
         || root_artifact.phase != UnitPhase::FixedReduce
         || root_artifact.interval_commitment != root_interval_binding.interval_commitment(limits)?
     {
-        return Err(WorkerError::UnitBindingMismatchAt(line!()));
+        return Err(WorkerError::UnitBindingMismatch);
     }
     let root_output = decode_fixed_reduce_output(root_artifact.phase_payload(limits)?, limits)?;
     let root_header = root_artifact.output_header(limits)?;
     let root_aggregate = root_output
         .aggregate
         .as_ref()
-        .ok_or(WorkerError::UnitBindingMismatchAt(line!()))?;
+        .ok_or(WorkerError::UnitBindingMismatch)?;
     if root_output.ordered_fractions.is_empty()
         || root_aggregate.tribute_count != plan.tribute_count
         || root_output.coverage.final_root(plan.tribute_count)? != root_header.output_coverage_root
         || root_header.output_coverage_count != plan.tribute_count
     {
-        return Err(WorkerError::UnitBindingMismatchAt(line!()));
+        return Err(WorkerError::UnitBindingMismatch);
     }
 
     let oracle_chunks = input_chunks
@@ -1285,11 +1283,11 @@ fn execute_amount_map_unit(
         .filter(|(_, chunk)| chunk.kind == InputChunkKind::Oracle)
         .collect::<Vec<_>>();
     if oracle_chunks.len() != 1 {
-        return Err(WorkerError::UnitBindingMismatchAt(line!()));
+        return Err(WorkerError::UnitBindingMismatch);
     }
     let (oracle_reference, oracle_chunk) = oracle_chunks[0];
     if oracle_chunk.canonical_records_or_openings.len() != 1 {
-        return Err(WorkerError::UnitBindingMismatchAt(line!()));
+        return Err(WorkerError::UnitBindingMismatch);
     }
     require_authenticated_input(
         spec,
@@ -1303,12 +1301,12 @@ fn execute_amount_map_unit(
         limits,
     )?;
     if opening.source_kind != OpeningSourceKind::Oracle {
-        return Err(WorkerError::UnitBindingMismatchAt(line!()));
+        return Err(WorkerError::UnitBindingMismatch);
     }
     opening.validate_against_bundle(bundle, limits)?;
     let (oracle_wwd, reference_isos) = decode_oracle_subject_key(&opening.canonical_subject_key.0)?;
     if oracle_wwd != manifest.wwd {
-        return Err(WorkerError::UnitBindingMismatchAt(line!()));
+        return Err(WorkerError::UnitBindingMismatch);
     }
     let raw = opening
         .decode_and_validate_raw_opening(manifest.checkpoint.finalized_state_root, limits)?;
@@ -1321,12 +1319,12 @@ fn execute_amount_map_unit(
         evaluate_oracle_opening_v1(WorldwideDay::new(manifest.wwd), &reference_isos, &raw_slots)?;
     let mandatory_entry_price = oracle
         .entry_price(840)
-        .ok_or(WorkerError::UnitBindingMismatchAt(line!()))?;
+        .ok_or(WorkerError::UnitBindingMismatch)?;
 
     let mut observed = Vec::new();
     observed
         .try_reserve_exact(enumerated.ordered_records.len())
-        .map_err(|_| WorkerError::UnitBindingMismatchAt(line!()))?;
+        .map_err(|_| WorkerError::UnitBindingMismatch)?;
     for (record, fidelity) in enumerated
         .ordered_records
         .iter()
@@ -1336,7 +1334,7 @@ fn execute_amount_map_unit(
         if record.raw_ordinal != fidelity.raw_ordinal
             || record.tribute.tribute_id != fidelity.tribute_id
         {
-            return Err(WorkerError::UnitBindingMismatchAt(line!()));
+            return Err(WorkerError::UnitBindingMismatch);
         }
         observed.push(ObservedTributeV1 {
             tribute: record.tribute.clone(),
@@ -1358,10 +1356,10 @@ fn execute_amount_map_unit(
     .map_err(LysisArtifactErrorV1::from)?;
     let output_coverage_root = amount.coverage_root()?;
     if output_coverage_root != enumerate_header.output_coverage_root {
-        return Err(WorkerError::UnitBindingMismatchAt(line!()));
+        return Err(WorkerError::UnitBindingMismatch);
     }
     let output_count = u32::try_from(amount.ordered_records.len())
-        .map_err(|_| WorkerError::UnitBindingMismatchAt(line!()))?;
+        .map_err(|_| WorkerError::UnitBindingMismatch)?;
     UnitArtifactV1::from_canonical_output(
         spec,
         WorkOutputHeaderV1 {
