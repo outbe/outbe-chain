@@ -23,10 +23,9 @@ pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
 sol!("../../../contracts/precompiles/src/ICca.sol");
 
-/// Storage is unused while the registry is a stub; the parameter stays to match
-/// the route table's dispatch signature.
+/// Routes reads into [`crate::api`], which owns the (currently stubbed) answer.
 pub fn dispatch(
-    _storage: StorageHandle,
+    storage: StorageHandle,
     data: &[u8],
     _caller: Address,
     value: U256,
@@ -35,23 +34,11 @@ pub fn dispatch(
     dispatch_call(data, ICca::ICcaCalls::abi_decode, |call| {
         use ICca::ICcaCalls::*;
         match call {
-            getCcaState(c) => view(c, |c| Ok(cca_state(c.cca))),
+            getCcaState(c) => view(c, |c| crate::api::cca_state(&storage, c.cca)),
             supportsInterface(c) => view(c, |c| {
                 let id: [u8; 4] = c.interfaceId.0;
                 Ok(id == ERC165_INTERFACE_ID)
             }),
         }
     })
-}
-
-/// Registration state of `cca`.
-///
-/// TODO(cca): implement the registry. This must become a storage lookup that
-/// returns [`ICca::State::Unknown`] for an address that never registered, and
-/// the recorded state otherwise. `Unknown` exists in the ABI precisely so an
-/// unregistered agent is distinguishable from an active one — the stub cannot
-/// make that distinction, so callers must not treat `Active` as proof of
-/// registration until this is replaced.
-fn cca_state(_cca: Address) -> ICca::State {
-    ICca::State::Active
 }

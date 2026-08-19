@@ -12,6 +12,7 @@ use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::CredisFactoryError;
 use crate::precompile::ICredisFactory;
+use crate::schema::CredisFactoryContract;
 use crate::sol_ext::IReferenceCurrency;
 use crate::sol_ext::IERC20;
 
@@ -43,9 +44,25 @@ pub fn request_credis(
     smart_account: Address,
     pledge_handle: B256,
     spend_auth: [u8; 32],
+    stake: U256,
 ) -> Result<(U256, U256)> {
     if smart_account.is_zero() {
         return Err(CredisFactoryError::InvalidSmartAccount.into());
+    }
+
+    // Origination is a CCA action, not an open one: the caller must be in good
+    // standing at the registry. Today's registry is a stub that reports every address
+    // active, so this rejects nothing yet — it is the seam the real one drops into.
+    if !outbe_cca::api::is_active(&storage, caller)? {
+        return Err(CredisFactoryError::CcaNotActive.into());
+    }
+
+    // The loan is delivered by a call into the smart account, and a CALL to a codeless
+    // account succeeds returning empty — so an undeployed account would take the loan
+    // into a black hole while the position and the consumed pledge stood. Same guard
+    // the vault router applies to its own receiver.
+    if storage.with_account_info(smart_account, |info| Ok(info.is_empty_code_hash()))? {
+        return Err(CredisFactoryError::SmartAccountNotDeployed.into());
     }
 
     // Block timestamp is read from the execution frame rather than threaded in
@@ -76,6 +93,15 @@ pub fn request_credis(
         return Err(CredisFactoryError::InvalidAsset.into());
     }
 
+    // The CCA matches the borrower's collateral one for one, in COEN. Checked only
+    // after `consume_pledge` because the required amount is sealed in the ticket, not
+    // in calldata — a caller cannot know it from the call alone, and must read it from
+    // the pledge quote. Exact equality, not a floor: an overpayment has no release path
+    // (the escrow returns exactly what the position recorded) and would strand.
+    if stake != terms.gratis_amount {
+        return Err(CredisFactoryError::CcaStakeMismatch.into());
+    }
+
     // Derive the issuance currency from the disbursed asset (it self-reports its
     // ISO 4217 code via `IReferenceCurrency.isoCode()`) and pin that currency's
     // official policy rate for the position's life.
@@ -99,6 +125,22 @@ pub fn request_credis(
         collateral: terms.gratis_amount,
         originated_at: current_time,
     })?;
+
+    // Record the CCA's claim on the value the boundary already credited to this
+    // precompile's balance. Written before the loan leaves so an escrow can never be
+    // owed against a position that failed to disburse.
+    if !stake.is_zero() {
+        let factory = CredisFactoryContract::new(storage.clone());
+        factory.cca_stake.write(&position_id, stake)?;
+        storage.emit_event(
+            CREDIS_FACTORY_ADDRESS,
+            alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CcaStakeEscrowed {
+                positionId: position_id,
+                cca: caller,
+                amount: stake,
+            }),
+        )?;
+    }
 
     // Withdraw the matching stablecoin from the vault to the smart account.
     outbe_vaultrouter::api::withdraw(&storage, asset, terms.stables_amount, smart_account)?;
@@ -206,7 +248,38 @@ pub fn settle(
         )?;
     }
 
+    // 5) The settlement that clears the last principal returns the originating CCA's
+    //    stake. Keyed off `closed` rather than a balance read, so a position that never
+    //    escrowed simply finds zero.
+    if settlement.closed {
+        release_cca_stake(&storage, position_id, settlement.cca)?;
+    }
+
     Ok((settlement.principal_paid, settlement.interest))
+}
+
+/// Returns the escrowed stake for a closed position to its originating CCA and clears
+/// the claim. A no-op when nothing was escrowed.
+fn release_cca_stake(storage: &StorageHandle<'_>, position_id: U256, cca: Address) -> Result<()> {
+    let factory = CredisFactoryContract::new(storage.clone());
+    let stake = factory.cca_stake.read(&position_id)?;
+    if stake.is_zero() {
+        return Ok(());
+    }
+    // Clear first: the transfer is the last step, so a revert inside it unwinds the
+    // whole frame anyway, and clearing up front leaves no window where the claim and
+    // the payout could both succeed.
+    factory.cca_stake.write(&position_id, U256::ZERO)?;
+    storage.transfer_balance(CREDIS_FACTORY_ADDRESS, cca, stake)?;
+    storage.emit_event(
+        CREDIS_FACTORY_ADDRESS,
+        alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CcaStakeReleased {
+            positionId: position_id,
+            cca,
+            amount: stake,
+        }),
+    )?;
+    Ok(())
 }
 
 /// Latches an Open position whose currency's live COEN price has crossed its floor.
@@ -278,6 +351,31 @@ pub fn void_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()
     outbe_promislimit::PromisLimitContract::new(storage.clone())
         .add_to_total_unallocated(void.gratis_burned)?;
 
+    // The originating CCA's stake is burned with the collateral it matched — that is
+    // what makes origination accountable rather than free.
+    burn_cca_stake(&storage, position_id, void.cca)?;
+
+    Ok(())
+}
+
+/// Burns the escrowed stake of a voided position: the claim is cleared and the COEN
+/// leaves the factory's balance without a recipient, reducing supply.
+fn burn_cca_stake(storage: &StorageHandle<'_>, position_id: U256, cca: Address) -> Result<()> {
+    let factory = CredisFactoryContract::new(storage.clone());
+    let stake = factory.cca_stake.read(&position_id)?;
+    if stake.is_zero() {
+        return Ok(());
+    }
+    factory.cca_stake.write(&position_id, U256::ZERO)?;
+    storage.decrease_balance(CREDIS_FACTORY_ADDRESS, stake)?;
+    storage.emit_event(
+        CREDIS_FACTORY_ADDRESS,
+        alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CcaStakeBurned {
+            positionId: position_id,
+            cca,
+            amount: stake,
+        }),
+    )?;
     Ok(())
 }
 

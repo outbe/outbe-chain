@@ -7434,6 +7434,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-cca",
  "outbe-credis",
  "outbe-fidelity",
  "outbe-gratis",
