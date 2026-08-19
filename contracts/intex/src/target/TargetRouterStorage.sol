@@ -97,6 +97,14 @@ struct TargetRouterStorage {
     mapping(uint256 idx => PendingMark) pendingMarks;
     /// @dev Next index to assign in `pendingMarks`; also the count ever enqueued.
     uint256 nextPendingMarkIdx;
+    /// @dev Winners already issued their allocation of a series; a repeated instruction for the pair is ignored.
+    mapping(bytes14 seriesId => mapping(address recipient => bool issued)) issued;
+    /// @dev How many issuance chunks the day's run spans on this chain, as the first applied chunk declared.
+    mapping(uint32 worldwideDay => uint16 total) issuanceTotalChunks;
+    /// @dev How many of the day's issuance chunks have been applied.
+    mapping(uint32 worldwideDay => uint16 seen) issuanceChunksSeen;
+    /// @dev Issuance chunks already applied, so a repeat neither mints nor counts.
+    mapping(uint32 worldwideDay => mapping(uint16 chunkIndex => bool applied)) issuanceChunkApplied;
 }
 
 /// @notice A proceeds route parked because its outbound send reverted (e.g. relay float too low); retried

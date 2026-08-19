@@ -273,6 +273,25 @@
     },
     {
       "type": "event",
+      "name": "IssuanceCompleted",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "totalChunks",
+          "type": "uint16",
+          "indexed": false,
+          "internalType": "uint16"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
       "name": "IssuanceInstructionsReceived",
       "inputs": [
         {

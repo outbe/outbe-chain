@@ -40,6 +40,13 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
 
     event RemoteMessengerRegistered(uint32 indexed chainId, bytes interop);
 
+    /// @notice An authenticated inbound message, or one item of it, was acknowledged without effect.
+    /// @param srcChainId Source chainId the message was authenticated against.
+    /// @param msgType Codec message type.
+    /// @param key Identity of the ignored effect (worldwide day, series id, chunk, …) as the handler keys it.
+    /// @param reason One of the `InboundReason` codes.
+    event InboundMessageIgnored(uint32 indexed srcChainId, uint8 indexed msgType, bytes32 indexed key, uint8 reason);
+
     error InvalidBridge();
     error UnauthorizedBridge(address caller);
     error UnauthorizedSourceMessenger(uint32 chainId, bytes sender);

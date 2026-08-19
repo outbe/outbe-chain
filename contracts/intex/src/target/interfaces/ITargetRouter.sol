@@ -45,6 +45,11 @@ interface ITargetRouter {
     /// @param recipientsCount Number of recipients.
     event IssuanceInstructionsReceived(uint32 indexed srcChainId, bytes14 indexed seriesId, uint256 recipientsCount);
 
+    /// @notice Emitted when the last of a day's issuance chunks has been applied on this chain.
+    /// @param worldwideDay Worldwide day whose issuance is complete here.
+    /// @param totalChunks How many chunks the day's run spanned.
+    event IssuanceCompleted(uint32 indexed worldwideDay, uint16 totalChunks);
+
     /// @notice Emitted when refund instructions are received from Outbe.
     /// @param srcChainId Source chainId the message was authenticated against.
     /// @param worldwideDay Worldwide day (yyyymmdd).

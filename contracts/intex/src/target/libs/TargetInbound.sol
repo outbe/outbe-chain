@@ -5,7 +5,9 @@ import {IIntexAuction} from "../interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../../shared/interfaces/IIntexNFT1155.sol";
 import {IEscrowAdapter} from "../interfaces/IEscrowAdapter.sol";
 import {ITargetRouter} from "../interfaces/ITargetRouter.sol";
+import {ERC7786MessengerBase} from "../../shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "../../shared/libs/BridgeMsgCodec.sol";
+import {InboundReason} from "../../shared/libs/InboundReason.sol";
 import {
     TargetRouterStorage,
     PendingBidsRelay,
@@ -78,57 +80,126 @@ library TargetInbound {
         emit ITargetRouter.AuctionResultReceived(srcChainId, worldwideDay, issuedIntexCount, auctionClearingRate);
     }
 
-    /// @notice Decode ISSUANCE_INSTRUCTIONS, create the series, and mint tokens via IntexNFT1155.
+    /// @notice Decode one ISSUANCE_INSTRUCTIONS chunk, create the series it names, and mint each winner once.
+    /// @dev A repeated chunk, a chunk whose header disagrees with the day's run, and a series whose stored
+    ///      params differ from the chunk's are acknowledged without effect (`InboundMessageIgnored`); the last
+    ///      applied chunk emits `IssuanceCompleted`.
     function handleIssuanceInstructions(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
         external
     {
-        (,,, BridgeMsgCodec.IssuanceInstructionsPayload[] memory series) =
-            BridgeMsgCodec.decodeIssuanceInstructions(message);
+        (
+            uint32 worldwideDay,
+            uint16 chunkIndex,
+            uint16 totalChunks,
+            BridgeMsgCodec.IssuanceInstructionsPayload[] memory series
+        ) = BridgeMsgCodec.decodeIssuanceInstructions(message);
+
+        bytes32 chunkKey = bytes32((uint256(worldwideDay) << 16) | chunkIndex);
+        if ($.issuanceChunkApplied[worldwideDay][chunkIndex]) {
+            _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, chunkKey, InboundReason.DUPLICATE);
+            return;
+        }
+        uint16 knownTotal = $.issuanceTotalChunks[worldwideDay];
+        if (knownTotal != 0 && knownTotal != totalChunks) {
+            _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, chunkKey, InboundReason.CONFLICT);
+            return;
+        }
+        // A chunk naming a series this chain already holds under other terms is an origin disagreement: none of
+        // it is applied, so a corrected resend of the same index can still land.
+        for (uint256 s = 0; s < series.length; s++) {
+            if ($.intex.seriesExists(series[s].seriesId) && !_sameSeries($, series[s])) {
+                _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, chunkKey, InboundReason.CONFLICT);
+                return;
+            }
+        }
+
+        if (knownTotal == 0) $.issuanceTotalChunks[worldwideDay] = totalChunks;
+        $.issuanceChunkApplied[worldwideDay][chunkIndex] = true;
+        uint16 seen = ++$.issuanceChunksSeen[worldwideDay];
 
         for (uint256 s = 0; s < series.length; s++) {
-            BridgeMsgCodec.IssuanceInstructionsPayload memory payload = series[s];
-
-            // Create-if-absent: any of a day's messages may be the first to name a series.
-            if (!$.intex.seriesExists(payload.seriesId)) {
-                $.intex
-                    .createSeries(
-                        IIntexNFT1155.CreateSeriesParams({
-                            seriesId: payload.seriesId,
-                            worldwideDay: payload.worldwideDay,
-                            issuanceCurrency: payload.issuanceCurrency,
-                            referenceCurrency: payload.referenceCurrency,
-                            issuedIntexCount: payload.issuedIntexCount,
-                            promisLoadMinor: payload.promisLoadMinor,
-                            entryPriceMinor: payload.entryPriceMinor,
-                            floorPriceMinor: payload.floorPriceMinor,
-                            callPriceMinor: payload.callPriceMinor,
-                            callTrigger: IIntexNFT1155.IntexCallTrigger({
-                                callWindow: payload.callWindow,
-                                callThreshold: payload.callThreshold,
-                                callNoticePeriod: payload.callNoticePeriod
-                            })
-                        })
-                    );
-            }
-
-            uint256 recipientsLen = payload.recipients.length;
-            for (uint256 i = 0; i < recipientsLen; i++) {
-                uint256 quantity = payload.quantities[i];
-                if (quantity == 0) continue;
-                address recipient = payload.recipients[i];
-                // Per-recipient self-call: a reverting receiver hook parks only that mint, not the whole batch.
-                try ITargetRouterShims(address(this)).mintIssuanceOne(payload.seriesId, recipient, quantity) {}
-                catch (bytes memory reason) {
-                    uint256 idx = $.nextPendingIssuanceMintIdx++;
-                    $.pendingIssuanceMints[idx] = PendingIssuanceMint({
-                        seriesId: payload.seriesId, recipient: recipient, quantity: quantity, exists: true, done: false
-                    });
-                    emit ITargetRouter.IssuanceMintDeferred(idx, payload.seriesId, recipient, reason);
-                }
-            }
-
-            emit ITargetRouter.IssuanceInstructionsReceived(srcChainId, payload.seriesId, recipientsLen);
+            _applyIssuance($, srcChainId, series[s]);
         }
+
+        if (seen == totalChunks) emit ITargetRouter.IssuanceCompleted(worldwideDay, totalChunks);
+    }
+
+    /// @dev Create the series if this chain has not seen it and mint its winners, each at most once.
+    function _applyIssuance(
+        TargetRouterStorage storage $,
+        uint32 srcChainId,
+        BridgeMsgCodec.IssuanceInstructionsPayload memory payload
+    ) private {
+        // Create-if-absent: any of a day's chunks may be the first to name a series.
+        if (!$.intex.seriesExists(payload.seriesId)) {
+            $.intex
+                .createSeries(
+                    IIntexNFT1155.CreateSeriesParams({
+                        seriesId: payload.seriesId,
+                        worldwideDay: payload.worldwideDay,
+                        issuanceCurrency: payload.issuanceCurrency,
+                        referenceCurrency: payload.referenceCurrency,
+                        issuedIntexCount: payload.issuedIntexCount,
+                        promisLoadMinor: payload.promisLoadMinor,
+                        entryPriceMinor: payload.entryPriceMinor,
+                        floorPriceMinor: payload.floorPriceMinor,
+                        callPriceMinor: payload.callPriceMinor,
+                        callTrigger: IIntexNFT1155.IntexCallTrigger({
+                            callWindow: payload.callWindow,
+                            callThreshold: payload.callThreshold,
+                            callNoticePeriod: payload.callNoticePeriod
+                        })
+                    })
+                );
+        }
+
+        uint256 recipientsLen = payload.recipients.length;
+        for (uint256 i = 0; i < recipientsLen; i++) {
+            uint256 quantity = payload.quantities[i];
+            if (quantity == 0) continue;
+            address recipient = payload.recipients[i];
+            if ($.issued[payload.seriesId][recipient]) {
+                _ignore(
+                    srcChainId,
+                    BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
+                    bytes32(abi.encodePacked(payload.seriesId, recipient)),
+                    InboundReason.DUPLICATE
+                );
+                continue;
+            }
+            // Marked before the mint: a parked mint is still this winner's one allocation.
+            $.issued[payload.seriesId][recipient] = true;
+            // Per-recipient self-call: a reverting receiver hook parks only that mint, not the whole batch.
+            try ITargetRouterShims(address(this)).mintIssuanceOne(payload.seriesId, recipient, quantity) {}
+            catch (bytes memory reason) {
+                uint256 idx = $.nextPendingIssuanceMintIdx++;
+                $.pendingIssuanceMints[idx] = PendingIssuanceMint({
+                    seriesId: payload.seriesId, recipient: recipient, quantity: quantity, exists: true, done: false
+                });
+                emit ITargetRouter.IssuanceMintDeferred(idx, payload.seriesId, recipient, reason);
+            }
+        }
+
+        emit ITargetRouter.IssuanceInstructionsReceived(srcChainId, payload.seriesId, recipientsLen);
+    }
+
+    /// @dev Whether the series this chain holds was created under exactly the chunk's terms.
+    function _sameSeries(TargetRouterStorage storage $, BridgeMsgCodec.IssuanceInstructionsPayload memory payload)
+        private
+        view
+        returns (bool)
+    {
+        IIntexNFT1155.SeriesData memory d = $.intex.readData(payload.seriesId);
+        return d.worldwideDay == payload.worldwideDay && d.issuanceCurrency == payload.issuanceCurrency
+            && d.referenceCurrency == payload.referenceCurrency && d.issuedIntexCount == payload.issuedIntexCount
+            && d.promisLoadMinor == payload.promisLoadMinor && d.entryPriceMinor == payload.entryPriceMinor
+            && d.floorPriceMinor == payload.floorPriceMinor && d.callPriceMinor == payload.callPriceMinor
+            && d.callTrigger.callWindow == payload.callWindow && d.callTrigger.callThreshold == payload.callThreshold
+            && d.callTrigger.callNoticePeriod == payload.callNoticePeriod;
+    }
+
+    function _ignore(uint32 srcChainId, uint8 msgType, bytes32 key, uint8 reason) private {
+        emit ERC7786MessengerBase.InboundMessageIgnored(srcChainId, msgType, key, reason);
     }
 
     /// @notice Decode REFUND_INSTRUCTIONS and forward finalization instructions to the EscrowAdapter.

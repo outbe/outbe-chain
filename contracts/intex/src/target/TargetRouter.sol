@@ -156,6 +156,23 @@ contract TargetRouter is
         return _ts().nextPendingIssuanceMintIdx;
     }
 
+    /// @notice Whether `recipient` has already been issued its allocation of `seriesId` here.
+    function issued(bytes14 seriesId, address recipient) external view returns (bool) {
+        return _ts().issued[seriesId][recipient];
+    }
+
+    /// @notice Issuance chunk progress of `worldwideDay` on this chain: applied so far and the declared total
+    ///         (0 until the first chunk lands).
+    function issuanceChunks(uint32 worldwideDay) external view returns (uint16 seen, uint16 total) {
+        TargetRouterStorage storage $ = _ts();
+        return ($.issuanceChunksSeen[worldwideDay], $.issuanceTotalChunks[worldwideDay]);
+    }
+
+    /// @notice Whether issuance chunk `chunkIndex` of `worldwideDay` has been applied here.
+    function issuanceChunkApplied(uint32 worldwideDay, uint16 chunkIndex) external view returns (bool) {
+        return _ts().issuanceChunkApplied[worldwideDay][chunkIndex];
+    }
+
     /// @notice Parked lifecycle mark at `idx`.
     function pendingMarks(uint256 idx) external view returns (bytes14 seriesId, uint8 msgType, bool exists, bool done) {
         PendingMark storage p = _ts().pendingMarks[idx];
