@@ -82,7 +82,8 @@ library TargetInbound {
     function handleIssuanceInstructions(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
         external
     {
-        BridgeMsgCodec.IssuanceInstructionsPayload[] memory series = BridgeMsgCodec.decodeIssuanceInstructions(message);
+        (,,, BridgeMsgCodec.IssuanceInstructionsPayload[] memory series) =
+            BridgeMsgCodec.decodeIssuanceInstructions(message);
 
         for (uint256 s = 0; s < series.length; s++) {
             BridgeMsgCodec.IssuanceInstructionsPayload memory payload = series[s];

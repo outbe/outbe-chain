@@ -284,18 +284,20 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function quoteSendIssuanceInstructions(uint32 dstChainId, IssuanceInstructionsParams[] calldata series)
-        external
-        view
-        returns (uint256)
-    {
+    function quoteSendIssuanceInstructions(
+        uint32 dstChainId,
+        uint32 worldwideDay,
+        uint16 chunkIndex,
+        uint16 totalChunks,
+        IssuanceInstructionsParams[] calldata series
+    ) external view returns (uint256) {
         uint256 recipients;
         for (uint256 i = 0; i < series.length; i++) {
             recipients += series[i].recipients.length;
         }
         return _quoteFee(
             dstChainId,
-            BridgeMsgCodec.encodeIssuanceInstructions(_toCodecPayloads(series)),
+            BridgeMsgCodec.encodeIssuanceInstructions(worldwideDay, chunkIndex, totalChunks, _toCodecPayloads(series)),
             IntexGas.issuance(series.length, recipients)
         );
     }
@@ -387,33 +389,35 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function sendIssuanceInstructions(uint32 dstChainId, IssuanceInstructionsParams[] calldata series)
-        external
-        payable
-        onlyRole(INTEX_FACTORY_ROLE)
-        returns (bytes32 sendId)
-    {
+    function sendIssuanceInstructions(
+        uint32 dstChainId,
+        uint32 worldwideDay,
+        uint16 chunkIndex,
+        uint16 totalChunks,
+        IssuanceInstructionsParams[] calldata series
+    ) external payable onlyRole(INTEX_FACTORY_ROLE) returns (bytes32 sendId) {
         // Empty `recipients` is valid: a snapshot chain with no local winners still needs the series created.
-        uint256 recipients = _requireIssuanceBatch(dstChainId, series);
+        uint256 recipients = _requireIssuanceBatch(dstChainId, worldwideDay, series);
         sendId = _sendOrPark(
             dstChainId,
-            BridgeMsgCodec.encodeIssuanceInstructions(_toCodecPayloads(series)),
+            BridgeMsgCodec.encodeIssuanceInstructions(worldwideDay, chunkIndex, totalChunks, _toCodecPayloads(series)),
             IntexGas.issuance(series.length, recipients)
         );
         emit IssuanceInstructionsSent(sendId, series[0].seriesId, recipients);
     }
 
-    /// @dev Validates a batch and returns its total recipient count. Every series in a message
-    ///      must belong to a day this chain is a target of; the codec bounds the counts.
-    function _requireIssuanceBatch(uint32 dstChainId, IssuanceInstructionsParams[] calldata series)
+    /// @dev Validates a batch and returns its total recipient count. The day must be one this chain is a
+    ///      target of and every series must belong to it; the codec bounds the counts and the chunk header.
+    function _requireIssuanceBatch(uint32 dstChainId, uint32 worldwideDay, IssuanceInstructionsParams[] calldata series)
         private
         view
         returns (uint256 recipients)
     {
         if (series.length == 0) revert EmptyArray();
+        _requireSeriesTarget(worldwideDay, dstChainId);
         for (uint256 i = 0; i < series.length; i++) {
             if (series[i].recipients.length != series[i].quantities.length) revert ArrayLengthMismatch();
-            _requireSeriesTarget(series[i].worldwideDay, dstChainId);
+            if (series[i].worldwideDay != worldwideDay) revert IssuanceDayMismatch(series[i].seriesId);
             recipients += series[i].recipients.length;
         }
     }

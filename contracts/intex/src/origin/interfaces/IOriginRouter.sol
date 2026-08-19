@@ -206,6 +206,8 @@ interface IOriginRouter {
     error ArrayLengthMismatch();
     /// @notice Empty array provided.
     error EmptyArray();
+    /// @notice A series in an issuance chunk belongs to a different day than the chunk header.
+    error IssuanceDayMismatch(bytes14 seriesId);
     /// @notice Inbound BIDS_BATCH body-level `srcChainId` disagrees with the authenticated source chainId.
     /// @param origin Source chainId the bridge authenticated.
     /// @param body Source chainId claimed by the encoded body.
@@ -261,11 +263,14 @@ interface IOriginRouter {
         uint64 auctionClearingRate,
         uint32 wonBidsCount
     ) external view returns (uint256 fee);
-    /// @notice Native fee to send issuance instructions to the target chain in `params.dstChainId`.
-    function quoteSendIssuanceInstructions(uint32 dstChainId, IssuanceInstructionsParams[] calldata series)
-        external
-        view
-        returns (uint256 fee);
+    /// @notice Native fee to send one issuance chunk to `dstChainId`.
+    function quoteSendIssuanceInstructions(
+        uint32 dstChainId,
+        uint32 worldwideDay,
+        uint16 chunkIndex,
+        uint16 totalChunks,
+        IssuanceInstructionsParams[] calldata series
+    ) external view returns (uint256 fee);
     /// @notice Native fee to send one chunk of a day's refund instructions to a single target chain.
     function quoteSendRefundInstructions(
         uint32 dstChainId,
@@ -298,12 +303,16 @@ interface IOriginRouter {
         uint64 auctionClearingRate,
         uint32 wonBidsCount
     ) external payable returns (bytes32 sendId);
-    /// @notice Send one chain the series of a day it must create and the winners to mint to.
-    ///         Empty `recipients` creates the series only. Restricted to `INTEX_FACTORY_ROLE`.
-    function sendIssuanceInstructions(uint32 dstChainId, IssuanceInstructionsParams[] calldata series)
-        external
-        payable
-        returns (bytes32 sendId);
+    /// @notice Send one chain one chunk (`chunkIndex` of `totalChunks`) of the series of `worldwideDay` it must
+    ///         create and the winners to mint to. Empty `recipients` creates the series only. Restricted to
+    ///         `INTEX_FACTORY_ROLE`.
+    function sendIssuanceInstructions(
+        uint32 dstChainId,
+        uint32 worldwideDay,
+        uint16 chunkIndex,
+        uint16 totalChunks,
+        IssuanceInstructionsParams[] calldata series
+    ) external payable returns (bytes32 sendId);
     /// @notice Send one chunk of a day's refund instructions to a single target chain.
     ///         Restricted to `DESIS_ROLE`.
     function sendRefundInstructions(

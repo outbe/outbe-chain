@@ -168,22 +168,46 @@ pub fn pack_issuance_messages(
     per_chain
 }
 
-/// Send a day's packed issuance messages. Relay-float-funded: value 0, the router
-/// quotes and pays the bridge fee from its own float.
+/// Send a day's packed issuance messages, each stamped with its position in the chain's
+/// run so the receiver can tell a repeat from the rest and knows when the day is complete.
+/// Relay-float-funded: value 0, the router quotes and pays the bridge fee from its own float.
 pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Result<()> {
-    for (chain_id, series) in pack_issuance_messages(legs) {
-        storage.call(
-            ORIGIN_ROUTER_ADDRESS,
-            U256::ZERO,
-            IOriginRouter::sendIssuanceInstructionsCall {
-                dstChainId: chain_id,
-                series,
-            }
-            .abi_encode()
-            .into(),
-        )?;
+    for (chain_id, messages) in chunk_issuance_messages(pack_issuance_messages(legs)) {
+        let total_chunks = u16::try_from(messages.len())
+            .map_err(|_| PrecompileError::Revert("issuance chunk count exceeds u16".into()))?;
+        for (chunk_index, series) in messages.into_iter().enumerate() {
+            let worldwide_day = series[0].worldwideDay;
+            storage.call(
+                ORIGIN_ROUTER_ADDRESS,
+                U256::ZERO,
+                IOriginRouter::sendIssuanceInstructionsCall {
+                    dstChainId: chain_id,
+                    worldwideDay: worldwide_day,
+                    chunkIndex: chunk_index as u16,
+                    totalChunks: total_chunks,
+                    series,
+                }
+                .abi_encode()
+                .into(),
+            )?;
+        }
     }
     Ok(())
+}
+
+/// Group packed messages by chain, keeping each chain's send order: a chain's messages are
+/// interleaved with the others' in the packed vector, and the chunk header counts per chain.
+pub(crate) fn chunk_issuance_messages(
+    packed: Vec<(u32, Vec<IssuanceInstructionsParams>)>,
+) -> Vec<(u32, Vec<Vec<IssuanceInstructionsParams>>)> {
+    let mut per_chain: Vec<(u32, Vec<Vec<IssuanceInstructionsParams>>)> = Vec::new();
+    for (chain_id, message) in packed {
+        match per_chain.iter_mut().find(|(chain, _)| *chain == chain_id) {
+            Some((_, messages)) => messages.push(message),
+            None => per_chain.push((chain_id, vec![message])),
+        }
+    }
+    per_chain
 }
 
 fn recipient_count(message: &[IssuanceInstructionsParams]) -> usize {

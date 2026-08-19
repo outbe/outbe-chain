@@ -304,6 +304,21 @@
           "internalType": "uint32"
         },
         {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "totalChunks",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
           "name": "series",
           "type": "tuple[]",
           "internalType": "struct IOriginRouter.IssuanceInstructionsParams[]",
@@ -675,6 +690,21 @@
           "name": "dstChainId",
           "type": "uint32",
           "internalType": "uint32"
+        },
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "totalChunks",
+          "type": "uint16",
+          "internalType": "uint16"
         },
         {
           "name": "series",
@@ -1410,6 +1440,17 @@
           "name": "wired",
           "type": "address",
           "internalType": "address"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "IssuanceDayMismatch",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
         }
       ]
     },

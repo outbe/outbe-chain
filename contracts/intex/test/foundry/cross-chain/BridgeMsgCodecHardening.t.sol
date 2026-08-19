@@ -28,7 +28,7 @@ contract BridgeMsgCodecHardeningHarness {
         pure
         returns (bytes memory)
     {
-        return BridgeMsgCodec.encodeIssuanceInstructions(series);
+        return BridgeMsgCodec.encodeIssuanceInstructions(series[0].worldwideDay, 0, 1, series);
     }
 
     function encodeRefundInstructions(
@@ -63,9 +63,9 @@ contract BridgeMsgCodecHardeningHarness {
     function decodeIssuanceInstructions(bytes calldata m)
         external
         pure
-        returns (BridgeMsgCodec.IssuanceInstructionsPayload[] memory)
+        returns (BridgeMsgCodec.IssuanceInstructionsPayload[] memory series)
     {
-        return BridgeMsgCodec.decodeIssuanceInstructions(m);
+        (,,, series) = BridgeMsgCodec.decodeIssuanceInstructions(m);
     }
 }
 

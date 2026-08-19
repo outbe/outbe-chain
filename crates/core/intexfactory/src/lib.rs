@@ -32,3 +32,5 @@ mod tests_called_pstar;
 mod tests_group_index;
 #[cfg(test)]
 mod tests_group_scans;
+#[cfg(test)]
+mod tests_issuance_chunks;

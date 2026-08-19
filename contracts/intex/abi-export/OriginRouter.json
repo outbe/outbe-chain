@@ -531,6 +531,21 @@
           "internalType": "uint32"
         },
         {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "totalChunks",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
           "name": "series",
           "type": "tuple[]",
           "internalType": "struct IOriginRouter.IssuanceInstructionsParams[]",
@@ -986,6 +1001,21 @@
           "name": "dstChainId",
           "type": "uint32",
           "internalType": "uint32"
+        },
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "totalChunks",
+          "type": "uint16",
+          "internalType": "uint16"
         },
         {
           "name": "series",
@@ -2028,6 +2058,22 @@
     },
     {
       "type": "error",
+      "name": "InvalidIssuanceChunk",
+      "inputs": [
+        {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "totalChunks",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "InvalidPayloadLength",
       "inputs": [
         {
@@ -2092,6 +2138,38 @@
           "name": "max",
           "type": "uint256",
           "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "IssuanceDayMismatch",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "IssuanceDayMismatch",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        },
+        {
+          "name": "seriesDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "messageDay",
+          "type": "uint32",
+          "internalType": "uint32"
         }
       ]
     },

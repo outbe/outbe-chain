@@ -40,7 +40,7 @@ library IntexGas {
     ///      per-recipient cost.
     uint256 internal constant ISSUANCE_BASE = 200_000;
     uint256 internal constant ISSUANCE_PER_SERIES = 400_000;
-    uint256 internal constant ISSUANCE_PER_ITEM = 250_000;
+    uint256 internal constant ISSUANCE_PER_ITEM = 300_000;
     uint256 internal constant REFUND_BASE = 250_000;
     uint256 internal constant REFUND_PER_ITEM = 150_000;
     /// @dev ERC-1155 crosschainMint loop (mint + enumerable holder bookkeeping + supply-cap check) per item.
