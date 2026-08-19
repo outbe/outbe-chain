@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
+import {ICca} from "@precompiles/ICca.sol";
 import {ISmartAccountFactory} from "./interfaces/ISmartAccountFactory.sol";
 import {IKernelFactory} from "./interfaces/kernel/IKernelFactory.sol";
 import {BundleModulePlugin} from "./BundleModulePlugin.sol";
@@ -40,6 +41,17 @@ contract SmartAccountFactory is ISmartAccountFactory {
     /// @notice Daily withdrawal limit enforced by WithdrawalLimitPolicy (6-decimal USDC units)
     uint256 public constant DAILY_LIMIT = 1000e6;
     uint48 public constant LIMIT_INTERVAL = 1 days;
+
+    /// @notice Credis Card Agent registry precompile.
+    /// @dev A protocol address, not a deployment parameter: an injectable registry could be
+    ///      pointed at a look-alike that reports every agent active, which would silently defeat
+    ///      the standing check below. This also confines the factory to Outbe chains — elsewhere
+    ///      0x1019 has no code and `createAccount` reverts on the empty return data.
+    address public constant CCA_REGISTRY = 0x0000000000000000000000000000000000001019;
+
+    /// @notice Thrown when the CCA is not in good standing at the registry.
+    /// @param state The state actually recorded; `Unknown` means it never registered.
+    error CcaNotActive(address cca, ICca.State state);
 
     constructor(
         address kernelFactory_,
@@ -114,6 +126,10 @@ contract SmartAccountFactory is ISmartAccountFactory {
     ) external returns (address account) {
         require(owner != address(0), "owner required");
         require(cca != address(0), "cca required");
+        // Standing is checked only on the deploying path; `getAccountAddress` stays a pure CREATE2
+        // prediction so a client can always compute the address it is about to ask for.
+        ICca.State ccaState = ICca(CCA_REGISTRY).getCcaState(cca);
+        require(ccaState == ICca.State.Active, CcaNotActive(cca, ccaState));
         Install[] memory packages = _packages(owner, cca, bundleTokens, bundleSenders);
         account = _KERNEL_FACTORY.deploy(packages, salt);
     }

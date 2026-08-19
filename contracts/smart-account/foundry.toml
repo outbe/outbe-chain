@@ -22,6 +22,10 @@ auto_detect_remappings = false
 
 remappings = [
     "@openzeppelin/contracts/=dependencies/openzeppelin-contracts-5.6.1/contracts/",
+    # Canonical precompile interfaces (ICca, ...). Same form as contracts/intex/foundry.toml,
+    # so the Solidity here and the Rust `sol!("contracts/precompiles/src/ICca.sol")` binding
+    # read one source and cannot drift.
+    "@precompiles/=../precompiles/src/",
     "@zerodev/kernel/=dependencies/kernel-4.0.0/src/",
     "account-abstraction/=dependencies/eth-infinitism-account-abstraction-0.9.0/contracts/",
     "solady/=dependencies/solady-0.1.26/src/",
