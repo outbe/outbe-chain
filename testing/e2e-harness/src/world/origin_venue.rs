@@ -48,6 +48,13 @@ pub struct OriginContracts {
 /// Runs the project's own scripts so the chain ends up with what a real origin
 /// has. `chain_id` is the committee's, registered as its own auction target:
 /// that is what makes the loopback route reachable.
+/// The account every deploy script signs with; genesis does not fund it.
+pub fn deployer_address() -> alloy_primitives::Address {
+    DEPLOYER_ADDRESS
+        .parse()
+        .expect("deployer address is canonical")
+}
+
 pub fn deploy(repo: &Path, url: &str, chain_id: u64) -> Result<OriginContracts> {
     let crosschain: PathBuf = repo.join("contracts/crosschain");
     let intex: PathBuf = repo.join("contracts/intex");

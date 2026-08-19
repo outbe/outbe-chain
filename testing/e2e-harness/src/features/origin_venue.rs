@@ -20,6 +20,21 @@ fn deploy_origin_venue(world: &mut World) {
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
     let chain_id = world.rpc.chain_id(port).expect("committee chain id");
+    // Genesis funds validators and Tribute owners, so the deploy account starts
+    // empty on this chain and cannot even pay for its own scripts.
+    let funder = world
+        .state
+        .ocomp_capacity_tribute_private_keys
+        .first()
+        .cloned()
+        .expect("capacity fixture funded its owners");
+    crate::internal::eth::send_value(
+        &url,
+        origin_venue::deployer_address(),
+        &funder,
+        crate::internal::eth::coen(100),
+    )
+    .expect("fund the deploy account on the committee chain");
     let contracts = origin_venue::deploy(&environment().repo, &url, chain_id)
         .expect("deploy the intex engine on the committee chain");
     world.state.origin_contracts = Some(contracts);
