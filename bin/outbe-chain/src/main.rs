@@ -456,35 +456,6 @@ impl RpcModuleValidator for OutbeRpcModuleValidator {
     }
 }
 
-/// Outbe's native unit is a millionth of a COEN, not a wei. Reth starts a
-/// genesis that omits `baseFeePerGas` at Ethereum's 1 gwei, which under this
-/// denomination prices one gas at a thousand COEN and makes every ordinary
-/// transaction unaffordable. A genesis file that says nothing therefore starts
-/// at the protocol floor instead; a genesis that states a base fee is honoured
-/// as written, and named chains keep their curated specs untouched.
-pub(crate) fn parse_outbe_genesis_source(source: &str) -> eyre::Result<Arc<ChainSpec>> {
-    let path = std::path::Path::new(source);
-    if !path.is_file() {
-        return Ok(reth_ethereum::cli::chainspec::chain_value_parser(source)?);
-    }
-    let raw = std::fs::read(path)
-        .map_err(|error| eyre::eyre!("read genesis {}: {error}", path.display()))?;
-    let mut document: serde_json::Value = serde_json::from_slice(&raw)
-        .map_err(|error| eyre::eyre!("parse genesis {}: {error}", path.display()))?;
-    let object = document
-        .as_object_mut()
-        .ok_or_else(|| eyre::eyre!("genesis {} is not a JSON object", path.display()))?;
-    if !object.contains_key("baseFeePerGas") {
-        object.insert(
-            "baseFeePerGas".to_owned(),
-            serde_json::Value::String(format!("{:#x}", alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE)),
-        );
-    }
-    let genesis: alloy_genesis::Genesis = serde_json::from_value(document)
-        .map_err(|error| eyre::eyre!("decode genesis {}: {error}", path.display()))?;
-    Ok(Arc::new(ChainSpec::from(genesis)))
-}
-
 impl ChainSpecParser for OutbeChainSpecParser {
     type ChainSpec = ChainSpec<OutbeHeader>;
 
@@ -492,9 +463,12 @@ impl ChainSpecParser for OutbeChainSpecParser {
         reth_ethereum::cli::chainspec::SUPPORTED_CHAINS;
 
     fn parse(s: &str) -> eyre::Result<Arc<Self::ChainSpec>> {
-        let parsed = parse_outbe_genesis_source(s)?;
         let chain_spec: Arc<Self::ChainSpec> =
-            parsed.as_ref().clone().map_header(OutbeHeader::new).into();
+            reth_ethereum::cli::chainspec::chain_value_parser(s)?
+                .as_ref()
+                .clone()
+                .map_header(OutbeHeader::new)
+                .into();
         outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
             chain_spec.as_ref(),
         )
