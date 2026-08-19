@@ -31,6 +31,9 @@ interface ITargetRouterShims {
 ///         the router's EIP-170 runtime size. Every function runs via DELEGATECALL in the router's context.
 library TargetInbound {
     /// @notice Decode AUCTION_STAGE_START and forward the day state, schedule and params to the Auction contract.
+    /// @dev An auction the day already has (same terms → duplicate, other terms → conflict), a schedule the day
+    ///      can no longer honour, or an unknown day state are acknowledged without effect: no later state makes
+    ///      such a START applicable. Anything else propagates so the bridge redelivers.
     function handleAuctionStageStart(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
         external
     {
@@ -40,19 +43,57 @@ library TargetInbound {
             IIntexAuction.AuctionSchedule memory schedule,
             IIntexAuction.AuctionParams memory params
         ) = BridgeMsgCodec.decodeAuctionParams(message);
-        $.auction.auctionStart(worldwideDay, dayState, schedule, params);
 
-        emit ITargetRouter.AuctionStageReceived(srcChainId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
+        try $.auction.auctionStart(worldwideDay, dayState, schedule, params) {
+            emit ITargetRouter.AuctionStageReceived(srcChainId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
+        } catch (bytes memory reason) {
+            bytes4 selector = _selectorOf(reason);
+            uint8 why;
+            if (selector == IIntexAuction.AuctionAlreadyExists.selector) {
+                why = _sameAuction($, worldwideDay, dayState, schedule, params)
+                    ? InboundReason.DUPLICATE
+                    : InboundReason.CONFLICT;
+            } else if (selector == IIntexAuction.InvalidSchedule.selector) {
+                bool late = dayState == IIntexAuction.WorldwideDayState.Green && schedule.commitEnd <= block.timestamp;
+                why = late ? InboundReason.LATE : InboundReason.INVALID;
+            } else if (selector == IIntexAuction.InvalidDayState.selector) {
+                why = InboundReason.INVALID;
+            } else {
+                _bubble(reason);
+            }
+            _ignore(srcChainId, BridgeMsgCodec.MSG_AUCTION_STAGE_START, bytes32(uint256(worldwideDay)), why);
+        }
     }
 
     /// @notice Decode AUCTION_STAGE_CLEARING, forward to Auction, then relay revealed bids to Outbe.
-    /// @dev Only the outbound relay is caught (parked on failure); a failing inbound transition propagates so the
-    ///      bridge redelivers.
+    /// @dev A day already past clearing (Completed), a cancelled day or a day this chain never opened cannot take
+    ///      the transition any more and are acknowledged without effect (and without a relay). A day whose commit
+    ///      stage is still running propagates: time alone makes the transition valid, so the bridge redelivers.
+    ///      Only the outbound relay is caught (parked on failure).
     function handleAuctionStageClearing(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
         external
     {
         uint32 worldwideDay = BridgeMsgCodec.decodeAuctionStageClearing(message);
-        $.auction.startClearingStage(worldwideDay); // idempotent; a failing transition propagates for redelivery
+
+        try $.auction.startClearingStage(worldwideDay) {}
+        catch (bytes memory reason) {
+            bytes4 selector = _selectorOf(reason);
+            uint8 why;
+            if (selector == IIntexAuction.StageRequired.selector) {
+                IIntexAuction.AuctionStage current = _stageRequiredCurrent(reason);
+                if (current != IIntexAuction.AuctionStage.Completed && current != IIntexAuction.AuctionStage.Cancelled)
+                {
+                    _bubble(reason);
+                }
+                why = InboundReason.OBSOLETE;
+            } else if (selector == IIntexAuction.AuctionNotFound.selector) {
+                why = InboundReason.UNKNOWN;
+            } else {
+                _bubble(reason);
+            }
+            _ignore(srcChainId, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING, bytes32(uint256(worldwideDay)), why);
+            return;
+        }
 
         // Relay the revealed bids exactly once. A redelivered CLEARING must not re-relay under a fresh generation.
         if (!$.clearingRelayed[worldwideDay]) {
@@ -71,13 +112,99 @@ library TargetInbound {
     }
 
     /// @notice Decode AUCTION_RESULT and execute auction clearing on the Auction contract.
+    /// @dev A result the day already holds (same → duplicate, other → conflict), a cancelled or unknown day and a
+    ///      result that fails the auction's permanent sanity bounds are acknowledged without effect. A day whose
+    ///      reveal stage has not closed yet (clock skew) propagates so the bridge redelivers.
     function handleAuctionResult(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
         (uint32 worldwideDay, uint32 issuedIntexCount, uint64 auctionClearingRate, uint32 wonBidsCount) =
             BridgeMsgCodec.decodeAuctionResult(message);
 
-        $.auction.executeAuctionClearing(worldwideDay, issuedIntexCount, auctionClearingRate, wonBidsCount);
+        try $.auction.executeAuctionClearing(worldwideDay, issuedIntexCount, auctionClearingRate, wonBidsCount) {
+            emit ITargetRouter.AuctionResultReceived(srcChainId, worldwideDay, issuedIntexCount, auctionClearingRate);
+        } catch (bytes memory reason) {
+            bytes4 selector = _selectorOf(reason);
+            uint8 why;
+            if (selector == IIntexAuction.StageRequired.selector) {
+                IIntexAuction.AuctionStage current = _stageRequiredCurrent(reason);
+                if (current == IIntexAuction.AuctionStage.Completed) {
+                    why = _sameResult($, worldwideDay, issuedIntexCount, auctionClearingRate, wonBidsCount)
+                        ? InboundReason.DUPLICATE
+                        : InboundReason.CONFLICT;
+                } else if (current == IIntexAuction.AuctionStage.Cancelled) {
+                    why = InboundReason.OBSOLETE;
+                } else {
+                    _bubble(reason);
+                }
+            } else if (selector == IIntexAuction.AuctionNotFound.selector) {
+                why = InboundReason.UNKNOWN;
+            } else if (
+                selector == IIntexAuction.WonBidsExceedRevealed.selector
+                    || selector == IIntexAuction.ClearingRateBelowMin.selector
+                    || selector == IIntexAuction.ZeroValue.selector
+                    || selector == IIntexAuction.IssuedPromisOverflow.selector
+            ) {
+                why = InboundReason.INVALID;
+            } else {
+                _bubble(reason);
+            }
+            _ignore(srcChainId, BridgeMsgCodec.MSG_AUCTION_RESULT, bytes32(uint256(worldwideDay)), why);
+        }
+    }
 
-        emit ITargetRouter.AuctionResultReceived(srcChainId, worldwideDay, issuedIntexCount, auctionClearingRate);
+    /// @dev Whether the auction this chain holds for `worldwideDay` was opened under the START's terms. The reveal
+    ///      end is left out: CLEARING snaps it forward, and a START repeated after that is still the same START.
+    function _sameAuction(
+        TargetRouterStorage storage $,
+        uint32 worldwideDay,
+        IIntexAuction.WorldwideDayState dayState,
+        IIntexAuction.AuctionSchedule memory schedule,
+        IIntexAuction.AuctionParams memory params
+    ) private view returns (bool) {
+        IIntexAuction.AuctionData memory a = $.auction.getAuctionInfo(worldwideDay);
+        return a.worldwideDayState == dayState && a.schedule.commitEnd == schedule.commitEnd
+            && a.schedule.issuanceEnd == schedule.issuanceEnd
+            && keccak256(abi.encode(a.params)) == keccak256(abi.encode(params));
+    }
+
+    /// @dev Whether the result this chain holds for `worldwideDay` is the one the RESULT carries.
+    function _sameResult(
+        TargetRouterStorage storage $,
+        uint32 worldwideDay,
+        uint32 issuedIntexCount,
+        uint64 auctionClearingRate,
+        uint32 wonBidsCount
+    ) private view returns (bool) {
+        IIntexAuction.AuctionResult memory r = $.auction.getAuctionInfo(worldwideDay).result;
+        return r.issuedIntexCount == issuedIntexCount && r.auctionClearingRate == auctionClearingRate
+            && r.wonBidsCount == wonBidsCount;
+    }
+
+    /// @dev `currentStage` argument of a `StageRequired(requiredStage, currentStage)` revert payload.
+    function _stageRequiredCurrent(bytes memory reason) private pure returns (IIntexAuction.AuctionStage current) {
+        // [len][selector(4)][requiredStage(32)][currentStage(32)]
+        uint256 raw;
+        // solhint-disable-next-line no-inline-assembly
+        assembly ("memory-safe") {
+            raw := mload(add(reason, 0x44))
+        }
+        // forge-lint: disable-next-line(unsafe-typecast) -- the low byte is the enum value
+        current = IIntexAuction.AuctionStage(uint8(raw));
+    }
+
+    function _selectorOf(bytes memory reason) private pure returns (bytes4 selector) {
+        if (reason.length < 4) return bytes4(0);
+        // solhint-disable-next-line no-inline-assembly
+        assembly ("memory-safe") {
+            selector := mload(add(reason, 0x20))
+        }
+    }
+
+    /// @dev Re-raise a caught revert payload unchanged.
+    function _bubble(bytes memory reason) private pure {
+        // solhint-disable-next-line no-inline-assembly
+        assembly ("memory-safe") {
+            revert(add(reason, 0x20), mload(reason))
+        }
     }
 
     /// @notice Decode one ISSUANCE_INSTRUCTIONS chunk, create the series it names, and mint each winner once.
