@@ -67,6 +67,10 @@ const DEFAULT_DAYS_BACK = 30;
 const DEFAULT_DAYS_AHEAD = 2;
 const DAY_MS = 86_400_000;
 
+function priced(minor: bigint) {
+  return { raw: minor.toString(), value: formatUnits(minor, 6), scale: "1e6 ISO stable-unit" };
+}
+
 function ymdToDate(ymd: number): Date {
   return new Date(Date.UTC(Math.floor(ymd / 10000), (Math.floor(ymd / 100) % 100) - 1, ymd % 100));
 }
@@ -498,12 +502,12 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
           minIntexBidQuantity: Number(d.params.minIntexBidQuantity),
           // entry bond pulled at commit and returned at reveal/cancel; 0 = no bond.
           commitBondMinor: { raw: d.params.commitBondMinor.toString(), value: formatUnits(d.params.commitBondMinor, dec) },
-          // A bid's reference currency must appear here. Prices are ISO stable-units (1e6).
+          // A bid's reference currency must appear here.
           prices: d.params.prices.map((row) => ({
             isoCode: Number(row.isoCode),
-            entryPriceMinor: row.entryPriceMinor.toString(),
-            floorPriceMinor: row.floorPriceMinor.toString(),
-            callPriceMinor: row.callPriceMinor.toString(),
+            entryPrice: priced(row.entryPriceMinor),
+            floorPrice: priced(row.floorPriceMinor),
+            callPrice: priced(row.callPriceMinor),
           })),
         },
         result: {
