@@ -388,7 +388,7 @@ where
         if target.number == self.scanned_height {
             self.refresh_jobs(target.number, target.hash)?;
             self.reconcile_materialization(target.number, target.hash)?;
-            self.drive_payout();
+            self.drive_payout(target.hash);
             self.publish_readiness(target.number, target.hash)?;
             return Ok(());
         }
@@ -401,7 +401,7 @@ where
             self.scan_requests(number, hash)?;
             self.refresh_jobs(number, hash)?;
             self.reconcile_materialization(number, hash)?;
-            self.drive_payout();
+            self.drive_payout(hash);
             self.scanned_height = number;
             self.scanned_hash = hash;
             self.publish_readiness(number, hash)?;
@@ -883,14 +883,17 @@ where
     /// Ticks the payout sender the standalone Supervisor process would tick.
     /// One tick at a time: the submitter journals its own progress, so a later
     /// block simply resumes where this one stopped.
-    fn drive_payout(&mut self) {
+    fn drive_payout(&mut self, head: B256) {
         if self.payout_active {
             return;
         }
-        let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
+        // The chain's own clock, not the host's: a localnet can run a shifted
+        // genesis, and a day the host has not reached yet still owes its payout.
+        let Ok(Some(block)) = self.provider.block_by_hash(head) else {
             return;
         };
-        let mut day = outbe_primitives::time::worldwide_day_from_timestamp(now.as_secs());
+        let mut day =
+            outbe_primitives::time::worldwide_day_from_timestamp(block.header().timestamp());
         let mut days = Vec::with_capacity(PAYOUT_LOOKBACK_DAYS as usize + 1);
         for _ in 0..=PAYOUT_LOOKBACK_DAYS {
             days.push(day);
