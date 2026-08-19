@@ -13,7 +13,9 @@ use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_common::pow;
 
-use crate::constants::{CALL_RATE, FLOOR_RATE, POSITION_VALIDITY_SECONDS, SRA_RATE};
+use crate::constants::{
+    CALL_RATE, FLOOR_RATE, POSITION_VALIDITY_SECONDS, SETTLEMENT_ASSET_DECIMALS, SRA_RATE,
+};
 use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::{GemBurned, GemIssued, GemSettled};
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
@@ -282,6 +284,19 @@ pub fn settle_gem(
         return Err(GemFactoryError::SettlementCurrencyMismatch { asset, expected }.into());
     }
 
+    // Amounts are protocol-scale, and the transfer moves raw token units, so an
+    // asset on a different scale would move the wrong sum. Nothing enforces the
+    // scale at registration, so it is checked here.
+    let asset_decimals = read_decimals(storage, asset)?;
+    if asset_decimals != SETTLEMENT_ASSET_DECIMALS {
+        return Err(GemFactoryError::SettlementDecimalsMismatch {
+            asset,
+            decimals: asset_decimals,
+            expected: SETTLEMENT_ASSET_DECIMALS,
+        }
+        .into());
+    }
+
     // The Cost Amount is denominated in the reference currency, so a settlement
     // that resolves to the issuance currency is charged at the live cross rate.
     let amount_paid = outbe_oracle::api::convert_currency(
@@ -310,6 +325,12 @@ pub fn settle_gem(
     )?;
 
     Ok(())
+}
+
+/// Reads the settlement asset's `decimals()` via a static sub-call.
+fn read_decimals(storage: &StorageHandle<'_>, asset: Address) -> Result<u8> {
+    let ret = storage.staticcall(asset, IERC20::decimalsCall {}.abi_encode().into())?;
+    IERC20::decimalsCall::abi_decode_returns(&ret).map_err(|_| GemFactoryError::InvalidAsset.into())
 }
 
 fn deposit_to_vault(
