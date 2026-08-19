@@ -23,10 +23,13 @@ fn deploy_origin_venue(world: &mut World) {
     // Genesis funds validators and Tribute owners, so the deploy account starts
     // empty on this chain and cannot even pay for its own scripts.
     // One owner's balance does not cover the whole deploy, so several chip in.
+    // Taken from the tail: the scenario's Tribute submitters are the head of the
+    // same list, and they still need their own gas.
     let funders: Vec<String> = world
         .state
         .ocomp_capacity_tribute_private_keys
         .iter()
+        .rev()
         .take(6)
         .cloned()
         .collect();
