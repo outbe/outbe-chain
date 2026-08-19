@@ -1,4 +1,4 @@
-use alloy_primitives::{address, keccak256, Address, Bytes, U256};
+use alloy_primitives::{address, keccak256, Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -307,6 +307,195 @@ fn settle_takes_only_what_the_position_needs() {
         assert!(
             p.collateral_locked.is_zero(),
             "the final settlement leaves no dust locked"
+        );
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Settlement arithmetic: interest first, principal second
+//
+// These pin the numbers independently of `accrued_interest`, so a wrong formula
+// cannot satisfy them. Day 73 is exactly 1/5 of a 365-day year, so on P = $1,000
+// at r = 4% one period of interest is $8.00 with no rounding.
+// ---------------------------------------------------------------------------
+
+/// One period of the fixtures below: 73 days = 0.2 × ACT/365.
+const FIFTH_YEAR: u64 = 73;
+
+#[test]
+fn settle_covers_the_accrued_interest_before_any_principal() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage);
+        let id = open_settleable(&mut credis, 1);
+
+        // I = 1_000_000_000 × 4% × 73/365 = 8_000_000, exactly.
+        let expected_interest = U256::from(8_000_000u64);
+        let principal_target = U256::from(100_000_000u64);
+
+        let paid = credis
+            .settle(id, expected_interest + principal_target, at(FIFTH_YEAR))
+            .unwrap();
+
+        // The interest is taken off the top; only the surplus reduces principal.
+        assert_eq!(paid.interest, expected_interest);
+        assert_eq!(paid.principal_paid, principal_target);
+        assert_eq!(paid.total_paid, expected_interest + principal_target);
+        assert!(!paid.closed);
+
+        let p = credis.get_position(id).unwrap();
+        assert_eq!(p.outstanding, U256::from(PRINCIPAL) - principal_target);
+        // Collateral tracks the principal covered, not the gross payment:
+        // ΔG = 2e9 × 1e8 / 1e9 = 2e8.
+        assert_eq!(paid.gratis_released, U256::from(200_000_000u64));
+        assert_eq!(p.collateral_locked, collateral() - paid.gratis_released);
+        // Principal, not the payment, is what the position is measured against.
+        assert_eq!(p.principal, U256::from(PRINCIPAL), "principal never moves");
+    });
+}
+
+#[test]
+fn one_minor_unit_above_the_interest_pays_exactly_one_of_principal() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage);
+        let id = open_settleable(&mut credis, 1);
+
+        // The boundary: the first unit above the coupon is principal, and only
+        // that unit. A payment that mixed the two would show more here.
+        let paid = credis
+            .settle(id, U256::from(8_000_001u64), at(FIFTH_YEAR))
+            .unwrap();
+
+        assert_eq!(paid.interest, U256::from(8_000_000u64));
+        assert_eq!(paid.principal_paid, U256::from(1u64));
+        assert_eq!(
+            credis.get_position(id).unwrap().outstanding,
+            U256::from(PRINCIPAL) - U256::from(1u64)
+        );
+    });
+}
+
+#[test]
+fn sequential_settlements_recompute_interest_on_the_reduced_principal() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage);
+        let id = open_settleable(&mut credis, 1);
+
+        // Three equal 73-day periods. Interest falls with the outstanding
+        // principal, because accrual restarts on what is left rather than
+        // carrying anything forward.
+        //   day  73: I = 1_000e6 × 4% × 0.2 = 8.00e6, pay 400e6 of principal
+        //   day 146: I =   600e6 × 4% × 0.2 = 4.80e6, pay 300e6
+        //   day 219: I =   300e6 × 4% × 0.2 = 2.40e6, pay the remaining 300e6
+        let plan = [
+            (
+                1u64,
+                8_000_000u64,
+                400_000_000u64,
+                600_000_000u64,
+                800_000_000u64,
+            ),
+            (2, 4_800_000, 300_000_000, 300_000_000, 600_000_000),
+            (3, 2_400_000, 300_000_000, 0, 600_000_000),
+        ];
+
+        let mut interest_collected = U256::ZERO;
+        let mut principal_settled = U256::ZERO;
+        let mut collateral_released = U256::ZERO;
+
+        for (period, interest, principal, outstanding_after, released) in plan {
+            let day = at(period * FIFTH_YEAR);
+            let paid = credis
+                .settle(id, U256::from(interest) + U256::from(principal), day)
+                .unwrap();
+
+            assert_eq!(paid.interest, U256::from(interest), "period {period}");
+            assert_eq!(
+                paid.principal_paid,
+                U256::from(principal),
+                "period {period}"
+            );
+            assert_eq!(
+                paid.gratis_released,
+                U256::from(released),
+                "period {period}"
+            );
+
+            let p = credis.get_position(id).unwrap();
+            assert_eq!(
+                p.outstanding,
+                U256::from(outstanding_after),
+                "period {period}"
+            );
+            // The anchor advances one whole period, and nothing is owed at the
+            // instant of settlement — no interest carries between events.
+            assert_eq!(p.last_settled_at, day, "period {period}");
+            assert_eq!(
+                CredisContract::accrued_interest(&p, day).unwrap(),
+                U256::ZERO,
+                "period {period}"
+            );
+
+            interest_collected += paid.interest;
+            principal_settled += paid.principal_paid;
+            collateral_released += paid.gratis_released;
+        }
+
+        // The three ledgers close exactly.
+        assert_eq!(principal_settled, U256::from(PRINCIPAL));
+        assert_eq!(collateral_released, collateral());
+        assert_eq!(interest_collected, U256::from(15_200_000u64));
+
+        let p = credis.get_position(id).unwrap();
+        assert_eq!(p.lifecycle_state().unwrap(), CredisState::Settled);
+        assert!(p.outstanding.is_zero());
+        assert!(p.collateral_locked.is_zero());
+    });
+}
+
+#[test]
+fn settle_below_the_accrued_interest_reverts_and_changes_nothing() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage);
+        let id = open_settleable(&mut credis, 1);
+
+        // Reject at the first settlement: one unit short of the $8.00 coupon.
+        let before = credis.get_position(id).unwrap();
+        let err = credis
+            .settle(id, U256::from(7_999_999u64), at(FIFTH_YEAR))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("below the interest"), "got: {err}");
+
+        let after = credis.get_position(id).unwrap();
+        assert_eq!(after.outstanding, before.outstanding);
+        assert_eq!(after.collateral_locked, before.collateral_locked);
+        assert_eq!(after.last_settled_at, before.last_settled_at);
+        assert_eq!(after.state, before.state);
+
+        // Paying the coupon exactly is accepted, so the boundary is `< I`.
+        credis
+            .settle(id, U256::from(8_000_000u64), at(FIFTH_YEAR))
+            .unwrap();
+
+        // The guard still holds once the principal has been drawn down: after
+        // settling half, the next period's coupon is 4.00e6 on 500e6, and a
+        // payment sized for the *old* balance's coupon is now more than enough
+        // while one below the *new* coupon is still rejected.
+        credis
+            .settle(id, U256::from(500_000_000u64), at(FIFTH_YEAR))
+            .unwrap();
+        let mid = credis.get_position(id).unwrap();
+        assert_eq!(mid.outstanding, U256::from(500_000_000u64));
+
+        let err = credis
+            .settle(id, U256::from(3_999_999u64), at(2 * FIFTH_YEAR))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("below the interest"), "got: {err}");
+        assert_eq!(
+            credis.get_position(id).unwrap().outstanding,
+            U256::from(500_000_000u64),
+            "a rejected settlement leaves the balance untouched"
         );
     });
 }
@@ -836,25 +1025,25 @@ fn precompile_enumerates_positions_globally_and_per_owner() {
             first
         );
 
-        // `ownerOf` takes the 32-byte big-endian id; a short id is rejected
-        // rather than zero-extended into a different position.
-        let out = call(
-            ICredis::ownerOfCall {
-                positionId: Bytes::copy_from_slice(&first.to_be_bytes::<32>()),
-            }
-            .abi_encode(),
-        );
+        // `ownerOf` resolves the owner of a single position.
+        let out = call(ICredis::ownerOfCall { positionId: first }.abi_encode());
         assert_eq!(
             ICredis::ownerOfCall::abi_decode_returns(&out).unwrap(),
             alice()
         );
+        let out = call(ICredis::ownerOfCall { positionId: second }.abi_encode());
+        assert_eq!(
+            ICredis::ownerOfCall::abi_decode_returns(&out).unwrap(),
+            bob()
+        );
 
-        let short = ICredis::ownerOfCall {
-            positionId: Bytes::copy_from_slice(&first.to_be_bytes::<32>()[..31]),
+        // An unknown id is rejected rather than reported as owned by nobody.
+        let unknown = ICredis::ownerOfCall {
+            positionId: U256::from(0xdeadu64),
         }
         .abi_encode();
-        let err = dispatch(storage.clone(), &short, alice(), U256::ZERO).unwrap_err();
-        assert!(err.to_string().contains("32 bytes"), "got: {err}");
+        let err = dispatch(storage.clone(), &unknown, alice(), U256::ZERO).unwrap_err();
+        assert!(err.to_string().contains("not found"), "got: {err}");
     });
 }
 

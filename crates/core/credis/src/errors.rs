@@ -33,8 +33,6 @@ pub enum CredisError {
     ArithmeticOverflow,
     #[error("index out of bounds")]
     IndexOutOfBounds,
-    #[error("position id must be exactly 32 bytes")]
-    InvalidPositionId,
 }
 
 impl From<CredisError> for PrecompileError {
