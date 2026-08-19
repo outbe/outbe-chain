@@ -402,6 +402,7 @@ fn initialize_fixture_repository(repo: &Path, mutation: FixtureMutation) {
             "-c",
             "user.email=ocomp-fixture@example.invalid",
             "commit",
+            "--no-gpg-sign",
             "--quiet",
             "-m",
             "fixture",

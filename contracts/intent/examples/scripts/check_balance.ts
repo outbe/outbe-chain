@@ -44,7 +44,8 @@ async function main() {
   ): Promise<{ symbol: string; balance: string }> {
     if (tokenAddr === ethers.ZeroAddress) {
       const bal = await provider.getBalance(address);
-      return { symbol: 'NATIVE', balance: formatUnits(bal, 18) };
+      const decimals = await getTokenDecimals(tokenAddr, provider);
+      return { symbol: 'NATIVE', balance: formatUnits(bal, decimals) };
     }
     const token = ERC20__factory.connect(tokenAddr, provider);
     const decimals = await getTokenDecimals(tokenAddr, provider);

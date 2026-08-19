@@ -106,38 +106,38 @@ pub struct ValidatorSet {
 
     // Per-validator fields keyed by Address (slots 5-15)
     /// BLS MinPk consensus public key — low 32 bytes (bytes[0..32]).
-    pub val_consensus_pubkey_lo: Mapping<Address, B256>,
+    pub(crate) val_consensus_pubkey_lo: Mapping<Address, B256>,
     /// BLS MinPk consensus public key — high 16 bytes (bytes[32..48]), right-padded with zeros.
-    pub val_consensus_pubkey_hi: Mapping<Address, B256>,
-    pub val_stake: Mapping<Address, U256>,
-    pub val_status: Mapping<Address, u8>,
-    pub val_slash_count: Mapping<Address, u64>,
-    pub val_missed_blocks: Mapping<Address, u64>,
-    pub val_missed_votes: Mapping<Address, u64>,
-    pub val_blocks_proposed: Mapping<Address, u64>,
-    pub val_joined_at_height: Mapping<Address, u64>,
-    pub val_deactivated_at_height: Mapping<Address, u64>,
-    pub val_unbonding_end: Mapping<Address, u64>,
+    pub(crate) val_consensus_pubkey_hi: Mapping<Address, B256>,
+    pub(crate) val_stake: Mapping<Address, U256>,
+    pub(crate) val_status: Mapping<Address, u8>,
+    pub(crate) val_slash_count: Mapping<Address, u64>,
+    pub(crate) val_missed_blocks: Mapping<Address, u64>,
+    pub(crate) val_missed_votes: Mapping<Address, u64>,
+    pub(crate) val_blocks_proposed: Mapping<Address, u64>,
+    pub(crate) val_joined_at_height: Mapping<Address, u64>,
+    pub(crate) val_deactivated_at_height: Mapping<Address, u64>,
+    pub(crate) val_unbonding_end: Mapping<Address, u64>,
 
     // Validator list — 1-indexed array pattern (slots 16-17)
-    pub address_to_index: Mapping<Address, u64>,
-    pub index_to_address: Mapping<u64, Address>,
+    pub(crate) address_to_index: Mapping<Address, u64>,
+    pub(crate) index_to_address: Mapping<u64, Address>,
 
     // Pubkey reverse lookup (slot 18) — keyed by keccak256(48-byte BLS MinPk pubkey)
-    pub consensus_pubkey_hash_to_address: Mapping<B256, Address>,
+    pub(crate) consensus_pubkey_hash_to_address: Mapping<B256, Address>,
     // Reserved (slot 19) — previously bls_pubkey_to_address
     pub _reserved_slot_19: Mapping<B256, Address>,
 
     // Counters + epoch (slots 20-23)
-    pub validator_count: Slot<u32>,
-    pub epoch_number: Slot<U256>,
-    pub epoch_start_timestamp: Slot<u64>,
-    pub epoch_start_block: Slot<u64>,
+    pub(crate) validator_count: Slot<u32>,
+    pub(crate) epoch_number: Slot<U256>,
+    pub(crate) epoch_start_timestamp: Slot<u64>,
+    pub(crate) epoch_start_block: Slot<u64>,
 
     // Consensus set tracking (slots 24-26)
-    pub val_has_bls_share: Mapping<Address, bool>,
-    pub pending_set_change: Slot<bool>,
-    pub active_consensus_set_hash: Slot<B256>,
+    pub(crate) val_has_bls_share: Mapping<Address, bool>,
+    pub(crate) pending_set_change: Slot<bool>,
+    pub(crate) active_consensus_set_hash: Slot<B256>,
 
     // Re-registration cooldown (slot 27)
     // Number of blocks a validator must wait after deactivation before re-registering.
@@ -145,8 +145,8 @@ pub struct ValidatorSet {
     pub config_reregistration_cooldown: Slot<u32>,
 
     // Versioned Commonware P2P address registry (slots 28-29)
-    pub val_p2p_address_version: Mapping<Address, u8>,
-    pub val_p2p_address_payload: Mapping<Address, StorageBytes>,
+    pub(crate) val_p2p_address_version: Mapping<Address, u8>,
+    pub(crate) val_p2p_address_payload: Mapping<Address, StorageBytes>,
 
     // Per-finalized-block idempotency guard for `record_finalized_participation`
     // (slot 30). Keyed by `metadata.finalized_block_hash`; set on first
@@ -187,7 +187,7 @@ pub struct ValidatorSet {
     /// `confirmValidatorReady()` (caller = the validator itself). Cleared when
     /// the validator leaves PENDING. Without this flag a behind/stale joiner
     /// would be frozen into the ceremony and flipped ACTIVE before it can vote.
-    pub val_join_confirmed: Mapping<Address, bool>,
+    pub(crate) val_join_confirmed: Mapping<Address, bool>,
 
     /// Slot 42 — unjail cooldown in blocks. A JAILED validator may call
     /// `unjailValidator()` only once `block_number >= val_jailed_at_height +
@@ -199,7 +199,7 @@ pub struct ValidatorSet {
     /// Slot 43 — block height at which a validator was JAILED (set by
     /// `jail_validator`). Drives the unjail cooldown check; meaningless unless
     /// the validator is currently JAILED.
-    pub val_jailed_at_height: Mapping<Address, u64>,
+    pub(crate) val_jailed_at_height: Mapping<Address, u64>,
 
     /// Slot 44 — committee-snapshot prune ring (`epoch % COMMITTEE_SNAPSHOT_RETAIN_EPOCHS
     /// → snapshot_key`). `write_committee_snapshot` pushes each new key here and

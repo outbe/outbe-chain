@@ -77,6 +77,8 @@ fn terminal_request_and_exclusive_expiry_commit_real_effects_atomically() {
     let day_limit = U256::from(100);
     let mut profile = request_profile();
     profile.chain_id = chain::CHAIN_ID;
+    provider.set_block_number(block_number);
+    provider.set_timestamp(U256::from(block_time));
 
     StorageHandle::enter(&mut provider, |storage| {
         let expected_ocomp_snapshot = seed_active_ocomp_snapshot(storage.clone(), 5);

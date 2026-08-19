@@ -8,6 +8,7 @@ use crate::hooks::{
     ZeroFeeTransaction,
 };
 use outbe_oracle::precompile::IOracle;
+use outbe_validatorset::ValidatorLifecycle;
 
 /// Maximum calldata bytes accepted for a zero-fee oracle vote.
 pub const MAX_ZERO_FEE_ORACLE_CALLDATA_BYTES: usize = 16 * 1024;
@@ -102,6 +103,12 @@ fn validate_oracle_submit_vote_state(
             outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
         )?
         .ok_or(ZeroFeePolicyError::UnauthorizedSigner)?;
+    if !matches!(
+        vs.validator_lifecycle(validator)?,
+        ValidatorLifecycle::Active(_)
+    ) {
+        return Err(ZeroFeePolicyError::UnauthorizedSigner);
+    }
 
     let oracle = outbe_oracle::schema::OracleContract::new(vs.storage.clone());
     if oracle.vote_exists.read(&validator)? {
@@ -198,14 +205,18 @@ mod tests {
     fn delegated_feeder_passes_until_validator_votes() {
         let mut storage = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut storage, |storage| {
+            let owner = address!("0xffffffffffffffffffffffffffffffffffffffff");
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            vs.validator_count.write(1).unwrap();
-            vs.address_to_index.write(&VALIDATOR, 1).unwrap();
-            vs.index_to_address.write(&1, VALIDATOR).unwrap();
-            vs.val_status
-                .write(&VALIDATOR, outbe_validatorset::logic::status::ACTIVE)
+            vs.config_owner.write(owner).unwrap();
+            vs.config_max_validators.write(1).unwrap();
+            vs.test_register_validator_without_pop(VALIDATOR, &[1; 48])
                 .unwrap();
-            vs.val_has_bls_share.write(&VALIDATOR, true).unwrap();
+            vs.test_activate_validator_canonically(
+                VALIDATOR,
+                outbe_validatorset::StakeProjection::new(U256::from(1), None),
+                U256::from(1),
+            )
+            .unwrap();
 
             vs.set_delegate(
                 VALIDATOR,

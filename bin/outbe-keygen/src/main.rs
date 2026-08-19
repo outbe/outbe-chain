@@ -21,6 +21,7 @@ use outbe_ocomp_protocol::{
     },
     profile::poc_schema_limits,
 };
+use outbe_primitives::validators::{validator_registration_message, VALIDATOR_REGISTRATION_DST};
 
 #[cfg(not(test))]
 fn exit_process(code: i32) -> ! {
@@ -40,9 +41,6 @@ use std::{
 };
 use zeroize::Zeroizing;
 
-/// BLS_SIG DST used for registration signatures.
-/// Must match `verify_bls_registration_sig` in validatorset/logic.rs.
-const REGISTER_DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_outbe_REGISTER";
 const OCOMP_KEY_FILENAME: &str = "ocomp-key-v1.hex";
 const OCOMP_REGISTRATION_FILENAME: &str = "ocomp-registration-v1.ocb1";
 
@@ -100,6 +98,10 @@ enum Commands {
         /// Ethereum address of the validator being registered.
         #[arg(long)]
         validator_address: Address,
+
+        /// Chain ID on which this registration proof will be accepted.
+        #[arg(long)]
+        chain_id: u64,
     },
 
     /// Verify integrity of a BLS key file.
@@ -144,7 +146,8 @@ fn main() -> Result<()> {
         Commands::SignRegistration {
             key,
             validator_address,
-        } => cmd_sign_registration(key, validator_address, &backend),
+            chain_id,
+        } => cmd_sign_registration(key, validator_address, chain_id, &backend),
         Commands::Verify { key } => cmd_verify(key, &backend),
         Commands::Hybrid { output_dir } => cmd_hybrid(output_dir, &backend),
         Commands::Ocomp {
@@ -235,6 +238,7 @@ fn cmd_show_pubkey(key_path: PathBuf, backend: &KeyBackend) -> Result<()> {
 fn cmd_sign_registration(
     key_path: PathBuf,
     validator_address: Address,
+    chain_id: u64,
     backend: &KeyBackend,
 ) -> Result<()> {
     let key = load_key(&key_path, backend)?;
@@ -246,11 +250,11 @@ fn cmd_sign_registration(
     let blst_sk = blst::min_pk::SecretKey::from_bytes(&sk_bytes)
         .map_err(|e| eyre::eyre!("failed to create blst SecretKey: {e:?}"))?;
 
-    // Sign the validator address (20 bytes) with the registration DST.
-    let sig = blst_sk.sign(validator_address.as_slice(), REGISTER_DST, &[]);
+    let message = validator_registration_message(chain_id, validator_address);
+    let sig = blst_sk.sign(&message, VALIDATOR_REGISTRATION_DST, &[]);
     let sig_bytes = sig.to_bytes();
 
-    println!("registration signature for {validator_address}:");
+    println!("registration signature for {validator_address} on chain {chain_id}:");
     println!("  pubkey:    {}", hex::encode(&pk_bytes));
     println!("  signature: {}", hex::encode(sig_bytes));
 
@@ -616,7 +620,7 @@ mod tests {
         let addr: Address = "0x1111111111111111111111111111111111111111"
             .parse()
             .unwrap();
-        cmd_sign_registration(key_path, addr, &KeyBackend::Plaintext).unwrap();
+        cmd_sign_registration(key_path, addr, 1, &KeyBackend::Plaintext).unwrap();
     }
 
     #[test]
@@ -626,7 +630,7 @@ mod tests {
             .parse()
             .unwrap();
         let result =
-            cmd_sign_registration(dir.path().join("none.hex"), addr, &KeyBackend::Plaintext);
+            cmd_sign_registration(dir.path().join("none.hex"), addr, 1, &KeyBackend::Plaintext);
         assert!(result.is_err());
     }
 
@@ -643,16 +647,36 @@ mod tests {
         let addr: Address = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
             .parse()
             .unwrap();
+        let chain_id = 54322345;
 
         // Sign the same way cmd_sign_registration does
         let sk_bytes = key.encode();
         let blst_sk = blst::min_pk::SecretKey::from_bytes(&sk_bytes).unwrap();
-        let sig = blst_sk.sign(addr.as_slice(), REGISTER_DST, &[]);
+        let message = validator_registration_message(chain_id, addr);
+        let sig = blst_sk.sign(&message, VALIDATOR_REGISTRATION_DST, &[]);
 
         // Verify
         let blst_pk = blst::min_pk::PublicKey::from_bytes(&pk_bytes).unwrap();
-        let result = sig.verify(true, addr.as_slice(), REGISTER_DST, &[], &blst_pk, true);
+        let result = sig.verify(
+            true,
+            &message,
+            VALIDATOR_REGISTRATION_DST,
+            &[],
+            &blst_pk,
+            true,
+        );
         assert_eq!(result, blst::BLST_ERROR::BLST_SUCCESS);
+
+        let other_chain_message = validator_registration_message(chain_id + 1, addr);
+        let replay_result = sig.verify(
+            true,
+            &other_chain_message,
+            VALIDATOR_REGISTRATION_DST,
+            &[],
+            &blst_pk,
+            true,
+        );
+        assert_ne!(replay_result, blst::BLST_ERROR::BLST_SUCCESS);
     }
 
     #[test]

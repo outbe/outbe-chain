@@ -22,6 +22,7 @@ thiserror.workspace = true
 outbe-ocomp-protocol.workspace = true
 proptest.workspace = true
 revm.workspace = true
+outbe-validatorset = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true

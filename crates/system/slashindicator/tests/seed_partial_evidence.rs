@@ -14,7 +14,7 @@ use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_slashindicator::schema::SlashIndicator;
 use outbe_staking::contract::Staking;
 use outbe_validatorset::contract::ValidatorSet;
-use outbe_validatorset::logic::status;
+use outbe_validatorset::{StakeProjection, ValidatorLifecycle};
 
 const CHAIN_ID: u64 = 1;
 const OWNER: Address = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
@@ -75,11 +75,11 @@ fn setup(storage: StorageHandle, accused_pubkey: &[u8; 48]) {
     let mut vs = ValidatorSet::new(storage.clone());
     vs.config_owner.write(OWNER).unwrap();
     vs.set_config_max_validators(100).unwrap();
-    vs.epoch_number.write(U256::from(ROUND_EPOCH)).unwrap();
+    let mut epoch = vs.epoch_snapshot().unwrap();
+    epoch.number = U256::from(ROUND_EPOCH);
+    vs.test_set_epoch_snapshot(epoch).unwrap();
 
-    vs.register_validator(OWNER, ACCUSED, accused_pubkey)
-        .unwrap();
-    vs.activate_validator_via_boundary_for_test(ACCUSED)
+    vs.test_register_validator_without_pop(ACCUSED, accused_pubkey)
         .unwrap();
     let staking = Staking::new(storage.clone());
     let stake = U256::from(STAKE_AMOUNT);
@@ -89,18 +89,23 @@ fn setup(storage: StorageHandle, accused_pubkey: &[u8; 48]) {
         .storage
         .increase_balance(STAKING_ADDRESS, stake)
         .unwrap();
-    vs.val_stake.write(&ACCUSED, stake).unwrap();
+    vs.test_set_stake_projection(ACCUSED, StakeProjection::new(stake, None))
+        .unwrap();
+    vs.activate_validator_via_boundary_for_test(ACCUSED)
+        .unwrap();
 
     let mut submitter_pk = [0u8; 48];
     submitter_pk[0] = 0x77;
-    vs.register_validator(OWNER, SUBMITTER, &submitter_pk)
+    vs.test_register_validator_without_pop(SUBMITTER, &submitter_pk)
         .unwrap();
     vs.activate_validator_via_boundary_for_test(SUBMITTER)
         .unwrap();
 }
 
 fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
-    HashMapStorageProvider::new(CHAIN_ID).enter(f)
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_block_number(1);
+    storage.enter(f)
 }
 
 #[test]
@@ -119,9 +124,11 @@ fn equivocation_jails_and_slashes_then_dedups() {
             .expect("valid equivocation evidence must slash");
 
         let vs = ValidatorSet::new(storage.clone());
-        assert_eq!(
-            vs.val_status.read(&ACCUSED).unwrap(),
-            status::JAILED,
+        assert!(
+            matches!(
+                vs.validator_lifecycle(ACCUSED).unwrap(),
+                ValidatorLifecycle::JailRetained(_)
+            ),
             "accused must be JAILED"
         );
         let si = SlashIndicator::new(storage.clone());
@@ -181,10 +188,12 @@ fn unregistered_signer_is_rejected() {
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(100).unwrap();
-        vs.epoch_number.write(U256::from(ROUND_EPOCH)).unwrap();
+        let mut epoch = vs.epoch_snapshot().unwrap();
+        epoch.number = U256::from(ROUND_EPOCH);
+        vs.test_set_epoch_snapshot(epoch).unwrap();
         let mut submitter_pk = [0u8; 48];
         submitter_pk[0] = 0x77;
-        vs.register_validator(OWNER, SUBMITTER, &submitter_pk)
+        vs.test_register_validator_without_pop(SUBMITTER, &submitter_pk)
             .unwrap();
         vs.activate_validator_via_boundary_for_test(SUBMITTER)
             .unwrap();
@@ -209,8 +218,13 @@ fn non_active_submitter_is_rejected() {
         let mut vs = ValidatorSet::new(storage.clone());
         vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(100).unwrap();
-        vs.epoch_number.write(U256::from(ROUND_EPOCH)).unwrap();
-        vs.register_validator(OWNER, ACCUSED, &pubkey).unwrap();
+        let mut epoch = vs.epoch_snapshot().unwrap();
+        epoch.number = U256::from(ROUND_EPOCH);
+        vs.test_set_epoch_snapshot(epoch).unwrap();
+        vs.test_register_validator_without_pop(ACCUSED, &pubkey)
+            .unwrap();
+        vs.test_set_stake_projection(ACCUSED, StakeProjection::new(U256::from(1), None))
+            .unwrap();
         vs.activate_validator_via_boundary_for_test(ACCUSED)
             .unwrap();
 
