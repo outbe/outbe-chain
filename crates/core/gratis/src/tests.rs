@@ -197,7 +197,7 @@ fn burn_insufficient_balance_reverts() {
 }
 
 #[test]
-fn pledge_consume_and_pay_anadosis_flow() {
+fn pledge_consume_and_settle_flow() {
     with_env(|storage| {
         let amount = U256::from(1000u64);
         let stables = U256::from(500u64);
@@ -249,7 +249,7 @@ fn pledge_consume_and_pay_anadosis_flow() {
         // Re-consuming the now-deleted ticket is rejected.
         assert!(api::consume_pledge(storage.clone(), handle, bundle(), spend).is_err());
 
-        // Pay 10 installments: each releases 1/10 from alice's pledged ledger back to
+        // Ten settlements: each releases 1/10 from alice's pledged ledger back to
         // her balance.
         let per = amount / U256::from(10u64);
         for _ in 0..10 {
@@ -291,7 +291,7 @@ fn burn_pledged_reduces_supply_and_pledged() {
         let spend = spend_auth_mac(&pledge_secret(&mk, handle), bundle());
         api::consume_pledge(storage.clone(), handle, bundle(), spend).unwrap();
 
-        // Release 3 installments (300), leaving 700 outstanding, then burn it.
+        // Release across 3 settlements (300), leaving 700 outstanding, then burn it.
         let per = amount / U256::from(10u64);
         for _ in 0..3 {
             api::release_to_eoa(storage.clone(), alice(), per).unwrap();

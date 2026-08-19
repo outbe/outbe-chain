@@ -24,6 +24,7 @@ pub enum TriggerId {
     GemCallDaily = 4,
     AuctionClearing = 5,
     IntexNotify = 6,
+    CredisCallDaily = 7,
 }
 
 impl TriggerId {
@@ -72,6 +73,7 @@ pub enum TriggerHandler {
     GemCallDaily,
     AuctionClearing,
     IntexNotify,
+    CredisCallDaily,
 }
 
 impl TriggerHandler {
@@ -86,7 +88,8 @@ impl TriggerHandler {
             | Self::AuctionAdvance
             | Self::GemCallDaily
             | Self::AuctionClearing
-            | Self::IntexNotify => 0,
+            | Self::IntexNotify
+            | Self::CredisCallDaily => 0,
         }
     }
 
@@ -108,6 +111,7 @@ impl TriggerHandler {
             Self::GemCallDaily => outbe_gem::hooks::run_call_daily(ctx),
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
             Self::IntexNotify => outbe_intexfactory::qualified::drain_notices(ctx),
+            Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
         }
     }
 }
@@ -124,7 +128,7 @@ pub fn metadosis_mutation_lease_budget_per_tick() -> u8 {
 
 /// Active trigger table. Order is informational only — the dispatcher
 /// fires triggers independently per slot.
-pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 7] {
+pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 8] {
     let production_default = outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS;
     let (wwd_period_seconds, wwd_start_offset_seconds) =
         if metadosis_advance_interval_seconds == production_default {
@@ -222,10 +226,21 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             coalesces_backlog: true,
             handler: TriggerHandler::IntexNotify,
         },
+        TriggerSpec {
+            id: TriggerId::CredisCallDaily.as_u32(),
+            label: "credis_call_daily",
+            period_seconds: 86_400,
+            start_offset_seconds: 0,
+            // Reads finalized oracle VWAP history to latch, call and void credis
+            // positions; no dependency on the parent block's settlement accounting.
+            requires_accounting_window: false,
+            coalesces_backlog: false,
+            handler: TriggerHandler::CredisCallDaily,
+        },
     ]
 }
 
-pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 7] =
+pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 8] =
     active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
 pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &ACTIVE_TRIGGER_ARRAY;
 
@@ -279,6 +294,12 @@ mod protocol_parameter_tests {
         assert!(matches!(
             configured[5].handler,
             TriggerHandler::GemCallDaily
+        ));
+        assert_eq!(configured[7].period_seconds, 86_400);
+        assert_eq!(configured[7].start_offset_seconds, 0);
+        assert!(matches!(
+            configured[7].handler,
+            TriggerHandler::CredisCallDaily
         ));
 
         let defaults =

@@ -193,9 +193,9 @@ pub enum GratisOp {
     ConsumePledge,
     /// Release `amount` of collateral from the EOA's own pledged ledger back to its
     /// balance (`pledged_total_supply -= amount`). Amount-based (no ticket); the
-    /// on-chain Credis position schedule is the accounting authority.
+    /// on-chain Credis position is the accounting authority.
     ReleaseToEoa,
-    /// Burn `amount` of collateral from the EOA's own pledged ledger at credis expiry
+    /// Burn `amount` of collateral from the EOA's own pledged ledger at credis void
     /// (`total_supply -= amount`; `pledged_total_supply -= amount`). Amount-based (no
     /// ticket); the on-chain Credis position's outstanding balance is the authority.
     BurnPledged,
@@ -203,7 +203,7 @@ pub enum GratisOp {
     /// With `pledge_handle = Some(handle)` the blob in `current_pledge_record` is a live
     /// `PledgeLockTicket` (used at credis `ConsumePledge` time, before the calldata carries
     /// no EOA); with `None` it is the self-contained `eoa_ct` stored on the Credis position
-    /// (used at `payAnadosis`/expiry to recover the EOA that keys the pledged ledger).
+    /// (used at settlement/void to recover the EOA that keys the pledged ledger).
     /// No state mutation, no authorization.
     RevealOwner,
 }

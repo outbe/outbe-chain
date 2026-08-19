@@ -21,11 +21,7 @@ pub(crate) fn current_ocomp_attempt_snapshot(
     storage: StorageHandle<'_>,
 ) -> Result<OcompAttemptSnapshotBinding> {
     let validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-    let validator_set_epoch: u64 = validators
-        .epoch_number
-        .read()?
-        .try_into()
-        .map_err(|_| storage_corruption_message("ValidatorSet epoch exceeds u64"))?;
+    let validator_set_epoch = validators.current_epoch_u64()?;
     let (_, extension) =
         outbe_validatorset::read_ocomp_snapshot_extension_at_epoch(storage, validator_set_epoch)?
             .ok_or_else(|| {

@@ -419,6 +419,7 @@ pub mod vote {
             let raw = core::str::from_utf8(&raw).unwrap();
             let forced_surplus = U256::from(7u64);
             let mut provider = HashMapStorageProvider::new(1);
+            provider.set_block_number(8);
             provider.set_balance(VOTE_ADDRESS, STABLECOIN_CREATE_BOND + forced_surplus);
             let proposal_id;
             {

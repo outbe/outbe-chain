@@ -327,6 +327,7 @@ pub(crate) fn ensure_enclave_image(
     repo: &Path,
     sudo: bool,
     signing_key: &Path,
+    established_image_id: Option<&DockerImageId>,
 ) -> Result<DockerImageId> {
     // The scenario's first setup call creates its signing key and freezes the
     // mutable image tag to one immutable image ID. All later starts must use
@@ -345,6 +346,9 @@ pub(crate) fn ensure_enclave_image(
                 "test SGX signing key has unsafe permissions: {}",
                 signing_key.display()
             );
+        }
+        if let Some(image_id) = established_image_id {
+            return Ok(image_id.clone());
         }
         return inspect_enclave_image_id(sudo);
     }
@@ -716,6 +720,28 @@ mod tests {
             TEST_ENCLAVE_IMAGE_BUILD_ARGS,
             ["build", "--provenance=false", "-f"]
         );
+    }
+
+    #[test]
+    fn existing_signing_key_reuses_the_scenario_pinned_image_id() {
+        let root = tempfile::tempdir().expect("temporary signing-key directory");
+        let signing_key = root.path().join("test-sgx-signing-key.pem");
+        fs::write(&signing_key, b"scenario signing key").expect("write signing key fixture");
+        fs::set_permissions(&signing_key, fs::Permissions::from_mode(0o600))
+            .expect("secure signing key permissions");
+        let established =
+            DockerImageId::from_inspect_output(&format!("sha256:{}", "ef".repeat(32)))
+                .expect("established image ID");
+
+        let resolved = ensure_enclave_image(
+            Path::new("/unused/repository"),
+            false,
+            &signing_key,
+            Some(&established),
+        )
+        .expect("reuse established image without resolving the mutable tag");
+
+        assert_eq!(resolved, established);
     }
 
     #[test]

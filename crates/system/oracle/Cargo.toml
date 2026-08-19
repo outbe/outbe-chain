@@ -17,6 +17,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+outbe-validatorset = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true

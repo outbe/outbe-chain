@@ -15,8 +15,11 @@ use alloy_sol_types::{SolCall, SolError};
 use outbe_evm::OutbeEvmFactory;
 use outbe_primitives::addresses::{
     GRATIS_ADDRESS, ORACLE_ADDRESS, STABLECOIN_ADDRESS_PREFIX, STAKING_ADDRESS,
+    VALIDATOR_SET_ADDRESS,
 };
+use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_staking::precompile::IStaking;
+use outbe_validatorset::contract::ValidatorSet;
 use reth_ethereum::evm::primitives::EvmEnv;
 use revm::{
     context::{
@@ -166,6 +169,38 @@ fn db_with_borrower(opcode: u8) -> CacheDB<EmptyDB> {
     db
 }
 
+fn db_with_registered_validator(validator: Address) -> CacheDB<EmptyDB> {
+    let mut seed = HashMapStorageProvider::new(CHAIN_ID);
+    seed.set_block_number(1);
+    StorageHandle::enter(&mut seed, |storage| {
+        let mut validators = ValidatorSet::new(storage);
+        validators.config_owner.write(Address::ZERO).unwrap();
+        validators.set_config_max_validators(100).unwrap();
+        let mut consensus_pubkey = [0u8; 48];
+        consensus_pubkey[..20].copy_from_slice(validator.as_slice());
+        validators
+            .test_register_validator_without_pop(validator, &consensus_pubkey)
+            .unwrap();
+    });
+
+    let mut db = CacheDB::new(EmptyDB::default());
+    db.insert_account_info(validator, funded(1_000_000_000));
+    let marker = Bytecode::new_legacy([0xef].into());
+    db.insert_account_info(
+        VALIDATOR_SET_ADDRESS,
+        AccountInfo {
+            code_hash: marker.hash_slow(),
+            code: Some(marker),
+            ..Default::default()
+        },
+    );
+    for ((address, slot), value) in seed.storage {
+        db.insert_account_storage(address, slot, value)
+            .expect("validator registration storage seeds");
+    }
+    db
+}
+
 /// CALLCODE hands the boundary a `CallValue::Transfer` whose amount came off the
 /// stack, but caller and target are the same account, so revm's journal performs a
 /// balance check and moves nothing. Crediting it would let `staking.stake` book
@@ -277,8 +312,7 @@ fn plain_call_with_value_to_non_payable_precompile_is_rejected() {
 /// everything would look identical to a correct one.
 #[test]
 fn plain_call_with_value_credits_a_payable_precompile() {
-    let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_info(EOA, funded(1_000_000_000));
+    let db = db_with_registered_validator(EOA);
 
     let outcome = run(
         db,

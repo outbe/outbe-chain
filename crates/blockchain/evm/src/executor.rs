@@ -38,6 +38,7 @@ use outbe_primitives::{
     storage::{direct::DirectStorageProvider, StorageHandle},
     OutbeHeader,
 };
+use outbe_validatorset::ValidatorLifecycle;
 use outbe_zerofee::ZeroFeeTransaction;
 use reth_ethereum::{
     evm::{primitives::Evm, revm::context::TxEnv, RethReceiptBuilder},
@@ -270,10 +271,10 @@ pub(crate) fn apply_boundary_outcome(
     }
 
     let vs_check = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-    let current_hash = vs_check.active_consensus_set_hash.read()?;
+    let current_hash = vs_check.active_consensus_set_hash()?;
     let current_epoch: u64 = vs_check
-        .epoch_number
-        .read()?
+        .epoch_snapshot()?
+        .number
         .try_into()
         .map_err(|_| PrecompileError::Fatal("ValidatorSet epoch exceeds u64".into()))?;
 
@@ -299,6 +300,7 @@ pub(crate) fn apply_boundary_outcome(
         outgoing: None,
         incoming_epoch: boundary.epoch,
         incoming: incoming_snapshot,
+        freeze_height: boundary.freeze_height,
         new_active_set: reshare.new_active_set.clone(),
         active_set_hash: reshare.active_set_hash,
         tee_expired_target_exclusions: boundary.tee_expired_target_exclusions.clone(),
@@ -340,11 +342,7 @@ pub(crate) fn prepare_boundary_epoch_counters(
     block_number: u64,
 ) -> outbe_primitives::error::Result<()> {
     let validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-    let current_epoch: u64 = validators
-        .epoch_number
-        .read()?
-        .try_into()
-        .map_err(|_| PrecompileError::Fatal("ValidatorSet epoch exceeds u64".into()))?;
+    let current_epoch = validators.current_epoch_u64()?;
     if !validate_boundary_epoch_transition(current_epoch, boundary.epoch, block_number)? {
         return Ok(());
     }
@@ -374,14 +372,14 @@ fn committee_snapshot_from_boundary(
     let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
     let mut committee = Vec::with_capacity(boundary.reshare.new_active_set.len());
     for address in &boundary.reshare.new_active_set {
-        let Some(record) = vs.get_validator(*address)? else {
+        let Some(consensus_pubkey) = vs.consensus_pubkey_of(*address)? else {
             return Err(PrecompileError::Fatal(format!(
                 "boundary active set contains unregistered validator {address}"
             )));
         };
         committee.push(outbe_validatorset::CommitteeEntry {
             address: *address,
-            consensus_pubkey: record.consensus_pubkey,
+            consensus_pubkey,
         });
     }
 
@@ -678,10 +676,6 @@ fn run_outbe_pre_execution_hooks_inner(
     // rate. Reads the same Oracle surface, so it runs after Oracle.
     <outbe_intexfactory::IntexLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
 
-    // CREDIS: burn the pledged collateral of positions that still carry an unpaid balance.
-    // Cursor-bounded per block.
-    <outbe_credisfactory::CredisLifecycle as BlockLifecycle>::begin_block(hook_ctx)?;
-
     Ok(())
 }
 
@@ -817,26 +811,28 @@ fn validate_genesis_state(storage: StorageHandle, genesis: &GenesisValidators) -
 
     let mut expected_total = U256::ZERO;
     for validator in &genesis.validators {
-        let Some(record) = vs.get_validator(validator.address)? else {
+        let state = vs.validator_state(validator.address)?;
+        if !state.is_registered() {
             return Err(PrecompileError::Fatal(format!(
                 "genesis validator {} is missing from ValidatorSet",
                 validator.address
             )));
-        };
+        }
 
-        if record.consensus_pubkey != validator.consensus_pubkey {
+        if state.consensus_pubkey().copied() != Some(validator.consensus_pubkey) {
             return Err(PrecompileError::Fatal(format!(
                 "genesis validator {} consensus pubkey mismatch",
                 validator.address
             )));
         }
-        if record.status != outbe_validatorset::logic::status::ACTIVE || !record.has_bls_share {
+        if !matches!(state.lifecycle(), ValidatorLifecycle::Active(_)) {
             return Err(PrecompileError::Fatal(format!(
                 "genesis validator {} must be active with a BLS share",
                 validator.address
             )));
         }
-        if record.stake < min_stake {
+        let bonded_stake = state.bonded_stake();
+        if bonded_stake < min_stake {
             return Err(PrecompileError::Fatal(format!(
                 "genesis validator {} stake below min_stake",
                 validator.address
@@ -844,7 +840,7 @@ fn validate_genesis_state(storage: StorageHandle, genesis: &GenesisValidators) -
         }
 
         let staking_amount = staking.stake_amount.read(&validator.address)?;
-        if staking_amount != record.stake {
+        if staking_amount != bonded_stake {
             return Err(PrecompileError::Fatal(format!(
                 "genesis validator {} stake mismatch between ValidatorSet and Staking",
                 validator.address
@@ -4407,6 +4403,7 @@ mod tests {
     use outbe_stablecoin::StablecoinContract;
     use outbe_stablecoinfactory::{precompile::IStablecoinFactory, StablecoinFactoryContract};
     use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
+    use outbe_validatorset::ValidatorHistory;
     use outbe_vote::{
         constants::VOTING_WINDOW_BLOCKS,
         precompile::IVote,
@@ -8376,18 +8373,33 @@ mod tests {
     fn boundary_activation_allows_registered_next_epoch_proposer() {
         let signer = test_evm_signer();
         let proposer = signer.address();
-        let old_active = address!("0x1010101010101010101010101010101010101010");
+        let old_active_secret = [2; 32];
+        let old_active = OutbeEvmSigner::from_secret_bytes(old_active_secret)
+            .expect("old active test signer")
+            .address();
         let mut state = state_with_active_and_registered_candidate(old_active, proposer);
         let evm_env = test_evm_env(1, REWARDS_ADDRESS);
-        let boundary = boundary_with(true, vec![(proposer, dummy_pubkey(0xB3))]);
+        let boundary = boundary_with(
+            true,
+            vec![
+                (old_active, dummy_pubkey(0xA2)),
+                (proposer, dummy_pubkey(0xB3)),
+            ],
+        );
         let tee_bootstrap = sample_tee_bootstrap_payload_for(
             1,
             boundary.committee_set_hash,
             TEST_BLOCK_TIMESTAMP_BASE + 1 + 3_600,
-            &[outbe_primitives::tee_test_utils::DevValidatorV1 {
-                evm_secret: [1; 32],
-                bls_minpk_public: dummy_pubkey(0xB3),
-            }],
+            &[
+                outbe_primitives::tee_test_utils::DevValidatorV1 {
+                    evm_secret: old_active_secret,
+                    bls_minpk_public: dummy_pubkey(0xA2),
+                },
+                outbe_primitives::tee_test_utils::DevValidatorV1 {
+                    evm_secret: [1; 32],
+                    bls_minpk_public: dummy_pubkey(0xB3),
+                },
+            ],
         );
         let extra_data = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
             execution_summary: None,
@@ -9958,8 +9970,12 @@ mod tests {
                 staking.stake_amount.write(&old_active, stake).unwrap();
                 staking.total_staked.write(stake).unwrap();
                 staking.config_min_stake.write(U256::from(1u64)).unwrap();
-                let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-                vs.val_stake.write(&old_active, stake).unwrap();
+                let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+                vs.test_set_stake_projection(
+                    old_active,
+                    outbe_validatorset::StakeProjection::new(stake, None),
+                )
+                .unwrap();
             });
         let stake = U256::from(1_000u64);
         let mut setup_provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
@@ -11003,6 +11019,52 @@ mod tests {
             .0
     }
 
+    fn test_register_waiting(
+        vs: &mut outbe_validatorset::contract::ValidatorSet<'_>,
+        validator: Address,
+        pubkey: &[u8; 48],
+    ) {
+        vs.test_register_validator_without_pop(validator, pubkey)
+            .unwrap();
+    }
+
+    fn test_register_active_with_stake(
+        vs: &mut outbe_validatorset::contract::ValidatorSet<'_>,
+        validator: Address,
+        pubkey: &[u8; 48],
+        stake: U256,
+        minimum: U256,
+    ) {
+        test_register_waiting(vs, validator, pubkey);
+        assert!(stake >= minimum);
+        vs.test_set_stake_projection(
+            validator,
+            outbe_validatorset::StakeProjection::new(stake, None),
+        )
+        .unwrap();
+        vs.activate_validator_via_boundary_for_test(validator)
+            .unwrap();
+    }
+
+    fn test_register_active(
+        vs: &mut outbe_validatorset::contract::ValidatorSet<'_>,
+        validator: Address,
+        pubkey: &[u8; 48],
+    ) {
+        test_register_active_with_stake(vs, validator, pubkey, U256::from(1), U256::from(1));
+    }
+
+    fn test_register_joining(
+        vs: &mut outbe_validatorset::contract::ValidatorSet<'_>,
+        validator: Address,
+        pubkey: &[u8; 48],
+    ) {
+        test_register_waiting(vs, validator, pubkey);
+        vs.record_stake_increase(validator, U256::from(1), U256::from(1))
+            .unwrap();
+        vs.admit_validator_for_boundary_for_test(validator).unwrap();
+    }
+
     #[allow(dead_code)] // retained for follow-up tests
     fn cache_db_from_storage(
         seed_storage: HashMapStorageProvider,
@@ -11143,8 +11205,12 @@ mod tests {
             let stake = U256::from(100u64);
             seed_registered_active_validator(storage.clone(), validator, &pk);
 
-            let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            vs.val_stake.write(&validator, stake).unwrap();
+            let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            vs.test_set_stake_projection(
+                validator,
+                outbe_validatorset::StakeProjection::new(stake, None),
+            )
+            .unwrap();
 
             let staking = outbe_staking::contract::Staking::new(storage.clone());
             staking.config_min_stake.write(stake).unwrap();
@@ -11176,6 +11242,7 @@ mod tests {
     #[test]
     fn test_reshare_activation_after_participation_decode() {
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.set_block_number(1);
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
@@ -11188,20 +11255,12 @@ mod tests {
             let val_c = address!("0x3333333333333333333333333333333333333333");
             let val_d = address!("0x4444444444444444444444444444444444444444");
 
-            vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
-                .unwrap();
-            vs.register_validator(OWNER, val_b, &dummy_pubkey(0xB2))
-                .unwrap();
-            vs.register_validator(OWNER, val_c, &dummy_pubkey(0xC3))
-                .unwrap();
-            vs.register_validator(OWNER, val_d, &dummy_pubkey(0xD4))
-                .unwrap();
+            test_register_active(&mut vs, val_a, &dummy_pubkey(0xA1));
+            test_register_active(&mut vs, val_b, &dummy_pubkey(0xB2));
+            test_register_active(&mut vs, val_c, &dummy_pubkey(0xC3));
+            test_register_joining(&mut vs, val_d, &dummy_pubkey(0xD4));
 
-            // Initial certified boundary: activate A, B, C (not D).
-            for validator in [val_a, val_b, val_c] {
-                vs.activate_validator_via_boundary_for_test(validator)
-                    .unwrap();
-            }
+            // The fixture helpers activated A, B, C; D remains a ready joiner.
 
             // Step 1: Read old active set — should be [A, B, C].
             let old_set = vs.get_active_consensus_set().unwrap();
@@ -11216,6 +11275,7 @@ mod tests {
             // (We just verify the set is correct — actual slashing tested in Task 01 code.)
 
             // Step 4: NOW activate new reshare with [A, B, D] (C removed, D added).
+            let new_hash = B256::with_last_byte(0x02);
             // First deactivate C (simulate EXITING).
             vs.deactivate_validator(OWNER, val_c).unwrap();
 
@@ -11229,8 +11289,9 @@ mod tests {
             vs.record_proposer(val_c).unwrap();
             vs.record_participation(&[val_a, val_b], &[val_c]).unwrap();
 
-            // Activate D.
-            vs.activate_validator_via_boundary_for_test(val_d).unwrap();
+            // Reshare with new set.
+            vs.test_activate_validated_boundary_set(&[val_a, val_b, val_d], new_hash, 1)
+                .unwrap();
 
             // After reshare: active set is [A, B, D].
             let new_set = vs.get_active_consensus_set().unwrap();
@@ -11262,20 +11323,12 @@ mod tests {
             let val_c = address!("0x3333333333333333333333333333333333333333");
             let val_d = address!("0x4444444444444444444444444444444444444444");
 
-            vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
-                .unwrap();
-            vs.register_validator(OWNER, val_b, &dummy_pubkey(0xB2))
-                .unwrap();
-            vs.register_validator(OWNER, val_c, &dummy_pubkey(0xC3))
-                .unwrap();
-            vs.register_validator(OWNER, val_d, &dummy_pubkey(0xD4))
-                .unwrap();
+            test_register_active(&mut vs, val_a, &dummy_pubkey(0xA1));
+            test_register_active(&mut vs, val_b, &dummy_pubkey(0xB2));
+            test_register_active(&mut vs, val_c, &dummy_pubkey(0xC3));
+            test_register_joining(&mut vs, val_d, &dummy_pubkey(0xD4));
 
             // Old set: 3 validators [A, B, C].
-            for validator in [val_a, val_b, val_c] {
-                vs.activate_validator_via_boundary_for_test(validator)
-                    .unwrap();
-            }
             let old_set = vs.get_active_consensus_set().unwrap();
             assert_eq!(old_set.len(), 3, "old set must have 3 validators");
 
@@ -11292,7 +11345,12 @@ mod tests {
             .unwrap();
 
             // Now activate new set with 4 validators.
-            vs.activate_validator_via_boundary_for_test(val_d).unwrap();
+            vs.test_activate_validated_boundary_set(
+                &[val_a, val_b, val_c, val_d],
+                B256::with_last_byte(0x02),
+                0,
+            )
+            .unwrap();
             let new_set = vs.get_active_consensus_set().unwrap();
             assert_eq!(new_set.len(), 4, "new set must have 4 validators");
 
@@ -11333,30 +11391,26 @@ mod tests {
             let val_a = address!("0x1111111111111111111111111111111111111111");
             let val_b = address!("0x2222222222222222222222222222222222222222");
 
-            vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
-                .unwrap();
-            vs.register_validator(OWNER, val_b, &dummy_pubkey(0xB2))
-                .unwrap();
+            test_register_active(&mut vs, val_a, &dummy_pubkey(0xA1));
+            test_register_active(&mut vs, val_b, &dummy_pubkey(0xB2));
 
-            vs.activate_validator_via_boundary_for_test(val_a).unwrap();
-            vs.activate_validator_via_boundary_for_test(val_b).unwrap();
-            let hash = vs.active_consensus_set_hash.read().unwrap();
+            let hash = vs.active_consensus_set_hash().unwrap();
 
             // Read state after first activation.
             let set1 = vs.get_active_consensus_set().unwrap();
-            let hash1 = vs.active_consensus_set_hash.read().unwrap();
+            let hash1 = vs.active_consensus_set_hash().unwrap();
 
             // Second call with same hash → idempotency guard in executor.rs
             // checks `current_hash != reshare.active_set_hash`.
             // Here: current_hash == hash → no-op.
-            let current_hash = vs.active_consensus_set_hash.read().unwrap();
+            let current_hash = vs.active_consensus_set_hash().unwrap();
             assert_eq!(current_hash, hash, "hash must match after first activation");
 
             // Simulate executor's guard: skip if hash matches.
             assert_eq!(current_hash, hash);
             // State unchanged.
             let set2 = vs.get_active_consensus_set().unwrap();
-            let hash2 = vs.active_consensus_set_hash.read().unwrap();
+            let hash2 = vs.active_consensus_set_hash().unwrap();
             assert_eq!(
                 set1.len(),
                 set2.len(),
@@ -11414,15 +11468,14 @@ mod tests {
                 (val_c, 0xC3u8),
                 (val_d, 0xD4u8),
             ] {
-                vs.register_validator(OWNER, addr, &dummy_pubkey(seed))
-                    .unwrap();
+                if addr == val_c {
+                    test_register_waiting(&mut vs, addr, &dummy_pubkey(seed));
+                } else {
+                    test_register_active(&mut vs, addr, &dummy_pubkey(seed));
+                }
             }
             // Live active set is [A, B, D]; C is registered but no longer a
             // current consensus participant after a reshare.
-            for validator in [val_a, val_b, val_d] {
-                vs.activate_validator_via_boundary_for_test(validator)
-                    .unwrap();
-            }
             let live_active = vs.get_active_consensus_set().unwrap();
             let live_addrs: Vec<Address> =
                 live_active.iter().map(|v| v.validator_address).collect();
@@ -11445,14 +11498,8 @@ mod tests {
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
             let val_b = address!("0x2222222222222222222222222222222222222222");
-            vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
-                .unwrap();
-            vs.register_validator(OWNER, val_b, &dummy_pubkey(0xB2))
-                .unwrap();
-            for validator in [val_a, val_b] {
-                vs.activate_validator_via_boundary_for_test(validator)
-                    .unwrap();
-            }
+            test_register_active(&mut vs, val_a, &dummy_pubkey(0xA1));
+            test_register_active(&mut vs, val_b, &dummy_pubkey(0xB2));
 
             let metadata = metadata_with(vec![val_a, val_b, val_a], vec![1, 1, 1], vec![]);
             let err = super::validate_finalized_metadata(storage.clone(), &metadata).unwrap_err();
@@ -11473,9 +11520,7 @@ mod tests {
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
-            vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
-                .unwrap();
-            vs.activate_validator_via_boundary_for_test(val_a).unwrap();
+            test_register_active(&mut vs, val_a, &dummy_pubkey(0xA1));
 
             let stranger = address!("0x9999999999999999999999999999999999999999");
             let metadata = metadata_with(vec![val_a, stranger], vec![1, 1], vec![]);
@@ -11500,12 +11545,7 @@ mod tests {
             let val_b = address!("0x2222222222222222222222222222222222222222");
             let val_c = address!("0x3333333333333333333333333333333333333333");
             for (addr, seed) in [(val_a, 0xA1u8), (val_b, 0xB2u8), (val_c, 0xC3u8)] {
-                vs.register_validator(OWNER, addr, &dummy_pubkey(seed))
-                    .unwrap();
-            }
-            for validator in [val_a, val_b, val_c] {
-                vs.activate_validator_via_boundary_for_test(validator)
-                    .unwrap();
+                test_register_active(&mut vs, addr, &dummy_pubkey(seed));
             }
 
             let metadata = metadata_with(vec![val_a, val_b], vec![1, 1], vec![val_c]);
@@ -11527,9 +11567,7 @@ mod tests {
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
-            vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
-                .unwrap();
-            vs.activate_validator_via_boundary_for_test(val_a).unwrap();
+            test_register_active(&mut vs, val_a, &dummy_pubkey(0xA1));
 
             let metadata = metadata_with(vec![val_a], vec![1, 0], vec![]);
             let err = super::validate_finalized_metadata(storage.clone(), &metadata).unwrap_err();
@@ -11609,14 +11647,24 @@ mod tests {
                 .unwrap();
             vs.activate_validator_via_boundary_for_test(validator)
                 .unwrap();
-            vs.epoch_number.write(U256::ZERO).unwrap();
-            vs.epoch_start_block.write(1).unwrap();
-            vs.epoch_start_timestamp
-                .write(TEST_BLOCK_TIMESTAMP_BASE)
-                .unwrap();
-            vs.val_missed_blocks.write(&validator, 7).unwrap();
-            vs.val_missed_votes.write(&validator, 8).unwrap();
-            vs.val_blocks_proposed.write(&validator, 9).unwrap();
+            let mut epoch = vs.epoch_snapshot().unwrap();
+            epoch.number = U256::ZERO;
+            epoch.start_block = 1;
+            epoch.start_timestamp = TEST_BLOCK_TIMESTAMP_BASE;
+            vs.test_set_epoch_snapshot(epoch).unwrap();
+            let record = vs.get_validator(validator).unwrap().unwrap();
+            vs.test_set_history(
+                validator,
+                ValidatorHistory::new(
+                    record.joined_at_height,
+                    (record.deactivated_at_height != 0).then_some(record.deactivated_at_height),
+                    record.slash_count,
+                    7,
+                    8,
+                    9,
+                ),
+            )
+            .unwrap();
             drop(vs);
             let slash = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
             slash.proposer_miss_count.write(&validator, 10).unwrap();
@@ -11642,15 +11690,14 @@ mod tests {
                 .expect("certified delayed boundary must activate");
 
             let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            assert_eq!(vs_after.epoch_number.read().unwrap(), U256::from(1));
-            assert_eq!(vs_after.epoch_start_block.read().unwrap(), activation_block);
+            let epoch = vs_after.epoch_snapshot().unwrap();
+            assert_eq!(epoch.number, U256::from(1));
+            assert_eq!(epoch.start_block, activation_block);
+            assert_eq!(epoch.start_timestamp, activation_timestamp);
             assert_eq!(
-                vs_after.epoch_start_timestamp.read().unwrap(),
-                activation_timestamp
+                vs_after.participation(validator).unwrap(),
+                outbe_validatorset::ValidatorParticipation::default()
             );
-            assert_eq!(vs_after.val_missed_blocks.read(&validator).unwrap(), 0);
-            assert_eq!(vs_after.val_missed_votes.read(&validator).unwrap(), 0);
-            assert_eq!(vs_after.val_blocks_proposed.read(&validator).unwrap(), 0);
             let slash_after = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
             assert_eq!(slash_after.proposer_miss_count.read(&validator).unwrap(), 0);
             assert_eq!(slash_after.voter_miss_count.read(&validator).unwrap(), 0);
@@ -11676,13 +11723,25 @@ mod tests {
                 .unwrap();
             vs.activate_validator_via_boundary_for_test(validator)
                 .unwrap();
-            vs.epoch_number.write(U256::ZERO).unwrap();
-            vs.epoch_start_block.write(1).unwrap();
-            vs.epoch_start_timestamp
-                .write(TEST_BLOCK_TIMESTAMP_BASE)
-                .unwrap();
-            vs.val_missed_blocks.write(&validator, 7).unwrap();
-            let active_hash_before = vs.active_consensus_set_hash.read().unwrap();
+            let mut epoch = vs.epoch_snapshot().unwrap();
+            epoch.number = U256::ZERO;
+            epoch.start_block = 1;
+            epoch.start_timestamp = TEST_BLOCK_TIMESTAMP_BASE;
+            vs.test_set_epoch_snapshot(epoch).unwrap();
+            let record = vs.get_validator(validator).unwrap().unwrap();
+            vs.test_set_history(
+                validator,
+                ValidatorHistory::new(
+                    record.joined_at_height,
+                    (record.deactivated_at_height != 0).then_some(record.deactivated_at_height),
+                    record.slash_count,
+                    7,
+                    record.missed_votes,
+                    record.blocks_proposed,
+                ),
+            )
+            .unwrap();
+            let active_hash_before = vs.active_consensus_set_hash().unwrap();
             // Force the incoming snapshot writer to fail after the boundary
             // transition has started. The enclosing activation checkpoint must
             // restore every earlier epoch/set/counter write.
@@ -11709,17 +11768,15 @@ mod tests {
             drop(block_guard);
 
             let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            assert_eq!(vs_after.epoch_number.read().unwrap(), U256::ZERO);
-            assert_eq!(vs_after.epoch_start_block.read().unwrap(), 1);
+            let epoch = vs_after.epoch_snapshot().unwrap();
+            assert_eq!(epoch.number, U256::ZERO);
+            assert_eq!(epoch.start_block, 1);
+            assert_eq!(epoch.start_timestamp, TEST_BLOCK_TIMESTAMP_BASE);
             assert_eq!(
-                vs_after.epoch_start_timestamp.read().unwrap(),
-                TEST_BLOCK_TIMESTAMP_BASE
-            );
-            assert_eq!(
-                vs_after.active_consensus_set_hash.read().unwrap(),
+                vs_after.active_consensus_set_hash().unwrap(),
                 active_hash_before
             );
-            assert_eq!(vs_after.val_missed_blocks.read(&validator).unwrap(), 7);
+            assert_eq!(vs_after.participation(validator).unwrap().missed_blocks, 7);
             let slash_after = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
             assert_eq!(
                 slash_after.proposer_miss_count.read(&validator).unwrap(),
@@ -11747,8 +11804,10 @@ mod tests {
                 .unwrap();
             vs.activate_validator_via_boundary_for_test(validator)
                 .unwrap();
-            vs.epoch_number.write(U256::ZERO).unwrap();
-            vs.epoch_start_block.write(1).unwrap();
+            let mut epoch = vs.epoch_snapshot().unwrap();
+            epoch.number = U256::ZERO;
+            epoch.start_block = 1;
+            vs.test_set_epoch_snapshot(epoch).unwrap();
             drop(vs);
 
             let boundary = boundary_with_epoch(2, false, vec![(validator, dummy_pubkey(0xA1))]);
@@ -11762,8 +11821,9 @@ mod tests {
             assert!(error.to_string().contains("activate current+1"));
 
             let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            assert_eq!(vs_after.epoch_number.read().unwrap(), U256::ZERO);
-            assert_eq!(vs_after.epoch_start_block.read().unwrap(), 1);
+            let epoch = vs_after.epoch_snapshot().unwrap();
+            assert_eq!(epoch.number, U256::ZERO);
+            assert_eq!(epoch.start_block, 1);
             assert!(
                 outbe_validatorset::read_ocomp_snapshot_extension_at_epoch(storage, 2)
                     .unwrap()
@@ -11783,14 +11843,8 @@ mod tests {
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
             let val_b = address!("0x2222222222222222222222222222222222222222");
-            vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
-                .unwrap();
-            vs.register_validator(OWNER, val_b, &dummy_pubkey(0xB2))
-                .unwrap();
-            for validator in [val_a, val_b] {
-                vs.activate_validator_via_boundary_for_test(validator)
-                    .unwrap();
-            }
+            test_register_active(&mut vs, val_a, &dummy_pubkey(0xA1));
+            test_register_active(&mut vs, val_b, &dummy_pubkey(0xB2));
 
             // Boundary claims membership unchanged but carries a different active set.
             let boundary = boundary_with(false, vec![(val_a, dummy_pubkey(0xA1))]);
@@ -11821,15 +11875,9 @@ mod tests {
             let val_a = address!("0x1111111111111111111111111111111111111111");
             let val_b = address!("0x2222222222222222222222222222222222222222");
             let val_c = address!("0x3333333333333333333333333333333333333333");
-            for (addr, seed) in [(val_a, 0xA1u8), (val_b, 0xB2u8), (val_c, 0xC3u8)] {
-                vs.register_validator(OWNER, addr, &dummy_pubkey(seed))
-                    .unwrap();
-            }
-            for validator in [val_a, val_b] {
-                vs.activate_validator_via_boundary_for_test(validator)
-                    .unwrap();
-            }
-            vs.admit_validator_for_boundary_for_test(val_c).unwrap();
+            test_register_active(&mut vs, val_a, &dummy_pubkey(0xA1));
+            test_register_active(&mut vs, val_b, &dummy_pubkey(0xB2));
+            test_register_joining(&mut vs, val_c, &dummy_pubkey(0xC3));
 
             let boundary = boundary_with(
                 true,
@@ -11844,7 +11892,7 @@ mod tests {
                 .unwrap();
 
             let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            let now_hash = vs_after.active_consensus_set_hash.read().unwrap();
+            let now_hash = vs_after.active_consensus_set_hash().unwrap();
             assert_eq!(now_hash, new_hash, "active_set_hash must advance");
             let active = vs_after.get_active_consensus_set().unwrap();
             let addrs: Vec<Address> = active.iter().map(|v| v.validator_address).collect();
@@ -11863,14 +11911,10 @@ mod tests {
 
             let retained = address!("0x1111111111111111111111111111111111111111");
             let expired = address!("0x2222222222222222222222222222222222222222");
-            vs.register_validator(OWNER, retained, &dummy_pubkey(0xA1))
-                .unwrap();
-            vs.register_validator(OWNER, expired, &dummy_pubkey(0xB2))
-                .unwrap();
-            for validator in [retained, expired] {
-                vs.activate_validator_via_boundary_for_test(validator)
-                    .unwrap();
-            }
+            test_register_active(&mut vs, retained, &dummy_pubkey(0xA1));
+            test_register_active(&mut vs, expired, &dummy_pubkey(0xB2));
+            let current_hash = super::hash_boundary_active_set(&[retained, expired]);
+            vs.test_set_active_consensus_set_hash(current_hash).unwrap();
 
             let mut boundary = boundary_with(true, vec![(retained, dummy_pubkey(0xA1))]);
             boundary.tee_expired_target_exclusions = vec![expired];
@@ -11883,14 +11927,16 @@ mod tests {
                 .unwrap();
 
             let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+            let expired_state = vs_after.validator_state(expired).unwrap();
             assert_eq!(
-                vs_after.val_status.read(&expired).unwrap(),
+                expired_state.stored_status().unwrap(),
                 outbe_validatorset::runtime::status::PENDING
             );
-            assert!(!vs_after.val_has_bls_share.read(&expired).unwrap());
-            assert!(!vs_after.val_join_confirmed.read(&expired).unwrap());
+            assert!(!expired_state.has_bls_share());
+            assert!(!expired_state.join_confirmed());
+            let retained_state = vs_after.validator_state(retained).unwrap();
             assert_eq!(
-                vs_after.val_status.read(&retained).unwrap(),
+                retained_state.stored_status().unwrap(),
                 outbe_validatorset::runtime::status::ACTIVE
             );
         });
@@ -11905,10 +11951,9 @@ mod tests {
             vs.set_config_max_validators(128).unwrap();
             vs.config_is_initialized.write(true).unwrap();
             let retained = address!("0x1111111111111111111111111111111111111111");
-            vs.register_validator(OWNER, retained, &dummy_pubkey(0xA1))
-                .unwrap();
-            vs.activate_validator_via_boundary_for_test(retained)
-                .unwrap();
+            test_register_active(&mut vs, retained, &dummy_pubkey(0xA1));
+            let hash = super::hash_boundary_active_set(&[retained]);
+            vs.test_set_active_consensus_set_hash(hash).unwrap();
 
             let mut boundary = boundary_with(false, vec![(retained, dummy_pubkey(0xA1))]);
             boundary.tee_expired_target_exclusions_hash = B256::with_last_byte(0xFF);
@@ -11935,17 +11980,15 @@ mod tests {
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
-            vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
-                .unwrap();
-            vs.activate_validator_via_boundary_for_test(val_a).unwrap();
-            let hash = vs.active_consensus_set_hash.read().unwrap();
+            test_register_active(&mut vs, val_a, &dummy_pubkey(0xA1));
+            let hash = vs.active_consensus_set_hash().unwrap();
 
             let boundary = boundary_with(false, vec![(val_a, dummy_pubkey(0xA1))]);
             super::apply_boundary_outcome(storage.clone(), &boundary, 1, TEST_BLOCK_TIMESTAMP_BASE)
                 .unwrap();
 
             let vs_after = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            assert_eq!(vs_after.active_consensus_set_hash.read().unwrap(), hash);
+            assert_eq!(vs_after.active_consensus_set_hash().unwrap(), hash);
 
             let snapshot_key = outbe_validatorset::committee_snapshot_key(
                 boundary.epoch,
@@ -11976,9 +12019,7 @@ mod tests {
             vs.config_is_initialized.write(true).unwrap();
 
             let val_a = address!("0x1111111111111111111111111111111111111111");
-            vs.register_validator(OWNER, val_a, &dummy_pubkey(0xA1))
-                .unwrap();
-            vs.activate_validator_via_boundary_for_test(val_a).unwrap();
+            test_register_active(&mut vs, val_a, &dummy_pubkey(0xA1));
 
             let mut boundary = boundary_with(false, vec![(val_a, dummy_pubkey(0xA1))]);
             boundary.committee_set_hash = B256::with_last_byte(0xFE);

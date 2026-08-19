@@ -7,16 +7,19 @@ use outbe_primitives::error::Result as PrecompileResult;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::Units;
+use outbe_validatorset::StakeProjection;
 
 /// No shared mutable state between tests; contracts read/write through the
 /// scoped `StorageHandle` passed into the closure.
 pub(super) fn with_storage<F: FnOnce(StorageHandle)>(f: F) {
     let mut storage = HashMapStorageProvider::new(1);
+    storage.set_block_number(1);
     StorageHandle::enter(&mut storage, f);
 }
 
 pub(super) fn with_storage_at<F: FnOnce(StorageHandle)>(timestamp: u64, f: F) {
     let mut storage = HashMapStorageProvider::new(1);
+    storage.set_block_number(1);
     storage.set_timestamp(U256::from(timestamp));
     StorageHandle::enter(&mut storage, f);
 }
@@ -298,8 +301,6 @@ pub(super) fn init_oracle(oracle: &mut OracleContract) {
 /// Helper: register a validator in the ValidatorSet with given stake.
 /// Uses the first byte of addr as the pubkey seed to avoid BLS pubkey collision.
 pub(super) fn register_validator(storage: StorageHandle, addr: Address, stake: U256) {
-    use outbe_validatorset::logic::status;
-
     let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
     // Only write config once (if not already initialized)
     if !vs.config_is_initialized.read().unwrap() {
@@ -314,8 +315,25 @@ pub(super) fn register_validator(storage: StorageHandle, addr: Address, stake: U
     let mut pubkey = [0u8; 48];
     pubkey[..20].copy_from_slice(addr.as_slice());
     vs.register_validator(Address::ZERO, addr, &pubkey).unwrap();
-    // Set stake and status to ACTIVE
-    vs.val_stake.write(&addr, stake).unwrap();
-    vs.val_status.write(&addr, status::ACTIVE).unwrap();
-    vs.val_has_bls_share.write(&addr, true).unwrap();
+    vs.test_activate_validator_canonically(addr, StakeProjection::new(stake, None), U256::ZERO)
+        .unwrap();
+}
+
+/// Register a validator and move it to the canonical staked-but-not-ready
+/// phase without constructing or overwriting a lifecycle payload.
+pub(super) fn register_waiting_for_readiness(storage: StorageHandle, addr: Address, stake: U256) {
+    let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+    if !vs.config_is_initialized.read().unwrap() {
+        vs.config_is_initialized.write(true).unwrap();
+        vs.config_max_validators.write(128).unwrap();
+        vs.config_min_stake.write(U256::in_units(1u64)).unwrap();
+        vs.config_epoch_length_blocks.write(3600).unwrap();
+        vs.config_owner.write(Address::ZERO).unwrap();
+    }
+
+    let mut pubkey = [0u8; 48];
+    pubkey[..20].copy_from_slice(addr.as_slice());
+    vs.test_register_validator_without_pop(addr, &pubkey)
+        .unwrap();
+    vs.record_stake_increase(addr, stake, stake).unwrap();
 }

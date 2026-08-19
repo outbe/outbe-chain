@@ -5,7 +5,6 @@ use outbe_primitives::error::Result;
 use outbe_primitives::stablecoin_fork::MAX_PENDING_PUBLIC_BONDED_PROPOSALS;
 use outbe_primitives::storage::StorageHandle;
 use outbe_validatorset::contract::ValidatorSet;
-use outbe_validatorset::logic::status;
 
 use crate::constants::{
     MAX_PENDING_PROPOSALS, MAX_PENDING_PROPOSALS_PER_VALIDATOR, QUORUM_DENOMINATOR,
@@ -38,7 +37,17 @@ fn voting_window_blocks(chain_id: u64) -> u64 {
 /// Returns `Ok(())` when `caller` is a registered validator with `status == ACTIVE`.
 pub fn ensure_active_validator(storage: StorageHandle<'_>, caller: Address) -> Result<()> {
     let vs = ValidatorSet::new(storage);
-    if !matches!(vs.get_validator(caller)?, Some(record) if record.status == status::ACTIVE) {
+    if !vs.validator_lifecycle(caller)?.is_active_status() {
+        return Err(VoteError::NotValidator.into());
+    }
+    Ok(())
+}
+
+/// Returns `Ok(())` when `caller` is a registered validator with `status ∈ {PENDING, ACTIVE}`.
+pub fn ensure_voting_validator(storage: StorageHandle<'_>, caller: Address) -> Result<()> {
+    let vs = ValidatorSet::new(storage);
+    let lifecycle = vs.validator_lifecycle(caller)?;
+    if !lifecycle.is_active_status() && !lifecycle.is_pending() {
         return Err(VoteError::NotValidator.into());
     }
     Ok(())

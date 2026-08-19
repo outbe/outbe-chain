@@ -1256,7 +1256,7 @@ impl ActivationFixture {
             let validator = Address::repeat_byte(0xB0 + index);
             let consensus_pubkey = [0x30 + index; 48];
             let mut validators = ValidatorSet::new(storage.clone());
-            assert_eq!(validators.validator_count.read().unwrap(), u32::from(index));
+            assert_eq!(validators.validator_count().unwrap(), u32::from(index));
             validators
                 .set_config_max_validators(u32::from(index) + 1)
                 .unwrap();
