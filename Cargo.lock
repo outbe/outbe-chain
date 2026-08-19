@@ -7240,6 +7240,7 @@ name = "outbe-chain"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus",
+ "alloy-eips 2.0.4",
  "alloy-primitives",
  "alloy-sol-types",
  "clap",
