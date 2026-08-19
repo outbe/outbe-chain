@@ -19,7 +19,8 @@ pub(crate) const DESIS: &str = "0x0000000000000000000000000000000000001016";
 const INTEX_FACTORY: &str = "0x0000000000000000000000000000000000001015";
 const SYSTEM_CALLER: &str = "0xff00000000000000000000000000000000000001";
 
-const RELAY_FLOAT_WEI: u128 = 3_000_000_000_000_000_000;
+/// Native float each router spends on bridge fees, in whole COEN.
+const RELAY_FLOAT_COEN: u64 = 100;
 
 /// Addresses one origin-side deploy produced.
 #[derive(Clone, Debug)]
@@ -193,7 +194,7 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64) -> Result<OriginContracts> 
             url,
             router,
             forge::DEPLOYER_KEY,
-            alloy_primitives::U256::from(RELAY_FLOAT_WEI),
+            crate::internal::eth::coen(RELAY_FLOAT_COEN),
         )?;
     }
     Ok(contracts)

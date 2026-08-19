@@ -31,7 +31,8 @@ sol! {
     }
 }
 
-const BIDDER_NATIVE_WEI: u128 = 1_000_000_000_000_000_000;
+/// Native balance each bidder needs for its own gas, in whole COEN.
+const BIDDER_NATIVE_COEN: u64 = 100;
 
 /// The single-currency day both the issuance and reference sides carry.
 const DAY_CURRENCY: u16 = 840;
@@ -75,7 +76,7 @@ pub fn fund(
             url,
             bidder.address,
             DEPLOYER_KEY,
-            U256::from(BIDDER_NATIVE_WEI),
+            eth::coen(BIDDER_NATIVE_COEN),
         )?;
         eth::send_call(
             url,
