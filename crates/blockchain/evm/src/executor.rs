@@ -4553,22 +4553,18 @@ mod tests {
         use crate::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
         use crate::precompiles::outbe_precompile_addresses;
         use outbe_primitives::addresses::{
-            CCA_REGISTRY_ADDRESS, DEBUG_SUBCALL_PRECOMPILE_ADDRESS, GOVERNANCE_ADDRESS,
-            STABLECOIN_FACTORY_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS, VAULT_ROUTER_ADDRESS,
-            ZEROFEE_ADDRESS, ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
+            DEBUG_SUBCALL_PRECOMPILE_ADDRESS, GOVERNANCE_ADDRESS, STABLECOIN_FACTORY_ADDRESS,
+            STABLECOIN_POLICY_REGISTRY_ADDRESS, VAULT_ROUTER_ADDRESS, ZEROFEE_ADDRESS,
+            ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
         };
 
         // Dispatch-registered precompiles that legitimately need NO runtime 0xEF
         // marker. Each exemption is justified; adding a state-owning precompile here
         // instead of to the marker list would re-open reth22-1.
-        const MARKER_EXEMPT: [Address; 9] = [
+        const MARKER_EXEMPT: [Address; 8] = [
             // Stateless verifiers — no EVM storage to preserve.
             ZKPROOF_POSEIDON_ADDRESS,
             ZKPROOF_GROTH16_ADDRESS,
-            // CCA registry stub: answers from a constant and owns no storage.
-            // The moment it gains a storage slot this entry must move to
-            // OUTBE_RUNTIME_MARKER_ADDRESSES, or slot 0 is pruned (reth22-1).
-            CCA_REGISTRY_ADDRESS,
             // Debug adapter owns no persistent state; any child effects are journaled
             // against the actual child target.
             DEBUG_SUBCALL_PRECOMPILE_ADDRESS,

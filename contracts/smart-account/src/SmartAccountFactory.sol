@@ -42,12 +42,12 @@ contract SmartAccountFactory is ISmartAccountFactory {
     uint256 public constant DAILY_LIMIT = 1000e6;
     uint48 public constant LIMIT_INTERVAL = 1 days;
 
-    /// @notice Credis Card Agent registry precompile.
+    /// @notice Credis Card Agent precompile.
     /// @dev A protocol address, not a deployment parameter: an injectable registry could be
     ///      pointed at a look-alike that reports every agent active, which would silently defeat
     ///      the standing check below. This also confines the factory to Outbe chains — elsewhere
-    ///      0x1019 has no code and `createAccount` reverts on the empty return data.
-    address public constant CCA_REGISTRY = 0x0000000000000000000000000000000000001019;
+    ///      0x1011 has no code and `createAccount` reverts on the empty return data.
+    address public constant CCA_REGISTRY = 0x0000000000000000000000000000000000001011;
 
     /// @notice Thrown when the CCA is not in good standing at the registry.
     /// @param state The state actually recorded; `Unknown` means it never registered.
