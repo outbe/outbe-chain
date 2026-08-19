@@ -4,6 +4,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::block::{BlockContext, BlockLifecycle, BlockRuntimeContext};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::Units;
+use outbe_validatorset::ValidatorLifecycle;
 
 use crate::schema::{OracleContract, SCALE_1E18};
 
@@ -437,8 +438,10 @@ fn slash_window_resets_penalty_counters_at_the_window_end() {
 
         // Validator should be force-exited (check via ValidatorSet)
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        let info = vs.get_validator(v1).unwrap().unwrap();
-        assert_eq!(info.status, outbe_validatorset::logic::status::JAILED);
+        assert!(matches!(
+            vs.validator_lifecycle(v1).unwrap(),
+            ValidatorLifecycle::JailRetained(_) | ValidatorLifecycle::Jail(_)
+        ));
     });
 }
 
@@ -482,9 +485,9 @@ fn slash_window_rolls_back_slash_state_when_force_exit_fails() {
 
         let validator = Address::new([0x33; 20]);
         let stake = U256::in_units(100u64);
-        register_validator(storage.clone(), validator, stake);
-        let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.pending_set_change.write(false).unwrap();
+        register_waiting_for_readiness(storage.clone(), validator, stake);
+        let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        vs.test_set_pending_set_change(false).unwrap();
 
         let staking = outbe_staking::contract::Staking::new(storage.clone());
         staking.stake_amount.write(&validator, stake).unwrap();
@@ -492,11 +495,6 @@ fn slash_window_rolls_back_slash_state_when_force_exit_fails() {
         oracle
             .storage
             .set_balance(outbe_primitives::addresses::STAKING_ADDRESS, stake)
-            .unwrap();
-
-        let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.val_status
-            .write(&validator, outbe_validatorset::logic::status::REGISTERED)
             .unwrap();
 
         oracle.increment_miss(&validator).unwrap();
@@ -516,11 +514,11 @@ fn slash_window_rolls_back_slash_state_when_force_exit_fails() {
         );
 
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        assert_eq!(vs.val_stake.read(&validator).unwrap(), stake);
-        assert_eq!(
-            vs.val_status.read(&validator).unwrap(),
-            outbe_validatorset::logic::status::REGISTERED
-        );
+        assert_eq!(vs.validator_state(validator).unwrap().bonded_stake(), stake);
+        assert!(matches!(
+            vs.validator_lifecycle(validator).unwrap(),
+            ValidatorLifecycle::WaitingForReadiness(_)
+        ));
 
         assert_eq!(oracle.penalty_miss_count.read(&validator).unwrap(), 1);
     });
@@ -539,8 +537,8 @@ fn slash_window_rolls_back_the_forced_exit_when_slashing_fails() {
         let validator = Address::new([0x44; 20]);
         let stake = U256::in_units(100u64);
         register_validator(storage.clone(), validator, stake);
-        let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.pending_set_change.write(false).unwrap();
+        let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+        vs.test_set_pending_set_change(false).unwrap();
 
         let staking = outbe_staking::contract::Staking::new(storage.clone());
         staking.stake_amount.write(&validator, stake).unwrap();
@@ -558,11 +556,11 @@ fn slash_window_rolls_back_the_forced_exit_when_slashing_fails() {
             "unexpected error: {err}"
         );
 
-        assert_eq!(
-            vs.val_status.read(&validator).unwrap(),
-            outbe_validatorset::logic::status::ACTIVE
-        );
-        assert!(!vs.pending_set_change.read().unwrap());
+        assert!(vs
+            .validator_lifecycle(validator)
+            .unwrap()
+            .is_active_status());
+        assert!(!vs.has_pending_set_change().unwrap());
         assert_eq!(oracle.penalty_miss_count.read(&validator).unwrap(), 1);
         assert_eq!(staking.stake_amount.read(&validator).unwrap(), stake);
         assert_eq!(staking.total_staked.read().unwrap(), stake);
@@ -592,8 +590,7 @@ fn slash_window_never_force_exits_a_protected_validator() {
         // Counters reset but validator NOT force-exited
         assert_eq!(oracle.penalty_miss_count.read(&v1).unwrap(), 0);
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        let info = vs.get_validator(v1).unwrap().unwrap();
-        assert_eq!(info.status, outbe_validatorset::logic::status::ACTIVE);
+        assert!(vs.validator_lifecycle(v1).unwrap().is_active_status());
     });
 }
 #[test]

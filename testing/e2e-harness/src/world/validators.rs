@@ -5,8 +5,12 @@
 //! lifecycle flows land). A validator is addressed by index (`validator-<i>`);
 //! an `Operator` is just an active validator acting as proposer/voter.
 
-use std::path::PathBuf;
+use std::fmt;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
+use alloy_primitives::{Address, Bytes};
 use eyre::{eyre, Result, WrapErr};
 
 use crate::internal::config::Config;
@@ -15,21 +19,141 @@ use crate::internal::config::Config;
 #[derive(Debug, Clone)]
 pub struct Validator {
     pub index: usize,
-    key_path: PathBuf,
+    dir: PathBuf,
 }
 
 impl Validator {
     /// The EOA private key (`validator-<i>/evm-key.hex`), `0x`-prefixed — matches
     /// the shell `"0x$(tr -d '[:space:]' < evm-key.hex)"`.
     pub fn evm_key(&self) -> Result<String> {
-        let raw = std::fs::read_to_string(&self.key_path)
-            .wrap_err_with(|| format!("reading evm key {:?}", self.key_path))?;
+        let path = self.evm_key_path();
+        let raw =
+            std::fs::read_to_string(&path).wrap_err_with(|| format!("reading evm key {path:?}"))?;
         let hex: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
         Ok(if hex.starts_with("0x") {
             hex
         } else {
             format!("0x{hex}")
         })
+    }
+
+    /// Path of the validator's EOA key.
+    pub fn evm_key_path(&self) -> PathBuf {
+        self.dir.join("evm-key.hex")
+    }
+
+    /// Path of the validator's individual MinPk BLS key.
+    pub fn signing_key_path(&self) -> PathBuf {
+        self.dir.join("signing-key.hex")
+    }
+
+    /// Install a prepared identity into an otherwise-unprovisioned validator
+    /// directory. Existing secret files are never overwritten.
+    pub fn install_registration_identity(&self, identity: &RegistrationIdentity) -> Result<()> {
+        identity.install_at(&self.dir)
+    }
+}
+
+/// Reusable self-registration material.
+///
+/// It intentionally owns the exact EOA, BLS private key, public key and PoP
+/// bytes in memory, so a test may destroy and rebuild a localnet with another
+/// valid chain ID and submit the *same* proof again. The custom `Debug`
+/// implementation never prints either private key.
+#[derive(Clone)]
+pub struct RegistrationIdentity {
+    address: Address,
+    evm_private_key: String,
+    bls_private_key: String,
+    bls_public_key: Bytes,
+    registration_signature: Bytes,
+    reth_p2p_secret: String,
+}
+
+impl fmt::Debug for RegistrationIdentity {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RegistrationIdentity")
+            .field("address", &self.address)
+            .field("bls_public_key", &self.bls_public_key)
+            .field("registration_signature", &self.registration_signature)
+            .field("evm_private_key", &"<redacted>")
+            .field("bls_private_key", &"<redacted>")
+            .field("reth_p2p_secret", &"<redacted>")
+            .finish()
+    }
+}
+
+impl RegistrationIdentity {
+    pub(crate) fn new(
+        address: Address,
+        evm_private_key: String,
+        bls_private_key: String,
+        bls_public_key: Bytes,
+        registration_signature: Bytes,
+        reth_p2p_secret: String,
+    ) -> Self {
+        Self {
+            address,
+            evm_private_key,
+            bls_private_key,
+            bls_public_key,
+            registration_signature,
+            reth_p2p_secret,
+        }
+    }
+
+    pub fn address(&self) -> Address {
+        self.address
+    }
+
+    pub fn evm_key(&self) -> &str {
+        &self.evm_private_key
+    }
+
+    pub fn bls_public_key(&self) -> &Bytes {
+        &self.bls_public_key
+    }
+
+    pub fn registration_signature(&self) -> &Bytes {
+        &self.registration_signature
+    }
+
+    pub fn reth_p2p_secret(&self) -> &str {
+        &self.reth_p2p_secret
+    }
+
+    pub(crate) fn install_at(&self, dir: &Path) -> Result<()> {
+        fs::create_dir_all(dir)?;
+        let secrets = [
+            (dir.join("signing-key.hex"), self.bls_private_key.as_str()),
+            (
+                dir.join("evm-key.hex"),
+                trim_hex_prefix(&self.evm_private_key),
+            ),
+            (
+                dir.join("reth-p2p-secret.hex"),
+                self.reth_p2p_secret.as_str(),
+            ),
+        ];
+        if let Some((path, _)) = secrets.iter().find(|(path, _)| path.exists()) {
+            return Err(eyre!(
+                "refusing to overwrite identity file {}",
+                path.display()
+            ));
+        }
+
+        let mut installed = Vec::with_capacity(secrets.len());
+        for (path, value) in secrets {
+            if let Err(error) = write_secret_no_clobber(&path, value) {
+                for installed_path in installed {
+                    let _ = fs::remove_file(installed_path);
+                }
+                return Err(error);
+            }
+            installed.push(path);
+        }
+        Ok(())
     }
 }
 
@@ -65,7 +189,7 @@ impl Validators {
     pub fn get(&self, i: usize) -> Validator {
         Validator {
             index: i,
-            key_path: self.cfg.validator_dir(i).join("evm-key.hex"),
+            dir: self.cfg.validator_dir(i),
         }
     }
 
@@ -120,4 +244,71 @@ fn parse_index(name: &str) -> Result<usize> {
     name.strip_prefix("validator-")
         .and_then(|s| s.trim().parse().ok())
         .ok_or_else(|| eyre!("expected 'validator-<N>', got '{name}'"))
+}
+
+fn trim_hex_prefix(value: &str) -> &str {
+    value.strip_prefix("0x").unwrap_or(value)
+}
+
+fn write_secret_no_clobber(path: &Path, value: &str) -> Result<()> {
+    if path.exists() {
+        return Err(eyre!(
+            "refusing to overwrite identity file {}",
+            path.display()
+        ));
+    }
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| eyre!("identity path has no filename: {}", path.display()))?
+        .to_string_lossy();
+    let temporary = path.with_file_name(format!(".{file_name}.tmp.{}", std::process::id()));
+
+    let result = (|| -> Result<()> {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt as _;
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(&temporary)
+            .wrap_err_with(|| format!("create temporary identity file {}", temporary.display()))?;
+        file.write_all(value.as_bytes())?;
+        file.sync_all()?;
+        if path.exists() {
+            return Err(eyre!(
+                "refusing to overwrite identity file {}",
+                path.display()
+            ));
+        }
+        fs::rename(&temporary, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identity_debug_redacts_secret_material() {
+        let identity = RegistrationIdentity::new(
+            Address::ZERO,
+            "0xevm-secret".into(),
+            "bls-secret".into(),
+            Bytes::from_static(&[1; 48]),
+            Bytes::from_static(&[2; 96]),
+            "p2p-secret".into(),
+        );
+        let debug = format!("{identity:?}");
+        assert!(debug.contains("<redacted>"));
+        assert!(!debug.contains("evm-secret"));
+        assert!(!debug.contains("bls-secret"));
+        assert!(!debug.contains("p2p-secret"));
+    }
 }

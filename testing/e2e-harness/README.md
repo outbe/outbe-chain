@@ -276,6 +276,8 @@ that the external Linux lane has already run.
 
 The same full run is available as `mise run e2e`. The harness owns an isolated
 MongoDB replica set unless `--projection-mongodb-uri` is supplied explicitly.
+Its port is published only on host loopback, so the managed replica set works
+with rootless Docker and Docker Desktop without host networking.
 On an SGX runner, `mise run e2e-sgx` builds the real enclave and runs the same
 features with four `gramine-sgx` containers. That lane raises the per-request
 TEE timeout to 120 seconds for EPC paging while retaining the normal 30-second
@@ -303,6 +305,77 @@ while `--validators 2 --all` exits non-zero.
 
 `--debug` streams the localnet setup output live; without it, that output is
 captured and only printed if a setup step fails.
+
+## Validator lifecycle consistency target suite
+
+[`validator_lifecycle_consistency.feature`](./features/validator_lifecycle_consistency.feature)
+contains target-state checks derived from
+`.cursor/validator-lifecycle-consistency-e2e-checklist.md`. It covers 16
+public/runtime-reachable checklist IDs without direct storage writes. All current
+scenarios are enforced; none is tagged `@expected-to-fail`. If the tag is used
+for a future target invariant, it remains a selection and traceability tag, not
+Cucumber skip or xfail semantics.
+
+Run the currently enforced subset:
+
+```sh
+cargo run -p outbe-e2e-harness --bin outbe-e2e -- \
+  --tee mock --validators 4 --all \
+  --tags 'not @expected-to-fail' \
+  --input testing/e2e-harness/features/validator_lifecycle_consistency.feature
+```
+
+There are currently no target-gap examples. Setup errors, environment failures,
+timeouts, lack of finalization, and log-audit failures remain distinct from
+product-defect evidence.
+
+### Coverage matrix
+
+| Checklist ID | Live scenario | Target result |
+|---|---|---|
+| D-01A | Replay one unchanged registration fixture after a valid cross-chain rebootstrap | Replay rejected |
+| D-01B | Configured owner submits an empty-PoP post-bootstrap registration | Registration rejected |
+| D-02 | Readiness arrives just after freeze | No immediate DKG; activation at the next scheduled window |
+| D-04 | Attempt to omit an ACTIVE member and recover it at the next reshare | `ACTIVE/share=false` remains repairable |
+| D-05 | Submit canonical felony evidence and all replays | Exactly one complete punishment |
+| D-06 | Claim and same-EOA re-register in one block | Dense index retained; reachable residue and key ownership reset |
+| D-07 | Partially unstake a jailed validator below minimum | Validator remains JAILED |
+| D-10 | Request unjail before exclusion | Rejected or `PENDING/share=false` |
+| S-01 | Drop confirmed PENDING below minimum, then restake without reconfirming | Readiness cleared and no activation |
+| S-02 | Owner calls the public raw activation facade | Rejected with the coupled bundle unchanged |
+| S-03 | Duplicate, reorder, or hash-mismatch an activation set | Three atomic rejections |
+| S-06 | Finalize successful and reverting lifecycle value transitions | Stake mirrors and native value remain conserved |
+| S-08 | Consume staggered claims one at a time | INACTIVE only after all bonded/live value is gone |
+| S-09 | Submit three invalid P2P updates, then reset identity | Pair is atomic and both fields clear together |
+| S-12 | Submit old evidence after an unchanged committee wraps the snapshot ring | Evidence rejected without punishment |
+| S-14 | Submit invalid-PoP, duplicate-key, and over-capacity registrations | No partial identity, reverse-owner, index, or count writes |
+
+### Fixture policy and deliberate exclusions
+
+Scenario genesis customization is typed configuration only. It may use distinct
+valid chain IDs, select an existing validator EOA as ValidatorSet owner, set a
+zero re-registration cooldown, set capacity at or above the initial validator
+count, and shorten positive epoch/DKG/unbonding windows while preserving their
+normal ordering constraints. It must not write storage slots, seed an unknown
+status, pre-load near-overflow counters, or otherwise create a state that cannot
+be reached through production interfaces.
+
+D-08 and S-13 are excluded because they require respectively corrupted status
+storage and counters seeded near their maximum. The INFO-only D-03, D-09A
+through D-09F, S-04, S-05, S-07, S-10, and S-11 remain system, CLI, or
+fault-injection work rather than live-node scenarios. The implemented live
+boundaries are also intentionally limited as follows:
+
+- S-01 covers the public unstake path; its internal slash-transition variant
+  needs a controlled system hook.
+- D-06 verifies naturally reachable re-registration residue, not synthetic
+  stale jail/readiness values.
+- S-06 verifies committed and publicly reverting value transitions, not
+  injected mid-transaction failures.
+- S-14 covers validation, uniqueness, and valid capacity rejection; a late-write
+  failure still belongs in an atomicity fault-injection test.
+
+There are no `@todo` placeholders for excluded checks.
 
 ## Published testnet SGX release acceptance
 

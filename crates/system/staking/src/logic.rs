@@ -2,7 +2,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::addresses::STAKING_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_validatorset::contract::ValidatorSet;
-use outbe_validatorset::logic::status;
+use outbe_validatorset::ValidatorLifecycle;
 
 use crate::contract::Staking;
 
@@ -45,19 +45,9 @@ impl Staking<'_> {
 
                 self.total_staked.write(amount)?;
 
-                let mut val_set = ValidatorSet::new(self.storage.clone());
-                val_set.val_stake.write(&validator, new_stake)?;
-
                 let min_stake = self.config_min_stake.read()?;
-                if val_set.is_validator(validator)? {
-                    let current_status = val_set.val_status.read(&validator)?;
-                    if new_stake >= min_stake && current_status == status::REGISTERED {
-                        // PoS: stake reaching min_stake marks the validator PENDING
-                        // (admitted, syncing, not yet voting). The next DKG reshare
-                        // grants a share and promotes PENDING→ACTIVE.
-                        val_set.mark_pending(validator)?;
-                    }
-                }
+                let mut val_set = ValidatorSet::new(self.storage.clone());
+                val_set.record_stake_increase(validator, new_stake, min_stake)?;
 
                 return Ok(());
             }
@@ -76,24 +66,14 @@ impl Staking<'_> {
         let total = self.total_staked.read()?;
         self.total_staked.write(total + amount)?;
 
-        // Cross-call: update ValidatorSet
-        let mut val_set = ValidatorSet::new(self.storage.clone());
-
-        // Update val_stake in ValidatorSet
-        val_set.val_stake.write(&validator, new_stake)?;
-
         // PoS staking: when a REGISTERED validator reaches min_stake it becomes
         // PENDING (admitted to the validator set, syncing, not yet voting). The next
         // DKG reshare grants it a share and activate_reshared_set promotes
-        // PENDING→ACTIVE. mark_pending also raises pending_set_change so consensus
-        // schedules that reshare.
+        // PENDING→ACTIVE. The ValidatorSet facade also mirrors the authoritative
+        // bonded value and raises pending_set_change when the threshold is crossed.
         let min_stake = self.config_min_stake.read()?;
-        if val_set.is_validator(validator)? {
-            let current_status = val_set.val_status.read(&validator)?;
-            if new_stake >= min_stake && current_status == status::REGISTERED {
-                val_set.mark_pending(validator)?;
-            }
-        }
+        let mut val_set = ValidatorSet::new(self.storage.clone());
+        val_set.record_stake_increase(validator, new_stake, min_stake)?;
 
         Ok(())
     }
@@ -155,17 +135,13 @@ impl Staking<'_> {
         val_set: &mut ValidatorSet,
         validator: Address,
     ) -> Result<()> {
-        if !val_set.is_validator(validator)? {
-            return Ok(());
-        }
-        let current_status = val_set.val_status.read(&validator)?;
-        if current_status == status::UNBONDING
-            && self.stake_amount.read(&validator)?.is_zero()
+        if matches!(
+            val_set.validator_lifecycle(validator)?,
+            ValidatorLifecycle::Unbonding(_)
+        ) && self.stake_amount.read(&validator)?.is_zero()
             && !self.has_pending_unbonding(validator)?
         {
-            val_set.val_status.write(&validator, status::INACTIVE)?;
-            val_set.val_unbonding_end.write(&validator, 0)?;
-            val_set.val_has_bls_share.write(&validator, false)?;
+            val_set.complete_unbonding(validator)?;
         }
         Ok(())
     }
@@ -187,54 +163,22 @@ impl Staking<'_> {
             return Err(PrecompileError::Revert("insufficient staked amount".into()));
         }
 
+        let timestamp = self.storage.timestamp()?.to::<u64>();
+        let unbonding_period = self.config_unbonding_period.read()?;
+        let complete_time = self.checked_complete_time(timestamp, unbonding_period)?;
+        let min_stake = self.config_min_stake.read()?;
         let new_stake = current - amount;
         self.stake_amount.write(&caller, new_stake)?;
 
         let total = self.total_staked.read()?;
         self.total_staked.write(total - amount)?;
 
-        // Cross-call: update ValidatorSet
-        let val_set = ValidatorSet::new(self.storage.clone());
-        val_set.val_stake.write(&caller, new_stake)?;
-
-        let min_stake = self.config_min_stake.read()?;
-        if val_set.is_validator(caller)? {
-            let current_status = val_set.val_status.read(&caller)?;
-            if new_stake < min_stake && current_status == status::ACTIVE {
-                // Transition to EXITING — DKG reshare will exclude from consensus set
-                val_set.val_status.write(&caller, status::EXITING)?;
-                val_set
-                    .val_deactivated_at_height
-                    .write(&caller, val_set.storage.block_number()?)?;
-                // Signal consensus to trigger DKG reshare
-                val_set.pending_set_change.write(true)?;
-            } else if new_stake < min_stake && current_status == status::PENDING {
-                // A PENDING joiner that drops below min_stake before its activating
-                // reshare reverts to REGISTERED, so the reshare target (ACTIVE∪PENDING)
-                // no longer selects it and it cannot be promoted to ACTIVE without
-                // re-staking. Re-signal so consensus refreshes the target.
-                val_set.val_status.write(&caller, status::REGISTERED)?;
-                val_set.pending_set_change.write(true)?;
-            } else if new_stake < min_stake && current_status == status::JAILED {
-                // A JAILED validator that unstakes below min_stake LEAVES the set:
-                // it enters the EXITING → UNBONDING → INACTIVE drain (the next reshare
-                // excludes it + clears its share; process_unbonding drains the stake).
-                // This is the "I no longer want to be a validator" exit from jail.
-                val_set.val_status.write(&caller, status::EXITING)?;
-                val_set
-                    .val_deactivated_at_height
-                    .write(&caller, val_set.storage.block_number()?)?;
-                val_set.val_jailed_at_height.write(&caller, 0)?;
-                val_set.pending_set_change.write(true)?;
-            }
-        }
-
-        // Add to unbonding queue
-        let timestamp = self.storage.timestamp()?.to::<u64>();
-        let unbonding_period = self.config_unbonding_period.read()?;
-        let complete_time = self.checked_complete_time(timestamp, unbonding_period)?;
+        // Staking owns the accounting and queue. The ValidatorSet facade records
+        // the complete projection only after those authoritative writes succeed;
+        // the outer call-frame checkpoint keeps the sequence atomic on failure.
         self.enqueue_unbonding(caller, amount, complete_time)?;
-        val_set.val_unbonding_end.write(&caller, complete_time)?;
+        let mut val_set = ValidatorSet::new(self.storage.clone());
+        val_set.record_unstake(caller, new_stake, min_stake, complete_time)?;
 
         Ok(())
     }
@@ -243,9 +187,9 @@ impl Staking<'_> {
     /// caller's bonded stake to be ≥ min_stake (top up via `stake` first if a
     /// felony slash dropped it below). The JAILED→PENDING transition, the unjail
     /// cooldown, the readiness reset, and the reshare signal live in ValidatorSet
-    /// (`unjail_to_pending`); afterwards the validator re-confirms readiness and is
-    /// promoted PENDING→ACTIVE by the next DKG reshare. Self-only: `caller` is the
-    /// validator (the precompile passes the tx sender).
+    /// (`unjail_after_stake_check`); afterwards the validator re-confirms readiness
+    /// and is promoted PENDING→ACTIVE by the next DKG reshare. Self-only: `caller`
+    /// is the validator (the precompile passes the tx sender).
     pub fn unjail_validator(&mut self, caller: Address) -> Result<()> {
         let stake = self.stake_amount.read(&caller)?;
         let min_stake = self.config_min_stake.read()?;
@@ -255,7 +199,7 @@ impl Staking<'_> {
             )));
         }
         let mut val_set = ValidatorSet::new(self.storage.clone());
-        val_set.unjail_to_pending(caller)
+        val_set.unjail_after_stake_check(caller)
     }
 
     /// Claims matured unbonding entries for the caller.
@@ -381,28 +325,13 @@ impl Staking<'_> {
                 .decrease_balance(STAKING_ADDRESS, total_slashed)?;
         }
 
-        // Cross-call: update ValidatorSet stake
+        // Cross-call: mirror the authoritative stake after all stake, claim, and
+        // burn accounting has succeeded. Preserve the existing unbonding-end hint;
+        // individual Staking claim timestamps remain authoritative.
         let remaining_stake = self.stake_amount.read(&validator)?;
-        let val_set = ValidatorSet::new(self.storage.clone());
-        val_set.val_stake.write(&validator, remaining_stake)?;
-
-        // If stake dropped below min_stake, demote: an ACTIVE validator exits
-        // (ACTIVE→EXITING, removed at the next reshare); a PENDING joiner that never
-        // activated reverts to REGISTERED so the reshare target no longer selects it.
         let min_stake = self.config_min_stake.read()?;
-        if !min_stake.is_zero() && remaining_stake < min_stake && val_set.is_validator(validator)? {
-            let current_status = val_set.val_status.read(&validator)?;
-            if current_status == status::ACTIVE {
-                val_set.val_status.write(&validator, status::EXITING)?;
-                val_set
-                    .val_deactivated_at_height
-                    .write(&validator, val_set.storage.block_number()?)?;
-                val_set.pending_set_change.write(true)?;
-            } else if current_status == status::PENDING {
-                val_set.val_status.write(&validator, status::REGISTERED)?;
-                val_set.pending_set_change.write(true)?;
-            }
-        }
+        let mut val_set = ValidatorSet::new(self.storage.clone());
+        val_set.record_stake_slash(validator, remaining_stake, min_stake, None)?;
 
         Ok(total_slashed)
     }
@@ -424,37 +353,41 @@ impl Staking<'_> {
     /// per-block cost. Remaining entries are trimmed in subsequent blocks.
     pub fn process_unbonding(&mut self, timestamp: u64) -> Result<()> {
         let mut val_set = ValidatorSet::new(self.storage.clone());
-        let validators = val_set.get_all_validators()?;
-        for v in validators {
-            if v.status != status::UNBONDING {
+        let validators = val_set.registered_validator_addresses()?;
+        for validator in validators {
+            let state = val_set.validator_state(validator)?;
+            if !matches!(state.lifecycle(), ValidatorLifecycle::Unbonding(_)) {
                 continue;
             }
 
-            let stake = self.stake_amount.read(&v.validator_address)?;
+            let stake = self.stake_amount.read(&validator)?;
             if !stake.is_zero() {
                 let total = self.total_staked.read()?;
                 if stake > total {
                     return Err(PrecompileError::Revert(format!(
                         "stake accounting underflow for validator {}",
-                        v.validator_address
+                        validator
                     )));
                 }
-                self.stake_amount.write(&v.validator_address, U256::ZERO)?;
+                self.stake_amount.write(&validator, U256::ZERO)?;
                 self.total_staked.write(total - stake)?;
-                val_set.val_stake.write(&v.validator_address, U256::ZERO)?;
 
-                let period = if v.slash_count > 0 {
+                let slash_count = state
+                    .history()
+                    .ok_or_else(|| {
+                        PrecompileError::Fatal("registered validator is missing history".into())
+                    })?
+                    .slash_count();
+                let period = if slash_count > 0 {
                     self.slashed_withdrawal_delay()?
                 } else {
                     self.config_unbonding_period.read()?
                 };
                 let complete_time = self.checked_complete_time(timestamp, period)?;
-                self.enqueue_unbonding(v.validator_address, stake, complete_time)?;
-                val_set
-                    .val_unbonding_end
-                    .write(&v.validator_address, complete_time)?;
+                self.enqueue_unbonding(validator, stake, complete_time)?;
+                val_set.record_unstake(validator, U256::ZERO, U256::ZERO, complete_time)?;
             } else {
-                self.finalize_inactive_if_complete(&mut val_set, v.validator_address)?;
+                self.finalize_inactive_if_complete(&mut val_set, validator)?;
             }
         }
 

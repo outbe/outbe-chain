@@ -12,7 +12,6 @@ use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
-#[cfg(feature = "ocomp-integration")]
 use alloy_sol_types::SolCall as _;
 use eyre::{eyre, Result, WrapErr as _};
 #[cfg(feature = "ocomp-integration")]
@@ -38,8 +37,8 @@ use crate::internal::{
     addresses,
     config::Config,
     eth::{
-        self, IGovernance, IL2Registry, IMetadosis, INod, IStaking, ITeeRegistryV1, ITribute,
-        IUpdate, IValidatorSet, IVote, IZeroFee,
+        self, IGovernance, IL2Registry, IMetadosis, INod, ISlashIndicator, IStaking,
+        ITeeRegistryV1, ITribute, IUpdate, IValidatorSet, IValidatorSetRaw, IVote, IZeroFee,
     },
     parse::{self, ScheduledUpdate, VoteStatus},
     shell::Sh,
@@ -241,6 +240,61 @@ impl CompressedEntityAtHeader {
             .r_sealed
             .to_string();
         Ok((ce_root, proof_sha256))
+    }
+}
+
+/// Public ValidatorSet record returned by either address or dense index.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ValidatorRecord {
+    pub address: Address,
+    pub consensus_pubkey: Bytes,
+    pub stake: U256,
+    pub status: u8,
+    pub slash_count: u64,
+    pub missed_blocks: u64,
+    pub missed_votes: u64,
+    pub blocks_proposed: u64,
+    pub joined_at_height: u64,
+    pub deactivated_at_height: u64,
+    pub unbonding_end: u64,
+    pub has_bls_share: bool,
+}
+
+/// Versioned P2P address stored atomically by ValidatorSet.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ValidatorP2pAddress {
+    pub version: u8,
+    pub encoded: Bytes,
+}
+
+/// Mined transaction result, including contract-level reverts.
+#[derive(Clone, Debug)]
+pub struct TxOutcome {
+    pub transaction_hash: String,
+    pub success: bool,
+    pub receipt: serde_json::Value,
+}
+
+impl TxOutcome {
+    /// Canonical block number from the mined receipt.
+    pub fn block_number(&self) -> Option<u64> {
+        let encoded = self.receipt.get("blockNumber")?.as_str()?;
+        u64::from_str_radix(encoded.trim_start_matches("0x"), 16).ok()
+    }
+
+    /// Exact native fee charged by this transaction.
+    pub fn gas_cost(&self) -> Option<U256> {
+        Rpc::receipt_gas_cost(&self.receipt)
+    }
+}
+
+impl From<eth::MinedCallOutcome> for TxOutcome {
+    fn from(outcome: eth::MinedCallOutcome) -> Self {
+        Self {
+            transaction_hash: outcome.transaction_hash,
+            success: outcome.success,
+            receipt: outcome.receipt,
+        }
     }
 }
 
@@ -1150,29 +1204,153 @@ impl Rpc {
 
     // ---- validator lifecycle reads (ValidatorSet / tribute / metadosis) ------
 
-    /// The full `validatorByAddress` record, or `None` if unreadable.
-    fn validator_record(
-        &self,
-        port: u16,
-        addr: &str,
-    ) -> Option<IValidatorSet::validatorByAddressReturn> {
+    /// The full `validatorByAddress` record, or `None` if absent/unreadable.
+    pub fn validator_record(&self, port: u16, addr: &str) -> Option<ValidatorRecord> {
+        let v: Address = addr.parse().ok()?;
+        let record = eth::read_call(
+            &self.url(port),
+            addresses::VS_ADDR,
+            &IValidatorSet::validatorByAddressCall { addr: v },
+        )?;
+        Some(ValidatorRecord {
+            address: record.validatorAddress,
+            consensus_pubkey: record.consensusPubkey,
+            stake: record.stake,
+            status: record.status,
+            slash_count: record.slashCount,
+            missed_blocks: record.missedBlocks,
+            missed_votes: record.missedVotes,
+            blocks_proposed: record.blocksProposed,
+            joined_at_height: record.joinedAtHeight,
+            deactivated_at_height: record.deactivatedAtHeight,
+            unbonding_end: record.unbondingEnd,
+            has_bls_share: record.hasBLSShare,
+        })
+    }
+
+    /// The full record at the one-based dense ValidatorSet index.
+    pub fn validator_record_by_index(&self, port: u16, index: u64) -> Option<ValidatorRecord> {
+        let record = eth::read_call(
+            &self.url(port),
+            addresses::VS_ADDR,
+            &IValidatorSet::validatorByIndexCall { index },
+        )?;
+        Some(ValidatorRecord {
+            address: record.validatorAddress,
+            consensus_pubkey: record.consensusPubkey,
+            stake: record.stake,
+            status: record.status,
+            slash_count: record.slashCount,
+            missed_blocks: record.missedBlocks,
+            missed_votes: record.missedVotes,
+            blocks_proposed: record.blocksProposed,
+            joined_at_height: record.joinedAtHeight,
+            deactivated_at_height: record.deactivatedAtHeight,
+            unbonding_end: record.unbondingEnd,
+            has_bls_share: record.hasBLSShare,
+        })
+    }
+
+    /// Dense ValidatorSet membership, including non-active records.
+    pub fn validators(&self, port: u16) -> Option<Vec<Address>> {
+        eth::read_call(
+            &self.url(port),
+            addresses::VS_ADDR,
+            &IValidatorSet::getValidatorsCall {},
+        )
+    }
+
+    /// Validators whose persisted status is ACTIVE, share or no share.
+    pub fn active_validators(&self, port: u16) -> Option<Vec<Address>> {
+        eth::read_call(
+            &self.url(port),
+            addresses::VS_ADDR,
+            &IValidatorSet::getActiveValidatorsCall {},
+        )
+    }
+
+    /// Current consensus participants selected by status plus share ownership.
+    pub fn active_consensus_set(&self, port: u16) -> Option<Vec<Address>> {
+        eth::read_call(
+            &self.url(port),
+            addresses::VS_ADDR,
+            &IValidatorSet::getActiveConsensusSetCall {},
+        )
+    }
+
+    /// Number of records in the dense ValidatorSet index.
+    pub fn validator_count(&self, port: u16) -> Option<u64> {
+        eth::read_call(
+            &self.url(port),
+            addresses::VS_ADDR,
+            &IValidatorSet::validatorCountCall {},
+        )
+        .map(u64::from)
+    }
+
+    /// Whether an address currently owns a ValidatorSet record.
+    pub fn is_validator(&self, port: u16, addr: &str) -> Option<bool> {
         let v: Address = addr.parse().ok()?;
         eth::read_call(
             &self.url(port),
             addresses::VS_ADDR,
-            &IValidatorSet::validatorByAddressCall { addr: v },
+            &IValidatorSet::isValidatorCall { addr: v },
         )
+    }
+
+    /// Whether consensus should schedule another validator-set change.
+    pub fn has_pending_set_change(&self, port: u16) -> Option<bool> {
+        eth::read_call(
+            &self.url(port),
+            addresses::VS_ADDR,
+            &IValidatorSet::hasPendingSetChangeCall {},
+        )
+    }
+
+    /// ValidatorSet epoch start timestamp.
+    pub fn epoch_start_timestamp(&self, port: u16) -> Option<u64> {
+        eth::read_call(
+            &self.url(port),
+            addresses::VS_ADDR,
+            &IValidatorSet::getEpochStartTimestampCall {},
+        )
+    }
+
+    /// ValidatorSet epoch start block.
+    pub fn epoch_start_block(&self, port: u16) -> Option<u64> {
+        eth::read_call(
+            &self.url(port),
+            addresses::VS_ADDR,
+            &IValidatorSet::getEpochStartBlockCall {},
+        )
+    }
+
+    /// Version and encoded P2P address. `(0, empty)` means no address is set.
+    pub fn validator_p2p_address(&self, port: u16, addr: &str) -> Option<ValidatorP2pAddress> {
+        let v: Address = addr.parse().ok()?;
+        let value = eth::read_call(
+            &self.url(port),
+            addresses::VS_ADDR,
+            &IValidatorSet::getP2pAddressCall {
+                validatorAddress: v,
+            },
+        )?;
+        Some(ValidatorP2pAddress {
+            version: value.version,
+            encoded: value.encoded,
+        })
     }
 
     /// Status code: 0 REGISTERED, 1 PENDING, 2 ACTIVE, 3 EXITING,
     /// 4 UNBONDING, 5 INACTIVE, 6 JAILED.
     pub fn validator_status(&self, port: u16, addr: &str) -> Option<u64> {
-        self.validator_record(port, addr).map(|r| r.status as u64)
+        self.validator_record(port, addr)
+            .map(|r| u64::from(r.status))
     }
 
     /// Felony slash counter.
     pub fn slash_count(&self, port: u16, addr: &str) -> Option<u64> {
-        self.validator_record(port, addr).map(|r| r.slashCount)
+        self.validator_record(port, addr).map(|r| r.slash_count)
     }
 
     /// Bonded stake recorded by the Staking precompile on a specific node.
@@ -1226,9 +1404,34 @@ impl Rpc {
         .unwrap_or(false)
     }
 
+    /// Number of finalized evidence-felony applications for `validator` at or
+    /// after `from_block`.
+    pub fn evidence_felony_event_count(
+        &self,
+        port: u16,
+        validator: &str,
+        from_block: u64,
+    ) -> Option<usize> {
+        let validator: Address = validator.parse().ok()?;
+        let signature = keccak256("EvidenceFelonyApplied(address,address,uint256,uint256)");
+        let indexed_validator = format!("0x{:0>64}", hex::encode(validator));
+        eth::raw_json_with_params(
+            &self.url(port),
+            "eth_getLogs",
+            serde_json::json!([{
+                "address": format!("{:#x}", addresses::SLASH_ADDR),
+                "fromBlock": format!("0x{from_block:x}"),
+                "toBlock": "finalized",
+                "topics": [format!("{signature:#x}"), indexed_validator],
+            }]),
+        )?
+        .as_array()
+        .map(Vec::len)
+    }
+
     /// Whether the validator holds a live DKG share.
     pub fn has_share(&self, port: u16, addr: &str) -> Option<bool> {
-        self.validator_record(port, addr).map(|r| r.hasBLSShare)
+        self.validator_record(port, addr).map(|r| r.has_bls_share)
     }
 
     /// Whether `addr` is a current consensus participant (ACTIVE or EXITING-with-share).
@@ -1272,6 +1475,26 @@ impl Rpc {
             &IValidatorSet::activeConsensusCountCall {},
         )
         .map(|v| v as u64)
+    }
+
+    /// SlashIndicator's cumulative proposer-miss counter.
+    pub fn proposer_miss_count(&self, port: u16, addr: &str) -> Option<u64> {
+        let validator = addr.parse().ok()?;
+        eth::read_call(
+            &self.url(port),
+            addresses::SLASH_ADDR,
+            &ISlashIndicator::getProposerMissCountCall { validator },
+        )
+    }
+
+    /// SlashIndicator's cumulative felony counter.
+    pub fn felony_count(&self, port: u16, addr: &str) -> Option<u64> {
+        let validator = addr.parse().ok()?;
+        eth::read_call(
+            &self.url(port),
+            addresses::SLASH_ADDR,
+            &ISlashIndicator::getFelonyCountCall { validator },
+        )
     }
 
     /// Tribute total supply on the node at `port` (decimal, for parity checks).
@@ -2287,6 +2510,213 @@ impl Rpc {
             return Err(eyre!("stake receipt was not successful: {tx}"));
         }
         Ok(tx)
+    }
+
+    /// Submit validator registration and return either success or a mined
+    /// contract-level revert without treating the latter as a transport error.
+    pub fn register_validator(
+        &self,
+        caller_key: &str,
+        validator: Address,
+        consensus_pubkey: &[u8],
+        bls_signature: &[u8],
+    ) -> Result<TxOutcome> {
+        eth::send_call_outcome(
+            &self.cfg.rpc0,
+            addresses::VS_ADDR,
+            caller_key,
+            &IValidatorSet::registerValidatorCall {
+                validatorAddress: validator,
+                consensusPubkey: Bytes::copy_from_slice(consensus_pubkey),
+                blsSignature: Bytes::copy_from_slice(bls_signature),
+            },
+            None,
+        )
+        .map(Into::into)
+    }
+
+    /// Set the complete versioned P2P pair and retain reverted receipts for
+    /// atomicity assertions.
+    pub fn set_validator_p2p_address(
+        &self,
+        caller_key: &str,
+        validator: Address,
+        version: u8,
+        encoded: &[u8],
+    ) -> Result<TxOutcome> {
+        eth::send_call_outcome(
+            &self.cfg.rpc0,
+            addresses::VS_ADDR,
+            caller_key,
+            &IValidatorSet::setP2pAddressCall {
+                validatorAddress: validator,
+                version,
+                encoded: Bytes::copy_from_slice(encoded),
+            },
+            None,
+        )
+        .map(Into::into)
+    }
+
+    /// Unstake an exact base-unit amount, preserving reverted receipts.
+    pub fn unstake_base_units(&self, key: &str, amount: U256) -> Result<TxOutcome> {
+        eth::send_call_outcome(
+            &self.cfg.rpc0,
+            addresses::STK_ADDR,
+            key,
+            &IStaking::unstakeCall { amount },
+            None,
+        )
+        .map(Into::into)
+    }
+
+    /// Unstake whole COEN, preserving reverted receipts.
+    pub fn unstake(&self, key: &str, amount: u64) -> Result<TxOutcome> {
+        self.unstake_base_units(key, eth::coen(amount))
+    }
+
+    /// Attempt to move the caller from JAILED to PENDING.
+    pub fn unjail_validator(&self, key: &str) -> Result<TxOutcome> {
+        eth::send_call_outcome(
+            &self.cfg.rpc0,
+            addresses::STK_ADDR,
+            key,
+            &IStaking::unjailValidatorCall {},
+            None,
+        )
+        .map(Into::into)
+    }
+
+    /// Direct typed stale-join confirmation, including a reverted receipt.
+    pub fn confirm_ready_outcome(&self, key: &str, validator_index: usize) -> Result<TxOutcome> {
+        let registration_path = self
+            .cfg
+            .validator_dir(validator_index)
+            .join("ocomp-registration-v1.ocb1");
+        let registration = std::fs::read(&registration_path).wrap_err_with(|| {
+            format!(
+                "read validator-{validator_index} canonical OCOMP registration {}",
+                registration_path.display()
+            )
+        })?;
+        if registration.is_empty() {
+            return Err(eyre!(
+                "validator-{validator_index} canonical OCOMP registration is empty: {}",
+                registration_path.display()
+            ));
+        }
+        eth::send_call_outcome(
+            &self.cfg.rpc0,
+            addresses::VS_ADDR,
+            key,
+            &IValidatorSet::confirmValidatorReadyCall {
+                registration: registration.into(),
+            },
+            None,
+        )
+        .map(Into::into)
+    }
+
+    /// Invoke the privileged raw reshared-set facade.
+    pub fn activate_reshared_set(
+        &self,
+        caller_key: &str,
+        new_active_set: &[Address],
+        active_set_hash: B256,
+    ) -> Result<TxOutcome> {
+        eth::send_call_outcome(
+            &self.cfg.rpc0,
+            addresses::VS_ADDR,
+            caller_key,
+            &IValidatorSetRaw::activateResharedSetCall {
+                newActiveSet: new_active_set.to_vec(),
+                groupPublicKey: active_set_hash,
+            },
+            None,
+        )
+        .map(Into::into)
+    }
+
+    /// Submit two conflicting notarize blocks to SlashIndicator.
+    pub fn submit_conflicting_notarize_evidence(
+        &self,
+        submitter_key: &str,
+        block1: &[u8],
+        block2: &[u8],
+    ) -> Result<TxOutcome> {
+        eth::send_call_outcome(
+            &self.cfg.rpc0,
+            addresses::SLASH_ADDR,
+            submitter_key,
+            &ISlashIndicator::submitConflictingNotarizeEvidenceCall {
+                block1: Bytes::copy_from_slice(block1),
+                block2: Bytes::copy_from_slice(block2),
+            },
+            None,
+        )
+        .map(Into::into)
+    }
+
+    /// Simulate conflicting-notarize evidence without changing state, retaining
+    /// the node's revert text for E2E fixture diagnostics.
+    pub fn simulate_conflicting_notarize_evidence(
+        &self,
+        submitter: Address,
+        block1: &[u8],
+        block2: &[u8],
+    ) -> Result<()> {
+        eth::simulate_call(
+            &self.cfg.rpc0,
+            addresses::SLASH_ADDR,
+            submitter,
+            &ISlashIndicator::submitConflictingNotarizeEvidenceCall {
+                block1: Bytes::copy_from_slice(block1),
+                block2: Bytes::copy_from_slice(block2),
+            },
+        )
+    }
+
+    /// Submit `claimUnbonded()` followed by `registerValidator()` with
+    /// sequential explicit nonces before waiting for either receipt.
+    ///
+    /// The returned receipts expose their block numbers; D-06 asserts that they
+    /// match, proving re-registration happened before the next begin-block
+    /// cleanup rather than after an automatically removed record.
+    pub fn claim_unbonded_then_register(
+        &self,
+        key: &str,
+        validator: Address,
+        consensus_pubkey: &[u8],
+        bls_signature: &[u8],
+    ) -> Result<[TxOutcome; 2]> {
+        let claim = IStaking::claimUnbondedCall {};
+        let register = IValidatorSet::registerValidatorCall {
+            validatorAddress: validator,
+            consensusPubkey: Bytes::copy_from_slice(consensus_pubkey),
+            blsSignature: Bytes::copy_from_slice(bls_signature),
+        };
+        let outcomes = eth::send_prepared_calls_outcomes(
+            &self.cfg.rpc0,
+            key,
+            vec![
+                eth::PreparedCall {
+                    to: addresses::STK_ADDR,
+                    data: Bytes::from(claim.abi_encode()),
+                    value: None,
+                },
+                eth::PreparedCall {
+                    to: addresses::VS_ADDR,
+                    data: Bytes::from(register.abi_encode()),
+                    value: None,
+                },
+            ],
+        )?
+        .into_iter()
+        .map(Into::into)
+        .collect::<Vec<TxOutcome>>();
+        outcomes.try_into().map_err(|outcomes: Vec<TxOutcome>| {
+            eyre!("expected 2 outcomes, got {}", outcomes.len())
+        })
     }
 
     /// Confirm a PENDING joiner is synced/ready (stale-join guard).
