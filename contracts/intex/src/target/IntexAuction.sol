@@ -377,8 +377,9 @@ contract IntexAuction is
         if (issuanceCurrency == 0 || issuanceCurrency > 999) revert InvalidIssuanceCurrency(issuanceCurrency);
         _requirePriced(a.params.prices, worldwideDay, referenceCurrency);
 
-        // Escrow lock in WCOEN = qty * escrowBasis * rate / 1e6; escrowBasis = promis_load
-        // per Intex. 256-bit math so an over-range product reverts typed, not via Panic(0x11).
+        // Escrow lock in WCOEN = qty * escrowBasis * rate / 1e6; escrowBasis is the per-Intex
+        // PROMIS load spent as payment-token minor units, which holds while both carry six decimals.
+        // 256-bit math so an over-range product reverts typed, not via Panic(0x11).
         uint256 escrowBasis = a.params.promisLoadMinor;
         uint256 lockAmount = uint256(quantity) * escrowBasis * bidRate / BridgeMsgCodec.SCALE_1E6;
         if (lockAmount > type(uint128).max) revert BidAmountOverflow(quantity, bidRate);
