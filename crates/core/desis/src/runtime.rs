@@ -453,15 +453,42 @@ fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u
 // ---------------------------------------------------------------------------
 
 /// Intake is open while `Revealing` and through the `Clearing` fan-in. Returns
-/// `true` to proceed, `false` for a redundant post-intake delivery (idempotent
-/// no-op, else the transport redelivers forever), `Err` before intake so the
-/// transport redelivers after reveal.
-fn intake_is_open(stage: AuctionStage) -> Result<bool> {
+/// `Open` to proceed, `Closed` for a redundant post-intake delivery (idempotent
+/// no-op, else the transport redelivers forever), `UnknownDay` for a day this
+/// chain never briefed (acknowledged with `InboundIgnored`, nothing can ever make
+/// it applicable), `Err` before intake so the transport redelivers after reveal.
+fn intake_state(stage: AuctionStage) -> Result<Intake> {
     match stage {
-        AuctionStage::Revealing | AuctionStage::Clearing => Ok(true),
-        AuctionStage::Cleared | AuctionStage::Cancelled => Ok(false),
+        AuctionStage::Revealing | AuctionStage::Clearing => Ok(Intake::Open),
+        AuctionStage::Cleared | AuctionStage::Cancelled => Ok(Intake::Closed),
+        AuctionStage::None => Ok(Intake::UnknownDay),
         _ => Err(DesisError::InvalidStageTransition.into()),
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Intake {
+    Open,
+    Closed,
+    UnknownDay,
+}
+
+/// `InboundIgnored.reason` codes, mirrored in `IDesis`.
+const IGNORED_STALE_GENERATION: u8 = 1;
+const IGNORED_UNKNOWN_DAY: u8 = 2;
+const IGNORED_CONFLICTING_MARKER: u8 = 3;
+
+fn emit_inbound_ignored(
+    contract: &mut DesisContract<'_>,
+    worldwide_day: WorldwideDay,
+    src_chain_id: u32,
+    reason: u8,
+) -> Result<()> {
+    contract.emit(IDesis::InboundIgnored {
+        worldwideDay: worldwide_day.into(),
+        srcChainId: src_chain_id,
+        reason,
+    })
 }
 
 /// Accept a relayed bid batch. Bids accumulate per source chain while the stage is `Revealing`; a
@@ -469,7 +496,8 @@ fn intake_is_open(stage: AuctionStage) -> Result<bool> {
 /// unordered bridge, so completeness is tracked by a per-(chain, generation) bitmap of `batch_index`;
 /// the chain finalizes once its BIDS_DONE marker and every batch have arrived (see
 /// `try_finalize_chain`). A redelivered batch (its bit already set) is an idempotent no-op, so the
-/// transport may safely re-deliver.
+/// transport may safely re-deliver. A batch of a generation a later relay superseded, or for a day this
+/// chain never briefed, is acknowledged with `InboundIgnored`: no later state could make it applicable.
 #[allow(clippy::too_many_arguments)]
 pub fn process_bids_batch(
     storage: StorageHandle<'_>,
@@ -503,18 +531,28 @@ pub fn process_bids_batch(
     }
     let mut contract = storage.contract::<DesisContract>();
 
-    if !intake_is_open(contract.read_stage(worldwide_day)?)? {
-        return Ok(());
+    match intake_state(contract.read_stage(worldwide_day)?)? {
+        Intake::Open => {}
+        Intake::Closed => return Ok(()),
+        Intake::UnknownDay => {
+            return emit_inbound_ignored(
+                &mut contract,
+                worldwide_day,
+                src_chain_id,
+                IGNORED_UNKNOWN_DAY,
+            );
+        }
     }
 
     let chain_key = DesisContract::chain_key(worldwide_day, src_chain_id);
     let last_gen = contract.chain_last_generation.read(&chain_key)?;
     if generation < last_gen {
-        return Err(DesisError::StaleBidsGeneration {
-            incoming: generation,
-            last: last_gen,
-        }
-        .into());
+        return emit_inbound_ignored(
+            &mut contract,
+            worldwide_day,
+            src_chain_id,
+            IGNORED_STALE_GENERATION,
+        );
     }
 
     if generation > last_gen {
@@ -556,7 +594,8 @@ pub fn process_bids_batch(
 /// Accept a chain's BIDS_DONE completeness marker: the source relayed `total_batches` batches with
 /// `total_bids` bids for this day/generation. Stage/generation semantics mirror `process_bids_batch`;
 /// a marker whose generation is ahead of the chain's batches reverts so the transport redelivers it
-/// once the batches have arrived.
+/// once the batches have arrived. A marker the generation already recorded is a no-op when it agrees
+/// and is acknowledged with `InboundIgnored` when it does not: the first marker stands.
 pub fn process_bids_done(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -575,23 +614,48 @@ pub fn process_bids_done(
     }
     let mut contract = storage.contract::<DesisContract>();
 
-    if !intake_is_open(contract.read_stage(worldwide_day)?)? {
-        return Ok(());
+    match intake_state(contract.read_stage(worldwide_day)?)? {
+        Intake::Open => {}
+        Intake::Closed => return Ok(()),
+        Intake::UnknownDay => {
+            return emit_inbound_ignored(
+                &mut contract,
+                worldwide_day,
+                src_chain_id,
+                IGNORED_UNKNOWN_DAY,
+            );
+        }
     }
 
     let chain_key = DesisContract::chain_key(worldwide_day, src_chain_id);
     let last_gen = contract.chain_last_generation.read(&chain_key)?;
     if relay_generation < last_gen {
-        return Err(DesisError::StaleBidsGeneration {
-            incoming: relay_generation,
-            last: last_gen,
-        }
-        .into());
+        return emit_inbound_ignored(
+            &mut contract,
+            worldwide_day,
+            src_chain_id,
+            IGNORED_STALE_GENERATION,
+        );
     }
     if relay_generation > last_gen {
         return Err(PrecompileError::Revert(
             "processBidsDone: marker generation ahead of its batches".into(),
         ));
+    }
+
+    let recorded_batches = contract.chain_done_batches.read(&chain_key)?;
+    if recorded_batches != 0 {
+        let same = recorded_batches == u32::from(total_batches)
+            && contract.chain_done_bids.read(&chain_key)? == total_bids;
+        if same {
+            return Ok(());
+        }
+        return emit_inbound_ignored(
+            &mut contract,
+            worldwide_day,
+            src_chain_id,
+            IGNORED_CONFLICTING_MARKER,
+        );
     }
 
     contract

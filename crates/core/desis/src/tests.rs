@@ -1207,7 +1207,7 @@ fn superseding_generation_resets_done_flag() {
 }
 
 #[test]
-fn stale_generation_is_rejected() {
+fn stale_generation_is_acknowledged_without_effect() {
     with_storage(|s| {
         open_revealing(&s);
 
@@ -1222,7 +1222,7 @@ fn stale_generation_is_rejected() {
             bids(1, 200),
         )
         .unwrap();
-        assert!(runtime::process_bids_batch(
+        runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
             WORLDWIDE_DAY,
@@ -1230,9 +1230,13 @@ fn stale_generation_is_rejected() {
             1,
             0,
             1,
-            bids(1, 200)
+            bids(1, 200),
         )
-        .is_err());
+        .unwrap();
+        let contract = DesisContract::new(s.clone());
+        let key = DesisContract::chain_key(WORLDWIDE_DAY, SRC_CHAIN);
+        assert_eq!(contract.chain_last_generation.read(&key).unwrap(), 2);
+        assert_eq!(contract.chain_bid_count.read(&key).unwrap(), 1);
     });
 }
 
