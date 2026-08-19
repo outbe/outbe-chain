@@ -77,6 +77,10 @@ Feature: Off-chain computation and Metadosis
     When all validator nodes and OCOMP node-facing processes restart with preserved data
     Then the completed materialization cursor and ordinary NOD set remain unchanged
     And validator 0 reconstructs that certified generation from canonical history
+    And the certified contributor authority for that day is identical on every validator
+    And that day has no open contributor payout round before proceeds arrive
+    When the day's auction proceeds arrive from one chain
+    Then every certified contributor is paid their share
 
   @ocomp-int-024
   Scenario: A worker failure is isolated from consensus
