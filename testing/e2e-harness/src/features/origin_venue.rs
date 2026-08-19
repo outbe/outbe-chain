@@ -540,7 +540,11 @@ fn parked_deliveries(world: &World) -> String {
                     format!("{data} ({text})")
                 })
                 .collect();
-            format!("{} parked deliveries: {}", entries.len(), reasons.join(" | "))
+            format!(
+                "{} parked deliveries: {}",
+                entries.len(),
+                reasons.join(" | ")
+            )
         }
         None => "the adapter log is unreadable".to_owned(),
     }
@@ -554,9 +558,8 @@ fn refunds_were_sent(world: &World, worldwide_day: u32) -> bool {
     let Some(contracts) = world.state.origin_contracts.clone() else {
         return false;
     };
-    let topic0 = alloy_primitives::keccak256(
-        b"RefundInstructionsSent(bytes32,uint32,uint256)".as_slice(),
-    );
+    let topic0 =
+        alloy_primitives::keccak256(b"RefundInstructionsSent(bytes32,uint32,uint256)".as_slice());
     eth::raw_json_with_params(
         &url,
         "eth_getLogs",
@@ -780,7 +783,9 @@ fn issued_series(url: &str, venue_router: Address) -> Option<alloy_primitives::F
         .get(2)?
         .as_str()?;
     let word: alloy_primitives::B256 = topic.parse().ok()?;
-    Some(alloy_primitives::FixedBytes::<14>::from_slice(&word.0[..14]))
+    Some(alloy_primitives::FixedBytes::<14>::from_slice(
+        &word.0[..14],
+    ))
 }
 
 #[cfg(feature = "ocomp-integration")]
