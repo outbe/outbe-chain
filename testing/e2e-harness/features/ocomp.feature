@@ -12,7 +12,7 @@ Feature: Off-chain computation and Metadosis
   # OCOMP-TEST-ID: OCM-PUB-001
   # OCOMP-TEST-ID: OCM-PUB-004
   # PFS-TEST-ID: PFS-011-01
-  Scenario: A public Tribute completes real OCOMP, FullNode verification, NOD, and replay
+  Scenario: A public Tribute completes real OCOMP, FullNode verification, NOD, replay, and contributor payout
     Given a fresh four-validator Metadosis capacity localnet at FORMING
     Then the fresh capacity day is created in FORMING by finalized block 1
     And every OCOMP transaction signer is distinct and scoped only to the OCOMP role
