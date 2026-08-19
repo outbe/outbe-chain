@@ -841,6 +841,102 @@ fn has_called_position_tracks_the_owners_book() {
 }
 
 #[test]
+fn the_called_counter_also_clears_on_a_void() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage);
+        let id = open_settleable(&mut credis, 1);
+        credis.mark_called(id, at(10)).unwrap();
+        assert!(credis.has_called_position(alice()).unwrap());
+
+        credis.void_position(id, at(24)).unwrap();
+        assert!(
+            !credis.has_called_position(alice()).unwrap(),
+            "a void resolves the call as much as a settlement does"
+        );
+    });
+}
+
+/// Reads the active index back as a plain list, so the assertions below are
+/// about membership rather than about a particular slot order.
+fn active_ids(credis: &CredisContract<'_>) -> Vec<U256> {
+    let mut out = Vec::new();
+    for i in 0..credis.active_len().unwrap() {
+        if let Some(id) = credis.active_at(i).unwrap() {
+            out.push(id);
+        }
+    }
+    out
+}
+
+#[test]
+fn the_active_index_holds_exactly_the_non_terminal_positions() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage);
+        let id = credis.open_position(params(handle(1), alice())).unwrap();
+        assert_eq!(active_ids(&credis), vec![id], "an open position is listed");
+
+        // Latching and calling keep it listed — both are non-terminal.
+        credis.mark_settleable(id).unwrap();
+        assert_eq!(active_ids(&credis), vec![id]);
+        credis.mark_called(id, at(10)).unwrap();
+        assert_eq!(active_ids(&credis), vec![id]);
+
+        // A partial settlement leaves it listed; the settlement that closes it
+        // does not.
+        credis
+            .settle(id, U256::from(400_000_000u64), at(11))
+            .unwrap();
+        assert_eq!(active_ids(&credis), vec![id]);
+        credis
+            .settle(id, U256::from(999_999_999_999u64), at(12))
+            .unwrap();
+        assert!(active_ids(&credis).is_empty(), "Settled leaves the index");
+    });
+}
+
+#[test]
+fn a_void_leaves_the_active_index() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage);
+        let id = open_settleable(&mut credis, 1);
+        credis.mark_called(id, at(10)).unwrap();
+        credis.void_position(id, at(24)).unwrap();
+        assert!(active_ids(&credis).is_empty());
+    });
+}
+
+#[test]
+fn removing_from_the_middle_keeps_the_active_index_consistent() {
+    with_credis(|storage| {
+        let mut credis = CredisContract::new(storage);
+        let first = open_settleable(&mut credis, 1);
+        let second = open_settleable(&mut credis, 2);
+        let third = open_settleable(&mut credis, 3);
+        assert_eq!(active_ids(&credis), vec![first, second, third]);
+
+        // Close the middle one: the tail swaps into its slot.
+        credis
+            .settle(second, U256::from(999_999_999_999u64), at(1))
+            .unwrap();
+        let after = active_ids(&credis);
+        assert_eq!(after.len(), 2);
+        assert!(after.contains(&first) && after.contains(&third));
+
+        // The swapped entry's stored slot must have followed it, or removing it
+        // next would corrupt the list.
+        credis
+            .settle(third, U256::from(999_999_999_999u64), at(2))
+            .unwrap();
+        assert_eq!(active_ids(&credis), vec![first]);
+
+        credis
+            .settle(first, U256::from(999_999_999_999u64), at(3))
+            .unwrap();
+        assert!(active_ids(&credis).is_empty());
+    });
+}
+
+#[test]
 fn sums_and_indexes_span_all_of_an_accounts_positions() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);

@@ -1,7 +1,7 @@
 # ADR-C-CRD-001: Credis owns credit positions and the price-path state machine
 
 - **Status:** Proposed; current implementation profiled
-- **Date:** 2026-07-17 (revised 2026-08-18 for the Credis v2 price-path model)
+- **Date:** 2026-07-17 (revised 2026-08-19 for the daily price-path scan)
 - **Decision owners:** Credis protocol maintainers
 - **Scope:** `crates/core/credis`
 - **Depends on:** ADR-B-CNS-003, ADR-B-EVM-004
@@ -35,7 +35,7 @@ unknown byte is rejected rather than silently reinterpreted:
 ```text
 Open --mark_settleable--> Settleable --mark_called--> Called
 Settleable|Called --settle(P_out -> 0)--> Settled     (terminal)
-Called --void_remainder--> Void                        (terminal)
+Called --void_position--> Void                         (terminal)
 ```
 
 `Open -> Settleable` is a one-way price latch: a later price fall never re-locks it.
@@ -84,6 +84,14 @@ pledger recorded on the position, so a payer can never redirect value to themsel
 - Every position id is unique and points to one nonzero smart account.
 - Every account index entry points to an existing position owned by that account; every
   position appears exactly once in its owner's dense index.
+- A position appears in the dense active index iff its state is non-terminal
+  (`Open`, `Settleable` or `Called`); `Settled` and `Void` are swap-popped out, and
+  `active_position_index` always holds the entry's current slot. This is what lets the
+  daily scan visit only the positions that can still transition instead of the whole book.
+- `called_position_counts[account]` equals the number of that account's positions in
+  `Called`. It is bumped by `mark_called` and dropped by whichever transition resolves the
+  call — the settlement that closes the position, or the void — so `has_called_position`
+  is an O(1) read rather than a walk.
 - Sealed terms are immutable after creation.
 - `Σ principal settled + outstanding + principal written off = P`.
 - `Σ released collateral + collateral_locked + burned collateral = G`.
@@ -158,9 +166,10 @@ accrual state exists and nothing schedules off a position's creation date.
    Settlement is open at any time once the floor latch has been taken.
 3. **Resolved 2026-08-18** — position status is now an explicit stored `u8` decoded via
    `CredisState::from_u8`, replacing the cursor-derived status.
-4. **Partially resolved 2026-08-18** — the call and void path is implemented, but nothing
-   in production reaches `Called` until the daily reference-price scan lands, so the
-   write-off is currently unreachable. Acceleration and restructuring remain undefined.
+4. **Resolved 2026-08-19** — the `credis_call_daily` scan (ADR-C-CRD-002) arms the call
+   from the finalized daily reference series, so `Called` and the write-off are both
+   reachable in production. Acceleration and restructuring remain undefined and out of
+   scope: the product has no due dates to accelerate.
 5. **Resolved 2026-08-18** — the interest path is fully `checked_*`; the month arithmetic
    it referred to no longer exists.
 6. **Resolved 2026-08-18** — obsolete: there are no installments, and the day count is
@@ -169,12 +178,11 @@ accrual state exists and nothing schedules off a position's creation date.
    monotonicity and account indexes over arbitrary terms and bounds.
 8. Add corruption tests for wrong owners, duplicate account entries and impossible
    state/outstanding combinations.
-9. **Partially resolved 2026-08-18** — the ABI no longer returns unbounded position
-   arrays; callers enumerate through `positionByIndex` /
-   `positionOfAddressByIndex`. The remaining unbounded work is internal:
-   `has_called_position` and `credisPrincipalAndOutstandingOf` still walk every position
-   an account owns, so a borrower can still make new-credit validation increasingly
-   expensive. Bound those with a called-position counter and running per-account totals.
+9. **Partially resolved 2026-08-19** — the ABI no longer returns unbounded position
+   arrays; callers enumerate through `positionByIndex` / `positionOfAddressByIndex`, and
+   `has_called_position` is now the O(1) `called_position_counts` read this item asked
+   for. `credisPrincipalAndOutstandingOf` still walks every position an account owns, so
+   that one read remains unbounded; bound it with running per-account totals.
 10. Define stable position-id domain separation beyond pledge-handle uniqueness and add
     collision/reference vectors.
 11. Prove the opening/settlement/void APIs have no caller except CredisFactory.
