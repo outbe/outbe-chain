@@ -36,9 +36,13 @@ interface ICredisFactory {
     ///         behalf of another account: the debt is pulled from the caller's own
     ///         balance while the freed collateral is always released to the original
     ///         pledger, so a payer can never redirect value to themselves.
-    /// @return totalPaid Stablecoin actually pulled — accrued interest plus the
-    ///         principal covered.
-    function settle(uint256 positionId, uint256 amount) external returns (uint256 totalPaid);
+    /// @return principal Principal covered by this settlement. Drives the collateral
+    ///         released and the reduction in the position's outstanding balance.
+    /// @return interest Accrued interest collected by this settlement. Taken in full
+    ///         before any principal, and never carried between settlements.
+    function settle(uint256 positionId, uint256 amount)
+        external
+        returns (uint256 principal, uint256 interest);
 
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

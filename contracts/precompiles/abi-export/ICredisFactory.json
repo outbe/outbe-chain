@@ -50,7 +50,12 @@
     ],
     "outputs": [
       {
-        "name": "totalPaid",
+        "name": "principal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "interest",
         "type": "uint256",
         "internalType": "uint256"
       }

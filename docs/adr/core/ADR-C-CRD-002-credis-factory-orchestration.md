@@ -55,6 +55,12 @@ rejects a zero amount. It then:
 5. releases the proportional collateral share to the pledger recovered from the
    position's sealed ciphertext via a `RevealOwner` enclave round-trip.
 
+`settle` returns the split — `(principal, interest)` — rather than a single total.
+A caller reconciling a payment needs to know how much of it retired debt and how much
+was the coupon; recovering that from one number would mean re-deriving the interest
+from the position's accrual anchor, which races the settlement that just moved it.
+Their sum is what was pulled.
+
 Failure at any external call rolls back the position bookkeeping and the release.
 
 ### Void the remainder

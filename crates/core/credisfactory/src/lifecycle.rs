@@ -4,7 +4,7 @@
 //! every called position whose settlement window has lapsed with principal still
 //! outstanding, burns the unpaid share of the pledged collateral, drops the pledger's
 //! fidelity cohort, and deposits the equivalent value into the Promis Reserve (see
-//! [`crate::runtime::void_remainder`]).
+//! [`crate::runtime::void_position`]).
 
 use outbe_credis::CredisContract;
 use outbe_primitives::{
@@ -64,7 +64,7 @@ pub fn scan_and_void(ctx: &BlockRuntimeContext) -> Result<u32> {
         let position_id = credis.position_id_at(cursor)?;
         let position = credis.get_position(position_id)?;
         if runtime::is_voidable(&position, now)? {
-            runtime::void_remainder(ctx.storage.clone(), position_id)?;
+            runtime::void_position(ctx.storage.clone(), position_id)?;
             voided = voided.saturating_add(1);
         }
         cursor += 1;

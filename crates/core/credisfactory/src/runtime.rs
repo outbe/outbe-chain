@@ -140,12 +140,15 @@ fn policy_rate_for(storage: StorageHandle<'_>, issuance_currency: u16) -> Result
 /// payer can therefore never redirect value to themselves, and the EOA never appears
 /// on-chain. The payment (the ERC20 → vault deposit below) is the authorization for
 /// the release — no separate proof is required. Returns the stablecoin actually pulled.
+/// Settles `amount` against a position and returns `(principal, interest)` — the
+/// principal this payment covered and the interest it collected. Their sum is what
+/// was pulled from the caller.
 pub fn settle(
     storage: StorageHandle<'_>,
     caller: Address,
     position_id: U256,
     amount: U256,
-) -> Result<U256> {
+) -> Result<(U256, U256)> {
     if amount.is_zero() {
         return Err(CredisFactoryError::InvalidAmount.into());
     }
@@ -203,7 +206,7 @@ pub fn settle(
         )?;
     }
 
-    Ok(paid)
+    Ok((settlement.principal_paid, settlement.interest))
 }
 
 /// Latches an Open position whose currency's live COEN price has crossed its floor.
@@ -243,9 +246,9 @@ fn latch_if_above_floor(
 /// Nothing is market-sold and nothing is collected — the written-off principal and its
 /// accrued interest simply cease to exist, and the burned collateral becomes invest-side
 /// capacity instead.
-pub fn void_remainder(storage: StorageHandle<'_>, position_id: U256) -> Result<()> {
+pub fn void_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()> {
     let now = storage.timestamp()?.to::<u64>();
-    let void = CredisContract::new(storage.clone()).void_remainder(position_id, now)?;
+    let void = CredisContract::new(storage.clone()).void_position(position_id, now)?;
 
     // Recover the pledger EOA from the position's sealed `eoa_ct` through the enclave so
     // the burn / fidelity drop address the right confidential ledgers (reveal once, use

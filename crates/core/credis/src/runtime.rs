@@ -100,10 +100,7 @@ impl CredisContract<'_> {
     }
 
     /// Interest accrued on the outstanding principal since the accrual anchor:
-    /// simple, non-compounding, ACT/365 over **whole** elapsed UTC days.
-    ///
-    /// Rounded up, because §4 requires rounding to favor the protocol. A
-    /// position with nothing outstanding accrues nothing.
+    /// simple, non-compounding, ACT/365 over **whole** elapsed UTC days rounded up.
     pub fn accrued_interest(position: &Position, now: u64) -> Result<U256> {
         let days = Self::elapsed_days(position, now);
         if days == 0 || position.outstanding.is_zero() || position.policy_rate.is_zero() {
@@ -316,7 +313,7 @@ impl CredisContract<'_> {
     ///
     /// Returns what the caller must burn and credit; the position itself is
     /// closed here.
-    pub fn void_remainder(&mut self, position_id: U256, now: u64) -> Result<Void> {
+    pub fn void_position(&mut self, position_id: U256, now: u64) -> Result<Void> {
         let mut position = self.load_position(position_id)?;
         if position.lifecycle_state()? != CredisState::Called {
             return Err(CredisError::NotCalled.into());

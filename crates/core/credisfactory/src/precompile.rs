@@ -50,7 +50,12 @@ pub fn dispatch(
                     })
                 }),
                 settle(c) => mutate(c, caller, |sender, c| {
-                    runtime::settle(storage.clone(), sender, c.positionId, c.amount)
+                    let (principal, interest) =
+                        runtime::settle(storage.clone(), sender, c.positionId, c.amount)?;
+                    Ok(ICredisFactory::settleReturn {
+                        principal,
+                        interest,
+                    })
                 }),
                 supportsInterface(c) => view(c, |c| {
                     let id: [u8; 4] = c.interfaceId.0;

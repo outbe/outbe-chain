@@ -12,7 +12,9 @@
 //! production is a separate change.
 
 use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_sol_types::SolCall;
 
+use crate::precompile::ICredisFactory;
 use outbe_credis::{CredisContract, CredisState};
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave;
@@ -126,13 +128,13 @@ fn advance_to(storage: &StorageHandle<'_>, timestamp: u64) {
 }
 
 /// Settles exactly the accrued interest plus `principal` of the outstanding
-/// balance, and returns what was actually pulled from `payer`.
+/// balance, and returns the `(principal, interest)` the settlement reported.
 fn settle_principal(
     storage: &StorageHandle<'_>,
     payer: Address,
     position_id: U256,
     principal: U256,
-) -> U256 {
+) -> (U256, U256) {
     let position = CredisContract::new(storage.clone())
         .get_position(position_id)
         .unwrap();
@@ -332,15 +334,19 @@ fn settlement_releases_collateral_proportionally_and_closes_without_dust() {
         // Half the principal, 30 days in → half the collateral back.
         advance_to(&storage, CREATED_AT + 30 * DAY);
         let half = pledge_stables() / U256::from(2u64);
-        let paid = settle_principal(&storage, alice(), position_id, half);
+        let (principal_paid, interest_paid) =
+            settle_principal(&storage, alice(), position_id, half);
 
         let position = CredisContract::new(storage.clone())
             .get_position(position_id)
             .unwrap();
         assert_eq!(position.outstanding, half);
         assert_eq!(position.collateral_locked, pledge_cost() / U256::from(2u64));
+        // The two components are reported separately: the principal is exactly
+        // what was asked for, and the interest rode on top of it.
+        assert_eq!(principal_paid, half);
         assert!(
-            paid > half,
+            !interest_paid.is_zero(),
             "interest was collected on top of the principal"
         );
 
@@ -370,6 +376,48 @@ fn settlement_releases_collateral_proportionally_and_closes_without_dust() {
 }
 
 #[test]
+fn the_settle_abi_returns_the_principal_and_interest_split() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let position_id = open(&storage, 1);
+        set_coen_rate(&storage, above_floor());
+        advance_to(&storage, CREATED_AT + 30 * DAY);
+
+        let position = CredisContract::new(storage.clone())
+            .get_position(position_id)
+            .unwrap();
+        let interest = CredisContract::accrued_interest(&position, now_of(&storage)).unwrap();
+        assert!(!interest.is_zero(), "30 days must have accrued something");
+        let principal = pledge_stables() / U256::from(4u64);
+
+        // Drive the real ABI path, so the two-field return is exercised through
+        // encoding and decoding rather than only as a Rust tuple.
+        let data = ICredisFactory::settleCall {
+            positionId: position_id,
+            amount: interest + principal,
+        }
+        .abi_encode();
+        let out = crate::precompile::dispatch(storage.clone(), &data, alice(), U256::ZERO).unwrap();
+        let decoded = ICredisFactory::settleCall::abi_decode_returns(&out).unwrap();
+
+        // Order matters: principal first, interest second.
+        assert_eq!(decoded.principal, principal);
+        assert_eq!(decoded.interest, interest);
+
+        let after = CredisContract::new(storage.clone())
+            .get_position(position_id)
+            .unwrap();
+        assert_eq!(
+            after.outstanding,
+            pledge_stables() - principal,
+            "only the principal component reduces the balance"
+        );
+    });
+    teardown();
+}
+
+#[test]
 fn settle_takes_only_what_the_position_needs() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
@@ -383,15 +431,19 @@ fn settle_takes_only_what_the_position_needs() {
             .unwrap();
         let interest = CredisContract::accrued_interest(&position, now_of(&storage)).unwrap();
 
-        let paid = runtime::settle(
+        let (principal_paid, interest_paid) = runtime::settle(
             storage.clone(),
             alice(),
             position_id,
             pledge_stables() * U256::from(1_000u64),
         )
         .unwrap();
+        // The split is reported separately, and only what the position needed
+        // was pulled — the vast over-payment is not.
+        assert_eq!(principal_paid, pledge_stables());
+        assert_eq!(interest_paid, interest);
         assert_eq!(
-            paid,
+            principal_paid + interest_paid,
             interest + pledge_stables(),
             "only interest + outstanding principal is pulled"
         );

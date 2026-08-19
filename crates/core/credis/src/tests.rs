@@ -208,7 +208,7 @@ fn worked_example_ledger_closes_exactly() {
         assert_eq!(p.collateral_locked, U256::from(470_794_524u64));
 
         // --- Day 472: the window lapses. ------------------------------------
-        let void = credis.void_remainder(id, at(472)).unwrap();
+        let void = credis.void_position(id, at(472)).unwrap();
         assert_eq!(void.gratis_burned, U256::from(470_794_524u64));
         assert_eq!(void.principal_written_off, U256::from(235_397_262u64));
         // 7 days of interest on the remainder — never collected.
@@ -759,13 +759,13 @@ fn void_requires_a_called_position_past_its_window_with_a_remainder() {
         let mut credis = CredisContract::new(storage);
         let id = open_settleable(&mut credis, 1);
 
-        let err = credis.void_remainder(id, at(500)).unwrap_err().to_string();
+        let err = credis.void_position(id, at(500)).unwrap_err().to_string();
         assert!(err.contains("not called"), "got: {err}");
 
         credis.mark_called(id, at(10)).unwrap();
         let deadline = settlement_deadline(&credis.get_position(id).unwrap());
         let err = credis
-            .void_remainder(id, deadline - 1)
+            .void_position(id, deadline - 1)
             .unwrap_err()
             .to_string();
         assert!(err.contains("window has not lapsed"), "got: {err}");
@@ -774,7 +774,7 @@ fn void_requires_a_called_position_past_its_window_with_a_remainder() {
         credis
             .settle(id, U256::from(999_999_999_999u64), at(11))
             .unwrap();
-        let err = credis.void_remainder(id, deadline).unwrap_err().to_string();
+        let err = credis.void_position(id, deadline).unwrap_err().to_string();
         assert!(
             err.contains("closed") || err.contains("not called"),
             "got: {err}"
@@ -789,7 +789,7 @@ fn a_fully_unpaid_void_burns_all_collateral_and_scores_a_full_unpaid_share() {
         let id = open_settleable(&mut credis, 1);
         credis.mark_called(id, at(10)).unwrap();
 
-        let void = credis.void_remainder(id, at(24)).unwrap();
+        let void = credis.void_position(id, at(24)).unwrap();
         assert_eq!(void.gratis_burned, collateral());
         assert_eq!(void.principal_written_off, U256::from(PRINCIPAL));
         assert_eq!(void.unpaid_share, SCALE_1E6_U256, "100% unpaid");
@@ -802,10 +802,10 @@ fn void_is_terminal() {
         let mut credis = CredisContract::new(storage);
         let id = open_settleable(&mut credis, 1);
         credis.mark_called(id, at(10)).unwrap();
-        credis.void_remainder(id, at(24)).unwrap();
+        credis.void_position(id, at(24)).unwrap();
 
         // A second sweep finds nothing: the position is no longer Called.
-        assert!(credis.void_remainder(id, at(25)).is_err());
+        assert!(credis.void_position(id, at(25)).is_err());
         assert!(credis.settle(id, U256::from(1u64), at(25)).is_err());
         assert!(!credis.has_called_position(alice()).unwrap());
     });
