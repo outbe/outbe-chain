@@ -16,7 +16,7 @@ import {
   parseUnits,
 } from "viem";
 import { z } from "zod";
-import { type Ctx, createCtx } from "../chain.js";
+import { type Ctx, createCtx, formatNativeAmount } from "../chain.js";
 import { handler, ok } from "./util.js";
 import {
   AUCTION_ABI,
@@ -966,7 +966,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         tokenId: sp.tokenId.toString(),
         dstChainId: sp.dstChainId,
         recipient: to,
-        fee: { nativeFee: { raw: fee.toString(), value: formatUnits(fee, 18) } },
+        fee: { nativeFee: { raw: fee.toString(), value: formatNativeAmount(n.chain, fee) } },
       });
     }),
   );
@@ -997,7 +997,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         series,
         tokenId: sp.tokenId.toString(),
         recipient: to,
-        fee: { raw: fee.toString(), value: formatUnits(fee, 18) },
+        fee: { raw: fee.toString(), value: formatNativeAmount(n.chain, fee) },
         ...receipt,
       });
     }),
