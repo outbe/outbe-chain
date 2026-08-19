@@ -62,9 +62,6 @@ pub enum GemFactoryError {
     #[error("{currency} is not an ISO 4217 currency code")]
     InvalidCurrency { currency: u16 },
 
-    #[error("issuance currency {issuance} must equal reference currency {reference}")]
-    IssuanceReferenceMismatch { issuance: u16, reference: u16 },
-
     #[error("oracle nominal unavailable")]
     OracleUnavailable,
 

@@ -28,6 +28,7 @@ use outbe_primitives::{
     error::{PrecompileError, Result},
 };
 
+use crate::constants::REWARD_GEM_CURRENCY;
 use crate::runtime::day_number_since_genesis;
 use crate::schema::Rewards;
 
@@ -130,8 +131,14 @@ pub fn add_topup_for_voters(
         if share.is_zero() {
             continue;
         }
-        // 840, 840 = ISO 4217 USD for both issuance and reference currency.
-        outbe_gemfactory::api::mint_gem(&ctx.storage, *voter, gem_type, share, 840, 840)?;
+        outbe_gemfactory::api::mint_gem(
+            &ctx.storage,
+            *voter,
+            gem_type,
+            share,
+            REWARD_GEM_CURRENCY,
+            REWARD_GEM_CURRENCY,
+        )?;
         distributed = distributed
             .checked_add(share)
             .ok_or_else(|| PrecompileError::Revert("topup distributed overflow".into()))?;

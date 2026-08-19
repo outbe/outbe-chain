@@ -98,6 +98,31 @@ pub fn coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<U256> {
     oracle.get_exchange_rate(COEN_ASSET, currency_address(iso_code))
 }
 
+/// `amount`, denominated in `from_iso`, re-expressed in `to_iso`.
+///
+/// Both currencies are priced against COEN, so the cross rate is the ratio of
+/// the two legs: `amount x rate(COEN/to) / rate(COEN/from)`. One rounding,
+/// upwards, so a converted charge never undercollects. Equal currencies
+/// short-circuit and read no rate at all.
+///
+/// Reverts when either leg has no registered pair or no published rate.
+pub fn convert_currency(
+    storage: StorageHandle,
+    amount: U256,
+    from_iso: u16,
+    to_iso: u16,
+) -> Result<U256> {
+    if from_iso == to_iso || amount.is_zero() {
+        return Ok(amount);
+    }
+    let rate_from = coen_rate_for(storage.clone(), from_iso)?;
+    let rate_to = coen_rate_for(storage, to_iso)?;
+    let numerator = amount
+        .checked_mul(rate_to)
+        .ok_or(OracleError::CrossRateOverflow)?;
+    Ok(numerator.div_ceil(rate_from))
+}
+
 /// Current COEN price to currency `iso_code`, or `None` when the pair is not
 /// registered or carries no published rate.
 ///

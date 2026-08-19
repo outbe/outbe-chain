@@ -44,6 +44,9 @@ pub fn dispatch(
                 let quote = crate::api::currency_address(c.isoCode);
                 oracle.get_exchange_rate(crate::api::COEN_ASSET, quote)
             }),
+            convertCurrency(c) => view(c, |c| {
+                crate::api::convert_currency(oracle.storage.clone(), c.amount, c.fromIso, c.toIso)
+            }),
             getVwap(c) => view(c, |c| {
                 let pair = oracle.require_pair_from(c.base, c.quote)?;
                 let now = oracle.storage.timestamp()?.to::<u64>();

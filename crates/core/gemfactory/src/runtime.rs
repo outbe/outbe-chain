@@ -108,14 +108,6 @@ pub fn mint_gem_position(
 
     let series = outbe_intex::api::get_series(storage, source_intex_id)?
         .ok_or(GemFactoryError::SourceIntexNotFound)?;
-    // v1 supports only same-currency positions (mirrors mint_gem's limitation).
-    if series.issuance_currency != series.reference_currency {
-        return Err(GemFactoryError::IssuanceReferenceMismatch {
-            issuance: series.issuance_currency,
-            reference: series.reference_currency,
-        }
-        .into());
-    }
 
     // Burn `amount` of the merchant's Intex units; `parkIntex` returns the
     // burned count (and reverts on a non-parkable state or a zero amount).
@@ -290,16 +282,21 @@ pub fn settle_gem(
         return Err(GemFactoryError::SettlementCurrencyMismatch { asset, expected }.into());
     }
 
+    // The Cost Amount is denominated in the reference currency, so a settlement
+    // that resolves to the issuance currency is charged at the live cross rate.
+    let amount_paid = outbe_oracle::api::convert_currency(
+        storage.clone(),
+        item.cost_amount_minor,
+        item.reference_currency,
+        expected,
+    )?;
+
     gem_api::set_state(storage, gem_id, GemState::Settled)?;
 
-    if !item.cost_amount_minor.is_zero() {
+    if !amount_paid.is_zero() {
         // The caller pays in `asset`, validated above to match the Settlement
         // Currency.
-        //
-        // TODO(multi-currency): `cost_amount_minor` is denominated in the
-        // reference currency, so when the Settlement Currency resolves to a
-        // different issuance currency the charge has to be converted
-        deposit_to_vault(storage, caller, item.cost_amount_minor, asset)?;
+        deposit_to_vault(storage, caller, amount_paid, asset)?;
     }
 
     emit_event(
@@ -307,7 +304,7 @@ pub fn settle_gem(
         GemSettled {
             gemId: gem_id,
             owner: caller,
-            amountPaid: item.cost_amount_minor,
+            amountPaid: amount_paid,
             issuanceCurrency: item.issuance_currency,
         },
     )?;
