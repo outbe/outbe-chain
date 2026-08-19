@@ -453,9 +453,9 @@ pub mod mock {
         const GAS_ESTIMATE: u64 = 21_000;
         const TX_HASH: &str = "0xdeadbeef";
 
-        // `eth_gasPrice` returns `suggested`; `send_tx` signs with the buffered price.
-        let suggested = U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE);
-        let gas_price = crate::tx::buffered_gas_price(suggested);
+        // The latest block states the base fee; `send_tx` signs with the buffered price.
+        let base_fee = U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE);
+        let gas_price = crate::tx::buffered_gas_price(base_fee);
         let signer = TxSigner::new(private_key)?;
         let gas_limit = GAS_ESTIMATE + GAS_ESTIMATE / 5;
         let raw_tx = signer
@@ -473,8 +473,10 @@ pub mod mock {
                 RecordedRpcResponse::U64(NONCE),
             ),
             ExpectedRpcCall::ok(
-                RecordedRpcCall::EthGasPrice,
-                RecordedRpcResponse::U256(suggested),
+                RecordedRpcCall::EthGetLatestBlock,
+                RecordedRpcResponse::Value(serde_json::json!({
+                    "baseFeePerGas": format!("{base_fee:#x}"),
+                })),
             ),
             ExpectedRpcCall::ok(
                 RecordedRpcCall::EthEstimateGas {
