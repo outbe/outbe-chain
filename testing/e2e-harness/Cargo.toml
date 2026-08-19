@@ -16,7 +16,6 @@ ocomp-finality-fixture = [
     "dep:outbe-consensus",
     "dep:outbe-common",
     "dep:outbe-fidelity",
-    "dep:outbe-intex",
     "dep:outbe-metadosis",
     "dep:outbe-node",
     "dep:outbe-ocomp-protocol",
@@ -82,7 +81,6 @@ outbe-common = { workspace = true, optional = true }
 outbe-consensus = { workspace = true, optional = true }
 outbe-fidelity = { workspace = true, optional = true }
 outbe-metadosis = { workspace = true, optional = true }
-outbe-intex = { workspace = true, optional = true }
 outbe-nod = { workspace = true, optional = true }
 outbe-nodfactory = { workspace = true, optional = true }
 outbe-node = { workspace = true, optional = true }

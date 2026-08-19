@@ -7539,7 +7539,6 @@ dependencies = [
  "outbe-consensus",
  "outbe-evm",
  "outbe-fidelity",
- "outbe-intex",
  "outbe-metadosis",
  "outbe-nod",
  "outbe-node",

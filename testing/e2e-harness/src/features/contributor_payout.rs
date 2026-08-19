@@ -3,19 +3,12 @@
 //! Reads the two precompile views the payout path publishes: the contributor
 //! authority Lysis installs, and the payout round proceeds open.
 
-use std::fs;
-use std::path::PathBuf;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::sol;
 use cucumber::{then, when};
-
-use outbe_intex::payout::{
-    build_contributor_range_proof, decode_contributor_leaf, encode_contributor_leaf,
-    ContributorLeafData, CONTRIBUTOR_CHUNK_CAPACITY, CONTRIBUTOR_LEAF_BYTES,
-};
 
 use crate::internal::eth;
 use crate::world::World;
@@ -50,98 +43,6 @@ sol! {
         }
         function contributorPayoutRound(uint32 worldwideDay)
             external view returns (ContributorRound memory);
-    }
-}
-
-sol! {
-    #[sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
-    interface IIntexFactoryPayout {
-        struct ContributorLeaf {
-            address owner;
-            bytes32 sourceTributeDigest;
-            bytes4 sourceTributeIndex;
-            uint256 nominal;
-        }
-        function payContributorBatch(
-            uint32 worldwideDay,
-            uint32 startIndex,
-            ContributorLeaf[] calldata leaves,
-            bytes32[] calldata proof
-        ) external;
-    }
-}
-
-/// Reads the day's dense contributor list from validator 0's finalized payout
-/// artifact, the same file the production payout sender consumes.
-fn certified_leaves(world: &World) -> Vec<ContributorLeafData> {
-    let jobs = world
-        .ocomp
-        .domain_root(0)
-        .expect("validator 0 OCOMP domain root")
-        .join("supervisor-v1")
-        .join("jobs");
-    let mut artifact: Option<PathBuf> = None;
-    for entry in fs::read_dir(&jobs).expect("read OCOMP job roots") {
-        let candidate = entry
-            .expect("read one OCOMP job root")
-            .path()
-            .join("contributor-payout-v1.bin");
-        if candidate.is_file() {
-            artifact = Some(candidate);
-        }
-    }
-    let artifact = artifact.expect("finalization wrote a contributor payout artifact");
-    let bytes = fs::read(&artifact).expect("read the contributor payout artifact");
-    assert!(
-        !bytes.is_empty() && bytes.len() % CONTRIBUTOR_LEAF_BYTES == 0,
-        "payout artifact {} is not a whole number of records",
-        artifact.display()
-    );
-    bytes
-        .chunks_exact(CONTRIBUTOR_LEAF_BYTES)
-        .map(|record| decode_contributor_leaf(record.try_into().expect("record is one leaf wide")))
-        .collect()
-}
-
-/// Drives the payout exactly as production does: the validator's OCOMP delegate
-/// sends one chunk-aligned batch per call, each proved against the certified
-/// root, and rides the zero-fee lane its role grants.
-fn pay_every_chunk(world: &World, day: u32, sender: &str) {
-    let leaves = certified_leaves(world);
-    let count = u32::try_from(leaves.len()).expect("contributor count fits u32");
-    let encoded: Vec<[u8; CONTRIBUTOR_LEAF_BYTES]> =
-        leaves.iter().map(encode_contributor_leaf).collect();
-    let url = world.rpc.url(world.validators.primary_port());
-    let mut start = 0_u32;
-    while start < count {
-        let end = count.min(start + CONTRIBUTOR_CHUNK_CAPACITY);
-        let proof = build_contributor_range_proof(count, start, encoded.iter())
-            .expect("build the contributor range proof");
-        let batch = leaves[start as usize..end as usize]
-            .iter()
-            .map(|leaf| IIntexFactoryPayout::ContributorLeaf {
-                owner: leaf.owner,
-                sourceTributeDigest: B256::from_slice(&leaf.source_tribute_id[..32]),
-                sourceTributeIndex: leaf.source_tribute_id[32..]
-                    .try_into()
-                    .expect("four trailing index bytes"),
-                nominal: leaf.nominal,
-            })
-            .collect::<Vec<_>>();
-        eth::send_call(
-            &url,
-            INTEX_FACTORY_ADDR,
-            sender,
-            &IIntexFactoryPayout::payContributorBatchCall {
-                worldwideDay: day,
-                startIndex: start,
-                leaves: batch,
-                proof,
-            },
-            None,
-        )
-        .expect("pay one contributor chunk");
-        start = end;
     }
 }
 
@@ -296,11 +197,6 @@ fn proceeds_arrive(world: &mut World) {
 fn contributors_are_paid(world: &mut World) {
     let day = worldwide_day(world);
     let url = world.rpc.url(world.validators.primary_port());
-    let delegate = world
-        .ocomp
-        .ocomp_delegate_private_key(0)
-        .expect("validator 0 OCOMP delegate key");
-    pay_every_chunk(world, day, &delegate);
     let deadline = Instant::now() + Duration::from_secs(600);
     loop {
         let round = eth::read_call(
