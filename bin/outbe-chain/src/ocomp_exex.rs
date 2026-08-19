@@ -23,13 +23,15 @@ use alloy_sol_types::SolEvent as _;
 use eyre::{bail, Context as _};
 use futures::StreamExt as _;
 use outbe_metadosis::precompile::IMetadosis;
+use outbe_ocomp::payout_submitter::PayoutTickOutcomeV1;
 use outbe_ocomp::{
     bundle::PinnedProtocolBundle,
     embedded::{EmbeddedJobActionV1, EmbeddedJobStateV1, EmbeddedOcompJobsV1, EmbeddedOcompModeV1},
     embedded_checkpoint::{OcompExExCheckpointStoreV1, OcompExExCheckpointV1},
     embedded_runtime::{
         EmbeddedComputeOutcomeV1, EmbeddedMaterializationOutcomeV1, EmbeddedNodePolicyV1,
-        EmbeddedOcompDomainConfigV1, EmbeddedOcompDomainV1, EmbeddedVoteOutcomeV1,
+        EmbeddedOcompDomainConfigV1, EmbeddedOcompDomainV1, EmbeddedOcompRuntimeErrorV1,
+        EmbeddedPayoutOutcomeV1, EmbeddedVoteOutcomeV1,
     },
     supervisor::DiscoveryRecord,
 };
@@ -61,6 +63,8 @@ use reth_provider::{
 };
 use tracing::{error, info, warn};
 
+/// Days a payout tick looks back over, matching the standalone Supervisor.
+const PAYOUT_LOOKBACK_DAYS: u32 = 30;
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Clone)]
@@ -184,6 +188,9 @@ struct EmbeddedOcompExExV1<P> {
     materialization_tx: mpsc::Sender<EmbeddedMaterializationOutcomeV1>,
     materialization_rx: mpsc::Receiver<EmbeddedMaterializationOutcomeV1>,
     materialization_active: Option<MaterializationAttemptKeyV1>,
+    payout_tx: mpsc::Sender<EmbeddedPayoutOutcomeV1>,
+    payout_rx: mpsc::Receiver<EmbeddedPayoutOutcomeV1>,
+    payout_active: bool,
     materialization_attempt_heights: BTreeMap<MaterializationAttemptKeyV1, u64>,
     chain_id: u64,
     genesis_hash: B256,
@@ -258,6 +265,7 @@ where
     let (compute_tx, compute_rx) = mpsc::channel();
     let (vote_tx, vote_rx) = mpsc::channel();
     let (materialization_tx, materialization_rx) = mpsc::channel();
+    let (payout_tx, payout_rx) = mpsc::channel();
     let mut runtime = EmbeddedOcompExExV1 {
         provider,
         policy: config.policy,
@@ -279,6 +287,9 @@ where
         materialization_tx,
         materialization_rx,
         materialization_active: None,
+        payout_tx,
+        payout_rx,
+        payout_active: false,
         materialization_attempt_heights: BTreeMap::new(),
         chain_id: config.identity.chain_id,
         genesis_hash: config.genesis_hash,
@@ -318,6 +329,9 @@ where
                 }
                 while let Ok(outcome) = runtime.materialization_rx.try_recv() {
                     runtime.handle_materialization(outcome);
+                }
+                while let Ok(outcome) = runtime.payout_rx.try_recv() {
+                    runtime.handle_payout(outcome);
                 }
                 if let Some(checkpoint) = runtime.advance_checkpoint()? {
                     if ctx.events.send(ExExEvent::FinishedHeight(
@@ -374,6 +388,7 @@ where
         if target.number == self.scanned_height {
             self.refresh_jobs(target.number, target.hash)?;
             self.reconcile_materialization(target.number, target.hash)?;
+            self.drive_payout();
             self.publish_readiness(target.number, target.hash)?;
             return Ok(());
         }
@@ -386,6 +401,7 @@ where
             self.scan_requests(number, hash)?;
             self.refresh_jobs(number, hash)?;
             self.reconcile_materialization(number, hash)?;
+            self.drive_payout();
             self.scanned_height = number;
             self.scanned_hash = hash;
             self.publish_readiness(number, hash)?;
@@ -862,6 +878,47 @@ where
             "finalized proposer woke NOD materialization"
         );
         Ok(())
+    }
+
+    /// Ticks the payout sender the standalone Supervisor process would tick.
+    /// One tick at a time: the submitter journals its own progress, so a later
+    /// block simply resumes where this one stopped.
+    fn drive_payout(&mut self) {
+        if self.payout_active {
+            return;
+        }
+        let Ok(now) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) else {
+            return;
+        };
+        let mut day = outbe_primitives::time::worldwide_day_from_timestamp(now.as_secs());
+        let mut days = Vec::with_capacity(PAYOUT_LOOKBACK_DAYS as usize + 1);
+        for _ in 0..=PAYOUT_LOOKBACK_DAYS {
+            days.push(day);
+            day = outbe_primitives::time::previous_date_key(day);
+        }
+        days.reverse();
+        match self.domain.spawn_validator_payout(
+            days,
+            Arc::new(AtomicBool::new(false)),
+            self.payout_tx.clone(),
+        ) {
+            Ok(()) => self.payout_active = true,
+            Err(EmbeddedOcompRuntimeErrorV1::FullNodeVoteAuthority) => {}
+            Err(error) => warn!(?error, "OCOMP payout tick could not start"),
+        }
+    }
+
+    fn handle_payout(&mut self, outcome: EmbeddedPayoutOutcomeV1) {
+        self.payout_active = false;
+        match outcome {
+            EmbeddedPayoutOutcomeV1::Ticked(PayoutTickOutcomeV1::Idle) => {}
+            EmbeddedPayoutOutcomeV1::Ticked(outcome) => {
+                info!(?outcome, "OCOMP payout tick advanced");
+            }
+            EmbeddedPayoutOutcomeV1::Failed(detail) => {
+                warn!(detail, "OCOMP payout tick failed");
+            }
+        }
     }
 
     fn handle_materialization(&mut self, outcome: EmbeddedMaterializationOutcomeV1) {
