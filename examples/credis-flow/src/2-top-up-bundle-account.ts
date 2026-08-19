@@ -1,5 +1,5 @@
 /**
- * 2-top-up-smart-account.ts
+ * 2-top-up-bundle-account.ts
  *
  * Runs on behalf of the user to:
  *   1. Check if a smart account exists, create if not
@@ -9,7 +9,7 @@
  *   - Run 0-setup.ts first to ensure balances
  *   - .{envName}.env and .{envName}.deployment.env populated
  *
- * Usage: npx tsx src/2-top-up-smart-account.ts [envName]
+ * Usage: npx tsx src/2-top-up-bundle-account.ts [envName]
  */
 
 import { ethers, Wallet } from "ethers";

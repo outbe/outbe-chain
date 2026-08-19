@@ -14,6 +14,33 @@ export const DEFAULT_GEM_FACTORY_ADDRESS = "0x0000000000000000000000000000000000
 export const DEFAULT_CREDIS_FACTORY_ADDRESS = "0x0000000000000000000000000000000000001009";
 export const DEFAULT_CREDIS_ADDRESS = "0x000000000000000000000000000000000000100A";
 export const DEFAULT_FIDELITY_ADDRESS = "0x000000000000000000000000000000000000100C";
+export const DEFAULT_CCA_REGISTRY_ADDRESS = "0x0000000000000000000000000000000000001019";
+
+// Native COEN is SIX-decimal on this chain, not eighteen:
+// `crates/blockchain/primitives/src/units.rs` sets NATIVE_TOKEN_DECIMALS = 6 and
+// ONE_COEN = 1e6, and `mineCoen` mints native 1:1 from six-decimal Gratis. Using
+// ethers' parseEther/formatEther here is off by 1e12 — enough to exceed every
+// funded account and revert. Always go through these two.
+export const COEN_DECIMALS = 6;
+
+/** Whole COEN -> base units. `coen("1.5")` === 1_500_000n. */
+export function coen(whole: string): bigint {
+  return ethers.parseUnits(whole, COEN_DECIMALS);
+}
+
+/** Base units -> a human string, without a symbol. */
+export function formatCoen(value: bigint): string {
+  return ethers.formatUnits(value, COEN_DECIMALS);
+}
+
+// ERC-4337 prefund. EntryPoint requires
+//   (verificationGasLimit + callGasLimit + preVerificationGas) * maxFeePerGas
+// to be on deposit before validation. The UserOps here use [2e6, 2e6] account gas
+// limits, 1e6 preVerificationGas and maxFeePerGas = 1, so that floor is 5e6 base
+// units = 5 COEN. Note this is a COEN amount, so it must be sized in base units —
+// a "0.05 COEN" deposit would be 50_000 units and fail validation.
+export const ENTRYPOINT_MIN_DEPOSIT = 5_000_000n;
+export const ENTRYPOINT_TOPUP = 20_000_000n;
 
 export interface TokenMeta {
   decimals: number;

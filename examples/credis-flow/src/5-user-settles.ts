@@ -22,6 +22,9 @@ import {
   ownerPermissionId,
   permissionNonceKey,
   encodePermissionSignature,
+  ENTRYPOINT_MIN_DEPOSIT,
+  ENTRYPOINT_TOPUP,
+  formatCoen,
 } from "./utils.js";
 import { deriveGratisKeys, decryptBalance } from "./confidential.js";
 import { findLatestTicket } from "./ticket.js";
@@ -181,7 +184,7 @@ async function main() {
   // Verify smart account is deployed
   const code = await provider.getCode(smartAccountAddr);
   if (code === "0x") {
-    console.error("smart account not deployed. Run 2-top-up-smart-account.ts first.");
+    console.error("smart account not deployed. Run `npm run top-up-bundle-account` first.");
     process.exit(1);
   }
 
@@ -247,9 +250,9 @@ async function main() {
   const gratisBalBefore = decryptBalance(userKeys.viewKey, userAddress, await gratis.balanceOf(userAddress));
   console.log(
     `\nThis payment unlocks the matching share of collateral back to ${userAddress}` +
-      ` (up to ${formatToken(position.collateralLocked, 18, "GRATIS")} still locked).`,
+      ` (up to ${formatToken(position.collateralLocked, 6, "GRATIS")} still locked).`,
   );
-  console.log(`  User Gratis balance before: ${formatToken(gratisBalBefore, 18, "GRATIS")} (decrypted)`);
+  console.log(`  User Gratis balance before: ${formatToken(gratisBalBefore, 6, "GRATIS")} (decrypted)`);
 
   // State before
   const before = await getState(token, credis, smartAccountAddr, underlyingVaultAddr);
@@ -272,11 +275,11 @@ async function main() {
 
   // Ensure EntryPoint has deposit for gas
   const epDeposit: bigint = await entryPoint.balanceOf(smartAccountAddr);
-  if (epDeposit < ethers.parseEther("0.01")) {
+  if (epDeposit < ENTRYPOINT_MIN_DEPOSIT) {
     console.log("\nFunding EntryPoint deposit for smart account...");
-    const depositTx = await entryPoint.depositTo(smartAccountAddr, { value: ethers.parseEther("0.05") });
+    const depositTx = await entryPoint.depositTo(smartAccountAddr, { value: ENTRYPOINT_TOPUP });
     await depositTx.wait();
-    console.log("  Deposited 0.05 COEN into EntryPoint");
+    console.log(`  Deposited ${formatCoen(ENTRYPOINT_TOPUP)} COEN into EntryPoint`);
   }
 
   // Encode batch: [approve(credisFactory, settleAmount), settle(positionId, settleAmount)].
@@ -424,7 +427,7 @@ async function main() {
   // or follow-up unpledge is needed.
   const gratisBalAfter = decryptBalance(userKeys.viewKey, userAddress, await gratis.balanceOf(userAddress));
   const unlocked = gratisBalAfter - gratisBalBefore;
-  console.log(`  User Gratis:     ${formatTokenDiff(unlocked, 18, "GRATIS")} (collateral released to the pledger)`);
+  console.log(`  User Gratis:     ${formatTokenDiff(unlocked, 6, "GRATIS")} (collateral released to the pledger)`);
 
   // The release is proportional to the debt paid down, so it must be positive and can
   // never exceed what the position still had locked.
@@ -435,8 +438,8 @@ async function main() {
   console.log(`  Outstanding:     ${formatTokenMeta(positionAfter.outstanding, erc20Meta)}`);
   if (unlocked <= 0n || unlocked > position.collateralLocked) {
     console.warn(
-      `  WARNING: unlocked ${formatToken(unlocked, 18, "GRATIS")} outside the expected` +
-        ` (0, ${formatToken(position.collateralLocked, 18, "GRATIS")}] range`,
+      `  WARNING: unlocked ${formatToken(unlocked, 6, "GRATIS")} outside the expected` +
+        ` (0, ${formatToken(position.collateralLocked, 6, "GRATIS")}] range`,
     );
   }
 }

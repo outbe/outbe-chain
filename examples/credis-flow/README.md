@@ -179,9 +179,11 @@ export BUNDLE_SPEND_PROTECTOR_HOOK_ADDRESS=0xC3Fdf1E3DE6767eeEa95028A8BF93817CA2
 export BUNDLE_WITHDRAW_HOOK_ADDRESS=0xdF25D88FED0FF8af2003Eb98E0CC153303fcAF2c
 export SMART_ACCOUNT_FACTORY_ADDRESS=0xe28db1d1a138B21f2c84D7156b4Dab45a2F18E30
 
-export VAULT_ADDRESS=0xc0E713890eC7bbcC9e21e027c357c5042B7f03B6
-export VAULT_ROUTER_IMPL_ADDRESS=0x7c43B530dE37E6943f8AfF0e0698246A7b87D682
-export VAULT_ROUTER_ADDRESS=0xA447d123a93236A64CBBE1599E8102b54491F01E
+# The vault router is a precompile at a fixed address, NOT a deployment. It is also
+# passed as the smart account's allowed `topUp` caller, and CallerHook reverts
+# InvalidCaller for anything else — so a deployed-looking address here makes step 3's
+# disbursement revert inside the sub-call.
+export VAULT_ROUTER_ADDRESS=0x0000000000000000000000000000000000001017
 ```
 
 ## Running
@@ -209,10 +211,13 @@ npx tsx src/1-pledge-gratis.ts                          # default: 1 stablecoin 
 npx tsx src/1-pledge-gratis.ts 1000 outbe-peira         # $1,000 of credit
 
 # Deploy smart account (if needed) and fund with 1,000 USD
-npx tsx src/2-top-up-smart-account.ts
+npx tsx src/2-top-up-bundle-account.ts
 
 # CCA requests credis against a prior pledge (latest ticket, or an explicit path).
 # The disbursed amount and the asset come from the ticket, not from calldata.
+# Payable: the CCA attaches COEN equal to the pledged collateral, which is escrowed
+# against the position, returned when it settles in full, and burned if it voids.
+# Requires the smart account from the previous step to already be deployed.
 npx tsx src/3-request-credis.ts
 npx tsx src/3-request-credis.ts tickets/pledge-abc123def456.json
 
@@ -225,5 +230,20 @@ npx tsx src/4.1-user-sa-withdraw.ts 5.5
 # User settles a credis position. Defaults to the full payoff (accrued interest +
 # outstanding principal); pass an amount to settle partially. Each payment releases
 # the proportional collateral share back to the pledger's encrypted balance.
+# Requires the position to be settleable — see the prerequisite below.
 npx tsx src/5-user-settles.ts <positionId> [amount]
 ```
+
+### Prerequisites this demo does not set up itself
+
+- **A moving COEN price, for step 5.** A position is settleable only once the live
+  COEN price exceeds its floor (entry + 8%). Entry is the oracle rate at pledge time
+  and the seeded feed is flat, so nothing in these scripts ever crosses the floor.
+  Run the price feeder (`scripts/price-oracle/run.sh`) alongside the chain, or step 5
+  reverts as not settleable.
+- **A reserve vault registered for the ERC20.** `0-setup-erc20.ts` reads
+  `assetVaultAt(erc20, 0)`; the vault itself is registered out-of-band via `addVault`,
+  which nothing in this repo calls. Without it the setup step reverts.
+- **The smart account must hold at least the loan amount** in its own ERC20 balance
+  before step 3: the disbursement path tops the bundle up against that balance. Step 2
+  moves 1,000 USD, so pledges above that fail inside the sub-call.

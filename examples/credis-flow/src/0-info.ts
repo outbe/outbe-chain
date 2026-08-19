@@ -21,6 +21,7 @@ import {
   DEFAULT_ENV,
   loadEnv,
   requireEnv, formatTokenMeta2,
+  formatCoen,
 } from "./utils.js";
 import {
   deriveGratisKeys,
@@ -154,7 +155,7 @@ async function printUserInfo(
   const fid = await fetchFidelity(provider, fidelity, wallet);
 
   console.log(`\n=== User: ${userAddress} ===`);
-  console.log(`  Native balance:  ${ethers.formatEther(nativeBalance)} COEN`);
+  console.log(`  Native balance:  ${formatCoen(nativeBalance)} COEN`);
   console.log(`  ERC20 balance:   ${formatTokenMeta(erc20Balance, erc20Meta)}`);
   console.log(`  Gratis balance:  ${showGratis}   ${keys ? "(decrypted with view key)" : ""}`);
   console.log(`  Active pledged:  ${showPledged} (credited to the pledged ledger at requestCredis)`);
@@ -242,7 +243,7 @@ async function printSmartAccountInfo(
 
   const bundleBalance2 = bundleBalance / toBigInt(2);
   const personalBalance = erc20Balance - bundleBalance;
-  console.log(`  Native balance:  ${ethers.formatEther(nativeBalance)} COEN`);
+  console.log(`  Native balance:  ${formatCoen(nativeBalance)} COEN`);
   console.log(`  ERC20 balance (total):   ${formatTokenMeta(erc20Balance, erc20Meta)}`);
   console.log(`     Bundle:               ${formatTokenMeta(bundleBalance, erc20Meta)} (${formatTokenMeta2(bundleBalance2, erc20Meta)} + ${formatTokenMeta2(bundleBalance2, erc20Meta)})`);
   console.log(`     Personal:             ${formatTokenMeta(personalBalance, erc20Meta)}`);
@@ -277,9 +278,9 @@ async function printCredisInfo(
     console.log(`    Position ${p.positionId} :`);
     console.log(`      state: ${STATE_NAMES[Number(p.state)] ?? p.state}`);
     console.log(`      principal: ${formatTokenMeta(p.principal, erc20Meta)}, outstanding: ${formatTokenMeta(p.outstanding, erc20Meta)}`);
-    console.log(`      accrued interest: ${formatTokenMeta(interest, erc20Meta)} (policy rate ${formatToken(p.policyRate, 18, "")}/yr, ACT/365)`);
-    console.log(`      collateral: ${formatToken(p.collateral, 18, "GRATIS")}, locked: ${formatToken(p.collateralLocked, 18, "GRATIS")}`);
-    console.log(`      entry: ${formatToken(p.entryPrice, 18, "")}, floor: ${formatToken(p.floorPrice, 18, "")}, call: ${formatToken(p.callPrice, 18, "")}`);
+    console.log(`      accrued interest: ${formatTokenMeta(interest, erc20Meta)} (policy rate ${formatToken(p.policyRate, 6, "")}/yr, ACT/365)`);
+    console.log(`      collateral: ${formatToken(p.collateral, 6, "GRATIS")}, locked: ${formatToken(p.collateralLocked, 6, "GRATIS")}`);
+    console.log(`      entry: ${formatToken(p.entryPrice, 6, "")}, floor: ${formatToken(p.floorPrice, 6, "")}, call: ${formatToken(p.callPrice, 6, "")}`);
     console.log(`      originated: ${formatDate(p.originatedAt)}, accrual anchor: ${formatDate(p.lastSettledAt)}`);
     if (p.calledAt > 0n) {
       console.log(`      called: ${formatDate(p.calledAt)}`);
@@ -298,7 +299,7 @@ async function printCcaInfo(
   ]);
 
   console.log(`\n=== CCA: ${ccaAddress} ===`);
-  console.log(`  Native balance:  ${ethers.formatEther(nativeBalance)} COEN`);
+  console.log(`  Native balance:  ${formatCoen(nativeBalance)} COEN`);
   console.log(`  ERC20 balance:   ${formatTokenMeta(erc20Balance, erc20Meta)}`);
 }
 
