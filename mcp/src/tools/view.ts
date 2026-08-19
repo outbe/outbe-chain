@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { rememberMarkets } from "../oracle/markets.js";
 import type { Ctx } from "../chain.js";
 import {
   CONTRACTS,
@@ -230,6 +231,10 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
             active,
           };
         }),
+      );
+      rememberMarkets(
+        ctx.chain.id,
+        pairs.map((p) => [p.base, p.quote, p.baseScale, p.quoteScale] as const),
       );
       return ok(pairs);
     }),
