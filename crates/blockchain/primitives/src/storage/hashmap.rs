@@ -151,9 +151,7 @@ impl HashMapStorageProvider {
     /// returndata) instead of [`SubCallError::NotAvailable`].
     ///
     /// Use only in tests whose runtime now issues Rust → Solidity sub-calls
-    /// (e.g. credisfactory `request_credis` / `pay_anadosis` calling
-    /// `IVaultRouter` and `IERC20`) but do not assert vault/EVM state on the
-    /// child frame.
+    /// but do not assert vault/EVM state on the child frame.
     pub fn enable_sub_call_stub(&mut self) {
         self.sub_call_stub = true;
     }

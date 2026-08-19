@@ -9,7 +9,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 
 use crate::errors::CredisError;
-use crate::schema::{Anadosis, CredisContract, Position};
+use crate::schema::{CredisContract, Position};
 
 impl CredisContract<'_> {
     // ---------------------------------------------------------------------
@@ -32,29 +32,6 @@ impl CredisContract<'_> {
 
     pub(crate) fn update_position_record(&mut self, position: &Position) -> Result<()> {
         self.positions.update(position)
-    }
-
-    // ---------------------------------------------------------------------
-    // Anadosis CRUD
-    // ---------------------------------------------------------------------
-
-    pub(crate) fn load_anadosis(
-        &self,
-        position_id: U256,
-        anadosis_number: u32,
-    ) -> Result<Anadosis> {
-        let key = CredisContract::anadosis_key(position_id, anadosis_number);
-        self.anadosis_records
-            .get(key)?
-            .ok_or_else(|| CredisError::PositionNotFound.into())
-    }
-
-    pub(crate) fn create_anadosis_record(&mut self, anadosis: &Anadosis) -> Result<()> {
-        self.anadosis_records.create(anadosis)
-    }
-
-    pub(crate) fn update_anadosis_record(&mut self, anadosis: &Anadosis) -> Result<()> {
-        self.anadosis_records.update(anadosis)
     }
 
     // ---------------------------------------------------------------------
@@ -83,7 +60,7 @@ impl CredisContract<'_> {
     }
 
     // ---------------------------------------------------------------------
-    // Global dense index for getAllPositions iteration
+    // Global dense index backing `totalSupply` / `positionByIndex`
     // ---------------------------------------------------------------------
 
     pub(crate) fn append_to_global_index(&mut self, position_id: U256) -> Result<()> {

@@ -25,7 +25,7 @@ export interface Ticket {
   txHash: string;
   chainId: string;
   createdAt: string;
-  // Filled by `request-credis` so `pay-anadosis` can address the position.
+  // Filled by `request-credis` so `user-settles` can address the position.
   positionId?: string; // decimal string (uint256)
   smartAccount?: string; // the smart account the pledge was bound to
 }

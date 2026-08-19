@@ -214,7 +214,7 @@ states, partial effects and missing production evidence under the exact heading
 | [ADR-C-PRM-001](core/ADR-C-PRM-001-promis-ledger.md) | Promis ledger | promis | Proposed |
 | [ADR-C-PRM-002](core/ADR-C-PRM-002-promis-factory-conversions.md) | Promis conversions | promisfactory | Proposed |
 | [ADR-C-PRM-003](core/ADR-C-PRM-003-promis-unallocated-limit.md) | Unallocated Promis limit | promislimit | Proposed |
-| [ADR-C-CRD-001](core/ADR-C-CRD-001-credis-position-ledger.md) | Credis position/installment FSM | credis | Proposed |
+| [ADR-C-CRD-001](core/ADR-C-CRD-001-credis-position-ledger.md) | Credis position/price-path FSM | credis | Proposed |
 | [ADR-C-CRD-002](core/ADR-C-CRD-002-credis-factory-orchestration.md) | Credis orchestration | credisfactory | Proposed |
 | [ADR-C-VLT-001](core/ADR-C-VLT-001-vault-router-liquidity-authority.md) | Vault liquidity authority | vaultrouter | Proposed |
 | [ADR-C-TOK-001](core/ADR-C-TOK-001-native-wrapped-and-synthetic-token-contracts.md) | Native/wrapped/synthetic token issuance | Solidity token contracts | Proposed |

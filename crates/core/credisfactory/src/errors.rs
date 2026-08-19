@@ -8,18 +8,12 @@ pub enum CredisFactoryError {
     InvalidAsset,
     #[error("invalid smart account address")]
     InvalidSmartAccount,
-    #[error("anadosis amount is zero")]
+    #[error("settlement amount is zero")]
     InvalidAmount,
-    #[error("position is already fully paid")]
-    PositionCompleted,
-    #[error("address has overdue anadosis")]
-    OverduePayments,
+    #[error("owner has an unresolved called position")]
+    OwnerHasCalledPosition,
     #[error("asset isoCode() call returned undecodable data")]
     AssetIsoUndecodable,
-    #[error("position has not reached its credis expiry")]
-    NotExpired,
-    #[error("position has no outstanding balance to expire")]
-    NothingOutstanding,
 }
 
 impl From<CredisFactoryError> for PrecompileError {

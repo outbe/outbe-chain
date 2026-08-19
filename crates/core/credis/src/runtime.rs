@@ -1,341 +1,426 @@
 //! Business logic for the Credis contract.
 //!
-//! - positions carry **10 monthly** anadosis installments, due dates spaced by
-//!   `SECONDS_PER_MONTH` from `created_at`;
+//! A position lives on the COEN price path, not on a calendar. Nothing here is
+//! scheduled off `originated_at`: the only time-driven quantity is the interest
+//! day count, and even that is evaluated lazily at settlement rather than
+//! accrued per block.
 
 use alloy_primitives::{Address, U256};
 
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
+use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::units::SCALE_1E6_U256;
 
+use crate::constants::{
+    CALL_RATE_PCT, CALL_WINDOW_SECS, DAYS_PER_YEAR, FLOOR_RATE_PCT, PRICE_RATE_DEN,
+};
 use crate::errors::CredisError;
 use crate::precompile::ICredis;
-use crate::schema::{Anadosis, CredisContract, Position, NUMBER_OF_ANADOSIS, SECONDS_PER_MONTH};
+use crate::schema::{CredisContract, CredisState, Position};
 
-/// Result bundle returned by [`CredisContract::pay_anadosis`].
+/// Terms captured when a position opens. Grouped rather than passed positionally
+/// so a mis-ordered `U256` cannot silently swap principal for collateral.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AnadosisPayment {
-    /// Stablecoin actually applied — `min(requested_amount, outstanding)`.
-    pub total_paid_amount: U256,
-    /// Collateral freed by this payment, summed over the installments it touched.
+pub struct OpenPositionParams {
+    /// The pledge handle the position id derives from.
+    pub handle_id: U256,
+    pub smart_account: Address,
+    pub cca: Address,
+    /// Sealed pledger EOA, opaque here.
+    pub eoa_ct: Vec<u8>,
+    pub asset: Address,
+    pub issuance_currency: u16,
+    /// `r`, 1e18 scaled, already multiplied by the policy-rate factor.
+    pub policy_rate: U256,
+    /// `P` — stablecoin minor units disbursed.
+    pub principal: U256,
+    /// `P₀` — COEN price in the position's currency, 1e18 oracle scale.
+    pub entry_price: U256,
+    /// `G` — pledged Gratis collateral.
+    pub collateral: U256,
+    pub originated_at: u64,
+}
+
+/// Outcome of [`CredisContract::settle`]. The caller moves the money: it pulls
+/// `total_paid` from the payer into the vault and releases `gratis_released` to
+/// the pledger — never to the payer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Settlement {
+    /// Interest collected, in full, before any principal.
+    pub interest: U256,
+    /// Principal covered by this payment.
+    pub principal_paid: U256,
+    /// `interest + principal_paid` — what the payer owes for this settlement.
+    pub total_paid: U256,
+    /// Collateral freed and owed back to the pledger.
     pub gratis_released: U256,
     pub asset: Address,
     pub smart_account: Address,
+    pub cca: Address,
+    /// True when this settlement drove the outstanding principal to zero.
+    pub closed: bool,
+}
+
+/// What a void writes off. `gratis_burned` is the unpaid share of the collateral;
+/// the two written-off amounts are never collected from anyone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Void {
+    pub gratis_burned: U256,
+    pub principal_written_off: U256,
+    pub interest_written_off: U256,
+    pub smart_account: Address,
+    pub cca: Address,
+    /// Unpaid share of the original principal, scale `1e6`. Scales the
+    /// originating CCA's penalty.
+    pub unpaid_share: U256,
+    /// Sealed pledger EOA — the caller opens it to key the confidential ledgers.
+    pub eoa_ct: Vec<u8>,
+}
+
+/// `price × (100 + rate_pct) / 100`. Used for both the floor and the call price.
+pub fn marked_up(price: U256, rate_pct: u16) -> Result<U256> {
+    price
+        .checked_mul(U256::from(PRICE_RATE_DEN.saturating_add(rate_pct)))
+        .map(|v| v / U256::from(PRICE_RATE_DEN))
+        .ok_or_else(|| CredisError::ArithmeticOverflow.into())
+}
+
+/// Timestamp after which a called position's remainder may be voided.
+pub fn settlement_deadline(position: &Position) -> u64 {
+    position.called_at.saturating_add(CALL_WINDOW_SECS)
 }
 
 impl CredisContract<'_> {
-    /// Per-anadosis amount with remainder routed to the final anadosis so
-    /// `sum(anadosis_amount[i]) == total` exactly. Anadosis
-    /// 1..NUMBER_OF_ANADOSIS-1 each pay `total / NUMBER_OF_ANADOSIS`; anadosis
-    /// `NUMBER_OF_ANADOSIS` pays the remainder.
-    fn split_amount(total: U256, anadosis_number: u32) -> U256 {
-        let n = U256::from(NUMBER_OF_ANADOSIS);
-        let per = total / n;
-        if anadosis_number == NUMBER_OF_ANADOSIS {
-            // saturating_sub: per * (n-1) <= total for any non-negative U256.
-            total.saturating_sub(per * U256::from(NUMBER_OF_ANADOSIS - 1))
-        } else {
-            per
+    /// Whole UTC days charged by a settlement at `now`, i.e. the day count the
+    /// interest is computed over and the amount the accrual anchor advances by.
+    /// The sub-day remainder is deliberately not consumed: it stays on the
+    /// position and is charged by a later settlement.
+    fn elapsed_days(position: &Position, now: u64) -> u64 {
+        now.saturating_sub(position.last_settled_at) / SECONDS_PER_DAY
+    }
+
+    /// Interest accrued on the outstanding principal since the accrual anchor:
+    /// simple, non-compounding, ACT/365 over **whole** elapsed UTC days rounded up.
+    pub fn accrued_interest(position: &Position, now: u64) -> Result<U256> {
+        let days = Self::elapsed_days(position, now);
+        if days == 0 || position.outstanding.is_zero() || position.policy_rate.is_zero() {
+            return Ok(U256::ZERO);
         }
+        let numerator = position
+            .outstanding
+            .checked_mul(position.policy_rate)
+            .and_then(|v| v.checked_mul(U256::from(days)))
+            .ok_or(CredisError::ArithmeticOverflow)?;
+        // Non-zero by construction: both factors are compile-time constants.
+        // The scale must match `policy_rate`, which the oracle publishes at 1e6.
+        let denominator = U256::from(DAYS_PER_YEAR)
+            .checked_mul(SCALE_1E6_U256)
+            .ok_or(CredisError::ArithmeticOverflow)?;
+        Ok(numerator.div_ceil(denominator))
     }
 
-    /// Total repayable debt for a position: `principal × (1 + rate × TERM / 12)`,
-    /// where `rate` is the annualized currency rate with scale `1e6` and `TERM`
-    /// is [`NUMBER_OF_ANADOSIS`] months. A zero rate yields `total == principal`
-    /// (the pre-currency-rate behavior).
-    fn total_debt(principal: U256, currency_rate: U256) -> Result<U256> {
-        let term = U256::from(NUMBER_OF_ANADOSIS);
-        // Preserve the existing staged rounding: floor the term rate first,
-        // then floor the scaled principal multiplication.
-        let term_rate = currency_rate
-            .checked_mul(term)
-            .ok_or_else(|| -> PrecompileError { CredisError::InvalidAmount.into() })?
-            / U256::from(12u64);
-        let multiplier = SCALE_1E6_U256
-            .checked_add(term_rate)
-            .ok_or_else(|| -> PrecompileError { CredisError::InvalidAmount.into() })?;
-        let scaled = principal
-            .checked_mul(multiplier)
-            .ok_or_else(|| -> PrecompileError { CredisError::InvalidAmount.into() })?;
-        Ok(scaled / SCALE_1E6_U256)
-    }
-
-    /// Creates a position and returns the derived
-    /// `position_id = keccak256(commitment || smart_account)`.
+    /// Opens a position and returns its derived
+    /// `position_id = keccak256(handle_id || smart_account)`.
     ///
-    /// `credis_principal` is the disbursed loan amount; the repayment schedule is
-    /// sized to `total_debt(principal, currency_rate)` and split across the
-    /// [`NUMBER_OF_ANADOSIS`] monthly installments. `currency_rate` (scale
-    /// `1e6`) and `issuance_currency` (ISO 4217) are pinned at issuance.
-    #[allow(clippy::too_many_arguments)]
-    pub fn create_position(
-        &mut self,
-        handle_id: U256,
-        smart_account: Address,
-        eoa_ct: Vec<u8>,
-        asset: Address,
-        issuance_currency: u16,
-        currency_rate: U256,
-        credis_principal: U256,
-        rate: U256,
-        gratis_amount: U256,
-        current_time: u64,
-    ) -> Result<U256> {
-        if credis_principal.is_zero() {
+    /// Everything the position will ever need is sealed here: the floor and call
+    /// prices derive from `entry_price`, and `policy_rate` is pinned. Collateral
+    /// starts fully locked and the interest anchor starts at origination.
+    pub fn open_position(&mut self, params: OpenPositionParams) -> Result<U256> {
+        if params.principal.is_zero() || params.collateral.is_zero() {
             return Err(CredisError::InvalidAmount.into());
         }
 
-        let position_id = CredisContract::position_id(handle_id, smart_account);
+        let position_id = CredisContract::position_id(params.handle_id, params.smart_account);
         if self.position_exists(position_id)? {
             return Err(CredisError::PositionAlreadyExists.into());
         }
 
-        let total_debt = Self::total_debt(credis_principal, currency_rate)?;
-
-        self.create_position_record(&Position {
+        let position = Position {
             position_id,
-            smart_account,
-            asset,
-            total_anadosis_amount: total_debt,
-            outstanding_anadosis_amount: total_debt,
-            total_gratis_amount: gratis_amount,
-            outstanding_gratis_amount: gratis_amount,
-            next_anadosis_number: 1,
-            created_at: current_time,
-            credis_principal,
-            entry_price_minor: rate,
-            currency_rate,
-            issuance_currency,
-            eoa_ct,
-        })?;
-
-        for n in 1..=NUMBER_OF_ANADOSIS {
-            let anadosis_amount = Self::split_amount(total_debt, n);
-            self.create_anadosis_record(&Anadosis {
-                anadosis_key: CredisContract::anadosis_key(position_id, n),
-                anadosis_number: n,
-                due_date: current_time + (n as u64) * SECONDS_PER_MONTH,
-                anadosis_amount,
-                gratis_amount: Self::split_amount(gratis_amount, n),
-                paid_at: 0,
-                unpaid_amount: anadosis_amount,
-            })?;
-        }
-
-        self.append_to_address_index(smart_account, position_id)?;
+            smart_account: params.smart_account,
+            cca: params.cca,
+            asset: params.asset,
+            issuance_currency: params.issuance_currency,
+            eoa_ct: params.eoa_ct,
+            principal: params.principal,
+            outstanding: params.principal,
+            collateral: params.collateral,
+            collateral_locked: params.collateral,
+            policy_rate: params.policy_rate,
+            entry_price: params.entry_price,
+            floor_price: marked_up(params.entry_price, FLOOR_RATE_PCT)?,
+            call_price: marked_up(params.entry_price, CALL_RATE_PCT)?,
+            originated_at: params.originated_at,
+            last_settled_at: params.originated_at,
+            called_at: 0,
+            state: CredisState::Open as u8,
+        };
+        self.create_position_record(&position)?;
+        self.append_to_address_index(params.smart_account, position_id)?;
         self.append_to_global_index(position_id)?;
 
         self.emit(ICredis::PositionCreated {
             positionId: position_id,
-            smartAccount: smart_account,
-            anadosisAmount: total_debt,
+            smartAccount: params.smart_account,
+            cca: params.cca,
+            principal: params.principal,
+            collateral: params.collateral,
         })?;
-
         Ok(position_id)
     }
 
-    /// Collateral of `anadosis` still locked, given its current `unpaid_amount`.
-    /// Floor division: it reaches exactly zero when the installment is settled, so
-    /// the deltas taken across successive partial payments sum to `gratis_amount`
-    /// with no dust left behind and nothing over-released.
-    fn locked_gratis(anadosis: &Anadosis) -> U256 {
-        if anadosis.anadosis_amount.is_zero() {
-            return U256::ZERO;
+    /// Latches the position settleable. One-way: a later price fall never
+    /// re-locks it, and re-latching an already-latched position is a no-op.
+    ///
+    /// Returns whether this call performed the transition. The caller is
+    /// responsible for having established that the live price exceeds
+    /// `floor_price`.
+    pub fn mark_settleable(&mut self, position_id: U256) -> Result<bool> {
+        let mut position = self.load_position(position_id)?;
+        if position.lifecycle_state()? != CredisState::Open {
+            return Ok(false);
         }
-        anadosis.gratis_amount * anadosis.unpaid_amount / anadosis.anadosis_amount
+        position.state = CredisState::Settleable as u8;
+        let floor_price = position.floor_price;
+        self.update_position_record(&position)?;
+        self.emit(ICredis::PositionSettleable {
+            positionId: position_id,
+            floorPrice: floor_price,
+        })?;
+        Ok(true)
     }
 
-    /// Applies `amount` to the position's unpaid anadosis schedule, oldest first.
+    /// Calls a settleable position, opening the settlement window. Settlement
+    /// terms are unchanged throughout it. Idempotent: an already-called position
+    /// returns `false` without moving its deadline.
     ///
-    /// Each installment is covered in full while the budget lasts; the last one
-    /// reached may be covered partially, keeping the remainder on its
-    /// `unpaid_amount` with `paid_at` still 0 (so it stays overdue-eligible). Only
-    /// what the schedule actually needs is consumed — the returned
-    /// `total_paid_amount` is `min(amount, outstanding)` and is what the caller
-    /// should pull from the payer.
-    ///
-    /// - Rejects when the position is missing.
-    /// - Rejects when the position has already paid all 10 installments.
-    pub fn pay_anadosis(
-        &mut self,
-        position_id: U256,
-        amount: U256,
-        current_time: u64,
-    ) -> Result<AnadosisPayment> {
+    /// The caller is responsible for having established the sustained breach.
+    pub fn mark_called(&mut self, position_id: U256, now: u64) -> Result<bool> {
         let mut position = self.load_position(position_id)?;
-        if position.next_anadosis_number > NUMBER_OF_ANADOSIS {
-            return Err(CredisError::PositionCompleted.into());
+        if position.lifecycle_state()? != CredisState::Settleable {
+            return Ok(false);
+        }
+        position.state = CredisState::Called as u8;
+        position.called_at = now;
+        self.update_position_record(&position)?;
+        self.emit(ICredis::PositionCalled {
+            positionId: position_id,
+            calledAt: now,
+            settlementDeadline: settlement_deadline(&position),
+        })?;
+        Ok(true)
+    }
+
+    /// Applies a settlement of `amount` — interest first, principal second.
+    ///
+    /// Any payer may settle any settleable or called position: the collateral
+    /// released is owed to the pledger recorded on the position, so a payer can
+    /// never redirect value to themselves.
+    ///
+    /// - a payment below the accrued interest is rejected outright;
+    /// - only what the position needs is consumed, so an over-payment is not
+    ///   over-pulled — the caller charges `Settlement::total_paid`;
+    /// - collateral release is principal-proportional and floored, except on the
+    ///   final settlement, which releases exactly what is left so no dust
+    ///   remains locked.
+    pub fn settle(&mut self, position_id: U256, amount: U256, now: u64) -> Result<Settlement> {
+        let mut position = self.load_position(position_id)?;
+        match position.lifecycle_state()? {
+            CredisState::Open => return Err(CredisError::NotSettleable.into()),
+            CredisState::Settled | CredisState::Void => {
+                return Err(CredisError::PositionClosed.into())
+            }
+            CredisState::Settleable | CredisState::Called => {}
         }
 
-        let mut remaining = amount;
-        let mut total_paid = U256::ZERO;
-        let mut gratis_released = U256::ZERO;
-
-        while position.next_anadosis_number <= NUMBER_OF_ANADOSIS {
-            let n = position.next_anadosis_number;
-            let mut anadosis = self.load_anadosis(position_id, n)?;
-
-            let pay = remaining.min(anadosis.unpaid_amount);
-            // Budget exhausted before this installment could be touched at all.
-            // (A zero-amount installment still settles here — it needs nothing.)
-            if pay.is_zero() && !anadosis.unpaid_amount.is_zero() {
-                break;
-            }
-
-            let locked_before = Self::locked_gratis(&anadosis);
-            anadosis.unpaid_amount -= pay;
-            let released = locked_before - Self::locked_gratis(&anadosis);
-
-            let settled = anadosis.unpaid_amount.is_zero();
-            if settled {
-                anadosis.paid_at = current_time;
-                position.next_anadosis_number = n + 1;
-            }
-            self.update_anadosis_record(&anadosis)?;
-
-            remaining -= pay;
-            total_paid += pay;
-            gratis_released += released;
-
-            self.emit(ICredis::AnadosisPaid {
-                positionId: position_id,
-                anadosisNumber: n,
-                anadosisAmount: pay,
-            })?;
-
-            if !settled {
-                break;
-            }
+        let days = Self::elapsed_days(&position, now);
+        let interest = Self::accrued_interest(&position, now)?;
+        if amount < interest {
+            return Err(CredisError::PaymentBelowAccruedInterest.into());
         }
+        let principal_paid = (amount - interest).min(position.outstanding);
 
-        position.outstanding_anadosis_amount = position
-            .outstanding_anadosis_amount
-            .saturating_sub(total_paid);
-        position.outstanding_gratis_amount = position
-            .outstanding_gratis_amount
-            .saturating_sub(gratis_released);
+        // Floor division favors the protocol on every partial; the final
+        // settlement short-circuits to the exact remainder so the sum of
+        // releases closes on `collateral` with nothing stranded.
+        let gratis_released = if principal_paid == position.outstanding {
+            position.collateral_locked
+        } else {
+            position
+                .collateral
+                .checked_mul(principal_paid)
+                .ok_or(CredisError::ArithmeticOverflow)?
+                / position.principal
+        };
+
+        position.outstanding = position
+            .outstanding
+            .checked_sub(principal_paid)
+            .ok_or(CredisError::ArithmeticOverflow)?;
+        position.collateral_locked = position
+            .collateral_locked
+            .checked_sub(gratis_released)
+            .ok_or(CredisError::ArithmeticOverflow)?;
+        // Accrual restarts on the reduced principal; no unpaid interest ever
+        // carries between settlements. The anchor advances by the whole days
+        // actually charged, never to `now`: settling on a sub-day boundary must
+        // not discard the remainder, or repeated dust settlements just under
+        // 24h apart would hold `days` at zero and evade the coupon entirely.
+        position.last_settled_at = position
+            .last_settled_at
+            .saturating_add(days.saturating_mul(SECONDS_PER_DAY));
+
+        let closed = position.outstanding.is_zero();
+        if closed {
+            position.state = CredisState::Settled as u8;
+        }
         self.update_position_record(&position)?;
 
-        Ok(AnadosisPayment {
-            total_paid_amount: total_paid,
+        self.emit(ICredis::SettlementApplied {
+            positionId: position_id,
+            interestPaid: interest,
+            principalPaid: principal_paid,
+            gratisReleased: gratis_released,
+            outstanding: position.outstanding,
+        })?;
+        if closed {
+            self.emit(ICredis::PositionSettled {
+                positionId: position_id,
+            })?;
+        }
+
+        Ok(Settlement {
+            interest,
+            principal_paid,
+            total_paid: interest
+                .checked_add(principal_paid)
+                .ok_or(CredisError::ArithmeticOverflow)?,
             gratis_released,
             asset: position.asset,
             smart_account: position.smart_account,
+            cca: position.cca,
+            closed,
         })
     }
 
-    /// Timestamp at which `position`'s credis period expires — the due date of the
-    /// final anadosis installment (`created_at + NUMBER_OF_ANADOSIS × SECONDS_PER_MONTH`).
-    pub fn expires_at(position: &Position) -> u64 {
-        position
-            .created_at
-            .saturating_add((NUMBER_OF_ANADOSIS as u64).saturating_mul(SECONDS_PER_MONTH))
-    }
-
-    /// Closes an expired position after its collateral has been burned by the caller:
-    /// zeroes the outstanding balances, marks the schedule complete (so it is skipped
-    /// by future sweeps and overdue checks), and emits `CollateralBurned`. Returns the
-    /// pre-close snapshot so the caller can read `outstanding_gratis_amount` /
-    /// `eoa_ct` / `smart_account`.
-    pub fn expire_position(&mut self, position_id: U256) -> Result<Position> {
+    /// Voids the remainder of a called position whose settlement window has
+    /// lapsed. Only the unpaid share is written off: every settlement already
+    /// released its proportional share, so whatever the owner settled they have
+    /// already reclaimed. The invariant that holds exactly is
+    /// `Σ released + collateral_locked == G`; because each partial release is
+    /// floored, `collateral_locked >= floor(G × P_out / P)`, with the drift
+    /// always toward the protocol.
+    ///
+    /// Returns what the caller must burn and credit; the position itself is
+    /// closed here.
+    pub fn void_position(&mut self, position_id: U256, now: u64) -> Result<Void> {
         let mut position = self.load_position(position_id)?;
-        let snapshot = position.clone();
-        position.outstanding_anadosis_amount = U256::ZERO;
-        position.outstanding_gratis_amount = U256::ZERO;
-        position.next_anadosis_number = NUMBER_OF_ANADOSIS + 1;
+        if position.lifecycle_state()? != CredisState::Called {
+            return Err(CredisError::NotCalled.into());
+        }
+        if now < settlement_deadline(&position) {
+            return Err(CredisError::CallWindowOpen.into());
+        }
+        if position.outstanding.is_zero() {
+            return Err(CredisError::NothingOutstanding.into());
+        }
+
+        let gratis_burned = position.collateral_locked;
+        let principal_written_off = position.outstanding;
+        let interest_written_off = Self::accrued_interest(&position, now)?;
+        // A dimensionless fraction of the original principal, carried at the
+        // protocol's 1e6 fixed-point scale.
+        let unpaid_share = principal_written_off
+            .checked_mul(SCALE_1E6_U256)
+            .ok_or(CredisError::ArithmeticOverflow)?
+            / position.principal;
+
+        position.outstanding = U256::ZERO;
+        position.collateral_locked = U256::ZERO;
+        position.state = CredisState::Void as u8;
         self.update_position_record(&position)?;
-        self.emit(ICredis::CollateralBurned {
+
+        self.emit(ICredis::PositionVoided {
             positionId: position_id,
-            smartAccount: snapshot.smart_account,
-            gratisBurned: snapshot.outstanding_gratis_amount,
+            cca: position.cca,
+            gratisBurned: gratis_burned,
+            principalWrittenOff: principal_written_off,
+            interestWrittenOff: interest_written_off,
         })?;
-        Ok(snapshot)
+
+        Ok(Void {
+            gratis_burned,
+            principal_written_off,
+            interest_written_off,
+            smart_account: position.smart_account,
+            cca: position.cca,
+            unpaid_share,
+            eoa_ct: position.eoa_ct,
+        })
     }
 
-    /// Loads the position head record. Reverts on missing.
+    // ---------------------------------------------------------------------
+    // Reads
+    // ---------------------------------------------------------------------
+
+    /// Loads the position record. Reverts on missing.
     pub fn get_position(&self, position_id: U256) -> Result<Position> {
         self.load_position(position_id)
     }
 
-    /// Loads a single anadosis record, validated by both position existence and
-    /// anadosis_number range.
-    pub fn get_anadosis(&self, position_id: U256, anadosis_number: u32) -> Result<Anadosis> {
-        validate_anadosis_number(anadosis_number)?;
-        if !self.position_exists(position_id)? {
-            return Err(CredisError::PositionNotFound.into());
-        }
-        self.load_anadosis(position_id, anadosis_number)
-    }
-
-    /// Returns the next unpaid anadosis, or `None` when complete.
-    pub fn get_next_anadosis(&self, position_id: U256) -> Result<Option<Anadosis>> {
-        let position = self.load_position(position_id)?;
-        if position.outstanding_anadosis_amount.is_zero()
-            || position.next_anadosis_number > NUMBER_OF_ANADOSIS
-        {
-            return Ok(None);
-        }
-        Ok(Some(self.load_anadosis(
-            position_id,
-            position.next_anadosis_number,
-        )?))
-    }
-
-    /// All 10 anadosis records for a position.
-    pub fn get_position_anadosis(&self, position_id: U256) -> Result<Vec<Anadosis>> {
-        if !self.position_exists(position_id)? {
-            return Err(CredisError::PositionNotFound.into());
-        }
-        let mut out = Vec::with_capacity(NUMBER_OF_ANADOSIS as usize);
-        for n in 1..=NUMBER_OF_ANADOSIS {
-            out.push(self.load_anadosis(position_id, n)?);
-        }
-        Ok(out)
-    }
-
-    /// True if any of `account`'s positions has an unpaid anadosis whose
-    /// `due_date` is strictly before `current_time`.
-    pub fn has_overdue_anadosis(&self, account: Address, current_time: u64) -> Result<bool> {
-        let count = self.read_address_position_count(account)?;
-        for i in 0..count {
-            let position_id = self.read_address_position_id(account, i)?;
-            let position = match self.positions.get(position_id)? {
-                Some(p) => p,
-                None => continue,
-            };
-            if position.outstanding_anadosis_amount.is_zero() {
-                continue;
-            }
-            if position.next_anadosis_number > NUMBER_OF_ANADOSIS {
-                continue;
-            }
-            let anadosis = self.load_anadosis(position_id, position.next_anadosis_number)?;
-            if anadosis.paid_at == 0 && anadosis.due_date < current_time {
+    /// True if any of `account`'s positions is CALLED. Such an owner cannot open
+    /// new positions until the call resolves.
+    // ponytail: O(positions-per-account) walk. A `called_position_counts` map
+    // makes it O(1) once the call transition has a single choke point.
+    pub fn has_called_position(&self, account: Address) -> Result<bool> {
+        for position in self.get_positions_by_address(account)? {
+            if position.lifecycle_state()? == CredisState::Called {
                 return Ok(true);
             }
         }
         Ok(false)
     }
 
-    /// Sum of `outstanding_anadosis_amount` across all positions for `account`.
-    pub fn get_outstanding_amount(&self, account: Address) -> Result<U256> {
-        let count = self.read_address_position_count(account)?;
-        let mut total = U256::ZERO;
-        for i in 0..count {
-            let position_id = self.read_address_position_id(account, i)?;
-            let position = match self.positions.get(position_id)? {
-                Some(p) => p,
-                None => continue,
-            };
-            total = total
-                .checked_add(position.outstanding_anadosis_amount)
-                .ok_or_else(|| PrecompileError::Revert("credis outstanding sum overflow".into()))?;
+    /// Sum of `principal` and of `outstanding` across all positions for
+    /// `account`, in one walk of the owner index.
+    pub fn principal_and_outstanding_of(&self, account: Address) -> Result<(U256, U256)> {
+        let mut principal = U256::ZERO;
+        let mut outstanding = U256::ZERO;
+        for position in self.get_positions_by_address(account)? {
+            principal = principal
+                .checked_add(position.principal)
+                .ok_or(CredisError::ArithmeticOverflow)?;
+            outstanding = outstanding
+                .checked_add(position.outstanding)
+                .ok_or(CredisError::ArithmeticOverflow)?;
         }
-        Ok(total)
+        Ok((principal, outstanding))
     }
 
-    /// All positions for `account`, in insertion order.
-    pub fn get_positions_by_address(&self, account: Address) -> Result<Vec<Position>> {
+    /// How many positions `account` has ever been issued.
+    pub fn position_count_of(&self, account: Address) -> Result<u32> {
+        self.read_address_position_count(account)
+    }
+
+    /// `account`'s `index`-th position, in insertion order.
+    pub fn position_of_address_at(&self, account: Address, index: u32) -> Result<Position> {
+        if index >= self.read_address_position_count(account)? {
+            return Err(CredisError::IndexOutOfBounds.into());
+        }
+        self.load_position(self.read_address_position_id(account, index)?)
+    }
+
+    /// The `index`-th position ever created, in creation order.
+    pub fn position_at(&self, index: u64) -> Result<Position> {
+        if index >= self.read_total_positions()? {
+            return Err(CredisError::IndexOutOfBounds.into());
+        }
+        self.load_position(self.read_position_id_at(index)?)
+    }
+
+    /// All positions for `account`, in insertion order. Unbounded, so it stays
+    /// internal: the ABI enumerates through `position_of_address_at` instead.
+    pub(crate) fn get_positions_by_address(&self, account: Address) -> Result<Vec<Position>> {
         let count = self.read_address_position_count(account)?;
         let mut out = Vec::with_capacity(count as usize);
         for i in 0..count {
@@ -347,8 +432,8 @@ impl CredisContract<'_> {
         Ok(out)
     }
 
-    /// Total positions ever created (length of the global dense index). Used by the
-    /// begin-block expiry sweep to bound its cursor.
+    /// Total positions ever created (length of the global dense index). Used by
+    /// the block sweeps to bound their cursors.
     pub fn total_positions(&self) -> Result<u64> {
         self.read_total_positions()
     }
@@ -357,25 +442,4 @@ impl CredisContract<'_> {
     pub fn position_id_at(&self, index: u64) -> Result<U256> {
         self.read_position_id_at(index)
     }
-
-    /// All positions ever created, in creation order.
-    pub fn get_all_positions(&self) -> Result<Vec<Position>> {
-        let total = self.read_total_positions()?;
-        let mut out = Vec::with_capacity(total as usize);
-        for i in 0..total {
-            let position_id = self.read_position_id_at(i)?;
-            if let Some(position) = self.positions.get(position_id)? {
-                out.push(position);
-            }
-        }
-        Ok(out)
-    }
-}
-
-/// Validates `anadosis_number` is in `[1, NUMBER_OF_ANADOSIS]`.
-fn validate_anadosis_number(anadosis_number: u32) -> Result<()> {
-    if anadosis_number == 0 || anadosis_number > NUMBER_OF_ANADOSIS {
-        return Err(CredisError::InvalidAnadosisNumber.into());
-    }
-    Ok(())
 }

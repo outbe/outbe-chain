@@ -248,36 +248,41 @@ async function printSmartAccountInfo(
   console.log(`     Personal:             ${formatTokenMeta(personalBalance, erc20Meta)}`);
 }
 
+/// Mirrors `enum State` in contracts/precompiles/src/ICredis.sol.
+const STATE_NAMES = ["Open", "Settleable", "Called", "Settled", "Void"];
+
 async function printCredisInfo(
   credis: ReturnType<typeof ICredis__factory.connect>,
   smartAccountAddr: string,
   erc20Meta: TokenMeta,
 ) {
-  const [positions, hasOverdue] = await Promise.all([
-    credis.getPositionsByAddress(smartAccountAddr).catch(() => []),
-    credis.hasOverdueAnadosis(smartAccountAddr).catch(() => false),
+  const [count, hasCalled] = await Promise.all([
+    credis.balanceOf(smartAccountAddr).catch(() => 0n),
+    credis.hasCalledPosition(smartAccountAddr).catch(() => false),
   ]);
 
+  // The ABI enumerates rather than returning an unbounded array, so walk the
+  // owner index one position at a time.
+  const positions = await Promise.all(
+    Array.from({ length: Number(count) }, (_, i) =>
+      credis.positionOfAddressByIndex(smartAccountAddr, i),
+    ),
+  );
+
   console.log(`\n=== Credis Positions (smart account: ${smartAccountAddr}) ===`);
-  console.log(`  Positions:       ${positions.length} (overdue: ${hasOverdue})`);
+  console.log(`  Positions:       ${count} (called: ${hasCalled})`);
 
   for (const p of positions) {
+    const interest = await credis.accruedInterest(p.positionId).catch(() => 0n);
     console.log(`    Position ${p.positionId} :`);
-    console.log(`      totalAnadosisAmount: ${formatTokenMeta(p.totalAnadosisAmount, erc20Meta)}, outstanding: ${formatTokenMeta(p.outstandingAnadosisAmount, erc20Meta)}`);
-    console.log(`      totalGratisAmount: ${formatToken(p.totalGratisAmount, 18, "GRATIS")}, outstandingGratisAmount: ${formatToken(p.outstandingGratisAmount, 18, "GRATIS")}`);
-    console.log(`      created: ${formatDate(p.createdAt)}`);
-
-    const anadosisList = await credis.getPositionAnadosis(p.positionId).catch(() => null);
-    if (anadosisList) {
-      for (const a of anadosisList) {
-        const status =
-          a.paidAt > 0n
-            ? `paid at ${formatDate(a.paidAt)}`
-            : a.unpaidAmount < a.anadosisAmount
-              ? `partially paid, ${formatTokenMeta(a.unpaidAmount, erc20Meta)} left`
-              : "unpaid";
-        console.log(`      anadosis #${a.anadosisNumber}: due ${formatDate(a.dueDate)}, amount: ${formatTokenMeta(a.anadosisAmount, erc20Meta)}, gratis: ${formatToken(a.gratisAmount, 18, "GRATIS")}, ${status}`);
-      }
+    console.log(`      state: ${STATE_NAMES[Number(p.state)] ?? p.state}`);
+    console.log(`      principal: ${formatTokenMeta(p.principal, erc20Meta)}, outstanding: ${formatTokenMeta(p.outstanding, erc20Meta)}`);
+    console.log(`      accrued interest: ${formatTokenMeta(interest, erc20Meta)} (policy rate ${formatToken(p.policyRate, 18, "")}/yr, ACT/365)`);
+    console.log(`      collateral: ${formatToken(p.collateral, 18, "GRATIS")}, locked: ${formatToken(p.collateralLocked, 18, "GRATIS")}`);
+    console.log(`      entry: ${formatToken(p.entryPrice, 18, "")}, floor: ${formatToken(p.floorPrice, 18, "")}, call: ${formatToken(p.callPrice, 18, "")}`);
+    console.log(`      originated: ${formatDate(p.originatedAt)}, accrual anchor: ${formatDate(p.lastSettledAt)}`);
+    if (p.calledAt > 0n) {
+      console.log(`      called: ${formatDate(p.calledAt)}`);
     }
   }
 }
