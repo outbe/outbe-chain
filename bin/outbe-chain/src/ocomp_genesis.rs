@@ -215,7 +215,7 @@ fn generate_genesis(args: &OcompGenesisArgs) -> eyre::Result<()> {
 
 fn parse_base_identity(path: &Path) -> eyre::Result<(u64, B256)> {
     let path = utf8_path(path, "input genesis")?;
-    let spec = reth_ethereum::cli::chainspec::chain_value_parser(path)
+    let spec = crate::parse_outbe_genesis_source(path)
         .wrap_err_with(|| format!("parse input genesis {path}"))?;
     let extra = &spec.genesis.config.extra_fields;
     ensure!(
@@ -358,7 +358,7 @@ fn validate_output(
     expected_install: &OcompForkInstallV1,
 ) -> eyre::Result<()> {
     let parsed: ChainSpec<OutbeHeader> =
-        reth_ethereum::cli::chainspec::chain_value_parser(utf8_path(output, "output genesis")?)?
+        crate::parse_outbe_genesis_source(utf8_path(output, "output genesis")?)?
             .as_ref()
             .clone()
             .map_header(OutbeHeader::new);

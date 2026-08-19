@@ -462,7 +462,7 @@ impl RpcModuleValidator for OutbeRpcModuleValidator {
 /// transaction unaffordable. A genesis file that says nothing therefore starts
 /// at the protocol floor instead; a genesis that states a base fee is honoured
 /// as written, and named chains keep their curated specs untouched.
-fn parse_outbe_genesis_source(source: &str) -> eyre::Result<Arc<ChainSpec>> {
+pub(crate) fn parse_outbe_genesis_source(source: &str) -> eyre::Result<Arc<ChainSpec>> {
     let path = std::path::Path::new(source);
     if !path.is_file() {
         return Ok(reth_ethereum::cli::chainspec::chain_value_parser(source)?);

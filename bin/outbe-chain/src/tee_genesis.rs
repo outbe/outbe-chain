@@ -98,7 +98,7 @@ fn generate_genesis(args: &TeeGenesisArgs) -> eyre::Result<()> {
     );
 
     let input_path = utf8_path(&args.input, "input genesis")?;
-    let base = reth_ethereum::cli::chainspec::chain_value_parser(input_path)
+    let base = crate::parse_outbe_genesis_source(input_path)
         .wrap_err_with(|| format!("parse input genesis {}", args.input.display()))?;
     let chain_id = base.chain().id();
     let genesis_hash = base.genesis_hash();
@@ -281,8 +281,7 @@ mod tests {
             "alloc": {}
         });
         fs::write(path, serde_json::to_vec_pretty(&genesis).unwrap()).unwrap();
-        let parsed =
-            reth_ethereum::cli::chainspec::chain_value_parser(path.to_str().unwrap()).unwrap();
+        let parsed = crate::parse_outbe_genesis_source(path.to_str().unwrap()).unwrap();
         let install = ForkInstallScenario::measurement_at(1, chain_id, parsed.genesis_hash())
             .unwrap()
             .into_install();
@@ -323,7 +322,7 @@ mod tests {
         let input = root.path().join("base.json");
         let output = root.path().join("dev.json");
         write_base_genesis(&input, DEVNET_CHAIN_ID);
-        let before = reth_ethereum::cli::chainspec::chain_value_parser(input.to_str().unwrap())
+        let before = crate::parse_outbe_genesis_source(input.to_str().unwrap())
             .unwrap()
             .genesis_hash();
 
@@ -345,7 +344,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let input = root.path().join("base.json");
         write_base_genesis(&input, TESTNET_CHAIN_ID);
-        let before = reth_ethereum::cli::chainspec::chain_value_parser(input.to_str().unwrap())
+        let before = crate::parse_outbe_genesis_source(input.to_str().unwrap())
             .unwrap()
             .genesis_hash();
         let output = root.path().join("testnet.json");
