@@ -6,6 +6,7 @@ use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate_void, reject_value, view};
 use outbe_primitives::error::Result;
+use outbe_primitives::math::reference_price::pair_scales;
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -79,7 +80,8 @@ pub fn dispatch(
             getPairCount(_) => metadata::<IOracle::getPairCountCall>(|| oracle.pair_count.read()),
             getPairByIndex(c) => view(c, |c| {
                 let pair = oracle.require_pair_at(c.index)?;
-                Ok((pair.address1(), pair.address2()).into())
+                let (base_scale, quote_scale) = pair_scales(pair);
+                Ok((pair.address1(), pair.address2(), base_scale, quote_scale).into())
             }),
             getVoteTargets(_) => metadata::<IOracle::getVoteTargetsCall>(|| {
                 let (bases, quotes) = oracle.get_vote_targets()?;
