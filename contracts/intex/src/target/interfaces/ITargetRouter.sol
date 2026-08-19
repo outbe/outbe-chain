@@ -105,14 +105,12 @@ interface ITargetRouter {
     /// @notice Emitted when `flushPendingIssuanceMint` successfully retries a parked mint.
     event IssuanceMintFlushed(uint256 indexed idx, bytes14 indexed seriesId);
 
-    /// @notice Emitted when a lifecycle mark is parked because the series would not take it yet.
-    /// @param idx Index of the parked mark slot.
-    /// @param seriesId Series the mark was meant for.
+    /// @notice Emitted when a lifecycle mark waits in its series' slot because the series has not landed here yet.
+    /// @param seriesId Series the mark is for.
     /// @param msgType Codec message type: MARK_CALLED or MARK_QUALIFIED.
-    /// @param reason Raw revert bytes from IntexNFT1155.
-    event MarkDeferred(uint256 indexed idx, bytes14 indexed seriesId, uint8 indexed msgType, bytes reason);
-    /// @notice Emitted when `flushPendingMark` successfully applies a parked mark.
-    event MarkFlushed(uint256 indexed idx, bytes14 indexed seriesId, uint8 indexed msgType);
+    event MarkSlotted(bytes14 indexed seriesId, uint8 indexed msgType);
+    /// @notice Emitted when a slotted mark is applied to its series.
+    event PendingMarkApplied(bytes14 indexed seriesId, uint8 indexed msgType);
 
     /// @notice Emitted when `sweepNative` transfers native tokens out of the contract.
     /// @param to Recipient of the swept native balance.
@@ -144,8 +142,8 @@ interface ITargetRouter {
     error NoSuchPendingProceedsRoute(uint256 idx);
     /// @notice `flushPendingIssuanceMint` called for an index that was never enqueued.
     error NoSuchPendingIssuanceMint(uint256 idx);
-    /// @notice `flushPendingMark` called for an index that was never enqueued.
-    error NoSuchPendingMark(uint256 idx);
+    /// @notice `applyPendingMark` called for a series with nothing waiting in its slot.
+    error NoPendingMark(bytes14 seriesId);
     /// @notice Pending slot was already flushed; a re-flush would double-send the deferred relay.
     error AlreadyFlushed(uint256 idx);
 

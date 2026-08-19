@@ -93,6 +93,19 @@
     },
     {
       "type": "function",
+      "name": "applyPendingMark",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "auction",
       "inputs": [],
       "outputs": [
@@ -169,19 +182,6 @@
     {
       "type": "function",
       "name": "flushPendingIssuanceMint",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "flushPendingMark",
       "inputs": [
         {
           "name": "idx",
@@ -428,19 +428,6 @@
     },
     {
       "type": "function",
-      "name": "nextPendingMarkIdx",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "nftBridge",
       "inputs": [],
       "outputs": [
@@ -564,34 +551,19 @@
     },
     {
       "type": "function",
-      "name": "pendingMarks",
+      "name": "pendingMark",
       "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
         {
           "name": "seriesId",
           "type": "bytes14",
           "internalType": "bytes14"
-        },
+        }
+      ],
+      "outputs": [
         {
-          "name": "msgType",
+          "name": "",
           "type": "uint8",
           "internalType": "uint8"
-        },
-        {
-          "name": "exists",
-          "type": "bool",
-          "internalType": "bool"
-        },
-        {
-          "name": "done",
-          "type": "bool",
-          "internalType": "bool"
         }
       ],
       "stateMutability": "view"
@@ -1255,62 +1227,6 @@
     },
     {
       "type": "event",
-      "name": "MarkDeferred",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "indexed": true,
-          "internalType": "bytes14"
-        },
-        {
-          "name": "msgType",
-          "type": "uint8",
-          "indexed": true,
-          "internalType": "uint8"
-        },
-        {
-          "name": "reason",
-          "type": "bytes",
-          "indexed": false,
-          "internalType": "bytes"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "MarkFlushed",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "indexed": true,
-          "internalType": "bytes14"
-        },
-        {
-          "name": "msgType",
-          "type": "uint8",
-          "indexed": true,
-          "internalType": "uint8"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
       "name": "MarkQualifiedReceived",
       "inputs": [
         {
@@ -1330,6 +1246,25 @@
     },
     {
       "type": "event",
+      "name": "MarkSlotted",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "indexed": true,
+          "internalType": "bytes14"
+        },
+        {
+          "name": "msgType",
+          "type": "uint8",
+          "indexed": true,
+          "internalType": "uint8"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
       "name": "NativeSwept",
       "inputs": [
         {
@@ -1343,6 +1278,25 @@
           "type": "uint256",
           "indexed": false,
           "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "PendingMarkApplied",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "indexed": true,
+          "internalType": "bytes14"
+        },
+        {
+          "name": "msgType",
+          "type": "uint8",
+          "indexed": true,
+          "internalType": "uint8"
         }
       ],
       "anonymous": false
@@ -1728,6 +1682,17 @@
     },
     {
       "type": "error",
+      "name": "NoPendingMark",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "NoSuchPendingBidsRelay",
       "inputs": [
         {
@@ -1751,17 +1716,6 @@
     {
       "type": "error",
       "name": "NoSuchPendingIssuanceMint",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "NoSuchPendingMark",
       "inputs": [
         {
           "name": "idx",

@@ -36,17 +36,6 @@ struct PendingIssuanceMint {
     bool done;
 }
 
-/// @notice A lifecycle mark IntexNFT1155 would not take, most often because the series has not
-///         landed yet. Retried via `flushPendingMark`; `msgType` says which mark it was.
-/// @dev A mark a later one superseded stays parked and its flush keeps reverting — an inert slot,
-///      left standing because a reverting flush reports the disagreement rather than hiding it.
-struct PendingMark {
-    bytes14 seriesId;
-    uint8 msgType;
-    bool exists;
-    bool done;
-}
-
 /// @custom:storage-location erc7201:outbe.intex.TargetRouter
 struct TargetRouterStorage {
     /// @dev Auction contract that originates outbound bids and receives inbound stage transitions.
@@ -93,10 +82,9 @@ struct TargetRouterStorage {
     mapping(uint32 worldwideDay => uint128 accrued) refundProceedsAccrued;
     /// @dev How many of the day's refund chunks have been applied.
     mapping(uint32 worldwideDay => uint16 applied) refundChunksSeen;
-    /// @dev Parked lifecycle marks awaiting permissionless retry, keyed by enqueue index.
-    mapping(uint256 idx => PendingMark) pendingMarks;
-    /// @dev Next index to assign in `pendingMarks`; also the count ever enqueued.
-    uint256 nextPendingMarkIdx;
+    /// @dev Lifecycle mark waiting for its series to land here (codec msgType, 0 = none); Called overrides
+    ///      Qualified. Applied when ISSUANCE creates the series, or via `applyPendingMark`.
+    mapping(bytes14 seriesId => uint8 msgType) pendingMark;
     /// @dev Winners already issued their allocation of a series; a repeated instruction for the pair is ignored.
     mapping(bytes14 seriesId => mapping(address recipient => bool issued)) issued;
     /// @dev How many issuance chunks the day's run spans on this chain, as the first applied chunk declared.

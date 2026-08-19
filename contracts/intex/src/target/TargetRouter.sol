@@ -24,8 +24,7 @@ import {
     PendingBidsRelay,
     PendingHoldersRelay,
     PendingIssuanceMint,
-    PendingProceedsRoute,
-    PendingMark
+    PendingProceedsRoute
 } from "./TargetRouterStorage.sol";
 
 /// @title TargetRouter
@@ -173,15 +172,9 @@ contract TargetRouter is
         return _ts().issuanceChunkApplied[worldwideDay][chunkIndex];
     }
 
-    /// @notice Parked lifecycle mark at `idx`.
-    function pendingMarks(uint256 idx) external view returns (bytes14 seriesId, uint8 msgType, bool exists, bool done) {
-        PendingMark storage p = _ts().pendingMarks[idx];
-        return (p.seriesId, p.msgType, p.exists, p.done);
-    }
-
-    /// @notice Next index to assign in `pendingMarks`.
-    function nextPendingMarkIdx() external view returns (uint256) {
-        return _ts().nextPendingMarkIdx;
+    /// @notice Lifecycle mark waiting for `seriesId` to land here (codec msgType, 0 = none).
+    function pendingMark(bytes14 seriesId) external view returns (uint8) {
+        return _ts().pendingMark[seriesId];
     }
 
     // --- Admin ---
@@ -387,19 +380,20 @@ contract TargetRouter is
         _markCalledAndMigrate(seriesId);
     }
 
-    /// @notice Permissionless retry of a previously deferred lifecycle mark.
-    /// @param idx Index of the parked mark to flush.
-    function flushPendingMark(uint256 idx) external nonReentrant {
-        PendingMark storage p = _ts().pendingMarks[idx];
-        if (!p.exists) revert NoSuchPendingMark(idx);
-        if (p.done) revert AlreadyFlushed(idx);
-        p.done = true;
-        if (p.msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED) {
-            _ts().intex.markQualified(p.seriesId);
+    /// @notice Permissionless apply of the mark waiting in `seriesId`'s slot. Reverts if nothing waits or the
+    ///         series still will not take it, leaving the slot in place.
+    /// @param seriesId Series whose slotted mark to apply.
+    function applyPendingMark(bytes14 seriesId) external nonReentrant {
+        TargetRouterStorage storage $ = _ts();
+        uint8 msgType = $.pendingMark[seriesId];
+        if (msgType == 0) revert NoPendingMark(seriesId);
+        delete $.pendingMark[seriesId];
+        if (msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED) {
+            $.intex.markQualified(seriesId);
         } else {
-            _markCalledAndMigrate(p.seriesId);
+            _markCalledAndMigrate(seriesId);
         }
-        emit MarkFlushed(idx, p.seriesId, p.msgType);
+        emit PendingMarkApplied(seriesId, msgType);
     }
 
     /// @notice Apply markCalled to IntexNFT1155, then bridge all series holders to Outbe.

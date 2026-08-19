@@ -111,33 +111,30 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // TargetRouter — premature MARK_CALLED parks, then flushes once the series lands
+    // TargetRouter — premature MARK_CALLED waits in the series' slot, then applies once the series lands
     // ---------------------------------------------------------------
 
-    /// @notice MARK_CALLED for a series the BNB intex has never seen is parked rather than rejected:
+    /// @notice MARK_CALLED for a series the BNB intex has never seen waits in its slot rather than rejecting:
     ///         a batch carries several series, and one of them missing must not reject the message.
     function test_TM_PrematureMarkCalled_Parks() public {
         bytes memory packet = BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, MarkBatchLib.one(SERIES_ID));
         _deliverToTM(packet);
 
-        (bytes14 seriesId,, bool exists, bool done) = bnbRouter.pendingMarks(0);
-        assertEq(seriesId, SERIES_ID, "the mark was parked for its series");
-        assertTrue(exists, "the parked slot exists");
-        assertFalse(done, "the parked slot is still open");
+        assertEq(bnbRouter.pendingMark(SERIES_ID), BridgeMsgCodec.MSG_MARK_CALLED, "the mark waits for its series");
     }
 
-    /// @notice Once the prerequisite (the series) lands, flushing the parked mark applies it and the
-    ///         series flips to Called — the out-of-order arrival resolves without a redelivery.
+    /// @notice Once the prerequisite (the series) lands, applying the slotted mark flips the series to
+    ///         Called — the out-of-order arrival resolves without a redelivery.
     function test_TM_ParkedMarkCalledFlushesAfterSeriesLands() public {
         bytes memory packet = BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, MarkBatchLib.one(SERIES_ID));
 
-        // Premature: no series yet → parked.
+        // Premature: no series yet → slotted.
         _deliverToTM(packet);
 
         // Prerequisite lands (the ISSUANCE that would have created the series).
         intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
 
-        bnbRouter.flushPendingMark(0);
+        bnbRouter.applyPendingMark(SERIES_ID);
 
         IIntexNFT1155.SeriesData memory data = intex.readData(SERIES_ID);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Called), "series flipped to Called on flush");

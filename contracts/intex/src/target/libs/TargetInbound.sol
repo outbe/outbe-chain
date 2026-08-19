@@ -12,7 +12,6 @@ import {
     TargetRouterStorage,
     PendingBidsRelay,
     PendingIssuanceMint,
-    PendingMark,
     PendingProceedsRoute
 } from "../TargetRouterStorage.sol";
 
@@ -278,6 +277,7 @@ library TargetInbound {
                         })
                     })
                 );
+            _applySlottedMark($, payload.seriesId);
         }
 
         uint256 recipientsLen = payload.recipients.length;
@@ -403,21 +403,52 @@ library TargetInbound {
         }
     }
 
-    /// @dev Apply one lifecycle mark through its self-call shim, parking it on revert. Parking keeps a series the
-    ///      target has not seen from rejecting the whole message.
+    /// @dev Apply one lifecycle mark through its self-call shim. A series this chain has not seen keeps the mark
+    ///      in its slot; a mark the series already carries (or one a later mark superseded) is acknowledged
+    ///      without effect; any other failure slots the mark for `applyPendingMark`.
     function _applyMark(TargetRouterStorage storage $, uint32 srcChainId, bytes14 seriesId, uint8 msgType) private {
+        if (!$.intex.seriesExists(seriesId)) {
+            _slotMark($, seriesId, msgType);
+            return;
+        }
         // solhint-disable-next-line no-empty-blocks
         try ITargetRouterShims(address(this)).applyMarkOne(seriesId, msgType) {}
         catch (bytes memory reason) {
-            uint256 idx = $.nextPendingMarkIdx++;
-            $.pendingMarks[idx] = PendingMark({seriesId: seriesId, msgType: msgType, exists: true, done: false});
-            emit ITargetRouter.MarkDeferred(idx, seriesId, msgType, reason);
+            if (_selectorOf(reason) == IIntexNFT1155.InvalidState.selector) {
+                IIntexNFT1155.IntexState state = $.intex.readData(seriesId).state;
+                bool already = (msgType == BridgeMsgCodec.MSG_MARK_CALLED && state == IIntexNFT1155.IntexState.Called)
+                    || (msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED && state == IIntexNFT1155.IntexState.Qualified);
+                _ignore(srcChainId, msgType, seriesId, already ? InboundReason.DUPLICATE : InboundReason.OBSOLETE);
+                return;
+            }
+            _slotMark($, seriesId, msgType);
+            _ignore(srcChainId, msgType, seriesId, InboundReason.DEFERRED);
             return;
         }
         if (msgType == BridgeMsgCodec.MSG_MARK_CALLED) {
             emit ITargetRouter.MarkCalledReceived(srcChainId, seriesId);
         } else {
             emit ITargetRouter.MarkQualifiedReceived(srcChainId, seriesId);
+        }
+    }
+
+    /// @dev Keep a mark for a series that cannot take it yet; Called overrides Qualified, never the reverse.
+    function _slotMark(TargetRouterStorage storage $, bytes14 seriesId, uint8 msgType) private {
+        if (msgType == BridgeMsgCodec.MSG_MARK_CALLED || $.pendingMark[seriesId] != BridgeMsgCodec.MSG_MARK_CALLED) {
+            $.pendingMark[seriesId] = msgType;
+        }
+        emit ITargetRouter.MarkSlotted(seriesId, msgType);
+    }
+
+    /// @dev Apply the mark waiting for a series that has just been created; a failure leaves it slotted.
+    function _applySlottedMark(TargetRouterStorage storage $, bytes14 seriesId) private {
+        uint8 msgType = $.pendingMark[seriesId];
+        if (msgType == 0) return;
+        delete $.pendingMark[seriesId];
+        try ITargetRouterShims(address(this)).applyMarkOne(seriesId, msgType) {
+            emit ITargetRouter.PendingMarkApplied(seriesId, msgType);
+        } catch {
+            $.pendingMark[seriesId] = msgType;
         }
     }
 
