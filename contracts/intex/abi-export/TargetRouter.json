@@ -1832,17 +1832,6 @@
     },
     {
       "type": "error",
-      "name": "UnsupportedBodyVersion",
-      "inputs": [
-        {
-          "name": "got",
-          "type": "uint8",
-          "internalType": "uint8"
-        }
-      ]
-    },
-    {
-      "type": "error",
       "name": "ZeroAddress",
       "inputs": [
         {
