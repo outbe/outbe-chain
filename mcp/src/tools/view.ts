@@ -205,7 +205,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   // --- Oracle ----------------------------------------------------------------
   server.tool(
     "currency_pairs",
-    "All oracle price pairs (index, base, quote, active).",
+    "All oracle price pairs (index, base, quote, the decimals each side is quoted in, active).",
     {},
     handler(async () => {
       // The oracle enumerates its registry by index rather than returning the
@@ -217,9 +217,18 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
           const pair = (await view(ctx, "oracle", "getPairByIndex", [index])) as {
             base: string;
             quote: string;
+            baseScale: number;
+            quoteScale: number;
           };
           const active = await view(ctx, "oracle", "isVoteTarget", [pair.base, pair.quote]);
-          return { index, base: pair.base, quote: pair.quote, active };
+          return {
+            index,
+            base: pair.base,
+            quote: pair.quote,
+            baseScale: Number(pair.baseScale),
+            quoteScale: Number(pair.quoteScale),
+            active,
+          };
         }),
       );
       return ok(pairs);
