@@ -15,6 +15,7 @@ import {IWCOEN} from "./interfaces/IWCOEN.sol";
 import {IERC7786TokenReceiver} from "./interfaces/IERC7786TokenReceiver.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../shared/libs/IntexGas.sol";
+import {InboundReason} from "../shared/libs/InboundReason.sol";
 
 /// @title OriginRouter
 /// @author Outbe
@@ -531,10 +532,7 @@ contract OriginRouter is
             uint256[] memory packedBids
         ) = BridgeMsgCodec.decodeBidsBatch(payload);
 
-        if (bodySrcChainId != srcChainId) revert SrcChainIdBodyMismatch(srcChainId, bodySrcChainId);
-        // Only a chain in the day's frozen snapshot may feed bids; a rogue/late-registered source
-        // would otherwise leave storage residue Desis never clears (it resets only snapshot chains).
-        if (!_isSeriesTarget(worldwideDay, srcChainId)) revert NotSeriesTarget(worldwideDay, srcChainId);
+        if (!_acceptBids(srcChainId, bodySrcChainId, worldwideDay, BridgeMsgCodec.MSG_BIDS_BATCH)) return;
 
         IDesis(_os().desis)
             .processBidsBatch(
@@ -549,12 +547,31 @@ contract OriginRouter is
         (uint32 worldwideDay, uint32 bodySrcChainId, uint32 relayGeneration, uint16 totalBatches, uint32 totalBids) =
             BridgeMsgCodec.decodeBidsDone(payload);
 
-        if (bodySrcChainId != srcChainId) revert SrcChainIdBodyMismatch(srcChainId, bodySrcChainId);
-        if (!_isSeriesTarget(worldwideDay, srcChainId)) revert NotSeriesTarget(worldwideDay, srcChainId);
+        if (!_acceptBids(srcChainId, bodySrcChainId, worldwideDay, BridgeMsgCodec.MSG_BIDS_DONE)) return;
 
         IDesis(_os().desis).processBidsDone(worldwideDay, srcChainId, relayGeneration, totalBatches, totalBids);
 
         emit BidsDoneReceived(srcChainId, worldwideDay, totalBatches, totalBids);
+    }
+
+    /// @dev Whether a relayed bids message may reach Desis. A body naming another source than the one the bridge
+    ///      authenticated, or a source outside the day's frozen snapshot, can never become acceptable: it is
+    ///      acknowledged without effect (a rogue/late-registered source would otherwise leave storage residue
+    ///      Desis never clears — it resets only snapshot chains).
+    function _acceptBids(uint32 srcChainId, uint32 bodySrcChainId, uint32 worldwideDay, uint8 msgType)
+        private
+        returns (bool)
+    {
+        bytes32 key = bytes32((uint256(worldwideDay) << 32) | srcChainId);
+        if (bodySrcChainId != srcChainId) {
+            emit InboundMessageIgnored(srcChainId, msgType, key, InboundReason.CONFLICT);
+            return false;
+        }
+        if (!_isSeriesTarget(worldwideDay, srcChainId)) {
+            emit InboundMessageIgnored(srcChainId, msgType, key, InboundReason.UNKNOWN);
+            return false;
+        }
+        return true;
     }
 
     // --- Internal helpers ---

@@ -330,7 +330,9 @@ library TargetInbound {
     }
 
     /// @notice Decode REFUND_INSTRUCTIONS and forward finalization instructions to the EscrowAdapter.
-    /// @dev `receiveId` is the escrow finalization tag; escrow dedups on the series' own `finalized` flag.
+    /// @dev `receiveId` is the escrow finalization tag. A chunk already applied, or one arriving after the escrow
+    ///      closed the day, is acknowledged without effect: bidders it would have settled recover through the
+    ///      escrow's own `claimRefund` path.
     function handleRefundInstructions(
         TargetRouterStorage storage $,
         uint32 srcChainId,
@@ -346,10 +348,15 @@ library TargetInbound {
             uint128[] memory paidAmounts
         ) = BridgeMsgCodec.decodeRefundInstructions(message);
 
+        bytes32 chunkKey = bytes32((uint256(worldwideDay) << 16) | chunkIndex);
         uint256 bit = 1 << chunkIndex;
         if ($.refundChunksApplied[worldwideDay] & bit != 0) {
-            // Redelivered: already settled and counted.
-            emit ITargetRouter.RefundInstructionsReceived(srcChainId, worldwideDay, 0);
+            _ignore(srcChainId, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, chunkKey, InboundReason.DUPLICATE);
+            return;
+        }
+        (, bool finalized,) = $.escrowAdapter.getAuctionStatus(worldwideDay);
+        if (finalized) {
+            _ignore(srcChainId, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, chunkKey, InboundReason.OBSOLETE);
             return;
         }
 

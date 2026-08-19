@@ -10,6 +10,7 @@ import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
+import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 /// @dev Multi-target OriginRouter behavior: registry, broadcast fan-out over the frozen day snapshot, addressed-send
@@ -167,15 +168,18 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         _deliver(TARGET_A, peerA, address(origin), pkt);
     }
 
-    function test_inbound_bids_rejectNonSnapshotSource() public {
+    function test_inbound_bids_ignoreNonSnapshotSource() public {
         _fireStart(DAY); // snapshot = {TARGET_A, TARGET_B}; chain 9 is a registered peer but not a target
         origin.setRemoteMessenger(9, _interop(9, address(0x9999)));
+        bytes32 key = bytes32((uint256(DAY) << 32) | 9);
         bytes memory batch = BridgeMsgCodec.encodeBidsBatch(DAY, 9, 1, 0, 1, new address[](0), new uint256[](0));
-        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.NotSeriesTarget.selector, DAY, uint32(9)));
+        vm.expectEmit(true, true, true, true, address(origin));
+        emit ERC7786MessengerBase.InboundMessageIgnored(9, BridgeMsgCodec.MSG_BIDS_BATCH, key, InboundReason.UNKNOWN);
         _deliver(9, address(0x9999), address(origin), batch);
 
         bytes memory done = BridgeMsgCodec.encodeBidsDone(DAY, 9, 1, 1, 0);
-        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.NotSeriesTarget.selector, DAY, uint32(9)));
+        vm.expectEmit(true, true, true, true, address(origin));
+        emit ERC7786MessengerBase.InboundMessageIgnored(9, BridgeMsgCodec.MSG_BIDS_DONE, key, InboundReason.UNKNOWN);
         _deliver(9, address(0x9999), address(origin), done);
     }
 }
