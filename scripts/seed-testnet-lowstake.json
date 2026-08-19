@@ -1,13 +1,12 @@
 {
  "balance": {
-  "0x4FE927aB711793954B3a29969Ecd4A60D6D265d0": "1000000000000000000000",
-  "0x265846D63407cB61354B6AFd317A509DF4dcc327": "1000000000000000000000",
-  "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266": "10000000000000000000"
+  "0x4FE927aB711793954B3a29969Ecd4A60D6D265d0": "1000000000",
+  "0x265846D63407cB61354B6AFd317A509DF4dcc327": "1000000000"
  },
  "gems": [
   {
    "owner": "0x64CCA861d30714593cB690e0a550C8a9b8b3b058",
-   "gem_load": "1000000000000000000000",
+   "gem_load": "1000000000",
    "issuance_currency": 840,
    "reference_currency": 840
   }
@@ -16,10 +15,10 @@
  "nods": [
   {
    "owner": "0x1111111111111111111111111111111111111111",
-   "gratis_load": "100000000000000000",
+   "gratis_load": "100000",
    "worldwide_day": 20241220,
    "league_id": 1,
-   "floor_price": "540000000000000000"
+   "floor_price": "540000"
   }
  ],
  "metadosis": {
@@ -34,8 +33,8 @@
     "offering_end": 4000000000,
     "scheduled_process_time": 4100000000,
     "previous_vwap": "0",
-    "current_vwap": "1000000000000000000",
-    "day_limit": "500000000000000000000"
+    "current_vwap": "1000000",
+    "day_limit": "500000000"
    }
   ]
  },
@@ -44,8 +43,8 @@
   "reregistration_cooldown_blocks": 151200
  },
  "staking": {
-  "min_stake": "1000000000000000000000",
-  "genesis_validator_stake": "100000000000000000000000",
+  "min_stake": "1000000000",
+  "genesis_validator_stake": "100000000000",
   "unbonding_period": 1814400,
   "slashed_withdrawal_delay": 3628800,
   "max_stake_percent": 33
@@ -69,7 +68,7 @@
    {
     "base": "COEN",
     "quote": "840",
-    "initial_rate": "1000000000000000000"
+    "initial_rate": "1000000"
    }
   ],
   "scurve_seeds": [
@@ -77,7 +76,7 @@
     "pair_base": "COEN",
     "pair_quote": "840",
     "peak_day": 20241220,
-    "peak_price": "1000000000000000000"
+    "peak_price": "1000000"
    }
   ]
  },

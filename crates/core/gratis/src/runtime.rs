@@ -11,7 +11,7 @@
 //! the gratis in an encrypted `PledgeLockTicket` alongside the loan terms it was
 //! quoted against; `consume_pledge` (at requestCredis) deletes the ticket, credits the
 //! EOA's OWN pledged ledger and hands those terms to credis; `release_to_eoa`
-//! (per anadosis) and `burn_pledged` (at credis expiry) draw the collateral back down
+//! (per settlement) and `burn_pledged` (at credis void) draw the collateral back down
 //! from that same EOA's pledged ledger. `pledged_total_supply` counts both the
 //! pending (in-ticket) and active (in `pledged_ct`) locked gratis.
 //!
@@ -350,7 +350,7 @@ pub(crate) fn unpledge(
 /// Recover the plaintext EOA behind a sealed owner blob through the enclave, without
 /// touching state. `handle = Some(h)` decrypts a live pledge ticket (at
 /// `consume_pledge`, before calldata carries the EOA); `None` decrypts the self-contained
-/// `eoa_ct` stored on a Credis position (at payAnadosis / expiry). The EOA is recovered
+/// `eoa_ct` stored on a Credis position (at settlement / void). The EOA is recovered
 /// this way so it never appears in calldata or stored plaintext — only in the (trusted)
 /// host to key the confidential ledgers.
 fn reveal_owner_inner(
@@ -417,9 +417,9 @@ pub(crate) fn consume_pledge(
     Ok((terms, result.eoa_ct))
 }
 
-/// payAnadosis: release `amount` of collateral from `eoa`'s own pledged ledger back
-/// to its balance. Amount-based (no ticket): the credis position schedule is the
-/// accounting authority. Returns the released amount.
+/// Settlement: release `amount` of collateral from `eoa`'s own pledged ledger back
+/// to its balance. Amount-based (no ticket): the credis position is the accounting
+/// authority. Returns the released amount.
 pub(crate) fn release_to_eoa(
     storage: StorageHandle<'_>,
     eoa: Address,
@@ -443,8 +443,8 @@ pub(crate) fn release_to_eoa(
         .ok_or_else(|| PrecompileError::Fatal("gratis pledged_total underflow".to_string()))?;
     gratis.set_pledged_total_supply(total_pledged)?;
     // Scrub the EOA from the event: this is a credis-driven release tied to a specific
-    // position (credisfactory emits the position-scoped `AnadosisPaid`), so emitting the
-    // pledger address here would re-link EOA↔position on every payment. The aggregate
+    // position (credis emits the position-scoped `SettlementApplied`), so emitting the
+    // pledger address here would re-link EOA↔position on every settlement. The aggregate
     // `remainingPledged` signal is preserved.
     storage.emit_event(
         GRATIS_ADDRESS,

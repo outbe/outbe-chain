@@ -25,14 +25,9 @@ use outbe_gratis::api::{self as gratis, ModifyAuth, PledgeTerms};
 use outbe_oracle::api::coen_rate_for;
 use outbe_primitives::addresses::GRATIS_FACTORY_ADDRESS;
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::math::scaled_math::checked_mul_div_ceil;
 use outbe_primitives::storage::StorageHandle;
-use outbe_primitives::units::SCALE_1E18;
-
-/// Decimal-gap factor between COEN (10^18) and stablecoin (10^6). Cosmos:
-/// `decimalsDiff = sdk.NewIntWithDecimal(1, 12)`.
-fn decimals_diff() -> U256 {
-    U256::from(1_000_000_000_000u128)
-}
+use outbe_primitives::units::SCALE_1E6_U256;
 
 /// Reads the pledged asset's ISO 4217 currency code via a static
 /// `IReferenceCurrency.isoCode()` sub-call, mirroring credisfactory's
@@ -48,9 +43,8 @@ fn read_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
         .map_err(|_| GratisFactoryError::AssetIsoUndecodable.into())
 }
 
-/// Inverse of the credis issuance formula
-/// (`stables = gratis * rate / (decimalsDiff * 1e18)`), rounded **up** so the pledged
-/// collateral always covers the requested credit rather than falling a wei short.
+/// Convert canonical six-decimal stablecoin raw units to six-decimal GRATIS,
+/// rounded **up** so the pledged collateral always covers the requested credit.
 /// Gratis is priced at the COEN price because `mine_coen` converts the two 1:1.
 /// Returns `(gratis_cost, rate)`.
 fn convert_stables_to_gratis(
@@ -60,13 +54,11 @@ fn convert_stables_to_gratis(
 ) -> Result<(U256, U256)> {
     let iso_code = read_iso_code(&storage, asset)?;
     let rate = coen_rate_for(storage, iso_code)?;
-    let numerator = amount_stables
-        .checked_mul(decimals_diff())
-        .and_then(|v| v.checked_mul(SCALE_1E18))
-        .ok_or_else(|| -> PrecompileError {
-            GratisFactoryError::OracleConversionOverflow.into()
-        })?;
-    Ok((numerator.div_ceil(rate), rate))
+    let gratis = checked_mul_div_ceil(amount_stables, SCALE_1E6_U256, rate).map_err(|_| {
+        let error: PrecompileError = GratisFactoryError::OracleConversionOverflow.into();
+        error
+    })?;
+    Ok((gratis, rate))
 }
 
 /// Pledge the gratis that collateralizes `amount_stables` of credit in `asset` into a
@@ -75,8 +67,8 @@ fn convert_stables_to_gratis(
 /// exceeds `max_gratis` — that cap is the pledger's slippage protection, authenticated
 /// by their transaction signature rather than the MAC. Returns
 /// `(pledge_handle, gratis_cost)`; the handle is what the CCA presents at
-/// `requestCredis`. The anadosis installment count lives on the Credis position, not
-/// the pledge.
+/// `requestCredis`. The loan's own terms — the policy rate, the floor and call prices —
+/// are sealed on the Credis position, not on the pledge.
 pub fn pledge_gratis(
     storage: StorageHandle<'_>,
     caller: Address,

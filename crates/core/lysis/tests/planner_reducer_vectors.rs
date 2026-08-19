@@ -46,8 +46,9 @@ use outbe_ocomp_protocol::{
     unit::{InputPurpose, InputSourceKind, UnitInterval, UnitPhase},
     ListKind, ObjectKind, OrderedListLimits,
 };
-use outbe_primitives::units::SCALE_1E18;
 use std::collections::BTreeMap;
+
+const SIX_DECIMAL_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
 
 fn tribute(seed: u32, day: WorldwideDay, nominal: u64, excluded: bool) -> TributeInputV1 {
     let mut owner_bytes = [0_u8; 20];
@@ -1938,7 +1939,7 @@ fn fidelity_map_and_fixed_reduce_match_the_native_lysis_fraction_table() {
                     owner,
                     worldwide_day: day,
                     issuance_currency: 978,
-                    nominal_amount_minor: U256::from(1_000_000_u64) * SCALE_1E18,
+                    nominal_amount_minor: U256::from(1_000_000_u64) * SIX_DECIMAL_SCALE,
                     reference_currency: 840,
                     tribute_price_minor: U256::ZERO,
                     exclude_from_intex_issuance: ordinal.is_multiple_of(11),
@@ -1960,7 +1961,7 @@ fn fidelity_map_and_fixed_reduce_match_the_native_lysis_fraction_table() {
         worldwide_day: day,
         logical_evaluation_time: 1_784_765_900,
         gratis_allocation,
-        mandatory_entry_price_840: ObservationValueV1::Value(SCALE_1E18),
+        mandatory_entry_price_840: ObservationValueV1::Value(SIX_DECIMAL_SCALE),
         tributes: tributes.clone(),
     })
     .unwrap();
@@ -1987,7 +1988,7 @@ fn fidelity_phase_rejects_missing_mismatched_and_non_adjacent_evidence() {
             owner,
             worldwide_day: day,
             issuance_currency: 978,
-            nominal_amount_minor: SCALE_1E18,
+            nominal_amount_minor: SIX_DECIMAL_SCALE,
             reference_currency: 840,
             tribute_price_minor: U256::ZERO,
             exclude_from_intex_issuance: false,
@@ -2022,9 +2023,9 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
                     owner,
                     worldwide_day: day,
                     issuance_currency: 978,
-                    nominal_amount_minor: U256::from(1_000_000_u64) * SCALE_1E18,
+                    nominal_amount_minor: U256::from(1_000_000_u64) * SIX_DECIMAL_SCALE,
                     reference_currency: 840,
-                    tribute_price_minor: U256::from(2_u8) * SCALE_1E18,
+                    tribute_price_minor: U256::from(2_u8) * SIX_DECIMAL_SCALE,
                     exclude_from_intex_issuance: ordinal.is_multiple_of(11),
                 },
                 first_league: ObservationValueV1::Value(7),
@@ -2041,7 +2042,7 @@ fn amount_and_output_finalize_phases_match_sequential_lysis_for_shard_cap_plus_o
         .sum::<U256>();
     let lysis_budget = total_nominal * U256::from(32_u8) / U256::from(100_u8);
     let logical_time = 1_784_765_900;
-    let entry_price = SCALE_1E18;
+    let entry_price = SIX_DECIMAL_SCALE;
     let sequential = execute(ProgramInputV1 {
         worldwide_day: day,
         logical_evaluation_time: logical_time,
@@ -2372,10 +2373,10 @@ fn output_finalize_commits_all_excluded_nominal_once_per_shard_and_checks_overfl
             worldwide_day: day,
             league_id: 7,
             nominal_amount_minor: U256::ZERO,
-            gratis_fraction_fp: SCALE_1E18,
+            gratis_fraction_fp: SIX_DECIMAL_SCALE,
             gratis_load_minor: U256::from(1),
-            entry_price_minor: SCALE_1E18,
-            floor_price_minor: SCALE_1E18,
+            entry_price_minor: SIX_DECIMAL_SCALE,
+            floor_price_minor: SIX_DECIMAL_SCALE,
             cost_amount_minor: U256::from(1),
             issuance_currency: 840,
             reference_currency: 978,
@@ -2443,7 +2444,7 @@ fn fidelity_reducer_handles_every_padded_empty_shape_for_one_to_eight_shards() {
                         owner,
                         worldwide_day: day,
                         issuance_currency: 978,
-                        nominal_amount_minor: SCALE_1E18,
+                        nominal_amount_minor: SIX_DECIMAL_SCALE,
                         reference_currency: 840,
                         tribute_price_minor: U256::ZERO,
                         exclude_from_intex_issuance: false,

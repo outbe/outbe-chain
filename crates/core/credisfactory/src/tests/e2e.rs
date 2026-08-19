@@ -1,4 +1,4 @@
-//! End-to-end flow: mine → pledge → requestCredis → payAnadosis → unlock.
+//! End-to-end flow: mine → pledge → requestCredis → latch → settle → void.
 //!
 //! The confidential Gratis path runs against the in-process enclave engine
 //! (`outbe_gratis::enclave_client::test_enclave`); balances/pledged amounts are
@@ -6,10 +6,16 @@
 //! a client would. `HashMapStorageProvider` does not run a real EVM, so the
 //! runtime's Rust → Solidity sub-calls into `IVaultRouter` / `IERC20` are
 //! stubbed via `enable_sub_call_stub` (returns `default_success()`).
+//!
+//! There is no price-scan hook yet, so the tests that need a CALLED position
+//! drive `mark_called` directly — the daily reference-price scan that fires it in
+//! production is a separate change.
 
 use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_sol_types::SolCall;
 
-use outbe_credis::{CredisContract, NUMBER_OF_ANADOSIS, SECONDS_PER_MONTH};
+use crate::precompile::ICredisFactory;
+use outbe_credis::{CredisContract, CredisState};
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::runtime as gf;
@@ -18,6 +24,7 @@ use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_promislimit::PromisLimitContract;
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
 use outbe_tee_enclave::gratis::{
@@ -31,18 +38,22 @@ use crate::tests::common::*;
 /// Issuance currency (ISO 4217) reported by `asset()`'s stubbed `isoCode()`.
 const ISSUANCE_ISO: u16 = 840;
 
-/// currency rate seeded for USD in these e2e tests (4.30 %, 1e18 scaled).
-fn refi_rate() -> U256 {
-    U256::from(43_000_000_000_000_000u128)
+const DAY: u64 = 86_400;
+
+/// Policy rate seeded for USD in these e2e tests (4.30 %, scale 1e6).
+fn policy_rate() -> U256 {
+    U256::from(43_000u64)
 }
 
-fn one_e18() -> U256 {
-    U256::from(10u64).pow(U256::from(18u64))
-}
-
-/// COEN/840 rate these tests seed: 2.0, 1e18-scaled.
+/// COEN/840 rate these tests seed: 2.0 at scale 1e6. This is the entry price of
+/// every position opened here, so floor = 2.16 and call = 2.64.
 fn oracle_rate() -> U256 {
-    U256::from(2u64) * one_e18()
+    U256::from(2u64) * SCALE_1E6_U256
+}
+
+/// A price above every position's floor (2.16), so the settlement latch trips.
+fn above_floor() -> U256 {
+    U256::from(2_200_000u64)
 }
 
 /// Credit a pledge asks for: $2.00 in 6-decimal minor units. At [`oracle_rate`] that
@@ -51,9 +62,9 @@ fn pledge_stables() -> U256 {
     U256::from(2_000_000u64)
 }
 
-/// Gratis collateral [`pledge_stables`] costs: `2e6 * 1e12 * 1e18 / 2e18 = 1e18`.
+/// Gratis collateral [`pledge_stables`] costs: `2e6 * 1e6 / 2e6 = 1e6`.
 fn pledge_cost() -> U256 {
-    one_e18()
+    SCALE_1E6_U256
 }
 
 /// Pledge [`pledge_stables`] of credit for `who` at op-nonce `nonce` (uncapped), and
@@ -72,37 +83,63 @@ fn pledge(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> B256 {
     handle
 }
 
+/// Pledge and open a position for alice, originated by [`cca`].
+fn open(storage: &StorageHandle<'_>, nonce: u64) -> U256 {
+    let handle = pledge(storage, alice(), nonce);
+    let spend = credis_spend_auth(alice(), handle, alice());
+    let (position_id, _) =
+        runtime::request_credis(storage.clone(), cca(), alice(), handle, spend).unwrap();
+    position_id
+}
+
 fn chain_b256() -> B256 {
     B256::from(U256::from(CHAIN_ID))
 }
 
-fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
+fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
     outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
+    set_coen_rate(&storage, coen_iso_rate);
+    let oracle = OracleContract::new(storage);
+    oracle
+        .reference_currency_rate
+        .write(&ISSUANCE_ISO, policy_rate())
+        .unwrap();
+}
+
+/// Re-publishes the COEN/840 rate — how these tests move the price across a floor.
+fn set_coen_rate(storage: &StorageHandle<'_>, coen_iso_rate: U256) {
     outbe_oracle::api::set_exchange_rate(
         storage.clone(),
         Address::ZERO,
         outbe_oracle::api::DAY_TYPE_PAIR,
-        rate_1e18,
+        coen_iso_rate,
         0,
         0,
     )
     .unwrap();
-    let oracle = OracleContract::new(storage);
-    oracle
-        .reference_currency_rate
-        .write(&ISSUANCE_ISO, refi_rate())
-        .unwrap();
 }
 
-/// Pays exactly what the position's next installment still owes, and returns the
-/// amount actually pulled.
-fn pay_next_installment(storage: &StorageHandle<'_>, caller: Address, position_id: U256) -> U256 {
-    let owed = CredisContract::new(storage.clone())
-        .get_next_anadosis(position_id)
-        .unwrap()
-        .unwrap()
-        .unpaid_amount;
-    runtime::pay_anadosis(storage.clone(), caller, position_id, owed).unwrap()
+fn now_of(storage: &StorageHandle<'_>) -> u64 {
+    storage.timestamp().unwrap().to::<u64>()
+}
+
+fn advance_to(storage: &StorageHandle<'_>, timestamp: u64) {
+    storage.set_block_timestamp(U256::from(timestamp)).unwrap();
+}
+
+/// Settles exactly the accrued interest plus `principal` of the outstanding
+/// balance, and returns the `(principal, interest)` the settlement reported.
+fn settle_principal(
+    storage: &StorageHandle<'_>,
+    payer: Address,
+    position_id: U256,
+    principal: U256,
+) -> (U256, U256) {
+    let position = CredisContract::new(storage.clone())
+        .get_position(position_id)
+        .unwrap();
+    let interest = CredisContract::accrued_interest(&position, now_of(storage)).unwrap();
+    runtime::settle(storage.clone(), payer, position_id, interest + principal).unwrap()
 }
 
 /// ABI-encoded `uint16` return for the asset's `isoCode()` static sub-call.
@@ -175,41 +212,48 @@ fn env() -> HashMapStorageProvider {
     storage
 }
 
+/// Mints `amount` gratis to alice and seeds the fidelity + oracle state a pledge needs.
+fn bootstrap(storage: &StorageHandle<'_>, amount: U256) {
+    outbe_gratis::api::mint(
+        storage.clone(),
+        alice(),
+        amount,
+        auth(GratisOp::Mint, alice(), amount, 0),
+    )
+    .unwrap();
+    seed_fidelity(storage.clone(), alice());
+    seed_oracle(storage.clone(), oracle_rate());
+}
+
+fn teardown() {
+    fidelity_enclave::uninstall();
+    test_enclave::uninstall();
+}
+
 #[test]
-fn full_pledge_request_pay_unlock_flow() {
+fn request_credis_seals_the_position_geometry_from_the_pledge_quote() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let pledge_amount = one_e18();
-        let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
-
-        // Mine + pledge. Alice is both the pledger EOA and the smart account here.
-        outbe_gratis::api::mint(
-            storage.clone(),
-            alice(),
-            pledge_amount,
-            auth(GratisOp::Mint, alice(), pledge_amount, 0),
-        )
-        .unwrap();
-        seed_fidelity(storage.clone(), alice());
-        seed_oracle(storage.clone(), oracle_rate());
+        bootstrap(&storage, pledge_cost());
         let handle = pledge(&storage, alice(), 1);
         // Pledge parks the amount in the ticket: balance drained, pledged ledger 0.
         assert_eq!(view_balance(&storage, alice()), U256::ZERO);
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
 
-        // requestCredis bound to alice's smart account, with alice as the pledger
-        // EOA. The collateral is credited into alice's OWN pledged ledger.
         let spend = credis_spend_auth(alice(), handle, alice());
         let (position_id, amount_stables) =
-            runtime::request_credis(storage.clone(), alice(), alice(), handle, spend).unwrap();
-        assert_eq!(view_pledged(&storage, alice()), pledge_amount);
+            runtime::request_credis(storage.clone(), cca(), alice(), handle, spend).unwrap();
 
+        // The collateral moved into alice's OWN pledged ledger.
+        assert_eq!(view_pledged(&storage, alice()), pledge_cost());
         // The loan is exactly what the pledger asked for — credis does not re-price it.
         assert_eq!(amount_stables, pledge_stables());
 
-        let credis = CredisContract::new(storage.clone());
-        let position = credis.get_position(position_id).unwrap();
+        let position = CredisContract::new(storage.clone())
+            .get_position(position_id)
+            .unwrap();
         assert_eq!(position.smart_account, alice());
+        assert_eq!(position.cca, cca(), "the caller is the originating agent");
         // The pledger EOA is stored sealed (ciphertext), never as a plaintext address,
         // and the enclave opens it back to alice via RevealOwner.
         assert!(!position.eoa_ct.is_empty(), "eoa stored as ciphertext");
@@ -217,318 +261,318 @@ fn full_pledge_request_pay_unlock_flow() {
             outbe_gratis::api::reveal_owner(storage.clone(), &position.eoa_ct).unwrap(),
             alice()
         );
-        assert_eq!(position.credis_principal, amount_stables);
-        // The entry price is the rate the PLEDGE was quoted at, not a later read.
-        assert_eq!(position.entry_price_minor, oracle_rate());
-        assert_eq!(position.currency_rate, refi_rate());
+
+        assert_eq!(position.principal, amount_stables);
+        assert_eq!(position.outstanding, amount_stables);
+        assert_eq!(position.collateral, pledge_cost());
+        assert_eq!(position.collateral_locked, pledge_cost());
+        // The entry price is the rate the PLEDGE was quoted at, not a later read;
+        // floor and call derive from it, so the whole geometry follows the quote.
+        assert_eq!(position.entry_price, oracle_rate());
+        assert_eq!(position.floor_price, U256::from(2_160_000u64));
+        assert_eq!(position.call_price, U256::from(2_640_000u64));
+        assert_eq!(position.policy_rate, policy_rate());
         assert_eq!(position.issuance_currency, ISSUANCE_ISO);
-        let multiplier =
-            one_e18() + refi_rate() * U256::from(NUMBER_OF_ANADOSIS) / U256::from(12u64);
-        assert_eq!(
-            position.total_anadosis_amount,
-            amount_stables * multiplier / one_e18()
-        );
-        assert_eq!(position.total_gratis_amount, pledge_amount);
-
-        // Pay each installment; each releases 1/10 of the collateral from alice's own
-        // pledged ledger back to her balance, one installment at a time.
-        for n in 1..=NUMBER_OF_ANADOSIS {
-            storage
-                .set_block_timestamp(U256::from(CREATED_AT + n as u64 * SECONDS_PER_MONTH))
-                .unwrap();
-            pay_next_installment(&storage, alice(), position_id);
-
-            let unlocked = U256::from(n) * installment;
-            assert_eq!(view_balance(&storage, alice()), unlocked, "installment {n}");
-            assert_eq!(
-                view_pledged(&storage, alice()),
-                pledge_amount - unlocked,
-                "pledged {n}"
-            );
-        }
-
-        // Fully drained: alice holds the whole pledge again; pledged ledger empty.
-        assert_eq!(view_balance(&storage, alice()), pledge_amount);
-        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert_eq!(position.lifecycle_state().unwrap(), CredisState::Open);
+        assert_eq!(position.last_settled_at, position.originated_at);
     });
-    fidelity_enclave::uninstall();
-    test_enclave::uninstall();
+    teardown();
 }
 
 #[test]
-fn pay_anadosis_unlocks_one_installment() {
+fn settle_is_rejected_until_the_price_crosses_the_floor() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let pledge_amount = one_e18();
-        let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
+        bootstrap(&storage, pledge_cost());
+        let position_id = open(&storage, 1);
 
-        outbe_gratis::api::mint(
-            storage.clone(),
-            alice(),
-            pledge_amount,
-            auth(GratisOp::Mint, alice(), pledge_amount, 0),
-        )
-        .unwrap();
-        seed_fidelity(storage.clone(), alice());
-        seed_oracle(storage.clone(), oracle_rate());
-        let handle = pledge(&storage, alice(), 1);
-
-        let spend = credis_spend_auth(alice(), handle, alice());
-        let (position_id, _) =
-            runtime::request_credis(storage.clone(), alice(), alice(), handle, spend).unwrap();
-
-        // Pay a single installment: releases exactly pledge/10 from alice's pledged
-        // ledger right away, without waiting for the loan to complete.
-        storage
-            .set_block_timestamp(U256::from(CREATED_AT + SECONDS_PER_MONTH))
-            .unwrap();
-        pay_next_installment(&storage, alice(), position_id);
-
-        assert_eq!(view_balance(&storage, alice()), installment);
-        assert_eq!(view_pledged(&storage, alice()), pledge_amount - installment);
-    });
-    fidelity_enclave::uninstall();
-    test_enclave::uninstall();
-}
-
-#[test]
-fn pay_anadosis_spans_installments_and_caps_at_outstanding() {
-    let mut storage = env();
-    StorageHandle::enter(&mut storage, |storage| {
-        let pledge_amount = one_e18();
-
-        outbe_gratis::api::mint(
-            storage.clone(),
-            alice(),
-            pledge_amount,
-            auth(GratisOp::Mint, alice(), pledge_amount, 0),
-        )
-        .unwrap();
-        seed_fidelity(storage.clone(), alice());
-        seed_oracle(storage.clone(), oracle_rate());
-        let handle = pledge(&storage, alice(), 1);
-
-        let spend = credis_spend_auth(alice(), handle, alice());
-        let (position_id, _) =
-            runtime::request_credis(storage.clone(), alice(), alice(), handle, spend).unwrap();
-
-        let total_debt = CredisContract::new(storage.clone())
-            .get_position(position_id)
-            .unwrap()
-            .total_anadosis_amount;
-        let per_installment = total_debt / U256::from(NUMBER_OF_ANADOSIS);
-
-        storage
-            .set_block_timestamp(U256::from(CREATED_AT + SECONDS_PER_MONTH))
-            .unwrap();
-
-        // 2.5 installments in one call: #1 and #2 settle, #3 keeps half owed.
-        let amount = per_installment * U256::from(2u64) + per_installment / U256::from(2u64);
-        let paid = runtime::pay_anadosis(storage.clone(), alice(), position_id, amount).unwrap();
-        assert_eq!(paid, amount, "whole budget consumed — schedule had room");
-
-        let credis = CredisContract::new(storage.clone());
-        assert_eq!(
-            credis
-                .get_position(position_id)
-                .unwrap()
-                .next_anadosis_number,
-            3
-        );
-        let third = credis.get_anadosis(position_id, 3).unwrap();
-        assert_eq!(
-            third.unpaid_amount,
-            third.anadosis_amount - per_installment / U256::from(2u64)
-        );
-        assert_eq!(third.paid_at, 0, "partially paid installment stays open");
-
-        // Collateral released tracks the debt paid down, and the two ledgers stay
-        // complementary (nothing minted, nothing stranded).
-        let released = view_balance(&storage, alice());
-        assert_eq!(view_pledged(&storage, alice()), pledge_amount - released);
-        assert!(released > U256::ZERO && released < pledge_amount);
-
-        // Overpaying the rest takes only what is outstanding and closes the position,
-        // returning the full pledge to alice's liquid balance.
-        let outstanding = credis
-            .get_position(position_id)
-            .unwrap()
-            .outstanding_anadosis_amount;
-        let rest = runtime::pay_anadosis(
+        // The seeded price (2.0) sits below the floor (2.16).
+        let err = runtime::settle(
             storage.clone(),
             alice(),
             position_id,
-            outstanding * U256::from(1_000u64),
+            U256::from(1_000_000u64),
         )
-        .unwrap();
-        assert_eq!(rest, outstanding, "only the required amount is used");
-        assert_eq!(paid + rest, total_debt, "never more than the total debt");
+        .unwrap_err();
+        assert!(err.to_string().contains("not settleable"), "got: {err}");
 
-        assert_eq!(view_balance(&storage, alice()), pledge_amount);
-        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        // Cross the floor: the settlement latches the position on the way through.
+        set_coen_rate(&storage, above_floor());
+        settle_principal(&storage, alice(), position_id, U256::from(500_000u64));
+        assert_eq!(
+            CredisContract::new(storage.clone())
+                .get_position(position_id)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            CredisState::Settleable
+        );
+
+        // The latch is one-way: the price falling back below the floor does not
+        // re-lock the position.
+        set_coen_rate(&storage, oracle_rate());
+        settle_principal(&storage, alice(), position_id, U256::from(500_000u64));
+        assert_eq!(
+            CredisContract::new(storage.clone())
+                .get_position(position_id)
+                .unwrap()
+                .outstanding,
+            U256::from(1_000_000u64)
+        );
     });
-    fidelity_enclave::uninstall();
-    test_enclave::uninstall();
+    teardown();
 }
 
 #[test]
-fn request_credis_rejects_overdue_anadosis() {
+fn settlement_releases_collateral_proportionally_and_closes_without_dust() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let amount = one_e18();
-        outbe_gratis::api::mint(
-            storage.clone(),
-            alice(),
-            amount * U256::from(2u64),
-            auth(GratisOp::Mint, alice(), amount * U256::from(2u64), 0),
-        )
-        .unwrap();
-        seed_fidelity(storage.clone(), alice());
-        seed_oracle(storage.clone(), oracle_rate());
+        bootstrap(&storage, pledge_cost());
+        let position_id = open(&storage, 1);
+        set_coen_rate(&storage, above_floor());
 
-        // First pledge + request.
-        let h1 = pledge(&storage, alice(), 1);
-        let spend1 = credis_spend_auth(alice(), h1, alice());
-        runtime::request_credis(storage.clone(), alice(), alice(), h1, spend1).unwrap();
+        // Half the principal, 30 days in → half the collateral back.
+        advance_to(&storage, CREATED_AT + 30 * DAY);
+        let half = pledge_stables() / U256::from(2u64);
+        let (principal_paid, interest_paid) =
+            settle_principal(&storage, alice(), position_id, half);
 
-        // Second pledge — then attempt a second request once anadosis-1 is overdue
-        // on the first position.
-        let h2 = pledge(&storage, alice(), 2);
-        let spend2 = credis_spend_auth(alice(), h2, alice());
-        storage
-            .set_block_timestamp(U256::from(CREATED_AT + SECONDS_PER_MONTH + 1))
+        let position = CredisContract::new(storage.clone())
+            .get_position(position_id)
             .unwrap();
-        let err =
-            runtime::request_credis(storage.clone(), alice(), alice(), h2, spend2).unwrap_err();
-        assert!(err.to_string().contains("overdue"), "got: {err}");
+        assert_eq!(position.outstanding, half);
+        assert_eq!(position.collateral_locked, pledge_cost() / U256::from(2u64));
+        // The two components are reported separately: the principal is exactly
+        // what was asked for, and the interest rode on top of it.
+        assert_eq!(principal_paid, half);
+        assert!(
+            !interest_paid.is_zero(),
+            "interest was collected on top of the principal"
+        );
+
+        assert_eq!(
+            view_balance(&storage, alice()),
+            pledge_cost() / U256::from(2u64)
+        );
+        assert_eq!(
+            view_pledged(&storage, alice()),
+            pledge_cost() / U256::from(2u64)
+        );
+
+        // Settling the rest returns the whole pledge and closes the position with
+        // nothing stranded in the pledged ledger.
+        advance_to(&storage, CREATED_AT + 60 * DAY);
+        settle_principal(&storage, alice(), position_id, half);
+
+        let position = CredisContract::new(storage.clone())
+            .get_position(position_id)
+            .unwrap();
+        assert_eq!(position.lifecycle_state().unwrap(), CredisState::Settled);
+        assert!(position.collateral_locked.is_zero());
+        assert_eq!(view_balance(&storage, alice()), pledge_cost());
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
     });
-    fidelity_enclave::uninstall();
-    test_enclave::uninstall();
+    teardown();
 }
 
-// A zero asset can no longer reach requestCredis — it is rejected at pledge time now
-// that the asset travels in the ticket. See
-// `outbe_gratisfactory::tests::pledge_rejects_zero_asset`.
+#[test]
+fn the_settle_abi_returns_the_principal_and_interest_split() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let position_id = open(&storage, 1);
+        set_coen_rate(&storage, above_floor());
+        advance_to(&storage, CREATED_AT + 30 * DAY);
+
+        let position = CredisContract::new(storage.clone())
+            .get_position(position_id)
+            .unwrap();
+        let interest = CredisContract::accrued_interest(&position, now_of(&storage)).unwrap();
+        assert!(!interest.is_zero(), "30 days must have accrued something");
+        let principal = pledge_stables() / U256::from(4u64);
+
+        // Drive the real ABI path, so the two-field return is exercised through
+        // encoding and decoding rather than only as a Rust tuple.
+        let data = ICredisFactory::settleCall {
+            positionId: position_id,
+            amount: interest + principal,
+        }
+        .abi_encode();
+        let out = crate::precompile::dispatch(storage.clone(), &data, alice(), U256::ZERO).unwrap();
+        let decoded = ICredisFactory::settleCall::abi_decode_returns(&out).unwrap();
+
+        // Order matters: principal first, interest second.
+        assert_eq!(decoded.principal, principal);
+        assert_eq!(decoded.interest, interest);
+
+        let after = CredisContract::new(storage.clone())
+            .get_position(position_id)
+            .unwrap();
+        assert_eq!(
+            after.outstanding,
+            pledge_stables() - principal,
+            "only the principal component reduces the balance"
+        );
+    });
+    teardown();
+}
+
+#[test]
+fn settle_takes_only_what_the_position_needs() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let position_id = open(&storage, 1);
+        set_coen_rate(&storage, above_floor());
+        advance_to(&storage, CREATED_AT + 30 * DAY);
+
+        let position = CredisContract::new(storage.clone())
+            .get_position(position_id)
+            .unwrap();
+        let interest = CredisContract::accrued_interest(&position, now_of(&storage)).unwrap();
+
+        let (principal_paid, interest_paid) = runtime::settle(
+            storage.clone(),
+            alice(),
+            position_id,
+            pledge_stables() * U256::from(1_000u64),
+        )
+        .unwrap();
+        // The split is reported separately, and only what the position needed
+        // was pulled — the vast over-payment is not.
+        assert_eq!(principal_paid, pledge_stables());
+        assert_eq!(interest_paid, interest);
+        assert_eq!(
+            principal_paid + interest_paid,
+            interest + pledge_stables(),
+            "only interest + outstanding principal is pulled"
+        );
+        assert_eq!(view_balance(&storage, alice()), pledge_cost());
+    });
+    teardown();
+}
+
+#[test]
+fn settle_accepts_a_third_party_payer() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let position_id = open(&storage, 1);
+        set_coen_rate(&storage, above_floor());
+
+        // bob is neither the pledger nor the smart account, but anyone may settle.
+        let half = pledge_stables() / U256::from(2u64);
+        settle_principal(&storage, bob(), position_id, half);
+
+        // The freed collateral goes to the ORIGINAL pledger, never to the payer — this
+        // is what makes an open payer safe without an access check.
+        assert_eq!(
+            view_balance(&storage, alice()),
+            pledge_cost() / U256::from(2u64)
+        );
+        assert_eq!(
+            view_pledged(&storage, alice()),
+            pledge_cost() / U256::from(2u64)
+        );
+        assert_eq!(view_balance(&storage, bob()), U256::ZERO);
+        assert_eq!(view_pledged(&storage, bob()), U256::ZERO);
+    });
+    teardown();
+}
+
+#[test]
+fn request_credis_rejects_an_owner_with_an_unresolved_call() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost() * U256::from(2u64));
+        // Both pledges are quoted at the seeded rate, before the price moves.
+        let first_handle = pledge(&storage, alice(), 1);
+        let second_handle = pledge(&storage, alice(), 2);
+
+        let first_spend = credis_spend_auth(alice(), first_handle, alice());
+        let (first, _) =
+            runtime::request_credis(storage.clone(), cca(), alice(), first_handle, first_spend)
+                .unwrap();
+
+        // Latch and call the first position.
+        set_coen_rate(&storage, above_floor());
+        {
+            let mut credis = CredisContract::new(storage.clone());
+            assert!(credis.mark_settleable(first).unwrap());
+            assert!(credis.mark_called(first, now_of(&storage)).unwrap());
+        }
+
+        let spend = credis_spend_auth(alice(), second_handle, alice());
+        let err = runtime::request_credis(storage.clone(), cca(), alice(), second_handle, spend)
+            .unwrap_err();
+        assert!(err.to_string().contains("called position"), "got: {err}");
+
+        // Settling the call in full clears the block.
+        settle_principal(&storage, alice(), first, pledge_stables());
+        runtime::request_credis(storage.clone(), cca(), alice(), second_handle, spend).unwrap();
+    });
+    teardown();
+}
 
 #[test]
 fn request_credis_rejects_zero_smart_account() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
-        let err = runtime::request_credis(
-            storage.clone(),
-            alice(),
-            Address::ZERO,
-            B256::ZERO,
-            [0u8; 32],
-        )
-        .unwrap_err();
+        let err =
+            runtime::request_credis(storage.clone(), cca(), Address::ZERO, B256::ZERO, [0u8; 32])
+                .unwrap_err();
         assert!(err.to_string().contains("smart account"), "got: {err}");
     });
 }
 
 #[test]
-fn pay_anadosis_accepts_third_party_payer() {
+fn void_sweep_burns_only_the_unpaid_share() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
-        let pledge_amount = one_e18();
-        let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
+        bootstrap(&storage, pledge_cost());
+        let position_id = open(&storage, 1);
+        set_coen_rate(&storage, above_floor());
 
-        outbe_gratis::api::mint(
-            storage.clone(),
+        // Settle half the principal, reclaiming half the collateral.
+        advance_to(&storage, CREATED_AT + 30 * DAY);
+        settle_principal(
+            &storage,
             alice(),
-            pledge_amount,
-            auth(GratisOp::Mint, alice(), pledge_amount, 0),
-        )
-        .unwrap();
-        seed_fidelity(storage.clone(), alice());
-        seed_oracle(storage.clone(), oracle_rate());
-        let handle = pledge(&storage, alice(), 1);
-        let spend = credis_spend_auth(alice(), handle, alice());
-        let (position_id, _) =
-            runtime::request_credis(storage.clone(), alice(), alice(), handle, spend).unwrap();
-
-        // bob is not the position's smart account, but anyone may pay it down.
-        let owed = CredisContract::new(storage.clone())
-            .get_next_anadosis(position_id)
-            .unwrap()
-            .unwrap()
-            .unpaid_amount;
-        let paid = runtime::pay_anadosis(storage.clone(), bob(), position_id, owed).unwrap();
-        assert_eq!(paid, owed);
-        assert_eq!(
-            CredisContract::new(storage.clone())
-                .get_position(position_id)
-                .unwrap()
-                .next_anadosis_number,
-            2,
-            "third-party payment advances the schedule"
+            position_id,
+            pledge_stables() / U256::from(2u64),
         );
+        let unpaid_collateral = pledge_cost() / U256::from(2u64);
+        assert_eq!(view_pledged(&storage, alice()), unpaid_collateral);
 
-        // The freed collateral goes to the ORIGINAL pledger, never to the payer — this
-        // is what makes an open payer safe without an access check.
-        assert_eq!(view_balance(&storage, alice()), installment);
-        assert_eq!(view_pledged(&storage, alice()), pledge_amount - installment);
-        assert_eq!(view_balance(&storage, bob()), U256::ZERO);
-        assert_eq!(view_pledged(&storage, bob()), U256::ZERO);
-    });
-    fidelity_enclave::uninstall();
-    test_enclave::uninstall();
-}
-
-#[test]
-fn expiry_sweep_burns_outstanding_collateral() {
-    let mut storage = env();
-    StorageHandle::enter(&mut storage, |storage| {
-        let pledge_amount = one_e18();
-        let installment = pledge_amount / U256::from(NUMBER_OF_ANADOSIS);
-
-        outbe_gratis::api::mint(
-            storage.clone(),
-            alice(),
-            pledge_amount,
-            auth(GratisOp::Mint, alice(), pledge_amount, 0),
-        )
-        .unwrap();
-        seed_fidelity(storage.clone(), alice());
-        seed_oracle(storage.clone(), oracle_rate());
-        let handle = pledge(&storage, alice(), 1);
-        let spend = credis_spend_auth(alice(), handle, alice());
-        let (position_id, _) =
-            runtime::request_credis(storage.clone(), alice(), alice(), handle, spend).unwrap();
-
-        // Pay 3 of 10 installments, leaving 7/10 of the collateral outstanding.
-        for n in 1..=3u64 {
-            storage
-                .set_block_timestamp(U256::from(CREATED_AT + n * SECONDS_PER_MONTH))
-                .unwrap();
-            pay_next_installment(&storage, alice(), position_id);
+        // Call it, then let the settlement window lapse.
+        let called_at = now_of(&storage);
+        {
+            let mut credis = CredisContract::new(storage.clone());
+            assert!(credis.mark_called(position_id, called_at).unwrap());
         }
-        let outstanding_gratis = pledge_amount - U256::from(3u64) * installment;
-        assert_eq!(view_pledged(&storage, alice()), outstanding_gratis);
 
         // Encrypted cohort ledger before the burn — the burn records a sale
         // cohort, so the ciphertext must change afterwards.
-        let expiry_ts = CREATED_AT + NUMBER_OF_ANADOSIS as u64 * SECONDS_PER_MONTH;
         let cohorts_before = outbe_fidelity::FidelityContract::new(storage.clone())
             .cohorts_ct_of(alice())
             .unwrap();
         assert!(!cohorts_before.is_empty(), "alice has a seeded cohort");
 
-        // Advance past the 10-month term and run the begin-block expiry sweep.
-        let sweep_ts = expiry_ts + 1;
-        storage.set_block_timestamp(U256::from(sweep_ts)).unwrap();
-        let ctx = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(BLOCK_NUMBER, sweep_ts, CHAIN_ID),
-            storage.clone(),
-        );
-        assert_eq!(crate::lifecycle::scan_and_expire(&ctx).unwrap(), 1);
+        // One second inside the window the sweep must find nothing.
+        let deadline = called_at + 14 * DAY;
+        advance_to(&storage, deadline - 1);
+        assert_eq!(scan(&storage, deadline - 1), 0, "window still open");
 
-        // Collateral burned from alice's own pledged ledger; supply reduced by it.
+        advance_to(&storage, deadline);
+        assert_eq!(scan(&storage, deadline), 1);
+
+        // Only the unpaid share was burned; the settled half stays with alice.
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert_eq!(view_balance(&storage, alice()), unpaid_collateral);
         assert_eq!(
             outbe_gratis::api::total_supply(storage.clone()).unwrap(),
-            pledge_amount - outstanding_gratis
+            pledge_cost() - unpaid_collateral
         );
         assert_eq!(
             outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
@@ -540,15 +584,15 @@ fn expiry_sweep_burns_outstanding_collateral() {
             PromisLimitContract::new(storage.clone())
                 .get_total_unallocated()
                 .unwrap(),
-            outstanding_gratis
+            unpaid_collateral
         );
 
-        // Position closed: outstanding balances zeroed.
         let position = CredisContract::new(storage.clone())
             .get_position(position_id)
             .unwrap();
-        assert!(position.outstanding_anadosis_amount.is_zero());
-        assert!(position.outstanding_gratis_amount.is_zero());
+        assert_eq!(position.lifecycle_state().unwrap(), CredisState::Void);
+        assert!(position.outstanding.is_zero());
+        assert!(position.collateral_locked.is_zero());
 
         // A sale cohort was recorded for the burned collateral, so alice's
         // encrypted cohort ledger changed (the RCFI-drop semantics itself is
@@ -558,16 +602,60 @@ fn expiry_sweep_burns_outstanding_collateral() {
             .unwrap();
         assert_ne!(
             cohorts_before, cohorts_after,
-            "expiry burn should record a sale cohort"
+            "the void burn should record a sale cohort"
         );
 
         // Idempotent: a second sweep at the same height finds nothing to burn.
-        let ctx2 = BlockRuntimeContext::new(
-            BlockContext::empty_for_tests(BLOCK_NUMBER, sweep_ts, CHAIN_ID),
-            storage.clone(),
-        );
-        assert_eq!(crate::lifecycle::scan_and_expire(&ctx2).unwrap(), 0);
+        assert_eq!(scan(&storage, deadline), 0);
     });
-    fidelity_enclave::uninstall();
-    test_enclave::uninstall();
+    teardown();
+}
+
+#[test]
+fn a_position_settled_inside_the_window_is_never_voided() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let position_id = open(&storage, 1);
+        set_coen_rate(&storage, above_floor());
+
+        let called_at = now_of(&storage);
+        {
+            let mut credis = CredisContract::new(storage.clone());
+            assert!(credis.mark_settleable(position_id).unwrap());
+            assert!(credis.mark_called(position_id, called_at).unwrap());
+        }
+
+        // Settle in full inside the window.
+        advance_to(&storage, called_at + 7 * DAY);
+        settle_principal(&storage, alice(), position_id, pledge_stables());
+
+        let deadline = called_at + 14 * DAY;
+        advance_to(&storage, deadline + DAY);
+        assert_eq!(scan(&storage, deadline + DAY), 0);
+
+        // Nothing burned: the whole pledge is back with alice.
+        assert_eq!(view_balance(&storage, alice()), pledge_cost());
+        assert_eq!(
+            outbe_gratis::api::total_supply(storage.clone()).unwrap(),
+            pledge_cost()
+        );
+        assert_eq!(
+            PromisLimitContract::new(storage.clone())
+                .get_total_unallocated()
+                .unwrap(),
+            U256::ZERO
+        );
+    });
+    teardown();
+}
+
+/// Runs the begin-block void sweep at `timestamp`, returning how many positions
+/// it voided.
+fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
+    let ctx = BlockRuntimeContext::new(
+        BlockContext::empty_for_tests(BLOCK_NUMBER, timestamp, CHAIN_ID),
+        storage.clone(),
+    );
+    crate::lifecycle::scan_and_void(&ctx).unwrap()
 }

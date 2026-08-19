@@ -77,7 +77,8 @@ pub struct EncryptedTributeOffer {
     /// excluded from Intex issuance.
     pub exclude_from_intex_issuance: bool,
     /// Nominal COEN price for `COEN/<tribute_currency>` at `worldwide_day`,
-    /// 1e18 scaled, resolved by the node from committed Oracle state.
+    /// Rate in the ISO stablecoin domain (scale 1e6), resolved by the node from
+    /// committed Oracle state.
     pub tribute_price_minor: U256,
     /// Public ZK claim context supplied only for registered L2 networks with
     /// ZK verification enabled. The owner is the first public input embedded
@@ -192,9 +193,9 @@ pub enum GratisOp {
     ConsumePledge,
     /// Release `amount` of collateral from the EOA's own pledged ledger back to its
     /// balance (`pledged_total_supply -= amount`). Amount-based (no ticket); the
-    /// on-chain Credis position schedule is the accounting authority.
+    /// on-chain Credis position is the accounting authority.
     ReleaseToEoa,
-    /// Burn `amount` of collateral from the EOA's own pledged ledger at credis expiry
+    /// Burn `amount` of collateral from the EOA's own pledged ledger at credis void
     /// (`total_supply -= amount`; `pledged_total_supply -= amount`). Amount-based (no
     /// ticket); the on-chain Credis position's outstanding balance is the authority.
     BurnPledged,
@@ -202,7 +203,7 @@ pub enum GratisOp {
     /// With `pledge_handle = Some(handle)` the blob in `current_pledge_record` is a live
     /// `PledgeLockTicket` (used at credis `ConsumePledge` time, before the calldata carries
     /// no EOA); with `None` it is the self-contained `eoa_ct` stored on the Credis position
-    /// (used at `payAnadosis`/expiry to recover the EOA that keys the pledged ledger).
+    /// (used at settlement/void to recover the EOA that keys the pledged ledger).
     /// No state mutation, no authorization.
     RevealOwner,
 }
@@ -234,8 +235,8 @@ pub struct PledgeTerms {
     pub gratis_amount: U256,
     /// The stablecoin the credis is disbursed in.
     pub asset: Address,
-    /// COEN/stablecoin rate (1e18) the conversion used; pinned as the Credis
-    /// position's `entry_price_minor`.
+    /// COEN/ISO rate (scale 1e6) used for the conversion; pinned as the Credis
+    /// position's `entry_price_minor` without changing the field shape.
     pub entry_rate: U256,
 }
 

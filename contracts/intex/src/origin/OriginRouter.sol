@@ -320,20 +320,20 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function quoteSendMarkCalled(bytes14 seriesId, uint32 worldwideDay) external view returns (uint256) {
+    function quoteSendMarkCalled(uint32 worldwideDay, bytes14[] calldata seriesIds) external view returns (uint256) {
         return _broadcastFee(
             _seriesOrRegistry(worldwideDay),
-            BridgeMsgCodec.encodeMarkCalled(seriesId, worldwideDay),
-            IntexGas.MARK_CALLED
+            BridgeMsgCodec.encodeMarkCalled(worldwideDay, seriesIds),
+            IntexGas.markCalled(seriesIds.length)
         );
     }
 
     /// @inheritdoc IOriginRouter
-    function quoteSendMarkQualified(bytes14 seriesId, uint32 worldwideDay) external view returns (uint256) {
+    function quoteSendMarkQualified(uint32 worldwideDay, bytes14[] calldata seriesIds) external view returns (uint256) {
         return _broadcastFee(
             _seriesOrRegistry(worldwideDay),
-            BridgeMsgCodec.encodeMarkQualified(seriesId, worldwideDay),
-            IntexGas.MARK_QUALIFIED
+            BridgeMsgCodec.encodeMarkQualified(worldwideDay, seriesIds),
+            IntexGas.markQualified(seriesIds.length)
         );
     }
 
@@ -443,24 +443,38 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function sendMarkCalled(bytes14 seriesId, uint32 worldwideDay) external payable onlyRole(INTEX_FACTORY_ROLE) {
+    function sendMarkCalled(uint32 worldwideDay, bytes14[] calldata seriesIds)
+        external
+        payable
+        onlyRole(INTEX_FACTORY_ROLE)
+    {
         uint32[] memory snapshot = _os().seriesTargets[worldwideDay];
         if (snapshot.length == 0) revert NoTargets();
-        bytes memory payload = BridgeMsgCodec.encodeMarkCalled(seriesId, worldwideDay);
+        bytes memory payload = BridgeMsgCodec.encodeMarkCalled(worldwideDay, seriesIds);
+        uint256 gasLimit = IntexGas.markCalled(seriesIds.length);
         for (uint256 i = 0; i < snapshot.length; ++i) {
-            bytes32 sendId = _sendOrPark(snapshot[i], payload, IntexGas.MARK_CALLED);
-            emit MarkCalledSent(sendId, seriesId);
+            bytes32 sendId = _sendOrPark(snapshot[i], payload, gasLimit);
+            for (uint256 s = 0; s < seriesIds.length; ++s) {
+                emit MarkCalledSent(sendId, seriesIds[s]);
+            }
         }
     }
 
     /// @inheritdoc IOriginRouter
-    function sendMarkQualified(bytes14 seriesId, uint32 worldwideDay) external payable onlyRole(INTEX_FACTORY_ROLE) {
+    function sendMarkQualified(uint32 worldwideDay, bytes14[] calldata seriesIds)
+        external
+        payable
+        onlyRole(INTEX_FACTORY_ROLE)
+    {
         uint32[] memory snapshot = _os().seriesTargets[worldwideDay];
         if (snapshot.length == 0) revert NoTargets();
-        bytes memory payload = BridgeMsgCodec.encodeMarkQualified(seriesId, worldwideDay);
+        bytes memory payload = BridgeMsgCodec.encodeMarkQualified(worldwideDay, seriesIds);
+        uint256 gasLimit = IntexGas.markQualified(seriesIds.length);
         for (uint256 i = 0; i < snapshot.length; ++i) {
-            bytes32 sendId = _sendOrPark(snapshot[i], payload, IntexGas.MARK_QUALIFIED);
-            emit MarkQualifiedSent(sendId, seriesId);
+            bytes32 sendId = _sendOrPark(snapshot[i], payload, gasLimit);
+            for (uint256 s = 0; s < seriesIds.length; ++s) {
+                emit MarkQualifiedSent(sendId, seriesIds[s]);
+            }
         }
     }
 

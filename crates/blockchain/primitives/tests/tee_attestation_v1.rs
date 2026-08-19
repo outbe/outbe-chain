@@ -903,6 +903,22 @@ fn policy(
 }
 
 #[test]
+fn tee_policy_accepts_at_most_thirty_days() {
+    const THIRTY_DAYS: u64 = 30 * 24 * 60 * 60;
+
+    let mut at_limit = policy(1, 1, B256::ZERO);
+    at_limit.maximum_lease = THIRTY_DAYS;
+    assert!(at_limit.encode_canonical().is_ok());
+
+    let mut above_limit = at_limit;
+    above_limit.maximum_lease = THIRTY_DAYS + 1;
+    assert_eq!(
+        above_limit.encode_canonical().unwrap_err(),
+        CodecError::NonCanonical("invalid TEE lease policy")
+    );
+}
+
+#[test]
 fn policy_and_schedule_roundtrip_with_height_selection() {
     let first = policy(1, 1, B256::ZERO);
     let first_hash = first.policy_hash().unwrap();

@@ -23,6 +23,7 @@ mod joiner;
 mod log_audit;
 mod probes;
 
+pub use bootstrap::BootstrapProfile;
 pub(crate) use log_audit::LogAudit;
 pub use probes::{CeStartupReplayObservationV1, OcompRuntimeTraceMarkerV1};
 
@@ -157,7 +158,7 @@ impl Localnet {
         let sudo = self.cfg.sudo;
         let signing_key = self.cfg.dir.join("test-sgx-signing-key.pem");
         self.ensure_enclave_image_once_with(|| {
-            proc::ensure_enclave_image(&repo, sudo, &signing_key)
+            proc::ensure_enclave_image(&repo, sudo, &signing_key, None)
         })
     }
 

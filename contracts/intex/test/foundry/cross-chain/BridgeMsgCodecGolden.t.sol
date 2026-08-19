@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {BidPackLib} from "../helpers/BidPackLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {Test} from "forge-std/Test.sol";
@@ -47,16 +48,17 @@ contract BridgeMsgCodecGoldenTest is Test {
     }
 
     function test_Golden_MarkCalled() public pure {
-        // [ver=01][type=08][seriesId="20260212-TRY-U"][wwd=01352574]
+        // [ver=01][type=08] ++ abi.encode(wwd, seriesIds)
         assertEq(
-            BridgeMsgCodec.encodeMarkCalled("20260212-TRY-U", 20260212), hex"010832303236303231322d5452592d5501352574"
+            BridgeMsgCodec.encodeMarkCalled(20260212, MarkBatchLib.one("20260212-TRY-U")),
+            abi.encodePacked(hex"0108", abi.encode(uint32(20260212), MarkBatchLib.one("20260212-TRY-U")))
         );
     }
 
     function test_Golden_MarkQualified() public pure {
         assertEq(
-            BridgeMsgCodec.encodeMarkQualified("20260212-TRY-U", 20260212),
-            hex"010932303236303231322d5452592d5501352574"
+            BridgeMsgCodec.encodeMarkQualified(20260212, MarkBatchLib.one("20260212-TRY-U")),
+            abi.encodePacked(hex"0109", abi.encode(uint32(20260212), MarkBatchLib.one("20260212-TRY-U")))
         );
     }
 
@@ -280,11 +282,13 @@ contract BridgeMsgCodecGoldenTest is Test {
             this.exposedDecodeAuctionStageClearing(BridgeMsgCodec.encodeAuctionStageClearing(0x0A0B0C0D)), 0x0A0B0C0D
         );
         assertEq(
-            this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled("20260212-TRY-U", 20260212)),
+            this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled(20260212, MarkBatchLib.one("20260212-TRY-U"))),
             bytes14("20260212-TRY-U")
         );
         assertEq(
-            this.exposedDecodeMarkQualified(BridgeMsgCodec.encodeMarkQualified("20260212-TRY-U", 20260212)),
+            this.exposedDecodeMarkQualified(
+                BridgeMsgCodec.encodeMarkQualified(20260212, MarkBatchLib.one("20260212-TRY-U"))
+            ),
             bytes14("20260212-TRY-U")
         );
     }
@@ -300,11 +304,13 @@ contract BridgeMsgCodecGoldenTest is Test {
     }
 
     function exposedDecodeMarkCalled(bytes calldata p) external pure returns (bytes14) {
-        return BridgeMsgCodec.decodeMarkCalled(p);
+        (, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(p);
+        return seriesIds[0];
     }
 
     function exposedDecodeMarkQualified(bytes calldata p) external pure returns (bytes14) {
-        return BridgeMsgCodec.decodeMarkQualified(p);
+        (, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkQualified(p);
+        return seriesIds[0];
     }
 
     function exposedDecodeBidsDone(bytes calldata p) external pure returns (uint32, uint32, uint32, uint16, uint32) {

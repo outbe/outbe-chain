@@ -11,8 +11,11 @@ use outbe_primitives::storage::types::{Storable, StorageKey};
 
 const CHAIN_ID: u64 = 1;
 const ISSUED_AT: u32 = 1_700_000_000;
-const PROMIS_LOAD_MINOR: u128 = 1_000_000_000_000_000_000; // 1e18
+const PROMIS_LOAD_MINOR: u128 = 1_000_000; // 1 PROMIS in PROMIS-unit
 const CALL_NOTICE_PERIOD: u32 = 21 * 24 * 60 * 60;
+const ENTRY_PRICE_MINOR: u64 = 2_000_000;
+const FLOOR_PRICE_MINOR: u64 = 1_500_000;
+const CALL_PRICE_MINOR: u64 = 900_000;
 
 fn with_registry<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -123,9 +126,9 @@ fn sample_params(worldwide_day: u32) -> CreateSeriesParams {
         worldwide_day: WorldwideDay::new(worldwide_day),
         issued_intex_count: 100,
         promis_load_minor: PROMIS_LOAD_MINOR,
-        entry_price_minor: U256::from(2_000u64),
-        floor_price_minor: U256::from(1_500u64),
-        call_price_minor: U256::from(900u64),
+        entry_price_minor: U256::from(ENTRY_PRICE_MINOR),
+        floor_price_minor: U256::from(FLOOR_PRICE_MINOR),
+        call_price_minor: U256::from(CALL_PRICE_MINOR),
         call_trigger: IntexCallTrigger {
             call_window: 30 * 24 * 60 * 60,
             call_threshold: 5 * 24 * 60 * 60,
@@ -152,8 +155,8 @@ fn create_then_read_round_trip() {
         assert_eq!(r.series_id, sid(7));
         // u128 -> U256 widening preserved.
         assert_eq!(r.promis_load_minor, U256::from(PROMIS_LOAD_MINOR));
-        assert_eq!(r.entry_price_minor, U256::from(2_000u64));
-        assert_eq!(r.floor_price_minor, U256::from(1_500u64));
+        assert_eq!(r.entry_price_minor, U256::from(ENTRY_PRICE_MINOR));
+        assert_eq!(r.floor_price_minor, U256::from(FLOOR_PRICE_MINOR));
         assert_eq!(r.issued_intex_count, 100);
         assert_eq!(
             r.call_trigger(),
@@ -341,12 +344,12 @@ fn precompile_series_data_round_trip() {
 
         assert_eq!(data.seriesId, alloy_primitives::FixedBytes::from(sid(7)));
         assert_eq!(data.promisLoadMinor, U256::from(PROMIS_LOAD_MINOR));
-        assert_eq!(data.entryPriceMinor, U256::from(2_000u64));
-        assert_eq!(data.floorPriceMinor, U256::from(1_500u64));
+        assert_eq!(data.entryPriceMinor, U256::from(ENTRY_PRICE_MINOR));
+        assert_eq!(data.floorPriceMinor, U256::from(FLOOR_PRICE_MINOR));
         assert_eq!(data.issuedIntexCount, 100);
         assert_eq!(data.callWindow, 30 * 24 * 60 * 60);
         assert_eq!(data.callThreshold, 5 * 24 * 60 * 60);
-        assert_eq!(data.callPriceMinor, U256::from(900u64));
+        assert_eq!(data.callPriceMinor, U256::from(CALL_PRICE_MINOR));
         assert_eq!(data.state, IntexState::Qualified as u8);
         assert_eq!(data.issuedAt, ISSUED_AT);
         assert_eq!(data.callNoticePeriod, CALL_NOTICE_PERIOD);

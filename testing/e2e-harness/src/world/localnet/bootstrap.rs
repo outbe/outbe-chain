@@ -3,10 +3,19 @@
 //! `python3 seed_genesis.py`); the genesis skeleton, port rewrite, and dev felony
 //! patch are native Rust.
 
-use std::fs;
+#[cfg(all(test, unix))]
+use std::fs::Permissions;
+use std::fs::{self, OpenOptions};
+use std::io::Write as _;
+use std::num::NonZeroU64;
+#[cfg(unix)]
+use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(not(feature = "ocomp-integration"))]
+use alloy_primitives::hex;
 use eyre::{bail, eyre, Result, WrapErr};
 use outbe_primitives::chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID};
 use serde_json::json;
@@ -16,16 +25,13 @@ use crate::{env::TeeMode, internal::proc};
 
 use super::{worldwide_day, Localnet};
 
-/// 10000 COEN (`10000 * 10^18`) as hex — the per-validator liquid balance.
-const VALIDATOR_BALANCE_HEX: &str = "0x21E19E0C9BAB2400000";
+/// 10000 COEN (`10000 * 10^6`) as hex — the per-validator liquid balance.
+const VALIDATOR_BALANCE_HEX: &str = "0x2540be400";
 /// Dev felony threshold (blocks) so downtime slashing is observable on the short
 /// localnet epoch; must stay `<` the epoch length (`bootstrap-testnet.sh:234`).
 const DEV_FELONY_THRESHOLD: u64 = 30;
 const PROPOSER_FELONY_SLOT: u64 = 1;
 const VOTER_FELONY_SLOT: u64 = 12;
-/// A lifecycle E2E may opt into a short delay; testnet seed defaults remain
-/// untouched. The value is supplied through `TESTNET_UNBONDING_PERIOD_SECS`.
-const STAKING_SUFFIX: &str = "ee02";
 const LOCALNET_METADOSIS_FORMING_LEAD_SECONDS: u64 = 60;
 const LOCALNET_METADOSIS_LOOKBACK_SECONDS: u64 = 0;
 const LOCALNET_METADOSIS_OFFERING_SECONDS: u64 = 120;
@@ -33,6 +39,239 @@ const LOCALNET_METADOSIS_WAITING_SECONDS: u64 = 30;
 const LOCALNET_METADOSIS_BOOTSTRAP_SECONDS: u64 = 300;
 const LOCALNET_METADOSIS_ADVANCE_SECONDS: u64 = 10;
 const LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS: u64 = 120;
+const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 300;
+const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 30;
+const DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS: u64 = 30;
+
+/// Valid, scenario-local genesis choices used by lifecycle E2E tests.
+///
+/// The fields are deliberately private: callers use the checked builders, and
+/// [`Localnet::bootstrap_with_profile`] validates the values again against the
+/// actual committee size before generating any files. ValidatorSet and Staking
+/// overrides are written to a scenario-local seed copy consumed by the normal
+/// genesis seeder; they are never installed through raw storage writes.
+#[derive(Debug, Clone)]
+pub struct BootstrapProfile {
+    chain_id: Option<NonZeroU64>,
+    validator_set_owner_index: Option<usize>,
+    max_validators: Option<u32>,
+    reregistration_cooldown_blocks: Option<u32>,
+    epoch_length_blocks: NonZeroU64,
+    dkg_prepare_window_blocks: NonZeroU64,
+    dkg_activation_grace_blocks: NonZeroU64,
+    dev_felony_threshold: u64,
+    unbonding_period_secs: Option<NonZeroU64>,
+    slashed_withdrawal_delay_secs: Option<NonZeroU64>,
+    validator_balance_coen: Option<u64>,
+    metadosis_forming_seconds: Option<u64>,
+    metadosis_offering_seconds: u64,
+    ocomp_vote_window_blocks: u64,
+}
+
+impl Default for BootstrapProfile {
+    fn default() -> Self {
+        Self {
+            chain_id: None,
+            validator_set_owner_index: None,
+            max_validators: None,
+            reregistration_cooldown_blocks: None,
+            epoch_length_blocks: NonZeroU64::new(DEFAULT_EPOCH_LENGTH_BLOCKS)
+                .expect("non-zero default epoch"),
+            dkg_prepare_window_blocks: NonZeroU64::new(DEFAULT_DKG_PREPARE_WINDOW_BLOCKS)
+                .expect("non-zero default prepare window"),
+            dkg_activation_grace_blocks: NonZeroU64::new(DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS)
+                .expect("non-zero default activation grace"),
+            dev_felony_threshold: DEV_FELONY_THRESHOLD,
+            unbonding_period_secs: None,
+            slashed_withdrawal_delay_secs: None,
+            validator_balance_coen: None,
+            metadosis_forming_seconds: None,
+            metadosis_offering_seconds: LOCALNET_METADOSIS_OFFERING_SECONDS,
+            ocomp_vote_window_blocks: LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS,
+        }
+    }
+}
+
+impl BootstrapProfile {
+    /// Override the EIP-155 chain identity. Zero is rejected.
+    pub fn with_chain_id(mut self, chain_id: u64) -> Result<Self> {
+        self.chain_id =
+            Some(NonZeroU64::new(chain_id).ok_or_else(|| eyre!("chain id must be > 0"))?);
+        Ok(self)
+    }
+
+    /// Make an existing genesis validator the ValidatorSet owner.
+    ///
+    /// The index is checked against the requested committee size at bootstrap.
+    pub fn with_validator_set_owner(mut self, validator_index: usize) -> Self {
+        self.validator_set_owner_index = Some(validator_index);
+        self
+    }
+
+    /// Override the registry capacity. It must cover the genesis committee.
+    pub fn with_max_validators(mut self, max_validators: u32) -> Result<Self> {
+        if max_validators == 0 {
+            bail!("max validators must be > 0");
+        }
+        self.max_validators = Some(max_validators);
+        Ok(self)
+    }
+
+    /// Override the re-registration cooldown. Zero intentionally means no
+    /// cooldown and is a valid acceleration setting.
+    pub fn with_reregistration_cooldown_blocks(mut self, blocks: u32) -> Self {
+        self.reregistration_cooldown_blocks = Some(blocks);
+        self
+    }
+
+    /// Set the positive periodic epoch/DKG schedule.
+    pub fn with_dkg_timing(
+        mut self,
+        epoch_length_blocks: u64,
+        prepare_window_blocks: u64,
+        activation_grace_blocks: u64,
+    ) -> Result<Self> {
+        self.epoch_length_blocks = positive(epoch_length_blocks, "epoch length")?;
+        self.dkg_prepare_window_blocks = positive(prepare_window_blocks, "DKG prepare window")?;
+        self.dkg_activation_grace_blocks =
+            positive(activation_grace_blocks, "DKG activation grace")?;
+        if prepare_window_blocks > epoch_length_blocks {
+            bail!(
+                "DKG prepare window {prepare_window_blocks} exceeds epoch length \
+                 {epoch_length_blocks}"
+            );
+        }
+        Ok(self)
+    }
+
+    /// Set the localnet felony threshold. It may be zero, but must remain below
+    /// the epoch length so the per-epoch reset cannot hide a test offense.
+    pub fn with_dev_felony_threshold(mut self, blocks: u64) -> Result<Self> {
+        if blocks >= self.epoch_length_blocks.get() {
+            bail!(
+                "dev felony threshold {blocks} must be < epoch length {}",
+                self.epoch_length_blocks
+            );
+        }
+        self.dev_felony_threshold = blocks;
+        Ok(self)
+    }
+
+    /// Set positive Staking delays through the public genesis seed schema.
+    pub fn with_staking_timing(
+        mut self,
+        unbonding_period_secs: Option<u64>,
+        slashed_withdrawal_delay_secs: Option<u64>,
+    ) -> Result<Self> {
+        self.unbonding_period_secs = unbonding_period_secs
+            .map(|value| positive(value, "unbonding period"))
+            .transpose()?;
+        self.slashed_withdrawal_delay_secs = slashed_withdrawal_delay_secs
+            .map(|value| positive(value, "slashed withdrawal delay"))
+            .transpose()?;
+        Ok(self)
+    }
+
+    /// Parse the legacy `TESTNET_*` slice used by existing feature steps.
+    ///
+    /// Parsing is strict: malformed or unsupported knobs fail before bootstrap
+    /// instead of silently falling back to a different genesis.
+    fn from_tuning(tuning: &[(&str, String)]) -> Result<Self> {
+        let mut profile = Self::default();
+        for (key, value) in tuning {
+            let parsed = || {
+                value
+                    .parse::<u64>()
+                    .wrap_err_with(|| format!("{key} must be an unsigned integer"))
+            };
+            match *key {
+                "TESTNET_EPOCH_LENGTH_BLOCKS" => {
+                    profile.epoch_length_blocks = positive(parsed()?, "epoch length")?;
+                }
+                "TESTNET_DKG_PREPARE_WINDOW_BLOCKS" => {
+                    profile.dkg_prepare_window_blocks = positive(parsed()?, "DKG prepare window")?;
+                }
+                "TESTNET_DKG_ACTIVATION_GRACE_BLOCKS" => {
+                    profile.dkg_activation_grace_blocks =
+                        positive(parsed()?, "DKG activation grace")?;
+                }
+                "TESTNET_DEV_FELONY_THRESHOLD" => {
+                    profile.dev_felony_threshold = parsed()?;
+                }
+                "TESTNET_UNBONDING_PERIOD_SECS" => {
+                    profile.unbonding_period_secs = Some(positive(parsed()?, "unbonding period")?);
+                }
+                "TESTNET_SLASHED_WITHDRAWAL_DELAY_SECS" => {
+                    profile.slashed_withdrawal_delay_secs =
+                        Some(positive(parsed()?, "slashed withdrawal delay")?);
+                }
+                "TESTNET_VALIDATOR_BALANCE_COEN" => {
+                    profile.validator_balance_coen = Some(parsed()?);
+                }
+                "TESTNET_METADOSIS_FORMING_SECONDS" => {
+                    profile.metadosis_forming_seconds = Some(parsed()?);
+                }
+                "TESTNET_METADOSIS_OFFERING_SECONDS" => {
+                    profile.metadosis_offering_seconds = parsed()?;
+                }
+                "TESTNET_OCOMP_VOTE_WINDOW_BLOCKS" => {
+                    profile.ocomp_vote_window_blocks = parsed()?;
+                }
+                other => {
+                    bail!("unsupported localnet tuning key {other}");
+                }
+            }
+        }
+        profile.validate_timing()?;
+        Ok(profile)
+    }
+
+    fn validate_timing(&self) -> Result<()> {
+        if self.dkg_prepare_window_blocks > self.epoch_length_blocks {
+            bail!(
+                "DKG prepare window {} exceeds epoch length {}",
+                self.dkg_prepare_window_blocks,
+                self.epoch_length_blocks
+            );
+        }
+        if self.epoch_length_blocks.get() > u64::from(u32::MAX) {
+            bail!("epoch length exceeds the on-chain u32 range");
+        }
+        if self.dev_felony_threshold >= self.epoch_length_blocks.get() {
+            bail!(
+                "dev felony threshold {} must be < epoch length {}",
+                self.dev_felony_threshold,
+                self.epoch_length_blocks
+            );
+        }
+        Ok(())
+    }
+
+    fn validate_for_committee(&self, n: usize) -> Result<()> {
+        self.validate_timing()?;
+        if n == 0 {
+            bail!("bootstrap committee must contain at least one validator");
+        }
+        if n > u32::MAX as usize {
+            bail!("bootstrap committee size exceeds u32 range");
+        }
+        if let Some(index) = self.validator_set_owner_index {
+            if index >= n {
+                bail!("ValidatorSet owner index {index} is outside committee size {n}");
+            }
+        }
+        if let Some(max) = self.max_validators {
+            if max < n as u32 {
+                bail!("max validators {max} is smaller than genesis committee size {n}");
+            }
+        }
+        Ok(())
+    }
+}
+
+fn positive(value: u64, label: &str) -> Result<NonZeroU64> {
+    NonZeroU64::new(value).ok_or_else(|| eyre!("{label} must be > 0"))
+}
 
 impl Localnet {
     /// Add the canonical block-1 TEE manifest after every scenario has finished
@@ -71,8 +310,12 @@ impl Localnet {
         match self.cfg.tee_mode {
             TeeMode::Real => {
                 let signing_key = self.cfg.dir.join("test-sgx-signing-key.pem");
-                let image_id =
-                    proc::ensure_enclave_image(&self.cfg.repo, self.cfg.sudo, &signing_key)?;
+                let image_id = proc::ensure_enclave_image(
+                    &self.cfg.repo,
+                    self.cfg.sudo,
+                    &signing_key,
+                    self.enclave_image_id.as_ref(),
+                )?;
                 let measurement = proc::inspect_test_sgx_measurement(
                     &self.cfg.repo,
                     &self.real_enclave_bin()?,
@@ -224,6 +467,40 @@ impl Localnet {
         Ok(())
     }
 
+    /// Stage the founder material required by each node's mandatory embedded
+    /// OCOMP runtime when the harness is built without the external OCOMP
+    /// scenario drivers.
+    #[cfg(not(feature = "ocomp-integration"))]
+    pub(crate) fn ensure_embedded_ocomp_domain_material(&self) -> Result<()> {
+        for index in 0..self.committee_size() {
+            self.ensure_embedded_ocomp_validator_domain_material(index)?;
+        }
+        Ok(())
+    }
+
+    /// Stage one validator's mandatory embedded OCOMP runtime domain. Founder
+    /// startup and late validator promotion share this exact material contract.
+    #[cfg(not(feature = "ocomp-integration"))]
+    pub(crate) fn ensure_embedded_ocomp_validator_domain_material(
+        &self,
+        index: usize,
+    ) -> Result<()> {
+        let bundle = fs::read(self.cfg.dir.join("protocol-bundle-v1.ocb1"))?;
+        let validator_dir = self.cfg.validator_dir(index);
+        let signing_key = fs::read(validator_dir.join("ocomp-key-v1.hex"))?;
+        let domain = validator_dir.join("ocomp").join("domain-v1");
+        fs::create_dir_all(&domain)?;
+        publish_embedded_ocomp_file(&domain.join("protocol-bundle-v1.ocb1"), &bundle, 0o640)?;
+        publish_embedded_ocomp_file(&domain.join("ocomp-key-v1.hex"), &signing_key, 0o600)?;
+        let validator_index = u8::try_from(index)?;
+        let evm_key = hex::encode([validator_index.saturating_add(0x71); 32]);
+        publish_embedded_ocomp_file(
+            &domain.join("ocomp-evm-key.hex"),
+            format!("{evm_key}\n").as_bytes(),
+            0o600,
+        )?;
+        Ok(())
+    }
     /// Keep a debug-only logical-clock E2E internally consistent by shifting the
     /// genesis header by the same signed number of seconds passed to every node.
     /// Without this, block 1 is correctly rejected by the testnet max-drift
@@ -248,9 +525,17 @@ impl Localnet {
     /// Bootstrap an N-validator set (keys, DKG, genesis). Runs unprivileged.
     /// `outbe-chain dkg bootstrap` and `seed_genesis.py` stay one-shot
     /// subprocesses; the genesis skeleton, port rewrite, and felony patch are
-    /// native. `tuning` forwards `TESTNET_*` knobs (epoch length, DKG grace) some
-    /// flows override; pass `&[]` for the defaults.
+    /// native. `tuning` strictly maps the legacy `TESTNET_*` knobs used by
+    /// existing flows into a [`BootstrapProfile`]; pass `&[]` for defaults.
     pub fn bootstrap(&self, n: usize, tuning: &[(&str, String)]) -> Result<()> {
+        let profile = BootstrapProfile::from_tuning(tuning)?;
+        self.bootstrap_with_profile(n, &profile)
+    }
+
+    /// Bootstrap using a checked, typed genesis profile.
+    pub fn bootstrap_with_profile(&self, n: usize, profile: &BootstrapProfile) -> Result<()> {
+        profile.validate_for_committee(n)?;
+        self.validate_effective_seed_capacity(n, profile)?;
         fs::create_dir_all(&self.cfg.dir)?;
 
         // Step 1: DKG bootstrap — keys, polynomial, dkg-output, validators.json,
@@ -264,9 +549,6 @@ impl Localnet {
             "--validators",
             &n.to_string(),
         ]);
-        for (k, v) in tuning {
-            cmd.env(k, v);
-        }
         self.run_setup(&mut cmd, "outbe-chain dkg bootstrap")?;
 
         // Step 1b: point the baked consensus/reth p2p endpoints at the resolved
@@ -274,16 +556,30 @@ impl Localnet {
         self.rewrite_ports()?;
 
         // Step 2: genesis skeleton (chain config + validator balances).
-        self.write_genesis(tuning)?;
+        self.write_genesis(profile)?;
 
         // Step 2b: seed precompile storage (validator set/staking/etc.).
-        self.seed_genesis(&worldwide_day())?;
+        self.seed_genesis(&worldwide_day(), profile)?;
 
         // Step 2c: dev felony thresholds for observable localnet slashing.
-        self.patch_felony(tuning)?;
-        // Step 2d: opt-in lifecycle timing for claim/accounting E2E scenarios.
-        self.patch_staking_timing(tuning)?;
+        self.patch_felony(profile)?;
         Ok(())
+    }
+
+    /// Stop and rebuild this scenario directory with a new valid genesis.
+    ///
+    /// [`crate::world::validators::RegistrationIdentity`] values are owned by
+    /// the caller and remain reusable after this method wipes on-disk chain
+    /// state. This is the intended way to exercise proof replay across two
+    /// otherwise-valid chain IDs.
+    pub fn rebootstrap_with_profile(&mut self, n: usize, profile: &BootstrapProfile) -> Result<()> {
+        profile.validate_for_committee(n)?;
+        let signing_key_path = self.cfg.dir.join("test-sgx-signing-key.pem");
+        let signing_key = read_rebootstrap_signing_key(&signing_key_path)?;
+        self.stop()?;
+        self.wipe()?;
+        restore_rebootstrap_signing_key(&signing_key_path, signing_key.as_deref())?;
+        self.bootstrap_with_profile(n, profile)
     }
 
     /// Rewrite `validators.json` `p2p_address` to the resolved consensus port and
@@ -326,19 +622,12 @@ impl Localnet {
         Ok(())
     }
 
-    /// Write the devnet genesis skeleton: static chain config (chain id 424242, epoch /
-    /// DKG params from `tuning`) plus a pre-funded `alloc` of each validator
-    /// address (`bootstrap-testnet.sh:133-203`).
-    fn write_genesis(&self, tuning: &[(&str, String)]) -> Result<()> {
-        // OCOMP retains committee snapshots for a bounded number of epochs.
-        // The default must cover one complete result-vote window; 120 blocks
-        // was accepted before OCOMP became mandatory but is now invalid.
-        let epoch = tuned(tuning, "TESTNET_EPOCH_LENGTH_BLOCKS", 300);
-        let dkg_prepare = tuned(tuning, "TESTNET_DKG_PREPARE_WINDOW_BLOCKS", 30);
-        let dkg_grace = tuned(tuning, "TESTNET_DKG_ACTIVATION_GRACE_BLOCKS", 30);
-        let ocomp_vote_window = localnet_ocomp_vote_window_blocks(tuning);
-        let validator_balance = validator_balance_hex(tuning);
-
+    /// Write the genesis skeleton: profiled chain id / epoch / DKG parameters
+    /// plus a pre-funded `alloc` of each validator address
+    /// (`bootstrap-testnet.sh:133-203`).
+    fn write_genesis(&self, profile: &BootstrapProfile) -> Result<()> {
+        let ocomp_vote_window = localnet_ocomp_vote_window_blocks(profile);
+        let validator_balance = validator_balance_hex(profile);
         let vjson: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(self.cfg.dir.join("validators.json"))?)?;
         let arr = vjson
@@ -359,14 +648,16 @@ impl Localnet {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let localnet_forming_period = localnet_metadosis_forming_period_seconds(now, tuning)?;
+        let localnet_forming_period = localnet_metadosis_forming_period_seconds(now, profile)?;
         // genesisTime is one day in the past so the chain can produce immediately.
         let genesis_time = OffsetDateTime::from_unix_timestamp(now as i64 - 86_400)
             .wrap_err("genesis time")?
             .format(&Rfc3339)
             .wrap_err("format genesis time")?;
 
-        let chain_id = localnet_chain_id(self.cfg.tee_mode);
+        let chain_id = profile
+            .chain_id
+            .map_or_else(|| localnet_chain_id(self.cfg.tee_mode), NonZeroU64::get);
         let mut genesis = json!({
             "config": {
                 "chainId": chain_id,
@@ -386,9 +677,9 @@ impl Localnet {
                 "shanghaiTime": 0,
                 "cancunTime": 0,
                 "pragueTime": 0,
-                "epochLengthBlocks": epoch,
-                "dkgPrepareWindowBlocks": dkg_prepare,
-                "dkgActivationGraceBlocks": dkg_grace,
+                "epochLengthBlocks": profile.epoch_length_blocks.get(),
+                "dkgPrepareWindowBlocks": profile.dkg_prepare_window_blocks.get(),
+                "dkgActivationGraceBlocks": profile.dkg_activation_grace_blocks.get(),
                 "genesisTime": genesis_time,
                 "outbeProtocol": {
                     "schemaVersion": 1,
@@ -396,7 +687,7 @@ impl Localnet {
                         "formingPeriodSeconds": localnet_forming_period,
                         "lookbackDelaySeconds": LOCALNET_METADOSIS_LOOKBACK_SECONDS,
                         "offeringPeriodSeconds":
-                            localnet_metadosis_offering_period_seconds(tuning),
+                            localnet_metadosis_offering_period_seconds(profile),
                         "waitingPeriodSeconds": LOCALNET_METADOSIS_WAITING_SECONDS,
                         "bootstrapDurationSeconds": LOCALNET_METADOSIS_BOOTSTRAP_SECONDS,
                         "advanceIntervalSeconds": LOCALNET_METADOSIS_ADVANCE_SECONDS,
@@ -431,14 +722,21 @@ impl Localnet {
 
     /// Seed precompile storage into genesis (`bootstrap-testnet.sh:209-226`) via
     /// the kept `scripts/seed_genesis.py`.
-    fn seed_genesis(&self, worldwide_day: &str) -> Result<()> {
+    fn seed_genesis(&self, worldwide_day: &str, profile: &BootstrapProfile) -> Result<()> {
         let genesis = self.cfg.dir.join("genesis.json");
+        let seed = self.prepare_scenario_seed(profile)?;
         let mut cmd = Command::new("python3");
         cmd.arg(self.cfg.repo.join("scripts/seed_genesis.py"))
             .arg("--genesis")
             .arg(&genesis)
             .arg("--seed")
-            .arg(&self.cfg.seed)
+            .arg(seed)
+            // The typed profile is written to a scenario-local seed copy. Keep
+            // external contract artifacts anchored to the repository seed
+            // directory instead of letting seed_genesis.py infer a nonexistent
+            // `<scenario>/contracts` sibling.
+            .arg("--contracts-dir")
+            .arg(self.cfg.repo.join("scripts/contracts"))
             .arg("--validators")
             .arg(self.cfg.dir.join("validators.json"))
             .arg("--worldwide-day")
@@ -451,12 +749,8 @@ impl Localnet {
 
     /// Lower the SlashIndicator felony thresholds so downtime slashing triggers
     /// within the short dev epoch (`bootstrap-testnet.sh:228-253`).
-    fn patch_felony(&self, tuning: &[(&str, String)]) -> Result<()> {
-        let epoch = tuned(tuning, "TESTNET_EPOCH_LENGTH_BLOCKS", 300);
-        let felony_threshold = tuned(tuning, "TESTNET_DEV_FELONY_THRESHOLD", DEV_FELONY_THRESHOLD);
-        if felony_threshold >= epoch {
-            bail!("dev felony threshold {felony_threshold} must be < epoch length {epoch}");
-        }
+    fn patch_felony(&self, profile: &BootstrapProfile) -> Result<()> {
+        let felony_threshold = profile.dev_felony_threshold;
         let path = self.cfg.dir.join("genesis.json");
         let mut g: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
         let alloc = g
@@ -487,23 +781,153 @@ impl Localnet {
         Ok(())
     }
 
-    /// Apply opt-in staking lifecycle timings to the already-seeded genesis.
-    /// No slot is changed unless its corresponding `TESTNET_*` knob is present.
-    fn patch_staking_timing(&self, tuning: &[(&str, String)]) -> Result<()> {
-        let unbonding = tuned_optional(tuning, "TESTNET_UNBONDING_PERIOD_SECS");
-        let slashed = tuned_optional(tuning, "TESTNET_SLASHED_WITHDRAWAL_DELAY_SECS");
-        if unbonding.is_none() && slashed.is_none() {
-            return Ok(());
+    fn validate_effective_seed_capacity(&self, n: usize, profile: &BootstrapProfile) -> Result<()> {
+        let seed: serde_json::Value = serde_json::from_str(&fs::read_to_string(&self.cfg.seed)?)?;
+        let configured = profile.max_validators.or_else(|| {
+            seed.pointer("/validator_set/max_validators")
+                .and_then(json_u32)
+        });
+        if let Some(max) = configured {
+            if max == 0 || max < n as u32 {
+                bail!("effective max validators {max} cannot hold genesis committee size {n}");
+            }
+        }
+        Ok(())
+    }
+
+    /// Create the seed consumed by `seed_genesis.py` without changing the
+    /// caller-supplied seed file.
+    fn prepare_scenario_seed(&self, profile: &BootstrapProfile) -> Result<std::path::PathBuf> {
+        let mut seed: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&self.cfg.seed)?)?;
+        let root = seed
+            .as_object_mut()
+            .ok_or_else(|| eyre!("genesis seed root is not an object"))?;
+        let validator_set = root
+            .entry("validator_set")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or_else(|| eyre!("genesis seed validator_set is not an object"))?;
+
+        if let Some(index) = profile.validator_set_owner_index {
+            let validators: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(self.cfg.dir.join("validators.json"))?)?;
+            let owner = validators
+                .as_array()
+                .and_then(|entries| entries.get(index))
+                .and_then(|entry| entry.get("address"))
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| eyre!("validator-{index} has no address in validators.json"))?;
+            validator_set.insert("owner".into(), json!(owner));
+        }
+        if let Some(max) = profile.max_validators {
+            validator_set.insert("max_validators".into(), json!(max));
+        }
+        if let Some(cooldown) = profile.reregistration_cooldown_blocks {
+            validator_set.insert("reregistration_cooldown_blocks".into(), json!(cooldown));
         }
 
-        let path = self.cfg.dir.join("genesis.json");
-        let mut genesis: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
-        patch_staking_storage(&mut genesis, unbonding, slashed)?;
-        fs::write(&path, serde_json::to_string_pretty(&genesis)? + "\n")?;
-        Ok(())
+        if profile.unbonding_period_secs.is_some()
+            || profile.slashed_withdrawal_delay_secs.is_some()
+        {
+            let staking = root
+                .entry("staking")
+                .or_insert_with(|| json!({}))
+                .as_object_mut()
+                .ok_or_else(|| eyre!("genesis seed staking is not an object"))?;
+            if let Some(value) = profile.unbonding_period_secs {
+                staking.insert("unbonding_period".into(), json!(value.get()));
+            }
+            if let Some(value) = profile.slashed_withdrawal_delay_secs {
+                staking.insert("slashed_withdrawal_delay".into(), json!(value.get()));
+            }
+        }
+
+        let path = self.cfg.dir.join("scenario-seed.json");
+        fs::write(&path, serde_json::to_string_pretty(&seed)? + "\n")?;
+        Ok(path)
     }
 }
 
+fn read_rebootstrap_signing_key(path: &Path) -> Result<Option<Vec<u8>>> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        bail!(
+            "unsafe test SGX signing key before localnet rebootstrap: {}",
+            path.display()
+        );
+    }
+    #[cfg(unix)]
+    if metadata.permissions().mode() & 0o077 != 0 {
+        bail!(
+            "test SGX signing key has unsafe permissions before localnet rebootstrap: {}",
+            path.display()
+        );
+    }
+    Ok(Some(fs::read(path)?))
+}
+
+fn restore_rebootstrap_signing_key(path: &Path, signing_key: Option<&[u8]>) -> Result<()> {
+    let Some(signing_key) = signing_key else {
+        return Ok(());
+    };
+    let parent = path
+        .parent()
+        .ok_or_else(|| eyre!("test SGX signing key has no parent"))?;
+    fs::create_dir_all(parent)?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(path)?;
+    file.write_all(signing_key)?;
+    file.sync_all()?;
+    Ok(())
+}
+
+#[cfg(not(feature = "ocomp-integration"))]
+fn publish_embedded_ocomp_file(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
+    match fs::read(path) {
+        Ok(existing) if existing == bytes => {
+            let metadata = fs::symlink_metadata(path)?;
+            if !metadata.file_type().is_file() {
+                bail!(
+                    "existing embedded OCOMP artifact is not a regular file: {}",
+                    path.display()
+                );
+            }
+            #[cfg(unix)]
+            if metadata.permissions().mode() & 0o777 != mode {
+                bail!(
+                    "existing embedded OCOMP artifact has unsafe permissions: {}",
+                    path.display()
+                );
+            }
+            Ok(())
+        }
+        Ok(_) => bail!(
+            "refusing to replace a different embedded OCOMP artifact at {}",
+            path.display()
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut options = OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            options.mode(mode);
+            #[cfg(not(unix))]
+            let _ = mode;
+            let mut file = options.open(path)?;
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            Ok(())
+        }
+        Err(error) => Err(error.into()),
+    }
+}
 fn apply_co_located_sgx_timing(
     genesis: &mut serde_json::Value,
     tee_mode: crate::env::TeeMode,
@@ -541,82 +965,33 @@ fn patch_felony_storage(
     storage.insert(format!("0x{VOTER_FELONY_SLOT:064x}"), threshold);
 }
 
-/// A `TESTNET_*` tuning override parsed as `u64`, or `default`.
-fn tuned(tuning: &[(&str, String)], key: &str, default: u64) -> u64 {
-    tuning
-        .iter()
-        .find(|(k, _)| *k == key)
-        .and_then(|(_, v)| v.parse().ok())
-        .unwrap_or(default)
+fn localnet_metadosis_offering_period_seconds(profile: &BootstrapProfile) -> u64 {
+    profile.metadosis_offering_seconds
 }
 
-fn tuned_optional(tuning: &[(&str, String)], key: &str) -> Option<u64> {
-    tuning
-        .iter()
-        .find(|(candidate, _)| *candidate == key)
-        .and_then(|(_, value)| value.parse().ok())
-}
-
-fn localnet_metadosis_offering_period_seconds(tuning: &[(&str, String)]) -> u64 {
-    tuned(
-        tuning,
-        "TESTNET_METADOSIS_OFFERING_SECONDS",
-        LOCALNET_METADOSIS_OFFERING_SECONDS,
-    )
-}
-
-fn localnet_metadosis_forming_period_seconds(now: u64, tuning: &[(&str, String)]) -> Result<u64> {
-    match tuned_optional(tuning, "TESTNET_METADOSIS_FORMING_SECONDS") {
+fn localnet_metadosis_forming_period_seconds(now: u64, profile: &BootstrapProfile) -> Result<u64> {
+    match profile.metadosis_forming_seconds {
         Some(period) => Ok(period),
         None => localnet_forming_period_seconds(now),
     }
 }
 
-fn localnet_ocomp_vote_window_blocks(tuning: &[(&str, String)]) -> u64 {
-    tuned(
-        tuning,
-        "TESTNET_OCOMP_VOTE_WINDOW_BLOCKS",
-        LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS,
-    )
+fn localnet_ocomp_vote_window_blocks(profile: &BootstrapProfile) -> u64 {
+    profile.ocomp_vote_window_blocks
 }
 
-fn validator_balance_hex(tuning: &[(&str, String)]) -> String {
-    tuned_optional(tuning, "TESTNET_VALIDATOR_BALANCE_COEN").map_or_else(
+fn validator_balance_hex(profile: &BootstrapProfile) -> String {
+    profile.validator_balance_coen.map_or_else(
         || VALIDATOR_BALANCE_HEX.to_owned(),
-        |coen| format!("0x{:x}", u128::from(coen) * 10u128.pow(18)),
+        |coen| format!("0x{:x}", u128::from(coen) * 1_000_000),
     )
 }
 
-fn patch_staking_storage(
-    genesis: &mut serde_json::Value,
-    unbonding: Option<u64>,
-    slashed: Option<u64>,
-) -> Result<()> {
-    let alloc = genesis
-        .get_mut("alloc")
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| eyre!("genesis has no alloc object"))?;
-    let key = alloc
-        .keys()
-        .find(|key| address_has_suffix(key, STAKING_SUFFIX))
-        .cloned()
-        .ok_or_else(|| eyre!("seeded genesis has no Staking alloc entry"))?;
-    let storage = alloc
-        .get_mut(&key)
-        .and_then(serde_json::Value::as_object_mut)
-        .and_then(|entry| entry.get_mut("storage"))
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or_else(|| eyre!("Staking alloc entry has no storage object"))?;
-    if let Some(value) = unbonding {
-        storage.insert(format!("0x{:064x}", 1u64), json!(format!("0x{value:064x}")));
-    }
-    if let Some(value) = slashed {
-        storage.insert(
-            format!("0x{:064x}", 11u64),
-            json!(format!("0x{value:064x}")),
-        );
-    }
-    Ok(())
+fn json_u32(value: &serde_json::Value) -> Option<u32> {
+    value
+        .as_u64()
+        .and_then(|raw| u32::try_from(raw).ok())
+        .or_else(|| value.as_str().and_then(|raw| raw.parse::<u32>().ok()))
 }
 
 /// Whether an alloc key normalizes (lowercase, `0x`-stripped, left-padded to 40)
@@ -645,17 +1020,119 @@ fn localnet_forming_period_seconds(now: u64) -> Result<u64> {
 mod tests {
     use super::*;
 
-    fn seeded_genesis() -> serde_json::Value {
-        json!({
-            "alloc": {
-                "000000000000000000000000000000000000ee02": {
-                    "storage": {
-                        format!("0x{:064x}", 1u64): format!("0x{:064x}", 1_814_400u64),
-                        format!("0x{:064x}", 11u64): format!("0x{:064x}", 3_628_800u64)
-                    }
-                }
-            }
-        })
+    #[test]
+    fn rebootstrap_preserves_the_scenario_signing_key_across_wipe() {
+        let directory = tempfile::tempdir().unwrap();
+        let scenario = directory.path().join("scenario-1");
+        let signing_key_path = scenario.join("test-sgx-signing-key.pem");
+        fs::create_dir_all(&scenario).unwrap();
+        fs::write(&signing_key_path, b"scenario signing key").unwrap();
+        #[cfg(unix)]
+        fs::set_permissions(&signing_key_path, Permissions::from_mode(0o600)).unwrap();
+
+        let signing_key = read_rebootstrap_signing_key(&signing_key_path).unwrap();
+        fs::remove_dir_all(&scenario).unwrap();
+        restore_rebootstrap_signing_key(&signing_key_path, signing_key.as_deref()).unwrap();
+
+        assert_eq!(
+            fs::read(&signing_key_path).unwrap(),
+            b"scenario signing key"
+        );
+        #[cfg(unix)]
+        assert_eq!(
+            fs::metadata(&signing_key_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+
+    #[cfg(not(feature = "ocomp-integration"))]
+    #[test]
+    fn default_bootstrap_stages_embedded_ocomp_domain_material() {
+        let directory = tempfile::tempdir().unwrap();
+        let env = crate::env::Environment {
+            data_dir: directory.path().to_path_buf(),
+            validators: 2,
+            ..crate::env::Environment::default()
+        };
+        env.ports.start_scenario(env.validators).unwrap();
+        let localnet = Localnet::new(crate::internal::config::Config::for_scenario(&env, 1));
+        fs::create_dir_all(&localnet.cfg.dir).unwrap();
+        fs::write(
+            localnet.cfg.dir.join("protocol-bundle-v1.ocb1"),
+            b"canonical-bundle",
+        )
+        .unwrap();
+        for index in 0..env.validators {
+            let validator_dir = localnet.cfg.validator_dir(index);
+            fs::create_dir_all(&validator_dir).unwrap();
+            fs::write(
+                validator_dir.join("ocomp-key-v1.hex"),
+                format!("{}\n", hex::encode([index as u8 + 1; 32])),
+            )
+            .unwrap();
+        }
+
+        localnet.ensure_embedded_ocomp_domain_material().unwrap();
+        localnet.ensure_embedded_ocomp_domain_material().unwrap();
+
+        let joiner_index = env.validators;
+        let joiner_dir = localnet.cfg.validator_dir(joiner_index);
+        fs::create_dir_all(&joiner_dir).unwrap();
+        fs::write(
+            joiner_dir.join("ocomp-key-v1.hex"),
+            b"joiner-registration-secret\n",
+        )
+        .unwrap();
+        localnet
+            .ensure_embedded_ocomp_validator_domain_material(joiner_index)
+            .unwrap();
+        localnet
+            .ensure_embedded_ocomp_validator_domain_material(joiner_index)
+            .unwrap();
+
+        for index in 0..env.validators {
+            let validator_dir = localnet.cfg.validator_dir(index);
+            let domain = validator_dir.join("ocomp").join("domain-v1");
+            assert_eq!(
+                fs::read(domain.join("protocol-bundle-v1.ocb1")).unwrap(),
+                b"canonical-bundle"
+            );
+            assert_eq!(
+                fs::read(domain.join("ocomp-key-v1.hex")).unwrap(),
+                fs::read(validator_dir.join("ocomp-key-v1.hex")).unwrap()
+            );
+            assert_eq!(
+                fs::read_to_string(domain.join("ocomp-evm-key.hex")).unwrap(),
+                format!("{}\n", hex::encode([index as u8 + 0x71; 32]))
+            );
+            #[cfg(unix)]
+            assert_eq!(
+                fs::metadata(domain.join("ocomp-evm-key.hex"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+
+        let joiner_domain = joiner_dir.join("ocomp").join("domain-v1");
+        assert_eq!(
+            fs::read(joiner_domain.join("protocol-bundle-v1.ocb1")).unwrap(),
+            b"canonical-bundle"
+        );
+        assert_eq!(
+            fs::read(joiner_domain.join("ocomp-key-v1.hex")).unwrap(),
+            b"joiner-registration-secret\n"
+        );
+        assert_eq!(
+            fs::read_to_string(joiner_domain.join("ocomp-evm-key.hex")).unwrap(),
+            format!("{}\n", hex::encode([joiner_index as u8 + 0x71; 32]))
+        );
     }
 
     #[test]
@@ -676,30 +1153,6 @@ mod tests {
             );
         }
     }
-
-    #[test]
-    fn lifecycle_timing_patch_updates_only_requested_staking_slots() {
-        let mut genesis = seeded_genesis();
-        patch_staking_storage(&mut genesis, Some(8), None).unwrap();
-        let storage = genesis["alloc"]["000000000000000000000000000000000000ee02"]["storage"]
-            .as_object()
-            .unwrap();
-        assert_eq!(
-            storage[&format!("0x{:064x}", 1u64)],
-            json!(format!("0x{:064x}", 8u64))
-        );
-        assert_eq!(
-            storage[&format!("0x{:064x}", 11u64)],
-            json!(format!("0x{:064x}", 3_628_800u64))
-        );
-    }
-
-    #[test]
-    fn lifecycle_timing_patch_rejects_unseeded_staking_entry() {
-        let mut genesis = json!({ "alloc": {} });
-        assert!(patch_staking_storage(&mut genesis, Some(8), None).is_err());
-    }
-
     #[test]
     fn felony_patch_uses_current_slashindicator_config_slots() {
         let mut storage = serde_json::Map::new();
@@ -758,60 +1211,122 @@ mod tests {
 
     #[test]
     fn validator_liquid_balance_can_be_tuned_per_scenario() {
-        assert_eq!(validator_balance_hex(&[]), VALIDATOR_BALANCE_HEX);
+        assert_eq!(
+            validator_balance_hex(&BootstrapProfile::default()),
+            VALIDATOR_BALANCE_HEX
+        );
 
-        let tuned =
-            validator_balance_hex(&[("TESTNET_VALIDATOR_BALANCE_COEN", "2100000".to_owned())]);
+        let tuned_profile = BootstrapProfile::from_tuning(&[(
+            "TESTNET_VALIDATOR_BALANCE_COEN",
+            "2100000".to_owned(),
+        )])
+        .unwrap();
+        let tuned = validator_balance_hex(&tuned_profile);
         assert_eq!(
             u128::from_str_radix(tuned.trim_start_matches("0x"), 16).unwrap(),
-            2_100_000u128 * 10u128.pow(18)
+            2_100_000u128 * 1_000_000
         );
     }
 
     #[test]
     fn metadosis_offering_period_can_be_tuned_only_in_generated_genesis() {
+        let default = BootstrapProfile::default();
         assert_eq!(
-            localnet_metadosis_offering_period_seconds(&[]),
+            localnet_metadosis_offering_period_seconds(&default),
             LOCALNET_METADOSIS_OFFERING_SECONDS
         );
-        assert_eq!(
-            localnet_metadosis_offering_period_seconds(&[(
-                "TESTNET_METADOSIS_OFFERING_SECONDS",
-                "900".to_owned(),
-            )]),
-            900
-        );
+        let tuned = BootstrapProfile::from_tuning(&[(
+            "TESTNET_METADOSIS_OFFERING_SECONDS",
+            "900".to_owned(),
+        )])
+        .unwrap();
+        assert_eq!(localnet_metadosis_offering_period_seconds(&tuned), 900);
     }
 
     #[test]
     fn metadosis_forming_period_can_be_tuned_only_in_generated_genesis() {
         let now = outbe_primitives::time::date_key_to_utc_timestamp(20260302) + 12 * 3_600;
+        let default = BootstrapProfile::default();
         assert_eq!(
-            localnet_metadosis_forming_period_seconds(now, &[]).unwrap(),
+            localnet_metadosis_forming_period_seconds(now, &default).unwrap(),
             localnet_forming_period_seconds(now).unwrap()
         );
+        let tuned = BootstrapProfile::from_tuning(&[(
+            "TESTNET_METADOSIS_FORMING_SECONDS",
+            "136860".to_owned(),
+        )])
+        .unwrap();
         assert_eq!(
-            localnet_metadosis_forming_period_seconds(
-                now,
-                &[("TESTNET_METADOSIS_FORMING_SECONDS", "136860".to_owned())],
-            )
-            .unwrap(),
+            localnet_metadosis_forming_period_seconds(now, &tuned).unwrap(),
             136_860
         );
     }
 
     #[test]
     fn ocomp_vote_window_can_be_tuned_only_in_generated_genesis() {
+        let default = BootstrapProfile::default();
         assert_eq!(
-            localnet_ocomp_vote_window_blocks(&[]),
+            localnet_ocomp_vote_window_blocks(&default),
             LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS
         );
-        assert_eq!(
-            localnet_ocomp_vote_window_blocks(&[(
-                "TESTNET_OCOMP_VOTE_WINDOW_BLOCKS",
-                "450".to_owned(),
-            )]),
-            450
-        );
+        let tuned = BootstrapProfile::from_tuning(&[(
+            "TESTNET_OCOMP_VOTE_WINDOW_BLOCKS",
+            "450".to_owned(),
+        )])
+        .unwrap();
+        assert_eq!(localnet_ocomp_vote_window_blocks(&tuned), 450);
+    }
+
+    #[test]
+    fn profile_rejects_invalid_values_before_bootstrap() {
+        assert!(BootstrapProfile::default().with_chain_id(0).is_err());
+        assert!(BootstrapProfile::default()
+            .with_dkg_timing(60, 0, 30)
+            .is_err());
+        assert!(BootstrapProfile::default()
+            .with_dkg_timing(60, 61, 30)
+            .is_err());
+        assert!(BootstrapProfile::default()
+            .with_staking_timing(Some(0), None)
+            .is_err());
+        assert!(BootstrapProfile::default().with_max_validators(0).is_err());
+    }
+
+    #[test]
+    fn profile_checks_committee_dependent_bounds() {
+        let owner_outside = BootstrapProfile::default().with_validator_set_owner(4);
+        assert!(owner_outside.validate_for_committee(4).is_err());
+
+        let too_small = BootstrapProfile::default().with_max_validators(3).unwrap();
+        assert!(too_small.validate_for_committee(4).is_err());
+
+        let valid = BootstrapProfile::default()
+            .with_validator_set_owner(0)
+            .with_max_validators(5)
+            .unwrap()
+            .with_reregistration_cooldown_blocks(0);
+        valid.validate_for_committee(4).unwrap();
+    }
+
+    #[test]
+    fn legacy_tuning_is_strict_and_maps_to_typed_profile() {
+        let profile = BootstrapProfile::from_tuning(&[
+            ("TESTNET_EPOCH_LENGTH_BLOCKS", "60".to_owned()),
+            ("TESTNET_DKG_PREPARE_WINDOW_BLOCKS", "15".to_owned()),
+            ("TESTNET_DKG_ACTIVATION_GRACE_BLOCKS", "20".to_owned()),
+            ("TESTNET_DEV_FELONY_THRESHOLD", "59".to_owned()),
+            ("TESTNET_UNBONDING_PERIOD_SECS", "8".to_owned()),
+        ])
+        .unwrap();
+        assert_eq!(profile.epoch_length_blocks.get(), 60);
+        assert_eq!(profile.dkg_prepare_window_blocks.get(), 15);
+        assert_eq!(profile.unbonding_period_secs.unwrap().get(), 8);
+
+        assert!(BootstrapProfile::from_tuning(&[(
+            "TESTNET_EPOCH_LENGTH_BLOCKS",
+            "not-a-number".to_owned(),
+        )])
+        .is_err());
+        assert!(BootstrapProfile::from_tuning(&[("TESTNET_UNKNOWN", "1".to_owned(),)]).is_err());
     }
 }

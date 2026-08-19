@@ -1,135 +1,186 @@
-# ADR-C-CRD-001: Credis owns credit positions and the installment state machine
+# ADR-C-CRD-001: Credis owns credit positions and the price-path state machine
 
 - **Status:** Proposed; current implementation profiled
-- **Date:** 2026-07-17
+- **Date:** 2026-07-17 (revised 2026-08-18 for the Credis v2 price-path model)
 - **Decision owners:** Credis protocol maintainers
 - **Scope:** `crates/core/credis`
 - **Depends on:** ADR-B-CNS-003, ADR-B-EVM-004
 - **Related:** ADR-C-CRD-002, ADR-C-VLT-001
-- **Supersedes:** Credis ledger portions of former broad pre-space Gratis/economic aggregate (previously numbered 030)
+- **Supersedes:** Credis ledger portions of former broad pre-space Gratis/economic aggregate (previously numbered 030); the ten-installment anadosis schedule this ADR previously described
 
 ## Context
 
-Credis records a borrower's debt after proof, pricing and liquidity delivery have
-been approved by CredisFactory. It owns position identity, terms, account indexes,
-ten repayment records and overdue queries. It does not verify shielded notes, read
-Oracle rates, move ERC-20 assets or release Gratis.
+Credis records a borrower's position after pricing and liquidity delivery have been
+approved by CredisFactory. It owns position identity, sealed terms, account indexes and
+the lifecycle state machine. It does not consume pledge tickets, read Oracle rates, move
+ERC-20 assets or release Gratis.
+
+The product model (`credis-v2-product-paper.md`) puts a position on the COEN price path
+rather than a calendar: there are no installments, no due dates and no maturity. Time
+drives only the interest day count and the response window opened by a call.
 
 ## Decision
 
-A position is created once from a globally unique commitment/nullifier-derived id.
-It snapshots smart account, settlement asset and currency, currency rate,
-principal, original collateral, creation time, outstanding debt/collateral and an
-ordered schedule of exactly ten `Anadosis` installments.
+A position is created once from a globally unique id derived as
+`keccak256(pledge_handle ‖ smart_account)`. It seals, and never afterwards changes:
+smart account, originating agent, settlement asset and ISO currency, the sealed pledger
+ciphertext, principal `P`, collateral `G`, policy rate `r`, entry price `P₀`, the derived
+floor price `P₀ + 8%` and call price `P₀ + 32%`, and the origination timestamp. Only
+`outstanding`, `collateral_locked`, the accrual anchor, `called_at` and `state` move over
+the position's life.
 
-Total debt is derived at creation from principal and the pinned annual currency
-rate for a ten-month term. Integer division remainder is assigned deterministically
-to the final installment so installment debt sums exactly to recorded total debt.
-Collateral is likewise partitioned so all installments close the recorded amount.
-Due dates are monthly offsets from creation under the currently implemented fixed
-30-day convention.
-
-The implicit FSM is:
+The FSM is explicit and stored as a `u8` decoded through `CredisState::from_u8`, so an
+unknown byte is rejected rather than silently reinterpreted:
 
 ```text
-Absent --create--> Open[next=0]
-Open[next=i] --advance_next--> Open[next=i+1]  (i < 9)
-Open[next=9] --advance_next--> Complete
-Complete --advance_next--> error
+Open --mark_settleable--> Settleable --mark_called--> Called
+Settleable|Called --settle(P_out -> 0)--> Settled     (terminal)
+Called --void_remainder--> Void                        (terminal)
 ```
 
-Only the next installment may advance. Advancement records canonical payment time,
-reduces outstanding debt and collateral by that installment, and increments the
-cursor atomically. Early payment is currently accepted; this is implementation
-evidence pending policy acceptance.
+`Open -> Settleable` is a one-way price latch: a later price fall never re-locks it.
+`Settleable -> Called` is the sustained-breach trigger. Both `Settled` and `Void` are
+terminal.
+
+**Interest** is not accrued per block. It is computed at settlement as simple,
+non-compounding, ACT/365 interest on the outstanding principal over the **whole** UTC
+days elapsed since the accrual anchor, rounded up so rounding favours the protocol. The
+anchor starts at origination and advances by exactly the whole days each settlement
+charges — never to the settlement timestamp. Advancing it to `now` would discard the
+sub-day remainder, and because a sub-day settlement charges nothing, repeated dust
+payments just under 24 hours apart would hold the day count at zero and evade the coupon
+entirely.
+
+**Settlement** applies interest first and principal second. A payment below the accrued
+interest is rejected outright rather than partially applied. Only what the position needs
+is consumed, so an over-payment is not over-pulled. Collateral release is
+principal-proportional against the original principal and floored; the closing settlement
+short-circuits to the exact remaining locked collateral so no dust is stranded.
+
+**Void** writes off only the unpaid share. Settlement remains open on unchanged terms
+throughout the call window, so whatever the owner settled they have already reclaimed.
 
 ## Authority and interfaces
 
-The public ABI exposes position, installment, next-installment, account-position
-and overdue reads. Creation and advancement are privileged internal APIs intended
-only for CredisFactory. The ledger trusts factory-supplied snapshotted inputs only
-after validating local representational invariants.
+The public ABI is enumerable rather than array-returning: `totalSupply` /
+`positionByIndex` walk the global creation order, `balanceOf` /
+`positionOfAddressByIndex` walk one owner's index, and `getPosition` / `ownerOf` address
+a single position. A caller therefore paginates instead of forcing an unbounded return.
+`ownerOf` takes the position id as its 32-byte big-endian form; any other length is
+rejected rather than zero-extended, so a truncated id cannot silently address a
+different position. An out-of-range index fails rather than returning a zeroed record.
+`accruedInterest` reads the block timestamp from storage rather than calldata, so it is
+deterministic. `credisPrincipalAndOutstandingOf` returns both sums from one walk of the
+owner index, so the two can never be read at different heights. Opening, latching,
+calling, settling and voiding are privileged internal APIs intended only for
+CredisFactory. The ledger trusts factory-supplied sealed inputs only after validating
+local representational invariants.
 
-Overdue means an unpaid next installment whose due time is earlier than canonical
-block time. Account-level overdue checks traverse that account's positions and are
-used by CredisFactory to gate new credit.
+Settlement is deliberately payable by any caller: the collateral released is owed to the
+pledger recorded on the position, so a payer can never redirect value to themselves.
 
 ## Persistent state and invariants
 
 - Every position id is unique and points to one nonzero smart account.
-- Every account index entry points to an existing position owned by that account;
-  every position appears exactly once in its owner's dense index.
-- Every position has exactly ten ordered installment records.
-- Installment due dates are monotonic and terms are immutable after creation.
-- Sum of installment debt/collateral equals original recorded totals.
-- Outstanding debt/collateral equals the sum of unpaid installments.
-- Cursor equals the first unpaid installment and lies in `0..=10`.
-- Paid installments before the cursor have exactly one nonzero payment time; later
-  installments are unpaid.
-- Complete means cursor ten and both outstanding quantities zero.
+- Every account index entry points to an existing position owned by that account; every
+  position appears exactly once in its owner's dense index.
+- Sealed terms are immutable after creation.
+- `Σ principal settled + outstanding + principal written off = P`.
+- `Σ released collateral + collateral_locked + burned collateral = G`.
+- Because each partial release is floored, `collateral_locked >= floor(G × P_out / P)`,
+  with the drift always toward the protocol; the closing settlement releases the exact
+  remainder.
+- `outstanding == 0` iff the state is `Settled`, for any position that ever settled fully.
+- The accrual anchor is monotonically non-decreasing and never exceeds the current time.
+- No unpaid interest carries between settlements: accrual restarts on the reduced
+  principal.
 
-Saturating subtraction is forbidden for invariant closure: an installment larger
-than outstanding state must fail as corruption.
+Saturating subtraction is forbidden for invariant closure: a settlement larger than
+outstanding state must fail as corruption, and every arithmetic path uses `checked_*`
+returning `ArithmeticOverflow`.
 
 ## Atomicity, replay and failure
 
-Position creation writes record, ten installments and owner indexes in one EVM
-frame. Advancement is rolled back with CredisFactory's token deposit and reclaim
-commitment insertion. The cursor is the repayment replay guard; position identity
-guards duplicate creation.
+Position creation writes the record and both owner indexes in one EVM frame. Settlement
+bookkeeping is rolled back with CredisFactory's token pull, vault deposit and collateral
+release. Position identity guards duplicate creation; the terminal states guard replay —
+a `Settled` or `Void` position rejects further settlement with `PositionClosed`.
 
-Missing record, completed position and illegal cursor are business/state errors.
-Broken indexes, missing scheduled installments, arithmetic mismatch and underflow
-are invariant failures. No getter may silently skip corrupt records and still report
-a healthy position.
+Missing record, closed position, unlatched position and a payment below accrued interest
+are business/state errors. Broken indexes, arithmetic mismatch and underflow are
+invariant failures. No getter may silently skip corrupt records and still report a
+healthy position.
 
 ## Determinism, bounds and compatibility
 
-Term length, 30-day duration, debt formula, rounding remainder, currency/rate scale,
-field widths and position-id derivation are consensus formats. Changes require
-migration and before/after vectors. Per-account scans require a maximum or pagination
-before they may be used in transaction admission at unbounded size.
+The interest formula and its rounding direction, the day-count convention, the floor and
+call markups, the currency/rate scale, field widths, the state discriminants and
+position-id derivation are consensus formats. Changes require migration and before/after
+vectors. Per-account scans require a maximum or pagination before they may be used in
+transaction admission at unbounded size.
+
+The v2 layout is a **clean break**: `Position` and the contract's top-level slots were
+renumbered wholesale with no reserved or deprecated fields, on the accepted basis that no
+environment holds live Credis positions. Any such environment must be re-genesised.
 
 ## Production-interface verification evidence
 
-Inspected schema, creation arithmetic, position/account indexing, next-installment
-advancement, early/due-date tests, outstanding updates, overdue scans and ABI reads.
-Tests cover core examples but not generated closure, corruption, scale bounds or
-all factory rollback points. Status remains Proposed.
+Inspected schema, opening arithmetic, position/account indexing, the interest day count
+and its anchor, settlement ordering and collateral release, the state machine including
+the terminal guards, and ABI reads. Tests cover the product paper's §5 worked example end
+to end, interest/collateral rounding directions in both directions, the dust-settlement
+accrual-evasion regression, and rejection of unknown state bytes. They do not yet cover
+generated closure over arbitrary terms, corruption, or all factory rollback points.
+Status remains Proposed.
 
 ## Consequences
 
-Credis becomes a pure debt-state module. Proof privacy, rates, assets and liquidity
-remain in CredisFactory/VaultRouter and can fail without weakening its FSM.
+Credis becomes a pure position-state module. Pricing, assets, liquidity and the
+confidential pledger ledger remain in CredisFactory/Oracle/VaultRouter/Gratis and can
+fail without weakening its FSM. Because interest is evaluated lazily, no per-block
+accrual state exists and nothing schedules off a position's creation date.
 
 ## Rejected alternatives
 
-- **Infer debt from events:** events do not own repayment state.
-- **Allow arbitrary installment selection:** repayment order and overdue status
-  become ambiguous.
-- **Re-read rates each payment:** recorded obligations would change over time.
+- **Infer state from events:** events do not own position state.
+- **Accrue interest per block:** would add per-block work and per-position state for a
+  quantity that is exactly reconstructible from two timestamps.
+- **Advance the accrual anchor to the settlement time:** discards the sub-day remainder
+  and makes the whole coupon evadable with dust payments.
+- **Re-read rates each settlement:** recorded obligations would change over time.
 - **Saturate outstanding amounts:** corruption would masquerade as completion.
 
 ## Open questions and technical debt
 
-1. Replace saturating outstanding subtraction with checked invariant failures.
-2. Decide whether payment before due date is allowed; current tests explicitly
-   accept it, but no normative economic decision exists.
-3. Add explicit typed position status (`Open`, `Complete`, and any future default or
-   liquidation states) or prove cursor-derived status is sufficient at every API.
-4. There is no default, acceleration, restructuring, liquidation or bad-debt FSM.
-   Define these before credit is treated as production complete.
-5. Check currency-rate multiplication and all timestamp/month arithmetic for
-   overflow before writes.
-6. Specify whether fixed 30-day installments or calendar months are intended.
-7. Add a generated model proving installment sums, cursor, outstanding values,
-   overdue results and account indexes over arbitrary terms/bounds.
-8. Add corruption tests for missing installment slots, wrong owners, duplicate
-   account entries and impossible cursor/payment combinations.
-9. Add pagination and bound account-wide overdue scans; a borrower can otherwise
-   make new-credit validation increasingly expensive.
-10. Define stable position-id domain separation beyond raw nullifier uniqueness and
-    add collision/reference vectors.
-11. Prove creation/advancement APIs have no caller except CredisFactory.
-12. Define historical retention after completion and whether closed positions may
-    ever be pruned without breaking auditability.
+1. **Resolved 2026-08-18** — outstanding subtraction now uses `checked_sub` with an
+   explicit `ArithmeticOverflow` invariant failure.
+2. **Resolved 2026-08-18** — there are no due dates, so early payment is not a concept.
+   Settlement is open at any time once the floor latch has been taken.
+3. **Resolved 2026-08-18** — position status is now an explicit stored `u8` decoded via
+   `CredisState::from_u8`, replacing the cursor-derived status.
+4. **Partially resolved 2026-08-18** — the call and void path is implemented, but nothing
+   in production reaches `Called` until the daily reference-price scan lands, so the
+   write-off is currently unreachable. Acceleration and restructuring remain undefined.
+5. **Resolved 2026-08-18** — the interest path is fully `checked_*`; the month arithmetic
+   it referred to no longer exists.
+6. **Resolved 2026-08-18** — obsolete: there are no installments, and the day count is
+   ACT/365 over whole UTC days.
+7. Add a generated model proving the principal and collateral closure equations, anchor
+   monotonicity and account indexes over arbitrary terms and bounds.
+8. Add corruption tests for wrong owners, duplicate account entries and impossible
+   state/outstanding combinations.
+9. **Partially resolved 2026-08-18** — the ABI no longer returns unbounded position
+   arrays; callers enumerate through `positionByIndex` /
+   `positionOfAddressByIndex`. The remaining unbounded work is internal:
+   `has_called_position` and `credisPrincipalAndOutstandingOf` still walk every position
+   an account owns, so a borrower can still make new-credit validation increasingly
+   expensive. Bound those with a called-position counter and running per-account totals.
+10. Define stable position-id domain separation beyond pledge-handle uniqueness and add
+    collision/reference vectors.
+11. Prove the opening/settlement/void APIs have no caller except CredisFactory.
+12. Define historical retention after closure and whether terminal positions may ever be
+    pruned without breaking auditability.
+13. Decide the product paper's §11.1 downside resolution: a position whose price never
+    reaches the floor currently waits forever with no write-off path.
+14. The originating agent is recorded as `cca` but is neither authorized at opening nor
+    held accountable at void; the CCA program is not yet implemented.

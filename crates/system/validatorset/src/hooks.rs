@@ -102,7 +102,12 @@ pub fn record_finalized_participation(
         vs.finalized_participation_recorded.write(&evicted, false)?;
     }
     vs.finalized_participation_ring.write(&idx, fb_hash)?;
-    vs.finalized_participation_ring_seq.write(seq + 1)?;
+    vs.finalized_participation_ring_seq
+        .write(seq.checked_add(1).ok_or_else(|| {
+            outbe_primitives::error::PrecompileError::Fatal(
+                "finalized participation ring sequence overflow".into(),
+            )
+        })?)?;
     Ok(())
 }
 
@@ -111,18 +116,6 @@ pub fn record_finalized_participation(
 /// last `FINALIZED_PARTICIPATION_RETAIN` blocks is generous; older guard flags are
 /// pruned by [`record_finalized_participation`]. Changing it is a hard fork.
 pub const FINALIZED_PARTICIPATION_RETAIN: u64 = 64;
-
-/// Called from post-execution after a DKG/reshare ceremony completes:
-/// activates the reshared validator set and updates the group public key.
-pub fn activate_reshared_set(
-    storage: StorageHandle,
-    new_active_set: &[Address],
-    active_set_hash: B256,
-) -> Result<()> {
-    let mut vs = ValidatorSet::new(storage);
-    vs.activate_reshared_set(new_active_set, active_set_hash)?;
-    Ok(())
-}
 
 /// Inputs for the V2 atomic boundary activation hook.
 ///
@@ -137,6 +130,11 @@ pub struct BoundaryActivationInputs {
     pub outgoing: Option<(u64, CommitteeSnapshot)>,
     pub incoming_epoch: u64,
     pub incoming: CommitteeSnapshot,
+    /// Historical EVM height at which consensus froze the target committee.
+    /// Runtime transition validation uses this to distinguish a validator that
+    /// exited or was jailed after the freeze from a malformed boundary that
+    /// includes a validator already ineligible at the freeze height.
+    pub freeze_height: u64,
     pub new_active_set: Vec<Address>,
     pub active_set_hash: B256,
     pub tee_expired_target_exclusions: Vec<Address>,
@@ -147,7 +145,7 @@ pub struct BoundaryActivationInputs {
 ///
 ///   1. Open a journal checkpoint (RAII guard).
 ///   2. Write the outgoing committee snapshot for epoch `N` (if any).
-///   3. Apply `activate_reshared_set` to mutate validator-set membership.
+///   3. Apply the validated boundary transition to validator-set membership.
 ///   4. Write the incoming committee snapshot for epoch `N + 1`.
 ///   5. Commit the checkpoint.
 ///
@@ -175,9 +173,10 @@ pub fn activate_boundary_atomic(
 
     {
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.activate_reshared_set_with_expiry_exclusions(
+        vs.activate_validated_boundary_set_with_expiry_exclusions(
             &inputs.new_active_set,
             inputs.active_set_hash,
+            inputs.freeze_height,
             &inputs.tee_expired_target_exclusions,
         )?;
     }

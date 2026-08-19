@@ -109,10 +109,14 @@ function decodeRevert(data: string): string {
   return `raw=${data}`;
 }
 
+/// Mirrors `enum State` in contracts/precompiles/src/ICredis.sol.
+const STATE_NAMES = ["Open", "Settleable", "Called", "Settled", "Void"];
+const STATE_OPEN = 0;
+
 interface State {
   saErc20Balance: bigint;
   vaultErc20Balance: bigint;
-  hasOverdue: boolean;
+  hasCalled: boolean;
 }
 
 async function getState(
@@ -121,12 +125,12 @@ async function getState(
   smartAccountAddr: string,
   underlyingVaultAddr: string,
 ): Promise<State> {
-  const [saErc20Balance, vaultErc20Balance, hasOverdue] = await Promise.all([
+  const [saErc20Balance, vaultErc20Balance, hasCalled] = await Promise.all([
     token.balanceOf(smartAccountAddr),
     token.balanceOf(underlyingVaultAddr),
-    credis.hasOverdueAnadosis(smartAccountAddr).catch(() => false),
+    credis.hasCalledPosition(smartAccountAddr).catch(() => false),
   ]);
-  return { saErc20Balance, vaultErc20Balance, hasOverdue };
+  return { saErc20Balance, vaultErc20Balance, hasCalled };
 }
 
 function printState(label: string, state: State, erc20Meta: TokenMeta, smartAccountAddr: string) {
@@ -136,11 +140,11 @@ function printState(label: string, state: State, erc20Meta: TokenMeta, smartAcco
   console.log(`  Vault Router (${vaultRouterAddress}):`);
   console.log(`    Vault ERC20:   ${formatTokenMeta(state.vaultErc20Balance, erc20Meta)}`);
   console.log(`  Credis:`);
-  console.log(`    Has overdue:   ${state.hasOverdue}`);
+  console.log(`    Has called:    ${state.hasCalled}`);
 }
 
 async function main() {
-  console.log("=== User Pays Anadosis ===");
+  console.log("=== User Settles Credis ===");
   console.log(`Env:              ${envName}`);
   console.log(`RPC:              ${rpcUrl}`);
   console.log(`User:             ${userAddress}`);
@@ -183,37 +187,53 @@ async function main() {
 
   // Fetch position to validate it exists
   const position = await credis.getPosition(positionId);
-  if (position.createdAt === 0n) {
+  if (position.originatedAt === 0n) {
     console.error(`Position ${positionId} does not exist.`);
     process.exit(1);
   }
+
+  // Interest is not accrued per block: the chain computes it at settlement from
+  // the whole UTC days elapsed since the accrual anchor, ACT/365 on the
+  // outstanding principal. Read it now so the payment covers it.
+  const interest = await credis.accruedInterest(positionId);
+
   console.log(`\nPosition:`);
   console.log(`  smart account: ${position.smartAccount}`);
-  console.log(`  Total:         ${formatTokenMeta(position.totalAnadosisAmount, erc20Meta)}`);
-  console.log(`  Outstanding:   ${formatTokenMeta(position.outstandingAnadosisAmount, erc20Meta)}`);
-  console.log(`  Created:       ${formatDate(position.createdAt)}`);
+  console.log(`  State:         ${STATE_NAMES[Number(position.state)] ?? position.state}`);
+  console.log(`  Principal:     ${formatTokenMeta(position.principal, erc20Meta)}`);
+  console.log(`  Outstanding:   ${formatTokenMeta(position.outstanding, erc20Meta)}`);
+  console.log(`  Interest due:  ${formatTokenMeta(interest, erc20Meta)}`);
+  console.log(`  Originated:    ${formatDate(position.originatedAt)}`);
+  console.log(`  Floor price:   ${position.floorPrice} (settlement unlocks above this)`);
 
-  if (position.outstandingAnadosisAmount === 0n) {
-    console.error("Position is fully paid. No anadosis remaining.");
+  if (position.outstanding === 0n) {
+    console.error("Position is fully settled. Nothing outstanding.");
     process.exit(1);
   }
 
-  // Get next anadosis; its remaining balance is the default payment amount.
-  const nextAnadosis = await credis.getNextAnadosis(positionId);
-  console.log(`\nNext anadosis #${nextAnadosis.anadosisNumber}:`);
-  console.log(`  Due:           ${formatDate(nextAnadosis.dueDate)}`);
-  console.log(`  Amount:        ${formatTokenMeta(nextAnadosis.anadosisAmount, erc20Meta)}`);
-  console.log(`  Still owed:    ${formatTokenMeta(nextAnadosis.unpaidAmount, erc20Meta)}`);
-  console.log(`  Gratis amount: ${formatToken(nextAnadosis.gratisAmount, 18, "GRATIS")}`);
+  if (Number(position.state) === STATE_OPEN) {
+    console.log(
+      "\nNote: this position has never traded above its floor price. The settle call" +
+        " latches it if the live COEN price is above the floor right now, and reverts otherwise.",
+    );
+  }
 
-  // Cap at the position's outstanding balance — the chain only pulls what the
-  // schedule needs, so approving more than that would just be a dangling allowance.
-  const requested = amountArg !== undefined ? BigInt(amountArg) : nextAnadosis.unpaidAmount;
-  const anadosisAmount =
-    requested > position.outstandingAnadosisAmount ? position.outstandingAnadosisAmount : requested;
-  console.log(`  Paying:        ${formatTokenMeta(anadosisAmount, erc20Meta)}`);
+  // Interest is always collected in full before any principal, so a payment below
+  // it is rejected outright. Default to closing the position: interest + the whole
+  // outstanding principal. The chain pulls only what the position needs, so
+  // over-approving would just leave a dangling allowance.
+  const payoff = interest + position.outstanding;
+  const requested = amountArg !== undefined ? BigInt(amountArg) : payoff;
+  const settleAmount = requested > payoff ? payoff : requested;
+  console.log(`  Paying:        ${formatTokenMeta(settleAmount, erc20Meta)}`);
 
-  if (anadosisAmount === 0n) {
+  if (settleAmount < interest) {
+    console.error(
+      `Payment must cover the accrued interest of ${formatTokenMeta(interest, erc20Meta)} first.`,
+    );
+    process.exit(1);
+  }
+  if (settleAmount === 0n) {
     console.error("Nothing to pay.");
     process.exit(1);
   }
@@ -227,7 +247,7 @@ async function main() {
   const gratisBalBefore = decryptBalance(userKeys.viewKey, userAddress, await gratis.balanceOf(userAddress));
   console.log(
     `\nThis payment unlocks the matching share of collateral back to ${userAddress}` +
-      ` (up to ${formatToken(position.outstandingGratisAmount, 18, "GRATIS")} still locked).`,
+      ` (up to ${formatToken(position.collateralLocked, 18, "GRATIS")} still locked).`,
   );
   console.log(`  User Gratis balance before: ${formatToken(gratisBalBefore, 18, "GRATIS")} (decrypted)`);
 
@@ -235,12 +255,12 @@ async function main() {
   const before = await getState(token, credis, smartAccountAddr, underlyingVaultAddr);
   printState("State BEFORE", before, erc20Meta, smartAccountAddr);
 
-  if (before.saErc20Balance < anadosisAmount) {
-    console.error(`Insufficient SA balance: have ${formatTokenMeta(before.saErc20Balance, erc20Meta)}, need ${formatTokenMeta(anadosisAmount, erc20Meta)}`);
+  if (before.saErc20Balance < settleAmount) {
+    console.error(`Insufficient SA balance: have ${formatTokenMeta(before.saErc20Balance, erc20Meta)}, need ${formatTokenMeta(settleAmount, erc20Meta)}`);
     process.exit(1);
   }
 
-  // ── Build batch UserOp: approve + anadosis ────────────────────────────
+  // ── Build batch UserOp: approve + settle ──────────────────────────────
 
   // Owner permission validation (Kernel v4 permission nonce type 0x02); the owner permission
   // carries BundleSpendProtectorHook, so this batch executeUserOp is checked against the reserve.
@@ -259,13 +279,14 @@ async function main() {
     console.log("  Deposited 0.05 COEN into EntryPoint");
   }
 
-  // Encode batch: [approve(credisFactory, anadosisAmount), anadosis(positionId, anadosisAmount)].
-  // The runtime settles installments in order (the last one possibly partially), pulls
-  // only what the schedule needed, and releases the matching collateral share back to
-  // the pledger's (userAddress) encrypted balance — the enclave recovers the EOA from
-  // the position's sealed ciphertext, so it is not passed in calldata.
-  const approveCalldata = IERC20__factory.createInterface().encodeFunctionData("approve", [credisFactoryAddress, anadosisAmount]);
-  const payCalldata = ICredisFactory__factory.createInterface().encodeFunctionData("anadosis", [positionId, anadosisAmount]);
+  // Encode batch: [approve(credisFactory, settleAmount), settle(positionId, settleAmount)].
+  // The runtime applies the payment interest first and principal second, pulls only
+  // what the position needed, and releases the collateral share proportional to the
+  // principal covered back to the pledger's (userAddress) encrypted balance — the
+  // enclave recovers the EOA from the position's sealed ciphertext, so it is not
+  // passed in calldata.
+  const approveCalldata = IERC20__factory.createInterface().encodeFunctionData("approve", [credisFactoryAddress, settleAmount]);
+  const payCalldata = ICredisFactory__factory.createInterface().encodeFunctionData("settle", [positionId, settleAmount]);
 
   // Batch execution: execMode byte[0] = 0x01 (CALLTYPE_BATCH)
   const execModeBatch = "0x01" + "00".repeat(31);
@@ -408,12 +429,14 @@ async function main() {
   // The release is proportional to the debt paid down, so it must be positive and can
   // never exceed what the position still had locked.
   const positionAfter = await credis.getPosition(positionId);
-  const debtPaid = position.outstandingAnadosisAmount - positionAfter.outstandingAnadosisAmount;
-  console.log(`  Debt paid:       ${formatTokenMeta(debtPaid, erc20Meta)}`);
-  if (unlocked <= 0n || unlocked > position.outstandingGratisAmount) {
+  const principalPaid = position.outstanding - positionAfter.outstanding;
+  console.log(`  Principal paid:  ${formatTokenMeta(principalPaid, erc20Meta)}`);
+  console.log(`  Interest paid:   ${formatTokenMeta(settleAmount - principalPaid, erc20Meta)}`);
+  console.log(`  Outstanding:     ${formatTokenMeta(positionAfter.outstanding, erc20Meta)}`);
+  if (unlocked <= 0n || unlocked > position.collateralLocked) {
     console.warn(
       `  WARNING: unlocked ${formatToken(unlocked, 18, "GRATIS")} outside the expected` +
-        ` (0, ${formatToken(position.outstandingGratisAmount, 18, "GRATIS")}] range`,
+        ` (0, ${formatToken(position.collateralLocked, 18, "GRATIS")}] range`,
     );
   }
 }

@@ -21,7 +21,8 @@ pub type PairIndex = u32;
 /// Manages exchange rates, validator voting, price snapshots, and VWAP
 /// calculation for whitelisted trading pairs.
 ///
-/// All prices and volumes use U256 with 1e18 scale factor.
+/// Prices and volumes remain `U256` in each pair's canonical scale. COEN/ISO
+/// uses six decimals; generic non-ISO pairs retain their existing contract.
 ///
 /// A pair is an [`AddressPair`]: its two asset addresses in the orientation they
 /// were quoted. As a *key* it sorts (so both directions of a market share one
@@ -73,7 +74,7 @@ pub struct OracleContract {
     // index, so an unregistered market has no rate slot to write into at all,
     // and the index carries the orientation the pair was registered in — the
     // stored rate is always the canonical direction, never the reciprocal.
-    // slot 12: mapping(pair_index => exchange_rate) 1e18 scaled
+    // slot 12: mapping(pair_index => exchange_rate), pair-canonical scale
     pub exchange_rate: Mapping<PairIndex, U256>,
     // slot 13: mapping(pair_index => last_update_block)
     pub exchange_rate_block: Mapping<PairIndex, u64>,
@@ -138,7 +139,7 @@ pub struct OracleContract {
     pub scurve_pair: Mapping<u32, AddressPair>,
     // slot 36: mapping(entry_idx => peak_day_timestamp) UTC midnight
     pub scurve_peak_day: Mapping<u32, u64>,
-    // slot 37: mapping(entry_idx => peak_price) 1e18 scaled
+    // slot 37: mapping(entry_idx => peak_price), pair-canonical scale
     pub scurve_peak_price: Mapping<u32, U256>,
     // slot 38: oldest non-evicted entry index (head pointer for cleanup)
     pub scurve_oldest_idx: Slot<u32>,
@@ -212,7 +213,7 @@ pub struct OracleContract {
     //
     // Slots 56 (`utc_day_vwap_pair_count`) and 57 (`utc_day_vwap_pair`) are
     // retired holes. Do not reuse.
-    // slot 58: mapping(utc_day => mapping(pair_index => vwap)) 1e18 scaled.
+    // slot 58: mapping(utc_day => mapping(pair_index => vwap)), pair scale.
     // Inner key is the registry [`PairIndex`], as for the WorldwideDay column
     // above. slot 58 — pinned against the retired 56-57 hole.
     #[slot(58)]
@@ -222,7 +223,7 @@ pub struct OracleContract {
     // so every day <= this watermark is considered finalized.
     pub utc_day_vwap_last_finalized: Slot<u32>,
 
-    // slot 60: reference-currency currency rates
+    // slot 60: reference-currency annual rates, scale 1e6
     pub reference_currency_rate: Mapping<u16, U256>,
 
     // === OCOMP PoC pre-admission projection (slots 61, 63-64) ===

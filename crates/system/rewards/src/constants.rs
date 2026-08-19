@@ -91,7 +91,7 @@ mod tests {
     #[test]
     fn w_max_solvency_full_attendance() {
         let committee_size: u64 = 16;
-        let pool = U256::from(committee_size) * uint!(1_000_000_000_000_000_000_U256); // divisible by N
+        let pool = U256::from(committee_size) * uint!(1_000_000_U256); // one COEN per member; divisible by N
         let denom = fixed_denominator(committee_size);
         assert_eq!(denom, U256::from(committee_size) * uint!(100_U256));
 

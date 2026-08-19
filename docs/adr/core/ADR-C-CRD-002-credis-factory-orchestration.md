@@ -1,7 +1,7 @@
-# ADR-C-CRD-002: CredisFactory owns collateral-proof, pricing and repayment orchestration
+# ADR-C-CRD-002: CredisFactory owns collateral-proof, pricing and settlement orchestration
 
 - **Status:** Proposed; current implementation profiled
-- **Date:** 2026-07-17
+- **Date:** 2026-07-17 (revised 2026-08-18 for the Credis v2 price-path model)
 - **Decision owners:** Credis protocol maintainers
 - **Scope:** `crates/core/credisfactory`
 - **Depends on:** ADR-B-CNS-003, ADR-B-EVM-004, ADR-C-GRT-001, ADR-C-GRT-003, ADR-C-CRD-001, ADR-C-VLT-001, ADR-S-ORC-001
@@ -10,10 +10,10 @@
 
 ## Context
 
-CredisFactory turns one shielded pledged-Gratis note into a credit position and
-reserve disbursement, then turns repayments into reclaim notes. It is the atomicity
-owner across GratisPool, Oracle, Credis, external asset contracts and VaultRouter.
-It does not own any of those modules' state.
+CredisFactory turns one sealed pledged-Gratis ticket into a credit position and
+reserve disbursement, then turns settlements into vault inflows and proportional
+collateral releases. It is the atomicity owner across Gratis, Oracle, Credis, external
+asset contracts and VaultRouter. It does not own any of those modules' state.
 
 ## Decision
 
@@ -22,12 +22,13 @@ It does not own any of those modules' state.
 `requestCredis` derives the borrower from a nonzero smart account and performs:
 
 1. validate nonzero asset/bundle and a Credis-eligible denomination;
-2. reject a bundle with any overdue Credis position at canonical block time;
+2. reject a bundle holding any unresolved called Credis position;
 3. verify the GratisPool spend proof bound to the bundle, action, chain and zero
    context nonce, consuming the nullifier;
 4. convert the denomination's 18-decimal Gratis amount into six-decimal stable
    amount using the pinned `COEN/840` Oracle rate and explicit decimal gap;
-5. staticcall the selected asset's `isoCode()` and snapshot its currency rate;
+5. staticcall the selected asset's `isoCode()` and pin the currency's annual official
+   policy rate, scaled by the policy-rate factor;
 6. create the Credis position using the nullifier as unique identity input;
 7. persist the original denomination for reclaim derivation; and
 8. withdraw exactly the position asset/amount through VaultRouter into the bundle.
@@ -35,29 +36,49 @@ It does not own any of those modules' state.
 The caller cannot redirect a copied proof because receiver binding uses the bundle.
 All steps and the success event are one EVM rollback domain.
 
-### Pay next Anadosis
+### Settle
 
-Any caller may pay, including on behalf of another account: the debt is pulled from
-the caller's own balance while the freed collateral is always released to the original
-pledger, so a payer can never redirect value to themselves. Before mutation the factory
-validates position, next installment, asset, amount and nonzero reclaim commitment. It
-then:
+Any caller may settle, including on behalf of another account: value is pulled from the
+caller's own balance while the freed collateral is always released to the original
+pledger, so a payer can never redirect value to themselves. The position must be
+`Settleable` or `Called`; `Open` reverts as not settleable and a terminal position
+reverts as closed. Before mutation the factory validates the position and asset and
+rejects a zero amount. It then:
 
-1. advances the Credis next installment at canonical time;
-2. pulls the exact recorded asset/amount from the caller;
-3. approves and deposits it through VaultRouter; and
-4. appends the caller-supplied reclaim commitment at the denomination one decade
-   below the original pledge denomination.
+1. latches the position settleable if its currency's live COEN price is above the sealed
+   floor price — a non-reverting read, so a cold oracle cannot block an already-latched
+   position;
+2. applies the settlement in Credis at canonical time, interest first and principal
+   second, rejecting any amount below the accrued interest;
+3. pulls exactly `interest + principal covered` from the caller;
+4. approves and deposits it through VaultRouter; and
+5. releases the proportional collateral share to the pledger recovered from the
+   position's sealed ciphertext via a `RevealOwner` enclave round-trip.
 
-Failure at any external call or commitment append rolls back cursor/debt changes.
+`settle` returns the split — `(principal, interest)` — rather than a single total.
+A caller reconciling a payment needs to know how much of it retired debt and how much
+was the coupon; recovering that from one number would mean re-deriving the interest
+from the position's accrual anchor, which races the settlement that just moved it.
+Their sum is what was pulled.
+
+Failure at any external call rolls back the position bookkeeping and the release.
+
+### Void the remainder
+
+A begin-block sweep walks the position index with a bounded, persisted cursor and, for
+every called position whose settlement window has lapsed with principal outstanding,
+burns the unpaid collateral share, drops the pledger's fidelity cohort and credits the
+Promis Reserve. Nothing in production reaches `Called` until the daily reference-price
+scan lands, so this sweep is currently inert.
 
 ## Cross-module invariants
 
 - One consumed pledge nullifier opens at most one position.
 - Position terms use the exact asset/currency/rate and amount delivered.
 - Bundle token increase equals recorded principal under the supported token policy.
-- Each successful payment advances one installment, deposits its exact debt amount
-  and creates one reclaim right for its exact collateral slice.
+- Each successful settlement collects the accrued interest in full before any
+  principal, deposits exactly what it pulled, and releases collateral proportional to
+  the principal it covered.
 - Live unreclaimed position collateral is backed by pledged Gratis escrow.
 - Reclaim notes cannot be redirected, duplicated or created with an unverifiable
   denomination.
@@ -71,7 +92,7 @@ are snapshotted for later determinism. ERC-20 and VaultRouter are adversarial
 external-call boundaries: return data, actual balance deltas and asset identity must
 be validated according to supported-token policy.
 
-Pool nullifier, position id and installment cursor are replay guards. A node restart
+Pool nullifier, position id and the position's terminal states are replay guards. A node restart
 uses canonical EVM state; no local cache may authorize a request/payment.
 
 ## Compatibility and evidence
@@ -111,9 +132,9 @@ choreography. Credis and VaultRouter remain separately auditable state owners.
    token decimals describe the same economic currency.
 7. Hard-coded six-decimal conversion and `COEN/840` symbol require a versioned
    multi-currency/decimal design.
-8. Add failure injection after nullifier consumption, position creation,
-   denomination write, vault withdrawal, installment advance, token pull/deposit
-   and reclaim insertion.
+8. Add failure injection after ticket consumption, position creation, denomination
+   write, vault withdrawal, settlement application, token pull/deposit and collateral
+   release.
 9. Add ABI-level proof replay/front-running/redirection and restart tests matching
    PFS-003.
 10. Define allowance reset/nonstandard ERC-20 safe-call policy.
@@ -124,3 +145,12 @@ choreography. Credis and VaultRouter remain separately auditable state owners.
     execution; execution snapshot is authority.
 14. Production deployment must structurally prove CredisFactory is registered as
     the correct VaultRouter source/target type.
+15. The call is implemented but unarmed: nothing in production reaches `Called` until
+    the daily reference-price scan lands, so the begin-block void sweep is inert and the
+    unresolved-call guard on `requestCredis` can never trip. Reinstate both guarantees
+    with the scan.
+16. The floor latch is evaluated only inside `settle`, so a price crossing that reverses
+    before anyone settles is missed. The daily scan closes this.
+17. The originating agent is recorded as `cca` on the position and in `CredisRequested`
+    but is not authorized at origination or penalized at void; the CCA program is not yet
+    implemented.

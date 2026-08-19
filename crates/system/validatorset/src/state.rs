@@ -608,14 +608,11 @@ pub fn read_committee_snapshot(
 /// needing the `committee_set_hash`.
 ///
 /// The ring maps `epoch % COMMITTEE_SNAPSHOT_RETAIN_EPOCHS -> snapshot_key`. For
-/// an epoch within the retained window the slot holds that epoch's key; for an
-/// epoch older than the window the slot has been overwritten by a newer epoch
-/// that collides on the ring index, so this returns that newer committee (the
-/// snapshot does not store its own epoch). Callers that bind the result to a
-/// specific epoch (SlashIndicator evidence) MUST therefore verify against
-/// the returned committee and treat a verification failure as "unverifiable",
-/// never trusting the epoch match implicitly. Returns `None` when the ring slot
-/// is empty.
+/// an epoch within the retained window the slot holds that epoch's key. For an
+/// older epoch, the slot may have been overwritten by a newer colliding epoch;
+/// the reader recomputes the requested epoch's canonical key from the decoded
+/// snapshot and returns `None` on mismatch. This keeps evidence lookup
+/// fail-closed even when both epochs have an identical committee.
 pub fn read_committee_snapshot_for_epoch(
     storage: StorageHandle,
     epoch: u64,
@@ -628,7 +625,14 @@ pub fn read_committee_snapshot_for_epoch(
     if key == B256::ZERO {
         return Ok(None);
     }
-    read_committee_snapshot(storage, key)
+    let Some(snapshot) = read_committee_snapshot(storage, key)? else {
+        return Ok(None);
+    };
+    let (_, expected_key) = snapshot_identity(epoch, &snapshot);
+    if key != expected_key {
+        return Ok(None);
+    }
+    Ok(Some(snapshot))
 }
 
 /// Pre-computes `(committee_set_hash, snapshot_key)` without touching storage.

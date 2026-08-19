@@ -49,10 +49,13 @@ SECP256K1_G = (
     0x483ADA7726A3C4655DA4FBFC0E1108A8FD17B448A68554199C47D08FFB10D4B8,
 )
 
-DEFAULT_PREFUND_WEI = 10_000 * 10**18
+DEFAULT_PREFUND_COEN_UNITS = 10_000 * 10**6
 DEVNET_CHAIN_ID = 424242
 TESTNET_CHAIN_ID = 54322345
-DEFAULT_EPOCH_LENGTH_BLOCKS = 120
+# OCOMP jobs can live for 1,868 blocks. The canonical localnet and retained
+# final-artifact fixture use a 300-block epoch, so the fixed eight-epoch
+# committee snapshot ring retains 7 * 300 = 2,100 blocks of history.
+DEFAULT_EPOCH_LENGTH_BLOCKS = 300
 DEFAULT_DKG_PREPARE_WINDOW_BLOCKS = 30
 DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS = 30
 DEFAULT_GAS_LIMIT = "0x1c9c380"
@@ -410,19 +413,19 @@ def prepare_prefunded_genesis(
     base_genesis: dict[str, Any],
     validators: list[dict[str, Any]],
     *,
-    prefund_wei: int,
+    prefund_coen_units: int,
 ) -> dict[str, Any]:
     genesis = json.loads(json.dumps(base_genesis))
     alloc = genesis.setdefault("alloc", {})
     if not isinstance(alloc, dict):
         raise ValueError("genesis alloc must be an object")
-    if prefund_wei == 0:
+    if prefund_coen_units == 0:
         return genesis
     for validator in validators:
         address, _ = validator_wallet_info(validator)
         key = normalize_hex(address, expected_len=40, field="validator address")
         entry = alloc.setdefault(key, {})
-        entry.setdefault("balance", compact_hex_balance(prefund_wei))
+        entry.setdefault("balance", compact_hex_balance(prefund_coen_units))
     return genesis
 
 
@@ -538,8 +541,24 @@ def run_ocomp_keygen(
     keygen_binary: str,
     output_dir: Path,
     bindings: dict[str, Any],
+    validators: list[dict[str, Any]],
 ) -> None:
-    for index, identity in enumerate(bindings["validatorIdentityHashes"]):
+    identities = bindings["validatorIdentityHashes"]
+    if len(validators) != len(identities):
+        raise ValueError(
+            "OCOMP key generation validator count does not match bindings"
+        )
+    for index, validator in enumerate(validators):
+        address = normalize_hex(
+            validator_field(validator, ["address"]) or "",
+            expected_len=40,
+            field=f"validator {index} address",
+        )
+        public_key = normalize_hex(
+            validator_field(validator, ["public_key"]) or "",
+            expected_len=96,
+            field=f"validator {index} public_key",
+        )
         subprocess.run(
             [
                 keygen_binary,
@@ -550,18 +569,10 @@ def run_ocomp_keygen(
                 str(bindings["chainId"]),
                 "--genesis-hash",
                 str(bindings["genesisHash"]),
-                "--fork-id",
-                str(bindings["forkId"]),
-                "--protocol-bundle-hash",
-                str(bindings["protocolBundleHash"]),
-                "--validator-index",
-                str(index),
-                "--validator-identity-hash",
-                str(identity),
-                "--valid-from-height",
-                str(bindings["activationHeight"]),
-                "--valid-until-height-exclusive",
-                str(bindings["validUntilHeightExclusive"]),
+                "--validator-address",
+                "0x" + address,
+                "--consensus-bls-min-pk",
+                "0x" + public_key,
             ],
             check=True,
         )
@@ -891,7 +902,9 @@ def main() -> None:
     parser.add_argument("--minimum-isv-svn", type=int)
     parser.add_argument("--minimum-tcb-evaluation-data-number", type=int)
     parser.add_argument("--runtime-base-dir", help="Path prefix used in generated commands; defaults to output dir")
-    parser.add_argument("--prefund-wei", type=int, default=DEFAULT_PREFUND_WEI)
+    parser.add_argument(
+        "--prefund-coen-units", type=int, default=DEFAULT_PREFUND_COEN_UNITS
+    )
     parser.add_argument("--chain-id", type=int)
     parser.add_argument("--epoch-length-blocks", type=int, default=DEFAULT_EPOCH_LENGTH_BLOCKS)
     parser.add_argument("--dkg-prepare-window-blocks", type=int, default=DEFAULT_DKG_PREPARE_WINDOW_BLOCKS)
@@ -1039,7 +1052,7 @@ def main() -> None:
     preseed_genesis = prepare_prefunded_genesis(
         base_genesis,
         validators,
-        prefund_wei=args.prefund_wei,
+        prefund_coen_units=args.prefund_coen_units,
     )
     preseed_path = output_dir / "genesis.prefund.json"
     seeded_genesis_path = output_dir / "genesis.seeded.json"
@@ -1067,6 +1080,7 @@ def main() -> None:
         keygen_binary=args.keygen_binary,
         output_dir=output_dir,
         bindings=ocomp_bindings,
+        validators=validators,
     )
     protocol_bundle_path = output_dir / "protocol-bundle-v1.ocb1"
     run_ocomp_genesis(

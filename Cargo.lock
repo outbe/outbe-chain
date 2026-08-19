@@ -7520,6 +7520,7 @@ dependencies = [
  "alloy-trie",
  "ark-bn254 0.6.0",
  "ark-ff 0.6.0",
+ "blst",
  "bytes",
  "clap",
  "commonware-codec",
@@ -7586,6 +7587,7 @@ dependencies = [
  "alloy-primitives",
  "outbe-metadosis",
  "outbe-primitives",
+ "serde_json",
  "tracing",
 ]
 
@@ -7907,6 +7909,7 @@ dependencies = [
  "k256 0.13.4",
  "outbe-consensus",
  "outbe-ocomp-protocol",
+ "outbe-primitives",
  "rand_core 0.6.4",
  "tempfile",
  "zeroize",
@@ -8228,6 +8231,7 @@ dependencies = [
 name = "outbe-operator"
 version = "0.1.0"
 dependencies = [
+ "alloy-eips 2.0.4",
  "alloy-primitives",
  "alloy-sol-types",
  "eyre",
@@ -8256,6 +8260,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-staking",
  "outbe-validatorset",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 

@@ -3,7 +3,7 @@ pragma solidity ^0.8.30;
 
 /// @title ICredisFactory — credis lifecycle orchestrator.
 interface ICredisFactory {
-    event CredisRequested(address indexed smartAccount, uint256 amount);
+    event CredisRequested(address indexed smartAccount, address indexed cca, uint256 amount);
 
     /// @notice Open a credis position against a confidential Gratis pledge. Called by
     ///         the CCA, which presents `pledgeHandle` (the public id returned by
@@ -13,26 +13,34 @@ interface ICredisFactory {
     ///         pledge-lock ticket is consumed once and bound to `smartAccount`.
     ///         The disbursed amount and the asset are NOT calldata: both were sealed
     ///         into the ticket at `pledgeGratis` time, so the loan is issued at the
-    ///         price the pledger accepted.
+    ///         price the pledger accepted. `msg.sender` is recorded on the position
+    ///         as the originating CCA.
     /// @return positionId Derived from `pledgeHandle` and `smartAccount`.
     /// @return amountStables Stablecoin amount disbursed, as quoted at pledge time.
     function requestCredis(address smartAccount, bytes32 pledgeHandle, bytes32 spendAuth)
         external
         returns (uint256 positionId, uint256 amountStables);
 
-    /// @notice Pay `amount` toward the position's unpaid anadosis schedule and
-    ///         release the matching share of collateral from the pledged lock
-    ///         ledger back to its balance. Installments are settled in order:
-    ///         each is covered in full while the supplied amount lasts, and the
-    ///         last one reached may be covered partially (its remainder stays on
-    ///         `Anadosis.unpaidAmount`). When `amount` exceeds the position's
-    ///         outstanding balance only the required part is pulled from the caller.
-    ///         Any caller may pay, including on behalf of another account: the debt
-    ///         is pulled from the caller's own balance while the freed collateral is
-    ///         always released to the original pledger, so a payer can never redirect
-    ///         value to themselves.
-    /// @return totalPaidAmount Stablecoin actually pulled — `min(amount, outstanding)`.
-    function anadosis(uint256 positionId, uint256 amount) external returns (uint256 totalPaidAmount);
+    /// @notice Settle `amount` against a position and release the matching share of
+    ///         collateral from the pledged lock ledger back to its balance.
+    ///         The position must be settleable: the live COEN price must have
+    ///         exceeded its floor price at least once. Payment is applied interest
+    ///         first, principal second, so an `amount` below the interest accrued
+    ///         since the last settlement is rejected — query
+    ///         `ICredis.accruedInterest` for that floor. Collateral is released in
+    ///         proportion to the principal covered, and the settlement that clears
+    ///         the last of the outstanding principal releases exactly the remainder,
+    ///         leaving no dust.
+    ///         When `amount` exceeds what the position still needs, only the required
+    ///         part is pulled from the caller. Any caller may settle, including on
+    ///         behalf of another account: the debt is pulled from the caller's own
+    ///         balance while the freed collateral is always released to the original
+    ///         pledger, so a payer can never redirect value to themselves.
+    /// @return principal Principal covered by this settlement. Drives the collateral
+    ///         released and the reduction in the position's outstanding balance.
+    /// @return interest Accrued interest collected by this settlement. Taken in full
+    ///         before any principal, and never carried between settlements.
+    function settle(uint256 positionId, uint256 amount) external returns (uint256 principal, uint256 interest);
 
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

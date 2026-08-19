@@ -42,13 +42,13 @@ fn asset() -> Address {
     address!("0x0888088808880888088808880888088808880888")
 }
 
-fn one_e18() -> U256 {
-    U256::from(10u64).pow(U256::from(18u64))
+fn one_six_decimal_unit() -> U256 {
+    U256::from(1_000_000u64)
 }
 
-/// COEN/840 rate these tests seed: 2.0, 1e18-scaled.
+/// COEN/840 rate these tests seed: 2.0 at the pair's six-decimal scale.
 fn oracle_rate() -> U256 {
-    U256::from(2u64) * one_e18()
+    U256::from(2u64) * one_six_decimal_unit()
 }
 
 /// Credit a pledge asks for: $2.00 in 6-decimal minor units. At [`oracle_rate`] that
@@ -59,9 +59,9 @@ fn pledge_stables() -> U256 {
 }
 
 /// Gratis [`pledge_stables`] costs at [`oracle_rate`]:
-/// `2e6 * 1e12 * 1e18 / 2e18 = 1e18`.
+/// `ceil(2e6 * 1e6 / 2e6) = 1e6`.
 fn pledge_cost() -> U256 {
-    one_e18()
+    one_six_decimal_unit()
 }
 fn chain_b256() -> B256 {
     B256::from(U256::from(CHAIN_ID))
@@ -97,13 +97,13 @@ fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
 
 /// Register the COEN/840 pair plus the ISO 840 settlement mapping the pledge
 /// conversion resolves through (the asset's `isoCode()` selects the pair).
-fn seed_oracle(storage: StorageHandle<'_>, rate_1e18: U256) {
+fn seed_oracle(storage: StorageHandle<'_>, rate: U256) {
     outbe_oracle::api::register_pair(storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR).unwrap();
     outbe_oracle::api::set_exchange_rate(
         storage,
         Address::ZERO,
         outbe_oracle::api::DAY_TYPE_PAIR,
-        rate_1e18,
+        rate,
         0,
         0,
     )
@@ -239,6 +239,33 @@ fn pledge_debits_the_oracle_derived_gratis_and_parks_it_in_the_ticket() {
             outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
             pledge_cost()
         );
+    });
+}
+
+#[test]
+fn pledge_rounds_positive_subunit_collateral_up_to_one_gratis_unit() {
+    with_env(|storage| {
+        let stable_raw = U256::ONE;
+        let gratis_raw = U256::ONE;
+        outbe_gratis::api::mint(
+            storage.clone(),
+            alice(),
+            gratis_raw,
+            auth(GratisOp::Mint, alice(), gratis_raw, 0),
+        )
+        .unwrap();
+        seed_fidelity(storage.clone(), alice());
+
+        let (_, charged) = runtime::pledge_gratis(
+            storage,
+            alice(),
+            stable_raw,
+            asset(),
+            gratis_raw,
+            auth(GratisOp::Pledge, alice(), stable_raw, 1),
+        )
+        .unwrap();
+        assert_eq!(charged, gratis_raw);
     });
 }
 

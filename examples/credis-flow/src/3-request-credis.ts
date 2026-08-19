@@ -156,19 +156,22 @@ async function main() {
   console.log("\n=== Position ===");
   console.log(`  positionId:        ${positionId}`);
   console.log(`  smartAccount:     ${position.smartAccount}`);
-  console.log(`  credisPrincipal:   ${formatTokenMeta(position.credisPrincipal, erc20Meta)}`);
-  console.log(`  totalAnadosis:     ${formatTokenMeta(position.totalAnadosisAmount, erc20Meta)}`);
-  console.log(`  totalGratis:       ${position.totalGratisAmount}`);
-  console.log(`  currencyRate:   ${position.currencyRate}`);
+  console.log(`  principal:         ${formatTokenMeta(position.principal, erc20Meta)}`);
+  console.log(`  outstanding:       ${formatTokenMeta(position.outstanding, erc20Meta)}`);
+  console.log(`  collateral:        ${position.collateral}`);
+  console.log(`  policyRate:        ${position.policyRate}`);
+  console.log(`  entryPrice:        ${position.entryPrice}`);
+  console.log(`  floorPrice:        ${position.floorPrice} (settlement unlocks above this)`);
+  console.log(`  callPrice:         ${position.callPrice}`);
   console.log(`  issuanceCurrency:  ${position.issuanceCurrency}`);
   console.log(`\nBundle ERC20 change: ${formatTokenDiff(bundleErc20After - bundleErc20Before, erc20Meta.decimals, erc20Meta.symbol)}`);
 
-  // Persist the position + bundle for pay-anadosis.
+  // Persist the position + bundle for settlement.
   ticket.positionId = positionId.toString();
   ticket.smartAccount = smartAccount;
   writeTicket(ticket);
   console.log(`\nTicket updated: ${usedTicketPath}`);
-  console.log("Run `npm run user-pays-anadosis` to pay an installment (and unlock 1/N of the collateral).");
+  console.log("Run `npm run user-settles` to settle once the COEN price is above the floor (collateral releases in proportion).");
 }
 
 main().catch((error) => {

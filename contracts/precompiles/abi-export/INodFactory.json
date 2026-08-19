@@ -1,6 +1,37 @@
 [
   {
     "type": "function",
+    "name": "materializationHead",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "exists",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "canonicalHead",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "materializeCertifiedNods",
+    "inputs": [
+      {
+        "name": "canonicalBatch",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "mineGratis",
     "inputs": [
       {
@@ -225,6 +256,55 @@
   },
   {
     "type": "event",
+    "name": "NodMaterializationProgress",
+    "inputs": [
+      {
+        "name": "queueSequence",
+        "type": "uint64",
+        "indexed": true,
+        "internalType": "uint64"
+      },
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "generation",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "firstNodOrdinal",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "nextNodOrdinal",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "completed",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      },
+      {
+        "name": "blockNumber",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "NodSettled",
     "inputs": [
       {
@@ -259,5 +339,16 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "NodMaterializationRejected",
+    "inputs": [
+      {
+        "name": "code",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
   }
 ]

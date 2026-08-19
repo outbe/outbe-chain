@@ -1,4 +1,10 @@
-import { type AbiFunction, type AbiParameter, formatUnits } from "viem";
+import {
+  type AbiFunction,
+  type AbiParameter,
+  formatUnits,
+  getAddress,
+  zeroAddress,
+} from "viem";
 import {
   currencyLabel,
   dayTypeName,
@@ -13,14 +19,82 @@ import {
  *
  * Formatting sources:
  *  - WorldwideDay u32 YYYYMMDD .......... crates/core/common/src/worldwideday.rs
- *  - *_minor / amounts at 1e18 .......... crates/blockchain/primitives/src/units.rs
+ *  - scoped monetary amounts at 1e6 ..... crates/blockchain/primitives/src/units.rs
+ *  - Credis annual currency rate at 1e6 . Oracle/Credis contract
+ *  - generic prices/ratios at 1e18 ...... their owning protocol modules
  *  - status / day_type enums ............ crates/core/metadosis/src/schema.rs
  */
 
 const DATE_RE = /(worldwideday|^wwd$|^wwds$|^date$|^day$)/i;
-const MINOR_RE =
-  /(minor$|amount|stake|balance|vwap|twap|rate|price|volume|pledged|reward|peakprice|currentvalue|nominalprice|maxscurve)/i;
+const SIX_DECIMAL_AMOUNT_RE = /(minor$|amount|stake|balance|pledged|reward)/i;
+const SIX_DECIMAL_RATE_RE = /currencyrate/i;
+const DIMENSIONLESS_FP18_RE = /(rewardband|minvalidperwindow|slashfraction)/i;
+const GENERIC_FP18_RE = /(vwap|twap|rate|price|volume|peakprice|currentvalue|nominalprice|maxscurve)/i;
 const TIME_RE = /(at$|time$|timestamp$|start$|end$|date$|duedate$|paidat$)/i;
+
+function isIsoCurrencyAddress(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  try {
+    const raw = BigInt(getAddress(value));
+    if (raw < 0xcc000n || raw > 0xcc999n) return false;
+    const packed = Number(raw - 0xcc000n);
+    return [0, 4, 8].every((shift) => ((packed >> shift) & 0xf) <= 9);
+  } catch {
+    return false;
+  }
+}
+
+/** Decimal scale override for a stablecoin-backed COEN/ISO Oracle market. */
+function coenIsoMarketDecimals(base: unknown, quote: unknown): 6 | undefined {
+  const isCoen = (value: unknown) => {
+    if (typeof value !== "string") return false;
+    try {
+      return getAddress(value) === zeroAddress;
+    } catch {
+      return false;
+    }
+  };
+  return (isCoen(base) && isIsoCurrencyAddress(quote)) ||
+    (isIsoCurrencyAddress(base) && isCoen(quote))
+    ? 6
+    : undefined;
+}
+
+type DecimalScale = number | (number | undefined)[];
+
+export interface ReturnFormatContext {
+  /** Raw ABI arguments for a call resolved to the Oracle precompile. */
+  oracleArgs: readonly unknown[];
+}
+
+function oraclePresentationScale(
+  fn: AbiFunction,
+  result: unknown,
+  context: ReturnFormatContext | undefined,
+): DecimalScale | undefined {
+  if (!context) return undefined;
+
+  if (fn.name === "getCoenExchangeRateFor" || fn.name === "getCurrencyRate") {
+    return 6;
+  }
+
+  const inputs = fn.inputs ?? [];
+  if (inputs[0]?.name === "base" && inputs[1]?.name === "quote") {
+    return coenIsoMarketDecimals(context.oracleArgs[0], context.oracleArgs[1]);
+  }
+
+  const outputs = fn.outputs ?? [];
+  const basesIndex = outputs.findIndex((output) => output.name === "bases");
+  const quotesIndex = outputs.findIndex((output) => output.name === "quotes");
+  if (basesIndex < 0 || quotesIndex < 0 || !Array.isArray(result)) return undefined;
+
+  const bases = result[basesIndex];
+  const quotes = result[quotesIndex];
+  if (!Array.isArray(bases) || !Array.isArray(quotes) || bases.length !== quotes.length) {
+    return undefined;
+  }
+  return bases.map((base, index) => coenIsoMarketDecimals(base, quotes[index]));
+}
 
 function formatWwd(v: number): string {
   const y = Math.floor(v / 10_000);
@@ -61,12 +135,23 @@ function isUint(type: string, bits?: number): boolean {
 /**
  * Format a single (non-array, non-tuple) scalar value by name + type.
  *
- * `owner` is the enclosing tuple's `internalType` (e.g. `struct
+ * `enclosingTupleType` is the enclosing tuple's `internalType` (e.g. `struct
  * IGovernance.Proposal`) when there is one. A bare `status` byte means the
  * WorldwideDay lifecycle everywhere except inside a governance proposal, which
- * uses its own enum — so the owning struct disambiguates them.
+ * uses its own enum — so the enclosing struct disambiguates them.
  */
-function formatScalar(name: string, type: string, value: unknown, owner?: string): unknown {
+interface ScalarFormatContext {
+  functionName?: string;
+  enclosingTupleType?: string;
+  marketDecimals?: number;
+}
+
+function formatScalar(
+  name: string,
+  type: string,
+  value: unknown,
+  context: ScalarFormatContext = {},
+): unknown {
   const n = name ?? "";
 
   if (isUint(type, 32) && DATE_RE.test(n)) {
@@ -75,7 +160,9 @@ function formatScalar(name: string, type: string, value: unknown, owner?: string
   }
   if (isUint(type, 8) && n === "status") {
     const v = Number(value);
-    const inProposal = owner !== undefined && /\bIGovernance\./.test(owner);
+    const inProposal =
+      context.enclosingTupleType !== undefined &&
+      /\bIGovernance\./.test(context.enclosingTupleType);
     return { code: v, name: inProposal ? proposalStatusName(v) : statusName(v) };
   }
   if (isUint(type, 8) && n === "dayType") {
@@ -89,13 +176,27 @@ function formatScalar(name: string, type: string, value: unknown, owner?: string
   if (isUint(type, 16) && /currency/i.test(n)) {
     return currencyLabel(Number(value));
   }
-  if (type === "uint256" && MINOR_RE.test(n)) {
-    // 1e18 fixed-point. The unit is context-dependent: native-token amounts
-    // (balances, stake, rewards, nominal) are COEN, but currency-denominated
-    // amounts (e.g. issuance_amount_minor) are in the paired *_currency (USD,
-    // ...). So expose the scaled decimal without asserting a unit.
+  if (type === "uint256" && DIMENSIONLESS_FP18_RE.test(n)) {
     const v = value as bigint;
     return { raw: v.toString(), value: formatUnits(v, 18) };
+  }
+  if (
+    type === "uint256" &&
+    (SIX_DECIMAL_RATE_RE.test(n) || context.functionName === "getCurrencyRate")
+  ) {
+    const v = value as bigint;
+    return { raw: v.toString(), value: formatUnits(v, 6) };
+  }
+  if (type === "uint256" && SIX_DECIMAL_AMOUNT_RE.test(n)) {
+    const v = value as bigint;
+    return { raw: v.toString(), value: formatUnits(v, 6) };
+  }
+  if (type === "uint256" && GENERIC_FP18_RE.test(n)) {
+    const v = value as bigint;
+    return {
+      raw: v.toString(),
+      value: formatUnits(v, context.marketDecimals ?? 18),
+    };
   }
   if (isUint(type, 64) && TIME_RE.test(n) && !/height$|block$/i.test(n)) {
     return { epoch: Number(value), iso: toIso(value as bigint) };
@@ -107,32 +208,71 @@ function formatScalar(name: string, type: string, value: unknown, owner?: string
   return value;
 }
 
+interface ParamFormatContext {
+  functionName?: string;
+  enclosingTupleType?: string;
+  marketDecimals?: DecimalScale;
+}
+
 /** Recursively format a value against its ABI parameter metadata. */
-export function formatParam(param: AbiParameter, value: unknown, owner?: string): unknown {
+export function formatParam(
+  param: AbiParameter,
+  value: unknown,
+  context: ParamFormatContext = {},
+): unknown {
   const { type } = param;
 
   if (type.endsWith("[]")) {
     const base = { ...param, type: type.slice(0, -2) } as AbiParameter;
-    return Array.isArray(value) ? value.map((v) => formatParam(base, v, owner)) : value;
+    return Array.isArray(value)
+      ? value.map((v, index) =>
+          formatParam(
+            base,
+            v,
+            {
+              ...context,
+              marketDecimals: Array.isArray(context.marketDecimals)
+                ? context.marketDecimals[index]
+                : context.marketDecimals,
+            },
+          ),
+        )
+      : value;
   }
 
   if (type === "tuple" && "components" in param && param.components) {
-    const structName =
+    const enclosingTupleType =
       "internalType" in param && typeof param.internalType === "string"
         ? param.internalType
-        : owner;
+        : context.enclosingTupleType;
     const out: Record<string, unknown> = {};
     param.components.forEach((c, i) => {
       const sub =
         value && typeof value === "object" && c.name && c.name in (value as object)
           ? (value as Record<string, unknown>)[c.name]
           : (value as unknown[])[i];
-      out[c.name || String(i)] = formatParam(c, sub, structName);
+      out[c.name || String(i)] = formatParam(
+        c,
+        sub,
+        {
+          ...context,
+          enclosingTupleType,
+          marketDecimals: Array.isArray(context.marketDecimals)
+            ? undefined
+            : context.marketDecimals,
+        },
+      );
     });
     return out;
   }
 
-  return formatScalar(param.name ?? "", type, value, owner);
+  return formatScalar(param.name ?? "", type, value, {
+    functionName: context.functionName,
+    enclosingTupleType: context.enclosingTupleType,
+    marketDecimals: Array.isArray(context.marketDecimals)
+      ? undefined
+      : context.marketDecimals,
+  });
 }
 
 /**
@@ -140,18 +280,29 @@ export function formatParam(param: AbiParameter, value: unknown, owner?: string)
  * `readContract`/`decodeFunctionResult`: a scalar for a single output, an array
  * for multiple outputs.
  */
-export function humanizeReturn(fn: AbiFunction, result: unknown): unknown {
+export function humanizeReturn(
+  fn: AbiFunction,
+  result: unknown,
+  context?: ReturnFormatContext,
+): unknown {
   const outputs = fn.outputs ?? [];
+  const marketDecimals = oraclePresentationScale(fn, result, context);
   if (outputs.length === 0) return null;
   if (outputs.length === 1) {
     const p = outputs[0];
-    const formatted = formatParam(p, result);
+    const formatted = formatParam(p, result, {
+      functionName: fn.name,
+      marketDecimals,
+    });
     return p.name ? { [p.name]: formatted } : formatted;
   }
   const arr = result as unknown[];
   const out: Record<string, unknown> = {};
   outputs.forEach((p, i) => {
-    out[p.name || String(i)] = formatParam(p, arr[i]);
+    out[p.name || String(i)] = formatParam(p, arr[i], {
+      functionName: fn.name,
+      marketDecimals,
+    });
   });
   return out;
 }

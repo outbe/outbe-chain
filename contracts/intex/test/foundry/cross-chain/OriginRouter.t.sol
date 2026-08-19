@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
@@ -161,7 +162,7 @@ contract OriginRouterTest is CrossChainTest {
     function test_sendMarkCalled_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendMarkCalled{value: 0.1 ether}(SERIES_ID, WORLDWIDE_DAY);
+        originRouter.sendMarkCalled{value: 0.1 ether}(WORLDWIDE_DAY, MarkBatchLib.one(SERIES_ID));
     }
 
     function test_sendAuctionStageClearing_revert_unauthorized() public {
@@ -207,7 +208,7 @@ contract OriginRouterTest is CrossChainTest {
     function test_sendMarkQualified_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendMarkQualified{value: 0.1 ether}(SERIES_ID, WORLDWIDE_DAY);
+        originRouter.sendMarkQualified{value: 0.1 ether}(WORLDWIDE_DAY, MarkBatchLib.one(SERIES_ID));
     }
 
     // --- Validation Tests ---
@@ -329,7 +330,7 @@ contract OriginRouterTest is CrossChainTest {
     }
 
     function test_quoteSendMarkCalled() public view {
-        uint256 fee = originRouter.quoteSendMarkCalled(SERIES_ID, WORLDWIDE_DAY);
+        uint256 fee = originRouter.quoteSendMarkCalled(WORLDWIDE_DAY, MarkBatchLib.one(SERIES_ID));
 
         assertEq(fee, 0.001 ether);
     }

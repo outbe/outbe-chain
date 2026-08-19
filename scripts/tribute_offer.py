@@ -134,19 +134,33 @@ def pick_offering_day(w3: Web3) -> int:
     return int(days[0])
 
 
+def canonical_amount_base(value: str) -> str:
+    if not value or not value.isascii() or not value.isdigit():
+        raise argparse.ArgumentTypeError("amount_base must be a canonical unsigned u64")
+    parsed = int(value)
+    if str(parsed) != value or parsed > 18_446_744_073_709_551_615:
+        raise argparse.ArgumentTypeError("amount_base must be a canonical unsigned u64")
+    return value
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Submit an encrypted Tribute offer")
     ap.add_argument("--rpc", required=True, help="JSON-RPC endpoint URL")
     ap.add_argument("--private-key", required=True, help="signer private key (hex)")
     ap.add_argument("--day", type=int, default=None,
                     help="WorldwideDay (YYYYMMDD); auto-detect OFFERING if omitted")
-    ap.add_argument("--amount", default="100", help="amount_base in whole units")
+    ap.add_argument(
+        "--amount",
+        default="100",
+        help="canonical unsigned amount_base in whole units",
+    )
     ap.add_argument("--currency", type=int, default=840, help="ISO 4217 code (840=USD)")
     ap.add_argument("--exclude-from-intex-issuance", action="store_true",
                     help="set the excludeFromIntexIssuance flag")
     ap.add_argument("--gas", type=int, default=8_000_000, help="explicit gas limit")
     ap.add_argument("--wait", action="store_true", help="wait for the receipt")
     args = ap.parse_args()
+    amount_base = canonical_amount_base(args.amount)
 
     w3 = Web3(Web3.HTTPProvider(args.rpc))
     acct = Account.from_key(args.private_key)
@@ -170,7 +184,7 @@ def main() -> None:
     payload = {
         "creator": creator,
         "tribute_draft_id": "0x" + os.urandom(32).hex(),
-        "amount_base": str(args.amount),
+        "amount_base": amount_base,
         "amount_atto": "0",
         "su_hashes": ["0x" + os.urandom(32).hex()],
         "wallet_addresses": [],
@@ -206,7 +220,7 @@ def main() -> None:
     tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
     print(f"offerTribute tx: {tx_hash.hex()}")
     print(f"  creator={creator} worldwide_day={day} "
-          f"currency={args.currency} amount_base={args.amount}")
+          f"currency={args.currency} amount_base={amount_base}")
 
     if not args.wait:
         print(f"verify once mined: getTributesByOwner({creator}) on {TRIBUTE_ADDR}")

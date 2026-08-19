@@ -7,16 +7,19 @@ use outbe_primitives::error::Result as PrecompileResult;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::Units;
+use outbe_validatorset::StakeProjection;
 
 /// No shared mutable state between tests; contracts read/write through the
 /// scoped `StorageHandle` passed into the closure.
 pub(super) fn with_storage<F: FnOnce(StorageHandle)>(f: F) {
     let mut storage = HashMapStorageProvider::new(1);
+    storage.set_block_number(1);
     StorageHandle::enter(&mut storage, f);
 }
 
 pub(super) fn with_storage_at<F: FnOnce(StorageHandle)>(timestamp: u64, f: F) {
     let mut storage = HashMapStorageProvider::new(1);
+    storage.set_block_number(1);
     storage.set_timestamp(U256::from(timestamp));
     StorageHandle::enter(&mut storage, f);
 }
@@ -30,6 +33,20 @@ pub(super) const USDC: Address = address!("0xa0b86991c6218b36c1d19d4a2e9eb0ce360
 pub(super) const ETH: Address = address!("0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
 pub(super) const BTC: Address = address!("0x2260fac5e5542a773aa44fbcfedf7c193bc2c599");
 
+/// Canonical COEN/ISO price and COEN volume scale after the denomination cutover.
+pub(super) const COEN_ISO_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
+
+/// Builds a whole COEN/ISO price or COEN volume in its canonical six-decimal scale.
+pub(super) fn coen_iso(whole: u64) -> U256 {
+    U256::from(whole) * COEN_ISO_SCALE
+}
+
+/// Builds a whole value for an existing generic decimal18 fixture. This does
+/// not impose one global scale on generic Oracle pairs.
+pub(super) fn fixed18(whole: u64) -> U256 {
+    U256::from(whole) * crate::schema::SCALE_1E18
+}
+
 /// ISO 840 (USD) as an asset address.
 pub(super) fn usd() -> Address {
     AssetType::IsoCurrency(840).into()
@@ -41,9 +58,9 @@ pub(super) fn pair_key(base: Address, quote: Address) -> AddressPair {
     AddressPair::from_addresses(base, quote)
 }
 
-/// Test currency rate (4.30 %, 1e18 scaled) used when building
+/// Test currency rate (4.30 %, scale 1e6) used when building
 /// `ReferenceCurrency` genesis entries.
-pub(super) const TEST_RATE: U256 = U256::from_limbs([43_000_000_000_000_000u64, 0, 0, 0]);
+pub(super) const TEST_RATE: U256 = U256::from_limbs([43_000u64, 0, 0, 0]);
 
 /// Builds a `ReferenceCurrency` with the test currency rate.
 pub(super) fn ref_cur(iso_code: u16) -> crate::genesis::ReferenceCurrency {
@@ -72,7 +89,7 @@ pub(super) fn seed_ocomp_oracle_with_snapshot(provider: &mut HashMapStorageProvi
         OracleContract::new(storage)
             .write_snapshot(
                 ATOMIC_DAY_START + 100,
-                &[(pair_key(COEN, usd()), U256::from(125), U256::from(2))],
+                &[(pair_key(COEN, usd()), coen_iso(125), coen_iso(2))],
             )
             .unwrap();
     });
@@ -85,7 +102,7 @@ pub(super) fn seed_ocomp_oracle_with_scurve(provider: &mut HashMapStorageProvide
             &mut OracleContract::new(storage),
             pair_key(COEN, usd()),
             ATOMIC_DAY_START,
-            U256::from(125),
+            coen_iso(125),
         )
         .unwrap();
     });
@@ -111,7 +128,7 @@ pub(super) fn seed_oracle_with_peak_history(
             oracle
                 .write_snapshot(
                     day + 100,
-                    &[(pair_key(COEN, usd()), U256::from(price), U256::from(2))],
+                    &[(pair_key(COEN, usd()), coen_iso(price), coen_iso(2))],
                 )
                 .unwrap();
         }
@@ -133,7 +150,7 @@ pub(super) fn seed_prefork_oracle_with_snapshot(provider: &mut HashMapStoragePro
         oracle
             .write_snapshot(
                 ATOMIC_DAY_START + 100,
-                &[(pair_key(COEN, usd()), U256::from(125), U256::from(2))],
+                &[(pair_key(COEN, usd()), coen_iso(125), coen_iso(2))],
             )
             .unwrap();
     });
@@ -142,7 +159,7 @@ pub(super) fn seed_prefork_oracle_with_snapshot(provider: &mut HashMapStoragePro
 pub(super) fn write_snapshot_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
     OracleContract::new(storage).write_snapshot(
         ATOMIC_DAY_START + 100,
-        &[(pair_key(COEN, usd()), U256::from(125), U256::from(2))],
+        &[(pair_key(COEN, usd()), coen_iso(125), coen_iso(2))],
     )
 }
 
@@ -166,7 +183,7 @@ pub(super) fn store_scurve_mutation(storage: StorageHandle<'_>) -> PrecompileRes
         &mut OracleContract::new(storage),
         pair_key(COEN, usd()),
         ATOMIC_DAY_START,
-        U256::from(125),
+        coen_iso(125),
     )
 }
 
@@ -284,8 +301,6 @@ pub(super) fn init_oracle(oracle: &mut OracleContract) {
 /// Helper: register a validator in the ValidatorSet with given stake.
 /// Uses the first byte of addr as the pubkey seed to avoid BLS pubkey collision.
 pub(super) fn register_validator(storage: StorageHandle, addr: Address, stake: U256) {
-    use outbe_validatorset::logic::status;
-
     let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
     // Only write config once (if not already initialized)
     if !vs.config_is_initialized.read().unwrap() {
@@ -300,8 +315,25 @@ pub(super) fn register_validator(storage: StorageHandle, addr: Address, stake: U
     let mut pubkey = [0u8; 48];
     pubkey[..20].copy_from_slice(addr.as_slice());
     vs.register_validator(Address::ZERO, addr, &pubkey).unwrap();
-    // Set stake and status to ACTIVE
-    vs.val_stake.write(&addr, stake).unwrap();
-    vs.val_status.write(&addr, status::ACTIVE).unwrap();
-    vs.val_has_bls_share.write(&addr, true).unwrap();
+    vs.test_activate_validator_canonically(addr, StakeProjection::new(stake, None), U256::ZERO)
+        .unwrap();
+}
+
+/// Register a validator and move it to the canonical staked-but-not-ready
+/// phase without constructing or overwriting a lifecycle payload.
+pub(super) fn register_waiting_for_readiness(storage: StorageHandle, addr: Address, stake: U256) {
+    let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+    if !vs.config_is_initialized.read().unwrap() {
+        vs.config_is_initialized.write(true).unwrap();
+        vs.config_max_validators.write(128).unwrap();
+        vs.config_min_stake.write(U256::in_units(1u64)).unwrap();
+        vs.config_epoch_length_blocks.write(3600).unwrap();
+        vs.config_owner.write(Address::ZERO).unwrap();
+    }
+
+    let mut pubkey = [0u8; 48];
+    pubkey[..20].copy_from_slice(addr.as_slice());
+    vs.test_register_validator_without_pop(addr, &pubkey)
+        .unwrap();
+    vs.record_stake_increase(addr, stake, stake).unwrap();
 }

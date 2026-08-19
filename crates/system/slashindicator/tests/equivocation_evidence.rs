@@ -12,8 +12,8 @@ use outbe_consensus::proof::{finalize_namespace, notarize_namespace, nullify_nam
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_slashindicator::schema::SlashIndicator;
 use outbe_validatorset::contract::ValidatorSet;
-use outbe_validatorset::logic::status;
 use outbe_validatorset::state::{write_committee_snapshot, CommitteeEntry, CommitteeSnapshot};
+use outbe_validatorset::{StakeProjection, ValidatorLifecycle};
 
 const CHAIN_ID: u64 = 1;
 const OWNER: Address = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
@@ -122,19 +122,27 @@ fn setup(storage: StorageHandle, sk: &SecretKey) {
     let mut vs = ValidatorSet::new(storage.clone());
     vs.config_owner.write(OWNER).unwrap();
     vs.set_config_max_validators(100).unwrap();
-    vs.epoch_number.write(U256::from(1u64)).unwrap();
+    let mut epoch = vs.epoch_snapshot().unwrap();
+    epoch.number = U256::from(1u64);
+    vs.test_set_epoch_snapshot(epoch).unwrap();
     let pk: [u8; 48] = sk.sk_to_pk().to_bytes();
-    vs.register_validator(OWNER, ACCUSED, &pk).unwrap();
-    vs.activate_validator_via_boundary_for_test(ACCUSED)
+    vs.test_register_validator_without_pop(ACCUSED, &pk)
         .unwrap();
-    vs.val_stake
-        .write(&ACCUSED, U256::from(1_000_000u64))
+    vs.test_set_stake_projection(
+        ACCUSED,
+        StakeProjection::new(U256::from(1_000_000u64), None),
+    )
+    .unwrap();
+    vs.activate_validator_via_boundary_for_test(ACCUSED)
         .unwrap();
 
     // evidence precompiles require an ACTIVE-validator submitter.
     let mut sub_pk = [0u8; 48];
     sub_pk[0] = 0x77;
-    vs.register_validator(OWNER, SUBMITTER, &sub_pk).unwrap();
+    vs.test_register_validator_without_pop(SUBMITTER, &sub_pk)
+        .unwrap();
+    vs.test_set_stake_projection(SUBMITTER, StakeProjection::new(U256::from(1), None))
+        .unwrap();
     vs.activate_validator_via_boundary_for_test(SUBMITTER)
         .unwrap();
 
@@ -156,12 +164,17 @@ fn setup(storage: StorageHandle, sk: &SecretKey) {
 }
 
 fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
-    HashMapStorageProvider::new(CHAIN_ID).enter(f)
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_block_number(1);
+    storage.enter(f)
 }
 
 fn assert_jailed_once(storage: &StorageHandle) {
     let vs = ValidatorSet::new(storage.clone());
-    assert_eq!(vs.val_status.read(&ACCUSED).unwrap(), status::JAILED);
+    assert!(matches!(
+        vs.validator_lifecycle(ACCUSED).unwrap(),
+        ValidatorLifecycle::JailRetained(_)
+    ));
     let si = SlashIndicator::new(storage.clone());
     assert_eq!(si.felony_count.read(&ACCUSED).unwrap(), 1);
 }

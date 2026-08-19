@@ -43,7 +43,7 @@ contract MockIntexFactory {
 contract OriginRouterProceedsTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 2;
     uint32 internal constant WORLDWIDE_DAY = 20_260_713;
-    uint256 internal constant AMOUNT = 100e18;
+    uint256 internal constant AMOUNT = 100e6;
 
     OriginRouter internal origin;
     MockWCOEN internal wcoen;
@@ -63,7 +63,7 @@ contract OriginRouterProceedsTest is CrossChainTest {
         desis = new MockDesis();
         factory = new MockIntexFactory();
         wcoen = new MockWCOEN();
-        vm.deal(address(wcoen), 1_000e18); // native backing for unwrap
+        vm.deal(address(wcoen), 1_000e6); // native backing for unwrap
 
         origin.wire(address(desis), address(factory));
         origin.setProceedsRoute(tokenBridge, address(wcoen));

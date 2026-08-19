@@ -23,7 +23,7 @@ impl Gratis<'_> {
     }
 
     pub fn decimals(&self) -> u8 {
-        18
+        6
     }
 
     // --- Plaintext aggregates (non-attributable) ---

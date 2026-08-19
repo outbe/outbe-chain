@@ -1,6 +1,6 @@
 //! Outbe chain constants and network identification.
 //!
-//! Native token: COEN (18 decimals), base unit: unit.
+//! Native token: COEN (6 decimals), base unit: unit.
 
 /// Canonical Outbe network identity.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -35,6 +35,7 @@ alloy-signer.workspace = true
 alloy-signer-local.workspace = true
 commonware-consensus.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-validatorset = { path = "../validatorset", features = ["test-utils"] }
 rand.workspace = true
 rand_chacha = "0.3"
 

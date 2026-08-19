@@ -85,37 +85,37 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
     }
 
     function test_ProceedsLeaveOnceTheLastChunkLands() public {
-        _deliverChunk(0, 2, 40e18);
+        _deliverChunk(0, 2, 40e6);
         assertEq(tokenBridge.calls(), 0, "an unfinished day must not route");
 
-        _deliverChunk(1, 2, 60e18);
+        _deliverChunk(1, 2, 60e6);
         assertEq(tokenBridge.calls(), 1, "one transfer for the day");
-        assertEq(tokenBridge.lastAmount(), 100e18, "the whole day's proceeds");
+        assertEq(tokenBridge.lastAmount(), 100e6, "the whole day's proceeds");
     }
 
     function test_RedeliveredChunkNeitherRoutesNorRecounts() public {
-        _deliverChunk(0, 2, 40e18);
-        _deliverChunk(0, 2, 40e18); // the bridge may deliver the same chunk twice
+        _deliverChunk(0, 2, 40e6);
+        _deliverChunk(0, 2, 40e6); // the bridge may deliver the same chunk twice
         assertEq(tokenBridge.calls(), 0, "a repeat must not complete the day");
 
-        _deliverChunk(1, 2, 60e18);
+        _deliverChunk(1, 2, 60e6);
         assertEq(tokenBridge.calls(), 1);
-        assertEq(tokenBridge.lastAmount(), 100e18, "the repeat must not be counted twice");
+        assertEq(tokenBridge.lastAmount(), 100e6, "the repeat must not be counted twice");
     }
 
     function test_ChunksMayArriveInAnyOrder() public {
-        _deliverChunk(1, 2, 60e18);
+        _deliverChunk(1, 2, 60e6);
         assertEq(tokenBridge.calls(), 0);
 
-        _deliverChunk(0, 2, 40e18);
+        _deliverChunk(0, 2, 40e6);
         assertEq(tokenBridge.calls(), 1);
-        assertEq(tokenBridge.lastAmount(), 100e18);
+        assertEq(tokenBridge.lastAmount(), 100e6);
     }
 
     function test_SingleChunkDayRoutesImmediately() public {
-        _deliverChunk(0, 1, 25e18);
+        _deliverChunk(0, 1, 25e6);
         assertEq(tokenBridge.calls(), 1);
-        assertEq(tokenBridge.lastAmount(), 25e18);
+        assertEq(tokenBridge.lastAmount(), 25e6);
     }
 
     /// Driven through the real adapter: the rule that matters — a finalized day refuses
@@ -133,14 +133,14 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
 
         address[2] memory bidders = [makeAddr("early"), makeAddr("late")];
         for (uint256 i = 0; i < bidders.length; i++) {
-            token.mint(bidders[i], 1e24);
+            token.mint(bidders[i], 1_000_000e6);
             vm.prank(bidders[i]);
             token.approve(address(escrow), type(uint256).max);
-            escrow.lockFunds(DAY, bidders[i], 100e18);
+            escrow.lockFunds(DAY, bidders[i], 100e6);
         }
 
-        _deliverChunkFor(bidders[0], 0, 2, 100e18);
-        _deliverChunkFor(bidders[1], 1, 2, 100e18);
+        _deliverChunkFor(bidders[0], 0, 2, 100e6);
+        _deliverChunkFor(bidders[1], 1, 2, 100e6);
 
         assertTrue(
             escrow.getBidLock(DAY, bidders[0]).status == IEscrowAdapter.LockStatus.Finalized, "first chunk settled"

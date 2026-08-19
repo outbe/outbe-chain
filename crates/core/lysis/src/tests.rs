@@ -13,9 +13,14 @@ use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::{COMPRESSED_ENTITIES_ADDRESS, NOD_ADDRESS};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-use outbe_primitives::units::{Units, SCALE_1E18};
 use outbe_tribute::{TributeContract, TributeData, TributeRepositoryReader};
 use std::sync::Arc;
+
+const SIX_DECIMAL_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
+
+fn coen(whole: u64) -> U256 {
+    U256::from(whole) * SIX_DECIMAL_SCALE
+}
 
 struct TestBodyRepository {
     tribute_reader: TributeRepositoryReader,
@@ -139,7 +144,7 @@ fn later_nod_failure_rolls_back_the_complete_lysis_attempt() {
     const T_NOW: u64 = 1_700_000_000;
     let wwd = WorldwideDay::new(20_260_717);
     let owner = Address::repeat_byte(0x31);
-    let nominal = U256::in_units(100_u64);
+    let nominal = coen(100_u64);
     let mut storage = HashMapStorageProvider::new(1);
     outbe_fidelity::enclave_client::test_enclave::install();
     storage.set_timestamp(U256::from(T_NOW));
@@ -160,7 +165,7 @@ fn later_nod_failure_rolls_back_the_complete_lysis_attempt() {
         oracle
             .worldwide_day_vwap_value
             .get_nested(&wwd)
-            .write(&pair_index, U256::from(500_000_000_000_000_000_u128))
+            .write(&pair_index, U256::from(500_000u64))
             .unwrap();
 
         let first = gas_audit_tribute(1, owner, wwd, nominal);
@@ -211,10 +216,10 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
     const DENSE_TRIBUTE_COUNT: u64 = 512;
     const T_NOW: u64 = 1_700_000_000;
     let wwd = WorldwideDay::new(20260525);
-    let nominal = U256::in_units(100u64);
+    let nominal = coen(100u64);
     let total_nominal = nominal * U256::from(DENSE_TRIBUTE_COUNT);
     let gratis_allocation = total_nominal / U256::from(10u64);
-    let cost_of_gratis = U256::from(500_000_000_000_000_000u128);
+    let cost_of_gratis = U256::from(500_000u64);
     let mut storage = HashMapStorageProvider::new(1);
     outbe_fidelity::enclave_client::test_enclave::install();
     storage.set_timestamp(U256::from(T_NOW));
@@ -308,7 +313,7 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
         assert!(!item.gratis_load_minor.is_zero());
         assert_eq!(
             item.cost_amount_minor,
-            cost_of_gratis * item.gratis_load_minor / SCALE_1E18,
+            cost_of_gratis * item.gratis_load_minor / SIX_DECIMAL_SCALE,
         );
         issued_gratis += item.gratis_load_minor;
     }
@@ -416,8 +421,9 @@ fn test_deficit_derivation_scarce_and_abundant() {
 #[test]
 fn test_default_constants() {
     // Verify constants match expected values within integer precision
-    assert_eq!(F_FP_DEFAULT, U256::from(320_000_000_000_000_000u128)); // 0.32 * 10^18
-    assert_eq!(F_MAX_FP, U256::from(640_000_000_000_000_000u128)); // 0.64 * 10^18
+    assert_eq!(SCALE, SIX_DECIMAL_SCALE);
+    assert_eq!(F_FP_DEFAULT, U256::from(320_000u64)); // 0.32 * 10^6
+    assert_eq!(F_MAX_FP, U256::from(640_000u64)); // 0.64 * 10^6
 }
 
 #[test]
@@ -600,19 +606,19 @@ fn test_negative_beta_branch_produces_bounded_distribution() {
 }
 
 // ---------------------------------------------------------------------------
-// Scale invariant: cost_amount_minor must be in 10^18-minor units, not 10^36
+// Scale invariant: cost_amount_minor must be in 10^6-minor units, not 10^12
 // ---------------------------------------------------------------------------
 
 /// Regression test for the scale-mismatch bug in `lysis::runtime`. Both
-/// `cost_of_gratis_minor` (an oracle VWAP at 10^18 scale) and `gratis_load`
-/// (a token amount at 10^18 minor scale) are 18-decimal U256 values. Their
-/// product lives in 10^36 and must be divided by SCALE once to land in
+/// `cost_of_gratis_minor` (an oracle VWAP at 10^6 scale) and `gratis_load`
+/// (a token amount at 10^6 minor scale) are six-decimal U256 values. Their
+/// product lives in 10^12 and must be divided by SCALE once to land in
 /// minor units. The contract is documented at
 /// `crates/core/nod/src/schema.rs:6-7`:
-///   `cost_amount_minor = cost_of_gratis_minor * gratis_load_minor / SCALE_1E18`
+///   `cost_amount_minor = cost_of_gratis_minor * gratis_load_minor / SIX_DECIMAL_SCALE`
 ///
 /// Pre-fix: `lysis::runtime` computed `cost_of_gratis_minor * gratis_load`
-/// without the divisor, producing a value ~10^18× too large that was stored
+/// without the divisor, producing a value ~10^6× too large that was stored
 /// on-chain and emitted to the `NodIssued` event. This was silent because
 /// `settle_mine_payment` is a no-op today, but every nominal-scale consumer
 /// (token URI, `nodData`, future settlement) was wrong.
@@ -631,8 +637,8 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
     const T_NOW: u64 = 1_700_000_000;
     let owner = address!("0x1111111111111111111111111111111111111111");
     // 100 COEN nominal, $0.5 oracle VWAP.
-    let nominal = U256::in_units(100u64);
-    let cost_of_gratis = U256::from(500_000_000_000_000_000u128);
+    let nominal = coen(100u64);
+    let cost_of_gratis = U256::from(500_000u64);
 
     let mut storage = HashMapStorageProvider::new(1);
     outbe_fidelity::enclave_client::test_enclave::install();
@@ -664,7 +670,7 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
             tribute_id: entity_id(wwd, owner),
             owner,
             worldwide_day: wwd,
-            issuance_amount_minor: U256::in_units(50u64),
+            issuance_amount_minor: coen(50u64),
             issuance_currency: 840,
             nominal_amount_minor: nominal,
             reference_currency: 840,
@@ -733,19 +739,19 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
     assert_eq!(item.reference_currency, expected_action.reference_currency);
     assert_eq!(item.issued_at, expected_action.issued_at);
 
-    let expected = cost_of_gratis * item.gratis_load_minor / SCALE_1E18;
+    let expected = cost_of_gratis * item.gratis_load_minor / SIX_DECIMAL_SCALE;
     assert_eq!(
         item.cost_amount_minor,
         expected,
-        "cost_amount_minor must equal cost_of_gratis * gratis_load / SCALE_1E18; \
+        "cost_amount_minor must equal cost_of_gratis * gratis_load / SIX_DECIMAL_SCALE; \
          pre-fix value (missing /SCALE) would be {}",
         cost_of_gratis * item.gratis_load_minor
     );
 
-    let upper_bound = U256::in_units(1_000u64);
+    let upper_bound = coen(1_000u64);
     assert!(
         item.cost_amount_minor <= upper_bound,
-        "cost_amount_minor {} looks like a 10^36-scaled value; likely a scale-mismatch regression",
+        "cost_amount_minor {} looks like a 10^12-scaled value; likely a scale-mismatch regression",
         item.cost_amount_minor
     );
 }
@@ -755,14 +761,14 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
 /// integer truncation in the deficit derivation — the assertions can use
 /// strict equality rather than tolerance bands.
 fn uniform_fi_one_population_15() -> (Vec<U256>, Vec<u16>, U256) {
-    let nominal_amounts: Vec<U256> = (1u64..=15).map(|i| U256::in_units(10u64 * i)).collect();
+    let nominal_amounts: Vec<U256> = (1u64..=15).map(|i| coen(10u64 * i)).collect();
     let tribute_fis = vec![1u16; 15];
     let total_interest: U256 = nominal_amounts
         .iter()
         .copied()
         .fold(U256::ZERO, |acc, v| acc + v);
     // Sanity: 10 * (1+2+...+15) = 1200 COEN.
-    debug_assert_eq!(total_interest, U256::in_units(1200u64));
+    debug_assert_eq!(total_interest, coen(1200u64));
     (nominal_amounts, tribute_fis, total_interest)
 }
 
@@ -781,7 +787,7 @@ fn test_compute_fi_fraction_map_single_fi_five_percent_allocation() {
     .unwrap();
 
     assert_eq!(map.len(), 1, "all FI=1 must collapse to one map entry");
-    let expected = SCALE * U256::from(5u64) / U256::from(100u64); // 0.05 * 10^18
+    let expected = SCALE * U256::from(5u64) / U256::from(100u64); // 0.05 * 10^6
     assert_eq!(
         map.get(&1).copied(),
         Some(expected),
@@ -806,7 +812,7 @@ fn test_compute_fi_fraction_map_single_fi_thirty_percent_allocation() {
     .unwrap();
 
     assert_eq!(map.len(), 1);
-    let expected = SCALE * U256::from(30u64) / U256::from(100u64); // 0.30 * 10^18
+    let expected = SCALE * U256::from(30u64) / U256::from(100u64); // 0.30 * 10^6
     assert_eq!(
         map.get(&1).copied(),
         Some(expected),
@@ -830,7 +836,7 @@ fn test_compute_fi_fraction_map_single_fi_thirtytwo_percent_allocation() {
     .unwrap();
 
     assert_eq!(map.len(), 1);
-    let expected = SCALE * U256::from(32u64) / U256::from(100u64); // 0.32 * 10^18
+    let expected = SCALE * U256::from(32u64) / U256::from(100u64); // 0.32 * 10^6
     assert_eq!(
         map.get(&1).copied(),
         Some(expected),
@@ -845,7 +851,7 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
     use std::collections::BTreeMap;
 
     // Distinct nominals 1..=100 COEN. Sum = 5050 COEN; 32% = 1616 COEN exactly.
-    let nominal_amounts: Vec<U256> = (1u64..=100).map(U256::in_units).collect();
+    let nominal_amounts: Vec<U256> = (1u64..=100).map(coen).collect();
     // Round-robin FI assignment over 1..=15: FIs 1..=10 each get 7 tributes,
     // FIs 11..=15 each get 6 — covers every bucket with uneven population.
     let tribute_fis: Vec<u16> = (0u16..100).map(|i| (i % 15) + 1).collect();
@@ -853,10 +859,10 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
         .iter()
         .copied()
         .fold(U256::ZERO, |acc, v| acc + v);
-    debug_assert_eq!(total_interest, U256::in_units(5050u64));
+    debug_assert_eq!(total_interest, coen(5050u64));
 
     let gratis_allocation = total_interest * U256::from(32u64) / U256::from(100u64);
-    debug_assert_eq!(gratis_allocation, U256::in_units(1616u64));
+    debug_assert_eq!(gratis_allocation, coen(1616u64));
 
     let map = crate::runtime::compute_fi_fraction_map(
         &nominal_amounts,
@@ -897,7 +903,7 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
     }
     let mut y_fp: Vec<U256> = group_interest
         .values()
-        .map(|gi| *gi * SCALE_1E18 / total_interest)
+        .map(|gi| *gi * SIX_DECIMAL_SCALE / total_interest)
         .collect();
     let y_sum: U256 = y_fp.iter().copied().sum();
     if let Some(last) = y_fp.last_mut() {
@@ -913,7 +919,7 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
             f * *y / SCALE
         })
         .sum();
-    let f_fp = SCALE * U256::from(32u64) / U256::from(100u64); // 0.32 * 10^18
+    let f_fp = SCALE * U256::from(32u64) / U256::from(100u64); // 0.32 * 10^6
     assert!(
         weighted <= f_fp,
         "weighted Σ(f·y_fp)/SCALE = {weighted} exceeds f_fp {f_fp} (32% budget violated)"
@@ -944,8 +950,8 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
     let wwd = WorldwideDay::new(20241221);
     const T_NOW: u64 = 1_700_000_000;
     let owner = address!("0x2222222222222222222222222222222222222222");
-    let nominal = U256::in_units(100u64);
-    let cost_of_gratis = U256::from(500_000_000_000_000_000u128);
+    let nominal = coen(100u64);
+    let cost_of_gratis = U256::from(500_000u64);
 
     // Scarce: allocation is only 4% of nominal → deficit (4%) is BELOW the 8% floor.
     let gratis_allocation = nominal * U256::from(4u64) / U256::from(100u64);
@@ -980,7 +986,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
                 tribute_id: entity_id(wwd, owner),
                 owner,
                 worldwide_day: wwd,
-                issuance_amount_minor: U256::in_units(50u64),
+                issuance_amount_minor: coen(50u64),
                 issuance_currency: 840,
                 nominal_amount_minor: nominal,
                 reference_currency: 840,
@@ -1027,7 +1033,7 @@ fn test_lysis_scarce_gratis_adapts_floor_below_eight_percent() {
 fn lysis_records_contributors_aggregated_by_owner() {
     const T_NOW: u64 = 1_700_000_000;
     let wwd = WorldwideDay::new(20260526);
-    let cost_of_gratis = U256::from(500_000_000_000_000_000u128);
+    let cost_of_gratis = U256::from(500_000u64);
     let mut storage = HashMapStorageProvider::new(1);
     outbe_fidelity::enclave_client::test_enclave::install();
     storage.set_timestamp(U256::from(T_NOW));
@@ -1062,21 +1068,21 @@ fn lysis_records_contributors_aggregated_by_owner() {
         bodies.issue(
             &mut tribute,
             &scope,
-            &gas_audit_tribute(1, owner_a, wwd, U256::in_units(100u64)),
+            &gas_audit_tribute(1, owner_a, wwd, coen(100u64)),
         );
         bodies.issue(
             &mut tribute,
             &scope,
-            &gas_audit_tribute(2, owner_b, wwd, U256::in_units(200u64)),
+            &gas_audit_tribute(2, owner_b, wwd, coen(200u64)),
         );
         bodies.issue(
             &mut tribute,
             &scope,
-            &gas_audit_tribute(3, owner_c, wwd, U256::in_units(300u64)),
+            &gas_audit_tribute(3, owner_c, wwd, coen(300u64)),
         );
         tribute.seal_day(wwd).unwrap();
 
-        let total_nominal = U256::in_units(600u64);
+        let total_nominal = coen(600u64);
         let gratis_allocation = total_nominal / U256::from(10u64);
 
         let result =
@@ -1094,14 +1100,14 @@ fn lysis_records_contributors_aggregated_by_owner() {
         assert_eq!(
             outbe_intex::api::read_contributors(&storage, WorldwideDay::new(series_id)).unwrap(),
             vec![
-                (owner_a, U256::in_units(100u64)),
-                (owner_b, U256::in_units(200u64)),
-                (owner_c, U256::in_units(300u64)),
+                (owner_a, coen(100u64)),
+                (owner_b, coen(200u64)),
+                (owner_c, coen(300u64)),
             ]
         );
         assert_eq!(
             outbe_intex::api::contributor_total(&storage, WorldwideDay::new(series_id)).unwrap(),
-            U256::in_units(600u64)
+            coen(600u64)
         );
 
         end_block(storage, &scope).unwrap();
@@ -1112,7 +1118,7 @@ fn lysis_records_contributors_aggregated_by_owner() {
 fn lysis_omits_excluded_owners_from_contributor_map() {
     const T_NOW: u64 = 1_700_000_000;
     let wwd = WorldwideDay::new(20260526);
-    let cost_of_gratis = U256::from(500_000_000_000_000_000u128);
+    let cost_of_gratis = U256::from(500_000u64);
     let mut storage = HashMapStorageProvider::new(1);
     outbe_fidelity::enclave_client::test_enclave::install();
     storage.set_timestamp(U256::from(T_NOW));
@@ -1145,9 +1151,9 @@ fn lysis_omits_excluded_owners_from_contributor_map() {
             tribute_id: entity_id(wwd, owner_b),
             owner: owner_b,
             worldwide_day: wwd,
-            issuance_amount_minor: U256::in_units(100u64),
+            issuance_amount_minor: coen(100u64),
             issuance_currency: 840,
-            nominal_amount_minor: U256::in_units(200u64),
+            nominal_amount_minor: coen(200u64),
             reference_currency: 840,
             exclude_from_intex_issuance: true,
             tribute_price_minor: U256::ZERO,
@@ -1158,17 +1164,17 @@ fn lysis_omits_excluded_owners_from_contributor_map() {
         bodies.issue(
             &mut tribute,
             &scope,
-            &gas_audit_tribute(1, owner_a, wwd, U256::in_units(100u64)),
+            &gas_audit_tribute(1, owner_a, wwd, coen(100u64)),
         );
         bodies.issue(&mut tribute, &scope, &excluded_b);
         bodies.issue(
             &mut tribute,
             &scope,
-            &gas_audit_tribute(3, owner_c, wwd, U256::in_units(300u64)),
+            &gas_audit_tribute(3, owner_c, wwd, coen(300u64)),
         );
         tribute.seal_day(wwd).unwrap();
 
-        let total_nominal = U256::in_units(600u64);
+        let total_nominal = coen(600u64);
         let gratis_allocation = total_nominal / U256::from(10u64);
 
         let result =
@@ -1183,15 +1189,12 @@ fn lysis_omits_excluded_owners_from_contributor_map() {
         let series_id = u32::from(wwd);
         assert_eq!(
             outbe_intex::api::read_contributors(&storage, WorldwideDay::new(series_id)).unwrap(),
-            vec![
-                (owner_a, U256::in_units(100u64)),
-                (owner_c, U256::in_units(300u64)),
-            ],
+            vec![(owner_a, coen(100u64)), (owner_c, coen(300u64)),],
             "opted-out owner must be absent from the contributor map"
         );
         assert_eq!(
             outbe_intex::api::contributor_total(&storage, WorldwideDay::new(series_id)).unwrap(),
-            U256::in_units(400u64),
+            coen(400u64),
             "contributor total must exclude the opted-out owner's nominal"
         );
         assert_eq!(

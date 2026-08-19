@@ -29,16 +29,11 @@ const FIELD_PLEDGED: u8 = 1;
 /// blob or a pledge ticket sealed under the same state key + handle.
 const FIELD_EOA: u8 = 2;
 
-/// Sealed-EOA blob: `nonce(12) ‖ ChaCha20Poly1305(Address 20B)` = 48 bytes. Written once
-/// at `ConsumePledge` and stored on the Credis position; the nonce is carried in the blob
-/// so `open_eoa_ct` needs no handle at payAnadosis/expiry time.
+/// Sealed-EOA blob: `nonce(12) ‖ ChaCha20Poly1305(Address 20B)` = 48 bytes.
 const EOA_CT_LEN: usize = 12 + 20 + 16;
 
 /// PledgeLockTicket plaintext:
 /// `stables(32) ‖ owner(20) ‖ gratis(32) ‖ asset(20) ‖ entry_rate(32)` = 136 bytes.
-/// The ticket only exists between `Pledge` and its consumption
-/// (`ConsumePledge`/`Unpledge`); the active credis schedule (installments,
-/// outstanding collateral) is tracked on-chain by the Credis position, not here.
 const RECORD_PLAINTEXT_LEN: usize = 32 + 20 + 32 + 20 + 32;
 
 const SPEND_BIND_TAG: &[u8] = b"outbe/gratis/credis-bind/v1";
@@ -354,7 +349,7 @@ fn apply_op_inner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisO
 /// without the EOA ever appearing in calldata or stored plaintext. `pledge_handle = Some`
 /// → the blob in `current_pledge_record` is a live `PledgeLockTicket` (credis
 /// `ConsumePledge` time, when calldata no longer carries the EOA); `None` → the
-/// self-contained `eoa_ct` stored on the Credis position (payAnadosis / expiry). No state
+/// self-contained `eoa_ct` stored on the Credis position (settlement / void). No state
 /// mutation, no authorization — the on-chain Credis position is the accounting authority.
 fn apply_reveal_owner(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
     let owner = match req.pledge_handle {
@@ -541,10 +536,10 @@ fn apply_consume_pledge(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<G
     Ok(r)
 }
 
-/// payAnadosis: release `amount` of collateral from the EOA's OWN pledged ledger back
+/// Settlement: release `amount` of collateral from the EOA's OWN pledged ledger back
 /// to its balance (`EOA.pledged -= amount; EOA.balance += amount`). Amount-based (no
 /// ticket): the on-chain Credis position schedule is the accounting authority for the
-/// per-installment amount; the enclave only enforces pledged-ledger sufficiency.
+/// per-settlement amount; the enclave only enforces pledged-ledger sufficiency.
 /// `req.account` is the EOA the host recovered from the position's `eoa_ct` via a prior
 /// `RevealOwner` round-trip — it never appears in calldata or stored plaintext.
 fn apply_release_to_eoa(state_key: &[u8; 32], req: &GratisOpRequest) -> Result<GratisOpResult> {
@@ -620,6 +615,7 @@ fn constant_time_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use outbe_primitives::units::SCALE_1E6_U256;
     use outbe_tee::protocol::ModifyAuth;
 
     const CHAIN: B256 = B256::repeat_byte(0xC1);
@@ -673,7 +669,7 @@ mod tests {
             stables_amount: stables,
             gratis_amount: gratis,
             asset: asset(),
-            entry_rate: U256::from(2u64) * U256::from(10u64).pow(U256::from(18u64)),
+            entry_rate: U256::from(2u64) * SCALE_1E6_U256,
         }
     }
 
@@ -762,7 +758,7 @@ mod tests {
     }
 
     /// requestCredis consume: the pledge ticket credits the EOA's OWN pledged ledger
-    /// (no escrow), the ticket is deleted, and installments release from that same
+    /// (no escrow), the ticket is deleted, and settlements release from that same
     /// ledger back to the EOA's balance.
     #[test]
     fn pledge_consume_and_release_flow() {
@@ -841,7 +837,7 @@ mod tests {
             GratisOpStatus::Rejected { .. }
         ));
 
-        // Pay 10 installments (amount-based release, 100 each) → drains pledged back
+        // Ten settlements (amount-based release, 100 each) → drains pledged back
         // to balance.
         let mut pledged_blob = credis_res.new_pledged.clone();
         let mut bal_blob = pledged.new_balance.clone();
@@ -899,7 +895,7 @@ mod tests {
             owner: alice(),
             gratis_amount: U256::from(1000u64),
             asset: asset(),
-            entry_rate: U256::from(2u64) * U256::from(10u64).pow(U256::from(18u64)),
+            entry_rate: U256::from(2u64) * SCALE_1E6_U256,
         };
         let encoded = ticket.encode();
         assert_eq!(encoded.len(), RECORD_PLAINTEXT_LEN);
@@ -958,7 +954,7 @@ mod tests {
         let consumed = apply_op(&sk, &rc);
         assert!(matches!(consumed.status, GratisOpStatus::Applied));
 
-        // Release 3 installments (300), leaving 700 outstanding.
+        // Release across 3 settlements (300), leaving 700 outstanding.
         let mut pledged_blob = consumed.new_pledged.clone();
         let mut bal_blob = pledged.new_balance.clone();
         for _ in 0..3 {
@@ -1034,7 +1030,7 @@ mod tests {
     }
 
     /// The EOA is recovered through the enclave both at consume (from the live ticket) and
-    /// at payAnadosis/expiry (from the sealed `eoa_ct`), never from calldata.
+    /// at settlement/void (from the sealed `eoa_ct`), never from calldata.
     #[test]
     fn reveal_owner_roundtrips_ticket_and_eoa_ct() {
         let sk = state_key();

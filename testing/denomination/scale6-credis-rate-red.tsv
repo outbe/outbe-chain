@@ -1,0 +1,10 @@
+# Credis annual-rate re-freeze approved on 2026-08-18.
+# Frozen against old scale-1e18 Credis/Oracle/genesis/MCP production at test commit eb238e12.
+# The selected algorithm preserves the existing staged two-floor order and changes only rate scale.
+test_stage	test	expected_new_behavior	actual_old_behavior	production_owner	production_stage
+T3R	outbe-credis::tests::create_position_applies_currency_rate_to_total_debt	rate 45000 produces debt 1037 from principal 1000	old denominator produces debt 1000	crates/core/credis/src/runtime.rs	P3R
+T3R	outbe-credis::tests::create_position_preserves_staged_six_decimal_rate_rounding_and_remainder	rate 43000 and principal 3000000 produce staged debt 3107499	old denominator produces debt 3000000	crates/core/credis/src/runtime.rs	P3R
+T3R	outbe-credisfactory::tests::e2e::full_pledge_request_pay_unlock_flow	rate 43000 and principal 2000000 produce debt 2071666	old denominator produces debt 2000000	crates/core/credis/src/runtime.rs	P3R
+T3R	outbe-oracle::tests::state::genesis_seeds_the_usd_currency_rate	default USD rate is raw 36300	old default is 36300000000000000	crates/system/oracle/src/constants.rs	P3R
+T3R	scripts.test_seed_genesis_protocol_constants::test_default_usd_currency_rate_uses_scale_1e6_in_slot_60	mapping slot 60 stores 0x8dcc	old seeder stores 0x80f6a85d58c000	scripts/seed_genesis.py	P5
+T3R	mcp::denomination.test.ts::MCP formats Credis and Oracle annual rates with six decimals	currencyRate 43000 renders as 0.043	generic 18-decimal formatting renders 0.000000000000043	mcp/src/format.ts	P5

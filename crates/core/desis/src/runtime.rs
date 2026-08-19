@@ -6,19 +6,17 @@ use outbe_common::WorldwideDay;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-#[cfg(not(feature = "e2e-test"))]
 use outbe_primitives::time::SECONDS_PER_DAY;
+use outbe_primitives::units::SCALE_1E6_U64;
 use outbe_promislimit::PromisLimitContract;
 
 use outbe_intexfactory::schema::IssuanceParams;
 use outbe_intexfactory::SeriesId;
 
-#[cfg(not(feature = "e2e-test"))]
-use crate::constants::MIN_COMMIT_WINDOW_SECONDS;
 use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
-    DAY_STATE_RED, MAX_REFERENCE_PRICES, MAX_REFUND_CHUNKS, ORIGIN_ROUTER_ADDRESS, RATE_SCALE,
-    REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
+    DAY_STATE_RED, MAX_REFERENCE_PRICES, MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS,
+    ORIGIN_ROUTER_ADDRESS, REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -69,25 +67,18 @@ pub(crate) fn preflight_brief(
     }
     // Anchor to this midnight while it still leaves the minimum commit window;
     // a late brief (stall past midnight) anchors to the next one instead.
-    #[cfg(not(feature = "e2e-test"))]
-    let anchor_ts = {
-        let midnight = now - now % SECONDS_PER_DAY;
-        let elapsed = now.checked_sub(midnight).ok_or_else(|| {
-            PrecompileError::Fatal("brief timestamp precedes its UTC midnight".into())
-        })?;
-        let remaining = COMMIT_WINDOW_SECONDS.saturating_sub(elapsed);
-        if remaining >= MIN_COMMIT_WINDOW_SECONDS {
-            midnight
-        } else {
-            midnight
-                .checked_add(SECONDS_PER_DAY)
-                .ok_or_else(|| PrecompileError::Revert("brief anchor timestamp overflow".into()))?
-        }
+    let midnight = now - now % SECONDS_PER_DAY;
+    let elapsed = now.checked_sub(midnight).ok_or_else(|| {
+        PrecompileError::Fatal("brief timestamp precedes its UTC midnight".into())
+    })?;
+    let remaining = COMMIT_WINDOW_SECONDS.saturating_sub(elapsed);
+    let anchor_ts = if remaining >= MIN_COMMIT_WINDOW_SECONDS {
+        midnight
+    } else {
+        midnight
+            .checked_add(SECONDS_PER_DAY)
+            .ok_or_else(|| PrecompileError::Revert("brief anchor timestamp overflow".into()))?
     };
-    // An e2e run's windows are minutes, so anchoring to midnight would put the
-    // whole auction a day out; it starts from the brief instead.
-    #[cfg(feature = "e2e-test")]
-    let anchor_ts = now;
     u32::try_from(anchor_ts).map_err(|_| PrecompileError::Revert("brief anchor exceeds u32".into()))
 }
 
@@ -276,24 +267,7 @@ fn advance_day(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u6
     loop {
         let mut contract = storage.contract::<DesisContract>();
         let stage = contract.read_stage(worldwide_day)?;
-        // An e2e build's windows are minutes and the tick can reach a briefed day
-        // long after the brief, so the windows start where the tick found it.
-        #[cfg(feature = "e2e-test")]
-        if stage == AuctionStage::Briefed {
-            let briefed_at = u64::from(contract.auction_at.read(&worldwide_day)?);
-            if now > briefed_at {
-                contract.auction_at.write(&worldwide_day, ts32(now)?)?;
-            }
-        }
-        let stored_anchor = u64::from(contract.auction_at.read(&worldwide_day)?);
-        #[cfg(feature = "e2e-test")]
-        let anchor = if stage == AuctionStage::Briefed {
-            now
-        } else {
-            stored_anchor
-        };
-        #[cfg(not(feature = "e2e-test"))]
-        let anchor = stored_anchor;
+        let anchor = u64::from(contract.auction_at.read(&worldwide_day)?);
         let commit_end = anchor.saturating_add(COMMIT_WINDOW_SECONDS);
         let reveal_end = commit_end.saturating_add(u64::from(REVEAL_WINDOW_SECONDS));
         let issuance_end = reveal_end.saturating_add(SETTLEMENT_WINDOW_SECONDS);
@@ -924,18 +898,18 @@ fn sort_bids(bids: &mut [(u32, BidData)]) {
 }
 
 /// Escrow amount for `qty` Intexes at `rate` (1e6 fixed-point) against the
-/// per-Intex escrow basis: `qty * basis * rate / RATE_SCALE`, saturating to u128
-/// (wCOEN amounts at 18 decimals exceed u64).
+/// per-Intex escrow basis: `qty * basis * rate / 1_000_000`, saturating to u128
+/// (large six-decimal WCOEN amounts can exceed u64).
 fn rate_lock(qty: u64, basis: u128, rate: u32) -> u128 {
     let amount = U256::from(qty)
         .saturating_mul(U256::from(basis))
         .saturating_mul(U256::from(rate))
-        / U256::from(RATE_SCALE);
+        / U256::from(SCALE_1E6_U64);
     u128::try_from(amount).unwrap_or(u128::MAX)
 }
 
 /// Uniform-rate clearing: allocate sorted bids until `supply` runs out; the
-/// clearing rate is the last allocated bid's. lock/pay = qty * escrow_basis * rate / RATE_SCALE.
+/// clearing rate is the last allocated bid's. lock/pay uses the shared scale-1e6 denominator.
 fn calculate_clearing(
     bids: &[(u32, BidData)],
     config: &AuctionConfig,
@@ -987,7 +961,7 @@ fn calculate_clearing(
         all_bidders.push(bid.bidder_address);
         bidder_chains.push(*chain_id);
 
-        // locked = quantity * escrow_basis * rate / RATE_SCALE (escrowed at bid time).
+        // locked = quantity * escrow_basis * rate / 1_000_000 (escrowed at bid time).
         let locked = rate_lock(
             u64::from(bid.intex_quantity),
             escrow_basis,

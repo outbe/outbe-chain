@@ -3,6 +3,7 @@
 //! `config_profile` selector byte seeded from genesis (unset reads 0 = prod).
 
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::units::SCALE_1E6_U128;
 
 use crate::constants::{
     CALL_NOTICE_PERIOD, CALL_RATE, CALL_THRESHOLD, CALL_WINDOW, COMMIT_BOND_MINOR, FLOOR_RATE,
@@ -23,7 +24,7 @@ pub struct IntexParams {
     pub call_notice_period: u32,
     pub call_rate: u16,
     pub floor_rate: u16,
-    /// Commit-entry bond on the target-chain auction (payment-token 18-dec minor units).
+    /// Commit-entry bond on the target-chain auction in six-decimal WCOEN-units.
     pub commit_bond_minor: u128,
 }
 
@@ -49,7 +50,7 @@ impl IntexParams {
         call_notice_period: 3 * 24 * 3600,
         call_rate: 10,
         floor_rate: 5,
-        commit_bond_minor: 100 * 10u128.pow(18),
+        commit_bond_minor: 100 * SCALE_1E6_U128,
     };
 
     pub fn from_selector(selector: u8) -> Result<Self> {

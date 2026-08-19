@@ -23,7 +23,7 @@ pub enum TriggerId {
     AuctionAdvance = 3,
     GemCallDaily = 4,
     AuctionClearing = 5,
-    IntexQualifyNotify = 6,
+    IntexNotify = 6,
 }
 
 impl TriggerId {
@@ -71,7 +71,7 @@ pub enum TriggerHandler {
     AuctionAdvance,
     GemCallDaily,
     AuctionClearing,
-    IntexQualifyNotify,
+    IntexNotify,
 }
 
 impl TriggerHandler {
@@ -86,7 +86,7 @@ impl TriggerHandler {
             | Self::AuctionAdvance
             | Self::GemCallDaily
             | Self::AuctionClearing
-            | Self::IntexQualifyNotify => 0,
+            | Self::IntexNotify => 0,
         }
     }
 
@@ -107,9 +107,7 @@ impl TriggerHandler {
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
             Self::GemCallDaily => outbe_gem::hooks::run_call_daily(ctx),
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
-            Self::IntexQualifyNotify => {
-                outbe_intexfactory::qualified::drain_qualify_notices(ctx)
-            }
+            Self::IntexNotify => outbe_intexfactory::qualified::drain_notices(ctx),
         }
     }
 }
@@ -123,19 +121,6 @@ pub fn metadosis_mutation_lease_budget_per_tick() -> u8 {
         budget.saturating_add(trigger.handler.metadosis_mutation_lease_budget())
     })
 }
-
-/// An e2e run walks a whole auction inside one day, so its stages need a cadence
-/// that fits there rather than the production half-day one.
-#[cfg(not(feature = "e2e-test"))]
-const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 43_200;
-#[cfg(feature = "e2e-test")]
-const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 60;
-
-/// Cadence of the two outbound polls, shortened for the same reason.
-#[cfg(not(feature = "e2e-test"))]
-const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 600;
-#[cfg(feature = "e2e-test")]
-const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 30;
 
 /// Active trigger table. Order is informational only — the dispatcher
 /// fires triggers independently per slot.
@@ -193,7 +178,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
         TriggerSpec {
             id: TriggerId::AuctionAdvance.as_u32(),
             label: "auction_advance",
-            period_seconds: AUCTION_ADVANCE_PERIOD_SECONDS,
+            period_seconds: 43_200,
             start_offset_seconds: 0,
             // Gated like emission_limit_1 so the brief it writes and this start
             // land in the same slot.
@@ -206,7 +191,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "auction_clearing",
             // Polls the fan-in gate `auction_advance` arms, so it runs far more
             // often than the stage schedule advances.
-            period_seconds: OUTBOUND_POLL_PERIOD_SECONDS,
+            period_seconds: 600,
             start_offset_seconds: 0,
             // Clears from bids already ingested and the router's frozen target
             // list; no dependency on the parent block's settlement accounting.
@@ -227,15 +212,15 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             handler: TriggerHandler::GemCallDaily,
         },
         TriggerSpec {
-            id: TriggerId::IntexQualifyNotify.as_u32(),
-            label: "intex_qualify_notify",
-            period_seconds: OUTBOUND_POLL_PERIOD_SECONDS,
+            id: TriggerId::IntexNotify.as_u32(),
+            label: "intex_notify",
+            period_seconds: 600,
             start_offset_seconds: 0,
             // Drains a queue the qualify sweep filled; reads no accounting state.
             requires_accounting_window: false,
             // A poll has nothing to replay: a gap collapses to one drain.
             coalesces_backlog: true,
-            handler: TriggerHandler::IntexQualifyNotify,
+            handler: TriggerHandler::IntexNotify,
         },
     ]
 }

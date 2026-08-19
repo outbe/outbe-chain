@@ -2,6 +2,7 @@ use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::SolCall;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::address_pair::AddressPair;
+use outbe_primitives::math::constants::REAL_ID_SHIFT;
 use outbe_primitives::math::tree_math;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -25,11 +26,11 @@ fn sample_params(owner: Address) -> GemAddParams {
     GemAddParams {
         owner,
         gem_type: 2, // WALLET
-        gem_load_minor: U256::from(1_000_000_000_000_000_000u128),
-        entry_price_minor: U256::from(500_000_000_000_000_000u128),
-        cost_amount_minor: U256::from(500_000_000_000_000_000u128),
-        floor_price_minor: U256::from(540_000_000_000_000_000u128),
-        call_price_minor: U256::from(1_140_000_000_000_000_000u128),
+        gem_load_minor: U256::from(1_000_000u64),
+        entry_price_minor: U256::from(500_000u64),
+        cost_amount_minor: U256::from(500_000u64),
+        floor_price_minor: U256::from(540_000u64),
+        call_price_minor: U256::from(1_140_000u64),
         call_rate: 228,
         call_window: 28 * 86_400,
         call_threshold: 21 * 86_400,
@@ -38,6 +39,14 @@ fn sample_params(owner: Address) -> GemAddParams {
         initial_state: GemState::Issued,
         issued_at: T_NOW,
     }
+}
+
+#[test]
+fn coen_iso_one_maps_to_the_center_price_bin_at_six_decimals() {
+    assert_eq!(
+        GemContract::price_to_bin(U256::from(1_000_000u64)).unwrap(),
+        REAL_ID_SHIFT as u32
+    );
 }
 
 #[test]
@@ -146,7 +155,7 @@ fn qualify_respects_state_and_floor() {
     with_storage(|storage| {
         let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
         let mut gem = GemContract::new(storage.clone());
-        let floor = U256::from(540_000_000_000_000_000u128);
+        let floor = U256::from(540_000u64);
 
         // Rate equals floor (strict `>`) — must NOT qualify.
         assert!(!gem.qualify(gem_id, T_NOW, 840, floor).unwrap());
@@ -175,7 +184,7 @@ fn add_gem_parks_issued_in_bin_tree() {
     with_storage(|storage| {
         let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
         let gem = GemContract::new(storage.clone());
-        let floor = U256::from(540_000_000_000_000_000u128);
+        let floor = U256::from(540_000u64);
         let bin = GemContract::price_to_bin(floor).unwrap();
         assert_eq!(
             gem.unqualified_bin_count
@@ -198,7 +207,7 @@ fn qualify_removes_from_bin_tree() {
     with_storage(|storage| {
         let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
         let mut gem = GemContract::new(storage.clone());
-        let floor = U256::from(540_000_000_000_000_000u128);
+        let floor = U256::from(540_000u64);
         let bin = GemContract::price_to_bin(floor).unwrap();
 
         assert!(gem
@@ -237,15 +246,15 @@ fn add_gem_qualified_initial_state_skips_bin_tree() {
 fn scan_skips_bins_above_rate() {
     with_storage(|storage| {
         let mut low = sample_params(ALICE);
-        low.floor_price_minor = U256::from(100_000_000_000_000_000u128);
+        low.floor_price_minor = U256::from(100_000u64);
         let low_id = api::add_gem(storage, low.clone()).unwrap();
 
         let mut high = sample_params(BOB);
-        high.floor_price_minor = U256::from(900_000_000_000_000_000u128);
+        high.floor_price_minor = U256::from(900_000u64);
         let _high_id = api::add_gem(storage, high.clone()).unwrap();
 
         let mut gem = GemContract::new(storage.clone());
-        let rate = U256::from(500_000_000_000_000_000u128);
+        let rate = U256::from(500_000u64);
 
         // Direct qualify call on low gem: passes (floor 0.1 < rate 0.5).
         assert!(gem.qualify(low_id, T_NOW, 840, rate).unwrap());
@@ -350,13 +359,13 @@ fn scan_skips_a_currency_without_a_priced_pair() {
 fn qualify_resumes_from_the_bin_cursor_after_the_budget_runs_out() {
     with_storage(|storage| {
         let mut low = sample_params(ALICE);
-        low.floor_price_minor = U256::from(100_000_000_000_000_000u128);
+        low.floor_price_minor = U256::from(100_000u64);
         let low_id = api::add_gem(storage, low).unwrap();
         let mut high = sample_params(BOB);
-        high.floor_price_minor = U256::from(200_000_000_000_000_000u128);
+        high.floor_price_minor = U256::from(200_000u64);
         let high_id = api::add_gem(storage, high).unwrap();
 
-        let rate = U256::from(500_000_000_000_000_000u128);
+        let rate = U256::from(500_000u64);
         let ctx = block_ctx(storage);
 
         // Budget of one: only the lower bin is drained this block.
@@ -409,7 +418,7 @@ fn call_scan_reads_each_gem_own_pair_window() {
         let eur_id = api::add_gem(storage, p).unwrap();
         api::set_state(storage, eur_id, GemState::Qualified).unwrap();
 
-        let rate = U256::from(600_000_000_000_000_000u128);
+        let rate = U256::from(600_000u64);
         seed_currency(storage, 840, Some(rate));
         let eur_pair = seed_currency(storage, EUR, Some(rate));
 

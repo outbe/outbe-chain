@@ -6,7 +6,7 @@ use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_validatorset::contract::ValidatorSet;
-use outbe_validatorset::logic::status;
+use outbe_validatorset::ValidatorLifecycle;
 
 use crate::api::{get_proposal, get_proposal_voters, list_proposals, list_proposals_by_status};
 use crate::constants::VOTING_WINDOW_BLOCKS;
@@ -102,12 +102,15 @@ pub(super) fn register_pending_validator(storage: StorageHandle, addr: Address, 
     let mut vs = ValidatorSet::new(storage.clone());
     vs.config_owner.write(VALIDATOR_OWNER).unwrap();
     vs.set_config_max_validators(100).unwrap();
-    vs.register_validator(VALIDATOR_OWNER, addr, &dummy_pubkey(seed))
+    vs.test_register_validator_without_pop(addr, &dummy_pubkey(seed))
         .unwrap();
-    vs.mark_pending(addr).unwrap();
-    assert_eq!(
-        vs.val_status.read(&addr).unwrap(),
-        status::PENDING,
+    vs.record_stake_increase(addr, U256::from(1), U256::from(1))
+        .unwrap();
+    assert!(
+        matches!(
+            vs.validator_lifecycle(addr).unwrap(),
+            ValidatorLifecycle::WaitingForReadiness(_)
+        ),
         "fixture must leave validator in PENDING status"
     );
 }
@@ -140,6 +143,7 @@ pub(super) fn empty_update_payload(current_height: u64) -> String {
 
 pub(super) fn with_vote<F: FnOnce(StorageHandle)>(f: F) {
     let mut provider = HashMapStorageProvider::new(1);
+    provider.set_block_number(1);
     let storage = StorageHandle::new(&mut provider);
     setup_default_validators(storage.clone());
     f(storage);

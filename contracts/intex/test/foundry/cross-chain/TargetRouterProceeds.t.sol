@@ -75,7 +75,7 @@ contract TargetRouterProceedsTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant SERIES_ID = 20_260_713;
-    uint128 internal constant AMOUNT = 100e18;
+    uint128 internal constant AMOUNT = 100e6;
 
     TargetRouter internal target;
     MockEscrowAdapter internal escrow;

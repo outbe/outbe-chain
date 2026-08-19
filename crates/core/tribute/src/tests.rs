@@ -163,12 +163,12 @@ fn sample_tribute() -> TributeData {
         tribute_id: derive_poseidon_entity_id(owner, worldwide_day).unwrap(),
         owner,
         worldwide_day,
-        issuance_amount_minor: U256::from(1_000_000_000_000_000_000u128),
+        issuance_amount_minor: U256::from(1_000_000u64),
         issuance_currency: 840,
-        nominal_amount_minor: U256::from(500_000_000_000_000_000u128),
+        nominal_amount_minor: U256::from(500_000u64),
         reference_currency: 840,
         exclude_from_intex_issuance: false,
-        tribute_price_minor: U256::from(2_000_000_000_000_000_000u128),
+        tribute_price_minor: U256::from(2_000_000u64),
     }
 }
 
@@ -232,7 +232,7 @@ fn test_day_bucket_tracks_nominal_and_gratis() {
             &mut t2,
             address!("0x2222222222222222222222222222222222222222"),
         );
-        t2.nominal_amount_minor = U256::from(300_000_000_000_000_000u128);
+        t2.nominal_amount_minor = U256::from(300_000u64);
 
         open_sample_day(tc);
         tc.issue(&t1).unwrap();

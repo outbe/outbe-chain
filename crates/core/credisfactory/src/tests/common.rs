@@ -17,3 +17,8 @@ pub fn bob() -> Address {
 pub fn asset() -> Address {
     address!("0x0000000000000000000000000000000000000888")
 }
+
+/// The originating agent. `requestCredis`'s caller is recorded on the position.
+pub fn cca() -> Address {
+    address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC")
+}

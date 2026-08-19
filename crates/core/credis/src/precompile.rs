@@ -5,6 +5,7 @@ use outbe_primitives::dispatch::{dispatch_call, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
 
+use crate::errors::CredisError;
 use crate::schema::CredisContract;
 
 /// Selectors on this precompile that accept native value. The route table binds
@@ -25,50 +26,41 @@ pub fn dispatch(
         let contract = CredisContract::new(storage.clone());
         use ICredis::ICredisCalls::*;
         match call {
+            totalSupply(c) => view(c, |_| Ok(U256::from(contract.total_positions()?))),
             getPosition(c) => view(c, |c| {
                 let position = contract.get_position(c.positionId)?;
                 Ok(abi_position(&position))
             }),
-            getPositionsByAddress(c) => view(c, |c| {
-                let positions = contract.get_positions_by_address(c.smartAccount)?;
-                Ok(positions.iter().map(abi_position).collect())
+            ownerOf(c) => view(c, |c| {
+                let position = contract.get_position(c.positionId)?;
+                Ok(position.smart_account)
             }),
-            getAllPositions(c) => view(c, |_| {
-                let positions = contract.get_all_positions()?;
-                Ok(positions.iter().map(abi_position).collect())
+            positionByIndex(c) => view(c, |c| {
+                let index = u64::try_from(c.index).map_err(|_| CredisError::IndexOutOfBounds)?;
+                Ok(abi_position(&contract.position_at(index)?))
             }),
-            hasOverdueAnadosis(c) => view(c, |c| {
+            balanceOf(c) => view(c, |c| {
+                Ok(U256::from(contract.position_count_of(c.smartAccount)?))
+            }),
+            positionOfAddressByIndex(c) => view(c, |c| {
+                let index = u32::try_from(c.index).map_err(|_| CredisError::IndexOutOfBounds)?;
+                let position = contract.position_of_address_at(c.smartAccount, index)?;
+                Ok(abi_position(&position))
+            }),
+            hasCalledPosition(c) => view(c, |c| contract.has_called_position(c.smartAccount)),
+            accruedInterest(c) => view(c, |c| {
+                let position = contract.get_position(c.positionId)?;
                 let timestamp = contract.storage.timestamp()?.to::<u64>();
-                contract.has_overdue_anadosis(c.smartAccount, timestamp)
+                CredisContract::accrued_interest(&position, timestamp)
             }),
-            getNextAnadosis(c) => view(c, |c| {
-                let anadosis = contract.get_next_anadosis(c.positionId)?.ok_or_else(|| {
-                    outbe_primitives::error::PrecompileError::Revert(
-                        "position already completed".into(),
-                    )
-                })?;
-                Ok(abi_anadosis(&anadosis))
+            credisPrincipalAndOutstandingOf(c) => view(c, |c| {
+                let (principal, outstanding) =
+                    contract.principal_and_outstanding_of(c.smartAccount)?;
+                Ok(ICredis::credisPrincipalAndOutstandingOfReturn {
+                    _0: principal,
+                    _1: outstanding,
+                })
             }),
-            getPositionAnadosis(c) => view(c, |c| {
-                let records = contract.get_position_anadosis(c.positionId)?;
-                Ok(records.iter().map(abi_anadosis).collect())
-            }),
-            credisOf(c) => view(c, |c| {
-                let mut total = U256::ZERO;
-                for position in contract.get_positions_by_address(c.smartAccount)? {
-                    total = total
-                        .checked_add(position.credis_principal)
-                        .ok_or_else(|| {
-                            outbe_primitives::error::PrecompileError::Revert(
-                                "credis total sum overflow".into(),
-                            )
-                        })?;
-                }
-                Ok(total)
-            }),
-            outstandingAnadosisOf(c) => {
-                view(c, |c| contract.get_outstanding_amount(c.smartAccount))
-            }
             supportsInterface(c) => view(c, |c| {
                 let id: [u8; 4] = c.interfaceId.0;
                 Ok(id == ERC165_INTERFACE_ID)
@@ -80,29 +72,22 @@ pub fn dispatch(
 fn abi_position(p: &crate::schema::Position) -> ICredis::Position {
     ICredis::Position {
         positionId: p.position_id,
-        asset: p.asset,
         smartAccount: p.smart_account,
-        totalAnadosisAmount: p.total_anadosis_amount,
-        outstandingAnadosisAmount: p.outstanding_anadosis_amount,
-        totalGratisAmount: p.total_gratis_amount,
-        outstandingGratisAmount: p.outstanding_gratis_amount,
-        nextAnadosisNumber: p.next_anadosis_number,
-        createdAt: p.created_at,
-        credisPrincipal: p.credis_principal,
-        entryPriceMinor: p.entry_price_minor,
-        currencyRate: p.currency_rate,
+        cca: p.cca,
+        asset: p.asset,
         issuanceCurrency: p.issuance_currency,
         eoaCiphertext: p.eoa_ct.clone().into(),
-    }
-}
-
-fn abi_anadosis(a: &crate::schema::Anadosis) -> ICredis::Anadosis {
-    ICredis::Anadosis {
-        anadosisNumber: a.anadosis_number,
-        dueDate: a.due_date,
-        paidAt: a.paid_at,
-        anadosisAmount: a.anadosis_amount,
-        gratisAmount: a.gratis_amount,
-        unpaidAmount: a.unpaid_amount,
+        principal: p.principal,
+        outstanding: p.outstanding,
+        collateral: p.collateral,
+        collateralLocked: p.collateral_locked,
+        policyRate: p.policy_rate,
+        entryPrice: p.entry_price,
+        floorPrice: p.floor_price,
+        callPrice: p.call_price,
+        originatedAt: p.originated_at,
+        lastSettledAt: p.last_settled_at,
+        calledAt: p.called_at,
+        state: p.state,
     }
 }

@@ -125,7 +125,7 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
         bidders.push(address(0xB2));
         bidders.push(address(0xB3));
         for (uint256 i = 0; i < bidders.length; i++) {
-            paymentToken.mint(bidders[i], 1e24);
+            paymentToken.mint(bidders[i], 1_000_000e6);
             vm.prank(bidders[i]);
             paymentToken.approve(address(escrow), type(uint256).max);
         }

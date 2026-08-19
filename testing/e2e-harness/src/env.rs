@@ -251,9 +251,7 @@ impl Environment {
             sudo: !cli.no_sudo,
             all: cli.all,
             debug: cli.debug,
-            data_dir: cli.data_dir.clone().unwrap_or_else(|| {
-                std::env::temp_dir().join(format!("outbe-e2e-harness-{}", std::process::id()))
-            }),
+            data_dir: cli.data_dir.clone().unwrap_or_else(default_data_dir),
             evidence_dir: cli.evidence_dir.clone(),
             metadosis_p0,
             chain_bin: cli
@@ -337,6 +335,20 @@ fn default_repo() -> PathBuf {
         p.pop();
     }
     p
+}
+
+/// Keep Unix-domain socket paths below the platform `sun_path` limit. In
+/// particular, macOS expands `std::env::temp_dir()` to a long per-user path;
+/// appending run/scenario/validator components makes reth.ipc exceed 104 bytes.
+fn default_data_dir() -> PathBuf {
+    #[cfg(unix)]
+    {
+        PathBuf::from("/tmp/outbe-e2e-harness")
+    }
+    #[cfg(not(unix))]
+    {
+        std::env::temp_dir().join("outbe-e2e-harness")
+    }
 }
 
 static ENV: OnceLock<Environment> = OnceLock::new();
@@ -500,6 +512,16 @@ mod tests {
             env.selected_enclave_bin(),
             Path::new("/artifact-set/outbe-tee-enclave")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn default_data_dir_keeps_unix_socket_paths_short() {
+        let path = default_data_dir()
+            .join("run-1785161738-87200")
+            .join("scenario-1/validator-0/data/reth.ipc");
+
+        assert!(path.as_os_str().len() < 104, "{}", path.display());
     }
 
     #[test]

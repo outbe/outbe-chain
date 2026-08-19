@@ -162,8 +162,8 @@ async fn info(client: &(impl Rpc + Sync), address: Address) -> Result<()> {
     let si = fetch_staking_info(client, address).await?;
 
     println!("Validator:    {:?}", address);
-    println!("Stake:        {} COEN", super::format_unit(si.stake));
-    println!("Total Staked: {} COEN", super::format_unit(si.total));
+    println!("Stake:        {} COEN", super::format_coen_amount(si.stake));
+    println!("Total Staked: {} COEN", super::format_coen_amount(si.total));
 
     if !si.total.is_zero() && !si.stake.is_zero() {
         let pct = (si.stake * U256::from(10000)) / si.total;
@@ -218,14 +218,17 @@ async fn stats(client: &(impl Rpc + Sync)) -> Result<()> {
     println!("=== Staking Statistics ===");
     println!(
         "Total Staked:       {} COEN",
-        super::format_unit(ss.total_staked)
+        super::format_coen_amount(ss.total_staked)
     );
     println!("Total Validators:   {}", ss.total_count);
     println!("Active Validators:  {}", ss.active_count);
 
     if ss.active_count > 0 && !ss.total_staked.is_zero() {
         let avg = ss.total_staked / U256::from(ss.active_count);
-        println!("Avg Stake (active): {} COEN", super::format_unit(avg));
+        println!(
+            "Avg Stake (active): {} COEN",
+            super::format_coen_amount(avg)
+        );
     }
 
     Ok(())
@@ -275,8 +278,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_staking_info_returns_correct_values() {
-        let stake = U256::from(500u64) * U256::from(10u64).pow(U256::from(18));
-        let total = U256::from(1000u64) * U256::from(10u64).pow(U256::from(18));
+        let stake = U256::from(500_000_000u64);
+        let total = U256::from(1_000_000_000u64);
         let mock = staking_info_mock(stake, total);
         let addr: Address = "0x1111111111111111111111111111111111111111"
             .parse()
@@ -310,7 +313,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_staking_stats_returns_correct_values() {
-        let total = U256::from(3000u64) * U256::from(10u64).pow(U256::from(18));
+        let total = U256::from(3_000_000_000u64);
         let mut map = HashMap::new();
         map.insert(
             (abi::STAKING_ADDR, IStaking::getTotalStakedCall::SELECTOR),
@@ -343,8 +346,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_staking_share_percentage_calculation() {
-        let stake = U256::from(250u64) * U256::from(10u64).pow(U256::from(18));
-        let total = U256::from(1000u64) * U256::from(10u64).pow(U256::from(18));
+        let stake = U256::from(250_000_000u64);
+        let total = U256::from(1_000_000_000u64);
         let mock = staking_info_mock(stake, total);
         let addr: Address = "0x1111111111111111111111111111111111111111"
             .parse()

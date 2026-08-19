@@ -17,7 +17,9 @@ use std::future::Future;
 use std::sync::mpsc::sync_channel;
 use std::sync::OnceLock;
 
-use alloy_eips::{eip7702::Authorization, BlockId, BlockNumberOrTag};
+use alloy_eips::{
+    eip1559::MIN_PROTOCOL_BASE_FEE, eip7702::Authorization, BlockId, BlockNumberOrTag,
+};
 use alloy_network::{EthereumWallet, TransactionBuilder7702};
 use alloy_primitives::{Address, Bytes, TxHash, B256, U256};
 use alloy_provider::{Provider, ProviderBuilder};
@@ -28,8 +30,15 @@ use alloy_sol_types::{sol, SolCall};
 use eyre::{eyre, Result};
 use tokio::runtime::Runtime;
 
-/// Legacy-style gas price used by the old `cast send --gas-price` calls (1 gwei).
-const GAS_PRICE_WEI: u128 = 1_000_000_000;
+/// Canonical Outbe native fee floor, expressed directly in COEN unit per gas.
+const GAS_PRICE_UNITS: u128 = MIN_PROTOCOL_BASE_FEE as u128;
+
+/// Explicit limit used by negative-path calls.
+///
+/// Supplying a limit prevents the provider from estimating gas first: an
+/// intentional contract revert is then submitted and observed through its
+/// mined receipt instead of being returned as a preflight RPC error.
+const REVERT_FRIENDLY_GAS_LIMIT: u64 = 10_000_000;
 
 // Precompile ABI surface the harness reads/writes, generated from the canonical
 // Solidity sources so the harness exercises the same selectors the node
@@ -49,6 +58,16 @@ sol!("../../contracts/precompiles/src/IStaking.sol");
 sol!("../../contracts/precompiles/src/IZeroFee.sol");
 sol!("../../contracts/precompiles/src/IAgentReward.sol");
 sol!("../../contracts/precompiles/src/ITeeRegistryV1.sol");
+sol!("../../contracts/precompiles/src/ISlashIndicator.sol");
+
+// Negative-path tests submit this deliberately unsupported legacy selector and
+// assert that the canonical ValidatorSet ABI rejects it without mutation.
+sol! {
+    interface IValidatorSetRaw {
+        function activateResharedSet(address[] calldata newActiveSet, bytes32 groupPublicKey)
+            external;
+    }
+}
 
 sol!(
     #![sol(extra_derives(Debug, PartialEq))]
@@ -69,6 +88,22 @@ sol!(
     #![sol(extra_derives(Debug, PartialEq))]
     "../../contracts/precompiles/src/IStablecoin.sol"
 );
+
+/// A contract call that was submitted and mined, including reverted calls.
+#[derive(Clone, Debug)]
+pub(crate) struct MinedCallOutcome {
+    pub transaction_hash: String,
+    pub success: bool,
+    pub receipt: serde_json::Value,
+}
+
+/// One already ABI-encoded call for an explicit-nonce transaction batch.
+#[derive(Clone, Debug)]
+pub(crate) struct PreparedCall {
+    pub to: Address,
+    pub data: Bytes,
+    pub value: Option<U256>,
+}
 
 /// A dedicated multi-thread runtime that drives every RPC future, independent of
 /// whatever thread/runtime the cucumber step is on.
@@ -205,6 +240,29 @@ pub(crate) fn read_call_reverts_at<C: SolCall>(
                 Some(message.contains("revert"))
             }
         }
+    })
+}
+
+/// Simulate a state-changing call at the canonical head while preserving the
+/// RPC server's revert error. This is diagnostic only: E2E mutation paths still
+/// submit a real transaction and assert its mined receipt.
+pub(crate) fn simulate_call<C: SolCall>(
+    url: &str,
+    to: Address,
+    from: Address,
+    call: &C,
+) -> Result<()> {
+    let url = url.to_string();
+    let data = call.abi_encode();
+    block_on(async move {
+        let provider = ProviderBuilder::new().connect_http(url.parse()?);
+        let tx = TransactionRequest::default()
+            .from(from)
+            .to(to)
+            .input(Bytes::from(data).into())
+            .gas_limit(REVERT_FRIENDLY_GAS_LIMIT);
+        provider.call(tx).block(BlockId::latest()).await?;
+        Ok(())
     })
 }
 
@@ -501,7 +559,7 @@ pub(crate) fn send_call<C: SolCall>(
         let mut tx = TransactionRequest::default()
             .to(to)
             .input(Bytes::from(data).into())
-            .max_fee_per_gas(GAS_PRICE_WEI)
+            .max_fee_per_gas(GAS_PRICE_UNITS)
             .max_priority_fee_per_gas(0);
         if let Some(v) = value {
             tx = tx.value(v);
@@ -542,7 +600,7 @@ pub(crate) fn send_calldata(
             .to(to)
             .input(Bytes::from(calldata).into())
             .gas_limit(gas_limit)
-            .max_fee_per_gas(GAS_PRICE_WEI)
+            .max_fee_per_gas(GAS_PRICE_UNITS)
             .max_priority_fee_per_gas(0);
         let pending = tokio::time::timeout(
             std::time::Duration::from_secs(10),
@@ -558,6 +616,109 @@ pub(crate) fn send_calldata(
     })
 }
 
+/// Sign and submit a contract call without revert-sensitive gas estimation,
+/// then return the mined receipt regardless of its success bit.
+///
+/// Transport, signing, and inclusion failures remain [`Err`]. A contract-level
+/// revert is an [`Ok`] outcome with `success == false`, which lets E2E scenarios
+/// assert both the rejection and the absence of partial state changes.
+pub(crate) fn send_call_outcome<C: SolCall>(
+    url: &str,
+    to: Address,
+    key: &str,
+    call: &C,
+    value: Option<U256>,
+) -> Result<MinedCallOutcome> {
+    let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
+    let wallet = EthereumWallet::from(signer);
+    let url = url.to_string();
+    let data = call.abi_encode();
+    block_on(async move {
+        let provider = ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_http(url.parse()?);
+        let mut tx = TransactionRequest::default()
+            .to(to)
+            .input(Bytes::from(data).into())
+            .gas_limit(REVERT_FRIENDLY_GAS_LIMIT)
+            .max_fee_per_gas(GAS_PRICE_UNITS)
+            .max_priority_fee_per_gas(0);
+        if let Some(v) = value {
+            tx = tx.value(v);
+        }
+        let pending = provider.send_transaction(tx).await?;
+        let receipt = pending.get_receipt().await?;
+        Ok(MinedCallOutcome {
+            transaction_hash: format!("{:#x}", receipt.transaction_hash),
+            success: receipt.status(),
+            receipt: serde_json::to_value(receipt)?,
+        })
+    })
+}
+
+/// Submit sequential-nonce calls before waiting for any receipt.
+///
+/// This is the narrow batching primitive used by lifecycle tests that must put
+/// dependent transactions into the same candidate block without enabling
+/// non-production automine or storage controls. The caller can compare the
+/// returned receipt block numbers and fail explicitly if the node split them.
+pub(crate) fn send_prepared_calls_outcomes(
+    url: &str,
+    key: &str,
+    calls: Vec<PreparedCall>,
+) -> Result<Vec<MinedCallOutcome>> {
+    let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
+    let sender = signer.address();
+    let wallet = EthereumWallet::from(signer);
+    let url = url.to_string();
+    block_on(async move {
+        let provider = ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_http(url.parse()?);
+        let first_nonce = provider.get_transaction_count(sender).pending().await?;
+        let mut hashes = Vec::with_capacity(calls.len());
+        for (offset, call) in calls.into_iter().enumerate() {
+            let offset =
+                u64::try_from(offset).map_err(|_| eyre!("transaction batch is too large"))?;
+            let nonce = first_nonce
+                .checked_add(offset)
+                .ok_or_else(|| eyre!("transaction batch nonce overflow"))?;
+            let mut tx = TransactionRequest::default()
+                .to(call.to)
+                .input(call.data.into())
+                .nonce(nonce)
+                .gas_limit(REVERT_FRIENDLY_GAS_LIMIT)
+                .max_fee_per_gas(GAS_PRICE_UNITS)
+                .max_priority_fee_per_gas(0);
+            if let Some(value) = call.value {
+                tx = tx.value(value);
+            }
+            let pending = provider.send_transaction(tx).await?;
+            hashes.push(*pending.tx_hash());
+        }
+
+        let mut outcomes = Vec::with_capacity(hashes.len());
+        for hash in hashes {
+            let mut mined = None;
+            for _ in 0..240 {
+                if let Some(receipt) = provider.get_transaction_receipt(hash).await? {
+                    mined = Some(receipt);
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+            let receipt =
+                mined.ok_or_else(|| eyre!("transaction was not mined within 60s: {hash:#x}"))?;
+            outcomes.push(MinedCallOutcome {
+                transaction_hash: format!("{:#x}", receipt.transaction_hash),
+                success: receipt.status(),
+                receipt: serde_json::to_value(receipt)?,
+            });
+        }
+        Ok(outcomes)
+    })
+}
+
 /// Plain COEN transfer from `key` to `to` (funds a new account).
 pub(crate) fn send_value(url: &str, to: Address, key: &str, value: U256) -> Result<String> {
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
@@ -570,7 +731,7 @@ pub(crate) fn send_value(url: &str, to: Address, key: &str, value: U256) -> Resu
         let tx = TransactionRequest::default()
             .to(to)
             .value(value)
-            .max_fee_per_gas(GAS_PRICE_WEI)
+            .max_fee_per_gas(GAS_PRICE_UNITS)
             .max_priority_fee_per_gas(0);
         let pending = provider.send_transaction(tx).await?;
         let receipt = pending.get_receipt().await?;
@@ -672,7 +833,7 @@ pub(crate) fn install_delegation_with_overrides(
             .to(authority)
             .nonce(tx_nonce)
             .gas_limit(100_000)
-            .max_fee_per_gas(GAS_PRICE_WEI)
+            .max_fee_per_gas(GAS_PRICE_UNITS)
             .max_priority_fee_per_gas(0)
             .with_authorization_list(vec![signed]);
         let pending = provider.send_transaction(tx).await?;
@@ -703,7 +864,7 @@ pub(crate) fn send_reward_call(
         let provider = ProviderBuilder::new()
             .wallet(wallet)
             .connect_http(url.parse()?);
-        let max_fee = GAS_PRICE_WEI;
+        let max_fee = GAS_PRICE_UNITS;
         let tx = TransactionRequest::default()
             .to(to)
             .input(Bytes::from(data).into())
@@ -728,14 +889,20 @@ pub(crate) fn address_of(key: &str) -> Option<Address> {
     Some(signer.address())
 }
 
-/// `amount` whole COEN in the chain's 18-decimal native base units.
+/// `amount` whole COEN in the chain's six-decimal native units.
 pub(crate) fn coen(amount: u64) -> U256 {
-    U256::from(amount) * U256::from(1_000_000_000_000_000_000u128)
+    U256::from(amount) * U256::from(1_000_000u64)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn selector(signature: &str) -> [u8; 4] {
+        alloy_primitives::keccak256(signature.as_bytes())[..4]
+            .try_into()
+            .expect("four-byte selector")
+    }
 
     #[test]
     fn address_from_known_key() {
@@ -751,7 +918,39 @@ mod tests {
 
     #[test]
     fn coen_scales_to_base_units() {
-        assert_eq!(coen(1), U256::from(1_000_000_000_000_000_000u128));
+        assert_eq!(coen(1), U256::from(1_000_000u64));
         assert_eq!(coen(0), U256::ZERO);
+    }
+
+    #[test]
+    fn validator_lifecycle_abi_selectors_match_canonical_interfaces() {
+        assert_eq!(
+            IValidatorSet::validatorByIndexCall::SELECTOR,
+            selector("validatorByIndex(uint64)")
+        );
+        assert_eq!(
+            IValidatorSet::getP2pAddressCall::SELECTOR,
+            selector("getP2pAddress(address)")
+        );
+        assert_eq!(
+            IValidatorSet::confirmValidatorReadyCall::SELECTOR,
+            selector("confirmValidatorReady(bytes)")
+        );
+        assert_eq!(
+            IValidatorSetRaw::activateResharedSetCall::SELECTOR,
+            selector("activateResharedSet(address[],bytes32)")
+        );
+        assert_eq!(
+            IStaking::unstakeCall::SELECTOR,
+            selector("unstake(uint256)")
+        );
+        assert_eq!(
+            IStaking::unjailValidatorCall::SELECTOR,
+            selector("unjailValidator()")
+        );
+        assert_eq!(
+            ISlashIndicator::submitConflictingNotarizeEvidenceCall::SELECTOR,
+            selector("submitConflictingNotarizeEvidence(bytes,bytes)")
+        );
     }
 }

@@ -89,7 +89,7 @@ pub fn check_reference_currency_with_storage(storage: StorageHandle, iso_code: u
     Err(OracleError::NotReferenceCurrency { iso_code }.into())
 }
 
-/// Current COEN price to currency `iso_code`, 1e18 scaled.
+/// Current COEN price to currency `iso_code` in the COEN/ISO six-decimal scale.
 ///
 /// Returns errors when `COEN/<iso_code>` is not a registered pair, or
 /// no rates are found.
@@ -150,7 +150,8 @@ pub fn register_pair(storage: StorageHandle, pair: AddressPair) -> Result<PairIn
     oracle.register_pair(pair)
 }
 
-/// Nominal COEN price for `COEN/<iso_code>` at `worldwide_day`, 1e18 scaled:
+/// Nominal COEN price for `COEN/<iso_code>` at `worldwide_day`, in the pair's
+/// canonical scale (`COEN/ISO` is six-decimal):
 /// `max(WorldwideDay VWAP, highest active S-curve value)`.
 ///
 /// `None` when no `COEN/<iso_code>` pair is registered — the currency is not one
@@ -352,10 +353,10 @@ pub fn get_max_active_scurve_value(
     scurve::get_max_active_scurve_value(&oracle, pair, scurve_timestamp)
 }
 
-/// Annualized currency rate (1e18 scaled) for an ISO 4217 code, read from the
+/// Annualized currency rate (scale `1e6`) for an ISO 4217 code, read from the
 /// reference-currency collection. Reverts when the code is not a registered
 /// reference currency or carries no (non-zero) rate. Called by the Credis
-/// Factory at issuance to pin the Anadosis currency rate.
+/// Factory at issuance to pin the position's policy rate.
 pub fn get_currency_rate(storage: StorageHandle, iso_code: u16) -> Result<U256> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     oracle.get_currency_rate(iso_code)

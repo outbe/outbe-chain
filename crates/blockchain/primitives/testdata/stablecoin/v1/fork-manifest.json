@@ -12,7 +12,7 @@
     "mainnet": "unsupported-until-chain-id-fresh-genesis-and-release-gates-are-frozen"
   },
   "proposal": {
-    "bondBaseUnits": "1000000000000000000000000",
+    "bondBaseUnits": "1000000000000",
     "maxPendingPublicBonded": 16,
     "maxPendingPublicBondedPerProposer": 1,
     "absoluteVotePendingCap": 64

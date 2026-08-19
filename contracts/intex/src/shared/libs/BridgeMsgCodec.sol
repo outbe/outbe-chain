@@ -43,12 +43,15 @@ library BridgeMsgCodec {
     ///         recipients split across them the worst case stays inside the 10_000-byte send cap.
     uint16 internal constant MAX_SERIES_PER_ISSUANCE = 8;
 
+    /// @notice Series one MARK_CALLED or MARK_QUALIFIED message may carry. A batch is one day's
+    ///         series in one reference currency, so it is short; the cap bounds destination work.
+    uint16 internal constant MAX_SERIES_PER_MARK = 8;
+
     /// @notice Chunks one day's fan-out may span; keeps a receiver's arrival set in one word.
     uint16 internal constant MAX_CHUNKS = 256;
 
-    /// @notice Fixed-point scale for bid/clearing rates (`1e6` = 100%). Shared with the Outbe
-    ///         `RATE_SCALE` and `IntexAuction`; escrow math is `qty * escrowBasis * rate / RATE_SCALE`.
-    uint32 internal constant RATE_SCALE = 1_000_000;
+    /// @notice Numeric fixed-point scale for bid/clearing rates (`1e6` = 100%).
+    uint32 internal constant SCALE_1E6 = 1_000_000;
 
     // --- Minimum encoded lengths ---
     // Header is fixed at 2 bytes: [bodyVersion(1)][msgType(1)].
@@ -62,8 +65,10 @@ library BridgeMsgCodec {
     uint8 internal constant MAX_REFERENCE_PRICES = 6;
     uint16 internal constant MIN_LEN_AUCTION_STAGE_CLEARING = 6;
     uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
-    uint16 internal constant MIN_LEN_MARK_CALLED = 20;
-    uint16 internal constant MIN_LEN_MARK_QUALIFIED = 20;
+    // MARK_*: header + abi.encode(worldwideDay, seriesIds). The shortest valid body is one
+    // series: [worldwideDay][array offset][array length][element] = 4 words.
+    uint16 internal constant MIN_LEN_MARK_CALLED = HEADER_LEN + 128;
+    uint16 internal constant MIN_LEN_MARK_QUALIFIED = HEADER_LEN + 128;
     // BIDS_DONE: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][relayGeneration(4)][totalBatches(2)][totalBids(4)]
     uint16 internal constant MIN_LEN_BIDS_DONE = 20;
 
@@ -135,6 +140,14 @@ library BridgeMsgCodec {
     /// @param count Decoded number of recipients.
     /// @param max Maximum permitted recipients per message.
     error IssuanceBatchTooLarge(uint256 count, uint256 max);
+
+    /// @notice A mark message carries no series; there is nothing for the target to apply.
+    error EmptyMarkBatch();
+
+    /// @notice A mark message exceeds the per-message series cap.
+    /// @param count Number of series in the batch.
+    /// @param max Maximum permitted series per mark message.
+    error MarkBatchTooLarge(uint256 count, uint256 max);
 
     /// @notice Inbound REFUND_INSTRUCTIONS exceeds the per-message bidder cap.
     /// @param count Decoded number of bidders.
@@ -509,24 +522,37 @@ library BridgeMsgCodec {
         );
     }
 
-    /// @notice Encodes MARK_CALLED message.
-    /// @dev The settlement deadline is derived locally on the destination chain
-    ///      from the series `callNoticePeriod` and the moment markCalled is applied.
-    ///      encodePacked layout (20 bytes): [bodyVersion(1)][msgType(1)][seriesId(14)][worldwideDay(4)]
-    /// @param _seriesId The auction series identifier.
-    /// @param _worldwideDay The worldwide day the series was derived from.
+    /// @notice Encodes MARK_CALLED message for one day's batch of series.
+    /// @dev Layout: [bodyVersion(1)][msgType(1)] ++ abi.encode(worldwideDay, seriesIds). The
+    ///      settlement deadline is derived on the destination from `callNoticePeriod`.
+    /// @param _worldwideDay The worldwide day the series were derived from.
+    /// @param _seriesIds The auction series identifiers, 1..`MAX_SERIES_PER_MARK` of them.
     /// @return The wire-encoded MARK_CALLED message.
-    function encodeMarkCalled(bytes14 _seriesId, uint32 _worldwideDay) internal pure returns (bytes memory) {
-        return abi.encodePacked(BODY_VERSION_V1, MSG_MARK_CALLED, _seriesId, _worldwideDay);
+    function encodeMarkCalled(uint32 _worldwideDay, bytes14[] memory _seriesIds) internal pure returns (bytes memory) {
+        _assertMarkBatch(_seriesIds);
+        return abi.encodePacked(BODY_VERSION_V1, MSG_MARK_CALLED, abi.encode(_worldwideDay, _seriesIds));
     }
 
-    /// @notice Encodes MARK_QUALIFIED message.
-    /// @dev encodePacked layout (20 bytes): [bodyVersion(1)][msgType(1)][seriesId(14)][worldwideDay(4)]
-    /// @param _seriesId The auction series identifier.
-    /// @param _worldwideDay The worldwide day the series was derived from.
+    /// @notice Encodes MARK_QUALIFIED message for one day's batch of series.
+    /// @dev Layout: [bodyVersion(1)][msgType(1)] ++ abi.encode(worldwideDay, seriesIds)
+    /// @param _worldwideDay The worldwide day the series were derived from.
+    /// @param _seriesIds The auction series identifiers, at most `MAX_SERIES_PER_MARK`.
     /// @return The wire-encoded MARK_QUALIFIED message.
-    function encodeMarkQualified(bytes14 _seriesId, uint32 _worldwideDay) internal pure returns (bytes memory) {
-        return abi.encodePacked(BODY_VERSION_V1, MSG_MARK_QUALIFIED, _seriesId, _worldwideDay);
+    function encodeMarkQualified(uint32 _worldwideDay, bytes14[] memory _seriesIds)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        _assertMarkBatch(_seriesIds);
+        return abi.encodePacked(BODY_VERSION_V1, MSG_MARK_QUALIFIED, abi.encode(_worldwideDay, _seriesIds));
+    }
+
+    /// @dev A mark batch carries at least one series and at most `MAX_SERIES_PER_MARK`.
+    function _assertMarkBatch(bytes14[] memory _seriesIds) private pure {
+        if (_seriesIds.length == 0) revert EmptyMarkBatch();
+        if (_seriesIds.length > MAX_SERIES_PER_MARK) {
+            revert MarkBatchTooLarge(_seriesIds.length, MAX_SERIES_PER_MARK);
+        }
     }
 
     // --- Decoding ---
@@ -733,25 +759,43 @@ library BridgeMsgCodec {
     }
 
     /// @notice Decodes MARK_CALLED message.
-    /// @dev encodePacked layout (20 bytes): [bodyVersion(1)][msgType(1)][seriesId(14)][worldwideDay(4)]
-    ///      Reverts `InvalidPayloadLength` unless exactly 20 bytes, then `UnsupportedBodyVersion`.
+    /// @dev Reverts `InvalidPayloadLength` below the one-series minimum, then
+    ///      `UnsupportedBodyVersion`, then the batch bounds, re-checked inbound.
     /// @param _msg The wire-encoded MARK_CALLED message.
-    /// @return seriesId The auction series identifier.
-    function decodeMarkCalled(bytes calldata _msg) internal pure returns (bytes14 seriesId) {
-        _assertExactLength(_msg, MSG_MARK_CALLED, MIN_LEN_MARK_CALLED);
-        _assertBodyVersion(_msg);
-        seriesId = bytes14(_msg[2:16]);
+    /// @return worldwideDay The worldwide day the series were derived from.
+    /// @return seriesIds The auction series identifiers.
+    function decodeMarkCalled(bytes calldata _msg)
+        external
+        pure
+        returns (uint32 worldwideDay, bytes14[] memory seriesIds)
+    {
+        return _decodeMark(_msg, MSG_MARK_CALLED, MIN_LEN_MARK_CALLED);
     }
 
     /// @notice Decodes MARK_QUALIFIED message.
-    /// @dev encodePacked layout (20 bytes): [bodyVersion(1)][msgType(1)][seriesId(14)][worldwideDay(4)]
-    ///      Reverts `InvalidPayloadLength` unless exactly 20 bytes, then `UnsupportedBodyVersion`.
+    /// @dev Reverts `InvalidPayloadLength` below the one-series minimum, then
+    ///      `UnsupportedBodyVersion`, then the batch bounds.
     /// @param _msg The wire-encoded MARK_QUALIFIED message.
-    /// @return seriesId The auction series identifier.
-    function decodeMarkQualified(bytes calldata _msg) internal pure returns (bytes14 seriesId) {
-        _assertExactLength(_msg, MSG_MARK_QUALIFIED, MIN_LEN_MARK_QUALIFIED);
+    /// @return worldwideDay The worldwide day the series were derived from.
+    /// @return seriesIds The auction series identifiers.
+    function decodeMarkQualified(bytes calldata _msg)
+        external
+        pure
+        returns (uint32 worldwideDay, bytes14[] memory seriesIds)
+    {
+        return _decodeMark(_msg, MSG_MARK_QUALIFIED, MIN_LEN_MARK_QUALIFIED);
+    }
+
+    /// @dev Shared body of the two mark decoders; they differ only in which type they report.
+    function _decodeMark(bytes calldata _msg, uint8 _msgType, uint16 _minLen)
+        private
+        pure
+        returns (uint32 worldwideDay, bytes14[] memory seriesIds)
+    {
+        if (_msg.length < _minLen) revert InvalidPayloadLength(_msgType, _msg.length, _minLen);
         _assertBodyVersion(_msg);
-        seriesId = bytes14(_msg[2:16]);
+        (worldwideDay, seriesIds) = abi.decode(_msg[2:], (uint32, bytes14[]));
+        _assertMarkBatch(seriesIds);
     }
 
     // --- Validation helpers ---

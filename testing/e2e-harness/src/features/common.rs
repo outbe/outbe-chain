@@ -94,6 +94,11 @@ pub(crate) fn start_bootstrapped_localnet(world: &mut World, opts: &StartOpts) {
         .localnet
         .bind_tee_genesis()
         .expect("bind canonical TEE genesis manifest");
+    #[cfg(not(feature = "ocomp-integration"))]
+    world
+        .localnet
+        .ensure_embedded_ocomp_domain_material()
+        .expect("stage embedded OCOMP validator domain material before node start");
     #[cfg(feature = "ocomp-integration")]
     world
         .ocomp

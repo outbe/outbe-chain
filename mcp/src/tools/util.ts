@@ -36,5 +36,7 @@ export async function view(
 ): Promise<unknown> {
   const entry = resolveContract(contract);
   const { fn, result } = await readView(ctx, entry, method, args);
-  return humanizeReturn(fn, result);
+  const oracle = resolveContract("oracle");
+  const formatContext = entry.address === oracle.address ? { oracleArgs: args } : undefined;
+  return humanizeReturn(fn, result, formatContext);
 }

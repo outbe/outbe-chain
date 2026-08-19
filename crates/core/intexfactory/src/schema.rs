@@ -14,7 +14,7 @@ pub struct IssuanceParams {
     pub worldwide_day: WorldwideDay,
     pub issued_intex_count: u32,
     pub promis_load_minor: u128,
-    /// Entry price (per-unit, reference currency, 1e18 oracle scale); cost/floor/call derive from it.
+    /// Entry price (per-unit, reference ISO stable-units, 1e6); cost/floor/call derive from it.
     pub entry_price_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
@@ -53,12 +53,15 @@ pub struct IntexFactoryContract {
     pub bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
     #[attribute(order = 5)]
     pub bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
-    /// `scoped(iso, bin_id)` -> count of series in the bin.
+    /// `scoped(iso, bin_id)` -> count of groups in the bin.
     #[attribute(order = 6)]
     pub unqualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
-    /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> series_id.
-    #[attribute(order = 7)]
-    pub unqualified_bin_series: outbe_primitives::storage::dsl::Map<B256, U256>,
+    /// Held series ids while the bin indexed series; a group's worldwide day is
+    /// narrower than that word, so the column is reserved rather than reused.
+    #[attribute(order = 7, deprecated = true)]
+    pub unqualified_bin_series_legacy: outbe_primitives::storage::dsl::Deprecated<
+        outbe_primitives::storage::dsl::Value<'storage, U256>,
+    >,
 
     // Qualified-series bin index (by call_price_minor) for the daily
     // Called scan. A series moves here from the unqualified index on qualify.
@@ -68,12 +71,14 @@ pub struct IntexFactoryContract {
     pub qualified_bin_tree_mid: outbe_primitives::storage::dsl::Map<u64, U256>,
     #[attribute(order = 10)]
     pub qualified_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u64, U256>,
-    /// `scoped(iso, bin_id)` -> count of series in the bin.
+    /// `scoped(iso, bin_id)` -> count of groups in the bin.
     #[attribute(order = 11)]
     pub qualified_bin_count: outbe_primitives::storage::dsl::Map<u64, u32>,
-    /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> series_id.
-    #[attribute(order = 12)]
-    pub qualified_bin_series: outbe_primitives::storage::dsl::Map<B256, U256>,
+    /// Reserved for the same reason as its unqualified twin at order 7.
+    #[attribute(order = 12, deprecated = true)]
+    pub qualified_bin_series_legacy: outbe_primitives::storage::dsl::Deprecated<
+        outbe_primitives::storage::dsl::Value<'storage, U256>,
+    >,
 
     // Genesis parameter-profile selector (0 = prod, 1 = dev); see crate::config.
     #[attribute(order = 13)]
@@ -95,16 +100,55 @@ pub struct IntexFactoryContract {
     #[attribute(order = 17)]
     pub call_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    // Qualified notices waiting for the `intex_qualify_notify` trigger to send
-    // them: the sweep that qualifies runs in a block hook, which cannot call
-    // contracts. Head and tail reset to 0 whenever the queue drains empty.
+    // Group members, keyed by `scoped(iso, day)`: a decision reads only fields the
+    // whole (reference currency, worldwide day) pair shares.
     #[attribute(order = 18)]
-    pub qualify_notify_head: outbe_primitives::storage::dsl::Value<u32>,
+    pub unqualified_group_count: outbe_primitives::storage::dsl::Map<u64, u32>,
+    /// `keccak256(iso_be16 ++ worldwide_day_be32 ++ index_be32)` -> series_id word.
     #[attribute(order = 19)]
-    pub qualify_notify_tail: outbe_primitives::storage::dsl::Value<u32>,
-    /// Queue index -> series awaiting its Qualified notice.
+    pub unqualified_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
+    /// `scoped(iso, worldwide_day)` -> the bin holding the group; valid while it has members.
     #[attribute(order = 20)]
-    pub qualify_notify_at: outbe_primitives::storage::dsl::Map<u32, SeriesId>,
+    pub unqualified_group_bin: outbe_primitives::storage::dsl::Map<u64, u32>,
+
+    #[attribute(order = 21)]
+    pub qualified_group_count: outbe_primitives::storage::dsl::Map<u64, u32>,
+    /// `keccak256(iso_be16 ++ worldwide_day_be32 ++ index_be32)` -> series_id word.
+    #[attribute(order = 22)]
+    pub qualified_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
+    /// `scoped(iso, worldwide_day)` -> the bin holding the group; valid while it has members.
+    #[attribute(order = 23)]
+    pub qualified_group_bin: outbe_primitives::storage::dsl::Map<u64, u32>,
+
+    // UTC day an unfinished call sweep is pinned to, so its later slices decide
+    // against the prices it opened with. 0 = none in flight; a date key is never 0.
+    #[attribute(order = 24)]
+    pub call_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+
+    // Past the group columns because orders 7 and 12 carried series ids: a leftover
+    // word is too wide for a worldwide day and would fault the scan, not misread.
+    /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> group's worldwide day.
+    #[attribute(order = 25)]
+    pub unqualified_bin_groups: outbe_primitives::storage::dsl::Map<B256, u32>,
+    /// `keccak256(iso_be16 ++ bin_id_be32 ++ index_be32)` -> group's worldwide day.
+    #[attribute(order = 26)]
+    pub qualified_bin_groups: outbe_primitives::storage::dsl::Map<B256, u32>,
+
+    // Lifecycle notices waiting for the `intex_notify` trigger to send them: the
+    // scans run in a block hook, which cannot call contracts. Head and tail reset
+    // to 0 whenever the queue drains empty.
+    #[attribute(order = 27)]
+    pub notify_head: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 28)]
+    pub notify_tail: outbe_primitives::storage::dsl::Value<u32>,
+    /// Queue index -> `scoped(iso, day)` for a Qualified group, or the series word
+    /// for a Called one: a called group leaves the index, so its notice carries the
+    /// series itself while a qualified one is still readable from the index.
+    #[attribute(order = 29)]
+    pub notify_at: outbe_primitives::storage::dsl::Map<u32, U256>,
+    /// Queue index -> which mark the notice carries; see `NOTICE_QUALIFIED`.
+    #[attribute(order = 30)]
+    pub notify_kind: outbe_primitives::storage::dsl::Map<u32, u8>,
 }
 
 impl IntexFactoryContract<'_> {
@@ -119,6 +163,14 @@ impl IntexFactoryContract<'_> {
     /// Namespace a bin-index column by the reference currency its prices are in.
     pub(crate) const fn scoped(reference_currency: u16, key: u32) -> u64 {
         ((reference_currency as u64) << 32) | key as u64
+    }
+
+    /// Inverse of [`Self::scoped`] for a key that is a worldwide day.
+    pub(crate) const fn unscoped(scoped: u64) -> (u16, WorldwideDay) {
+        (
+            (scoped >> 32) as u16,
+            WorldwideDay::new((scoped & 0xffff_ffff) as u32),
+        )
     }
 
     /// Composite key for `mine_seq`: `keccak256(series_id ++ holder)`.
