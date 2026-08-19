@@ -40,9 +40,7 @@ interface ICredisFactory {
     ///         released and the reduction in the position's outstanding balance.
     /// @return interest Accrued interest collected by this settlement. Taken in full
     ///         before any principal, and never carried between settlements.
-    function settle(uint256 positionId, uint256 amount)
-        external
-        returns (uint256 principal, uint256 interest);
+    function settle(uint256 positionId, uint256 amount) external returns (uint256 principal, uint256 interest);
 
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

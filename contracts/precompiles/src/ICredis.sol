@@ -86,7 +86,6 @@ interface ICredis {
     function balanceOf(address smartAccount) external view returns (uint256 balance);
     function positionOfAddressByIndex(address smartAccount, uint256 index) external view returns (Position memory);
 
-
     /// @notice True while `smartAccount` holds any CALLED position. Such an owner
     ///         cannot open new positions until the call resolves.
     function hasCalledPosition(address smartAccount) external view returns (bool);
