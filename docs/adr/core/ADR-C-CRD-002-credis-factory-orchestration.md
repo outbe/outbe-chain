@@ -1,10 +1,10 @@
 # ADR-C-CRD-002: CredisFactory owns collateral-proof, pricing and settlement orchestration
 
 - **Status:** Proposed; current implementation profiled
-- **Date:** 2026-07-17 (revised 2026-08-18 for the Credis v2 price-path model)
+- **Date:** 2026-07-17 (revised 2026-08-19 for the daily price-path scan)
 - **Decision owners:** Credis protocol maintainers
 - **Scope:** `crates/core/credisfactory`
-- **Depends on:** ADR-B-CNS-003, ADR-B-EVM-004, ADR-C-GRT-001, ADR-C-GRT-003, ADR-C-CRD-001, ADR-C-VLT-001, ADR-S-ORC-001
+- **Depends on:** ADR-B-CNS-003, ADR-B-EVM-004, ADR-C-GRT-001, ADR-C-GRT-003, ADR-C-CRD-001, ADR-C-VLT-001, ADR-S-ORC-001, ADR-S-CYC-001
 - **Related:** ADR-C-GRT-002, ADR-C-FID-001
 - **Supersedes:** CredisFactory portions of former broad pre-space Gratis/economic aggregate (previously numbered 030)
 
@@ -63,13 +63,45 @@ Their sum is what was pulled.
 
 Failure at any external call rolls back the position bookkeeping and the release.
 
-### Void the remainder
+### The daily price-path scan
 
-A begin-block sweep walks the position index with a bounded, persisted cursor and, for
-every called position whose settlement window has lapsed with principal outstanding,
-burns the unpaid collateral share, drops the pledger's fidelity cohort and credits the
-Promis Reserve. Nothing in production reaches `Called` until the daily reference-price
-scan lands, so this sweep is currently inert.
+`called::scan_and_call` is the `credis_call_daily` Cycle trigger (id 7, period 86_400,
+no accounting gate). It walks the credis active-position index — the non-terminal
+positions only — from a persisted cursor, and applies up to three transitions per
+position in lifecycle order:
+
+1. `Open -> Settleable` when the last closed day's finalized reference price exceeded the
+   sealed floor. One-way.
+2. `Settleable -> Called` when that price sat at or above the call price on
+   `CALL_BREACH_DAYS` of the trailing `CALL_LOOKBACK_DAYS` closed days. Counting
+   breach days rather than requiring a run means the window absorbs the difference in below-call
+   or unpublished days, and needs no per-position streak state: the count is recomputed
+   from oracle history every run. A day that predates the position ends the count, so no
+   position inherits a breach run from before it existed. Same shape as
+   `outbe_gem`'s `CALL_WINDOW` / `CALL_THRESHOLD` pair.
+3. `Called -> Void` when the settlement window has lapsed with principal outstanding:
+   burn the unpaid collateral share, drop the pledger's fidelity cohort, credit the Promis
+   Reserve.
+
+Ordering is structural, not incidental: the Oracle finalizes the closed day's VWAP in a
+pre-execution hook, and `CycleTick` is a body transaction in the begin zone, so the scan
+always reads the current block's finalization. A watermark behind the last closed day
+means that ordering broke, and the run skips loudly rather than misreading an unfinalized
+day as one with no published price.
+
+The handler is total with respect to market data. A Cycle handler error propagates out of
+the `CycleTick` system transaction and fails the block, so an unregistered pair, an
+unpriced currency and an unfinalized day each degrade to "no transition".
+
+**Error isolation is deliberately split.** The latch and call arms are pure storage and
+arithmetic, so each position runs inside its own checkpoint and a deterministic error
+skips just that position — one bad position can never halt the run. The void arm is *not*
+isolated: it makes two TEE enclave round-trips, whose faults (sidecar unavailable, socket
+timeout, poisoned global connection mutex) are node-local rather than a function of
+committed state. Swallowing one would leave one validator's state root diverged from the
+rest with no block failure to catch it, so the void propagates and fails the block
+instead. The three domain errors the void can raise are fully pre-filtered by its guard,
+so nothing deterministic reaches that path.
 
 ## Cross-module invariants
 
@@ -145,12 +177,25 @@ choreography. Credis and VaultRouter remain separately auditable state owners.
     execution; execution snapshot is authority.
 14. Production deployment must structurally prove CredisFactory is registered as
     the correct VaultRouter source/target type.
-15. The call is implemented but unarmed: nothing in production reaches `Called` until
-    the daily reference-price scan lands, so the begin-block void sweep is inert and the
-    unresolved-call guard on `requestCredis` can never trip. Reinstate both guarantees
-    with the scan.
-16. The floor latch is evaluated only inside `settle`, so a price crossing that reverses
-    before anyone settles is missed. The daily scan closes this.
+15. **Resolved 2026-08-19** — the `credis_call_daily` scan arms the call, so the void
+    path and the unresolved-call guard on `requestCredis` are both reachable in
+    production. `has_called_position` is now an O(1) counter read rather than a walk.
+16. **Resolved 2026-08-19** — the daily scan latches off the previous day's finalized
+    VWAP, so a crossing no longer needs a settler. Residual: an intraday spike that clears
+    the floor without lifting the day's volume-weighted average, and that nobody settles
+    into, still does not latch — the `settle`-time live-spot arm is what covers it.
+18. One run voids at most `MAX_CREDIS_VOIDS_PER_RUN` (64) positions, because each void
+    costs two blocking enclave round-trips on a process-global connection. A sustained
+    breach calls a whole currency's book at once and it lapses together 14 days later, so
+    a backlog larger than the budget drains over several days. Spending the budget only
+    declines further voids — the pass continues, so the latch and call arms keep their
+    full `MAX_CREDIS_DAILY_VISITS` reach and a void backlog cannot throttle them (all
+    three arms share one cursor, so ending the pass there would have). Raise the budget
+    once real sidecar latency is measured, or batch the round-trips.
+19. Only `COEN/840` is registered at genesis and `register_pair` has no precompile entry
+    point, so a position in any other issuance currency has no daily series and can never
+    latch or be called through the scan. Live-config limitation; the scan degrades
+    correctly.
 17. The originating agent is recorded as `cca` on the position and in `CredisRequested`
     but is not authorized at origination or penalized at void; the CCA program is not yet
     implemented.

@@ -34,12 +34,19 @@ JSON or read mutable configuration.
 
 The currently registered schedule is:
 
-| Id | Slot | Command invoked | Accounting gate |
-|---:|---|---|---|
-| 0 | daily 00:00 UTC | previous UTC-day emission command | required |
-| 1 | daily 00:00 UTC | Intex call scan | not required |
-| 2 | production: daily 12:00 UTC; shortened genesis profile: every `metadosis.advanceIntervalSeconds` | WorldwideDay advancement command | not required |
-| 3 | every 12h | auction schedule advancement | required |
+| Id | Label | Slot | Command invoked | Accounting gate | Coalesces backlog |
+|---:|---|---|---|---|---|
+| 0 | `emission_limit_1` | daily 00:00 UTC | previous UTC-day emission command | required | no |
+| 1 | `intex_call_daily` | daily 00:00 UTC | Intex call scan | not required | no |
+| 2 | `wwd_advance` | production: daily 12:00 UTC; shortened genesis profile: every `metadosis.advanceIntervalSeconds` | WorldwideDay advancement command | not required | no |
+| 3 | `auction_advance` | every 12h | auction schedule advancement | required | no |
+| 4 | `gem_call_daily` | daily 00:00 UTC | Gem force-call / forfeit-burn scan | not required | no |
+| 5 | `auction_clearing` | every 10 min | auction clearing sweep | not required | yes |
+| 6 | `intex_notify` | every 10 min | Intex lifecycle-notice drain | not required | yes |
+| 7 | `credis_call_daily` | daily 00:00 UTC | Credis price-path scan: latch, call, void | not required | no |
+
+Ids are permanent: they are emitted as the indexed `id` on `CycleTriggerExecuted` and key
+the `Cycle` mappings, so new triggers append and existing ones are never renumbered.
 
 Names and order are normative even if handlers happen to commute today. A handler
 is an imported command boundary. Its calculations, state transitions, sinks and
