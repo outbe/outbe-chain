@@ -86,7 +86,7 @@ library TargetInbound {
                 }
                 why = InboundReason.OBSOLETE;
             } else if (selector == IIntexAuction.AuctionNotFound.selector) {
-                why = InboundReason.UNKNOWN;
+                why = InboundReason.NOT_FOUND;
             } else {
                 LowLevelCall.bubbleRevert(reason);
             }
@@ -134,7 +134,7 @@ library TargetInbound {
                     LowLevelCall.bubbleRevert(reason);
                 }
             } else if (selector == IIntexAuction.AuctionNotFound.selector) {
-                why = InboundReason.UNKNOWN;
+                why = InboundReason.NOT_FOUND;
             } else if (
                 selector == IIntexAuction.WonBidsExceedRevealed.selector
                     || selector == IIntexAuction.ClearingRateBelowMin.selector

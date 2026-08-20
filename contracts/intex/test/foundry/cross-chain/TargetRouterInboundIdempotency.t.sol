@@ -166,7 +166,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     }
 
     function test_AClearingForADayNeverOpenedHereIsUnknown() public {
-        _expectIgnored(BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING, InboundReason.UNKNOWN);
+        _expectIgnored(BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING, InboundReason.NOT_FOUND);
         _deliver(BridgeMsgCodec.encodeAuctionStageClearing(DAY));
     }
 
@@ -219,7 +219,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     }
 
     function test_AResultForADayNeverOpenedHereIsUnknown() public {
-        _expectIgnored(BridgeMsgCodec.MSG_AUCTION_RESULT, InboundReason.UNKNOWN);
+        _expectIgnored(BridgeMsgCodec.MSG_AUCTION_RESULT, InboundReason.NOT_FOUND);
         _deliver(BridgeMsgCodec.encodeAuctionResult(DAY, 0, 0, 0));
     }
 

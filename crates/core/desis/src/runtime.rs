@@ -473,7 +473,7 @@ enum Intake {
 /// `InboundIgnored.reason` codes; the shared `InboundReason` numbering, mirrored in `IDesis`.
 const IGNORED_OBSOLETE: u8 = 2;
 const IGNORED_CONFLICT: u8 = 3;
-const IGNORED_UNKNOWN_DAY: u8 = 4;
+const IGNORED_NOT_FOUND: u8 = 4;
 
 fn emit_inbound_ignored(
     contract: &mut DesisContract<'_>,
@@ -543,7 +543,7 @@ pub fn process_bids_batch(
                 &mut contract,
                 worldwide_day,
                 src_chain_id,
-                IGNORED_UNKNOWN_DAY,
+                IGNORED_NOT_FOUND,
             );
         }
     }
@@ -628,7 +628,7 @@ pub fn process_bids_done(
                 &mut contract,
                 worldwide_day,
                 src_chain_id,
-                IGNORED_UNKNOWN_DAY,
+                IGNORED_NOT_FOUND,
             );
         }
     }

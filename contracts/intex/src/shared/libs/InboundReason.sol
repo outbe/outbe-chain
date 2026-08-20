@@ -12,8 +12,8 @@ library InboundReason {
     uint8 internal constant OBSOLETE = 2;
     /// @notice Same identity as an applied message, different content; the first one stands.
     uint8 internal constant CONFLICT = 3;
-    /// @notice The message names something this chain does not know (day, series, source).
-    uint8 internal constant UNKNOWN = 4;
+    /// @notice The message names something that does not exist on this chain and never will (day, source).
+    uint8 internal constant NOT_FOUND = 4;
     /// @notice The message arrived after the window it needed had closed.
     uint8 internal constant LATE = 5;
     /// @notice The message failed a permanent validation check.

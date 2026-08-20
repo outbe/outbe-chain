@@ -2128,7 +2128,7 @@ const UNBRIEFED_DAY: WorldwideDay = WorldwideDay::new(20260202);
 /// The shared `InboundReason` codes `IDesis.InboundIgnored` reuses.
 const IGNORED_OBSOLETE: u8 = 2;
 const IGNORED_CONFLICT: u8 = 3;
-const IGNORED_UNKNOWN_DAY: u8 = 4;
+const IGNORED_NOT_FOUND: u8 = 4;
 
 fn inbound_storage() -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -2175,7 +2175,7 @@ fn a_batch_for_a_day_never_briefed_is_acknowledged() {
         let key = DesisContract::chain_key(UNBRIEFED_DAY, SRC_CHAIN);
         assert_eq!(contract.chain_bid_count.read(&key).unwrap(), 0);
     });
-    assert_eq!(ignored_reasons(&storage), vec![IGNORED_UNKNOWN_DAY]);
+    assert_eq!(ignored_reasons(&storage), vec![IGNORED_NOT_FOUND]);
 }
 
 #[test]

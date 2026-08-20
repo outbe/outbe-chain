@@ -567,7 +567,7 @@ contract OriginRouter is
             return false;
         }
         if (!_isSeriesTarget(worldwideDay, srcChainId)) {
-            emit InboundMessageIgnored(srcChainId, msgType, key, InboundReason.UNKNOWN);
+            emit InboundMessageIgnored(srcChainId, msgType, key, InboundReason.NOT_FOUND);
             return false;
         }
         return true;

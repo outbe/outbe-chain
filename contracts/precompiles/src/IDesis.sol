@@ -59,7 +59,7 @@ interface IDesis {
     event ChainSkipped(uint32 indexed worldwideDay, uint32 indexed srcChainId);
     /// @notice A relayed bids message was acknowledged without effect. `reason` uses the shared InboundReason
     /// codes: 2 = obsolete (superseded generation or post-clearing delivery), 3 = conflicting BIDS_DONE
-    /// marker, 4 = unknown day.
+    /// marker, 4 = day not found (never briefed here).
     event InboundIgnored(uint32 indexed worldwideDay, uint32 indexed srcChainId, uint8 reason);
     event AuctionCancelledRedDay(uint32 indexed worldwideDay);
     /// @notice The day was cancelled because the oracle could price none of its reference
