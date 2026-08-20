@@ -52,7 +52,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         return BridgeMsgCodec.encodeMarkCalled(DAY, MarkBatchLib.one(CreateSeriesLib.seriesId(DAY)));
     }
 
-    function _issuance() internal pure returns (bytes memory) {
+    function _issuance() internal returns (bytes memory) {
         BridgeMsgCodec.IssuanceInstructionsPayload[] memory one = new BridgeMsgCodec.IssuanceInstructionsPayload[](1);
         one[0].seriesId = CreateSeriesLib.seriesId(DAY);
         one[0].worldwideDay = DAY;
@@ -60,6 +60,10 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         one[0].promisLoadMinor = 1;
         one[0].issuanceCurrency = 840;
         one[0].referenceCurrency = 840;
+        one[0].recipients = new address[](1);
+        one[0].quantities = new uint256[](1);
+        one[0].recipients[0] = makeAddr("winner");
+        one[0].quantities[0] = 3;
         return BridgeMsgCodec.encodeIssuanceInstructions(DAY, 0, 1, one);
     }
 
@@ -97,9 +101,37 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         assertEq(router.pendingMark(series), BridgeMsgCodec.MSG_MARK_CALLED, "Called wins");
         _deliver(_qualified());
         assertEq(router.pendingMark(series), BridgeMsgCodec.MSG_MARK_CALLED, "Qualified cannot demote it");
+    }
 
+    function test_ASlottedCalledWaitsForTheValveSoTheWinnersMintFirst() public {
+        _deliver(_called());
+        // Issuance creates the series and mints; the Called slot must NOT apply mid-issuance —
+        // its holders migration would snapshot the still-empty series.
         _deliver(_issuance());
-        assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "the series lands Called");
+        assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Issued), "winners minted into a live series");
+        assertEq(router.pendingMark(series), BridgeMsgCodec.MSG_MARK_CALLED, "the Called still waits");
+
+        router.applyPendingMark(series);
+        assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "the valve applies it after the mints");
+    }
+
+    function test_OnARemoteTargetTheValveMigratesTheMintedHolders() public {
+        // Remote-target shape (OUTBE_CHAIN_ID != this chain): markCalled must bridge the holders minted
+        // by the issuance that preceded the valve. The stub bridge rejects the send, so the holders
+        // chunk parks — proving the migration ran against the real, non-empty holder set.
+        TargetRouter remote = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
+        remote.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
+        remote.wire(makeAddr("auction"), address(intex), makeAddr("escrow"), makeAddr("nftBridge"));
+        intex.grantRole(intex.RELAYER_ROLE(), address(remote));
+
+        _deliver(OUTBE_CHAIN_ID, originSender, address(remote), _called());
+        _deliver(OUTBE_CHAIN_ID, originSender, address(remote), _issuance());
+        assertEq(remote.pendingMark(series), BridgeMsgCodec.MSG_MARK_CALLED, "Called waits for the valve");
+
+        remote.applyPendingMark(series);
+        assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "applied");
+        (uint256 tokenId,,) = remote.pendingHoldersRelays(0);
+        assertEq(tokenId, intex.issuedTokenId(series), "the minted holders were snapshotted for migration");
     }
 
     function test_ApplyPendingMarkIsThePermissionlessValve() public {

@@ -447,15 +447,19 @@ library TargetInbound {
         emit ITargetRouter.MarkSlotted(seriesId, msgType);
     }
 
-    /// @dev Apply the mark waiting for a series that has just been created; a failure leaves it slotted.
+    /// @dev Apply the mark waiting for a series that has just been created. Only Qualified applies here: a
+    ///      Called must wait for `applyPendingMark` until the winners are minted, else its holders migration
+    ///      would snapshot the still-empty series and the winners would mint into Called unmigrated. A failure
+    ///      re-announces the slot.
     function _applySlottedMark(TargetRouterStorage storage $, bytes14 seriesId) private {
         uint8 msgType = $.pendingMark[seriesId];
-        if (msgType == 0) return;
+        if (msgType != BridgeMsgCodec.MSG_MARK_QUALIFIED) return;
         delete $.pendingMark[seriesId];
         try ITargetRouterShims(address(this)).applyMarkOne(seriesId, msgType) {
             emit ITargetRouter.PendingMarkApplied(seriesId, msgType);
         } catch {
             $.pendingMark[seriesId] = msgType;
+            emit ITargetRouter.MarkSlotted(seriesId, msgType);
         }
     }
 
