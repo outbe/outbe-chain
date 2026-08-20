@@ -51,7 +51,7 @@ contract MarkBatchWireTest is CrossChainTest {
         bnbRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
         outbeRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
 
-        bnbRouter.wire(address(auction), address(intex), admin, admin);
+        bnbRouter.wire(address(auction), address(intex), admin);
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
 
         outbeRouter.wire(address(desis), intexFactory);

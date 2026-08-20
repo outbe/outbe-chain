@@ -45,7 +45,7 @@ contract TargetRouterMarkParkTest is CrossChainTest {
         escrow = DeployProxy.escrowAdapter(admin, admin);
 
         bnbRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
-        bnbRouter.wire(address(auction), address(intex), address(escrow), address(nftBridge));
+        bnbRouter.wire(address(auction), address(intex), address(escrow));
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
     }
 

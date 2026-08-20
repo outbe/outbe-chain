@@ -224,7 +224,7 @@ contract UpgradeDrillTest is CrossChainTest {
         bytes memory remote = _interop(A_CHAIN_ID, address(0xCAFE));
 
         vm.startPrank(admin);
-        target.wire(auction, intex, escrow, nftBridge);
+        target.wire(auction, intex, escrow);
         target.setRemoteMessenger(A_CHAIN_ID, remote);
         vm.stopPrank();
 

@@ -95,7 +95,7 @@ contract TargetRouterProceedsTest is CrossChainTest {
         escrow = new MockEscrowAdapter(IERC20(address(wcoen)));
         tokenBridge = new MockTokenBridge();
 
-        target.wire(makeAddr("auction"), makeAddr("intex"), address(escrow), makeAddr("nftBridge"));
+        target.wire(makeAddr("auction"), makeAddr("intex"), address(escrow));
         target.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
         target.setProceedsRoute(address(tokenBridge), originRouter);
     }

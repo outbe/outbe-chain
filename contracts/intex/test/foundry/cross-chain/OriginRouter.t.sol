@@ -84,7 +84,7 @@ contract OriginRouterTest is CrossChainTest {
         originRouter.wire(desis, intexFactory);
 
         // Wire BNB adapter
-        targetRouter.wire(address(auction), address(intex), admin, address(nftBridge));
+        targetRouter.wire(address(auction), address(intex), admin);
     }
 
     // --- Helpers ---

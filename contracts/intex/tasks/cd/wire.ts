@@ -61,7 +61,6 @@ interface TargetBridgeWireArgs {
   intexAuctionContract: string;
   intexContract: string;
   escrowContract: string;
-  nftBridgeContract: string;
 }
 
 interface OriginBridgeWireArgs {
@@ -219,17 +218,15 @@ const targetBridgeWireAction = async (args: TargetBridgeWireArgs, hre: unknown) 
   const auction = (args.intexAuctionContract ?? "").trim();
   const intex = (args.intexContract ?? "").trim();
   const escrow = (args.escrowContract ?? "").trim();
-  const nftBridge = (args.nftBridgeContract ?? "").trim();
 
   const empty: string[] = [];
   if (!auction) empty.push("--auction-contract");
   if (!intex) empty.push("--intex-contract");
   if (!escrow) empty.push("--escrow-contract");
-  if (!nftBridge) empty.push("--nft-bridge-contract");
   if (empty.length > 0) {
     throw new Error(
       `TargetRouter wire requires non-empty addresses. Missing: ${empty.join(", ")}. ` +
-        `The deploy workflow reads them from dist/addresses/<network>.json - ensure the deploy step captured IntexAuction, IntexNFT1155, EscrowAdapter, IntexNFT1155Bridge.`
+        `The deploy workflow reads them from dist/addresses/<network>.json - ensure the deploy step captured IntexAuction, IntexNFT1155, EscrowAdapter.`
     );
   }
 
@@ -240,7 +237,6 @@ const targetBridgeWireAction = async (args: TargetBridgeWireArgs, hre: unknown) 
   console.log(`  Auction: ${auction}`);
   console.log(`  Intex: ${intex}`);
   console.log(`  Escrow: ${escrow}`);
-  console.log(`  NftBridge: ${nftBridge}`);
 
   const bridge = (await viem.getContractAt(
     "TargetRouter",
@@ -250,25 +246,22 @@ const targetBridgeWireAction = async (args: TargetBridgeWireArgs, hre: unknown) 
       auction: () => Promise<`0x${string}`>;
       intex: () => Promise<`0x${string}`>;
       escrowAdapter: () => Promise<`0x${string}`>;
-      nftBridge: () => Promise<`0x${string}`>;
     };
     write: {
-      wire: (args: [`0x${string}`, `0x${string}`, `0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
+      wire: (args: [`0x${string}`, `0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
     };
   };
 
-  const [currentAuction, currentIntex, currentEscrow, currentNftBridge] = await Promise.all([
+  const [currentAuction, currentIntex, currentEscrow] = await Promise.all([
     bridge.read.auction(),
     bridge.read.intex(),
     bridge.read.escrowAdapter(),
-    bridge.read.nftBridge(),
   ]);
 
   const allMatch =
     currentAuction.toLowerCase() === auction.toLowerCase() &&
     currentIntex.toLowerCase() === intex.toLowerCase() &&
-    currentEscrow.toLowerCase() === escrow.toLowerCase() &&
-    currentNftBridge.toLowerCase() === nftBridge.toLowerCase();
+    currentEscrow.toLowerCase() === escrow.toLowerCase();
 
   if (allMatch) {
     console.log(`✅ TargetRouter already wired to these contracts`);
@@ -280,7 +273,6 @@ const targetBridgeWireAction = async (args: TargetBridgeWireArgs, hre: unknown) 
       currentAuction.toLowerCase() !== auction.toLowerCase() && "auction",
       currentIntex.toLowerCase() !== intex.toLowerCase() && "intex",
       currentEscrow.toLowerCase() !== escrow.toLowerCase() && "escrow",
-      currentNftBridge.toLowerCase() !== nftBridge.toLowerCase() && "nftBridge",
     ].filter(Boolean);
     console.log(`🔄 Rewiring TargetRouter (changed: ${changed.join(", ")})`);
   }
@@ -290,13 +282,12 @@ const targetBridgeWireAction = async (args: TargetBridgeWireArgs, hre: unknown) 
       auction as `0x${string}`,
       intex as `0x${string}`,
       escrow as `0x${string}`,
-      nftBridge as `0x${string}`,
     ]),
   );
   console.log(`✅ TargetRouter wired. Tx: ${txHash}`);
 };
 
-const targetBridgeWire = task("target-bridge-wire", "Wire TargetRouter to Auction, Intex, EscrowAdapter, and IntexNFT1155Bridge")
+const targetBridgeWire = task("target-bridge-wire", "Wire TargetRouter to Auction, Intex, and EscrowAdapter")
   .addOption({
     name: "bridgeContract",
     description: "TargetRouter contract address",
@@ -315,11 +306,6 @@ const targetBridgeWire = task("target-bridge-wire", "Wire TargetRouter to Auctio
   .addOption({
     name: "escrowContract",
     description: "EscrowAdapter contract address",
-    defaultValue: "",
-  })
-  .addOption({
-    name: "nftBridgeContract",
-    description: "IntexNFT1155Bridge contract address",
     defaultValue: "",
   })
   .setAction(lazy(targetBridgeWireAction));

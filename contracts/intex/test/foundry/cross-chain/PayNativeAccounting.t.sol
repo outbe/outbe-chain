@@ -6,6 +6,7 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
+import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {SendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
@@ -68,7 +69,7 @@ contract PayNativeAccountingTest is CrossChainTest {
 
         // Wire TM with a stub auction and the batch adapter.
         StubAuction stubAuction = new StubAuction();
-        bnbRouter.wire(address(stubAuction), address(intex), admin, address(nftBridge));
+        bnbRouter.wire(address(stubAuction), address(intex), admin);
 
         // Holders bridge: the router drives the bridge's systemMultiSend, which crosschainBurns on the local
         // Intex. `crosschainBurn` is `RELAYER_ROLE`-gated and additionally requires `SYSTEM_RELAYER_ROLE` once the
@@ -211,42 +212,41 @@ contract PayNativeAccountingTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // Relay / float path — fired from inside receiveMessage (MARK_CALLED)
+    // Relay / float path — fired from inside receiveMessage (CLEARING)
     // ---------------------------------------------------------------
 
-    /// @dev The inbound MARK_CALLED handler fires the holders relay, funding it from TargetRouter's float. With
-    ///      that float empty the forwarded-value call fails, which the handler catches and parks for later flush.
+    /// @dev The inbound CLEARING handler relays the day's bids, funding the send from TargetRouter's float. With
+    ///      that float empty the send reverts, which the handler catches and parks for later flush.
     function test_Relay_InsideReceiveMessage_EmptyFloatDefers() public {
         assertEq(address(bnbRouter).balance, 0, "router float unfunded");
 
-        _deliverMarkCalled();
+        _deliverClearing();
 
-        (uint256 storedTokenId, bool exists, bool done) = bnbRouter.pendingHoldersRelays(0);
-        assertEq(storedTokenId, TOKEN_ID, "holders relay deferred on float-starved NotEnoughNative");
+        (uint32 storedDay, bool exists, bool done) = bnbRouter.pendingBidsRelays(0);
+        assertEq(storedDay, SERIES_ID_DAY, "bids relay deferred on float-starved NotEnoughNative");
         assertTrue(exists);
         assertFalse(done);
     }
 
-    /// @dev With TargetRouter's float funded, the relay fired from inside `receiveMessage` forwards the fee and
+    /// @dev With TargetRouter's float funded, the relay fired from inside `receiveMessage` draws the fee and
     ///      sends cleanly — nothing is parked.
     function test_Relay_InsideReceiveMessage_FundedFloatSucceeds() public {
-        vm.deal(address(bnbRouter), 1 ether); // TargetRouter pays the systemMultiSend fee
+        vm.deal(address(bnbRouter), 1 ether);
         uint256 floatBefore = address(bnbRouter).balance;
 
-        _deliverMarkCalled();
+        _deliverClearing();
 
-        // No parked relay: TargetRouter funded the send.
-        assertEq(bnbRouter.nextPendingHoldersRelayIdx(), 0, "no holders relay deferred");
-        assertEq(address(bnbRouter).balance, floatBefore - BRIDGE_FEE, "fee drawn from router float");
-        assertEq(address(nftBridge).balance, 0, "adapter holds no float");
+        // One bid relays as a data batch plus the final empty one, so the float pays two fees.
+        assertEq(bnbRouter.nextPendingBidsRelayIdx(), 0, "no bids relay deferred");
+        assertEq(floatBefore - address(bnbRouter).balance, 2 * BRIDGE_FEE, "every batch drew its fee from the float");
     }
 
-    function _deliverMarkCalled() internal {
+    function _deliverClearing() internal {
         _deliver(
             OUTBE_CHAIN_ID,
             address(outbeRouter),
             address(bnbRouter),
-            BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, MarkBatchLib.one(SERIES_ID))
+            BridgeMsgCodec.encodeAuctionStageClearing(SERIES_ID_DAY)
         );
     }
 
@@ -286,10 +286,33 @@ contract PayNativeAccountingTest is CrossChainTest {
     }
 }
 
-/// @dev Placeholder auction so `TargetRouter.wire` accepts a non-zero auction address. The delivered MARK_CALLED
-///      (which only touches `intex`) never calls the auction, so no interface surface is needed.
-// solhint-disable-next-line no-empty-blocks
-contract StubAuction {}
+/// @dev Auction stub with one bid, so an inbound CLEARING produces exactly one relayed batch — one bridge fee.
+contract StubAuction {
+    function auctionStart(
+        uint32,
+        IIntexAuction.WorldwideDayState,
+        IIntexAuction.AuctionSchedule calldata,
+        IIntexAuction.AuctionParams calldata
+    ) external {}
+    function startClearingStage(uint32) external {}
+    function executeAuctionClearing(uint32, uint32, uint64, uint32) external {}
+
+    function getAuctionDetails(uint32)
+        external
+        view
+        returns (IIntexAuction.AuctionData memory data, IIntexAuction.SubmittedBidData[] memory bids)
+    {
+        bids = new IIntexAuction.SubmittedBidData[](1);
+        bids[0] = IIntexAuction.SubmittedBidData({
+            bidderAddress: address(0xCAFE),
+            intexQuantity: 1,
+            intexBidRate: 100e6,
+            timestamp: uint32(block.timestamp),
+            issuanceCurrency: 840,
+            referenceCurrency: 840
+        });
+    }
+}
 
 /// @dev Holds a bridgeable token (accepts the ERC-1155 mint) but whose `receive()` reverts; used to pin `_send`'s
 ///      RefundFailed guard on the entry path via the NFT bridge.

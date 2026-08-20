@@ -72,7 +72,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         bnbRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
         outbeRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
 
-        bnbRouter.wire(address(auction), address(intex), address(escrow), address(nftBridge));
+        bnbRouter.wire(address(auction), address(intex), address(escrow));
 
         // The router drives auction lifecycle (RELAYER_ROLE), creates/mints IntexNFT1155
         // (RELAYER_ROLE), and finalizes escrow (RELAYER_ROLE). Each downstream contract gates
@@ -127,13 +127,13 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         assertEq(_countLogs(keccak256("BidsDoneSent(bytes32,uint32,uint16,uint32)")), 0, "no re-relay");
     }
 
-    // --- _handleMarkCalled: origin-as-target skips holder migration (holders already on the canonical NFT) ---
-    function test_handleMarkCalled_localTarget_skipsHolderMigration() public {
+    // --- _handleMarkCalled: the mark is a pure state flip and never touches balances ---
+    function test_handleMarkCalled_leavesBalancesUntouched() public {
         uint32 local = uint32(block.chainid);
         TargetRouter localRouter = DeployProxy.targetRouter(address(bridge), admin, local);
         address localOrigin = makeAddr("localOrigin");
         localRouter.setRemoteMessenger(local, _interop(local, localOrigin));
-        localRouter.wire(address(auction), address(intex), address(escrow), address(nftBridge));
+        localRouter.wire(address(auction), address(intex), address(escrow));
         intex.grantRole(intex.RELAYER_ROLE(), address(localRouter));
 
         address[] memory recipients = new address[](1);
@@ -153,7 +153,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         );
 
         assertEq(uint8(intex.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called), "series Called");
-        assertEq(intex.balanceOf(bidder, tokenId), 5, "holders retained on the canonical NFT (no migration)");
+        assertEq(intex.balanceOf(bidder, tokenId), 5, "balances untouched by the mark");
     }
 
     function _countLogs(bytes32 sig) internal returns (uint256 n) {

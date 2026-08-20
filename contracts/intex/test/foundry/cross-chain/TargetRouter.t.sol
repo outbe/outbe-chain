@@ -72,7 +72,7 @@ contract TargetRouterTest is CrossChainTest {
         originRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(targetRouter)));
 
         // Wire BNB adapter dependencies
-        targetRouter.wire(address(auction), address(intex), admin, address(nftBridge));
+        targetRouter.wire(address(auction), address(intex), admin);
 
         // Wire Outbe adapter dependencies
         originRouter.wire(desis, makeAddr("factory"));
@@ -102,28 +102,21 @@ contract TargetRouterTest is CrossChainTest {
         TargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "auction"));
-        newRouter.wire(address(0), address(intex), admin, address(nftBridge));
+        newRouter.wire(address(0), address(intex), admin);
     }
 
     function test_wire_revert_zero_intex() public {
         TargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "intex"));
-        newRouter.wire(address(auction), address(0), admin, address(nftBridge));
+        newRouter.wire(address(auction), address(0), admin);
     }
 
     function test_wire_revert_zero_escrowAdapter() public {
         TargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "escrowAdapter"));
-        newRouter.wire(address(auction), address(intex), address(0), address(nftBridge));
-    }
-
-    function test_wire_revert_zero_nftBridge() public {
-        TargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "nftBridge"));
-        newRouter.wire(address(auction), address(intex), admin, address(0));
+        newRouter.wire(address(auction), address(intex), address(0));
     }
 
     // --- ERC165 Tests ---

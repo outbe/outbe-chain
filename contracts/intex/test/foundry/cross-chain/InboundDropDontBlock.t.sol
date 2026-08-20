@@ -83,7 +83,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
         outbeRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
 
         // TM drives the local Intex on markCalled.
-        bnbRouter.wire(address(auction), address(intex), admin, admin);
+        bnbRouter.wire(address(auction), address(intex), admin);
         auction.grantRole(auction.RELAYER_ROLE(), address(bnbRouter));
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
 

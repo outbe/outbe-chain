@@ -58,7 +58,7 @@ contract InboundValidationTest is CrossChainTest {
         outbeRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
         nftBridgeBnb.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
 
-        bnbRouter.wire(address(auction), address(intex), admin, address(nftBridgeBnb));
+        bnbRouter.wire(address(auction), address(intex), admin);
         outbeRouter.wire(desis, intexFactory);
     }
 
