@@ -12,7 +12,6 @@ use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_intex::SeriesId;
 use outbe_oracle::schema::{OracleContract, PairIndex};
-use outbe_primitives::storage::types::Storable;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
@@ -384,13 +383,13 @@ pub(crate) fn try_call_group(
     factory.remove_qualified_group(group.iso_code, group.worldwide_day)?;
 
     // A slice of this sweep runs in a block hook, which cannot call contracts, so
-    // the notices leave from the `intex_notify` cycle trigger. One per series: the
-    // group is gone from the index by the time they are sent.
+    // the notices leave from the `intex_notify` cycle trigger. Each entry carries its
+    // own series and call time: the group is gone from the index by the time they are sent.
     for &series_id in &group.members {
         crate::qualified::enqueue_notice(
             factory,
             crate::qualified::NOTICE_CALLED,
-            series_id.to_word(),
+            crate::qualified::pack_called_notice(series_id, called_at),
         )?;
     }
 
@@ -406,12 +405,12 @@ pub(crate) fn try_call_group(
     Ok(group.members.len() as u32)
 }
 
-/// One series per message, unlike the Qualified notice: applying a Called mark
-/// migrates the target's holders, an unbounded cost the origin cannot price, so
-/// sharing a budget would take a whole group down with one heavy series.
+/// One message per queue entry; `called_at` travels so every target derives the
+/// same deadline the origin did.
 pub(crate) fn notify_called(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
+    called_at: u32,
     members: &[SeriesId],
 ) -> Result<()> {
     for chunk in members.chunks(1) {
@@ -421,6 +420,7 @@ pub(crate) fn notify_called(
             U256::ZERO,
             IOriginRouter::sendMarkCalledCall {
                 worldwideDay: worldwide_day.value(),
+                calledAt: called_at,
                 seriesIds: chunk.iter().map(|id| (*id).into()).collect(),
             }
             .abi_encode()

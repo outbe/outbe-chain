@@ -11,6 +11,9 @@ import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
 /// @dev Golden-value and per-field round-trip coverage for BridgeMsgCodec encode/decode.
 contract BridgeMsgCodecGoldenTest is Test {
+    /// @dev Fixed call stamp; these tests exercise the wire, not the clock.
+    uint32 internal constant CALLED_AT = 1_777_000_000;
+
     // Byte-literal goldens for the fixed-width packed messages.
 
     function test_Golden_AuctionStageStart() public pure {
@@ -48,10 +51,10 @@ contract BridgeMsgCodecGoldenTest is Test {
     }
 
     function test_Golden_MarkCalled() public pure {
-        // [ver=01][type=08] ++ abi.encode(wwd, seriesIds)
+        // [ver=01][type=08] ++ abi.encode(wwd, calledAt, seriesIds)
         assertEq(
-            BridgeMsgCodec.encodeMarkCalled(20260212, MarkBatchLib.one("20260212-TRY-U")),
-            abi.encodePacked(hex"0108", abi.encode(uint32(20260212), MarkBatchLib.one("20260212-TRY-U")))
+            BridgeMsgCodec.encodeMarkCalled(20260212, CALLED_AT, MarkBatchLib.one("20260212-TRY-U")),
+            abi.encodePacked(hex"0108", abi.encode(uint32(20260212), CALLED_AT, MarkBatchLib.one("20260212-TRY-U")))
         );
     }
 
@@ -282,7 +285,7 @@ contract BridgeMsgCodecGoldenTest is Test {
             this.exposedDecodeAuctionStageClearing(BridgeMsgCodec.encodeAuctionStageClearing(0x0A0B0C0D)), 0x0A0B0C0D
         );
         assertEq(
-            this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled(20260212, MarkBatchLib.one("20260212-TRY-U"))),
+            this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled(20260212, CALLED_AT, MarkBatchLib.one("20260212-TRY-U"))),
             bytes14("20260212-TRY-U")
         );
         assertEq(
@@ -304,7 +307,7 @@ contract BridgeMsgCodecGoldenTest is Test {
     }
 
     function exposedDecodeMarkCalled(bytes calldata p) external pure returns (bytes14) {
-        (, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(p);
+        (,, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(p);
         return seriesIds[0];
     }
 

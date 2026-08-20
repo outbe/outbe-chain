@@ -68,7 +68,7 @@ contract IntexNFT1155SettledRecordTest is Test {
         vm.prank(bridger);
         nft.markQualified(SERIES_ID);
         vm.prank(bridger);
-        nft.markCalled(SERIES_ID);
+        nft.markCalled(SERIES_ID, uint32(block.timestamp));
 
         for (uint256 i = 0; i < _SERIES_DATA_SLOTS; i++) {
             assertEq(_recordSlot(sTok, i), before[i], "lifecycle transitions must not write the Settled record");

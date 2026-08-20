@@ -271,6 +271,16 @@ pub const NOTICE_QUALIFIED: u8 = 0;
 /// A notice carrying one Called series, which its group no longer holds.
 pub const NOTICE_CALLED: u8 = 1;
 
+/// A Called entry packs its call time into the low bytes the 14-byte `SeriesId` leaves free,
+/// so the origin's stamp reaches the target instead of its delivery time.
+pub(crate) fn pack_called_notice(series_id: SeriesId, called_at: u32) -> U256 {
+    series_id.to_word() | U256::from(called_at)
+}
+
+fn unpack_called_notice(entry: U256) -> (SeriesId, u32) {
+    (SeriesId::from_word(entry), (entry & U256::from(u32::MAX)).to::<u32>())
+}
+
 pub(crate) fn enqueue_notice(
     factory: &mut IntexFactoryContract,
     kind: u8,
@@ -317,8 +327,8 @@ pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
 
 fn send_notice(storage: &StorageHandle<'_>, kind: u8, entry: U256) -> Result<()> {
     if kind == NOTICE_CALLED {
-        let series_id = SeriesId::from_word(entry);
-        return crate::called::notify_called(storage, series_id.worldwide_day(), &[series_id]);
+        let (series_id, called_at) = unpack_called_notice(entry);
+        return crate::called::notify_called(storage, series_id.worldwide_day(), called_at, &[series_id]);
     }
     // A group that has since been called is gone from the index, and a Called
     // series would refuse the Qualified mark anyway — so an empty read is the

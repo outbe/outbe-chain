@@ -87,7 +87,7 @@ contract IntexNFT1155SupplyTest is Test {
         nft.mint(holderA, mintAmount, SERIES_ID);
         if (callBeforeSettle) {
             vm.prank(bridger);
-            nft.markCalled(SERIES_ID);
+            nft.markCalled(SERIES_ID, uint32(block.timestamp));
         } else {
             vm.prank(bridger);
             nft.markQualified(SERIES_ID);

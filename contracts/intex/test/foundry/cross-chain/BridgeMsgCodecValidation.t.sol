@@ -18,6 +18,9 @@ import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 ///      External wrappers expose the internal calldata-slice decoders so they can be
 ///      driven through `vm.expectRevert` (mirrors BodyVersion.t.sol).
 contract BridgeMsgCodecValidationTest is Test {
+    /// @dev Fixed call stamp; these tests exercise the wire, not the clock.
+    uint32 internal constant CALLED_AT = 1_777_000_000;
+
     // --- fixed-width decoders reject over-long payloads ---
 
     function test_AuctionStageStart_OverLong_Reverts() public {
@@ -151,7 +154,7 @@ contract BridgeMsgCodecValidationTest is Test {
         (uint32 rs,,,) = this.exposedDecodeAuctionResult(BridgeMsgCodec.encodeAuctionResult(9, 1, 1, 1));
         assertEq(rs, 9, "result");
         assertEq(
-            this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled(20260212, MarkBatchLib.one("20260212-TRY-U"))),
+            this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled(20260212, CALLED_AT, MarkBatchLib.one("20260212-TRY-U"))),
             bytes14("20260212-TRY-U"),
             "markCalled"
         );
@@ -283,7 +286,7 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     function exposedEncodeMarkCalled(uint32 day, bytes14[] calldata ids) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeMarkCalled(day, ids);
+        return BridgeMsgCodec.encodeMarkCalled(day, CALLED_AT, ids);
     }
 
     function exposedEncodeMarkQualified(uint32 day, bytes14[] calldata ids) external pure returns (bytes memory) {
@@ -291,7 +294,7 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     function exposedDecodeMarkCalled(bytes calldata p) external pure returns (bytes14) {
-        (, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(p);
+        (,, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(p);
         return seriesIds[0];
     }
 

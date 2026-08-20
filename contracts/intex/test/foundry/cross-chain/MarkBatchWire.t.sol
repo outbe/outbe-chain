@@ -108,7 +108,7 @@ contract MarkBatchWireTest is CrossChainTest {
 
         assertEq(_state(USD_SERIES), uint8(IIntexNFT1155.IntexState.Qualified), "the known series applied");
         assertEq(bnbRouter.nextPendingMarkIdx(), 1, "only the missing one parked");
-        (bytes14 parked,,,) = bnbRouter.pendingMarks(0);
+        (bytes14 parked,,,,) = bnbRouter.pendingMarks(0);
         assertEq(parked, EUR_SERIES, "the missing series parked");
     }
 
@@ -122,7 +122,7 @@ contract MarkBatchWireTest is CrossChainTest {
         outbeRouter.sendMarkQualified(WORLDWIDE_DAY, MarkBatchLib.two(USD_SERIES, EUR_SERIES));
         _assertLastGas(IntexGas.markQualified(2));
 
-        outbeRouter.sendMarkCalled(WORLDWIDE_DAY, MarkBatchLib.two(USD_SERIES, EUR_SERIES));
+        outbeRouter.sendMarkCalled(WORLDWIDE_DAY, uint32(block.timestamp), MarkBatchLib.two(USD_SERIES, EUR_SERIES));
         _assertLastGas(IntexGas.markCalled(2));
         vm.stopPrank();
     }
@@ -144,7 +144,7 @@ contract MarkBatchWireTest is CrossChainTest {
                 BridgeMsgCodec.MAX_SERIES_PER_MARK
             )
         );
-        outbeRouter.sendMarkCalled(WORLDWIDE_DAY, batch);
+        outbeRouter.sendMarkCalled(WORLDWIDE_DAY, uint32(block.timestamp), batch);
     }
 
     function test_onlyTheFactoryMaySendAMarkBatch() public {

@@ -264,7 +264,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function markCalled(bytes14 seriesId) external onlyRole(RELAYER_ROLE) {
+    function markCalled(bytes14 seriesId, uint32 calledAt) external onlyRole(RELAYER_ROLE) {
         uint256 tokenId = _issuedTokenId(seriesId);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.issuedAt == 0) {
@@ -275,7 +275,10 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             revert InvalidState(uint8(IIntexNFT1155.IntexState.Qualified), uint8(data.state));
         }
 
-        uint32 calledAt = uint32(block.timestamp);
+        // The origin stamps the call; a target that stamped its own delivery time would grant a
+        // later deadline than the one settlement actually honours.
+        if (calledAt > block.timestamp) revert CalledAtInFuture(calledAt, uint32(block.timestamp));
+
         IIntexNFT1155.IntexState previousState = data.state;
         data.state = IIntexNFT1155.IntexState.Called;
         data.calledAt = calledAt;

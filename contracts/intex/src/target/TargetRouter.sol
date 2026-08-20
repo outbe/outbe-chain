@@ -64,6 +64,7 @@ contract TargetRouter is
     struct PendingMark {
         bytes14 seriesId;
         uint8 msgType;
+        uint32 calledAt;
         bool exists;
         bool done;
     }
@@ -214,9 +215,13 @@ contract TargetRouter is
     }
 
     /// @notice Parked lifecycle mark at `idx`.
-    function pendingMarks(uint256 idx) external view returns (bytes14 seriesId, uint8 msgType, bool exists, bool done) {
+    function pendingMarks(uint256 idx)
+        external
+        view
+        returns (bytes14 seriesId, uint8 msgType, uint32 calledAt, bool exists, bool done)
+    {
         PendingMark storage p = _ts().pendingMarks[idx];
-        return (p.seriesId, p.msgType, p.exists, p.done);
+        return (p.seriesId, p.msgType, p.calledAt, p.exists, p.done);
     }
 
     /// @notice Next index to assign in `pendingMarks`.
@@ -566,9 +571,9 @@ contract TargetRouter is
     /// @notice Decode MARK_CALLED and apply it to every series it carries, parking the ones that
     ///         will not take the mark yet.
     function _handleMarkCalled(uint32 _srcChainId, bytes calldata _message) internal {
-        (, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(_message);
+        (, uint32 calledAt, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(_message);
         for (uint256 i = 0; i < seriesIds.length; ++i) {
-            _applyMark(_srcChainId, seriesIds[i], BridgeMsgCodec.MSG_MARK_CALLED);
+            _applyMark(_srcChainId, seriesIds[i], BridgeMsgCodec.MSG_MARK_CALLED, calledAt);
         }
     }
 
@@ -577,19 +582,20 @@ contract TargetRouter is
     function _handleMarkQualified(uint32 _srcChainId, bytes calldata _message) internal {
         (, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkQualified(_message);
         for (uint256 i = 0; i < seriesIds.length; ++i) {
-            _applyMark(_srcChainId, seriesIds[i], BridgeMsgCodec.MSG_MARK_QUALIFIED);
+            _applyMark(_srcChainId, seriesIds[i], BridgeMsgCodec.MSG_MARK_QUALIFIED, 0);
         }
     }
 
     /// @notice Apply one lifecycle mark through its self-call shim, parking it on revert.
     /// @dev Parking keeps a series the target has not seen from rejecting the whole message.
-    function _applyMark(uint32 _srcChainId, bytes14 _seriesId, uint8 _msgType) internal {
+    function _applyMark(uint32 _srcChainId, bytes14 _seriesId, uint8 _msgType, uint32 _calledAt) internal {
         // solhint-disable-next-line no-empty-blocks
-        try this.applyMarkOne(_seriesId, _msgType) {}
+        try this.applyMarkOne(_seriesId, _msgType, _calledAt) {}
         catch (bytes memory reason) {
             TargetRouterStorage storage $ = _ts();
             uint256 idx = $.nextPendingMarkIdx++;
-            $.pendingMarks[idx] = PendingMark({seriesId: _seriesId, msgType: _msgType, exists: true, done: false});
+            $.pendingMarks[idx] =
+                PendingMark({seriesId: _seriesId, msgType: _msgType, calledAt: _calledAt, exists: true, done: false});
             emit MarkDeferred(idx, _seriesId, _msgType, reason);
             return;
         }
@@ -603,13 +609,14 @@ contract TargetRouter is
     /// @notice Self-call shim around one lifecycle mark; isolates a series that will not take it.
     /// @param seriesId Series the mark applies to.
     /// @param msgType Codec message type: MARK_CALLED or MARK_QUALIFIED.
-    function applyMarkOne(bytes14 seriesId, uint8 msgType) external {
+    /// @param calledAt Origin's call timestamp; ignored for MARK_QUALIFIED.
+    function applyMarkOne(bytes14 seriesId, uint8 msgType, uint32 calledAt) external {
         if (msg.sender != address(this)) revert NotSelf();
         if (msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED) {
             _ts().intex.markQualified(seriesId);
             return;
         }
-        _ts().intex.markCalled(seriesId);
+        _ts().intex.markCalled(seriesId, calledAt);
     }
 
     /// @notice Permissionless retry of a previously deferred lifecycle mark.
@@ -622,7 +629,7 @@ contract TargetRouter is
         if (p.msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED) {
             _ts().intex.markQualified(p.seriesId);
         } else {
-            _ts().intex.markCalled(p.seriesId);
+            _ts().intex.markCalled(p.seriesId, p.calledAt);
         }
         emit MarkFlushed(idx, p.seriesId, p.msgType);
     }

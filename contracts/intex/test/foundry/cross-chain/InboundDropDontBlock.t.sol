@@ -117,10 +117,10 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     /// @notice MARK_CALLED for a series the BNB intex has never seen is parked rather than rejected:
     ///         a batch carries several series, and one of them missing must not reject the message.
     function test_TM_PrematureMarkCalled_Parks() public {
-        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, MarkBatchLib.one(SERIES_ID));
+        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID));
         _deliverToTM(packet);
 
-        (bytes14 seriesId,, bool exists, bool done) = bnbRouter.pendingMarks(0);
+        (bytes14 seriesId,,, bool exists, bool done) = bnbRouter.pendingMarks(0);
         assertEq(seriesId, SERIES_ID, "the mark was parked for its series");
         assertTrue(exists, "the parked slot exists");
         assertFalse(done, "the parked slot is still open");
@@ -129,7 +129,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     /// @notice Once the prerequisite (the series) lands, flushing the parked mark applies it and the
     ///         series flips to Called — the out-of-order arrival resolves without a redelivery.
     function test_TM_ParkedMarkCalledFlushesAfterSeriesLands() public {
-        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, MarkBatchLib.one(SERIES_ID));
+        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID));
 
         // Premature: no series yet → parked.
         _deliverToTM(packet);

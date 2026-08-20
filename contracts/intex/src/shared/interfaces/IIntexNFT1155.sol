@@ -178,6 +178,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Settle attempted on a `Called` series after the settlement deadline
     ///         (`calledAt + callNoticePeriod`) has passed.
     error SettleAfterDeadline(uint256 tokenId, uint32 deadline);
+    /// @notice `markCalled` was given a timestamp the destination clock has not reached yet.
+    error CalledAtInFuture(uint32 calledAt, uint32 nowTs);
     /// @notice A mint or batch sum would push `totalSupply` past `issuedIntexCount`.
     error SupplyCapExceeded(bytes14 seriesId, uint256 attempted, uint256 cap);
 
@@ -215,7 +217,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     /// @notice Mark a series as Called (Issued/Qualified -> Called).
     /// @param seriesId Series identifier.
-    function markCalled(bytes14 seriesId) external;
+    /// @param calledAt Unix time the origin marked the series Called; the deadline derives from it.
+    function markCalled(bytes14 seriesId, uint32 calledAt) external;
 
     /// @notice Burn `amount` Issued Intex from `from` and mint the same `amount` of Settled Intex to `to`.
     /// @dev Settlement-contract entry point under SETTLEMENT_ROLE. Series must be Qualified or Called.

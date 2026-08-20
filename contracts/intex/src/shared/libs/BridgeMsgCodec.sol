@@ -65,9 +65,10 @@ library BridgeMsgCodec {
     uint8 internal constant MAX_REFERENCE_PRICES = 6;
     uint16 internal constant MIN_LEN_AUCTION_STAGE_CLEARING = 6;
     uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
-    // MARK_*: header + abi.encode(worldwideDay, seriesIds). The shortest valid body is one
-    // series: [worldwideDay][array offset][array length][element] = 4 words.
-    uint16 internal constant MIN_LEN_MARK_CALLED = HEADER_LEN + 128;
+    // MARK_CALLED: header + abi.encode(worldwideDay, calledAt, seriesIds). The shortest valid body is
+    // one series: [worldwideDay][calledAt][array offset][array length][element] = 5 words.
+    uint16 internal constant MIN_LEN_MARK_CALLED = HEADER_LEN + 160;
+    // MARK_QUALIFIED: header + abi.encode(worldwideDay, seriesIds) = 4 words at minimum.
     uint16 internal constant MIN_LEN_MARK_QUALIFIED = HEADER_LEN + 128;
     // BIDS_DONE: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][relayGeneration(4)][totalBatches(2)][totalBids(4)]
     uint16 internal constant MIN_LEN_BIDS_DONE = 20;
@@ -523,14 +524,19 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes MARK_CALLED message for one day's batch of series.
-    /// @dev Layout: [bodyVersion(1)][msgType(1)] ++ abi.encode(worldwideDay, seriesIds). The
-    ///      settlement deadline is derived on the destination from `callNoticePeriod`.
+    /// @dev Layout: [bodyVersion(1)][msgType(1)] ++ abi.encode(worldwideDay, calledAt, seriesIds). The
+    ///      origin's `calledAt` travels so every chain derives the same deadline from `callNoticePeriod`.
     /// @param _worldwideDay The worldwide day the series were derived from.
+    /// @param _calledAt Unix time the origin marked the series Called.
     /// @param _seriesIds The auction series identifiers, 1..`MAX_SERIES_PER_MARK` of them.
     /// @return The wire-encoded MARK_CALLED message.
-    function encodeMarkCalled(uint32 _worldwideDay, bytes14[] memory _seriesIds) internal pure returns (bytes memory) {
+    function encodeMarkCalled(uint32 _worldwideDay, uint32 _calledAt, bytes14[] memory _seriesIds)
+        internal
+        pure
+        returns (bytes memory)
+    {
         _assertMarkBatch(_seriesIds);
-        return abi.encodePacked(BODY_VERSION_V1, MSG_MARK_CALLED, abi.encode(_worldwideDay, _seriesIds));
+        return abi.encodePacked(BODY_VERSION_V1, MSG_MARK_CALLED, abi.encode(_worldwideDay, _calledAt, _seriesIds));
     }
 
     /// @notice Encodes MARK_QUALIFIED message for one day's batch of series.
@@ -763,13 +769,19 @@ library BridgeMsgCodec {
     ///      `UnsupportedBodyVersion`, then the batch bounds, re-checked inbound.
     /// @param _msg The wire-encoded MARK_CALLED message.
     /// @return worldwideDay The worldwide day the series were derived from.
+    /// @return calledAt Unix time the origin marked the series Called.
     /// @return seriesIds The auction series identifiers.
     function decodeMarkCalled(bytes calldata _msg)
         external
         pure
-        returns (uint32 worldwideDay, bytes14[] memory seriesIds)
+        returns (uint32 worldwideDay, uint32 calledAt, bytes14[] memory seriesIds)
     {
-        return _decodeMark(_msg, MSG_MARK_CALLED, MIN_LEN_MARK_CALLED);
+        if (_msg.length < MIN_LEN_MARK_CALLED) {
+            revert InvalidPayloadLength(MSG_MARK_CALLED, _msg.length, MIN_LEN_MARK_CALLED);
+        }
+        _assertBodyVersion(_msg);
+        (worldwideDay, calledAt, seriesIds) = abi.decode(_msg[2:], (uint32, uint32, bytes14[]));
+        _assertMarkBatch(seriesIds);
     }
 
     /// @notice Decodes MARK_QUALIFIED message.

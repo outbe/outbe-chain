@@ -149,7 +149,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
             local,
             localOrigin,
             address(localRouter),
-            BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, MarkBatchLib.one(SERIES_ID))
+            BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID))
         );
 
         assertEq(uint8(intex.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called), "series Called");

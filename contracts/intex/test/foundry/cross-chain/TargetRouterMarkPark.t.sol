@@ -61,7 +61,7 @@ contract TargetRouterMarkParkTest is CrossChainTest {
         _deliver(BridgeMsgCodec.encodeMarkQualified(WORLDWIDE_DAY, MarkBatchLib.one(SERIES_ID)));
 
         assertEq(bnbRouter.nextPendingMarkIdx(), 1, "one mark parked");
-        (bytes14 seriesId, uint8 msgType, bool exists, bool done) = bnbRouter.pendingMarks(0);
+        (bytes14 seriesId, uint8 msgType,, bool exists, bool done) = bnbRouter.pendingMarks(0);
         assertEq(seriesId, SERIES_ID, "parked for its series");
         assertEq(msgType, BridgeMsgCodec.MSG_MARK_QUALIFIED, "parked as a qualified mark");
         assertTrue(exists, "slot exists");
@@ -76,7 +76,7 @@ contract TargetRouterMarkParkTest is CrossChainTest {
 
         IIntexNFT1155.SeriesData memory data = intex.readData(SERIES_ID);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Qualified), "series flipped to Qualified");
-        (,,, bool done) = bnbRouter.pendingMarks(0);
+        (,,,, bool done) = bnbRouter.pendingMarks(0);
         assertTrue(done, "slot closed");
     }
 
@@ -94,12 +94,12 @@ contract TargetRouterMarkParkTest is CrossChainTest {
     ///         parks rather than rejecting the message.
     function test_aMarkTheSeriesRefusesIsParked() public {
         _createSeries();
-        _deliver(BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, MarkBatchLib.one(SERIES_ID)));
+        _deliver(BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID)));
 
-        _deliver(BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, MarkBatchLib.one(SERIES_ID)));
+        _deliver(BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID)));
 
         assertEq(bnbRouter.nextPendingMarkIdx(), 1, "the repeat was parked");
-        (bytes14 seriesId, uint8 msgType,,) = bnbRouter.pendingMarks(0);
+        (bytes14 seriesId, uint8 msgType,,,) = bnbRouter.pendingMarks(0);
         assertEq(seriesId, SERIES_ID, "parked for its series");
         assertEq(msgType, BridgeMsgCodec.MSG_MARK_CALLED, "parked as a called mark");
     }
@@ -120,6 +120,6 @@ contract TargetRouterMarkParkTest is CrossChainTest {
 
     function test_theShimIsOnlyCallableByTheRouterItself() public {
         vm.expectRevert(ITargetRouter.NotSelf.selector);
-        bnbRouter.applyMarkOne(SERIES_ID, BridgeMsgCodec.MSG_MARK_QUALIFIED);
+        bnbRouter.applyMarkOne(SERIES_ID, BridgeMsgCodec.MSG_MARK_QUALIFIED, 0);
     }
 }

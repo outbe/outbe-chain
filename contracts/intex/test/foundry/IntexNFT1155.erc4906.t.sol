@@ -78,7 +78,7 @@ contract IntexNFT1155Erc4906Test is Test {
         (count,) = _metadataUpdates();
         assertEq(count, 0, "parkIntex is supply-only");
 
-        nft.markCalled(SERIES_ID);
+        nft.markCalled(SERIES_ID, uint32(block.timestamp));
         (count, tokenId) = _metadataUpdates();
         assertEq(count, 1, "markCalled changes the document");
         assertEq(tokenId, iTok);
