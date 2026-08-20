@@ -229,10 +229,21 @@ library TargetInbound {
             _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, chunkKey, InboundReason.CONFLICT);
             return;
         }
-        // A chunk naming a series this chain already holds under other terms is an origin disagreement: none of
-        // it is applied, so a corrected resend of the same index can still land.
+        // A chunk naming a series under other terms — held on-chain or earlier in this same chunk — is an
+        // origin disagreement, and a series with no supply can never be created: none of the chunk is applied,
+        // so a corrected resend of the same index can still land.
+        bool[] memory exists = new bool[](series.length);
         for (uint256 s = 0; s < series.length; s++) {
-            if ($.intex.seriesExists(series[s].seriesId) && !_sameSeries($, series[s])) {
+            if (series[s].issuedIntexCount == 0) {
+                _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, chunkKey, InboundReason.INVALID);
+                return;
+            }
+            exists[s] = $.intex.seriesExists(series[s].seriesId);
+            bool conflict = exists[s] && !_sameSeries($, series[s]);
+            for (uint256 j = 0; !conflict && j < s; j++) {
+                conflict = series[j].seriesId == series[s].seriesId && !_samePayloadParams(series[j], series[s]);
+            }
+            if (conflict) {
                 _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, chunkKey, InboundReason.CONFLICT);
                 return;
             }
@@ -243,7 +254,11 @@ library TargetInbound {
         uint16 seen = ++$.issuanceChunksSeen[worldwideDay];
 
         for (uint256 s = 0; s < series.length; s++) {
-            _applyIssuance($, srcChainId, series[s]);
+            // A duplicate id inside the chunk (already param-checked above) must not re-create; treat it as seen.
+            for (uint256 j = 0; !exists[s] && j < s; j++) {
+                exists[s] = series[j].seriesId == series[s].seriesId;
+            }
+            _applyIssuance($, srcChainId, series[s], exists[s]);
         }
 
         if (seen == totalChunks) emit ITargetRouter.IssuanceCompleted(worldwideDay, totalChunks);
@@ -253,10 +268,11 @@ library TargetInbound {
     function _applyIssuance(
         TargetRouterStorage storage $,
         uint32 srcChainId,
-        BridgeMsgCodec.IssuanceInstructionsPayload memory payload
+        BridgeMsgCodec.IssuanceInstructionsPayload memory payload,
+        bool seriesKnown
     ) private {
         // Create-if-absent: any of a day's chunks may be the first to name a series.
-        if (!$.intex.seriesExists(payload.seriesId)) {
+        if (!seriesKnown) {
             $.intex
                 .createSeries(
                     IIntexNFT1155.CreateSeriesParams({
@@ -284,6 +300,17 @@ library TargetInbound {
             uint256 quantity = payload.quantities[i];
             if (quantity == 0) continue;
             address recipient = payload.recipients[i];
+            // A quantity the NFT can never mint would park an unflushable entry and burn the winner's
+            // one allocation; acknowledge it instead, leaving the pair open for a corrected resend.
+            if (quantity > type(uint16).max) {
+                _ignore(
+                    srcChainId,
+                    BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
+                    keccak256(abi.encodePacked(payload.seriesId, recipient)),
+                    InboundReason.INVALID
+                );
+                continue;
+            }
             if ($.issued[payload.seriesId][recipient]) {
                 _ignore(
                     srcChainId,
@@ -307,6 +334,19 @@ library TargetInbound {
         }
 
         emit ITargetRouter.IssuanceInstructionsReceived(srcChainId, payload.seriesId, recipientsLen);
+    }
+
+    /// @dev Whether two payloads of one chunk name a series under the same terms (their winners may differ).
+    function _samePayloadParams(
+        BridgeMsgCodec.IssuanceInstructionsPayload memory a,
+        BridgeMsgCodec.IssuanceInstructionsPayload memory b
+    ) private pure returns (bool) {
+        return a.worldwideDay == b.worldwideDay && a.issuanceCurrency == b.issuanceCurrency
+            && a.referenceCurrency == b.referenceCurrency && a.issuedIntexCount == b.issuedIntexCount
+            && a.promisLoadMinor == b.promisLoadMinor && a.entryPriceMinor == b.entryPriceMinor
+            && a.floorPriceMinor == b.floorPriceMinor && a.callPriceMinor == b.callPriceMinor
+            && a.callWindow == b.callWindow && a.callThreshold == b.callThreshold
+            && a.callNoticePeriod == b.callNoticePeriod;
     }
 
     /// @dev Whether the series this chain holds was created under exactly the chunk's terms.

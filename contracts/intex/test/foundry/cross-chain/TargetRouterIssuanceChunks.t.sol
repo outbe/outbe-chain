@@ -185,6 +185,70 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         assertEq(_balance(USD, bob), 3, "corrected chunk applied");
     }
 
+    function test_ASeriesWithNoSupplyIsInvalidNotALoop() public {
+        BridgeMsgCodec.IssuanceInstructionsPayload memory p = _series(USD, alice, 7);
+        p.issuedIntexCount = 0;
+        vm.expectEmit(true, true, true, true, address(router));
+        emit ITargetRouter.InboundMessageIgnored(
+            OUTBE_CHAIN_ID, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, bytes32(uint256(DAY) << 16), InboundReason.INVALID
+        );
+        _deliver(0, 1, _one(p));
+        assertFalse(intex.seriesExists(USD), "nothing created");
+        assertFalse(router.issuanceChunkApplied(DAY, 0), "a corrected resend can still land");
+    }
+
+    function test_AnUnmintableQuantityIsAckedAndTheAllocationStaysOpen() public {
+        BridgeMsgCodec.IssuanceInstructionsPayload memory p = _series(USD, alice, uint256(type(uint16).max) + 1);
+        vm.recordLogs();
+        _deliver(0, 2, _one(p));
+        assertEq(_balance(USD, alice), 0, "nothing minted");
+        assertFalse(router.issued(USD, alice), "the allocation is not burned");
+        assertEq(_countTopic(ITargetRouter.InboundMessageIgnored.selector), 1, "acknowledged as invalid");
+
+        _deliver(1, 2, _one(_series(USD, alice, 7))); // the corrected allocation in the run's other chunk
+        assertEq(_balance(USD, alice), 7, "the corrected allocation lands");
+    }
+
+    function test_ADuplicateSeriesWithOtherTermsInsideOneChunkIsAConflict() public {
+        BridgeMsgCodec.IssuanceInstructionsPayload[] memory chunk = new BridgeMsgCodec.IssuanceInstructionsPayload[](2);
+        chunk[0] = _series(USD, alice, 7);
+        chunk[1] = _series(USD, bob, 3);
+        chunk[1].entryPriceMinor = 101e6;
+
+        vm.expectEmit(true, true, true, true, address(router));
+        emit ITargetRouter.InboundMessageIgnored(
+            OUTBE_CHAIN_ID,
+            BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
+            bytes32(uint256(DAY) << 16),
+            InboundReason.CONFLICT
+        );
+        _deliver(0, 1, chunk);
+        assertFalse(intex.seriesExists(USD), "nothing of the chunk applied");
+    }
+
+    function test_ASeriesSplitInsideOneChunkMintsBothPieces() public {
+        BridgeMsgCodec.IssuanceInstructionsPayload[] memory chunk = new BridgeMsgCodec.IssuanceInstructionsPayload[](2);
+        chunk[0] = _series(USD, alice, 7);
+        chunk[1] = _series(USD, bob, 3); // same terms, different winners — a legitimate split
+        _deliver(0, 1, chunk);
+        assertEq(_balance(USD, alice), 7, "first piece minted");
+        assertEq(_balance(USD, bob), 3, "second piece minted");
+    }
+
+    function test_ARecipientNamedTwiceInOnePayloadIsIssuedOnce() public {
+        BridgeMsgCodec.IssuanceInstructionsPayload memory p = _series(USD, address(0), 0);
+        p.recipients = new address[](2);
+        p.quantities = new uint256[](2);
+        p.recipients[0] = alice;
+        p.recipients[1] = alice;
+        p.quantities[0] = 7;
+        p.quantities[1] = 3;
+        vm.recordLogs();
+        _deliver(0, 1, _one(p));
+        assertEq(_balance(USD, alice), 7, "only the first naming mints");
+        assertEq(_countTopic(ITargetRouter.InboundMessageIgnored.selector), 1, "the repeat is reported");
+    }
+
     // --- completeness ---
 
     function test_TheLastChunkCompletesTheDayWhateverTheOrder() public {
