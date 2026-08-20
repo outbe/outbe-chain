@@ -61,12 +61,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         mapping(address owner => mapping(uint256 tokenId => bool owns)) ownsToken;
         /// @dev Total balance across all series for each owner.
         mapping(address owner => uint256 balance) totalBalance;
-        /// @dev Per-series array of holder addresses (addresses with balance > 0).
-        mapping(uint256 tokenId => address[]) seriesHolders;
-        /// @dev Index of holder in seriesHolders[tokenId] array (for efficient swap-and-pop removal).
-        mapping(uint256 tokenId => mapping(address holder => uint256 index)) seriesHolderIndex;
-        /// @dev Whether address is in seriesHolders[tokenId].
-        mapping(uint256 tokenId => mapping(address holder => bool isHolder)) isSeriesHolder;
         /// @dev Series ids issued per worldwide day.
         mapping(uint32 worldwideDay => bytes14[] seriesIds) seriesOfDay;
     }
@@ -522,47 +516,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function getIssuedHoldersWithBalances(bytes14 seriesId, uint256 offset, uint256 limit)
-        external
-        view
-        returns (
-            address[] memory holders,
-            uint256[] memory issuedBalances,
-            uint256[] memory settledBalances,
-            uint256 total
-        )
-    {
-        if (limit == 0) revert ZeroLimit();
-
-        uint256 iTok = _issuedTokenId(seriesId);
-        uint256 sTok = _settledTokenId(seriesId);
-
-        address[] storage allHolders = _s().seriesHolders[iTok];
-        total = allHolders.length;
-        if (offset >= total) {
-            return (new address[](0), new uint256[](0), new uint256[](0), total);
-        }
-
-        // Clip the slice length to the remaining tail before adding to `offset` — prevents
-        // a checked-arithmetic panic when callers pass `type(uint256).max` as a sentinel
-        // (overflow). `offset < total` is guaranteed by the early-return above.
-        uint256 sliceLen = total - offset;
-        if (limit < sliceLen) sliceLen = limit;
-
-        holders = new address[](sliceLen);
-        issuedBalances = new uint256[](sliceLen);
-        settledBalances = new uint256[](sliceLen);
-
-        for (uint256 i = 0; i < sliceLen; i++) {
-            address h = allHolders[offset + i];
-            holders[i] = h;
-            issuedBalances[i] = balanceOf(h, iTok);
-            settledBalances[i] = balanceOf(h, sTok);
-        }
-        return (holders, issuedBalances, settledBalances, total);
-    }
-
-    /// @inheritdoc IIntexNFT1155
     function totalSupply(uint256 tokenId) external view returns (uint256) {
         return _s().seriesData[tokenId].totalSupply;
     }
@@ -636,11 +589,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
             if (from != address(0) && fromHadTokens[i] && balanceOf(from, ids[i]) == 0) {
                 _removeOwnedSeries(from, ids[i]);
-                _removeSeriesHolder(ids[i], from);
             }
             if (to != address(0) && !toHadTokens[i] && balanceOf(to, ids[i]) > 0) {
                 _addOwnedSeries(to, ids[i]);
-                _addSeriesHolder(ids[i], to);
             }
         }
     }
@@ -675,39 +626,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             $.ownedSeries[owner].pop();
             delete $.ownedSeriesIndex[owner][tokenId];
             $.ownsToken[owner][tokenId] = false;
-        }
-    }
-
-    /// @dev Add `holder` to series `tokenId`'s holder enumeration (idempotent).
-    /// @param tokenId Token ID (series).
-    /// @param holder Holder address to add.
-    function _addSeriesHolder(uint256 tokenId, address holder) internal {
-        IntexNFT1155Storage storage $ = _s();
-        if (!$.isSeriesHolder[tokenId][holder]) {
-            $.seriesHolderIndex[tokenId][holder] = $.seriesHolders[tokenId].length;
-            $.seriesHolders[tokenId].push(holder);
-            $.isSeriesHolder[tokenId][holder] = true;
-        }
-    }
-
-    /// @dev Remove `holder` from series `tokenId`'s holder enumeration (swap-and-pop, idempotent).
-    /// @param tokenId Token ID (series).
-    /// @param holder Holder address to remove.
-    function _removeSeriesHolder(uint256 tokenId, address holder) internal {
-        IntexNFT1155Storage storage $ = _s();
-        if ($.isSeriesHolder[tokenId][holder]) {
-            uint256 lastIndex = $.seriesHolders[tokenId].length - 1;
-            uint256 holderIndex = $.seriesHolderIndex[tokenId][holder];
-
-            if (holderIndex != lastIndex) {
-                address lastHolder = $.seriesHolders[tokenId][lastIndex];
-                $.seriesHolders[tokenId][holderIndex] = lastHolder;
-                $.seriesHolderIndex[tokenId][lastHolder] = holderIndex;
-            }
-
-            $.seriesHolders[tokenId].pop();
-            delete $.seriesHolderIndex[tokenId][holder];
-            $.isSeriesHolder[tokenId][holder] = false;
         }
     }
 
@@ -813,74 +731,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             ownedTokenIds[i] = tokenId;
             balances[i] = balanceOf(owner, tokenId);
         }
-    }
-
-    // --- Series holder enumeration (tokenId → holders[]) ---
-
-    /// @inheritdoc IIntexNFT1155
-    function getSeriesHolders(uint256 tokenId) external view returns (address[] memory) {
-        return _s().seriesHolders[tokenId];
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function getSeriesHoldersPaginated(uint256 tokenId, uint256 offset, uint256 limit)
-        external
-        view
-        returns (address[] memory holders, uint256 total)
-    {
-        address[] storage all = _s().seriesHolders[tokenId];
-        total = all.length;
-        if (offset >= total) return (new address[](0), total);
-
-        uint256 end = offset + limit;
-        if (end > total) end = total;
-
-        holders = new address[](end - offset);
-        for (uint256 i = offset; i < end; i++) {
-            holders[i - offset] = all[i];
-        }
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function getSeriesHoldersWithBalances(uint256 tokenId)
-        external
-        view
-        returns (address[] memory holders, uint256[] memory balances)
-    {
-        holders = _s().seriesHolders[tokenId];
-        balances = new uint256[](holders.length);
-
-        for (uint256 i = 0; i < holders.length; i++) {
-            balances[i] = balanceOf(holders[i], tokenId);
-        }
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function getSeriesHoldersWithBalancesPaginated(uint256 tokenId, uint256 offset, uint256 limit)
-        external
-        view
-        returns (address[] memory holders, uint256[] memory balances, uint256 total)
-    {
-        address[] storage all = _s().seriesHolders[tokenId];
-        total = all.length;
-        if (offset >= total) return (new address[](0), new uint256[](0), total);
-
-        uint256 end = offset + limit;
-        if (end > total) end = total;
-
-        uint256 n = end - offset;
-        holders = new address[](n);
-        balances = new uint256[](n);
-        for (uint256 i = 0; i < n; i++) {
-            address holder = all[offset + i];
-            holders[i] = holder;
-            balances[i] = balanceOf(holder, tokenId);
-        }
-    }
-
-    /// @inheritdoc IIntexNFT1155
-    function seriesHolderCount(uint256 tokenId) external view returns (uint256) {
-        return _s().seriesHolders[tokenId].length;
     }
 
     /// @notice ERC-165 interface detection.
