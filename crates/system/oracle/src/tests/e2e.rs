@@ -455,7 +455,7 @@ fn ioracle_selectors_are_unique() {
     use alloy_sol_types::SolInterface;
     use std::collections::HashSet;
 
-    const EXPECTED_IORACLE_FUNCTIONS: usize = 36;
+    const EXPECTED_IORACLE_FUNCTIONS: usize = 37;
 
     let selectors: Vec<[u8; 4]> = IOracle::IOracleCalls::selectors().collect();
     assert_eq!(
@@ -1386,6 +1386,49 @@ fn coen_pair_price_takes_the_max_of_vwap_and_scurve() {
             crate::api::coen_pair_price(storage, 978, worldwide_day).unwrap(),
             Some(coen_iso(90)),
             "EUR keeps its own VWAP"
+        );
+    });
+}
+
+/// Seeds `COEN/<iso>` at `rate` whole units so a cross rate can be read.
+fn seed_coen_rate(oracle: &mut OracleContract, iso: u16, rate: u64) {
+    let quote = crate::api::currency_address(iso);
+    oracle.register_pair(AddressPair::new_coen_to(iso)).unwrap();
+    oracle
+        .set_exchange_rate(
+            Address::ZERO,
+            AddressPair::from_addresses(COEN, quote),
+            coen_iso(rate),
+            0,
+            0,
+        )
+        .unwrap();
+}
+
+#[test]
+fn currency_cross_rate_converts_between_currencies() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        // One COEN buys 2 USD or 4 EUR, so a EUR is worth half a USD.
+        seed_coen_rate(&mut oracle, 840, 2);
+        seed_coen_rate(&mut oracle, 978, 4);
+
+        assert_eq!(
+            crate::api::currency_cross_rate(storage.clone(), 840, 978, coen_iso(10)).unwrap(),
+            coen_iso(20),
+            "10 USD is 20 EUR at COEN/USD 2 and COEN/EUR 4"
+        );
+        assert_eq!(
+            crate::api::currency_cross_rate(storage.clone(), 978, 840, coen_iso(20)).unwrap(),
+            coen_iso(10),
+            "the inverse direction reads the same two legs"
+        );
+        // Half a unit rounds up, so a charge never converts down to nothing.
+        assert_eq!(
+            crate::api::currency_cross_rate(storage.clone(), 978, 840, U256::from(1u64)).unwrap(),
+            U256::from(1u64),
+            "1 EUR unit is half a USD unit and rounds up, not down to zero"
         );
     });
 }

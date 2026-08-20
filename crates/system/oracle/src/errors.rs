@@ -60,6 +60,8 @@ pub enum OracleError {
     VwapOverflow(&'static str),
     #[error("TWAP overflow")]
     TwapOverflow,
+    #[error("cross-currency conversion overflow")]
+    CrossRateOverflow,
     #[error("lookback_seconds must be > 0 and <= lookback_duration")]
     InvalidLookbackSeconds,
     #[error("start_time must be less than end_time")]
@@ -150,6 +152,7 @@ impl From<OracleError> for PrecompileError {
             | MissingTwapData
             | VwapOverflow(_)
             | TwapOverflow
+            | CrossRateOverflow
             | InvalidLookbackSeconds
             | InvalidVwapRange
             | WorldwideDayVwapSnapshotNotFound
