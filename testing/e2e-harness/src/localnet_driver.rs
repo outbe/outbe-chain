@@ -21,7 +21,7 @@ use eyre::{bail, ensure, eyre, Result, WrapErr};
 use serde::{Deserialize, Serialize};
 
 use crate::env::{EnvCli, Environment, TeeMode};
-use crate::internal::{config::Config, eth, ports::Ports};
+use crate::internal::{config::Config, eth, ports::Ports, proc};
 use crate::world::localnet::Localnet;
 #[cfg(feature = "ocomp-integration")]
 use crate::world::localnet::StartOpts;
@@ -364,6 +364,7 @@ fn start(cli: &LocalnetCli) -> Result<()> {
                     state.ocomp_connected_workers,
                     state.ocomp_workers
                 );
+                print_funded_accounts(cli, &state.rpc_ports);
                 return Ok(());
             }
         }
@@ -529,6 +530,7 @@ fn wait_for_existing_start(
             );
             verify_running_state(cli, &state)?;
             println!("LocalNet running (pid {})", state.owner_pid);
+            print_funded_accounts(cli, &state.rpc_ports);
             return Ok(());
         }
         ensure!(
@@ -975,6 +977,48 @@ fn ensure_matches(cli: &LocalnetCli, state: &LocalnetStateV1) -> Result<()> {
         "state validator count differs"
     );
     Ok(())
+}
+
+/// The genesis-funded accounts an operator drives this localnet with.
+///
+/// A development network is unusable without them and they otherwise exist only
+/// on disk, so `start` prints them. These are throwaway devnet keys generated
+/// into the data directory for a chain that is wiped on the next bootstrap;
+/// nothing outside a localnet may print key material this way.
+fn print_funded_accounts(cli: &LocalnetCli, rpc_ports: &[u16]) {
+    let rpc = rpc_ports
+        .first()
+        .map(|port| format!("http://127.0.0.1:{port}"));
+    println!(
+        "Funded genesis accounts (also at {}/validator-<i>/evm-key.hex):",
+        cli.data_dir.display()
+    );
+    for index in 0..cli.validators {
+        let Ok(key) = proc::read_evm_key(&cli.data_dir.join(format!("validator-{index}"))) else {
+            println!("  validator-{index}: <evm-key.hex unreadable>");
+            continue;
+        };
+        let Some(address) = eth::address_of(&key) else {
+            println!("  validator-{index}: <evm-key.hex is not a valid private key>");
+            continue;
+        };
+        let balance = rpc
+            .as_deref()
+            .and_then(|url| eth::balance(url, address))
+            .map_or_else(|| "unknown".to_owned(), coen);
+        println!("  validator-{index}  {address}  {key}  {balance} COEN");
+    }
+    if let Some(rpc) = rpc {
+        println!("Primary RPC: {rpc}");
+    }
+}
+
+/// COEN carries six decimals; render base units as a decimal amount.
+fn coen(balance: alloy_primitives::U256) -> String {
+    const UNITS: u64 = 1_000_000;
+    let whole = balance / alloy_primitives::U256::from(UNITS);
+    let fraction = balance % alloy_primitives::U256::from(UNITS);
+    format!("{whole}.{:06}", fraction.to::<u64>())
 }
 
 /// One line naming the resolved enclave profile, so no run is ambiguous about
