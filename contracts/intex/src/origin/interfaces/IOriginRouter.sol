@@ -319,7 +319,7 @@ interface IOriginRouter {
         uint128[] calldata paidAmounts
     ) external payable returns (bytes32 sendId);
     /// @notice Broadcast mark-called for one day's series over its snapshot. A batch is one day's
-    ///         series in one reference currency, which share the decision that called them.
+    ///         series that share both the decision that called them and its timestamp.
     ///         Restricted to `INTEX_FACTORY_ROLE`.
     /// @dev `calledAt` is the origin's own stamp, so every chain derives the same deadline from
     ///      `callNoticePeriod` regardless of how long delivery took.

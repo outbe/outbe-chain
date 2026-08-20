@@ -273,12 +273,15 @@ pub const NOTICE_CALLED: u8 = 1;
 
 /// A Called entry packs its call time into the low bytes the 14-byte `SeriesId` leaves free,
 /// so the origin's stamp reaches the target instead of its delivery time.
-pub(crate) fn pack_called_notice(series_id: SeriesId, called_at: u32) -> U256 {
+pub fn pack_called_notice(series_id: SeriesId, called_at: u32) -> U256 {
     series_id.to_word() | U256::from(called_at)
 }
 
 fn unpack_called_notice(entry: U256) -> (SeriesId, u32) {
-    (SeriesId::from_word(entry), (entry & U256::from(u32::MAX)).to::<u32>())
+    (
+        SeriesId::from_word(entry),
+        (entry & U256::from(u32::MAX)).to::<u32>(),
+    )
 }
 
 pub(crate) fn enqueue_notice(
@@ -294,8 +297,8 @@ pub(crate) fn enqueue_notice(
 }
 
 /// Cycle-trigger entry: send the queued notices, at most [`NOTIFY_CHUNK_LIMIT`]
-/// per firing. This is where every outbound mark leaves from — the scans that
-/// queue them run in a block hook, which cannot call contracts.
+/// entries per firing. This is where every outbound mark leaves from — the scans
+/// that queue them run in a block hook, which cannot call contracts.
 pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     let storage = ctx.storage.clone();
     let factory = IntexFactoryContract::new(storage.clone());
@@ -305,16 +308,19 @@ pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
         return Ok(());
     }
     let stop = tail.min(head.saturating_add(NOTIFY_CHUNK_LIMIT));
-    for index in head..stop {
+    let mut index = head;
+    while index < stop {
         let kind = factory.notify_kind.read(&index)?;
         let entry = factory.notify_at.read(&index)?;
-        factory.notify_at.clear(&index)?;
-        factory.notify_kind.clear(&index)?;
-        // Best-effort, as it was when the sweep sent it inline: a dropped notice
-        // leaves the target chain to reconcile series state from the origin.
-        if let Err(error) = storage.with_checkpoint(|| send_notice(&storage, kind, entry)) {
-            tracing::warn!(target: "outbe::intexfactory", kind, error = ?error, "notice: dropping");
-        }
+        let consumed = if kind == NOTICE_CALLED {
+            drain_called_run(&factory, &storage, index, stop, entry)?
+        } else {
+            factory.notify_at.clear(&index)?;
+            factory.notify_kind.clear(&index)?;
+            send_notice(&storage, kind, entry)?;
+            1
+        };
+        index += consumed;
     }
     if stop == tail {
         factory.notify_head.write(0)?;
@@ -325,10 +331,50 @@ pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
+/// Send the run of Called entries that starts at `at` and shares its day and call time, never
+/// reading past `stop`: a cleared slot reads back as a well-formed Qualified notice, so a
+/// look-ahead that overshoots would drop or re-send silently. Returns how many it consumed.
+fn drain_called_run(
+    factory: &IntexFactoryContract,
+    storage: &StorageHandle<'_>,
+    at: u32,
+    stop: u32,
+    first: U256,
+) -> Result<u32> {
+    let (first_id, called_at) = unpack_called_notice(first);
+    let worldwide_day = first_id.worldwide_day();
+    let mut run = vec![first_id];
+
+    let mut index = at + 1;
+    while index < stop && run.len() < MAX_SERIES_PER_MARK {
+        if factory.notify_kind.read(&index)? != NOTICE_CALLED {
+            break;
+        }
+        let (id, ts) = unpack_called_notice(factory.notify_at.read(&index)?);
+        if ts != called_at || id.worldwide_day() != worldwide_day {
+            break;
+        }
+        run.push(id);
+        index += 1;
+    }
+
+    for slot in at..index {
+        factory.notify_at.clear(&slot)?;
+        factory.notify_kind.clear(&slot)?;
+    }
+    crate::called::notify_called(storage, worldwide_day, called_at, &run)?;
+    Ok(index - at)
+}
+
 fn send_notice(storage: &StorageHandle<'_>, kind: u8, entry: U256) -> Result<()> {
     if kind == NOTICE_CALLED {
         let (series_id, called_at) = unpack_called_notice(entry);
-        return crate::called::notify_called(storage, series_id.worldwide_day(), called_at, &[series_id]);
+        return crate::called::notify_called(
+            storage,
+            series_id.worldwide_day(),
+            called_at,
+            &[series_id],
+        );
     }
     // A group that has since been called is gone from the index, and a Called
     // series would refuse the Qualified mark anyway — so an empty read is the
@@ -349,17 +395,30 @@ fn notify_qualified(
     members: &[SeriesId],
 ) -> Result<()> {
     for chunk in members.chunks(MAX_SERIES_PER_MARK) {
-        // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
-        storage.call(
-            ORIGIN_ROUTER_ADDRESS,
-            U256::ZERO,
-            IOriginRouter::sendMarkQualifiedCall {
-                worldwideDay: worldwide_day.value(),
-                seriesIds: chunk.iter().map(|id| (*id).into()).collect(),
-            }
-            .abi_encode()
-            .into(),
-        )?;
+        // Best-effort: one checkpoint per message, so a failure takes only its own batch.
+        let sent = storage.with_checkpoint(|| {
+            // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
+            storage.call(
+                ORIGIN_ROUTER_ADDRESS,
+                U256::ZERO,
+                IOriginRouter::sendMarkQualifiedCall {
+                    worldwideDay: worldwide_day.value(),
+                    seriesIds: chunk.iter().map(|id| (*id).into()).collect(),
+                }
+                .abi_encode()
+                .into(),
+            )?;
+            Ok(())
+        });
+        if let Err(error) = sent {
+            tracing::warn!(
+                target: "outbe::intexfactory",
+                worldwide_day = worldwide_day.value(),
+                series = ?chunk.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+                error = ?error,
+                "qualified notice: dropping"
+            );
+        }
     }
     Ok(())
 }

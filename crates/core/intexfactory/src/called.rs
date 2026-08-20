@@ -22,7 +22,7 @@ use outbe_primitives::{
 
 use outbe_intex::IntexState;
 
-use crate::constants::ORIGIN_ROUTER_ADDRESS;
+use crate::constants::{MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS};
 use crate::qualified::ScanBudget;
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
@@ -405,27 +405,42 @@ pub(crate) fn try_call_group(
     Ok(group.members.len() as u32)
 }
 
-/// One message per queue entry; `called_at` travels so every target derives the
-/// same deadline the origin did.
+/// One message per group, split only where the wire's cap forces it. `called_at`
+/// travels so every target derives the same deadline the origin did.
 pub(crate) fn notify_called(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
     called_at: u32,
     members: &[SeriesId],
 ) -> Result<()> {
-    for chunk in members.chunks(1) {
-        // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
-        storage.call(
-            ORIGIN_ROUTER_ADDRESS,
-            U256::ZERO,
-            IOriginRouter::sendMarkCalledCall {
-                worldwideDay: worldwide_day.value(),
-                calledAt: called_at,
-                seriesIds: chunk.iter().map(|id| (*id).into()).collect(),
-            }
-            .abi_encode()
-            .into(),
-        )?;
+    for chunk in members.chunks(MAX_SERIES_PER_MARK) {
+        // Best-effort, as it was when the sweep sent it inline: one checkpoint per message, so a
+        // failure takes only the batch it belongs to.
+        let sent = storage.with_checkpoint(|| {
+            // Relay-float-funded: value 0, so the router self-quotes and pays the fee from its float.
+            storage.call(
+                ORIGIN_ROUTER_ADDRESS,
+                U256::ZERO,
+                IOriginRouter::sendMarkCalledCall {
+                    worldwideDay: worldwide_day.value(),
+                    calledAt: called_at,
+                    seriesIds: chunk.iter().map(|id| (*id).into()).collect(),
+                }
+                .abi_encode()
+                .into(),
+            )?;
+            Ok(())
+        });
+        if let Err(error) = sent {
+            tracing::warn!(
+                target: "outbe::intexfactory",
+                worldwide_day = worldwide_day.value(),
+                called_at,
+                series = ?chunk.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+                error = ?error,
+                "called notice: dropping"
+            );
+        }
     }
     Ok(())
 }

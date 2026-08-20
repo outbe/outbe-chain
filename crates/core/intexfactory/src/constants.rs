@@ -41,8 +41,8 @@ pub const BIN_STEP_BP: u16 = 25;
 pub(crate) const MAX_GROUP_DECISIONS_PER_SWEEP: u32 = 256;
 pub(crate) const MAX_SERIES_ACTIONS_PER_SWEEP: u32 = 256;
 
-/// Notices sent per `intex_notify` firing. Each one is a bridge dispatch per
-/// target chain, so the bound stays far below the scan's.
+/// Queue entries drained per `intex_notify` firing. Called entries of one group
+/// coalesce into a single dispatch, so this bounds the work, not the messages.
 pub const NOTIFY_CHUNK_LIMIT: u32 = 32;
 
 /// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.

@@ -44,7 +44,8 @@ library BridgeMsgCodec {
     uint16 internal constant MAX_SERIES_PER_ISSUANCE = 8;
 
     /// @notice Series one MARK_CALLED or MARK_QUALIFIED message may carry. A batch is one day's
-    ///         series in one reference currency, so it is short; the cap bounds destination work.
+    ///         series that took the same decision at the same moment, so it is short; the cap
+    ///         bounds destination work.
     uint16 internal constant MAX_SERIES_PER_MARK = 8;
 
     /// @notice Chunks one day's fan-out may span; keeps a receiver's arrival set in one word.
