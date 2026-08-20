@@ -82,8 +82,6 @@ contract TargetRouterRefundAckTest is CrossChainTest {
 
     function test_AChunkClaimingAnotherTotalCannotCloseTheDayEarly() public {
         _deliverChunk(1, 2); // fixes the day's total at 2
-        // A mis-headed sibling claiming to be the whole run must not complete the day
-        // (and route partial proceeds) — the first chunk's total stands.
         _expectIgnored(0, InboundReason.CONFLICT);
         _deliverChunk(0, 1);
         assertEq(escrow.finalizations(), 1, "the conflicting chunk never reaches the escrow");
@@ -91,7 +89,6 @@ contract TargetRouterRefundAckTest is CrossChainTest {
         assertEq(seen, 1, "not counted");
         assertEq(total, 2, "the first chunk's total stands");
 
-        // The correctly-headed resend of the same index lands and completes the day.
         _deliverChunk(0, 2);
         (seen,) = target.refundChunks(DAY);
         assertEq(seen, 2, "day completed by the corrected chunk");

@@ -116,7 +116,6 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
 
     function test_AWinnerNamedTwiceAcrossChunksIsIssuedOnce() public {
         _deliver(0, 2, _one(_series(USD, alice, 7)));
-        // A second chunk that names alice again (an origin slip) must not top her up.
         vm.recordLogs();
         _deliver(1, 2, _one(_series(USD, alice, 3)));
         assertEq(_balance(USD, alice), 7, "alice keeps her one allocation");

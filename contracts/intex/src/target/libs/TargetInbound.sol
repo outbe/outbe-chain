@@ -97,9 +97,8 @@ library TargetInbound {
         // Relay the revealed bids exactly once. A redelivered CLEARING must not re-relay under a fresh generation.
         if (!$.clearingRelayed[worldwideDay]) {
             $.clearingRelayed[worldwideDay] = true;
-            try ITargetRouterShims(address(this)).relayBidsToOutbe(worldwideDay) {
-            // ok — bids forwarded
-            }
+            // solhint-disable-next-line no-empty-blocks
+            try ITargetRouterShims(address(this)).relayBidsToOutbe(worldwideDay) {}
             catch (bytes memory reason) {
                 uint256 idx = $.nextPendingBidsRelayIdx++;
                 $.pendingBidsRelays[idx] = PendingBidsRelay({worldwideDay: worldwideDay, exists: true, done: false});
@@ -507,9 +506,8 @@ library TargetInbound {
     /// @dev Route proceeds to Outbe, parking series+amount on failure so a transport/float hiccup never rolls
     ///      back the finalization (the WCOEN is already held here). Retried via `flushPendingProceedsRoute`.
     function _routeOrParkProceeds(TargetRouterStorage storage $, uint32 worldwideDay, uint128 amount) private {
-        try ITargetRouterShims(address(this)).routeProceedsExt(worldwideDay, amount) {
-        // ok — proceeds routed
-        }
+        // solhint-disable-next-line no-empty-blocks
+        try ITargetRouterShims(address(this)).routeProceedsExt(worldwideDay, amount) {}
         catch (bytes memory reason) {
             uint256 idx = $.nextPendingProceedsRouteIdx++;
             $.pendingProceedsRoutes[idx] =

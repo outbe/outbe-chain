@@ -105,9 +105,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
 
     function test_ASlottedCalledWaitsForTheValveSoTheWinnersMintFirst() public {
         _deliver(_called());
-        // Issuance creates the series and mints; the Called slot must NOT apply mid-issuance —
-        // its holders migration would snapshot the still-empty series.
-        _deliver(_issuance());
+        _deliver(_issuance()); // the Called slot must not apply mid-issuance against the still-empty series
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Issued), "winners minted into a live series");
         assertEq(router.pendingMark(series), BridgeMsgCodec.MSG_MARK_CALLED, "the Called still waits");
 

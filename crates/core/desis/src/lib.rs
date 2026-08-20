@@ -15,8 +15,6 @@ pub(crate) mod sol_ext;
 pub(crate) mod state;
 
 #[cfg(test)]
-mod inbound_tests;
-#[cfg(test)]
 mod tests;
 
 pub use errors::DesisError;

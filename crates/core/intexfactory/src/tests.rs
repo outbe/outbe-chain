@@ -2519,3 +2519,34 @@ fn a_chains_series_batch_even_when_another_chain_comes_between_them() {
         vec![(10, 2, 3), (20, 1, 3)]
     );
 }
+
+#[test]
+fn a_chains_chunks_form_one_run_even_when_another_chain_interleaves() {
+    let packed =
+        runtime::pack_issuance_messages(vec![leg(10, 1, 64), leg(20, 1, 5), leg(10, 2, 64)]);
+    let chunked = runtime::chunk_issuance_messages(packed);
+
+    let shape: Vec<(u32, Vec<usize>)> = chunked
+        .iter()
+        .map(|(chain, messages)| {
+            (
+                *chain,
+                messages
+                    .iter()
+                    .map(|m| m.iter().map(|s| s.recipients.len()).sum())
+                    .collect(),
+            )
+        })
+        .collect();
+    assert_eq!(shape, vec![(10, vec![64, 64]), (20, vec![5])]);
+}
+
+#[test]
+fn a_single_message_day_is_chunk_zero_of_one() {
+    let chunked =
+        runtime::chunk_issuance_messages(runtime::pack_issuance_messages(vec![leg(7, 1, 3)]));
+    assert_eq!(chunked.len(), 1);
+    assert_eq!(chunked[0].0, 7);
+    assert_eq!(chunked[0].1.len(), 1);
+    assert_eq!(chunked[0].1[0][0].recipients.len(), 3);
+}
