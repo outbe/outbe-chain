@@ -40,6 +40,11 @@ pub enum TeeMode {
     /// Test-only mock enclave binary under `gramine-direct` (no SGX).
     #[default]
     Mock,
+    /// Test-only mock enclave binary as a plain host process — no container, no
+    /// Gramine, no LibOS, no attestation. For hosts where Gramine cannot run
+    /// (the amd64 image has no arm64 build and dies under emulation), which is
+    /// every macOS box. Development only; it proves nothing Gramine proves.
+    MockNative,
 }
 
 impl TeeMode {
@@ -50,7 +55,13 @@ impl TeeMode {
 
     /// Whether the test-only mock enclave binary is selected.
     pub const fn uses_mock_binary(self) -> bool {
-        matches!(self, TeeMode::Mock)
+        matches!(self, TeeMode::Mock | TeeMode::MockNative)
+    }
+
+    /// Whether the enclave runs as a bare host process instead of inside the
+    /// Gramine test container. No image is built, resolved or recorded.
+    pub const fn runs_native_host_enclave(self) -> bool {
+        matches!(self, TeeMode::MockNative)
     }
 
     /// Whether SGX device nodes are passed to the Gramine container.
@@ -60,7 +71,10 @@ impl TeeMode {
 
     /// Whether the harness supplies a deterministic per-validator DKG seed.
     pub const fn uses_deterministic_dkg_seed(self) -> bool {
-        matches!(self, TeeMode::GramineDirect | TeeMode::Mock)
+        matches!(
+            self,
+            TeeMode::GramineDirect | TeeMode::Mock | TeeMode::MockNative
+        )
     }
 
     /// Stable CLI/evidence spelling for the selected mode.
@@ -70,6 +84,7 @@ impl TeeMode {
             Self::SgxNoAttest => "sgx-no-attest",
             Self::GramineDirect => "gramine-direct",
             Self::Mock => "mock",
+            Self::MockNative => "mock-native",
         }
     }
 
@@ -248,7 +263,7 @@ impl Environment {
             ports: Ports::new(!cli.no_resolve_ports),
             no_cleanup: cli.no_cleanup,
             tee_mode: cli.tee,
-            sudo: !cli.no_sudo,
+            sudo: !cli.no_sudo && !docker_reachable_without_sudo(),
             all: cli.all,
             debug: cli.debug,
             data_dir: cli.data_dir.clone().unwrap_or_else(default_data_dir),
@@ -326,6 +341,26 @@ impl Default for Environment {
             projection_mongodb_uri: "auto".to_owned(),
         })
     }
+}
+
+/// Whether this user can already drive the Docker daemon unprivileged, so the
+/// harness must not prepend `sudo` and prompt for a password it does not need.
+///
+/// True for Docker Desktop (macOS) and for any Linux host whose user is in the
+/// `docker` group; false for a rootful daemon, which still gets `sudo`. Mirrors
+/// `scripts/localnet-mongo.sh`. Probed once — the daemon does not change
+/// reachability mid-run, and every `base_cmd` would otherwise pay for it.
+fn docker_reachable_without_sudo() -> bool {
+    static REACHABLE: OnceLock<bool> = OnceLock::new();
+    *REACHABLE.get_or_init(|| {
+        std::process::Command::new("docker")
+            .arg("info")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .stdin(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    })
 }
 
 /// Default repo root: two levels up from this crate (`testing/e2e-harness`).
@@ -498,6 +533,51 @@ mod tests {
         assert!(mode.satisfies_gramine_direct_requirement());
         assert!(!TeeMode::Mock.satisfies_gramine_direct_requirement());
         assert!(!TeeMode::Real.satisfies_gramine_direct_requirement());
+    }
+
+    /// The native profile runs the same mock binary and the same deterministic
+    /// seed, but outside Gramine — so it must carry its own evidence label and
+    /// must not stand in for any profile that proves a Gramine or SGX property.
+    #[test]
+    fn native_host_mode_is_a_distinct_profile_that_proves_no_gramine_property() {
+        let mode = TeeMode::MockNative;
+        assert!(mode.enabled());
+        assert!(mode.uses_mock_binary());
+        assert!(mode.runs_native_host_enclave());
+        assert!(mode.uses_deterministic_dkg_seed());
+        assert!(!mode.passes_sgx_devices());
+        assert_eq!(mode.evidence_name(), "mock-native");
+        assert!(!mode.satisfies_gramine_direct_requirement());
+        assert!(!mode.satisfies_sgx_no_attest_requirement());
+
+        // Every containerized profile keeps running under Gramine.
+        for containerized in [
+            TeeMode::Real,
+            TeeMode::SgxNoAttest,
+            TeeMode::GramineDirect,
+            TeeMode::Mock,
+        ] {
+            assert!(
+                !containerized.runs_native_host_enclave(),
+                "{containerized:?} must stay containerized"
+            );
+            assert_ne!(containerized.evidence_name(), mode.evidence_name());
+        }
+    }
+
+    /// Both mock profiles select the mock binary; only the wrapper differs.
+    #[test]
+    fn native_host_mode_selects_the_mock_enclave_binary() {
+        let env = Environment {
+            tee_mode: TeeMode::MockNative,
+            mock_bin: PathBuf::from("/artifact-set/outbe-tee-enclave-mock"),
+            enclave_bin: PathBuf::from("/artifact-set/outbe-tee-enclave"),
+            ..Environment::default()
+        };
+        assert_eq!(
+            env.selected_enclave_bin(),
+            Path::new("/artifact-set/outbe-tee-enclave-mock")
+        );
     }
 
     #[test]

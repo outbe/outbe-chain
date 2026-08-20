@@ -91,6 +91,34 @@ impl OcompExExCheckpointStoreV1 {
                 return Err(OcompExExCheckpointErrorV1::NonMonotonic);
             }
         }
+        self.write_record(checkpoint)
+    }
+
+    /// Move the watermark back to `checkpoint`, discarding a higher one.
+    ///
+    /// Reserved for startup reconciliation against the canonical chain this
+    /// node actually has on disk. The watermark is fsynced independently of
+    /// block persistence, so an unclean shutdown can leave it naming a block
+    /// the node no longer holds. Per-job work is rebuilt from canonical
+    /// notifications, so resuming lower re-scans rather than losing anything.
+    /// [`Self::persist`] stays strictly monotonic.
+    pub fn rewind_to(
+        &mut self,
+        checkpoint: OcompExExCheckpointV1,
+    ) -> Result<(), OcompExExCheckpointErrorV1> {
+        if checkpoint.block_hash.is_zero() {
+            return Err(OcompExExCheckpointErrorV1::InvalidCheckpoint);
+        }
+        if self.current == Some(checkpoint) {
+            return Ok(());
+        }
+        self.write_record(checkpoint)
+    }
+
+    fn write_record(
+        &mut self,
+        checkpoint: OcompExExCheckpointV1,
+    ) -> Result<(), OcompExExCheckpointErrorV1> {
         let pending = self.root.join(PENDING_NAME);
         let final_path = self.root.join(FILE_NAME);
         let mut file = OpenOptions::new()

@@ -14,6 +14,17 @@ Supported profiles are:
 | `DcapRequired` | production `outbe-tee-enclave`, `gramine-sgx`, NodeHost | DCAP | testnet/production admission |
 | `GramineDirectDev` | production `outbe-tee-enclave`, `gramine-sgx`, NodeHost | none | real SGX development network without Intel collateral |
 | `GramineDirectDev` | production or mock enclave, `gramine-direct`, development session | none | hardware-free development |
+| `GramineDirectDev` | mock enclave as a native host process, development session | none | development on hosts where Gramine cannot run |
+
+The fourth profile exists because the Gramine test image is published for
+`linux/amd64` only and does not survive emulation, so no Apple Silicon host can
+run it. It executes the same mock enclave binary with the same arguments, but
+directly on the host: no container, no LibOS, no manifest and no signing key.
+The Rust localnet harness selects it automatically on every non-Linux host and
+labels it `mock-native`; Linux keeps the containerized `mock` profile. It is a
+separate named profile, not a fallback — nothing that requires `@gramine-direct`
+or `@sgx-no-attest` is satisfied by it, and it records no Gramine image
+identity. `run-testnet.sh` does not offer it at all.
 
 The second profile is intentionally supported. It executes inside real SGX,
 uses the SGX local report, EGETKEY-backed sealing and the production NodeHost
@@ -211,6 +222,7 @@ governance replacement, forced DKG or testnet-to-devnet fallback.
 | Path | What it proves | What it does not prove |
 | --- | --- | --- |
 | `GramineDirectDev` | deterministic devnet behavior and reachable operator flow | SGX, DCAP, Intel collateral or testnet readiness |
+| `mock-native` localnet | deterministic devnet behavior and reachable operator flow on a Gramine-less host | Gramine, the LibOS sandbox, SGX, DCAP or Intel collateral |
 | private `#[cfg(test)]` verdict capability | I3-I8 state-machine behavior after the verifier boundary | quote parsing, QVL execution or hardware acceptance |
 | synthetic cap vectors | deterministic bounds, allocation order and gas arithmetic | Intel-signed hardware evidence |
 | fresh I9 `gramine-sgx` runs | exact-release Processor acceptance and timing | a future Platform node's own admission evidence |
