@@ -459,21 +459,6 @@ fn relayed_bids(url: &str, worldwide_day: u32, chain_id: u32) -> String {
 /// carry ordinary time: a chain that has not resumed yet looks identical to a
 /// settled one if only the clock is sampled.
 #[cfg(feature = "ocomp-integration")]
-/// Desis starts a day's auction from the `auction_advance` cycle trigger, which
-/// has a twelve-hour slot. A day briefed just after one slot waits for the next,
-/// so the scenario walks the clock there rather than expecting an instant start.
-#[when("the committee clock reaches the next auction slot")]
-fn committee_clock_reaches_next_auction_slot(world: &mut World) {
-    const AUCTION_SLOT_SECS: u64 = 43_200;
-    let port = world.validators.primary_port();
-    let now = world
-        .rpc
-        .latest_block_timestamp(port)
-        .expect("committee head timestamp");
-    let next_slot = now / AUCTION_SLOT_SECS * AUCTION_SLOT_SECS + AUCTION_SLOT_SECS;
-    let _ = crate::features::ocomp::restart_committee_at_logical_time(world, next_slot + 60);
-}
-
 #[when("the committee clock settles after the jump")]
 fn committee_clock_settles(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());

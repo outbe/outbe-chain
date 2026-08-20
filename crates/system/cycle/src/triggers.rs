@@ -122,6 +122,19 @@ pub fn metadosis_mutation_lease_budget_per_tick() -> u8 {
     })
 }
 
+/// An e2e day is minutes long, so the auction schedule advances on a cadence
+/// that fits there rather than the production half-day one.
+#[cfg(not(feature = "e2e-test"))]
+const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 43_200;
+#[cfg(feature = "e2e-test")]
+const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 60;
+
+/// Cadence of the two outbound polls, shortened for the same reason.
+#[cfg(not(feature = "e2e-test"))]
+const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 600;
+#[cfg(feature = "e2e-test")]
+const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 30;
+
 /// Active trigger table. Order is informational only — the dispatcher
 /// fires triggers independently per slot.
 pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 7] {
@@ -178,7 +191,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
         TriggerSpec {
             id: TriggerId::AuctionAdvance.as_u32(),
             label: "auction_advance",
-            period_seconds: 43_200,
+            period_seconds: AUCTION_ADVANCE_PERIOD_SECONDS,
             start_offset_seconds: 0,
             // Gated like emission_limit_1 so the brief it writes and this start
             // land in the same slot.
@@ -191,7 +204,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             label: "auction_clearing",
             // Polls the fan-in gate `auction_advance` arms, so it runs far more
             // often than the stage schedule advances.
-            period_seconds: 600,
+            period_seconds: OUTBOUND_POLL_PERIOD_SECONDS,
             start_offset_seconds: 0,
             // Clears from bids already ingested and the router's frozen target
             // list; no dependency on the parent block's settlement accounting.
@@ -214,7 +227,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
         TriggerSpec {
             id: TriggerId::IntexNotify.as_u32(),
             label: "intex_notify",
-            period_seconds: 600,
+            period_seconds: OUTBOUND_POLL_PERIOD_SECONDS,
             start_offset_seconds: 0,
             // Drains a queue the qualify sweep filled; reads no accounting state.
             requires_accounting_window: false,
