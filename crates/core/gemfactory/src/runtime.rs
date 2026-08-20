@@ -299,11 +299,11 @@ pub fn settle_gem(
 
     // The Cost Amount is denominated in the reference currency, so a settlement
     // that resolves to the issuance currency is charged at the live cross rate.
-    let amount_paid = outbe_oracle::api::convert_currency(
+    let amount_paid = outbe_oracle::api::currency_cross_rate(
         storage.clone(),
-        item.cost_amount_minor,
         item.reference_currency,
         expected,
+        item.cost_amount_minor,
     )?;
 
     gem_api::set_state(storage, gem_id, GemState::Settled)?;

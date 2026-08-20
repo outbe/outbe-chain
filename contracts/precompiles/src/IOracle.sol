@@ -55,7 +55,7 @@ interface IOracle {
     ///         both COEN legs: `amount * rate(COEN/toIso) / rate(COEN/fromIso)`,
     ///         rounded up. Equal currencies return `amount` unchanged.
     /// @dev Reverts when either leg has no registered pair or no published rate.
-    function convertCurrency(uint256 amount, uint16 fromIso, uint16 toIso) external view returns (uint256 converted);
+    function currencyCrossRate(uint16 fromIso, uint16 toIso, uint256 amount) external view returns (uint256 converted);
 
     /// @notice `getExchangeRate` plus when the rate was last written. The block
     ///         and timestamp describe the stored observation and are the same

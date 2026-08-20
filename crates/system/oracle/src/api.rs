@@ -106,11 +106,11 @@ pub fn coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<U256> {
 /// short-circuit and read no rate at all.
 ///
 /// Reverts when either leg has no registered pair or no published rate.
-pub fn convert_currency(
+pub fn currency_cross_rate(
     storage: StorageHandle,
-    amount: U256,
     from_iso: u16,
     to_iso: u16,
+    amount: U256,
 ) -> Result<U256> {
     if from_iso == to_iso || amount.is_zero() {
         return Ok(amount);
