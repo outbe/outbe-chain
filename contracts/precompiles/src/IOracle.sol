@@ -100,10 +100,14 @@ interface IOracle {
     /// @notice Returns the number of registered pairs.
     function getPairCount() external view returns (uint32 count);
 
-    /// @notice The pair at a 1-based registry index, in canonical orientation.
+    /// @notice The pair at a 1-based registry index, in canonical orientation,
+    ///         with the decimals each side is quoted in.
     /// @dev Together with `getPairCount` this is how the whole registry is
     ///      enumerated. Reverts outside `1..getPairCount()`.
-    function getPairByIndex(uint32 index) external view returns (address base, address quote);
+    function getPairByIndex(uint32 index)
+        external
+        view
+        returns (address base, address quote, uint8 baseScale, uint8 quoteScale);
 
     /// @notice Returns all active vote target pairs.
     function getVoteTargets() external view returns (address[] memory bases, address[] memory quotes);

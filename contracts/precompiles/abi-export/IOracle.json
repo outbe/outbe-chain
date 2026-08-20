@@ -420,6 +420,16 @@
         "name": "quote",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "baseScale",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "quoteScale",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
     "stateMutability": "view"
