@@ -22,7 +22,7 @@ use crate::metadosis_p0::{
 };
 
 const FRESH_SCENARIO: &str =
-    "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay";
+    "A public Tribute completes real OCOMP, FullNode verification, NOD, replay, and contributor payout";
 const P0_SCENARIO: &str = "A shard-cap-plus-one public population is completely processed";
 
 pub fn run_fresh_devnet(repo: &Path, output: &Path) -> Result<()> {

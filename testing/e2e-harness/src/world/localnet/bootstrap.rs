@@ -701,6 +701,8 @@ impl Localnet {
             "timestamp": format!("0x{now:x}"),
             "extraData": "0x",
             "gasLimit": "0x1c9c380",
+            // Start at the protocol floor: the harness pays it as its max fee.
+            "baseFeePerGas": "0x7",
             "difficulty": "0x0",
             "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
             "coinbase": "0x0000000000000000000000000000000000000000",

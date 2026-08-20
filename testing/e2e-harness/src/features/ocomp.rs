@@ -1594,6 +1594,11 @@ fn fresh_domains_retain_authenticated_workers(world: &mut World) {
     }
 }
 
+/// How long the logical clock may stand still before the ratchet counts as
+/// stalled. Bounding the wait by progress rather than by the distance jumped
+/// keeps a loaded host from expiring a run that is still moving.
+const RATCHET_STALL_TIMEOUT: Duration = Duration::from_secs(180);
+
 fn advance_fresh_metadosis_time(
     world: &mut World,
     requested_timestamp: u64,
@@ -1602,11 +1607,20 @@ fn advance_fresh_metadosis_time(
 ) {
     let (offset, before_restart, minimum_height) =
         restart_committee_at_logical_time(world, requested_timestamp);
+    let before_timestamp = before_restart[0].block_timestamp;
     let worldwide_day = fresh_metadosis_wwd(world);
-    let deadline = Instant::now() + Duration::from_secs(240);
+    // The chain closes the gap one hour per block, so wait on progress rather
+    // than on a budget derived from the distance: a loaded host slows block
+    // production without stalling it.
+    let mut deadline = Instant::now() + RATCHET_STALL_TIMEOUT;
+    let mut last_timestamp = before_timestamp;
     let (after_restart, changes) = loop {
         let points = finalized_points_at_common_height(world, minimum_height);
         let common_height = points[0].block_number;
+        if points[0].block_timestamp > last_timestamp {
+            last_timestamp = points[0].block_timestamp;
+            deadline = Instant::now() + RATCHET_STALL_TIMEOUT;
+        }
         let states = world
             .validators
             .committee_ports()
@@ -1650,7 +1664,19 @@ fn advance_fresh_metadosis_time(
         assert!(
             Instant::now() < deadline,
             "fresh Metadosis WWD did not reach status {expected_persisted_status} with edges \
-             {expected_edges:?}; the production one-hour timestamp drift ratchet may be stalled"
+             {expected_edges:?}; observed statuses {observed:?} and edges {seen:?} at logical \
+             timestamp {reached} (requested {requested_timestamp}); the drift ratchet made no \
+             progress for {stall:?}",
+            observed = states
+                .iter()
+                .map(|state| state.as_ref().map(|state| state.status))
+                .collect::<Vec<_>>(),
+            seen = changes[0].as_ref().map(|edges| edges
+                .iter()
+                .map(|edge| (edge.old_status, edge.new_status))
+                .collect::<Vec<_>>()),
+            reached = points[0].block_timestamp,
+            stall = RATCHET_STALL_TIMEOUT,
         );
         sleep(Duration::from_millis(250));
     };

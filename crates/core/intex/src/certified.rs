@@ -48,7 +48,7 @@ pub fn install_certified_contributor_root(
 
     let current = api::ocomp_contributor_target_projection(
         storage,
-        WorldwideDay::new(input.precondition.series_id),
+        WorldwideDay::new(input.precondition.worldwide_day),
     )?;
     if current.expected_series_version != input.precondition.expected_series_version {
         return Err(revert("certified contributor target version changed"));
@@ -59,7 +59,9 @@ pub fn install_certified_contributor_root(
 
     let intex = IntexContract::new(storage.clone());
     if intex
-        .ocomp_certified_contributor_generation(WorldwideDay::new(input.precondition.series_id))?
+        .ocomp_certified_contributor_generation(WorldwideDay::new(
+            input.precondition.worldwide_day,
+        ))?
         .is_some()
     {
         return Err(revert("certified contributor root cannot be overwritten"));
@@ -70,7 +72,7 @@ pub fn install_certified_contributor_root(
         .ok_or_else(|| revert("certified contributor series version overflow"))?;
 
     let state_projection = ContributorStateEventProjectionV1 {
-        series_id: input.precondition.series_id,
+        worldwide_day: input.precondition.worldwide_day,
         series_version_before: input.precondition.expected_series_version,
         series_version_after: next_version,
         contributor_count: input.contributor_count,
@@ -94,7 +96,7 @@ pub fn install_certified_contributor_root(
     receipt.receipt_hash(limits).map_err(protocol_error)?;
 
     let installed = CertifiedContributorGenerationProjection {
-        series_id: input.precondition.series_id,
+        worldwide_day: input.precondition.worldwide_day,
         series_version: next_version,
         contributor_root: input.contributor_root,
         contributor_count: input.contributor_count,
@@ -102,24 +104,24 @@ pub fn install_certified_contributor_root(
     };
     storage.with_checkpoint(|| {
         intex.ocomp_contributor_root.write(
-            &WorldwideDay::new(installed.series_id),
+            &WorldwideDay::new(installed.worldwide_day),
             installed.contributor_root,
         )?;
         intex.ocomp_eligible_nominal_total.write(
-            &WorldwideDay::new(installed.series_id),
+            &WorldwideDay::new(installed.worldwide_day),
             installed.eligible_nominal_total,
         )?;
         // Metadata contains the version selector and switches only after the
         // root and total are durable.
         intex.ocomp_contributor_metadata.write(
-            &WorldwideDay::new(installed.series_id),
+            &WorldwideDay::new(installed.worldwide_day),
             installed.metadata_word(),
         )?;
         storage.emit_event(
             INTEX_ADDRESS,
             IIntex::CertifiedContributorRootInstalled {
                 activationCallId: input.binding.activation_call_id,
-                worldwideDay: input.precondition.series_id,
+                worldwideDay: input.precondition.worldwide_day,
                 seriesVersionBefore: input.precondition.expected_series_version,
                 seriesVersionAfter: next_version,
                 contributorCount: input.contributor_count,
@@ -387,11 +389,11 @@ mod tests {
         SeriesId::pack(WorldwideDay::new(worldwide_day), *b"USD", b'U').unwrap()
     }
 
-    fn input(series_id: u32, call: u8) -> CertifiedContributorRootV1 {
+    fn input(worldwide_day: u32, call: u8) -> CertifiedContributorRootV1 {
         CertifiedContributorRootV1 {
             binding: binding(call),
             precondition: ContributorTargetPreconditionV1 {
-                series_id,
+                worldwide_day,
                 expected_series_version: 0,
                 max_contributor_count: 4,
                 max_eligible_nominal_total: U256::from(100_000_000_u128),
@@ -462,9 +464,9 @@ mod tests {
             ])
         );
         assert_eq!(
-            provider.generation(input.precondition.series_id),
+            provider.generation(input.precondition.worldwide_day),
             Some(CertifiedContributorGenerationProjection {
-                series_id: input.precondition.series_id,
+                worldwide_day: input.precondition.worldwide_day,
                 series_version: 1,
                 contributor_root: input.contributor_root,
                 contributor_count: input.contributor_count,
@@ -474,15 +476,16 @@ mod tests {
         let (series_exists, legacy_contributors, target) =
             StorageHandle::enter(&mut provider, |storage| {
                 (
-                    api::series_exists(&storage, test_sid(input.precondition.series_id)).unwrap(),
+                    api::series_exists(&storage, test_sid(input.precondition.worldwide_day))
+                        .unwrap(),
                     api::read_contributors(
                         &storage,
-                        WorldwideDay::new(input.precondition.series_id),
+                        WorldwideDay::new(input.precondition.worldwide_day),
                     )
                     .unwrap(),
                     api::ocomp_contributor_target_projection(
                         &storage,
-                        WorldwideDay::new(input.precondition.series_id),
+                        WorldwideDay::new(input.precondition.worldwide_day),
                     )
                     .unwrap(),
                 )
@@ -494,7 +497,7 @@ mod tests {
         assert_eq!(target.contributor_total, input.eligible_nominal_total);
 
         let projection = ContributorStateEventProjectionV1 {
-            series_id: input.precondition.series_id,
+            worldwide_day: input.precondition.worldwide_day,
             series_version_before: 0,
             series_version_after: 1,
             contributor_count: input.contributor_count,
@@ -531,7 +534,9 @@ mod tests {
         input.eligible_nominal_total = U256::ZERO;
 
         let receipt = provider.run(&input).unwrap();
-        let generation = provider.generation(input.precondition.series_id).unwrap();
+        let generation = provider
+            .generation(input.precondition.worldwide_day)
+            .unwrap();
         assert!(!excluded.nominal_amount_minor.is_zero());
         assert_eq!(generation.contributor_count, 0);
         assert_eq!(generation.eligible_nominal_total, U256::ZERO);
@@ -592,7 +597,7 @@ mod tests {
         let record_result = StorageHandle::enter(&mut provider, |storage| {
             api::record_contributors(
                 &storage,
-                WorldwideDay::new(value.precondition.series_id),
+                WorldwideDay::new(value.precondition.worldwide_day),
                 &legacy_contributors,
             )
         });
@@ -604,8 +609,8 @@ mod tests {
             api::create_series(
                 &storage,
                 crate::CreateSeriesParams {
-                    series_id: test_sid(value.precondition.series_id),
-                    worldwide_day: value.precondition.series_id.into(),
+                    series_id: test_sid(value.precondition.worldwide_day),
+                    worldwide_day: value.precondition.worldwide_day.into(),
                     issued_intex_count: 1,
                     promis_load_minor: 1,
                     entry_price_minor: U256::from(1),
@@ -622,17 +627,19 @@ mod tests {
                 },
             )
             .unwrap();
-            assert!(api::series_exists(&storage, test_sid(value.precondition.series_id)).unwrap());
+            assert!(
+                api::series_exists(&storage, test_sid(value.precondition.worldwide_day)).unwrap()
+            );
             assert!(api::read_contributors(
                 &storage,
-                WorldwideDay::new(value.precondition.series_id)
+                WorldwideDay::new(value.precondition.worldwide_day)
             )
             .unwrap()
             .is_empty());
             assert_eq!(
                 api::certified_contributor_generation(
                     &storage,
-                    WorldwideDay::new(value.precondition.series_id)
+                    WorldwideDay::new(value.precondition.worldwide_day)
                 )
                 .unwrap()
                 .unwrap()
@@ -741,7 +748,7 @@ mod tests {
         assert_eq!(receipt.contributor_root, value.contributor_root);
         assert_eq!(
             provider
-                .generation(value.precondition.series_id)
+                .generation(value.precondition.worldwide_day)
                 .unwrap()
                 .series_version,
             1

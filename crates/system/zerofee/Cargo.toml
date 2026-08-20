@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 outbe-primitives.workspace = true
+outbe-intexfactory.workspace = true
 outbe-oracle.workspace = true
 outbe-validatorset.workspace = true
 outbe-macros.workspace = true

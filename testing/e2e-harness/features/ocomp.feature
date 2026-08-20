@@ -12,7 +12,7 @@ Feature: Off-chain computation and Metadosis
   # OCOMP-TEST-ID: OCM-PUB-001
   # OCOMP-TEST-ID: OCM-PUB-004
   # PFS-TEST-ID: PFS-011-01
-  Scenario: A public Tribute completes real OCOMP, FullNode verification, NOD, and replay
+  Scenario: A public Tribute completes real OCOMP, FullNode verification, NOD, replay, and contributor payout
     Given a fresh four-validator Metadosis capacity localnet at FORMING
     Then the fresh capacity day is created in FORMING by finalized block 1
     And every OCOMP transaction signer is distinct and scoped only to the OCOMP role
@@ -43,6 +43,10 @@ Feature: Off-chain computation and Metadosis
     Then the completed generation and exact vote replay remain identical
     When a late follower replays the finalized OCOMP request and quorum blocks
     Then runtime traces prove proposal import and historical replay without on-chain calculation
+    And the certified contributor authority for that day is identical on every validator
+    And that day has no open contributor payout round before proceeds arrive
+    When the day's auction proceeds arrive from one chain
+    Then every certified contributor is paid their share
 
   @ocomp-materialization
   Scenario: A certified generation is materialized into user NODs in bounded batches
@@ -73,6 +77,10 @@ Feature: Off-chain computation and Metadosis
     When all validator nodes and OCOMP node-facing processes restart with preserved data
     Then the completed materialization cursor and ordinary NOD set remain unchanged
     And validator 0 reconstructs that certified generation from canonical history
+    And the certified contributor authority for that day is identical on every validator
+    And that day has no open contributor payout round before proceeds arrive
+    When the day's auction proceeds arrive from one chain
+    Then every certified contributor is paid their share
 
   @ocomp-int-024
   Scenario: A worker failure is isolated from consensus
