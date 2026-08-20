@@ -212,6 +212,12 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
         assertEq(uint8(auction.getAuctionStage(DAY)), uint8(IIntexAuction.AuctionStage.Issuance), "not cleared");
     }
 
+    function test_AResultForACancelledDayIsObsolete() public {
+        _deliver(_start(DAY, uint32(block.timestamp + 1 days), 60e6, uint8(IIntexAuction.WorldwideDayState.Red)));
+        _expectIgnored(BridgeMsgCodec.MSG_AUCTION_RESULT, InboundReason.OBSOLETE);
+        _deliver(BridgeMsgCodec.encodeAuctionResult(DAY, 0, 0, 0));
+    }
+
     function test_AResultForADayNeverOpenedHereIsUnknown() public {
         _expectIgnored(BridgeMsgCodec.MSG_AUCTION_RESULT, InboundReason.UNKNOWN);
         _deliver(BridgeMsgCodec.encodeAuctionResult(DAY, 0, 0, 0));
