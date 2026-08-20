@@ -646,6 +646,30 @@
     },
     {
       "type": "function",
+      "name": "refundChunks",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "seen",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "total",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "relayBidsToOutbe",
       "inputs": [
         {

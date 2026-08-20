@@ -82,6 +82,9 @@ struct TargetRouterStorage {
     mapping(uint32 worldwideDay => uint128 accrued) refundProceedsAccrued;
     /// @dev How many of the day's refund chunks have been applied.
     mapping(uint32 worldwideDay => uint16 applied) refundChunksSeen;
+    /// @dev How many refund chunks the day's run spans, as the first applied chunk declared; a chunk
+    ///      claiming another total is a conflict, so an under-totaled header cannot close the day early.
+    mapping(uint32 worldwideDay => uint16 total) refundTotalChunks;
     /// @dev Lifecycle mark waiting for its series to land here (codec msgType, 0 = none); Called overrides
     ///      Qualified. Applied when ISSUANCE creates the series, or via `applyPendingMark`.
     mapping(bytes14 seriesId => uint8 msgType) pendingMark;

@@ -167,6 +167,13 @@ contract TargetRouter is
         return ($.issuanceChunksSeen[worldwideDay], $.issuanceTotalChunks[worldwideDay]);
     }
 
+    /// @notice Refund chunk progress of `worldwideDay` on this chain: applied so far and the declared total
+    ///         (0 until the first chunk lands).
+    function refundChunks(uint32 worldwideDay) external view returns (uint16 seen, uint16 total) {
+        TargetRouterStorage storage $ = _ts();
+        return ($.refundChunksSeen[worldwideDay], $.refundTotalChunks[worldwideDay]);
+    }
+
     /// @notice Whether issuance chunk `chunkIndex` of `worldwideDay` has been applied here.
     function issuanceChunkApplied(uint32 worldwideDay, uint16 chunkIndex) external view returns (bool) {
         return _ts().issuanceChunkApplied[worldwideDay][chunkIndex];

@@ -354,6 +354,11 @@ library TargetInbound {
             _ignore(srcChainId, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, chunkKey, InboundReason.DUPLICATE);
             return;
         }
+        uint16 knownTotal = $.refundTotalChunks[worldwideDay];
+        if (knownTotal != 0 && knownTotal != totalChunks) {
+            _ignore(srcChainId, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, chunkKey, InboundReason.CONFLICT);
+            return;
+        }
         (, bool finalized,) = $.escrowAdapter.getAuctionStatus(worldwideDay);
         if (finalized) {
             _ignore(srcChainId, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, chunkKey, InboundReason.OBSOLETE);
@@ -370,6 +375,7 @@ library TargetInbound {
         }
 
         // Counted before settling: the escrow refuses instructions once the day is closed.
+        if (knownTotal == 0) $.refundTotalChunks[worldwideDay] = totalChunks;
         $.refundChunksApplied[worldwideDay] |= bit;
         uint16 seen = $.refundChunksSeen[worldwideDay] + 1;
         $.refundChunksSeen[worldwideDay] = seen;
