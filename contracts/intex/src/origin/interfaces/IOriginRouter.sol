@@ -206,8 +206,6 @@ interface IOriginRouter {
     error ArrayLengthMismatch();
     /// @notice Empty array provided.
     error EmptyArray();
-    /// @notice A series in an issuance chunk belongs to a different day than the chunk header.
-    error IssuanceDayMismatch(bytes14 seriesId);
 
     /// @notice An authenticated inbound message, or one item of it, was acknowledged without effect.
     /// @param srcChainId Source chainId the message was authenticated against.
@@ -216,10 +214,6 @@ interface IOriginRouter {
     /// @param reason One of the `InboundReason` codes.
     event InboundMessageIgnored(uint32 indexed srcChainId, uint8 indexed msgType, bytes32 indexed key, uint8 reason);
 
-    /// @notice Inbound BIDS_BATCH body-level `srcChainId` disagrees with the authenticated source chainId.
-    /// @param origin Source chainId the bridge authenticated.
-    /// @param body Source chainId claimed by the encoded body.
-    error SrcChainIdBodyMismatch(uint32 origin, uint32 body);
     /// @notice Address wired as `desis` does not advertise `IDesis` via ERC-165 or is an EOA.
     /// @param wired Address that failed the interface probe.
     error InvalidDesisInterface(address wired);

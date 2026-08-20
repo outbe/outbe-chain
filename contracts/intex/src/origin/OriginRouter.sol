@@ -408,7 +408,7 @@ contract OriginRouter is
     }
 
     /// @dev Validates a batch and returns its total recipient count. The day must be one this chain is a
-    ///      target of and every series must belong to it; the codec bounds the counts and the chunk header.
+    ///      target of; the codec owns the wire format (chunk header, per-series day and counts).
     function _requireIssuanceBatch(uint32 dstChainId, uint32 worldwideDay, IssuanceInstructionsParams[] calldata series)
         private
         view
@@ -418,7 +418,6 @@ contract OriginRouter is
         _requireSeriesTarget(worldwideDay, dstChainId);
         for (uint256 i = 0; i < series.length; i++) {
             if (series[i].recipients.length != series[i].quantities.length) revert ArrayLengthMismatch();
-            if (series[i].worldwideDay != worldwideDay) revert IssuanceDayMismatch(series[i].seriesId);
             recipients += series[i].recipients.length;
         }
     }

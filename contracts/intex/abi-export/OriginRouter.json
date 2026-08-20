@@ -2180,17 +2180,6 @@
           "name": "seriesId",
           "type": "bytes14",
           "internalType": "bytes14"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "IssuanceDayMismatch",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "internalType": "bytes14"
         },
         {
           "name": "seriesDay",
@@ -2429,22 +2418,6 @@
           "name": "value",
           "type": "uint256",
           "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "SrcChainIdBodyMismatch",
-      "inputs": [
-        {
-          "name": "origin",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "body",
-          "type": "uint32",
-          "internalType": "uint32"
         }
       ]
     },

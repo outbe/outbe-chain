@@ -6,6 +6,7 @@ import {IIntexNFT1155} from "../../shared/interfaces/IIntexNFT1155.sol";
 import {IEscrowAdapter} from "../interfaces/IEscrowAdapter.sol";
 import {ITargetRouter} from "../interfaces/ITargetRouter.sol";
 import {BridgeMsgCodec} from "../../shared/libs/BridgeMsgCodec.sol";
+import {LowLevelCall} from "@openzeppelin/contracts/utils/LowLevelCall.sol";
 import {InboundReason} from "../../shared/libs/InboundReason.sol";
 import {
     TargetRouterStorage,
@@ -57,7 +58,7 @@ library TargetInbound {
             } else if (selector == IIntexAuction.InvalidDayState.selector) {
                 why = InboundReason.INVALID;
             } else {
-                _bubble(reason);
+                LowLevelCall.bubbleRevert(reason);
             }
             _ignore(srcChainId, BridgeMsgCodec.MSG_AUCTION_STAGE_START, bytes32(uint256(worldwideDay)), why);
         }
@@ -81,13 +82,13 @@ library TargetInbound {
                 IIntexAuction.AuctionStage current = _stageRequiredCurrent(reason);
                 if (current != IIntexAuction.AuctionStage.Completed && current != IIntexAuction.AuctionStage.Cancelled)
                 {
-                    _bubble(reason);
+                    LowLevelCall.bubbleRevert(reason);
                 }
                 why = InboundReason.OBSOLETE;
             } else if (selector == IIntexAuction.AuctionNotFound.selector) {
                 why = InboundReason.UNKNOWN;
             } else {
-                _bubble(reason);
+                LowLevelCall.bubbleRevert(reason);
             }
             _ignore(srcChainId, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING, bytes32(uint256(worldwideDay)), why);
             return;
@@ -131,7 +132,7 @@ library TargetInbound {
                 } else if (current == IIntexAuction.AuctionStage.Cancelled) {
                     why = InboundReason.OBSOLETE;
                 } else {
-                    _bubble(reason);
+                    LowLevelCall.bubbleRevert(reason);
                 }
             } else if (selector == IIntexAuction.AuctionNotFound.selector) {
                 why = InboundReason.UNKNOWN;
@@ -143,7 +144,7 @@ library TargetInbound {
             ) {
                 why = InboundReason.INVALID;
             } else {
-                _bubble(reason);
+                LowLevelCall.bubbleRevert(reason);
             }
             _ignore(srcChainId, BridgeMsgCodec.MSG_AUCTION_RESULT, bytes32(uint256(worldwideDay)), why);
         }
@@ -194,14 +195,6 @@ library TargetInbound {
         // solhint-disable-next-line no-inline-assembly
         assembly ("memory-safe") {
             selector := mload(add(reason, 0x20))
-        }
-    }
-
-    /// @dev Re-raise a caught revert payload unchanged.
-    function _bubble(bytes memory reason) private pure {
-        // solhint-disable-next-line no-inline-assembly
-        assembly ("memory-safe") {
-            revert(add(reason, 0x20), mload(reason))
         }
     }
 

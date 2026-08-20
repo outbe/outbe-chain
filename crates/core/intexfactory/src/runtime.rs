@@ -168,8 +168,7 @@ pub fn pack_issuance_messages(
     per_chain
 }
 
-/// Send a day's packed issuance messages, each stamped with its position in the chain's
-/// run so the receiver can tell a repeat from the rest and knows when the day is complete.
+/// Send a day's packed issuance messages, each stamped with its position in the chain's run.
 /// Relay-float-funded: value 0, the router quotes and pays the bridge fee from its own float.
 pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Result<()> {
     for (chain_id, messages) in chunk_issuance_messages(pack_issuance_messages(legs)) {

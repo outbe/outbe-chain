@@ -452,11 +452,8 @@ fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u
 // Bid ingestion
 // ---------------------------------------------------------------------------
 
-/// Intake is open while `Revealing` and through the `Clearing` fan-in. Returns
-/// `Open` to proceed, `Closed` for a redundant post-intake delivery (idempotent
-/// no-op, else the transport redelivers forever), `UnknownDay` for a day this
-/// chain never briefed (acknowledged with `InboundIgnored`, nothing can ever make
-/// it applicable), `Err` before intake so the transport redelivers after reveal.
+/// `Open` while `Revealing`/`Clearing`; `Closed` past clearing and `UnknownDay` for an unbriefed day
+/// (both acknowledged, nothing can make them applicable); `Err` before reveal so the transport redelivers.
 fn intake_state(stage: AuctionStage) -> Result<Intake> {
     match stage {
         AuctionStage::Revealing | AuctionStage::Clearing => Ok(Intake::Open),
@@ -554,12 +551,7 @@ pub fn process_bids_batch(
     let chain_key = DesisContract::chain_key(worldwide_day, src_chain_id);
     let last_gen = contract.chain_last_generation.read(&chain_key)?;
     if generation < last_gen {
-        return emit_inbound_ignored(
-            &mut contract,
-            worldwide_day,
-            src_chain_id,
-            IGNORED_OBSOLETE,
-        );
+        return emit_inbound_ignored(&mut contract, worldwide_day, src_chain_id, IGNORED_OBSOLETE);
     }
 
     if generation > last_gen {
@@ -644,12 +636,7 @@ pub fn process_bids_done(
     let chain_key = DesisContract::chain_key(worldwide_day, src_chain_id);
     let last_gen = contract.chain_last_generation.read(&chain_key)?;
     if relay_generation < last_gen {
-        return emit_inbound_ignored(
-            &mut contract,
-            worldwide_day,
-            src_chain_id,
-            IGNORED_OBSOLETE,
-        );
+        return emit_inbound_ignored(&mut contract, worldwide_day, src_chain_id, IGNORED_OBSOLETE);
     }
     if relay_generation > last_gen {
         return Err(PrecompileError::Revert(
@@ -664,12 +651,7 @@ pub fn process_bids_done(
         if same {
             return Ok(());
         }
-        return emit_inbound_ignored(
-            &mut contract,
-            worldwide_day,
-            src_chain_id,
-            IGNORED_CONFLICT,
-        );
+        return emit_inbound_ignored(&mut contract, worldwide_day, src_chain_id, IGNORED_CONFLICT);
     }
 
     contract

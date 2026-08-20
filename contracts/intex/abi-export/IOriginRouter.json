@@ -1153,6 +1153,37 @@
     },
     {
       "type": "event",
+      "name": "InboundMessageIgnored",
+      "inputs": [
+        {
+          "name": "srcChainId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "msgType",
+          "type": "uint8",
+          "indexed": true,
+          "internalType": "uint8"
+        },
+        {
+          "name": "key",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "reason",
+          "type": "uint8",
+          "indexed": false,
+          "internalType": "uint8"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
       "name": "IssuanceInstructionsSent",
       "inputs": [
         {
@@ -1445,17 +1476,6 @@
     },
     {
       "type": "error",
-      "name": "IssuanceDayMismatch",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "internalType": "bytes14"
-        }
-      ]
-    },
-    {
-      "type": "error",
       "name": "NativeBalanceInsufficient",
       "inputs": [
         {
@@ -1522,22 +1542,6 @@
       "type": "error",
       "name": "OnlySelf",
       "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "SrcChainIdBodyMismatch",
-      "inputs": [
-        {
-          "name": "origin",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "body",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ]
     },
     {
       "type": "error",

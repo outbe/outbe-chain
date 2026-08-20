@@ -273,6 +273,37 @@
     },
     {
       "type": "event",
+      "name": "InboundMessageIgnored",
+      "inputs": [
+        {
+          "name": "srcChainId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "msgType",
+          "type": "uint8",
+          "indexed": true,
+          "internalType": "uint8"
+        },
+        {
+          "name": "key",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "reason",
+          "type": "uint8",
+          "indexed": false,
+          "internalType": "uint8"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
       "name": "IssuanceCompleted",
       "inputs": [
         {
