@@ -123,9 +123,10 @@ retained work   <= canonical MAX_RECORDS_KEPT
 MAX_ACTIVE_WWDS = normal pipeline + canonical record-retention bound
 ```
 
-The production genesis default advances at midnight and noon, so its 12-hour catch-up cadence is
-strictly faster than the 24-hour creation cadence. With continuing ticks an
-already-active candidate has at most 27 admission ticks (324 hours) of older
+The production genesis default runs ProtocolCycle at every UTC-hour boundary,
+so its one-hour advancement cadence is strictly faster than the 24-hour creation
+cadence. With continuing ticks an
+already-active candidate has at most 27 admission ticks (27 hours) of older
 pipeline work ahead. Missing external finality is classified as retained OCOMP
 progress, not scheduler starvation.
 

@@ -1527,23 +1527,31 @@ fn committee_clock_reaches_fresh_capacity_processing(world: &mut World) {
         .as_ref()
         .expect("fresh Metadosis creation evidence")
         .scheduled_process_time;
-    // The configurable sub-day trigger advances the WWD state machine only as
-    // far as READY. Production settlement deliberately belongs to the daily
-    // Cycle handler, so cross the first UTC midnight after the processing time
-    // before expecting the READY day to become an OCOMP job.
-    let target = first_daily_cycle_at_or_after(scheduled_process_time);
+    // ProtocolCycle advances WWD state and processes one READY candidate at the
+    // first genesis-configured aligned slot at or after the processing time.
+    let target = first_protocol_cycle_at_or_after(world, scheduled_process_time);
     advance_fresh_metadosis_time(world, target, &[(0, 1), (1, 2), (2, 3), (3, 4)], 8);
 }
 
-fn first_daily_cycle_at_or_after(timestamp: u64) -> u64 {
-    const SECONDS_PER_DAY: u64 = 86_400;
+fn first_protocol_cycle_at_or_after(world: &World, timestamp: u64) -> u64 {
+    let genesis_path = world.ocomp.canonical_chain_manifest_path();
+    let genesis: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&genesis_path).expect("read ProtocolCycle genesis"))
+            .expect("decode ProtocolCycle genesis");
+    let interval = GenesisProtocolParametersV1::from_genesis(&genesis)
+        .expect("read immutable ProtocolCycle interval")
+        .metadosis_advance_interval_seconds;
+    first_protocol_cycle_at_or_after_interval(timestamp, interval)
+}
 
+fn first_protocol_cycle_at_or_after_interval(timestamp: u64, interval: u64) -> u64 {
+    assert!(interval != 0, "ProtocolCycle interval must be non-zero");
     timestamp
-        .checked_add(SECONDS_PER_DAY - 1)
-        .and_then(|rounded| rounded.checked_div(SECONDS_PER_DAY))
-        .and_then(|day| day.checked_mul(SECONDS_PER_DAY))
-        .and_then(|midnight| midnight.checked_add(1))
-        .expect("first UTC daily Cycle at or after Metadosis processing time")
+        .checked_add(interval - 1)
+        .and_then(|rounded| rounded.checked_div(interval))
+        .and_then(|slot| slot.checked_mul(interval))
+        .and_then(|slot| slot.checked_add(1))
+        .expect("first aligned ProtocolCycle at or after Metadosis processing time")
 }
 
 #[then("the same fresh capacity day advances through WAITING and READY")]
@@ -2254,7 +2262,7 @@ fn committee_clock_reaches_public_capacity_processing(world: &mut World) {
         "capacity WorldwideDay must remain in OFFERING until all 257 receipts and projections are observed"
     );
 
-    let target = first_daily_cycle_at_or_after(state.scheduled_process_time);
+    let target = first_protocol_cycle_at_or_after(world, state.scheduled_process_time);
     let _ = restart_committee_at_logical_time(world, target);
 }
 
@@ -4249,19 +4257,26 @@ fn runtime_traces_cover_ocomp_execution_paths(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::{
-        bounded_completion_decision, dynamic_live_ports_after_jail, first_daily_cycle_at_or_after,
-        joiner_restart_is_in_safe_early_epoch_window, post_restart_convergence_target,
-        BoundedCompletionDecision, OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
+        bounded_completion_decision, dynamic_live_ports_after_jail,
+        first_protocol_cycle_at_or_after_interval, joiner_restart_is_in_safe_early_epoch_window,
+        post_restart_convergence_target, BoundedCompletionDecision,
+        OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
     };
 
     #[test]
-    fn daily_cycle_keeps_an_exact_midnight_processing_boundary() {
-        assert_eq!(first_daily_cycle_at_or_after(172_800), 172_801);
+    fn protocol_cycle_keeps_an_exact_hourly_processing_boundary() {
+        assert_eq!(
+            first_protocol_cycle_at_or_after_interval(172_800, 3_600),
+            172_801
+        );
     }
 
     #[test]
-    fn daily_cycle_rounds_a_non_boundary_processing_time_up() {
-        assert_eq!(first_daily_cycle_at_or_after(172_801), 259_201);
+    fn protocol_cycle_rounds_a_non_boundary_processing_time_up() {
+        assert_eq!(
+            first_protocol_cycle_at_or_after_interval(172_801, 3_600),
+            176_401
+        );
     }
 
     #[test]

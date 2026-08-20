@@ -36,7 +36,7 @@ uses JSON values and fail startup if the test-only key is present.
 | `metadosis.offeringPeriodSeconds` | `u64`, seconds | 180000 | `1..=180000` | Tribute offering window |
 | `metadosis.waitingPeriodSeconds` | `u64`, seconds | 43200 | `1..=43200` | WAITING to READY |
 | `metadosis.bootstrapDurationSeconds` | `u64`, seconds | 1814400 | `1..=1814400` | Metadosis bootstrap |
-| `metadosis.advanceIntervalSeconds` | `u64`, seconds | 43200 | `1..=43200` | WWD advancement cadence |
+| `metadosis.advanceIntervalSeconds` | `u64`, seconds | 3600 | `1..=3600` | ProtocolCycle/WWD advancement cadence |
 | `ocomp.computeVoteWindowBlocks` | `u64`, blocks | 1800 | `1..=1800` plus capacity gates | compute and vote deadline |
 | `nodMaterialization.batchSubtreeHeight` | `u8`, tree levels | 3 | capacity `2^height` in `1..=256` | NOD batch capacity |
 | `nodMaterialization.retryIntervalBlocks` | `u64`, blocks | 30 | nonzero | no-progress wake cadence |
