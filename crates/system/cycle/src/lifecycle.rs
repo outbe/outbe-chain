@@ -7,8 +7,8 @@
 //!
 //! The dispatcher itself is fully idempotent per slot via
 //! `Cycle.last_executed_at[trigger_id]`, so it is safe to invoke on
-//! every block — the daily trigger only does work on the first block
-//! whose timestamp crosses the next UTC midnight.
+//! every block. ProtocolCycle runs on the first block after each UTC-hour
+//! boundary and owns contiguous-day settlement and missed-day forfeiture.
 
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, ParentBodySourceRef};
 use outbe_primitives::{

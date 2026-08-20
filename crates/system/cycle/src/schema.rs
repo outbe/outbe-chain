@@ -1,6 +1,6 @@
 use outbe_macros::contract;
 use outbe_primitives::addresses::CYCLE_ADDRESS;
-use outbe_primitives::storage::types::Mapping;
+use outbe_primitives::storage::types::{Mapping, Slot};
 
 /// EVM storage layout for the Cycle dispatcher.
 ///
@@ -15,6 +15,7 @@ use outbe_primitives::storage::types::Mapping;
 /// Storage slots:
 ///   0:  last_executed_at             — mapping(uint32 => uint64)
 ///   1:  last_executed_block_number   — mapping(uint32 => uint64)
+///   2:  active_utc_day                — uint32
 #[contract(addr = CYCLE_ADDRESS)]
 pub struct Cycle {
     /// Per-trigger last-fired slot timestamp. Stored as the slot value
@@ -27,4 +28,9 @@ pub struct Cycle {
     /// auditing which block dispatched which slot; not consulted by the
     /// scheduling math.
     pub last_executed_block_number: Mapping<u32, u64>,
+
+    /// UTC calendar day currently owned by ProtocolCycle. Genesis seeds this
+    /// from the consensus header timestamp. A contiguous transition settles it;
+    /// a multi-day halt advances it without synthesizing missed-day economics.
+    pub active_utc_day: Slot<u32>,
 }

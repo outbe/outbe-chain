@@ -1,8 +1,7 @@
-//! Daily emission orchestrator wired in as the
-//! [`crate::triggers::TriggerId::EmissionLimit1`] handler.
+//! ProtocolCycle calendar orchestration and completed-day emission settlement.
 //!
 //! This is the natural home of the `Cycle → EmissionLimit → AgentReward
-//! → Rewards` orchestration described in the epic. Putting
+//! → Rewards → Metadosis` orchestration. Putting
 //! it inside `outbe-cycle` (rather than `outbe-emissionlimit`) avoids
 //! a `outbe-emissionlimit → outbe-rewards` dependency edge, which
 //! would close the cycle with the existing
@@ -19,8 +18,60 @@ use outbe_emissionlimit::{
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
-    time::{date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key},
+    time::{date_key_to_utc_timestamp, next_date_key, timestamp_to_date_key},
 };
+
+/// Calendar work owned by one hourly ProtocolCycle execution.
+///
+/// This is intentionally not persisted or exposed through the EVM ABI. It is
+/// shared with the executor so command authority is derived from exactly the
+/// same calendar decision as the handler.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProtocolDayAction {
+    SameDay,
+    SettlePrevious { day: u32 },
+    SkipMissed { from: u32, to: u32 },
+}
+
+/// Selects the daily action for an hourly ProtocolCycle execution.
+///
+/// Only a contiguous UTC-day transition is settled. If the chain advances by
+/// more than one calendar day, every completed day in that gap is deliberately
+/// forfeited: no economic state is synthesized after the halt.
+pub fn protocol_day_action(active_utc_day: u32, block_utc_day: u32) -> Result<ProtocolDayAction> {
+    let valid_date_key = |date_key: u32| {
+        let year = date_key / 10_000;
+        let month = (date_key / 100) % 100;
+        let day = date_key % 100;
+        year >= 1970
+            && (1..=12).contains(&month)
+            && (1..=31).contains(&day)
+            && timestamp_to_date_key(date_key_to_utc_timestamp(date_key)) == date_key
+    };
+    if !valid_date_key(active_utc_day) || !valid_date_key(block_utc_day) {
+        return Err(PrecompileError::Fatal(format!(
+            "ProtocolCycle received invalid UTC day: active={active_utc_day}, block={block_utc_day}"
+        )));
+    }
+    if active_utc_day > block_utc_day {
+        return Err(PrecompileError::Fatal(format!(
+            "ProtocolCycle active UTC day {active_utc_day} is after block UTC day {block_utc_day}"
+        )));
+    }
+
+    if active_utc_day == block_utc_day {
+        return Ok(ProtocolDayAction::SameDay);
+    }
+    if next_date_key(active_utc_day) == block_utc_day {
+        return Ok(ProtocolDayAction::SettlePrevious {
+            day: active_utc_day,
+        });
+    }
+    Ok(ProtocolDayAction::SkipMissed {
+        from: active_utc_day,
+        to: block_utc_day,
+    })
+}
 
 fn gas(ctx: &BlockRuntimeContext) -> u64 {
     ctx.storage.gas_used().unwrap_or(0)
@@ -34,14 +85,12 @@ fn wrap(step: &str, r: Result<()>) -> Result<()> {
     })
 }
 
-pub fn run_emission_limit_daily(
-    ctx: &BlockRuntimeContext,
-    scope: &ExecutionScope,
-    parent: &impl ParentBodySource,
-) -> Result<()> {
+/// Settles one explicitly owned, completed UTC day. Calendar selection belongs
+/// to [`run_protocol_cycle`]; this function only performs the existing daily
+/// economic calculation and commits its idempotency pair.
+pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<()> {
     let block_ts = ctx.block.timestamp;
     let current_day = timestamp_to_date_key(block_ts);
-    let prev_day = previous_date_key(current_day);
 
     // idempotency guard. This handler mints the CCA agent pool
     // and re-dispatches terminal Metadosis with no PER-MINT day guard (only the
@@ -208,20 +257,12 @@ pub fn run_emission_limit_daily(
     tracing::debug!(target: "outbe::cycle::gas", step_gas = g4 - g3, cumulative = g4, "after terminal dispatch");
 
     wrap(
-        "start_metadosis",
-        outbe_metadosis::commands::start_metadosis(ctx, scope, parent),
-    )?;
-
-    let g5 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", step_gas = g5 - g4, cumulative = g5, "after start_metadosis");
-
-    wrap(
         "mark_day_settled",
         outbe_rewards::api::mark_day_settled(ctx, prev_day),
     )?;
 
-    let g6 = gas(ctx);
-    tracing::debug!(target: "outbe::cycle::gas", step_gas = g6 - g5, cumulative = g6, total = g6 - g0, "completed");
+    let g5 = gas(ctx);
+    tracing::debug!(target: "outbe::cycle::gas", step_gas = g5 - g4, cumulative = g5, total = g5 - g0, "completed");
 
     tracing::info!(
         target: "outbe::cycle",
@@ -232,9 +273,80 @@ pub fn run_emission_limit_daily(
         validator_excess = %validator_excess,
         agent_excess = %agent_excess,
         metadosis_total = %metadosis_total,
-        total_gas = g6 - g0,
+        total_gas = g5 - g0,
         "emission_limit_daily handler completed"
     );
 
     Ok(())
+}
+
+/// Runs the single hourly protocol orchestration entry point.
+///
+/// A contiguous completed UTC day is settled before the existing Metadosis
+/// command runs. Multi-day gaps are forfeited and advance the calendar cursor
+/// without synthesizing economic state. The existing command then runs exactly
+/// once to create the current WWD, advance every active WWD, and process at most
+/// one READY WWD.
+pub fn run_protocol_cycle(
+    ctx: &BlockRuntimeContext,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+) -> Result<()> {
+    let block_utc_day = timestamp_to_date_key(ctx.block.timestamp);
+    let cycle: crate::schema::Cycle<'_> = ctx.storage.contract::<crate::schema::Cycle<'_>>();
+    let active_utc_day = cycle.active_utc_day.read()?;
+    if active_utc_day == 0 {
+        return Err(PrecompileError::Fatal(
+            "ProtocolCycle active UTC day is not initialized in genesis".into(),
+        ));
+    }
+
+    let day_action = protocol_day_action(active_utc_day, block_utc_day)?;
+    match day_action {
+        ProtocolDayAction::SameDay => {}
+        ProtocolDayAction::SettlePrevious { day } => {
+            settle_emission_day(ctx, day)?;
+            cycle.active_utc_day.write(block_utc_day)?;
+        }
+        ProtocolDayAction::SkipMissed { from, to } => {
+            cycle.active_utc_day.write(block_utc_day)?;
+            tracing::warn!(
+                target: "outbe::cycle",
+                block_number = ctx.block.block_number,
+                block_timestamp = ctx.block.timestamp,
+                skipped_from_utc_day = from,
+                current_utc_day = to,
+                "protocol cycle forfeited missed UTC days after a multi-day chain halt"
+            );
+        }
+    }
+
+    wrap(
+        "start_metadosis",
+        outbe_metadosis::commands::start_metadosis(ctx, scope, parent),
+    )?;
+
+    tracing::info!(
+        target: "outbe::cycle",
+        block_number = ctx.block.block_number,
+        block_timestamp = ctx.block.timestamp,
+        active_utc_day,
+        block_utc_day,
+        day_action = ?day_action,
+        "protocol cycle completed"
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn run_emission_limit_daily(
+    ctx: &BlockRuntimeContext,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+) -> Result<()> {
+    settle_emission_day(
+        ctx,
+        outbe_primitives::time::previous_date_key(timestamp_to_date_key(ctx.block.timestamp)),
+    )?;
+    outbe_metadosis::commands::start_metadosis(ctx, scope, parent)
 }

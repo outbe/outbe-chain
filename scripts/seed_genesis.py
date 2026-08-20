@@ -433,11 +433,23 @@ def parse_genesis_timestamp(genesis: dict) -> int:
     return int(dt.timestamp())
 
 
+def parse_header_timestamp(genesis: dict) -> int:
+    """Parse the consensus header ``timestamp`` as a unix timestamp."""
+    if "timestamp" not in genesis:
+        raise ValueError("genesis header timestamp is required")
+    return parse_int(genesis["timestamp"])
+
+
 def timestamp_to_utc_date_key(timestamp: int) -> int:
     """Convert a unix timestamp to a UTC yyyymmdd date key."""
     if timestamp < 0:
         raise ValueError(f"genesis timestamp must be non-negative: {timestamp}")
     return civil_date_from_days(timestamp // SECONDS_PER_DAY)
+
+
+def seed_cycle(storage: "StorageBuilder", genesis_timestamp: int):
+    """Seed Cycle slot 2 with the UTC day owned by the genesis block."""
+    storage.set_slot(2, timestamp_to_utc_date_key(genesis_timestamp))
 
 
 def civil_date_from_days(days_since_epoch: int) -> int:
@@ -1647,6 +1659,15 @@ def main():
         entry = alloc.setdefault(addr, {})
         entry["code"] = MARKER_CODE
         entry.setdefault("balance", "0x0")
+
+    header_timestamp = parse_header_timestamp(genesis)
+    cycle_storage = StorageBuilder()
+    seed_cycle(cycle_storage, header_timestamp)
+    alloc[CYCLE_ADDRESS].setdefault("storage", {}).update(cycle_storage.entries)
+    print(
+        "  Cycle: active_utc_day="
+        f"{timestamp_to_utc_date_key(header_timestamp)}, slot 2 seeded"
+    )
 
     # Seed native EVM token balances into alloc.
     if "balance" in seed:

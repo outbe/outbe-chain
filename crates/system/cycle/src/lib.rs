@@ -1,18 +1,22 @@
-//! Cycle — generic trigger registry that dispatches periodic workloads
-//! from the executor's post-execution block.
+//! Cycle — deterministic trigger registry and calendar orchestrator.
 //!
 //! Each `TriggerSpec` declares a `period_seconds` and a
 //! `start_offset_seconds` phase relative to unix epoch zero. A trigger
 //! fires at every slot `t` where `(t - offset) % period == 0`, on the
 //! first block whose timestamp is `>= t`. If `block.timestamp` jumps
-//! over multiple slots (rare clock-jump / restart edge), the trigger
-//! fires once for the most recent slot only — pre-genesis design says
-//! "Cycle is not responsible for catching up missed days".
+//! over multiple hourly slots, ProtocolCycle fires once for the most recent
+//! slot. It settles only a contiguous UTC-day transition; days missed during a
+//! multi-day halt are forfeited. The current UTC day is never settled.
 //!
-//! In v1 the registry contains a single trigger,
-//! [`triggers::TriggerId::EmissionLimit1`] (`period = 86_400`,
-//! `offset = 0`), whose handler ([`handler::run_emission_limit_daily`])
-//! orchestrates the daily 5-pool + Metadosis terminal split:
+//! [`triggers::TriggerId::ProtocolCycle`] is aligned to UTC-hour boundaries
+//! (`period = 3_600`, `offset = 0` in production). Its handler settles one
+//! contiguous completed day or advances `Cycle.active_utc_day` past a forfeited
+//! multi-day gap, then invokes the existing Metadosis WWD flow exactly once. A
+//! failed step rolls back the whole trigger checkpoint, so the same hourly slot
+//! retries on the next block.
+//!
+//! Each completed-day settlement preserves the existing 5-pool + Metadosis
+//! terminal split:
 //!
 //! 1. Compute `day_emission_limit(day_number_since_genesis(prev_day))`.
 //! 2. Allocate over the 5-sink table from `outbe-emissionlimit`.
