@@ -20,12 +20,12 @@ library IntexGas {
     /// @dev Clearing also fires the bids relay back to Outbe (parked on failure), so it runs generously.
     uint256 internal constant AUCTION_STAGE_CLEARING = 2_000_000;
     uint256 internal constant AUCTION_RESULT = 300_000;
-    /// @dev A mark is a bounded state flip. A full batch of 8 measures ~123k applied and ~404k on the
-    ///      parking path, so this leaves room for the heavier one several times over.
+    /// @dev A mark is a bounded state flip. Measured: a batch of 8 takes ~123k applied and ~404k when
+    ///      every series parks, one series ~50k and ~70k. The parking path sets the marginal.
     uint256 internal constant MARK_CALLED_BASE = 100_000;
-    uint256 internal constant MARK_CALLED_PER_SERIES = 200_000;
+    uint256 internal constant MARK_CALLED_PER_SERIES = 100_000;
     uint256 internal constant MARK_QUALIFIED_BASE = 100_000;
-    uint256 internal constant MARK_QUALIFIED_PER_SERIES = 200_000;
+    uint256 internal constant MARK_QUALIFIED_PER_SERIES = 100_000;
     /// @dev Destination hook for composed proceeds: WCOEN unwrap + IntexFactory distribute registration.
     uint256 internal constant PROCEEDS_COMPOSE = 300_000;
 
@@ -36,16 +36,19 @@ library IntexGas {
     uint256 internal constant BIDS_BASE = 1_300_000;
     uint256 internal constant BIDS_PER_ITEM = 160_000;
     /// @dev Handler overhead only; a message carries several series, so the createSeries cost is
-    ///      per series rather than in the base. The NFT's enumerable-holder mints dominate the
-    ///      per-recipient cost.
+    ///      per series rather than in the base. Measured at the 64-recipient cap: ~10.1M against a
+    ///      16.6M budget.
     uint256 internal constant ISSUANCE_BASE = 200_000;
     uint256 internal constant ISSUANCE_PER_SERIES = 400_000;
     uint256 internal constant ISSUANCE_PER_ITEM = 250_000;
     uint256 internal constant REFUND_BASE = 250_000;
     uint256 internal constant REFUND_PER_ITEM = 150_000;
-    /// @dev ERC-1155 crosschainMint loop (mint + enumerable holder bookkeeping + supply-cap check) per item.
+    /// @dev The mint loop's cost is set by its failure path, not its happy one: a rejected item is
+    ///      recorded with its revert bytes so the owner can retry, and the tokens are already burned on
+    ///      the source, so an under-provisioned delivery strands them for good. Measured at the 64-item
+    ///      cap: ~8.3M when every mint lands, ~17.1M when every one is rejected.
     uint256 internal constant NFT_MINT_BASE = 150_000;
-    uint256 internal constant NFT_MINT_PER_ITEM = 180_000;
+    uint256 internal constant NFT_MINT_PER_ITEM = 350_000;
 
     /// @notice Destination gas for a BIDS_BATCH carrying `itemCount` bids.
     function bidsBatch(uint256 itemCount) internal pure returns (uint256) {

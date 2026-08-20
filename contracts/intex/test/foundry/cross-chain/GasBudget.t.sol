@@ -1,0 +1,295 @@
+// SPDX-License-Identifier: UNLICENSED
+pragma solidity 0.8.30;
+
+import {CrossChainTest} from "../helpers/CrossChainTest.sol";
+
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
+import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
+import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
+import {DeployProxy} from "../helpers/DeployProxy.sol";
+import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
+import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
+import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {MultiRecipientSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
+import {IntexNFT1155BridgeCodec} from "@contracts/shared/libs/IntexNFT1155BridgeCodec.sol";
+
+/// @dev The origin buys destination gas from `IntexGas` before it knows what the target will spend, and
+///      the budgets were last sized by estimate rather than measurement. These pin each formula against
+///      the real consumption of a realistic message: a budget below actual cost strands the delivery in
+///      redelivery, and one far above it just overpays every send.
+contract GasBudgetTest is CrossChainTest {
+    uint32 internal constant OUTBE_CHAIN_ID = 2;
+    uint32 internal constant WORLDWIDE_DAY = 20260501;
+    bytes14 internal constant SERIES_PREFIX = "20260501-USD-U";
+    bytes14 internal constant POISON = "20260501-EUR-U";
+
+    TargetRouter internal router;
+    IntexNFT1155 internal intex;
+    address internal admin = address(this);
+    address internal originPeer = address(0x0B1);
+
+    function setUp() public {
+        _setUpBridge();
+        intex = DeployProxy.intexNFT1155(admin, admin);
+        router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        router.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
+        router.wire(makeAddr("auction"), address(intex), makeAddr("escrow"));
+        intex.grantRole(intex.RELAYER_ROLE(), address(router));
+    }
+
+    function _measure(bytes14[] memory batch) internal returns (uint256 spent) {
+        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, uint32(block.timestamp), batch);
+        uint256 before = gasleft();
+        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
+        spent = before - gasleft();
+    }
+
+    function _seed(bytes14[] memory batch) internal {
+        for (uint256 i = 0; i < batch.length; ++i) {
+            IIntexNFT1155.CreateSeriesParams memory p = CreateSeriesLib.params(WORLDWIDE_DAY, 10_000, 0);
+            p.seriesId = batch[i];
+            intex.createSeries(p);
+        }
+    }
+
+    function test_TheQuoteCoversAFullBatchThatApplies() public {
+        bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_MARK);
+        _seed(batch);
+
+        uint256 spent = _measure(batch);
+
+        assertLt(spent, IntexGas.markCalled(batch.length), "a full applying batch must fit the quote");
+    }
+
+    function test_TheQuoteCoversAFullBatchThatParks() public {
+        // No series exist, so every mark reverts and parks — the heavier of the two paths.
+        bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_MARK);
+
+        uint256 spent = _measure(batch);
+
+        assertEq(router.nextPendingMarkIdx(), batch.length, "every series parked");
+        assertLt(spent, IntexGas.markCalled(batch.length), "a full parking batch must fit the quote");
+    }
+
+    function test_TheQuoteCoversASingleSeriesMark() public {
+        bytes14[] memory one = MarkBatchLib.one(SERIES_PREFIX);
+        _seed(one);
+        emit log_named_uint("apply_batch1", _measure(one));
+
+        bytes14[] memory absent = MarkBatchLib.sized("20260501-EUR-U", 1);
+        emit log_named_uint("park_batch1", _measure(absent));
+
+        assertLt(_measure(one), IntexGas.markCalled(1), "a single mark must fit the quote");
+    }
+
+    function test_TheQuoteCoversAMarkQualifiedBatch() public {
+        bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_MARK);
+        _seed(batch);
+
+        bytes memory packet = BridgeMsgCodec.encodeMarkQualified(WORLDWIDE_DAY, batch);
+        uint256 before = gasleft();
+        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
+        uint256 spent = before - gasleft();
+
+        emit log_named_uint("mark_qualified_8", spent);
+        assertLt(spent, IntexGas.markQualified(batch.length), "a full qualified batch must fit the quote");
+    }
+
+    function test_TheQuoteCoversIssuanceAtItsWidest() public {
+        uint256 recipients = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN;
+        address[] memory to = new address[](recipients);
+        uint256[] memory qty = new uint256[](recipients);
+        for (uint256 i = 0; i < recipients; ++i) {
+            to[i] = address(uint160(0x2000 + i));
+            qty[i] = 1;
+        }
+
+        bytes memory packet = BridgeMsgCodec.encodeIssuanceInstructions(
+            IssuanceBatchLib.one(
+                BridgeMsgCodec.IssuanceInstructionsPayload({
+                    seriesId: SERIES_PREFIX,
+                    worldwideDay: WORLDWIDE_DAY,
+                    issuedIntexCount: 10_000,
+                    promisLoadMinor: 1e6,
+                    entryPriceMinor: 100e6,
+                    floorPriceMinor: 40e6,
+                    callNoticePeriod: 0,
+                    issuanceCurrency: 840,
+                    referenceCurrency: 840,
+                    callWindow: 0,
+                    callThreshold: 0,
+                    callPriceMinor: 200e6,
+                    recipients: to,
+                    quantities: qty
+                })
+            )
+        );
+
+        uint256 before = gasleft();
+        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
+        uint256 spent = before - gasleft();
+
+        emit log_named_uint("issuance_1x64", spent);
+        assertLt(spent, IntexGas.issuance(1, recipients), "the widest issuance must fit the quote");
+    }
+
+    function test_TheQuoteCoversABridgeMintAtItsWidest() public {
+        uint256 items = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE;
+        IntexNFT1155 dstToken = DeployProxy.intexNFT1155(admin, admin);
+        IntexNFT1155Bridge src = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
+        IntexNFT1155Bridge dst = DeployProxy.intexNFT1155Bridge(address(dstToken), address(bridge), admin);
+        src.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(dst)));
+        dst.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(src)));
+        intex.grantRole(intex.RELAYER_ROLE(), address(src));
+        dstToken.grantRole(dstToken.RELAYER_ROLE(), address(dst));
+
+        bytes14[] memory one = MarkBatchLib.one(SERIES_PREFIX);
+        _seed(one);
+        dstToken.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, 10_000, 0));
+        intex.markQualified(SERIES_PREFIX);
+        dstToken.markQualified(SERIES_PREFIX);
+
+        // `multiSend` burns the whole batch from its caller and fans it out to `recipients`.
+        address sender = address(0x3000);
+        uint256 tokenId = intex.issuedTokenId(SERIES_PREFIX);
+        intex.mint(sender, items, SERIES_PREFIX);
+
+        bytes32[] memory to = new bytes32[](items);
+        uint256[] memory ids = new uint256[](items);
+        uint256[] memory amounts = new uint256[](items);
+        for (uint256 i = 0; i < items; ++i) {
+            to[i] = bytes32(uint256(uint160(address(uint160(0x4000 + i)))));
+            ids[i] = tokenId;
+            amounts[i] = 1;
+        }
+
+        vm.prank(sender);
+        src.multiSend(
+            MultiRecipientSendParam({dstChainId: OUTBE_CHAIN_ID, recipients: to, tokenIds: ids, amounts: amounts})
+        );
+
+        bytes memory payload = bridge.lastPayload();
+        uint256 before = gasleft();
+        _deliver(OUTBE_CHAIN_ID, address(src), address(dst), payload);
+        uint256 spent = before - gasleft();
+
+        emit log_named_uint("nft_mint_64", spent);
+        assertLt(spent, IntexGas.nftMint(items), "the widest bridge mint must fit the quote");
+    }
+
+    /// @dev The costly path is not the mint but its failure: every item that a recipient rejects is
+    ///      recorded with its revert bytes so the owner can retry. Tokens are already burned on the
+    ///      source, so a budget that only covers the happy path strands them.
+    function test_TheQuoteCoversABridgeMintWhereEveryItemIsRejected() public {
+        uint256 items = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE;
+        IntexNFT1155 dstToken = DeployProxy.intexNFT1155(admin, admin);
+        IntexNFT1155Bridge src = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
+        IntexNFT1155Bridge dst = DeployProxy.intexNFT1155Bridge(address(dstToken), address(bridge), admin);
+        src.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(dst)));
+        dst.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(src)));
+        intex.grantRole(intex.RELAYER_ROLE(), address(src));
+        dstToken.grantRole(dstToken.RELAYER_ROLE(), address(dst));
+
+        _seed(MarkBatchLib.one(SERIES_PREFIX));
+        dstToken.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, 10_000, 0));
+        intex.markQualified(SERIES_PREFIX);
+        dstToken.markQualified(SERIES_PREFIX);
+
+        address sender = address(0x3000);
+        uint256 tokenId = intex.issuedTokenId(SERIES_PREFIX);
+        intex.mint(sender, items, SERIES_PREFIX);
+
+        // One receiver that rejects every mint, so all 64 items take the recording path.
+        RevertingReceiver rejecting = new RevertingReceiver();
+        bytes32[] memory to = new bytes32[](items);
+        uint256[] memory ids = new uint256[](items);
+        uint256[] memory amounts = new uint256[](items);
+        for (uint256 i = 0; i < items; ++i) {
+            to[i] = bytes32(uint256(uint160(address(rejecting))));
+            ids[i] = tokenId;
+            amounts[i] = 1;
+        }
+
+        vm.prank(sender);
+        src.multiSend(
+            MultiRecipientSendParam({dstChainId: OUTBE_CHAIN_ID, recipients: to, tokenIds: ids, amounts: amounts})
+        );
+
+        bytes memory payload = bridge.lastPayload();
+        uint256 before = gasleft();
+        _deliver(OUTBE_CHAIN_ID, address(src), address(dst), payload);
+        uint256 spent = before - gasleft();
+
+        emit log_named_uint("nft_mint_64_all_rejected", spent);
+        assertLt(spent, IntexGas.nftMint(items), "the rejecting path must fit the quote too");
+    }
+
+    // A series whose mark runs away must not take its batch mates with it. The delivery runs inside the
+    // gas the quote actually buys — with an uncapped child that budget is gone before the parking write,
+    // and the whole message reverts into redelivery.
+    function test_ARunawaySeriesIsParkedAndTheBatchContinues() public {
+        GasBurningIntex poisoned = new GasBurningIntex(POISON);
+        TargetRouter mocked = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        mocked.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
+        mocked.wire(makeAddr("auction"), address(poisoned), makeAddr("escrow"));
+
+        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(
+            WORLDWIDE_DAY, uint32(block.timestamp), MarkBatchLib.two(POISON, SERIES_PREFIX)
+        );
+        bytes memory call = abi.encodeCall(
+            bridge.deliverAs,
+            (
+                _interop(OUTBE_CHAIN_ID, originPeer),
+                _interop(uint32(block.chainid), address(mocked)),
+                packet
+            )
+        );
+        (bool ok,) = address(bridge).call{gas: IntexGas.markCalled(2)}(call);
+
+        assertTrue(ok, "the message must land, not bounce back into redelivery");
+        assertEq(mocked.nextPendingMarkIdx(), 1, "only the runaway parked");
+        (bytes14 parked,,,,) = mocked.pendingMarks(0);
+        assertEq(parked, POISON, "the runaway is the parked one");
+        assertEq(poisoned.markedCount(), 1, "its batch mate still applied");
+    }
+}
+
+/// @dev Stands in for IntexNFT1155 so one series can be made to burn everything it is given.
+contract GasBurningIntex {
+    bytes14 private immutable poison;
+    uint256 public markedCount;
+
+    constructor(bytes14 _poison) {
+        poison = _poison;
+    }
+
+    function markCalled(bytes14 seriesId, uint32) external {
+        if (seriesId == poison) {
+            // Spin until the frame's gas is gone.
+            while (true) {
+                markedCount = markedCount;
+            }
+        }
+        markedCount++;
+    }
+}
+
+/// @dev Rejects every ERC-1155 receive, so each item lands in the bridge's failed-mint record.
+contract RevertingReceiver {
+    error Rejected();
+
+    function onERC1155Received(address, address, uint256, uint256, bytes calldata) external pure returns (bytes4) {
+        revert Rejected();
+    }
+
+    function onERC1155BatchReceived(address, address, uint256[] calldata, uint256[] calldata, bytes calldata)
+        external
+        pure
+        returns (bytes4)
+    {
+        revert Rejected();
+    }
+}
