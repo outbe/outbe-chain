@@ -122,25 +122,15 @@ fn sample(worldwide_day: u32) -> IssuanceParams {
     }
 }
 
-mod call_bins;
-mod call_sweep;
-mod called_pstar;
 mod creator_reward;
-mod dispatch;
-mod genesis;
-mod group_index;
-mod group_scans;
+mod entrypoints;
+mod groups;
 mod issuance;
-mod issuance_currency;
-mod mine_promis;
-mod monitoring;
-mod notices;
-mod packing;
-mod qualify_bins;
+mod lifecycle;
 mod scans;
 mod settlement;
 
-// --- Shared across the test modules ---
+// --- // --- Shared across the test modules ---
 const PAIR_ID: u32 = 1;
 const EUR_ISO: u16 = 978;
 const EUR_PAIR_ID: u32 = 2;

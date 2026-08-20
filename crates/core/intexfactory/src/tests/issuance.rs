@@ -133,3 +133,273 @@ fn coen_iso_wire_price_preserves_the_six_decimal_integer() {
     );
     assert!(runtime::to_wire_price(U256::from(u64::MAX) + U256::ONE).is_err());
 }
+
+fn leg(chain_id: u32, series: u32, recipients: usize) -> runtime::IssuanceLeg {
+    let mut payload = crate::sol_ext::IOriginRouter::IssuanceInstructionsParams {
+        seriesId: sid(series).into(),
+        worldwideDay: series,
+        issuedIntexCount: 1,
+        promisLoadMinor: PROMIS_LOAD_MINOR,
+        entryPriceMinor: 0,
+        floorPriceMinor: 0,
+        callNoticePeriod: 0,
+        issuanceCurrency: 840,
+        referenceCurrency: 840,
+        callWindow: 0,
+        callThreshold: 0,
+        callPriceMinor: 0,
+        recipients: Vec::new(),
+        quantities: Vec::new(),
+    };
+    for i in 0..recipients {
+        payload
+            .recipients
+            .push(Address::from([(i % 250) as u8 + 1; 20]));
+        payload.quantities.push(U256::from(1u64));
+    }
+    runtime::IssuanceLeg { chain_id, payload }
+}
+
+fn shape(
+    messages: &[(
+        u32,
+        Vec<crate::sol_ext::IOriginRouter::IssuanceInstructionsParams>,
+    )],
+) -> Vec<(u32, usize, usize)> {
+    messages
+        .iter()
+        .map(|(chain, series)| {
+            (
+                *chain,
+                series.len(),
+                series.iter().map(|s| s.recipients.len()).sum(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_chains_series_travel_together_up_to_the_message_caps() {
+    // Nine empty-recipient series on one chain: the series cap alone splits them.
+    let legs: Vec<_> = (1..=9u32).map(|s| leg(10, s, 0)).collect();
+    assert_eq!(
+        shape(&runtime::pack_issuance_messages(legs)),
+        vec![(10, MAX_SERIES_PER_MESSAGE, 0), (10, 1, 0)]
+    );
+}
+
+#[test]
+fn a_message_never_carries_more_winners_than_the_wire_allows() {
+    // Two series of 40 winners each: together they exceed the recipient cap, so the
+    // second starts a new message rather than overfilling the first.
+    let legs = vec![leg(10, 1, 40), leg(10, 2, 40)];
+    assert_eq!(
+        shape(&runtime::pack_issuance_messages(legs)),
+        vec![(10, 1, 40), (10, 1, 40)]
+    );
+}
+
+#[test]
+fn one_series_with_more_winners_than_a_message_spans_several() {
+    // 150 winners of one series on one chain: three messages, and every piece repeats
+    // the series so whichever arrives first can create it.
+    let messages = runtime::pack_issuance_messages(vec![leg(10, 1, 150)]);
+    assert_eq!(
+        shape(&messages),
+        vec![
+            (10, 1, MAX_RECIPIENTS_PER_MESSAGE),
+            (10, 1, MAX_RECIPIENTS_PER_MESSAGE),
+            (10, 1, 150 - 2 * MAX_RECIPIENTS_PER_MESSAGE)
+        ]
+    );
+    for (_, series) in &messages {
+        assert_eq!(SeriesId::from(series[0].seriesId), sid(1));
+    }
+}
+
+#[test]
+fn a_chains_series_batch_even_when_another_chain_comes_between_them() {
+    // A day emits its legs series by series, so one chain's legs are never adjacent.
+    // Both of chain 10's series still travel together, or the batching would do
+    // nothing precisely when a day has several currency pairs.
+    let legs = vec![leg(10, 1, 2), leg(20, 1, 3), leg(10, 2, 1)];
+    assert_eq!(
+        shape(&runtime::pack_issuance_messages(legs)),
+        vec![(10, 2, 3), (20, 1, 3)]
+    );
+}
+
+#[test]
+fn a_chains_chunks_form_one_run_even_when_another_chain_interleaves() {
+    let packed =
+        runtime::pack_issuance_messages(vec![leg(10, 1, 64), leg(20, 1, 5), leg(10, 2, 64)]);
+    let chunked = runtime::chunk_issuance_messages(packed);
+
+    let shape: Vec<(u32, Vec<usize>)> = chunked
+        .iter()
+        .map(|(chain, messages)| {
+            (
+                *chain,
+                messages
+                    .iter()
+                    .map(|m| m.iter().map(|s| s.recipients.len()).sum())
+                    .collect(),
+            )
+        })
+        .collect();
+    assert_eq!(shape, vec![(10, vec![64, 64]), (20, vec![5])]);
+}
+
+#[test]
+fn a_single_message_day_is_chunk_zero_of_one() {
+    let chunked =
+        runtime::chunk_issuance_messages(runtime::pack_issuance_messages(vec![leg(7, 1, 3)]));
+    assert_eq!(chunked.len(), 1);
+    assert_eq!(chunked[0].0, 7);
+    assert_eq!(chunked[0].1.len(), 1);
+    assert_eq!(chunked[0].1[0][0].recipients.len(), 3);
+}
+
+/// Issue a series whose issuance currency differs from its reference, with a
+/// payment token reporting `iso` and 18 decimals and a registered vault.
+fn with_dual_currency_series<R>(iso: u64, f: impl FnOnce(StorageHandle) -> R) -> R {
+    use crate::sol_ext::{IReferenceCurrency, IERC20};
+    use outbe_vaultrouter::api::IVaultRouter;
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(ISSUED_AT as u64));
+    storage.stub_sub_call_at(crate::constants::INTEX_NFT1155_ADDRESS, word(0));
+    storage.stub_sub_call_at(crate::constants::ORIGIN_ROUTER_ADDRESS, word(0));
+    storage.stub_sub_call_at_selector(
+        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        IVaultRouter::assetVaultsCountCall::SELECTOR,
+        word(1),
+    );
+    storage.stub_sub_call_at_selector(
+        payment_token(),
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(iso),
+    );
+    storage.stub_sub_call_at_selector(payment_token(), IERC20::decimalsCall::SELECTOR, word(18));
+
+    StorageHandle::enter(&mut storage, |s| {
+        let params = IssuanceParams {
+            issuance_currency: EUR_ISO,
+            ..sample(7)
+        };
+        runtime::issue(&s, params).unwrap();
+        f(s)
+    })
+}
+
+/// Every stablecoin-backed COEN/ISO Oracle rate uses six decimals.
+const COEN_ISO_RATE_SCALE: U256 = U256::from_limbs([1_000_000, 0, 0, 0]);
+
+/// Publish a COEN rate for `iso_code`, stamped `age` seconds ago.
+fn publish_rate(oracle: &OracleContract, iso_code: u16, pair_id: u32, rate: U256, age: u64) {
+    write_rate(oracle, iso_code, pair_id, rate);
+    oracle
+        .exchange_rate_timestamp
+        .write(&pair_id, ISSUED_AT as u64 - age)
+        .unwrap();
+}
+
+#[test]
+fn the_issuance_currency_settles_through_the_coen_pivot() {
+    with_dual_currency_series(EUR_ISO as u64, |s| {
+        let oracle = OracleContract::new(s.clone());
+        // COEN buys twice as many dollars as euros, so the euro price of one
+        // Intex is half its dollar price.
+        publish_rate(
+            &oracle,
+            REFERENCE_ISO,
+            PAIR_ID,
+            U256::from(2u64) * COEN_ISO_RATE_SCALE,
+            0,
+        );
+        publish_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE, 0);
+
+        let cost = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap();
+        assert_eq!(cost, U256::from(500_000_000_000_000_000u64));
+    });
+}
+
+#[test]
+fn issuance_currency_settlement_rounds_a_non_divisible_fx_result_up_once() {
+    with_dual_currency_series(EUR_ISO as u64, |s| {
+        let oracle = OracleContract::new(s.clone());
+        publish_rate(
+            &oracle,
+            REFERENCE_ISO,
+            PAIR_ID,
+            U256::from(3u64) * COEN_ISO_RATE_SCALE,
+            0,
+        );
+        publish_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE, 0);
+
+        let cost = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap();
+        assert_eq!(cost, U256::from(333_333_333_333_333_334u64));
+    });
+}
+
+#[test]
+fn an_unpriced_issuance_currency_cannot_be_settled_in() {
+    with_dual_currency_series(EUR_ISO as u64, |s| {
+        let oracle = OracleContract::new(s.clone());
+        publish_rate(
+            &oracle,
+            REFERENCE_ISO,
+            PAIR_ID,
+            U256::from(2u64) * COEN_ISO_RATE_SCALE,
+            0,
+        );
+        // No euro pair at all.
+        let err = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap_err();
+        assert!(err.to_string().contains("no COEN rate published"), "{err}");
+    });
+}
+
+#[test]
+fn a_stale_rate_cannot_be_settled_in() {
+    with_dual_currency_series(EUR_ISO as u64, |s| {
+        let oracle = OracleContract::new(s.clone());
+        publish_rate(
+            &oracle,
+            REFERENCE_ISO,
+            PAIR_ID,
+            U256::from(2u64) * COEN_ISO_RATE_SCALE,
+            0,
+        );
+        publish_rate(
+            &oracle,
+            EUR_ISO,
+            EUR_PAIR_ID,
+            COEN_ISO_RATE_SCALE,
+            crate::constants::FX_RATE_MAX_AGE_SECONDS + 1,
+        );
+
+        let err = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap_err();
+        assert!(err.to_string().contains("too old"), "{err}");
+    });
+}
+
+#[test]
+fn issuance_currency_settlement_rejects_fx_overflow() {
+    with_dual_currency_series(EUR_ISO as u64, |s| {
+        let oracle = OracleContract::new(s.clone());
+        publish_rate(&oracle, REFERENCE_ISO, PAIR_ID, COEN_ISO_RATE_SCALE, 0);
+        publish_rate(&oracle, EUR_ISO, EUR_PAIR_ID, U256::MAX, 0);
+
+        let err = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap_err();
+        assert!(err.to_string().to_lowercase().contains("overflow"), "{err}");
+    });
+}
+
+#[test]
+fn the_reference_currency_settles_without_reading_any_rate() {
+    // No rate is published at all, yet the reference currency still settles.
+    with_dual_currency_series(REFERENCE_ISO as u64, |s| {
+        let cost = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap();
+        assert_eq!(cost, U256::from(1_000_000_000_000_000_000u64));
+    });
+}
