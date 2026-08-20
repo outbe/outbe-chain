@@ -36,6 +36,11 @@ contract TargetRouter is
     /// @notice Max BIDS_BATCH count per relay generation; bounded by the receiver's 256-bit arrival mask.
     uint16 internal constant MAX_BIDS_BATCHES = 256;
 
+    /// @notice Ceiling on one series' mark inside a batch. Without it the child takes 63/64 of what is
+    ///         left, so a single runaway series starves the parking write and the whole message reverts
+    ///         into endless redelivery, taking its batch mates with it. A mark measures ~15k.
+    uint256 internal constant MARK_APPLY_GAS_CAP = 150_000;
+
     /// @notice Destination chainId of Outbe — the sole peer for every outbound send and the only accepted source.
     uint32 public immutable OUTBE_CHAIN_ID;
 
@@ -590,7 +595,7 @@ contract TargetRouter is
     /// @dev Parking keeps a series the target has not seen from rejecting the whole message.
     function _applyMark(uint32 _srcChainId, bytes14 _seriesId, uint8 _msgType, uint32 _calledAt) internal {
         // solhint-disable-next-line no-empty-blocks
-        try this.applyMarkOne(_seriesId, _msgType, _calledAt) {}
+        try this.applyMarkOne{gas: MARK_APPLY_GAS_CAP}(_seriesId, _msgType, _calledAt) {}
         catch (bytes memory reason) {
             TargetRouterStorage storage $ = _ts();
             uint256 idx = $.nextPendingMarkIdx++;
