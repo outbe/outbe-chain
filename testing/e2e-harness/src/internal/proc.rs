@@ -36,6 +36,11 @@ const PINNED_QVL_RUNTIME_FILES: &[(&str, &str)] = &[
 
 const SENSITIVE_ARG_FLAGS: &[&str] = &["--private-key", "--p2p-secret-key-hex", "--dkg-seed"];
 
+/// How long a node/enclave gets to exit on SIGTERM before it is killed. Reth
+/// closes its database well inside this; the ceiling only bounds teardown when
+/// a process is wedged.
+const GRACEFUL_STOP_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// Preserve a command's diagnostic shape without emitting secret argument
 /// values into CI logs, evidence capture, or agent transcripts.
 pub(crate) fn redact_args_for_log(argv: &[String]) -> Vec<String> {
@@ -126,7 +131,32 @@ impl ChildGuard {
     }
 
     /// Stop and synchronously reap this owned process. Idempotent after exit.
+    ///
+    /// SIGTERM first, SIGKILL only if the process will not leave. A node killed
+    /// outright never closes its database: reth heals the torn static-file write
+    /// on the next launch by dropping the newest block, which strands the
+    /// offchain-data projection one block short of the finalized head, and
+    /// execution then waits forever for a projected parent that can never
+    /// arrive. Stopping the way an operator would is what makes a restart
+    /// reproducible.
     pub(crate) fn stop(&mut self) {
+        if self.exited() {
+            let _ = self.child.wait();
+            return;
+        }
+        let _ = Command::new("kill")
+            .args(["-TERM", &self.child.id().to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let deadline = std::time::Instant::now() + GRACEFUL_STOP_TIMEOUT;
+        while std::time::Instant::now() < deadline {
+            if matches!(self.child.try_wait(), Ok(Some(_))) {
+                let _ = self.child.wait();
+                return;
+            }
+            sleep(Duration::from_millis(50));
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -160,15 +190,17 @@ impl Drop for DockerGuard {
     }
 }
 
-/// An owned enclave: the foreground `docker run` child (killed on drop) plus a
-/// `docker rm -f` backstop for the container itself. Field order matters — the
-/// `docker run` client is dropped first, then the container is force-removed.
+/// An owned enclave: the foreground child (killed on drop) plus, for the
+/// containerized profile, a `docker rm -f` backstop for the container itself.
+/// Field order matters — the `docker run` client is dropped first, then the
+/// container is force-removed. A native host enclave has no container, so the
+/// child guard alone owns its whole lifetime.
 #[derive(Debug)]
 pub(crate) struct EnclaveGuard {
-    #[allow(dead_code)] // owned for its Drop (kills the `docker run` client)
+    #[allow(dead_code)] // owned for its Drop (kills the child)
     child: ChildGuard,
     #[allow(dead_code)] // owned for its Drop (`docker rm -f`)
-    docker: DockerGuard,
+    docker: Option<DockerGuard>,
 }
 
 /// Optional sealed-restart parameters (persistent `/tee` mount + chain-id).
@@ -196,17 +228,33 @@ impl TestRemoteAttestation {
     }
 }
 
-/// Everything needed to launch one enclave container (mirrors `run-testnet.sh:215-293`).
+/// How one enclave is executed. Two distinct, explicitly named profiles — never
+/// a fallback from one to the other.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum EnclaveLaunch {
+    /// Under Gramine, inside the scenario-pinned test container.
+    Gramine {
+        /// Immutable Docker image identity resolved before the scenario starts.
+        image_id: DockerImageId,
+    },
+    /// The mock enclave as a plain host process: no container, no LibOS, no
+    /// manifest, no attestation. Development only, and only on the mock binary.
+    NativeHost,
+}
+
+/// Everything needed to launch one enclave (mirrors `run-testnet.sh:215-293`).
 pub(crate) struct EnclaveSpec {
     pub name: String,
     pub tee_port: u16,
-    /// Host enclave binary bind-mounted read-only at `/app/outbe-tee-enclave`.
+    /// Host enclave binary. Bind-mounted read-only at `/app/outbe-tee-enclave`
+    /// under Gramine; executed directly by the native profile.
     pub enclave_bin: PathBuf,
     /// Scenario-scoped test signing key, mounted read-only and never baked into
     /// the Gramine test image. Reused across restarts to preserve MRSIGNER.
+    /// Unused by [`EnclaveLaunch::NativeHost`], which signs no manifest.
     pub signing_key: PathBuf,
-    /// Immutable Docker image identity resolved before the scenario starts.
-    pub image_id: DockerImageId,
+    /// Which execution profile runs this enclave.
+    pub launch: EnclaveLaunch,
     pub sudo: bool,
     /// Pass real SGX device nodes through when the host exposes them.
     pub pass_sgx_devices: bool,
@@ -419,7 +467,7 @@ fn inspect_enclave_image_id(sudo: bool) -> Result<DockerImageId> {
         .wrap_err("validate test-only Gramine enclave image identity")
 }
 
-fn build_enclave_command(spec: &EnclaveSpec) -> Result<Command> {
+fn build_enclave_command(spec: &EnclaveSpec, image_id: &DockerImageId) -> Result<Command> {
     let mut cmd = base_cmd("docker", spec.sudo);
     cmd.env(
         "OUTBE_TEST_REMOTE_ATTESTATION",
@@ -482,7 +530,7 @@ fn build_enclave_command(spec: &EnclaveSpec) -> Result<Command> {
             "{}:/run/secrets/outbe-test-sgx-key.pem:ro",
             signing_key.display()
         ),
-        spec.image_id.as_str(),
+        image_id.as_str(),
         "--socket",
         &format!("127.0.0.1:{}", spec.tee_port),
     ]);
@@ -491,6 +539,28 @@ fn build_enclave_command(spec: &EnclaveSpec) -> Result<Command> {
     }
     if let Some(seal) = &spec.seal {
         cmd.args(["--tee-dir", "/tee", "--chain-id", &seal.chain_id_hex]);
+    }
+    Ok(cmd)
+}
+
+/// The mock enclave as a plain host process. Same argv contract the Gramine
+/// entrypoint passes through (`loader.insecure__use_cmdline_argv`), except that
+/// the seal directory is the real host path rather than the container's `/tee`.
+fn build_native_command(spec: &EnclaveSpec) -> Result<Command> {
+    let mut cmd = Command::new(&spec.enclave_bin);
+    cmd.args(["--socket", &format!("127.0.0.1:{}", spec.tee_port)]);
+    if let Some(seed) = &spec.dkg_seed {
+        cmd.args(["--dkg-seed", seed]);
+    }
+    if let Some(seal) = &spec.seal {
+        fs::create_dir_all(&seal.tee_dir)?;
+        let tee_dir = seal.tee_dir.canonicalize().unwrap_or(seal.tee_dir.clone());
+        cmd.args([
+            "--tee-dir",
+            &tee_dir.display().to_string(),
+            "--chain-id",
+            &seal.chain_id_hex,
+        ]);
     }
     Ok(cmd)
 }
@@ -511,16 +581,38 @@ fn pinned_qvl_mount_args() -> Result<Vec<String>> {
     Ok(arguments)
 }
 
-/// `docker run` the enclave in the **foreground** (no `-d`) as an owned child,
-/// returning a guard that kills the client + `docker rm -f`s the container on drop.
+/// Launch the enclave in the **foreground** as an owned child, returning a guard
+/// that kills it (and, under Gramine, `docker rm -f`s its container) on drop.
 /// The caller waits on socket readiness with [`wait_tcp`].
 pub(crate) fn spawn_enclave(spec: EnclaveSpec) -> Result<EnclaveGuard> {
-    // Remove any stale container of the same name first.
-    docker_rm(&spec.name, spec.sudo);
+    let (mut cmd, docker) = match &spec.launch {
+        EnclaveLaunch::Gramine { image_id } => {
+            // Remove any stale container of the same name first.
+            docker_rm(&spec.name, spec.sudo);
+            let image_id = image_id.clone();
+            (
+                build_enclave_command(&spec, &image_id)?,
+                Some(DockerGuard::new(spec.name.clone(), spec.sudo)),
+            )
+        }
+        EnclaveLaunch::NativeHost => {
+            // A container has a name to force-remove; a host process does not.
+            // A re-bootstrap that orphaned the previous run's enclave would
+            // leave it bound here, and the node would silently attach to a
+            // stale identity and die on offer-key divergence. Fail closed
+            // instead of killing a process this run does not own.
+            if wait_tcp(spec.tee_port, 1) {
+                bail!(
+                    "127.0.0.1:{} is already bound — an enclave from an earlier run is still \
+                     listening. Run `outbe-e2e localnet stop` (or kill it) before starting.",
+                    spec.tee_port
+                );
+            }
+            (build_native_command(&spec)?, None)
+        }
+    };
 
-    let mut cmd = build_enclave_command(&spec)?;
-
-    // Foreground: own the `docker run` child, stream its logs to <node>/enclave.log.
+    // Foreground: own the child, stream its logs to <node>/enclave.log.
     let log = OpenOptions::new()
         .create(true)
         .append(true)
@@ -548,10 +640,7 @@ pub(crate) fn spawn_enclave(spec: EnclaveSpec) -> Result<EnclaveGuard> {
     }
 
     let child = ChildGuard::spawn(format!("enclave {}", spec.name), cmd)?;
-    Ok(EnclaveGuard {
-        child,
-        docker: DockerGuard::new(spec.name, spec.sudo),
-    })
+    Ok(EnclaveGuard { child, docker })
 }
 
 fn select_sgx_enclave_device(
@@ -758,7 +847,9 @@ mod tests {
             tee_port: 19500,
             enclave_bin,
             signing_key,
-            image_id: image_id.clone(),
+            launch: EnclaveLaunch::Gramine {
+                image_id: image_id.clone(),
+            },
             sudo: false,
             pass_sgx_devices: false,
             remote_attestation: TestRemoteAttestation::None,
@@ -768,7 +859,7 @@ mod tests {
             debug: false,
         };
 
-        let command = build_enclave_command(&spec).expect("build enclave command");
+        let command = build_enclave_command(&spec, &image_id).expect("build enclave command");
         let arguments = command
             .get_args()
             .map(|argument| argument.to_string_lossy().into_owned())
@@ -783,6 +874,114 @@ mod tests {
             key == "OUTBE_TEST_REMOTE_ATTESTATION" && value.is_some_and(|value| value == "none")
         }));
         assert!(!arguments.iter().any(|argument| argument.contains("/qvl/")));
+    }
+
+    /// The native profile executes the enclave binary itself. No docker, no
+    /// bind mounts, no image id — and the seal directory is the real host path
+    /// rather than the container's `/tee`.
+    #[test]
+    fn native_enclave_command_runs_the_host_binary_without_docker() {
+        let root = tempfile::tempdir().expect("temporary enclave command inputs");
+        let enclave_bin = root.path().join("outbe-tee-enclave-mock");
+        fs::write(&enclave_bin, b"binary").expect("write enclave binary fixture");
+        let tee_dir = root.path().join("tee");
+        let spec = EnclaveSpec {
+            name: "validator-0-tee".to_owned(),
+            tee_port: 19501,
+            enclave_bin: enclave_bin.clone(),
+            signing_key: root.path().join("unused-signing-key.pem"),
+            launch: EnclaveLaunch::NativeHost,
+            sudo: true,
+            pass_sgx_devices: false,
+            remote_attestation: TestRemoteAttestation::None,
+            dkg_seed: Some("ab".repeat(32)),
+            seal: Some(SealSpec {
+                tee_dir: tee_dir.clone(),
+                chain_id_hex: format!("0x{:064x}", 424_242),
+            }),
+            log_path: root.path().join("enclave.log"),
+            debug: false,
+        };
+
+        let command = build_native_command(&spec).expect("build native enclave command");
+        assert_eq!(command.get_program(), enclave_bin.as_os_str());
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(arguments.iter().filter(|a| *a == "-v").count(), 0);
+        assert!(!arguments.iter().any(|a| a == "run" || a == "--network"));
+        assert!(arguments
+            .windows(2)
+            .any(|pair| pair[0] == "--socket" && pair[1] == "127.0.0.1:19501"));
+        // The container's `/tee` would be meaningless to a host process: the
+        // sealed offer key has to land in this validator's own directory.
+        let canonical = tee_dir.canonicalize().expect("seal dir created by builder");
+        assert!(arguments
+            .windows(2)
+            .any(|pair| pair[0] == "--tee-dir" && pair[1] == canonical.display().to_string()));
+        assert!(arguments.windows(2).any(|pair| pair[0] == "--chain-id"));
+    }
+
+    /// `sudo` is a docker concern. A native enclave must never be launched
+    /// through it, whatever the run-wide flag says.
+    #[test]
+    fn native_enclave_command_never_shells_through_sudo() {
+        let root = tempfile::tempdir().expect("temporary enclave command inputs");
+        let enclave_bin = root.path().join("outbe-tee-enclave-mock");
+        fs::write(&enclave_bin, b"binary").expect("write enclave binary fixture");
+        let spec = EnclaveSpec {
+            name: "validator-0-tee".to_owned(),
+            tee_port: 19502,
+            enclave_bin,
+            signing_key: root.path().join("unused-signing-key.pem"),
+            launch: EnclaveLaunch::NativeHost,
+            sudo: true,
+            pass_sgx_devices: false,
+            remote_attestation: TestRemoteAttestation::None,
+            dkg_seed: None,
+            seal: None,
+            log_path: root.path().join("enclave.log"),
+            debug: false,
+        };
+
+        let command = build_native_command(&spec).expect("build native enclave command");
+        assert_ne!(command.get_program(), "sudo");
+        assert_ne!(command.get_program(), "docker");
+    }
+
+    /// A re-bootstrap can orphan the previous run's enclave. Attaching a node to
+    /// it would surface much later as an offer-key divergence crash, so the
+    /// native profile refuses to start on top of a port somebody already owns.
+    #[test]
+    fn native_enclave_refuses_a_port_an_earlier_run_still_owns() {
+        let Ok(held) = std::net::TcpListener::bind(("127.0.0.1", 0)) else {
+            // Some restricted test sandboxes deny loopback bind entirely.
+            return;
+        };
+        let port = held.local_addr().expect("bound port").port();
+        let root = tempfile::tempdir().expect("temporary enclave command inputs");
+        let enclave_bin = root.path().join("outbe-tee-enclave-mock");
+        fs::write(&enclave_bin, b"binary").expect("write enclave binary fixture");
+        let spec = EnclaveSpec {
+            name: "validator-0-tee".to_owned(),
+            tee_port: port,
+            enclave_bin,
+            signing_key: root.path().join("unused-signing-key.pem"),
+            launch: EnclaveLaunch::NativeHost,
+            sudo: false,
+            pass_sgx_devices: false,
+            remote_attestation: TestRemoteAttestation::None,
+            dkg_seed: None,
+            seal: None,
+            log_path: root.path().join("enclave.log"),
+            debug: false,
+        };
+
+        let error = spawn_enclave(spec).expect_err("occupied TEE port must fail closed");
+        let message = error.to_string();
+        assert!(message.contains(&port.to_string()), "{message}");
+        assert!(message.contains("localnet stop"), "{message}");
     }
 
     #[test]

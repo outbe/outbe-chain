@@ -58,7 +58,7 @@ use reth_ethereum::exex::{ExExContext, ExExEvent, ExExHead};
 use reth_node_builder::FullNodeComponents;
 use reth_primitives_traits::{Block as _, BlockBody as _};
 use reth_provider::{
-    BlockHashReader, BlockIdReader, BlockReader, ReceiptProvider, StateProvider,
+    BlockHashReader, BlockIdReader, BlockNumReader, BlockReader, ReceiptProvider, StateProvider,
     StateProviderFactory,
 };
 use tracing::{error, info, warn};
@@ -114,6 +114,56 @@ struct MaterializationAttemptKeyV1 {
 enum FinalizedHeadPhaseV1 {
     StartupRecovery,
     Running,
+}
+
+/// What startup must do with a persisted watermark, given the canonical chain
+/// this node actually has on disk.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CheckpointRecoveryV1 {
+    /// The checkpoint block is canonical here; resume from it.
+    Resume,
+    /// The checkpoint outran block persistence; re-scan from the canonical tip.
+    RewindTo(OcompExExCheckpointV1),
+}
+
+/// Decide how to resume from `checkpoint`.
+///
+/// The watermark is fsynced independently of reth's block persistence, so an
+/// unclean shutdown can leave it naming a block above what was written. That is
+/// recoverable: per-job work is reconstructed from canonical notifications, so
+/// re-scanning from the canonical tip loses nothing. A checkpoint that is
+/// missing at or below the tip, or one whose hash disagrees with canonical, is a
+/// genuine inconsistency and still fails closed.
+fn classify_checkpoint_recovery(
+    checkpoint: OcompExExCheckpointV1,
+    canonical_at_checkpoint: Option<B256>,
+    canonical_tip: u64,
+    canonical_tip_hash: Option<B256>,
+) -> eyre::Result<CheckpointRecoveryV1> {
+    if let Some(canonical) = canonical_at_checkpoint {
+        if canonical == checkpoint.block_hash {
+            return Ok(CheckpointRecoveryV1::Resume);
+        }
+        bail!(
+            "OCOMP ExEx checkpoint hash {} conflicts with canonical {} at height {}",
+            checkpoint.block_hash,
+            canonical,
+            checkpoint.block_number
+        );
+    }
+    if checkpoint.block_number <= canonical_tip {
+        bail!(
+            "OCOMP ExEx checkpoint block {} is unavailable at or below canonical tip {}",
+            checkpoint.block_number,
+            canonical_tip
+        );
+    }
+    let block_hash = canonical_tip_hash
+        .ok_or_else(|| eyre::eyre!("OCOMP ExEx canonical tip {canonical_tip} is unavailable"))?;
+    Ok(CheckpointRecoveryV1::RewindTo(OcompExExCheckpointV1 {
+        block_number: canonical_tip,
+        block_hash,
+    }))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -206,6 +256,7 @@ where
     Node: FullNodeComponents,
     Node::Provider: BlockIdReader
         + BlockHashReader
+        + BlockNumReader
         + BlockReader
         + ReceiptProvider<Receipt = OutbeReceipt>
         + StateProviderFactory
@@ -226,34 +277,60 @@ where
         limits: poc_schema_limits(),
     })
     .map_err(|error| eyre::eyre!("open Node-owned OCOMP domain: {error}"))?;
-    let checkpoint = OcompExExCheckpointStoreV1::open(domain.checkpoint_root())
+    let mut checkpoint = OcompExExCheckpointStoreV1::open(domain.checkpoint_root())
         .wrap_err("open OCOMP ExEx checkpoint")?;
-    let loaded_checkpoint = checkpoint.load();
-    let (scanned_height, scanned_hash, finalized_head_phase) = match loaded_checkpoint {
-        Some(checkpoint) => {
-            let canonical = provider
-                .block_hash(checkpoint.block_number)
-                .wrap_err("validate OCOMP ExEx checkpoint hash")?
-                .ok_or_else(|| eyre::eyre!("OCOMP ExEx checkpoint block is unavailable"))?;
-            if canonical != checkpoint.block_hash {
-                bail!(
-                    "OCOMP ExEx checkpoint hash {} conflicts with canonical {} at height {}",
-                    checkpoint.block_hash,
-                    canonical,
-                    checkpoint.block_number
-                );
+    let loaded_checkpoint = match checkpoint.load() {
+        Some(stored) => {
+            let canonical_tip = provider
+                .best_block_number()
+                .wrap_err("read canonical tip for OCOMP ExEx checkpoint recovery")?;
+            let recovery = classify_checkpoint_recovery(
+                stored,
+                provider
+                    .block_hash(stored.block_number)
+                    .wrap_err("validate OCOMP ExEx checkpoint hash")?,
+                canonical_tip,
+                provider
+                    .block_hash(canonical_tip)
+                    .wrap_err("read canonical tip hash for OCOMP ExEx checkpoint recovery")?,
+            )?;
+            match recovery {
+                CheckpointRecoveryV1::Resume => stored,
+                CheckpointRecoveryV1::RewindTo(target) => {
+                    tracing::warn!(
+                        target: "outbe::ocomp::exex",
+                        checkpoint_block = stored.block_number,
+                        canonical_tip = target.block_number,
+                        "OCOMP ExEx checkpoint outran block persistence; re-scanning from the canonical tip"
+                    );
+                    checkpoint
+                        .rewind_to(target)
+                        .wrap_err("rewind OCOMP ExEx checkpoint to the canonical tip")?;
+                    target
+                }
             }
+        }
+        None => OcompExExCheckpointV1 {
+            block_number: 0,
+            block_hash: config.genesis_hash,
+        },
+    };
+    // Height 0 carries no notification head: there is nothing scanned to resume
+    // from, which is exactly the fresh-start contract.
+    let (scanned_height, scanned_hash, finalized_head_phase) =
+        if loaded_checkpoint.block_number == 0 {
+            (0, config.genesis_hash, FinalizedHeadPhaseV1::Running)
+        } else {
             ctx.set_notifications_with_head(ExExHead::new(
-                (checkpoint.block_number, checkpoint.block_hash).into(),
+                (loaded_checkpoint.block_number, loaded_checkpoint.block_hash).into(),
             ));
             (
-                checkpoint.block_number,
-                checkpoint.block_hash,
+                loaded_checkpoint.block_number,
+                loaded_checkpoint.block_hash,
                 FinalizedHeadPhaseV1::StartupRecovery,
             )
-        }
-        None => (0, config.genesis_hash, FinalizedHeadPhaseV1::Running),
-    };
+        };
+    let loaded_checkpoint = (loaded_checkpoint.block_number != 0).then_some(loaded_checkpoint);
     readiness.publish(initial_projection_status(
         loaded_checkpoint,
         config.genesis_hash,
@@ -1323,6 +1400,75 @@ impl StorageReader for OcompExExStateReaderV1<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn checkpoint_at(block_number: u64, byte: u8) -> OcompExExCheckpointV1 {
+        OcompExExCheckpointV1 {
+            block_number,
+            block_hash: B256::repeat_byte(byte),
+        }
+    }
+
+    #[test]
+    fn canonical_checkpoint_resumes_in_place() {
+        let checkpoint = checkpoint_at(139, 0xaa);
+        assert_eq!(
+            classify_checkpoint_recovery(checkpoint, Some(checkpoint.block_hash), 139, None)
+                .unwrap(),
+            CheckpointRecoveryV1::Resume
+        );
+    }
+
+    /// The watermark is fsynced independently of reth's block persistence, so an
+    /// unclean shutdown can leave it above the last written block. Re-scan from
+    /// the tip instead of refusing to start.
+    #[test]
+    fn checkpoint_above_the_canonical_tip_rewinds_and_rescans() {
+        let tip_hash = B256::repeat_byte(0xbb);
+        assert_eq!(
+            classify_checkpoint_recovery(checkpoint_at(139, 0xaa), None, 137, Some(tip_hash))
+                .unwrap(),
+            CheckpointRecoveryV1::RewindTo(OcompExExCheckpointV1 {
+                block_number: 137,
+                block_hash: tip_hash,
+            })
+        );
+    }
+
+    /// A hole at or below the tip is not a persistence lag — the history this
+    /// node claims to have is inconsistent, so it must not start.
+    #[test]
+    fn checkpoint_missing_below_the_canonical_tip_fails_closed() {
+        let error = classify_checkpoint_recovery(
+            checkpoint_at(100, 0xaa),
+            None,
+            139,
+            Some(B256::repeat_byte(0xbb)),
+        )
+        .expect_err("a gap below the tip is not recoverable");
+        assert!(error.to_string().contains("at or below canonical tip"));
+    }
+
+    /// A different chain at the same height is divergence, never a rewind.
+    #[test]
+    fn checkpoint_hash_conflict_fails_closed() {
+        let error = classify_checkpoint_recovery(
+            checkpoint_at(139, 0xaa),
+            Some(B256::repeat_byte(0xcc)),
+            139,
+            None,
+        )
+        .expect_err("a conflicting canonical hash is not recoverable");
+        assert!(error.to_string().contains("conflicts with canonical"));
+    }
+
+    #[test]
+    fn unavailable_canonical_tip_fails_closed() {
+        let error = classify_checkpoint_recovery(checkpoint_at(139, 0xaa), None, 137, None)
+            .expect_err("a missing tip hash is not recoverable");
+        assert!(error
+            .to_string()
+            .contains("canonical tip 137 is unavailable"));
+    }
 
     fn materialization_head(
         last_progress_height: u64,

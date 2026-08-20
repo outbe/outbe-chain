@@ -456,6 +456,13 @@ mise run test                   # cargo nextest run --workspace + doctests
 mise run test-consensus         # consensus crate only
 ```
 
+The localnet runs on macOS as well as Linux. On any non-Linux host the harness
+selects the `mock-native` enclave profile — the same mock enclave binary, run as
+a host process instead of inside the Gramine container, whose image is
+`linux/amd64` only. Docker is still required, for the MongoDB replica set. See
+[Launching TEE networks](docs/launching-with-sgx.md) for what that profile does
+and does not prove.
+
 These four `localnet-*` lifecycle commands are owned by the Rust E2E harness;
 they do not call `prepare_network.py`, `bootstrap-testnet.sh`, or
 `run-testnet.sh`. `prepare_network.py` remains the testnet/production deployment

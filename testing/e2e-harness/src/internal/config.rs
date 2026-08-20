@@ -88,7 +88,7 @@ impl Config {
             seed: env.seed.clone(),
             projection_mongodb_uri: env.projection_mongodb_uri.clone(),
             projection_database_prefix,
-            rpc0: format!("http://localhost:{}", env.ports.port(Service::Http, 0)),
+            rpc0: format!("http://127.0.0.1:{}", env.ports.port(Service::Http, 0)),
             path: path_with_foundry(),
             validators: env.validators,
             ports: env.ports.clone(),
@@ -130,7 +130,7 @@ impl Config {
     /// HTTP RPC url for validator index `i`.
     #[allow(dead_code)] // convenience for future flows
     pub fn rpc_url(&self, i: usize) -> String {
-        format!("http://localhost:{}", self.http_port(i))
+        format!("http://127.0.0.1:{}", self.http_port(i))
     }
 
     /// reth p2p (TCP+UDP) port for validator index `i`.

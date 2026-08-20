@@ -210,7 +210,7 @@ impl LocalnetCli {
             validators: self.validators,
             no_resolve_ports: persisted_blocks.is_some(),
             no_cleanup: true,
-            tee: TeeMode::Mock,
+            tee: localnet_tee_mode(),
             no_sudo: self.no_sudo,
             all: false,
             debug: self.debug,
@@ -288,12 +288,17 @@ fn bootstrap(cli: &LocalnetCli) -> Result<()> {
         rpc_ports,
     };
     write_json_atomic(&bootstrap_path(&cli.data_dir), &receipt)?;
-    println!("LocalNet bootstrapped at {}", cli.data_dir.display());
+    println!(
+        "LocalNet bootstrapped at {} ({})",
+        cli.data_dir.display(),
+        enclave_profile_banner()
+    );
     Ok(())
 }
 
 fn start(cli: &LocalnetCli) -> Result<()> {
     require_ocomp_integration_build()?;
+    println!("LocalNet enclave profile: {}", enclave_profile_banner());
     let receipt = read_bootstrap(cli)?;
     let _start_lock = StartLock::acquire(&cli.data_dir)?;
     if let Some(state) = read_state(&cli.data_dir)? {
@@ -972,6 +977,32 @@ fn ensure_matches(cli: &LocalnetCli, state: &LocalnetStateV1) -> Result<()> {
     Ok(())
 }
 
+/// One line naming the resolved enclave profile, so no run is ambiguous about
+/// which lane produced it.
+fn enclave_profile_banner() -> String {
+    let mode = localnet_tee_mode();
+    let detail = if mode.runs_native_host_enclave() {
+        "mock enclave as a host process; no Gramine, no LibOS, no attestation"
+    } else {
+        "mock enclave under gramine-direct in the pinned test container"
+    };
+    format!("{} — {detail}", mode.evidence_name())
+}
+
+/// The enclave execution profile this host can actually run.
+///
+/// The Gramine test image is published for `linux/amd64` only and does not
+/// survive emulation, so every non-Linux host runs the mock enclave as a native
+/// host process instead. This is a distinct named profile with its own evidence
+/// label — never a silent fallback to `mock`'s.
+const fn localnet_tee_mode() -> TeeMode {
+    if cfg!(target_os = "linux") {
+        TeeMode::Mock
+    } else {
+        TeeMode::MockNative
+    }
+}
+
 fn state_is_live(state: &LocalnetStateV1) -> bool {
     process_identity(state.owner_pid).as_deref() == Some(&state.owner_process_identity)
 }
@@ -1260,6 +1291,23 @@ mod tests {
         assert!(validate_data_dir(Path::new("/repo"), Path::new("/repo")).is_err());
         assert!(validate_data_dir(Path::new("/repo/project"), Path::new("/repo")).is_err());
         validate_data_dir(Path::new("/repo"), Path::new("/tmp/outbe-testnet")).unwrap();
+    }
+
+    /// Linux keeps the Gramine container; every other host runs the enclave
+    /// natively, because the test image is amd64-only and does not survive
+    /// emulation. Asserted on both sides so neither can drift silently.
+    #[test]
+    fn the_driver_resolves_the_enclave_profile_this_host_can_run() {
+        let mode = localnet_tee_mode();
+        if cfg!(target_os = "linux") {
+            assert_eq!(mode, TeeMode::Mock);
+            assert!(!mode.runs_native_host_enclave());
+        } else {
+            assert_eq!(mode, TeeMode::MockNative);
+            assert!(mode.runs_native_host_enclave());
+        }
+        assert!(mode.uses_mock_binary());
+        assert!(enclave_profile_banner().contains(mode.evidence_name()));
     }
 
     #[test]
