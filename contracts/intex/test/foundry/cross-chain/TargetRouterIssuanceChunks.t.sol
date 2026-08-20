@@ -101,7 +101,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         assertEq(_balance(USD, alice), 7, "first delivery mints");
 
         vm.expectEmit(true, true, true, true, address(router));
-        emit ERC7786MessengerBase.InboundMessageIgnored(
+        emit ITargetRouter.InboundMessageIgnored(
             OUTBE_CHAIN_ID,
             BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
             bytes32(uint256(DAY) << 16),
@@ -120,7 +120,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         vm.recordLogs();
         _deliver(1, 2, _one(_series(USD, alice, 3)));
         assertEq(_balance(USD, alice), 7, "alice keeps her one allocation");
-        assertEq(_countTopic(ERC7786MessengerBase.InboundMessageIgnored.selector), 1, "the repeated winner is reported");
+        assertEq(_countTopic(ITargetRouter.InboundMessageIgnored.selector), 1, "the repeated winner is reported");
         assertTrue(router.issued(USD, alice), "alice recorded as issued");
         assertFalse(router.issued(USD, bob), "bob never issued");
     }
@@ -141,7 +141,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         _deliver(0, 2, _one(_series(USD, alice, 7)));
 
         vm.expectEmit(true, true, true, true, address(router));
-        emit ERC7786MessengerBase.InboundMessageIgnored(
+        emit ITargetRouter.InboundMessageIgnored(
             OUTBE_CHAIN_ID,
             BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
             bytes32((uint256(DAY) << 16) | 1),
@@ -162,7 +162,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         chunk[1].entryPriceMinor = 101e6; // disagrees with the series this chain already holds
 
         vm.expectEmit(true, true, true, true, address(router));
-        emit ERC7786MessengerBase.InboundMessageIgnored(
+        emit ITargetRouter.InboundMessageIgnored(
             OUTBE_CHAIN_ID,
             BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
             bytes32((uint256(DAY) << 16) | 1),

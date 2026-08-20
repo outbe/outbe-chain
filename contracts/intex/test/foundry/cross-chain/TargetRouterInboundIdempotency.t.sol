@@ -80,7 +80,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
 
     function _expectIgnored(uint8 msgType, uint8 reason) internal {
         vm.expectEmit(true, true, true, true, address(router));
-        emit ERC7786MessengerBase.InboundMessageIgnored(OUTBE_CHAIN_ID, msgType, dayKey, reason);
+        emit ITargetRouter.InboundMessageIgnored(OUTBE_CHAIN_ID, msgType, dayKey, reason);
     }
 
     function _countTopic(bytes32 sig) internal returns (uint256 n) {
@@ -155,7 +155,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
 
         vm.recordLogs();
         _deliver(BridgeMsgCodec.encodeAuctionStageClearing(DAY));
-        assertEq(_countTopic(ERC7786MessengerBase.InboundMessageIgnored.selector), 1, "acknowledged without effect");
+        assertEq(_countTopic(ITargetRouter.InboundMessageIgnored.selector), 1, "acknowledged without effect");
         assertEq(_countTopic(ITargetRouter.BidsDoneSent.selector), 0, "no relay for a cleared day");
     }
 

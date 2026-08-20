@@ -6,6 +6,7 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
+import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
@@ -67,7 +68,7 @@ contract TargetRouterRefundAckTest is CrossChainTest {
 
     function _expectIgnored(uint16 chunkIndex, uint8 reason) internal {
         vm.expectEmit(true, true, true, true, address(target));
-        emit ERC7786MessengerBase.InboundMessageIgnored(
+        emit ITargetRouter.InboundMessageIgnored(
             OUTBE_CHAIN_ID, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, bytes32((uint256(DAY) << 16) | chunkIndex), reason
         );
     }

@@ -5,7 +5,6 @@ import {IIntexAuction} from "../interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../../shared/interfaces/IIntexNFT1155.sol";
 import {IEscrowAdapter} from "../interfaces/IEscrowAdapter.sol";
 import {ITargetRouter} from "../interfaces/ITargetRouter.sol";
-import {ERC7786MessengerBase} from "../../shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "../../shared/libs/BridgeMsgCodec.sol";
 import {InboundReason} from "../../shared/libs/InboundReason.sol";
 import {
@@ -289,7 +288,7 @@ library TargetInbound {
                 _ignore(
                     srcChainId,
                     BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
-                    bytes32(abi.encodePacked(payload.seriesId, recipient)),
+                    keccak256(abi.encodePacked(payload.seriesId, recipient)),
                     InboundReason.DUPLICATE
                 );
                 continue;
@@ -326,7 +325,7 @@ library TargetInbound {
     }
 
     function _ignore(uint32 srcChainId, uint8 msgType, bytes32 key, uint8 reason) private {
-        emit ERC7786MessengerBase.InboundMessageIgnored(srcChainId, msgType, key, reason);
+        emit ITargetRouter.InboundMessageIgnored(srcChainId, msgType, key, reason);
     }
 
     /// @notice Decode REFUND_INSTRUCTIONS and forward finalization instructions to the EscrowAdapter.
@@ -421,7 +420,7 @@ library TargetInbound {
     ///      without effect; any other failure slots the mark for `applyPendingMark`.
     function _applyMark(TargetRouterStorage storage $, uint32 srcChainId, bytes14 seriesId, uint8 msgType) private {
         if (!$.intex.seriesExists(seriesId)) {
-            _slotMark($, seriesId, msgType);
+            _slotMark($, srcChainId, seriesId, msgType);
             return;
         }
         // solhint-disable-next-line no-empty-blocks
@@ -434,7 +433,7 @@ library TargetInbound {
                 _ignore(srcChainId, msgType, seriesId, already ? InboundReason.DUPLICATE : InboundReason.OBSOLETE);
                 return;
             }
-            _slotMark($, seriesId, msgType);
+            _slotMark($, srcChainId, seriesId, msgType);
             _ignore(srcChainId, msgType, seriesId, InboundReason.DEFERRED);
             return;
         }
@@ -445,11 +444,14 @@ library TargetInbound {
         }
     }
 
-    /// @dev Keep a mark for a series that cannot take it yet; Called overrides Qualified, never the reverse.
-    function _slotMark(TargetRouterStorage storage $, bytes14 seriesId, uint8 msgType) private {
-        if (msgType == BridgeMsgCodec.MSG_MARK_CALLED || $.pendingMark[seriesId] != BridgeMsgCodec.MSG_MARK_CALLED) {
-            $.pendingMark[seriesId] = msgType;
+    /// @dev Keep a mark for a series that cannot take it yet; Called overrides Qualified, never the reverse
+    ///      (a Qualified arriving under a waiting Called is superseded and only acknowledged).
+    function _slotMark(TargetRouterStorage storage $, uint32 srcChainId, bytes14 seriesId, uint8 msgType) private {
+        if (msgType != BridgeMsgCodec.MSG_MARK_CALLED && $.pendingMark[seriesId] == BridgeMsgCodec.MSG_MARK_CALLED) {
+            _ignore(srcChainId, msgType, seriesId, InboundReason.OBSOLETE);
+            return;
         }
+        $.pendingMark[seriesId] = msgType;
         emit ITargetRouter.MarkSlotted(seriesId, msgType);
     }
 

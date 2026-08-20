@@ -188,7 +188,7 @@ contract InboundValidationTest is CrossChainTest {
         // authenticated source chainId (BNB_CHAIN_ID = 1): never acceptable, so acknowledged, not retried.
         bytes memory packet = BridgeMsgCodec.encodeBidsBatch(42, 0xDEAD, 1, 0, 1, new address[](0), new uint256[](0));
         vm.expectEmit(true, true, true, true, address(outbeRouter));
-        emit ERC7786MessengerBase.InboundMessageIgnored(
+        emit IOriginRouter.InboundMessageIgnored(
             BNB_CHAIN_ID,
             BridgeMsgCodec.MSG_BIDS_BATCH,
             bytes32((uint256(42) << 32) | BNB_CHAIN_ID),

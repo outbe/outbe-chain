@@ -45,6 +45,13 @@ interface ITargetRouter {
     /// @param recipientsCount Number of recipients.
     event IssuanceInstructionsReceived(uint32 indexed srcChainId, bytes14 indexed seriesId, uint256 recipientsCount);
 
+    /// @notice An authenticated inbound message, or one item of it, was acknowledged without effect.
+    /// @param srcChainId Source chainId the message was authenticated against.
+    /// @param msgType Codec message type.
+    /// @param key Identity of the ignored effect (worldwide day, series id, chunk, …) as the handler keys it.
+    /// @param reason One of the `InboundReason` codes.
+    event InboundMessageIgnored(uint32 indexed srcChainId, uint8 indexed msgType, bytes32 indexed key, uint8 reason);
+
     /// @notice Emitted when the last of a day's issuance chunks has been applied on this chain.
     /// @param worldwideDay Worldwide day whose issuance is complete here.
     /// @param totalChunks How many chunks the day's run spanned.

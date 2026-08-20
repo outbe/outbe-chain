@@ -208,6 +208,14 @@ interface IOriginRouter {
     error EmptyArray();
     /// @notice A series in an issuance chunk belongs to a different day than the chunk header.
     error IssuanceDayMismatch(bytes14 seriesId);
+
+    /// @notice An authenticated inbound message, or one item of it, was acknowledged without effect.
+    /// @param srcChainId Source chainId the message was authenticated against.
+    /// @param msgType Codec message type.
+    /// @param key Identity of the ignored effect (worldwide day, series id, chunk, …) as the handler keys it.
+    /// @param reason One of the `InboundReason` codes.
+    event InboundMessageIgnored(uint32 indexed srcChainId, uint8 indexed msgType, bytes32 indexed key, uint8 reason);
+
     /// @notice Inbound BIDS_BATCH body-level `srcChainId` disagrees with the authenticated source chainId.
     /// @param origin Source chainId the bridge authenticated.
     /// @param body Source chainId claimed by the encoded body.

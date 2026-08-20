@@ -174,12 +174,12 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         bytes32 key = bytes32((uint256(DAY) << 32) | 9);
         bytes memory batch = BridgeMsgCodec.encodeBidsBatch(DAY, 9, 1, 0, 1, new address[](0), new uint256[](0));
         vm.expectEmit(true, true, true, true, address(origin));
-        emit ERC7786MessengerBase.InboundMessageIgnored(9, BridgeMsgCodec.MSG_BIDS_BATCH, key, InboundReason.UNKNOWN);
+        emit IOriginRouter.InboundMessageIgnored(9, BridgeMsgCodec.MSG_BIDS_BATCH, key, InboundReason.UNKNOWN);
         _deliver(9, address(0x9999), address(origin), batch);
 
         bytes memory done = BridgeMsgCodec.encodeBidsDone(DAY, 9, 1, 1, 0);
         vm.expectEmit(true, true, true, true, address(origin));
-        emit ERC7786MessengerBase.InboundMessageIgnored(9, BridgeMsgCodec.MSG_BIDS_DONE, key, InboundReason.UNKNOWN);
+        emit IOriginRouter.InboundMessageIgnored(9, BridgeMsgCodec.MSG_BIDS_DONE, key, InboundReason.UNKNOWN);
         _deliver(9, address(0x9999), address(origin), done);
     }
 }

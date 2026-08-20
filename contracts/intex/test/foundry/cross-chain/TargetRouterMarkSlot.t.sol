@@ -73,7 +73,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
 
     function _expectIgnored(uint8 msgType, uint8 reason) internal {
         vm.expectEmit(true, true, true, true, address(router));
-        emit ERC7786MessengerBase.InboundMessageIgnored(uint32(block.chainid), msgType, series, reason);
+        emit ITargetRouter.InboundMessageIgnored(uint32(block.chainid), msgType, series, reason);
     }
 
     // --- unknown series: slot, then apply on creation ---

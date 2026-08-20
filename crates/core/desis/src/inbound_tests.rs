@@ -23,9 +23,9 @@ const NOW: u64 = 1_699_920_000 + 5;
 const ANCHOR: u64 = NOW - NOW % 86_400;
 const LOAD_MINOR: u128 = crate::constants::PROMIS_LOAD * 1_000_000;
 
-const IGNORED_STALE_GENERATION: u8 = 1;
-const IGNORED_UNKNOWN_DAY: u8 = 2;
-const IGNORED_CONFLICTING_MARKER: u8 = 3;
+const IGNORED_OBSOLETE: u8 = 2;
+const IGNORED_CONFLICT: u8 = 3;
+const IGNORED_UNKNOWN_DAY: u8 = 4;
 
 fn storage() -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -176,7 +176,7 @@ fn a_stale_marker_is_acknowledged() {
             "stale marker not recorded"
         );
     });
-    assert_eq!(ignored_reasons(&storage), vec![IGNORED_STALE_GENERATION]);
+    assert_eq!(ignored_reasons(&storage), vec![IGNORED_OBSOLETE]);
 }
 
 #[test]
@@ -238,5 +238,5 @@ fn a_repeated_marker_is_a_no_op_and_a_differing_one_is_reported() {
             "the first marker stands"
         );
     });
-    assert_eq!(ignored_reasons(&storage), vec![IGNORED_CONFLICTING_MARKER]);
+    assert_eq!(ignored_reasons(&storage), vec![IGNORED_CONFLICT]);
 }

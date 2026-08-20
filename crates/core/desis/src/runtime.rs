@@ -473,10 +473,10 @@ enum Intake {
     UnknownDay,
 }
 
-/// `InboundIgnored.reason` codes, mirrored in `IDesis`.
-const IGNORED_STALE_GENERATION: u8 = 1;
-const IGNORED_UNKNOWN_DAY: u8 = 2;
-const IGNORED_CONFLICTING_MARKER: u8 = 3;
+/// `InboundIgnored.reason` codes; the shared `InboundReason` numbering, mirrored in `IDesis`.
+const IGNORED_OBSOLETE: u8 = 2;
+const IGNORED_CONFLICT: u8 = 3;
+const IGNORED_UNKNOWN_DAY: u8 = 4;
 
 fn emit_inbound_ignored(
     contract: &mut DesisContract<'_>,
@@ -533,7 +533,14 @@ pub fn process_bids_batch(
 
     match intake_state(contract.read_stage(worldwide_day)?)? {
         Intake::Open => {}
-        Intake::Closed => return Ok(()),
+        Intake::Closed => {
+            return emit_inbound_ignored(
+                &mut contract,
+                worldwide_day,
+                src_chain_id,
+                IGNORED_OBSOLETE,
+            );
+        }
         Intake::UnknownDay => {
             return emit_inbound_ignored(
                 &mut contract,
@@ -551,7 +558,7 @@ pub fn process_bids_batch(
             &mut contract,
             worldwide_day,
             src_chain_id,
-            IGNORED_STALE_GENERATION,
+            IGNORED_OBSOLETE,
         );
     }
 
@@ -616,7 +623,14 @@ pub fn process_bids_done(
 
     match intake_state(contract.read_stage(worldwide_day)?)? {
         Intake::Open => {}
-        Intake::Closed => return Ok(()),
+        Intake::Closed => {
+            return emit_inbound_ignored(
+                &mut contract,
+                worldwide_day,
+                src_chain_id,
+                IGNORED_OBSOLETE,
+            );
+        }
         Intake::UnknownDay => {
             return emit_inbound_ignored(
                 &mut contract,
@@ -634,7 +648,7 @@ pub fn process_bids_done(
             &mut contract,
             worldwide_day,
             src_chain_id,
-            IGNORED_STALE_GENERATION,
+            IGNORED_OBSOLETE,
         );
     }
     if relay_generation > last_gen {
@@ -654,7 +668,7 @@ pub fn process_bids_done(
             &mut contract,
             worldwide_day,
             src_chain_id,
-            IGNORED_CONFLICTING_MARKER,
+            IGNORED_CONFLICT,
         );
     }
 
