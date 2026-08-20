@@ -284,11 +284,6 @@ cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-encla
 cargo run --release -p outbe-e2e-harness --bin outbe-e2e -- --tee mock --validators 4 --all "$@"
 """
 
-# Backward-compatible task name; `e2e` is now the canonical Rust harness task.
-[tasks.e2e-rust]
-description = "Alias for the Rust/Cucumber e2e suite"
-depends = ["e2e"]
-
 # ─── Off-chain Computation PoC ─────────────────────────────────────── #
 #
 # These names are the stable surfaces frozen by the OCOMP PoC plan. OCM-00
