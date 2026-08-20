@@ -37,6 +37,7 @@ const CHAIN_ID: u64 = 1;
 const GENESIS_TS: u64 = 1_704_067_200;
 const SECONDS_PER_DAY: u64 = 86_400;
 const EMISSION_LIMIT_1_ID: u32 = TriggerId::EmissionLimit1.as_u32();
+const METADOSIS_HOURLY_ID: u32 = TriggerId::MetadosisHourly.as_u32();
 
 fn retained_days_before(
     victim: outbe_common::WorldwideDay,
@@ -62,8 +63,12 @@ fn retained_days_before(
 #[test]
 fn cycle_tick_metadosis_authority_budget_matches_all_fixed_handlers() {
     assert_eq!(
-        crate::triggers::metadosis_mutation_lease_budget_per_tick(),
+        crate::triggers::metadosis_mutation_lease_budget_per_tick(false),
         3
+    );
+    assert_eq!(
+        crate::triggers::metadosis_mutation_lease_budget_per_tick(true),
+        2
     );
 }
 
@@ -180,9 +185,26 @@ fn run_cycle_lifecycle_at_activation(
     })
 }
 
+fn run_cycle_lifecycle_with_hourly_activation(
+    ctx: &BlockRuntimeContext,
+    metadosis_hourly_activation_height: u64,
+) -> outbe_primitives::error::Result<()> {
+    with_execution_scope(ctx, |scope, parent| {
+        let lifecycle = CycleLifecycleContext::new(ctx.clone(), scope, parent)
+            .with_metadosis_hourly_activation_height(Some(metadosis_hourly_activation_height));
+        <CycleLifecycle as BlockLifecycle>::begin_block(&lifecycle)
+    })
+}
+
 fn run_emission_limit_daily(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
     with_execution_scope(ctx, |scope, parent| {
         crate::handler::run_emission_limit_daily(ctx, scope, parent)
+    })
+}
+
+fn run_emission_limit_hourly(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<()> {
+    with_execution_scope(ctx, |scope, parent| {
+        crate::handler::run_metadosis_hourly(ctx, scope, parent)
     })
 }
 
@@ -265,6 +287,189 @@ fn first_encounter_anchors_without_firing() {
                 .unwrap(),
             0,
             "no fire = no last_executed_block_number write"
+        );
+    });
+}
+
+#[test]
+fn hourly_trigger_is_untouched_before_activation_and_only_anchors_at_activation() {
+    const ACTIVATION_HEIGHT: u64 = 10;
+    let mut storage = cycle_storage();
+    storage.enter(|handle| {
+        let anchor = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle.clone());
+        anchor_genesis(&anchor);
+        run_cycle_lifecycle_with_hourly_activation(&anchor, ACTIVATION_HEIGHT).unwrap();
+
+        let before = BlockRuntimeContext::new(
+            block_ctx(9, GENESIS_TS + SECONDS_PER_DAY + 60),
+            handle.clone(),
+        );
+        account_parent(&before, 9);
+        run_cycle_lifecycle_with_hourly_activation(&before, ACTIVATION_HEIGHT).unwrap();
+
+        let cycle: Cycle<'_> = before.storage.contract::<Cycle<'_>>();
+        assert_eq!(
+            cycle.last_executed_at.read(&METADOSIS_HOURLY_ID).unwrap(),
+            0
+        );
+        assert_eq!(
+            cycle
+                .last_executed_block_number
+                .read(&METADOSIS_HOURLY_ID)
+                .unwrap(),
+            0
+        );
+        assert!(
+            before
+                .storage
+                .contract::<outbe_rewards::schema::Rewards<'_>>()
+                .daily_settled
+                .read(&20_240_101)
+                .unwrap(),
+            "a staged future activation must preserve legacy settlement before X"
+        );
+
+        let activation_timestamp = GENESIS_TS + SECONDS_PER_DAY + 61 * 60;
+        let activation =
+            BlockRuntimeContext::new(block_ctx(ACTIVATION_HEIGHT, activation_timestamp), handle);
+        account_parent(&activation, ACTIVATION_HEIGHT);
+        run_cycle_lifecycle_with_hourly_activation(&activation, ACTIVATION_HEIGHT).unwrap();
+
+        let cycle: Cycle<'_> = activation.storage.contract::<Cycle<'_>>();
+        assert_eq!(
+            cycle.last_executed_at.read(&METADOSIS_HOURLY_ID).unwrap(),
+            activation_timestamp,
+            "the new trigger anchors on its first active block"
+        );
+        assert_eq!(
+            cycle
+                .last_executed_block_number
+                .read(&METADOSIS_HOURLY_ID)
+                .unwrap(),
+            0,
+            "anchoring must not execute the hourly handler"
+        );
+    });
+}
+
+#[test]
+fn hourly_settlement_integrity_failure_does_not_commit_the_due_slot() {
+    const ACTIVATION_HEIGHT: u64 = 2;
+    let previous_hour = GENESIS_TS + SECONDS_PER_DAY;
+    let due_timestamp = previous_hour + 3_600 + 5;
+    let mut storage = cycle_storage();
+    storage.enter(|handle| {
+        let ctx = BlockRuntimeContext::new(block_ctx(2, due_timestamp), handle.clone());
+        anchor_genesis(&ctx);
+        account_parent(&ctx, 2);
+        outbe_rewards::api::mark_day_settled(&ctx, 20_240_101).unwrap();
+
+        let cycle: Cycle<'_> = handle.contract::<Cycle<'_>>();
+        for spec in ACTIVE_TRIGGERS {
+            cycle
+                .last_executed_at
+                .write(
+                    &spec.id,
+                    if spec.id == METADOSIS_HOURLY_ID {
+                        previous_hour
+                    } else {
+                        due_timestamp
+                    },
+                )
+                .unwrap();
+        }
+
+        assert!(matches!(
+            run_cycle_lifecycle_with_hourly_activation(&ctx, ACTIVATION_HEIGHT),
+            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+        ));
+
+        let cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();
+        assert_eq!(
+            cycle.last_executed_at.read(&METADOSIS_HOURLY_ID).unwrap(),
+            previous_hour,
+            "a failed hourly handler must leave its due slot pending"
+        );
+        assert_eq!(
+            cycle
+                .last_executed_block_number
+                .read(&METADOSIS_HOURLY_ID)
+                .unwrap(),
+            0
+        );
+    });
+}
+
+#[test]
+fn activation_retires_legacy_domain_work_and_first_hour_runs_the_unified_flow() {
+    const ACTIVATION_HEIGHT: u64 = 2;
+    let mut storage = cycle_storage();
+    storage.enter(|handle| {
+        let anchor = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle.clone());
+        anchor_genesis(&anchor);
+        run_cycle_lifecycle_with_hourly_activation(&anchor, ACTIVATION_HEIGHT).unwrap();
+
+        let activation_timestamp = GENESIS_TS + SECONDS_PER_DAY + 60;
+        let activation = BlockRuntimeContext::new(
+            block_ctx(ACTIVATION_HEIGHT, activation_timestamp),
+            handle.clone(),
+        );
+        account_parent(&activation, ACTIVATION_HEIGHT);
+        run_cycle_lifecycle_with_hourly_activation(&activation, ACTIVATION_HEIGHT).unwrap();
+
+        let rewards = activation
+            .storage
+            .contract::<outbe_rewards::schema::Rewards<'_>>();
+        assert!(
+            !rewards.daily_settled.read(&20_240_101).unwrap(),
+            "the legacy midnight handler is a domain no-op after activation"
+        );
+        let cycle: Cycle<'_> = activation.storage.contract::<Cycle<'_>>();
+        assert_eq!(
+            cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
+            GENESIS_TS + SECONDS_PER_DAY,
+            "the retired legacy trigger keeps its historical audit checkpoint"
+        );
+        assert_eq!(
+            cycle.last_executed_at.read(&METADOSIS_HOURLY_ID).unwrap(),
+            activation_timestamp,
+            "the new trigger only anchors on the activation block"
+        );
+
+        let first_hour_timestamp = GENESIS_TS + SECONDS_PER_DAY + 3_600 + 5;
+        let first_hour = BlockRuntimeContext::new(
+            block_ctx(ACTIVATION_HEIGHT + 1, first_hour_timestamp),
+            handle,
+        );
+        account_parent(&first_hour, ACTIVATION_HEIGHT + 1);
+        run_cycle_lifecycle_with_hourly_activation(&first_hour, ACTIVATION_HEIGHT).unwrap();
+
+        let rewards = first_hour
+            .storage
+            .contract::<outbe_rewards::schema::Rewards<'_>>();
+        assert!(
+            rewards.daily_settled.read(&20_240_101).unwrap(),
+            "the first active hourly slot settles the previous UTC day"
+        );
+        assert!(matches!(
+            outbe_metadosis::api::day_limit_formation_receipt(
+                first_hour.storage.clone(),
+                outbe_common::WorldwideDay::new(20_240_101),
+            )
+            .unwrap(),
+            Some(outbe_metadosis::DayLimitFormationReceipt::Formed(_))
+        ));
+        let cycle: Cycle<'_> = first_hour.storage.contract::<Cycle<'_>>();
+        assert_eq!(
+            cycle.last_executed_at.read(&METADOSIS_HOURLY_ID).unwrap(),
+            GENESIS_TS + SECONDS_PER_DAY + 3_600
+        );
+        assert_eq!(
+            cycle
+                .last_executed_block_number
+                .read(&METADOSIS_HOURLY_ID)
+                .unwrap(),
+            ACTIVATION_HEIGHT + 1
         );
     });
 }
@@ -687,6 +892,84 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
             metadosis_after_first,
             "terminal Metadosis must not be re-dispatched for the same prev_day"
         );
+    });
+}
+
+#[test]
+fn hourly_flow_skips_settled_emission_but_still_runs_wwd_lifecycle() {
+    let mut storage = cycle_storage();
+    storage.enter(|handle| {
+        let previous_day_ctx =
+            BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle.clone());
+        outbe_metadosis::commands::apply_cycle_day_limit(&previous_day_ctx, U256::from(17_u8))
+            .unwrap();
+        outbe_rewards::api::mark_day_settled(&previous_day_ctx, 20_240_101).unwrap();
+
+        let days_before = outbe_metadosis::api::worldwide_days(handle.clone()).unwrap();
+        assert_eq!(days_before.len(), 1, "only the settled previous WWD exists");
+        let cca_before = handle
+            .balance(outbe_primitives::addresses::CCA_ADDRESS)
+            .unwrap();
+
+        let hourly_ctx = BlockRuntimeContext::new(
+            block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 3_600 + 5),
+            handle,
+        );
+        run_emission_limit_hourly(&hourly_ctx).unwrap();
+
+        let days_after = outbe_metadosis::api::worldwide_days(hourly_ctx.storage.clone()).unwrap();
+        assert!(
+            days_after.len() > days_before.len(),
+            "an already-settled day must skip only allocation and still create the current WWD"
+        );
+        assert_eq!(
+            hourly_ctx
+                .storage
+                .balance(outbe_primitives::addresses::CCA_ADDRESS)
+                .unwrap(),
+            cca_before,
+            "the settled previous day must not mint its allocation twice"
+        );
+    });
+}
+
+#[test]
+fn hourly_flow_processes_one_ready_wwd_with_its_persisted_day_limit() {
+    let ready_day = outbe_common::WorldwideDay::new(20_240_101);
+    let mut storage = cycle_storage();
+    storage.enter(|handle| {
+        outbe_metadosis::test_support::seed_ready_worldwide_days_for_capacity(
+            handle.clone(),
+            &[ready_day],
+        )
+        .unwrap();
+        let previous_day_ctx =
+            BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle.clone());
+        outbe_metadosis::commands::apply_cycle_day_limit(&previous_day_ctx, U256::from(17_u8))
+            .unwrap();
+        outbe_rewards::api::mark_day_settled(&previous_day_ctx, ready_day.value()).unwrap();
+
+        let before = outbe_metadosis::api::worldwide_days(handle.clone())
+            .unwrap()
+            .into_iter()
+            .find(|day| day.worldwide_day == ready_day)
+            .expect("READY WWD fixture");
+        assert_eq!(before.status, outbe_metadosis::WwdStatus::Ready);
+        assert_eq!(before.metadosis_limit_amount, U256::from(17_u8));
+
+        let hourly_ctx = BlockRuntimeContext::new(
+            block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 3_600 + 5),
+            handle,
+        );
+        run_emission_limit_hourly(&hourly_ctx).unwrap();
+
+        let after = outbe_metadosis::api::worldwide_days(hourly_ctx.storage.clone())
+            .unwrap()
+            .into_iter()
+            .find(|day| day.worldwide_day == ready_day)
+            .expect("processed WWD remains in the bounded terminal set");
+        assert_eq!(after.status, outbe_metadosis::WwdStatus::Completed);
+        assert_eq!(after.metadosis_limit_amount, U256::from(17_u8));
     });
 }
 

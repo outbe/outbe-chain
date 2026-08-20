@@ -18,8 +18,13 @@ use thiserror::Error;
 use crate::{
     control::EndpointIdentity,
     public_rpc::{FinalizedRpcBlockV1, PublicOcompRpcClientV1, PublicRpcError},
-    supervisor::{DiscoveryJournal, DiscoveryOutcome, DiscoveryRecord, SupervisorDiscoveryError},
+    supervisor::{
+        DiscoveryJournal, DiscoveryOutcome, DiscoveryRecord, ScanCheckpointV1,
+        SupervisorDiscoveryError,
+    },
 };
+
+const DISCOVERY_SCAN_CHUNK_BLOCKS: u64 = 100;
 
 #[derive(Clone, Debug)]
 pub struct FinalizedRpcDiscoveryConfigV1 {
@@ -45,9 +50,55 @@ pub enum FinalizedRpcDiscoveryPurposeV1 {
 
 pub struct FinalizedRpcDiscoveryV1 {
     config: FinalizedRpcDiscoveryConfigV1,
-    rpc: PublicOcompRpcClientV1,
+    rpc: Box<dyn FinalizedRpcClientV1>,
     journal: DiscoveryJournal,
     journal_validated: bool,
+    scan_checkpoint_validated: bool,
+}
+
+trait FinalizedRpcClientV1 {
+    fn finalized_block(&self) -> Result<FinalizedRpcBlockV1, PublicRpcError>;
+    fn block_by_number(&self, number: u64) -> Result<FinalizedRpcBlockV1, PublicRpcError>;
+    fn logs(
+        &self,
+        address: alloy_primitives::Address,
+        topic0: B256,
+        from_block: u64,
+        to_block: u64,
+    ) -> Result<Vec<serde_json::Value>, PublicRpcError>;
+    fn job_record_at_hash(
+        &self,
+        intent_id: B256,
+        block_hash: B256,
+    ) -> Result<Vec<u8>, PublicRpcError>;
+}
+
+impl FinalizedRpcClientV1 for PublicOcompRpcClientV1 {
+    fn finalized_block(&self) -> Result<FinalizedRpcBlockV1, PublicRpcError> {
+        Self::finalized_block(self)
+    }
+
+    fn block_by_number(&self, number: u64) -> Result<FinalizedRpcBlockV1, PublicRpcError> {
+        Self::block_by_number(self, number)
+    }
+
+    fn logs(
+        &self,
+        address: alloy_primitives::Address,
+        topic0: B256,
+        from_block: u64,
+        to_block: u64,
+    ) -> Result<Vec<serde_json::Value>, PublicRpcError> {
+        Self::logs(self, address, topic0, from_block, to_block)
+    }
+
+    fn job_record_at_hash(
+        &self,
+        intent_id: B256,
+        block_hash: B256,
+    ) -> Result<Vec<u8>, PublicRpcError> {
+        Self::job_record_at_hash(self, intent_id, block_hash)
+    }
 }
 
 impl FinalizedRpcDiscoveryV1 {
@@ -55,14 +106,32 @@ impl FinalizedRpcDiscoveryV1 {
         if config.projection_start_block == 0 || config.fork_id.is_zero() {
             return Err(RpcDiscoveryErrorV1::InvalidConfig);
         }
-        let rpc =
-            PublicOcompRpcClientV1::new(config.rpc_url.clone(), config.rpc_max_response_bytes)?;
+        let rpc = Box::new(PublicOcompRpcClientV1::new(
+            config.rpc_url.clone(),
+            config.rpc_max_response_bytes,
+        )?);
+        Self::open_with_rpc(config, rpc)
+    }
+
+    fn open_with_rpc(
+        config: FinalizedRpcDiscoveryConfigV1,
+        rpc: Box<dyn FinalizedRpcClientV1>,
+    ) -> Result<Self, RpcDiscoveryErrorV1> {
+        if config.projection_start_block == 0 || config.fork_id.is_zero() {
+            return Err(RpcDiscoveryErrorV1::InvalidConfig);
+        }
         let journal = DiscoveryJournal::open(&config.journal_root, config.limits)?;
+        if journal.scan_checkpoint().is_some_and(|checkpoint| {
+            checkpoint.identity != config.identity || checkpoint.fork_id != config.fork_id
+        }) {
+            return Err(RpcDiscoveryErrorV1::ScanCheckpointIdentityMismatch);
+        }
         Ok(Self {
             config,
             rpc,
             journal,
             journal_validated: false,
+            scan_checkpoint_validated: false,
         })
     }
 
@@ -76,11 +145,8 @@ impl FinalizedRpcDiscoveryV1 {
     }
 
     fn reconcile_inner(&mut self) -> Result<DiscoveryOutcome, RpcDiscoveryErrorV1> {
-        let after_cursor = self.journal.record().map_or(
-            self.config.projection_start_block.saturating_sub(1),
-            |record| record.cursor,
-        );
         let finalized_head = self.rpc.finalized_block()?;
+        self.validate_scan_checkpoint(finalized_head)?;
         if let Some(record) = self.journal.record() {
             if record.cursor > finalized_head.number {
                 return Err(RpcDiscoveryErrorV1::FinalizedHeadBehindJournal {
@@ -107,18 +173,29 @@ impl FinalizedRpcDiscoveryV1 {
             self.journal_validated =
                 record_available_for_purpose(self.config.purpose, &current, finalized_head.number);
         }
+        let after_cursor = effective_scan_cursor(
+            self.config.projection_start_block,
+            self.journal.record(),
+            self.journal.scan_checkpoint(),
+        );
         let Some(from_block) = after_cursor.checked_add(1) else {
             return Err(RpcDiscoveryErrorV1::CursorOverflow);
         };
         if from_block > finalized_head.number {
             return Ok(DiscoveryOutcome::NoNewJob);
         }
+        let to_block = bounded_scan_end(from_block, finalized_head.number);
+        eprintln!(
+            "OCOMP finalized discovery scanning blocks: \
+             from_block={from_block} to_block={to_block} finalized_head={}",
+            finalized_head.number
+        );
 
         let logs = self.rpc.logs(
             outbe_primitives::addresses::METADOSIS_ADDRESS,
             IMetadosis::OffchainJobRequested::SIGNATURE_HASH,
             from_block,
-            finalized_head.number,
+            to_block,
         )?;
         let mut previous_position = None;
         for value in logs {
@@ -128,8 +205,8 @@ impl FinalizedRpcDiscoveryV1 {
                 return Err(RpcDiscoveryErrorV1::NonCanonicalLogOrder);
             }
             previous_position = Some(position);
-            if indexed.block_number <= after_cursor {
-                return Err(RpcDiscoveryErrorV1::NonMonotonicEventCursor);
+            if indexed.block_number < from_block || indexed.block_number > to_block {
+                return Err(RpcDiscoveryErrorV1::EventOutsideRequestedRange);
             }
             let canonical = self.rpc.block_by_number(indexed.block_number)?;
             if canonical.hash != indexed.block_hash {
@@ -140,11 +217,17 @@ impl FinalizedRpcDiscoveryV1 {
                 .rpc
                 .job_record_at_hash(indexed.intent_id, finalized_head.hash)?;
             let current = OcompJobRecordV1::decode_canonical(&current_bytes, &self.config.limits)?;
-            if current.finalized.is_none() {
-                continue;
-            }
-            if !record_available_for_purpose(self.config.purpose, &current, finalized_head.number) {
-                continue;
+            match record_availability_for_purpose(
+                self.config.purpose,
+                &current,
+                finalized_head.number,
+            ) {
+                RecordAvailabilityV1::Pending => {
+                    self.persist_scan_checkpoint_before(indexed.block_number)?;
+                    return Ok(DiscoveryOutcome::NoNewJob);
+                }
+                RecordAvailabilityV1::Terminal => continue,
+                RecordAvailabilityV1::Available => {}
             }
 
             let spec = build_finalized_job_spec(
@@ -159,7 +242,84 @@ impl FinalizedRpcDiscoveryV1 {
             self.journal_validated = true;
             return Ok(DiscoveryOutcome::Discovered(Box::new(record)));
         }
+        let anchor = if to_block == finalized_head.number {
+            finalized_head
+        } else {
+            self.rpc.block_by_number(to_block)?
+        };
+        self.persist_scan_checkpoint(to_block, anchor)?;
         Ok(DiscoveryOutcome::NoNewJob)
+    }
+
+    fn validate_scan_checkpoint(
+        &mut self,
+        finalized_head: FinalizedRpcBlockV1,
+    ) -> Result<(), RpcDiscoveryErrorV1> {
+        if self.scan_checkpoint_validated {
+            return Ok(());
+        }
+        if let Some(checkpoint) = self.journal.scan_checkpoint().copied() {
+            if checkpoint.scanned_through_height > finalized_head.number {
+                return Err(RpcDiscoveryErrorV1::FinalizedHeadBehindScanCheckpoint {
+                    finalized: finalized_head.number,
+                    checkpoint: checkpoint.scanned_through_height,
+                });
+            }
+            let canonical = self
+                .rpc
+                .block_by_number(checkpoint.scanned_through_height)?;
+            require_scan_checkpoint_anchor(checkpoint, canonical)?;
+        }
+        self.scan_checkpoint_validated = true;
+        Ok(())
+    }
+
+    fn persist_scan_checkpoint_before(
+        &mut self,
+        blocking_height: u64,
+    ) -> Result<(), RpcDiscoveryErrorV1> {
+        let Some(safe_height) = blocking_height.checked_sub(1) else {
+            return Err(RpcDiscoveryErrorV1::CursorOverflow);
+        };
+        let current = effective_scan_cursor(
+            self.config.projection_start_block,
+            self.journal.record(),
+            self.journal.scan_checkpoint(),
+        );
+        if safe_height <= current {
+            return Ok(());
+        }
+        let anchor = self.rpc.block_by_number(safe_height)?;
+        self.persist_scan_checkpoint(safe_height, anchor)
+    }
+
+    fn persist_scan_checkpoint(
+        &mut self,
+        height: u64,
+        canonical: FinalizedRpcBlockV1,
+    ) -> Result<(), RpcDiscoveryErrorV1> {
+        if canonical.number != height || canonical.hash.is_zero() {
+            return Err(RpcDiscoveryErrorV1::ScanCheckpointAuthorityMismatch);
+        }
+        let previous_height = self
+            .journal
+            .scan_checkpoint()
+            .map(|checkpoint| checkpoint.scanned_through_height);
+        let checkpoint = self.journal.persist_scan_checkpoint(
+            self.config.identity,
+            self.config.fork_id,
+            height,
+            canonical.hash,
+        )?;
+        if previous_height.is_none_or(|previous| checkpoint.scanned_through_height > previous) {
+            eprintln!(
+                "OCOMP finalized discovery advanced scan checkpoint: \
+                 scanned_through_height={} scanned_through_block_hash={:#x}",
+                checkpoint.scanned_through_height, checkpoint.scanned_through_block_hash
+            );
+        }
+        self.scan_checkpoint_validated = true;
+        Ok(())
     }
 
     pub fn current_record(&self) -> Option<DiscoveryRecord> {
@@ -167,6 +327,24 @@ impl FinalizedRpcDiscoveryV1 {
             .then(|| self.journal.record().cloned())
             .flatten()
     }
+}
+
+fn bounded_scan_end(from_block: u64, finalized_height: u64) -> u64 {
+    from_block
+        .saturating_add(DISCOVERY_SCAN_CHUNK_BLOCKS - 1)
+        .min(finalized_height)
+}
+
+fn effective_scan_cursor(
+    projection_start_block: u64,
+    record: Option<&DiscoveryRecord>,
+    checkpoint: Option<&ScanCheckpointV1>,
+) -> u64 {
+    let initial = projection_start_block.saturating_sub(1);
+    let job_cursor = record.map_or(initial, |record| record.cursor);
+    checkpoint.map_or(job_cursor, |checkpoint| {
+        job_cursor.max(checkpoint.scanned_through_height)
+    })
 }
 
 fn rebuild_durable_spec(
@@ -199,19 +377,49 @@ fn record_available_for_purpose(
     record: &OcompJobRecordV1,
     finalized_height: u64,
 ) -> bool {
+    record_availability_for_purpose(purpose, record, finalized_height)
+        == RecordAvailabilityV1::Available
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RecordAvailabilityV1 {
+    Pending,
+    Available,
+    Terminal,
+}
+
+fn record_availability_for_purpose(
+    purpose: FinalizedRpcDiscoveryPurposeV1,
+    record: &OcompJobRecordV1,
+    finalized_height: u64,
+) -> RecordAvailabilityV1 {
     let Some(finalized) = record.finalized.as_ref() else {
-        return false;
+        return RecordAvailabilityV1::Pending;
     };
     match purpose {
-        FinalizedRpcDiscoveryPurposeV1::VotingAuthority => {
-            record.status == OcompJobStatus::VotingOpen
-                && finalized_height >= finalized.open_height
-                && finalized_height < finalized.deadline_height
-        }
-        FinalizedRpcDiscoveryPurposeV1::InputReplay => matches!(
-            record.status,
-            OcompJobStatus::VotingOpen | OcompJobStatus::Completed
-        ),
+        FinalizedRpcDiscoveryPurposeV1::VotingAuthority => match record.status {
+            OcompJobStatus::AwaitingFinality => RecordAvailabilityV1::Pending,
+            OcompJobStatus::VotingOpen if finalized_height < finalized.open_height => {
+                RecordAvailabilityV1::Pending
+            }
+            OcompJobStatus::VotingOpen if finalized_height < finalized.deadline_height => {
+                RecordAvailabilityV1::Available
+            }
+            OcompJobStatus::VotingOpen
+            | OcompJobStatus::Completed
+            | OcompJobStatus::Expired
+            | OcompJobStatus::Conflicted
+            | OcompJobStatus::Canceled => RecordAvailabilityV1::Terminal,
+        },
+        FinalizedRpcDiscoveryPurposeV1::InputReplay => match record.status {
+            OcompJobStatus::AwaitingFinality => RecordAvailabilityV1::Pending,
+            OcompJobStatus::VotingOpen | OcompJobStatus::Completed => {
+                RecordAvailabilityV1::Available
+            }
+            OcompJobStatus::Expired | OcompJobStatus::Conflicted | OcompJobStatus::Canceled => {
+                RecordAvailabilityV1::Terminal
+            }
+        },
     }
 }
 
@@ -224,6 +432,18 @@ fn require_journal_anchor(
         || canonical.state_root != record.spec.summary.finalized_state_root
     {
         return Err(RpcDiscoveryErrorV1::JournalAuthorityMismatch);
+    }
+    Ok(())
+}
+
+fn require_scan_checkpoint_anchor(
+    checkpoint: ScanCheckpointV1,
+    canonical: FinalizedRpcBlockV1,
+) -> Result<(), RpcDiscoveryErrorV1> {
+    if canonical.number != checkpoint.scanned_through_height
+        || canonical.hash != checkpoint.scanned_through_block_hash
+    {
+        return Err(RpcDiscoveryErrorV1::ScanCheckpointAuthorityMismatch);
     }
     Ok(())
 }
@@ -367,6 +587,8 @@ pub enum RpcDiscoveryErrorV1 {
     NonCanonicalLogOrder,
     #[error("finalized OCOMP request event did not advance the durable cursor")]
     NonMonotonicEventCursor,
+    #[error("finalized OCOMP request event is outside the requested block range")]
+    EventOutsideRequestedRange,
     #[error("finalized OCOMP request log is marked removed")]
     RemovedLog,
     #[error("finalized OCOMP request log is malformed")]
@@ -377,12 +599,20 @@ pub enum RpcDiscoveryErrorV1 {
     EventAuthorityMismatch,
     #[error("finalized RPC head {finalized} is behind durable OCOMP discovery cursor {cursor}")]
     FinalizedHeadBehindJournal { finalized: u64, cursor: u64 },
+    #[error("finalized RPC head {finalized} is behind durable OCOMP scan checkpoint {checkpoint}")]
+    FinalizedHeadBehindScanCheckpoint { finalized: u64, checkpoint: u64 },
     #[error("durable OCOMP discovery record differs from the canonical finalized block")]
     JournalAuthorityMismatch,
+    #[error("durable OCOMP scan checkpoint identity differs from the active endpoint")]
+    ScanCheckpointIdentityMismatch,
+    #[error("durable OCOMP scan checkpoint differs from its canonical finalized block")]
+    ScanCheckpointAuthorityMismatch,
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use alloy_primitives::U256;
     use outbe_ocomp_protocol::{
         intent::{
@@ -395,6 +625,144 @@ mod tests {
     };
 
     use super::*;
+
+    #[derive(Default)]
+    struct MockRpcState {
+        finalized_height: u64,
+        log_ranges: Vec<(u64, u64)>,
+        fail_logs: bool,
+        logs: Vec<serde_json::Value>,
+        job_record: Option<Vec<u8>>,
+        block_override: Option<FinalizedRpcBlockV1>,
+    }
+
+    #[derive(Clone)]
+    struct MockRpc {
+        state: Arc<Mutex<MockRpcState>>,
+    }
+
+    impl MockRpc {
+        fn new(finalized_height: u64) -> (Self, Arc<Mutex<MockRpcState>>) {
+            let state = Arc::new(Mutex::new(MockRpcState {
+                finalized_height,
+                ..Default::default()
+            }));
+            (
+                Self {
+                    state: Arc::clone(&state),
+                },
+                state,
+            )
+        }
+    }
+
+    impl FinalizedRpcClientV1 for MockRpc {
+        fn finalized_block(&self) -> Result<FinalizedRpcBlockV1, PublicRpcError> {
+            let height = self.state.lock().unwrap().finalized_height;
+            Ok(mock_block(height, None))
+        }
+
+        fn block_by_number(&self, number: u64) -> Result<FinalizedRpcBlockV1, PublicRpcError> {
+            let block_override = self.state.lock().unwrap().block_override;
+            Ok(block_override
+                .filter(|block| block.number == number)
+                .unwrap_or_else(|| mock_block(number, None)))
+        }
+
+        fn logs(
+            &self,
+            _address: alloy_primitives::Address,
+            _topic0: B256,
+            from_block: u64,
+            to_block: u64,
+        ) -> Result<Vec<serde_json::Value>, PublicRpcError> {
+            let mut state = self.state.lock().unwrap();
+            state.log_ranges.push((from_block, to_block));
+            if state.fail_logs {
+                return Err(PublicRpcError::Remote {
+                    method: "eth_getLogs",
+                    detail: "injected failure".to_owned(),
+                });
+            }
+            Ok(state
+                .logs
+                .iter()
+                .filter(|value| {
+                    parse_rpc_u64(value, "blockNumber")
+                        .is_ok_and(|height| height >= from_block && height <= to_block)
+                })
+                .cloned()
+                .collect())
+        }
+
+        fn job_record_at_hash(
+            &self,
+            _intent_id: B256,
+            _block_hash: B256,
+        ) -> Result<Vec<u8>, PublicRpcError> {
+            self.state
+                .lock()
+                .unwrap()
+                .job_record
+                .clone()
+                .ok_or(PublicRpcError::Remote {
+                    method: "eth_call",
+                    detail: "no mock job record".to_owned(),
+                })
+        }
+    }
+
+    fn mock_block(number: u64, hash: Option<B256>) -> FinalizedRpcBlockV1 {
+        FinalizedRpcBlockV1 {
+            number,
+            hash: hash.unwrap_or_else(|| numbered_hash(0x51, number)),
+            state_root: numbered_hash(0x52, number),
+        }
+    }
+
+    fn numbered_hash(domain: u8, number: u64) -> B256 {
+        let mut bytes = [0_u8; 32];
+        bytes[0] = domain;
+        bytes[24..].copy_from_slice(&number.to_be_bytes());
+        B256::from(bytes)
+    }
+
+    fn discovery_config(
+        journal_root: PathBuf,
+        identity: EndpointIdentity,
+        fork_id: B256,
+        purpose: FinalizedRpcDiscoveryPurposeV1,
+    ) -> FinalizedRpcDiscoveryConfigV1 {
+        FinalizedRpcDiscoveryConfigV1 {
+            rpc_url: "mock://finalized".to_owned(),
+            rpc_max_response_bytes: 1024,
+            journal_root,
+            projection_start_block: 1,
+            identity,
+            fork_id,
+            limits: poc_schema_limits(),
+            purpose,
+        }
+    }
+
+    fn request_log(indexed: IndexedJobRequestV1) -> serde_json::Value {
+        let event = IMetadosis::OffchainJobRequested {
+            intentId: indexed.intent_id,
+            wwd: indexed.worldwide_day,
+            pendingNonce: indexed.pending_nonce,
+            attempt: indexed.attempt,
+            activationPreconditionsHash: indexed.activation_preconditions_hash,
+        };
+        let encoded = event.encode_log_data();
+        serde_json::json!({
+            "removed": false,
+            "blockNumber": format!("0x{:x}", indexed.block_number),
+            "blockHash": format!("{:#x}", indexed.block_hash),
+            "logIndex": format!("0x{:x}", indexed.log_index),
+            "topics": encoded.topics().iter().map(|topic| format!("{topic:#x}")).collect::<Vec<_>>(),
+            "data": format!("0x{}", hex::encode(encoded.data.as_ref())),
+        })
+    }
 
     fn finalized_record_fixture() -> (
         EndpointIdentity,
@@ -516,6 +884,196 @@ mod tests {
             terminal: None,
         };
         (identity, fork_id, indexed, request, record)
+    }
+
+    #[test]
+    fn empty_finalized_scans_advance_in_restart_safe_hundred_block_chunks() {
+        let (identity, fork_id, _, _, _) = finalized_record_fixture();
+        let root = tempfile::tempdir().unwrap();
+        let (first_rpc, first_state) = MockRpc::new(250);
+        let mut first = FinalizedRpcDiscoveryV1::open_with_rpc(
+            discovery_config(
+                root.path().to_path_buf(),
+                identity,
+                fork_id,
+                FinalizedRpcDiscoveryPurposeV1::InputReplay,
+            ),
+            Box::new(first_rpc),
+        )
+        .unwrap();
+
+        assert_eq!(first.reconcile_once().unwrap(), DiscoveryOutcome::NoNewJob);
+        assert_eq!(first_state.lock().unwrap().log_ranges, vec![(1, 100)]);
+        assert_eq!(
+            first
+                .journal
+                .scan_checkpoint()
+                .unwrap()
+                .scanned_through_height,
+            100
+        );
+        drop(first);
+
+        let (restart_rpc, restart_state) = MockRpc::new(250);
+        let mut restarted = FinalizedRpcDiscoveryV1::open_with_rpc(
+            discovery_config(
+                root.path().to_path_buf(),
+                identity,
+                fork_id,
+                FinalizedRpcDiscoveryPurposeV1::InputReplay,
+            ),
+            Box::new(restart_rpc),
+        )
+        .unwrap();
+        assert_eq!(
+            restarted.reconcile_once().unwrap(),
+            DiscoveryOutcome::NoNewJob
+        );
+        assert_eq!(restart_state.lock().unwrap().log_ranges, vec![(101, 200)]);
+        assert_eq!(
+            restarted
+                .journal
+                .scan_checkpoint()
+                .unwrap()
+                .scanned_through_height,
+            200
+        );
+
+        assert_eq!(
+            restarted.reconcile_once().unwrap(),
+            DiscoveryOutcome::NoNewJob
+        );
+        assert_eq!(
+            restart_state.lock().unwrap().log_ranges,
+            vec![(101, 200), (201, 250)]
+        );
+        assert_eq!(
+            restarted
+                .journal
+                .scan_checkpoint()
+                .unwrap()
+                .scanned_through_height,
+            250
+        );
+    }
+
+    #[test]
+    fn failed_empty_scan_does_not_advance_checkpoint() {
+        let (identity, fork_id, _, _, _) = finalized_record_fixture();
+        let root = tempfile::tempdir().unwrap();
+        let (rpc, state) = MockRpc::new(100);
+        state.lock().unwrap().fail_logs = true;
+        let mut discovery = FinalizedRpcDiscoveryV1::open_with_rpc(
+            discovery_config(
+                root.path().to_path_buf(),
+                identity,
+                fork_id,
+                FinalizedRpcDiscoveryPurposeV1::InputReplay,
+            ),
+            Box::new(rpc),
+        )
+        .unwrap();
+
+        assert!(matches!(
+            discovery.reconcile_once(),
+            Err(RpcDiscoveryErrorV1::Rpc(PublicRpcError::Remote { .. }))
+        ));
+        assert!(discovery.journal.scan_checkpoint().is_none());
+        state.lock().unwrap().fail_logs = false;
+        assert_eq!(
+            discovery.reconcile_once().unwrap(),
+            DiscoveryOutcome::NoNewJob
+        );
+        assert_eq!(state.lock().unwrap().log_ranges, vec![(1, 100), (1, 100)]);
+    }
+
+    #[test]
+    fn restart_rejects_a_scan_checkpoint_whose_finalized_hash_changed() {
+        let (identity, fork_id, _, _, _) = finalized_record_fixture();
+        let root = tempfile::tempdir().unwrap();
+        let (rpc, _) = MockRpc::new(100);
+        let mut discovery = FinalizedRpcDiscoveryV1::open_with_rpc(
+            discovery_config(
+                root.path().to_path_buf(),
+                identity,
+                fork_id,
+                FinalizedRpcDiscoveryPurposeV1::InputReplay,
+            ),
+            Box::new(rpc),
+        )
+        .unwrap();
+        discovery.reconcile_once().unwrap();
+        drop(discovery);
+
+        let (restart_rpc, restart_state) = MockRpc::new(101);
+        restart_state.lock().unwrap().block_override = Some(FinalizedRpcBlockV1 {
+            number: 100,
+            hash: B256::repeat_byte(0xee),
+            state_root: numbered_hash(0x52, 100),
+        });
+        let mut restarted = FinalizedRpcDiscoveryV1::open_with_rpc(
+            discovery_config(
+                root.path().to_path_buf(),
+                identity,
+                fork_id,
+                FinalizedRpcDiscoveryPurposeV1::InputReplay,
+            ),
+            Box::new(restart_rpc),
+        )
+        .unwrap();
+        assert!(matches!(
+            restarted.reconcile_once(),
+            Err(RpcDiscoveryErrorV1::ScanCheckpointAuthorityMismatch)
+        ));
+        assert!(restart_state.lock().unwrap().log_ranges.is_empty());
+    }
+
+    #[test]
+    fn pending_locator_stops_scan_before_event_and_is_discovered_when_available() {
+        let limits = poc_schema_limits();
+        let (identity, fork_id, indexed, request, record) = finalized_record_fixture();
+        let root = tempfile::tempdir().unwrap();
+        let (rpc, state) = MockRpc::new(110);
+        let mut pending = record.clone();
+        pending.status = OcompJobStatus::AwaitingFinality;
+        pending.finalized = None;
+        {
+            let mut state = state.lock().unwrap();
+            state.logs = vec![request_log(indexed)];
+            state.job_record = Some(pending.encode_canonical(&limits).unwrap());
+            state.block_override = Some(request);
+        }
+        let mut discovery = FinalizedRpcDiscoveryV1::open_with_rpc(
+            discovery_config(
+                root.path().to_path_buf(),
+                identity,
+                fork_id,
+                FinalizedRpcDiscoveryPurposeV1::InputReplay,
+            ),
+            Box::new(rpc),
+        )
+        .unwrap();
+
+        assert_eq!(
+            discovery.reconcile_once().unwrap(),
+            DiscoveryOutcome::NoNewJob
+        );
+        assert_eq!(
+            discovery
+                .journal
+                .scan_checkpoint()
+                .unwrap()
+                .scanned_through_height,
+            request.number - 1
+        );
+
+        state.lock().unwrap().job_record = Some(record.encode_canonical(&limits).unwrap());
+        assert!(matches!(
+            discovery.reconcile_once().unwrap(),
+            DiscoveryOutcome::Discovered(_)
+        ));
+        assert_eq!(discovery.journal.record().unwrap().cursor, request.number);
+        assert_eq!(state.lock().unwrap().log_ranges, vec![(1, 100), (100, 110)]);
     }
 
     #[test]
@@ -740,9 +1298,10 @@ mod tests {
                 limits,
                 purpose: FinalizedRpcDiscoveryPurposeV1::VotingAuthority,
             },
-            rpc: PublicOcompRpcClientV1::new("http://127.0.0.1:1", 1024).unwrap(),
+            rpc: Box::new(PublicOcompRpcClientV1::new("http://127.0.0.1:1", 1024).unwrap()),
             journal,
             journal_validated: true,
+            scan_checkpoint_validated: false,
         };
 
         assert!(discovery.current_record().is_some());

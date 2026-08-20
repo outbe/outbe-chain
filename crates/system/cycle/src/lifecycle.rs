@@ -7,14 +7,16 @@
 //!
 //! The dispatcher itself is fully idempotent per slot via
 //! `Cycle.last_executed_at[trigger_id]`, so it is safe to invoke on
-//! every block — the daily trigger only does work on the first block
-//! whose timestamp crosses the next UTC midnight.
+//! every block. The legacy daily schedule remains authoritative before the
+//! configured height; the hourly schedule becomes authoritative after it.
 
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, ParentBodySourceRef};
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
 };
+
+use crate::triggers::METADOSIS_HOURLY_ACTIVATION_HEIGHT;
 
 /// Zero-sized marker registered in `outbe_evm::executor` begin-block ordering.
 pub struct CycleLifecycle;
@@ -25,6 +27,7 @@ pub struct CycleLifecycleContext<'a, 'storage> {
     pub scope: &'a ExecutionScope,
     parent: ParentBodySourceRef<'a>,
     metadosis_genesis_activation_height: u64,
+    metadosis_hourly_activation_height: Option<u64>,
 }
 
 impl<'a, 'storage> CycleLifecycleContext<'a, 'storage> {
@@ -39,6 +42,7 @@ impl<'a, 'storage> CycleLifecycleContext<'a, 'storage> {
             scope,
             parent: ParentBodySourceRef::new(parent),
             metadosis_genesis_activation_height: 1,
+            metadosis_hourly_activation_height: METADOSIS_HOURLY_ACTIVATION_HEIGHT,
         }
     }
 
@@ -52,6 +56,14 @@ impl<'a, 'storage> CycleLifecycleContext<'a, 'storage> {
         self.metadosis_genesis_activation_height = height;
         self
     }
+
+    /// Overrides the compile-time height gate for deterministic boundary tests.
+    /// Production construction retains [`METADOSIS_HOURLY_ACTIVATION_HEIGHT`].
+    #[must_use]
+    pub fn with_metadosis_hourly_activation_height(mut self, height: Option<u64>) -> Self {
+        self.metadosis_hourly_activation_height = height;
+        self
+    }
 }
 
 impl BlockLifecycle for CycleLifecycle {
@@ -62,7 +74,12 @@ impl BlockLifecycle for CycleLifecycle {
         if ctx.runtime.block.block_number == ctx.metadosis_genesis_activation_height {
             outbe_metadosis::commands::init_genesis_day(&ctx.runtime)?;
         }
-        crate::runtime::dispatch_triggers(&ctx.runtime, ctx.scope, &ctx.parent)
+        crate::runtime::dispatch_triggers_with_hourly_activation(
+            &ctx.runtime,
+            ctx.scope,
+            &ctx.parent,
+            ctx.metadosis_hourly_activation_height,
+        )
     }
 
     fn end_block(_ctx: &Self::Context<'_, '_>) -> Result<Self::EndBlockResult> {

@@ -13,18 +13,34 @@ use alloy_primitives::{keccak256, B256};
 use outbe_ocomp_protocol::{FinalizedJobSpecV1, ProtocolError, SchemaLimits};
 use thiserror::Error;
 
+use crate::control::EndpointIdentity;
+
 const JOURNAL_MAGIC: [u8; 8] = *b"OUTBDIS1";
 const JOURNAL_VERSION: u16 = 1;
 const JOURNAL_FILE: &str = "discovery.v1";
 const JOURNAL_TEMP_FILE: &str = "discovery.v1.tmp";
 const JOURNAL_LOCK_FILE: &str = "discovery.lock";
 const JOURNAL_FIXED_BYTES: usize = 8 + 2 + 8 + 8 + 4 + 32;
+const SCAN_CHECKPOINT_MAGIC: [u8; 8] = *b"OUTBSCN1";
+const SCAN_CHECKPOINT_VERSION: u16 = 1;
+const SCAN_CHECKPOINT_FILE: &str = "scan-checkpoint.v1";
+const SCAN_CHECKPOINT_TEMP_FILE: &str = "scan-checkpoint.v1.tmp";
+const SCAN_CHECKPOINT_BYTES: usize = 8 + 2 + 8 + 8 + 32 + 32 + 32 + 32 + 8 + 32 + 32;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DiscoveryRecord {
     pub generation: u64,
     pub cursor: u64,
     pub spec: FinalizedJobSpecV1,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ScanCheckpointV1 {
+    pub generation: u64,
+    pub identity: EndpointIdentity,
+    pub fork_id: B256,
+    pub scanned_through_height: u64,
+    pub scanned_through_block_hash: B256,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -37,6 +53,7 @@ pub(crate) struct DiscoveryJournal {
     root: PathBuf,
     limits: SchemaLimits,
     record: Option<DiscoveryRecord>,
+    scan_checkpoint: Option<ScanCheckpointV1>,
     _lock: JournalLock,
 }
 
@@ -51,9 +68,19 @@ impl DiscoveryJournal {
         if path_exists(&temp)? {
             return Err(SupervisorDiscoveryError::AmbiguousJournal(temp));
         }
+        let scan_temp = root.join(SCAN_CHECKPOINT_TEMP_FILE);
+        if path_exists(&scan_temp)? {
+            return Err(SupervisorDiscoveryError::AmbiguousJournal(scan_temp));
+        }
         let path = root.join(JOURNAL_FILE);
         let record = if path_exists(&path)? {
             Some(read_record(&path, &limits)?)
+        } else {
+            None
+        };
+        let scan_path = root.join(SCAN_CHECKPOINT_FILE);
+        let scan_checkpoint = if path_exists(&scan_path)? {
+            Some(read_scan_checkpoint(&scan_path)?)
         } else {
             None
         };
@@ -61,12 +88,17 @@ impl DiscoveryJournal {
             root: root.to_path_buf(),
             limits,
             record,
+            scan_checkpoint,
             _lock: lock,
         })
     }
 
     pub(crate) const fn record(&self) -> Option<&DiscoveryRecord> {
         self.record.as_ref()
+    }
+
+    pub(crate) const fn scan_checkpoint(&self) -> Option<&ScanCheckpointV1> {
+        self.scan_checkpoint.as_ref()
     }
 
     pub(crate) fn persist(
@@ -106,6 +138,139 @@ impl DiscoveryJournal {
         self.record = Some(record.clone());
         Ok(record)
     }
+
+    pub(crate) fn persist_scan_checkpoint(
+        &mut self,
+        identity: EndpointIdentity,
+        fork_id: B256,
+        scanned_through_height: u64,
+        scanned_through_block_hash: B256,
+    ) -> Result<ScanCheckpointV1, SupervisorDiscoveryError> {
+        if let Some(existing) = self.scan_checkpoint {
+            if existing.identity != identity || existing.fork_id != fork_id {
+                return Err(SupervisorDiscoveryError::ScanCheckpointIdentityMismatch);
+            }
+            if scanned_through_height < existing.scanned_through_height {
+                return Err(SupervisorDiscoveryError::NonMonotonicScanCheckpoint {
+                    before: existing.scanned_through_height,
+                    after: scanned_through_height,
+                });
+            }
+            if scanned_through_height == existing.scanned_through_height {
+                if scanned_through_block_hash == existing.scanned_through_block_hash {
+                    return Ok(existing);
+                }
+                return Err(SupervisorDiscoveryError::ScanCheckpointConflict {
+                    height: scanned_through_height,
+                });
+            }
+        }
+        let generation = self.scan_checkpoint.map_or(Ok(1), |checkpoint| {
+            checkpoint
+                .generation
+                .checked_add(1)
+                .ok_or(SupervisorDiscoveryError::JournalGenerationOverflow)
+        })?;
+        let checkpoint = ScanCheckpointV1 {
+            generation,
+            identity,
+            fork_id,
+            scanned_through_height,
+            scanned_through_block_hash,
+        };
+        let encoded = encode_scan_checkpoint(checkpoint)?;
+        let temp = self.root.join(SCAN_CHECKPOINT_TEMP_FILE);
+        let final_path = self.root.join(SCAN_CHECKPOINT_FILE);
+        let result = publish_record(&temp, &final_path, &self.root, &encoded);
+        if result.is_err() {
+            let _ = fs::remove_file(&temp);
+        }
+        result?;
+        self.scan_checkpoint = Some(checkpoint);
+        Ok(checkpoint)
+    }
+}
+
+fn encode_scan_checkpoint(
+    checkpoint: ScanCheckpointV1,
+) -> Result<Vec<u8>, SupervisorDiscoveryError> {
+    if checkpoint.generation == 0
+        || checkpoint.identity.chain_id == 0
+        || checkpoint.identity.genesis_hash.is_zero()
+        || checkpoint.identity.boot_nonce.is_zero()
+        || checkpoint.identity.protocol_bundle_hash.is_zero()
+        || checkpoint.fork_id.is_zero()
+        || checkpoint.scanned_through_height == 0
+        || checkpoint.scanned_through_block_hash.is_zero()
+    {
+        return Err(SupervisorDiscoveryError::InvalidScanCheckpoint);
+    }
+    let mut encoded = Vec::with_capacity(SCAN_CHECKPOINT_BYTES);
+    encoded.extend_from_slice(&SCAN_CHECKPOINT_MAGIC);
+    encoded.extend_from_slice(&SCAN_CHECKPOINT_VERSION.to_be_bytes());
+    encoded.extend_from_slice(&checkpoint.generation.to_be_bytes());
+    encoded.extend_from_slice(&checkpoint.identity.chain_id.to_be_bytes());
+    encoded.extend_from_slice(checkpoint.identity.genesis_hash.as_slice());
+    encoded.extend_from_slice(checkpoint.identity.boot_nonce.as_slice());
+    encoded.extend_from_slice(checkpoint.identity.protocol_bundle_hash.as_slice());
+    encoded.extend_from_slice(checkpoint.fork_id.as_slice());
+    encoded.extend_from_slice(&checkpoint.scanned_through_height.to_be_bytes());
+    encoded.extend_from_slice(checkpoint.scanned_through_block_hash.as_slice());
+    let checksum = keccak256(&encoded);
+    encoded.extend_from_slice(checksum.as_slice());
+    debug_assert_eq!(encoded.len(), SCAN_CHECKPOINT_BYTES);
+    Ok(encoded)
+}
+
+fn read_scan_checkpoint(path: &Path) -> Result<ScanCheckpointV1, SupervisorDiscoveryError> {
+    let mut file = open_regular_nofollow(path)?;
+    let metadata = file
+        .metadata()
+        .map_err(|source| io_error("stat discovery scan checkpoint", path, source))?;
+    if usize::try_from(metadata.len()).ok() != Some(SCAN_CHECKPOINT_BYTES) {
+        return Err(SupervisorDiscoveryError::InvalidScanCheckpoint);
+    }
+    let mut encoded = Vec::with_capacity(SCAN_CHECKPOINT_BYTES);
+    file.read_to_end(&mut encoded)
+        .map_err(|source| io_error("read discovery scan checkpoint", path, source))?;
+    decode_scan_checkpoint(&encoded)
+}
+
+fn decode_scan_checkpoint(encoded: &[u8]) -> Result<ScanCheckpointV1, SupervisorDiscoveryError> {
+    if encoded.len() != SCAN_CHECKPOINT_BYTES || encoded[..8] != SCAN_CHECKPOINT_MAGIC {
+        return Err(SupervisorDiscoveryError::InvalidScanCheckpoint);
+    }
+    let version = u16::from_be_bytes(
+        encoded[8..10]
+            .try_into()
+            .map_err(|_| SupervisorDiscoveryError::InvalidScanCheckpoint)?,
+    );
+    if version != SCAN_CHECKPOINT_VERSION {
+        return Err(SupervisorDiscoveryError::UnsupportedScanCheckpointVersion(
+            version,
+        ));
+    }
+    let checksum_offset = SCAN_CHECKPOINT_BYTES - 32;
+    let expected_checksum = B256::from_slice(&encoded[checksum_offset..]);
+    if keccak256(&encoded[..checksum_offset]) != expected_checksum {
+        return Err(SupervisorDiscoveryError::ScanCheckpointChecksumMismatch);
+    }
+    let checkpoint = ScanCheckpointV1 {
+        generation: read_u64(encoded, 10)?,
+        identity: EndpointIdentity {
+            chain_id: read_u64(encoded, 18)?,
+            genesis_hash: B256::from_slice(&encoded[26..58]),
+            boot_nonce: B256::from_slice(&encoded[58..90]),
+            protocol_bundle_hash: B256::from_slice(&encoded[90..122]),
+        },
+        fork_id: B256::from_slice(&encoded[122..154]),
+        scanned_through_height: read_u64(encoded, 154)?,
+        scanned_through_block_hash: B256::from_slice(&encoded[162..194]),
+    };
+    if encode_scan_checkpoint(checkpoint)? != encoded {
+        return Err(SupervisorDiscoveryError::InvalidScanCheckpoint);
+    }
+    Ok(checkpoint)
 }
 
 fn encode_record(
@@ -348,6 +513,12 @@ pub enum SupervisorDiscoveryError {
     },
     #[error("non-monotonic finalized cursor {after} after {before}")]
     NonMonotonicCursor { before: u64, after: u64 },
+    #[error("non-monotonic finalized scan checkpoint {after} after {before}")]
+    NonMonotonicScanCheckpoint { before: u64, after: u64 },
+    #[error("finalized scan checkpoint conflicts at height {height}")]
+    ScanCheckpointConflict { height: u64 },
+    #[error("finalized scan checkpoint identity differs from the active endpoint")]
+    ScanCheckpointIdentityMismatch,
     #[error("supervisor discovery journal has an ambiguous temporary file at {0}")]
     AmbiguousJournal(PathBuf),
     #[error("supervisor discovery journal path is not a safe regular file/directory: {0}")]
@@ -356,10 +527,116 @@ pub enum SupervisorDiscoveryError {
     InvalidJournal,
     #[error("supervisor discovery journal checksum does not match its contents")]
     JournalChecksumMismatch,
+    #[error("supervisor discovery scan checkpoint is malformed")]
+    InvalidScanCheckpoint,
+    #[error("supervisor discovery scan checkpoint checksum does not match its contents")]
+    ScanCheckpointChecksumMismatch,
     #[error("unsupported supervisor discovery journal version {0}")]
     UnsupportedJournalVersion(u16),
+    #[error("unsupported supervisor discovery scan checkpoint version {0}")]
+    UnsupportedScanCheckpointVersion(u16),
     #[error("supervisor discovery journal exceeds the protocol bound")]
     JournalTooLarge,
     #[error("supervisor discovery journal generation overflow")]
     JournalGenerationOverflow,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use outbe_ocomp_protocol::profile::poc_schema_limits;
+
+    fn identity(marker: u8) -> EndpointIdentity {
+        EndpointIdentity {
+            chain_id: u64::from(marker),
+            genesis_hash: B256::repeat_byte(marker),
+            boot_nonce: B256::repeat_byte(marker.wrapping_add(1)),
+            protocol_bundle_hash: B256::repeat_byte(marker.wrapping_add(2)),
+        }
+    }
+
+    #[test]
+    fn scan_checkpoint_is_atomic_monotonic_and_restart_safe() {
+        let root = tempfile::tempdir().unwrap();
+        let expected = ScanCheckpointV1 {
+            generation: 1,
+            identity: identity(41),
+            fork_id: B256::repeat_byte(44),
+            scanned_through_height: 100,
+            scanned_through_block_hash: B256::repeat_byte(45),
+        };
+        {
+            let mut journal = DiscoveryJournal::open(root.path(), poc_schema_limits()).unwrap();
+            assert!(journal.scan_checkpoint().is_none());
+            assert_eq!(
+                journal
+                    .persist_scan_checkpoint(
+                        expected.identity,
+                        expected.fork_id,
+                        expected.scanned_through_height,
+                        expected.scanned_through_block_hash,
+                    )
+                    .unwrap(),
+                expected
+            );
+            assert_eq!(journal.scan_checkpoint(), Some(&expected));
+        }
+        let journal = DiscoveryJournal::open(root.path(), poc_schema_limits()).unwrap();
+        assert_eq!(journal.scan_checkpoint(), Some(&expected));
+        assert!(!root.path().join(SCAN_CHECKPOINT_TEMP_FILE).exists());
+    }
+
+    #[test]
+    fn scan_checkpoint_rejects_regression_conflict_and_identity_change() {
+        let root = tempfile::tempdir().unwrap();
+        let mut journal = DiscoveryJournal::open(root.path(), poc_schema_limits()).unwrap();
+        let endpoint = identity(41);
+        let fork_id = B256::repeat_byte(44);
+        journal
+            .persist_scan_checkpoint(endpoint, fork_id, 100, B256::repeat_byte(45))
+            .unwrap();
+        assert!(matches!(
+            journal.persist_scan_checkpoint(endpoint, fork_id, 99, B256::repeat_byte(46)),
+            Err(SupervisorDiscoveryError::NonMonotonicScanCheckpoint { .. })
+        ));
+        assert!(matches!(
+            journal.persist_scan_checkpoint(endpoint, fork_id, 100, B256::repeat_byte(46)),
+            Err(SupervisorDiscoveryError::ScanCheckpointConflict { height: 100 })
+        ));
+        assert!(matches!(
+            journal.persist_scan_checkpoint(identity(51), fork_id, 101, B256::repeat_byte(47)),
+            Err(SupervisorDiscoveryError::ScanCheckpointIdentityMismatch)
+        ));
+    }
+
+    #[test]
+    fn scan_checkpoint_rejects_corruption_and_ambiguous_temp() {
+        let root = tempfile::tempdir().unwrap();
+        {
+            let mut journal = DiscoveryJournal::open(root.path(), poc_schema_limits()).unwrap();
+            journal
+                .persist_scan_checkpoint(
+                    identity(41),
+                    B256::repeat_byte(44),
+                    100,
+                    B256::repeat_byte(45),
+                )
+                .unwrap();
+        }
+        let path = root.path().join(SCAN_CHECKPOINT_FILE);
+        let mut bytes = fs::read(&path).unwrap();
+        bytes[26] ^= 1;
+        fs::write(&path, bytes).unwrap();
+        assert!(matches!(
+            DiscoveryJournal::open(root.path(), poc_schema_limits()),
+            Err(SupervisorDiscoveryError::ScanCheckpointChecksumMismatch)
+        ));
+
+        fs::remove_file(path).unwrap();
+        fs::write(root.path().join(SCAN_CHECKPOINT_TEMP_FILE), b"partial").unwrap();
+        assert!(matches!(
+            DiscoveryJournal::open(root.path(), poc_schema_limits()),
+            Err(SupervisorDiscoveryError::AmbiguousJournal(_))
+        ));
+    }
 }

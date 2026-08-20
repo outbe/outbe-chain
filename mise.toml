@@ -251,20 +251,35 @@ description = "Stop the managed localnet and MongoDB, then remove chain data"
 run = "bash ./scripts/localnet-stack.sh clean"
 
 [tasks.localnet-sgx-bootstrap]
-description = "Deferred real-SGX LocalNet bootstrap (tracked by outbe-chain-8lp)"
-run = './target/release/outbe-e2e localnet-sgx bootstrap --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
+description = "Bootstrap the persistent 4-validator real-SGX LocalNet without protocol overrides"
+run = "bash ./scripts/localnet-sgx.sh bootstrap"
 
 [tasks.localnet-sgx-start]
-description = "Deferred real-SGX LocalNet start (tracked by outbe-chain-8lp)"
-run = './target/release/outbe-e2e localnet-sgx start --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
+description = "Start real SGX, validators, embedded OCOMP Supervisors, exporters, and workers"
+run = "bash ./scripts/localnet-sgx.sh start"
 
 [tasks.localnet-sgx-status]
-description = "Deferred real-SGX LocalNet status (tracked by outbe-chain-8lp)"
-run = './target/release/outbe-e2e localnet-sgx status --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
+description = "Show real-SGX LocalNet process state and validator RPC heads"
+run = "bash ./scripts/localnet-sgx.sh status"
 
 [tasks.localnet-sgx-stop]
-description = "Deferred real-SGX LocalNet stop (tracked by outbe-chain-8lp)"
-run = './target/release/outbe-e2e localnet-sgx stop --repo . --data-dir "${OUT_DIR}-sgx" --validators "$VALIDATORS"'
+description = "Stop the exact real-SGX LocalNet processes and containers"
+run = "bash ./scripts/localnet-sgx.sh stop"
+
+[tasks.localnet-sgx]
+description = "Build production-feature release binaries and start the real-SGX LocalNet"
+run = """
+cargo build --release -p outbe-chain --bin outbe-chain
+cargo build --release -p outbe-ocomp --bin outbe-ocomp -p outbe-cli --bin outbe-cli -p outbe-keygen --bin outbe-keygen
+cargo build --release -p outbe-tee-enclave --bin outbe-tee-enclave
+./target/release/outbe-chain --version | tee /tmp/outbe-localnet-sgx-version.txt
+if rg -q 'test-protocol-overrides|test-marshal-drop' /tmp/outbe-localnet-sgx-version.txt; then
+  echo 'release outbe-chain contains a forbidden test feature' >&2
+  exit 1
+fi
+mise run localnet-sgx-bootstrap
+mise run localnet-sgx-start
+"""
 
 [tasks.tribute-offer]
 description = "Create one encrypted Tribute on the running managed localnet"

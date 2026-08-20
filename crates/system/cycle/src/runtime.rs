@@ -10,7 +10,7 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::schema::Cycle;
 use crate::state::{accounting_gate_blocks, EvmAccountingProgress};
-use crate::triggers::{active_triggers, next_fire_at};
+use crate::triggers::{active_triggers, next_fire_at, METADOSIS_HOURLY_ACTIVATION_HEIGHT};
 use crate::ICycle;
 
 /// Dispatches every active trigger whose `next_fire_at` is `<=
@@ -18,20 +18,35 @@ use crate::ICycle;
 /// storage checkpoint, so a handler failure rolls back its writes and
 /// leaves `last_executed_at` unchanged for retry on the next block.
 ///
-/// For the typical case of a slow-running chain that produces blocks
-/// every few seconds, the dispatcher is a near-noop on every block and
-/// fires the daily trigger only on the first block whose timestamp
-/// crosses UTC midnight.
+/// For the typical case of a chain that produces blocks every few seconds, the
+/// dispatcher is a near-noop between canonical trigger slots.
 pub fn dispatch_triggers(
     ctx: &BlockRuntimeContext,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
 ) -> Result<()> {
+    dispatch_triggers_with_hourly_activation(ctx, scope, parent, METADOSIS_HOURLY_ACTIVATION_HEIGHT)
+}
+
+pub(crate) fn dispatch_triggers_with_hourly_activation(
+    ctx: &BlockRuntimeContext,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    metadosis_hourly_activation_height: Option<u64>,
+) -> Result<()> {
     let block_ts = ctx.block.timestamp;
     let block_number = ctx.block.block_number;
+    let metadosis_hourly_active = metadosis_hourly_activation_height
+        .is_some_and(|activation_height| block_number >= activation_height);
     let triggers = active_triggers(outbe_chain_constants::get_metadosis_advance_interval_seconds());
 
     for spec in &triggers {
+        // Before activation the new trigger must be completely invisible: no
+        // lazy anchor, checkpoint, or event may distinguish a staged binary
+        // from the legacy binary during a rolling deployment.
+        if !spec.handler.is_dispatchable(metadosis_hourly_active) {
+            continue;
+        }
         let cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();
         let last_executed_at = cycle.last_executed_at.read(&spec.id)?;
 
@@ -83,7 +98,8 @@ pub fn dispatch_triggers(
         }
 
         let result = ctx.storage.with_checkpoint(|| {
-            spec.handler.run(ctx, scope, parent)?;
+            spec.handler
+                .run(ctx, scope, parent, metadosis_hourly_active)?;
             let mut cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();
             cycle.last_executed_at.write(&spec.id, scheduled_at)?;
             cycle

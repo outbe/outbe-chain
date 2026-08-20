@@ -39,6 +39,26 @@ pub fn run_emission_limit_daily(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
 ) -> Result<()> {
+    run_emission_and_metadosis(ctx, scope, parent, false)
+}
+
+/// Hourly Metadosis orchestrator enabled by the height-gated Cycle trigger.
+/// A settled previous UTC day skips only emission allocation; WWD creation,
+/// phase advancement, and READY processing still run every hour.
+pub fn run_metadosis_hourly(
+    ctx: &BlockRuntimeContext,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+) -> Result<()> {
+    run_emission_and_metadosis(ctx, scope, parent, true)
+}
+
+fn run_emission_and_metadosis(
+    ctx: &BlockRuntimeContext,
+    scope: &ExecutionScope,
+    parent: &impl ParentBodySource,
+    continue_after_settled: bool,
+) -> Result<()> {
     let block_ts = ctx.block.timestamp;
     let current_day = timestamp_to_date_key(block_ts);
     let prev_day = previous_date_key(current_day);
@@ -76,6 +96,12 @@ pub fn run_emission_limit_daily(
                 block_number = ctx.block.block_number,
                 "emission_limit_daily: prev_day already settled — skipping (idempotent)"
             );
+            if continue_after_settled {
+                return wrap(
+                    "start_metadosis",
+                    outbe_metadosis::commands::start_metadosis(ctx, scope, parent),
+                );
+            }
             return Ok(());
         }
         (false, None) => {}
@@ -105,6 +131,12 @@ pub fn run_emission_limit_daily(
 
     let cap = day_emission_limit(day_number);
     if cap.is_zero() {
+        if continue_after_settled {
+            return wrap(
+                "start_metadosis",
+                outbe_metadosis::commands::start_metadosis(ctx, scope, parent),
+            );
+        }
         return Ok(());
     }
 

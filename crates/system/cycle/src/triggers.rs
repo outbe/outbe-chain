@@ -22,6 +22,7 @@ pub enum TriggerId {
     WwdAdvanceNoon = 2,
     AuctionAdvance = 3,
     GemCallDaily = 4,
+    MetadosisHourly = 5,
 }
 
 impl TriggerId {
@@ -64,7 +65,11 @@ pub enum TriggerHandler {
     WwdAdvanceNoon,
     AuctionAdvance,
     GemCallDaily,
+    MetadosisHourly,
 }
+
+/// Height gate for the hourly Metadosis flow.
+pub const METADOSIS_HOURLY_ACTIVATION_HEIGHT: Option<u64> = Some(171_027);
 
 impl TriggerHandler {
     /// Maximum number of sequential Metadosis command leases this handler can
@@ -72,10 +77,22 @@ impl TriggerHandler {
     pub const fn metadosis_mutation_lease_budget(self) -> u8 {
         match self {
             // Terminal allocation and the subsequent WWD process command.
-            Self::EmissionLimitDaily => 2,
+            Self::EmissionLimitDaily | Self::MetadosisHourly => 2,
             Self::WwdAdvanceNoon => 1,
             Self::IntexDaily | Self::AuctionAdvance | Self::GemCallDaily => 0,
         }
+    }
+
+    const fn has_domain_effects(self, metadosis_hourly_active: bool) -> bool {
+        match self {
+            Self::EmissionLimitDaily | Self::WwdAdvanceNoon => !metadosis_hourly_active,
+            Self::MetadosisHourly => metadosis_hourly_active,
+            Self::IntexDaily | Self::AuctionAdvance | Self::GemCallDaily => true,
+        }
+    }
+
+    pub(crate) const fn is_dispatchable(self, metadosis_hourly_active: bool) -> bool {
+        !matches!(self, Self::MetadosisHourly) || metadosis_hourly_active
     }
 
     pub(crate) fn run(
@@ -83,7 +100,11 @@ impl TriggerHandler {
         ctx: &BlockRuntimeContext,
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
+        metadosis_hourly_active: bool,
     ) -> Result<()> {
+        if !self.has_domain_effects(metadosis_hourly_active) {
+            return Ok(());
+        }
         match self {
             Self::EmissionLimitDaily => {
                 crate::handler::run_emission_limit_daily(ctx, scope, parent)
@@ -94,6 +115,7 @@ impl TriggerHandler {
             }
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
             Self::GemCallDaily => outbe_gem::hooks::run_call_daily(ctx),
+            Self::MetadosisHourly => crate::handler::run_metadosis_hourly(ctx, scope, parent),
         }
     }
 }
@@ -102,15 +124,19 @@ impl TriggerHandler {
 /// can fire both the daily emission and noon advancement handlers, so their
 /// budgets must be summed rather than taking only the common daily path.
 #[must_use]
-pub fn metadosis_mutation_lease_budget_per_tick() -> u8 {
+pub fn metadosis_mutation_lease_budget_per_tick(metadosis_hourly_active: bool) -> u8 {
     ACTIVE_TRIGGERS.iter().fold(0_u8, |budget, trigger| {
-        budget.saturating_add(trigger.handler.metadosis_mutation_lease_budget())
+        if trigger.handler.has_domain_effects(metadosis_hourly_active) {
+            budget.saturating_add(trigger.handler.metadosis_mutation_lease_budget())
+        } else {
+            budget
+        }
     })
 }
 
 /// Active trigger table. Order is informational only — the dispatcher
 /// fires triggers independently per slot.
-pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 5] {
+pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 6] {
     let production_default = outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS;
     let (wwd_period_seconds, wwd_start_offset_seconds) =
         if metadosis_advance_interval_seconds == production_default {
@@ -178,10 +204,23 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             requires_accounting_window: false,
             handler: TriggerHandler::GemCallDaily,
         },
+        TriggerSpec {
+            id: TriggerId::MetadosisHourly.as_u32(),
+            label: "metadosis_hourly",
+            // The unified flow is always aligned to whole UTC hours. Test-only
+            // phase overrides must not move this consensus schedule.
+            period_seconds: 3_600,
+            start_offset_seconds: 0,
+            // The optional daily settlement reads finalized parent accounting.
+            // Gating every hourly slot preserves that authority regardless of
+            // whether this particular UTC day was already settled.
+            requires_accounting_window: true,
+            handler: TriggerHandler::MetadosisHourly,
+        },
     ]
 }
 
-pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 5] =
+pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 6] =
     active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
 pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &ACTIVE_TRIGGER_ARRAY;
 
@@ -209,7 +248,7 @@ mod protocol_parameter_tests {
     use super::*;
 
     #[test]
-    fn only_wwd_advancement_uses_the_genesis_interval() {
+    fn only_legacy_wwd_advancement_uses_the_test_genesis_interval() {
         let configured = active_triggers(10);
         assert_eq!(configured[0].period_seconds, 86_400);
         assert_eq!(configured[1].period_seconds, 86_400);
@@ -217,14 +256,21 @@ mod protocol_parameter_tests {
         assert_eq!(configured[2].start_offset_seconds, 0);
         assert_eq!(configured[3].period_seconds, 43_200);
         assert_eq!(configured[4].period_seconds, 86_400);
+        assert_eq!(configured[5].period_seconds, 3_600);
+        assert_eq!(configured[5].start_offset_seconds, 0);
         assert!(matches!(
             configured[4].handler,
             TriggerHandler::GemCallDaily
+        ));
+        assert!(matches!(
+            configured[5].handler,
+            TriggerHandler::MetadosisHourly
         ));
 
         let defaults =
             active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
         assert_eq!(defaults[2].period_seconds, 86_400);
         assert_eq!(defaults[2].start_offset_seconds, 43_200);
+        assert_eq!(defaults[5].period_seconds, 3_600);
     }
 }

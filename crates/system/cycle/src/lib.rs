@@ -4,15 +4,16 @@
 //! Each `TriggerSpec` declares a `period_seconds` and a
 //! `start_offset_seconds` phase relative to unix epoch zero. A trigger
 //! fires at every slot `t` where `(t - offset) % period == 0`, on the
-//! first block whose timestamp is `>= t`. If `block.timestamp` jumps
-//! over multiple slots (rare clock-jump / restart edge), the trigger
-//! fires once for the most recent slot only — pre-genesis design says
-//! "Cycle is not responsible for catching up missed days".
+//! first block whose timestamp is `>= t`. If `block.timestamp` jumps over
+//! multiple slots (rare clock-jump / restart edge), the dispatcher processes
+//! one pending slot per block until its canonical checkpoint catches up.
 //!
-//! In v1 the registry contains a single trigger,
-//! [`triggers::TriggerId::EmissionLimit1`] (`period = 86_400`,
-//! `offset = 0`), whose handler ([`handler::run_emission_limit_daily`])
-//! orchestrates the daily 5-pool + Metadosis terminal split:
+//! Before the height-gated hourly flow activates,
+//! [`triggers::TriggerId::EmissionLimit1`] (`period = 86_400`, `offset = 0`)
+//! orchestrates the daily 5-pool + Metadosis terminal split. After activation,
+//! the legacy Metadosis triggers remain audit-only no-ops and
+//! [`triggers::TriggerId::MetadosisHourly`] owns the same optional daily
+//! settlement followed by WWD advancement and READY processing:
 //!
 //! 1. Compute `day_emission_limit(day_number_since_genesis(prev_day))`.
 //! 2. Allocate over the 5-sink table from `outbe-emissionlimit`.
