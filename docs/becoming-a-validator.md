@@ -1,520 +1,729 @@
-# Running a full node and a validator
+# Run an Outbe FullNode and promote it to a Validator
 
-There are two node roles:
+This runbook joins an existing Outbe network from a fresh Linux host:
 
-- **Full node** — `outbe-chain node` (no `--validator`). It has a persistent
-  compressed Reth P2P identity registered through TeeRegistry V1, follows a
-  selected certified `--upstream`, re-executes blocks and serves RPC. It does not
-  vote or propose. Its provisioning includes separate EVM and consensus-BLS key
-  files, but FullNode runtime does not load them and their presence grants no role.
+1. install a verified Outbe release;
+2. start and synchronize a non-voting FullNode;
+3. register the operator and restart the same node as a Validator;
+4. stake, confirm readiness, and wait for DKG activation.
 
-- **Validator** — `outbe-chain node --validator`. This is **one** role with a
-  lifecycle. The node always runs `--validator`; what it does depends on whether it
-  currently holds a BLS threshold share:
-  - **No share yet** — it follows finalized blocks through the consensus mesh as a
-    share-less _verifier_ (the code calls this a "finalized-follower"): it syncs,
-    processes offers, and survives DKG rotations, but cannot vote. **This is a
-    transient lifecycle phase, not a separate role** — a node is here only while it
-    is waiting for its first share, or while a restarted node catches up. You do not
-    stay here permanently.
-  - **Has a share** — it is an ACTIVE signer: it proposes and votes.
+The procedure was tested on Ubuntu 24.04 LTS x86_64. Other Linux distributions
+may be used with equivalent packages, Docker, SGX devices, and the
+release-pinned Gramine runtime.
 
-On-chain PoS status tracks the same lifecycle: REGISTERED → PENDING → **ACTIVE** →
-EXITING → UNBONDING → INACTIVE, with JAILED as the punishment/recovery branch.
-Validators that still hold a BLS share vote and remain accountable in the current
-committee: ACTIVE, EXITING, and temporarily JAILED until the next reshare clears
-that share.
+Run the node as a regular operator account with `sudo` access. Do not build the
+release on the node host and do not run `outbe-chain` itself as root. Commands
+assume Bash and are intended to be run in the same shell. After a new SSH login,
+reload `/etc/outbe-chain/network.env` before continuing.
 
-> **The TEE enclave is mandatory for every V1 chain and every node role.** The
-> ChainSpec must contain `teeAttestationV1`, and startup requires
-> `--tee-enclave-socket`. A node that does not hold the exact permanent offer key
-> cannot participate in consensus or execute canonical transactions. There is no
-> in-process stub, tee-less chain or offer-free exception. DKG consensus key
-> material is separate and lives in `--consensus.keys-dir`, not in the enclave.
+> **TEE identity during promotion**
+>
+> TEE V1 admission is role-neutral. A node performs `tee join` exactly once,
+> before its first FullNode startup. Promotion keeps the same Reth P2P identity,
+> NodeHost manifest, enclave, sealed state, permanent offer key, and synchronized
+> datadir. Do not repeat `tee join` or replace TEE/NodeHost state when enabling
+> Validator mode.
 
-> **Evidence boundary.** The reachable restart path is exercised on the isolated
-> `GramineDirectDev` mock localnet and proves development behavior only. Deterministic
-> tests cover Validator and FullNode V1 admission and fail-closed startup seams.
-> Real exact-release `DcapRequired` Validator and FullNode paths remain a
-> mandatory I9 hardware gate. A logical or physical 32-validator network is
-> not required.
+## 0. Collect the network inputs
 
----
+Get these from a trusted network operator:
 
-## 0. Prerequisites
+- the exact immutable Outbe release tag used by the network;
+- `genesis.json`;
+- `reth-bootnodes.txt`, one `enode://...` URL per line;
+- a trusted RPC URL with continuous `outbe_getFinalization` history;
+- the Gramine/SGX runtime required by the release;
+- immediately before Validator startup, the current
+  `dkg_polynomial.hex`, `dkg_output.hex`, and `consensus-peers.txt`;
+- an address reachable in both directions between validators on TCP `30400`.
 
-```sh
-cargo build --release -p outbe-chain  --bin outbe-chain    # the node
-cargo build --release -p outbe-cli    --bin outbe-cli      # operator CLI
-cargo build --release -p outbe-keygen --bin outbe-keygen   # key generation
+`consensus-peers.txt` contains one remote bootstrap peer per line. Do not add
+the new validator itself:
+
+```text
+<96-hex-character-BLS-public-key>@host:30400
 ```
 
-- The genesis bundle: `genesis.json` with mandatory `teeAttestationV1`, the Reth bootnode list, and — for a validator
-  (it joins the consensus mesh) — the network's **public** DKG artifacts
-  `polynomial.hex` and `dkg-output.hex` (public, no secret share).
-- The `outbe-tee-enclave` sidecar (the exact accepted `gramine-sgx` release in
-  production; an explicit GramineDirectDev binary on localnet). It must be running
-  before `tee join` or node startup.
-- For testnet, deploy the exact Cosign-verified enclave image digest and compare its
-  signed ReleaseManifest measurements by following
-  [Testnet SGX release and rollout](testnet-sgx-release.md). Do not build or sign the
-  release bundle on the validator host.
-- A funded relay EVM account and per-node persistent Reth P2P, EVM and
-  consensus-BLS key files. The relay may be different from the node EVM address.
+The DKG polynomial and output are public bootstrap data. Never copy another
+validator's `dkg_share.hex`, BLS/EVM private keys, Reth P2P key, OCOMP key, or
+sealed enclave state.
 
-`outbe-cli` / `outbe-keygen` never send key material to the RPC; only signed
-transactions and public keys go over the wire.
+This guide uses:
 
----
+| Path | Purpose |
+| --- | --- |
+| `/opt/outbe-chain` | binaries and network files |
+| `/var/lib/outbe/node` | Reth data and NodeHost state |
+| `/var/lib/outbe/keys` | this validator's BLS, EVM, and DKG files |
+| `/var/lib/outbe/consensus` | consensus state |
+| `/var/lib/outbe/ocomp/domain-v1` | embedded OCOMP state and keys |
+| `/var/lib/outbe/tee` | sealed enclave state |
+| `/var/lib/outbe/mongodb` | MongoDB projection data |
 
-## 1. Full node (sync + RPC only)
+## 1. Prepare the host
 
-Run the node **without** `--validator`. It must first register its persistent Reth
-P2P identity and install the one-time permanent-key artifact. The node data
-directory passed to `tee join` must be the same resolved chain-specific directory
-that `outbe-chain` uses. The P2P secret file must also be the same one used by the
-node.
+Install the equivalent of these tools with your distribution's package
+manager: CA certificates, `curl`, Docker, `jq`, `openssl`, `tar`, `sha256sum`,
+Cosign, and Foundry `cast`.
 
-```sh
-RETH_P2P_SECRET=/var/lib/outbe/reth-p2p-secret.hex
-NODE_KEYS_DIR=/var/lib/outbe/keys
-NODE_DATA_DIR=/var/lib/outbe/<resolved-chain-data-dir>
-BINDING_ID=0x$(openssl rand -hex 32)
-VALID_UNTIL=$(( $(date -u +%s) + 86400 ))
+Ubuntu 24.04 example:
 
-# Provision independent node key material once. FullNode runtime does not load it.
-outbe-keygen hybrid --output-dir "$NODE_KEYS_DIR"
-
-# The exact release enclave is already running at 127.0.0.1:7000.
-# RELAY_EVM_KEY is only a funded transaction relay. The P2P and node EVM keys
-# jointly authorize the one-time address-to-NodeHost association.
-outbe-cli tee join --enclave-socket 127.0.0.1:7000 \
-  --node-data-dir "$NODE_DATA_DIR" \
-  --reth-p2p-secret-key "$RETH_P2P_SECRET" \
-  --node-evm-key "$NODE_KEYS_DIR/evm-key.hex" \
-  --binding-id "$BINDING_ID" --valid-until "$VALID_UNTIL" \
-  --private-key "$RELAY_EVM_KEY" \
-  --rpc-url http://<certified-rpc>:8545 --timeout-secs 60
-
-outbe-chain node \
-  --chain /path/to/genesis.json --datadir /var/lib/outbe \
-  --p2p-secret-key "$RETH_P2P_SECRET" \
-  --bootnodes "<enode URLs>" \
-  --upstream http://<selected-certified-upstream>:8545 \
-  --consensus.storage-dir /var/lib/outbe/consensus \
-  --ocomp.supervisor-socket /opt/outbe-chain/ocomp/run/node-supervisor.sock \
-  --ocomp.snapshot-exporter-socket /opt/outbe-chain/ocomp/run/node-snapshot-exporter.sock \
-  --ocomp.protocol-bundle-hash <0x-protocol-bundle-hash> \
-  --ocomp.boot-nonce <nonzero-0x32-byte-boot-nonce> \
-  --http --http.addr 127.0.0.1 --http.port 8545 --http.api eth,net,web3,outbe \
-  --tee-enclave-socket 127.0.0.1:7000
+```bash
+sudo apt update
+sudo apt install -y ca-certificates curl docker.io jq openssl tar
+sudo systemctl enable --now docker
 ```
 
-`tee join` must finish successfully before the FullNode process starts. At
-startup the node reads the upstream canonical 32-byte offer key, requires a
-ready nonzero resident key and compares them exactly before launching Reth.
-The six `--ocomp.*` control arguments are an all-or-nothing FullNode profile;
-do not pass `--ocomp.key`. Run the normal SnapshotExporter/worker services and
-`outbe-ocomp follower` with the same `OCOMP_CHAIN_ID`, `OCOMP_GENESIS_HASH`,
-`OCOMP_BOOT_NONCE`, `OCOMP_PROTOCOL_BUNDLE_HASH` and `OUTBE_OCOMP_BASE_PATH`.
-The follower performs Lysis and
-durably publishes the exact local result, but it never reads an OCOMP signing
-key or `OUTBE_OCOMP_RPC_URL` and never submits a vote.
+Install version-pinned Cosign using an operator-approved Sigstore or
+distribution package. Install Foundry for `cast`:
 
-> **RPC exposure.** Examples bind RPC to `127.0.0.1` and enable only the
-> `eth,net,web3,outbe` modules. Never add `admin` or `debug` to `--http.api` on a
-> public (`0.0.0.0`) binding: that exposes unauthenticated node control. To serve
-> RPC off-host, put it behind authentication or a firewall that restricts access
-> to trusted operators, or keep `admin`/`debug` on a local IPC socket. The
-> `--consensus.listen-addr 0.0.0.0:30400` P2P port below is the consensus gossip
-> listener and is meant to be reachable by peers.
+```bash
+curl -L https://foundry.paradigm.xyz | bash
+export PATH="$HOME/.foundry/bin:$PATH"
+foundryup
+```
 
-Check it with `outbe-cli monitor health` / `cast block finalized`. A certified
-FullNode's `outbe_consensusStatus.lastFinalizedBlock` advances only after the
-exact parent proof, OCOMP retention and snapshot arming have all succeeded.
+The host must expose SGX and provide the Gramine version required by the
+release:
 
-If this FullNode later receives validator role, stop it and restart validator mode
-on the same synchronized datadir using the already provisioned EVM/BLS keys. Do
-not repeat `tee join`: the P2P identity, NodeHost association, manifest, enclave,
-Noise identity, sealed state and resident offer key remain unchanged.
+```bash
+ls -l /dev/sgx_enclave /dev/sgx_provision
+command -v gramine-sgx
+```
 
----
+These checks only confirm that SGX and the launcher are present. The network's
+genesis policy decides whether `GramineDirectDev` is accepted or DCAP is
+required. For DCAP deployments, also follow
+[`dcap-testnet-launch.md`](dcap-testnet-launch.md).
 
-## 2. Becoming a validator
+Configure host and perimeter firewalls according to your infrastructure policy.
+Keep MongoDB (`27017`), the enclave (`7000`), and operator RPC (`8545`) on
+loopback. Expose the configured Reth P2P ports and allow bidirectional Validator
+traffic on TCP `30400`.
 
-A validator always runs `outbe-chain node --validator`. One-time setup, then run the
-node; it joins as a share-less follower and becomes a voting signer at a DKG reshare.
+## 2. Install the verified release
 
-### 2.1 Keys
+Use the exact tag supplied by the operator, never a moving `latest` release:
 
-```sh
-outbe-keygen hybrid --output-dir /var/lib/outbe/keys
-# writes signing-key.hex (BLS12-381) + evm-key.hex (secp256k1)
+```bash
+OUTBE_RELEASE='<operator-supplied-immutable-release-tag>'
+RELEASE_URL="https://github.com/outbe/outbe-chain/releases/download/$OUTBE_RELEASE"
+RELEASE_DIR=$(mktemp -d "/tmp/outbe-${OUTBE_RELEASE}.XXXXXXXX")
 
-BLS_PUBKEY=$(outbe-keygen show-pubkey --key /var/lib/outbe/keys/signing-key.hex \
-  | grep -oE '[0-9a-f]{96}' | head -1)
-EVM_KEY=0x$(tr -d '[:space:]' < /var/lib/outbe/keys/evm-key.hex)
+cd "$RELEASE_DIR"
+
+for ASSET in \
+  ReleaseManifest.json \
+  ReleaseManifest.sigstore.json \
+  outbe-linux-x86_64.tar \
+  outbe-tee-enclave-sgx.tar
+do
+  curl --fail --location --retry 3 \
+    --proto '=https' --proto-redir '=https' --tlsv1.2 \
+    --output "$ASSET" \
+    "$RELEASE_URL/$ASSET"
+done
+```
+
+Verify the signed manifest and bind it to the requested tag and platform:
+
+```bash
+cosign verify-blob \
+  --bundle ReleaseManifest.sigstore.json \
+  --certificate-identity-regexp \
+    '^https://github.com/outbe/outbe-chain/.github/workflows/testnet-release.yml@refs/heads/main$' \
+  --certificate-oidc-issuer \
+    'https://token.actions.githubusercontent.com' \
+  ReleaseManifest.json
+
+test "$(jq -er '.release.tag' ReleaseManifest.json)" = "$OUTBE_RELEASE"
+test "$(jq -er '.release.lifecycle' ReleaseManifest.json)" = verified
+test "$(jq -er '.build.target' ReleaseManifest.json)" = x86_64-unknown-linux-gnu
+
+SGX_SHA=$(jq -er '
+  .artifacts[]
+  | select(.name == "outbe-tee-enclave-sgx-bundle")
+  | .digest.value
+' ReleaseManifest.json)
+
+printf '%s  outbe-tee-enclave-sgx.tar\n' "$SGX_SHA" | sha256sum -c -
+```
+
+Extract the release and verify every released ELF against the signed manifest:
+
+```bash
+mkdir payload sgx
+tar --no-same-owner --no-same-permissions -xf outbe-linux-x86_64.tar -C payload
+tar --no-same-owner --no-same-permissions -xf outbe-tee-enclave-sgx.tar -C sgx
+
+jq -er '
+  .artifacts[]
+  | select(.kind == "elf")
+  | "\(.digest.value)  \(.path)"
+' ReleaseManifest.json > ELF.SHA256SUMS
+
+(cd payload && sha256sum -c ../ELF.SHA256SUMS)
+```
+
+Install the node tools and signed enclave bundle:
+
+```bash
+sudo install -d -o root -g root -m 0755 \
+  /opt/outbe-chain \
+  /opt/outbe-chain/release
+
+sudo install -o root -g root -m 0755 \
+  payload/bin/outbe-chain \
+  payload/bin/outbe-cli \
+  payload/bin/outbe-keygen \
+  sgx/rootfs/opt/outbe/sgx/bin/outbe-tee-enclave \
+  /opt/outbe-chain/
+
+sudo install -o root -g root -m 0644 \
+  sgx/rootfs/opt/outbe/sgx/outbe-tee-enclave.manifest \
+  sgx/rootfs/opt/outbe/sgx/outbe-tee-enclave.manifest.sgx \
+  sgx/rootfs/opt/outbe/sgx/outbe-tee-enclave.sig \
+  /opt/outbe-chain/
+
+sudo install -o root -g root -m 0644 \
+  ReleaseManifest.json \
+  ReleaseManifest.sigstore.json \
+  ELF.SHA256SUMS \
+  /opt/outbe-chain/release/
+
+printf '%s\n' "$OUTBE_RELEASE" \
+  | sudo tee /opt/outbe-chain/release/RELEASE_TAG >/dev/null
+```
+
+Do not modify, locally rebuild, re-sign, or mix enclave bundle files from
+different releases. See [`testnet-sgx-release.md`](testnet-sgx-release.md) for
+the complete release-evidence procedure.
+
+Install the network files supplied by the operator:
+
+```bash
+NETWORK_BUNDLE_DIR='<operator-supplied-network-bundle-directory>'
+
+sudo install -o root -g root -m 0644 \
+  "$NETWORK_BUNDLE_DIR/genesis.json" \
+  "$NETWORK_BUNDLE_DIR/reth-bootnodes.txt" \
+  /opt/outbe-chain/
+```
+
+## 3. Configure the node and create its keys
+
+Create a non-secret environment file and replace the network-specific values:
+
+```bash
+sudo install -d -o root -g root -m 0755 /etc/outbe-chain
+
+sudo tee /etc/outbe-chain/network.env >/dev/null <<'EOF'
+APP_DIR=/opt/outbe-chain
+BASE_DIR=/var/lib/outbe
+NODE_DATA_DIR=/var/lib/outbe/node
+KEYS_DIR=/var/lib/outbe/keys
+CONSENSUS_DIR=/var/lib/outbe/consensus
+OCOMP_DIR=/var/lib/outbe/ocomp/domain-v1
+TEE_DIR=/var/lib/outbe/tee
+NETWORK_RPC=https://rpc.testnet.outbe.net
+ADVERTISE_IP=REPLACE_ME
+PROJECTION_DB=outbe_testnet_validator_0
+MONGODB_URI='mongodb://127.0.0.1:27017/?replicaSet=rs0&directConnection=true'
+TEE_ENDPOINT=127.0.0.1:7000
+TEE_LEASE_SECONDS=86400
+EOF
+
+sudoedit /etc/outbe-chain/network.env
+
+set -a
+source /etc/outbe-chain/network.env
+set +a
+```
+
+The exact `NODE_DATA_DIR` value is used both for `tee join` and
+`outbe-chain node --datadir`.
+
+Create persistent directories:
+
+```bash
+sudo install -d -o "$USER" -g "$(id -gn)" -m 0700 \
+  "$BASE_DIR" \
+  "$NODE_DATA_DIR" \
+  "$KEYS_DIR" \
+  "$CONSENSUS_DIR" \
+  "$OCOMP_DIR" \
+  "$BASE_DIR/mongodb"
+
+sudo install -d -o root -g root -m 0700 "$TEE_DIR"
+```
+
+Provision the future Validator EVM/BLS keys now, even though FullNode runtime
+does not load them. The same EVM key also authorizes the one-time association
+between this address and the node's role-neutral NodeHost identity.
+
+```bash
+cd "$APP_DIR"
+umask 077
+
+./outbe-keygen hybrid --output-dir "$KEYS_DIR"
+openssl rand -hex 32 > "$BASE_DIR/reth-p2p-secret.hex"
+
+BLS_PUBKEY=$(
+  ./outbe-keygen show-pubkey --key "$KEYS_DIR/signing-key.hex" \
+    | awk '/public key:/ {print $3}'
+)
+
+EVM_KEY="0x$(tr -d '[:space:]' < "$KEYS_DIR/evm-key.hex")"
 VALIDATOR_ADDR=$(cast wallet address --private-key "$EVM_KEY")
+unset EVM_KEY
+
+printf 'VALIDATOR_ADDR=%s\nBLS_PUBKEY=%s\n' \
+  "$VALIDATOR_ADDR" "$BLS_PUBKEY"
 ```
 
-Keep `signing-key.hex` / `evm-key.hex` secret and backed up.
+Back up `signing-key.hex` and `evm-key.hex` securely. Fund
+`$VALIDATOR_ADDR` with at least the network minimum stake plus transaction gas.
 
-For a node that previously ran as a FullNode, reuse the files provisioned before
-its first `tee join`; do not generate replacements during promotion. These key
-files had no authority while the process ran without `--validator`.
+Confirm that the local genesis belongs to the RPC network, then check the
+funded balance in base units:
 
-Generate the validator's OCOMP result-signing key before its first validator
-startup. The public registration binds this key to the chain, genesis,
-validator address and current BLS MinPk identity; the secret key remains local:
+```bash
+CHAIN_ID=$(jq -r '.config.chainId' "$APP_DIR/genesis.json")
+test "$CHAIN_ID" = "$(cast chain-id --rpc-url "$NETWORK_RPC")" \
+  || { echo 'ABORT: genesis and RPC chain IDs differ'; exit 1; }
 
-```sh
-outbe-keygen ocomp --output-dir /var/lib/outbe/ocomp \
-  --chain-id <chain-id> --genesis-hash <0x-genesis-hash> \
+cast balance "$VALIDATOR_ADDR" --rpc-url "$NETWORK_RPC"
+```
+
+Never run key commands with shell tracing enabled. The CLI signs locally, but a
+private key passed through `--private-key` can briefly be visible to privileged
+users in the host process list.
+
+## 4. Start MongoDB
+
+Projection writes require a MongoDB replica set:
+
+```bash
+sudo docker run -d \
+  --name outbe-mongodb \
+  --restart unless-stopped \
+  -p 127.0.0.1:27017:27017 \
+  -v "$BASE_DIR/mongodb:/data/db" \
+  mongo:8.3.7 \
+  --replSet rs0 \
+  --bind_ip_all
+
+until sudo docker exec outbe-mongodb mongosh --quiet \
+  --eval 'db.runCommand({ping:1}).ok' >/dev/null 2>&1
+do
+  sleep 1
+done
+
+sudo docker exec outbe-mongodb mongosh --quiet --eval \
+  "rs.initiate({_id:'rs0',members:[{_id:0,host:'127.0.0.1:27017'}]})"
+
+until sudo docker exec outbe-mongodb mongosh --quiet \
+  --eval 'db.hello().isWritablePrimary ? quit(0) : quit(1)' \
+  >/dev/null 2>&1
+do
+  sleep 1
+done
+```
+
+## 5. Start and synchronize the FullNode
+
+### 5.1 Start the enclave
+
+```bash
+set -a
+source /etc/outbe-chain/network.env
+set +a
+
+CHAIN_ID=$(jq -r '.config.chainId' "$APP_DIR/genesis.json")
+printf -v CHAIN_ID_HEX '0x%064x' "$CHAIN_ID"
+
+cd "$APP_DIR"
+
+sudo nohup gramine-sgx outbe-tee-enclave \
+  --tee-dir "$TEE_DIR" \
+  --socket "$TEE_ENDPOINT" \
+  --chain-id "$CHAIN_ID_HEX" \
+  > "$BASE_DIR/tee-enclave.log" 2>&1 &
+
+TEE_PID=$!
+printf '%s\n' "$TEE_PID" | sudo tee "$BASE_DIR/tee-enclave.pid" >/dev/null
+
+sleep 5
+sudo tail -n 30 "$BASE_DIR/tee-enclave.log"
+```
+
+Do not continue unless the log says that the enclave is listening and sealing
+is enabled. An unattested/debug warning is acceptable only when the genesis
+policy explicitly permits it.
+
+### 5.2 Perform the one-time TEE join
+
+The node's EVM key is used below as the funded relay as well. The relay may be a
+different funded account, but `--node-evm-key` must always point to this node's
+persistent EVM key file.
+
+```bash
+EVM_KEY="0x$(tr -d '[:space:]' < "$KEYS_DIR/evm-key.hex")"
+BINDING_ID="0x$(openssl rand -hex 32)"
+LATEST_TS_HEX=$(
+  cast block latest --json --rpc-url "$NETWORK_RPC" \
+    | jq -r '.timestamp'
+)
+VALID_UNTIL=$((LATEST_TS_HEX + TEE_LEASE_SECONDS))
+
+./outbe-cli tee join \
+  --enclave-socket "$TEE_ENDPOINT" \
+  --node-data-dir "$NODE_DATA_DIR" \
+  --reth-p2p-secret-key "$BASE_DIR/reth-p2p-secret.hex" \
+  --node-evm-key "$KEYS_DIR/evm-key.hex" \
+  --binding-id "$BINDING_ID" \
+  --valid-until "$VALID_UNTIL" \
+  --private-key "$EVM_KEY" \
+  --rpc-url "$NETWORK_RPC" \
+  --timeout-secs 60
+
+unset EVM_KEY
+```
+
+Continue only after the command reports that the offer key was durably installed
+and the authenticated enclave connection reopened. Do not run `tee join` again
+when this node becomes a Validator.
+
+### 5.3 Start the FullNode
+
+```bash
+BOOTNODES=$(
+  grep -Ev '^[[:space:]]*(#|$)' reth-bootnodes.txt \
+    | paste -sd, -
+)
+
+nohup ./outbe-chain node \
+  --chain "$APP_DIR/genesis.json" \
+  --datadir "$NODE_DATA_DIR" \
+  --p2p-secret-key "$BASE_DIR/reth-p2p-secret.hex" \
+  --bootnodes "$BOOTNODES" \
+  --nat "extip:$ADVERTISE_IP" \
+  --port 30303 \
+  --discovery.port 30303 \
+  --discovery.v5.addr 0.0.0.0 \
+  --discovery.v5.port 31303 \
+  --upstream "$NETWORK_RPC" \
+  --projection.mongodb-uri "$MONGODB_URI" \
+  --projection.mongodb-database "$PROJECTION_DB" \
+  --engine.persistence-threshold 0 \
+  --engine.memory-block-buffer-target 0 \
+  --http \
+  --http.addr 127.0.0.1 \
+  --http.port 8545 \
+  --http.api eth,net,web3,outbe \
+  --tee-enclave-socket "$TEE_ENDPOINT" \
+  --tee-session-mode production-node-host \
+  --consensus.storage-dir "$CONSENSUS_DIR" \
+  > "$BASE_DIR/full-node.log" 2>&1 &
+
+printf '%s\n' "$!" > "$BASE_DIR/full-node.pid"
+```
+
+OCOMP runs inside `outbe-chain`; no separate `outbe-ocomp` process is required.
+For a `DcapRequired` network, add the renewal arguments required by
+[`dcap-testnet-launch.md`](dcap-testnet-launch.md), including a funded
+`--tee-renewal.relay-key`.
+
+Follow synchronization:
+
+```bash
+tail -f "$BASE_DIR/full-node.log"
+```
+
+In another shell, load the environment and compare heights:
+
+```bash
+set -a
+source /etc/outbe-chain/network.env
+set +a
+
+LOCAL=$(cast block-number --rpc-url http://127.0.0.1:8545)
+REMOTE=$(cast block-number --rpc-url "$NETWORK_RPC")
+printf 'local=%s remote=%s behind=%s\n' "$LOCAL" "$REMOTE" "$((REMOTE - LOCAL))"
+```
+
+When the lag is zero or one block, compare one exact block. This guards against
+quietly following the wrong chain:
+
+```bash
+H=$(cast block-number --rpc-url http://127.0.0.1:8545)
+LOCAL_HASH=$(
+  cast block "$H" --json --rpc-url http://127.0.0.1:8545 \
+    | jq -r '.hash'
+)
+REMOTE_HASH=$(
+  cast block "$H" --json --rpc-url "$NETWORK_RPC" \
+    | jq -r '.hash'
+)
+
+test "$LOCAL_HASH" = "$REMOTE_HASH" \
+  && echo 'FullNode synchronized: OK' \
+  || { echo 'ABORT: block hash mismatch'; exit 1; }
+```
+
+## 6. Prepare the Validator
+
+Do this only after the FullNode is synchronized.
+
+### 6.1 Install the current DKG bootstrap files and peers
+
+Obtain fresh copies from an active validator's actual
+`--consensus.keys-dir`, then install them as:
+
+```text
+/opt/outbe-chain/dkg_polynomial.hex
+/opt/outbe-chain/dkg_output.hex
+/opt/outbe-chain/consensus-peers.txt
+```
+
+Do not copy `dkg_share.hex`. The new Validator receives its own share during a
+later DKG reshare.
+
+### 6.2 Register the Validator and consensus address
+
+```bash
+cd "$APP_DIR"
+
+CHAIN_ID=$(jq -r '.config.chainId' "$APP_DIR/genesis.json")
+EVM_KEY="0x$(tr -d '[:space:]' < "$KEYS_DIR/evm-key.hex")"
+VALIDATOR_ADDR=$(cast wallet address --private-key "$EVM_KEY")
+BLS_PUBKEY=$(
+  ./outbe-keygen show-pubkey --key "$KEYS_DIR/signing-key.hex" \
+    | awk '/public key:/ {print $3}'
+)
+BLS_SIG=$(
+  ./outbe-keygen sign-registration \
+    --key "$KEYS_DIR/signing-key.hex" \
+    --validator-address "$VALIDATOR_ADDR" \
+    --chain-id "$CHAIN_ID" \
+    | awk '/signature:/ {print $2}'
+)
+
+./outbe-cli validator register \
+  --pubkey "0x$BLS_PUBKEY" \
+  --bls-sig "0x$BLS_SIG" \
+  --private-key "$EVM_KEY" \
+  --rpc-url "$NETWORK_RPC"
+```
+
+Wait until the transaction is included and this command reports
+`Registered`:
+
+```bash
+./outbe-cli validator info "$VALIDATOR_ADDR" --rpc-url "$NETWORK_RPC"
+```
+
+Then publish the address reachable by the consensus mesh:
+
+```bash
+./outbe-cli validator set-p2p \
+  --symmetric "$ADVERTISE_IP:30400" \
+  --private-key "$EVM_KEY" \
+  --rpc-url "$NETWORK_RPC"
+```
+
+### 6.3 Create the Validator OCOMP identity
+
+```bash
+GENESIS_HASH=$(cast block 0 --json --rpc-url "$NETWORK_RPC" | jq -r '.hash')
+
+./outbe-keygen ocomp \
+  --output-dir "$OCOMP_DIR" \
+  --chain-id "$CHAIN_ID" \
+  --genesis-hash "$GENESIS_HASH" \
   --validator-address "$VALIDATOR_ADDR" \
   --consensus-bls-min-pk "$BLS_PUBKEY"
+
+install -m 0600 \
+  "$KEYS_DIR/evm-key.hex" \
+  "$OCOMP_DIR/ocomp-evm-key.hex"
+
+unset EVM_KEY BLS_SIG
 ```
 
-This writes `ocomp-key-v1.hex` and the public
-`ocomp-registration-v1.ocb1`. A validator startup without the OCOMP key and
-complete local-control configuration is rejected. A FullNode needs no OCOMP
-signing key or registration, but it does require the complete keyless
-local-control profile described in section 1.
+Preserve the entire OCOMP directory. Its private key and sign-once state must
+survive restarts.
 
-### 2.2 Register, announce P2P, and install the offer key once
+## 7. Promote the FullNode to a Validator
 
-Every node performs exactly one role-neutral TEE join before its first node
-startup. If this datadir already ran as a FullNode, that join and the association
-already exist: skip the final command in this section and retain all NodeHost
-artifacts.
+### 7.1 Stop only the FullNode process
 
-```sh
-# register the validator (binds your address to your BLS pubkey) -> REGISTERED
-CHAIN_ID=$(cast chain-id --rpc-url http://<rpc>:8545)
-SIG=$(outbe-keygen sign-registration --key /var/lib/outbe/keys/signing-key.hex \
-        --validator-address "$VALIDATOR_ADDR" --chain-id "$CHAIN_ID" \
-        | grep -oE '[0-9a-f]{120,}' | head -1)
-outbe-cli validator register --pubkey "0x$BLS_PUBKEY" --bls-sig "0x$SIG" \
-  --private-key "$EVM_KEY" --rpc-url http://<rpc>:8545
+Leave MongoDB, the enclave, `$TEE_DIR`, and
+`$NODE_DATA_DIR/tee-node-host-v1` unchanged:
 
-# publish your consensus P2P address (the mesh reads it from chain state)
-outbe-cli validator set-p2p --symmetric <public-host>:30400 \
-  --private-key "$EVM_KEY" --rpc-url http://<rpc>:8545
-
-# For a newly provisioned node only: start the accepted enclave sidecar, register
-# its role-neutral V1 identity and atomically associate the node EVM address.
-NODE_DATA_DIR=/var/lib/outbe/<resolved-chain-data-dir>
-RETH_P2P_SECRET=/var/lib/outbe/reth-p2p-secret.hex
-BINDING_ID=0x$(openssl rand -hex 32)
-VALID_UNTIL=$(( $(date -u +%s) + 86400 ))
-outbe-cli tee join --enclave-socket 127.0.0.1:7000 \
-  --node-data-dir "$NODE_DATA_DIR" \
-  --reth-p2p-secret-key "$RETH_P2P_SECRET" \
-  --node-evm-key /var/lib/outbe/keys/evm-key.hex \
-  --binding-id "$BINDING_ID" --valid-until "$VALID_UNTIL" \
-  --private-key "$RELAY_EVM_KEY" \
-  --rpc-url http://<certified-rpc>:8545 --timeout-secs 60
+```bash
+FULL_NODE_PID=$(cat "$BASE_DIR/full-node.pid")
+kill -TERM "$FULL_NODE_PID"
+while kill -0 "$FULL_NODE_PID" 2>/dev/null; do sleep 1; done
 ```
 
-The relay and node EVM keys may belong to different accounts. NodeHost admission
-requires canonical evidence plus signatures from the persistent P2P key and node
-EVM key, not `msg.sender`. This association does not register a validator. A
-Created registration emits one matching
-`OfferKeySealedForRegistryV1`; idempotent replay, renewal and replacement never
-redeliver it.
+### 7.2 Start the Validator
 
-Registration admits your node to the consensus mesh as a non-voting peer; it does
-not by itself make you a voting validator (no stake, no share yet). The non-voting
-admission tier also includes PENDING and JAILED validators so they can sync,
-recover, and rejoin.
+The public DKG pair lets the new node follow and verify consensus without a
+private share. It receives its own share at the next reshare.
 
-### 2.3 Run the node (`--validator`)
+```bash
+BOOTNODES=$(
+  grep -Ev '^[[:space:]]*(#|$)' reth-bootnodes.txt \
+    | paste -sd, -
+)
+CONSENSUS_PEERS=$(
+  grep -Ev '^[[:space:]]*(#|$)' consensus-peers.txt \
+    | paste -sd, -
+)
 
-Launch with `--validator`, the public DKG artifacts (to verify finality), the
-enclave socket, and your keys — but **no** `--consensus.signing-share` (you have no
-share yet). The node runs the consensus engine as a share-less follower:
+nohup ./outbe-chain node --validator \
+  --chain "$APP_DIR/genesis.json" \
+  --datadir "$NODE_DATA_DIR" \
+  --p2p-secret-key "$BASE_DIR/reth-p2p-secret.hex" \
+  --bootnodes "$BOOTNODES" \
+  --nat "extip:$ADVERTISE_IP" \
+  --port 30303 \
+  --discovery.port 30303 \
+  --discovery.v5.addr 0.0.0.0 \
+  --discovery.v5.port 31303 \
+  --projection.mongodb-uri "$MONGODB_URI" \
+  --projection.mongodb-database "$PROJECTION_DB" \
+  --engine.persistence-threshold 0 \
+  --engine.memory-block-buffer-target 0 \
+  --http \
+  --http.addr 127.0.0.1 \
+  --http.port 8545 \
+  --http.api eth,net,web3,outbe \
+  --tee-enclave-socket "$TEE_ENDPOINT" \
+  --tee-session-mode production-node-host \
+  --consensus.signing-key "$KEYS_DIR/signing-key.hex" \
+  --validator.evm-key "$KEYS_DIR/evm-key.hex" \
+  --consensus.public-polynomial "$APP_DIR/dkg_polynomial.hex" \
+  --consensus.dkg-output "$APP_DIR/dkg_output.hex" \
+  --consensus.keys-dir "$KEYS_DIR" \
+  --consensus.listen-addr 0.0.0.0:30400 \
+  --consensus.storage-dir "$CONSENSUS_DIR" \
+  --consensus.peers "$CONSENSUS_PEERS" \
+  --consensus.use-local-defaults \
+  > "$BASE_DIR/validator.log" 2>&1 &
 
-```sh
-outbe-chain node --validator \
-  --chain /path/to/genesis.json --datadir /var/lib/outbe \
-  --bootnodes "<enode URLs>" \
-  --http --http.addr 127.0.0.1 --http.port 8545 --http.api eth,net,web3,outbe \
-  --consensus.signing-key       /var/lib/outbe/keys/signing-key.hex \
-  --validator.evm-key           /var/lib/outbe/keys/evm-key.hex \
-  --consensus.public-polynomial /path/to/polynomial.hex \
-  --consensus.dkg-output        /path/to/dkg-output.hex \
-  --consensus.listen-addr       0.0.0.0:30400 \
-  --consensus.peers             "<bls_pubkey>@<host:port>,..." \
-  --ocomp.supervisor-socket     /run/outbe/ocomp-supervisor.sock \
-  --ocomp.snapshot-exporter-socket /run/outbe/ocomp-snapshot-exporter.sock \
-  --ocomp.protocol-bundle-hash  <0x-chain-pinned-bundle-hash> \
-  --ocomp.boot-nonce            <fresh-nonzero-0x32-byte-value> \
-  --ocomp.key                   /var/lib/outbe/ocomp/ocomp-key-v1.hex \
-  --tee-enclave-socket          127.0.0.1:7000
+printf '%s\n' "$!" > "$BASE_DIR/validator.pid"
 ```
 
-An existing-chain validator must not wait for a future DKG boundary during
-startup, because synchronization is not running yet. If its local signing share
-or DKG material is missing or stale, startup fails immediately. Restart it with
-the current public polynomial and DKG output, without `--consensus.signing-share`,
-so it can synchronize as `VerifierOnly` and acquire a new share through the
-normal running reshare path.
+`--consensus.use-local-defaults` is appropriate for the routed private testnet
+used to verify this guide. Follow the network operator's setting on another
+network. Do not pass `--upstream` to a Validator.
 
-There is deliberately no OCOMP validator-index or committee file. For every
-finalized job the node opens that job's historical ValidatorSet snapshot,
-finds `VALIDATOR_ADDR`, checks that the stored OCOMP public key matches
-`ocomp-key-v1.hex`, and signs with the index from that snapshot. A membership
-change therefore affects only new jobs; old live jobs keep their old index and
-quorum.
+The first startup should report verifier mode because this Validator does not
+have a threshold share yet:
 
-The two OCOMP sockets belong to the local Supervisor and SnapshotExporter
-processes. The bundle hash and boot nonce form one all-or-nothing startup
-profile. All roles inherit the invoking process identity; OCOMP does not require
-fixed service usernames. The OCOMP key file and the node-owned sign-once
-journal under the chain data directory must survive restarts. An exact retry
-returns the byte-identical stored signature; a changed job binding is refused
-as equivocation.
-
-> The node sources its DKG `prev_output`/polynomial from the **chain** (the latest
-> finalized DKG boundary), so the public artifact files only need to be valid genesis
-> material — the node adopts the committee's current output automatically.
-
-Wait until it is caught up to the finalized tip:
-
-```sh
-cast rpc outbe_syncStatus --rpc-url http://localhost:8545
-outbe-cli monitor readiness --rpc-url http://localhost:8545
+```bash
+sleep 15
+tail -n 50 "$BASE_DIR/validator.log"
+cast rpc outbe_syncStatus --rpc-url http://127.0.0.1:8545
+cast rpc outbe_consensusStatus --rpc-url http://127.0.0.1:8545
 ```
 
-### 2.4 Stake (→ PENDING)
+## 8. Stake, confirm readiness, and activate
 
-```sh
-outbe-cli staking stake --validator "$VALIDATOR_ADDR" --amount <amount> \
-  --private-key "$EVM_KEY" --rpc-url http://<rpc>:8545
+First make sure the local Validator is at the network tip:
+
+```bash
+LOCAL=$(cast block-number --rpc-url http://127.0.0.1:8545)
+REMOTE=$(cast block-number --rpc-url "$NETWORK_RPC")
+printf 'local=%s remote=%s behind=%s\n' "$LOCAL" "$REMOTE" "$((REMOTE - LOCAL))"
 ```
 
-Staking accumulates; once your **cumulative** stake reaches `min_stake`, you move
-REGISTERED → **PENDING**. (A smaller stake is accepted, it just leaves you REGISTERED
-until the total reaches `min_stake`.)
+Stake the current network minimum. `--amount` uses integer base units:
 
-### 2.5 Confirm readiness (→ eligible) and wait for the reshare (→ ACTIVE)
+```bash
+EVM_KEY="0x$(tr -d '[:space:]' < "$KEYS_DIR/evm-key.hex")"
+VALIDATOR_ADDR=$(cast wallet address --private-key "$EVM_KEY")
+MIN_STAKE_HEX=$(cast storage \
+  0x000000000000000000000000000000000000EE02 \
+  0 \
+  --rpc-url "$NETWORK_RPC")
+MIN_STAKE_WEI=$(cast to-dec "$MIN_STAKE_HEX")
 
-A PENDING validator is not admitted to the next reshare until it confirms,
-on-chain, that it has caught up and supplies the canonical proof-of-possession
-registration for its OCOMP result key. Only after the node has reached the
-finalized tip, submit the public registration generated in section 2.1:
-
-```sh
-outbe-cli validator confirm-ready \
-  --registration /var/lib/outbe/ocomp/ocomp-registration-v1.ocb1 \
-  --private-key "$EVM_KEY" --rpc-url http://<rpc>:8545
+./outbe-cli staking stake \
+  --validator "$VALIDATOR_ADDR" \
+  --amount "$MIN_STAKE_WEI" \
+  --private-key "$EVM_KEY" \
+  --rpc-url "$NETWORK_RPC"
 ```
 
-DKG reshares are **periodic** (one per epoch, height-driven). At the first reshare
-after you are confirmed, the ceremony grants your node a share and promotes you
-PENDING → **ACTIVE** (`hasBLSShare = true`) exactly at the epoch boundary. Your
-running node completes the ceremony ("threshold material obtained"), switches to
-signer mode, and votes in lockstep. There is no on-demand "join now" — you wait for
-the next periodic reshare (≤ one epoch). Confirm:
+After the transaction is included, the Validator should be `Pending`:
 
-```sh
-cast call 0x000000000000000000000000000000000000EE00 \
-  'isConsensusParticipant(address)(bool)' "$VALIDATOR_ADDR" --rpc-url http://<rpc>:8545   # true
-outbe-cli validator participation --rpc-url http://<rpc>:8545   # watch it vote in lockstep
+```bash
+./outbe-cli validator info "$VALIDATOR_ADDR" --rpc-url "$NETWORK_RPC"
 ```
 
----
+While the local node remains at the network tip, submit its OCOMP registration
+and readiness signal:
 
-## 3. The two onboarding situations
+```bash
+./outbe-cli validator confirm-ready \
+  --registration "$OCOMP_DIR/ocomp-registration-v1.ocb1" \
+  --private-key "$EVM_KEY" \
+  --rpc-url "$NETWORK_RPC"
 
-Both run `outbe-chain node --validator` with the same `--datadir`/`--consensus.keys-dir`;
-the difference is only whether the node already holds a share.
-
-- **New validator (first time)** — no share on disk. The node comes up as a share-less
-  follower (section 2.3), syncs to head, and once you have staked + confirmed it
-  **waits for the next periodic DKG reshare** to be granted a share and become ACTIVE.
-
-- **Returning validator (was ACTIVE)** — restart `node --validator` with its existing
-  `--consensus.keys-dir`. It **recovers its share from disk**, catches up to head, and
-  **resumes signing without a new reshare** while its on-chain status is still ACTIVE.
-  If it has already left the active set and reached INACTIVE, it must complete the
-  normal re-registration/stake/PENDING flow and submit `confirm-ready` again; exit
-  clears the prior OCOMP readiness. It then rejoins only through the next certified
-  reshare.
-
-- **FullNode receiving validator role** — stop the FullNode and restart the same
-  synchronized data directory with `--validator`, the already provisioned
-  consensus/EVM keys, OCOMP key, public DKG artifacts and complete local-control
-  profile from section 2.3. Do not repeat TEE join or replace any NodeHost
-  artifact. The ordinary `registerValidator`, stake and `confirm-ready` path leads
-  to PENDING; the next certified reshare makes it ACTIVE and its address appears
-  automatically in snapshots for new OCOMP jobs.
-
-Once a new or returning node is registered, staked, PENDING and confirmed, the
-normal action is simply to **wait for the next periodic reshare** — it re-reads the
-eligible set each epoch and picks the validator up. There is no on-demand or forced
-DKG path. In particular, losing the permanent enclave offer key never starts DKG or
-reshare: that NodeId is lost and cannot receive the key again. Continuing requires
-an independently admitted new node identity; the old identity cannot be recovered
-or replaced.
-
-If an old job's pinned snapshot is missing/evicted, the local validator is absent
-from it, or its stored OCOMP key does not match, the node abstains from that job.
-It logs the JobId and all three snapshot bindings and increments
-`outbe_ocomp_attestation_abstentions_total`; it never substitutes the current
-ValidatorSet. Other consensus and FullNode processing continues.
-
-Each pinned OCOMP participant has 1,800 blocks from the finalized job opening to
-compute and include its vote, even when quorum formed earlier. Deadline closure
-always records a missing pinned participant. It changes validator status only if
-that participant is still `ACTIVE`, in which case it performs `ACTIVE -> JAILED`;
-an already non-ACTIVE participant is recorded but not mutated. Operators should
-therefore alert on unfinished OCOMP work relative to the job deadline, not only
-on whether quorum has already been reached.
-
----
-
-## 4. Validator statuses
-
-`validatorByAddress(addr)` on ValidatorSet (`0x…EE00`) returns the status code:
-
-| Code | Status     | Meaning                                                                                                                                     |
-| ---- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | REGISTERED | registered (+ usually P2P-announced + enclave-joined); not staked; non-voting follower                                                      |
-| 1    | PENDING    | staked, awaiting confirm-ready + the reshare that grants a share (excluded from `activeValidatorCount`)                                     |
-| 2    | ACTIVE     | holds a share; voting                                                                                                                       |
-| 3    | EXITING    | left the active set; still accountable (keeps signing) until the next reshare excludes it                                                   |
-| 4    | UNBONDING  | excluded by a reshare; share cleared; stake unbonding                                                                                       |
-| 5    | INACTIVE   | unbonding complete; stake withdrawn                                                                                                         |
-| 6    | JAILED     | punished on a felony (slashed + frozen); dropped from the committee at the next reshare, but kept in the registry pending unjail or unstake |
-
-### Felony → JAILED
-
-On a consensus/oracle **felony** (proposer/voter miss threshold, double-proposal /
-conflicting-vote / invalid-VRF evidence, or oracle underperformance) the validator
-is **slashed and moved to JAILED** — not force-exited out of the registry. It keeps
-current-epoch accountability until the next reshare clears its share (like EXITING),
-then it stops voting; it stays admitted to P2P as a non-voting follower so it keeps
-syncing. From JAILED there are two ways out:
-
-- **Return:** top up your stake to at least `min_stake` if the slash dropped you
-  below it, then send `outbe-cli staking unjail` (caller = the validator). This
-  moves you JAILED → PENDING; then `confirm-ready` and the next reshare promote you
-  back to ACTIVE. A stake top-up alone does **not** unjail — the explicit unjail tx
-  is always required. (An optional cooldown, `config_unjail_cooldown_blocks`, gates
-  how soon you may unjail; default 0.)
-- **Leave:** unstake your full stake — from JAILED this enters the
-  EXITING → UNBONDING → INACTIVE drain, and you are no longer a validator.
-
----
-
-## 5. Leaving the active set
-
-```sh
-outbe-cli validator deactivate --private-key "$EVM_KEY" --rpc-url http://<rpc>:8545
+unset EVM_KEY
 ```
 
-Moves you ACTIVE → **EXITING** immediately; you keep signing until the next reshare,
-which excludes you (EXITING → **UNBONDING**, share cleared). Your node then
-**transitions to the share-less follower phase** of the smaller committee — it stays online
-following finality rather than shutting down. Stop the process to leave entirely.
+The Validator remains `Pending` until the next scheduled DKG reshare activates
+it. Do not restart it merely because activation is not immediate.
 
-Unstake / withdraw:
+After the next DKG boundary, run the final checks:
 
-```sh
-outbe-cli staking unstake --amount <amount> --private-key "$EVM_KEY" --rpc-url http://<rpc>:8545
-# after the unbonding period:
-outbe-cli staking claim --private-key "$EVM_KEY" --rpc-url http://<rpc>:8545
+```bash
+./outbe-cli validator info "$VALIDATOR_ADDR" --rpc-url "$NETWORK_RPC"
+./outbe-chain dkg status --storage-dir "$KEYS_DIR"
+./outbe-cli monitor readiness \
+  --address "$VALIDATOR_ADDR" \
+  --rpc-url http://127.0.0.1:8545
 ```
 
-Unstaking below `min_stake` from ACTIVE also triggers EXITING → UNBONDING; from
-PENDING it reverts to REGISTERED.
+The setup is complete when:
 
----
+- Validator status is `Active`;
+- `Has BLS Share` is `true`;
+- DKG status is `READY`;
+- readiness reports synchronized execution, active consensus, and peers.
 
-## 6. Restart and recovery
+## 9. Persistence and normal restarts
 
-The DKG share is persisted to `--consensus.keys-dir` (default `<datadir>/keys`); a
-restart recovers it and resumes signing without a new reshare (the "returning
-validator" case in section 3). Restart with the same `--datadir`/`--consensus.keys-dir`.
+Back up and preserve:
 
-Consensus recovery is fail-closed. A restarted validator decides which epoch
-committee it may sign for from durable consensus finalization and DKG boundary
-evidence. The latest local execution head alone is insufficient. If the local Reth
-head is only in the normal bounded in-flight window ahead of the marshal-finalized
-tip, and that head includes an unfinalized membership change, an old-epoch signer
-can still recover from the finalized DKG boundary and continue signing until the
-activation is actually finalized.
+- `$KEYS_DIR`, including the DKG files written after activation;
+- `$BASE_DIR/reth-p2p-secret.hex`;
+- `$TEE_DIR` and `$NODE_DATA_DIR/tee-node-host-v1` together;
+- `$OCOMP_DIR`, including its sign-once state;
+- `$NODE_DATA_DIR`, `$CONSENSUS_DIR`, and `$BASE_DIR/mongodb`.
 
-Stop and investigate rather than deleting files if startup reports missing marshal
-finalization, inconsistent saved/pending DKG material, a pending boundary snapshot
-without matching DKG material, an EVM key that does not match the recovered boundary
-address for the local BLS key, or execution history with no durable consensus
-finalization evidence. For details and operator actions, see
-[`consensus-restart-recovery.md`](consensus-restart-recovery.md).
+On a normal restart:
 
-For the enclave, production requires sealing (`--tee-dir <path>` + `--chain-id`) and
-restores the exact same permanent offer key. Missing, corrupt, wrong-chain or otherwise
-unsealable permanent-key state is terminal for that identity; there is no recovery,
-replacement, forced DKG or fallback. The separate GramineDirectDev chain may use an
-explicitly ephemeral enclave only for fresh development networks and is never a restart
-fallback for production.
+1. start MongoDB;
+2. start the enclave with the same signed bundle and existing `$TEE_DIR`;
+3. start the node in its current role with the same datadir and key paths.
 
----
+Do not run `tee join`, register, stake, or confirm readiness again. Those are
+onboarding operations, not normal startup steps. A returning Active Validator
+loads its existing share from `$KEYS_DIR` and resumes signing.
 
-## 7. Reference
+For TEE lease renewal, DCAP rollout, enclave upgrades, consensus recovery, and
+Validator lifecycle operations, use the release-matched runbooks and CLI help:
 
-### Protocol addresses
-
-| Precompile   | Address                                      |
-| ------------ | -------------------------------------------- |
-| ValidatorSet | `0x000000000000000000000000000000000000EE00` |
-| Staking      | `0x000000000000000000000000000000000000EE02` |
-| TeeRegistry  | `0x000000000000000000000000000000000000EE0A` |
-
-### Key node flags
-
-| Flag                                                       | Purpose                                                                                                                                         |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--validator`                                              | run the consensus thread (validator); omit for a full node (EL sync + RPC only)                                                                 |
-| `--consensus.signing-key` / `--validator.evm-key`          | BLS signing key / secp256k1 system-tx signer (validator)                                                                                        |
-| `--consensus.signing-share`                                | BLS threshold share — present only once the node holds a share                                                                                  |
-| `--consensus.public-polynomial` / `--consensus.dkg-output` | public DKG artifacts to follow finality before holding a share                                                                                  |
-| `--consensus.keys-dir`                                     | where the DKG share/polynomial/output are persisted (default `<datadir>/keys`)                                                                  |
-| `--consensus.listen-addr` / `--consensus.peers`            | consensus P2P listen address / bootstrap hint `<bls_pubkey>@<host:port>`                                                                        |
-| `--ocomp.supervisor-socket` / `--ocomp.snapshot-exporter-socket` | local Supervisor/Follower and SnapshotExporter endpoints; both are mandatory together on validators and certified FullNodes              |
-| `--ocomp.protocol-bundle-hash` / `--ocomp.boot-nonce`      | chain-pinned OCOMP bundle identity / nonzero per-boot control-session binding                                                                   |
-| `--ocomp.key`                                              | validator-only node-owned OCOMP result-signing key registered through `confirm-ready`; omit on FullNode; no static participant index is configured |
-| `--tee-enclave-socket`                                     | mandatory enclave sidecar endpoint; every V1 node fails startup if it is absent or cannot satisfy its genesis-fixed mode                        |
-| `--testnet.trust-el-head`                                  | disaster-recovery only: trust execution head when no durable consensus-finalized height exists (testnet/devnet; not normal production recovery) |
-
-### Operator commands
-
-| Command                                                     | Purpose                                                        |
-| ----------------------------------------------------------- | -------------------------------------------------------------- |
-| `outbe-keygen hybrid` / `show-pubkey` / `sign-registration` | generate keys / derive BLS pubkey / sign registration          |
-| `outbe-keygen ocomp`                                       | generate the permanent validator OCOMP key and public `ocomp-registration-v1.ocb1` artifact |
-| `outbe-cli tee join`                                        | register an exact Validator or FullNode identity and ingest its one-time permanent-key artifact through any funded relay |
-| `outbe-cli validator register` / `set-p2p`                  | register (→ REGISTERED) / publish the P2P address              |
-| `outbe-cli staking stake` / `unstake` / `claim`             | stake (→ PENDING at `min_stake`) / unstake / withdraw          |
-| `outbe-cli staking unjail`                                  | return a JAILED validator → PENDING (stake ≥ min_stake)        |
-| `outbe-cli validator confirm-ready --registration <file>`   | confirm caught-up and register the OCOMP result key            |
-| `outbe-cli validator deactivate`                            | leave the active set (→ EXITING)                               |
-| `outbe-cli monitor health` / `readiness` / `watch`          | health / readiness / dashboard                                 |
-| `outbe-cli validator participation` / `list` / `info`       | participation + set inspection                                 |
-
----
-
-## Localnet quickstart
-
-The development validator path runs through the Rust/Cucumber harness on an
-isolated four-validator GramineDirectDev mock localnet. This is never hardware
-evidence:
-
-```sh
-mise run e2e
+```bash
+./outbe-cli tee --help
+./outbe-cli validator --help
+./outbe-cli staking --help
 ```
 
-The harness owns the node processes, enclave containers, port ranges, data
-directories, and a temporary MongoDB replica set. See
-`testing/e2e-harness/README.md` for focused feature commands and debug
-options.
+Do not delete consensus, DKG, OCOMP, NodeHost, or sealed TEE state to work
+around a startup error.
