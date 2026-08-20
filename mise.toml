@@ -211,10 +211,6 @@ mise run localnet-bootstrap
 mise run localnet-start
 """
 
-[tasks.localnet-tee]
-description = "Alias for the canonical dev/mock LocalNet (TEE is mandatory)"
-depends = ["localnet"]
-
 [tasks.localnet-restart]
 description = "Stop and start the bootstrapped localnet"
 run = """
