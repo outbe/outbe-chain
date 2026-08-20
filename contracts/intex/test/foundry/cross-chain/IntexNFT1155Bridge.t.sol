@@ -17,7 +17,7 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @title IntexNFT1155BridgeTest
 /// @notice direct coverage for the NFT-Batch outbound entry points
-///         (`batchSend`, `multiSend`, `systemMultiSend`) and their `quote*` views. The inbound
+///         (`batchSend`, `multiSend`) and their `quote*` views. The inbound
 ///         `receiveMessage` validation matrix (malformed / duplicate / version / srcChainId) is covered by
 ///         the sibling cross-chain suites; this file exercises the send-side surface that had no
 ///         direct test: happy-path delivery, every revert branch, the role gate, and quoting.
@@ -67,10 +67,7 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
 
         srcToken.grantRole(srcToken.RELAYER_ROLE(), address(srcBatch));
         dstToken.grantRole(dstToken.RELAYER_ROLE(), address(dstBatch));
-        srcBatch.grantRole(srcBatch.SYSTEM_RELAYER_ROLE(), admin);
 
-        // systemMultiSend draws the bridge fee from the adapter's own float; pre-fund it.
-        vm.deal(address(srcBatch), 100 ether);
         vm.deal(sender, 100 ether); // batchSend/multiSend are caller-funded
 
         // Stock the sender with units on both series so the per-item `crosschainBurn` succeeds.
@@ -323,61 +320,6 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
             dstChainId: DST_CHAIN_ID, recipients: recipients, tokenIds: _u256One(TID_A), amounts: _u256One(1)
         });
         uint256 fee = srcBatch.quoteMultiSend(p);
-        assertEq(fee, FEE, "native fee quoted");
-    }
-
-    // ---------------------------------------------------------------
-    // systemMultiSend / quoteSystemMultiSend — role-gated migration
-    // ---------------------------------------------------------------
-
-    function test_SystemMultiSend_HappyPath_CrosschainMintsHolders() public {
-        address[] memory holders = new address[](1);
-        holders[0] = sender;
-        uint256[] memory amounts = _u256One(5);
-
-        // Relay-float funded: NOT payable, fee drawn from the pre-funded adapter balance.
-        srcBatch.systemMultiSend(TID_A, holders, amounts, DST_CHAIN_ID);
-
-        assertEq(srcToken.balanceOf(sender, TID_A), 95, "holder crosschainBurned on source");
-
-        _deliverLast();
-        assertEq(dstToken.balanceOf(sender, TID_A), 5, "holder crosschainMinted on destination");
-    }
-
-    function test_SystemMultiSend_RevertsWhenNotSystemRelayer() public {
-        address[] memory holders = new address[](1);
-        holders[0] = sender;
-        uint256[] memory amounts = _u256One(1);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, sender, srcBatch.SYSTEM_RELAYER_ROLE()
-            )
-        );
-        vm.prank(sender);
-        srcBatch.systemMultiSend(TID_A, holders, amounts, DST_CHAIN_ID);
-    }
-
-    function test_SystemMultiSend_RevertsEmptyBatch() public {
-        address[] memory holders = new address[](0);
-        uint256[] memory amounts = new uint256[](0);
-        vm.expectRevert(IIntexNFT1155Bridge.EmptyBatch.selector);
-        srcBatch.systemMultiSend(TID_A, holders, amounts, DST_CHAIN_ID);
-    }
-
-    function test_SystemMultiSend_RevertsArrayLengthMismatch() public {
-        address[] memory holders = new address[](1);
-        holders[0] = sender;
-        uint256[] memory amounts = _u256(1, 2); // length 2 vs 1 holder
-        vm.expectRevert(IIntexNFT1155Bridge.ArrayLengthMismatch.selector);
-        srcBatch.systemMultiSend(TID_A, holders, amounts, DST_CHAIN_ID);
-    }
-
-    function test_QuoteSystemMultiSend_ReturnsNonZeroNativeFee() public view {
-        address[] memory holders = new address[](1);
-        holders[0] = sender;
-        uint256[] memory amounts = _u256One(1);
-        uint256 fee = srcBatch.quoteSystemMultiSend(TID_A, holders, amounts, DST_CHAIN_ID);
         assertEq(fee, FEE, "native fee quoted");
     }
 }

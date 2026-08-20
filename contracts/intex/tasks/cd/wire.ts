@@ -383,62 +383,6 @@ const originBridgeWire = task("origin-bridge-wire", "Wire OriginRouter to Desis 
   .setAction(lazy(originBridgeWireAction));
 
 // ============================================================================
-// IntexNFT1155Bridge Wire (grant SYSTEM_RELAYER_ROLE)
-// ============================================================================
-
-interface NftBridgeWireArgs {
-  nftBridgeContract: string;
-  targetRouter: string;
-}
-
-const nftBridgeWireAction = async (args: NftBridgeWireArgs, hre: unknown) => {
-  const viem = await getViemForWire(hre);
-
-  console.log(`Wiring IntexNFT1155Bridge (grant SYSTEM_RELAYER_ROLE)...`);
-  console.log(`  NftBridge: ${args.nftBridgeContract}`);
-  console.log(`  TargetRouter: ${args.targetRouter}`);
-
-  const bridge = (await viem.getContractAt(
-    "IntexNFT1155Bridge",
-    args.nftBridgeContract as `0x${string}`
-  )) as {
-    read: {
-      SYSTEM_RELAYER_ROLE: () => Promise<`0x${string}`>;
-      hasRole: (args: [`0x${string}`, `0x${string}`]) => Promise<boolean>;
-    };
-    write: {
-      grantRole: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
-    };
-  };
-
-  const role = await bridge.read.SYSTEM_RELAYER_ROLE();
-  const alreadyGranted = await bridge.read.hasRole([role, args.targetRouter as `0x${string}`]);
-
-  if (alreadyGranted) {
-    console.log(`✅ SYSTEM_RELAYER_ROLE already granted to TargetRouter`);
-    return;
-  }
-
-  const txHash = await sendAndWait(viem, () =>
-    bridge.write.grantRole([role, args.targetRouter as `0x${string}`]),
-  );
-  console.log(`✅ IntexNFT1155Bridge wired. Tx: ${txHash}`);
-};
-
-const nftBridgeWire = task("nft-bridge-wire", "Grant SYSTEM_RELAYER_ROLE on IntexNFT1155Bridge to TargetRouter")
-  .addOption({
-    name: "nftBridgeContract",
-    description: "IntexNFT1155Bridge contract address",
-    defaultValue: "",
-  })
-  .addOption({
-    name: "targetRouter",
-    description: "TargetRouter contract address",
-    defaultValue: "",
-  })
-  .setAction(lazy(nftBridgeWireAction));
-
-// ============================================================================
 // IntexFactory Grant Roles
 // Grant SETTLEMENT_ROLE on IntexNFT1155 to IntexFactory so it can call
 // `intex.settle(...)` and burn Issued / mint Settled tokens.
@@ -857,7 +801,7 @@ const grantRelayerRole = task(
   .setAction(lazy(grantRelayerRoleAction));
 
 // ============================================================================
-// Grant SYSTEM_RELAYER_ROLE (holder-migration system bridge)
+// Grant SYSTEM_RELAYER_ROLE (user bridging inside the call window)
 // ============================================================================
 
 const grantSystemRelayerRoleAction = async (args: GrantRelayerRoleArgs, hre: unknown) => {
@@ -888,10 +832,10 @@ const grantSystemRelayerRoleAction = async (args: GrantRelayerRoleArgs, hre: unk
 
 const grantSystemRelayerRole = task(
   "grant-system-relayer-role",
-  "Grant SYSTEM_RELAYER_ROLE on IntexNFT1155 to the system holder-migration adapter (IntexNFT1155Bridge)",
+  "Grant SYSTEM_RELAYER_ROLE on IntexNFT1155 to IntexNFT1155Bridge - without it no user can bridge a Called series",
 )
   .addOption({ name: "token", description: "IntexNFT1155 contract address", defaultValue: "" })
-  .addOption({ name: "adapter", description: "System bridge adapter to grant SYSTEM_RELAYER_ROLE to", defaultValue: "" })
+  .addOption({ name: "adapter", description: "IntexNFT1155Bridge to grant SYSTEM_RELAYER_ROLE to", defaultValue: "" })
   .addOption({ name: "contract", description: "Contract name (default: IntexNFT1155)", defaultValue: "" })
   .setAction(lazy(grantSystemRelayerRoleAction));
 
@@ -903,7 +847,6 @@ export const wireTasks = [
   auctionWire.build(),
   escrowWire.build(),
   targetBridgeWire.build(),
-  nftBridgeWire.build(),
   originBridgeWire.build(),
   systemGrantRoles.build(),
   intexFactoryAssertRelayerRole.build(),

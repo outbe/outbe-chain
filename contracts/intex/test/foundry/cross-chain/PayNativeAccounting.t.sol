@@ -26,10 +26,9 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 ///             the fee is drawn from the contract's pre-funded native float and reverts `NotEnoughNative` when short.
 ///         Conflating the two would let an entry caller's `msg.value` seed future relay sends without refund, or let
 ///         an entry caller drain the relay float.
-/// @dev Entry path is driven through the user-facing `IntexNFT1155Bridge.send` (payable). The relay/float path
-///      is driven both directly (`IntexNFT1155Bridge.systemMultiSend`, not payable → `msg.value == 0`) and through
-///      an inbound MARK_CALLED delivery whose `_handleMarkCalled` handler fires that same relay from inside
-///      `receiveMessage` — the canonical `msg.value == 0` relay send.
+/// @dev Entry path is driven through the user-facing `IntexNFT1155Bridge.send` (payable). The relay/float path is
+///      driven by an inbound CLEARING delivery whose handler relays the day's bids from inside `receiveMessage` —
+///      the canonical `msg.value == 0` relay send.
 contract PayNativeAccountingTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
@@ -71,11 +70,8 @@ contract PayNativeAccountingTest is CrossChainTest {
         StubAuction stubAuction = new StubAuction();
         bnbRouter.wire(address(stubAuction), address(intex), admin);
 
-        // Holders bridge: the router drives the bridge's systemMultiSend, which crosschainBurns on the local
-        // Intex. `crosschainBurn` is `RELAYER_ROLE`-gated and additionally requires `SYSTEM_RELAYER_ROLE` once the
+        // `crosschainBurn` is `RELAYER_ROLE`-gated and additionally requires `SYSTEM_RELAYER_ROLE` once the
         // series is Called, so the adapter needs both roles on the token.
-        nftBridge.grantRole(nftBridge.SYSTEM_RELAYER_ROLE(), address(bnbRouter));
-        nftBridge.grantRole(nftBridge.SYSTEM_RELAYER_ROLE(), admin);
         intex.grantRole(intex.SYSTEM_RELAYER_ROLE(), address(nftBridge));
         intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
@@ -182,33 +178,6 @@ contract PayNativeAccountingTest is CrossChainTest {
 
         vm.expectRevert(ERC7786MessengerBase.RefundFailed.selector);
         rejector.callSend{value: fee + buffer}(params);
-    }
-
-    // ---------------------------------------------------------------
-    // System bridge funding — TargetRouter forwards the quoted fee
-    // ---------------------------------------------------------------
-
-    function test_SystemMultiSend_UnderfundedReverts() public {
-        (address[] memory holders, uint256[] memory amounts) = _holderArrays();
-        // The caller must cover the fee; forwarding less than the quote reverts.
-        vm.deal(address(this), BRIDGE_FEE);
-
-        vm.expectRevert(
-            abi.encodeWithSelector(ERC7786MessengerBase.MsgValueBelowFee.selector, BRIDGE_FEE - 1, BRIDGE_FEE)
-        );
-        nftBridge.systemMultiSend{value: BRIDGE_FEE - 1}(TOKEN_ID, holders, amounts, OUTBE_CHAIN_ID);
-    }
-
-    function test_SystemMultiSend_CallerFundedDrawsFee() public {
-        (address[] memory holders, uint256[] memory amounts) = _holderArrays();
-
-        vm.deal(address(this), BRIDGE_FEE);
-
-        nftBridge.systemMultiSend{value: BRIDGE_FEE}(TOKEN_ID, holders, amounts, OUTBE_CHAIN_ID);
-
-        // The caller's value covered the fee and the universal adapter kept nothing.
-        assertEq(bridge.lastValue(), BRIDGE_FEE, "bridge received the forwarded fee");
-        assertEq(address(nftBridge).balance, 0, "adapter holds no float");
     }
 
     // ---------------------------------------------------------------

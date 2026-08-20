@@ -20,8 +20,8 @@ import {IntexGas} from "./libs/IntexGas.sol";
 /// @author Outbe
 /// @notice Batch cross-chain ERC-1155 adapter over the protocol-agnostic ERC-7786 bridge: burns on the source and
 ///         mints on the paired adapter registered as the remote messenger for a chainId.
-/// @dev UUPS upgradeable; the bridge and bridged token are implementation immutables. Modes: single-recipient batch,
-///      multi-recipient, and a relay-float-funded system holder migration (SYSTEM_RELAYER_ROLE).
+/// @dev UUPS upgradeable; the bridge and bridged token are implementation immutables. Modes: single-recipient batch
+///      and multi-recipient.
 contract IntexNFT1155Bridge is
     IIntexNFT1155Bridge,
     ERC7786MessengerBase,
@@ -33,9 +33,6 @@ contract IntexNFT1155Bridge is
     uint16 public constant SEND_MULTI = IntexNFT1155BridgeCodec.SEND_MULTI;
     uint8 public constant BODY_VERSION_V2 = IntexNFT1155BridgeCodec.BODY_VERSION_V2;
     uint256 public constant MAX_BATCH_SIZE = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE;
-
-    /// @notice Granted to TargetRouter; gates the relay-funded `systemMultiSend` holder migration.
-    bytes32 public constant SYSTEM_RELAYER_ROLE = keccak256("SYSTEM_RELAYER_ROLE");
 
     /// @notice The bridgeable ERC-1155 this adapter burns on send and mints on receive.
     IERC1155Bridgeable public immutable token;
@@ -207,59 +204,6 @@ contract IntexNFT1155Bridge is
             IntexNFT1155BridgeCodec.MultiPayload({
                 recipients: _sendParam.recipients, tokenIds: _sendParam.tokenIds, amounts: _sendParam.amounts
             })
-        );
-    }
-
-    // --- System bridge ---
-    /// @inheritdoc IIntexNFT1155Bridge
-    function quoteSystemMultiSend(
-        uint256 tokenId,
-        address[] calldata holders,
-        uint256[] calldata amounts,
-        uint32 dstChainId
-    ) external view returns (uint256) {
-        return _quoteFee(dstChainId, _buildSystemMultiMsg(tokenId, holders, amounts), IntexGas.nftMint(holders.length));
-    }
-
-    /// @inheritdoc IIntexNFT1155Bridge
-    function systemMultiSend(uint256 tokenId, address[] calldata holders, uint256[] calldata amounts, uint32 dstChainId)
-        external
-        payable
-        onlyRole(SYSTEM_RELAYER_ROLE)
-        nonReentrant
-        returns (bytes32 sendId)
-    {
-        uint256 len = holders.length;
-        if (len == 0) revert EmptyBatch();
-        if (len != amounts.length) revert ArrayLengthMismatch();
-
-        bytes memory message = _buildSystemMultiMsg(tokenId, holders, amounts);
-        for (uint256 i = 0; i < len; i++) {
-            token.crosschainBurn(holders[i], tokenId, amounts[i]);
-        }
-
-        // TargetRouter forwards the exact fee as msg.value; this adapter holds no float of its own.
-        sendId = _send(dstChainId, message, IntexGas.nftMint(len));
-        emit SystemBridged(sendId, dstChainId, tokenId, len);
-    }
-
-    /// @dev Build a SEND_MULTI message where every entry shares `tokenId`.
-    function _buildSystemMultiMsg(uint256 tokenId, address[] calldata holders, uint256[] calldata amounts)
-        internal
-        pure
-        returns (bytes memory)
-    {
-        uint256 len = holders.length;
-        if (len > MAX_BATCH_SIZE) revert IntexNFT1155BridgeCodec.BatchTooLarge(len, MAX_BATCH_SIZE);
-
-        bytes32[] memory recipients = new bytes32[](len);
-        uint256[] memory tokenIds = new uint256[](len);
-        for (uint256 i = 0; i < len; i++) {
-            recipients[i] = bytes32(uint256(uint160(holders[i])));
-            tokenIds[i] = tokenId;
-        }
-        return IntexNFT1155BridgeCodec.encodeMulti(
-            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, amounts: amounts})
         );
     }
 
