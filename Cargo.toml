@@ -27,6 +27,7 @@ members = [
     "crates/system/tee",
     "crates/system/teeregistry",
     "crates/system/l2registry",
+    "crates/system/radicleregistry",
     "crates/system/update",
     "crates/system/vote",
     "crates/system/offchain-data",
@@ -122,6 +123,7 @@ outbe-tee = { path = "crates/system/tee", default-features = false }
 outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 outbe-teeregistry = { path = "crates/system/teeregistry" }
 outbe-l2registry = { path = "crates/system/l2registry" }
+outbe-radicleregistry = { path = "crates/system/radicleregistry" }
 outbe-update = { path = "crates/system/update" }
 outbe-vote = { path = "crates/system/vote" }
 outbe-offchain-data = { path = "crates/system/offchain-data" }

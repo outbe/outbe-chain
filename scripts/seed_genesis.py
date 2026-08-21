@@ -212,6 +212,7 @@ TEE_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee0a"
 # before production dispatch activates.
 STABLECOIN_FACTORY_ADDRESS = "000000000000000000000000000000000000ee0f"
 STABLECOIN_POLICY_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee10"
+RADICLE_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee11"
 STABLECOIN_ADDRESS_PREFIX = "53c0"
 OUTBE_SYSTEM_TX_ADDRESS = "ff00000000000000000000000000000000000001"
 
@@ -235,6 +236,7 @@ ALL_PRECOMPILE_ADDRESSES = [
     CYCLE_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS,
     GOVERNANCE_ADDRESS, STABLECOIN_FACTORY_ADDRESS,
     STABLECOIN_POLICY_REGISTRY_ADDRESS,
+    RADICLE_REGISTRY_ADDRESS,
     VALIDATOR_SET_ADDRESS, SLASH_INDICATOR_ADDRESS,
     STAKING_ADDRESS, REWARDS_ADDRESS, ACCOUNTING_PROGRESS_ADDRESS, ORACLE_ADDRESS,
     ZEROFEE_ADDRESS, COMPRESSED_ENTITIES_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
@@ -1517,6 +1519,16 @@ def seed_intex_factory(storage: StorageBuilder, config: dict):
     storage.set_slot(13, selector)
 
 
+def seed_radicle_registry(storage: StorageBuilder, config: dict):
+    """Seed immutable RadicleRegistry V1 capacity at slot 5."""
+    if not isinstance(config, dict):
+        raise ValueError("radicle_registry must be a JSON object")
+    maximum = parse_int(config.get("max_repositories", 0))
+    if maximum <= 0 or maximum > 0xFFFFFFFF:
+        raise ValueError("radicle_registry.max_repositories must be in 1..=4294967295")
+    storage.set_slot(5, maximum)
+
+
 def seed_external_contracts(alloc, contracts_list, contracts_dir):
     """
     Embed externally-fetched contracts (bytecode + storage) into the genesis
@@ -1829,6 +1841,17 @@ def main():
         "  CompressedEntities: slot 0 = 3, "
         "slot 1 = ADR-010 empty sealed Root Catalog root"
     )
+
+    if "radicle_registry" in seed:
+        radicle_registry_storage = StorageBuilder()
+        seed_radicle_registry(radicle_registry_storage, seed["radicle_registry"])
+        alloc[RADICLE_REGISTRY_ADDRESS].setdefault("storage", {}).update(
+            radicle_registry_storage.entries
+        )
+        print(
+            "  RadicleRegistry: maxRepositories="
+            f"{seed['radicle_registry']['max_repositories']}"
+        )
 
     # ZeroFee paymaster: slot 0 = schema version (1). Honors the README
     # rule "All precompiles storage versioned (slot 0 = version)" and

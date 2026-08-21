@@ -7835,6 +7835,7 @@ dependencies = [
  "outbe-promis",
  "outbe-promisfactory",
  "outbe-promislimit",
+ "outbe-radicleregistry",
  "outbe-rewards",
  "outbe-slashindicator",
  "outbe-stablecoin",
@@ -8519,6 +8520,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "outbe-radicleregistry"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "outbe-macros",
+ "outbe-primitives",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
