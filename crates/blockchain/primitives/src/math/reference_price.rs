@@ -23,6 +23,15 @@ pub fn is_coen_iso_market(pair: AddressPair) -> bool {
     )
 }
 
+/// Decimals each side of a market is quoted in; both sides match today.
+pub fn pair_scales(pair: AddressPair) -> (u8, u8) {
+    if is_coen_iso_market(pair) {
+        (6, 6)
+    } else {
+        (18, 18)
+    }
+}
+
 /// Converts a six-decimal COEN/ISO price to the existing 128.128 price domain.
 pub fn coen_iso_price_to_128x128(price: U256) -> Result<U256> {
     shift_div_round_down(price, PRICE_BINARY_OFFSET, SCALE_1E6_U256)

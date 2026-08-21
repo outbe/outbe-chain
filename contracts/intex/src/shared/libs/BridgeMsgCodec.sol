@@ -82,12 +82,12 @@ library BridgeMsgCodec {
     //     5 static head words + 2 dynamic head offsets + 2 empty length words = 9×32 = 288
     //   REFUND_INSTRUCTIONS(uint32, uint16, uint16, address[], uint64[], uint64[]):
     //     3 static head words + 3 dynamic offsets + 3 empty length words = 9×32 = 288
-    //   ISSUANCE_INSTRUCTIONS(dynamic array of a struct with 12 static + 2 dynamic fields):
-    //     array offset(32) + array length(32) + one element's offset(32) + 12 static
-    //     + 2 inner offsets + 2 empty length words = 19×32 = 608
+    //   ISSUANCE_INSTRUCTIONS(3 static head words + dynamic array of a struct with 12 static + 2 dynamic fields):
+    //     3 head words + array offset(32) + array length(32) + one element's offset(32) + 12 static
+    //     + 2 inner offsets + 2 empty length words = 22×32 = 704
     uint16 internal constant MIN_LEN_BIDS_BATCH = HEADER_LEN + 288;
     uint16 internal constant MIN_LEN_REFUND_INSTRUCTIONS = HEADER_LEN + 288;
-    uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 608;
+    uint16 internal constant MIN_LEN_ISSUANCE_INSTRUCTIONS = HEADER_LEN + 704;
 
     /// @notice Per-message cap on inbound BIDS_BATCH entries. Bounds the crosschainMint/storage loop the
     ///         receiver runs so one oversized batch cannot exceed the inbound gas limit and stall
@@ -166,6 +166,10 @@ library BridgeMsgCodec {
     /// @notice The refund chunk header is inconsistent: no chunks claimed, more than
     ///         `MAX_CHUNKS`, or an index outside the claimed count.
     error InvalidRefundChunk(uint16 chunkIndex, uint16 totalChunks);
+    /// @notice The issuance chunk header is inconsistent: no chunks claimed or an index outside the claimed count.
+    error InvalidIssuanceChunk(uint16 chunkIndex, uint16 totalChunks);
+    /// @notice A series in an ISSUANCE_INSTRUCTIONS message belongs to a different day than the message header.
+    error IssuanceDayMismatch(bytes14 seriesId, uint32 seriesDay, uint32 messageDay);
 
     /// @notice An outbound payload array exceeds `MAX_PAYLOAD_ARRAY_LEN`.
     /// @dev Fail-fast on the source chain so the relayer learns before any bridge fee is burned.
@@ -465,28 +469,45 @@ library BridgeMsgCodec {
         }
     }
 
-    /// @notice Encodes ISSUANCE_INSTRUCTIONS message: the series a chain receives from one day.
+    /// @notice Encodes one chunk of the ISSUANCE_INSTRUCTIONS a chain receives from one day.
     /// @dev Capped at `MAX_SERIES_PER_ISSUANCE` series and `MAX_RECIPIENTS_PER_ISSUANCE` recipients;
-    ///      a larger set is split by the sender.
+    ///      a larger set is split by the sender into `_totalChunks` numbered messages.
+    /// @param _worldwideDay The worldwide day (yyyymmdd) every series in the message belongs to.
+    /// @param _chunkIndex Position of this chunk in the chain-day's run of issuance messages.
+    /// @param _totalChunks How many chunks the chain-day's issuance spans.
     /// @param _series The per-series issuance payloads carried by this message.
     /// @return The wire-encoded ISSUANCE_INSTRUCTIONS message.
-    function encodeIssuanceInstructions(IssuanceInstructionsPayload[] memory _series)
-        internal
-        pure
-        returns (bytes memory)
-    {
-        _assertIssuanceLimits(_series);
-        return abi.encodePacked(BODY_VERSION_V1, MSG_ISSUANCE_INSTRUCTIONS, abi.encode(_series));
+    function encodeIssuanceInstructions(
+        uint32 _worldwideDay,
+        uint16 _chunkIndex,
+        uint16 _totalChunks,
+        IssuanceInstructionsPayload[] memory _series
+    ) internal pure returns (bytes memory) {
+        _assertIssuanceLimits(_worldwideDay, _chunkIndex, _totalChunks, _series);
+        return abi.encodePacked(
+            BODY_VERSION_V1, MSG_ISSUANCE_INSTRUCTIONS, abi.encode(_worldwideDay, _chunkIndex, _totalChunks, _series)
+        );
     }
 
-    /// @dev Per-series array parity, plus the series and recipient counts of the message.
-    function _assertIssuanceLimits(IssuanceInstructionsPayload[] memory _series) private pure {
+    /// @dev Chunk header sanity, per-series day and array parity, plus the series and recipient counts.
+    function _assertIssuanceLimits(
+        uint32 _worldwideDay,
+        uint16 _chunkIndex,
+        uint16 _totalChunks,
+        IssuanceInstructionsPayload[] memory _series
+    ) private pure {
+        if (_totalChunks == 0 || _chunkIndex >= _totalChunks) {
+            revert InvalidIssuanceChunk(_chunkIndex, _totalChunks);
+        }
         if (_series.length == 0) revert EmptyIssuanceBatch();
         if (_series.length > MAX_SERIES_PER_ISSUANCE) {
             revert IssuanceSeriesBatchTooLarge(_series.length, MAX_SERIES_PER_ISSUANCE);
         }
         uint256 recipients;
         for (uint256 i = 0; i < _series.length; i++) {
+            if (_series[i].worldwideDay != _worldwideDay) {
+                revert IssuanceDayMismatch(_series[i].seriesId, _series[i].worldwideDay, _worldwideDay);
+            }
             if (_series[i].recipients.length != _series[i].quantities.length) {
                 revert IssuanceArrayLengthMismatch(_series[i].recipients.length, _series[i].quantities.length);
             }
@@ -697,15 +718,24 @@ library BridgeMsgCodec {
     }
 
     /// @notice Decodes ISSUANCE_INSTRUCTIONS message.
-    /// @dev Reverts `UnsupportedBodyVersion` on a stale version byte,
-    ///      `IssuanceArrayLengthMismatch` if `recipients` and `quantities` differ in length, and
-    ///      `IssuanceBatchTooLarge` if `recipients` exceeds `MAX_RECIPIENTS_PER_ISSUANCE`.
+    /// @dev Reverts `UnsupportedBodyVersion` on a stale version byte, `InvalidIssuanceChunk` on a bad chunk
+    ///      header, `IssuanceDayMismatch` if a series names another day, `IssuanceArrayLengthMismatch` if
+    ///      `recipients` and `quantities` differ in length, and `IssuanceBatchTooLarge` if `recipients`
+    ///      exceeds `MAX_RECIPIENTS_PER_ISSUANCE`.
     /// @param _msg The wire-encoded ISSUANCE_INSTRUCTIONS message.
+    /// @return worldwideDay The worldwide day (yyyymmdd) every series in the message belongs to.
+    /// @return chunkIndex Position of this chunk in the chain-day's run of issuance messages.
+    /// @return totalChunks How many chunks the chain-day's issuance spans.
     /// @return series The decoded per-series issuance payloads.
     function decodeIssuanceInstructions(bytes calldata _msg)
         external
         pure
-        returns (IssuanceInstructionsPayload[] memory series)
+        returns (
+            uint32 worldwideDay,
+            uint16 chunkIndex,
+            uint16 totalChunks,
+            IssuanceInstructionsPayload[] memory series
+        )
     {
         if (_msg.length < HEADER_LEN) {
             revert InvalidPayloadLength(MSG_ISSUANCE_INSTRUCTIONS, _msg.length, HEADER_LEN);
@@ -713,14 +743,18 @@ library BridgeMsgCodec {
         _assertBodyVersion(_msg);
         // Decode in a dedicated frame so the struct ABI-decoder's locals don't share this
         // function's stack — keeps the 14-field payload within bounds under via_ir.
-        series = _decodeIssuancePayload(_msg[2:]);
+        (worldwideDay, chunkIndex, totalChunks, series) = _decodeIssuancePayload(_msg[2:]);
         // Re-checked inbound against a bad peer, as every variable-length decode here is.
-        _assertIssuanceLimits(series);
+        _assertIssuanceLimits(worldwideDay, chunkIndex, totalChunks, series);
     }
 
-    /// @dev Isolated frame for the `IssuanceInstructionsPayload[]` ABI decode (via_ir stack relief).
-    function _decodeIssuancePayload(bytes calldata _body) private pure returns (IssuanceInstructionsPayload[] memory) {
-        return abi.decode(_body, (IssuanceInstructionsPayload[]));
+    /// @dev Isolated frame for the issuance ABI decode (via_ir stack relief).
+    function _decodeIssuancePayload(bytes calldata _body)
+        private
+        pure
+        returns (uint32, uint16, uint16, IssuanceInstructionsPayload[] memory)
+    {
+        return abi.decode(_body, (uint32, uint16, uint16, IssuanceInstructionsPayload[]));
     }
 
     /// @notice Decodes REFUND_INSTRUCTIONS message.

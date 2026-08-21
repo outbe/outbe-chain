@@ -29,6 +29,7 @@ const WORK_LEASE_TIMEOUT: Duration = Duration::from_secs(30);
 const WORKER_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 const WORK_RESULT_TIMEOUT: Duration = Duration::from_secs(7_200);
 const DISPATCH_CANCEL_POLL: Duration = Duration::from_millis(100);
+const DISPATCH_WAIT_REPORT_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -705,6 +706,8 @@ impl WorkerApiState {
         drop(registry);
         self.wake.notify_one();
         let result_deadline = Instant::now() + self.durations.result;
+        let waiting_since = Instant::now();
+        let mut last_report = Instant::now();
         loop {
             if cancelled.is_some_and(|cancelled| cancelled.load(Ordering::Acquire)) {
                 self.cancel(queue_id)?;
@@ -717,13 +720,46 @@ impl WorkerApiState {
             }
             match completion_rx.recv_timeout(remaining.min(DISPATCH_CANCEL_POLL)) {
                 Ok(finished) => return Ok(finished),
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if last_report.elapsed() >= DISPATCH_WAIT_REPORT_INTERVAL {
+                        last_report = Instant::now();
+                        self.report_dispatch_wait(queue_id, unit_id, waiting_since);
+                    }
+                }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     self.cancel(queue_id)?;
                     return Err(WorkerApiErrorV1::DispatchCancelled);
                 }
             }
         }
+    }
+
+    fn report_dispatch_wait(&self, queue_id: u64, unit_id: B256, waiting_since: Instant) {
+        let Ok(registry) = self.lock() else {
+            return;
+        };
+        let queued = registry
+            .pending
+            .iter()
+            .any(|work| work.queue_id == queue_id);
+        let connected = registry
+            .workers
+            .values()
+            .filter(|worker| worker.connected)
+            .count();
+        let leased = registry.workers.values().any(|worker| {
+            worker
+                .active
+                .as_ref()
+                .is_some_and(|lease| lease.work.queue_id == queue_id)
+        });
+        drop(registry);
+        eprintln!(
+            "OCOMP supervisor still waiting for a worker result: unit={unit_id:#x} \
+queue_id={queue_id} queued={queued} leased={leased} connected_workers={connected} \
+waited_secs={}",
+            waiting_since.elapsed().as_secs()
+        );
     }
 
     fn cancel(&self, queue_id: u64) -> Result<(), WorkerApiErrorV1> {

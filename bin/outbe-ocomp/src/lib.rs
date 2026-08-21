@@ -24,6 +24,8 @@ pub mod lysis_shuffle_adoption;
 pub mod nod_materialization;
 pub mod nod_materialization_submitter;
 pub mod nod_proof;
+pub mod payout_artifact;
+pub mod payout_submitter;
 pub mod public_rpc;
 pub mod result_attestation;
 pub mod result_signer;

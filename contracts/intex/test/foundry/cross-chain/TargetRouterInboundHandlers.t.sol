@@ -186,7 +186,8 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
             recipients: recipients,
             quantities: quantities
         });
-        bytes memory packet = BridgeMsgCodec.encodeIssuanceInstructions(IssuanceBatchLib.one(payload));
+        bytes memory packet =
+            BridgeMsgCodec.encodeIssuanceInstructions(WORLDWIDE_DAY, 0, 1, IssuanceBatchLib.one(payload));
         _deliver(packet);
 
         uint256 tokenId = intex.issuedTokenId(SERIES_ID);
@@ -200,6 +201,9 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         returns (bytes memory)
     {
         return BridgeMsgCodec.encodeIssuanceInstructions(
+            WORLDWIDE_DAY,
+            0,
+            1,
             IssuanceBatchLib.one(
                 BridgeMsgCodec.IssuanceInstructionsPayload({
                     seriesId: SERIES_ID,

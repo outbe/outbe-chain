@@ -10,7 +10,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::types::Storable;
 
 use crate::errors::IntexError;
-use crate::schema::{DistProgress, IntexContract, SeriesId, SeriesRecord};
+use crate::schema::{CertifiedPayoutRound, DistProgress, IntexContract, SeriesId, SeriesRecord};
 
 impl IntexContract<'_> {
     // ---------------------------------------------------------------------
@@ -147,6 +147,32 @@ impl IntexContract<'_> {
 
     pub(crate) fn delete_dist_progress(&mut self, worldwide_day: WorldwideDay) -> Result<()> {
         self.dist_progress.delete(worldwide_day)
+    }
+
+    // ---------------------------------------------------------------------
+    // Creator-reward: certified payout round + paid-leaf bitmap
+    // ---------------------------------------------------------------------
+
+    pub(crate) fn get_payout_round(&self, wwd: u32) -> Result<Option<CertifiedPayoutRound>> {
+        self.ocomp_payout_round.get(wwd)
+    }
+
+    pub(crate) fn create_payout_round(&mut self, record: &CertifiedPayoutRound) -> Result<()> {
+        self.ocomp_payout_round.create(record)
+    }
+
+    pub(crate) fn update_payout_round(&mut self, record: &CertifiedPayoutRound) -> Result<()> {
+        self.ocomp_payout_round.update(record)
+    }
+
+    pub(crate) fn read_paid_word(&self, wwd: u32, word_index: u32) -> Result<U256> {
+        self.ocomp_paid_leaves
+            .read(&Self::paid_bitmap_key(wwd, word_index))
+    }
+
+    pub(crate) fn write_paid_word(&mut self, wwd: u32, word_index: u32, word: U256) -> Result<()> {
+        self.ocomp_paid_leaves
+            .write(&Self::paid_bitmap_key(wwd, word_index), word)
     }
 
     pub(crate) fn read_active_dist_count(&self) -> Result<u32> {

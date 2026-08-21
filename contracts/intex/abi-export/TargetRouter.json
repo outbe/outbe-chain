@@ -98,6 +98,19 @@
     },
     {
       "type": "function",
+      "name": "applyPendingMark",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        }
+      ],
+      "outputs": [],
+      "stateMutability": "nonpayable"
+    },
+    {
+      "type": "function",
       "name": "auction",
       "inputs": [],
       "outputs": [
@@ -138,19 +151,6 @@
     {
       "type": "function",
       "name": "flushPendingIssuanceMint",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "flushPendingMark",
       "inputs": [
         {
           "name": "idx",
@@ -263,6 +263,78 @@
     },
     {
       "type": "function",
+      "name": "issuanceChunkApplied",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "issuanceChunks",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "seen",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "total",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
+      "name": "issued",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        },
+        {
+          "name": "recipient",
+          "type": "address",
+          "internalType": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ],
+      "stateMutability": "view"
+    },
+    {
+      "type": "function",
       "name": "mintIssuanceOne",
       "inputs": [
         {
@@ -300,19 +372,6 @@
     {
       "type": "function",
       "name": "nextPendingIssuanceMintIdx",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "nextPendingMarkIdx",
       "inputs": [],
       "outputs": [
         {
@@ -406,39 +465,19 @@
     },
     {
       "type": "function",
-      "name": "pendingMarks",
+      "name": "pendingMark",
       "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
         {
           "name": "seriesId",
           "type": "bytes14",
           "internalType": "bytes14"
-        },
+        }
+      ],
+      "outputs": [
         {
-          "name": "msgType",
+          "name": "",
           "type": "uint8",
           "internalType": "uint8"
-        },
-        {
-          "name": "calledAt",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "exists",
-          "type": "bool",
-          "internalType": "bool"
-        },
-        {
-          "name": "done",
-          "type": "bool",
-          "internalType": "bool"
         }
       ],
       "stateMutability": "view"
@@ -518,6 +557,30 @@
         }
       ],
       "stateMutability": "payable"
+    },
+    {
+      "type": "function",
+      "name": "refundChunks",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "seen",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "total",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ],
+      "stateMutability": "view"
     },
     {
       "type": "function",
@@ -890,6 +953,37 @@
     },
     {
       "type": "event",
+      "name": "InboundMessageIgnored",
+      "inputs": [
+        {
+          "name": "srcChainId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "msgType",
+          "type": "uint8",
+          "indexed": true,
+          "internalType": "uint8"
+        },
+        {
+          "name": "key",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "reason",
+          "type": "uint8",
+          "indexed": false,
+          "internalType": "uint8"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
       "name": "Initialized",
       "inputs": [
         {
@@ -897,6 +991,25 @@
           "type": "uint64",
           "indexed": false,
           "internalType": "uint64"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "IssuanceCompleted",
+      "inputs": [
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "totalChunks",
+          "type": "uint16",
+          "indexed": false,
+          "internalType": "uint16"
         }
       ],
       "anonymous": false
@@ -997,62 +1110,6 @@
     },
     {
       "type": "event",
-      "name": "MarkDeferred",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "indexed": true,
-          "internalType": "bytes14"
-        },
-        {
-          "name": "msgType",
-          "type": "uint8",
-          "indexed": true,
-          "internalType": "uint8"
-        },
-        {
-          "name": "reason",
-          "type": "bytes",
-          "indexed": false,
-          "internalType": "bytes"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "MarkFlushed",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "indexed": true,
-          "internalType": "bytes14"
-        },
-        {
-          "name": "msgType",
-          "type": "uint8",
-          "indexed": true,
-          "internalType": "uint8"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
       "name": "MarkQualifiedReceived",
       "inputs": [
         {
@@ -1072,6 +1129,25 @@
     },
     {
       "type": "event",
+      "name": "MarkSlotted",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "indexed": true,
+          "internalType": "bytes14"
+        },
+        {
+          "name": "msgType",
+          "type": "uint8",
+          "indexed": true,
+          "internalType": "uint8"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
       "name": "NativeSwept",
       "inputs": [
         {
@@ -1085,6 +1161,25 @@
           "type": "uint256",
           "indexed": false,
           "internalType": "uint256"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "PendingMarkApplied",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "indexed": true,
+          "internalType": "bytes14"
+        },
+        {
+          "name": "msgType",
+          "type": "uint8",
+          "indexed": true,
+          "internalType": "uint8"
         }
       ],
       "anonymous": false
@@ -1470,6 +1565,17 @@
     },
     {
       "type": "error",
+      "name": "NoPendingMark",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "NoSuchPendingBidsRelay",
       "inputs": [
         {
@@ -1482,17 +1588,6 @@
     {
       "type": "error",
       "name": "NoSuchPendingIssuanceMint",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "NoSuchPendingMark",
       "inputs": [
         {
           "name": "idx",
@@ -1675,17 +1770,6 @@
     {
       "type": "error",
       "name": "UnknownMsgType",
-      "inputs": [
-        {
-          "name": "got",
-          "type": "uint8",
-          "internalType": "uint8"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "UnsupportedBodyVersion",
       "inputs": [
         {
           "name": "got",

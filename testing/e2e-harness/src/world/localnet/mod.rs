@@ -154,11 +154,30 @@ impl Localnet {
     }
 
     fn ensure_enclave_image_once(&mut self) -> Result<()> {
+        // The native profile runs no container, so it must not build, resolve or
+        // retain an image identity: `enclave_image_id()` stays `None` and the
+        // evidence records no Gramine image for a run that never used one.
+        if self.cfg.tee_mode.runs_native_host_enclave() {
+            return Ok(());
+        }
         let repo = self.cfg.repo.clone();
         let sudo = self.cfg.sudo;
         let signing_key = self.cfg.dir.join("test-sgx-signing-key.pem");
         self.ensure_enclave_image_once_with(|| {
             proc::ensure_enclave_image(&repo, sudo, &signing_key, None)
+        })
+    }
+
+    /// The execution profile every enclave in this scenario runs under.
+    fn enclave_launch(&self) -> Result<proc::EnclaveLaunch> {
+        if self.cfg.tee_mode.runs_native_host_enclave() {
+            return Ok(proc::EnclaveLaunch::NativeHost);
+        }
+        Ok(proc::EnclaveLaunch::Gramine {
+            image_id: self
+                .enclave_image_id
+                .clone()
+                .ok_or_else(|| eyre::eyre!("Gramine Docker image identity was not resolved"))?,
         })
     }
 
@@ -366,6 +385,15 @@ impl Localnet {
 
         let nodes = format!("outbe-chain node.*{}", self.dir());
         self.sh().sudo_best_effort("pkill", &["-9", "-f", &nodes]);
+        if self.cfg.tee_mode.runs_native_host_enclave() {
+            // Native enclaves are processes, not containers. Their `--tee-dir`
+            // argv carries this run's dir, so the pattern is run-scoped exactly
+            // like the node sweep above.
+            let enclaves = format!("outbe-tee-enclave.*{}", self.dir());
+            self.sh()
+                .sudo_best_effort("pkill", &["-9", "-f", &enclaves]);
+            return;
+        }
         let tee_sweep = format!(
             "docker ps -aq --filter name=outbe-tee-gramine-{}- | xargs -r docker rm -f",
             self.cfg.run_tag

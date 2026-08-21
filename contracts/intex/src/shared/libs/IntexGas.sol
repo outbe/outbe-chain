@@ -22,12 +22,12 @@ library IntexGas {
     uint256 internal constant AUCTION_STAGE_CLEARING = 7_500_000;
     /// @dev Measured at ~66k.
     uint256 internal constant AUCTION_RESULT = 100_000;
-    /// @dev A mark is a bounded state flip. Measured: a batch of 8 takes ~123k applied and ~404k when
-    ///      every series parks, one series ~50k and ~70k. The parking path sets the marginal.
+    /// @dev A mark is a bounded state flip. Measured: a batch of 8 takes ~177k applied and ~451k when
+    ///      every series slots instead, one series ~60k and ~67k. The slotting path sets the marginal.
     uint256 internal constant MARK_CALLED_BASE = 100_000;
-    uint256 internal constant MARK_CALLED_PER_SERIES = 65_000;
+    uint256 internal constant MARK_CALLED_PER_SERIES = 75_000;
     uint256 internal constant MARK_QUALIFIED_BASE = 100_000;
-    uint256 internal constant MARK_QUALIFIED_PER_SERIES = 65_000;
+    uint256 internal constant MARK_QUALIFIED_PER_SERIES = 75_000;
     /// @dev Destination hook for composed proceeds: WCOEN unwrap + IntexFactory distribute registration.
     uint256 internal constant PROCEEDS_COMPOSE = 300_000;
 
@@ -39,10 +39,10 @@ library IntexGas {
     ///      The router's own share of a 64-bid batch is ~73k; the rest of this stands for the precompile.
     uint256 internal constant BIDS_BASE = 1_300_000;
     uint256 internal constant BIDS_PER_ITEM = 160_000;
-    /// @dev Handler overhead only; createSeries is charged per series. Measured ~5.2M at the recipient cap.
+    /// @dev Handler overhead only; createSeries is charged per series. Measured ~6.0M at the recipient cap.
     uint256 internal constant ISSUANCE_BASE = 200_000;
     uint256 internal constant ISSUANCE_PER_SERIES = 400_000;
-    uint256 internal constant ISSUANCE_PER_ITEM = 230_000;
+    uint256 internal constant ISSUANCE_PER_ITEM = 270_000;
     /// @dev Measured at ~3.58M for a full 64-bidder chunk against a live escrow.
     uint256 internal constant REFUND_BASE = 250_000;
     uint256 internal constant REFUND_PER_ITEM = 80_000;

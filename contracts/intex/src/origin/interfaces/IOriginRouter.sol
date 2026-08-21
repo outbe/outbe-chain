@@ -206,10 +206,14 @@ interface IOriginRouter {
     error ArrayLengthMismatch();
     /// @notice Empty array provided.
     error EmptyArray();
-    /// @notice Inbound BIDS_BATCH body-level `srcChainId` disagrees with the authenticated source chainId.
-    /// @param origin Source chainId the bridge authenticated.
-    /// @param body Source chainId claimed by the encoded body.
-    error SrcChainIdBodyMismatch(uint32 origin, uint32 body);
+
+    /// @notice An authenticated inbound message, or one item of it, was acknowledged without effect.
+    /// @param srcChainId Source chainId the message was authenticated against.
+    /// @param msgType Codec message type.
+    /// @param key Identity of the ignored effect (worldwide day, series id, chunk, …) as the handler keys it.
+    /// @param reason One of the `InboundReason` codes.
+    event InboundMessageIgnored(uint32 indexed srcChainId, uint8 indexed msgType, bytes32 indexed key, uint8 reason);
+
     /// @notice Address wired as `desis` does not advertise `IDesis` via ERC-165 or is an EOA.
     /// @param wired Address that failed the interface probe.
     error InvalidDesisInterface(address wired);
@@ -261,11 +265,14 @@ interface IOriginRouter {
         uint64 auctionClearingRate,
         uint32 wonBidsCount
     ) external view returns (uint256 fee);
-    /// @notice Native fee to send issuance instructions to the target chain in `params.dstChainId`.
-    function quoteSendIssuanceInstructions(uint32 dstChainId, IssuanceInstructionsParams[] calldata series)
-        external
-        view
-        returns (uint256 fee);
+    /// @notice Native fee to send one issuance chunk to `dstChainId`.
+    function quoteSendIssuanceInstructions(
+        uint32 dstChainId,
+        uint32 worldwideDay,
+        uint16 chunkIndex,
+        uint16 totalChunks,
+        IssuanceInstructionsParams[] calldata series
+    ) external view returns (uint256 fee);
     /// @notice Native fee to send one chunk of a day's refund instructions to a single target chain.
     function quoteSendRefundInstructions(
         uint32 dstChainId,
@@ -301,12 +308,16 @@ interface IOriginRouter {
         uint64 auctionClearingRate,
         uint32 wonBidsCount
     ) external payable returns (bytes32 sendId);
-    /// @notice Send one chain the series of a day it must create and the winners to mint to.
-    ///         Empty `recipients` creates the series only. Restricted to `INTEX_FACTORY_ROLE`.
-    function sendIssuanceInstructions(uint32 dstChainId, IssuanceInstructionsParams[] calldata series)
-        external
-        payable
-        returns (bytes32 sendId);
+    /// @notice Send one chain one chunk (`chunkIndex` of `totalChunks`) of the series of `worldwideDay` it must
+    ///         create and the winners to mint to. Empty `recipients` creates the series only. Restricted to
+    ///         `INTEX_FACTORY_ROLE`.
+    function sendIssuanceInstructions(
+        uint32 dstChainId,
+        uint32 worldwideDay,
+        uint16 chunkIndex,
+        uint16 totalChunks,
+        IssuanceInstructionsParams[] calldata series
+    ) external payable returns (bytes32 sendId);
     /// @notice Send one chunk of a day's refund instructions to a single target chain.
     ///         Restricted to `DESIS_ROLE`.
     function sendRefundInstructions(

@@ -352,7 +352,7 @@ contract LocalLoopbackTest is Test {
             quantities: amounts
         });
         vm.prank(address(factory));
-        origin.sendIssuanceInstructions(local, issuance);
+        origin.sendIssuanceInstructions(local, DAY, 0, 1, issuance);
         uint256 tokenId = intex.issuedTokenId(CreateSeriesLib.seriesId(DAY));
         assertEq(intex.balanceOf(iba1, tokenId), 30, "iba1 mint");
         assertEq(intex.balanceOf(iba2, tokenId), 20, "iba2 mint");

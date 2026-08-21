@@ -72,6 +72,7 @@ contract GasBudgetTest is CrossChainTest {
 
         uint256 spent = _measure(batch);
 
+        emit log_named_uint("apply_batch8", spent);
         assertLt(spent, IntexGas.markCalled(batch.length), "a full applying batch must fit the quote");
     }
 
@@ -94,7 +95,7 @@ contract GasBudgetTest is CrossChainTest {
         (bool ok,) = address(bridge).call{gas: IntexGas.markCalled(batch.length)}(call);
 
         assertTrue(ok, "the message must land inside the gas its quote buys");
-        assertEq(mocked.nextPendingMarkIdx(), 1, "only the runaway parked");
+        assertEq(mocked.pendingMark(POISON), BridgeMsgCodec.MSG_MARK_CALLED, "the runaway waits in its slot");
     }
 
     function test_TheQuoteCoversAFullBatchThatParks() public {
@@ -103,7 +104,10 @@ contract GasBudgetTest is CrossChainTest {
 
         uint256 spent = _measure(batch);
 
-        assertEq(router.nextPendingMarkIdx(), batch.length, "every series parked");
+        for (uint256 i = 0; i < batch.length; ++i) {
+            assertEq(router.pendingMark(batch[i]), BridgeMsgCodec.MSG_MARK_CALLED, "every series waits in its slot");
+        }
+        emit log_named_uint("park_batch8", spent);
         assertLt(spent, IntexGas.markCalled(batch.length), "a full parking batch must fit the quote");
     }
 
@@ -141,6 +145,9 @@ contract GasBudgetTest is CrossChainTest {
         }
 
         bytes memory packet = BridgeMsgCodec.encodeIssuanceInstructions(
+            WORLDWIDE_DAY,
+            0,
+            1,
             IssuanceBatchLib.one(
                 BridgeMsgCodec.IssuanceInstructionsPayload({
                     seriesId: SERIES_PREFIX,
@@ -282,9 +289,8 @@ contract GasBudgetTest is CrossChainTest {
         (bool ok,) = address(bridge).call{gas: IntexGas.markCalled(2)}(call);
 
         assertTrue(ok, "the message must land, not bounce back into redelivery");
-        assertEq(mocked.nextPendingMarkIdx(), 1, "only the runaway parked");
-        (bytes14 parked,,,,) = mocked.pendingMarks(0);
-        assertEq(parked, POISON, "the runaway is the parked one");
+        assertEq(mocked.pendingMark(POISON), BridgeMsgCodec.MSG_MARK_CALLED, "the runaway waits in its slot");
+        assertEq(mocked.pendingMark(SERIES_PREFIX), 0, "its batch mate has no slot");
         assertEq(poisoned.markedCount(), 1, "its batch mate still applied");
     }
 }
@@ -296,6 +302,11 @@ contract GasBurningIntex {
 
     constructor(bytes14 _poison) {
         poison = _poison;
+    }
+
+    /// @dev The inbound path asks before it marks; every series here is live.
+    function seriesExists(bytes14) external pure returns (bool) {
+        return true;
     }
 
     function markCalled(bytes14 seriesId, uint32) external {

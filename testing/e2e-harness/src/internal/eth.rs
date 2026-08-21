@@ -30,8 +30,12 @@ use alloy_sol_types::{sol, SolCall};
 use eyre::{eyre, Result};
 use tokio::runtime::Runtime;
 
-/// Canonical Outbe native fee floor, expressed directly in COEN unit per gas.
-const GAS_PRICE_UNITS: u128 = MIN_PROTOCOL_BASE_FEE as u128;
+/// Fee cap, in COEN units per gas. EIP-1559 charges the block's base fee and
+/// treats this only as the ceiling the sender accepts, so headroom above the
+/// protocol floor costs nothing — it just has to be held up front. Without it a
+/// burst of deploy-sized blocks lifts the base fee and every later send is
+/// rejected as underpriced.
+const GAS_PRICE_UNITS: u128 = MIN_PROTOCOL_BASE_FEE as u128 * 8;
 
 /// Explicit limit used by negative-path calls.
 ///
@@ -285,6 +289,15 @@ pub(crate) fn latest_block_timestamp(url: &str) -> Option<u64> {
             .await
             .ok()??;
         Some(block.header.timestamp)
+    })
+}
+
+/// Chain id (`eth_chainId`).
+pub(crate) fn chain_id(url: &str) -> Option<u64> {
+    let url = url.to_string();
+    block_on(async move {
+        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
+        provider.get_chain_id().await.ok()
     })
 }
 

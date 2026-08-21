@@ -487,6 +487,30 @@ impl ChainSpecParser for OutbeChainSpecParser {
     }
 }
 
+/// Ceiling for advised gas price: one COEN per gas, already far above anything
+/// this chain charges, so a fee spike can never advise an unpayable number.
+const OUTBE_MAX_SUGGESTED_GAS_PRICE: u64 = 1_000_000;
+
+/// Reth suggests a one gwei tip while its oracle has no sampled block to learn
+/// from. A gwei is an Ethereum-scale number, and one COEN unit is a millionth
+/// of a COEN, so that cold-start advice prices a single gas at a thousand COEN
+/// and makes the first transactions on a young chain unaffordable. Advise the
+/// protocol floor instead, and cap the advice at a figure that stays sane in
+/// this denomination.
+fn apply_outbe_gas_price_oracle_defaults<C: reth_cli::chainspec::ChainSpecParser, Ext, SubCmd>(
+    command: &mut reth_ethereum::cli::interface::Commands<C, Ext, SubCmd>,
+) where
+    Ext: clap::Args + std::fmt::Debug,
+    SubCmd: clap::Subcommand + std::fmt::Debug,
+{
+    if let reth_ethereum::cli::interface::Commands::Node(node) = command {
+        node.rpc.gas_price_oracle.default_suggested_fee = Some(alloy_primitives::U256::from(
+            alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE,
+        ));
+        node.rpc.gas_price_oracle.max_price = OUTBE_MAX_SUGGESTED_GAS_PRICE;
+    }
+}
+
 fn handle_consensus_thread_join(joined: thread::Result<eyre::Result<()>>) -> eyre::Result<()> {
     match joined {
         Ok(Ok(())) => Ok(()),
@@ -741,7 +765,8 @@ fn run_node() -> eyre::Result<()> {
     // `reqwest::blocking` internally and would panic from an async context.
     outbe_zkproof::init_crs()?;
 
-    let cli = Cli::<OutbeChainSpecParser, ConsensusArgs, OutbeRpcModuleValidator>::parse();
+    let mut cli = Cli::<OutbeChainSpecParser, ConsensusArgs, OutbeRpcModuleValidator>::parse();
+    apply_outbe_gas_price_oracle_defaults(&mut cli.command);
 
     let bridge = ConsensusExecutionBridge::new();
 

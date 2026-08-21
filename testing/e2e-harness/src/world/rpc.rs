@@ -621,7 +621,7 @@ impl Rpc {
     }
 
     pub(crate) fn url(&self, port: u16) -> String {
-        format!("http://localhost:{port}")
+        format!("http://127.0.0.1:{port}")
     }
 
     // ---- reads ----------------------------------------------------------
@@ -3708,6 +3708,7 @@ mod ocomp_tests {
         );
     }
 
+    #[cfg(feature = "ocomp-integration")]
     #[test]
     fn first_owner_index_revert_is_not_reported_as_an_absent_nod() {
         let error = classify_owner_index_result(
@@ -3719,6 +3720,7 @@ mod ocomp_tests {
         assert!(error.contains("index out of bounds"));
     }
 
+    #[cfg(feature = "ocomp-integration")]
     #[test]
     fn second_owner_index_transport_failure_does_not_prove_uniqueness() {
         let error = classify_owner_index_result(
@@ -3730,6 +3732,7 @@ mod ocomp_tests {
         assert!(error.contains("exact parent mismatch"));
     }
 
+    #[cfg(feature = "ocomp-integration")]
     #[test]
     fn exact_second_owner_index_out_of_bounds_proves_uniqueness() {
         assert_eq!(

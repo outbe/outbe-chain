@@ -11,11 +11,27 @@ use outbe_primitives::units::SCALE_1E6_U128;
 /// IntexNFT1155 on Outbe (balance ledger: settle / burnSettled / balanceOf).
 /// CREATE3 proxy, salt "outbe-intex:IntexNFT1155:v3.0.0". Canonical definition
 /// lives in `outbe_primitives::addresses`; re-exported here for existing callers.
+#[cfg(not(feature = "e2e-test"))]
 pub use outbe_primitives::addresses::INTEX_NFT1155_ADDRESS;
+
+/// Same proxy under salt "outbe-intex:IntexNFT1155:e2e-test", deployed by the
+/// well-known anvil account so a throwaway chain needs no production key.
+#[cfg(feature = "e2e-test")]
+pub const INTEX_NFT1155_ADDRESS: Address = address!("0x671cB5f90CA40A601F248615204699A826dbFd0d");
 
 /// OriginRouter on Outbe (outbound ERC-7786 sends).
 /// CREATE3 proxy, salt "outbe-intex:OriginRouter:v3.0.0".
+#[cfg(not(feature = "e2e-test"))]
 pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0xCBfa290DCd34319Ff1aec79A4084f2C900977599");
+
+/// Same proxy under salt "outbe-intex:OriginRouter:e2e-test".
+#[cfg(feature = "e2e-test")]
+pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x6Dda31E7211c31dB8E5AF24c780Cb34526d8411E");
+
+/// A payout e2e credits proceeds without deploying the router, so a throwaway
+/// build also accepts Hardhat account #0 as their source.
+#[cfg(feature = "e2e-test")]
+pub const PROCEEDS_TEST_SENDER: Address = address!("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266");
 
 /// minePromis PoW difficulty: required leading zero bytes of the work hash.
 pub const POW_DIFFICULTY: usize = 1;
@@ -61,7 +77,8 @@ pub const CALL_WINDOW: u32 = 28 * 24 * 3600;
 /// Call-trigger threshold: how much of the window must be in breach to force-call.
 pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
 
-/// Commit-entry bond on the target-chain auction: 100M WCOEN in WCOEN-units.
+/// Commit-entry bond on the target-chain auction: 100M in wire units, which the
+/// adapter's six-decimal pin makes equal to the payment token's minor units.
 pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * SCALE_1E6_U128;
 
 /// How old a COEN rate may be and still convert a settlement into the issuance currency.

@@ -58,7 +58,7 @@ contract BodyVersionTest is Test {
 
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
-        encoded = BridgeMsgCodec.encodeIssuanceInstructions(IssuanceBatchLib.one(payload));
+        encoded = BridgeMsgCodec.encodeIssuanceInstructions(0, 0, 1, IssuanceBatchLib.one(payload));
         assertEq(uint8(encoded[0]), BridgeMsgCodec.BODY_VERSION_V1, "issuance.version");
         assertEq(uint8(encoded[1]), BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, "issuance.msgType");
     }
@@ -160,7 +160,7 @@ contract BodyVersionTest is Test {
     function test_BridgeCodec_UnknownBodyVersion_IssuanceInstructions_Reverts() public {
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
-        bytes memory packet = BridgeMsgCodec.encodeIssuanceInstructions(IssuanceBatchLib.one(payload));
+        bytes memory packet = BridgeMsgCodec.encodeIssuanceInstructions(0, 0, 1, IssuanceBatchLib.one(payload));
         packet[0] = 0x77;
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnsupportedBodyVersion.selector, 0x77));
         this.exposedDecodeIssuanceInstructions(packet);
@@ -199,7 +199,7 @@ contract BodyVersionTest is Test {
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
-            abi.encode(IssuanceBatchLib.one(payload))
+            abi.encode(uint32(0), uint16(0), uint16(1), IssuanceBatchLib.one(payload))
         );
 
         vm.expectRevert(
@@ -220,7 +220,7 @@ contract BodyVersionTest is Test {
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
             BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
-            abi.encode(IssuanceBatchLib.one(payload))
+            abi.encode(uint32(0), uint16(0), uint16(1), IssuanceBatchLib.one(payload))
         );
 
         vm.expectRevert(
@@ -289,8 +289,8 @@ contract BodyVersionTest is Test {
     function exposedDecodeIssuanceInstructions(bytes calldata p)
         external
         pure
-        returns (BridgeMsgCodec.IssuanceInstructionsPayload[] memory)
+        returns (BridgeMsgCodec.IssuanceInstructionsPayload[] memory series)
     {
-        return BridgeMsgCodec.decodeIssuanceInstructions(p);
+        (,,, series) = BridgeMsgCodec.decodeIssuanceInstructions(p);
     }
 }

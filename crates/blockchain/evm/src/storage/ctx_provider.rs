@@ -289,6 +289,17 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
         }
     }
 
+    /// Installs the exact route inventory after a provider-backed read has
+    /// resolved consensus state needed to derive it. This is used by
+    /// ProtocolCycle, whose daily allocation decision depends on Cycle's
+    /// persisted UTC cursor rather than on untrusted calldata.
+    pub(crate) fn replace_metadosis_mutation_entitlements(
+        &mut self,
+        entitlements: MetadosisMutationEntitlements,
+    ) {
+        self.metadosis_mutation_frame = MetadosisMutationFrameState::new(entitlements);
+    }
+
     /// Constructs a fresh `EvmInternals` view of `self.ctx` for one
     /// storage operation. Reborrows `self.ctx`; the returned facade is
     /// valid only within the calling method scope.

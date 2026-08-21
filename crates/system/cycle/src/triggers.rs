@@ -17,8 +17,9 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum TriggerId {
-    EmissionLimit1 = 0,
+    ProtocolCycle = 0,
     IntexCallDaily = 1,
+    /// Reserved historical identifier; no active trigger uses it.
     WwdAdvanceNoon = 2,
     AuctionAdvance = 3,
     GemCallDaily = 4,
@@ -53,11 +54,11 @@ pub struct TriggerSpec {
     /// firing the handler. When `false` (e.g., a job that does NOT depend
     /// on parent accounting state) the handler runs on its own schedule
     /// without consulting [`outbe_primitives::accounting_progress::AccountingProgressView`].
-    /// Default for the canonical emission-limit trigger is `true`.
+    /// Default for the canonical protocol-cycle trigger is `true`.
     pub requires_accounting_window: bool,
     /// When `true` a backlog collapses to the latest due slot instead of
-    /// replaying every missed one. Poll-style triggers want this; a handler
-    /// that settles one specific slot (emission, advancement) must not.
+    /// replaying every missed one. ProtocolCycle owns its UTC-day decision,
+    /// so replaying every missed hourly slot would duplicate orchestration.
     pub coalesces_backlog: bool,
     /// Handler invoked when a slot fires. Failure rolls back the
     /// trigger's checkpoint and leaves `last_executed_at` unchanged.
@@ -66,9 +67,8 @@ pub struct TriggerSpec {
 
 #[derive(Clone, Copy)]
 pub enum TriggerHandler {
-    EmissionLimitDaily,
+    ProtocolCycle,
     IntexDaily,
-    WwdAdvanceNoon,
     AuctionAdvance,
     GemCallDaily,
     AuctionClearing,
@@ -77,22 +77,6 @@ pub enum TriggerHandler {
 }
 
 impl TriggerHandler {
-    /// Maximum number of sequential Metadosis command leases this handler can
-    /// consume in one authenticated Cycle system transaction.
-    pub const fn metadosis_mutation_lease_budget(self) -> u8 {
-        match self {
-            // Terminal allocation and the subsequent WWD process command.
-            Self::EmissionLimitDaily => 2,
-            Self::WwdAdvanceNoon => 1,
-            Self::IntexDaily
-            | Self::AuctionAdvance
-            | Self::GemCallDaily
-            | Self::AuctionClearing
-            | Self::IntexNotify
-            | Self::CredisCallDaily => 0,
-        }
-    }
-
     pub(crate) fn run(
         self,
         ctx: &BlockRuntimeContext,
@@ -100,13 +84,8 @@ impl TriggerHandler {
         parent: &impl ParentBodySource,
     ) -> Result<()> {
         match self {
-            Self::EmissionLimitDaily => {
-                crate::handler::run_emission_limit_daily(ctx, scope, parent)
-            }
+            Self::ProtocolCycle => crate::handler::run_protocol_cycle(ctx, scope, parent),
             Self::IntexDaily => outbe_intexfactory::called::run_daily(ctx),
-            Self::WwdAdvanceNoon => {
-                outbe_metadosis::commands::advance_active_worldwide_days(ctx, scope)
-            }
             Self::AuctionAdvance => outbe_desis::tick_schedule(ctx),
             Self::GemCallDaily => outbe_gem::hooks::run_call_daily(ctx),
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
@@ -116,42 +95,39 @@ impl TriggerHandler {
     }
 }
 
-/// Exact bounded Metadosis command budget for one `CycleTick`. A long-gap block
-/// can fire both the daily emission and noon advancement handlers, so their
-/// budgets must be summed rather than taking only the common daily path.
-#[must_use]
-pub fn metadosis_mutation_lease_budget_per_tick() -> u8 {
-    ACTIVE_TRIGGERS.iter().fold(0_u8, |budget, trigger| {
-        budget.saturating_add(trigger.handler.metadosis_mutation_lease_budget())
-    })
-}
+/// An e2e day is minutes long, so the auction schedule advances on a cadence
+/// that fits there rather than the production half-day one.
+#[cfg(not(feature = "e2e-test"))]
+const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 43_200;
+#[cfg(feature = "e2e-test")]
+const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 60;
+
+/// Cadence of the two outbound polls, shortened for the same reason.
+#[cfg(not(feature = "e2e-test"))]
+const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 600;
+#[cfg(feature = "e2e-test")]
+const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 30;
 
 /// Active trigger table. Order is informational only — the dispatcher
 /// fires triggers independently per slot.
-pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 8] {
-    let production_default = outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS;
-    let (wwd_period_seconds, wwd_start_offset_seconds) =
-        if metadosis_advance_interval_seconds == production_default {
-            // Preserve the historical noon-only dedicated trigger. The
-            // midnight daily handler is the other production advancement.
-            (86_400, production_default)
-        } else {
-            // Short genesis profiles drive the dedicated advancement directly.
-            (metadosis_advance_interval_seconds, 0)
-        };
+/// Active trigger table in permanent numeric-id order. The dispatcher walks
+/// this order when several handlers are due in the same block.
+pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 7] {
     [
         TriggerSpec {
-            id: TriggerId::EmissionLimit1.as_u32(),
-            label: "emission_limit_1",
-            period_seconds: 86_400,
+            id: TriggerId::ProtocolCycle.as_u32(),
+            label: "protocol_cycle",
+            period_seconds: metadosis_advance_interval_seconds,
             start_offset_seconds: 0,
-            // daily emission orchestrator settles the previous UTC
-            // day; it MUST observe the parent block's Phase 1 accounting before
+            // ProtocolCycle settles a contiguous completed UTC day; it MUST
+            // observe the parent block's Phase 1 accounting before
             // firing, otherwise validator-pool top-ups and daily-fee reads would
             // race the parent-finalization tx.
             requires_accounting_window: true,
-            coalesces_backlog: false,
-            handler: TriggerHandler::EmissionLimitDaily,
+            // The handler owns the calendar decision, so missed hourly slots
+            // collapse to one execution at the latest due boundary.
+            coalesces_backlog: true,
+            handler: TriggerHandler::ProtocolCycle,
         },
         TriggerSpec {
             id: TriggerId::IntexCallDaily.as_u32(),
@@ -165,44 +141,15 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             handler: TriggerHandler::IntexDaily,
         },
         TriggerSpec {
-            id: TriggerId::WwdAdvanceNoon.as_u32(),
-            label: "wwd_advance",
-            // Defaults to every 12 hours (midnight/noon). LocalNet can use a
-            // shorter genesis-bound interval without changing daily creation.
-            period_seconds: wwd_period_seconds,
-            start_offset_seconds: wwd_start_offset_seconds,
-            // Pure status-window walk over active WorldwideDays: reads
-            // Metadosis windows and the Oracle, never the parent block's
-            // settlement accounting. Day creation and READY settlement stay
-            // on the midnight `emission_limit_1` trigger.
-            requires_accounting_window: false,
-            coalesces_backlog: false,
-            handler: TriggerHandler::WwdAdvanceNoon,
-        },
-        TriggerSpec {
             id: TriggerId::AuctionAdvance.as_u32(),
             label: "auction_advance",
-            period_seconds: 43_200,
+            period_seconds: AUCTION_ADVANCE_PERIOD_SECONDS,
             start_offset_seconds: 0,
             // Gated like emission_limit_1 so the brief it writes and this start
             // land in the same slot.
             requires_accounting_window: true,
             coalesces_backlog: false,
             handler: TriggerHandler::AuctionAdvance,
-        },
-        TriggerSpec {
-            id: TriggerId::AuctionClearing.as_u32(),
-            label: "auction_clearing",
-            // Polls the fan-in gate `auction_advance` arms, so it runs far more
-            // often than the stage schedule advances.
-            period_seconds: 600,
-            start_offset_seconds: 0,
-            // Clears from bids already ingested and the router's frozen target
-            // list; no dependency on the parent block's settlement accounting.
-            requires_accounting_window: false,
-            // A poll has nothing to replay: a gap collapses to one clearing sweep.
-            coalesces_backlog: true,
-            handler: TriggerHandler::AuctionClearing,
         },
         TriggerSpec {
             id: TriggerId::GemCallDaily.as_u32(),
@@ -216,9 +163,23 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             handler: TriggerHandler::GemCallDaily,
         },
         TriggerSpec {
+            id: TriggerId::AuctionClearing.as_u32(),
+            label: "auction_clearing",
+            // Polls the fan-in gate `auction_advance` arms, so it runs far more
+            // often than the stage schedule advances.
+            period_seconds: OUTBOUND_POLL_PERIOD_SECONDS,
+            start_offset_seconds: 0,
+            // Clears from bids already ingested and the router's frozen target
+            // list; no dependency on the parent block's settlement accounting.
+            requires_accounting_window: false,
+            // A poll has nothing to replay: a gap collapses to one clearing sweep.
+            coalesces_backlog: true,
+            handler: TriggerHandler::AuctionClearing,
+        },
+        TriggerSpec {
             id: TriggerId::IntexNotify.as_u32(),
             label: "intex_notify",
-            period_seconds: 600,
+            period_seconds: OUTBOUND_POLL_PERIOD_SECONDS,
             start_offset_seconds: 0,
             // Drains a queue the qualify sweep filled; reads no accounting state.
             requires_accounting_window: false,
@@ -240,7 +201,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
     ]
 }
 
-pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 8] =
+pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 7] =
     active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
 pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &ACTIVE_TRIGGER_ARRAY;
 
@@ -278,33 +239,33 @@ mod protocol_parameter_tests {
     use super::*;
 
     #[test]
-    fn only_wwd_advancement_uses_the_genesis_interval() {
+    fn protocol_cycle_uses_the_genesis_interval() {
         let configured = active_triggers(10);
-        assert_eq!(configured[0].period_seconds, 86_400);
+        assert_eq!(configured[0].period_seconds, 10);
+        assert_eq!(configured[0].start_offset_seconds, 0);
         assert_eq!(configured[1].period_seconds, 86_400);
-        assert_eq!(configured[2].period_seconds, 10);
+        assert_eq!(configured[2].period_seconds, 43_200);
         assert_eq!(configured[2].start_offset_seconds, 0);
-        assert_eq!(configured[3].period_seconds, 43_200);
+        assert_eq!(configured[3].period_seconds, 86_400);
+        assert!(matches!(
+            configured[3].handler,
+            TriggerHandler::GemCallDaily
+        ));
         assert_eq!(configured[4].period_seconds, 600);
         assert!(matches!(
             configured[4].handler,
             TriggerHandler::AuctionClearing
         ));
-        assert_eq!(configured[5].period_seconds, 86_400);
+        assert_eq!(configured[6].period_seconds, 86_400);
+        assert_eq!(configured[6].start_offset_seconds, 0);
         assert!(matches!(
-            configured[5].handler,
-            TriggerHandler::GemCallDaily
-        ));
-        assert_eq!(configured[7].period_seconds, 86_400);
-        assert_eq!(configured[7].start_offset_seconds, 0);
-        assert!(matches!(
-            configured[7].handler,
+            configured[6].handler,
             TriggerHandler::CredisCallDaily
         ));
 
         let defaults =
             active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
-        assert_eq!(defaults[2].period_seconds, 86_400);
-        assert_eq!(defaults[2].start_offset_seconds, 43_200);
+        assert_eq!(defaults[0].period_seconds, 3_600);
+        assert_eq!(defaults[0].start_offset_seconds, 0);
     }
 }

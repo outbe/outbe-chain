@@ -51,6 +51,12 @@ interface IOracle {
     ///         Every ISO reference currency uses the six-decimal COEN/ISO contract.
     function getCoenExchangeRateFor(uint16 isoCode) external view returns (uint256 rate);
 
+    /// @notice `amount`, denominated in `fromIso`, re-expressed in `toIso` via
+    ///         both COEN legs: `amount * rate(COEN/toIso) / rate(COEN/fromIso)`,
+    ///         rounded up. Equal currencies return `amount` unchanged.
+    /// @dev Reverts when either leg has no registered pair or no published rate.
+    function currencyCrossRate(uint16 fromIso, uint16 toIso, uint256 amount) external view returns (uint256 converted);
+
     /// @notice `getExchangeRate` plus when the rate was last written. The block
     ///         and timestamp describe the stored observation and are the same
     ///         whichever direction the market is quoted in.
@@ -100,10 +106,14 @@ interface IOracle {
     /// @notice Returns the number of registered pairs.
     function getPairCount() external view returns (uint32 count);
 
-    /// @notice The pair at a 1-based registry index, in canonical orientation.
+    /// @notice The pair at a 1-based registry index, in canonical orientation,
+    ///         with the decimals each side is quoted in.
     /// @dev Together with `getPairCount` this is how the whole registry is
     ///      enumerated. Reverts outside `1..getPairCount()`.
-    function getPairByIndex(uint32 index) external view returns (address base, address quote);
+    function getPairByIndex(uint32 index)
+        external
+        view
+        returns (address base, address quote, uint8 baseScale, uint8 quoteScale);
 
     /// @notice Returns all active vote target pairs.
     function getVoteTargets() external view returns (address[] memory bases, address[] memory quotes);

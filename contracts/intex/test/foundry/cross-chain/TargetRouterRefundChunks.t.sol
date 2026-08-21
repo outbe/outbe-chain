@@ -28,6 +28,10 @@ contract SummingEscrowAdapter {
             totalPaid += instructions[i].paidAmount;
         }
     }
+
+    function getAuctionStatus(uint32) external pure returns (bool, bool, uint128) {
+        return (false, false, 0);
+    }
 }
 
 /// @dev Counts proceeds transfers and remembers the last amount.

@@ -580,8 +580,8 @@ where
 /// 4. `RewardsLifecycle::begin_block` — locks in `genesis_utc_day` on
 ///    block 0; the per-block emission and per-day settle paths have
 ///    moved to the Cycle module.
-/// 5. Metadosis WWD state machine has moved to the Cycle handler at
-///    UTC midnight; no per-block hook here anymore.
+/// 5. Metadosis WWD state machine has moved to the hourly ProtocolCycle
+///    handler; no per-block hook here anymore.
 /// 6. Staking matured-unbonding processing.
 /// 7. `OracleLifecycle::begin_block` — tally + daily S-curve only.
 ///
@@ -638,8 +638,8 @@ fn run_outbe_pre_execution_hooks_inner(
     // EmissionLimit no longer participates in pre-execution lifecycle.
     // Per-block emission dispatch was removed (Phase 4 of
     // the Cycle epic) — the closed-form daily cap, sink allocation,
-    // and AgentReward / Metadosis dispatch all run from the Cycle
-    // module's UTC-midnight handler instead.
+    // and AgentReward / Metadosis dispatch all run from ProtocolCycle's
+    // persisted UTC-day decision instead.
 
     // Rewards lifecycle: locks in `genesis_utc_day` on block 0. Day-
     // boundary settle moved out of Rewards (Phase 3); the
@@ -649,9 +649,9 @@ fn run_outbe_pre_execution_hooks_inner(
     // Metadosis WWD state machine + lysis distribution moved to the
     // Cycle handler. The
     // legacy `MetadosisLifecycle::begin_block` lifecycle hook used to
-    // run here on every block; it is now invoked once per UTC midnight
-    // by `outbe_cycle::handler::run_emission_limit_daily` after
-    // `dispatch_terminal_remainder_at` writes the day_metadosis_limit.
+    // run here on every block; it is now invoked once per hourly
+    // `outbe_cycle::handler::run_protocol_cycle` pass, after an optional
+    // contiguous-day `dispatch_terminal_remainder_at` write.
 
     // Staking: process matured unbonding entries.
     outbe_staking::hooks::process_unbonding(hook_ctx.storage.clone(), timestamp)?;
@@ -4469,6 +4469,16 @@ mod tests {
             .unwrap();
     }
 
+    fn seed_cycle_genesis(storage: StorageHandle<'_>) {
+        let cycle = storage.contract::<outbe_cycle::schema::Cycle<'_>>();
+        cycle
+            .active_utc_day
+            .write(outbe_primitives::time::timestamp_to_date_key(
+                TEST_BLOCK_TIMESTAMP_BASE,
+            ))
+            .unwrap();
+    }
+
     #[test]
     fn compressed_entities_header_semantics_reject_missing_wrong_scheme_and_wrong_root() {
         let root = B256::repeat_byte(0xA1);
@@ -4703,6 +4713,7 @@ mod tests {
         let install = test_ocomp_fork_install(&chain_spec, &[(proposer, proposer_key)]);
         StorageHandle::enter(&mut seed_storage, |storage| {
             seed_compressed_entities_genesis(storage.clone());
+            seed_cycle_genesis(storage.clone());
             seed_registered_active_validator_with_registration(
                 storage.clone(),
                 proposer,
@@ -4744,6 +4755,14 @@ mod tests {
             outbe_primitives::addresses::METADOSIS_ADDRESS,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
+                code: Some(marker_code.clone()),
+                ..Default::default()
+            },
+        );
+        db.insert_account_info(
+            CYCLE_ADDRESS,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
                 code: Some(marker_code),
                 ..Default::default()
             },
@@ -4780,6 +4799,7 @@ mod tests {
         let install = test_ocomp_fork_install(&chain_spec, &[(proposer, proposer_key)]);
         StorageHandle::enter(&mut seed_storage, |storage| {
             seed_compressed_entities_genesis(storage.clone());
+            seed_cycle_genesis(storage.clone());
             seed_registered_active_validator_with_registration(
                 storage.clone(),
                 proposer,
@@ -4872,6 +4892,7 @@ mod tests {
         seed_storage.set_block_number(block_number);
         StorageHandle::enter(&mut seed_storage, |storage| {
             seed_compressed_entities_genesis(storage.clone());
+            seed_cycle_genesis(storage.clone());
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             vs.config_owner.write(OWNER).unwrap();
             vs.set_config_max_validators(128).unwrap();
@@ -6496,7 +6517,7 @@ mod tests {
 
         let signer = test_evm_signer();
         let proposer = signer.address();
-        let emission_trigger = outbe_cycle::triggers::TriggerId::EmissionLimit1.as_u32();
+        let emission_trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
         let mut state =
             state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
                 let genesis_ctx = BlockRuntimeContext::new(
@@ -6505,6 +6526,10 @@ mod tests {
                 );
                 outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
                 let cycle = outbe_cycle::schema::Cycle::new(storage);
+                cycle
+                    .active_utc_day
+                    .write(outbe_primitives::time::timestamp_to_date_key(GENESIS_TS))
+                    .unwrap();
                 cycle
                     .last_executed_at
                     .write(&emission_trigger, GENESIS_TS + 60)
@@ -6556,7 +6581,7 @@ mod tests {
 
         let signer = test_evm_signer();
         let proposer = signer.address();
-        let emission_trigger = outbe_cycle::triggers::TriggerId::EmissionLimit1.as_u32();
+        let emission_trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
         let mut state =
             state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
                 let genesis_ctx = BlockRuntimeContext::new(
@@ -6565,6 +6590,10 @@ mod tests {
                 );
                 outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
                 let cycle = outbe_cycle::schema::Cycle::new(storage);
+                cycle
+                    .active_utc_day
+                    .write(outbe_primitives::time::timestamp_to_date_key(GENESIS_TS))
+                    .unwrap();
                 cycle
                     .last_executed_at
                     .write(&emission_trigger, GENESIS_TS + 60)
@@ -6767,23 +6796,22 @@ mod tests {
                         .unwrap();
                     tribute.total_supply.write(u64::from(u32::MAX)).unwrap();
                     let scheduled = victim_projection.scheduled_process_time;
-                    let noon_offset = 43_200;
-                    fire_at = if scheduled <= noon_offset {
-                        noon_offset
-                    } else {
-                        noon_offset
-                            + (scheduled - noon_offset).div_ceil(SECONDS_PER_DAY) * SECONDS_PER_DAY
-                    };
+                    let protocol_cycle_period = 3_600;
+                    fire_at = scheduled.div_ceil(protocol_cycle_period) * protocol_cycle_period;
                     let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
+                    cycle
+                        .active_utc_day
+                        .write(outbe_primitives::time::timestamp_to_date_key(fire_at))
+                        .unwrap();
                     for spec in outbe_cycle::triggers::ACTIVE_TRIGGERS {
                         cycle
                             .last_executed_at
                             .write(
                                 &spec.id,
                                 if spec.id
-                                    == outbe_cycle::triggers::TriggerId::WwdAdvanceNoon.as_u32()
+                                    == outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32()
                                 {
-                                    fire_at - SECONDS_PER_DAY
+                                    fire_at - protocol_cycle_period
                                 } else {
                                     fire_at
                                 },
@@ -6942,7 +6970,7 @@ mod tests {
         let prev_day = outbe_primitives::time::previous_date_key(
             outbe_primitives::time::timestamp_to_date_key(block_ts),
         );
-        let emission_trigger = outbe_cycle::triggers::TriggerId::EmissionLimit1.as_u32();
+        let emission_trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
         let mut state =
             state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
                 let genesis_ctx = BlockRuntimeContext::new(
@@ -6951,6 +6979,10 @@ mod tests {
                 );
                 outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
                 let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
+                cycle
+                    .active_utc_day
+                    .write(outbe_primitives::time::timestamp_to_date_key(GENESIS_TS))
+                    .unwrap();
                 cycle
                     .last_executed_at
                     .write(&emission_trigger, GENESIS_TS + 60)

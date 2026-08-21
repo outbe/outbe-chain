@@ -61,14 +61,15 @@ fn with_storage<R>(rate: Option<U256>, f: impl FnOnce(&StorageHandle) -> R) -> R
         outbe_primitives::addresses::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::from(U256::from(PARK_UNITS).to_be_bytes::<32>().to_vec()),
     );
-    // Stub the settlement stablecoins' ERC20 returns (a 32-byte word).
+    // Stub the settlement stablecoins' ERC20 returns (a 32-byte word): `decimals()`
+    // must read as the six-decimal settlement scale.
     storage.stub_sub_call_at(
         STABLE,
-        alloy_primitives::Bytes::from(U256::from(840u64).to_be_bytes::<32>().to_vec()),
+        alloy_primitives::Bytes::from(U256::from(6u64).to_be_bytes::<32>().to_vec()),
     );
     storage.stub_sub_call_at(
         STABLE_EUR,
-        alloy_primitives::Bytes::from(U256::from(978u64).to_be_bytes::<32>().to_vec()),
+        alloy_primitives::Bytes::from(U256::from(6u64).to_be_bytes::<32>().to_vec()),
     );
     // Stub VaultRouter `referenceCurrencyAssets` as `[STABLE]` for every ISO:
     // the USD stablecoin is the only registered settlement asset in tests.

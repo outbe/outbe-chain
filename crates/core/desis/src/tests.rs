@@ -7,7 +7,9 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::api::{AuctionBriefReceipt, AuctionBriefRejectionReason};
-use crate::constants::ORIGIN_ROUTER_ADDRESS;
+use crate::constants::{
+    IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, ORIGIN_ROUTER_ADDRESS,
+};
 use crate::runtime;
 use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract};
 
@@ -1207,7 +1209,7 @@ fn superseding_generation_resets_done_flag() {
 }
 
 #[test]
-fn stale_generation_is_rejected() {
+fn stale_generation_is_acknowledged_without_effect() {
     with_storage(|s| {
         open_revealing(&s);
 
@@ -1222,7 +1224,7 @@ fn stale_generation_is_rejected() {
             bids(1, 200),
         )
         .unwrap();
-        assert!(runtime::process_bids_batch(
+        runtime::process_bids_batch(
             s.clone(),
             ORIGIN_ROUTER_ADDRESS,
             WORLDWIDE_DAY,
@@ -1230,9 +1232,13 @@ fn stale_generation_is_rejected() {
             1,
             0,
             1,
-            bids(1, 200)
+            bids(1, 200),
         )
-        .is_err());
+        .unwrap();
+        let contract = DesisContract::new(s.clone());
+        let key = DesisContract::chain_key(WORLDWIDE_DAY, SRC_CHAIN);
+        assert_eq!(contract.chain_last_generation.read(&key).unwrap(), 2);
+        assert_eq!(contract.chain_bid_count.read(&key).unwrap(), 1);
     });
 }
 
@@ -2116,4 +2122,147 @@ fn a_relayed_bid_naming_an_unspellable_currency_is_refused_at_intake() {
         .unwrap_err();
         assert!(err.to_string().contains("no series id can spell"), "{err}");
     });
+}
+
+// --- Inbound acknowledgements: messages that can never apply are acked, not rejected ---
+
+const UNBRIEFED_DAY: WorldwideDay = WorldwideDay::new(20260202);
+fn inbound_storage() -> HashMapStorageProvider {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(NOW));
+    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    storage.stub_sub_call_at(
+        outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
+        Bytes::from(vec![0u8; 32]),
+    );
+    storage
+}
+
+fn ignored_reasons(storage: &HashMapStorageProvider) -> Vec<u8> {
+    use alloy_sol_types::SolEvent;
+    let sig = crate::precompile::IDesis::InboundIgnored::SIGNATURE_HASH;
+    storage
+        .get_events(outbe_primitives::addresses::DESIS_ADDRESS)
+        .iter()
+        .filter(|log| log.topics().first() == Some(&sig))
+        .map(|log| {
+            crate::precompile::IDesis::InboundIgnored::decode_log_data(log)
+                .unwrap()
+                .reason
+        })
+        .collect()
+}
+
+#[test]
+fn a_batch_for_a_day_never_briefed_is_acknowledged() {
+    let mut storage = inbound_storage();
+    StorageHandle::enter(&mut storage, |s| {
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            UNBRIEFED_DAY,
+            SRC_CHAIN,
+            1,
+            0,
+            1,
+            bids(1, 200),
+        )
+        .unwrap();
+        let contract = DesisContract::new(s.clone());
+        let key = DesisContract::chain_key(UNBRIEFED_DAY, SRC_CHAIN);
+        assert_eq!(contract.chain_bid_count.read(&key).unwrap(), 0);
+    });
+    assert_eq!(ignored_reasons(&storage), vec![IGNORED_NOT_FOUND]);
+}
+
+#[test]
+fn a_batch_before_reveal_still_reverts_so_the_transport_redelivers() {
+    let mut storage = inbound_storage();
+    StorageHandle::enter(&mut storage, |s| {
+        brief(&s, true);
+        runtime::schedule_tick(&s, NOW).unwrap(); // Started, commit stage running
+        assert!(runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            SRC_CHAIN,
+            1,
+            0,
+            1,
+            bids(1, 200),
+        )
+        .is_err());
+    });
+    assert!(ignored_reasons(&storage).is_empty());
+}
+
+#[test]
+fn a_stale_marker_is_acknowledged() {
+    let mut storage = inbound_storage();
+    StorageHandle::enter(&mut storage, |s| {
+        open_revealing(&s);
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            SRC_CHAIN,
+            2,
+            0,
+            1,
+            bids(1, 200),
+        )
+        .unwrap();
+        runtime::process_bids_done(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            SRC_CHAIN,
+            1,
+            1,
+            1,
+        )
+        .unwrap();
+        let contract = DesisContract::new(s.clone());
+        let key = DesisContract::chain_key(WORLDWIDE_DAY, SRC_CHAIN);
+        assert_eq!(contract.chain_done_batches.read(&key).unwrap(), 0);
+    });
+    assert_eq!(ignored_reasons(&storage), vec![IGNORED_OBSOLETE]);
+}
+
+#[test]
+fn a_repeated_marker_is_a_no_op_and_a_differing_one_is_reported() {
+    let mut storage = inbound_storage();
+    StorageHandle::enter(&mut storage, |s| {
+        open_revealing(&s);
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            SRC_CHAIN,
+            1,
+            0,
+            2,
+            bids(1, 200),
+        )
+        .unwrap();
+        // The marker claims 2 batches / 3 bids while the second batch is still missing; the repeat
+        // is a no-op and the disagreeing marker loses to the first.
+        for total_bids in [3u32, 3, 5] {
+            runtime::process_bids_done(
+                s.clone(),
+                ORIGIN_ROUTER_ADDRESS,
+                WORLDWIDE_DAY,
+                SRC_CHAIN,
+                1,
+                2,
+                total_bids,
+            )
+            .unwrap();
+        }
+        let contract = DesisContract::new(s.clone());
+        let key = DesisContract::chain_key(WORLDWIDE_DAY, SRC_CHAIN);
+        assert_eq!(contract.chain_done_batches.read(&key).unwrap(), 2);
+        assert_eq!(contract.chain_done_bids.read(&key).unwrap(), 3);
+    });
+    assert_eq!(ignored_reasons(&storage), vec![IGNORED_CONFLICT]);
 }

@@ -259,7 +259,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         p.quantities = quantities;
 
         BridgeMsgCodec.IssuanceInstructionsPayload memory d = this.exposedDecodeIssuanceInstructions(
-            BridgeMsgCodec.encodeIssuanceInstructions(IssuanceBatchLib.one(p))
+            BridgeMsgCodec.encodeIssuanceInstructions(p.worldwideDay, 0, 1, IssuanceBatchLib.one(p))
         )[0];
 
         assertEq(d.seriesId, bytes14("20260212-TRY-U"), "seriesId");
@@ -339,8 +339,8 @@ contract BridgeMsgCodecGoldenTest is Test {
     function exposedDecodeIssuanceInstructions(bytes calldata p)
         external
         pure
-        returns (BridgeMsgCodec.IssuanceInstructionsPayload[] memory)
+        returns (BridgeMsgCodec.IssuanceInstructionsPayload[] memory series)
     {
-        return BridgeMsgCodec.decodeIssuanceInstructions(p);
+        (,,, series) = BridgeMsgCodec.decodeIssuanceInstructions(p);
     }
 }
