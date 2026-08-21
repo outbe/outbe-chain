@@ -1,0 +1,476 @@
+//! Chain-state probes for the origin venue.
+//!
+//! Every one answers a question a failing step needs to explain itself — which
+//! stage the venue is in, what the router froze, what a parked delivery said —
+//! and returns a human sentence rather than a value, so a panic message reads
+//! as a diagnosis instead of a mismatch.
+
+use alloy_primitives::{Address, U256};
+use alloy_sol_types::sol;
+
+use crate::internal::eth;
+use crate::world::{origin_venue, World};
+
+sol! {
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IProceedsRoute {
+        function tokenBridge() external view returns (address);
+        function wcoen() external view returns (address);
+    }
+}
+sol! {
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IAuctionStage {
+        function getAuctionStage(uint32 worldwideDay) external view returns (uint8);
+    }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IOriginTargets {
+        function targetsOf(uint32 worldwideDay) external view returns (uint32[] memory);
+    }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IVenueSchedule {
+        struct IntexCallTrigger { uint32 callWindow; uint32 callThreshold; uint32 callNoticePeriod; }
+        struct AuctionSchedule { uint32 commitEnd; uint32 revealEnd; uint32 issuanceEnd; }
+        struct AuctionParams {
+            uint16 issuanceCurrency; uint16 referenceCurrency; uint128 promisLoadMinor;
+            IntexCallTrigger callTrigger; uint32 minIntexBidRate; uint16 minIntexBidQuantity;
+            uint64 entryPriceMinor; uint64 floorPriceMinor; uint64 callPriceMinor; uint128 commitBondMinor;
+        }
+        struct AuctionResult {
+            uint64 auctionClearingRate; uint32 wonBidsCount; uint32 issuedIntexCount; uint128 issuedIntexLoadedPromis;
+        }
+        function auctions(uint32 worldwideDay)
+            external view
+            returns (uint8 worldwideDayState, AuctionSchedule memory schedule, AuctionParams memory params, AuctionResult memory result);
+    }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IParkedWork {
+        struct ParkedSend { uint32 dstChainId; uint64 gasLimit; bool sent; bytes payload; }
+        function nextPendingBidsRelayIdx() external view returns (uint256);
+        function flushPendingBidsRelay(uint256 idx) external;
+        function parkedSend(uint256 idx) external view returns (ParkedSend memory);
+        function flushPendingSend(uint256 idx) external;
+    }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IVenueCounts {
+        function auctionRunningCounts(uint32 worldwideDay)
+            external view returns (uint32 committedBidsCount, uint32 revealedBidsCount);
+    }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IDesisBids {
+        function getBidsCount(uint32 worldwideDay) external view returns (uint256);
+        function isChainDone(uint32 worldwideDay, uint32 srcChainId) external view returns (bool);
+    }
+}
+pub(crate) fn frozen_targets(url: &str, router: Address, worldwide_day: u32) -> String {
+    match eth::read_call(
+        url,
+        router,
+        &IOriginTargets::targetsOfCall {
+            worldwideDay: worldwide_day,
+        },
+    ) {
+        Some(targets) if targets.is_empty() => "the router froze no targets for the day".to_owned(),
+        Some(targets) => format!("the router froze targets {targets:?}"),
+        None => "the router did not answer".to_owned(),
+    }
+}
+pub(crate) fn desis_stage(url: &str, worldwide_day: u32) -> String {
+    let desis = origin_venue::DESIS
+        .parse()
+        .expect("desis precompile address");
+    match eth::read_call(
+        url,
+        desis,
+        &IAuctionStage::getAuctionStageCall {
+            worldwideDay: worldwide_day,
+        },
+    ) {
+        Some(0) => "no brief ever reached Desis".to_owned(),
+        Some(1) => "Desis holds the brief but never started the auction".to_owned(),
+        Some(2) => "Desis started it, so the message never reached the venue".to_owned(),
+        Some(6) => "Desis cancelled the day".to_owned(),
+        Some(other) => format!("Desis stage {other}"),
+        None => "Desis did not answer".to_owned(),
+    }
+}
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn day_colour(world: &World, worldwide_day: u32) -> String {
+    match world
+        .rpc
+        .metadosis_wwd_state_on(world.validators.primary_port(), worldwide_day)
+    {
+        Some(state) => format!("day type {} in status {}", state.day_type, state.status),
+        None => "day state unreadable".to_owned(),
+    }
+}
+#[cfg(not(feature = "ocomp-integration"))]
+pub(crate) fn day_colour(_world: &World, _worldwide_day: u32) -> String {
+    "day type unreadable without ocomp-integration".to_owned()
+}
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn day_closure(world: &World, worldwide_day: u32) -> String {
+    match world
+        .rpc
+        .metadosis_terminal_receipt_on(world.validators.primary_port(), worldwide_day)
+    {
+        // An absent receipt reads back zeroed rather than reverting, so the
+        // block number is what tells a real closure from no closure at all.
+        Some(receipt) if receipt.block_number > 0 => format!(
+            "Metadosis closed the day at block {} with outcome {}",
+            receipt.block_number, receipt.outcome
+        ),
+        _ => "Metadosis never closed the day, so nothing ever briefed Desis".to_owned(),
+    }
+}
+#[cfg(not(feature = "ocomp-integration"))]
+pub(crate) fn day_closure(_world: &World, _worldwide_day: u32) -> String {
+    "day closure unreadable without ocomp-integration".to_owned()
+}
+pub(crate) fn venue_schedule(url: &str, venue: Address, worldwide_day: u32) -> String {
+    let now = eth::latest_block_timestamp(url).unwrap_or_default();
+    match eth::read_call(
+        url,
+        venue,
+        &IVenueSchedule::auctionsCall {
+            worldwideDay: worldwide_day,
+        },
+    ) {
+        Some(a) => format!(
+            "commitEnd {} revealEnd {} issuanceEnd {} against block time {now}",
+            a.schedule.commitEnd, a.schedule.revealEnd, a.schedule.issuanceEnd
+        ),
+        None => "venue did not report the schedule".to_owned(),
+    }
+}
+/// Both sides swallow a failed send by parking it, so the parked entry is the
+/// only trace of work that never left.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn parked_work(url: &str, router: Address, venue_router: Address) -> String {
+    let relays = eth::read_call(
+        url,
+        venue_router,
+        &IParkedWork::nextPendingBidsRelayIdxCall {},
+    );
+    let parked = eth::read_call(
+        url,
+        router,
+        &IParkedWork::parkedSendCall { idx: U256::ZERO },
+    );
+    let parked_note = match parked {
+        Some(send) if !send.payload.is_empty() => {
+            // Retrying a parked send is permissionless, and its revert carries
+            // the reason the router swallowed when it parked.
+            let flush = eth::send_call(
+                url,
+                router,
+                crate::world::forge::DEPLOYER_KEY,
+                &IParkedWork::flushPendingSendCall { idx: U256::ZERO },
+                None,
+            );
+            format!(
+                "origin parked a send to chain {} ({} bytes, gas {}), retry says {:?}",
+                send.dstChainId,
+                send.payload.len(),
+                send.gasLimit,
+                flush.err().map(|error| error.to_string())
+            )
+        }
+        Some(_) => "origin parked nothing".to_owned(),
+        None => "origin did not report parked sends".to_owned(),
+    };
+    let relay_note = match relays {
+        Some(count) if count > U256::ZERO => {
+            // Retrying a parked relay is permissionless, and its revert carries
+            // the reason the venue swallowed when it parked.
+            let flush = eth::send_call(
+                url,
+                venue_router,
+                crate::world::forge::DEPLOYER_KEY,
+                &IParkedWork::flushPendingBidsRelayCall { idx: U256::ZERO },
+                None,
+            );
+            format!(
+                "venue parked {count} bid relays, retry says {:?}",
+                flush.err().map(|error| error.to_string())
+            )
+        }
+        _ => format!("venue parked bid relays {relays:?}"),
+    };
+    format!("{parked_note}, {relay_note}")
+}
+/// The venue emits this at the end of every inbound stage handler, so its
+/// absence separates a message that never arrived from one that did nothing.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn stages_received(url: &str, venue_router: Address, worldwide_day: u32) -> String {
+    let topic0 =
+        alloy_primitives::keccak256(b"AuctionStageReceived(uint32,uint32,uint8)".as_slice());
+    let day_topic = format!("0x{:064x}", worldwide_day);
+    let logs = eth::raw_json_with_params(
+        url,
+        "eth_getLogs",
+        serde_json::json!([{
+            "fromBlock": "0x0",
+            "toBlock": "latest",
+            "address": format!("{venue_router:?}"),
+            "topics": [format!("{topic0:?}"), serde_json::Value::Null, day_topic],
+        }]),
+    );
+    match logs.as_ref().and_then(|value| value.as_array()) {
+        Some(entries) if entries.is_empty() => "the venue received no inbound stage".to_owned(),
+        Some(entries) => format!("the venue received {} inbound stages", entries.len()),
+        None => "the venue stage log is unreadable".to_owned(),
+    }
+}
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn venue_bid_counts(url: &str, venue: Address, worldwide_day: u32) -> String {
+    match eth::read_call(
+        url,
+        venue,
+        &IVenueCounts::auctionRunningCountsCall {
+            worldwideDay: worldwide_day,
+        },
+    ) {
+        Some(counts) => format!(
+            "venue holds {} committed and {} revealed bids",
+            counts.committedBidsCount, counts.revealedBidsCount
+        ),
+        None => "venue did not report its bid counts".to_owned(),
+    }
+}
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn relayed_bids(url: &str, worldwide_day: u32, chain_id: u32) -> String {
+    let desis = origin_venue::DESIS
+        .parse()
+        .expect("desis precompile address");
+    let count = eth::read_call(
+        url,
+        desis,
+        &IDesisBids::getBidsCountCall {
+            worldwideDay: worldwide_day,
+        },
+    );
+    let done = eth::read_call(
+        url,
+        desis,
+        &IDesisBids::isChainDoneCall {
+            worldwideDay: worldwide_day,
+            srcChainId: chain_id,
+        },
+    );
+    match (count, done) {
+        (Some(count), Some(done)) => {
+            format!("Desis holds {count} relayed bids, chain {chain_id} done={done}")
+        }
+        _ => "Desis did not report its relayed bids".to_owned(),
+    }
+}
+/// The loopback adapter delivers inside the send and swallows a failure: it
+/// parks the delivery with the revert reason and still reports the send as
+/// done. That reason is the only place a refused message explains itself.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn parked_deliveries(world: &World) -> String {
+    let url = world.rpc.url(world.validators.primary_port());
+    let Some(contracts) = world.state.origin_contracts.clone() else {
+        return "no deploy recorded".to_owned();
+    };
+    let topic0 = alloy_primitives::keccak256(b"DeliveryParked(uint256,bytes)".as_slice());
+    let logs = eth::raw_json_with_params(
+        &url,
+        "eth_getLogs",
+        serde_json::json!([{
+            "fromBlock": "0x0",
+            "toBlock": "latest",
+            "address": format!("{:?}", contracts.loopback),
+            "topics": [format!("{topic0:?}")],
+        }]),
+    );
+    match logs.as_ref().and_then(|value| value.as_array()) {
+        Some(entries) if entries.is_empty() => "no delivery was parked".to_owned(),
+        Some(entries) => {
+            let reasons: Vec<String> = entries
+                .iter()
+                .filter_map(|entry| entry.get("data")?.as_str())
+                .map(|data| {
+                    let bytes = alloy_primitives::hex::decode(data.trim_start_matches("0x"))
+                        .unwrap_or_default();
+                    let text: String = bytes
+                        .iter()
+                        .map(|b| {
+                            if b.is_ascii_graphic() || *b == b' ' {
+                                *b as char
+                            } else {
+                                '.'
+                            }
+                        })
+                        .collect();
+                    format!("{data} ({text})")
+                })
+                .collect();
+            format!(
+                "{} parked deliveries: {}",
+                entries.len(),
+                reasons.join(" | ")
+            )
+        }
+        None => "the adapter log is unreadable".to_owned(),
+    }
+}
+/// Did Desis get as far as handing the refunds to the router? Separates "the
+/// clearing never sent them" from "the target chain refused them".
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn refunds_were_sent(world: &World, worldwide_day: u32) -> bool {
+    let url = world.rpc.url(world.validators.primary_port());
+    let Some(contracts) = world.state.origin_contracts.clone() else {
+        return false;
+    };
+    let topic0 =
+        alloy_primitives::keccak256(b"RefundInstructionsSent(bytes32,uint32,uint256)".as_slice());
+    eth::raw_json_with_params(
+        &url,
+        "eth_getLogs",
+        serde_json::json!([{
+            "fromBlock": "0x0",
+            "toBlock": "latest",
+            "address": format!("{:?}", contracts.origin_router),
+            "topics": [
+                format!("{topic0:?}"),
+                serde_json::Value::Null,
+                format!("0x{worldwide_day:064x}"),
+            ],
+        }]),
+    )
+    .as_ref()
+    .and_then(|value| value.as_array())
+    .is_some_and(|entries| !entries.is_empty())
+}
+/// Clearing fires the auction result, the issuance instructions and the refunds
+/// back to back. A router that cannot pay the bridge fee parks the tail of that
+/// burst instead of reverting, so a parked send is the first thing to look at
+/// when a message never lands. Counting only: a run must not need a nudge.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn parked_origin_sends(world: &World) -> u32 {
+    let url = world.rpc.url(world.validators.primary_port());
+    let Some(contracts) = world.state.origin_contracts.clone() else {
+        return 0;
+    };
+    let mut parked = 0;
+    for idx in 0..64u64 {
+        let Some(send) = eth::read_call(
+            &url,
+            contracts.origin_router,
+            &IParkedWork::parkedSendCall {
+                idx: U256::from(idx),
+            },
+        ) else {
+            break;
+        };
+        if send.dstChainId == 0 {
+            break;
+        }
+        if !send.sent {
+            parked += 1;
+        }
+    }
+    parked
+}
+sol! {
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IIssuedSeries {
+        function seriesExists(bytes14 seriesId) external view returns (bool);
+        function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
+        function balanceOf(address account, uint256 id) external view returns (uint256);
+    }
+}
+sol! {
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IPaymentToken {
+        function balanceOf(address account) external view returns (uint256);
+    }
+}
+/// The series the target chain was told to issue, read back from its own log so
+/// the identifier comes from the chain rather than from a rebuilt guess.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn issued_series(
+    url: &str,
+    venue_router: Address,
+) -> Option<alloy_primitives::FixedBytes<14>> {
+    let topic0 = alloy_primitives::keccak256(
+        b"IssuanceInstructionsReceived(uint32,bytes14,uint256)".as_slice(),
+    );
+    let logs = eth::raw_json_with_params(
+        url,
+        "eth_getLogs",
+        serde_json::json!([{
+            "fromBlock": "0x0",
+            "toBlock": "latest",
+            "address": format!("{venue_router:?}"),
+            "topics": [format!("{topic0:?}")],
+        }]),
+    )?;
+    let topic = logs
+        .as_array()?
+        .first()?
+        .get("topics")?
+        .as_array()?
+        .get(2)?
+        .as_str()?;
+    let word: alloy_primitives::B256 = topic.parse().ok()?;
+    Some(alloy_primitives::FixedBytes::<14>::from_slice(
+        &word.0[..14],
+    ))
+}
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn deferred_mints(url: &str, venue_router: Address) -> usize {
+    let topic0 = alloy_primitives::keccak256(
+        b"IssuanceMintDeferred(uint256,bytes14,address,bytes)".as_slice(),
+    );
+    eth::raw_json_with_params(
+        url,
+        "eth_getLogs",
+        serde_json::json!([{
+            "fromBlock": "0x0",
+            "toBlock": "latest",
+            "address": format!("{venue_router:?}"),
+            "topics": [format!("{topic0:?}")],
+        }]),
+    )
+    .as_ref()
+    .and_then(|value| value.as_array())
+    .map_or(0, Vec::len)
+}
+/// Whether Desis issued anything at all. Absent issuance means one of two very
+/// different things, and only the clearing event tells them apart.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn cleared_empty(url: &str, worldwide_day: u32) -> Option<bool> {
+    let desis: Address = origin_venue::DESIS.parse().ok()?;
+    let day_topic = format!("0x{worldwide_day:064x}");
+    let seen = |signature: &[u8]| {
+        let topic0 = alloy_primitives::keccak256(signature);
+        eth::raw_json_with_params(
+            url,
+            "eth_getLogs",
+            serde_json::json!([{
+                "fromBlock": "0x0",
+                "toBlock": "latest",
+                "address": format!("{desis:?}"),
+                "topics": [format!("{topic0:?}"), day_topic],
+            }]),
+        )
+        .as_ref()
+        .and_then(|value| value.as_array())
+        .is_some_and(|entries| !entries.is_empty())
+    };
+    if seen(b"AuctionClearedEmpty(uint32,uint64)".as_slice()) {
+        return Some(true);
+    }
+    if seen(b"AuctionCleared(uint32,uint32,uint32,uint64)".as_slice()) {
+        return Some(false);
+    }
+    None
+}

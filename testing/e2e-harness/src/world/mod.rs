@@ -17,6 +17,7 @@ pub mod rpc;
 pub mod state;
 pub mod target_chain;
 pub mod validators;
+pub mod venue_probes;
 
 use crate::env::environment;
 use crate::internal::config::Config;
