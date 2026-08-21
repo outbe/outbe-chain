@@ -7466,6 +7466,7 @@ dependencies = [
  "outbe-desis",
  "outbe-emissionlimit",
  "outbe-gem",
+ "outbe-gratisfactory",
  "outbe-intexfactory",
  "outbe-macros",
  "outbe-metadosis",
@@ -7867,12 +7868,15 @@ dependencies = [
  "alloy-sol-types",
  "outbe-fidelity",
  "outbe-gratis",
+ "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promis",
  "outbe-tee",
  "outbe-tee-enclave",
+ "outbe-vaultrouter",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]

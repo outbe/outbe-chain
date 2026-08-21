@@ -26,6 +26,7 @@ pub enum TriggerId {
     AuctionClearing = 5,
     IntexNotify = 6,
     CredisCallDaily = 7,
+    PledgeReservationSweep = 8,
 }
 
 impl TriggerId {
@@ -74,6 +75,7 @@ pub enum TriggerHandler {
     AuctionClearing,
     IntexNotify,
     CredisCallDaily,
+    PledgeReservationSweep,
 }
 
 impl TriggerHandler {
@@ -91,6 +93,7 @@ impl TriggerHandler {
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
             Self::IntexNotify => outbe_intexfactory::qualified::drain_notices(ctx),
             Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
+            Self::PledgeReservationSweep => outbe_gratisfactory::lifecycle::run_sweep(ctx),
         }
     }
 }
@@ -112,7 +115,7 @@ const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 30;
 /// fires triggers independently per slot.
 /// Active trigger table in permanent numeric-id order. The dispatcher walks
 /// this order when several handlers are due in the same block.
-pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 7] {
+pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 8] {
     [
         TriggerSpec {
             id: TriggerId::ProtocolCycle.as_u32(),
@@ -198,10 +201,24 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             coalesces_backlog: false,
             handler: TriggerHandler::CredisCallDaily,
         },
+        TriggerSpec {
+            id: TriggerId::PledgeReservationSweep.as_u32(),
+            label: "pledge_reservation_sweep",
+            // The pledge quote TTL is 15 minutes, so a daily slot would strand
+            // vault liquidity for a day. Five minutes bounds the lateness well
+            // inside the TTL without making this a per-tick cost.
+            period_seconds: 300,
+            start_offset_seconds: 0,
+            requires_accounting_window: false,
+            // Level-triggered: the handler walks whatever is expired right now,
+            // so a missed slot means "run again", never "run twice".
+            coalesces_backlog: true,
+            handler: TriggerHandler::PledgeReservationSweep,
+        },
     ]
 }
 
-pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 7] =
+pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 8] =
     active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
 pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &ACTIVE_TRIGGER_ARRAY;
 
@@ -261,6 +278,13 @@ mod protocol_parameter_tests {
         assert!(matches!(
             configured[6].handler,
             TriggerHandler::CredisCallDaily
+        ));
+        assert_eq!(configured[7].period_seconds, 300);
+        assert_eq!(configured[7].start_offset_seconds, 0);
+        assert!(configured[7].coalesces_backlog);
+        assert!(matches!(
+            configured[7].handler,
+            TriggerHandler::PledgeReservationSweep
         ));
 
         let defaults =

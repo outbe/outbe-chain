@@ -1031,3 +1031,227 @@ fn reference_currency_assets_dispatch() {
         );
     });
 }
+
+// --- reservations -------------------------------------------------------------
+
+fn reservation_id(byte: u8) -> B256 {
+    B256::repeat_byte(byte)
+}
+
+/// Registers `vault()` for `asset()` and gives `receiver()` code, so a reservation
+/// can be taken and delivered. The vault stub answers `x` to `previewWithdraw`,
+/// `balanceOf`, `withdraw` and `deposit` alike.
+fn with_reservable_vault<R>(x: U256, f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at(vault(), word(x));
+    storage.enable_sub_call_stub();
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+        VaultRouterContract::new(storage.clone())
+            .asset_vault_set(asset())
+            .insert(vault())
+            .unwrap();
+        storage
+            .set_code(receiver(), Bytecode::new_raw(vec![0x00u8].into()))
+            .unwrap();
+        f(storage)
+    })
+}
+
+/// The reservation is the guarantee: once taken, the assets sit in the router's own
+/// custody until released — and can be released exactly once.
+#[test]
+fn a_reservation_holds_then_releases_once() {
+    let x = U256::from(50u64);
+    with_reservable_vault(x, |storage| {
+        let id = reservation_id(1);
+        let amount = U256::from(10u64);
+
+        let burned = runtime::reserve(
+            storage.clone(),
+            id,
+            asset(),
+            amount,
+            IVaultRouter::StablesTarget::Credis,
+        )
+        .unwrap();
+        assert_eq!(burned, x);
+        assert_eq!(
+            runtime::reservation_of(&storage, id).unwrap(),
+            (asset(), amount)
+        );
+
+        // The id is the claim; a second reserve under it would overwrite a live one.
+        let err = runtime::reserve(
+            storage.clone(),
+            id,
+            asset(),
+            amount,
+            IVaultRouter::StablesTarget::Credis,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("already exists"), "{err}");
+
+        let delivered = runtime::release_reservation(
+            storage.clone(),
+            id,
+            receiver(),
+            IVaultRouter::StablesTarget::Credis,
+        )
+        .unwrap();
+        assert_eq!(delivered, amount);
+        assert_eq!(
+            runtime::reservation_of(&storage, id).unwrap(),
+            (Address::ZERO, U256::ZERO)
+        );
+
+        // Deleted before the sub-call, so the same claim cannot be spent twice.
+        let err = runtime::release_reservation(
+            storage.clone(),
+            id,
+            receiver(),
+            IVaultRouter::StablesTarget::Credis,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("not found"), "{err}");
+    });
+}
+
+/// Giving assets back can harm nobody and an expiry sweep has no privileged caller,
+/// so `returnReservation` answers to no registry.
+#[test]
+fn an_unspent_reservation_returns_to_the_vault_permissionlessly() {
+    let x = U256::from(50u64);
+    with_reservable_vault(x, |storage| {
+        let id = reservation_id(2);
+        runtime::reserve(
+            storage.clone(),
+            id,
+            asset(),
+            U256::from(10u64),
+            IVaultRouter::StablesTarget::Credis,
+        )
+        .unwrap();
+
+        // Straight through the ABI as an unregistered stranger.
+        let calldata = IVaultRouter::returnReservationCall { id }.abi_encode();
+        let out = dispatch(storage.clone(), &calldata, stranger(), U256::ZERO).unwrap();
+        assert_eq!(
+            IVaultRouter::returnReservationCall::abi_decode_returns(&out).unwrap(),
+            x
+        );
+        assert_eq!(
+            runtime::reservation_of(&storage, id).unwrap(),
+            (Address::ZERO, U256::ZERO)
+        );
+
+        // Returning is idempotent: the expiry sweep and an owner's unpledge target the
+        // same reservation, and whichever arrives second must still succeed — a hard
+        // error there would strand a lapsed pledger's collateral for good.
+        assert_eq!(
+            runtime::return_reservation(storage.clone(), id).unwrap(),
+            U256::ZERO
+        );
+    });
+}
+
+/// Both verbs that TAKE liquidity answer to the liquidity-target registry, exactly
+/// as `withdraw` does.
+#[test]
+fn reservations_are_gated_like_a_withdrawal() {
+    let x = U256::from(50u64);
+    with_reservable_vault(x, |storage| {
+        let id = reservation_id(3);
+        let amount = U256::from(10u64);
+
+        let reserve_call = IVaultRouter::reserveCall {
+            id,
+            asset: asset(),
+            amount,
+        }
+        .abi_encode();
+
+        let err =
+            dispatch(storage.clone(), &reserve_call, target_account(), U256::ZERO).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid liquidity target"),
+            "{err}"
+        );
+
+        runtime::add_liquidity_target(storage.clone(), owner(), target_account(), 1).unwrap();
+        dispatch(storage.clone(), &reserve_call, target_account(), U256::ZERO).unwrap();
+
+        let release_call = IVaultRouter::releaseReservationCall {
+            id,
+            receiver: receiver(),
+        }
+        .abi_encode();
+        let err = dispatch(storage.clone(), &release_call, stranger(), U256::ZERO).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid liquidity target"),
+            "{err}"
+        );
+
+        let out = dispatch(storage.clone(), &release_call, target_account(), U256::ZERO).unwrap();
+        assert_eq!(
+            IVaultRouter::releaseReservationCall::abi_decode_returns(&out).unwrap(),
+            amount
+        );
+    });
+}
+
+/// A reservation is a real draw on the vault, so it fails on the same shortfall a
+/// withdrawal would — which is what makes the pledge-time claim a guarantee rather
+/// than an optimistic note.
+#[test]
+fn a_reservation_cannot_exceed_the_vaults_shares() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    // previewWithdraw requires 50 shares; the router holds 49.
+    storage.stub_sub_call_at_selector(
+        vault(),
+        IVaultV2::previewWithdrawCall::SELECTOR,
+        word(U256::from(50u64)),
+    );
+    storage.stub_sub_call_at(vault(), word(U256::from(49u64)));
+    storage.enable_sub_call_stub();
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+        VaultRouterContract::new(storage.clone())
+            .asset_vault_set(asset())
+            .insert(vault())
+            .unwrap();
+
+        assert!(!runtime::has_liquidity(&storage, asset(), U256::from(10u64)).unwrap());
+
+        let err = runtime::reserve(
+            storage.clone(),
+            reservation_id(4),
+            asset(),
+            U256::from(10u64),
+            IVaultRouter::StablesTarget::Credis,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("insufficient shares for withdraw"),
+            "{err}"
+        );
+
+        // Nothing was claimed.
+        assert_eq!(
+            runtime::reservation_of(&storage, reservation_id(4)).unwrap(),
+            (Address::ZERO, U256::ZERO)
+        );
+    });
+}
+
+/// An asset with no vault cannot fund anything; the preflight says so instead of
+/// reverting, because "cannot fund" is the honest answer to the question asked.
+#[test]
+fn has_liquidity_is_false_for_an_asset_without_a_vault() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.enable_sub_call_stub();
+    StorageHandle::enter(&mut storage, |storage| {
+        set_owner(&storage, owner());
+        assert!(!runtime::has_liquidity(&storage, asset(), U256::from(1u64)).unwrap());
+    });
+}

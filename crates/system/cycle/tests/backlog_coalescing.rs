@@ -57,6 +57,7 @@ fn only_polls_and_calendar_owned_protocol_cycle_coalesce() {
     for spec in ACTIVE_TRIGGERS {
         let is_poll = spec.id == TriggerId::AuctionClearing.as_u32()
             || spec.id == TriggerId::IntexNotify.as_u32()
+            || spec.id == TriggerId::PledgeReservationSweep.as_u32()
             || spec.id == TriggerId::ProtocolCycle.as_u32();
         assert_eq!(
             spec.coalesces_backlog, is_poll,
@@ -101,7 +102,7 @@ fn registry_ids_are_unique_and_traversed_in_permanent_id_order() {
         .iter()
         .map(|spec| spec.id)
         .collect::<Vec<_>>();
-    assert_eq!(ids, vec![0, 1, 3, 4, 5, 6, 7]);
+    assert_eq!(ids, vec![0, 1, 3, 4, 5, 6, 7, 8]);
 
     let mut unique = ids.clone();
     unique.sort_unstable();

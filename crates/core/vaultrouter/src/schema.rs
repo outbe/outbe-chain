@@ -107,6 +107,16 @@ pub struct VaultRouterContract {
     /// slot 25: vault -> ISO-4217 code captured at registration time.
     #[attribute(order = 22)]
     pub vault_reference_currencies: outbe_primitives::storage::dsl::Map<Address, u16>,
+
+    /// slot 26: reservation id -> the asset held in this router's own custody
+    /// for it. A non-zero entry is what makes a reservation exist; the amount
+    /// alone cannot stand in, since releasing needs the asset to deliver.
+    #[attribute(order = 23)]
+    pub reservation_assets: outbe_primitives::storage::dsl::Map<B256, Address>,
+
+    /// slot 27: reservation id -> assets held under it.
+    #[attribute(order = 24)]
+    pub reservation_amounts: outbe_primitives::storage::dsl::Map<B256, U256>,
 }
 
 impl<'storage> VaultRouterContract<'storage> {

@@ -50,6 +50,9 @@ pub fn dispatch(
                     emit_pledged(&storage, sender, &c, gratis_amount, handle)?;
                     Ok(handle)
                 }),
+                // Permissionless: no caller is consulted, so `view` is the right
+                // helper even though the sweep writes.
+                sweepExpiredPledges(c) => view(c, |c| runtime::sweep_expired(&storage, c.max)),
                 unpledgeGratis(c) => mutate_void(c, caller, |sender, c| {
                     let auth = ModifyAuth {
                         mac: c.mac.0,

@@ -22,6 +22,12 @@ interface IGratisFactory {
     ///         `gratisAmount` is the collateral credited back.
     event GratisUnpledged(address indexed account, uint256 gratisAmount);
 
+    /// @notice Emitted when a pledge quote lapses unspent and its reserved credit
+    ///         is returned to the vault. The pledger's GRATIS collateral is NOT
+    ///         released by this: it stays in the pledge ticket until they call
+    ///         `unpledgeGratis` themselves. Watch this event to prompt them.
+    event PledgeQuoteExpired(bytes32 indexed pledgeHandle, uint64 quotedAt);
+
     /// @notice Pledge enough gratis to collateralize `amountStables` of credit in
     ///         `asset`. The gratis cost is derived on-chain from the oracle rate and
     ///         sealed into the pledge ticket together with the asset and the rate, so
@@ -46,6 +52,13 @@ interface IGratisFactory {
     ///         quoted for and must match the one sealed in the ticket.
     // todo remove amountStables
     function unpledgeGratis(uint256 amountStables, bytes32 pledgeHandle, bytes32 mac, uint64 opNonce) external;
+
+    /// @notice Return the vault credit reserved by up to `max` expired pledge
+    ///         quotes. Permissionless and idempotent — a Cycle trigger runs it on a
+    ///         schedule, and anyone (the pledger most of all) may run it sooner.
+    ///         Does not release GRATIS collateral; see `PledgeQuoteExpired`.
+    /// @return swept Number of reservations actually returned to their vaults.
+    function sweepExpiredPledges(uint32 max) external returns (uint32 swept);
 
     /// @notice Convert `amount` gratis to native COEN at 1:1 (burns gratis).
     ///         Authorized by the caller's modify key.
