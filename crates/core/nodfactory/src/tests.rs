@@ -7,7 +7,8 @@ use outbe_compressed_entities::{begin_block, EntityId36, ExecutionScope};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::api::ModifyAuth;
 use outbe_nod::{
-    api as nod_api, precompile::INod, NodContract, NodIssueParams, NodRepositoryReader,
+    api as nod_api, constants::CALL_NOTICE_PERIOD, precompile::INod, NodContract, NodIssueParams,
+    NodRepositoryReader,
 };
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
@@ -172,6 +173,25 @@ impl World {
             .unwrap()
             .unwrap()
             .is_settled
+    }
+
+    /// Stamps the bucket's call directly. The scan that decides *when* to stamp
+    /// is covered in `outbe_nod::called_tests`; what matters here is the gate
+    /// `mine_gratis` applies once it is stamped.
+    fn mark_called(&mut self, nod_id: EntityId36, at: u64) {
+        self.enter(|storage, scope, parent| {
+            let item = nod_api::get_item(&storage, scope, parent, nod_id)
+                .unwrap()
+                .unwrap();
+            NodContract::new(storage)
+                .bucket_called_at
+                .write(&item.bucket_key, at)
+                .unwrap();
+        });
+    }
+
+    fn set_timestamp(&mut self, timestamp: u64) {
+        self.provider.set_timestamp(U256::from(timestamp));
     }
 
     fn qualify(&mut self, nod_id: EntityId36) {
@@ -572,3 +592,74 @@ fn certified_generation_has_no_public_installation_selector() {
 }
 
 mod materialization;
+
+/// Being called opens a notice period, it does not close mining: the owner is
+/// meant to settle and mine inside it. The deadline itself is still inside.
+#[test]
+fn a_called_nod_still_mines_at_the_settlement_deadline() {
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0x55));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.settle(nod_id, input.owner);
+
+    let called_at = 1_700_000_000;
+    world.mark_called(nod_id, called_at);
+    world.set_timestamp(called_at + CALL_NOTICE_PERIOD);
+
+    let nonce = find_valid_nonce(nod_id);
+    let minted = world
+        .enter(|storage, scope, parent| {
+            api::mine_gratis(
+                &storage,
+                scope,
+                parent,
+                input.owner,
+                nod_id,
+                nonce,
+                mine_auth(input.owner, input.gratis_load_minor),
+            )
+        })
+        .unwrap();
+    assert_eq!(minted, input.gratis_load_minor);
+}
+
+/// Past the deadline the Nod is forfeit. The daily sweep burns it, but this gate
+/// closes the window between the deadline and the sweep reaching it.
+#[test]
+fn mining_is_rejected_once_the_settlement_deadline_has_passed() {
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0x55));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.settle(nod_id, input.owner);
+
+    let called_at = 1_700_000_000;
+    world.mark_called(nod_id, called_at);
+    world.set_timestamp(called_at + CALL_NOTICE_PERIOD + 1);
+
+    let nonce = find_valid_nonce(nod_id);
+    let error = world
+        .enter(|storage, scope, parent| {
+            api::mine_gratis(
+                &storage,
+                scope,
+                parent,
+                input.owner,
+                nod_id,
+                nonce,
+                mine_auth(input.owner, input.gratis_load_minor),
+            )
+        })
+        .unwrap_err();
+    assert!(
+        matches!(error, PrecompileError::Revert(ref reason)
+            if reason == &NodFactoryError::CallDeadlineExpired.to_string()),
+        "unexpected error: {error:?}"
+    );
+    // The Nod survives for the sweep to burn; the gate only refuses to mine it.
+    assert!(world
+        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .unwrap()
+        .is_some());
+}

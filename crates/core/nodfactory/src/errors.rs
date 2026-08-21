@@ -58,6 +58,9 @@ pub enum NodFactoryError {
 
     #[error("no settlement asset registered for reference currency {reference_currency}")]
     NoSettlementAsset { reference_currency: u16 },
+
+    #[error("nod call settlement deadline has expired")]
+    CallDeadlineExpired,
 }
 
 impl From<NodFactoryError> for PrecompileError {
