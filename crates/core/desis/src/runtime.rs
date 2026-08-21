@@ -267,7 +267,17 @@ fn advance_day(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u6
     loop {
         let mut contract = storage.contract::<DesisContract>();
         let stage = contract.read_stage(worldwide_day)?;
-        let anchor = u64::from(contract.auction_at.read(&worldwide_day)?);
+        let stored_anchor = u64::from(contract.auction_at.read(&worldwide_day)?);
+        // An e2e day never reaches its production anchor, so a briefed day starts
+        // from the tick that observes the brief.
+        #[cfg(feature = "e2e-test")]
+        let anchor = if stage == AuctionStage::Briefed {
+            now
+        } else {
+            stored_anchor
+        };
+        #[cfg(not(feature = "e2e-test"))]
+        let anchor = stored_anchor;
         let commit_end = anchor.saturating_add(COMMIT_WINDOW_SECONDS);
         let reveal_end = commit_end.saturating_add(u64::from(REVEAL_WINDOW_SECONDS));
         let issuance_end = reveal_end.saturating_add(SETTLEMENT_WINDOW_SECONDS);
