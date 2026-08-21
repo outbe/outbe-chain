@@ -23,7 +23,7 @@ contract BridgeMsgCodecMinLengthTest is Test {
         series[0].seriesId = "20250101-USD-U";
         series[0].worldwideDay = 20_250_101;
 
-        bytes memory smallest = BridgeMsgCodec.encodeIssuanceInstructions(series);
+        bytes memory smallest = BridgeMsgCodec.encodeIssuanceInstructions(20_250_101, 0, 1, series);
         assertEq(smallest.length, BridgeMsgCodec.MIN_LEN_ISSUANCE_INSTRUCTIONS, "issuance floor");
     }
 

@@ -169,22 +169,51 @@ pub fn pack_issuance_messages(
     per_chain
 }
 
-/// Send a day's packed issuance messages. Relay-float-funded: value 0, the router
-/// quotes and pays the bridge fee from its own float.
+/// Send a day's packed issuance messages, each stamped with its position in the chain's run.
+/// Relay-float-funded: value 0, the router quotes and pays the bridge fee from its own float.
 pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Result<()> {
-    for (chain_id, series) in pack_issuance_messages(legs) {
-        storage.call(
-            ORIGIN_ROUTER_ADDRESS,
-            U256::ZERO,
-            IOriginRouter::sendIssuanceInstructionsCall {
-                dstChainId: chain_id,
-                series,
-            }
-            .abi_encode()
-            .into(),
-        )?;
+    for ((chain_id, worldwide_day), messages) in
+        chunk_issuance_messages(pack_issuance_messages(legs))
+    {
+        let total_chunks = u16::try_from(messages.len())
+            .map_err(|_| PrecompileError::Revert("issuance chunk count exceeds u16".into()))?;
+        for (chunk_index, series) in messages.into_iter().enumerate() {
+            storage.call(
+                ORIGIN_ROUTER_ADDRESS,
+                U256::ZERO,
+                IOriginRouter::sendIssuanceInstructionsCall {
+                    dstChainId: chain_id,
+                    worldwideDay: worldwide_day,
+                    chunkIndex: chunk_index as u16,
+                    totalChunks: total_chunks,
+                    series,
+                }
+                .abi_encode()
+                .into(),
+            )?;
+        }
     }
     Ok(())
+}
+
+/// One (chain, worldwide day) run of issuance messages, in send order: what the chunk header numbers.
+pub(crate) type IssuanceRun = ((u32, u32), Vec<Vec<IssuanceInstructionsParams>>);
+
+/// Group packed messages into the runs the chunk header numbers: one per (chain, day), the pair the
+/// receiver counts chunks against. Callers pass one day's legs (clearing does), which is also what
+/// keeps `pack_issuance_messages` from batching two days into one message.
+pub(crate) fn chunk_issuance_messages(
+    packed: Vec<(u32, Vec<IssuanceInstructionsParams>)>,
+) -> Vec<IssuanceRun> {
+    let mut runs: Vec<IssuanceRun> = Vec::new();
+    for (chain_id, message) in packed {
+        let key = (chain_id, message[0].worldwideDay);
+        match runs.iter_mut().find(|(run_key, _)| *run_key == key) {
+            Some((_, messages)) => messages.push(message),
+            None => runs.push((key, vec![message])),
+        }
+    }
+    runs
 }
 
 fn recipient_count(message: &[IssuanceInstructionsParams]) -> usize {

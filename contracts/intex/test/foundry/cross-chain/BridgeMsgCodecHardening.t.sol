@@ -28,7 +28,16 @@ contract BridgeMsgCodecHardeningHarness {
         pure
         returns (bytes memory)
     {
-        return BridgeMsgCodec.encodeIssuanceInstructions(series);
+        return BridgeMsgCodec.encodeIssuanceInstructions(series[0].worldwideDay, 0, 1, series);
+    }
+
+    function encodeIssuanceInstructions2(
+        uint32 worldwideDay,
+        uint16 chunkIndex,
+        uint16 totalChunks,
+        BridgeMsgCodec.IssuanceInstructionsPayload[] calldata series
+    ) external pure returns (bytes memory) {
+        return BridgeMsgCodec.encodeIssuanceInstructions(worldwideDay, chunkIndex, totalChunks, series);
     }
 
     function encodeRefundInstructions(
@@ -63,9 +72,9 @@ contract BridgeMsgCodecHardeningHarness {
     function decodeIssuanceInstructions(bytes calldata m)
         external
         pure
-        returns (BridgeMsgCodec.IssuanceInstructionsPayload[] memory)
+        returns (BridgeMsgCodec.IssuanceInstructionsPayload[] memory series)
     {
-        return BridgeMsgCodec.decodeIssuanceInstructions(m);
+        (,,, series) = BridgeMsgCodec.decodeIssuanceInstructions(m);
     }
 }
 
@@ -124,6 +133,20 @@ contract BridgeMsgCodecHardeningTest is Test {
             abi.encodeWithSelector(BridgeMsgCodec.IssuanceArrayLengthMismatch.selector, uint256(2), uint256(1))
         );
         harness.encodeIssuanceInstructions(IssuanceBatchLib.one(payload));
+    }
+
+    function test_encodeIssuanceInstructions_dayMismatch_reverts() public {
+        BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
+        payload.seriesId = "20260212-TRY-U";
+        payload.worldwideDay = 20_260_212;
+        payload.recipients = new address[](0);
+        payload.quantities = new uint256[](0);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BridgeMsgCodec.IssuanceDayMismatch.selector, payload.seriesId, uint32(20_260_212), uint32(20_260_213)
+            )
+        );
+        harness.encodeIssuanceInstructions2(20_260_213, 0, 1, IssuanceBatchLib.one(payload));
     }
 
     function test_encodeRefundInstructions_arrayLengthMismatch_reverts() public {

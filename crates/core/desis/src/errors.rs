@@ -10,9 +10,6 @@ pub enum DesisError {
     #[error("invalid stage transition")]
     InvalidStageTransition,
 
-    #[error("stale bids generation: incoming {incoming}, last {last}")]
-    StaleBidsGeneration { incoming: u32, last: u32 },
-
     #[error("pending clearing data missing for series {0}")]
     PendingClearingDataMissing(WorldwideDay),
 

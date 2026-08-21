@@ -321,6 +321,6 @@ contract BridgeMsgCodecValidationTest is Test {
         payload.seriesId = "20260212-TRY-U";
         payload.recipients = new address[](n);
         payload.quantities = new uint256[](n);
-        return BridgeMsgCodec.encodeIssuanceInstructions(IssuanceBatchLib.one(payload));
+        return BridgeMsgCodec.encodeIssuanceInstructions(0, 0, 1, IssuanceBatchLib.one(payload));
     }
 }

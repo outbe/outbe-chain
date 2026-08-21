@@ -15,6 +15,7 @@ import {IWCOEN} from "./interfaces/IWCOEN.sol";
 import {IERC7786TokenReceiver} from "./interfaces/IERC7786TokenReceiver.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../shared/libs/IntexGas.sol";
+import {InboundReason} from "../shared/libs/InboundReason.sol";
 
 /// @title OriginRouter
 /// @author Outbe
@@ -284,18 +285,20 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function quoteSendIssuanceInstructions(uint32 dstChainId, IssuanceInstructionsParams[] calldata series)
-        external
-        view
-        returns (uint256)
-    {
+    function quoteSendIssuanceInstructions(
+        uint32 dstChainId,
+        uint32 worldwideDay,
+        uint16 chunkIndex,
+        uint16 totalChunks,
+        IssuanceInstructionsParams[] calldata series
+    ) external view returns (uint256) {
         uint256 recipients;
         for (uint256 i = 0; i < series.length; i++) {
             recipients += series[i].recipients.length;
         }
         return _quoteFee(
             dstChainId,
-            BridgeMsgCodec.encodeIssuanceInstructions(_toCodecPayloads(series)),
+            BridgeMsgCodec.encodeIssuanceInstructions(worldwideDay, chunkIndex, totalChunks, _toCodecPayloads(series)),
             IntexGas.issuance(series.length, recipients)
         );
     }
@@ -387,33 +390,34 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function sendIssuanceInstructions(uint32 dstChainId, IssuanceInstructionsParams[] calldata series)
-        external
-        payable
-        onlyRole(INTEX_FACTORY_ROLE)
-        returns (bytes32 sendId)
-    {
+    function sendIssuanceInstructions(
+        uint32 dstChainId,
+        uint32 worldwideDay,
+        uint16 chunkIndex,
+        uint16 totalChunks,
+        IssuanceInstructionsParams[] calldata series
+    ) external payable onlyRole(INTEX_FACTORY_ROLE) returns (bytes32 sendId) {
         // Empty `recipients` is valid: a snapshot chain with no local winners still needs the series created.
-        uint256 recipients = _requireIssuanceBatch(dstChainId, series);
+        uint256 recipients = _requireIssuanceBatch(dstChainId, worldwideDay, series);
         sendId = _sendOrPark(
             dstChainId,
-            BridgeMsgCodec.encodeIssuanceInstructions(_toCodecPayloads(series)),
+            BridgeMsgCodec.encodeIssuanceInstructions(worldwideDay, chunkIndex, totalChunks, _toCodecPayloads(series)),
             IntexGas.issuance(series.length, recipients)
         );
         emit IssuanceInstructionsSent(sendId, series[0].seriesId, recipients);
     }
 
-    /// @dev Validates a batch and returns its total recipient count. Every series in a message
-    ///      must belong to a day this chain is a target of; the codec bounds the counts.
-    function _requireIssuanceBatch(uint32 dstChainId, IssuanceInstructionsParams[] calldata series)
+    /// @dev Validates a batch and returns its total recipient count. The day must be one this chain is a
+    ///      target of; the codec owns the wire format (chunk header, per-series day and counts).
+    function _requireIssuanceBatch(uint32 dstChainId, uint32 worldwideDay, IssuanceInstructionsParams[] calldata series)
         private
         view
         returns (uint256 recipients)
     {
         if (series.length == 0) revert EmptyArray();
+        _requireSeriesTarget(worldwideDay, dstChainId);
         for (uint256 i = 0; i < series.length; i++) {
             if (series[i].recipients.length != series[i].quantities.length) revert ArrayLengthMismatch();
-            _requireSeriesTarget(series[i].worldwideDay, dstChainId);
             recipients += series[i].recipients.length;
         }
     }
@@ -527,10 +531,7 @@ contract OriginRouter is
             uint256[] memory packedBids
         ) = BridgeMsgCodec.decodeBidsBatch(payload);
 
-        if (bodySrcChainId != srcChainId) revert SrcChainIdBodyMismatch(srcChainId, bodySrcChainId);
-        // Only a chain in the day's frozen snapshot may feed bids; a rogue/late-registered source
-        // would otherwise leave storage residue Desis never clears (it resets only snapshot chains).
-        if (!_isSeriesTarget(worldwideDay, srcChainId)) revert NotSeriesTarget(worldwideDay, srcChainId);
+        if (!_acceptBids(srcChainId, bodySrcChainId, worldwideDay, BridgeMsgCodec.MSG_BIDS_BATCH)) return;
 
         IDesis(_os().desis)
             .processBidsBatch(
@@ -545,12 +546,31 @@ contract OriginRouter is
         (uint32 worldwideDay, uint32 bodySrcChainId, uint32 relayGeneration, uint16 totalBatches, uint32 totalBids) =
             BridgeMsgCodec.decodeBidsDone(payload);
 
-        if (bodySrcChainId != srcChainId) revert SrcChainIdBodyMismatch(srcChainId, bodySrcChainId);
-        if (!_isSeriesTarget(worldwideDay, srcChainId)) revert NotSeriesTarget(worldwideDay, srcChainId);
+        if (!_acceptBids(srcChainId, bodySrcChainId, worldwideDay, BridgeMsgCodec.MSG_BIDS_DONE)) return;
 
         IDesis(_os().desis).processBidsDone(worldwideDay, srcChainId, relayGeneration, totalBatches, totalBids);
 
         emit BidsDoneReceived(srcChainId, worldwideDay, totalBatches, totalBids);
+    }
+
+    /// @dev Whether a relayed bids message may reach Desis. A body naming another source than the one the bridge
+    ///      authenticated, or a source outside the day's frozen snapshot, can never become acceptable: it is
+    ///      acknowledged without effect (a rogue/late-registered source would otherwise leave storage residue
+    ///      Desis never clears — it resets only snapshot chains).
+    function _acceptBids(uint32 srcChainId, uint32 bodySrcChainId, uint32 worldwideDay, uint8 msgType)
+        private
+        returns (bool)
+    {
+        bytes32 key = bytes32((uint256(worldwideDay) << 32) | srcChainId);
+        if (bodySrcChainId != srcChainId) {
+            emit InboundMessageIgnored(srcChainId, msgType, key, InboundReason.CONFLICT);
+            return false;
+        }
+        if (!_isSeriesTarget(worldwideDay, srcChainId)) {
+            emit InboundMessageIgnored(srcChainId, msgType, key, InboundReason.NOT_FOUND);
+            return false;
+        }
+        return true;
     }
 
     // --- Internal helpers ---

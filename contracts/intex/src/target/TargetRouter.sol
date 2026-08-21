@@ -18,6 +18,14 @@ import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {IntexNFT1155BridgeCodec} from "../shared/libs/IntexNFT1155BridgeCodec.sol";
 import {IntexGas} from "../shared/libs/IntexGas.sol";
 import {IIntexNFT1155Bridge} from "../shared/interfaces/IIntexNFT1155Bridge.sol";
+import {TargetInbound} from "./libs/TargetInbound.sol";
+import {
+    TargetRouterStorage,
+    PendingBidsRelay,
+    PendingHoldersRelay,
+    PendingIssuanceMint,
+    PendingProceedsRoute
+} from "./TargetRouterStorage.sol";
 
 /// @title TargetRouter
 /// @author Outbe
@@ -40,107 +48,6 @@ contract TargetRouter is
 
     /// @notice Destination chainId of Outbe — the sole peer for every outbound send and the only accepted source.
     uint32 public immutable OUTBE_CHAIN_ID;
-
-    /// @notice A bids relay parked because its outbound send reverted (e.g. relay float too low); retried via
-    ///         `flushPendingBidsRelay`. Bids stay in auction state, so only the worldwideDay is snapshotted.
-    struct PendingBidsRelay {
-        uint32 worldwideDay;
-        bool exists;
-        bool done;
-    }
-
-    /// @notice A holders bridge chunk parked because `systemMultiSend` reverted; retried via
-    ///         `flushPendingHoldersRelay`. markCalled does not change balances, so the snapshot stays the canonical
-    ///         work. Holders migrate in `MAX_BATCH_SIZE` chunks, so each parked entry is one such chunk.
-    struct PendingHoldersRelay {
-        uint256 tokenId;
-        address[] holders;
-        uint256[] amounts;
-        bool exists;
-        bool done;
-    }
-
-    /// @notice An issuance mint parked because a recipient's ERC-1155 receiver hook reverted; retried via
-    ///         `flushPendingIssuanceMint`.
-    struct PendingIssuanceMint {
-        bytes14 seriesId;
-        address recipient;
-        uint256 quantity;
-        bool exists;
-        bool done;
-    }
-
-    /// @notice A lifecycle mark IntexNFT1155 would not take, most often because the series has not
-    ///         landed yet. Retried via `flushPendingMark`; `msgType` says which mark it was.
-    /// @dev A mark a later one superseded stays parked and its flush keeps reverting — an inert slot,
-    ///      left standing because a reverting flush reports the disagreement rather than hiding it.
-    struct PendingMark {
-        bytes14 seriesId;
-        uint8 msgType;
-        bool exists;
-        bool done;
-    }
-
-    /// @custom:storage-location erc7201:outbe.intex.TargetRouter
-    struct TargetRouterStorage {
-        /// @dev Auction contract that originates outbound bids and receives inbound stage transitions.
-        IIntexAuction auction;
-        /// @dev IntexNFT1155 contract that issuance, mark-called, and mark-qualified messages apply to.
-        IIntexNFT1155 intex;
-        /// @dev EscrowAdapter contract that refund instructions are forwarded to for finalization.
-        IEscrowAdapter escrowAdapter;
-        /// @dev IntexNFT1155Bridge used to bridge series holders to Outbe on markCalled.
-        IIntexNFT1155Bridge nftBridge;
-        /// @dev Parked BIDS_BATCH relays awaiting permissionless retry, keyed by enqueue index.
-        mapping(uint256 idx => PendingBidsRelay) pendingBidsRelays;
-        /// @dev Next index to assign in `pendingBidsRelays`; also the count of relays ever enqueued.
-        uint256 nextPendingBidsRelayIdx;
-        /// @dev Monotonic per-series counter stamped on every BIDS_BATCH send/flush. The Outbe receiver
-        ///      replaces a lower generation's bids when a higher one arrives, so re-flushing a parked
-        ///      relay cannot double-count demand.
-        mapping(uint32 worldwideDay => uint32 generation) bidsRelayGeneration;
-        /// @dev Parked holders bridges awaiting permissionless retry, keyed by enqueue index.
-        mapping(uint256 idx => PendingHoldersRelay) pendingHoldersRelays;
-        /// @dev Next index to assign in `pendingHoldersRelays`; also the count of bridges ever enqueued.
-        uint256 nextPendingHoldersRelayIdx;
-        /// @dev Parked issuance mints awaiting permissionless retry, keyed by enqueue index.
-        mapping(uint256 idx => PendingIssuanceMint) pendingIssuanceMints;
-        /// @dev Next index to assign in `pendingIssuanceMints`; also the count ever enqueued.
-        uint256 nextPendingIssuanceMintIdx;
-        /// @dev Composed-transfer token bridge that routes auction proceeds to Outbe.
-        IERC7786TokenBridge tokenBridge;
-        /// @dev OriginRouter address on Outbe that receives and distributes the proceeds.
-        address originRouter;
-        /// @dev Parked proceeds routes awaiting permissionless retry, keyed by enqueue index.
-        mapping(uint256 idx => PendingProceedsRoute) pendingProceedsRoutes;
-        /// @dev Next index to assign in `pendingProceedsRoutes`; also the count ever enqueued.
-        uint256 nextPendingProceedsRouteIdx;
-        /// @dev Set once the CLEARING for a day has triggered its bids relay, so a redelivered CLEARING never
-        ///      re-relays under a fresh generation.
-        mapping(uint32 worldwideDay => bool relayed) clearingRelayed;
-        /// @dev Bit per applied refund chunk, so a redelivered one neither re-counts nor
-        ///      completes the day. One word covers `MAX_CHUNKS`.
-        mapping(uint32 worldwideDay => uint256 bitmap) refundChunksApplied;
-        /// @dev Proceeds accrued so far, routed as one transfer once every chunk has arrived:
-        ///      the origin marks a chain paid on first delivery, so a partial sum closes the
-        ///      creator-reward fan-in early.
-        mapping(uint32 worldwideDay => uint128 accrued) refundProceedsAccrued;
-        /// @dev How many of the day's refund chunks have been applied.
-        mapping(uint32 worldwideDay => uint16 applied) refundChunksSeen;
-        /// @dev Parked lifecycle marks awaiting permissionless retry, keyed by enqueue index.
-        mapping(uint256 idx => PendingMark) pendingMarks;
-        /// @dev Next index to assign in `pendingMarks`; also the count ever enqueued.
-        uint256 nextPendingMarkIdx;
-    }
-
-    /// @notice A proceeds route parked because its outbound send reverted (e.g. relay float too low); retried
-    ///         via `flushPendingProceedsRoute`. The WCOEN is already held here, so only series+amount is snapshotted.
-    struct PendingProceedsRoute {
-        uint32 worldwideDay;
-        uint128 amount;
-        bool exists;
-        bool done;
-    }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.TargetRouter")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant _STORAGE_SLOT = 0x69b6aeeb915a7ddfacf9fc7eeda850d126d37a2c760f56ea4c74fddcae77ba00;
@@ -248,15 +155,33 @@ contract TargetRouter is
         return _ts().nextPendingIssuanceMintIdx;
     }
 
-    /// @notice Parked lifecycle mark at `idx`.
-    function pendingMarks(uint256 idx) external view returns (bytes14 seriesId, uint8 msgType, bool exists, bool done) {
-        PendingMark storage p = _ts().pendingMarks[idx];
-        return (p.seriesId, p.msgType, p.exists, p.done);
+    /// @notice Whether `recipient` has already been issued its allocation of `seriesId` here.
+    function issued(bytes14 seriesId, address recipient) external view returns (bool) {
+        return _ts().issued[seriesId][recipient];
     }
 
-    /// @notice Next index to assign in `pendingMarks`.
-    function nextPendingMarkIdx() external view returns (uint256) {
-        return _ts().nextPendingMarkIdx;
+    /// @notice Issuance chunk progress of `worldwideDay` on this chain: applied so far and the declared total
+    ///         (0 until the first chunk lands).
+    function issuanceChunks(uint32 worldwideDay) external view returns (uint16 seen, uint16 total) {
+        TargetRouterStorage storage $ = _ts();
+        return ($.issuanceChunksSeen[worldwideDay], $.issuanceTotalChunks[worldwideDay]);
+    }
+
+    /// @notice Refund chunk progress of `worldwideDay` on this chain: applied so far and the declared total
+    ///         (0 until the first chunk lands).
+    function refundChunks(uint32 worldwideDay) external view returns (uint16 seen, uint16 total) {
+        TargetRouterStorage storage $ = _ts();
+        return ($.refundChunksSeen[worldwideDay], $.refundTotalChunks[worldwideDay]);
+    }
+
+    /// @notice Whether issuance chunk `chunkIndex` of `worldwideDay` has been applied here.
+    function issuanceChunkApplied(uint32 worldwideDay, uint16 chunkIndex) external view returns (bool) {
+        return _ts().issuanceChunkApplied[worldwideDay][chunkIndex];
+    }
+
+    /// @notice Lifecycle mark waiting for `seriesId` to land here (codec msgType, 0 = none).
+    function pendingMark(bytes14 seriesId) external view returns (uint8) {
+        return _ts().pendingMark[seriesId];
     }
 
     // --- Admin ---
@@ -312,59 +237,22 @@ contract TargetRouter is
         BridgeMsgCodec.assertMinLength(message, msgType);
 
         if (msgType == BridgeMsgCodec.MSG_AUCTION_STAGE_START) {
-            _handleAuctionStageStart(srcChainId, message);
+            TargetInbound.handleAuctionStageStart(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING) {
-            _handleAuctionStageClearing(srcChainId, message);
+            TargetInbound.handleAuctionStageClearing(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_AUCTION_RESULT) {
-            _handleAuctionResult(srcChainId, message);
+            TargetInbound.handleAuctionResult(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS) {
-            _handleIssuanceInstructions(srcChainId, message);
+            TargetInbound.handleIssuanceInstructions(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS) {
-            _handleRefundInstructions(srcChainId, receiveId, message);
+            TargetInbound.handleRefundInstructions(_ts(), srcChainId, receiveId, message);
         } else if (msgType == BridgeMsgCodec.MSG_MARK_CALLED) {
-            _handleMarkCalled(srcChainId, message);
+            TargetInbound.handleMarkCalled(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED) {
-            _handleMarkQualified(srcChainId, message);
+            TargetInbound.handleMarkQualified(_ts(), srcChainId, message);
         } else {
             revert BridgeMsgCodec.UnknownMsgType(msgType);
         }
-    }
-
-    /// @notice Decode AUCTION_STAGE_START and forward the day state, schedule and params to the Auction contract.
-    function _handleAuctionStageStart(uint32 _srcChainId, bytes calldata _message) internal {
-        (
-            uint32 worldwideDay,
-            IIntexAuction.WorldwideDayState dayState,
-            IIntexAuction.AuctionSchedule memory schedule,
-            IIntexAuction.AuctionParams memory params
-        ) = BridgeMsgCodec.decodeAuctionParams(_message);
-        _ts().auction.auctionStart(worldwideDay, dayState, schedule, params);
-
-        emit AuctionStageReceived(_srcChainId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
-    }
-
-    /// @notice Decode AUCTION_STAGE_CLEARING, forward to Auction, then relay revealed bids to Outbe.
-    /// @dev Only the outbound relay is caught (parked on failure); a failing inbound transition propagates so the
-    ///      bridge redelivers.
-    function _handleAuctionStageClearing(uint32 _srcChainId, bytes calldata _message) internal {
-        TargetRouterStorage storage $ = _ts();
-        uint32 worldwideDay = BridgeMsgCodec.decodeAuctionStageClearing(_message);
-        $.auction.startClearingStage(worldwideDay); // idempotent; a failing transition propagates for redelivery
-
-        // Relay the revealed bids exactly once. A redelivered CLEARING must not re-relay under a fresh generation.
-        if (!$.clearingRelayed[worldwideDay]) {
-            $.clearingRelayed[worldwideDay] = true;
-            try this.relayBidsToOutbe(worldwideDay) {
-            // ok — bids forwarded
-            }
-            catch (bytes memory reason) {
-                uint256 idx = $.nextPendingBidsRelayIdx++;
-                $.pendingBidsRelays[idx] = PendingBidsRelay({worldwideDay: worldwideDay, exists: true, done: false});
-                emit BidsRelayDeferred(idx, worldwideDay, reason);
-            }
-        }
-
-        emit AuctionStageReceived(_srcChainId, worldwideDay, BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING);
     }
 
     /// @notice Self-call shim around `_doSendBidsToOutbe`. Only callable by this contract itself —
@@ -471,67 +359,6 @@ contract TargetRouter is
         emit BidsBatchSent(sendId, worldwideDay, bidderAddresses.length);
     }
 
-    /// @notice Decode AUCTION_RESULT and execute auction clearing on the Auction contract.
-    function _handleAuctionResult(uint32 _srcChainId, bytes calldata _message) internal {
-        (uint32 worldwideDay, uint32 issuedIntexCount, uint64 auctionClearingRate, uint32 wonBidsCount) =
-            BridgeMsgCodec.decodeAuctionResult(_message);
-
-        _ts().auction.executeAuctionClearing(worldwideDay, issuedIntexCount, auctionClearingRate, wonBidsCount);
-
-        emit AuctionResultReceived(_srcChainId, worldwideDay, issuedIntexCount, auctionClearingRate);
-    }
-
-    /// @notice Decode ISSUANCE_INSTRUCTIONS, create the series, and mint tokens via IntexNFT1155.
-    function _handleIssuanceInstructions(uint32 _srcChainId, bytes calldata _message) internal {
-        TargetRouterStorage storage $ = _ts();
-        BridgeMsgCodec.IssuanceInstructionsPayload[] memory series = BridgeMsgCodec.decodeIssuanceInstructions(_message);
-
-        for (uint256 s = 0; s < series.length; s++) {
-            BridgeMsgCodec.IssuanceInstructionsPayload memory payload = series[s];
-
-            // Create-if-absent: any of a day's messages may be the first to name a series.
-            if (!$.intex.seriesExists(payload.seriesId)) {
-                $.intex
-                    .createSeries(
-                        IIntexNFT1155.CreateSeriesParams({
-                            seriesId: payload.seriesId,
-                            worldwideDay: payload.worldwideDay,
-                            issuanceCurrency: payload.issuanceCurrency,
-                            referenceCurrency: payload.referenceCurrency,
-                            issuedIntexCount: payload.issuedIntexCount,
-                            promisLoadMinor: payload.promisLoadMinor,
-                            entryPriceMinor: payload.entryPriceMinor,
-                            floorPriceMinor: payload.floorPriceMinor,
-                            callPriceMinor: payload.callPriceMinor,
-                            callTrigger: IIntexNFT1155.IntexCallTrigger({
-                                callWindow: payload.callWindow,
-                                callThreshold: payload.callThreshold,
-                                callNoticePeriod: payload.callNoticePeriod
-                            })
-                        })
-                    );
-            }
-
-            uint256 recipientsLen = payload.recipients.length;
-            for (uint256 i = 0; i < recipientsLen; i++) {
-                uint256 quantity = payload.quantities[i];
-                if (quantity == 0) continue;
-                address recipient = payload.recipients[i];
-                // Per-recipient self-call: a reverting receiver hook parks only that mint, not the whole batch.
-                try this.mintIssuanceOne(payload.seriesId, recipient, quantity) {}
-                catch (bytes memory reason) {
-                    uint256 idx = $.nextPendingIssuanceMintIdx++;
-                    $.pendingIssuanceMints[idx] = PendingIssuanceMint({
-                        seriesId: payload.seriesId, recipient: recipient, quantity: quantity, exists: true, done: false
-                    });
-                    emit IssuanceMintDeferred(idx, payload.seriesId, recipient, reason);
-                }
-            }
-
-            emit IssuanceInstructionsReceived(_srcChainId, payload.seriesId, recipientsLen);
-        }
-    }
-
     /// @notice Self-call shim around a single issuance mint; isolates a reverting recipient hook.
     function mintIssuanceOne(bytes14 seriesId, address to, uint256 quantity) external {
         if (msg.sender != address(this)) revert NotSelf();
@@ -548,95 +375,6 @@ contract TargetRouter is
         emit IssuanceMintFlushed(idx, p.seriesId);
     }
 
-    /// @notice Decode REFUND_INSTRUCTIONS and forward finalization instructions to the EscrowAdapter.
-    /// @dev `receiveId` is the escrow finalization tag; escrow dedups on the series' own `finalized` flag.
-    function _handleRefundInstructions(uint32 _srcChainId, bytes32 _receiveId, bytes calldata _message) internal {
-        (
-            uint32 worldwideDay,
-            uint16 chunkIndex,
-            uint16 totalChunks,
-            address[] memory bidders,
-            uint128[] memory refundedAmounts,
-            uint128[] memory paidAmounts
-        ) = BridgeMsgCodec.decodeRefundInstructions(_message);
-
-        TargetRouterStorage storage $ = _ts();
-        uint256 bit = 1 << chunkIndex;
-        if ($.refundChunksApplied[worldwideDay] & bit != 0) {
-            // Redelivered: already settled and counted.
-            emit RefundInstructionsReceived(_srcChainId, worldwideDay, 0);
-            return;
-        }
-
-        IEscrowAdapter.FinalizationInstruction[] memory instructions =
-            new IEscrowAdapter.FinalizationInstruction[](bidders.length);
-
-        for (uint256 i = 0; i < bidders.length; i++) {
-            instructions[i] = IEscrowAdapter.FinalizationInstruction({
-                bidder: bidders[i], refundedAmount: refundedAmounts[i], paidAmount: paidAmounts[i]
-            });
-        }
-
-        // Counted before settling: the escrow refuses instructions once the day is closed.
-        $.refundChunksApplied[worldwideDay] |= bit;
-        uint16 seen = $.refundChunksSeen[worldwideDay] + 1;
-        $.refundChunksSeen[worldwideDay] = seen;
-        // `>=` rather than `==`: an overshoot would otherwise leave the day's proceeds
-        // accrued in this contract with nothing left to release them.
-        bool completesDay = seen >= totalChunks;
-
-        uint128 totalPaid = $.escrowAdapter.finalizeAuction(worldwideDay, _receiveId, instructions, completesDay);
-        $.refundProceedsAccrued[worldwideDay] += totalPaid;
-
-        // One transfer per day: the origin counts a chain paid on the first delivery.
-        if (completesDay) {
-            uint128 proceeds = $.refundProceedsAccrued[worldwideDay];
-            if (proceeds > 0) {
-                $.refundProceedsAccrued[worldwideDay] = 0;
-                _routeOrParkProceeds(worldwideDay, proceeds);
-            }
-        }
-
-        emit RefundInstructionsReceived(_srcChainId, worldwideDay, bidders.length);
-    }
-
-    /// @notice Decode MARK_CALLED and apply it to every series it carries, parking the ones that
-    ///         will not take the mark yet.
-    function _handleMarkCalled(uint32 _srcChainId, bytes calldata _message) internal {
-        (, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(_message);
-        for (uint256 i = 0; i < seriesIds.length; ++i) {
-            _applyMark(_srcChainId, seriesIds[i], BridgeMsgCodec.MSG_MARK_CALLED);
-        }
-    }
-
-    /// @notice Decode MARK_QUALIFIED and apply it to every series it carries, parking the rest.
-    /// @dev A pure status flip, so unlike markCalled there is nothing to bridge back to Outbe.
-    function _handleMarkQualified(uint32 _srcChainId, bytes calldata _message) internal {
-        (, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkQualified(_message);
-        for (uint256 i = 0; i < seriesIds.length; ++i) {
-            _applyMark(_srcChainId, seriesIds[i], BridgeMsgCodec.MSG_MARK_QUALIFIED);
-        }
-    }
-
-    /// @notice Apply one lifecycle mark through its self-call shim, parking it on revert.
-    /// @dev Parking keeps a series the target has not seen from rejecting the whole message.
-    function _applyMark(uint32 _srcChainId, bytes14 _seriesId, uint8 _msgType) internal {
-        // solhint-disable-next-line no-empty-blocks
-        try this.applyMarkOne(_seriesId, _msgType) {}
-        catch (bytes memory reason) {
-            TargetRouterStorage storage $ = _ts();
-            uint256 idx = $.nextPendingMarkIdx++;
-            $.pendingMarks[idx] = PendingMark({seriesId: _seriesId, msgType: _msgType, exists: true, done: false});
-            emit MarkDeferred(idx, _seriesId, _msgType, reason);
-            return;
-        }
-        if (_msgType == BridgeMsgCodec.MSG_MARK_CALLED) {
-            emit MarkCalledReceived(_srcChainId, _seriesId);
-        } else {
-            emit MarkQualifiedReceived(_srcChainId, _seriesId);
-        }
-    }
-
     /// @notice Self-call shim around one lifecycle mark; isolates a series that will not take it.
     /// @param seriesId Series the mark applies to.
     /// @param msgType Codec message type: MARK_CALLED or MARK_QUALIFIED.
@@ -649,19 +387,20 @@ contract TargetRouter is
         _markCalledAndMigrate(seriesId);
     }
 
-    /// @notice Permissionless retry of a previously deferred lifecycle mark.
-    /// @param idx Index of the parked mark to flush.
-    function flushPendingMark(uint256 idx) external nonReentrant {
-        PendingMark storage p = _ts().pendingMarks[idx];
-        if (!p.exists) revert NoSuchPendingMark(idx);
-        if (p.done) revert AlreadyFlushed(idx);
-        p.done = true;
-        if (p.msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED) {
-            _ts().intex.markQualified(p.seriesId);
+    /// @notice Permissionless apply of the mark waiting in `seriesId`'s slot. Reverts if nothing waits or the
+    ///         series still will not take it, leaving the slot in place.
+    /// @param seriesId Series whose slotted mark to apply.
+    function applyPendingMark(bytes14 seriesId) external nonReentrant {
+        TargetRouterStorage storage $ = _ts();
+        uint8 msgType = $.pendingMark[seriesId];
+        if (msgType == 0) revert NoPendingMark(seriesId);
+        delete $.pendingMark[seriesId];
+        if (msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED) {
+            $.intex.markQualified(seriesId);
         } else {
-            _markCalledAndMigrate(p.seriesId);
+            _markCalledAndMigrate(seriesId);
         }
-        emit MarkFlushed(idx, p.seriesId, p.msgType);
+        emit PendingMarkApplied(seriesId, msgType);
     }
 
     /// @notice Apply markCalled to IntexNFT1155, then bridge all series holders to Outbe.
@@ -741,21 +480,6 @@ contract TargetRouter is
         uint256 fee = adapter.quoteSystemMultiSend(tokenId, holders, amounts, OUTBE_CHAIN_ID);
         // slither-disable-next-line unused-return,arbitrary-send-eth
         adapter.systemMultiSend{value: fee}(tokenId, holders, amounts, OUTBE_CHAIN_ID);
-    }
-
-    /// @dev Route proceeds to Outbe, parking series+amount on failure so a transport/float hiccup never rolls
-    ///      back the finalization (the WCOEN is already held here). Retried via `flushPendingProceedsRoute`.
-    function _routeOrParkProceeds(uint32 worldwideDay, uint128 amount) internal {
-        try this.routeProceedsExt(worldwideDay, amount) {
-        // ok — proceeds routed
-        }
-        catch (bytes memory reason) {
-            TargetRouterStorage storage $ = _ts();
-            uint256 idx = $.nextPendingProceedsRouteIdx++;
-            $.pendingProceedsRoutes[idx] =
-                PendingProceedsRoute({worldwideDay: worldwideDay, amount: amount, exists: true, done: false});
-            emit ProceedsRouteDeferred(idx, worldwideDay, amount, reason);
-        }
     }
 
     /// @notice Self-call shim around `_doRouteProceeds`. Only callable by this contract itself.
