@@ -831,11 +831,18 @@ mod boundary_value_tests {
     use crate::precompile_routes::{self, ValuePolicy};
     use alloy_primitives::{Address, U256};
     use outbe_primitives::addresses::{
-        DESIS_ADDRESS, GRATIS_ADDRESS, INTEX_FACTORY_ADDRESS, STAKING_ADDRESS, VOTE_ADDRESS,
+        CREDIS_FACTORY_ADDRESS, DESIS_ADDRESS, GRATIS_ADDRESS, INTEX_FACTORY_ADDRESS,
+        STAKING_ADDRESS, VOTE_ADDRESS,
     };
     use revm::interpreter::CallValue;
 
-    const PAYABLE: [Address; 3] = [STAKING_ADDRESS, INTEX_FACTORY_ADDRESS, VOTE_ADDRESS];
+    const PAYABLE: [Address; 4] = [
+        STAKING_ADDRESS,
+        INTEX_FACTORY_ADDRESS,
+        VOTE_ADDRESS,
+        // requestCredis takes the originating CCA's matching COEN stake.
+        CREDIS_FACTORY_ADDRESS,
+    ];
 
     fn policy(address: Address) -> ValuePolicy {
         precompile_routes::resolve(&address)
@@ -917,7 +924,7 @@ mod boundary_value_tests {
     /// and again by the module — so the omission shows up as its own broken
     /// entrypoint rather than as stranded value.
     #[test]
-    fn only_staking_intex_factory_and_vote_accept_value_among_exact_routes() {
+    fn only_the_expected_routes_accept_value_among_exact_routes() {
         for address in precompile_routes::EXACT_ADDRESSES {
             assert_eq!(
                 policy(*address) == ValuePolicy::Payable,

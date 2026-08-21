@@ -28,6 +28,7 @@ fn expected_exact_addresses() -> [Address; 38] {
         VAULT_ROUTER_ADDRESS,
         CREDIS_ADDRESS,
         CREDIS_FACTORY_ADDRESS,
+        CCA_ADDRESS,
         TRIBUTE_FACTORY_ADDRESS,
         VALIDATOR_SET_ADDRESS,
         SLASH_INDICATOR_ADDRESS,

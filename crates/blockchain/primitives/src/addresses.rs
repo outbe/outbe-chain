@@ -74,6 +74,12 @@ pub const PROMIS_LIMIT_ADDRESS: Address = address!("0x00000000000000000000000000
 /// at UTC midnight. See epic, Phase 5.
 pub const CYCLE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001010");
 
+/// Credis Card Agent precompile. Two roles at one address: the accumulator that
+/// receives the daily CCA emission pool, and the registry answering an agent's
+/// standing (`ICca.getCcaState`).
+///
+/// The registry side currently answers from a stub with no storage of its own;
+/// see `outbe_cca::precompile`.
 pub const CCA_ADDRESS: Address = address!("0x0000000000000000000000000000000000001011");
 
 // ---------------------------------------------------------------------------

@@ -12,6 +12,7 @@ import {
   DEFAULT_CREDIS_ADDRESS,
   DEFAULT_CREDIS_FACTORY_ADDRESS,
   formatTokenMeta,
+  formatCoen,
   formatTokenDiff,
   fetchTokenMeta,
   DEFAULT_ENV,
@@ -110,8 +111,36 @@ async function main() {
   // sealed so it is stored as ciphertext on the position (no EOA↔bundle linkage
   // on-chain); the asset and the disbursed amount were sealed into the same ticket at
   // pledge time, so the loan is issued at the price the user accepted.
+  // The CCA matches the user's collateral one for one in native COEN. The required
+  // amount is the gratis the quote cost, which the ticket recorded at pledge time —
+  // it is not in calldata, because it was sealed into the pledge.
+  const stake = BigInt(ticket.amount);
+  console.log(`CCA stake:      ${formatCoen(stake)} COEN (matches the pledged collateral)`);
+
+  // The loan is delivered by a call into the smart account, so the precompile now
+  // rejects an undeployed one. Fail here with a runnable instruction rather than
+  // paying gas for a mined revert carrying an opaque precompile string.
+  const saCode = await provider.getCode(smartAccount);
+  if (saCode === "0x") {
+    console.error("smart account not deployed. Run `npm run top-up-bundle-account` first.");
+    process.exit(1);
+  }
+
+  // requestCredis is payable and takes the stake from the CCA, so an underfunded
+  // CCA fails inside the EVM with no useful message.
+  const ccaNative = await provider.getBalance(ccaAddress);
+  if (ccaNative < stake) {
+    console.error(
+      `CCA holds ${formatCoen(ccaNative)} COEN but must stake ${formatCoen(stake)}. ` +
+        "Run `npm run setup-native` first.",
+    );
+    process.exit(1);
+  }
+
   console.log("\nSending requestCredis(smartAccount, pledgeHandle, spendAuth)...");
-  const tx = await credisFactory.requestCredis(smartAccount, ticket.pledgeHandle, spend);
+  const tx = await credisFactory.requestCredis(smartAccount, ticket.pledgeHandle, spend, {
+    value: stake,
+  });
   console.log(`  TX hash: ${tx.hash}`);
   const receipt = await tx.wait();
   if (!receipt) throw new Error("requestCredis tx receipt missing");

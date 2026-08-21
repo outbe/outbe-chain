@@ -47,6 +47,19 @@
   },
   {
     "type": "function",
+    "name": "CCA_REGISTRY",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "DAILY_LIMIT",
     "inputs": [],
     "outputs": [
@@ -252,5 +265,21 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "error",
+    "name": "CcaNotActive",
+    "inputs": [
+      {
+        "name": "cca",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "state",
+        "type": "uint8",
+        "internalType": "enum ICca.State"
+      }
+    ]
   }
 ]

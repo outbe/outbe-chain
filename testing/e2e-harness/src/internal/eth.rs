@@ -293,6 +293,15 @@ pub(crate) fn latest_block_timestamp(url: &str) -> Option<u64> {
     })
 }
 
+/// Chain id (`eth_chainId`).
+pub(crate) fn chain_id(url: &str) -> Option<u64> {
+    let url = url.to_string();
+    block_on(async move {
+        let provider = ProviderBuilder::new().connect_http(url.parse().ok()?);
+        provider.get_chain_id().await.ok()
+    })
+}
+
 /// Number of the finalized block.
 pub(crate) fn finalized_number(url: &str) -> Option<u64> {
     let url = url.to_string();

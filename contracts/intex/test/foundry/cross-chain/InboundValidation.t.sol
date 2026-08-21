@@ -9,6 +9,8 @@ import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
+import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
+import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
 import {IntexNFT1155BridgeCodec} from "@contracts/shared/libs/IntexNFT1155BridgeCodec.sol";
 import {IIntexNFT1155Bridge} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
 
@@ -181,11 +183,17 @@ contract InboundValidationTest is CrossChainTest {
         _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), packet);
     }
 
-    function test_OM_BodySrcChainIdMismatch_RevertsSrcChainIdBodyMismatch() public {
+    function test_OM_BodySrcChainIdMismatch_IsAcknowledgedAsAConflict() public {
         // Build a well-formed BIDS_BATCH whose body-srcChainId (0xDEAD) disagrees with the
-        // authenticated source chainId (BNB_CHAIN_ID = 1) → SrcChainIdBodyMismatch.
+        // authenticated source chainId (BNB_CHAIN_ID = 1): never acceptable, so acknowledged, not retried.
         bytes memory packet = BridgeMsgCodec.encodeBidsBatch(42, 0xDEAD, 1, 0, 1, new address[](0), new uint256[](0));
-        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.SrcChainIdBodyMismatch.selector, BNB_CHAIN_ID, 0xDEAD));
+        vm.expectEmit(true, true, true, true, address(outbeRouter));
+        emit IOriginRouter.InboundMessageIgnored(
+            BNB_CHAIN_ID,
+            BridgeMsgCodec.MSG_BIDS_BATCH,
+            bytes32((uint256(42) << 32) | BNB_CHAIN_ID),
+            InboundReason.CONFLICT
+        );
         _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), packet);
     }
 

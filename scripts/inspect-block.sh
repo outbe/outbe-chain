@@ -20,7 +20,7 @@
 #   ./scripts/inspect-block.sh [block_number_or_tag] [rpc_url]
 #
 # Examples:
-#   ./scripts/inspect-block.sh                       # latest, http://localhost:8545
+#   ./scripts/inspect-block.sh                       # latest, http://localhost:18545
 #   ./scripts/inspect-block.sh 241771                # decimal block number
 #   ./scripts/inspect-block.sh 0x3B0AB                # hex block number
 #   ./scripts/inspect-block.sh latest http://peira-1.outbe.net:8545
@@ -31,7 +31,7 @@
 set -euo pipefail
 
 BLOCK="${1:-latest}"
-RPC_URL="${2:-http://localhost:8545}"
+RPC_URL="${2:-http://localhost:18545}"
 JSON_OUT="${3:-}"
 
 # ---------------------------------------------------------------------------

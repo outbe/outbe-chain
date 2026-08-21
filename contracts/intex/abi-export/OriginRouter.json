@@ -531,6 +531,21 @@
           "internalType": "uint32"
         },
         {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "totalChunks",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
           "name": "series",
           "type": "tuple[]",
           "internalType": "struct IOriginRouter.IssuanceInstructionsParams[]",
@@ -986,6 +1001,21 @@
           "name": "dstChainId",
           "type": "uint32",
           "internalType": "uint32"
+        },
+        {
+          "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "totalChunks",
+          "type": "uint16",
+          "internalType": "uint16"
         },
         {
           "name": "series",
@@ -1494,6 +1524,37 @@
           "type": "address",
           "indexed": false,
           "internalType": "address"
+        }
+      ],
+      "anonymous": false
+    },
+    {
+      "type": "event",
+      "name": "InboundMessageIgnored",
+      "inputs": [
+        {
+          "name": "srcChainId",
+          "type": "uint32",
+          "indexed": true,
+          "internalType": "uint32"
+        },
+        {
+          "name": "msgType",
+          "type": "uint8",
+          "indexed": true,
+          "internalType": "uint8"
+        },
+        {
+          "name": "key",
+          "type": "bytes32",
+          "indexed": true,
+          "internalType": "bytes32"
+        },
+        {
+          "name": "reason",
+          "type": "uint8",
+          "indexed": false,
+          "internalType": "uint8"
         }
       ],
       "anonymous": false
@@ -2028,6 +2089,22 @@
     },
     {
       "type": "error",
+      "name": "InvalidIssuanceChunk",
+      "inputs": [
+        {
+          "name": "chunkIndex",
+          "type": "uint16",
+          "internalType": "uint16"
+        },
+        {
+          "name": "totalChunks",
+          "type": "uint16",
+          "internalType": "uint16"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "InvalidPayloadLength",
       "inputs": [
         {
@@ -2092,6 +2169,27 @@
           "name": "max",
           "type": "uint256",
           "internalType": "uint256"
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "name": "IssuanceDayMismatch",
+      "inputs": [
+        {
+          "name": "seriesId",
+          "type": "bytes14",
+          "internalType": "bytes14"
+        },
+        {
+          "name": "seriesDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "messageDay",
+          "type": "uint32",
+          "internalType": "uint32"
         }
       ]
     },
@@ -2320,22 +2418,6 @@
           "name": "value",
           "type": "uint256",
           "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "SrcChainIdBodyMismatch",
-      "inputs": [
-        {
-          "name": "origin",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "body",
-          "type": "uint32",
-          "internalType": "uint32"
         }
       ]
     },

@@ -361,6 +361,13 @@ pub struct FixtureState {
 
     // ---- Stablecoin Factory V1 live scenario ----
     pub stablecoin: Option<StablecoinFixture>,
+
+    // ---- Local target chain ----
+    /// Addresses the target-chain deploy reported.
+    pub target_contracts: Option<crate::world::target_chain::TargetContracts>,
+    /// Addresses the origin-side deploy reported.
+    pub origin_contracts: Option<crate::world::origin_venue::OriginContracts>,
+    pub auction_bidders: Vec<crate::world::bidders::Bidder>,
 }
 
 #[derive(Debug)]
@@ -481,6 +488,9 @@ impl Default for FixtureState {
             zerofee_new_day_balance_before: None,
             zerofee_new_day_balance_after: None,
             stablecoin: None,
+            target_contracts: None,
+            origin_contracts: None,
+            auction_bidders: Vec::new(),
         }
     }
 }

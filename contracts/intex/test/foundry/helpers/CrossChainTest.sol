@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {MockERC7786Bridge} from "@test-mocks/MockERC7786Bridge.sol";
 
@@ -20,6 +21,14 @@ abstract contract CrossChainTest is Test {
     /// @dev ERC-7930 interoperable address for `a` on `chainId`.
     function _interop(uint32 chainId, address a) internal pure returns (bytes memory) {
         return InteroperableAddress.formatEvmV1(chainId, a);
+    }
+
+    /// @dev How many recorded logs carry `sig` as topic0. Requires a prior `vm.recordLogs()`.
+    function _countTopic(bytes32 sig) internal returns (uint256 n) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] == sig) n++;
+        }
     }
 
     /// @dev Deliver `packet` to `recipient` as if sent by `src` on `srcChainId` (the bridge is the caller).

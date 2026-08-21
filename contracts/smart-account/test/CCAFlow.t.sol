@@ -4,6 +4,8 @@ import {BaseAATest} from "./BaseAATest.sol";
 import {BundleModulePlugin} from "src/BundleModulePlugin.sol";
 import {BundleWithdrawHook} from "src/BundleWithdrawHook.sol";
 import {BundleSpendProtectorHook} from "src/BundleSpendProtectorHook.sol";
+import {ICca} from "@precompiles/ICca.sol";
+import {SmartAccountFactory} from "src/SmartAccountFactory.sol";
 import {ITokenBundle} from "src/interfaces/ITokenBundle.sol";
 import {MockUSD} from "src/mocks/MockUSD.sol";
 import {MockFeeToken} from "src/mocks/MockFeeToken.sol";
@@ -417,5 +419,72 @@ contract CCAFlow is BaseAATest {
         assertEq(
             bundlePlugin.balanceOf(smartAccount, address(token)), 2000e6 - amount * 2, "bundle balance should decrease"
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // CCA standing gate on account creation
+    // -------------------------------------------------------------------------
+
+    /// @dev Baseline for the three revert cases below: with the registry reporting `Active`,
+    ///      creation succeeds. Without this, a gate that rejected *everything* would still make
+    ///      the negative tests pass.
+    function test_CreateAccount_SucceedsWhenCcaActive() external {
+        (address[] memory bundleTokens, address[] memory bundleSenders) = _bundleArgs();
+        ccaRegistry.setState(cca.addr, ICca.State.Active);
+
+        address account = factory.createAccount(user.addr, cca.addr, bundleTokens, bundleSenders, 7);
+        assertTrue(account.code.length > 0, "account should be deployed");
+    }
+
+    function test_RevertWhen_CcaSuspended() external {
+        (address[] memory bundleTokens, address[] memory bundleSenders) = _bundleArgs();
+        ccaRegistry.setState(cca.addr, ICca.State.Suspended);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(SmartAccountFactory.CcaNotActive.selector, cca.addr, ICca.State.Suspended)
+        );
+        factory.createAccount(user.addr, cca.addr, bundleTokens, bundleSenders, 8);
+    }
+
+    function test_RevertWhen_CcaDeregistered() external {
+        (address[] memory bundleTokens, address[] memory bundleSenders) = _bundleArgs();
+        ccaRegistry.setState(cca.addr, ICca.State.Deregistered);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(SmartAccountFactory.CcaNotActive.selector, cca.addr, ICca.State.Deregistered)
+        );
+        factory.createAccount(user.addr, cca.addr, bundleTokens, bundleSenders, 9);
+    }
+
+    /// @dev `Unknown` is the state of an address that never registered. It is the case the gate
+    ///      exists for, and it must not be conflated with `Active`.
+    function test_RevertWhen_CcaNeverRegistered() external {
+        (address[] memory bundleTokens, address[] memory bundleSenders) = _bundleArgs();
+        (address stranger,) = makeAddrAndKey("unregistered-cca");
+        ccaRegistry.setState(stranger, ICca.State.Unknown);
+
+        vm.expectRevert(abi.encodeWithSelector(SmartAccountFactory.CcaNotActive.selector, stranger, ICca.State.Unknown));
+        factory.createAccount(user.addr, stranger, bundleTokens, bundleSenders, 10);
+    }
+
+    /// @dev Address prediction is deliberately left unguarded, so a client can compute the
+    ///      counterfactual address before the agent is in good standing.
+    function test_GetAccountAddress_IgnoresCcaState() external {
+        (address[] memory bundleTokens, address[] memory bundleSenders) = _bundleArgs();
+
+        ccaRegistry.setState(cca.addr, ICca.State.Active);
+        address whenActive = factory.getAccountAddress(user.addr, cca.addr, bundleTokens, bundleSenders, 11);
+
+        ccaRegistry.setState(cca.addr, ICca.State.Deregistered);
+        address whenDeregistered = factory.getAccountAddress(user.addr, cca.addr, bundleTokens, bundleSenders, 11);
+
+        assertEq(whenActive, whenDeregistered, "prediction must not depend on registry state");
+    }
+
+    function _bundleArgs() private view returns (address[] memory bundleTokens, address[] memory bundleSenders) {
+        bundleTokens = new address[](1);
+        bundleTokens[0] = address(token);
+        bundleSenders = new address[](1);
+        bundleSenders[0] = vault;
     }
 }

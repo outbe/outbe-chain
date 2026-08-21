@@ -60,7 +60,18 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
     }
 
     function _deliver(BridgeMsgCodec.IssuanceInstructionsPayload[] memory series) internal {
-        _deliver(OUTBE_CHAIN_ID, originSender, address(router), BridgeMsgCodec.encodeIssuanceInstructions(series));
+        _deliver(0, 1, series);
+    }
+
+    function _deliver(uint16 chunkIndex, uint16 totalChunks, BridgeMsgCodec.IssuanceInstructionsPayload[] memory series)
+        internal
+    {
+        _deliver(
+            OUTBE_CHAIN_ID,
+            originSender,
+            address(router),
+            BridgeMsgCodec.encodeIssuanceInstructions(DAY, chunkIndex, totalChunks, series)
+        );
     }
 
     function test_OneMessageCreatesEverySeriesItCarries() public {
@@ -88,14 +99,14 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
         BridgeMsgCodec.IssuanceInstructionsPayload[] memory head = new BridgeMsgCodec.IssuanceInstructionsPayload[](1);
         (address[] memory r1, uint256[] memory q1) = _mintTo(first, 4);
         head[0] = _series("20250101-USD-U", r1, q1);
-        _deliver(head);
+        _deliver(0, 2, head);
 
         BridgeMsgCodec.IssuanceInstructionsPayload[] memory tail = new BridgeMsgCodec.IssuanceInstructionsPayload[](1);
         (address[] memory r2, uint256[] memory q2) = _mintTo(second, 6);
         tail[0] = _series("20250101-USD-U", r2, q2);
         // The second piece repeats the series; creating it again would revert, so the
         // receiver must recognise that it already exists.
-        _deliver(tail);
+        _deliver(1, 2, tail);
 
         uint256 tokenId = intex.issuedTokenId("20250101-USD-U");
         assertEq(intex.balanceOf(first, tokenId), 4, "first piece minted");
@@ -120,7 +131,7 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
             series[s] = _series(bytes14(uint112(uint256(0x3230323530313031) + s)), recipients, quantities);
         }
 
-        uint256 encoded = BridgeMsgCodec.encodeIssuanceInstructions(series).length;
+        uint256 encoded = BridgeMsgCodec.encodeIssuanceInstructions(DAY, 0, 1, series).length;
         assertLt(encoded, 10_000, "a full message must fit the bridge send ceiling");
     }
 }

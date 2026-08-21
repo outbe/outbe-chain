@@ -31,6 +31,10 @@ contract MockEscrowAdapter {
     {
         return totalPaidToReturn;
     }
+
+    function getAuctionStatus(uint32) external pure returns (bool, bool, uint128) {
+        return (false, false, 0);
+    }
 }
 
 /// @dev Records the composed-transfer send; can be toggled to revert to exercise the park path.

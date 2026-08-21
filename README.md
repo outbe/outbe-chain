@@ -479,6 +479,10 @@ tool. The explicit `localnet-sgx-*` command family is currently fail-closed and
 tracked by Beads issue `outbe-chain-8lp`; it never falls back to the mock dev
 enclave. Bootstrap resolves a free complete service-port layout and persists it
 in `<OUT_DIR>/localnet-bootstrap-v1.json`; `start` reuses that exact layout.
+The scan starts at `18545` and hands each validator one contiguous 13-port
+block with RPC first, so on a free machine the four RPCs are `18545`, `18558`,
+`18571`, and `18584` — read `rpc_ports` from that file instead of assuming
+consecutive ports.
 For each genesis validator the persistent owner also starts one OCOMP Supervisor,
 one SnapshotExporter and Worker ordinal 0. `start` and `status` succeed only when
 every Worker is registered and connected to its own Supervisor.
@@ -503,8 +507,12 @@ boots four validator nodes, and succeeds only after:
 - the primary RPC reaches block 1.
 
 The task prints RPC URLs, the MongoDB URI, database prefix, and data directory
-for use by any manual flow. Stop services while retaining chain and projection
-data, or remove everything, with:
+for use by any manual flow. With the default `LOCALNET_STACK_PORT_OFFSET=1000`
+the four validator RPCs are `http://127.0.0.1:19545` through `19548` (the shell
+localnet's base RPC port is `18545`, shifted by `PORT_OFFSET`).
+
+Stop services while retaining chain and projection data, or remove everything,
+with:
 
 ```bash
 mise run localnet-stack-stop

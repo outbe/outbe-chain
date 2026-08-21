@@ -15,8 +15,9 @@ use outbe_intexfactory::SeriesId;
 
 use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
-    DAY_STATE_RED, MAX_REFERENCE_PRICES, MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS,
-    ORIGIN_ROUTER_ADDRESS, REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
+    DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_REFERENCE_PRICES,
+    MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, REFUND_CHUNK_LEN,
+    REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -267,7 +268,17 @@ fn advance_day(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u6
     loop {
         let mut contract = storage.contract::<DesisContract>();
         let stage = contract.read_stage(worldwide_day)?;
-        let anchor = u64::from(contract.auction_at.read(&worldwide_day)?);
+        let stored_anchor = u64::from(contract.auction_at.read(&worldwide_day)?);
+        // An e2e day never reaches its production anchor, so a briefed day starts
+        // from the tick that observes the brief.
+        #[cfg(feature = "e2e-test")]
+        let anchor = if stage == AuctionStage::Briefed {
+            now
+        } else {
+            stored_anchor
+        };
+        #[cfg(not(feature = "e2e-test"))]
+        let anchor = stored_anchor;
         let commit_end = anchor.saturating_add(COMMIT_WINDOW_SECONDS);
         let reveal_end = commit_end.saturating_add(u64::from(REVEAL_WINDOW_SECONDS));
         let issuance_end = reveal_end.saturating_add(SETTLEMENT_WINDOW_SECONDS);
@@ -452,16 +463,35 @@ fn arm_clearing(storage: &StorageHandle<'_>, worldwide_day: WorldwideDay, now: u
 // Bid ingestion
 // ---------------------------------------------------------------------------
 
-/// Intake is open while `Revealing` and through the `Clearing` fan-in. Returns
-/// `true` to proceed, `false` for a redundant post-intake delivery (idempotent
-/// no-op, else the transport redelivers forever), `Err` before intake so the
-/// transport redelivers after reveal.
-fn intake_is_open(stage: AuctionStage) -> Result<bool> {
+/// `Open` while `Revealing`/`Clearing`; `Closed` past clearing and `UnknownDay` for an unbriefed day
+/// (both acknowledged, nothing can make them applicable); `Err` before reveal so the transport redelivers.
+fn intake_state(stage: AuctionStage) -> Result<Intake> {
     match stage {
-        AuctionStage::Revealing | AuctionStage::Clearing => Ok(true),
-        AuctionStage::Cleared | AuctionStage::Cancelled => Ok(false),
+        AuctionStage::Revealing | AuctionStage::Clearing => Ok(Intake::Open),
+        AuctionStage::Cleared | AuctionStage::Cancelled => Ok(Intake::Closed),
+        AuctionStage::None => Ok(Intake::UnknownDay),
         _ => Err(DesisError::InvalidStageTransition.into()),
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Intake {
+    Open,
+    Closed,
+    UnknownDay,
+}
+
+fn emit_inbound_ignored(
+    contract: &mut DesisContract<'_>,
+    worldwide_day: WorldwideDay,
+    src_chain_id: u32,
+    reason: u8,
+) -> Result<()> {
+    contract.emit(IDesis::InboundIgnored {
+        worldwideDay: worldwide_day.into(),
+        srcChainId: src_chain_id,
+        reason,
+    })
 }
 
 /// Accept a relayed bid batch. Bids accumulate per source chain while the stage is `Revealing`; a
@@ -469,7 +499,8 @@ fn intake_is_open(stage: AuctionStage) -> Result<bool> {
 /// unordered bridge, so completeness is tracked by a per-(chain, generation) bitmap of `batch_index`;
 /// the chain finalizes once its BIDS_DONE marker and every batch have arrived (see
 /// `try_finalize_chain`). A redelivered batch (its bit already set) is an idempotent no-op, so the
-/// transport may safely re-deliver.
+/// transport may safely re-deliver. A batch of a generation a later relay superseded, or for a day this
+/// chain never briefed, is acknowledged with `InboundIgnored`: no later state could make it applicable.
 #[allow(clippy::too_many_arguments)]
 pub fn process_bids_batch(
     storage: StorageHandle<'_>,
@@ -503,18 +534,30 @@ pub fn process_bids_batch(
     }
     let mut contract = storage.contract::<DesisContract>();
 
-    if !intake_is_open(contract.read_stage(worldwide_day)?)? {
-        return Ok(());
+    match intake_state(contract.read_stage(worldwide_day)?)? {
+        Intake::Open => {}
+        Intake::Closed => {
+            return emit_inbound_ignored(
+                &mut contract,
+                worldwide_day,
+                src_chain_id,
+                IGNORED_OBSOLETE,
+            );
+        }
+        Intake::UnknownDay => {
+            return emit_inbound_ignored(
+                &mut contract,
+                worldwide_day,
+                src_chain_id,
+                IGNORED_NOT_FOUND,
+            );
+        }
     }
 
     let chain_key = DesisContract::chain_key(worldwide_day, src_chain_id);
     let last_gen = contract.chain_last_generation.read(&chain_key)?;
     if generation < last_gen {
-        return Err(DesisError::StaleBidsGeneration {
-            incoming: generation,
-            last: last_gen,
-        }
-        .into());
+        return emit_inbound_ignored(&mut contract, worldwide_day, src_chain_id, IGNORED_OBSOLETE);
     }
 
     if generation > last_gen {
@@ -556,7 +599,8 @@ pub fn process_bids_batch(
 /// Accept a chain's BIDS_DONE completeness marker: the source relayed `total_batches` batches with
 /// `total_bids` bids for this day/generation. Stage/generation semantics mirror `process_bids_batch`;
 /// a marker whose generation is ahead of the chain's batches reverts so the transport redelivers it
-/// once the batches have arrived.
+/// once the batches have arrived. A marker the generation already recorded is a no-op when it agrees
+/// and is acknowledged with `InboundIgnored` when it does not: the first marker stands.
 pub fn process_bids_done(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -575,23 +619,45 @@ pub fn process_bids_done(
     }
     let mut contract = storage.contract::<DesisContract>();
 
-    if !intake_is_open(contract.read_stage(worldwide_day)?)? {
-        return Ok(());
+    match intake_state(contract.read_stage(worldwide_day)?)? {
+        Intake::Open => {}
+        Intake::Closed => {
+            return emit_inbound_ignored(
+                &mut contract,
+                worldwide_day,
+                src_chain_id,
+                IGNORED_OBSOLETE,
+            );
+        }
+        Intake::UnknownDay => {
+            return emit_inbound_ignored(
+                &mut contract,
+                worldwide_day,
+                src_chain_id,
+                IGNORED_NOT_FOUND,
+            );
+        }
     }
 
     let chain_key = DesisContract::chain_key(worldwide_day, src_chain_id);
     let last_gen = contract.chain_last_generation.read(&chain_key)?;
     if relay_generation < last_gen {
-        return Err(DesisError::StaleBidsGeneration {
-            incoming: relay_generation,
-            last: last_gen,
-        }
-        .into());
+        return emit_inbound_ignored(&mut contract, worldwide_day, src_chain_id, IGNORED_OBSOLETE);
     }
     if relay_generation > last_gen {
         return Err(PrecompileError::Revert(
             "processBidsDone: marker generation ahead of its batches".into(),
         ));
+    }
+
+    let recorded_batches = contract.chain_done_batches.read(&chain_key)?;
+    if recorded_batches != 0 {
+        let same = recorded_batches == u32::from(total_batches)
+            && contract.chain_done_bids.read(&chain_key)? == total_bids;
+        if same {
+            return Ok(());
+        }
+        return emit_inbound_ignored(&mut contract, worldwide_day, src_chain_id, IGNORED_CONFLICT);
     }
 
     contract

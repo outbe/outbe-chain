@@ -6,12 +6,18 @@
 //! `world.state`. The handles hold a cloned [`Config`] and defer all subprocess
 //! work to `crate::internal`.
 
+pub mod bidders;
+pub mod forge;
+pub mod hardhat;
 pub mod localnet;
 pub mod mongodb;
 pub mod ocomp;
+pub mod origin_venue;
 pub mod rpc;
 pub mod state;
+pub mod target_chain;
 pub mod validators;
+pub mod venue_probes;
 
 use crate::env::environment;
 use crate::internal::config::Config;
@@ -22,6 +28,7 @@ use ocomp::OcompTopology;
 use rpc::Rpc;
 use state::FixtureState;
 use std::time::Instant;
+use target_chain::TargetChain;
 use validators::Validators;
 
 // Public result types returned by the `Rpc` handle.
@@ -46,6 +53,8 @@ pub struct World {
     /// Present only when the Rust capacity runner explicitly starts this
     /// scenario inside its dedicated cold-run cgroup.
     pub(crate) capacity_meter: Option<OcompCapacityResourceMeterV1>,
+    /// Local EVM chain the committee bridges to. Idle until a scenario starts it.
+    pub target_chain: TargetChain,
     /// Scratch state threaded across the scenario's steps.
     pub state: FixtureState,
 }
@@ -67,6 +76,7 @@ impl Default for World {
                 )
             });
         let mongodb = MongoDb::connect_or_start(&mut cfg).expect("prepare projection MongoDB");
+        let target_chain = TargetChain::new(cfg.clone());
         Self {
             started_at: Instant::now(),
             localnet: Localnet::new(cfg.clone()),
@@ -75,6 +85,7 @@ impl Default for World {
             validators: Validators::new(cfg.clone(), env.validators),
             ocomp: OcompTopology::new(cfg),
             capacity_meter,
+            target_chain,
             state: FixtureState::default(),
         }
     }

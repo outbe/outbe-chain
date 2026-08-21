@@ -14,6 +14,12 @@ pub enum CredisFactoryError {
     OwnerHasCalledPosition,
     #[error("asset isoCode() call returned undecodable data")]
     AssetIsoUndecodable,
+    #[error("caller is not a CCA in active standing")]
+    CcaNotActive,
+    #[error("smart account is not deployed")]
+    SmartAccountNotDeployed,
+    #[error("attached COEN must equal the pledged collateral exactly")]
+    CcaStakeMismatch,
 }
 
 impl From<CredisFactoryError> for PrecompileError {
