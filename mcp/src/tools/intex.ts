@@ -364,24 +364,30 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
             args: [tokenId],
           })) as number;
           const base = { tokenId: tokenId.toString(), balance: balances[i].toString(), status: intexStatus(status) };
-          if (intexStatus(status) !== "Issued") return base;
-          // An Issued token id is the series id itself, so the lifecycle is one read away. Settled ids are
-          // hashed and carry no deadline of their own — the position is already settled.
+          // An Issued token id is the series id itself, so the lifecycle is one read away. A Settled id is
+          // hashed and carries no deadline — that position is already settled.
+          if (base.status.name !== "Issued") return base;
           const seriesHex = `0x${tokenId.toString(16).padStart(28, "0")}` as Hex;
-          const d = (await n.client.readContract({
-            address: addr(n, "nft"),
-            abi: NFT_ABI,
-            functionName: "readData",
-            args: [seriesHex],
-          })) as Record<string, bigint | number>;
-          const deadlineSec = Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callNoticePeriod) : 0;
-          return {
-            ...base,
-            series: fromSeriesId(seriesHex),
-            state: intexState(d.state),
-            callDeadline: epochIso(deadlineSec),
-            expired: deadlineSec > 0 && Math.floor(Date.now() / 1000) > deadlineSec,
-          };
+          try {
+            const d = (await n.client.readContract({
+              address: addr(n, "nft"),
+              abi: NFT_ABI,
+              functionName: "readData",
+              args: [seriesHex],
+            })) as { state: number; calledAt: bigint | number; callTrigger: { callNoticePeriod: bigint | number } };
+            const deadlineSec =
+              Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callTrigger.callNoticePeriod) : 0;
+            return {
+              ...base,
+              series: fromSeriesId(seriesHex),
+              state: intexState(d.state),
+              callDeadline: epochIso(deadlineSec),
+              expired: deadlineSec > 0 && Math.floor(Date.now() / 1000) > deadlineSec,
+            };
+          } catch {
+            // A series the chain does not know is still a holding worth listing.
+            return base;
+          }
         }),
       );
       return ok({ network: n.name, account: who, count: holdings.length, holdings });
