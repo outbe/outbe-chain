@@ -341,8 +341,10 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   // --- NFT holdings (BSC or outbe IntexNFT1155) ------------------------------
   server.tool(
     "intex_holdings_by_owner",
-    "Intex NFT holdings for an address: owned token ids, balances, and decoded status " +
-      "(Issued/Settled). Defaults to bsc-testnet (where won NFTs land); pass network to read outbe.",
+    "Intex NFT holdings for an address: owned token ids, balances, decoded status (Issued/Settled), and " +
+      "for Issued ones the series lifecycle with its callDeadline. Defaults to bsc-testnet (where won NFTs " +
+      "land); pass network to read outbe. A holding away from outbe cannot be settled where it sits — bridge " +
+      "it over with intex_bridge_send before the deadline shown here.",
     { account: accountArg, network: networkArg.optional() },
     handler(async ({ account, network }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
@@ -361,7 +363,25 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
             functionName: "statusOf",
             args: [tokenId],
           })) as number;
-          return { tokenId: tokenId.toString(), balance: balances[i].toString(), status: intexStatus(status) };
+          const base = { tokenId: tokenId.toString(), balance: balances[i].toString(), status: intexStatus(status) };
+          if (intexStatus(status) !== "Issued") return base;
+          // An Issued token id is the series id itself, so the lifecycle is one read away. Settled ids are
+          // hashed and carry no deadline of their own — the position is already settled.
+          const seriesHex = `0x${tokenId.toString(16).padStart(28, "0")}` as Hex;
+          const d = (await n.client.readContract({
+            address: addr(n, "nft"),
+            abi: NFT_ABI,
+            functionName: "readData",
+            args: [seriesHex],
+          })) as Record<string, bigint | number>;
+          const deadlineSec = Number(d.calledAt) > 0 ? Number(d.calledAt) + Number(d.callNoticePeriod) : 0;
+          return {
+            ...base,
+            series: fromSeriesId(seriesHex),
+            state: intexState(d.state),
+            callDeadline: epochIso(deadlineSec),
+            expired: deadlineSec > 0 && Math.floor(Date.now() / 1000) > deadlineSec,
+          };
         }),
       );
       return ok({ network: n.name, account: who, count: holdings.length, holdings });
@@ -370,7 +390,9 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "intex_series_balance",
-    "An address's Intex NFT balance for one series, split into issued and settled token ids.",
+    "An address's Intex NFT balance for one series, split into issued and settled token ids. Reads the " +
+      "chain you ask for; settlement only happens on outbe, so an issued balance found elsewhere has to be " +
+      "bridged over before the series callDeadline (intex_series_info shows it).",
     { series: seriesArg, account: accountArg, network: networkArg.optional() },
     handler(async ({ series, account, network }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
@@ -943,8 +965,9 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "intex_bridge_quote",
-    "Bridge native fee to move an Intex NFT from BSC to outbe. Voluntary bridging is allowed while the " +
-      "series is Issued or Qualified (Called is auto-bridged by the system).",
+    "Bridge native fee to move an Intex NFT from BSC to outbe. Bridging is holder-initiated at every stage: " +
+      "to any recipient while the series is Issued or Qualified, and to yourself only once it is Called, up to " +
+      "its callDeadline (read it with intex_series_info).",
     { series: seriesArg, amount: amountArg, recipient: recipientArg, network: networkArg.optional() },
     handler(async ({ series, amount, recipient, network }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
@@ -969,10 +992,12 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
 
   server.tool(
     "intex_bridge_send",
-    "Bridge a Qualified Intex NFT from BSC to outbe (voluntary, holder-initiated) to settle there. Only " +
-      "works once the series is Qualified — Issued cannot bridge, and Called is auto-bridged by the system, " +
-      "not via this tool. The bridge burns your token directly (role-gated), so no approval is needed. " +
-      "Auto-quotes the native fee (paid as value). Requires OUTBE_PRIVATE_KEY.",
+    "Bridge an Intex NFT from BSC to outbe, where settlement happens — nothing moves it for you, so a " +
+      "position left on BSC past the series callDeadline can no longer be settled at all. Works at every " +
+      "stage: to any recipient while Issued or Qualified, and to yourself only once the series is Called " +
+      "(ownership is frozen then, so a recipient other than you is refused). The bridge burns your token " +
+      "directly (role-gated), so no approval is needed. Auto-quotes the native fee (paid as value), which " +
+      "you pay in the source chain's native token. Requires OUTBE_PRIVATE_KEY.",
     { series: seriesArg, amount: amountArg, recipient: recipientArg, network: networkArg.optional(), wait: waitArg },
     handler(async ({ series, amount, recipient, network, wait }) => {
       const n = await resolveNetwork(network ?? "bsc-testnet");
@@ -1007,8 +1032,9 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
       "auction_settler_set. Allowed when the series is Qualified (voluntary) or Called (forced, " +
       "within the call period). The Settled token (soulbound) and the later Promis go to the SIGNING wallet, " +
       "not to holder; since the MCP signs with one key, to land them on a different wallet that wallet must " +
-      "settle/mine itself — Issued is transferable on BSC only while the series is Issued/Qualified (Called " +
-      "freezes transfers), so move it before the call. Requires OUTBE_PRIVATE_KEY.",
+      "settle/mine itself. Settlement only ever happens on outbe: a position sitting on BSC has to be brought " +
+      "over with intex_bridge_send first, and that has to land before the series callDeadline. Requires " +
+      "OUTBE_PRIVATE_KEY.",
     {
       series: seriesArg,
       amount: amountArg,
