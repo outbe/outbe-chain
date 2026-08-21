@@ -148,6 +148,82 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
 
         self.assertEqual(storage.entries[seed_genesis.hex32(2)], seed_genesis.hex32(20240101))
 
+    def test_founder_radicle_bindings_are_complete_unique_and_bidirectional(self):
+        validators = [
+            {
+                "address": "0x1111111111111111111111111111111111111111",
+                "public_key": "11" * 48,
+                "radicle_node_id": "21" * 32,
+            },
+            {
+                "address": "0x2222222222222222222222222222222222222222",
+                "public_key": "12" * 48,
+                "radicle_node_id": "22" * 32,
+            },
+        ]
+        storage = seed_genesis.StorageBuilder()
+
+        seed_genesis.seed_validator_set(
+            storage,
+            validators,
+            {},
+            epoch_length_blocks=300,
+            epoch_start_timestamp=1,
+            min_stake=1,
+            validator_stake=1,
+        )
+
+        for validator in validators:
+            address = seed_genesis.address_bytes(validator["address"])
+            node_id = bytes.fromhex(validator["radicle_node_id"])
+            self.assertEqual(
+                storage.entries[seed_genesis.mapping_key(address, 59)],
+                "0x" + node_id.hex(),
+            )
+            self.assertEqual(
+                storage.entries[seed_genesis.mapping_key(node_id, 60)],
+                seed_genesis.hex32(seed_genesis.address_as_u256(validator["address"])),
+            )
+
+        missing = [dict(validators[0])]
+        missing[0].pop("radicle_node_id")
+        with self.assertRaisesRegex(ValueError, "radicle_node_id"):
+            seed_genesis.seed_validator_set(
+                seed_genesis.StorageBuilder(),
+                missing,
+                {},
+                epoch_length_blocks=300,
+                epoch_start_timestamp=1,
+                min_stake=1,
+                validator_stake=1,
+            )
+
+        duplicate = [dict(validators[0]), dict(validators[1])]
+        duplicate[1]["radicle_node_id"] = duplicate[0]["radicle_node_id"]
+        with self.assertRaisesRegex(ValueError, "duplicate Radicle NodeId"):
+            seed_genesis.seed_validator_set(
+                seed_genesis.StorageBuilder(),
+                duplicate,
+                {},
+                epoch_length_blocks=300,
+                epoch_start_timestamp=1,
+                min_stake=1,
+                validator_stake=1,
+            )
+
+        zero = [dict(validators[0])]
+        zero[0]["radicle_node_id"] = "00" * 32
+        with self.assertRaisesRegex(ValueError, "must not be zero"):
+            seed_genesis.seed_validator_set(
+                seed_genesis.StorageBuilder(),
+                zero,
+                {},
+                epoch_length_blocks=300,
+                epoch_start_timestamp=1,
+                min_stake=1,
+                validator_stake=1,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

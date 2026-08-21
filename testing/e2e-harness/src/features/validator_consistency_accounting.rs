@@ -346,6 +346,7 @@ fn claim_and_reregister_in_one_block(world: &mut World) {
             scratch.new_identity.evm_key(),
             scratch.new_identity.address(),
             scratch.new_identity.bls_public_key(),
+            scratch.new_identity.radicle_node_id(),
             scratch.new_identity.registration_signature(),
         )
         .expect("submit same-block claim and registration");
@@ -426,6 +427,7 @@ fn old_bls_key_released_once(world: &mut World) {
             rebound.evm_key(),
             rebound.address(),
             rebound.bls_public_key(),
+            rebound.radicle_node_id(),
             rebound.registration_signature(),
         )
         .expect("register released old key");
@@ -454,6 +456,7 @@ fn old_bls_key_released_once(world: &mut World) {
             second_rebound.evm_key(),
             second_rebound.address(),
             second_rebound.bls_public_key(),
+            second_rebound.radicle_node_id(),
             second_rebound.registration_signature(),
         )
         .expect("submit duplicate old key");
@@ -495,6 +498,7 @@ fn duplicate_new_bls_is_atomic(world: &mut World) {
             duplicate_identity.evm_key(),
             duplicate_identity.address(),
             duplicate_identity.bls_public_key(),
+            duplicate_identity.radicle_node_id(),
             duplicate_identity.registration_signature(),
         )
         .expect("submit duplicate new key");

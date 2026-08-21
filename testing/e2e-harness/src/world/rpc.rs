@@ -1341,6 +1341,17 @@ impl Rpc {
         })
     }
 
+    pub fn validator_radicle_node_id(&self, port: u16, addr: &str) -> Option<B256> {
+        let validator_address = addr.parse().ok()?;
+        eth::read_call(
+            &self.url(port),
+            addresses::VS_ADDR,
+            &IValidatorSet::getRadicleNodeIdCall {
+                validator: validator_address,
+            },
+        )
+    }
+
     /// Status code: 0 REGISTERED, 1 PENDING, 2 ACTIVE, 3 EXITING,
     /// 4 UNBONDING, 5 INACTIVE, 6 JAILED.
     pub fn validator_status(&self, port: u16, addr: &str) -> Option<u64> {
@@ -2519,6 +2530,7 @@ impl Rpc {
         caller_key: &str,
         validator: Address,
         consensus_pubkey: &[u8],
+        radicle_node_id: B256,
         bls_signature: &[u8],
     ) -> Result<TxOutcome> {
         eth::send_call_outcome(
@@ -2528,7 +2540,8 @@ impl Rpc {
             &IValidatorSet::registerValidatorCall {
                 validatorAddress: validator,
                 consensusPubkey: Bytes::copy_from_slice(consensus_pubkey),
-                blsSignature: Bytes::copy_from_slice(bls_signature),
+                radicleNodeId: radicle_node_id,
+                blsRegistrationSignature: Bytes::copy_from_slice(bls_signature),
             },
             None,
         )
@@ -2687,13 +2700,15 @@ impl Rpc {
         key: &str,
         validator: Address,
         consensus_pubkey: &[u8],
+        radicle_node_id: B256,
         bls_signature: &[u8],
     ) -> Result<[TxOutcome; 2]> {
         let claim = IStaking::claimUnbondedCall {};
         let register = IValidatorSet::registerValidatorCall {
             validatorAddress: validator,
             consensusPubkey: Bytes::copy_from_slice(consensus_pubkey),
-            blsSignature: Bytes::copy_from_slice(bls_signature),
+            radicleNodeId: radicle_node_id,
+            blsRegistrationSignature: Bytes::copy_from_slice(bls_signature),
         };
         let outcomes = eth::send_prepared_calls_outcomes(
             &self.cfg.rpc0,

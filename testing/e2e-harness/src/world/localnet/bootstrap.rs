@@ -3,6 +3,7 @@
 //! `python3 seed_genesis.py`); the genesis skeleton, port rewrite, and dev felony
 //! patch are native Rust.
 
+use std::collections::HashSet;
 #[cfg(all(test, unix))]
 use std::fs::Permissions;
 use std::fs::{self, OpenOptions};
@@ -552,6 +553,10 @@ impl Localnet {
         ]);
         self.run_setup(&mut cmd, "outbe-chain dkg bootstrap")?;
 
+        // Registration V2 binds every founder to the native Heartwood identity
+        // that its sidecar will load from this validator directory.
+        self.materialize_radicle_identities(n)?;
+
         // Step 1b: point the baked consensus/reth p2p endpoints at the resolved
         // ports (a no-op under the default layout).
         self.rewrite_ports()?;
@@ -620,6 +625,49 @@ impl Localnet {
             }
             fs::write(&bpath, out)?;
         }
+        Ok(())
+    }
+
+    fn materialize_radicle_identities(&self, n: usize) -> Result<()> {
+        let validators_path = self.cfg.dir.join("validators.json");
+        let mut validators: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&validators_path)?)?;
+        let entries = validators
+            .as_array_mut()
+            .ok_or_else(|| eyre!("validators.json is not an array"))?;
+        eyre::ensure!(entries.len() == n, "validators.json founder count mismatch");
+
+        let mut node_ids = HashSet::with_capacity(n);
+        for (index, validator) in entries.iter_mut().enumerate() {
+            let home = self.cfg.validator_dir(index).join("radicle");
+            let output = proc::run_capture(
+                &self.cfg.bin_keygen,
+                &["radicle", "--output-dir", &home.display().to_string()],
+            )?;
+            let node_id = output
+                .lines()
+                .find_map(|line| {
+                    line.split_once("node id hex:")
+                        .map(|(_, value)| value.trim())
+                })
+                .ok_or_else(|| eyre!("outbe-keygen did not print validator-{index} NodeId"))?;
+            eyre::ensure!(
+                node_id.len() == 64 && node_id.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                "outbe-keygen printed invalid validator-{index} NodeId"
+            );
+            eyre::ensure!(
+                node_ids.insert(node_id.to_owned()),
+                "duplicate founder Radicle NodeId"
+            );
+            validator
+                .as_object_mut()
+                .ok_or_else(|| eyre!("validator-{index} manifest entry is not an object"))?
+                .insert("radicle_node_id".into(), json!(format!("0x{node_id}")));
+        }
+        fs::write(
+            validators_path,
+            serde_json::to_string_pretty(&validators)? + "\n",
+        )?;
         Ok(())
     }
 

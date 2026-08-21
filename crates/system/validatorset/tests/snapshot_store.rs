@@ -176,6 +176,19 @@ fn validator_operational_key_slots_48_and_49_are_append_only() {
 }
 
 #[test]
+fn radicle_node_id_slots_59_and_60_are_append_only() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        let vs = ValidatorSet::new(storage);
+        assert_eq!(vs.val_radicle_node_id.base_slot(), U256::from(59u64));
+        assert_eq!(
+            vs.radicle_node_id_to_validator.base_slot(),
+            U256::from(60u64)
+        );
+    });
+}
+
+#[test]
 fn committee_snapshot_persists_separate_strict_ocomp_extension() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut provider, |storage| {

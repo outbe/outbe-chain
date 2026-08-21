@@ -406,6 +406,26 @@ def pubkey_bytes(hex_str: str) -> bytes:
     return bytes.fromhex(h)
 
 
+def radicle_node_id_bytes(value: object, *, validator_index: int) -> bytes:
+    """Parse one founder's required non-zero 32-byte Radicle NodeId."""
+    if not isinstance(value, str):
+        raise ValueError(f"validator {validator_index} radicle_node_id is required")
+    raw = value.removeprefix("0x").removeprefix("0X")
+    if len(raw) != 64:
+        raise ValueError(
+            f"validator {validator_index} radicle_node_id must be 64 hex chars"
+        )
+    try:
+        node_id = bytes.fromhex(raw)
+    except ValueError as error:
+        raise ValueError(
+            f"validator {validator_index} radicle_node_id must be hexadecimal"
+        ) from error
+    if node_id == bytes(32):
+        raise ValueError(f"validator {validator_index} radicle_node_id must not be zero")
+    return node_id
+
+
 def address_as_u256(addr_hex: str) -> int:
     """Convert address to U256 (right-aligned in 32 bytes)."""
     return int(addr_hex, 16)
@@ -1091,7 +1111,15 @@ def seed_validator_set(
       slots 21-26: epoch / consensus-set tracking
       slot 27: re-registration cooldown
       slots 28-29: versioned Commonware P2P address registry
+      slots 59-60: Radicle NodeId forward and reverse indexes
     """
+    radicle_node_ids = [
+        radicle_node_id_bytes(validator.get("radicle_node_id"), validator_index=index)
+        for index, validator in enumerate(validators)
+    ]
+    if len(set(radicle_node_ids)) != len(radicle_node_ids):
+        raise ValueError("duplicate Radicle NodeId in founder validators")
+
     storage.set_slot(0, address_as_u256(config.get("owner", "0x0000000000000000000000000000000000000000")))
     storage.set_slot(1, parse_int(config.get("max_validators", 128)))
     if "epoch_duration" in config:
@@ -1112,7 +1140,9 @@ def seed_validator_set(
         DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS,
     )))
 
-    for index, validator in enumerate(validators, start=1):
+    for index, (validator, radicle_node_id) in enumerate(
+        zip(validators, radicle_node_ids, strict=True), start=1
+    ):
         addr = validator["address"]
         pk = pubkey_bytes(validator["public_key"])
         pk_hi = pk[32:] + (b"\x00" * 16)
@@ -1127,6 +1157,8 @@ def seed_validator_set(
         storage.set_mapping(17, u64_bytes(index), address_as_u256(addr))
         storage.set_mapping(18, pk_hash, address_as_u256(addr))
         storage.set_mapping(24, address_bytes(addr), 1)
+        storage.set_mapping_b256(59, address_bytes(addr), radicle_node_id)
+        storage.set_mapping(60, radicle_node_id, address_as_u256(addr))
         p2p_seed = encode_p2p_address_payload(validator.get("p2p_address"))
         if p2p_seed is not None:
             version, payload = p2p_seed
