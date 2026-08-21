@@ -277,6 +277,12 @@ pub fn pack_called_notice(series_id: SeriesId, called_at: u32) -> U256 {
     series_id.to_word() | U256::from(called_at)
 }
 
+/// Whether a Called entry belongs to the run a message is being built for. The wire carries one day and
+/// one call time for the whole batch, so both must match for a series to ride along.
+pub fn joins_run(day: WorldwideDay, called_at: u32, id: SeriesId, ts: u32) -> bool {
+    ts == called_at && id.worldwide_day() == day
+}
+
 fn unpack_called_notice(entry: U256) -> (SeriesId, u32) {
     (
         SeriesId::from_word(entry),
@@ -317,7 +323,10 @@ pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
         } else {
             factory.notify_at.clear(&index)?;
             factory.notify_kind.clear(&index)?;
-            send_notice(&storage, kind, entry)?;
+            // Best-effort: a notice that cannot be sent is dropped, never left to wedge the drain.
+            if let Err(error) = storage.with_checkpoint(|| send_notice(&storage, kind, entry)) {
+                tracing::warn!(target: "outbe::intexfactory", kind, error = ?error, "notice: dropping");
+            }
             1
         };
         index += consumed;
@@ -331,8 +340,8 @@ pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// Send the run of Called entries starting at `at` that shares its day and call time. Never reads past
-/// `stop`: a cleared slot reads back as a valid Qualified notice, so an overshoot drops entries silently.
+/// Send the run of Called entries starting at `at` that shares its day and call time. `stop` bounds the
+/// look-ahead to this firing's entries, so a run never consumes what the drain has not accounted for.
 fn drain_called_run(
     factory: &IntexFactoryContract,
     storage: &StorageHandle<'_>,
@@ -350,7 +359,7 @@ fn drain_called_run(
             break;
         }
         let (id, ts) = unpack_called_notice(factory.notify_at.read(&index)?);
-        if ts != called_at || id.worldwide_day() != worldwide_day {
+        if !joins_run(worldwide_day, called_at, id, ts) {
             break;
         }
         run.push(id);
@@ -365,16 +374,10 @@ fn drain_called_run(
     Ok(index - at)
 }
 
+/// Send one Qualified notice. Called entries never reach here — the drain routes them through
+/// [`drain_called_run`] so a whole group leaves as one message.
 fn send_notice(storage: &StorageHandle<'_>, kind: u8, entry: U256) -> Result<()> {
-    if kind == NOTICE_CALLED {
-        let (series_id, called_at) = unpack_called_notice(entry);
-        return crate::called::notify_called(
-            storage,
-            series_id.worldwide_day(),
-            called_at,
-            &[series_id],
-        );
-    }
+    debug_assert_ne!(kind, NOTICE_CALLED, "called notices leave through drain_called_run");
     // A group that has since been called is gone from the index, and a Called
     // series would refuse the Qualified mark anyway — so an empty read is the
     // answer, not an error.

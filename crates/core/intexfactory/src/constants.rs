@@ -41,8 +41,8 @@ pub const BIN_STEP_BP: u16 = 25;
 pub(crate) const MAX_GROUP_DECISIONS_PER_SWEEP: u32 = 256;
 pub(crate) const MAX_SERIES_ACTIONS_PER_SWEEP: u32 = 256;
 
-/// Queue entries drained per `intex_notify` firing. Called entries of one group
-/// coalesce into a single dispatch, so this bounds the work, not the messages.
+/// Queue entries drained per `intex_notify` firing. One entry can still fan out to several messages,
+/// so this bounds the entries taken from the queue, not the sends they produce.
 pub const NOTIFY_CHUNK_LIMIT: u32 = 32;
 
 /// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.
@@ -68,9 +68,15 @@ pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * SCALE_1E6_U128;
 /// Seconds, not vote periods: those are counted in blocks and stretch under congestion.
 pub const FX_RATE_MAX_AGE_SECONDS: u64 = 6 * 3600;
 
-/// Series one ISSUANCE_INSTRUCTIONS message may carry, and recipients across them.
-/// Mirror the codec's `MAX_SERIES_PER_ISSUANCE` and `MAX_PAYLOAD_ARRAY_LEN`.
+/// Series one ISSUANCE_INSTRUCTIONS message may carry. Mirrors `MAX_SERIES_PER_ISSUANCE`.
 pub const MAX_SERIES_PER_MESSAGE: usize = 8;
+
+/// Recipients one ISSUANCE_INSTRUCTIONS may carry across its series. Mirrors the codec's
+/// `MAX_RECIPIENTS_PER_ISSUANCE`, which is narrower than the general payload cap because a
+/// recipient costs a mint on the destination.
+pub const MAX_RECIPIENTS_PER_ISSUANCE: usize = 32;
+
+/// The general cross-chain array cap, mirroring `MAX_PAYLOAD_ARRAY_LEN`. Refund chunks use it.
 pub const MAX_RECIPIENTS_PER_MESSAGE: usize = 64;
 
 /// Series one MARK_CALLED or MARK_QUALIFIED message may carry. Mirrors the

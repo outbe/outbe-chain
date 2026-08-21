@@ -13,7 +13,7 @@ use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, times
 
 use crate::called;
 use crate::constants::{
-    CALL_RATE, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE, MAX_RECIPIENTS_PER_MESSAGE,
+    CALL_RATE, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE, MAX_RECIPIENTS_PER_ISSUANCE,
     MAX_SERIES_PER_MESSAGE, QUALIFICATION_PERIOD,
 };
 use crate::precompile::{self, IIntexFactory};
@@ -2481,27 +2481,38 @@ fn a_chains_series_travel_together_up_to_the_message_caps() {
 
 #[test]
 fn a_message_never_carries_more_winners_than_the_wire_allows() {
-    // Two series of 40 winners each: together they exceed the recipient cap, so the
-    // second starts a new message rather than overfilling the first.
-    let legs = vec![leg(10, 1, 40), leg(10, 2, 40)];
-    assert_eq!(
-        shape(&runtime::pack_issuance_messages(legs)),
-        vec![(10, 1, 40), (10, 1, 40)]
-    );
+    // Two series whose winners together exceed the recipient cap: no message may overfill.
+    let per_series = MAX_RECIPIENTS_PER_ISSUANCE - 1;
+    let legs = vec![leg(10, 1, per_series), leg(10, 2, per_series)];
+    let messages = runtime::pack_issuance_messages(legs);
+
+    for (_, _, recipients) in shape(&messages) {
+        assert!(
+            recipients <= MAX_RECIPIENTS_PER_ISSUANCE,
+            "a message carried {recipients} winners, over the wire's cap"
+        );
+    }
+    let total: usize = shape(&messages).iter().map(|(_, _, r)| r).sum();
+    assert_eq!(total, 2 * per_series, "every winner is carried exactly once");
 }
 
 #[test]
 fn one_series_with_more_winners_than_a_message_spans_several() {
-    // 150 winners of one series on one chain: three messages, and every piece repeats
-    // the series so whichever arrives first can create it.
-    let messages = runtime::pack_issuance_messages(vec![leg(10, 1, 150)]);
+    // One series far past the cap: it spans full messages plus a remainder, and every piece
+    // repeats the series so whichever arrives first can create it.
+    let winners = 5 * MAX_RECIPIENTS_PER_ISSUANCE - 10;
+    let messages = runtime::pack_issuance_messages(vec![leg(10, 1, winners)]);
+
+    let pieces = shape(&messages);
     assert_eq!(
-        shape(&messages),
-        vec![
-            (10, 1, MAX_RECIPIENTS_PER_MESSAGE),
-            (10, 1, MAX_RECIPIENTS_PER_MESSAGE),
-            (10, 1, 150 - 2 * MAX_RECIPIENTS_PER_MESSAGE)
-        ]
+        pieces.len(),
+        winners.div_ceil(MAX_RECIPIENTS_PER_ISSUANCE),
+        "one message per full slice plus the remainder"
+    );
+    assert_eq!(
+        pieces.iter().map(|(_, _, r)| r).sum::<usize>(),
+        winners,
+        "every winner is carried exactly once"
     );
     for (_, series) in &messages {
         assert_eq!(SeriesId::from(series[0].seriesId), sid(1));

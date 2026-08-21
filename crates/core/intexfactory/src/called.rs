@@ -413,7 +413,7 @@ pub(crate) fn notify_called(
     members: &[SeriesId],
 ) -> Result<()> {
     for chunk in members.chunks(MAX_SERIES_PER_MARK) {
-        // Best-effort: one checkpoint per message, so a failure takes only its own batch.
+        // Best-effort, and the batch is the unit: a failure loses the mark for every series in it.
         let sent = storage.with_checkpoint(|| {
             // Relay-float-funded: value 0, so the router self-quotes and pays the fee from its float.
             storage.call(

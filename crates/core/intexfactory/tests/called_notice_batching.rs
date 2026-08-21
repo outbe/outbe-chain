@@ -1,13 +1,15 @@
 //! Coalescing of Called notices in the `intex_notify` drain.
 //!
-//! A cleared slot reads back as a valid Qualified notice, so these pin the run's boundaries: an
-//! overshoot past the chunk limit would drop or re-send entries with nothing in the log to show.
+//! The harness cannot observe outbound calls, so the grouping rule is pinned as a predicate and the
+//! rest covers the queue walk: what each firing consumes and where it resumes.
 
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
 use outbe_intex::SeriesId;
 use outbe_intexfactory::constants::NOTIFY_CHUNK_LIMIT;
-use outbe_intexfactory::qualified::{drain_notices, pack_called_notice, NOTICE_CALLED, NOTICE_QUALIFIED};
+use outbe_intexfactory::qualified::{
+    drain_notices, joins_run, pack_called_notice, NOTICE_CALLED, NOTICE_QUALIFIED,
+};
 use outbe_intexfactory::IntexFactoryContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -75,6 +77,17 @@ fn a_run_never_reaches_past_the_chunk_limit() {
         drain(&handle);
         assert_eq!(bounds(&handle), (0, 0), "the remainder goes next firing");
     });
+}
+
+#[test]
+fn a_run_takes_only_entries_sharing_the_day_and_the_call_time() {
+    let day = WorldwideDay::new(DAY);
+    assert!(joins_run(day, CALLED_AT, series(1), CALLED_AT), "same day and stamp ride together");
+    assert!(!joins_run(day, CALLED_AT, series(1), CALLED_AT + 1), "a later stamp starts its own message");
+    assert!(!joins_run(day, CALLED_AT, series(1), CALLED_AT - 1), "an earlier stamp does too");
+
+    let other_day = SeriesId::pack(WorldwideDay::new(DAY + 1), *b"840", b'U').expect("well-formed series id");
+    assert!(!joins_run(day, CALLED_AT, other_day, CALLED_AT), "the wire carries one day per message");
 }
 
 #[test]
