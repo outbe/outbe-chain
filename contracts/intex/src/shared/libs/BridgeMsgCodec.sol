@@ -39,7 +39,7 @@ library BridgeMsgCodec {
     ///      live.
     uint16 internal constant MAX_PAYLOAD_ARRAY_LEN = 64;
 
-    /// @notice Series one ISSUANCE_INSTRUCTIONS message may carry. With `MAX_PAYLOAD_ARRAY_LEN`
+    /// @notice Series one ISSUANCE_INSTRUCTIONS message may carry. With `MAX_RECIPIENTS_PER_ISSUANCE`
     ///         recipients split across them the worst case stays inside the 10_000-byte send cap.
     uint16 internal constant MAX_SERIES_PER_ISSUANCE = 8;
 
@@ -466,7 +466,7 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes ISSUANCE_INSTRUCTIONS message: the series a chain receives from one day.
-    /// @dev Capped at `MAX_SERIES_PER_ISSUANCE` series and `MAX_PAYLOAD_ARRAY_LEN` recipients;
+    /// @dev Capped at `MAX_SERIES_PER_ISSUANCE` series and `MAX_RECIPIENTS_PER_ISSUANCE` recipients;
     ///      a larger set is split by the sender.
     /// @param _series The per-series issuance payloads carried by this message.
     /// @return The wire-encoded ISSUANCE_INSTRUCTIONS message.
@@ -699,7 +699,7 @@ library BridgeMsgCodec {
     /// @notice Decodes ISSUANCE_INSTRUCTIONS message.
     /// @dev Reverts `UnsupportedBodyVersion` on a stale version byte,
     ///      `IssuanceArrayLengthMismatch` if `recipients` and `quantities` differ in length, and
-    ///      `IssuanceBatchTooLarge` if `recipients` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
+    ///      `IssuanceBatchTooLarge` if `recipients` exceeds `MAX_RECIPIENTS_PER_ISSUANCE`.
     /// @param _msg The wire-encoded ISSUANCE_INSTRUCTIONS message.
     /// @return series The decoded per-series issuance payloads.
     function decodeIssuanceInstructions(bytes calldata _msg)

@@ -9,7 +9,6 @@ pragma solidity 0.8.30;
 ///         transport never touches these values.
 /// @dev Every budget is 1.5x the measured cost of its heaviest message, taking the failure path where one
 ///      exists. `test/foundry/cross-chain/GasBudget.t.sol` fails if a formula drifts under the measurement.
-///      Measurements live in `test/foundry/cross-chain/GasBudget.t.sol` and fail if a formula drifts under them.
 library IntexGas {
     // --- Outbe -> target chain fixed-size messages (TargetRouter handlers) ---
     /// @dev auctionStart creates the series' auction on the target chain.
@@ -19,8 +18,8 @@ library IntexGas {
     /// @notice Marginal cost of storing one reference-price row on the target.
     uint256 internal constant AUCTION_STAGE_START_PER_PRICE = 25_000;
     /// @dev Also relays the day's bids from inside the same delivery, a cost the origin cannot see, so the
-    ///      target caps that relay and a heavier day parks. Measured at ~4.05M once the cap binds.
-    uint256 internal constant AUCTION_STAGE_CLEARING = 6_000_000;
+    ///      target caps that relay and a heavier day parks. Measured at ~5.0M once the cap binds.
+    uint256 internal constant AUCTION_STAGE_CLEARING = 7_500_000;
     /// @dev Measured at ~66k.
     uint256 internal constant AUCTION_RESULT = 100_000;
     /// @dev A mark is a bounded state flip. Measured: a batch of 8 takes ~123k applied and ~404k when
@@ -83,7 +82,7 @@ library IntexGas {
         return REFUND_BASE + bidderCount * REFUND_PER_ITEM;
     }
 
-    /// @notice Destination gas for a bridge batch/multi/system message crosschainMinting `itemCount` items.
+    /// @notice Destination gas for a bridge batch/multi message crosschainMinting `itemCount` items.
     function nftMint(uint256 itemCount) internal pure returns (uint256) {
         return NFT_MINT_BASE + itemCount * NFT_MINT_PER_ITEM;
     }

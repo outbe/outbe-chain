@@ -57,9 +57,17 @@ contract MarkCalledClockTest is CrossChainTest {
         uint32 ahead = uint32(block.timestamp) + 1;
 
         vm.expectRevert(
-            abi.encodeWithSelector(IIntexNFT1155.CalledAtInFuture.selector, ahead, uint32(block.timestamp))
+            abi.encodeWithSelector(IIntexNFT1155.CalledAtInvalid.selector, ahead, uint32(block.timestamp))
         );
         vm.prank(address(router));
         intex.markCalled(SERIES_ID, ahead);
+    }
+
+    /// @dev Zero is what an uncalled series reads, so taking it would set a deadline in 1970 and brick
+    ///      every bridge and settle on the series.
+    function test_AZeroStampIsRefused() public {
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.CalledAtInvalid.selector, uint32(0), uint32(block.timestamp)));
+        vm.prank(address(router));
+        intex.markCalled(SERIES_ID, 0);
     }
 }

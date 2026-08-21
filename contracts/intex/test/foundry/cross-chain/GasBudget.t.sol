@@ -75,6 +75,28 @@ contract GasBudgetTest is CrossChainTest {
         assertLt(spent, IntexGas.markCalled(batch.length), "a full applying batch must fit the quote");
     }
 
+    /// @dev The cap bounds one series, not the batch: it buys the parking write room to run when a single
+    ///      series runs away. A batch where most of them do is outside what the quote can carry.
+    function test_TheQuoteSurvivesOneRunawaySeriesInAFullBatch() public {
+        GasBurningIntex poisoned = new GasBurningIntex(POISON);
+        TargetRouter mocked = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        mocked.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
+        mocked.wire(makeAddr("auction"), address(poisoned), makeAddr("escrow"));
+
+        bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_MARK);
+        batch[0] = POISON;
+        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, uint32(block.timestamp), batch);
+        bytes memory call = abi.encodeCall(
+            bridge.deliverAs,
+            (_interop(OUTBE_CHAIN_ID, originPeer), _interop(uint32(block.chainid), address(mocked)), packet)
+        );
+
+        (bool ok,) = address(bridge).call{gas: IntexGas.markCalled(batch.length)}(call);
+
+        assertTrue(ok, "the message must land inside the gas its quote buys");
+        assertEq(mocked.nextPendingMarkIdx(), 1, "only the runaway parked");
+    }
+
     function test_TheQuoteCoversAFullBatchThatParks() public {
         // No series exist, so every mark reverts and parks — the heavier of the two paths.
         bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_MARK);
@@ -468,14 +490,16 @@ contract ClearingRelayGasTest is CrossChainTest {
     function test_TheQuoteCoversClearingWithAFullChunkOfBids() public {
         uint256 spent = _clearingCost(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN);
 
-        emit log_named_uint("clearing_64bids", spent);
+        emit log_named_uint("clearing_one_chunk", spent);
+        assertEq(router.nextPendingBidsRelayIdx(), 0, "the relay went out, it did not park");
         assertLt(spent, IntexGas.AUCTION_STAGE_CLEARING, "one full chunk must fit the quote");
     }
 
     function test_TheQuoteCoversClearingWithFourChunksOfBids() public {
         uint256 spent = _clearingCost(4 * BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN);
 
-        emit log_named_uint("clearing_256bids", spent);
+        emit log_named_uint("clearing_four_chunks", spent);
+        assertEq(router.nextPendingBidsRelayIdx(), 0, "the relay went out, it did not park");
         assertLt(spent, IntexGas.AUCTION_STAGE_CLEARING, "four chunks must fit the quote");
     }
 

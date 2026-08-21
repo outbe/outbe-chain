@@ -178,8 +178,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Settle attempted on a `Called` series after the settlement deadline
     ///         (`calledAt + callNoticePeriod`) has passed.
     error SettleAfterDeadline(uint256 tokenId, uint32 deadline);
-    /// @notice `markCalled` was given a timestamp the destination clock has not reached yet.
-    error CalledAtInFuture(uint32 calledAt, uint32 nowTs);
+    /// @notice `markCalled` was given a call time of zero or one the destination clock has not reached.
+    error CalledAtInvalid(uint32 calledAt, uint32 nowTs);
     /// @notice A mint or batch sum would push `totalSupply` past `issuedIntexCount`.
     error SupplyCapExceeded(bytes14 seriesId, uint256 attempted, uint256 cap);
 

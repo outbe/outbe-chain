@@ -33,7 +33,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     bytes32 public constant PROMIS_ROLE = keccak256("PROMIS_ROLE");
     /// @notice Gem factory role; allowed to call `parkIntex`.
     bytes32 public constant GEM_ROLE = keccak256("GEM_ROLE");
-    /// @notice System relayer role; allowed to drive the system bridge during the `Called` window.
+    /// @notice Role the NFT bridge holds, so a holder can still carry their own balance during `Called`.
     /// @dev Holders of this role can `crosschainBurn` even while the series is `Called`. Regular `RELAYER_ROLE`
     ///      can only `crosschainBurn` while the series is `Qualified`.
     bytes32 public constant SYSTEM_RELAYER_ROLE = keccak256("SYSTEM_RELAYER_ROLE");
@@ -275,8 +275,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             revert InvalidState(uint8(IIntexNFT1155.IntexState.Qualified), uint8(data.state));
         }
 
-        // A stamp from the future would grant a longer window than the origin's.
-        if (calledAt > block.timestamp) revert CalledAtInFuture(calledAt, uint32(block.timestamp));
+        // Zero is the "not called" sentinel, and a future stamp would outlast the origin's window.
+        if (calledAt == 0 || calledAt > block.timestamp) revert CalledAtInvalid(calledAt, uint32(block.timestamp));
 
         IIntexNFT1155.IntexState previousState = data.state;
         data.state = IIntexNFT1155.IntexState.Called;
@@ -543,7 +543,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @notice ERC1155 transfer hook: enforces soulbound Settled tokens, freezes Called
-    ///         series, and maintains the owned-series / series-holder enumeration indexes.
+    ///         series, and maintains the owned-series enumeration index.
     /// @dev Transfer lock and soulbound enforcement.
     ///      - Mint/burn paths (from/to address(0)) are always allowed (settle, burnSettled,
     ///        bridge crosschainBurn/crosschainMint on Issued, mint).
