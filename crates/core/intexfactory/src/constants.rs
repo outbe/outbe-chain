@@ -3,19 +3,19 @@
 //!
 //! NFT / router addresses are permanent CREATE3 proxies via the outbe-intex
 //! Create3Factory (deployer 0x2Af7d3C5C3f82Fee4eA037A674f55fa2eD011c05, salt
-//! "outbe-intex:<Name>:v2.0.0") — stable across chains and redeploys.
+//! "outbe-intex:<Name>:v3.0.0") — stable across chains and redeploys.
 
 use alloy_primitives::{address, Address};
 use outbe_primitives::units::SCALE_1E6_U128;
 
 /// IntexNFT1155 on Outbe (balance ledger: settle / burnSettled / balanceOf).
-/// CREATE3 proxy, salt "outbe-intex:IntexNFT1155:v2.0.0". Canonical definition
+/// CREATE3 proxy, salt "outbe-intex:IntexNFT1155:v3.0.0". Canonical definition
 /// lives in `outbe_primitives::addresses`; re-exported here for existing callers.
 pub use outbe_primitives::addresses::INTEX_NFT1155_ADDRESS;
 
 /// OriginRouter on Outbe (outbound ERC-7786 sends).
-/// CREATE3 proxy, salt "outbe-intex:OriginRouter:v2.0.0".
-pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x67129C422bDC2c8984DbF381B6ec4515fE2BbD29");
+/// CREATE3 proxy, salt "outbe-intex:OriginRouter:v3.0.0".
+pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0xCBfa290DCd34319Ff1aec79A4084f2C900977599");
 
 /// minePromis PoW difficulty: required leading zero bytes of the work hash.
 pub const POW_DIFFICULTY: usize = 1;

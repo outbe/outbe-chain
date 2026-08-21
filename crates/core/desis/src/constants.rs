@@ -1,8 +1,8 @@
 use alloy_primitives::{address, Address};
 
 /// OriginRouter on Outbe (outbound ERC-7786 sends).
-/// CREATE3 proxy via outbe-intex Create3Factory, salt "outbe-intex:OriginRouter:v2.0.0".
-pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x67129C422bDC2c8984DbF381B6ec4515fE2BbD29");
+/// CREATE3 proxy via outbe-intex Create3Factory, salt "outbe-intex:OriginRouter:v3.0.0".
+pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0xCBfa290DCd34319Ff1aec79A4084f2C900977599");
 
 /// Minimum-bid-quantity floor: 4% of the prior series' issued count (basis points).
 pub const BID_QUANTITY_FLOOR_BPS: u32 = 400;
