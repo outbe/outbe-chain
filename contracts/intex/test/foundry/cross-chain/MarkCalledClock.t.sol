@@ -11,9 +11,8 @@ import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
-/// @dev MARK_CALLED carries the origin's own stamp, so a delivery that took hours still yields the
-///      deadline settlement honours. A target stamping its arrival would hand out a later one and
-///      invite a burn that can no longer mint.
+/// @dev MARK_CALLED carries the origin's stamp, so a slow delivery still yields the deadline
+///      settlement honours rather than a later one.
 contract MarkCalledClockTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant WORLDWIDE_DAY = 20260501;

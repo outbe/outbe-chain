@@ -238,9 +238,8 @@ contract GasBudgetTest is CrossChainTest {
         assertLt(spent, IntexGas.nftMint(items), "the rejecting path must fit the quote too");
     }
 
-    // A series whose mark runs away must not take its batch mates with it. The delivery runs inside the
-    // gas the quote actually buys — with an uncapped child that budget is gone before the parking write,
-    // and the whole message reverts into redelivery.
+    // The delivery runs inside the gas the quote buys: uncapped, one runaway series spends it all before
+    // the parking write and the whole message reverts into redelivery.
     function test_ARunawaySeriesIsParkedAndTheBatchContinues() public {
         GasBurningIntex poisoned = new GasBurningIntex(POISON);
         TargetRouter mocked = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);

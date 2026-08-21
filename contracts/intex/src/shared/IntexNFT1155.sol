@@ -275,8 +275,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             revert InvalidState(uint8(IIntexNFT1155.IntexState.Qualified), uint8(data.state));
         }
 
-        // The origin stamps the call; a target that stamped its own delivery time would grant a
-        // later deadline than the one settlement actually honours.
+        // A stamp from the future would grant a longer window than the origin's.
         if (calledAt > block.timestamp) revert CalledAtInFuture(calledAt, uint32(block.timestamp));
 
         IIntexNFT1155.IntexState previousState = data.state;
@@ -313,8 +312,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             if (!hasRole(SYSTEM_RELAYER_ROLE, msg.sender)) {
                 revert BridgeStateForbidden(tokenId, uint8(data.state));
             }
-            // Called freezes ownership, and a bridge hop that changes holder is a transfer with extra
-            // steps. Moving your own balance to the chain that settles it stays open.
+            // A bridge hop that changes holder is a transfer, which Called forbids.
             if (to != from) revert TransferOnCalledForbidden(tokenId);
             // Bridge moves are confined to the call window: once `calledAt + callTrigger.callNoticePeriod`
             // passes the series is settlement-complete and balances must stay frozen, otherwise

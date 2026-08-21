@@ -1,9 +1,7 @@
 //! Coalescing of Called notices in the `intex_notify` drain.
 //!
-//! A group's members land in the queue back to back and share one call time, so the drain
-//! sends them as one message. These pin the boundaries that keep that safe: a cleared slot
-//! reads back as a well-formed Qualified notice, so a look-ahead that walks past the chunk
-//! limit would drop or re-send entries with nothing in the log to show for it.
+//! A cleared slot reads back as a valid Qualified notice, so these pin the run's boundaries: an
+//! overshoot past the chunk limit would drop or re-send entries with nothing in the log to show.
 
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;

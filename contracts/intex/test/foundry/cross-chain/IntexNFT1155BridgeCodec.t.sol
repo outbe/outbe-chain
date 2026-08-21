@@ -227,9 +227,8 @@ contract IntexNFT1155BridgeCodecTest is Test {
 
     // --- cap relationship ---
 
-    /// @dev The bridge's cap is deliberately the narrower one: an item a recipient rejects is recorded with
-    ///      its revert bytes, which costs more per item than any other message's work. It must never exceed
-    ///      the protocol-wide payload cap, which every decoder still enforces.
+    /// @dev The bridge's cap is deliberately the narrower one: a rejected item is recorded with its revert
+    ///      bytes, the dearest per-item work anywhere. It must never exceed the protocol-wide payload cap.
     function test_MaxBatchSize_StaysWithinTheProtocolPayloadCap() public pure {
         assertLe(IntexNFT1155BridgeCodec.MAX_BATCH_SIZE, uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN));
     }

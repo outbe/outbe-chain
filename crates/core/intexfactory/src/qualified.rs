@@ -331,9 +331,8 @@ pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     Ok(())
 }
 
-/// Send the run of Called entries that starts at `at` and shares its day and call time, never
-/// reading past `stop`: a cleared slot reads back as a well-formed Qualified notice, so a
-/// look-ahead that overshoots would drop or re-send silently. Returns how many it consumed.
+/// Send the run of Called entries starting at `at` that shares its day and call time. Never reads past
+/// `stop`: a cleared slot reads back as a valid Qualified notice, so an overshoot drops entries silently.
 fn drain_called_run(
     factory: &IntexFactoryContract,
     storage: &StorageHandle<'_>,

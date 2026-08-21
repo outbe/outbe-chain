@@ -321,8 +321,7 @@ interface IOriginRouter {
     /// @notice Broadcast mark-called for one day's series over its snapshot. A batch is one day's
     ///         series that share both the decision that called them and its timestamp.
     ///         Restricted to `INTEX_FACTORY_ROLE`.
-    /// @dev `calledAt` is the origin's own stamp, so every chain derives the same deadline from
-    ///      `callNoticePeriod` regardless of how long delivery took.
+    /// @dev `calledAt` is the origin's own stamp, so delivery lag never lengthens a target's deadline.
     function sendMarkCalled(uint32 worldwideDay, uint32 calledAt, bytes14[] calldata seriesIds) external payable;
     /// @notice Broadcast mark-qualified for one day's series over its snapshot, flipping them to
     ///         Qualified. Restricted to `INTEX_FACTORY_ROLE`.

@@ -382,9 +382,8 @@ pub(crate) fn try_call_group(
     }
     factory.remove_qualified_group(group.iso_code, group.worldwide_day)?;
 
-    // A slice of this sweep runs in a block hook, which cannot call contracts, so
-    // the notices leave from the `intex_notify` cycle trigger. Each entry carries its
-    // own series and call time: the group is gone from the index by the time they are sent.
+    // A slice of this sweep runs in a block hook, which cannot call contracts, so the notices leave from
+    // the `intex_notify` trigger. Each carries its own series: the group has left the index by then.
     for &series_id in &group.members {
         crate::qualified::enqueue_notice(
             factory,
@@ -414,8 +413,7 @@ pub(crate) fn notify_called(
     members: &[SeriesId],
 ) -> Result<()> {
     for chunk in members.chunks(MAX_SERIES_PER_MARK) {
-        // Best-effort, as it was when the sweep sent it inline: one checkpoint per message, so a
-        // failure takes only the batch it belongs to.
+        // Best-effort: one checkpoint per message, so a failure takes only its own batch.
         let sent = storage.with_checkpoint(|| {
             // Relay-float-funded: value 0, so the router self-quotes and pays the fee from its float.
             storage.call(

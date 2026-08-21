@@ -44,13 +44,11 @@ library BridgeMsgCodec {
     uint16 internal constant MAX_SERIES_PER_ISSUANCE = 8;
 
     /// @notice Recipients one ISSUANCE_INSTRUCTIONS may carry across all its series. Narrower than
-    ///         `MAX_PAYLOAD_ARRAY_LEN` because a recipient costs a mint on the destination, which is
-    ///         the dearest per-item work of any message; a wider day is issued as several messages.
+    ///         `MAX_PAYLOAD_ARRAY_LEN`: a recipient costs a mint, so a wider day spans several messages.
     uint16 internal constant MAX_RECIPIENTS_PER_ISSUANCE = 32;
 
-    /// @notice Series one MARK_CALLED or MARK_QUALIFIED message may carry. A batch is one day's
-    ///         series that took the same decision at the same moment, so it is short; the cap
-    ///         bounds destination work.
+    /// @notice Series one MARK_CALLED or MARK_QUALIFIED message may carry. A batch is one day's series
+    ///         that took the same decision at the same moment, so it is short.
     uint16 internal constant MAX_SERIES_PER_MARK = 8;
 
     /// @notice Chunks one day's fan-out may span; keeps a receiver's arrival set in one word.
@@ -71,10 +69,9 @@ library BridgeMsgCodec {
     uint8 internal constant MAX_REFERENCE_PRICES = 6;
     uint16 internal constant MIN_LEN_AUCTION_STAGE_CLEARING = 6;
     uint16 internal constant MIN_LEN_AUCTION_RESULT = 22;
-    // MARK_CALLED: header + abi.encode(worldwideDay, calledAt, seriesIds). The shortest valid body is
-    // one series: [worldwideDay][calledAt][array offset][array length][element] = 5 words.
+    // MARK_CALLED: header + abi.encode(worldwideDay, calledAt, seriesIds); one series is 5 words.
     uint16 internal constant MIN_LEN_MARK_CALLED = HEADER_LEN + 160;
-    // MARK_QUALIFIED: header + abi.encode(worldwideDay, seriesIds) = 4 words at minimum.
+    // MARK_QUALIFIED: header + abi.encode(worldwideDay, seriesIds); one series is 4 words.
     uint16 internal constant MIN_LEN_MARK_QUALIFIED = HEADER_LEN + 128;
     // BIDS_DONE: [ver(1)][type(1)][worldwideDay(4)][srcChainId(4)][relayGeneration(4)][totalBatches(2)][totalBids(4)]
     uint16 internal constant MIN_LEN_BIDS_DONE = 20;
@@ -530,8 +527,8 @@ library BridgeMsgCodec {
     }
 
     /// @notice Encodes MARK_CALLED message for one day's batch of series.
-    /// @dev Layout: [bodyVersion(1)][msgType(1)] ++ abi.encode(worldwideDay, calledAt, seriesIds). The
-    ///      origin's `calledAt` travels so every chain derives the same deadline from `callNoticePeriod`.
+    /// @dev Layout: [bodyVersion(1)][msgType(1)] ++ abi.encode(worldwideDay, calledAt, seriesIds); the
+    ///      origin's stamp travels so every chain derives the same deadline.
     /// @param _worldwideDay The worldwide day the series were derived from.
     /// @param _calledAt Unix time the origin marked the series Called.
     /// @param _seriesIds The auction series identifiers, 1..`MAX_SERIES_PER_MARK` of them.

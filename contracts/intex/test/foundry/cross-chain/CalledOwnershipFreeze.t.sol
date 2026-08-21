@@ -10,9 +10,8 @@ import {SendParam, MultiRecipientSendParam} from "@contracts/shared/interfaces/I
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
-/// @dev Called freezes who owns a series. Plain transfers are refused outright; the bridge stays open so a
-///      holder can reach the chain that settles, but only for their own balance — otherwise "burn here, mint
-///      to someone else there" would be a transfer the freeze never sees.
+/// @dev Called freezes who owns a series. The bridge stays open so a holder can reach the chain that
+///      settles, but only for their own balance.
 contract CalledOwnershipFreezeTest is CrossChainTest {
     uint32 internal constant DST_CHAIN_ID = 2;
     uint32 internal constant WORLDWIDE_DAY = 20260501;

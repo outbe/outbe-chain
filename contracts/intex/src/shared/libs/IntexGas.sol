@@ -7,12 +7,8 @@ pragma solidity 0.8.30;
 ///         single source of gas policy; each messenger passes the result into `ERC7786MessengerBase._send`, which
 ///         wraps it as the ERC-7786 executionGasLimit attribute honored by whichever gateway is active. Swapping
 ///         transport never touches these values.
-/// @dev A per-message base plus a per-item marginal for the batched messages (the receiver loops over the array).
-///      Every budget here is one and a half times the measured consumption of its heaviest realistic message,
-///      taking the failure path where one exists — that is the expensive one, and it is the one that must not run
-///      out. The measurement is already the pessimistic case and the EVM is deterministic, so the margin covers
-///      only what varies: the length of revert data a failure records. The attribute is a ceiling the sender pays
-///      for, so the same factor everywhere keeps the cost honest per message type.
+/// @dev Every budget is 1.5x the measured cost of its heaviest message, taking the failure path where one
+///      exists. `test/foundry/cross-chain/GasBudget.t.sol` fails if a formula drifts under the measurement.
 ///      Measurements live in `test/foundry/cross-chain/GasBudget.t.sol` and fail if a formula drifts under them.
 library IntexGas {
     // --- Outbe -> target chain fixed-size messages (TargetRouter handlers) ---
@@ -22,11 +18,8 @@ library IntexGas {
     uint256 internal constant AUCTION_STAGE_START_BASE = 350_000;
     /// @notice Marginal cost of storing one reference-price row on the target.
     uint256 internal constant AUCTION_STAGE_START_PER_PRICE = 25_000;
-    /// @dev Clearing also relays the day's bids back to Outbe from inside the same delivery, and that
-    ///      cost grows with the bid count the origin cannot see. Measured: ~0.5M with no bids, ~3.5M at
-    ///      one chunk, ~4.2M at four, ~8M at sixteen. The relay is capped on the target, so this covers
-    ///      the stage flip, that cap, and the parking write; a heavier day parks and is flushed. Measured at
-    ///      ~4.05M once the cap binds.
+    /// @dev Also relays the day's bids from inside the same delivery, a cost the origin cannot see, so the
+    ///      target caps that relay and a heavier day parks. Measured at ~4.05M once the cap binds.
     uint256 internal constant AUCTION_STAGE_CLEARING = 6_000_000;
     /// @dev Measured at ~66k.
     uint256 internal constant AUCTION_RESULT = 100_000;
@@ -43,24 +36,19 @@ library IntexGas {
     /// @notice Destination gas for a fixed-size BIDS_DONE completeness marker. Measured at ~43k.
     uint256 internal constant BIDS_DONE = 70_000;
 
-    /// @dev Not measured against the same rule: on Outbe the receiver forwards into the Desis precompile,
-    ///      whose work this harness cannot execute. The router's own share of a 64-bid batch is ~73k, so these
-    ///      numbers stand for the precompile and are left where they were.
+    /// @dev Outside the rule: the receiver forwards into the Desis precompile, which no test can execute.
+    ///      The router's own share of a 64-bid batch is ~73k; the rest of this stands for the precompile.
     uint256 internal constant BIDS_BASE = 1_300_000;
     uint256 internal constant BIDS_PER_ITEM = 160_000;
-    /// @dev Handler overhead only; a message carries several series, so the createSeries cost is
-    ///      per series rather than in the base. Measured at the 64-recipient cap: ~10.1M against a
-    ///      16.6M budget.
+    /// @dev Handler overhead only; createSeries is charged per series. Measured ~5.2M at the recipient cap.
     uint256 internal constant ISSUANCE_BASE = 200_000;
     uint256 internal constant ISSUANCE_PER_SERIES = 400_000;
     uint256 internal constant ISSUANCE_PER_ITEM = 230_000;
     /// @dev Measured at ~3.58M for a full 64-bidder chunk against a live escrow.
     uint256 internal constant REFUND_BASE = 250_000;
     uint256 internal constant REFUND_PER_ITEM = 80_000;
-    /// @dev The mint loop's cost is set by its failure path, not its happy one: a rejected item is
-    ///      recorded with its revert bytes so the owner can retry, and the tokens are already burned on
-    ///      the source, so an under-provisioned delivery strands them for good. Measured at ~131k per item
-    ///      landed and ~266k per item rejected, which is what caps the batch at a size a block can take.
+    /// @dev Sized on the failure path: a rejected item is recorded with its revert bytes while the tokens
+    ///      are already burned on the source. Measured ~131k per item landed, ~266k rejected.
     uint256 internal constant NFT_MINT_BASE = 150_000;
     uint256 internal constant NFT_MINT_PER_ITEM = 400_000;
 

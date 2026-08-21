@@ -26,9 +26,8 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 ///             the fee is drawn from the contract's pre-funded native float and reverts `NotEnoughNative` when short.
 ///         Conflating the two would let an entry caller's `msg.value` seed future relay sends without refund, or let
 ///         an entry caller drain the relay float.
-/// @dev Entry path is driven through the user-facing `IntexNFT1155Bridge.send` (payable). The relay/float path is
-///      driven by an inbound CLEARING delivery whose handler relays the day's bids from inside `receiveMessage` —
-///      the canonical `msg.value == 0` relay send.
+/// @dev Entry path is driven through the user-facing `IntexNFT1155Bridge.send` (payable); the relay path by an
+///      inbound CLEARING whose handler relays the day's bids from inside `receiveMessage`.
 contract PayNativeAccountingTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;

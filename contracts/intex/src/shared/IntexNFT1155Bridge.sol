@@ -116,8 +116,7 @@ contract IntexNFT1155Bridge is
         emit Bridged(sendId, _sendParam.dstChainId, msg.sender, _sendParam.tokenId, _sendParam.amount);
     }
 
-    /// @dev The wire carries recipients as `bytes32`; `assertAddress` has already rejected anything
-    ///      that is not address-shaped by the time this narrows one.
+    /// @dev `assertAddress` has already rejected anything not address-shaped by the time this narrows one.
     function _toAddress(bytes32 recipient) internal pure returns (address) {
         return address(uint160(uint256(recipient)));
     }

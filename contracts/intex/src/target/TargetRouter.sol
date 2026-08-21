@@ -36,15 +36,12 @@ contract TargetRouter is
     /// @notice Max BIDS_BATCH count per relay generation; bounded by the receiver's 256-bit arrival mask.
     uint16 internal constant MAX_BIDS_BATCHES = 256;
 
-    /// @notice Ceiling on one series' mark inside a batch. Without it the child takes 63/64 of what is
-    ///         left, so a single runaway series starves the parking write and the whole message reverts
-    ///         into endless redelivery, taking its batch mates with it. A mark measures ~15k, and the
-    ///         ceiling stays under the gas `IntexGas` budgets per series so a runaway still fits.
+    /// @notice Ceiling on one series' mark. Uncapped, a runaway series takes 63/64 of the message's gas and
+    ///         starves the parking write, so the whole batch reverts into endless redelivery.
     uint256 internal constant MARK_APPLY_GAS_CAP = 60_000;
 
-    /// @notice Ceiling on the bids relay fired from an inbound CLEARING. Its cost grows with the day's
-    ///         bid count, which the origin cannot know when it buys the delivery's gas, so beyond this the
-    ///         relay parks for a permissionless flush instead of taking the stage transition down with it.
+    /// @notice Ceiling on the bids relay an inbound CLEARING fires. Its cost grows with the day's bid count,
+    ///         which the origin cannot know, so beyond this the relay parks instead of failing the message.
     uint256 internal constant RELAY_BIDS_GAS_CAP = 4_000_000;
 
     /// @notice Destination chainId of Outbe — the sole peer for every outbound send and the only accepted source.
