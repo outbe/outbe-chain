@@ -39,3 +39,8 @@ pub const MAX_REFUND_CHUNKS: usize = 256;
 /// Reference currencies one day may price. Mirrors the codec's `MAX_REFERENCE_PRICES`:
 /// a day over it could not be started on any chain.
 pub const MAX_REFERENCE_PRICES: usize = 6;
+
+/// `IDesis.InboundIgnored` reason codes; mirrors the routers' `InboundReason` library.
+pub const IGNORED_OBSOLETE: u8 = 2;
+pub const IGNORED_CONFLICT: u8 = 3;
+pub const IGNORED_NOT_FOUND: u8 = 4;

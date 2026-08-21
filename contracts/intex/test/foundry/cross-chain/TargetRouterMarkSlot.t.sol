@@ -5,6 +5,7 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
+import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
@@ -53,18 +54,18 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
     }
 
     function _issuance() internal returns (bytes memory) {
-        BridgeMsgCodec.IssuanceInstructionsPayload[] memory one = new BridgeMsgCodec.IssuanceInstructionsPayload[](1);
-        one[0].seriesId = CreateSeriesLib.seriesId(DAY);
-        one[0].worldwideDay = DAY;
-        one[0].issuedIntexCount = 10;
-        one[0].promisLoadMinor = 1;
-        one[0].issuanceCurrency = 840;
-        one[0].referenceCurrency = 840;
-        one[0].recipients = new address[](1);
-        one[0].quantities = new uint256[](1);
-        one[0].recipients[0] = makeAddr("winner");
-        one[0].quantities[0] = 3;
-        return BridgeMsgCodec.encodeIssuanceInstructions(DAY, 0, 1, one);
+        BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
+        payload.seriesId = CreateSeriesLib.seriesId(DAY);
+        payload.worldwideDay = DAY;
+        payload.issuedIntexCount = 10;
+        payload.promisLoadMinor = 1;
+        payload.issuanceCurrency = 840;
+        payload.referenceCurrency = 840;
+        payload.recipients = new address[](1);
+        payload.quantities = new uint256[](1);
+        payload.recipients[0] = makeAddr("winner");
+        payload.quantities[0] = 3;
+        return BridgeMsgCodec.encodeIssuanceInstructions(DAY, 0, 1, IssuanceBatchLib.one(payload));
     }
 
     function _state() internal view returns (IIntexNFT1155.IntexState) {

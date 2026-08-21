@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {Vm} from "forge-std/Vm.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
@@ -81,13 +80,6 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     function _expectIgnored(uint8 msgType, uint8 reason) internal {
         vm.expectEmit(true, true, true, true, address(router));
         emit ITargetRouter.InboundMessageIgnored(OUTBE_CHAIN_ID, msgType, dayKey, reason);
-    }
-
-    function _countTopic(bytes32 sig) internal returns (uint256 n) {
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].topics[0] == sig) n++;
-        }
     }
 
     // --- START ---

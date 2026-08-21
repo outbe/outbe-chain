@@ -221,19 +221,21 @@ library TargetInbound {
             _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, chunkKey, InboundReason.CONFLICT);
             return;
         }
-        // A chunk naming a series under other terms — held on-chain or earlier in this same chunk — is an
-        // origin disagreement, and a series with no supply can never be created: none of the chunk is applied,
-        // so a corrected resend of the same index can still land.
-        bool[] memory exists = new bool[](series.length);
+        // Nothing of a chunk is applied when it names a series under other terms — held on-chain or earlier
+        // in this same chunk — or a series with no supply: the chunk index stays free for a corrected resend.
+        // `known[s]` also records an in-chunk predecessor, so the second payload does not re-create the series.
+        bool[] memory known = new bool[](series.length);
         for (uint256 s = 0; s < series.length; s++) {
             if (series[s].issuedIntexCount == 0) {
                 _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, chunkKey, InboundReason.INVALID);
                 return;
             }
-            exists[s] = $.intex.seriesExists(series[s].seriesId);
-            bool conflict = exists[s] && !_sameSeries($, series[s]);
+            known[s] = $.intex.seriesExists(series[s].seriesId);
+            bool conflict = known[s] && !_sameSeries($, series[s]);
             for (uint256 j = 0; !conflict && j < s; j++) {
-                conflict = series[j].seriesId == series[s].seriesId && !_samePayloadParams(series[j], series[s]);
+                if (series[j].seriesId != series[s].seriesId) continue;
+                conflict = !_samePayloadParams(series[j], series[s]);
+                known[s] = true;
             }
             if (conflict) {
                 _ignore(srcChainId, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, chunkKey, InboundReason.CONFLICT);
@@ -246,11 +248,7 @@ library TargetInbound {
         uint16 seen = ++$.issuanceChunksSeen[worldwideDay];
 
         for (uint256 s = 0; s < series.length; s++) {
-            // A duplicate id inside the chunk (already param-checked above) must not re-create; treat it as seen.
-            for (uint256 j = 0; !exists[s] && j < s; j++) {
-                exists[s] = series[j].seriesId == series[s].seriesId;
-            }
-            _applyIssuance($, srcChainId, series[s], exists[s]);
+            _applyIssuance($, srcChainId, series[s], known[s]);
         }
 
         if (seen == totalChunks) emit ITargetRouter.IssuanceCompleted(worldwideDay, totalChunks);
@@ -292,8 +290,8 @@ library TargetInbound {
             uint256 quantity = payload.quantities[i];
             if (quantity == 0) continue;
             address recipient = payload.recipients[i];
-            // A quantity the NFT can never mint would park an unflushable entry and burn the winner's
-            // one allocation; acknowledge it instead, leaving the pair open for a corrected resend.
+            // A quantity the NFT can never mint would park an unflushable entry; acknowledge it and leave
+            // the winner unissued, so the day's other chunks can still carry a corrected allocation.
             if (quantity > type(uint16).max) {
                 _ignore(
                     srcChainId,

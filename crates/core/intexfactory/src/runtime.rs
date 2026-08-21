@@ -171,11 +171,12 @@ pub fn pack_issuance_messages(
 /// Send a day's packed issuance messages, each stamped with its position in the chain's run.
 /// Relay-float-funded: value 0, the router quotes and pays the bridge fee from its own float.
 pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Result<()> {
-    for (chain_id, messages) in chunk_issuance_messages(pack_issuance_messages(legs)) {
+    for ((chain_id, worldwide_day), messages) in
+        chunk_issuance_messages(pack_issuance_messages(legs))
+    {
         let total_chunks = u16::try_from(messages.len())
             .map_err(|_| PrecompileError::Revert("issuance chunk count exceeds u16".into()))?;
         for (chunk_index, series) in messages.into_iter().enumerate() {
-            let worldwide_day = series[0].worldwideDay;
             storage.call(
                 ORIGIN_ROUTER_ADDRESS,
                 U256::ZERO,
@@ -194,19 +195,23 @@ pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Res
     Ok(())
 }
 
-/// Group packed messages by chain, keeping each chain's send order: a chain's messages are
-/// interleaved with the others' in the packed vector, and the chunk header counts per chain.
+/// One (chain, worldwide day) run of issuance messages, in send order: what the chunk header numbers.
+pub(crate) type IssuanceRun = ((u32, u32), Vec<Vec<IssuanceInstructionsParams>>);
+
+/// Group packed messages into the runs the chunk header numbers. Keying by the day as well as the
+/// chain keeps the numbering right for a caller whose legs span several days.
 pub(crate) fn chunk_issuance_messages(
     packed: Vec<(u32, Vec<IssuanceInstructionsParams>)>,
-) -> Vec<(u32, Vec<Vec<IssuanceInstructionsParams>>)> {
-    let mut per_chain: Vec<(u32, Vec<Vec<IssuanceInstructionsParams>>)> = Vec::new();
+) -> Vec<IssuanceRun> {
+    let mut runs: Vec<IssuanceRun> = Vec::new();
     for (chain_id, message) in packed {
-        match per_chain.iter_mut().find(|(chain, _)| *chain == chain_id) {
+        let key = (chain_id, message[0].worldwideDay);
+        match runs.iter_mut().find(|(run_key, _)| *run_key == key) {
             Some((_, messages)) => messages.push(message),
-            None => per_chain.push((chain_id, vec![message])),
+            None => runs.push((key, vec![message])),
         }
     }
-    per_chain
+    runs
 }
 
 fn recipient_count(message: &[IssuanceInstructionsParams]) -> usize {

@@ -7,7 +7,9 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::api::{AuctionBriefReceipt, AuctionBriefRejectionReason};
-use crate::constants::ORIGIN_ROUTER_ADDRESS;
+use crate::constants::{
+    IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, ORIGIN_ROUTER_ADDRESS,
+};
 use crate::runtime;
 use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract};
 
@@ -2125,11 +2127,6 @@ fn a_relayed_bid_naming_an_unspellable_currency_is_refused_at_intake() {
 // --- Inbound acknowledgements: messages that can never apply are acked, not rejected ---
 
 const UNBRIEFED_DAY: WorldwideDay = WorldwideDay::new(20260202);
-/// The shared `InboundReason` codes `IDesis.InboundIgnored` reuses.
-const IGNORED_OBSOLETE: u8 = 2;
-const IGNORED_CONFLICT: u8 = 3;
-const IGNORED_NOT_FOUND: u8 = 4;
-
 fn inbound_storage() -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));

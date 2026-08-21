@@ -229,35 +229,48 @@ fn a_chains_series_batch_even_when_another_chain_comes_between_them() {
     );
 }
 
-#[test]
-fn a_chains_chunks_form_one_run_even_when_another_chain_interleaves() {
-    let packed =
-        runtime::pack_issuance_messages(vec![leg(10, 1, 64), leg(20, 1, 5), leg(10, 2, 64)]);
-    let chunked = runtime::chunk_issuance_messages(packed);
-
-    let shape: Vec<(u32, Vec<usize>)> = chunked
-        .iter()
-        .map(|(chain, messages)| {
+fn run_shape(runs: &[runtime::IssuanceRun]) -> Vec<((u32, u32), Vec<usize>)> {
+    runs.iter()
+        .map(|(key, messages)| {
             (
-                *chain,
+                *key,
                 messages
                     .iter()
                     .map(|m| m.iter().map(|s| s.recipients.len()).sum())
                     .collect(),
             )
         })
-        .collect();
-    assert_eq!(shape, vec![(10, vec![64, 64]), (20, vec![5])]);
+        .collect()
+}
+
+#[test]
+fn a_chains_chunks_form_one_run_even_when_another_chain_interleaves() {
+    // One day, one chain, winners spanning two messages, with another chain's message in between.
+    let packed =
+        runtime::pack_issuance_messages(vec![leg(10, 1, 64), leg(20, 1, 5), leg(10, 1, 64)]);
+    let runs = runtime::chunk_issuance_messages(packed);
+    assert_eq!(
+        run_shape(&runs),
+        vec![((10, 1), vec![64, 64]), ((20, 1), vec![5])]
+    );
+}
+
+#[test]
+fn a_chains_days_are_numbered_as_separate_runs() {
+    // `leg`'s series doubles as its worldwide day: each day carries its own chunk numbering.
+    let packed = runtime::pack_issuance_messages(vec![leg(10, 1, 64), leg(10, 2, 64)]);
+    let runs = runtime::chunk_issuance_messages(packed);
+    assert_eq!(
+        run_shape(&runs),
+        vec![((10, 1), vec![64]), ((10, 2), vec![64])]
+    );
 }
 
 #[test]
 fn a_single_message_day_is_chunk_zero_of_one() {
-    let chunked =
+    let runs =
         runtime::chunk_issuance_messages(runtime::pack_issuance_messages(vec![leg(7, 1, 3)]));
-    assert_eq!(chunked.len(), 1);
-    assert_eq!(chunked[0].0, 7);
-    assert_eq!(chunked[0].1.len(), 1);
-    assert_eq!(chunked[0].1[0][0].recipients.len(), 3);
+    assert_eq!(run_shape(&runs), vec![((7, 1), vec![3])]);
 }
 
 /// Issue a series whose issuance currency differs from its reference, with a

@@ -15,8 +15,9 @@ use outbe_intexfactory::SeriesId;
 
 use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
-    DAY_STATE_RED, MAX_REFERENCE_PRICES, MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS,
-    ORIGIN_ROUTER_ADDRESS, REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
+    DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_REFERENCE_PRICES,
+    MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, REFUND_CHUNK_LEN,
+    REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -469,11 +470,6 @@ enum Intake {
     Closed,
     UnknownDay,
 }
-
-/// `InboundIgnored.reason` codes; the shared `InboundReason` numbering, mirrored in `IDesis`.
-const IGNORED_OBSOLETE: u8 = 2;
-const IGNORED_CONFLICT: u8 = 3;
-const IGNORED_NOT_FOUND: u8 = 4;
 
 fn emit_inbound_ignored(
     contract: &mut DesisContract<'_>,

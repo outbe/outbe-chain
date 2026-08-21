@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {Vm} from "forge-std/Vm.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
@@ -10,6 +9,7 @@ import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
+import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
 /// A day's issuance reaches a chain as numbered chunks. Each winner is issued once per series whatever
 /// the chunks say; a repeated chunk, a chunk disagreeing with the day's run and a series named under other
@@ -63,15 +63,6 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         }
     }
 
-    function _one(BridgeMsgCodec.IssuanceInstructionsPayload memory p)
-        internal
-        pure
-        returns (BridgeMsgCodec.IssuanceInstructionsPayload[] memory series)
-    {
-        series = new BridgeMsgCodec.IssuanceInstructionsPayload[](1);
-        series[0] = p;
-    }
-
     function _deliver(uint16 chunkIndex, uint16 totalChunks, BridgeMsgCodec.IssuanceInstructionsPayload[] memory series)
         internal
     {
@@ -83,13 +74,6 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         );
     }
 
-    function _countTopic(bytes32 sig) internal returns (uint256 n) {
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].topics[0] == sig) n++;
-        }
-    }
-
     function _balance(bytes14 seriesId, address holder) internal view returns (uint256) {
         return intex.balanceOf(holder, intex.issuedTokenId(seriesId));
     }
@@ -97,7 +81,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
     // --- repeats ---
 
     function test_ARepeatedChunkMintsNothingAndIsAcknowledged() public {
-        _deliver(0, 1, _one(_series(USD, alice, 7)));
+        _deliver(0, 1, IssuanceBatchLib.one(_series(USD, alice, 7)));
         assertEq(_balance(USD, alice), 7, "first delivery mints");
 
         vm.expectEmit(true, true, true, true, address(router));
@@ -107,7 +91,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
             bytes32(uint256(DAY) << 16),
             InboundReason.DUPLICATE
         );
-        _deliver(0, 1, _one(_series(USD, alice, 7)));
+        _deliver(0, 1, IssuanceBatchLib.one(_series(USD, alice, 7)));
         assertEq(_balance(USD, alice), 7, "repeat mints nothing");
         (uint16 seen, uint16 total) = router.issuanceChunks(DAY);
         assertEq(seen, 1, "repeat is not counted");
@@ -115,9 +99,9 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
     }
 
     function test_AWinnerNamedTwiceAcrossChunksIsIssuedOnce() public {
-        _deliver(0, 2, _one(_series(USD, alice, 7)));
+        _deliver(0, 2, IssuanceBatchLib.one(_series(USD, alice, 7)));
         vm.recordLogs();
-        _deliver(1, 2, _one(_series(USD, alice, 3)));
+        _deliver(1, 2, IssuanceBatchLib.one(_series(USD, alice, 3)));
         assertEq(_balance(USD, alice), 7, "alice keeps her one allocation");
         assertEq(_countTopic(ITargetRouter.InboundMessageIgnored.selector), 1, "the repeated winner is reported");
         assertTrue(router.issued(USD, alice), "alice recorded as issued");
@@ -125,19 +109,19 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
     }
 
     function test_ABurnDoesNotReopenAWinnersAllocation() public {
-        _deliver(0, 1, _one(_series(USD, alice, 7)));
+        _deliver(0, 1, IssuanceBatchLib.one(_series(USD, alice, 7)));
         // Parking frees supply-cap room; the per-winner record is what keeps a repeat from re-minting.
         intex.parkIntex(alice, USD, 7);
         assertEq(_balance(USD, alice), 0, "parked");
 
-        _deliver(0, 1, _one(_series(USD, alice, 7)));
+        _deliver(0, 1, IssuanceBatchLib.one(_series(USD, alice, 7)));
         assertEq(_balance(USD, alice), 0, "repeat does not mint into the freed room");
     }
 
     // --- conflicts ---
 
     function test_AChunkDisagreeingOnTheTotalIsSkipped() public {
-        _deliver(0, 2, _one(_series(USD, alice, 7)));
+        _deliver(0, 2, IssuanceBatchLib.one(_series(USD, alice, 7)));
 
         vm.expectEmit(true, true, true, true, address(router));
         emit ITargetRouter.InboundMessageIgnored(
@@ -146,14 +130,14 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
             bytes32((uint256(DAY) << 16) | 1),
             InboundReason.CONFLICT
         );
-        _deliver(1, 3, _one(_series(EUR, bob, 2)));
+        _deliver(1, 3, IssuanceBatchLib.one(_series(EUR, bob, 2)));
         assertFalse(intex.seriesExists(EUR), "nothing of the conflicting chunk applied");
         (uint16 seen,) = router.issuanceChunks(DAY);
         assertEq(seen, 1, "conflicting chunk not counted");
     }
 
     function test_ASeriesNamedUnderOtherTermsSkipsTheWholeChunk() public {
-        _deliver(0, 2, _one(_series(USD, alice, 7)));
+        _deliver(0, 2, IssuanceBatchLib.one(_series(USD, alice, 7)));
 
         BridgeMsgCodec.IssuanceInstructionsPayload[] memory chunk = new BridgeMsgCodec.IssuanceInstructionsPayload[](2);
         chunk[0] = _series(EUR, bob, 2);
@@ -174,13 +158,13 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
     }
 
     function test_ACorrectedResendOfASkippedChunkLands() public {
-        _deliver(0, 2, _one(_series(USD, alice, 7)));
+        _deliver(0, 2, IssuanceBatchLib.one(_series(USD, alice, 7)));
         BridgeMsgCodec.IssuanceInstructionsPayload memory bad = _series(USD, bob, 3);
         bad.entryPriceMinor = 101e6;
-        _deliver(1, 2, _one(bad));
+        _deliver(1, 2, IssuanceBatchLib.one(bad));
         assertEq(_balance(USD, bob), 0, "conflict skipped");
 
-        _deliver(1, 2, _one(_series(USD, bob, 3)));
+        _deliver(1, 2, IssuanceBatchLib.one(_series(USD, bob, 3)));
         assertEq(_balance(USD, bob), 3, "corrected chunk applied");
     }
 
@@ -191,7 +175,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         emit ITargetRouter.InboundMessageIgnored(
             OUTBE_CHAIN_ID, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, bytes32(uint256(DAY) << 16), InboundReason.INVALID
         );
-        _deliver(0, 1, _one(p));
+        _deliver(0, 1, IssuanceBatchLib.one(p));
         assertFalse(intex.seriesExists(USD), "nothing created");
         assertFalse(router.issuanceChunkApplied(DAY, 0), "a corrected resend can still land");
     }
@@ -199,12 +183,12 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
     function test_AnUnmintableQuantityIsAckedAndTheAllocationStaysOpen() public {
         BridgeMsgCodec.IssuanceInstructionsPayload memory p = _series(USD, alice, uint256(type(uint16).max) + 1);
         vm.recordLogs();
-        _deliver(0, 2, _one(p));
+        _deliver(0, 2, IssuanceBatchLib.one(p));
         assertEq(_balance(USD, alice), 0, "nothing minted");
         assertFalse(router.issued(USD, alice), "the allocation is not burned");
         assertEq(_countTopic(ITargetRouter.InboundMessageIgnored.selector), 1, "acknowledged as invalid");
 
-        _deliver(1, 2, _one(_series(USD, alice, 7))); // the corrected allocation in the run's other chunk
+        _deliver(1, 2, IssuanceBatchLib.one(_series(USD, alice, 7))); // the corrected allocation in the run's other chunk
         assertEq(_balance(USD, alice), 7, "the corrected allocation lands");
     }
 
@@ -243,7 +227,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         p.quantities[0] = 7;
         p.quantities[1] = 3;
         vm.recordLogs();
-        _deliver(0, 1, _one(p));
+        _deliver(0, 1, IssuanceBatchLib.one(p));
         assertEq(_balance(USD, alice), 7, "only the first naming mints");
         assertEq(_countTopic(ITargetRouter.InboundMessageIgnored.selector), 1, "the repeat is reported");
     }
@@ -252,13 +236,13 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
 
     function test_TheLastChunkCompletesTheDayWhateverTheOrder() public {
         vm.recordLogs();
-        _deliver(2, 3, _one(_series(EUR, bob, 2)));
-        _deliver(0, 3, _one(_series(USD, alice, 7)));
+        _deliver(2, 3, IssuanceBatchLib.one(_series(EUR, bob, 2)));
+        _deliver(0, 3, IssuanceBatchLib.one(_series(USD, alice, 7)));
         assertEq(_countTopic(ITargetRouter.IssuanceCompleted.selector), 0, "not complete yet");
 
         vm.expectEmit(true, true, true, true, address(router));
         emit ITargetRouter.IssuanceCompleted(DAY, 3);
-        _deliver(1, 3, _one(_series(USD, bob, 1)));
+        _deliver(1, 3, IssuanceBatchLib.one(_series(USD, bob, 1)));
         (uint16 seen, uint16 total) = router.issuanceChunks(DAY);
         assertEq(seen, 3, "every chunk counted");
         assertEq(total, 3, "total as declared");
@@ -267,7 +251,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
     function test_ASeriesOnlyChunkCompletesADayWithNoLocalWinners() public {
         vm.expectEmit(true, true, true, true, address(router));
         emit ITargetRouter.IssuanceCompleted(DAY, 1);
-        _deliver(0, 1, _one(_series(USD, address(0), 0)));
+        _deliver(0, 1, IssuanceBatchLib.one(_series(USD, address(0), 0)));
         assertTrue(intex.seriesExists(USD), "series created");
     }
 }
