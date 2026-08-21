@@ -1,26 +1,45 @@
 /**
  * 0-setup-erc20.ts
  *
- * Ensures user and vault have sufficient ERC20 balances using a dedicated
- * holder wallet (ERC20_HOLDER_PRIVATE_KEY) as the source of distributed tokens.
- * The owner (PRIVATE_KEY) mints fresh tokens to the holder only when the
- * holder's balance is insufficient to cover the deficits.
+ * Ensures the vault router authorizes the Credis precompiles and that user and
+ * vault have sufficient ERC20 balances, using a dedicated holder wallet
+ * (ERC20_HOLDER_PRIVATE_KEY) as the source of distributed tokens. The owner
+ * (PRIVATE_KEY) mints fresh tokens to the holder only when the holder's balance
+ * is insufficient to cover the deficits.
  *
- *   1. Compute user + vault deficits (targets: 1,000 / 10,000 tokens)
- *   2. Ensure holder has enough tokens (mint via owner if short)
- *   3. Transfer to user (from holder) if user deficit > 0
- *   4. Deposit to vault (from holder) if vault deficit > 0
+ *   1. Register GratisFactory + CredisFactory as liquidity targets
+ *   2. Compute user + vault deficits (targets: 1,000 / 10,000 tokens)
+ *   3. Ensure holder has enough tokens (mint via owner if short)
+ *   4. Transfer to user (from holder) if user deficit > 0
+ *   5. Deposit to vault (from holder) if vault deficit > 0
  *
  * Usage: npx tsx src/0-setup-erc20.ts [envName]
  */
 
 import { ethers, Wallet } from "ethers";
 import { IERC20__factory, IVaultRouter__factory } from "./contracts/index.js";
-import { DEFAULT_ENV, formatToken, fetchTokenMeta, loadEnv, requireEnv } from "./utils.js";
+import {
+  DEFAULT_CREDIS_FACTORY_ADDRESS,
+  DEFAULT_ENV,
+  DEFAULT_GRATIS_FACTORY_ADDRESS,
+  fetchTokenMeta,
+  formatToken,
+  loadEnv,
+  requireEnv,
+} from "./utils.js";
 
 const USER_TARGET = 1_000_000_000n;    // 1,000 tokens (6 decimals)
 const VAULT_TARGET = 10_000_000_000n;  // 10,000 tokens (6 decimals)
-const INBOUND_FLOW = 3;                 // CredisCostAmount
+const INBOUND_FLOW = 3;                 // StablesSource.CredisCostAmount
+const CREDIS_TARGET = 1;                // StablesTarget.Credis
+
+// GratisFactory reserves the credit at pledgeGratis, CredisFactory releases it at
+// requestCredis. Both take vault liquidity, so both must be registered targets or
+// pledgeGratis reverts.
+const LIQUIDITY_TARGETS = [
+  ["GratisFactory", DEFAULT_GRATIS_FACTORY_ADDRESS],
+  ["CredisFactory", DEFAULT_CREDIS_FACTORY_ADDRESS],
+] as const;
 
 const envName = process.argv[2] || DEFAULT_ENV;
 const { envPath } = loadEnv(import.meta.url, envName, { deploymentEnv: true });
@@ -64,9 +83,56 @@ async function main() {
   console.log(`ERC20:          ${erc20Address} (${tokenSymbol}, ${tokenDecimals} decimals)`);
   console.log(`Vault Router: ${vaultRouterAddress}`);
 
-  // ── Step 1: Compute deficits ──────────────────────────────────────────────
+  /// The `add*` management methods are owner-gated; find which of the keys we hold
+  /// is the router's owner.
+  async function resolveVaultRouterOwnerSigner(): Promise<Wallet> {
+    const ownableVaultRouter = new ethers.Contract(
+      vaultRouterAddress,
+      ["function owner() view returns (address)"],
+      provider,
+    );
+    const vaultRouterOwner: string = await ownableVaultRouter.owner();
+    const candidates = [ownerWallet, holderWallet, vaultRouterWallet].filter(
+      (w): w is Wallet => w !== undefined,
+    );
+    const signer = candidates.find(
+      (w) => w.address.toLowerCase() === vaultRouterOwner.toLowerCase(),
+    );
+    if (!signer) {
+      throw new Error(
+        `VaultRouter owner ${vaultRouterOwner} matches none of PRIVATE_KEY / ERC20_HOLDER_PRIVATE_KEY / VAULT_ROUTER_PRIVATE_KEY (${candidates
+          .map((w) => w.address)
+          .join(", ")}); cannot manage the liquidity registry`,
+      );
+    }
+    return signer;
+  }
 
-  console.log("\n[1] Computing deficits...");
+  // ── Step 1: Register the Credis precompiles as liquidity targets ──────────
+
+  console.log("\n[1] Registering liquidity targets...");
+  const registeredTargets = new Set<string>();
+  const targetsCount = await vaultRouterAsOwner.liquidityTargetsCount();
+  for (let i = 0n; i < targetsCount; i++) {
+    const { targetAddress } = await vaultRouterAsOwner.liquidityTargetAt(i);
+    registeredTargets.add(targetAddress.toLowerCase());
+  }
+
+  for (const [label, address] of LIQUIDITY_TARGETS) {
+    if (registeredTargets.has(address.toLowerCase())) {
+      console.log(`    ${label} already registered`);
+      continue;
+    }
+    const signer = await resolveVaultRouterOwnerSigner();
+    const tx = await IVaultRouter__factory.connect(vaultRouterAddress, signer)
+      .addLiquidityTarget(address, CREDIS_TARGET);
+    await tx.wait();
+    console.log(`    Registered ${label} (${address}) as liquidity target`);
+  }
+
+  // ── Step 2: Compute deficits ──────────────────────────────────────────────
+
+  console.log("\n[2] Computing deficits...");
   const userBalance = await tokenAsOwner.balanceOf(userAddress);
   const underlyingVaultAddr = await vaultRouterAsOwner.assetVaultAt(erc20Address, 0);
   const vaultBalance = await tokenAsOwner.balanceOf(underlyingVaultAddr);
@@ -86,9 +152,9 @@ async function main() {
     return;
   }
 
-  // ── Step 2: Ensure holder has enough tokens ───────────────────────────────
+  // ── Step 3: Ensure holder has enough tokens ───────────────────────────────
 
-  console.log("\n[2] Checking holder ERC20 balance...");
+  console.log("\n[3] Checking holder ERC20 balance...");
   const holderBalance = await tokenAsOwner.balanceOf(holderWallet.address);
   console.log(`    Current: ${fmt(holderBalance)}`);
 
@@ -102,29 +168,22 @@ async function main() {
     console.log("    Sufficient — skipping mint");
   }
 
-  // ── Step 3: Transfer to user ──────────────────────────────────────────────
+  // ── Step 4: Transfer to user ──────────────────────────────────────────────
 
   if (userDeficit > 0n) {
-    console.log("\n[3] Transferring to user...");
+    console.log("\n[4] Transferring to user...");
     const tx = await tokenAsHolder.transfer(userAddress, userDeficit);
     await tx.wait();
     const newBal = await tokenAsOwner.balanceOf(userAddress);
     console.log(`    Sent ${fmt(userDeficit)} → user balance: ${fmt(newBal)}`);
   } else {
-    console.log("\n[3] User balance sufficient — skipping transfer");
+    console.log("\n[4] User balance sufficient — skipping transfer");
   }
 
-  // ── Step 4: Deposit to vault ──────────────────────────────────────────────
+  // ── Step 5: Deposit to vault ──────────────────────────────────────────────
 
   if (vaultDeficit > 0n) {
-    console.log("\n[4] Depositing to vault...");
-
-    const ownableVaultRouter = new ethers.Contract(
-      vaultRouterAddress,
-      ["function owner() view returns (address)"],
-      provider,
-    );
-    const vaultRouterOwner: string = await ownableVaultRouter.owner();
+    console.log("\n[5] Depositing to vault...");
 
     let alreadyRegistered = false;
     const sourcesCount = await vaultRouterAsOwner.liquiditySourcesCount();
@@ -139,23 +198,11 @@ async function main() {
     if (alreadyRegistered) {
       console.log(`    Holder already registered as liquidity source`);
     } else {
-      const candidates = [ownerWallet, holderWallet, vaultRouterWallet].filter(
-        (w): w is Wallet => w !== undefined,
-      );
-      const signerForRegistration = candidates.find(
-        (w) => w.address.toLowerCase() === vaultRouterOwner.toLowerCase(),
-      );
-      if (!signerForRegistration) {
-        throw new Error(
-          `VaultRouter owner ${vaultRouterOwner} matches none of PRIVATE_KEY / ERC20_HOLDER_PRIVATE_KEY / VAULT_ROUTER_PRIVATE_KEY (${candidates
-            .map((w) => w.address)
-            .join(", ")}); cannot register holder as liquidity source`,
-        );
-      }
-      const vaultRouterForRegistration = IVaultRouter__factory.connect(vaultRouterAddress, signerForRegistration);
+      const signer = await resolveVaultRouterOwnerSigner();
+      const vaultRouterForRegistration = IVaultRouter__factory.connect(vaultRouterAddress, signer);
       const setFlowTx = await vaultRouterForRegistration.addLiquiditySource(holderWallet.address, INBOUND_FLOW);
       await setFlowTx.wait();
-      console.log(`    Registered holder as liquidity source (signed by ${signerForRegistration.address})`);
+      console.log(`    Registered holder as liquidity source (signed by ${signer.address})`);
     }
 
     const approveTx = await tokenAsHolder.approve(vaultRouterAddress, vaultDeficit);
@@ -165,7 +212,7 @@ async function main() {
     const newBal = await tokenAsOwner.balanceOf(underlyingVaultAddr);
     console.log(`    Deposited ${fmt(vaultDeficit)} → vault balance: ${fmt(newBal)}`);
   } else {
-    console.log("\n[4] Vault balance sufficient — skipping deposit");
+    console.log("\n[5] Vault balance sufficient — skipping deposit");
   }
 
   console.log("\n=== Setup ERC20 complete ===");

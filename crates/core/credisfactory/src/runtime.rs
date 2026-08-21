@@ -142,8 +142,10 @@ pub fn request_credis(
         )?;
     }
 
-    // Withdraw the matching stablecoin from the vault to the smart account.
-    outbe_vaultrouter::api::withdraw(&storage, asset, terms.stables_amount, smart_account)?;
+    // Deliver the stablecoin the pledge already claimed. `pledgeGratis` pulled it
+    // out of the vault into router custody under this handle, so there is no vault
+    // liquidity to lose here — the credit was reserved when the quote was struck.
+    outbe_vaultrouter::api::release_reservation(&storage, pledge_handle, smart_account)?;
 
     storage.emit_event(
         CREDIS_FACTORY_ADDRESS,

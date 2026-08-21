@@ -1009,7 +1009,8 @@ VAULT_ROUTER_LIQUIDITY_SOURCES = [
     (GEM_FACTORY_ADDRESS, 4),     # GemCostAmount
 ]
 VAULT_ROUTER_LIQUIDITY_TARGETS = [
-    (CREDIS_FACTORY_ADDRESS, 1),  # Credis
+    (CREDIS_FACTORY_ADDRESS, 1),   # Credis — releases the reservation at requestCredis
+    (GRATIS_FACTORY_ADDRESS, 1),   # Credis — reserves the credit at pledgeGratis
 ]
 
 

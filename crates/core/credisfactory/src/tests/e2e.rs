@@ -652,3 +652,31 @@ fn request_credis_rejects_an_undeployed_smart_account() {
     });
     teardown();
 }
+
+/// The disbursement is a release of the credit the pledge already claimed, keyed by
+/// the pledge handle — not a fresh withdrawal that could find the vault dry. Only
+/// `reserve` and `releaseReservation` are stubbed here, so a flow that fell back to
+/// `withdraw` would get empty returndata and fail to decode.
+#[test]
+fn request_credis_releases_the_reservation_its_pledge_created() {
+    let mut storage = env_router_selectors(&[
+        outbe_vaultrouter::api::IVaultRouter::reserveCall::SELECTOR,
+        outbe_vaultrouter::api::IVaultRouter::releaseReservationCall::SELECTOR,
+    ]);
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let handle = pledge(&storage, alice(), 1);
+        let spend = credis_spend_auth(alice(), handle, alice());
+
+        let (_, amount_stables) = runtime::request_credis(
+            storage.clone(),
+            cca(),
+            alice(),
+            handle,
+            spend,
+            pledge_cost(),
+        )
+        .unwrap();
+        assert_eq!(amount_stables, pledge_stables());
+    });
+}

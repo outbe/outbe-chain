@@ -12,6 +12,10 @@ outbe-promis.workspace = true
 outbe-fidelity.workspace = true
 # Prices the credis loan at pledge time (COEN/840 → gratis collateral).
 outbe-oracle.workspace = true
+# Holds the pledged credit in vault-router custody until `requestCredis` or expiry.
+outbe-vaultrouter.workspace = true
+outbe-macros.workspace = true
+tracing.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
