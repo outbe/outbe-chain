@@ -27,7 +27,7 @@ business intent is recorded as a durable outbox item before/with its local trans
 send success records transport id, while failure remains retryable without recreating
 the economic effect.
 
-Pending bids, issuance mints, holder migrations, refunds and proceeds routes use typed
+Pending bids, issuance mints, lifecycle marks, refunds and proceeds routes use typed
 records with immutable payload commitment, attempt state and one terminal disposition.
 Permissionless flush methods operate only on stored intents and cannot substitute data.
 Admin sweep excludes value reserved by pending routes.
@@ -37,7 +37,7 @@ Admin sweep excludes value reserved by pending routes.
 OriginRouter's Desis/IntexFactory send methods and authenticated receive dispatch own
 Outbe-side routing; proceeds receive/retry owns the composed WCOEN distribution seam (per source
 chain, feeding the day's proceeds fan-in).
-TargetRouter's receive dispatch, bid relay, issuance mint, holder bridge and proceeds
+TargetRouter's receive dispatch, bid relay, issuance mint, lifecycle mark and proceeds
 flush methods own target-side orchestration. `wire`, peer setters, proceeds routes,
 roles, target registry membership and upgrades are privileged configuration.
 

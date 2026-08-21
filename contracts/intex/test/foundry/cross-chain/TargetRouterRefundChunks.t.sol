@@ -71,7 +71,7 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
         SummingEscrowAdapter escrow = new SummingEscrowAdapter(IERC20(address(wcoen)));
         tokenBridge = new CountingTokenBridge();
 
-        target.wire(makeAddr("auction"), makeAddr("intex"), address(escrow), makeAddr("nftBridge"));
+        target.wire(makeAddr("auction"), makeAddr("intex"), address(escrow));
         target.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
         target.setProceedsRoute(address(tokenBridge), originRouter);
     }
@@ -133,7 +133,7 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
         escrow.grantRole(escrow.RELAYER_ROLE(), address(target));
         escrow.grantRole(escrow.AUCTION_ROLE(), address(this));
         escrow.setProceedsRecipient(address(target));
-        target.wire(makeAddr("auction"), makeAddr("intex"), address(escrow), makeAddr("nftBridge"));
+        target.wire(makeAddr("auction"), makeAddr("intex"), address(escrow));
 
         address[2] memory bidders = [makeAddr("early"), makeAddr("late")];
         for (uint256 i = 0; i < bidders.length; i++) {

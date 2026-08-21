@@ -316,4 +316,4 @@ pub const GOVERNANCE_ADDRESS: Address = address!("0x0000000000000000000000000000
 /// (Issued/Settled tokens). A permanent CREATE3 proxy (not a low-range
 /// precompile). Called by IntexFactory (settle/burnSettled) and by GemFactory
 /// (`parkIntex`, gated by `GEM_ROLE`) to burn a merchant's parked Intex.
-pub const INTEX_NFT1155_ADDRESS: Address = address!("0x4Ccbc413a5f159Da316178F8b7576C923b4D1e5d");
+pub const INTEX_NFT1155_ADDRESS: Address = address!("0x4b25C6af5C45240D9cE546AF223Dd7132C7E39Af");

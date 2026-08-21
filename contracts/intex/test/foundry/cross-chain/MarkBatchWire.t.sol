@@ -51,7 +51,7 @@ contract MarkBatchWireTest is CrossChainTest {
         bnbRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
         outbeRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
 
-        bnbRouter.wire(address(auction), address(intex), admin, admin);
+        bnbRouter.wire(address(auction), address(intex), admin);
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
 
         outbeRouter.wire(address(desis), intexFactory);
@@ -121,7 +121,7 @@ contract MarkBatchWireTest is CrossChainTest {
         outbeRouter.sendMarkQualified(WORLDWIDE_DAY, MarkBatchLib.two(USD_SERIES, EUR_SERIES));
         _assertLastGas(IntexGas.markQualified(2));
 
-        outbeRouter.sendMarkCalled(WORLDWIDE_DAY, MarkBatchLib.two(USD_SERIES, EUR_SERIES));
+        outbeRouter.sendMarkCalled(WORLDWIDE_DAY, uint32(block.timestamp), MarkBatchLib.two(USD_SERIES, EUR_SERIES));
         _assertLastGas(IntexGas.markCalled(2));
         vm.stopPrank();
     }
@@ -143,7 +143,7 @@ contract MarkBatchWireTest is CrossChainTest {
                 BridgeMsgCodec.MAX_SERIES_PER_MARK
             )
         );
-        outbeRouter.sendMarkCalled(WORLDWIDE_DAY, batch);
+        outbeRouter.sendMarkCalled(WORLDWIDE_DAY, uint32(block.timestamp), batch);
     }
 
     function test_onlyTheFactoryMaySendAMarkBatch() public {

@@ -33,7 +33,7 @@ contract GasAttributeTest is CrossChainTest {
 
         desis = address(new MockDesis());
         outbe.wire(desis, makeAddr("factory"));
-        bnb.wire(admin, makeAddr("intex"), makeAddr("escrow"), makeAddr("nftBridge"));
+        bnb.wire(admin, makeAddr("intex"), makeAddr("escrow"));
     }
 
     /// @dev The last recorded send carries exactly one executionGasLimit attribute equal to `expectedGas`.

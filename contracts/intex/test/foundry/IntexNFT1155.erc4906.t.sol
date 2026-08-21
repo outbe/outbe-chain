@@ -78,7 +78,7 @@ contract IntexNFT1155Erc4906Test is Test {
         (count,) = _metadataUpdates();
         assertEq(count, 0, "parkIntex is supply-only");
 
-        nft.markCalled(SERIES_ID);
+        nft.markCalled(SERIES_ID, uint32(block.timestamp));
         (count, tokenId) = _metadataUpdates();
         assertEq(count, 1, "markCalled changes the document");
         assertEq(tokenId, iTok);
@@ -91,7 +91,7 @@ contract IntexNFT1155Erc4906Test is Test {
         (count,) = _metadataUpdates();
         assertEq(count, 0, "burnSettled is supply-only");
 
-        nft.crosschainBurn(user, iTok, 1);
+        nft.crosschainBurn(user, user,  iTok, 1);
         nft.crosschainMint(user3, iTok, 1);
         (count,) = _metadataUpdates();
         assertEq(count, 0, "bridge moves are supply-only");

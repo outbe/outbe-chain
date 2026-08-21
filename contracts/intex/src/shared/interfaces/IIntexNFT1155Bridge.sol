@@ -88,13 +88,6 @@ interface IIntexNFT1155Bridge {
         bytes32 indexed receiveId, uint32 srcChainId, bytes32[] recipients, uint256[] tokenIds, uint256[] amounts
     );
 
-    /// @notice Emitted when the system bridge migrates holders cross-chain.
-    /// @param sendId Bridge send identifier.
-    /// @param dstChainId Destination chainId.
-    /// @param tokenId Token ID (series) being migrated.
-    /// @param holdersCount Number of holders included in the migration.
-    event SystemBridged(bytes32 indexed sendId, uint32 dstChainId, uint256 indexed tokenId, uint256 holdersCount);
-
     /// @notice Emitted when residual pre-funded native tokens are swept to an admin recipient.
     /// @param to Recipient address the native tokens were swept to.
     /// @param amount Amount in wei swept.
@@ -218,30 +211,4 @@ interface IIntexNFT1155Bridge {
     /// @param _sendParam Multi-recipient send parameters.
     /// @return sendId Bridge send identifier.
     function multiSend(MultiRecipientSendParam calldata _sendParam) external payable returns (bytes32 sendId);
-
-    // --- System bridge (markCalled → holder migration) ---
-    /// @notice Quotes the native fee for a system bridge multi-send.
-    /// @param tokenId Token ID (series) to bridge.
-    /// @param holders Holder addresses on source chain.
-    /// @param amounts Corresponding balances for each holder.
-    /// @param dstChainId Destination chainId.
-    /// @return fee Native fee the bridge requires.
-    function quoteSystemMultiSend(
-        uint256 tokenId,
-        address[] calldata holders,
-        uint256[] calldata amounts,
-        uint32 dstChainId
-    ) external view returns (uint256 fee);
-
-    /// @notice Burns tokens from all holders and sends a single SEND_MULTI message, funded by the caller's msg.value.
-    /// @dev Only callable by SYSTEM_RELAYER_ROLE (TargetRouter), which forwards the quoted fee as value.
-    /// @param tokenId Token ID (series) to bridge.
-    /// @param holders Holder addresses on source chain.
-    /// @param amounts Corresponding balances for each holder.
-    /// @param dstChainId Destination chainId.
-    /// @return sendId Bridge send identifier.
-    function systemMultiSend(uint256 tokenId, address[] calldata holders, uint256[] calldata amounts, uint32 dstChainId)
-        external
-        payable
-        returns (bytes32 sendId);
 }

@@ -15,14 +15,11 @@ import {IERC7786TokenBridge} from "./interfaces/IERC7786TokenBridge.sol";
 import {ITargetRouter} from "./interfaces/ITargetRouter.sol";
 import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
-import {IntexNFT1155BridgeCodec} from "../shared/libs/IntexNFT1155BridgeCodec.sol";
 import {IntexGas} from "../shared/libs/IntexGas.sol";
-import {IIntexNFT1155Bridge} from "../shared/interfaces/IIntexNFT1155Bridge.sol";
 import {TargetInbound} from "./libs/TargetInbound.sol";
 import {
     TargetRouterStorage,
     PendingBidsRelay,
-    PendingHoldersRelay,
     PendingIssuanceMint,
     PendingProceedsRoute
 } from "./TargetRouterStorage.sol";
@@ -93,11 +90,6 @@ contract TargetRouter is
         return _ts().escrowAdapter;
     }
 
-    /// @notice IntexNFT1155Bridge used to bridge series holders to Outbe on markCalled.
-    function nftBridge() external view returns (IIntexNFT1155Bridge) {
-        return _ts().nftBridge;
-    }
-
     /// @notice Token bridge that routes auction proceeds to Outbe.
     function tokenBridge() external view returns (IERC7786TokenBridge) {
         return _ts().tokenBridge;
@@ -127,17 +119,6 @@ contract TargetRouter is
     /// @notice Next index to assign in `pendingBidsRelays`; also the count of relays ever enqueued.
     function nextPendingBidsRelayIdx() external view returns (uint256) {
         return _ts().nextPendingBidsRelayIdx;
-    }
-
-    /// @notice Parked holders bridge by enqueue index (scalar fields; arrays stay internal).
-    function pendingHoldersRelays(uint256 idx) external view returns (uint256 tokenId, bool exists, bool done) {
-        PendingHoldersRelay storage p = _ts().pendingHoldersRelays[idx];
-        return (p.tokenId, p.exists, p.done);
-    }
-
-    /// @notice Next index to assign in `pendingHoldersRelays`; also the count of bridges ever enqueued.
-    function nextPendingHoldersRelayIdx() external view returns (uint256) {
-        return _ts().nextPendingHoldersRelayIdx;
     }
 
     /// @notice Parked issuance mint at `idx`.
@@ -186,20 +167,18 @@ contract TargetRouter is
 
     // --- Admin ---
     /// @inheritdoc ITargetRouter
-    function wire(address _auction, address _intex, address _escrowAdapter, address _nftBridge)
+    function wire(address _auction, address _intex, address _escrowAdapter)
         external
         onlyRole(DEFAULT_ADMIN_ROLE)
     {
         if (_auction == address(0)) revert ZeroAddress("auction");
         if (_intex == address(0)) revert ZeroAddress("intex");
         if (_escrowAdapter == address(0)) revert ZeroAddress("escrowAdapter");
-        if (_nftBridge == address(0)) revert ZeroAddress("nftBridge");
 
         TargetRouterStorage storage $ = _ts();
         $.auction = IIntexAuction(_auction);
         $.intex = IIntexNFT1155(_intex);
         $.escrowAdapter = IEscrowAdapter(_escrowAdapter);
-        $.nftBridge = IIntexNFT1155Bridge(_nftBridge);
     }
 
     /// @inheritdoc ITargetRouter
@@ -378,13 +357,14 @@ contract TargetRouter is
     /// @notice Self-call shim around one lifecycle mark; isolates a series that will not take it.
     /// @param seriesId Series the mark applies to.
     /// @param msgType Codec message type: MARK_CALLED or MARK_QUALIFIED.
-    function applyMarkOne(bytes14 seriesId, uint8 msgType) external {
+    /// @param calledAt Origin's call timestamp; ignored for MARK_QUALIFIED.
+    function applyMarkOne(bytes14 seriesId, uint8 msgType, uint32 calledAt) external {
         if (msg.sender != address(this)) revert NotSelf();
         if (msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED) {
             _ts().intex.markQualified(seriesId);
             return;
         }
-        _markCalledAndMigrate(seriesId);
+        _ts().intex.markCalled(seriesId, calledAt);
     }
 
     /// @notice Permissionless apply of the mark waiting in `seriesId`'s slot. Reverts if nothing waits or the
@@ -398,88 +378,11 @@ contract TargetRouter is
         if (msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED) {
             $.intex.markQualified(seriesId);
         } else {
-            _markCalledAndMigrate(seriesId);
+            uint32 calledAt = $.pendingMarkCalledAt[seriesId];
+            delete $.pendingMarkCalledAt[seriesId];
+            $.intex.markCalled(seriesId, calledAt);
         }
         emit PendingMarkApplied(seriesId, msgType);
-    }
-
-    /// @notice Apply markCalled to IntexNFT1155, then bridge all series holders to Outbe.
-    /// @dev On bridge failure the holders+amounts snapshot is parked for retry via
-    ///      `flushPendingHoldersRelay`; markCalled itself still succeeds.
-    function _markCalledAndMigrate(bytes14 seriesId) internal {
-        TargetRouterStorage storage $ = _ts();
-
-        $.intex.markCalled(seriesId);
-
-        // On the origin-as-target the holders already sit on the canonical (shared) NFT, so there is nothing to
-        // migrate — only the remote targets bridge their holders back.
-        if (OUTBE_CHAIN_ID != uint32(block.chainid)) {
-            uint256 tokenId = $.intex.issuedTokenId(seriesId);
-            (address[] memory holders, uint256[] memory amounts) = $.intex.getSeriesHoldersWithBalances(tokenId);
-
-            // Bridge holders to Outbe in chunks of MAX_BATCH_SIZE: `systemMultiSend` caps its array at that size, so a
-            // series with more holders than the cap spans several sends. Each chunk is tried and parked independently,
-            // so one reverting (or over-float) chunk never blocks the rest, and a parked chunk is already within the
-            // cap for `flushPendingHoldersRelay` to retry.
-            uint256 maxChunk = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE;
-            for (uint256 start = 0; start < holders.length; start += maxChunk) {
-                uint256 end = start + maxChunk;
-                if (end > holders.length) end = holders.length;
-                uint256 chunkLen = end - start;
-
-                address[] memory chunkHolders = new address[](chunkLen);
-                uint256[] memory chunkAmounts = new uint256[](chunkLen);
-                for (uint256 i = 0; i < chunkLen; i++) {
-                    chunkHolders[i] = holders[start + i];
-                    chunkAmounts[i] = amounts[start + i];
-                }
-
-                try this.bridgeSeriesHoldersExt(tokenId, chunkHolders, chunkAmounts) {
-                // ok — chunk forwarded
-                }
-                catch (bytes memory reason) {
-                    uint256 idx = $.nextPendingHoldersRelayIdx++;
-                    $.pendingHoldersRelays[idx] = PendingHoldersRelay({
-                        tokenId: tokenId, holders: chunkHolders, amounts: chunkAmounts, exists: true, done: false
-                    });
-                    emit HoldersRelayDeferred(idx, tokenId, chunkLen, reason);
-                }
-            }
-        }
-    }
-
-    /// @notice Self-call shim around `_doBridgeSeriesHolders`. Only callable by this contract itself.
-    /// @param tokenId Token id (series) whose holders are bridged.
-    /// @param holders Source chain holder addresses.
-    /// @param amounts Corresponding balances for each holder.
-    function bridgeSeriesHoldersExt(uint256 tokenId, address[] calldata holders, uint256[] calldata amounts) external {
-        if (msg.sender != address(this)) revert NotSelf();
-        _doBridgeSeriesHolders(tokenId, holders, amounts);
-    }
-
-    /// @notice Permissionless retry of a previously deferred holders bridge.
-    /// @param idx Index of the parked relay to flush.
-    function flushPendingHoldersRelay(uint256 idx) external nonReentrant {
-        PendingHoldersRelay storage p = _ts().pendingHoldersRelays[idx];
-        if (!p.exists) revert NoSuchPendingHoldersRelay(idx);
-        if (p.done) revert AlreadyFlushed(idx);
-        p.done = true;
-        _doBridgeSeriesHolders(p.tokenId, p.holders, p.amounts);
-        emit HoldersRelayFlushed(idx, p.tokenId);
-    }
-
-    /// @notice Bridge series holders to Outbe via the IntexNFT1155Bridge's system holder migration.
-    /// @dev The adapter self-funds the bridge fee from its own relay float, so no value is forwarded here.
-    /// @param tokenId Token ID (series) to bridge.
-    /// @param holders Source chain holder addresses.
-    /// @param amounts Corresponding balances for each holder.
-    function _doBridgeSeriesHolders(uint256 tokenId, address[] memory holders, uint256[] memory amounts) internal {
-        // TargetRouter pays the bridge fee from its own relay float: quote it and forward it as value so the
-        // universal adapter never needs to hold native. The returned sendId is informational.
-        IIntexNFT1155Bridge adapter = _ts().nftBridge;
-        uint256 fee = adapter.quoteSystemMultiSend(tokenId, holders, amounts, OUTBE_CHAIN_ID);
-        // slither-disable-next-line unused-return,arbitrary-send-eth
-        adapter.systemMultiSend{value: fee}(tokenId, holders, amounts, OUTBE_CHAIN_ID);
     }
 
     /// @notice Self-call shim around `_doRouteProceeds`. Only callable by this contract itself.
