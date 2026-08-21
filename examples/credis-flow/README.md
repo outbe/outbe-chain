@@ -94,7 +94,7 @@ src/
 ├── confidential.ts             Client-side TEE crypto (key fetch, decrypt, MAC)
 ├── 1-pledge-gratis.ts          User pledges for N stables of credit → pledge handle
 ├── 1.1-unpledge-gratis.ts      Direct reclaim of an UNSPENT pledge (e.g. credis rejected)
-├── 2-top-up-bundle-account.ts  Deploy smart account; transfer ERC20 into it
+├── 2-top-up-smart-account.ts  Deploy smart account; transfer ERC20 into it
 ├── 3-request-credis.ts         CCA calls requestCredis(handle, spendAuth); vault funds enter bundle balance
 ├── 4-cca-simulate-purchase.ts  CCA uses bundle funds via per-token permission
 ├── 4.1-user-sa-withdraw.ts     User withdraws their free (non-bundled) balance
@@ -211,7 +211,7 @@ npx tsx src/1-pledge-gratis.ts                          # default: 1 stablecoin 
 npx tsx src/1-pledge-gratis.ts 1000 outbe-peira         # $1,000 of credit
 
 # Deploy smart account (if needed) and fund with 1,000 USD
-npx tsx src/2-top-up-bundle-account.ts
+npx tsx src/2-top-up-smart-account.ts
 
 # CCA requests credis against a prior pledge (latest ticket, or an explicit path).
 # The disbursed amount and the asset come from the ticket, not from calldata.
