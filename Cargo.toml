@@ -47,6 +47,7 @@ members = [
     "crates/core/vaultrouter",
     "crates/core/lysis",
     "crates/core/agentreward",
+    "crates/core/cca",
     "crates/core/credis",
     "crates/core/credisfactory",
     "crates/core/fidelity",
@@ -143,6 +144,7 @@ outbe-desis = { path = "crates/core/desis" }
 outbe-vaultrouter = { path = "crates/core/vaultrouter" }
 outbe-lysis = { path = "crates/core/lysis" }
 outbe-agentreward = { path = "crates/core/agentreward" }
+outbe-cca = { path = "crates/core/cca" }
 outbe-credis = { path = "crates/core/credis" }
 outbe-credisfactory = { path = "crates/core/credisfactory" }
 outbe-fidelity = { path = "crates/core/fidelity" }

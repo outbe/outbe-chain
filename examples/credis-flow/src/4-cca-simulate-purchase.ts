@@ -15,6 +15,9 @@ import {
   ccaPermissionId,
   permissionNonceKey,
   encodePermissionSignature,
+  ENTRYPOINT_MIN_DEPOSIT,
+  ENTRYPOINT_TOPUP,
+  formatCoen,
 } from "./utils.js";
 
 const SALT = 0n;
@@ -68,7 +71,7 @@ async function main() {
   // Verify smart account is deployed
   const code = await provider.getCode(smartAccountAddr);
   if (code === "0x") {
-    console.error("smart account not deployed. Run 2-top-up-smart-account.ts first.");
+    console.error("smart account not deployed. Run `npm run top-up-bundle-account` first.");
     process.exit(1);
   }
 
@@ -98,11 +101,11 @@ async function main() {
 
   // Ensure EntryPoint has deposit for gas
   const epDeposit: bigint = await entryPoint.balanceOf(smartAccountAddr);
-  if (epDeposit < ethers.parseEther("0.01")) {
+  if (epDeposit < ENTRYPOINT_MIN_DEPOSIT) {
     console.log("\nFunding EntryPoint deposit for smart account...");
-    const depositTx = await entryPoint.depositTo(smartAccountAddr, { value: ethers.parseEther("0.05") });
+    const depositTx = await entryPoint.depositTo(smartAccountAddr, { value: ENTRYPOINT_TOPUP });
     await depositTx.wait();
-    console.log("  Deposited 0.05 COEN into EntryPoint");
+    console.log(`  Deposited ${formatCoen(ENTRYPOINT_TOPUP)} COEN into EntryPoint`);
   }
 
   // callData = executeUserOp.selector || execute(execMode, encodeSingle(token, 0, transfer(cca, amount)))

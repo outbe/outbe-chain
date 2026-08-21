@@ -135,7 +135,7 @@ do_start() {
         fi
     fi
 
-    local base_rpc=$((8545 + PORT_OFFSET))
+    local base_rpc=$((18545 + PORT_OFFSET))
     local base_p2p=$((30303 + PORT_OFFSET))
     local base_discv5=$((31303 + PORT_OFFSET))
     local base_consensus=$((30400 + PORT_OFFSET))
