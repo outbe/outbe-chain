@@ -296,9 +296,12 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     ///      - Settled token ids are soulbound — always reverts.
     ///      - Series states `Issued` and `Qualified`: bridge allowed for `RELAYER_ROLE`
     ///        (voluntary, holder-initiated moves while the series is tradable).
-    ///      - Series state `Called`: bridge allowed only for `SYSTEM_RELAYER_ROLE`
-    ///        (the system bridge that migrates balances during the call window).
-    function crosschainBurn(address from, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
+    ///      - Series state `Called`: bridge allowed only for `SYSTEM_RELAYER_ROLE`, and only when the
+    ///        destination holder is the source holder — ownership is frozen once a series is Called.
+    function crosschainBurn(address from, address to, uint256 tokenId, uint256 amount)
+        external
+        onlyRole(RELAYER_ROLE)
+    {
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.status == IIntexNFT1155.IntexStatus.Settled) {
             revert BridgeOnSettledForbidden(tokenId);
@@ -310,6 +313,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
             if (!hasRole(SYSTEM_RELAYER_ROLE, msg.sender)) {
                 revert BridgeStateForbidden(tokenId, uint8(data.state));
             }
+            // Called freezes ownership, and a bridge hop that changes holder is a transfer with extra
+            // steps. Moving your own balance to the chain that settles it stays open.
+            if (to != from) revert TransferOnCalledForbidden(tokenId);
             // Bridge moves are confined to the call window: once `calledAt + callTrigger.callNoticePeriod`
             // passes the series is settlement-complete and balances must stay frozen, otherwise
             // a system relayer could keep moving (and `crosschainMint` could re-inflate) post-lifecycle.

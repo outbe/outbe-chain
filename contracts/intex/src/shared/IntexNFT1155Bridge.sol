@@ -111,9 +111,15 @@ contract IntexNFT1155Bridge is
     /// @inheritdoc IIntexNFT1155Bridge
     function send(SendParam calldata _sendParam) external payable nonReentrant returns (bytes32 sendId) {
         bytes memory message = _buildSingleMsg(_sendParam);
-        token.crosschainBurn(msg.sender, _sendParam.tokenId, _sendParam.amount);
+        token.crosschainBurn(msg.sender, _toAddress(_sendParam.to), _sendParam.tokenId, _sendParam.amount);
         sendId = _send(_sendParam.dstChainId, message, IntexGas.nftMint(1));
         emit Bridged(sendId, _sendParam.dstChainId, msg.sender, _sendParam.tokenId, _sendParam.amount);
+    }
+
+    /// @dev The wire carries recipients as `bytes32`; `assertAddress` has already rejected anything
+    ///      that is not address-shaped by the time this narrows one.
+    function _toAddress(bytes32 recipient) internal pure returns (address) {
+        return address(uint160(uint256(recipient)));
     }
 
     /// @dev A single transfer is a 1-item `SEND` batch: it shares the batch wire format and receive path.
@@ -145,7 +151,7 @@ contract IntexNFT1155Bridge is
         // Build first: the zero-`to` and `MAX_BATCH_SIZE` guards fail fast before any burn.
         bytes memory message = _buildBatchMsg(_sendParam);
         for (uint256 i = 0; i < _sendParam.tokenIds.length; i++) {
-            token.crosschainBurn(msg.sender, _sendParam.tokenIds[i], _sendParam.amounts[i]);
+            token.crosschainBurn(msg.sender, _toAddress(_sendParam.to), _sendParam.tokenIds[i], _sendParam.amounts[i]);
         }
 
         sendId = _send(_sendParam.dstChainId, message, IntexGas.nftMint(_sendParam.tokenIds.length));
@@ -187,7 +193,9 @@ contract IntexNFT1155Bridge is
         for (uint256 i = 0; i < len; i++) {
             IntexNFT1155BridgeCodec.assertAddress(_sendParam.recipients[i]);
             if (_sendParam.recipients[i] == bytes32(0)) revert InvalidReceiver();
-            token.crosschainBurn(msg.sender, _sendParam.tokenIds[i], _sendParam.amounts[i]);
+            token.crosschainBurn(
+                msg.sender, _toAddress(_sendParam.recipients[i]), _sendParam.tokenIds[i], _sendParam.amounts[i]
+            );
         }
 
         sendId = _send(_sendParam.dstChainId, message, IntexGas.nftMint(_sendParam.recipients.length));

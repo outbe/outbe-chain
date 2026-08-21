@@ -83,6 +83,6 @@ contract IntexNFT1155SettledRecordTest is Test {
 
         vm.prank(bridger);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeOnSettledForbidden.selector, sTok));
-        nft.crosschainBurn(holder, sTok, 1);
+        nft.crosschainBurn(holder, holder,  sTok, 1);
     }
 }
