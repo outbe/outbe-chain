@@ -124,6 +124,37 @@ fn materialization_fifo_slots_match_the_genesis_seeder() {
     });
 }
 
+/// Slot assignment is dense in `order` sequence, so inserting a field rather
+/// than appending one silently reassigns the meaning of every slot after it —
+/// including the two the genesis alloc seeds. New fields must append.
+#[test]
+fn nod_contract_slot_layout_is_pinned() {
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let nod = NodContract::new(storage);
+        assert_eq!(nod.total_supply.slot(), U256::ZERO);
+        assert_eq!(nod.bin_tree_root.base_slot(), U256::from(1));
+        assert_eq!(nod.unqualified_bin_scan_cursor.base_slot(), U256::from(6));
+        assert_eq!(nod.bucket_worldwide_day.base_slot(), U256::from(7));
+        assert_eq!(nod.ocomp_target_generation.base_slot(), U256::from(8));
+        assert_eq!(
+            nod.ocomp_materialization_attempt_count.slot(),
+            U256::from(23)
+        );
+        // Call-event columns, appended after the OCOMP block.
+        assert_eq!(nod.bucket_nod_count.base_slot(), U256::from(24));
+        assert_eq!(nod.bucket_nods.base_slot(), U256::from(25));
+        assert_eq!(nod.bucket_nod_index.base_slot(), U256::from(26));
+        // `callable_buckets` sits at 27. `StorageVec` exposes no slot accessor,
+        // but slots are dense, so pinning 26 and 28 pins it too.
+        assert_eq!(nod.callable_bucket_index.base_slot(), U256::from(28));
+        assert_eq!(nod.callable_bucket_call_price.base_slot(), U256::from(29));
+        assert_eq!(nod.callable_bucket_currency.base_slot(), U256::from(30));
+        assert_eq!(nod.bucket_called_at.base_slot(), U256::from(31));
+        assert_eq!(nod.call_scan_cursor.slot(), U256::from(32));
+    });
+}
+
 #[test]
 fn certified_generation_is_available_through_the_public_nod_abi() {
     let worldwide_day = WorldwideDay::new(20_260_726);
