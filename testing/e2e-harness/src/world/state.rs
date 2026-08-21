@@ -6,6 +6,56 @@
 
 use serde::Serialize;
 
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct RadicleScenarioEvidenceV1 {
+    pub genesis_hash: Option<String>,
+    pub repo_id: Option<String>,
+    pub repo_id_hex: Option<String>,
+    pub registration_transaction: Option<String>,
+    pub registration_finalized_height: Option<u64>,
+    pub issue_id: Option<String>,
+    pub patch_id: Option<String>,
+    pub pushed_commit: Option<String>,
+    pub source_home: Option<std::path::PathBuf>,
+    pub source_repository: Option<std::path::PathBuf>,
+    pub validator_node_ids: Vec<String>,
+    pub validator_native_node_ids: Vec<String>,
+    pub founder_validator_addresses: Vec<String>,
+    pub founder_onchain_node_ids: Vec<String>,
+    pub signed_endpoint_frames: Vec<Vec<serde_json::Value>>,
+    pub initial_native_session_sets: Vec<Vec<String>>,
+    pub initial_seed_scope_all_validators: Vec<usize>,
+    pub validator_sidecar_pids_before: Vec<u32>,
+    pub endpoint_node_pid_before: Option<u32>,
+    pub endpoint_node_pid_after: Option<u32>,
+    pub endpoint_sidecar_pid_before: Option<u32>,
+    pub endpoint_sidecar_pid_after: Option<u32>,
+    pub endpoint_old_port: Option<u16>,
+    pub endpoint_new_port: Option<u16>,
+    pub endpoint_replacement_signed_frames: Vec<serde_json::Value>,
+    pub endpoint_old_session_addresses: Vec<String>,
+    pub endpoint_new_session_addresses: Vec<String>,
+    pub endpoint_replacement_session_sets: Vec<Vec<String>>,
+    pub sidecar_fault_pid_before: Option<u32>,
+    pub sidecar_recovery_pid_after: Option<u32>,
+    pub finality_before_sidecar_fault: Option<u64>,
+    pub finality_after_sidecar_fault: Option<u64>,
+    pub sidecar_recovery_session_sets: Vec<Vec<String>>,
+    pub sidecar_recovery_seed_scope_all: Option<bool>,
+    pub node_restart_pid_before: Option<u32>,
+    pub node_restart_pid_after: Option<u32>,
+    pub node_restart_sidecar_pid_before: Option<u32>,
+    pub node_restart_sidecar_pid_after: Option<u32>,
+    pub finality_before_node_restart: Option<u64>,
+    pub finality_after_node_restart: Option<u64>,
+    pub node_recovery_session_sets: Vec<Vec<String>>,
+    pub node_recovery_seed_scope_all: Option<bool>,
+    pub joiner_node_id: Option<String>,
+    pub joiner_activation_finalized_height: Option<u64>,
+    pub final_native_session_sets: Vec<Vec<String>>,
+    pub final_seed_scope_all_validators: Vec<usize>,
+}
+
 /// Exact public-chain measurements for the q-forming S+1 capacity block.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct OcompPublicCapacityObservationV1 {
@@ -142,6 +192,8 @@ pub struct OcompPublicScenarioEvidenceV1 {
 /// Per-scenario state accumulated as the steps run.
 #[derive(Debug)]
 pub struct FixtureState {
+    /// Public-only Radicle operations and replication evidence.
+    pub radicle: RadicleScenarioEvidenceV1,
     /// Proposal id under test (always 1 in the update flow).
     pub proposal_id: u64,
     /// The protocol version we proposed (active + 1).
@@ -334,6 +386,7 @@ pub struct StablecoinFixture {
 impl Default for FixtureState {
     fn default() -> Self {
         Self {
+            radicle: RadicleScenarioEvidenceV1::default(),
             proposal_id: 1,
             proposed_version: None,
             activation_height: None,

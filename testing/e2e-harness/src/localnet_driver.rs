@@ -212,6 +212,7 @@ impl LocalnetCli {
             no_cleanup: true,
             tee: localnet_tee_mode(),
             no_sudo: self.no_sudo,
+            force_sudo: false,
             all: false,
             debug: self.debug,
             repo: Some(self.repo.clone()),

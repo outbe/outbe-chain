@@ -69,11 +69,13 @@ members = [
     "bin/outbe-cli",
     "bin/outbe-feeder",
     "bin/outbe-ocomp",
+    "bin/outbe-radicle",
     "bin/outbe-tee-enclave",
     # testing
     "testing/e2e-harness",
     "testing/lysis-v1-reference",
 ]
+exclude = ["vendor/commonware-runtime"]
 resolver = "2"
 
 [workspace.package]
@@ -131,6 +133,9 @@ outbe-vote = { path = "crates/system/vote" }
 outbe-offchain-data = { path = "crates/system/offchain-data" }
 outbe-ocomp-protocol = { path = "crates/system/ocomp-protocol" }
 outbe-ocomp = { path = "bin/outbe-ocomp" }
+heartwood-outbe-radicle = { package = "outbe-radicle", git = "https://github.com/outbe/outbe-heartwood.git", rev = "b76a17801329291153585ed31db61ee3c658046e" }
+radicle-log = { git = "https://github.com/outbe/outbe-heartwood.git", rev = "b76a17801329291153585ed31db61ee3c658046e" }
+radicle-signals = { git = "https://github.com/outbe/outbe-heartwood.git", rev = "b76a17801329291153585ed31db61ee3c658046e" }
 outbe-compressed-entities = { path = "crates/core/compressed-entities" }
 # Core — outbe
 outbe-gratis = { path = "crates/core/gratis" }
@@ -168,6 +173,7 @@ alloy-sol-types = { version = "=1.5.7", default-features = false }
 alloy-rlp = { version = "0.3.13", default-features = false }
 alloy-trie = { version = "0.9.5" }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
+log = "0.4.17"
 
 # Alloy — high-level (alloy-rs/alloy): 2.0.x, pinned to match reth v2.2.0
 alloy-consensus = { version = "2.0.4", default-features = false }
@@ -341,3 +347,6 @@ debug = 0
 # stateful precompiles. Pinned by exact commit revision for reproducible builds.
 [patch.crates-io]
 alloy-evm = { git = "https://github.com/outbedev/alloy-evm", rev = "88e239e601eea130ef6644ffa672970e39332f70" }
+
+[patch."https://github.com/commonwarexyz/monorepo"]
+commonware-runtime = { path = "vendor/commonware-runtime" }

@@ -6,7 +6,7 @@
 //! Also provides the `dkg` subcommand for bootstrapping BLS threshold key material.
 
 use clap::Parser;
-use commonware_runtime::Runner as _;
+use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
 use eyre::WrapErr as _;
 use outbe_compressed_entities::{
     CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, FinalizedMarker,
@@ -52,7 +52,7 @@ use reth_ethereum::cli::interface::Cli;
 use reth_node_builder::NodeHandle;
 use reth_provider::{BlockIdReader, HeaderProvider, StateProviderFactory};
 use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection, RpcModuleValidator};
-use std::{path::PathBuf, sync::Arc, thread};
+use std::{path::PathBuf, sync::Arc, thread, time::Duration};
 use tokio::sync::oneshot;
 use tracing::info;
 
@@ -519,6 +519,91 @@ fn handle_consensus_thread_join(joined: thread::Result<eyre::Result<()>>) -> eyr
     }
 }
 
+fn run_with_lifetime_pin<P, F, T>(pin: P, run: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    let output = run();
+    drop(pin);
+    output
+}
+
+async fn abort_and_wait_supervised<T>(handle: &mut commonware_runtime::Handle<T>)
+where
+    T: Send + 'static,
+{
+    handle.abort();
+    let _ = handle.await;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LauncherExitCause {
+    NodeExited,
+    ConsensusExited,
+    ProjectionRequested,
+    OcompRequested,
+    UpgradeRequested,
+    CtrlC,
+}
+
+impl LauncherExitCause {
+    const fn requests_engine_shutdown(self) -> bool {
+        matches!(
+            self,
+            Self::ProjectionRequested | Self::OcompRequested | Self::UpgradeRequested
+        )
+    }
+}
+
+/// Keeps the Commonware runtime alive until its task tree has observed shutdown.
+///
+/// Reth owns the process signal handler and may cancel the complete node launcher
+/// future. This guard therefore performs the same cancellation and synchronous
+/// join from `Drop` as the ordinary completion path, preventing Reth's ExEx and
+/// Engine resources from disappearing while consensus still holds an exact
+/// application acknowledgement.
+struct ConsensusThreadGuard {
+    shutdown: tokio_util::sync::CancellationToken,
+    handle: Option<thread::JoinHandle<eyre::Result<()>>>,
+}
+
+impl ConsensusThreadGuard {
+    fn new(
+        shutdown: tokio_util::sync::CancellationToken,
+        handle: thread::JoinHandle<eyre::Result<()>>,
+    ) -> Self {
+        Self {
+            shutdown,
+            handle: Some(handle),
+        }
+    }
+
+    fn join(mut self) -> thread::Result<eyre::Result<()>> {
+        self.shutdown.cancel();
+        let handle = self
+            .handle
+            .take()
+            .expect("consensus thread handle is consumed exactly once");
+        handle.join()
+    }
+}
+
+impl Drop for ConsensusThreadGuard {
+    fn drop(&mut self) {
+        let Some(handle) = self.handle.take() else {
+            return;
+        };
+        self.shutdown.cancel();
+        match handle.join() {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::error!(%error, "consensus task failed during launcher teardown")
+            }
+            Err(_) => tracing::error!("consensus task panicked during launcher teardown"),
+        }
+    }
+}
+
 /// DKG bootstrap subcommand, parsed separately from reth's CLI.
 #[derive(clap::Parser)]
 #[command(name = "outbe-chain-dkg")]
@@ -876,39 +961,58 @@ fn run_node() -> eyre::Result<()> {
             .with_catch_panics(true);
 
         let runner = commonware_runtime::tokio::Runner::new(runtime_config);
+        let node_lifetime_pin = node.clone();
 
-        let ret: eyre::Result<()> = runner.start(async move |ctx| {
-            tokio::select! {
-                result = outbe_engine::run_consensus_stack(
-                    &ctx,
-                    args,
-                    node,
-                    bridge_for_consensus,
-                    {
-                        let mut services = outbe_engine::ConsensusStackServices::new(
-                            projection_readiness,
-                            finalized_ce_committer,
-                            ce_startup_recovery,
-                        );
-                        if let Some(readiness) = ocomp_readiness {
-                            services = services.with_ocomp_readiness(readiness);
-                        }
-                        if let Some((endpoint, local, status)) = radicle {
-                            services = services.with_radicle(status, endpoint, local);
-                        }
-                        services
-                    },
-                ) => {
-                    if let Err(e) = &result {
-                        tracing::error!(%e, "consensus stack failed");
+        let ret: eyre::Result<()> = run_with_lifetime_pin(node_lifetime_pin, || {
+            runner.start(async move |ctx| {
+                let graceful_shutdown = ctx.child("shutdown");
+                let mut stack_handle = ctx.child("consensus_stack").spawn(move |stack_ctx| async move {
+                    outbe_engine::run_consensus_stack(
+                        &stack_ctx,
+                        args,
+                        node,
+                        bridge_for_consensus,
+                        {
+                            let mut services = outbe_engine::ConsensusStackServices::new(
+                                projection_readiness,
+                                finalized_ce_committer,
+                                ce_startup_recovery,
+                            );
+                            if let Some(readiness) = ocomp_readiness {
+                                services = services.with_ocomp_readiness(readiness);
+                            }
+                            if let Some((endpoint, local, status)) = radicle {
+                                services = services.with_radicle(status, endpoint, local);
+                            }
+                            services
+                        },
+                    )
+                    .await
+                });
+                tokio::select! {
+                    biased;
+                    _ = shutdown_token_clone.cancelled() => {
+                        info!("consensus stack shutting down");
+                        let stop_result = graceful_shutdown
+                            .stop(0, Some(Duration::from_secs(5)))
+                            .await;
+                        abort_and_wait_supervised(&mut stack_handle).await;
+                        stop_result.map_err(|error| eyre::eyre!(
+                                "consensus graceful shutdown did not complete within 5 seconds: {error}"
+                            ))?;
+                        Ok(())
                     }
-                    result
+                    result = &mut stack_handle => {
+                        let result = result.map_err(|error| {
+                            eyre::eyre!("consensus stack task failed: {error:?}")
+                        })?;
+                        if let Err(e) = &result {
+                            tracing::error!(%e, "consensus stack failed");
+                        }
+                        result
+                    }
                 }
-                _ = shutdown_token_clone.cancelled() => {
-                    info!("consensus stack shutting down");
-                    Ok(())
-                }
-            }
+            })
         });
 
         let _ = consensus_dead_tx.send(());
@@ -1744,7 +1848,10 @@ fn run_node() -> eyre::Result<()> {
             // Spawn the consensus thread for validator OR follower mode; the
             // follower branch inside `run_consensus_stack` selects the lightweight
             // follow stack (no consensus engine).
-            let consensus_handle = thread::spawn(consensus_thread_fn);
+            let consensus_lifecycle = ConsensusThreadGuard::new(
+                shutdown_token.clone(),
+                thread::spawn(consensus_thread_fn),
+            );
 
             let shutdown = node.add_ons_handle.engine_shutdown.clone();
             let _ = node_tx.send((
@@ -1757,12 +1864,14 @@ fn run_node() -> eyre::Result<()> {
                 radicle_consensus,
             ));
 
-            tokio::select! {
+            let exit_cause = tokio::select! {
                 _ = node_exit_future => {
                     info!("execution node exited");
+                    LauncherExitCause::NodeExited
                 }
                 _ = &mut consensus_dead_rx => {
                     info!("consensus node exited");
+                    LauncherExitCause::ConsensusExited
                 }
                 exit = projection_exit_rx.recv() => {
                     if let Some(exit) = exit {
@@ -1772,9 +1881,7 @@ fn run_node() -> eyre::Result<()> {
                             "mandatory offchain-data projection requested node shutdown"
                         );
                     }
-                    if let Some(done) = shutdown.shutdown() {
-                        let _ = done.await;
-                    }
+                    LauncherExitCause::ProjectionRequested
                 }
                 exit = ocomp_exit_rx.recv() => {
                     if let Some(exit) = exit {
@@ -1784,24 +1891,25 @@ fn run_node() -> eyre::Result<()> {
                             "embedded OCOMP requested node shutdown"
                         );
                     }
-                    if let Some(done) = shutdown.shutdown() {
-                        let _ = done.await;
-                    }
+                    LauncherExitCause::OcompRequested
                 }
                 () = upgrade_promotion.notified() => {
                     info!("finalized enclave upgrade requested execution restart");
-                    if let Some(done) = shutdown.shutdown() {
-                        let _ = done.await;
-                    }
+                    LauncherExitCause::UpgradeRequested
                 }
                 _ = tokio::signal::ctrl_c() => {
                     info!("received shutdown signal");
+                    LauncherExitCause::CtrlC
+                }
+            };
+
+            let consensus_joined = consensus_lifecycle.join();
+            if exit_cause.requests_engine_shutdown() {
+                if let Some(done) = shutdown.shutdown() {
+                    let _ = done.await;
                 }
             }
-
-            shutdown_token.cancel();
-
-            handle_consensus_thread_join(consensus_handle.join())?;
+            handle_consensus_thread_join(consensus_joined)?;
         } else {
             info!("outbe node launched in FULL NODE mode — no consensus thread spawned");
             let shutdown = node.add_ons_handle.engine_shutdown.clone();
@@ -1899,6 +2007,163 @@ fn configure_outbe_engine_args(engine: &mut reth_node_core::args::EngineArgs) {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    };
+
+    struct ThreadDropRecorder {
+        runner_returned: Arc<AtomicBool>,
+        dropped_on: Arc<Mutex<Option<std::thread::ThreadId>>>,
+    }
+
+    impl Drop for ThreadDropRecorder {
+        fn drop(&mut self) {
+            assert!(
+                self.runner_returned.load(Ordering::SeqCst),
+                "the lifetime pin must outlive the runner"
+            );
+            *self.dropped_on.lock().expect("drop recorder lock") =
+                Some(std::thread::current().id());
+        }
+    }
+
+    struct ExecutionTeardownSentinel(Arc<AtomicBool>);
+
+    impl Drop for ExecutionTeardownSentinel {
+        fn drop(&mut self) {
+            assert!(
+                self.0.load(Ordering::SeqCst),
+                "consensus must be joined before execution resources are torn down"
+            );
+        }
+    }
+
+    #[test]
+    fn dropped_launcher_joins_consensus_before_execution_teardown() {
+        let consensus_stopped = Arc::new(AtomicBool::new(false));
+        let execution = ExecutionTeardownSentinel(Arc::clone(&consensus_stopped));
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let worker_shutdown = shutdown.clone();
+        let worker_stopped = Arc::clone(&consensus_stopped);
+        let worker = std::thread::spawn(move || {
+            while !worker_shutdown.is_cancelled() {
+                std::thread::yield_now();
+            }
+            worker_stopped.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+
+        let lifecycle = super::ConsensusThreadGuard::new(shutdown, worker);
+        drop(lifecycle);
+
+        assert!(consensus_stopped.load(Ordering::SeqCst));
+        drop(execution);
+    }
+
+    #[test]
+    fn node_pin_drops_after_runner_on_consensus_thread() {
+        let runner_returned = Arc::new(AtomicBool::new(false));
+        let dropped_on = Arc::new(Mutex::new(None));
+        let expected_thread = std::thread::current().id();
+        let pin = Arc::new(ThreadDropRecorder {
+            runner_returned: Arc::clone(&runner_returned),
+            dropped_on: Arc::clone(&dropped_on),
+        });
+        let worker_pin = Arc::clone(&pin);
+
+        let output = super::run_with_lifetime_pin(pin, || {
+            std::thread::spawn(move || drop(worker_pin))
+                .join()
+                .expect("worker exits cleanly");
+            runner_returned.store(true, Ordering::SeqCst);
+            7
+        });
+
+        assert_eq!(output, 7);
+        assert_eq!(
+            *dropped_on.lock().expect("drop recorder lock"),
+            Some(expected_thread)
+        );
+    }
+
+    #[test]
+    fn supervised_shutdown_waits_for_descendants() {
+        use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
+
+        let dropped = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&dropped);
+        commonware_runtime::tokio::Runner::default().start(async move |ctx| {
+            let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+            let child_dropped = Arc::clone(&observed);
+            let mut stack = ctx.child("test_stack").spawn(move |_| async move {
+                struct ChildDrop(Arc<AtomicBool>);
+                impl Drop for ChildDrop {
+                    fn drop(&mut self) {
+                        self.0.store(true, Ordering::SeqCst);
+                    }
+                }
+
+                let _drop = ChildDrop(child_dropped);
+                let _ = started_tx.send(());
+                std::future::pending::<()>().await;
+            });
+            started_rx.await.expect("child started");
+
+            super::abort_and_wait_supervised(&mut stack).await;
+            assert!(observed.load(Ordering::SeqCst));
+        });
+        assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn only_controlled_launcher_causes_request_engine_shutdown() {
+        use super::LauncherExitCause;
+
+        for cause in [
+            LauncherExitCause::NodeExited,
+            LauncherExitCause::ConsensusExited,
+            LauncherExitCause::CtrlC,
+        ] {
+            assert!(!cause.requests_engine_shutdown());
+        }
+        for cause in [
+            LauncherExitCause::ProjectionRequested,
+            LauncherExitCause::OcompRequested,
+            LauncherExitCause::UpgradeRequested,
+        ] {
+            assert!(cause.requests_engine_shutdown());
+        }
+    }
+
+    #[test]
+    fn explicit_consensus_finish_preserves_error() {
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let worker = std::thread::spawn(|| Err(eyre::eyre!("consensus failed")));
+        let lifecycle = super::ConsensusThreadGuard::new(shutdown, worker);
+
+        let error = super::handle_consensus_thread_join(lifecycle.join())
+            .expect_err("consensus error must propagate through explicit finish");
+        assert!(format!("{error:#}").contains("consensus failed"));
+    }
+
+    #[test]
+    fn explicit_consensus_finish_preserves_panic() {
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let worker = std::thread::spawn(|| -> eyre::Result<()> {
+            panic!("consensus panicked");
+        });
+        let lifecycle = super::ConsensusThreadGuard::new(shutdown, worker);
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            super::handle_consensus_thread_join(lifecycle.join())
+        }));
+        assert!(
+            panic.is_err(),
+            "consensus panic must resume on explicit finish"
+        );
+    }
+
     #[test]
     fn ocomp_openings_remain_available_for_completed_full_node_replay() {
         use outbe_ocomp_protocol::state::OcompJobStatus;

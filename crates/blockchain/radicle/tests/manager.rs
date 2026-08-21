@@ -423,6 +423,8 @@ async fn partial_failure() {
     let status = wait_for(&handle, 70).await;
     assert_eq!(status.last_seen_finalized, Some(block(70)));
     assert_eq!(status.last_converged_finalized, None);
+    assert_eq!(status.phase, ManagerPhase::Ready);
+    assert_eq!(status.phase_error, None);
     assert_eq!(status.pending_repository_count, 1);
     assert!(status.tcp_status_failures > 0);
 
@@ -438,6 +440,125 @@ async fn partial_failure() {
     })
     .await
     .unwrap();
+    handle.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn remote_connect_failure_preserves_ready() {
+    let feed = Feed::new(block(71));
+    let snapshots = Snapshots::default();
+    snapshots.insert(snapshot(71, 2, vec![]));
+    let endpoints = Endpoints::default();
+    endpoints.set(endpoint(2, 71, 8776));
+    let control = Control::new(LOCAL_NODE);
+    control.fail_connect([2; 32], true);
+    let handle = start(
+        feed,
+        snapshots,
+        endpoints,
+        control.clone(),
+        Availability::default(),
+    );
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if control
+                .calls()
+                .iter()
+                .any(|call| matches!(call, Call::Connect(node_id, _) if *node_id == [2; 32]))
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let status = handle.status();
+    assert_eq!(status.phase, ManagerPhase::Ready);
+    assert_eq!(status.phase_error, None);
+    assert_eq!(status.last_converged_finalized, None);
+
+    control.fail_connect([2; 32], false);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if handle.status().last_converged_finalized == Some(block(71)) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    handle.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn remote_connect_failure_preserves_joining_unbound() {
+    let feed = Feed::new(block(72));
+    let snapshots = Snapshots::default();
+    let mut value = snapshot(72, 2, vec![]);
+    value.validators[0].node_id = None;
+    snapshots.insert(value);
+    let endpoints = Endpoints::default();
+    endpoints.set(endpoint(2, 72, 8776));
+    let control = Control::new(LOCAL_NODE);
+    control.fail_connect([2; 32], true);
+    let handle = start(
+        feed,
+        snapshots,
+        endpoints,
+        control.clone(),
+        Availability::default(),
+    );
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if control
+                .calls()
+                .iter()
+                .any(|call| matches!(call, Call::Connect(node_id, _) if *node_id == [2; 32]))
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let status = handle.status();
+    assert_eq!(status.phase, ManagerPhase::JoiningUnbound);
+    assert_eq!(status.phase_error, None);
+    assert_eq!(status.last_converged_finalized, None);
+    handle.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn local_sessions_failure_before_ready_is_unavailable() {
+    let feed = Feed::new(block(73));
+    let snapshots = Snapshots::default();
+    snapshots.insert(snapshot(73, 1, vec![]));
+    let control = Control::new(LOCAL_NODE);
+    control.fail_sessions(true);
+    let handle = start(
+        feed,
+        snapshots,
+        Endpoints::default(),
+        control,
+        Availability::default(),
+    );
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if handle.status().phase_error == Some(PhaseError::SidecarUnavailable) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(handle.status().last_converged_finalized, None);
     handle.shutdown().await.unwrap();
 }
 

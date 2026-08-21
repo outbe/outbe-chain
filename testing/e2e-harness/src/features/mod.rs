@@ -23,6 +23,8 @@ pub mod l2_zk_gate;
 pub mod lifecycle;
 #[cfg(feature = "ocomp-integration")]
 pub mod ocomp;
+#[cfg(feature = "ocomp-integration")]
+pub mod radicle;
 pub mod restart;
 pub mod stablecoin;
 pub mod stale_join;

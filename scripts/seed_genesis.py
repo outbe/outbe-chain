@@ -1523,9 +1523,12 @@ def seed_radicle_registry(storage: StorageBuilder, config: dict):
     """Seed immutable RadicleRegistry V1 capacity at slot 5."""
     if not isinstance(config, dict):
         raise ValueError("radicle_registry must be a JSON object")
-    maximum = parse_int(config.get("max_repositories", 0))
-    if maximum <= 0 or maximum > 0xFFFFFFFF:
-        raise ValueError("radicle_registry.max_repositories must be in 1..=4294967295")
+    configured = parse_int(config.get("max_repositories", 0))
+    maximum = 0xFFFFFFFF if configured == -1 else configured
+    if maximum <= 0 or maximum >= 0xFFFFFFFF and configured != -1:
+        raise ValueError(
+            "radicle_registry.max_repositories must be -1 or in 1..=4294967294"
+        )
     storage.set_slot(5, maximum)
 
 

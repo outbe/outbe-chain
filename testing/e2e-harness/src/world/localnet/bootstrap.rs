@@ -1065,17 +1065,23 @@ fn validate_radicle_registry_genesis(
     let Some(configured) = seed.pointer("/radicle_registry/max_repositories") else {
         return Ok(());
     };
-    let maximum = configured
-        .as_u64()
-        .or_else(|| {
-            configured.as_str().and_then(|raw| {
-                raw.strip_prefix("0x")
-                    .map_or_else(|| raw.parse().ok(), |hex| u64::from_str_radix(hex, 16).ok())
-            })
+    let parsed = configured.as_i64().map(i128::from).or_else(|| {
+        configured.as_str().and_then(|raw| {
+            raw.strip_prefix("0x").map_or_else(
+                || raw.parse::<i128>().ok(),
+                |hex| i128::from_str_radix(hex, 16).ok(),
+            )
         })
-        .and_then(|raw| u32::try_from(raw).ok())
-        .filter(|maximum| *maximum != 0)
-        .ok_or_else(|| eyre!("radicle_registry.max_repositories must be in 1..=4294967295"))?;
+    });
+    let maximum = match parsed {
+        Some(-1) => u32::MAX,
+        Some(value) if (1..i128::from(u32::MAX)).contains(&value) => value as u32,
+        _ => {
+            return Err(eyre!(
+                "radicle_registry.max_repositories must be -1 or in 1..=4294967294"
+            ));
+        }
+    };
 
     let alloc = genesis
         .get("alloc")
@@ -1159,6 +1165,33 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("maxRepositories mismatch"));
+    }
+
+    #[test]
+    fn radicle_registry_unlimited_genesis() {
+        let seed = json!({ "radicle_registry": { "max_repositories": -1 } });
+        let genesis = json!({
+            "alloc": {
+                "0x000000000000000000000000000000000000EE11": {
+                    "code": "0xef",
+                    "storage": {
+                        RADICLE_MAX_REPOSITORIES_SLOT:
+                            "0x00000000000000000000000000000000000000000000000000000000ffffffff"
+                    }
+                }
+            }
+        });
+
+        validate_radicle_registry_genesis(&seed, &genesis).unwrap();
+        for invalid in [
+            json!(-2),
+            json!(0),
+            json!(4_294_967_295_u64),
+            json!(4_294_967_296_u64),
+        ] {
+            let invalid_seed = json!({ "radicle_registry": { "max_repositories": invalid } });
+            assert!(validate_radicle_registry_genesis(&invalid_seed, &genesis).is_err());
+        }
     }
 
     #[test]

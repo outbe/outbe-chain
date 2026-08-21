@@ -130,8 +130,14 @@ pub struct EnvCli {
     pub tee: TeeMode,
 
     /// Run docker/process/script steps without `sudo`.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "force_sudo")]
     pub no_sudo: bool,
+
+    /// Force docker/process/script steps through `sudo`, even when Docker is
+    /// reachable directly. SGX device access may require this independently of
+    /// Docker socket permissions.
+    #[arg(long = "sudo", conflicts_with = "no_sudo")]
+    pub force_sudo: bool,
 
     /// Treat a scenario the environment can't satisfy as a FAILURE instead of
     /// skipping it.
@@ -263,7 +269,7 @@ impl Environment {
             ports: Ports::new(!cli.no_resolve_ports),
             no_cleanup: cli.no_cleanup,
             tee_mode: cli.tee,
-            sudo: !cli.no_sudo && !docker_reachable_without_sudo(),
+            sudo: resolve_sudo(cli.force_sudo, cli.no_sudo),
             all: cli.all,
             debug: cli.debug,
             data_dir: cli.data_dir.clone().unwrap_or_else(default_data_dir),
@@ -324,6 +330,7 @@ impl Default for Environment {
             no_cleanup: true,
             tee: TeeMode::Mock,
             no_sudo: false,
+            force_sudo: false,
             all: false,
             debug: false,
             repo: None,
@@ -361,6 +368,10 @@ fn docker_reachable_without_sudo() -> bool {
             .status()
             .is_ok_and(|status| status.success())
     })
+}
+
+fn resolve_sudo(force_sudo: bool, no_sudo: bool) -> bool {
+    force_sudo || (!no_sudo && !docker_reachable_without_sudo())
 }
 
 /// Default repo root: two levels up from this crate (`testing/e2e-harness`).
@@ -626,6 +637,12 @@ mod tests {
             env.selected_enclave_bin(),
             Path::new("/artifact-set/outbe-tee-enclave")
         );
+    }
+
+    #[test]
+    fn explicit_sudo_overrides_docker_reachability() {
+        assert!(resolve_sudo(true, false));
+        assert!(!resolve_sudo(false, true));
     }
 
     #[test]

@@ -623,6 +623,7 @@ impl Localnet {
         fs::create_dir_all(vd.join("data"))?;
         fs::create_dir_all(vd.join("logs"))?;
         let secret = read_trimmed(&vd.join("reth-p2p-secret.hex"))?;
+        self.start_radicle(index)?;
 
         let (public_polynomial, dkg_output) = verifier_material_paths(&self.cfg.dir);
         let mut a = self.reth_base_args(&vd, index);
@@ -649,6 +650,10 @@ impl Localnet {
             "--consensus.peers",
             self.consensus_peers()?,
             "--consensus.use-local-defaults",
+            "--radicle.control-socket",
+            self.radicle_control_socket(index).display(),
+            "--radicle.status-address",
+            format!("127.0.0.1:{}", self.cfg.radicle_status_port(index)),
             "--tee-enclave-socket",
             format!("127.0.0.1:{}", self.cfg.tee_port(index)),
             "--consensus.public-polynomial",

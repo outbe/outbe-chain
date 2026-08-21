@@ -2,7 +2,8 @@
 pragma solidity ^0.8.30;
 
 /// @title RadicleRegistry V1
-/// @notice Bounded, permissionless, append-only registry of public Heartwood repositories.
+/// @notice Permissionless, append-only registry of public Heartwood repositories.
+/// @dev maxRepositories() == type(uint32).max denotes an unlimited configured capacity.
 interface IRadicleRegistry {
     event RepositoryRegistered(
         bytes20 indexed repoId,

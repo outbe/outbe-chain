@@ -36,6 +36,12 @@ struct Runtime {
     next_retry: Option<Instant>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ControlReconciliation {
+    sidecar_available: bool,
+    converged: bool,
+}
+
 impl RadicleManager {
     #[must_use]
     pub fn start(config: ManagerConfig, dependencies: ManagerDependencies) -> RadicleManagerHandle {
@@ -290,13 +296,22 @@ impl Runtime {
         };
         self.status.phase = phase;
 
-        let control_ok = self.reconcile_control(&snapshot, &desired).await;
+        let control = self.reconcile_control(&snapshot, &desired).await;
         retry |= self.observe_repositories(&snapshot).await;
-        if control_ok {
+        if control.converged {
             self.status.last_converged_finalized = Some(snapshot.block);
             self.status.phase = phase;
             self.status.phase_error = None;
             self.was_ready |= self.status.phase == ManagerPhase::Ready;
+        } else if control.sidecar_available {
+            // A live local Heartwood runtime can be temporarily unable to dial
+            // or seed a remote target. Keep the binding-derived phase and retry
+            // the incomplete desired state without misclassifying the sidecar
+            // itself as unavailable.
+            self.status.phase = phase;
+            self.status.phase_error = None;
+            self.was_ready |= self.status.phase == ManagerPhase::Ready;
+            retry = true;
         } else {
             if self.was_ready {
                 self.status.phase = ManagerPhase::RuntimeDegraded;
@@ -356,12 +371,15 @@ impl Runtime {
         &mut self,
         snapshot: &FinalizedSnapshot,
         desired: &BTreeMap<[u8; 32], VerifiedEndpoint>,
-    ) -> bool {
+    ) -> ControlReconciliation {
         let Ok(mut sessions) = self.dependencies.control.sessions().await else {
             self.status.uds_failures += 1;
-            return false;
+            return ControlReconciliation {
+                sidecar_available: false,
+                converged: false,
+            };
         };
-        let mut ok = true;
+        let mut converged = true;
 
         for session in sessions
             .iter()
@@ -403,8 +421,7 @@ impl Runtime {
                 Ok(DisconnectDisposition::NotConnected | DisconnectDisposition::AddressChanged)
                 | Err(_) => {
                     blocked.insert(node_id);
-                    self.status.uds_failures += 1;
-                    ok = false;
+                    converged = false;
                 }
             }
         }
@@ -440,37 +457,38 @@ impl Runtime {
                     self.managed.insert(*node_id, address);
                 }
                 Err(_) => {
-                    self.status.uds_failures += 1;
-                    ok = false;
+                    converged = false;
                 }
             }
         }
 
         for repo in &snapshot.repositories {
             if self.dependencies.control.seed(*repo).await.is_err() {
-                self.status.uds_failures += 1;
-                ok = false;
+                converged = false;
             }
         }
-        self.status.connected_peer_count = self
-            .dependencies
-            .control
-            .sessions()
-            .await
-            .map(|sessions| {
-                sessions
+        match self.dependencies.control.sessions().await {
+            Ok(sessions) => {
+                self.status.connected_peer_count = sessions
                     .into_iter()
                     .filter(|session| session.connected && desired.contains_key(&session.node_id))
                     .map(|session| session.node_id)
                     .collect::<BTreeSet<_>>()
-                    .len()
-            })
-            .unwrap_or_else(|_| {
+                    .len();
+                ControlReconciliation {
+                    sidecar_available: true,
+                    converged,
+                }
+            }
+            Err(_) => {
                 self.status.uds_failures += 1;
-                ok = false;
-                0
-            });
-        ok
+                self.status.connected_peer_count = 0;
+                ControlReconciliation {
+                    sidecar_available: false,
+                    converged: false,
+                }
+            }
+        }
     }
 
     async fn observe_repositories(&mut self, snapshot: &FinalizedSnapshot) -> bool {

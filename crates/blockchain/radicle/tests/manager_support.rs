@@ -195,6 +195,7 @@ pub struct Control {
     sessions: Arc<Mutex<Vec<ControlSession>>>,
     calls: Arc<Mutex<Vec<Call>>>,
     fail_sessions: Arc<Mutex<bool>>,
+    fail_connect: Arc<Mutex<BTreeSet<[u8; 32]>>>,
     fail_seed: Arc<Mutex<BTreeSet<RepoId>>>,
     disconnect_disposition: Arc<Mutex<DisconnectDisposition>>,
 }
@@ -206,6 +207,7 @@ impl Control {
             sessions: Arc::new(Mutex::new(Vec::new())),
             calls: Arc::new(Mutex::new(Vec::new())),
             fail_sessions: Arc::new(Mutex::new(false)),
+            fail_connect: Arc::new(Mutex::new(BTreeSet::new())),
             fail_seed: Arc::new(Mutex::new(BTreeSet::new())),
             disconnect_disposition: Arc::new(Mutex::new(DisconnectDisposition::Disconnected)),
         }
@@ -225,6 +227,14 @@ impl Control {
 
     pub fn fail_sessions(&self, fail: bool) {
         *self.fail_sessions.lock().unwrap() = fail;
+    }
+
+    pub fn fail_connect(&self, node_id: [u8; 32], fail: bool) {
+        if fail {
+            self.fail_connect.lock().unwrap().insert(node_id);
+        } else {
+            self.fail_connect.lock().unwrap().remove(&node_id);
+        }
     }
 
     pub fn fail_seed(&self, repo: RepoId, fail: bool) {
@@ -270,6 +280,9 @@ impl HeartwoodControl for Control {
                 .lock()
                 .unwrap()
                 .push(Call::Connect(node_id, address.clone()));
+            if self.fail_connect.lock().unwrap().contains(&node_id) {
+                return Err(ManagerError::Control("connect failed".into()));
+            }
             self.sessions.lock().unwrap().push(ControlSession {
                 node_id,
                 address: address.clone(),

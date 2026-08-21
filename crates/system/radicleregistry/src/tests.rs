@@ -106,6 +106,17 @@ fn zero_duplicate_capacity_and_out_of_range_revert_without_advancing() {
 }
 
 #[test]
+fn unlimited_capacity() {
+    with_registry(u32::MAX, |registry| {
+        assert_eq!(registry.config_max_repositories.read().unwrap(), u32::MAX);
+        registry
+            .register_repository(repo(1), Address::repeat_byte(1))
+            .unwrap();
+        assert_eq!(registry.repository_count.read().unwrap(), 1);
+    });
+}
+
+#[test]
 fn storage_layout_slots_zero_through_five_are_stable() {
     with_registry(1, |registry| {
         assert_eq!(registry.repository_count.slot(), U256::from(0));
