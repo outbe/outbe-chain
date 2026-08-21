@@ -67,6 +67,28 @@ sol! {
         function isChainDone(uint32 worldwideDay, uint32 srcChainId) external view returns (bool);
     }
 }
+/// Every probe below asks the same question of the chain — "what did this
+/// contract emit for this day?" — so the query shape lives here once.
+fn logs_of(
+    url: &str,
+    address: Address,
+    topics: Vec<serde_json::Value>,
+) -> Option<Vec<serde_json::Value>> {
+    eth::raw_json_with_params(
+        url,
+        "eth_getLogs",
+        serde_json::json!([{
+            "fromBlock": "0x0",
+            "toBlock": "latest",
+            "address": format!("{address:?}"),
+            "topics": topics,
+        }]),
+    )
+    .as_ref()
+    .and_then(|value| value.as_array())
+    .cloned()
+}
+
 pub(crate) fn frozen_targets(url: &str, router: Address, worldwide_day: u32) -> String {
     match eth::read_call(
         url,
@@ -211,17 +233,16 @@ pub(crate) fn stages_received(url: &str, venue_router: Address, worldwide_day: u
     let topic0 =
         alloy_primitives::keccak256(b"AuctionStageReceived(uint32,uint32,uint8)".as_slice());
     let day_topic = format!("0x{:064x}", worldwide_day);
-    let logs = eth::raw_json_with_params(
+    let logs = logs_of(
         url,
-        "eth_getLogs",
-        serde_json::json!([{
-            "fromBlock": "0x0",
-            "toBlock": "latest",
-            "address": format!("{venue_router:?}"),
-            "topics": [format!("{topic0:?}"), serde_json::Value::Null, day_topic],
-        }]),
+        venue_router,
+        vec![
+            serde_json::json!(format!("{topic0:?}")),
+            serde_json::Value::Null,
+            serde_json::json!(day_topic),
+        ],
     );
-    match logs.as_ref().and_then(|value| value.as_array()) {
+    match logs.as_ref() {
         Some(entries) if entries.is_empty() => "the venue received no inbound stage".to_owned(),
         Some(entries) => format!("the venue received {} inbound stages", entries.len()),
         None => "the venue stage log is unreadable".to_owned(),
@@ -280,17 +301,12 @@ pub(crate) fn parked_deliveries(world: &World) -> String {
         return "no deploy recorded".to_owned();
     };
     let topic0 = alloy_primitives::keccak256(b"DeliveryParked(uint256,bytes)".as_slice());
-    let logs = eth::raw_json_with_params(
+    let logs = logs_of(
         &url,
-        "eth_getLogs",
-        serde_json::json!([{
-            "fromBlock": "0x0",
-            "toBlock": "latest",
-            "address": format!("{:?}", contracts.loopback),
-            "topics": [format!("{topic0:?}")],
-        }]),
+        contracts.loopback,
+        vec![serde_json::json!(format!("{topic0:?}"))],
     );
-    match logs.as_ref().and_then(|value| value.as_array()) {
+    match logs.as_ref() {
         Some(entries) if entries.is_empty() => "no delivery was parked".to_owned(),
         Some(entries) => {
             let reasons: Vec<String> = entries
@@ -331,22 +347,15 @@ pub(crate) fn refunds_were_sent(world: &World, worldwide_day: u32) -> bool {
     };
     let topic0 =
         alloy_primitives::keccak256(b"RefundInstructionsSent(bytes32,uint32,uint256)".as_slice());
-    eth::raw_json_with_params(
+    logs_of(
         &url,
-        "eth_getLogs",
-        serde_json::json!([{
-            "fromBlock": "0x0",
-            "toBlock": "latest",
-            "address": format!("{:?}", contracts.origin_router),
-            "topics": [
-                format!("{topic0:?}"),
-                serde_json::Value::Null,
-                format!("0x{worldwide_day:064x}"),
-            ],
-        }]),
+        contracts.origin_router,
+        vec![
+            serde_json::json!(format!("{topic0:?}")),
+            serde_json::Value::Null,
+            serde_json::json!(format!("0x{worldwide_day:064x}")),
+        ],
     )
-    .as_ref()
-    .and_then(|value| value.as_array())
     .is_some_and(|entries| !entries.is_empty())
 }
 /// Clearing fires the auction result, the issuance instructions and the refunds
@@ -403,23 +412,12 @@ pub(crate) fn issued_series(
     let topic0 = alloy_primitives::keccak256(
         b"IssuanceInstructionsReceived(uint32,bytes14,uint256)".as_slice(),
     );
-    let logs = eth::raw_json_with_params(
+    let logs = logs_of(
         url,
-        "eth_getLogs",
-        serde_json::json!([{
-            "fromBlock": "0x0",
-            "toBlock": "latest",
-            "address": format!("{venue_router:?}"),
-            "topics": [format!("{topic0:?}")],
-        }]),
+        venue_router,
+        vec![serde_json::json!(format!("{topic0:?}"))],
     )?;
-    let topic = logs
-        .as_array()?
-        .first()?
-        .get("topics")?
-        .as_array()?
-        .get(2)?
-        .as_str()?;
+    let topic = logs.first()?.get("topics")?.as_array()?.get(2)?.as_str()?;
     let word: alloy_primitives::B256 = topic.parse().ok()?;
     Some(alloy_primitives::FixedBytes::<14>::from_slice(
         &word.0[..14],
@@ -430,19 +428,12 @@ pub(crate) fn deferred_mints(url: &str, venue_router: Address) -> usize {
     let topic0 = alloy_primitives::keccak256(
         b"IssuanceMintDeferred(uint256,bytes14,address,bytes)".as_slice(),
     );
-    eth::raw_json_with_params(
+    logs_of(
         url,
-        "eth_getLogs",
-        serde_json::json!([{
-            "fromBlock": "0x0",
-            "toBlock": "latest",
-            "address": format!("{venue_router:?}"),
-            "topics": [format!("{topic0:?}")],
-        }]),
+        venue_router,
+        vec![serde_json::json!(format!("{topic0:?}"))],
     )
-    .as_ref()
-    .and_then(|value| value.as_array())
-    .map_or(0, Vec::len)
+    .map_or(0, |e| e.len())
 }
 /// Whether Desis issued anything at all. Absent issuance means one of two very
 /// different things, and only the clearing event tells them apart.
@@ -452,18 +443,14 @@ pub(crate) fn cleared_empty(url: &str, worldwide_day: u32) -> Option<bool> {
     let day_topic = format!("0x{worldwide_day:064x}");
     let seen = |signature: &[u8]| {
         let topic0 = alloy_primitives::keccak256(signature);
-        eth::raw_json_with_params(
+        logs_of(
             url,
-            "eth_getLogs",
-            serde_json::json!([{
-                "fromBlock": "0x0",
-                "toBlock": "latest",
-                "address": format!("{desis:?}"),
-                "topics": [format!("{topic0:?}"), day_topic],
-            }]),
+            desis,
+            vec![
+                serde_json::json!(format!("{topic0:?}")),
+                serde_json::json!(day_topic),
+            ],
         )
-        .as_ref()
-        .and_then(|value| value.as_array())
         .is_some_and(|entries| !entries.is_empty())
     };
     if seen(b"AuctionClearedEmpty(uint32,uint64)".as_slice()) {
