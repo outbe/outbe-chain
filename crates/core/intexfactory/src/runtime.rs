@@ -199,8 +199,9 @@ pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Res
 /// One (chain, worldwide day) run of issuance messages, in send order: what the chunk header numbers.
 pub(crate) type IssuanceRun = ((u32, u32), Vec<Vec<IssuanceInstructionsParams>>);
 
-/// Group packed messages into the runs the chunk header numbers. Keying by the day as well as the
-/// chain keeps the numbering right for a caller whose legs span several days.
+/// Group packed messages into the runs the chunk header numbers: one per (chain, day), the pair the
+/// receiver counts chunks against. Callers pass one day's legs (clearing does), which is also what
+/// keeps `pack_issuance_messages` from batching two days into one message.
 pub(crate) fn chunk_issuance_messages(
     packed: Vec<(u32, Vec<IssuanceInstructionsParams>)>,
 ) -> Vec<IssuanceRun> {

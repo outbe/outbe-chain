@@ -133,6 +133,18 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         assertEq(tokenId, intex.issuedTokenId(series), "the minted holders were snapshotted for migration");
     }
 
+    function test_ARedeliveredMarkThatSettlesTheSlotClearsIt() public {
+        _deliver(_called());
+        _deliver(_issuance()); // series created; the Called still waits for the valve
+        // The bridge redelivers the mark: it applies directly now, so nothing may keep waiting.
+        _deliver(_called());
+        assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "applied on redelivery");
+        assertEq(router.pendingMark(series), 0, "the settled slot is cleared");
+
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoPendingMark.selector, series));
+        router.applyPendingMark(series);
+    }
+
     function test_ApplyPendingMarkIsThePermissionlessValve() public {
         _deliver(_called());
         intex.createSeries(CreateSeriesLib.params(DAY, 10, 0)); // the series appears by another path

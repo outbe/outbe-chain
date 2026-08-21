@@ -21,7 +21,6 @@ import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 contract TargetRouterInboundIdempotencyTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20_250_101;
-    uint32 internal constant OTHER_DAY = 20_250_102;
     uint128 internal constant PROMIS_LOAD_MINOR = 1e6;
     uint64 internal constant ENTRY_PRICE = 100e6;
     uint64 internal constant FLOOR_PRICE = 40e6;
@@ -146,8 +145,8 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
         assertEq(uint8(auction.getAuctionStage(DAY)), uint8(IIntexAuction.AuctionStage.Completed), "cleared");
 
         vm.recordLogs();
+        _expectIgnored(BridgeMsgCodec.MSG_AUCTION_STAGE_CLEARING, InboundReason.OBSOLETE);
         _deliver(BridgeMsgCodec.encodeAuctionStageClearing(DAY));
-        assertEq(_countTopic(ITargetRouter.InboundMessageIgnored.selector), 1, "acknowledged without effect");
         assertEq(_countTopic(ITargetRouter.BidsDoneSent.selector), 0, "no relay for a cleared day");
     }
 

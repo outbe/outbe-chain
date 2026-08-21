@@ -463,10 +463,13 @@ library TargetInbound {
                 _ignore(srcChainId, msgType, seriesId, already ? InboundReason.DUPLICATE : InboundReason.OBSOLETE);
                 return;
             }
-            _slotMark($, srcChainId, seriesId, msgType);
-            _ignore(srcChainId, msgType, seriesId, InboundReason.DEFERRED);
+            if (_slotMark($, srcChainId, seriesId, msgType)) {
+                _ignore(srcChainId, msgType, seriesId, InboundReason.DEFERRED);
+            }
             return;
         }
+        // Applied, so nothing waits for this series any more — including a slot a redelivery has just settled.
+        delete $.pendingMark[seriesId];
         if (msgType == BridgeMsgCodec.MSG_MARK_CALLED) {
             emit ITargetRouter.MarkCalledReceived(srcChainId, seriesId);
         } else {
@@ -476,13 +479,18 @@ library TargetInbound {
 
     /// @dev Keep a mark for a series that cannot take it yet; Called overrides Qualified, never the reverse
     ///      (a Qualified arriving under a waiting Called is superseded and only acknowledged).
-    function _slotMark(TargetRouterStorage storage $, uint32 srcChainId, bytes14 seriesId, uint8 msgType) private {
+    /// @return slotted True when the mark now waits in the slot, false when a waiting Called superseded it.
+    function _slotMark(TargetRouterStorage storage $, uint32 srcChainId, bytes14 seriesId, uint8 msgType)
+        private
+        returns (bool slotted)
+    {
         if (msgType != BridgeMsgCodec.MSG_MARK_CALLED && $.pendingMark[seriesId] == BridgeMsgCodec.MSG_MARK_CALLED) {
             _ignore(srcChainId, msgType, seriesId, InboundReason.OBSOLETE);
-            return;
+            return false;
         }
         $.pendingMark[seriesId] = msgType;
         emit ITargetRouter.MarkSlotted(seriesId, msgType);
+        return true;
     }
 
     /// @dev Apply the mark waiting for a series that has just been created. Only Qualified applies here: a

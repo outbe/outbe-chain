@@ -109,13 +109,15 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
     }
 
     function test_ABurnDoesNotReopenAWinnersAllocation() public {
-        _deliver(0, 1, IssuanceBatchLib.one(_series(USD, alice, 7)));
-        // Parking frees supply-cap room; the per-winner record is what keeps a repeat from re-minting.
+        _deliver(0, 2, IssuanceBatchLib.one(_series(USD, alice, 7)));
+        // Parking frees supply-cap room; the per-winner record is what keeps a later chunk from re-minting
+        // (a repeat of the same chunk index never gets this far — the chunk guard drops it first).
         intex.parkIntex(alice, USD, 7);
         assertEq(_balance(USD, alice), 0, "parked");
 
-        _deliver(0, 1, IssuanceBatchLib.one(_series(USD, alice, 7)));
-        assertEq(_balance(USD, alice), 0, "repeat does not mint into the freed room");
+        _deliver(1, 2, IssuanceBatchLib.one(_series(USD, alice, 7)));
+        assertEq(_balance(USD, alice), 0, "the freed room is not re-minted into");
+        assertTrue(router.issued(USD, alice), "the winner stays recorded as issued");
     }
 
     // --- conflicts ---
