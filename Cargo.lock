@@ -8526,14 +8526,26 @@ dependencies = [
 name = "outbe-radicle"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-primitives",
  "bytes",
  "commonware-codec",
  "commonware-cryptography",
+ "futures",
  "hex",
  "idna",
+ "multibase",
+ "outbe-primitives",
+ "outbe-radicleregistry",
+ "outbe-validatorset",
  "proptest",
  "rand_core 0.6.4",
+ "reqwest 0.12.28",
+ "reth-chain-state",
+ "reth-provider",
+ "reth-storage-api",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tokio",
 ]
