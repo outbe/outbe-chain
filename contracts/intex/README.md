@@ -16,7 +16,7 @@ Origin (Outbe):
 
 Each target chain (including Outbe as the loopback venue):
 
-- `target/TargetRouter.sol` — per-chain orchestration: applies stage/result/issuance/refund/lifecycle messages, relays revealed bids back to the origin (batches plus a `BIDS_DONE` completeness marker), drives holder migration on call, and routes proceeds home.
+- `target/TargetRouter.sol` — per-chain orchestration: applies stage/result/issuance/refund/lifecycle messages, relays revealed bids back to the origin (batches plus a `BIDS_DONE` completeness marker) and routes proceeds home.
 - `target/IntexAuction.sol` — the commit/reveal auction state machine. The day state (green/red) and the whole schedule are final at `auctionStart`; stage flips follow that schedule on the local clock, so no cross-chain reveal signal exists.
 - `target/EscrowAdapter.sol` — bid escrow and commit bonds on TheCompact; locks at commit, releases the bond at reveal, settles winners and refunds losers in wCOEN.
 - `shared/IntexNFT1155.sol` + `shared/IntexNFT1155Bridge.sol` — the Intex ERC-1155 ledger (Issued/Settled per series) and its cross-chain balance carrier with park/retry recovery on both legs.
@@ -32,7 +32,7 @@ Each target chain (including Outbe as the loopback venue):
 | `AUCTION_RESULT` | origin → per chain | won-bid count (zero keeps a skipped venue consistent) |
 | `ISSUANCE_INSTRUCTIONS` | origin → every snapshot chain | series creation and winner mints; an empty recipient list provisions the series only |
 | `REFUND_INSTRUCTIONS` | origin → per chain | loser refunds through the escrow |
-| `MARK_QUALIFIED`, `MARK_CALLED` | origin → every snapshot chain | series lifecycle transitions; `MARK_CALLED` also starts holder migration to Outbe |
+| `MARK_QUALIFIED`, `MARK_CALLED` | origin → every snapshot chain | series lifecycle transitions; `MARK_CALLED` carries the origin's call time so every chain shares one deadline |
 
 Proceeds travel separately as a composed wCOEN bridge transfer from each venue's escrow to the OriginRouter, which forwards them to IntexFactory per source chain for the creator-reward fan-in.
 

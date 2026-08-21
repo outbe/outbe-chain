@@ -206,11 +206,10 @@ default; pass `network: outbe-testnet` to read the bridged side.
 **Series ledger (outbe)** — `intex_series_info` (canonical series record + lifecycle
 state), `intex_series_list`.
 
-**Bridge BSC→outbe (Qualified only)** — `intex_bridge_quote` (native fee),
-`intex_bridge_send`. The bridge burns the token directly (role-gated), so no
-approval step is needed. Bridging is voluntary and only allowed once a series is
-**Qualified**; *Issued* cannot bridge, and *Called* is auto-bridged by the system
-(not via these tools).
+**Bridge BSC→outbe** — `intex_bridge_quote` (native fee), `intex_bridge_send`. The
+bridge burns the token directly (role-gated), so no approval step is needed. Bridging
+is always holder-initiated: to any recipient while a series is *Issued* or *Qualified*,
+and to yourself only once it is *Called*, up to its `callDeadline`.
 
 **Settlement + Promis (outbe)** — `auction_bid_settle` (step 1: pay strike, Issued→Settled),
 `intex_promis_mine` (step 2: Settled→Promis), `auction_settler_set`,
@@ -218,8 +217,9 @@ approval step is needed. Bridging is voluntary and only allowed once a series is
 
 Series lifecycle is **Issued → Qualified → Called**: bids stay sealed through
 commit/reveal (counts and clearing result are 0 until clearing); winners hold
-*Issued* Intex on BSC and trade peer-to-peer; bridging + settlement open only at
-*Qualified* (voluntary) or *Called* (forced, system-bridged).
+*Issued* Intex on BSC and trade peer-to-peer. Settlement only ever happens on outbe, so
+a position has to be bridged over — and once *Called* freezes ownership, only to yourself
+and only before the `callDeadline`.
 
 Commit/reveal has **no salt**: the commit hash is `keccak256` of the EIP-712
 RevealBid signature, which is deterministic, so reveal re-derives it from
@@ -241,7 +241,7 @@ series and amount.
 - *"Reveal my bid in series 42: 5 at 1.5."* →
   `auction_bid_reveal { series: 42, quantity: 5, price: "1.5" }` (auto-approves first if needed)
 - *"Show my Intex NFTs."* → `intex_holdings_by_owner`
-- *"Bridge my series 42 NFT to outbe."* (only once Qualified) →
+- *"Bridge my series 42 NFT to outbe."* →
   `intex_bridge_send { series: 42, amount: "5" }`
 - *"Settle series 42 and mine Promis."* → `auction_bid_settle { series: 42, amount: "5" }`
   then `intex_promis_mine { series: 42, amount: "5" }`
