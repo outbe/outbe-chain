@@ -41,6 +41,11 @@ contract TargetRouter is
     ///         into endless redelivery, taking its batch mates with it. A mark measures ~15k.
     uint256 internal constant MARK_APPLY_GAS_CAP = 150_000;
 
+    /// @notice Ceiling on the bids relay fired from an inbound CLEARING. Its cost grows with the day's
+    ///         bid count, which the origin cannot know when it buys the delivery's gas, so beyond this the
+    ///         relay parks for a permissionless flush instead of taking the stage transition down with it.
+    uint256 internal constant RELAY_BIDS_GAS_CAP = 4_000_000;
+
     /// @notice Destination chainId of Outbe — the sole peer for every outbound send and the only accepted source.
     uint32 public immutable OUTBE_CHAIN_ID;
 
@@ -327,7 +332,7 @@ contract TargetRouter is
         // Relay the revealed bids exactly once. A redelivered CLEARING must not re-relay under a fresh generation.
         if (!$.clearingRelayed[worldwideDay]) {
             $.clearingRelayed[worldwideDay] = true;
-            try this.relayBidsToOutbe(worldwideDay) {
+            try this.relayBidsToOutbe{gas: RELAY_BIDS_GAS_CAP}(worldwideDay) {
             // ok — bids forwarded
             }
             catch (bytes memory reason) {

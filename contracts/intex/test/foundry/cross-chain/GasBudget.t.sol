@@ -15,6 +15,14 @@ import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {MultiRecipientSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
 import {IntexNFT1155BridgeCodec} from "@contracts/shared/libs/IntexNFT1155BridgeCodec.sol";
+import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
+import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
+import {IntexAuction} from "@contracts/target/IntexAuction.sol";
+import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
+import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
+import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
+import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
+import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 /// @dev The origin buys destination gas from `IntexGas` before it knows what the target will spend, and
 ///      the budgets were last sized by estimate rather than measurement. These pin each formula against
@@ -291,5 +299,196 @@ contract RevertingReceiver {
         returns (bytes4)
     {
         revert Rejected();
+    }
+}
+
+/// @dev The auction-side handlers need the real Auction and EscrowAdapter behind the router, so they
+///      get their own fixture. CLEARING is the interesting one: its budget has to cover the bids relay
+///      that fires from inside the same delivery, not just the stage flip.
+contract AuctionGasBudgetTest is CrossChainTest {
+    uint32 internal constant BNB_CHAIN_ID = 1;
+    uint32 internal constant OUTBE_CHAIN_ID = 2;
+    uint32 internal constant WORLDWIDE_DAY = 20250101;
+    uint32 internal constant ISSUED_INTEX_COUNT = 10_000;
+    uint64 internal constant ENTRY_PRICE = 100e6;
+
+    TargetRouter internal router;
+    OriginRouter internal originRouter;
+    IntexAuction internal auction;
+    IntexNFT1155 internal intex;
+    EscrowAdapter internal escrow;
+    MockTheCompact internal compact;
+    MockWCOEN internal paymentToken;
+    address internal admin = address(this);
+
+    function setUp() public {
+        _setUpBridge();
+        intex = DeployProxy.intexNFT1155(admin, admin);
+        auction = DeployProxy.intexAuction(admin, admin);
+        router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        originRouter = DeployProxy.originRouter(address(bridge), admin);
+        escrow = DeployProxy.escrowAdapter(admin, admin);
+        compact = new MockTheCompact();
+        paymentToken = new MockWCOEN();
+        escrow.wire(admin, address(compact), address(paymentToken));
+        compact.setResetPeriodSeconds(0);
+
+        router.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(originRouter)));
+        router.wire(address(auction), address(intex), address(escrow));
+        auction.grantRole(auction.RELAYER_ROLE(), address(router));
+        intex.grantRole(intex.RELAYER_ROLE(), address(router));
+        escrow.grantRole(escrow.RELAYER_ROLE(), address(router));
+
+        // The relay leaves from the router's own float.
+        vm.deal(address(router), 100 ether);
+    }
+
+    function _deliver(bytes memory packet) internal returns (uint256 spent) {
+        uint256 before = gasleft();
+        _deliver(OUTBE_CHAIN_ID, address(originRouter), address(router), packet);
+        spent = before - gasleft();
+    }
+
+    /// @dev The widest start the codec allows: `MAX_REFERENCE_PRICES` rows.
+    function _startPacket(uint256 rows) internal view returns (bytes memory) {
+        IOriginRouter.ReferenceCurrencyPrice[] memory prices = new IOriginRouter.ReferenceCurrencyPrice[](rows);
+        for (uint256 i = 0; i < rows; ++i) {
+            prices[i] = IOriginRouter.ReferenceCurrencyPrice({
+                isoCode: uint16(840 + i),
+                entryPriceMinor: ENTRY_PRICE,
+                floorPriceMinor: 40e6,
+                callPriceMinor: ENTRY_PRICE
+            });
+        }
+        return BridgeMsgCodec.encodeAuctionStageStart(
+            WORLDWIDE_DAY,
+            uint32(block.timestamp + 1 days),
+            uint32(block.timestamp + 2 days),
+            uint32(block.timestamp + 3 days),
+            1e6,
+            60e6,
+            prices,
+            0,
+            0,
+            0,
+            1,
+            0,
+            1
+        );
+    }
+
+    function test_TheQuoteCoversAuctionStageStartAtItsWidest() public {
+        uint256 rows = BridgeMsgCodec.MAX_REFERENCE_PRICES;
+
+        uint256 spent = _deliver(_startPacket(rows));
+
+        emit log_named_uint("auction_start_6prices", spent);
+        assertLt(spent, IntexGas.auctionStart(rows), "auction start must fit the quote");
+    }
+
+    function test_TheQuoteCoversAuctionStageClearingWithNoBids() public {
+        _deliver(_startPacket(1));
+        vm.warp(block.timestamp + 1 days);
+
+        uint256 spent = _deliver(BridgeMsgCodec.encodeAuctionStageClearing(WORLDWIDE_DAY));
+
+        emit log_named_uint("clearing_0bids", spent);
+        assertLt(spent, IntexGas.AUCTION_STAGE_CLEARING, "clearing must fit the quote");
+    }
+
+    function test_TheQuoteCoversAuctionResult() public {
+        _deliver(_startPacket(1));
+        vm.warp(block.timestamp + 1 days);
+        vm.prank(address(router));
+        auction.startClearingStage(WORLDWIDE_DAY);
+
+        uint256 spent = _deliver(BridgeMsgCodec.encodeAuctionResult(WORLDWIDE_DAY, ISSUED_INTEX_COUNT, ENTRY_PRICE, 0));
+
+        emit log_named_uint("auction_result", spent);
+        assertLt(spent, IntexGas.AUCTION_RESULT, "auction result must fit the quote");
+    }
+}
+
+/// @dev CLEARING's budget is dominated by the bids relay it fires: the day's revealed bids leave as
+///      chunks of `MAX_PAYLOAD_ARRAY_LEN`, and every chunk is an outbound send paid from this same
+///      delivery. A stub auction supplies the bids so the slope is measurable without the reveal flow.
+contract ClearingRelayGasTest is CrossChainTest {
+    uint32 internal constant OUTBE_CHAIN_ID = 2;
+    uint32 internal constant WORLDWIDE_DAY = 20250101;
+
+    TargetRouter internal router;
+    BidStub internal stub;
+    address internal admin = address(this);
+    address internal originPeer = address(0x0B1);
+
+    function setUp() public {
+        _setUpBridge();
+        stub = new BidStub();
+        router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        router.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
+        router.wire(address(stub), makeAddr("intex"), makeAddr("escrow"));
+        vm.deal(address(router), 100 ether);
+    }
+
+    function _clearingCost(uint256 bids) internal returns (uint256 spent) {
+        stub.setBidCount(bids);
+        uint256 before = gasleft();
+        _deliver(
+            OUTBE_CHAIN_ID, originPeer, address(router), BridgeMsgCodec.encodeAuctionStageClearing(WORLDWIDE_DAY)
+        );
+        spent = before - gasleft();
+    }
+
+    function test_TheQuoteCoversClearingWithAFullChunkOfBids() public {
+        uint256 spent = _clearingCost(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN);
+
+        emit log_named_uint("clearing_64bids", spent);
+        assertLt(spent, IntexGas.AUCTION_STAGE_CLEARING, "one full chunk must fit the quote");
+    }
+
+    function test_TheQuoteCoversClearingWithFourChunksOfBids() public {
+        uint256 spent = _clearingCost(4 * BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN);
+
+        emit log_named_uint("clearing_256bids", spent);
+        assertLt(spent, IntexGas.AUCTION_STAGE_CLEARING, "four chunks must fit the quote");
+    }
+
+    /// @dev Past the relay's ceiling the stage still transitions and the relay parks, so the day is
+    ///      recoverable by a flush rather than stuck in redelivery.
+    function test_ADayTooHeavyToRelayParksInsteadOfFailing() public {
+        uint256 spent = _clearingCost(16 * BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN);
+
+        emit log_named_uint("clearing_1024bids", spent);
+        assertEq(router.nextPendingBidsRelayIdx(), 1, "the relay parked");
+        assertLt(spent, IntexGas.AUCTION_STAGE_CLEARING, "the capped delivery still fits the quote");
+    }
+}
+
+/// @dev Supplies a settable number of revealed bids; the stage flip itself is a no-op.
+contract BidStub {
+    uint256 public bidCount;
+
+    function setBidCount(uint256 n) external {
+        bidCount = n;
+    }
+
+    function startClearingStage(uint32) external {}
+
+    function getAuctionDetails(uint32)
+        external
+        view
+        returns (IIntexAuction.AuctionData memory data, IIntexAuction.SubmittedBidData[] memory bids)
+    {
+        bids = new IIntexAuction.SubmittedBidData[](bidCount);
+        for (uint256 i = 0; i < bidCount; ++i) {
+            bids[i] = IIntexAuction.SubmittedBidData({
+                bidderAddress: address(uint160(0xCAFE + i)),
+                intexQuantity: 1,
+                intexBidRate: 100e6,
+                timestamp: uint32(block.timestamp),
+                issuanceCurrency: 840,
+                referenceCurrency: 840
+            });
+        }
     }
 }

@@ -17,8 +17,12 @@ library IntexGas {
     uint256 internal constant AUCTION_STAGE_START_BASE = 500_000;
     /// @notice Marginal cost of storing one reference-price row on the target.
     uint256 internal constant AUCTION_STAGE_START_PER_PRICE = 30_000;
-    /// @dev Clearing also fires the bids relay back to Outbe (parked on failure), so it runs generously.
-    uint256 internal constant AUCTION_STAGE_CLEARING = 2_000_000;
+    /// @dev Clearing also relays the day's bids back to Outbe from inside the same delivery, and that
+    ///      cost grows with the bid count the origin cannot see. Measured: ~0.5M with no bids, ~3.5M at
+    ///      one chunk, ~4.2M at four, ~8M at sixteen. The relay is capped on the target, so this covers
+    ///      the stage flip, that cap, and the parking write; a heavier day parks and is flushed.
+    uint256 internal constant AUCTION_STAGE_CLEARING = 5_000_000;
+    /// @dev Measured at ~66k; the rest is headroom for a longer auction record.
     uint256 internal constant AUCTION_RESULT = 300_000;
     /// @dev A mark is a bounded state flip. Measured: a batch of 8 takes ~123k applied and ~404k when
     ///      every series parks, one series ~50k and ~70k. The parking path sets the marginal.
