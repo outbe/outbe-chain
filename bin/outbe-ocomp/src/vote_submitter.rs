@@ -291,9 +291,31 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
     ) -> Result<VoteSubmissionOutcomeV1, VoteSubmissionErrorV1> {
         let record = self.journal.load(job_id)?;
         let Some(record) = record else {
-            return self.prepare(preparer, job_id, result_digest, canonical_result, finalized);
+            return self.prepare(
+                preparer,
+                job_id,
+                result_digest,
+                canonical_result,
+                finalized,
+                1,
+            );
         };
         self.require_record_binding(&record, result_digest)?;
+        if matches!(
+            record.stage,
+            VoteSubmissionStageV1::Prepared | VoteSubmissionStageV1::Submitted
+        ) && self.nonce_was_bypassed(&record)?
+        {
+            // Same vote, fresh envelope: the pinned nonce was consumed elsewhere.
+            return self.prepare(
+                preparer,
+                job_id,
+                result_digest,
+                canonical_result,
+                finalized,
+                next_generation(record.generation)?,
+            );
+        }
         match record.stage {
             VoteSubmissionStageV1::Prepared => self.submit(record),
             VoteSubmissionStageV1::Submitted => self.observe_submission(record),
@@ -314,6 +336,7 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
         result_digest: B256,
         canonical_result: &[u8],
         finalized: &FinalizedJobSpecV1,
+        generation: u64,
     ) -> Result<VoteSubmissionOutcomeV1, VoteSubmissionErrorV1> {
         if canonical_result.is_empty() {
             return Err(VoteSubmissionErrorV1::EmptyCanonicalResult);
@@ -347,7 +370,7 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
             .map_err(preparer_error)?;
         self.validate_prepared(&prepared, job_id, result_digest, nonce, max_fee_per_gas)?;
         self.journal.persist(VoteSubmissionRecordV1 {
-            generation: 1,
+            generation,
             stage: VoteSubmissionStageV1::Prepared,
             job_id,
             result_digest,
@@ -456,6 +479,27 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
             });
         }
         Ok(())
+    }
+
+    /// Receipt is checked after the nonce read, so a racing inclusion keeps
+    /// the record.
+    fn nonce_was_bypassed(
+        &self,
+        record: &VoteSubmissionRecordV1,
+    ) -> Result<bool, VoteSubmissionErrorV1> {
+        if self
+            .rpc
+            .canonical_nonce(record.sender_address)
+            .map_err(rpc_error)?
+            <= record.nonce
+        {
+            return Ok(false);
+        }
+        Ok(self
+            .rpc
+            .transaction_receipt(record.transaction_hash)
+            .map_err(rpc_error)?
+            .is_none())
     }
 
     fn receipt_is_canonical(&self, receipt: VoteReceiptV1) -> Result<bool, VoteSubmissionErrorV1> {
@@ -636,6 +680,28 @@ impl PublicVoteRpcClientV1 {
             return Err(PublicVoteRpcErrorV1::ResponseTooLarge);
         }
         parse_rpc_response(&bytes, id)
+    }
+
+    /// Executes a read-only `eth_call` against finalized state.
+    pub(crate) fn call_contract_finalized(
+        &self,
+        to: Address,
+        data: &[u8],
+    ) -> Result<Vec<u8>, PublicVoteRpcErrorV1> {
+        let value = self.call(
+            "eth_call",
+            serde_json::json!([
+                { "to": format!("{to:#x}"), "data": format!("0x{}", hex::encode(data)) },
+                "finalized",
+            ]),
+        )?;
+        let text = value.as_str().ok_or_else(|| {
+            PublicVoteRpcErrorV1::Malformed("eth_call result is not a string".to_owned())
+        })?;
+        let stripped = text.strip_prefix("0x").ok_or_else(|| {
+            PublicVoteRpcErrorV1::Malformed("eth_call result is not 0x-prefixed".to_owned())
+        })?;
+        hex::decode(stripped).map_err(|error| PublicVoteRpcErrorV1::Malformed(error.to_string()))
     }
 
     fn block_for_tag(&self, tag: serde_json::Value) -> Result<VoteBlockV1, PublicVoteRpcErrorV1> {
@@ -1864,5 +1930,285 @@ mod tests {
             canonical_nonce_params(Address::repeat_byte(0x44)),
             serde_json::json!([format!("{:#x}", Address::repeat_byte(0x44)), "latest"])
         );
+    }
+
+    struct NonceRecordingPreparer {
+        inner: FakePreparer,
+        last_nonce: Arc<AtomicU64>,
+    }
+
+    impl VoteTransactionPreparerV1 for NonceRecordingPreparer {
+        type Error = std::io::Error;
+
+        fn prepare_vote_transaction(
+            &self,
+            canonical_result: &[u8],
+            finalized: &FinalizedJobSpecV1,
+            canonical_height: u64,
+            nonce: u64,
+            max_fee_per_gas: u128,
+            gas_limit: u64,
+        ) -> Result<PreparedVoteTransactionV1, Self::Error> {
+            self.last_nonce.store(nonce, Ordering::SeqCst);
+            self.inner.prepare_vote_transaction(
+                canonical_result,
+                finalized,
+                canonical_height,
+                nonce,
+                max_fee_per_gas,
+                gas_limit,
+            )
+        }
+    }
+
+    /// Unlike [`FakeRpc`], the account nonce can move under a journaled envelope.
+    #[derive(Clone)]
+    struct NonceRpc {
+        state: Arc<Mutex<NonceRpcState>>,
+    }
+
+    struct NonceRpcState {
+        nonce: u64,
+        receipt: Option<VoteReceiptV1>,
+        canonical: Option<VoteBlockV1>,
+        finalized: VoteBlockV1,
+        broadcasts: usize,
+    }
+
+    impl NonceRpc {
+        fn new() -> Self {
+            Self {
+                state: Arc::new(Mutex::new(NonceRpcState {
+                    nonce: 7,
+                    receipt: None,
+                    canonical: None,
+                    finalized: VoteBlockV1 {
+                        number: 0,
+                        hash: B256::ZERO,
+                    },
+                    broadcasts: 0,
+                })),
+            }
+        }
+
+        fn bypass_nonce(&self, nonce: u64) {
+            self.state.lock().unwrap().nonce = nonce;
+        }
+
+        fn include(&self, transaction_hash: B256) {
+            let mut state = self.state.lock().unwrap();
+            state.receipt = Some(VoteReceiptV1 {
+                transaction_hash,
+                block_number: 1,
+                block_hash: BLOCK_A,
+                success: true,
+            });
+            state.canonical = Some(VoteBlockV1 {
+                number: 1,
+                hash: BLOCK_A,
+            });
+        }
+
+        fn broadcasts(&self) -> usize {
+            self.state.lock().unwrap().broadcasts
+        }
+    }
+
+    impl VoteSubmissionRpcV1 for NonceRpc {
+        type Error = std::io::Error;
+
+        fn chain_id(&self) -> Result<u64, Self::Error> {
+            Ok(42)
+        }
+
+        fn canonical_nonce(&self, _address: Address) -> Result<u64, Self::Error> {
+            Ok(self.state.lock().unwrap().nonce)
+        }
+
+        fn gas_price(&self) -> Result<u128, Self::Error> {
+            Ok(outbe_ocomp_protocol::system_carrier::MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS)
+        }
+
+        fn send_raw_transaction(
+            &self,
+            _raw_transaction: &[u8],
+            expected_hash: B256,
+        ) -> Result<B256, Self::Error> {
+            self.state.lock().unwrap().broadcasts += 1;
+            Ok(expected_hash)
+        }
+
+        fn transaction_receipt(
+            &self,
+            _transaction_hash: B256,
+        ) -> Result<Option<VoteReceiptV1>, Self::Error> {
+            Ok(self.state.lock().unwrap().receipt)
+        }
+
+        fn canonical_block(&self, _number: u64) -> Result<Option<VoteBlockV1>, Self::Error> {
+            Ok(self.state.lock().unwrap().canonical)
+        }
+
+        fn finalized_block(&self) -> Result<VoteBlockV1, Self::Error> {
+            Ok(self.state.lock().unwrap().finalized)
+        }
+    }
+
+    fn nonce_fixture(
+        root: &Path,
+    ) -> (
+        SupervisorVoteSubmitterV1<NonceRpc>,
+        NonceRpc,
+        NonceRecordingPreparer,
+        Arc<AtomicU64>,
+        Arc<AtomicU64>,
+    ) {
+        let signer = OutbeEvmSigner::from_secret_bytes([9; 32]).expect("test signer");
+        let sender_address = signer.address();
+        let rpc = NonceRpc::new();
+        let calls = Arc::new(AtomicU64::new(0));
+        let last_nonce = Arc::new(AtomicU64::new(u64::MAX));
+        let preparer = NonceRecordingPreparer {
+            inner: FakePreparer {
+                signer,
+                target: METADOSIS_ADDRESS,
+                calls: calls.clone(),
+                limits: poc_schema_limits(),
+            },
+            last_nonce: last_nonce.clone(),
+        };
+        let submitter = SupervisorVoteSubmitterV1::open(
+            VoteSubmissionConfigV1 {
+                journal_root: root.to_path_buf(),
+                expected_chain_id: 42,
+                sender_address,
+                limits: poc_schema_limits(),
+            },
+            rpc.clone(),
+        )
+        .expect("vote submitter");
+        (submitter, rpc, preparer, calls, last_nonce)
+    }
+
+    fn heal_reconcile(
+        submitter: &mut SupervisorVoteSubmitterV1<NonceRpc>,
+        preparer: &NonceRecordingPreparer,
+    ) -> VoteSubmissionOutcomeV1 {
+        submitter
+            .reconcile(
+                preparer,
+                JOB_ID,
+                result_digest(),
+                &canonical_result(),
+                &finalized_job_spec(),
+            )
+            .expect("reconcile")
+    }
+
+    #[test]
+    fn a_bypassed_nonce_rebuilds_the_vote_from_the_prepared_stage() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut submitter, rpc, preparer, calls, last_nonce) = nonce_fixture(directory.path());
+
+        assert_eq!(
+            heal_reconcile(&mut submitter, &preparer),
+            VoteSubmissionOutcomeV1::Prepared
+        );
+        assert_eq!(last_nonce.load(Ordering::SeqCst), 7);
+
+        rpc.bypass_nonce(8);
+        assert_eq!(
+            heal_reconcile(&mut submitter, &preparer),
+            VoteSubmissionOutcomeV1::Prepared
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(last_nonce.load(Ordering::SeqCst), 8);
+
+        assert_eq!(
+            heal_reconcile(&mut submitter, &preparer),
+            VoteSubmissionOutcomeV1::Submitted
+        );
+        assert_eq!(rpc.broadcasts(), 1);
+    }
+
+    #[test]
+    fn a_bypassed_nonce_rebuilds_the_vote_from_the_submitted_stage() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut submitter, rpc, preparer, calls, last_nonce) = nonce_fixture(directory.path());
+
+        assert_eq!(
+            heal_reconcile(&mut submitter, &preparer),
+            VoteSubmissionOutcomeV1::Prepared
+        );
+        assert_eq!(
+            heal_reconcile(&mut submitter, &preparer),
+            VoteSubmissionOutcomeV1::Submitted
+        );
+
+        rpc.bypass_nonce(9);
+        assert_eq!(
+            heal_reconcile(&mut submitter, &preparer),
+            VoteSubmissionOutcomeV1::Prepared
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(last_nonce.load(Ordering::SeqCst), 9);
+    }
+
+    #[test]
+    fn an_included_receipt_wins_over_the_advanced_nonce() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut submitter, rpc, preparer, calls, _) = nonce_fixture(directory.path());
+
+        assert_eq!(
+            heal_reconcile(&mut submitter, &preparer),
+            VoteSubmissionOutcomeV1::Prepared
+        );
+        assert_eq!(
+            heal_reconcile(&mut submitter, &preparer),
+            VoteSubmissionOutcomeV1::Submitted
+        );
+
+        // Our own envelope landed: the receipt must keep the record.
+        let transaction_hash = preparer
+            .prepare_vote_transaction(
+                &canonical_result(),
+                &finalized_job_spec(),
+                1,
+                7,
+                outbe_ocomp_protocol::system_carrier::MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+                outbe_ocomp_protocol::system_carrier::OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+            )
+            .unwrap()
+            .transaction_hash;
+        rpc.bypass_nonce(8);
+        rpc.include(transaction_hash);
+
+        assert!(matches!(
+            heal_reconcile(&mut submitter, &preparer),
+            VoteSubmissionOutcomeV1::Included(_)
+        ));
+        // Two prepare calls: the fixture one plus the hash probe above.
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_healthy_nonce_keeps_rebroadcasting_the_same_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut submitter, rpc, preparer, calls, _) = nonce_fixture(directory.path());
+
+        assert_eq!(
+            heal_reconcile(&mut submitter, &preparer),
+            VoteSubmissionOutcomeV1::Prepared
+        );
+        assert_eq!(
+            heal_reconcile(&mut submitter, &preparer),
+            VoteSubmissionOutcomeV1::Submitted
+        );
+        assert_eq!(
+            heal_reconcile(&mut submitter, &preparer),
+            VoteSubmissionOutcomeV1::Submitted
+        );
+        assert_eq!(rpc.broadcasts(), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

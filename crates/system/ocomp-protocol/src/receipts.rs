@@ -136,7 +136,7 @@ wire_struct! {
 
 wire_struct! {
     pub struct ContributorStateEventProjectionV1 {
-        pub series_id: u32,
+        pub worldwide_day: u32,
         pub series_version_before: u64,
         pub series_version_after: u64,
         pub contributor_count: u32,

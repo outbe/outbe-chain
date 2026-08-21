@@ -34,12 +34,19 @@ JSON or read mutable configuration.
 
 The currently registered schedule is:
 
-| Id | Slot | Command invoked | Accounting gate |
-|---:|---|---|---|
-| 0 | daily 00:00 UTC | previous UTC-day emission command | required |
-| 1 | daily 00:00 UTC | Intex call scan | not required |
-| 2 | production: daily 12:00 UTC; shortened genesis profile: every `metadosis.advanceIntervalSeconds` | WorldwideDay advancement command | not required |
-| 3 | every 12h | auction schedule advancement | required |
+| Id | Label | Slot | Command invoked | Accounting gate | Coalesces backlog |
+|---:|---|---|---|---|---|
+| 0 | `protocol_cycle` | hourly at `HH:00` UTC | contiguous-day emission or missed-day forfeiture, then one WWD/Metadosis pass | required | yes |
+| 1 | `intex_call_daily` | daily 00:00 UTC | Intex call scan | not required | no |
+| 2 | reserved | inactive historical id | none | n/a | n/a |
+| 3 | `auction_advance` | every 12h | auction schedule advancement | required | no |
+| 4 | `gem_call_daily` | daily 00:00 UTC | Gem force-call / forfeit-burn scan | not required | no |
+| 5 | `auction_clearing` | every 10 min | auction clearing sweep | not required | yes |
+| 6 | `intex_notify` | every 10 min | Intex lifecycle-notice drain | not required | yes |
+| 7 | `credis_call_daily` | daily 00:00 UTC | Credis price-path scan: latch, call, void | not required | no |
+
+Ids are permanent: they are emitted as the indexed `id` on `CycleTriggerExecuted` and key
+the `Cycle` mappings, so new triggers append and existing ones are never renumbered.
 
 Names and order are normative even if handlers happen to commute today. A handler
 is an imported command boundary. Its calculations, state transitions, sinks and
@@ -63,13 +70,18 @@ At each block Cycle:
 A failed handler leaves its cursor unchanged, so the same scheduled slot is
 eligible for retry. Cycle never fabricates a handler-specific completion marker.
 
-For Metadosis, one due trigger invokes one canonical command and one tick
-settles/advances at most one protocol-oldest WWD. The command identity binds
-`(trigger_id, scheduled_at, worldwide_day, command_kind,
-canonical_params_hash)` to the purpose-bound Metadosis mutation lease. Cycle
-does not select READY order or own any WWD economic branch.
+ProtocolCycle is the sole calendar owner. It reads `Cycle.active_utc_day`. If the
+block day is its immediate calendar successor, Cycle settles that one completed
+day and advances the cursor after successful settlement. If the block day is
+more than one day ahead, every completed day in the gap is forfeited: Cycle
+advances the cursor directly without synthesizing emission, rewards, receipts,
+WorldwideDays, Metadosis limits, Promis credit, or OCOMP work for the missed
+days. It then invokes the existing Metadosis command exactly once; Metadosis
+creates the current WWD when needed, advances every active WWD across all due
+phase boundaries, and selects at most one READY WWD in its canonical order.
+Cycle does not own those WWD economic branches.
 
-The emission-limit daily handler has two coordinated facts: Cycle's
+Each completed-day settlement has two coordinated facts: Rewards'
 `daily_settled[previous_day]` schedule marker and Metadosis'
 `DayLimitFormationReceipt`. Both are written in the same outer checkpoint.
 `true/receipt` replays without effects; `false/no receipt` proceeds;
@@ -82,9 +94,11 @@ typed inputs constructed by the receiving module. Cycle passes canonical block
 context or an explicitly specified scheduled context; it does not reinterpret
 domain dates.
 
-The current implementation catches up at most one overdue slot per trigger per
-block. This behavior is recorded as implementation evidence, not accepted policy,
-until bounds and stale-command semantics are decided below.
+Missed hourly ProtocolCycle slots coalesce to one invocation. A same-day gap has
+no daily economic action. A contiguous day transition settles exactly the prior
+day. A multi-day gap forfeits every completed day and advances the calendar
+cursor to the block day; lost calendar economics are never replayed. Other
+non-coalescing triggers retain their existing per-slot behavior.
 
 ## Authoritative interfaces
 
@@ -94,6 +108,7 @@ until bounds and stale-command semantics are decided below.
 | Trigger declaration/order | `ACTIVE_TRIGGERS` |
 | Slot calculation | schedule/`next_fire_at` functions |
 | Cursor and history | Cycle storage schema |
+| UTC-day ownership | `Cycle.active_utc_day` |
 | Handler transaction boundary | per-trigger checkpoint |
 | Parent-accounting prerequisite | trigger metadata plus Rewards query |
 
@@ -107,6 +122,10 @@ No user ABI may advance cursors or claim a trigger completed.
 - Failure commits neither cursor, success event, nor handler state.
 - Registry traversal order is identical on every node.
 - Block time and chain configuration are the only time/configuration inputs.
+- `active_utc_day <= block_utc_day`; invalid, zero, or future cursors are fatal.
+- A contiguous completed day is settled exactly once. A multi-day halt has no
+  settlement side effects for missed days and advances the cursor atomically
+  with the remaining ProtocolCycle work.
 - Stored cursor data refers to a trigger whose semantic identity has not changed
   without an explicit migration.
 
@@ -131,9 +150,9 @@ receipt, cursor and success event commit or roll back as one execution scope.
 ## Security and compatibility
 
 Registry contents, ids, order, schedules, date arithmetic, first-activation rule,
-and accounting gates are consensus-critical. Any change requires fork activation
-and cursor migration policy. Environment variables may not alter them in a
-production chain unless the chain specification commits the value.
+and accounting gates are consensus-critical. This design targets a fresh network:
+genesis seeds `active_utc_day` from the root header timestamp, so no migration or
+legacy activation path exists. Environment variables may not alter these values.
 
 A handler must not be registered until its worst-case work, failure mode and
 idempotency are known. Cycle is not a generic cron facility for operator jobs.
@@ -141,10 +160,10 @@ idempotency are known. Cycle is not a generic cron facility for operator jobs.
 ## Production-interface verification evidence
 
 Inspected production paths include Cycle begin-zone dispatch, trigger anchoring,
-slot calculation, accounting gating, checkpoints, cursor writes, midnight/noon
-fixtures, retry tests, and timestamp-gap tests. This establishes the implemented
-shape but not the unresolved activation and catch-up policies, so the ADR remains
-Proposed.
+slot calculation, accounting gating, checkpoints, cursor writes, hourly/day-boundary
+fixtures, retry tests, and multi-day timestamp-gap tests. This establishes the implemented
+shape, fresh-chain activation, and missed-day forfeiture policy; the ADR remains
+Proposed until the end-to-end evidence listed by the implementation issue lands.
 
 ## Consequences
 
@@ -162,25 +181,22 @@ trigger now requires an explicit cross-link rather than expanding Cycle's domain
 
 ## Open questions and technical debt
 
-1. `ACTIVE_TRIGGERS` currently describes order as informational although handlers
-   share downstream state. Make order normative and add a structural order test,
-   or prove commutativity for every pair.
-2. A large timestamp jump replays one historical slot per block against current
-   state. Define maximum catch-up, stale-slot skip/aggregate rules and recovery.
-3. First observation anchors to the observed block rather than a genesis- or
+1. Monitor the economic and operational impact of deliberate missed-day
+   forfeiture during a multi-day chain halt.
+2. First observation anchors to the observed block rather than a genesis- or
    activation-derived slot. Define deterministic initialization for late forks,
    snapshots and reindexing.
-4. Prove that the enclosing `CycleTick` failure class really permits the documented
+3. Prove that the enclosing `CycleTick` failure class really permits the documented
    next-block retry without producing a partially canonical block.
-5. Decide whether one failing trigger blocks later ids in the same block. Encode
+4. Decide whether one failing trigger blocks later ids in the same block. Encode
    this explicitly in the scheduling contract and tests.
-6. The generic allocation/fallback machinery historically associated with Cycle
+5. The generic allocation/fallback machinery historically associated with Cycle
    is not scheduler responsibility. Remove dead code or relocate it to the owning
    economic module.
-7. Define behavior when a registered command has no work (for example a zero daily
+6. Define behavior when a registered command has no work (for example a zero daily
    cap): handler success/no-op must be distinguishable from an unprocessed slot.
-8. Add generated model tests spanning leap days, timestamp equality, multiple due
+7. Add generated model tests spanning leap days, timestamp equality, multiple due
    triggers, long gaps, failures, retries, reorgs and restarts.
-9. Add a versioned migration test proving that trigger id reuse, removal or schedule
+8. Add a versioned migration test proving that trigger id reuse, removal or schedule
    change cannot reinterpret an existing cursor.
-10. This decision still requires human acceptance before status can change.
+9. This decision still requires human acceptance before status can change.

@@ -21,7 +21,7 @@ use eyre::{bail, ensure, eyre, Result, WrapErr};
 use serde::{Deserialize, Serialize};
 
 use crate::env::{EnvCli, Environment, TeeMode};
-use crate::internal::{config::Config, eth, ports::Ports};
+use crate::internal::{config::Config, eth, ports::Ports, proc};
 use crate::world::localnet::Localnet;
 #[cfg(feature = "ocomp-integration")]
 use crate::world::localnet::StartOpts;
@@ -210,7 +210,7 @@ impl LocalnetCli {
             validators: self.validators,
             no_resolve_ports: persisted_blocks.is_some(),
             no_cleanup: true,
-            tee: TeeMode::Mock,
+            tee: localnet_tee_mode(),
             no_sudo: self.no_sudo,
             all: false,
             debug: self.debug,
@@ -288,12 +288,17 @@ fn bootstrap(cli: &LocalnetCli) -> Result<()> {
         rpc_ports,
     };
     write_json_atomic(&bootstrap_path(&cli.data_dir), &receipt)?;
-    println!("LocalNet bootstrapped at {}", cli.data_dir.display());
+    println!(
+        "LocalNet bootstrapped at {} ({})",
+        cli.data_dir.display(),
+        enclave_profile_banner()
+    );
     Ok(())
 }
 
 fn start(cli: &LocalnetCli) -> Result<()> {
     require_ocomp_integration_build()?;
+    println!("LocalNet enclave profile: {}", enclave_profile_banner());
     let receipt = read_bootstrap(cli)?;
     let _start_lock = StartLock::acquire(&cli.data_dir)?;
     if let Some(state) = read_state(&cli.data_dir)? {
@@ -359,6 +364,7 @@ fn start(cli: &LocalnetCli) -> Result<()> {
                     state.ocomp_connected_workers,
                     state.ocomp_workers
                 );
+                print_funded_accounts(cli, &state.rpc_ports);
                 return Ok(());
             }
         }
@@ -524,6 +530,7 @@ fn wait_for_existing_start(
             );
             verify_running_state(cli, &state)?;
             println!("LocalNet running (pid {})", state.owner_pid);
+            print_funded_accounts(cli, &state.rpc_ports);
             return Ok(());
         }
         ensure!(
@@ -972,6 +979,74 @@ fn ensure_matches(cli: &LocalnetCli, state: &LocalnetStateV1) -> Result<()> {
     Ok(())
 }
 
+/// The genesis-funded accounts an operator drives this localnet with.
+///
+/// A development network is unusable without them and they otherwise exist only
+/// on disk, so `start` prints them. These are throwaway devnet keys generated
+/// into the data directory for a chain that is wiped on the next bootstrap;
+/// nothing outside a localnet may print key material this way.
+fn print_funded_accounts(cli: &LocalnetCli, rpc_ports: &[u16]) {
+    let rpc = rpc_ports
+        .first()
+        .map(|port| format!("http://127.0.0.1:{port}"));
+    println!(
+        "Funded genesis accounts (also at {}/validator-<i>/evm-key.hex):",
+        cli.data_dir.display()
+    );
+    for index in 0..cli.validators {
+        let Ok(key) = proc::read_evm_key(&cli.data_dir.join(format!("validator-{index}"))) else {
+            println!("  validator-{index}: <evm-key.hex unreadable>");
+            continue;
+        };
+        let Some(address) = eth::address_of(&key) else {
+            println!("  validator-{index}: <evm-key.hex is not a valid private key>");
+            continue;
+        };
+        let balance = rpc
+            .as_deref()
+            .and_then(|url| eth::balance(url, address))
+            .map_or_else(|| "unknown".to_owned(), coen);
+        println!("  validator-{index}  {address}  {key}  {balance} COEN");
+    }
+    if let Some(rpc) = rpc {
+        println!("Primary RPC: {rpc}");
+    }
+}
+
+/// COEN carries six decimals; render base units as a decimal amount.
+fn coen(balance: alloy_primitives::U256) -> String {
+    const UNITS: u64 = 1_000_000;
+    let whole = balance / alloy_primitives::U256::from(UNITS);
+    let fraction = balance % alloy_primitives::U256::from(UNITS);
+    format!("{whole}.{:06}", fraction.to::<u64>())
+}
+
+/// One line naming the resolved enclave profile, so no run is ambiguous about
+/// which lane produced it.
+fn enclave_profile_banner() -> String {
+    let mode = localnet_tee_mode();
+    let detail = if mode.runs_native_host_enclave() {
+        "mock enclave as a host process; no Gramine, no LibOS, no attestation"
+    } else {
+        "mock enclave under gramine-direct in the pinned test container"
+    };
+    format!("{} — {detail}", mode.evidence_name())
+}
+
+/// The enclave execution profile this host can actually run.
+///
+/// The Gramine test image is published for `linux/amd64` only and does not
+/// survive emulation, so every non-Linux host runs the mock enclave as a native
+/// host process instead. This is a distinct named profile with its own evidence
+/// label — never a silent fallback to `mock`'s.
+const fn localnet_tee_mode() -> TeeMode {
+    if cfg!(target_os = "linux") {
+        TeeMode::Mock
+    } else {
+        TeeMode::MockNative
+    }
+}
+
 fn state_is_live(state: &LocalnetStateV1) -> bool {
     process_identity(state.owner_pid).as_deref() == Some(&state.owner_process_identity)
 }
@@ -1260,6 +1335,23 @@ mod tests {
         assert!(validate_data_dir(Path::new("/repo"), Path::new("/repo")).is_err());
         assert!(validate_data_dir(Path::new("/repo/project"), Path::new("/repo")).is_err());
         validate_data_dir(Path::new("/repo"), Path::new("/tmp/outbe-testnet")).unwrap();
+    }
+
+    /// Linux keeps the Gramine container; every other host runs the enclave
+    /// natively, because the test image is amd64-only and does not survive
+    /// emulation. Asserted on both sides so neither can drift silently.
+    #[test]
+    fn the_driver_resolves_the_enclave_profile_this_host_can_run() {
+        let mode = localnet_tee_mode();
+        if cfg!(target_os = "linux") {
+            assert_eq!(mode, TeeMode::Mock);
+            assert!(!mode.runs_native_host_enclave());
+        } else {
+            assert_eq!(mode, TeeMode::MockNative);
+            assert!(mode.runs_native_host_enclave());
+        }
+        assert!(mode.uses_mock_binary());
+        assert!(enclave_profile_banner().contains(mode.evidence_name()));
     }
 
     #[test]

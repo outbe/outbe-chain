@@ -1527,23 +1527,31 @@ fn committee_clock_reaches_fresh_capacity_processing(world: &mut World) {
         .as_ref()
         .expect("fresh Metadosis creation evidence")
         .scheduled_process_time;
-    // The configurable sub-day trigger advances the WWD state machine only as
-    // far as READY. Production settlement deliberately belongs to the daily
-    // Cycle handler, so cross the first UTC midnight after the processing time
-    // before expecting the READY day to become an OCOMP job.
-    let target = first_daily_cycle_at_or_after(scheduled_process_time);
+    // ProtocolCycle advances WWD state and processes one READY candidate at the
+    // first genesis-configured aligned slot at or after the processing time.
+    let target = first_protocol_cycle_at_or_after(world, scheduled_process_time);
     advance_fresh_metadosis_time(world, target, &[(0, 1), (1, 2), (2, 3), (3, 4)], 8);
 }
 
-fn first_daily_cycle_at_or_after(timestamp: u64) -> u64 {
-    const SECONDS_PER_DAY: u64 = 86_400;
+fn first_protocol_cycle_at_or_after(world: &World, timestamp: u64) -> u64 {
+    let genesis_path = world.ocomp.canonical_chain_manifest_path();
+    let genesis: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&genesis_path).expect("read ProtocolCycle genesis"))
+            .expect("decode ProtocolCycle genesis");
+    let interval = GenesisProtocolParametersV1::from_genesis(&genesis)
+        .expect("read immutable ProtocolCycle interval")
+        .metadosis_advance_interval_seconds;
+    first_protocol_cycle_at_or_after_interval(timestamp, interval)
+}
 
+fn first_protocol_cycle_at_or_after_interval(timestamp: u64, interval: u64) -> u64 {
+    assert!(interval != 0, "ProtocolCycle interval must be non-zero");
     timestamp
-        .checked_add(SECONDS_PER_DAY - 1)
-        .and_then(|rounded| rounded.checked_div(SECONDS_PER_DAY))
-        .and_then(|day| day.checked_mul(SECONDS_PER_DAY))
-        .and_then(|midnight| midnight.checked_add(1))
-        .expect("first UTC daily Cycle at or after Metadosis processing time")
+        .checked_add(interval - 1)
+        .and_then(|rounded| rounded.checked_div(interval))
+        .and_then(|slot| slot.checked_mul(interval))
+        .and_then(|slot| slot.checked_add(1))
+        .expect("first aligned ProtocolCycle at or after Metadosis processing time")
 }
 
 #[then("the same fresh capacity day advances through WAITING and READY")]
@@ -1594,6 +1602,11 @@ fn fresh_domains_retain_authenticated_workers(world: &mut World) {
     }
 }
 
+/// How long the logical clock may stand still before the ratchet counts as
+/// stalled. Bounding the wait by progress rather than by the distance jumped
+/// keeps a loaded host from expiring a run that is still moving.
+const RATCHET_STALL_TIMEOUT: Duration = Duration::from_secs(180);
+
 fn advance_fresh_metadosis_time(
     world: &mut World,
     requested_timestamp: u64,
@@ -1602,11 +1615,20 @@ fn advance_fresh_metadosis_time(
 ) {
     let (offset, before_restart, minimum_height) =
         restart_committee_at_logical_time(world, requested_timestamp);
+    let before_timestamp = before_restart[0].block_timestamp;
     let worldwide_day = fresh_metadosis_wwd(world);
-    let deadline = Instant::now() + Duration::from_secs(240);
+    // The chain closes the gap one hour per block, so wait on progress rather
+    // than on a budget derived from the distance: a loaded host slows block
+    // production without stalling it.
+    let mut deadline = Instant::now() + RATCHET_STALL_TIMEOUT;
+    let mut last_timestamp = before_timestamp;
     let (after_restart, changes) = loop {
         let points = finalized_points_at_common_height(world, minimum_height);
         let common_height = points[0].block_number;
+        if points[0].block_timestamp > last_timestamp {
+            last_timestamp = points[0].block_timestamp;
+            deadline = Instant::now() + RATCHET_STALL_TIMEOUT;
+        }
         let states = world
             .validators
             .committee_ports()
@@ -1650,7 +1672,19 @@ fn advance_fresh_metadosis_time(
         assert!(
             Instant::now() < deadline,
             "fresh Metadosis WWD did not reach status {expected_persisted_status} with edges \
-             {expected_edges:?}; the production one-hour timestamp drift ratchet may be stalled"
+             {expected_edges:?}; observed statuses {observed:?} and edges {seen:?} at logical \
+             timestamp {reached} (requested {requested_timestamp}); the drift ratchet made no \
+             progress for {stall:?}",
+            observed = states
+                .iter()
+                .map(|state| state.as_ref().map(|state| state.status))
+                .collect::<Vec<_>>(),
+            seen = changes[0].as_ref().map(|edges| edges
+                .iter()
+                .map(|edge| (edge.old_status, edge.new_status))
+                .collect::<Vec<_>>()),
+            reached = points[0].block_timestamp,
+            stall = RATCHET_STALL_TIMEOUT,
         );
         sleep(Duration::from_millis(250));
     };
@@ -2228,7 +2262,7 @@ fn committee_clock_reaches_public_capacity_processing(world: &mut World) {
         "capacity WorldwideDay must remain in OFFERING until all 257 receipts and projections are observed"
     );
 
-    let target = first_daily_cycle_at_or_after(state.scheduled_process_time);
+    let target = first_protocol_cycle_at_or_after(world, state.scheduled_process_time);
     let _ = restart_committee_at_logical_time(world, target);
 }
 
@@ -4223,19 +4257,26 @@ fn runtime_traces_cover_ocomp_execution_paths(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::{
-        bounded_completion_decision, dynamic_live_ports_after_jail, first_daily_cycle_at_or_after,
-        joiner_restart_is_in_safe_early_epoch_window, post_restart_convergence_target,
-        BoundedCompletionDecision, OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
+        bounded_completion_decision, dynamic_live_ports_after_jail,
+        first_protocol_cycle_at_or_after_interval, joiner_restart_is_in_safe_early_epoch_window,
+        post_restart_convergence_target, BoundedCompletionDecision,
+        OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
     };
 
     #[test]
-    fn daily_cycle_keeps_an_exact_midnight_processing_boundary() {
-        assert_eq!(first_daily_cycle_at_or_after(172_800), 172_801);
+    fn protocol_cycle_keeps_an_exact_hourly_processing_boundary() {
+        assert_eq!(
+            first_protocol_cycle_at_or_after_interval(172_800, 3_600),
+            172_801
+        );
     }
 
     #[test]
-    fn daily_cycle_rounds_a_non_boundary_processing_time_up() {
-        assert_eq!(first_daily_cycle_at_or_after(172_801), 259_201);
+    fn protocol_cycle_rounds_a_non_boundary_processing_time_up() {
+        assert_eq!(
+            first_protocol_cycle_at_or_after_interval(172_801, 3_600),
+            176_401
+        );
     }
 
     #[test]

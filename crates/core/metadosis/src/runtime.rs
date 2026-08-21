@@ -30,10 +30,9 @@ pub fn date_key_to_timestamp(date_key: u32) -> u64 {
     primitives_date_key_to_timestamp(date_key)
 }
 
-/// Public entry point invoked by the daily Cycle handler
-/// (`outbe_cycle::handler::run_emission_limit_daily`) AFTER the
-/// terminal Metadosis credit has been written to `day_metadosis_limit`
-/// for the previous UTC day. Runs the full WWD lifecycle:
+/// Public entry point invoked once by each hourly ProtocolCycle pass, after an
+/// optional contiguous completed UTC day has received its terminal Metadosis
+/// credit. Runs the full WWD lifecycle:
 /// bootstrap (block 1 only), `create_worldwide_day_if_needed`,
 /// exhaustive reducer advancement for active WWDs, then either one closed
 /// local terminal outcome or OCOMP pre-admission for a READY WWD.
@@ -42,7 +41,7 @@ pub fn date_key_to_timestamp(date_key: u32) -> u64 {
 /// Cycle epic): the function used to be wired into a dedicated
 /// `MetadosisLifecycle::begin_block` lifecycle hook running on every
 /// block; with the Cycle epic the only legitimate caller is the
-/// Cycle handler at UTC midnight. The `MetadosisLifecycle` wrapper
+/// hourly ProtocolCycle handler. The `MetadosisLifecycle` wrapper
 /// was deleted altogether in the follow-up cleanup; tests that drive
 /// the WWD state machine sub-day call this function directly.
 pub fn start_metadosis(
@@ -102,10 +101,10 @@ pub fn advance_active_worldwide_days(
 ///
 /// Wired into the begin-zone CycleTick phase at block 1 via
 /// `outbe_cycle::lifecycle::CycleLifecycle::begin_block`. This is required
-/// because the daily Cycle trigger only *anchors* `last_executed_at` on its
+/// because ProtocolCycle only *anchors* `last_executed_at` on its
 /// first encounter (block 1) and therefore never invokes [`start_metadosis`]
 /// there; without this entry point the first worldwide day would not exist
-/// until the first block after the next UTC midnight.
+/// until the first block after the next UTC-hour boundary.
 pub fn init_genesis_day(ctx: &BlockRuntimeContext) -> Result<()> {
     lifecycle::init_genesis_day(ctx)
 }

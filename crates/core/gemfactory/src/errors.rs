@@ -62,8 +62,12 @@ pub enum GemFactoryError {
     #[error("{currency} is not an ISO 4217 currency code")]
     InvalidCurrency { currency: u16 },
 
-    #[error("issuance currency {issuance} must equal reference currency {reference}")]
-    IssuanceReferenceMismatch { issuance: u16, reference: u16 },
+    #[error("settlement asset {asset} has {decimals} decimals, expected {expected}")]
+    SettlementDecimalsMismatch {
+        asset: alloy_primitives::Address,
+        decimals: u8,
+        expected: u8,
+    },
 
     #[error("oracle nominal unavailable")]
     OracleUnavailable,

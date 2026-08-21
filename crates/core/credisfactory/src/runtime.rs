@@ -4,7 +4,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
 
 use outbe_credis::constants::{BP_DEN, POLICY_RATE_FACTOR_BP};
-use outbe_credis::{CredisContract, CredisState, OpenPositionParams, Position};
+use outbe_credis::{CredisContract, CredisState, OpenPositionParams};
 use outbe_oracle::api::{coen_rate_for_opt, get_currency_rate};
 use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
@@ -83,7 +83,7 @@ pub fn request_credis(
     let policy_rate = policy_rate_for(storage.clone(), issuance_currency)?;
 
     // Open the position, storing the sealed pledger EOA so settlement and the void
-    // sweep can address the right confidential pledged ledger. The `handle_id`
+    // can address the right confidential pledged ledger. The `handle_id`
     // building the position_id is the globally-unique pledge handle.
     let mut credis = CredisContract::new(storage.clone());
     let position_id = credis.open_position(OpenPositionParams {
@@ -211,10 +211,12 @@ pub fn settle(
 
 /// Latches an Open position whose currency's live COEN price has crossed its floor.
 ///
-/// Settlement is the only production path that latches today, so this is where a
-/// position crosses from Open to Settleable. The latch is one-way once taken. An
-/// unpriced currency simply does not latch here — `coen_rate_for_opt` reports that
-/// instead of reverting, so a cold oracle cannot block an already-latched position.
+/// The daily scan ([`crate::called`]) is the primary latch producer and reads the
+/// previous day's finalized reference price; this arm reads the live spot instead, so
+/// a settler who sees the price above their floor right now never waits for the next
+/// daily run. The latch is one-way once taken, whichever arm takes it. An unpriced
+/// currency simply does not latch here — `coen_rate_for_opt` reports that instead of
+/// reverting, so a cold oracle cannot block a position the scan already latched.
 /// A crossing that reverses before anyone settles is missed; the daily reference-price
 /// scan closes that gap when it lands.
 fn latch_if_above_floor(
@@ -277,14 +279,6 @@ pub fn void_position(storage: StorageHandle<'_>, position_id: U256) -> Result<()
         .add_to_total_unallocated(void.gratis_burned)?;
 
     Ok(())
-}
-
-/// True when `position` is a called position whose settlement window has lapsed with
-/// principal still outstanding — i.e. the void sweep should take it.
-pub fn is_voidable(position: &Position, now: u64) -> Result<bool> {
-    Ok(position.lifecycle_state()? == CredisState::Called
-        && !position.outstanding.is_zero()
-        && now >= outbe_credis::settlement_deadline(position))
 }
 
 /// Reads the disbursed asset's ISO 4217 currency code via a static

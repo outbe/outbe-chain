@@ -36,7 +36,7 @@ const CHAIN_ID: u64 = 1;
 /// Genesis at midnight UTC of 2024-01-01.
 const GENESIS_TS: u64 = 1_704_067_200;
 const SECONDS_PER_DAY: u64 = 86_400;
-const EMISSION_LIMIT_1_ID: u32 = TriggerId::EmissionLimit1.as_u32();
+const EMISSION_LIMIT_1_ID: u32 = TriggerId::ProtocolCycle.as_u32();
 
 fn retained_days_before(
     victim: outbe_common::WorldwideDay,
@@ -57,14 +57,6 @@ fn retained_days_before(
             )
         })
         .collect()
-}
-
-#[test]
-fn cycle_tick_metadosis_authority_budget_matches_all_fixed_handlers() {
-    assert_eq!(
-        crate::triggers::metadosis_mutation_lease_budget_per_tick(),
-        3
-    );
 }
 
 fn cycle_storage() -> HashMapStorageProvider {
@@ -88,6 +80,11 @@ fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
             BlockContext::empty_for_tests(1, GENESIS_TS, chain_id),
             handle,
         );
+        ctx.storage
+            .contract::<Cycle<'_>>()
+            .active_utc_day
+            .write(20_240_101)
+            .unwrap();
         let owner = Address::repeat_byte(0xA0);
         let founder = Address::repeat_byte(0xB0);
         let consensus_key = [0x30; 48];
@@ -383,11 +380,7 @@ fn frozen_final_profile_initializes_metadosis_at_its_existing_activation_height(
 
 #[test]
 fn does_not_fire_before_next_slot_after_anchor() {
-    // Anchor at GENESIS_TS + 60. Next slot at 86_400 (UTC midnight
-    // 1970-01-02 — already passed) → next > anchor → next slot is the
-    // first multiple of 86_400 strictly greater than (GENESIS_TS + 60).
-    // GENESIS_TS = 1_704_067_200 = 19723 * 86_400; +60 puts us in the
-    // current slot, so next slot = 19724 * 86_400 = GENESIS_TS + 86_400.
+    // Anchor at 00:01 UTC; the first aligned hourly slot is 01:00 UTC.
     let mut storage = cycle_storage();
     storage.enter(|handle| {
         let anchor_ts = GENESIS_TS + 60;
@@ -395,11 +388,9 @@ fn does_not_fire_before_next_slot_after_anchor() {
         anchor_genesis(&ctx_anchor);
         dispatch_triggers(&ctx_anchor).unwrap();
 
-        // Block at GENESIS_TS + 86_399 — still BEFORE next slot.
-        let ctx_before = BlockRuntimeContext::new(
-            block_ctx(2, GENESIS_TS + SECONDS_PER_DAY - 1),
-            handle.clone(),
-        );
+        // Block at 00:59:59 UTC — still before the next slot.
+        let ctx_before =
+            BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + 3_600 - 1), handle.clone());
         dispatch_triggers(&ctx_before).unwrap();
 
         let cycle: Cycle<'_> = ctx_before.storage.contract::<Cycle<'_>>();
@@ -421,9 +412,8 @@ fn fires_at_first_block_past_next_slot() {
         anchor_genesis(&ctx_anchor);
         dispatch_triggers(&ctx_anchor).unwrap();
 
-        // Step 2: block past next slot. Next slot after anchor =
-        // ceil(anchor_ts / 86_400) * 86_400 = GENESIS_TS + 86_400.
-        let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 5;
+        // Step 2: first block past the next aligned hour.
+        let fire_ts = GENESIS_TS + 3_600 + 5;
         let ctx_fire = BlockRuntimeContext::new(block_ctx(2, fire_ts), handle);
         account_parent(&ctx_fire, 2);
         dispatch_triggers(&ctx_fire).unwrap();
@@ -431,7 +421,7 @@ fn fires_at_first_block_past_next_slot() {
         let cycle: Cycle<'_> = ctx_fire.storage.contract::<Cycle<'_>>();
         assert_eq!(
             cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
-            GENESIS_TS + SECONDS_PER_DAY,
+            GENESIS_TS + 3_600,
             "last_executed_at must be the slot, not block.timestamp"
         );
         assert_eq!(
@@ -453,7 +443,7 @@ fn does_not_refire_within_same_slot() {
         anchor_genesis(&ctx_anchor);
         dispatch_triggers(&ctx_anchor).unwrap();
 
-        let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 60;
+        let fire_ts = GENESIS_TS + 3_600 + 60;
         let ctx_fire = BlockRuntimeContext::new(block_ctx(2, fire_ts), handle.clone());
         account_parent(&ctx_fire, 2);
         dispatch_triggers(&ctx_fire).unwrap();
@@ -481,15 +471,15 @@ fn does_not_refire_within_same_slot() {
 fn multi_slot_gap_fires_only_for_latest_slot_after_anchor() {
     // Anchor, then jump 3 slots ahead in one block.
     let mut storage = cycle_storage();
+    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 10);
     storage.enter(|handle| {
         let anchor_ts = GENESIS_TS + 60;
         let ctx_anchor = BlockRuntimeContext::new(block_ctx(1, anchor_ts), handle.clone());
         anchor_genesis(&ctx_anchor);
         dispatch_triggers(&ctx_anchor).unwrap();
 
-        // Block at GENESIS_TS + 4 days — 3 slots crossed. next_fire_at
-        // from anchor is the FIRST slot > anchor = GENESIS_TS + 86_400,
-        // even though the block is 3 days later.
+        // Missed hourly scheduler slots collapse to one execution at the latest
+        // due boundary. Calendar policy then forfeits this multi-day gap.
         let ctx_fire =
             BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + 4 * SECONDS_PER_DAY), handle);
         account_parent(&ctx_fire, 2);
@@ -498,9 +488,119 @@ fn multi_slot_gap_fires_only_for_latest_slot_after_anchor() {
         let cycle: Cycle<'_> = ctx_fire.storage.contract::<Cycle<'_>>();
         assert_eq!(
             cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
-            GENESIS_TS + SECONDS_PER_DAY,
-            "multi-slot gap fires once for the first slot strictly after anchor"
+            GENESIS_TS + 4 * SECONDS_PER_DAY,
+            "multi-slot gap fires once at the latest due hourly slot"
         );
+    });
+}
+
+#[test]
+fn protocol_cycle_forfeits_every_completed_day_after_a_multi_day_halt() {
+    let mut storage = cycle_storage();
+    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
+    storage.enter(|handle| {
+        let anchor_ts = GENESIS_TS + 60;
+        let anchor = BlockRuntimeContext::new(block_ctx(1, anchor_ts), handle.clone());
+        anchor_genesis(&anchor);
+        run_cycle_lifecycle(&anchor).unwrap();
+
+        let fire_ts = GENESIS_TS + 3 * SECONDS_PER_DAY + 3_600;
+        let fire = BlockRuntimeContext::new(block_ctx(2, fire_ts), handle);
+        account_parent(&fire, 2);
+        dispatch_triggers(&fire).unwrap();
+
+        let rewards = fire
+            .storage
+            .contract::<outbe_rewards::schema::Rewards<'_>>();
+        for day in [20_240_101, 20_240_102, 20_240_103] {
+            assert!(!rewards.daily_settled.read(&day).unwrap());
+            assert!(!rewards.daily_topup_settled.read(&day).unwrap());
+            assert!(
+                outbe_metadosis::api::day_limit_formation_receipt(
+                    fire.storage.clone(),
+                    outbe_common::WorldwideDay::new(day),
+                )
+                .unwrap()
+                .is_none(),
+                "forfeited day {day} must not gain a formation receipt"
+            );
+        }
+
+        for day in [20_240_102, 20_240_103] {
+            let wwd = outbe_common::WorldwideDay::new(day);
+            assert!(
+                outbe_metadosis::api::worldwide_day(fire.storage.clone(), wwd)
+                    .unwrap()
+                    .is_none(),
+                "missed day {day} must not gain the WWD identity required by downstream OCOMP or Promis work"
+            );
+            assert!(
+                outbe_metadosis::api::missed_offering_receipt(fire.storage.clone(), wwd)
+                    .unwrap()
+                    .is_none(),
+                "missed day {day} must not gain a Promis-bearing terminal receipt"
+            );
+            assert!(
+                outbe_metadosis::api::capacity_forfeiture_receipt(fire.storage.clone(), wwd)
+                    .unwrap()
+                    .is_none(),
+                "missed day {day} must not gain a capacity/Promis receipt"
+            );
+        }
+        assert!(
+            outbe_metadosis::api::worldwide_day(
+                fire.storage.clone(),
+                outbe_common::WorldwideDay::new(20_240_104),
+            )
+            .unwrap()
+            .is_some(),
+            "the one current WWD flow must still run after the gap"
+        );
+        assert_eq!(
+            fire.storage
+                .contract::<Cycle<'_>>()
+                .active_utc_day
+                .read()
+                .unwrap(),
+            20_240_104
+        );
+    });
+}
+
+#[test]
+fn contiguous_day_settlement_failure_preserves_the_calendar_cursor() {
+    let mut storage = cycle_storage();
+    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 16);
+    storage.enter(|handle| {
+        let anchor = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle.clone());
+        anchor_genesis(&anchor);
+        run_cycle_lifecycle(&anchor).unwrap();
+
+        // Create only the Metadosis half of day 1's idempotency pair. The
+        // contiguous transition must fail before advancing the cursor.
+        let inconsistent = BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + 60), handle.clone());
+        outbe_metadosis::commands::apply_cycle_day_limit(&inconsistent, U256::from(17_u8)).unwrap();
+        assert!(outbe_metadosis::api::day_limit_formation_receipt(
+            handle.clone(),
+            outbe_common::WorldwideDay::new(20_240_101),
+        )
+        .unwrap()
+        .is_some());
+
+        let fire =
+            BlockRuntimeContext::new(block_ctx(3, GENESIS_TS + SECONDS_PER_DAY + 3_600), handle);
+        account_parent(&fire, 3);
+        assert!(matches!(
+            dispatch_triggers(&fire),
+            Err(outbe_primitives::error::PrecompileError::Fatal(_))
+        ));
+
+        let cycle: Cycle<'_> = fire.storage.contract::<Cycle<'_>>();
+        assert_eq!(cycle.active_utc_day.read().unwrap(), 20_240_101);
+        let rewards = fire
+            .storage
+            .contract::<outbe_rewards::schema::Rewards<'_>>();
+        assert!(!rewards.daily_settled.read(&20_240_101).unwrap());
     });
 }
 
@@ -539,7 +639,7 @@ fn auction_advance_runs_after_emission_limit_1() {
     };
     assert!(
         position(TriggerId::AuctionAdvance.as_u32())
-            > position(TriggerId::EmissionLimit1.as_u32()),
+            > position(TriggerId::ProtocolCycle.as_u32()),
         "auction_advance must dispatch after emission_limit_1 so the same-slot brief starts the auction"
     );
 }
@@ -762,7 +862,7 @@ fn metadosis_semantic_receipt_without_settled_cycle_marker_is_fatal_before_effec
 }
 
 #[test]
-fn noon_dispatcher_commits_the_same_typed_missed_offering_outcome() {
+fn hourly_protocol_cycle_commits_the_same_typed_missed_offering_outcome() {
     let wwd = outbe_common::WorldwideDay::new(20_240_105);
     let day_limit = U256::from(109);
     let mut storage = cycle_storage();
@@ -778,28 +878,28 @@ fn noon_dispatcher_commits_the_same_typed_missed_offering_outcome() {
             .unwrap()
             .offering_end
     });
-    let noon_offset = 43_200;
-    let fire_at = if offering_end <= noon_offset {
-        noon_offset
-    } else {
-        noon_offset + (offering_end - noon_offset).div_ceil(SECONDS_PER_DAY) * SECONDS_PER_DAY
-    };
-    let previous_noon = fire_at - SECONDS_PER_DAY;
+    let fire_at = offering_end.div_ceil(3_600) * 3_600;
+    let previous_hour = fire_at - 3_600;
 
     storage.enter(|handle| {
         let cycle: Cycle<'_> = handle.contract::<Cycle<'_>>();
         for spec in ACTIVE_TRIGGERS {
-            let last = if spec.id == TriggerId::WwdAdvanceNoon.as_u32() {
-                previous_noon
+            let last = if spec.id == TriggerId::ProtocolCycle.as_u32() {
+                previous_hour
             } else {
                 fire_at
             };
             cycle.last_executed_at.write(&spec.id, last).unwrap();
         }
+        cycle
+            .active_utc_day
+            .write(outbe_primitives::time::timestamp_to_date_key(fire_at))
+            .unwrap();
     });
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
     storage.enter(|handle| {
         let ctx = BlockRuntimeContext::new(block_ctx(20, fire_at), handle.clone());
+        account_parent(&ctx, 20);
         dispatch_triggers(&ctx).unwrap();
 
         let projection = outbe_metadosis::api::worldwide_day(ctx.storage.clone(), wwd)
@@ -831,14 +931,14 @@ fn noon_dispatcher_commits_the_same_typed_missed_offering_outcome() {
         assert_eq!(
             cycle
                 .last_executed_at
-                .read(&TriggerId::WwdAdvanceNoon.as_u32())
+                .read(&TriggerId::ProtocolCycle.as_u32())
                 .unwrap(),
             fire_at
         );
         assert_eq!(
             cycle
                 .last_executed_block_number
-                .read(&TriggerId::WwdAdvanceNoon.as_u32())
+                .read(&TriggerId::ProtocolCycle.as_u32())
                 .unwrap(),
             20
         );
@@ -846,7 +946,7 @@ fn noon_dispatcher_commits_the_same_typed_missed_offering_outcome() {
 }
 
 #[test]
-fn noon_dispatcher_applies_exact_capacity_forfeiture_to_the_new_due_candidate() {
+fn hourly_protocol_cycle_applies_exact_capacity_forfeiture_to_the_new_due_candidate() {
     use outbe_common::WorldwideDay;
     use outbe_metadosis::constants::MAX_RETAINED_WWDS;
 
@@ -887,14 +987,8 @@ fn noon_dispatcher_applies_exact_capacity_forfeiture_to_the_new_due_candidate() 
         next_block += 1;
     }
 
-    let noon_offset = 43_200;
-    let fire_at = noon_offset
-        + victim_projection
-            .scheduled_process_time
-            .saturating_sub(noon_offset)
-            .div_ceil(SECONDS_PER_DAY)
-            * SECONDS_PER_DAY;
-    let previous_noon = fire_at - SECONDS_PER_DAY;
+    let fire_at = victim_projection.scheduled_process_time.div_ceil(3_600) * 3_600;
+    let previous_hour = fire_at - 3_600;
     storage.enter(|handle| {
         let cycle: Cycle<'_> = handle.contract::<Cycle<'_>>();
         for spec in ACTIVE_TRIGGERS {
@@ -902,14 +996,18 @@ fn noon_dispatcher_applies_exact_capacity_forfeiture_to_the_new_due_candidate() 
                 .last_executed_at
                 .write(
                     &spec.id,
-                    if spec.id == TriggerId::WwdAdvanceNoon.as_u32() {
-                        previous_noon
+                    if spec.id == TriggerId::ProtocolCycle.as_u32() {
+                        previous_hour
                     } else {
                         fire_at
                     },
                 )
                 .unwrap();
         }
+        cycle
+            .active_utc_day
+            .write(outbe_primitives::time::timestamp_to_date_key(fire_at))
+            .unwrap();
     });
 
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
@@ -946,14 +1044,14 @@ fn noon_dispatcher_applies_exact_capacity_forfeiture_to_the_new_due_candidate() 
         assert_eq!(
             cycle
                 .last_executed_at
-                .read(&TriggerId::WwdAdvanceNoon.as_u32())
+                .read(&TriggerId::ProtocolCycle.as_u32())
                 .unwrap(),
             fire_at
         );
         assert_eq!(
             cycle
                 .last_executed_block_number
-                .read(&TriggerId::WwdAdvanceNoon.as_u32())
+                .read(&TriggerId::ProtocolCycle.as_u32())
                 .unwrap(),
             next_block
         );

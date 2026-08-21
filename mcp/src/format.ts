@@ -65,6 +65,8 @@ type DecimalScale = number | (number | undefined)[];
 export interface ReturnFormatContext {
   /** Raw ABI arguments for a call resolved to the Oracle precompile. */
   oracleArgs: readonly unknown[];
+  /** The registry's own answer for a market; the local rule is the fallback. */
+  scaleFor?: (base: unknown, quote: unknown) => number | undefined;
 }
 
 function oraclePresentationScale(
@@ -78,9 +80,12 @@ function oraclePresentationScale(
     return 6;
   }
 
+  const scaleFor = (base: unknown, quote: unknown) =>
+    context.scaleFor?.(base, quote) ?? coenIsoMarketDecimals(base, quote);
+
   const inputs = fn.inputs ?? [];
   if (inputs[0]?.name === "base" && inputs[1]?.name === "quote") {
-    return coenIsoMarketDecimals(context.oracleArgs[0], context.oracleArgs[1]);
+    return scaleFor(context.oracleArgs[0], context.oracleArgs[1]);
   }
 
   const outputs = fn.outputs ?? [];
@@ -93,7 +98,7 @@ function oraclePresentationScale(
   if (!Array.isArray(bases) || !Array.isArray(quotes) || bases.length !== quotes.length) {
     return undefined;
   }
-  return bases.map((base, index) => coenIsoMarketDecimals(base, quotes[index]));
+  return bases.map((base, index) => scaleFor(base, quotes[index]));
 }
 
 function formatWwd(v: number): string {

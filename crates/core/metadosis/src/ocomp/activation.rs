@@ -269,7 +269,7 @@ fn target_preconditions_changed(
     let nod = NodContract::new(storage.clone()).ocomp_target_projection(wwd)?;
     let contributors = outbe_intex::api::ocomp_contributor_target_projection(
         storage,
-        WorldwideDay::new(expected.contributors.series_id),
+        WorldwideDay::new(expected.contributors.worldwide_day),
     )?;
     let metadosis_projection = metadosis.ocomp_pre_admission_projection(wwd)?;
     let intent_id = record.intent.intent_id(limits).map_err(|error| {
@@ -290,7 +290,7 @@ fn target_preconditions_changed(
         || nod.worldwide_day != wwd
         || nod.target_generation != expected.nod.target_generation
         || nod.namespace_root_before != expected.nod.namespace_root_before
-        || contributors.series_id != expected.contributors.series_id
+        || contributors.worldwide_day != expected.contributors.worldwide_day
         || contributors.expected_series_version != expected.contributors.expected_series_version
         || contributors.contributor_count != 0
         || !contributors.contributor_total.is_zero()

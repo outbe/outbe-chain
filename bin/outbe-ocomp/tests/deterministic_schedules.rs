@@ -722,7 +722,7 @@ fn job_intent(day: WorldwideDay, protocol_bundle_hash: B256, nominal_total: U256
                 max_nod_count: TRIBUTE_COUNT,
             },
             contributors: ContributorTargetPreconditionV1 {
-                series_id: day.value(),
+                worldwide_day: day.value(),
                 expected_series_version: 1,
                 max_contributor_count: TRIBUTE_COUNT,
                 max_eligible_nominal_total: nominal_total,

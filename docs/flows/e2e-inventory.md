@@ -28,7 +28,8 @@ documentation-only are requirements, not claims of executable coverage.
 | `crates/blockchain/evm/tests/ocomp_request_lifecycle.rs` | Canonical proposer/import/historical-replay blocks cover request, certified finality, open, expiry, retry and a quorum-forming block containing validator-authenticated OCOMP system vote carriers | PFS-002 and Metadosis production-adapter evidence; also proves canonical `gas_limit = 30_000` carriers use bounded system work without consuming the user gas lane |
 | `testing/e2e/tests/governance_lifecycle.rs` | Vote lifecycle and duplicate-ballot invariants | Partial PFS-005 |
 | `testing/e2e/tests/update_flow_spec.rs` | Update scheduling, activation and ordering/error edges | Partial PFS-005 |
-| `crates/core/credisfactory/src/tests/e2e.rs` | Pledge, request, settlement, void sweep and invalid-input edges | Partial PFS-003 |
+| `crates/core/credisfactory/src/tests/e2e.rs` | Pledge, request, settlement, void and invalid-input edges | Partial PFS-003 |
+| `crates/core/credisfactory/src/tests/called.rs` | Daily price-path scan: floor latch, multi-week breach-count call, void of a lapsed window, cursor and budget bounds | Partial PFS-003-14 through -17 |
 | `crates/core/tributefactory/src/tests.rs` (`l2_zk_gate`) and `crates/system/l2registry/src/tests.rs` | L2Registry registration/toggle/removal invariants and the offer-time BLS zk signature gate (all check outcomes) | Partial PFS-001-10/-11 |
 | `crates/blockchain/evm/tests/e2e_system_tx.rs` | System-transaction ordering, wire layout and gas behavior | ADR-level blockchain evidence; not a complete PFS |
 | `crates/blockchain/evm/src/handlers.rs` (`pfs_010_05`, `pfs_010_06`, `pfs_010_08`) | Real Vote-to-Factory expiry, proposal execution-error retention and fatal outer-checkpoint rollback | PFS-010-05, -06, -08 |

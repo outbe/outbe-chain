@@ -632,12 +632,18 @@ fn execute_claimed_unit(
                 transport_digest: reference.transport_digest,
             }
         }
-        Err(_) => UnitFinishedV1 {
-            unit_id,
-            status: UnitFinishedStatus::Failed,
-            exact_staged_bytes: 0,
-            transport_digest: B256::ZERO,
-        },
+        Err(error) => {
+            eprintln!(
+                "OCOMP worker unit failed: unit={unit_id:#x} phase={:?} index={} error={error}",
+                spec.phase, request.unit_index
+            );
+            UnitFinishedV1 {
+                unit_id,
+                status: UnitFinishedStatus::Failed,
+                exact_staged_bytes: 0,
+                transport_digest: B256::ZERO,
+            }
+        }
     };
     Ok(finished)
 }

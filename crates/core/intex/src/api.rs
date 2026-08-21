@@ -13,15 +13,19 @@
 //! completion. Other business validation (caps, defaults, zero economic
 //! parameters) belongs to the caller (IntexFactory).
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::IntexError;
+use crate::payout::{
+    encode_contributor_leaf, verify_contributor_leaf_range, ContributorLeafData,
+    CONTRIBUTOR_CHUNK_CAPACITY, CONTRIBUTOR_LEAF_BYTES,
+};
 use crate::schema::{
-    CertifiedContributorGenerationProjection, CreateSeriesParams, DistProgress, IntexContract,
-    IntexState, SeriesId, SeriesRecord,
+    CertifiedContributorGenerationProjection, CertifiedPayoutRound, CreateSeriesParams,
+    DistProgress, IntexContract, IntexState, SeriesId, SeriesRecord,
 };
 
 /// Immutable contributor target state consumed by OCOMP JobIntent assembly.
@@ -31,7 +35,7 @@ use crate::schema::{
 /// once; the version is active output authority, not reservation state.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OcompContributorTargetProjection {
-    pub series_id: u32,
+    pub worldwide_day: u32,
     pub expected_series_version: u64,
     pub contributor_count: u32,
     pub contributor_total: U256,
@@ -162,7 +166,7 @@ pub fn ocomp_contributor_target_projection(
         None => (base_version, legacy_count, legacy_total),
     };
     Ok(OcompContributorTargetProjection {
-        series_id: worldwide_day.value(),
+        worldwide_day: worldwide_day.value(),
         expected_series_version,
         contributor_count,
         contributor_total,
@@ -175,6 +179,131 @@ pub fn certified_contributor_generation(
     worldwide_day: WorldwideDay,
 ) -> Result<Option<CertifiedContributorGenerationProjection>> {
     IntexContract::new(storage.clone()).ocomp_certified_contributor_generation(worldwide_day)
+}
+
+// -------------------------------------------------------------------------
+// Creator-reward: certified payout round over the contributor root
+// -------------------------------------------------------------------------
+
+/// Reads the open payout round for a day, if any.
+pub fn certified_payout_round(
+    storage: &StorageHandle<'_>,
+    wwd: u32,
+) -> Result<Option<CertifiedPayoutRound>> {
+    IntexContract::new(storage.clone()).get_payout_round(wwd)
+}
+
+/// Opens the single payout round for a day with a frozen distribution amount.
+pub fn open_certified_payout_round(
+    storage: &StorageHandle<'_>,
+    wwd: u32,
+    amount: U256,
+) -> Result<()> {
+    let mut registry = IntexContract::new(storage.clone());
+    if registry.get_payout_round(wwd)?.is_some() {
+        return Err(IntexError::CertifiedRoundExists(wwd).into());
+    }
+    registry.create_payout_round(&CertifiedPayoutRound {
+        wwd,
+        amount,
+        paid_so_far: U256::ZERO,
+        paid_leaf_count: 0,
+        active: 1,
+    })
+}
+
+/// Rejects a batch whose leaves were already paid.
+///
+/// This is the cheapest possible gate — one word read — so a racing duplicate
+/// costs a single SLOAD instead of a full proof verification.
+pub fn require_certified_leaves_unpaid(
+    storage: &StorageHandle<'_>,
+    wwd: u32,
+    start_index: u32,
+    leaf_count: u32,
+) -> Result<()> {
+    let (word_index, mask) = leaf_mask(start_index, leaf_count)?;
+    let word = IntexContract::new(storage.clone()).read_paid_word(wwd, word_index)?;
+    if !(word & mask).is_zero() {
+        return Err(IntexError::ContributorLeavesAlreadyPaid(wwd).into());
+    }
+    Ok(())
+}
+
+/// Verifies one chunk-aligned batch against the day's certified contributor
+/// root and returns the authority its shares must be derived from.
+pub fn verify_certified_contributor_batch(
+    storage: &StorageHandle<'_>,
+    wwd: u32,
+    start_index: u32,
+    leaves: &[ContributorLeafData],
+    siblings: &[B256],
+) -> Result<CertifiedContributorGenerationProjection> {
+    let generation = certified_contributor_generation(storage, WorldwideDay::new(wwd))?.ok_or(
+        IntexError::BadContributorBatch("day has no certified contributor root"),
+    )?;
+    let encoded: Vec<[u8; CONTRIBUTOR_LEAF_BYTES]> =
+        leaves.iter().map(encode_contributor_leaf).collect();
+    verify_contributor_leaf_range(
+        generation.contributor_count,
+        start_index,
+        &encoded,
+        siblings,
+        generation.contributor_root,
+    )?;
+    Ok(generation)
+}
+
+/// Marks a verified batch paid and advances the round's counters.
+pub fn mark_certified_leaves_paid(
+    storage: &StorageHandle<'_>,
+    wwd: u32,
+    start_index: u32,
+    leaf_count: u32,
+    paid_amount: U256,
+) -> Result<()> {
+    let (word_index, mask) = leaf_mask(start_index, leaf_count)?;
+    let mut registry = IntexContract::new(storage.clone());
+    let word = registry.read_paid_word(wwd, word_index)?;
+    if !(word & mask).is_zero() {
+        return Err(IntexError::ContributorLeavesAlreadyPaid(wwd).into());
+    }
+    let mut round = registry
+        .get_payout_round(wwd)?
+        .ok_or(IntexError::BadContributorBatch("payout round is not open"))?;
+    round.paid_so_far = round
+        .paid_so_far
+        .checked_add(paid_amount)
+        .ok_or(IntexError::BadContributorBatch("paid amount overflow"))?;
+    round.paid_leaf_count = round
+        .paid_leaf_count
+        .checked_add(leaf_count)
+        .ok_or(IntexError::BadContributorBatch("paid leaf count overflow"))?;
+    registry.write_paid_word(wwd, word_index, word | mask)?;
+    registry.update_payout_round(&round)
+}
+
+/// Reads one 256-leaf word of the paid bitmap.
+pub fn paid_leaves_word(storage: &StorageHandle<'_>, wwd: u32, word_index: u32) -> Result<U256> {
+    IntexContract::new(storage.clone()).read_paid_word(wwd, word_index)
+}
+
+/// Locates a chunk-aligned batch in the paid bitmap: one word, `leaf_count` low bits.
+fn leaf_mask(start_index: u32, leaf_count: u32) -> Result<(u32, U256)> {
+    if leaf_count == 0 || leaf_count > CONTRIBUTOR_CHUNK_CAPACITY {
+        return Err(IntexError::BadContributorBatch("batch leaf count out of range").into());
+    }
+    if !start_index.is_multiple_of(CONTRIBUTOR_CHUNK_CAPACITY) {
+        return Err(IntexError::BadContributorBatch("batch start is not chunk-aligned").into());
+    }
+    let word_index = start_index / CONTRIBUTOR_CHUNK_CAPACITY;
+    // A full chunk fills the word; `1 << 256` does not fit U256.
+    let mask = if leaf_count == CONTRIBUTOR_CHUNK_CAPACITY {
+        U256::MAX
+    } else {
+        (U256::from(1u8) << (leaf_count as usize)) - U256::from(1u8)
+    };
+    Ok((word_index, mask))
 }
 
 /// Number of series ever created (for dense enumeration).

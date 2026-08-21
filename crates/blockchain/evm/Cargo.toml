@@ -123,3 +123,4 @@ ignored = ["hex"]
 
 [lints]
 workspace = true
+
