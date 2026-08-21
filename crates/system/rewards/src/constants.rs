@@ -11,6 +11,11 @@
 use alloy_primitives::{uint, U256};
 use outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K;
 
+/// ISO 4217 code both currency axes of a validator top-up gem carry.
+///
+/// Validator rewards are denominated in USD by protocol policy
+pub const REWARD_GEM_CURRENCY: u16 = 840;
+
 /// Number of inclusion-distance slots, `k ∈ {0..=K}` ⇒ `K + 1` weights.
 pub const LATE_FINALIZE_SLOTS: usize = LATE_FINALIZE_WINDOW_K as usize + 1;
 

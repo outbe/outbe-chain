@@ -120,3 +120,6 @@ ignored = ["hex"]
 
 [lints]
 workspace = true
+
+[features]
+e2e-test = ["outbe-intexfactory/e2e-test"]

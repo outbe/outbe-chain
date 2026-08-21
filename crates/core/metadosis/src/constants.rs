@@ -19,9 +19,9 @@ pub const WAITING_PERIOD_HOURS: u64 = DEFAULT_METADOSIS_WAITING_PERIOD_SECONDS /
 /// Fresh-devnet production creates at most one WorldwideDay per UTC day.
 pub const WWD_CREATION_CADENCE_HOURS: u64 = 24;
 
-/// Production advances the outer WWD reducer at midnight (the daily
-/// Metadosis command) and at noon (the dedicated Cycle trigger).
-pub const WWD_ADVANCE_TICK_CADENCE_HOURS: u64 = 12;
+/// Production ProtocolCycle advances the outer WWD reducer on every aligned
+/// UTC-hour boundary.
+pub const WWD_ADVANCE_TICK_CADENCE_HOURS: u64 = 1;
 
 /// Symbolic rate: 32% of tribute nominal → gratis demand.
 pub const SYMBOLIC_RATE: u64 = 32;
@@ -55,8 +55,8 @@ const BOOTSTRAP_PIPELINE_WWDS: usize =
 /// post-halt midnight before the reducer drains the bounded pre-halt pipeline.
 ///
 /// Normal windows dominate: ceil((50 + 502 + 50 + 12) / 24) + 1 = 27.
-/// The two 12-hour advancement opportunities per 24-hour creation cadence
-/// drain a halt backlog at a net rate of one WWD per day.
+/// Hourly advancement drains a halt backlog faster than the one-per-day
+/// creation cadence.
 pub const MAX_PIPELINE_WWDS: usize = if NORMAL_PIPELINE_WWDS > BOOTSTRAP_PIPELINE_WWDS {
     NORMAL_PIPELINE_WWDS + 1
 } else {
@@ -75,7 +75,7 @@ pub const MAX_RETAINED_WWDS: usize = MAX_RECORDS_KEPT;
 /// Exact bound for every scan of the active WorldwideDay aggregate.
 pub const MAX_ACTIVE_WWDS: usize = MAX_PIPELINE_WWDS + MAX_RETAINED_WWDS;
 
-/// Under continuing midnight/noon ticks, an already-active candidate can have
+/// Under continuing hourly ticks, an already-active candidate can have
 /// at most this many older protocol-order admissions ahead of it.
 pub const MAX_ADMISSION_WAIT_TICKS: usize = MAX_PIPELINE_WWDS;
 pub const MAX_ADMISSION_WAIT_HOURS: u64 =

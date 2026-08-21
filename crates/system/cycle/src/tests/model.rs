@@ -158,7 +158,7 @@ fn run_block(
     block_number: u64,
     timestamp: u64,
 ) -> outbe_primitives::error::Result<()> {
-    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
+    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 128);
     storage.enter(|handle| {
         let ctx = BlockRuntimeContext::new(block_ctx(block_number, timestamp), handle);
         if block_number == 1 {
@@ -167,6 +167,10 @@ fn run_block(
         account_parent(&ctx, block_number);
         run_cycle_lifecycle(&ctx)
     })
+}
+
+fn hourly_fire_at(timestamp: u64) -> u64 {
+    timestamp.div_ceil(3_600) * 3_600
 }
 
 fn advance_only(
@@ -234,6 +238,7 @@ fn outer_history(history: OuterHistory, coverage: &mut Coverage) -> TestCaseResu
             .unwrap()
             .forming_end
     });
+    let forming_fire = hourly_fire_at(forming_edge);
     let midnight = GENESIS_TS + SECONDS_PER_DAY;
     run_block(&mut storage, 2, midnight + 1).expect("midnight Cycle command");
     let replay_receipt = StorageHandle::enter(&mut storage, |handle| {
@@ -241,10 +246,10 @@ fn outer_history(history: OuterHistory, coverage: &mut Coverage) -> TestCaseResu
     });
     OuterWwdModel::genesis().observe(&mut storage, GENESIS_WWD, &replay_receipt)?;
 
-    run_block(&mut storage, 3, forming_edge - 1).expect("T-1 Cycle command");
+    run_block(&mut storage, 3, forming_fire - 1).expect("T-1 Cycle command");
     OuterWwdModel::genesis().observe(&mut storage, GENESIS_WWD, &replay_receipt)?;
 
-    run_block(&mut storage, 4, forming_edge).expect("T Cycle command");
+    run_block(&mut storage, 4, forming_fire).expect("T Cycle command");
     let lookback = OuterWwdModel {
         phase: ModelPhase::LookbackDelay,
         membership: WwdMembership::Active,
@@ -254,16 +259,16 @@ fn outer_history(history: OuterHistory, coverage: &mut Coverage) -> TestCaseResu
     lookback.observe(&mut storage, GENESIS_WWD, &replay_receipt)?;
 
     let duplicate_before = cycle_metadosis_snapshot(&storage);
-    run_block(&mut storage, 5, forming_edge).expect("duplicate Cycle command");
+    run_block(&mut storage, 5, forming_fire).expect("duplicate Cycle command");
     prop_assert_eq!(cycle_metadosis_snapshot(&storage), duplicate_before);
     lookback.observe(&mut storage, GENESIS_WWD, &replay_receipt)?;
 
     let backward_before = cycle_metadosis_snapshot(&storage);
-    run_block(&mut storage, 6, forming_edge - 1).expect("backward timestamp is effect-free");
+    run_block(&mut storage, 6, forming_fire - 1).expect("backward timestamp is effect-free");
     prop_assert_eq!(cycle_metadosis_snapshot(&storage), backward_before);
     lookback.observe(&mut storage, GENESIS_WWD, &replay_receipt)?;
 
-    run_block(&mut storage, 7, forming_edge + 1).expect("T+1 Cycle command");
+    run_block(&mut storage, 7, forming_fire + 1).expect("T+1 Cycle command");
     lookback.observe(&mut storage, GENESIS_WWD, &replay_receipt)?;
 
     let offering_edge = StorageHandle::enter(&mut storage, |handle| {
@@ -272,6 +277,7 @@ fn outer_history(history: OuterHistory, coverage: &mut Coverage) -> TestCaseResu
             .unwrap()
             .lookback_end
     });
+    let offering_fire = hourly_fire_at(offering_edge);
     let offering = OuterWwdModel {
         phase: ModelPhase::Offering,
         membership: WwdMembership::Active,
@@ -291,9 +297,9 @@ fn outer_history(history: OuterHistory, coverage: &mut Coverage) -> TestCaseResu
                 coverage.duplicate += 1;
                 (
                     if model.phase == ModelPhase::Offering {
-                        offering_edge
+                        offering_fire
                     } else {
-                        forming_edge + 1
+                        forming_fire + 1
                     },
                     false,
                     false,
@@ -301,26 +307,22 @@ fn outer_history(history: OuterHistory, coverage: &mut Coverage) -> TestCaseResu
             }
             OuterProbe::Backward(delta) => {
                 coverage.illegal += 1;
-                (forming_edge.saturating_sub(u64::from(delta)), false, false)
+                (forming_fire.saturating_sub(u64::from(delta)), false, false)
             }
             OuterProbe::BeforeOffering(delta) => {
                 coverage.illegal += 1;
-                (
-                    offering_edge.saturating_sub(u64::from(delta)),
-                    model.phase == ModelPhase::Offering,
-                    false,
-                )
+                (offering_fire.saturating_sub(u64::from(delta)), false, false)
             }
             OuterProbe::AdvanceOffering => (
-                offering_edge,
+                offering_fire,
                 false,
                 model.phase == ModelPhase::LookbackDelay,
             ),
             OuterProbe::FaultAtOffering if model.phase == ModelPhase::LookbackDelay => {
                 storage.fail_mutation_at_address(METADOSIS_ADDRESS);
-                (offering_edge, true, false)
+                (offering_fire, true, false)
             }
-            OuterProbe::FaultAtOffering => (offering_edge, false, false),
+            OuterProbe::FaultAtOffering => (offering_fire, false, false),
         };
         let result = run_block(&mut storage, next_block, timestamp);
         next_block += 1;
@@ -344,7 +346,7 @@ fn outer_history(history: OuterHistory, coverage: &mut Coverage) -> TestCaseResu
         model.observe(&mut storage, GENESIS_WWD, &replay_receipt)?;
     }
     if model.phase == ModelPhase::LookbackDelay {
-        run_block(&mut storage, next_block, offering_edge).expect("offering T Cycle command");
+        run_block(&mut storage, next_block, offering_fire).expect("offering T Cycle command");
         next_block += 1;
         model = offering;
         model.observe(&mut storage, GENESIS_WWD, &replay_receipt)?;
@@ -356,8 +358,7 @@ fn outer_history(history: OuterHistory, coverage: &mut Coverage) -> TestCaseResu
             .unwrap()
             .offering_end
     });
-    let fire_at =
-        43_200 + (offering_end.saturating_sub(43_200)).div_ceil(SECONDS_PER_DAY) * SECONDS_PER_DAY;
+    let fire_at = hourly_fire_at(offering_end);
 
     let rollback_storage = cycle_metadosis_snapshot(&storage);
     let rollback_events = storage.get_ordered_events().to_vec();
@@ -384,12 +385,7 @@ fn outer_history(history: OuterHistory, coverage: &mut Coverage) -> TestCaseResu
             .unwrap()
             .scheduled_process_time
     });
-    let process_fire_at = 43_200
-        + scheduled_process_time
-            .max(fire_at + 1)
-            .saturating_sub(43_200)
-            .div_ceil(SECONDS_PER_DAY)
-            * SECONDS_PER_DAY;
+    let process_fire_at = hourly_fire_at(scheduled_process_time.max(fire_at + 1));
     run_block(&mut storage, next_block, process_fire_at).expect("empty-day terminal Cycle command");
     OuterWwdModel {
         phase: ModelPhase::Completed,
@@ -448,10 +444,8 @@ fn capacity_history(retained_before: usize, coverage: &mut Coverage) -> TestCase
         next_block += 1;
     }
     let scheduled_process_time = victim_projection.scheduled_process_time;
-    let fire_at = 43_200
-        + (scheduled_process_time.saturating_sub(43_200)).div_ceil(SECONDS_PER_DAY)
-            * SECONDS_PER_DAY;
-    let previous_noon = fire_at - SECONDS_PER_DAY;
+    let fire_at = hourly_fire_at(scheduled_process_time);
+    let previous_hour = fire_at - 3_600;
     StorageHandle::enter(&mut storage, |handle| {
         let cycle: Cycle<'_> = handle.contract::<Cycle<'_>>();
         for spec in ACTIVE_TRIGGERS {
@@ -459,14 +453,18 @@ fn capacity_history(retained_before: usize, coverage: &mut Coverage) -> TestCase
                 .last_executed_at
                 .write(
                     &spec.id,
-                    if spec.id == TriggerId::WwdAdvanceNoon.as_u32() {
-                        previous_noon
+                    if spec.id == TriggerId::ProtocolCycle.as_u32() {
+                        previous_hour
                     } else {
                         fire_at
                     },
                 )
                 .unwrap();
         }
+        cycle
+            .active_utc_day
+            .write(outbe_primitives::time::timestamp_to_date_key(fire_at))
+            .unwrap();
     });
 
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);

@@ -1,6 +1,47 @@
 [
   {
     "type": "function",
+    "name": "certifiedContributorGeneration",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct IIntex.CertifiedContributorGeneration",
+        "components": [
+          {
+            "name": "seriesVersion",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "contributorRoot",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "contributorCount",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "eligibleNominalTotal",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "seriesAt",
     "inputs": [
       {

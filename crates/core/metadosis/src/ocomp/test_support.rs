@@ -800,7 +800,7 @@ fn intent(
                 max_nod_count: 2,
             },
             contributors: ContributorTargetPreconditionV1 {
-                series_id: TEST_WWD.value(),
+                worldwide_day: TEST_WWD.value(),
                 expected_series_version: 0,
                 max_contributor_count: 2,
                 max_eligible_nominal_total: U256::from(1_000),

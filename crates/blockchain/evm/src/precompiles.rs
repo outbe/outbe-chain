@@ -22,12 +22,11 @@ use outbe_primitives::addresses::{
 };
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 use outbe_primitives::storage::{
-    metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
-    metadosis_init_genesis_binding, metadosis_late_settlement_binding,
-    metadosis_ocomp_lifecycle_begin_binding, metadosis_ocomp_terminal_request_binding,
-    metadosis_process_ready_binding, metadosis_verified_vote_binding,
-    MetadosisCertifiedFinalityBinding, MetadosisMutationEntitlements, MetadosisMutationPurposeTag,
-    StorageHandle,
+    metadosis_cycle_allocation_binding, metadosis_init_genesis_binding,
+    metadosis_late_settlement_binding, metadosis_ocomp_lifecycle_begin_binding,
+    metadosis_ocomp_terminal_request_binding, metadosis_process_ready_binding,
+    metadosis_verified_vote_binding, MetadosisCertifiedFinalityBinding,
+    MetadosisMutationEntitlements, MetadosisMutationPurposeTag, StorageHandle,
 };
 use revm::{
     handler::{precompile_output_to_interpreter_result, EthPrecompiles, PrecompileProvider},
@@ -163,6 +162,7 @@ struct MetadosisMutationCall<'a> {
     chain_id: u64,
     block_number: u64,
     timestamp: u64,
+    cycle_active_utc_day: Option<u32>,
     preloaded_certified_state_root: Option<alloy_primitives::B256>,
     ocomp_fork_install: Option<&'a OcompForkInstallV1>,
 }
@@ -180,6 +180,7 @@ fn metadosis_mutation_entitlements(
         chain_id,
         block_number,
         timestamp,
+        cycle_active_utc_day,
         preloaded_certified_state_root,
         ocomp_fork_install,
     } = call;
@@ -223,31 +224,42 @@ fn metadosis_mutation_entitlements(
                 metadosis_late_settlement_binding(chain_id, block_number, timestamp),
             )
         }
-        // Exact fixed command identities cover genesis plus every statically
-        // registered trigger. A particular block may consume any due subset,
-        // but no identity can be consumed twice. Daily terminal allocation is
-        // intentionally keyed to the previous UTC day rather than the physical
-        // dispatch timestamp; derive the same fixed timestamp here.
+        // Exact command identities cover genesis, one contiguous daily
+        // allocation when due, and the single hourly Metadosis pass. The cursor
+        // is read from Cycle storage by the provider; it is never accepted from
+        // calldata. Multi-day gaps grant no missed-day economic authority.
         crate::system_tx::SystemTxInputV2::CycleTick => {
-            let current_day = outbe_primitives::time::timestamp_to_date_key(timestamp);
-            let previous_day = outbe_primitives::time::previous_date_key(current_day);
-            let allocation_timestamp =
-                outbe_primitives::time::date_key_to_utc_timestamp(previous_day);
-            MetadosisMutationEntitlements::exact(
-                Purpose::CycleLifecycle,
-                metadosis_init_genesis_binding(chain_id, block_number, timestamp),
-            )
-            .union(MetadosisMutationEntitlements::exact(
-                Purpose::CycleLifecycle,
-                metadosis_cycle_allocation_binding(chain_id, block_number, allocation_timestamp),
-            ))
-            .union(MetadosisMutationEntitlements::exact(
+            let genesis_activation_height =
+                ocomp_fork_install.map_or(1, |install| install.activation_height);
+            let mut entitlements = MetadosisMutationEntitlements::NONE;
+            if block_number == genesis_activation_height {
+                entitlements = entitlements.union(MetadosisMutationEntitlements::exact(
+                    Purpose::CycleLifecycle,
+                    metadosis_init_genesis_binding(chain_id, block_number, timestamp),
+                ));
+            }
+            let Some(active_utc_day) = cycle_active_utc_day else {
+                return entitlements;
+            };
+            let block_utc_day = outbe_primitives::time::timestamp_to_date_key(timestamp);
+            let Ok(day_action) =
+                outbe_cycle::handler::protocol_day_action(active_utc_day, block_utc_day)
+            else {
+                return entitlements;
+            };
+            if let outbe_cycle::handler::ProtocolDayAction::SettlePrevious { day } = day_action {
+                entitlements = entitlements.union(MetadosisMutationEntitlements::exact(
+                    Purpose::CycleLifecycle,
+                    metadosis_cycle_allocation_binding(
+                        chain_id,
+                        block_number,
+                        outbe_primitives::time::date_key_to_utc_timestamp(day),
+                    ),
+                ));
+            }
+            entitlements.union(MetadosisMutationEntitlements::exact(
                 Purpose::CycleLifecycle,
                 metadosis_process_ready_binding(chain_id, block_number, timestamp),
-            ))
-            .union(MetadosisMutationEntitlements::exact(
-                Purpose::CycleLifecycle,
-                metadosis_advance_due_binding(chain_id, block_number, timestamp),
             ))
         }
         crate::system_tx::SystemTxInputV2::OcompLifecycleBegin if ocomp_lifecycle_active => {
@@ -536,6 +548,10 @@ where
     };
     let gas_budget = inputs.gas_limit - base_gas;
     let gas_meter = SubcallGasMeter::new(gas_budget);
+    let protocol_cycle_call = matches!(
+        crate::system_tx::SystemTxInputV2::decode(data.as_ref()),
+        Ok(crate::system_tx::SystemTxInputV2::CycleTick)
+    );
 
     tracing::debug!(
         target: "outbe::precompile::gas",
@@ -577,6 +593,7 @@ where
                     chain_id,
                     block_number,
                     timestamp,
+                    cycle_active_utc_day: None,
                     preloaded_certified_state_root:
                         crate::begin_block_precompile::preloaded_certified_parent_state_root(),
                     ocomp_fork_install: ocomp_fork_install.as_deref(),
@@ -584,6 +601,33 @@ where
             ),
         },
     );
+    if protocol_cycle_call {
+        let active_utc_day = {
+            let storage = StorageHandle::new(&mut provider);
+            storage
+                .contract::<outbe_cycle::schema::Cycle<'_>>()
+                .active_utc_day
+                .read()
+                .map_err(|error| error.to_string())?
+        };
+        provider.replace_metadosis_mutation_entitlements(metadosis_mutation_entitlements(
+            MetadosisMutationCall {
+                address,
+                data: data.as_ref(),
+                caller,
+                is_static,
+                value,
+                ocomp_lifecycle_active,
+                chain_id,
+                block_number,
+                timestamp,
+                cycle_active_utc_day: Some(active_utc_day),
+                preloaded_certified_state_root:
+                    crate::begin_block_precompile::preloaded_certified_parent_state_root(),
+                ocomp_fork_install: ocomp_fork_install.as_deref(),
+            },
+        ));
+    }
     let storage = StorageHandle::new(&mut provider);
     let result = if is_active_result_vote_selector {
         outbe_metadosis::commands::submit_verified_result_vote(
@@ -907,19 +951,18 @@ mod lysis_activation_entitlement_tests {
         consensus_metadata::CertifiedParentAccountingMetadata,
         reshare_artifact::LateFinalizeCreditsArtifact,
         storage::{
-            metadosis_advance_due_binding, metadosis_cycle_allocation_binding,
-            metadosis_init_genesis_binding, metadosis_late_settlement_binding,
-            metadosis_ocomp_lifecycle_begin_binding, metadosis_ocomp_terminal_request_binding,
-            metadosis_process_ready_binding, metadosis_verified_vote_binding,
-            MetadosisCertifiedFinalityBinding, MetadosisMutationEntitlements,
-            MetadosisMutationPurposeTag as Purpose,
+            metadosis_cycle_allocation_binding, metadosis_init_genesis_binding,
+            metadosis_late_settlement_binding, metadosis_ocomp_lifecycle_begin_binding,
+            metadosis_ocomp_terminal_request_binding, metadosis_process_ready_binding,
+            metadosis_verified_vote_binding, MetadosisCertifiedFinalityBinding,
+            MetadosisMutationEntitlements, MetadosisMutationPurposeTag as Purpose,
         },
         system_tx::SystemTxInputV2,
     };
 
     const TEST_CHAIN_ID: u64 = 42;
     const TEST_BLOCK_NUMBER: u64 = 9;
-    const TEST_TIMESTAMP: u64 = 1_000;
+    const TEST_TIMESTAMP: u64 = 1_704_067_200;
 
     fn certified_root() -> B256 {
         B256::repeat_byte(0xa1)
@@ -959,6 +1002,11 @@ mod lysis_activation_entitlement_tests {
         input: SystemTxInputV2,
         lifecycle_active: bool,
     ) -> MetadosisMutationEntitlements {
+        let cycle_active_utc_day = matches!(input, SystemTxInputV2::CycleTick).then(|| {
+            outbe_primitives::time::previous_date_key(
+                outbe_primitives::time::timestamp_to_date_key(TEST_TIMESTAMP),
+            )
+        });
         let data = encoded(input);
         metadosis_mutation_entitlements(MetadosisMutationCall {
             address: OUTBE_SYSTEM_TX_ADDRESS,
@@ -970,6 +1018,7 @@ mod lysis_activation_entitlement_tests {
             chain_id: TEST_CHAIN_ID,
             block_number: TEST_BLOCK_NUMBER,
             timestamp: TEST_TIMESTAMP,
+            cycle_active_utc_day,
             preloaded_certified_state_root: Some(certified_root()),
             ocomp_fork_install: None,
         })
@@ -981,24 +1030,42 @@ mod lysis_activation_entitlement_tests {
         let allocation_timestamp = outbe_primitives::time::date_key_to_utc_timestamp(previous_day);
         MetadosisMutationEntitlements::exact(
             Purpose::CycleLifecycle,
-            metadosis_init_genesis_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
-        )
-        .union(MetadosisMutationEntitlements::exact(
-            Purpose::CycleLifecycle,
             metadosis_cycle_allocation_binding(
                 TEST_CHAIN_ID,
                 TEST_BLOCK_NUMBER,
                 allocation_timestamp,
             ),
-        ))
+        )
         .union(MetadosisMutationEntitlements::exact(
             Purpose::CycleLifecycle,
             metadosis_process_ready_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
         ))
-        .union(MetadosisMutationEntitlements::exact(
+    }
+
+    #[test]
+    fn protocol_cycle_entitles_genesis_initialization_at_fallback_activation_height() {
+        let data = encoded(SystemTxInputV2::CycleTick);
+        let entitlements = metadosis_mutation_entitlements(MetadosisMutationCall {
+            address: OUTBE_SYSTEM_TX_ADDRESS,
+            data: data.as_ref(),
+            caller: SYSTEM_ADDRESS,
+            is_static: false,
+            value: U256::ZERO,
+            ocomp_lifecycle_active: false,
+            chain_id: TEST_CHAIN_ID,
+            block_number: 1,
+            timestamp: TEST_TIMESTAMP,
+            cycle_active_utc_day: Some(outbe_primitives::time::timestamp_to_date_key(
+                TEST_TIMESTAMP,
+            )),
+            preloaded_certified_state_root: None,
+            ocomp_fork_install: None,
+        });
+
+        assert!(entitlements.expects(
             Purpose::CycleLifecycle,
-            metadosis_advance_due_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
-        ))
+            metadosis_init_genesis_binding(TEST_CHAIN_ID, 1, TEST_TIMESTAMP),
+        ));
     }
 
     #[test]
@@ -1143,6 +1210,7 @@ mod lysis_activation_entitlement_tests {
                 chain_id: TEST_CHAIN_ID,
                 block_number: TEST_BLOCK_NUMBER,
                 timestamp: TEST_TIMESTAMP,
+                cycle_active_utc_day: None,
                 preloaded_certified_state_root: None,
                 ocomp_fork_install: None,
             }),
@@ -1151,6 +1219,47 @@ mod lysis_activation_entitlement_tests {
                 metadosis_verified_vote_binding(&SUBMIT_LYSIS_RESULT_SELECTOR),
             ),
         );
+    }
+
+    #[test]
+    fn protocol_cycle_grants_no_daily_allocation_after_a_multi_day_halt() {
+        let block_day = outbe_primitives::time::timestamp_to_date_key(TEST_TIMESTAMP);
+        let mut active_day = block_day;
+        for _ in 0..6 {
+            active_day = outbe_primitives::time::previous_date_key(active_day);
+        }
+        let data = encoded(SystemTxInputV2::CycleTick);
+        let entitlements = metadosis_mutation_entitlements(MetadosisMutationCall {
+            address: OUTBE_SYSTEM_TX_ADDRESS,
+            data: data.as_ref(),
+            caller: SYSTEM_ADDRESS,
+            is_static: false,
+            value: U256::ZERO,
+            ocomp_lifecycle_active: false,
+            chain_id: TEST_CHAIN_ID,
+            block_number: TEST_BLOCK_NUMBER,
+            timestamp: TEST_TIMESTAMP,
+            cycle_active_utc_day: Some(active_day),
+            preloaded_certified_state_root: None,
+            ocomp_fork_install: None,
+        });
+
+        let mut day = active_day;
+        while day < block_day {
+            assert!(!entitlements.expects(
+                Purpose::CycleLifecycle,
+                metadosis_cycle_allocation_binding(
+                    TEST_CHAIN_ID,
+                    TEST_BLOCK_NUMBER,
+                    outbe_primitives::time::date_key_to_utc_timestamp(day),
+                ),
+            ));
+            day = outbe_primitives::time::next_date_key(day);
+        }
+        assert!(entitlements.expects(
+            Purpose::CycleLifecycle,
+            metadosis_process_ready_binding(TEST_CHAIN_ID, TEST_BLOCK_NUMBER, TEST_TIMESTAMP),
+        ));
     }
 
     #[test]
@@ -1183,6 +1292,7 @@ mod lysis_activation_entitlement_tests {
                     chain_id: TEST_CHAIN_ID,
                     block_number: TEST_BLOCK_NUMBER,
                     timestamp: TEST_TIMESTAMP,
+                    cycle_active_utc_day: None,
                     preloaded_certified_state_root: None,
                     ocomp_fork_install: None,
                 }),
@@ -1201,6 +1311,7 @@ mod lysis_activation_entitlement_tests {
                 chain_id: TEST_CHAIN_ID,
                 block_number: TEST_BLOCK_NUMBER,
                 timestamp: TEST_TIMESTAMP,
+                cycle_active_utc_day: None,
                 preloaded_certified_state_root: None,
                 ocomp_fork_install: None,
             }),
@@ -1229,6 +1340,7 @@ mod lysis_activation_entitlement_tests {
                 chain_id: TEST_CHAIN_ID,
                 block_number: TEST_BLOCK_NUMBER,
                 timestamp: TEST_TIMESTAMP,
+                cycle_active_utc_day: None,
                 preloaded_certified_state_root: None,
                 ocomp_fork_install: None,
             }),
@@ -1245,6 +1357,7 @@ mod lysis_activation_entitlement_tests {
                 chain_id: TEST_CHAIN_ID,
                 block_number: TEST_BLOCK_NUMBER,
                 timestamp: TEST_TIMESTAMP,
+                cycle_active_utc_day: None,
                 preloaded_certified_state_root: None,
                 ocomp_fork_install: None,
             }),

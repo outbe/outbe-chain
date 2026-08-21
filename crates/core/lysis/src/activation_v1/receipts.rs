@@ -333,7 +333,7 @@ fn verify_contributor_receipt(
             what: "contributor series version",
         })?;
     let projection = ContributorStateEventProjectionV1 {
-        series_id: expected.precondition().series_id,
+        worldwide_day: expected.precondition().worldwide_day,
         series_version_before: expected.precondition().expected_series_version,
         series_version_after: version_after,
         contributor_count: expected.contributor_count(),

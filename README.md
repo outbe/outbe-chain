@@ -308,11 +308,12 @@ inclusion window. Dust from fee and emission splits routes deterministically to
 terminal Metadosis. Block 0 produces no validator rewards.
 
 WorldwideDay lifecycle statuses (FORMING → LOOKBACK_DELAY → OFFERING → WAITING
-→ READY) advance on two daily begin-zone Cycle ticks: 00:00 UTC
-(`emission_limit_1`, which also creates the next day and settles READY days)
-and 12:00 UTC (`wwd_advance_noon`, status advancement only). The 12:00 tick
-exists because the forming/offering window edges land at 12:00 UTC; without it
-every offering window opened ~12 hours late.
+→ READY) advance from one `protocol_cycle` trigger on every UTC-hour boundary.
+On a contiguous UTC-day transition it first settles the prior day's emission,
+then runs the existing WWD/READY flow once. If the chain misses multiple UTC
+days, those days are forfeited without emission, rewards, synthetic WWDs, or
+Metadosis work; the cursor advances to the current day and normal hourly WWD
+processing resumes.
 
 The fresh-devnet profile requires a hash-bound, genesis-active
 `Measurement@1` OCOMP install and the exact
@@ -455,6 +456,13 @@ curl -s -X POST "http://localhost:${RPC_PORT}" -H "Content-Type: application/jso
 mise run test                   # cargo nextest run --workspace + doctests
 mise run test-consensus         # consensus crate only
 ```
+
+The localnet runs on macOS as well as Linux. On any non-Linux host the harness
+selects the `mock-native` enclave profile — the same mock enclave binary, run as
+a host process instead of inside the Gramine container, whose image is
+`linux/amd64` only. Docker is still required, for the MongoDB replica set. See
+[Launching TEE networks](docs/launching-with-sgx.md) for what that profile does
+and does not prove.
 
 These four `localnet-*` lifecycle commands are owned by the Rust E2E harness;
 they do not call `prepare_network.py`, `bootstrap-testnet.sh`, or

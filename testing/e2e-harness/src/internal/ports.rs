@@ -33,7 +33,7 @@
 //! genesis-baked one.
 
 use std::collections::HashMap;
-use std::net::{TcpListener, UdpSocket};
+use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use eyre::{bail, Result};
@@ -290,8 +290,20 @@ fn window_free(start: u16) -> bool {
 }
 
 /// Whether `port` is bindable on loopback for the required transport(s).
+///
+/// A bind probe alone is not enough for TCP: nodes bind their service ports on
+/// the wildcard address, and BSD `SO_REUSEADDR` semantics let a later
+/// loopback-specific bind succeed over a live `0.0.0.0` listener. Ask for a
+/// connection first — an answer proves somebody owns the port whatever address
+/// they bound — and only then try to bind, so the probe's own listener can
+/// never answer its own connect.
 fn is_free(port: u16, proto: Proto) -> bool {
-    let tcp = || TcpListener::bind(("127.0.0.1", port)).is_ok();
+    let tcp = || {
+        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+            return false;
+        }
+        TcpListener::bind(("127.0.0.1", port)).is_ok()
+    };
     let udp = || UdpSocket::bind(("127.0.0.1", port)).is_ok();
     match proto {
         Proto::Tcp => tcp(),
@@ -437,6 +449,33 @@ mod tests {
         assert!(message.contains("validator-0"));
         assert!(message.contains("Http"));
         assert!(message.contains(&NODE_BASE.to_string()));
+    }
+
+    /// Nodes bind their service ports on the wildcard address, not on loopback.
+    /// BSD `SO_REUSEADDR` semantics let a later `127.0.0.1` bind succeed over a
+    /// live `0.0.0.0` listener, so a bind-only probe waves a stale node through.
+    ///
+    /// Takes an ephemeral port rather than the static layout: the sibling
+    /// preflight test holds [`NODE_BASE`], and nextest runs both at once.
+    #[test]
+    fn preflight_rejects_a_wildcard_held_service_port() {
+        let Ok(held) = TcpListener::bind(("0.0.0.0", 0)) else {
+            // Some restricted test sandboxes deny bind entirely.
+            return;
+        };
+        let occupied = held.local_addr().expect("bound address").port();
+        if fits(u64::from(occupied)).is_err() {
+            return; // no room for a whole block at this ephemeral port
+        }
+        // Slot 0 of the block is Http, so the block starts on the held port.
+        let p = Ports::from_block_starts(&[occupied]).expect("single block layout");
+        let error = p
+            .ensure_available(1)
+            .expect_err("wildcard-held validator-0 Http port must fail preflight");
+        let message = error.to_string();
+        assert!(message.contains("validator-0"), "{message}");
+        assert!(message.contains("Http"), "{message}");
+        assert!(message.contains(&occupied.to_string()), "{message}");
     }
 
     #[test]

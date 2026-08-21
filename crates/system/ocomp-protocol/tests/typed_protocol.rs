@@ -164,7 +164,7 @@ fn preconditions() -> ActivationPreconditionsV1 {
             max_nod_count: 1,
         },
         contributors: ContributorTargetPreconditionV1 {
-            series_id: 7,
+            worldwide_day: 7,
             expected_series_version: 8,
             max_contributor_count: 1,
             max_eligible_nominal_total: U256::ZERO,

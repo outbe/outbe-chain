@@ -20,8 +20,8 @@ use crate::ICycle;
 ///
 /// For the typical case of a slow-running chain that produces blocks
 /// every few seconds, the dispatcher is a near-noop on every block and
-/// fires the daily trigger only on the first block whose timestamp
-/// crosses UTC midnight.
+/// fires ProtocolCycle only on the first block whose timestamp crosses
+/// the next UTC-hour boundary.
 pub fn dispatch_triggers(
     ctx: &BlockRuntimeContext,
     scope: &ExecutionScope,
@@ -38,9 +38,8 @@ pub fn dispatch_triggers(
         // First-ever encounter for this trigger: anchor `last_executed_at`
         // at the current block timestamp so the first real fire is the
         // next slot strictly after this point. Without this anchor,
-        // every chain would fire on its first block (because `block_ts`
-        // on a real chain is always `>> 86_400` so
-        // `next_fire_at(_, 0, 0) = 86_400` is always reached).
+        // every chain would fire on its first block because real genesis
+        // timestamps are far beyond the first unix-epoch schedule slot.
         if last_executed_at == 0 {
             cycle.last_executed_at.write(&spec.id, block_ts)?;
             tracing::debug!(

@@ -7249,6 +7249,7 @@ name = "outbe-chain"
 version = "0.1.0"
 dependencies = [
  "alloy-consensus",
+ "alloy-eips 2.0.4",
  "alloy-primitives",
  "alloy-sol-types",
  "clap",
@@ -8158,6 +8159,8 @@ dependencies = [
  "outbe-compressed-entities",
  "outbe-consensus",
  "outbe-e2e-harness",
+ "outbe-intex",
+ "outbe-intexfactory",
  "outbe-lysis",
  "outbe-metadosis",
  "outbe-node",
@@ -8168,6 +8171,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-tribute",
  "outbe-validatorset",
+ "outbe-zerofee",
  "reqwest 0.12.28",
  "reth-ethereum",
  "salvo",
@@ -8757,6 +8761,7 @@ dependencies = [
  "alloy-eips 2.0.4",
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-intexfactory",
  "outbe-macros",
  "outbe-ocomp-protocol",
  "outbe-oracle",

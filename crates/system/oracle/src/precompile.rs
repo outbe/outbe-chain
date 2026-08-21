@@ -6,6 +6,7 @@ use outbe_primitives::address_pair::AddressPair;
 use outbe_primitives::addresses::ORACLE_ADDRESS;
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate_void, reject_value, view};
 use outbe_primitives::error::Result;
+use outbe_primitives::math::reference_price::pair_scales;
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -44,6 +45,14 @@ pub fn dispatch(
                 let quote = crate::api::currency_address(c.isoCode);
                 oracle.get_exchange_rate(crate::api::COEN_ASSET, quote)
             }),
+            currencyCrossRate(c) => view(c, |c| {
+                crate::api::currency_cross_rate(
+                    oracle.storage.clone(),
+                    c.fromIso,
+                    c.toIso,
+                    c.amount,
+                )
+            }),
             getVwap(c) => view(c, |c| {
                 let pair = oracle.require_pair_from(c.base, c.quote)?;
                 let now = oracle.storage.timestamp()?.to::<u64>();
@@ -79,7 +88,8 @@ pub fn dispatch(
             getPairCount(_) => metadata::<IOracle::getPairCountCall>(|| oracle.pair_count.read()),
             getPairByIndex(c) => view(c, |c| {
                 let pair = oracle.require_pair_at(c.index)?;
-                Ok((pair.address1(), pair.address2()).into())
+                let (base_scale, quote_scale) = pair_scales(pair);
+                Ok((pair.address1(), pair.address2(), base_scale, quote_scale).into())
             }),
             getVoteTargets(_) => metadata::<IOracle::getVoteTargetsCall>(|| {
                 let (bases, quotes) = oracle.get_vote_targets()?;

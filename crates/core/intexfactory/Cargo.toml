@@ -20,5 +20,13 @@ hex.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
+[dev-dependencies]
+outbe-intex = { workspace = true, features = ["test-utils"] }
+
 [lints]
 workspace = true
+
+[features]
+# Let a payout e2e credit proceeds without a deployed router.
+# Never enabled in a release build.
+e2e-test = []

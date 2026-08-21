@@ -266,7 +266,7 @@ do_start() {
             local tee_dkg_seed
             tee_dkg_seed=$(printf '%064x' "$((i + 1))")
             # Base 17000, NOT 7000: macOS AirPlay Receiver (Control Center) binds
-            # *:7000 by default on Apple Silicon — the very platform `localnet-tee`
+            # *:7000 by default on Apple Silicon — the very platform `localnet`
             # targets — so the node would connect to AirPlay and fail-fast on a quote
             # timeout. 17000 is off that path. Endpoint is IPv4-literal (the enclave
             # binds 127.0.0.1 only; `localhost` could resolve to ::1).

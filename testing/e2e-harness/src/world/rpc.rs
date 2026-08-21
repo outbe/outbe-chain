@@ -621,7 +621,7 @@ impl Rpc {
     }
 
     pub(crate) fn url(&self, port: u16) -> String {
-        format!("http://localhost:{port}")
+        format!("http://127.0.0.1:{port}")
     }
 
     // ---- reads ----------------------------------------------------------
