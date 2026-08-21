@@ -86,6 +86,11 @@
           "name": "msgType",
           "type": "uint8",
           "internalType": "uint8"
+        },
+        {
+          "name": "calledAt",
+          "type": "uint32",
+          "internalType": "uint32"
         }
       ],
       "outputs": [],
@@ -106,29 +111,6 @@
     },
     {
       "type": "function",
-      "name": "bridgeSeriesHoldersExt",
-      "inputs": [
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "holders",
-          "type": "address[]",
-          "internalType": "address[]"
-        },
-        {
-          "name": "amounts",
-          "type": "uint256[]",
-          "internalType": "uint256[]"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
       "name": "escrowAdapter",
       "inputs": [],
       "outputs": [
@@ -143,19 +125,6 @@
     {
       "type": "function",
       "name": "flushPendingBidsRelay",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [],
-      "stateMutability": "nonpayable"
-    },
-    {
-      "type": "function",
-      "name": "flushPendingHoldersRelay",
       "inputs": [
         {
           "name": "idx",
@@ -330,19 +299,6 @@
     },
     {
       "type": "function",
-      "name": "nextPendingHoldersRelayIdx",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "nextPendingIssuanceMintIdx",
       "inputs": [],
       "outputs": [
@@ -363,19 +319,6 @@
           "name": "",
           "type": "uint256",
           "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "nftBridge",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "address",
-          "internalType": "contract IIntexNFT1155Bridge"
         }
       ],
       "stateMutability": "view"
@@ -408,35 +351,6 @@
           "name": "worldwideDay",
           "type": "uint32",
           "internalType": "uint32"
-        },
-        {
-          "name": "exists",
-          "type": "bool",
-          "internalType": "bool"
-        },
-        {
-          "name": "done",
-          "type": "bool",
-          "internalType": "bool"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "pendingHoldersRelays",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "internalType": "uint256"
         },
         {
           "name": "exists",
@@ -510,6 +424,11 @@
           "name": "msgType",
           "type": "uint8",
           "internalType": "uint8"
+        },
+        {
+          "name": "calledAt",
+          "type": "uint32",
+          "internalType": "uint32"
         },
         {
           "name": "exists",
@@ -808,11 +727,6 @@
           "name": "_escrowAdapter",
           "type": "address",
           "internalType": "address"
-        },
-        {
-          "name": "_nftBridge",
-          "type": "address",
-          "internalType": "address"
         }
       ],
       "outputs": [],
@@ -970,56 +884,6 @@
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "HoldersRelayDeferred",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "holdersCount",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
-        },
-        {
-          "name": "reason",
-          "type": "bytes",
-          "indexed": false,
-          "internalType": "bytes"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "HoldersRelayFlushed",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
         }
       ],
       "anonymous": false
@@ -1607,17 +1471,6 @@
     {
       "type": "error",
       "name": "NoSuchPendingBidsRelay",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "NoSuchPendingHoldersRelay",
       "inputs": [
         {
           "name": "idx",

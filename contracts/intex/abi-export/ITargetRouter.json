@@ -55,11 +55,6 @@
           "name": "escrowAdapter",
           "type": "address",
           "internalType": "address"
-        },
-        {
-          "name": "nftBridge",
-          "type": "address",
-          "internalType": "address"
         }
       ],
       "outputs": [],
@@ -217,56 +212,6 @@
           "type": "uint32",
           "indexed": true,
           "internalType": "uint32"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "HoldersRelayDeferred",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "holdersCount",
-          "type": "uint256",
-          "indexed": false,
-          "internalType": "uint256"
-        },
-        {
-          "name": "reason",
-          "type": "bytes",
-          "indexed": false,
-          "internalType": "bytes"
-        }
-      ],
-      "anonymous": false
-    },
-    {
-      "type": "event",
-      "name": "HoldersRelayFlushed",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
-        },
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "indexed": true,
-          "internalType": "uint256"
         }
       ],
       "anonymous": false
@@ -607,17 +552,6 @@
     {
       "type": "error",
       "name": "NoSuchPendingBidsRelay",
-      "inputs": [
-        {
-          "name": "idx",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ]
-    },
-    {
-      "type": "error",
-      "name": "NoSuchPendingHoldersRelay",
       "inputs": [
         {
           "name": "idx",
