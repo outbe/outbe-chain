@@ -31,6 +31,10 @@ pub const TEE_BOOTSTRAP_CHANNEL: u64 = 6;
 /// startup to derive the shared tribute offer key. Distinct from the consensus
 /// DKG channel (5) and the TEE bootstrap channel (6).
 pub const TEE_DKG_CHANNEL: u64 = 7;
+/// Signed Radicle endpoint request/response channel.
+pub const RADICLE_ENDPOINT_CHANNEL: u64 = 8;
+/// Per-peer signed Radicle endpoint messages accepted per second.
+pub const RADICLE_ENDPOINT_CHANNEL_QUOTA: u32 = 32;
 /// Maximum extra_data size in block headers (bytes).
 /// Enough for 128-validator participation bitmap (23 bytes) with room to grow.
 pub const MAX_EXTRA_DATA_SIZE: usize = 256;

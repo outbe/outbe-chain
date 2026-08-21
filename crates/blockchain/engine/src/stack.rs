@@ -92,6 +92,47 @@ use outbe_consensus::{
     reporter::{OutbeReporter, ReporterContinuity},
     vrf_safety::VrfSafetyGate,
 };
+use outbe_radicle::integration::{RadicleVotingGate, RadicleVotingGateError};
+
+fn radicle_channel_config() -> (u64, u32, usize) {
+    (
+        config::RADICLE_ENDPOINT_CHANNEL,
+        config::RADICLE_ENDPOINT_CHANNEL_QUOTA,
+        config::CHANNEL_BACKLOG,
+    )
+}
+
+fn radicle_signer_enabled(gate: RadicleVotingGate, has_share: bool) -> Result<bool> {
+    match gate {
+        RadicleVotingGate::Verifier => Ok(false),
+        RadicleVotingGate::SignerAllowed => Ok(has_share),
+        RadicleVotingGate::Fatal(error) => {
+            let reason = match error {
+                RadicleVotingGateError::SidecarUnavailable => "sidecar unavailable",
+                RadicleVotingGateError::LocalNodeIdUnavailable => "local NodeId unavailable",
+                RadicleVotingGateError::ActiveBindingMissing => "active binding missing",
+                RadicleVotingGateError::BindingMismatch => "binding mismatch",
+            };
+            Err(eyre::eyre!("Radicle voting gate is fatal: {reason}"))
+        }
+    }
+}
+
+async fn wait_for_radicle_fatal(
+    updates: &mut tokio::sync::watch::Receiver<outbe_radicle::integration::RadicleStatusSnapshot>,
+) -> Result<()> {
+    loop {
+        if let RadicleVotingGate::Fatal(error) = updates.borrow().voting_gate {
+            return Err(
+                radicle_signer_enabled(RadicleVotingGate::Fatal(error), false)
+                    .expect_err("fatal Radicle gate must reject signing"),
+            );
+        }
+        if updates.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
+}
 
 use outbe_node::OutbeFullNode;
 use outbe_ocomp_protocol::profile::poc_schema_limits;
@@ -120,6 +161,11 @@ pub struct ConsensusStackServices {
     ocomp_readiness: Option<ProjectionReadinessHandle>,
     finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
     ce_startup_recovery: Arc<dyn CeStartupRecovery>,
+    radicle_status: outbe_radicle::integration::RadicleStatusHandle,
+    radicle_endpoint: Option<(
+        outbe_radicle::integration::EndpointNetworkService,
+        outbe_radicle::integration::LocalEndpointIdentity,
+    )>,
 }
 
 impl ConsensusStackServices {
@@ -133,6 +179,8 @@ impl ConsensusStackServices {
             ocomp_readiness: None,
             finalized_ce_committer,
             ce_startup_recovery,
+            radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
+            radicle_endpoint: None,
         }
     }
 
@@ -141,6 +189,18 @@ impl ConsensusStackServices {
     #[must_use]
     pub fn with_ocomp_readiness(mut self, readiness: ProjectionReadinessHandle) -> Self {
         self.ocomp_readiness = Some(readiness);
+        self
+    }
+
+    #[must_use]
+    pub fn with_radicle(
+        mut self,
+        status: outbe_radicle::integration::RadicleStatusHandle,
+        endpoint: outbe_radicle::integration::EndpointNetworkService,
+        local: outbe_radicle::integration::LocalEndpointIdentity,
+    ) -> Self {
+        self.radicle_status = status;
+        self.radicle_endpoint = Some((endpoint, local));
         self
     }
 }
@@ -2503,7 +2563,10 @@ where
         ocomp_readiness,
         finalized_ce_committer,
         ce_startup_recovery,
+        radicle_status,
+        radicle_endpoint,
     } = services;
+    let mut radicle_updates = radicle_status.subscribe();
 
     // Validate network-scoped flags before any mode-specific early return. A
     // follower must fail closed too, even when it does not currently consume
@@ -2641,6 +2704,15 @@ where
         )
     });
 
+    let radicle_channel = radicle_endpoint.as_ref().map(|_| {
+        let (channel, quota, backlog) = radicle_channel_config();
+        network.register(
+            channel,
+            Quota::per_second(NonZeroU32::new(quota).expect("Radicle quota is non-zero")),
+            backlog,
+        )
+    });
+
     // Parse consensus peers: `<hex_pubkey>@<host:port>` → (PublicKey, SocketAddr).
     let bootnode_map = parse_consensus_peers(&args.consensus_peers)?;
 
@@ -2663,6 +2735,16 @@ where
     // ── 4. Start P2P network (needed before DKG can run) ───────────────
     let mut network_handle = network.start();
     info!("P2P network started");
+
+    if let (Some((endpoint, local)), Some((sender, receiver))) = (radicle_endpoint, radicle_channel)
+    {
+        let signer = signing_key.clone();
+        tokio::spawn(async move {
+            if let Err(error) = endpoint.run(sender, receiver, signer, local).await {
+                tracing::warn!(%error, "Radicle endpoint actor stopped");
+            }
+        });
+    }
 
     // ── 5. Create Muxers from physical channels ────────────────────────
     // Consensus channels are muxed by epoch — each engine restart
@@ -4244,7 +4326,11 @@ where
 
         // ── b. Build HybridScheme for this epoch ────────────────────────
         use commonware_consensus::simplex::elector::Config as ElectorConfig;
-        let scheme = if signing_share.is_some() {
+        let radicle_signer = radicle_signer_enabled(
+            radicle_status.snapshot().voting_gate,
+            signing_share.is_some(),
+        )?;
+        let scheme = if radicle_signer {
             HybridScheme::<MinSig>::signer_with_vrf_provider(
                 &config::outbe_app_namespace(),
                 participants.clone(),
@@ -4420,6 +4506,8 @@ where
                     info!("P2P network exited");
                     break 'epoch_loop;
                 }
+
+                result = wait_for_radicle_fatal(&mut radicle_updates) => return result,
 
                 // Engine exit → clean shutdown.
                 _ = &mut engine_handle_task => {

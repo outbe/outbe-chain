@@ -779,6 +779,11 @@ fn run_node() -> eyre::Result<()> {
         Option<ProjectionReadinessHandle>,
         Arc<dyn FinalizedCeCommitter>,
         Arc<dyn CeStartupRecovery>,
+        Option<(
+            outbe_radicle::integration::EndpointNetworkService,
+            outbe_radicle::integration::LocalEndpointIdentity,
+            outbe_radicle::integration::RadicleStatusHandle,
+        )>,
     )>();
     let (consensus_dead_tx, mut consensus_dead_rx) = oneshot::channel::<()>();
     let shutdown_token = tokio_util::sync::CancellationToken::new();
@@ -795,6 +800,7 @@ fn run_node() -> eyre::Result<()> {
             ocomp_readiness,
             finalized_ce_committer,
             ce_startup_recovery,
+            radicle,
         ) = match node_rx.blocking_recv() {
             Ok(v) => v,
             Err(_) => return Ok(()),
@@ -878,17 +884,19 @@ fn run_node() -> eyre::Result<()> {
                     args,
                     node,
                     bridge_for_consensus,
-                    match ocomp_readiness {
-                        Some(readiness) => outbe_engine::ConsensusStackServices::new(
+                    {
+                        let mut services = outbe_engine::ConsensusStackServices::new(
                             projection_readiness,
                             finalized_ce_committer,
                             ce_startup_recovery,
-                        ).with_ocomp_readiness(readiness),
-                        None => outbe_engine::ConsensusStackServices::new(
-                        projection_readiness,
-                        finalized_ce_committer,
-                        ce_startup_recovery,
-                        ),
+                        );
+                        if let Some(readiness) = ocomp_readiness {
+                            services = services.with_ocomp_readiness(readiness);
+                        }
+                        if let Some((endpoint, local, status)) = radicle {
+                            services = services.with_radicle(status, endpoint, local);
+                        }
+                        services
                     },
                 ) => {
                     if let Err(e) = &result {
@@ -932,6 +940,39 @@ fn run_node() -> eyre::Result<()> {
 
     cli.run_with_components::<OutbeNode>(components, async move |builder, args| {
         args.validate()?;
+        let (radicle_preflight, radicle_status) = if args.is_validator {
+            let socket = args
+                .radicle_control_socket
+                .as_ref()
+                .expect("validated Radicle control socket");
+            let sidecar = outbe_radicle::integration::query_sidecar(
+                socket,
+                std::time::Duration::from_secs(5),
+            )
+            .await
+            .wrap_err("Radicle sidecar preflight failed")?;
+            let evm_key = args
+                .effective_validator_evm_key()?
+                .ok_or_else(|| eyre::eyre!("validator EVM key is required for Radicle identity"))?;
+            let validator = outbe_primitives::signer::OutbeEvmSigner::from_file(&evm_key)
+                .wrap_err("load validator EVM key for Radicle identity")?
+                .address();
+            let (publisher, status) =
+                outbe_radicle::integration::RadicleStatusChannel::enabled(
+                    validator,
+                    sidecar.node_id,
+                );
+            (Some((validator, sidecar, publisher)), status)
+        } else {
+            (
+                None,
+                outbe_radicle::integration::RadicleStatusChannel::disabled(),
+            )
+        };
+        if radicle_preflight.is_none() {
+            let mut metrics = outbe_radicle::integration::RadicleMetrics::default();
+            metrics.record(&radicle_status.snapshot());
+        }
         info!(
             target: "outbe::protocol",
             formingPeriodSeconds = outbe_chain_constants::get_metadosis_forming_period_seconds(),
@@ -1316,6 +1357,7 @@ fn run_node() -> eyre::Result<()> {
         let (projection_exit_tx, mut projection_exit_rx) =
             tokio::sync::mpsc::unbounded_channel();
         let projection_readiness_for_rpc = projection_readiness.clone();
+        let radicle_status_for_rpc = radicle_status.clone();
 
         let NodeHandle {
             node,
@@ -1360,6 +1402,7 @@ fn run_node() -> eyre::Result<()> {
                 let projection_readiness = projection_readiness_for_rpc.clone();
                 let compressed_tree_service = compressed_tree_service.clone();
                 let proof_body_readers = proof_body_readers.clone();
+                let radicle_status = radicle_status_for_rpc.clone();
                 move |ctx| {
                     use outbe_rpc::OutbeApiServer as _;
                     let provider = Arc::new(ctx.provider().clone());
@@ -1456,7 +1499,8 @@ fn run_node() -> eyre::Result<()> {
                                 .map(alloy_primitives::Bytes::from)
                                 .map_err(|error| format!("encode OCOMP openings: {error}"))
                         }
-                    }));
+                    }))
+                    .with_radicle_status(radicle_status.clone());
                     ctx.modules.merge_if_module_configured(
                         RethRpcModule::Other("outbe".to_owned()),
                         outbe_api.into_rpc(),
@@ -1468,6 +1512,146 @@ fn run_node() -> eyre::Result<()> {
             .launch()
             .await
             .wrap_err("failed launching execution node")?;
+
+        let (radicle_consensus, radicle_observer) = if let Some((
+            validator,
+            sidecar,
+            publisher,
+        )) = radicle_preflight
+        {
+            use outbe_radicle::manager::SnapshotReader as _;
+
+            let exact = node
+                .provider
+                .finalized_block_num_hash()
+                .wrap_err("read finalized head for Radicle startup")?
+                .map(|block| outbe_radicle::manager::FinalizedBlock {
+                    number: block.number,
+                    hash: block.hash,
+                })
+                .unwrap_or(outbe_radicle::manager::FinalizedBlock {
+                    number: 0,
+                    hash: genesis_hash,
+                });
+            let raw_snapshots: Arc<dyn outbe_radicle::manager::SnapshotReader> = Arc::new(
+                outbe_radicle::manager::RethSnapshotReader::new(
+                    node.provider.clone(),
+                    proof_chain_id,
+                    genesis_hash,
+                ),
+            );
+            let observed_snapshots = Arc::new(
+                outbe_radicle::integration::ObservedSnapshotReader::new(
+                    raw_snapshots,
+                    publisher.clone(),
+                ),
+            );
+            let initial = observed_snapshots
+                .read_exact(exact)
+                .wrap_err("read exact Radicle startup snapshot")?;
+            match initial
+                .validators
+                .iter()
+                .find(|candidate| candidate.address == validator)
+            {
+                None => {}
+                Some(candidate) if candidate.node_id.is_none() => {
+                    eyre::bail!("active validator has no Radicle NodeId binding")
+                }
+                Some(candidate) if candidate.node_id != Some(sidecar.node_id) => {
+                    eyre::bail!("local Radicle NodeId does not match finalized validator binding")
+                }
+                Some(_) => publisher.mark_startup_ready(),
+            }
+
+            let (endpoint, resolver, evidence) =
+                outbe_radicle::integration::EndpointNetwork::build(
+                    outbe_radicle::endpoint::ChainIdentity {
+                        chain_id: proof_chain_id,
+                        genesis_hash,
+                    },
+                    radicle_status.clone(),
+                );
+            let repository_status: Arc<dyn outbe_radicle::manager::RepositoryStatus> = Arc::new(
+                outbe_radicle::manager::HttpRepositoryStatus::new(
+                    args.radicle_status_address
+                        .expect("validated Radicle status address"),
+                    std::time::Duration::from_secs(5),
+                )?,
+            );
+            let repository_status = Arc::new(
+                outbe_radicle::integration::ObservedRepositoryStatus::new(
+                    repository_status,
+                    publisher.clone(),
+                ),
+            );
+            let manager = outbe_radicle::manager::RadicleManager::start(
+                outbe_radicle::manager::ManagerConfig {
+                    self_validator: validator,
+                    local_node_id: sidecar.node_id,
+                    repair_interval: outbe_radicle::integration::PRODUCTION_REPAIR_INTERVAL,
+                    retry: outbe_radicle::manager::RetryPolicy::default(),
+                },
+                outbe_radicle::manager::ManagerDependencies {
+                    finality: Arc::new(
+                        outbe_radicle::integration::GenesisFallbackFinalizedFeed::new(
+                            Arc::new(outbe_radicle::manager::RethFinalizedFeed::new(
+                                node.provider.clone(),
+                            )),
+                            exact,
+                        ),
+                    ),
+                    snapshots: observed_snapshots,
+                    endpoints: Arc::new(resolver.clone()),
+                    control: Arc::new(outbe_radicle::manager::NativeHeartwoodControl::new(
+                        args.radicle_control_socket
+                            .clone()
+                            .expect("validated Radicle control socket"),
+                        std::time::Duration::from_secs(5),
+                    )),
+                    repository_status,
+                },
+            );
+            let observer_shutdown = shutdown_token.clone();
+            let observer_publisher = publisher.clone();
+            let observer_resolver = resolver.clone();
+            let observer_status = radicle_status.clone();
+            let observer = tokio::spawn(async move {
+                let manager = manager;
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+                let mut metrics = outbe_radicle::integration::RadicleMetrics::default();
+                loop {
+                    tokio::select! {
+                        _ = observer_shutdown.cancelled() => {
+                            if let Err(error) = outbe_radicle::integration::shutdown_bounded(
+                                std::time::Duration::from_secs(5),
+                                manager.shutdown(),
+                                observer_resolver.shutdown(),
+                            ).await {
+                                tracing::warn!(%error, "Radicle integration shutdown deadline exceeded");
+                            }
+                            break;
+                        }
+                        _ = interval.tick() => {
+                            observer_publisher.observe_manager(manager.status());
+                            observer_publisher.observe_evidence(evidence.snapshot());
+                            metrics.record(&observer_status.snapshot());
+                        }
+                    }
+                }
+            });
+            let local = outbe_radicle::integration::LocalEndpointIdentity {
+                validator,
+                node_id: sidecar.node_id,
+                addresses: sidecar.addresses,
+            };
+            (
+                Some((endpoint, local, radicle_status.clone())),
+                Some(observer),
+            )
+        } else {
+            (None, None)
+        };
 
         let renewal_handle = renewal_worker.map(|worker| {
             tokio::spawn(run_renewal_worker_v1(worker, shutdown_token.clone()))
@@ -1530,6 +1714,7 @@ fn run_node() -> eyre::Result<()> {
                 ocomp_readiness_for_consensus,
                 finalized_ce_committer,
                 ce_startup_recovery,
+                radicle_consensus,
             ));
 
             tokio::select! {
@@ -1622,6 +1807,12 @@ fn run_node() -> eyre::Result<()> {
         }
 
         shutdown_token.cancel();
+        if let Some(handle) = radicle_observer {
+            match tokio::time::timeout(std::time::Duration::from_secs(6), handle).await {
+                Ok(result) => result.wrap_err("Radicle observer panicked")?,
+                Err(_) => tracing::warn!("Radicle observer join deadline exceeded"),
+            }
+        }
         if let Some(handle) = renewal_handle {
             handle.await.wrap_err("automatic DCAP renewal worker panicked")?;
         }

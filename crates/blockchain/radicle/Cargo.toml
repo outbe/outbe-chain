@@ -11,6 +11,9 @@ alloy-primitives.workspace = true
 bytes.workspace = true
 commonware-codec.workspace = true
 commonware-cryptography.workspace = true
+commonware-actor.workspace = true
+commonware-p2p.workspace = true
+commonware-runtime.workspace = true
 futures.workspace = true
 hex.workspace = true
 idna.workspace = true
@@ -27,12 +30,15 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+metrics.workspace = true
 
 [dev-dependencies]
 hex.workspace = true
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
 proptest.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
+metrics-util = "0.20"
+tempfile.workspace = true
 
 [lints]
 workspace = true
