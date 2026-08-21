@@ -702,7 +702,7 @@ def address_pair(base: str, quote: str) -> bytes:
 # Gem states (crates/core/gem/src/schema.rs::GemState). Only Settled gems may be
 # genesis-seeded — `add_gem` parks Issued gems in a bin-tree index this seeder
 # does not reproduce, and `mineGemPromis` requires state == Settled.
-GEM_STATE_SETTLED = 2
+GEM_STATE_SETTLED = 3
 # Default gem type when unspecified (GemTypes::Wallet). Not validated by
 # `mineGemPromis`, so any agent class works.
 GEM_TYPE_WALLET = 3

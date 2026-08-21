@@ -48,7 +48,7 @@ const gratisAddress = process.env["GRATIS_ADDRESS"] || DEFAULT_GRATIS_ADDRESS;
 const promisAddress = process.env["PROMIS_ADDRESS"] || DEFAULT_PROMIS_ADDRESS;
 const gratisFactoryAddress = process.env["GRATIS_FACTORY_ADDRESS"] || DEFAULT_GRATIS_FACTORY_ADDRESS;
 
-const GEM_STATE_SETTLED = 2;
+const GEM_STATE_SETTLED = 3;
 
 async function main() {
   const provider = new ethers.JsonRpcProvider(rpcUrl);

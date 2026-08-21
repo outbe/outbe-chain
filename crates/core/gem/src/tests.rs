@@ -536,6 +536,9 @@ fn gem_storage_layout_matches_genesis_seeder() {
         assert_eq!(gem.owner_gem_ids.base_slot(), U256::from(20u64));
         // all_gem_ids (List) occupies slot 21.
         assert_eq!(gem.gem_index.base_slot(), U256::from(22u64));
+        // The seeder writes the raw `state` byte, so its GEM_STATE_SETTLED must
+        // track this discriminant.
+        assert_eq!(GemState::Settled as u8, 3);
     });
 }
 /// Build a full-window (newest-first) list with `breach_days` entries above the
