@@ -114,11 +114,13 @@ commonware-utils.workspace = true
 commonware-math.workspace = true
 rand_core.workspace = true
 
+[features]
+# Point the precompiles at a throwaway contract set an e2e run can deploy itself.
+e2e-test = ["outbe-desis/e2e-test", "outbe-intexfactory/e2e-test", "outbe-cycle/e2e-test"]
+
 [package.metadata.cargo-machete]
 ignored = ["hex"]
 
 [lints]
 workspace = true
 
-[features]
-e2e-test = ["outbe-intexfactory/e2e-test"]

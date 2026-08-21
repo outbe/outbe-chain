@@ -23,9 +23,11 @@ pub mod l2_zk_gate;
 pub mod lifecycle;
 #[cfg(feature = "ocomp-integration")]
 pub mod ocomp;
+pub mod origin_venue;
 pub mod restart;
 pub mod stablecoin;
 pub mod stale_join;
+pub mod target_chain;
 pub mod tribute_projection;
 pub mod zerofee;
 
