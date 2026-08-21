@@ -8,7 +8,7 @@
 #
 #   <from>, <to>     decimal, hex (0x…), or one of: latest|earliest|safe|finalized
 #                    Use "latest" for <to> to scan up to the head.
-#   rpc_url          default http://localhost:8545
+#   rpc_url          default http://localhost:18545
 #
 # Options:
 #   --address <hex>          filter by contract address (repeatable)
@@ -41,7 +41,7 @@ fi
 FROM_RAW="$1"; shift
 TO_RAW="$1"; shift
 
-RPC_URL="http://localhost:8545"
+RPC_URL="http://localhost:18545"
 ADDRESSES=()
 TOPIC0_FILTERS=()
 EXTRA_SIGS=()

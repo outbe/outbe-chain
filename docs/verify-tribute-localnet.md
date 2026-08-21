@@ -119,7 +119,7 @@ export OUTBE_TEE_ENCLAVE_BINARY="$PWD/target/release/outbe-tee-enclave-mock"
 Wait until the block number is greater than zero:
 
 ```sh
-RPC_PORT=$((8545 + PORT_OFFSET))
+RPC_PORT=$((18545 + PORT_OFFSET))
 cast block-number --rpc-url "http://127.0.0.1:$RPC_PORT"
 ```
 

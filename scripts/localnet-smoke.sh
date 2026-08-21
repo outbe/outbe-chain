@@ -28,7 +28,7 @@ OUTBE_CHAIN_BINARY="${OUTBE_CHAIN_BINARY:-./target/release/outbe-chain}"
 OUT_DIR="${OUT_DIR:-$(mktemp -d /tmp/outbe-localnet-smoke.XXXXXX)}"
 TARGET="${SMOKE_TARGET_HEIGHT:-5}"
 TIMEOUT="${SMOKE_TIMEOUT_SECS:-240}"
-BASE_RPC_PORT=8545
+BASE_RPC_PORT=18545
 export OUT_DIR OUTBE_CHAIN_BINARY
 
 if [[ ! -x "$OUTBE_CHAIN_BINARY" ]]; then
