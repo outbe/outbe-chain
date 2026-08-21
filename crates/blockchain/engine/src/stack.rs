@@ -164,7 +164,7 @@ pub struct ConsensusStackServices {
     radicle_status: outbe_radicle::integration::RadicleStatusHandle,
     radicle_endpoint: Option<(
         outbe_radicle::integration::EndpointNetworkService,
-        outbe_radicle::integration::LocalEndpointIdentity,
+        outbe_radicle::integration::LocalEndpointIdentityHandle,
     )>,
 }
 
@@ -197,7 +197,7 @@ impl ConsensusStackServices {
         mut self,
         status: outbe_radicle::integration::RadicleStatusHandle,
         endpoint: outbe_radicle::integration::EndpointNetworkService,
-        local: outbe_radicle::integration::LocalEndpointIdentity,
+        local: outbe_radicle::integration::LocalEndpointIdentityHandle,
     ) -> Self {
         self.radicle_status = status;
         self.radicle_endpoint = Some((endpoint, local));

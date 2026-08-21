@@ -781,7 +781,7 @@ fn run_node() -> eyre::Result<()> {
         Arc<dyn CeStartupRecovery>,
         Option<(
             outbe_radicle::integration::EndpointNetworkService,
-            outbe_radicle::integration::LocalEndpointIdentity,
+            outbe_radicle::integration::LocalEndpointIdentityHandle,
             outbe_radicle::integration::RadicleStatusHandle,
         )>,
     )>();
@@ -1572,6 +1572,19 @@ fn run_node() -> eyre::Result<()> {
                     },
                     radicle_status.clone(),
                 );
+            let (local_endpoint_publisher, local_endpoint) =
+                outbe_radicle::integration::LocalEndpointIdentityChannel::create(
+                    outbe_radicle::integration::LocalEndpointIdentity {
+                        validator,
+                        node_id: sidecar.node_id,
+                        addresses: sidecar.addresses,
+                    },
+                );
+            let pinned_node_id = sidecar.node_id;
+            let radicle_control_socket = args
+                .radicle_control_socket
+                .clone()
+                .expect("validated Radicle control socket");
             let repository_status: Arc<dyn outbe_radicle::manager::RepositoryStatus> = Arc::new(
                 outbe_radicle::manager::HttpRepositoryStatus::new(
                     args.radicle_status_address
@@ -1604,9 +1617,7 @@ fn run_node() -> eyre::Result<()> {
                     snapshots: observed_snapshots,
                     endpoints: Arc::new(resolver.clone()),
                     control: Arc::new(outbe_radicle::manager::NativeHeartwoodControl::new(
-                        args.radicle_control_socket
-                            .clone()
-                            .expect("validated Radicle control socket"),
+                        radicle_control_socket.clone(),
                         std::time::Duration::from_secs(5),
                     )),
                     repository_status,
@@ -1619,6 +1630,12 @@ fn run_node() -> eyre::Result<()> {
             let observer = tokio::spawn(async move {
                 let manager = manager;
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+                let mut local_endpoint_interval = tokio::time::interval(
+                    outbe_radicle::integration::PRODUCTION_REPAIR_INTERVAL,
+                );
+                local_endpoint_interval.set_missed_tick_behavior(
+                    tokio::time::MissedTickBehavior::Skip,
+                );
                 let mut metrics = outbe_radicle::integration::RadicleMetrics::default();
                 loop {
                     tokio::select! {
@@ -1637,16 +1654,39 @@ fn run_node() -> eyre::Result<()> {
                             observer_publisher.observe_evidence(evidence.snapshot());
                             metrics.record(&observer_status.snapshot());
                         }
+                        _ = local_endpoint_interval.tick() => {
+                            match outbe_radicle::integration::query_sidecar(
+                                &radicle_control_socket,
+                                std::time::Duration::from_secs(5),
+                            ).await {
+                                Ok(sidecar) if sidecar.node_id == pinned_node_id => {
+                                    let _ = local_endpoint_publisher.update(
+                                        sidecar.node_id,
+                                        sidecar.addresses,
+                                    );
+                                }
+                                Ok(sidecar) => {
+                                    local_endpoint_publisher.unavailable();
+                                    tracing::error!(
+                                        expected_node_id = ?pinned_node_id,
+                                        actual_node_id = ?sidecar.node_id,
+                                        "Radicle sidecar NodeId changed; endpoint publication suppressed"
+                                    );
+                                }
+                                Err(error) => {
+                                    local_endpoint_publisher.unavailable();
+                                    tracing::warn!(
+                                        %error,
+                                        "Radicle sidecar identity refresh failed; endpoint publication suppressed"
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
             });
-            let local = outbe_radicle::integration::LocalEndpointIdentity {
-                validator,
-                node_id: sidecar.node_id,
-                addresses: sidecar.addresses,
-            };
             (
-                Some((endpoint, local, radicle_status.clone())),
+                Some((endpoint, local_endpoint, radicle_status.clone())),
                 Some(observer),
             )
         } else {

@@ -6,7 +6,8 @@ mod status;
 pub use metrics::RadicleMetrics;
 pub use network::{
     shutdown_bounded, EndpointEvidenceHandle, EndpointNetwork, EndpointNetworkService,
-    LocalEndpointIdentity, SignedEndpointEvidence,
+    LocalEndpointIdentity, LocalEndpointIdentityChannel, LocalEndpointIdentityHandle,
+    LocalEndpointIdentityPublisher, SignedEndpointEvidence,
 };
 pub use sidecar::{query_sidecar, SidecarError, SidecarInfo};
 pub use status::{

@@ -4,7 +4,7 @@ use crate::{
         sign_response, AnchorSnapshot, AuthorityRecord, ChainIdentity, EndpointActor,
         EndpointAddress, EndpointFrame, EndpointHandle, EndpointProtocol, EndpointResponseBody,
         OsRequestIds, PeerId, ReceiveOutcome, SignedEndpointResponse, VerifiedEndpoint,
-        HANDLE_DEADLINE, MAX_ENDPOINT_TTL_BLOCKS, UNKNOWN_ANCHOR_TIMEOUT_MS,
+        HANDLE_DEADLINE, MAX_ADDRESSES, MAX_ENDPOINT_TTL_BLOCKS, UNKNOWN_ANCHOR_TIMEOUT_MS,
     },
     manager::{BoxFuture, EndpointResolver, FinalizedSnapshot, ManagerError},
 };
@@ -18,13 +18,77 @@ use std::{
     sync::{Arc, RwLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LocalEndpointIdentity {
     pub validator: Address,
     pub node_id: [u8; 32],
     pub addresses: Vec<EndpointAddress>,
+}
+
+pub struct LocalEndpointIdentityChannel;
+
+#[derive(Clone)]
+pub struct LocalEndpointIdentityPublisher {
+    validator: Address,
+    expected_node_id: [u8; 32],
+    sender: watch::Sender<Option<LocalEndpointIdentity>>,
+}
+
+#[derive(Clone)]
+pub struct LocalEndpointIdentityHandle {
+    validator: Address,
+    receiver: watch::Receiver<Option<LocalEndpointIdentity>>,
+}
+
+impl LocalEndpointIdentityChannel {
+    #[must_use]
+    pub fn create(
+        initial: LocalEndpointIdentity,
+    ) -> (LocalEndpointIdentityPublisher, LocalEndpointIdentityHandle) {
+        let validator = initial.validator;
+        let expected_node_id = initial.node_id;
+        let (sender, receiver) = watch::channel(Some(initial));
+        (
+            LocalEndpointIdentityPublisher {
+                validator,
+                expected_node_id,
+                sender,
+            },
+            LocalEndpointIdentityHandle {
+                validator,
+                receiver,
+            },
+        )
+    }
+}
+
+impl LocalEndpointIdentityPublisher {
+    pub fn update(&self, node_id: [u8; 32], mut addresses: Vec<EndpointAddress>) -> bool {
+        addresses.sort();
+        let valid = node_id == self.expected_node_id
+            && !addresses.is_empty()
+            && addresses.len() <= MAX_ADDRESSES
+            && !addresses.windows(2).any(|pair| pair[0] == pair[1]);
+        self.sender
+            .send_replace(valid.then_some(LocalEndpointIdentity {
+                validator: self.validator,
+                node_id,
+                addresses,
+            }));
+        valid
+    }
+
+    pub fn unavailable(&self) {
+        self.sender.send_replace(None);
+    }
+}
+
+impl LocalEndpointIdentityHandle {
+    fn current(&self) -> Option<LocalEndpointIdentity> {
+        self.receiver.borrow().clone()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -144,7 +208,7 @@ impl EndpointNetworkService {
         mut sender: S,
         mut receiver: R,
         signer: bls12381::PrivateKey,
-        local: LocalEndpointIdentity,
+        local: LocalEndpointIdentityHandle,
     ) -> Result<(), ManagerError>
     where
         S: LimitedSender<PublicKey = bls12381::PublicKey> + Send + 'static,
@@ -166,7 +230,7 @@ impl EndpointNetworkService {
                         Some(NetworkCommand::Refresh { snapshot, result }) => {
                             let refreshed = self.refresh(
                                 &mut sender,
-                                &local,
+                                local.validator,
                                 &snapshot,
                                 &mut queued,
                             ).await;
@@ -205,7 +269,7 @@ impl EndpointNetworkService {
     async fn refresh<S>(
         &self,
         sender: &mut S,
-        local: &LocalEndpointIdentity,
+        local_validator: Address,
         snapshot: &FinalizedSnapshot,
         queued: &mut BTreeMap<PeerId, (SignedEndpointResponse, u64)>,
     ) -> Result<Vec<VerifiedEndpoint>, ManagerError>
@@ -231,7 +295,7 @@ impl EndpointNetworkService {
         for validator in snapshot
             .validators
             .iter()
-            .filter(|validator| validator.address != local.validator && validator.node_id.is_some())
+            .filter(|validator| validator.address != local_validator && validator.node_id.is_some())
         {
             let request = match self.handle.request(validator.peer, now).await {
                 Ok(request) => request,
@@ -257,7 +321,7 @@ impl EndpointNetworkService {
         &self,
         sender: &mut S,
         signer: &bls12381::PrivateKey,
-        local: &LocalEndpointIdentity,
+        local: &LocalEndpointIdentityHandle,
         snapshot: Option<&FinalizedSnapshot>,
         queued: &mut BTreeMap<PeerId, (SignedEndpointResponse, u64)>,
         received: (bls12381::PublicKey, IoBuf),
@@ -272,6 +336,9 @@ impl EndpointNetworkService {
                 if self.status.snapshot().voting_gate != RadicleVotingGate::SignerAllowed {
                     return Ok(());
                 }
+                let Some(local) = local.current() else {
+                    return Ok(());
+                };
                 let Some(snapshot) = snapshot else {
                     return Ok(());
                 };

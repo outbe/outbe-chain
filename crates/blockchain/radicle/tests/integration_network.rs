@@ -10,8 +10,8 @@ use outbe_radicle::{
         MAX_ENDPOINT_TTL_BLOCKS,
     },
     integration::{
-        EndpointNetwork, LocalEndpointIdentity, RadicleStatusChannel, RadicleVotingGate,
-        RadicleVotingGateError,
+        EndpointNetwork, LocalEndpointIdentity, LocalEndpointIdentityChannel, RadicleStatusChannel,
+        RadicleVotingGate, RadicleVotingGateError,
     },
     manager::{EndpointResolver as _, FinalizedBlock, FinalizedSnapshot, FinalizedValidator},
 };
@@ -199,6 +199,7 @@ async fn request_response_and_signed_evidence() {
         node_id: [1_u8; 32],
         addresses: vec![EndpointAddress::dns("a.example.com", 8776).unwrap()],
     };
+    let (_, local) = LocalEndpointIdentityChannel::create(local);
     let task =
         tokio::spawn(service.run(sender, MockReceiver { receiver }, signer_a.clone(), local));
     let current = snapshot(10, &signer_a, &signer_b, true);
@@ -277,16 +278,19 @@ async fn response_gate() {
         },
         status,
     );
-    let task = tokio::spawn(service.run(
-        sender,
-        MockReceiver { receiver },
-        signer_a.clone(),
-        LocalEndpointIdentity {
-            validator: Address::repeat_byte(0x11),
-            node_id: [1_u8; 32],
-            addresses: vec![EndpointAddress::dns("a.example.com", 8776).unwrap()],
-        },
-    ));
+    let task = tokio::spawn(
+        service.run(
+            sender,
+            MockReceiver { receiver },
+            signer_a.clone(),
+            LocalEndpointIdentityChannel::create(LocalEndpointIdentity {
+                validator: Address::repeat_byte(0x11),
+                node_id: [1_u8; 32],
+                addresses: vec![EndpointAddress::dns("a.example.com", 8776).unwrap()],
+            })
+            .1,
+        ),
+    );
     let joining = snapshot(20, &signer_a, &signer_b, false);
     resolver.refresh(&joining).await.unwrap();
     let baseline = wait_for_frames(&sent, 1).await.len();
@@ -384,6 +388,119 @@ async fn response_gate() {
 }
 
 #[tokio::test]
+async fn live_local_endpoint_identity_replaces_addresses_and_suppresses_stale_responses() {
+    let signer_a = bls12381::PrivateKey::from_seed(31);
+    let signer_b = bls12381::PrivateKey::from_seed(32);
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let sender = MockSender { sent: sent.clone() };
+    let (incoming, receiver) = mpsc::unbounded_channel();
+    let (gate, status) = RadicleStatusChannel::enabled(Address::repeat_byte(0x11), [1_u8; 32]);
+    gate.mark_startup_ready();
+    let (service, resolver, _evidence) = EndpointNetwork::build(
+        ChainIdentity {
+            chain_id: 54_322_345,
+            genesis_hash: B256::repeat_byte(0xaa),
+        },
+        status,
+    );
+    let (publisher, local) = LocalEndpointIdentityChannel::create(LocalEndpointIdentity {
+        validator: Address::repeat_byte(0x11),
+        node_id: [1_u8; 32],
+        addresses: vec![EndpointAddress::dns("a.example.com", 8776).unwrap()],
+    });
+    let task =
+        tokio::spawn(service.run(sender, MockReceiver { receiver }, signer_a.clone(), local));
+    let current = snapshot(40, &signer_a, &signer_b, true);
+    resolver.refresh(&current).await.unwrap();
+    let baseline = wait_for_frames(&sent, 1).await.len();
+
+    let send_request = |request_id: u8| {
+        incoming
+            .send((
+                signer_b.public_key(),
+                EndpointFrame::Request(EndpointRequest::new([request_id; 32]).unwrap())
+                    .encode()
+                    .into(),
+            ))
+            .unwrap();
+    };
+    let response_addresses = || {
+        sent.lock()
+            .unwrap()
+            .iter()
+            .skip(baseline)
+            .filter_map(|(_, bytes)| match EndpointFrame::decode(bytes).ok()? {
+                EndpointFrame::Response(response) => Some(response.body().addresses.clone()),
+                EndpointFrame::Request(_) => None,
+            })
+            .collect::<Vec<_>>()
+    };
+
+    send_request(41);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while response_addresses().len() != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        response_addresses()[0],
+        vec![EndpointAddress::dns("a.example.com", 8776).unwrap()]
+    );
+
+    assert!(publisher.update(
+        [1_u8; 32],
+        vec![EndpointAddress::dns("a.example.com", 9776).unwrap()]
+    ));
+    send_request(42);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while response_addresses().len() != 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        response_addresses()[1],
+        vec![EndpointAddress::dns("a.example.com", 9776).unwrap()]
+    );
+
+    publisher.unavailable();
+    send_request(43);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert_eq!(response_addresses().len(), 2);
+
+    assert!(!publisher.update(
+        [9_u8; 32],
+        vec![EndpointAddress::dns("wrong.example.com", 10776).unwrap()]
+    ));
+    send_request(44);
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert_eq!(response_addresses().len(), 2);
+
+    assert!(publisher.update(
+        [1_u8; 32],
+        vec![EndpointAddress::ipv4([198, 51, 100, 1], 11776).unwrap()]
+    ));
+    send_request(45);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while response_addresses().len() != 3 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        response_addresses()[2],
+        vec![EndpointAddress::ipv4([198, 51, 100, 1], 11776).unwrap()]
+    );
+
+    resolver.shutdown().await.unwrap();
+    task.await.unwrap().unwrap();
+}
+
+#[tokio::test]
 async fn future_anchor_evidence_is_published_only_after_exact_resolution() {
     let signer_a = bls12381::PrivateKey::from_seed(21);
     let signer_b = bls12381::PrivateKey::from_seed(22);
@@ -399,16 +516,19 @@ async fn future_anchor_evidence_is_published_only_after_exact_resolution() {
         },
         status,
     );
-    let task = tokio::spawn(service.run(
-        sender,
-        MockReceiver { receiver },
-        signer_a.clone(),
-        LocalEndpointIdentity {
-            validator: Address::repeat_byte(0x11),
-            node_id: [1_u8; 32],
-            addresses: vec![EndpointAddress::dns("a.example.com", 8776).unwrap()],
-        },
-    ));
+    let task = tokio::spawn(
+        service.run(
+            sender,
+            MockReceiver { receiver },
+            signer_a.clone(),
+            LocalEndpointIdentityChannel::create(LocalEndpointIdentity {
+                validator: Address::repeat_byte(0x11),
+                node_id: [1_u8; 32],
+                addresses: vec![EndpointAddress::dns("a.example.com", 8776).unwrap()],
+            })
+            .1,
+        ),
+    );
     let at_30 = snapshot(30, &signer_a, &signer_b, true);
     let at_31 = snapshot(31, &signer_a, &signer_b, true);
     resolver.refresh(&at_30).await.unwrap();
