@@ -81,6 +81,11 @@ use crate::ocomp_evidence::{
 
 #[cfg(feature = "ocomp-integration")]
 const OCOMP_MAX_WORKERS_PER_DOMAIN: usize = 4;
+/// Longer than the projection writer lease a killed exporter leaves behind.
+#[cfg(feature = "ocomp-integration")]
+const WRITER_LEASE_LAPSE: Duration = Duration::from_secs(7);
+#[cfg(feature = "ocomp-integration")]
+const EXPORTER_RESTART_ATTEMPTS: u8 = 3;
 #[cfg(feature = "ocomp-integration")]
 const OCOMP_BASE_PATH_ENV: &str = "OUTBE_OCOMP_BASE_PATH";
 #[cfg(feature = "ocomp-integration")]
@@ -889,9 +894,10 @@ impl OcompTopology {
                 0o600,
             )?;
             let evm_key = ocomp_evm_private_key(u8::try_from(validator_index)?);
+            // The signer reads bare 64-hex plus LF.
             publish_exact_file(
                 &domain.root.join("ocomp-evm-key.hex"),
-                format!("{evm_key}\n").as_bytes(),
+                format!("{}\n", evm_key.trim_start_matches("0x")).as_bytes(),
                 0o600,
             )?;
         }
@@ -2035,6 +2041,15 @@ impl OcompTopology {
     /// Restart the fixed SnapshotExporter role in one domain after a typed stop.
     #[cfg(feature = "ocomp-integration")]
     pub fn restart_snapshot_exporter(&mut self, validator_index: u8) -> Result<()> {
+        self.restart_snapshot_exporter_inner(validator_index, EXPORTER_RESTART_ATTEMPTS)
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    fn restart_snapshot_exporter_inner(
+        &mut self,
+        validator_index: u8,
+        attempts_left: u8,
+    ) -> Result<()> {
         if self.domain(validator_index)?.snapshot_exporter.is_some() {
             eyre::bail!("validator-{validator_index} snapshot exporter is already running");
         }
@@ -2061,6 +2076,16 @@ impl OcompTopology {
                 .expect("attached immediately above");
             (process.record_index, process.guard.exited())
         };
+        if exited && attempts_left > 0 {
+            // The killed predecessor keeps its projection writer lease until the
+            // lease lapses, so an immediate successor loses the race with it.
+            self.records[record_index].stopped_at_millis = Some(unix_time_millis());
+            if let Some(process) = self.domain_mut(validator_index)?.snapshot_exporter.take() {
+                self.stop_owned(process);
+            }
+            sleep(WRITER_LEASE_LAPSE);
+            return self.restart_snapshot_exporter_inner(validator_index, attempts_left - 1);
+        }
         if exited {
             self.records[record_index].stopped_at_millis = Some(unix_time_millis());
             eyre::bail!(

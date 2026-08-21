@@ -276,7 +276,7 @@ fn derived_caps_are_bound_to_production_phase_and_tick_cadence() {
     assert_eq!(MAX_RETAINED_WWDS, MAX_RECORDS_KEPT);
     assert_eq!(MAX_ACTIVE_WWDS, MAX_PIPELINE_WWDS + MAX_RECORDS_KEPT);
     assert_eq!(MAX_ADMISSION_WAIT_TICKS, 27);
-    assert_eq!(MAX_ADMISSION_WAIT_HOURS, 324);
+    assert_eq!(MAX_ADMISSION_WAIT_HOURS, 27);
     const {
         assert!(WWD_ADVANCE_TICK_CADENCE_HOURS < WWD_CREATION_CADENCE_HOURS);
     }

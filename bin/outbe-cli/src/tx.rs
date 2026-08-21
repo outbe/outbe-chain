@@ -7,17 +7,29 @@ use k256::ecdsa::SigningKey;
 
 use crate::rpc::Rpc;
 
-/// Buffer the suggested gas price so a legacy tx survives an EIP-1559 base-fee rise
-/// between the `eth_gasPrice` read and inclusion. `eth_gasPrice` returns the current
-/// base fee, but the begin-zone system txs (and offer decryption) make blocks bursty,
-/// so the base fee can climb several steps before the tx lands — leaving a tx priced
-/// exactly at the read-time base fee rejected as `gas price is less than basefee`.
-/// The chain is ZeroFee, so over-pricing costs the sender nothing. A `2x`
-/// headroom plus the protocol's raw `unit/gas` floor keeps txs admittable.
-pub(crate) fn buffered_gas_price(suggested: U256) -> U256 {
-    suggested
+/// Price a legacy tx off the block's base fee, with `2x` headroom so it survives a
+/// base-fee rise between the read and inclusion — the begin-zone system txs and offer
+/// decryption make blocks bursty enough for several steps.
+///
+/// Deliberately not the `eth_gasPrice` suggestion: that figure includes the tips of
+/// recently mined txs, which on this chain are mostly our own. Doubling it fed the
+/// next suggestion, which we doubled again, and the advised price climbed 7, 14, 28,
+/// 56 with no demand behind it. Over-pricing is not free either — the sender must
+/// hold `gas_limit * gas_price` up front, so a runaway price locks a payer out.
+pub(crate) fn buffered_gas_price(base_fee: U256) -> U256 {
+    base_fee
         .saturating_mul(U256::from(2))
         .max(U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE))
+}
+
+/// Latest block base fee; a chain that states none prices at the protocol floor.
+pub(crate) async fn latest_base_fee(client: &impl Rpc) -> eyre::Result<U256> {
+    let block = client.eth_get_latest_block().await?;
+    Ok(block
+        .get("baseFeePerGas")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|hex| U256::from_str_radix(hex.trim_start_matches("0x"), 16).ok())
+        .unwrap_or_else(|| U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE)))
 }
 
 /// Transaction signer backed by a secp256k1 private key.
@@ -73,7 +85,7 @@ impl TxSigner {
     ) -> Result<String> {
         let chain_id = client.eth_chain_id().await?;
         let nonce = client.eth_get_transaction_count(self.address).await?;
-        let gas_price = buffered_gas_price(client.eth_gas_price().await?);
+        let gas_price = buffered_gas_price(latest_base_fee(client).await?);
         let gas_limit = client
             .eth_estimate_gas(self.address, to, &data, value)
             .await?;
@@ -101,7 +113,7 @@ impl TxSigner {
     ) -> Result<String> {
         let chain_id = client.eth_chain_id().await?;
         let nonce = client.eth_get_transaction_count(self.address).await?;
-        let gas_price = buffered_gas_price(client.eth_gas_price().await?);
+        let gas_price = buffered_gas_price(latest_base_fee(client).await?);
         let raw_tx =
             self.sign_legacy_tx(nonce, gas_price, gas_limit, to, value, &data, chain_id)?;
         client.eth_send_raw_transaction(&raw_tx).await
@@ -548,7 +560,10 @@ mod tests {
                 },
                 RecordedRpcResponse::U64(NONCE),
             ),
-            ExpectedRpcCall::err(RecordedRpcCall::EthGasPrice, "gas price unavailable"),
+            ExpectedRpcCall::err(
+                RecordedRpcCall::EthGetLatestBlock,
+                "latest block unavailable",
+            ),
         ]);
 
         let err = signer
@@ -556,7 +571,7 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(err.to_string().contains("gas price unavailable"));
+        assert!(err.to_string().contains("latest block unavailable"));
         assert_eq!(
             rpc.recorded_calls(),
             vec![
@@ -564,7 +579,7 @@ mod tests {
                 RecordedRpcCall::EthGetTransactionCount {
                     address: signer.address()
                 },
-                RecordedRpcCall::EthGasPrice,
+                RecordedRpcCall::EthGetLatestBlock,
             ]
         );
         rpc.assert_done();
@@ -586,8 +601,10 @@ mod tests {
                 RecordedRpcResponse::U64(NONCE),
             ),
             ExpectedRpcCall::ok(
-                RecordedRpcCall::EthGasPrice,
-                RecordedRpcResponse::U256(gas_price()),
+                RecordedRpcCall::EthGetLatestBlock,
+                RecordedRpcResponse::Value(serde_json::json!({
+                    "baseFeePerGas": format!("{:#x}", gas_price()),
+                })),
             ),
             ExpectedRpcCall::err(
                 RecordedRpcCall::EthEstimateGas {
@@ -613,7 +630,7 @@ mod tests {
                 RecordedRpcCall::EthGetTransactionCount {
                     address: signer.address()
                 },
-                RecordedRpcCall::EthGasPrice,
+                RecordedRpcCall::EthGetLatestBlock,
                 RecordedRpcCall::EthEstimateGas {
                     from: signer.address(),
                     to: tx_target(),
@@ -643,8 +660,10 @@ mod tests {
                 RecordedRpcResponse::U64(NONCE),
             ),
             ExpectedRpcCall::ok(
-                RecordedRpcCall::EthGasPrice,
-                RecordedRpcResponse::U256(gas_price()),
+                RecordedRpcCall::EthGetLatestBlock,
+                RecordedRpcResponse::Value(serde_json::json!({
+                    "baseFeePerGas": format!("{:#x}", gas_price()),
+                })),
             ),
             ExpectedRpcCall::ok(
                 RecordedRpcCall::EthEstimateGas {
@@ -676,7 +695,7 @@ mod tests {
                 RecordedRpcCall::EthGetTransactionCount {
                     address: signer.address()
                 },
-                RecordedRpcCall::EthGasPrice,
+                RecordedRpcCall::EthGetLatestBlock,
                 RecordedRpcCall::EthEstimateGas {
                     from: signer.address(),
                     to: tx_target(),
@@ -707,8 +726,10 @@ mod tests {
                 RecordedRpcResponse::U64(NONCE),
             ),
             ExpectedRpcCall::ok(
-                RecordedRpcCall::EthGasPrice,
-                RecordedRpcResponse::U256(gas_price()),
+                RecordedRpcCall::EthGetLatestBlock,
+                RecordedRpcResponse::Value(serde_json::json!({
+                    "baseFeePerGas": format!("{:#x}", gas_price()),
+                })),
             ),
             ExpectedRpcCall::ok(
                 RecordedRpcCall::EthEstimateGas {
@@ -752,8 +773,10 @@ mod tests {
                 RecordedRpcResponse::U64(NONCE),
             ),
             ExpectedRpcCall::ok(
-                RecordedRpcCall::EthGasPrice,
-                RecordedRpcResponse::U256(gas_price()),
+                RecordedRpcCall::EthGetLatestBlock,
+                RecordedRpcResponse::Value(serde_json::json!({
+                    "baseFeePerGas": format!("{:#x}", gas_price()),
+                })),
             ),
             ExpectedRpcCall::ok(
                 RecordedRpcCall::EthEstimateGas {
@@ -795,8 +818,10 @@ mod tests {
                 RecordedRpcResponse::U64(NONCE),
             ),
             ExpectedRpcCall::ok(
-                RecordedRpcCall::EthGasPrice,
-                RecordedRpcResponse::U256(gas_price()),
+                RecordedRpcCall::EthGetLatestBlock,
+                RecordedRpcResponse::Value(serde_json::json!({
+                    "baseFeePerGas": format!("{:#x}", gas_price()),
+                })),
             ),
             ExpectedRpcCall::ok(
                 RecordedRpcCall::EthEstimateGas {
@@ -822,7 +847,7 @@ mod tests {
                 RecordedRpcCall::EthGetTransactionCount {
                     address: signer.address()
                 },
-                RecordedRpcCall::EthGasPrice,
+                RecordedRpcCall::EthGetLatestBlock,
                 RecordedRpcCall::EthEstimateGas {
                     from: signer.address(),
                     to: tx_target(),

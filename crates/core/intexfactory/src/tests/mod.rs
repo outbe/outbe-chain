@@ -1,4 +1,4 @@
-use alloy_primitives::{address, keccak256, Address, U256};
+use alloy_primitives::{address, keccak256, Address, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_intex::SeriesId;

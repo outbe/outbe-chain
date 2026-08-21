@@ -67,7 +67,7 @@ After Phase 1 precommit, the current explicit pre-execution order is:
 9. Intex qualification-period/floor qualification and proceeds settlement sweep;
 10. Desis auction clearing fan-in gate.
 
-Cycle owns UTC-midnight/noon economic orchestration and compressed-body mutations
+Cycle owns hourly UTC-boundary economic orchestration and compressed-body mutations
 through receipt-visible system transactions. Oracle slash-window exits execute
 after BoundaryOutcome so an incoming target is activated before penalties can mark
 members EXITING (`executor.rs:516-606`).

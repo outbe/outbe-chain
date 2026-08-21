@@ -137,6 +137,17 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
         self.assertEqual(storage.entries[seed_genesis.hex32(19)], seed_genesis.hex32(1))
         self.assertEqual(storage.entries[seed_genesis.hex32(20)], seed_genesis.hex32(1))
 
+    def test_cycle_active_day_is_seeded_from_header_timestamp(self):
+        genesis = {
+            "timestamp": hex(1_704_103_200),  # 2024-01-01 10:00:00 UTC
+            "config": {"genesisTime": "2099-12-31T23:59:59Z"},
+        }
+        storage = seed_genesis.StorageBuilder()
+
+        seed_genesis.seed_cycle(storage, seed_genesis.parse_header_timestamp(genesis))
+
+        self.assertEqual(storage.entries[seed_genesis.hex32(2)], seed_genesis.hex32(20240101))
+
 
 if __name__ == "__main__":
     unittest.main()

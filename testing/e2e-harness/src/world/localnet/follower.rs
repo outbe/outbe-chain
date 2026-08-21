@@ -104,11 +104,11 @@ impl Localnet {
             "--tee-renewal.relay-key",
             node_dir.join("relay-evm-key.hex").display(),
             "--tee-renewal.rpc-url",
-            format!("http://localhost:{}", self.cfg.http_port(upstream_slot)),
+            format!("http://127.0.0.1:{}", self.cfg.http_port(upstream_slot)),
             "--tee-renewal.poll-secs",
             "2",
             "--upstream",
-            format!("http://localhost:{}", self.cfg.http_port(upstream_slot)),
+            format!("http://127.0.0.1:{}", self.cfg.http_port(upstream_slot)),
             "--consensus.listen-addr",
             format!("127.0.0.1:{}", self.cfg.consensus_port(index)),
         ]);

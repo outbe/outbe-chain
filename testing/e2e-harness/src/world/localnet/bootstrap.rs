@@ -14,6 +14,7 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 #[cfg(not(feature = "ocomp-integration"))]
 use alloy_primitives::hex;
 use eyre::{bail, eyre, Result, WrapErr};
@@ -336,7 +337,7 @@ impl Localnet {
                     .arg("--minimum-tcb-evaluation-data-number")
                     .arg("1");
             }
-            TeeMode::SgxNoAttest | TeeMode::GramineDirect | TeeMode::Mock => {
+            TeeMode::SgxNoAttest | TeeMode::GramineDirect | TeeMode::Mock | TeeMode::MockNative => {
                 command.arg("gramine-direct-dev");
             }
         }
@@ -701,6 +702,14 @@ impl Localnet {
             "timestamp": format!("0x{now:x}"),
             "extraData": "0x",
             "gasLimit": "0x1c9c380",
+            // Start at the EIP-1559 floor. Omitting this takes reth's 1 Gwei
+            // Ethereum default, which no account here can pay: COEN carries six
+            // decimals, so a validator's 10000 COEN is 10^10 base units and buys
+            // 13 gas at a Gwei. Every harness transaction is priced at
+            // MIN_PROTOCOL_BASE_FEE for that reason, and the base fee only sheds
+            // 12.5% per under-target block — about 140 blocks before the floor
+            // is reachable, while the localnet starts issuing work at block 2.
+            "baseFeePerGas": format!("0x{MIN_PROTOCOL_BASE_FEE:x}"),
             "difficulty": "0x0",
             "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
             "coinbase": "0x0000000000000000000000000000000000000000",
@@ -952,7 +961,7 @@ fn apply_co_located_sgx_timing(
 const fn localnet_chain_id(tee_mode: TeeMode) -> u64 {
     match tee_mode {
         TeeMode::Real | TeeMode::SgxNoAttest => TESTNET_CHAIN_ID,
-        TeeMode::GramineDirect | TeeMode::Mock => DEVNET_CHAIN_ID,
+        TeeMode::GramineDirect | TeeMode::Mock | TeeMode::MockNative => DEVNET_CHAIN_ID,
     }
 }
 

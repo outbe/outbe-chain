@@ -394,7 +394,7 @@ impl Localnet {
             "--tee-renewal.relay-key",
             vd.join("evm-key.hex").display(),
             "--tee-renewal.rpc-url",
-            format!("http://localhost:{}", self.cfg.http_port(i)),
+            format!("http://127.0.0.1:{}", self.cfg.http_port(i)),
             "--tee-renewal.poll-secs",
             "2",
             "--consensus.listen-addr",
@@ -452,17 +452,15 @@ impl Localnet {
             tee_port: port,
             enclave_bin,
             signing_key: self.cfg.dir.join("test-sgx-signing-key.pem"),
-            image_id: self
-                .enclave_image_id
-                .clone()
-                .ok_or_else(|| eyre::eyre!("Gramine Docker image identity was not resolved"))?,
+            launch: self.enclave_launch()?,
             sudo: self.cfg.sudo,
             pass_sgx_devices: self.cfg.tee_mode.passes_sgx_devices(),
             remote_attestation: match self.cfg.tee_mode {
                 crate::env::TeeMode::Real => proc::TestRemoteAttestation::Dcap,
                 crate::env::TeeMode::SgxNoAttest
                 | crate::env::TeeMode::GramineDirect
-                | crate::env::TeeMode::Mock => proc::TestRemoteAttestation::None,
+                | crate::env::TeeMode::Mock
+                | crate::env::TeeMode::MockNative => proc::TestRemoteAttestation::None,
             },
             dkg_seed,
             seal,

@@ -31,7 +31,7 @@ const REQUIRED_SCENARIO_BINARIES: [&str; 6] = [
 const PUBLIC_SCENARIOS: [(&str, &str, &str); 4] = [
     (
         "OCM-PUB-001",
-        "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay",
+        "A public Tribute completes real OCOMP, FullNode verification, NOD, replay, and contributor payout",
         "PUBLIC_TX_RECEIPT",
     ),
     (
@@ -46,7 +46,7 @@ const PUBLIC_SCENARIOS: [(&str, &str, &str); 4] = [
     ),
     (
         "OCM-PUB-004",
-        "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay",
+        "A public Tribute completes real OCOMP, FullNode verification, NOD, replay, and contributor payout",
         "FINALIZED_PUBLIC_STATE",
     ),
 ];
@@ -54,17 +54,17 @@ const PUBLIC_SCENARIOS: [(&str, &str, &str); 4] = [
 const E2E_SCENARIOS: [(&str, &str, &str); 3] = [
     (
         "OCM-E2E-001",
-        "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay",
+        "A public Tribute completes real OCOMP, FullNode verification, NOD, replay, and contributor payout",
         "FINALIZED_PUBLIC_STATE",
     ),
     (
         "OCM-TRC-001",
-        "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay",
+        "A public Tribute completes real OCOMP, FullNode verification, NOD, replay, and contributor payout",
         "RUNTIME_BOUNDARY_TRACE",
     ),
     (
         "OCM-E2E-008",
-        "A public Tribute completes real OCOMP, FullNode verification, NOD, and replay",
+        "A public Tribute completes real OCOMP, FullNode verification, NOD, replay, and contributor payout",
         "FINALIZED_PUBLIC_STATE",
     ),
 ];
