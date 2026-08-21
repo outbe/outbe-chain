@@ -43,6 +43,11 @@ library BridgeMsgCodec {
     ///         recipients split across them the worst case stays inside the 10_000-byte send cap.
     uint16 internal constant MAX_SERIES_PER_ISSUANCE = 8;
 
+    /// @notice Recipients one ISSUANCE_INSTRUCTIONS may carry across all its series. Narrower than
+    ///         `MAX_PAYLOAD_ARRAY_LEN` because a recipient costs a mint on the destination, which is
+    ///         the dearest per-item work of any message; a wider day is issued as several messages.
+    uint16 internal constant MAX_RECIPIENTS_PER_ISSUANCE = 32;
+
     /// @notice Series one MARK_CALLED or MARK_QUALIFIED message may carry. A batch is one day's
     ///         series that took the same decision at the same moment, so it is short; the cap
     ///         bounds destination work.
@@ -490,8 +495,8 @@ library BridgeMsgCodec {
             }
             recipients += _series[i].recipients.length;
         }
-        if (recipients > MAX_PAYLOAD_ARRAY_LEN) {
-            revert IssuanceBatchTooLarge(recipients, MAX_PAYLOAD_ARRAY_LEN);
+        if (recipients > MAX_RECIPIENTS_PER_ISSUANCE) {
+            revert IssuanceBatchTooLarge(recipients, MAX_RECIPIENTS_PER_ISSUANCE);
         }
     }
 

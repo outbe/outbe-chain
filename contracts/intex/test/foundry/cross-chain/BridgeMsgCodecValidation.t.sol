@@ -176,7 +176,7 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     function test_EncodeBidsBatch_OverCap_Reverts() public {
-        uint16 n = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN + 1; // 65
+        uint16 n = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN + 1;
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.PayloadArrayTooLong.selector, uint256(n), BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN
@@ -196,12 +196,14 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     function test_EncodeIssuance_OverCap_Reverts() public {
-        uint16 n = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN + 1;
+        uint16 n = BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE + 1;
         // The cap is now on the recipients a whole message carries, however many series they are
         // spread over, so it reports the message's total rather than one array's length.
         vm.expectRevert(
             abi.encodeWithSelector(
-                BridgeMsgCodec.IssuanceBatchTooLarge.selector, uint256(n), uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN)
+                BridgeMsgCodec.IssuanceBatchTooLarge.selector,
+                uint256(n),
+                uint256(BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE)
             )
         );
         this.exposedEncodeIssuance(n);

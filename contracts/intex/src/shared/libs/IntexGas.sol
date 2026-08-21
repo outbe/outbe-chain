@@ -59,10 +59,10 @@ library IntexGas {
     uint256 internal constant REFUND_PER_ITEM = 80_000;
     /// @dev The mint loop's cost is set by its failure path, not its happy one: a rejected item is
     ///      recorded with its revert bytes so the owner can retry, and the tokens are already burned on
-    ///      the source, so an under-provisioned delivery strands them for good. Measured at the 64-item
-    ///      cap: ~8.3M when every mint lands, ~17.1M when every one is rejected.
+    ///      the source, so an under-provisioned delivery strands them for good. Measured at ~131k per item
+    ///      landed and ~266k per item rejected, which is what caps the batch at a size a block can take.
     uint256 internal constant NFT_MINT_BASE = 150_000;
-    uint256 internal constant NFT_MINT_PER_ITEM = 350_000;
+    uint256 internal constant NFT_MINT_PER_ITEM = 400_000;
 
     /// @notice Destination gas for a BIDS_BATCH carrying `itemCount` bids.
     function bidsBatch(uint256 itemCount) internal pure returns (uint256) {

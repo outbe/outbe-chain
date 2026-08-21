@@ -110,7 +110,7 @@ contract GasBudgetTest is CrossChainTest {
     }
 
     function test_TheQuoteCoversIssuanceAtItsWidest() public {
-        uint256 recipients = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN;
+        uint256 recipients = BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE;
         address[] memory to = new address[](recipients);
         uint256[] memory qty = new uint256[](recipients);
         for (uint256 i = 0; i < recipients; ++i) {
@@ -143,7 +143,7 @@ contract GasBudgetTest is CrossChainTest {
         _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
         uint256 spent = before - gasleft();
 
-        emit log_named_uint("issuance_1x64", spent);
+        emit log_named_uint("issuance_one_series_full_recipients", spent);
         assertLt(spent, IntexGas.issuance(1, recipients), "the widest issuance must fit the quote");
     }
 
@@ -187,7 +187,7 @@ contract GasBudgetTest is CrossChainTest {
         _deliver(OUTBE_CHAIN_ID, address(src), address(dst), payload);
         uint256 spent = before - gasleft();
 
-        emit log_named_uint("nft_mint_64", spent);
+        emit log_named_uint("nft_mint_full_batch", spent);
         assertLt(spent, IntexGas.nftMint(items), "the widest bridge mint must fit the quote");
     }
 
@@ -234,7 +234,7 @@ contract GasBudgetTest is CrossChainTest {
         _deliver(OUTBE_CHAIN_ID, address(src), address(dst), payload);
         uint256 spent = before - gasleft();
 
-        emit log_named_uint("nft_mint_64_all_rejected", spent);
+        emit log_named_uint("nft_mint_full_batch_all_rejected", spent);
         assertLt(spent, IntexGas.nftMint(items), "the rejecting path must fit the quote too");
     }
 
@@ -419,7 +419,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
         uint256 spent =
             _deliver(BridgeMsgCodec.encodeRefundInstructions(WORLDWIDE_DAY, 0, 1, who, refunded, paid));
 
-        emit log_named_uint("refund_64", spent);
+        emit log_named_uint("refund_full_chunk", spent);
         assertLt(spent, IntexGas.refund(bidders), "the widest refund chunk must fit the quote");
     }
 
@@ -574,7 +574,7 @@ contract OriginInboundGasTest is CrossChainTest {
             )
         );
 
-        emit log_named_uint("bids_batch_64", spent);
+        emit log_named_uint("bids_batch_full_chunk", spent);
         assertLt(spent, IntexGas.bidsBatch(count), "the widest bids batch must fit the quote");
     }
 

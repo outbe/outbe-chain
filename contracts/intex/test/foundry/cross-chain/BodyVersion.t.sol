@@ -209,10 +209,10 @@ contract BodyVersionTest is Test {
     }
 
     function test_BridgeCodec_DecodeIssuance_RejectsOverCap() public {
-        // The outbound encoder caps recipients at MAX_PAYLOAD_ARRAY_LEN, so an over-cap packet
+        // The outbound encoder caps recipients at MAX_RECIPIENTS_PER_ISSUANCE, so an over-cap packet
         // cannot be built through it; hand-build the wire body to exercise the inbound decode cap
         // (the trusted-peer-bug path), reading the cap from the constant.
-        uint256 n = uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN) + 1;
+        uint256 n = uint256(BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE) + 1;
         BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
         payload.recipients = new address[](n);
@@ -225,7 +225,7 @@ contract BodyVersionTest is Test {
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                BridgeMsgCodec.IssuanceBatchTooLarge.selector, n, uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN)
+                BridgeMsgCodec.IssuanceBatchTooLarge.selector, n, uint256(BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE)
             )
         );
         this.exposedDecodeIssuanceInstructions(packet);

@@ -225,10 +225,13 @@ contract IntexNFT1155BridgeCodecTest is Test {
         harness.decodeMulti(encoded);
     }
 
-    // --- system-wide cap equality ---
+    // --- cap relationship ---
 
-    function test_MaxBatchSize_EqualsBridgeMaxPayloadArrayLen() public pure {
-        assertEq(IntexNFT1155BridgeCodec.MAX_BATCH_SIZE, uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN));
+    /// @dev The bridge's cap is deliberately the narrower one: an item a recipient rejects is recorded with
+    ///      its revert bytes, which costs more per item than any other message's work. It must never exceed
+    ///      the protocol-wide payload cap, which every decoder still enforces.
+    function test_MaxBatchSize_StaysWithinTheProtocolPayloadCap() public pure {
+        assertLe(IntexNFT1155BridgeCodec.MAX_BATCH_SIZE, uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN));
     }
 
     // --- fixtures ---
