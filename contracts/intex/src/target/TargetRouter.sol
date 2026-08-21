@@ -38,8 +38,9 @@ contract TargetRouter is
 
     /// @notice Ceiling on one series' mark inside a batch. Without it the child takes 63/64 of what is
     ///         left, so a single runaway series starves the parking write and the whole message reverts
-    ///         into endless redelivery, taking its batch mates with it. A mark measures ~15k.
-    uint256 internal constant MARK_APPLY_GAS_CAP = 150_000;
+    ///         into endless redelivery, taking its batch mates with it. A mark measures ~15k, and the
+    ///         ceiling stays under the gas `IntexGas` budgets per series so a runaway still fits.
+    uint256 internal constant MARK_APPLY_GAS_CAP = 60_000;
 
     /// @notice Ceiling on the bids relay fired from an inbound CLEARING. Its cost grows with the day's
     ///         bid count, which the origin cannot know when it buys the delivery's gas, so beyond this the

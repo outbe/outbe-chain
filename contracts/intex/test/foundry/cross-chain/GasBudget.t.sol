@@ -23,6 +23,9 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
+import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {BidPackLib} from "../helpers/BidPackLib.sol";
 
 /// @dev The origin buys destination gas from `IntexGas` before it knows what the target will spend, and
 ///      the budgets were last sized by estimate rather than measurement. These pin each formula against
@@ -396,6 +399,30 @@ contract AuctionGasBudgetTest is CrossChainTest {
         assertLt(spent, IntexGas.AUCTION_STAGE_CLEARING, "clearing must fit the quote");
     }
 
+    function test_TheQuoteCoversRefundsAtTheirWidest() public {
+        uint256 bidders = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN;
+        escrow.grantRole(escrow.AUCTION_ROLE(), admin);
+
+        address[] memory who = new address[](bidders);
+        uint128[] memory refunded = new uint128[](bidders);
+        uint128[] memory paid = new uint128[](bidders);
+        for (uint256 i = 0; i < bidders; ++i) {
+            who[i] = address(uint160(0x5000 + i));
+            paymentToken.mint(who[i], 1000e6);
+            vm.prank(who[i]);
+            paymentToken.approve(address(escrow), type(uint256).max);
+            escrow.lockFunds(WORLDWIDE_DAY, who[i], 1000e6);
+            refunded[i] = 1000e6;
+            paid[i] = 0;
+        }
+
+        uint256 spent =
+            _deliver(BridgeMsgCodec.encodeRefundInstructions(WORLDWIDE_DAY, 0, 1, who, refunded, paid));
+
+        emit log_named_uint("refund_64", spent);
+        assertLt(spent, IntexGas.refund(bidders), "the widest refund chunk must fit the quote");
+    }
+
     function test_TheQuoteCoversAuctionResult() public {
         _deliver(_startPacket(1));
         vm.warp(block.timestamp + 1 days);
@@ -490,5 +517,93 @@ contract BidStub {
                 referenceCurrency: 840
             });
         }
+    }
+}
+
+/// @dev The Outbe-side receives: a target relays its bids as BIDS_BATCH chunks and closes the generation
+///      with a BIDS_DONE. Both land on OriginRouter and forward to Desis.
+contract OriginInboundGasTest is CrossChainTest {
+    uint32 internal constant BNB_CHAIN_ID = 1;
+    uint32 internal constant WORLDWIDE_DAY = 20250101;
+    uint64 internal constant ENTRY_PRICE = 100e6;
+
+    OriginRouter internal originRouter;
+    DesisSink internal desis;
+    address internal admin = address(this);
+    address internal targetPeer = address(0x7A6);
+
+    function setUp() public {
+        _setUpBridge();
+        desis = new DesisSink();
+        originRouter = DeployProxy.originRouter(address(bridge), admin);
+        originRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, targetPeer));
+        originRouter.wire(address(desis), makeAddr("factory"));
+        originRouter.addTarget(BNB_CHAIN_ID);
+
+        // Freeze the day's snapshot so the target is allowed to feed bids into it.
+        IOriginRouter.AuctionStageStartParams memory p;
+        p.worldwideDay = WORLDWIDE_DAY;
+        p.dayState = 1;
+        p.prices = ReferenceCurrencyPriceLib.one(840, ENTRY_PRICE, 40e6, ENTRY_PRICE);
+        vm.prank(address(desis));
+        originRouter.sendAuctionStageStart(p);
+    }
+
+    function _deliver(bytes memory packet) internal returns (uint256 spent) {
+        uint256 before = gasleft();
+        _deliver(BNB_CHAIN_ID, targetPeer, address(originRouter), packet);
+        spent = before - gasleft();
+    }
+
+    function test_TheQuoteCoversABidsBatchAtItsWidest() public {
+        uint256 count = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN;
+        address[] memory bidders = new address[](count);
+        uint16[] memory quantities = new uint16[](count);
+        uint32[] memory rates = new uint32[](count);
+        uint32[] memory timestamps = new uint32[](count);
+        for (uint256 i = 0; i < count; ++i) {
+            bidders[i] = address(uint160(0x6000 + i));
+            quantities[i] = 1;
+            rates[i] = uint32(ENTRY_PRICE);
+            timestamps[i] = uint32(block.timestamp);
+        }
+
+        uint256 spent = _deliver(
+            BridgeMsgCodec.encodeBidsBatch(
+                WORLDWIDE_DAY, BNB_CHAIN_ID, 1, 0, 1, bidders, BidPackLib.pack(quantities, rates, timestamps)
+            )
+        );
+
+        emit log_named_uint("bids_batch_64", spent);
+        assertLt(spent, IntexGas.bidsBatch(count), "the widest bids batch must fit the quote");
+    }
+
+    function test_TheQuoteCoversBidsDone() public {
+        uint256 spent = _deliver(BridgeMsgCodec.encodeBidsDone(WORLDWIDE_DAY, BNB_CHAIN_ID, 1, 1, 0));
+
+        emit log_named_uint("bids_done", spent);
+        assertLt(spent, IntexGas.BIDS_DONE, "bids done must fit the quote");
+    }
+}
+
+/// @dev On Outbe the real Desis is a precompile, so these measure the router's own share of an inbound
+///      bids message. The precompile's work sits outside this harness and outside the numbers below.
+contract DesisSink {
+    function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+        return interfaceId == type(IDesis).interfaceId || interfaceId == type(IERC165).interfaceId;
+    }
+
+    function processBidsBatch(uint32, uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata)
+        external
+    {}
+
+    function processBidsDone(uint32, uint32, uint32, uint16, uint32) external {}
+
+    function getAuctionStage(uint32) external pure returns (uint8) {
+        return 0;
+    }
+
+    function getBidsCount(uint32) external pure returns (uint256) {
+        return 0;
     }
 }
