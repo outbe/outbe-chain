@@ -736,7 +736,18 @@ where
                 canonical_result_digest,
             )?,
             EmbeddedJobActionV1::AwaitCanonical { .. } => {}
-            _ => {
+            // A quorum can form before the local computation finishes; the job
+            // is then already canonical-settled and no local action remains.
+            EmbeddedJobActionV1::ProtocolOwned => {
+                info!(
+                    %job_id,
+                    %result_digest,
+                    "embedded OCOMP local result arrived after canonical settlement; protocol owns the job"
+                );
+            }
+            EmbeddedJobActionV1::AwaitLocalResult { .. }
+            | EmbeddedJobActionV1::HoldProgress { .. }
+            | EmbeddedJobActionV1::CloseNoQuorum { .. } => {
                 bail!("unexpected embedded OCOMP local-result action");
             }
         }
