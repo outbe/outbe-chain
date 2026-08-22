@@ -28,8 +28,9 @@ use crate::world::localnet::StartOpts;
 use crate::world::ocomp::{OcompMeasurementForkV1, OcompProcessFault, OcompProcessRole};
 use crate::world::ocomp::{
     OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS, OCOMP_DYNAMIC_DKG_PREPARE_WINDOW_BLOCKS,
-    OCOMP_DYNAMIC_VOTE_WINDOW_BLOCKS, OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO,
-    OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE, OCOMP_TEST_EPOCH_LENGTH_BLOCKS,
+    OCOMP_DYNAMIC_VOTE_WINDOW_BLOCKS, OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS,
+    OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO, OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE,
+    OCOMP_TEST_EPOCH_LENGTH_BLOCKS,
 };
 use crate::world::state::{
     MetadosisFinalizedPointV1, MetadosisFreshLifecycleObservationV1, MetadosisTimeControlEpochV1,
@@ -61,6 +62,7 @@ const OCOMP_TRACE_FOLLOWER_SLOT: usize = 14;
 // genesis-bound offering window closes, so the bounded wait includes the
 // remaining phase interval plus finalization/request publication slack.
 const OCOMP_JOB_REQUEST_TIMEOUT_SECS: u64 = 300;
+const OCOMP_PROGRESS_STALL_TIMEOUT_SECS: u64 = 120;
 // A WWD begins at 10:00 UTC on the previous civil date (UTC+14 midnight), while
 // the block-1 bootstrap derives its first key from the raw UTC civil date.
 // Starting 15 hours into the WWD places block 1 at 01:00 UTC on that same key:
@@ -72,6 +74,32 @@ enum BoundedCompletionDecision {
     Complete,
     Continue,
     TimedOut,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProgressWaitDecision {
+    Reached,
+    Progressed,
+    Waiting,
+    Stalled,
+}
+
+fn monotonic_progress_decision(
+    current: u64,
+    target: u64,
+    previous: u64,
+    now: Instant,
+    progress_deadline: Instant,
+) -> ProgressWaitDecision {
+    if current >= target {
+        ProgressWaitDecision::Reached
+    } else if current > previous {
+        ProgressWaitDecision::Progressed
+    } else if now >= progress_deadline {
+        ProgressWaitDecision::Stalled
+    } else {
+        ProgressWaitDecision::Waiting
+    }
 }
 
 fn bounded_completion_decision(
@@ -244,7 +272,7 @@ fn start_ocomp_measurement_localnet(
             .expect("system clock is after unix epoch")
             .as_secs();
         let boundary_lead_secs = if public_capacity_tribute_count == Some(0) {
-            120
+            OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS
         } else {
             OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS
         };
@@ -960,12 +988,12 @@ fn dynamic_vote_submission_path(
         .join(format!("{job_component}.vote.v1"))
 }
 
-fn full_node_local_result_path(world: &World, job_id: B256) -> std::path::PathBuf {
+fn local_result_path(world: &World, node_index: usize, job_id: B256) -> std::path::PathBuf {
     world
         .validators
-        .data_dir(world.validators.joiner_index())
+        .data_dir(node_index)
         .parent()
-        .expect("FullNode data directory has a node-slot parent")
+        .expect("node data directory has a node-slot parent")
         .join("ocomp")
         .join("domain-v1")
         .join("node-v1")
@@ -974,6 +1002,31 @@ fn full_node_local_result_path(world: &World, job_id: B256) -> std::path::PathBu
             "{}.lysis-result-v1.ocb1",
             hex::encode(job_id.as_slice())
         ))
+}
+
+fn full_node_local_result_path(world: &World, job_id: B256) -> std::path::PathBuf {
+    local_result_path(world, world.validators.joiner_index(), job_id)
+}
+
+fn finalized_job_id(world: &World) -> B256 {
+    let request = world
+        .state
+        .ocomp_job_request
+        .as_ref()
+        .expect("finalized OCOMP JobIntent");
+    world
+        .rpc
+        .finalized_ocomp_job_record_on(world.validators.primary_port(), request.intent_id)
+        .and_then(|record| record.finalized.map(|finalized| finalized.job_id))
+        .expect("finalized OCOMP job identity")
+}
+
+fn launch_preserved_keyless_full_node(world: &mut World) {
+    let index = world.validators.joiner_index();
+    world
+        .localnet
+        .launch_dcap_full_node(&format!("joiner-full-node-{index}"), index, 0)
+        .expect("restart keyless FullNode with its preserved datadir and domain");
 }
 
 fn result_nod_actions_on(world: &World, node_index: usize, job_id: B256) -> Vec<NodActionV1> {
@@ -2275,11 +2328,65 @@ fn metadosis_creates_finalized_job_intent(world: &mut World) {
         .expect("measurement WorldwideDay")
         .parse::<u32>()
         .expect("numeric measurement WorldwideDay");
-    let deadline = Instant::now() + Duration::from_secs(OCOMP_JOB_REQUEST_TIMEOUT_SECS);
     let activation_height = world
         .state
         .ocomp_activation_height
         .expect("prepared OCOMP activation height");
+    let primary = world.validators.primary_port();
+    let schedule = world
+        .rpc
+        .metadosis_wwd_state_on(primary, expected_wwd)
+        .expect("read authoritative Metadosis schedule before waiting for JobIntent");
+    let mut previous_timestamp = world
+        .rpc
+        .latest_block_timestamp(primary)
+        .expect("read canonical timestamp before waiting for JobIntent");
+    let mut progress_deadline =
+        Instant::now() + Duration::from_secs(OCOMP_PROGRESS_STALL_TIMEOUT_SECS);
+    loop {
+        let now = Instant::now();
+        let canonical_timestamp = world
+            .rpc
+            .latest_block_timestamp(primary)
+            .expect("read canonical timestamp while waiting for Metadosis schedule");
+        match monotonic_progress_decision(
+            canonical_timestamp,
+            schedule.scheduled_process_time,
+            previous_timestamp,
+            now,
+            progress_deadline,
+        ) {
+            ProgressWaitDecision::Reached => break,
+            ProgressWaitDecision::Progressed => {
+                previous_timestamp = canonical_timestamp;
+                progress_deadline = now + Duration::from_secs(OCOMP_PROGRESS_STALL_TIMEOUT_SECS);
+            }
+            ProgressWaitDecision::Waiting => {}
+            ProgressWaitDecision::Stalled => {
+                panic!(
+                    "canonical time stalled before the Metadosis JobIntent schedule: \
+                     worldwide_day={expected_wwd}, status={}, canonical_timestamp={canonical_timestamp}, \
+                     offering_end={}, scheduled_process_time={}, finalized={:?}",
+                    schedule.status,
+                    schedule.offering_end,
+                    schedule.scheduled_process_time,
+                    world
+                        .validators
+                        .committee_ports()
+                        .into_iter()
+                        .map(|port| world.rpc.finalized(port))
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+        world
+            .ocomp
+            .ensure_validator_roles_alive()
+            .expect("OCOMP roles stay alive while canonical time reaches the Metadosis schedule");
+        sleep(Duration::from_millis(500));
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(OCOMP_JOB_REQUEST_TIMEOUT_SECS);
     let request = loop {
         let observed = world
             .validators
@@ -3348,6 +3455,504 @@ fn stop_two_workers_before_job(world: &mut World) {
     }
 }
 
+#[when("validator 3 OCOMP worker is stopped before the job")]
+fn stop_late_worker_before_job(world: &mut World) {
+    world
+        .ocomp
+        .ensure_baseline_runtime_ready(1)
+        .expect("all baseline OCOMP workers are live and authenticated before the fault");
+    world
+        .ocomp
+        .apply_process_fault(OcompProcessFault::StopWorker {
+            validator_index: 3,
+            worker_ordinal: 0,
+        })
+        .expect("stop validator-3 Worker before the job");
+}
+
+#[then("validators 0, 1 and 2 finalize the result quorum while validator 3 remains computing")]
+fn three_validators_finalize_before_late_compute(world: &mut World) {
+    let request = world
+        .state
+        .ocomp_job_request
+        .clone()
+        .expect("finalized public JobIntent");
+    let ports = world.validators.committee_ports();
+    let primary = world.validators.primary_port();
+    let timeout = Instant::now() + Duration::from_secs(600);
+
+    loop {
+        world
+            .localnet
+            .ensure_committee_alive()
+            .expect("validator committee remains alive before the late local result");
+        for validator_index in [0, 1, 2] {
+            world
+                .ocomp
+                .ensure_worker_alive(validator_index, 0)
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "validator-{validator_index} Worker exited before the three-voter quorum: {error}"
+                    )
+                });
+        }
+        let records = ports
+            .iter()
+            .copied()
+            .map(|port| {
+                world
+                    .rpc
+                    .finalized_ocomp_job_record_on(port, request.intent_id)
+            })
+            .collect::<Vec<_>>();
+        let completed = records.iter().all(|record| {
+            record
+                .as_ref()
+                .is_some_and(|record| record.status == OcompJobStatus::Completed)
+        });
+        if completed {
+            let record = records[0]
+                .clone()
+                .expect("all completed records are present");
+            assert!(
+                records
+                    .iter()
+                    .all(|observed| observed.as_ref() == Some(&record)),
+                "validators expose different completed OCOMP records"
+            );
+            let finalized = record
+                .finalized
+                .as_ref()
+                .expect("completed OCOMP record is finalized");
+            let job_id = finalized.job_id;
+            let accountability = world
+                .rpc
+                .finalized_ocomp_vote_accountability_on(primary, job_id)
+                .expect("completed three-voter accountability");
+            if accountability.slot_validator_indexes != [0, 1, 2] {
+                assert!(
+                    Instant::now() < timeout,
+                    "unexpected finalized OCOMP voters before late compute: {:?}",
+                    accountability.slot_validator_indexes
+                );
+                sleep(Duration::from_millis(250));
+                continue;
+            }
+            assert!(accountability.quorum_result_digest.is_some());
+            assert!(
+                !local_result_path(world, 3, job_id).exists(),
+                "validator-3 produced a local result while its Worker was stopped"
+            );
+            let activations = ports
+                .iter()
+                .copied()
+                .map(|port| {
+                    world.rpc.finalized_ocomp_activation_on(
+                        port,
+                        request.request_height,
+                        request.intent_id,
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert!(activations.iter().all(Option::is_some));
+            let activation = activations[0]
+                .clone()
+                .expect("all finalized activations are present");
+            assert!(
+                activations
+                    .iter()
+                    .all(|observed| observed.as_ref() == Some(&activation)),
+                "validators expose different finalized activations"
+            );
+            world.state.ocomp_activation = Some(activation);
+            world.state.ocomp_vote_accountability = Some(accountability);
+            world.state.ocomp_finality_before_fault = world.rpc.finalized(primary);
+            return;
+        }
+        assert!(
+            Instant::now() < timeout,
+            "three validators did not finalize the OCOMP quorum while validator-3 was held"
+        );
+        sleep(Duration::from_millis(250));
+    }
+}
+
+#[when("validator 3 OCOMP worker restarts after the finalized quorum")]
+fn restart_late_worker_after_quorum(world: &mut World) {
+    world
+        .ocomp
+        .restart_worker(3, 0)
+        .expect("restart validator-3 Worker after finalized quorum");
+}
+
+#[then("validator 3 accepts its late local result without shutting down")]
+fn late_local_result_is_not_fatal(world: &mut World) {
+    let job_id = world
+        .state
+        .ocomp_activation
+        .as_ref()
+        .expect("finalized OCOMP activation")
+        .job_id;
+    let result_path = local_result_path(world, 3, job_id);
+    let primary = world.validators.primary_port();
+    let finalized_before = world
+        .state
+        .ocomp_finality_before_fault
+        .expect("finality captured before releasing validator-3 Worker");
+    let timeout = Instant::now() + Duration::from_secs(600);
+
+    loop {
+        world
+            .localnet
+            .ensure_committee_alive()
+            .expect("late local OCOMP result must not shut down validator-3");
+        let finalized = world.rpc.finalized(primary).unwrap_or_default();
+        if result_path.is_file() && finalized >= finalized_before.saturating_add(3) {
+            break;
+        }
+        assert!(
+            Instant::now() < timeout,
+            "validator-3 did not persist its late local result while finality continued"
+        );
+        sleep(Duration::from_millis(250));
+    }
+
+    assert!(
+        !world
+            .localnet
+            .log_has(3, "unexpected embedded OCOMP local-result action"),
+        "validator-3 treated the protocol-owned late result as fatal"
+    );
+    assert!(
+        !world
+            .localnet
+            .log_has(3, "embedded OCOMP requested local node shutdown"),
+        "validator-3 requested shutdown after its late local result"
+    );
+}
+
+#[when("the keyless FullNode compute roles stop before the job")]
+fn stop_keyless_full_node_compute_before_job(world: &mut World) {
+    let index = u8::try_from(world.validators.joiner_index()).expect("joiner index fits u8");
+    world
+        .ocomp
+        .stop_keyless_full_node_roles(index)
+        .expect("stop only the keyless FullNode compute clients");
+}
+
+#[then("the keyless FullNode holds at the exclusive deadline while validators keep finalizing")]
+fn keyless_full_node_holds_at_deadline(world: &mut World) {
+    let request = world
+        .state
+        .ocomp_job_request
+        .as_ref()
+        .expect("finalized OCOMP JobIntent");
+    let expected_barrier = request.deadline_height;
+    let committee_target = request.deadline_height.saturating_add(2);
+    let primary = world.validators.primary_port();
+    let full_node = world.validators.http_port(world.validators.joiner_index());
+    let mut previous_committee = world.rpc.finalized(primary).unwrap_or_default();
+    let mut progress_deadline =
+        Instant::now() + Duration::from_secs(OCOMP_PROGRESS_STALL_TIMEOUT_SECS);
+
+    loop {
+        world
+            .localnet
+            .ensure_committee_alive()
+            .expect("validators remain alive while the FullNode waits");
+        let committee_finalized = world.rpc.finalized(primary).unwrap_or_default();
+        let full_node_finalized = world.rpc.finalized(full_node);
+        if committee_finalized >= committee_target {
+            assert_eq!(
+                full_node_finalized,
+                Some(expected_barrier),
+                "FullNode must finalize deadline block D and hold before D+1"
+            );
+            break;
+        }
+        if let Some(full_node_finalized) = full_node_finalized {
+            assert!(
+                full_node_finalized <= expected_barrier,
+                "unresolved FullNode advanced past deadline D: deadline={expected_barrier}, \
+                 full_node={full_node_finalized}"
+            );
+        }
+        assert!(
+            !world
+                .localnet
+                .joiner_full_node_exited(world.validators.joiner_index()),
+            "keyless FullNode exited instead of holding its deadline barrier"
+        );
+        let now = Instant::now();
+        match monotonic_progress_decision(
+            committee_finalized,
+            committee_target,
+            previous_committee,
+            now,
+            progress_deadline,
+        ) {
+            ProgressWaitDecision::Reached => unreachable!("target handled above"),
+            ProgressWaitDecision::Progressed => {
+                previous_committee = committee_finalized;
+                progress_deadline = now + Duration::from_secs(OCOMP_PROGRESS_STALL_TIMEOUT_SECS);
+            }
+            ProgressWaitDecision::Waiting => {}
+            ProgressWaitDecision::Stalled => {
+                panic!(
+                    "committee finality stalled before proving the FullNode D boundary: \
+                     deadline={}, target={committee_target}, committee={committee_finalized}, \
+                     full_node={full_node_finalized:?}",
+                    request.deadline_height
+                );
+            }
+        }
+        sleep(Duration::from_millis(250));
+    }
+    let job_id = finalized_job_id(world);
+    assert!(!full_node_local_result_path(world, job_id).exists());
+    assert!(!dynamic_vote_submission_path(world, world.validators.joiner_index(), job_id).exists());
+    world.state.ocomp_full_node_deadline_barrier_height = Some(expected_barrier);
+}
+
+#[when("the unresolved keyless FullNode restarts with preserved data")]
+fn restart_unresolved_keyless_full_node(world: &mut World) {
+    let index = world.validators.joiner_index();
+    world.localnet.stop_joiner_full_node(index);
+    launch_preserved_keyless_full_node(world);
+}
+
+#[then("the restarted keyless FullNode restores the same deadline barrier without voting")]
+fn restarted_keyless_full_node_restores_barrier(world: &mut World) {
+    let index = world.validators.joiner_index();
+    let port = world.validators.http_port(index);
+    let barrier = world
+        .state
+        .ocomp_full_node_deadline_barrier_height
+        .expect("captured FullNode deadline barrier");
+    assert!(
+        world.rpc.wait_finalized_at_least(port, barrier, 90),
+        "restarted FullNode did not recover the exact unresolved checkpoint"
+    );
+    sleep(Duration::from_secs(2));
+    assert_eq!(world.rpc.finalized(port), Some(barrier));
+    assert!(!world.localnet.joiner_full_node_exited(index));
+    assert!(!dynamic_vote_submission_path(world, index, finalized_job_id(world)).exists());
+}
+
+#[when("the keyless FullNode compute roles restart after the canonical quorum")]
+fn restart_keyless_full_node_compute_after_quorum(world: &mut World) {
+    let index = u8::try_from(world.validators.joiner_index()).expect("joiner index fits u8");
+    world
+        .ocomp
+        .start_keyless_full_node_roles(index)
+        .expect("restart keyless FullNode compute clients after canonical quorum");
+}
+
+#[then(
+    "the keyless FullNode verifies the exact result and resumes finalized catch-up without voting"
+)]
+fn keyless_full_node_resumes_after_exact_result(world: &mut World) {
+    let activation = world
+        .state
+        .ocomp_activation
+        .as_ref()
+        .expect("finalized canonical OCOMP activation");
+    let path = full_node_local_result_path(world, activation.job_id);
+    let timeout = Instant::now() + Duration::from_secs(600);
+    while !path.is_file() {
+        assert!(
+            Instant::now() < timeout,
+            "keyless FullNode did not persist its exact late result"
+        );
+        sleep(Duration::from_millis(250));
+    }
+    let result = LysisResultV1::decode_canonical(
+        &std::fs::read(&path).expect("read FullNode late result"),
+        &poc_schema_limits(),
+    )
+    .expect("decode FullNode late result");
+    assert_eq!(
+        result
+            .result_digest(&poc_schema_limits())
+            .expect("validate FullNode late result"),
+        activation.result_digest
+    );
+    let target = world
+        .rpc
+        .finalized(world.validators.primary_port())
+        .expect("committee finalized target after exact result");
+    let index = world.validators.joiner_index();
+    let port = world.validators.http_port(index);
+    assert!(world.rpc.wait_finalized_at_least(port, target, 120));
+    assert!(!world.localnet.joiner_full_node_exited(index));
+    assert!(!dynamic_vote_submission_path(world, index, activation.job_id).exists());
+    world.state.ocomp_full_node_resumed_finalized_height = world.rpc.finalized(port);
+}
+
+#[then("the keyless FullNode computes its local result before canonical quorum")]
+fn keyless_full_node_computes_before_quorum(world: &mut World) {
+    let job_id = finalized_job_id(world);
+    let path = full_node_local_result_path(world, job_id);
+    let timeout = Instant::now() + Duration::from_secs(600);
+    while !path.is_file() {
+        assert!(
+            Instant::now() < timeout,
+            "keyless FullNode did not compute before the remaining validator workers resumed"
+        );
+        sleep(Duration::from_millis(250));
+    }
+    let bytes = std::fs::read(&path).expect("read FullNode local-first result");
+    let result = LysisResultV1::decode_canonical(&bytes, &poc_schema_limits())
+        .expect("decode FullNode local-first result");
+    let digest = result
+        .result_digest(&poc_schema_limits())
+        .expect("validate FullNode local-first result");
+    let request = world
+        .state
+        .ocomp_job_request
+        .as_ref()
+        .expect("finalized JobIntent");
+    let record = world
+        .rpc
+        .finalized_ocomp_job_record_on(world.validators.primary_port(), request.intent_id)
+        .expect("non-quorum job remains public");
+    assert_eq!(record.status, OcompJobStatus::VotingOpen);
+    assert!(record.terminal.is_none());
+    assert!(!dynamic_vote_submission_path(world, world.validators.joiner_index(), job_id).exists());
+    world.state.ocomp_full_node_local_result_before_restart = Some(bytes);
+    world.state.ocomp_full_node_local_first_digest = Some(digest);
+}
+
+#[when("the keyless FullNode restarts with that preserved local result")]
+fn restart_keyless_full_node_with_local_result(world: &mut World) {
+    let index = world.validators.joiner_index();
+    let validator_index = u8::try_from(index).expect("joiner index fits u8");
+    world
+        .ocomp
+        .stop_keyless_full_node_roles(validator_index)
+        .expect("stop FullNode compute clients before local-first restart");
+    world.localnet.stop_joiner_full_node(index);
+    launch_preserved_keyless_full_node(world);
+    world
+        .ocomp
+        .start_keyless_full_node_roles(validator_index)
+        .expect("restart FullNode compute clients after local-first restart");
+    let bytes = std::fs::read(full_node_local_result_path(world, finalized_job_id(world)))
+        .expect("read preserved local-first result after restart");
+    assert_eq!(
+        Some(&bytes),
+        world
+            .state
+            .ocomp_full_node_local_result_before_restart
+            .as_ref()
+    );
+}
+
+#[when("the keyless FullNode arms one valid local-result mismatch")]
+fn arm_keyless_full_node_mismatch(world: &mut World) {
+    let index = u8::try_from(world.validators.joiner_index()).expect("joiner index fits u8");
+    world
+        .ocomp
+        .arm_keyless_full_node_result_mismatch(index)
+        .expect("arm one test-only valid FullNode result mutation");
+}
+
+#[then("only the keyless FullNode shuts down with durable mismatch evidence")]
+fn only_keyless_full_node_shuts_down_on_mismatch(world: &mut World) {
+    let activation = world
+        .state
+        .ocomp_activation
+        .as_ref()
+        .expect("canonical activation before mismatch shutdown");
+    let job_id = activation.job_id;
+    let index = world.validators.joiner_index();
+    let timeout = Instant::now() + Duration::from_secs(120);
+    while !world.localnet.joiner_full_node_exited(index) {
+        world
+            .localnet
+            .ensure_committee_alive()
+            .expect("validator committee remains alive during FullNode mismatch");
+        assert!(
+            Instant::now() < timeout,
+            "mismatched FullNode did not request isolated shutdown"
+        );
+        sleep(Duration::from_millis(250));
+    }
+    let evidence_root = world
+        .ocomp
+        .keyless_full_node_fatal_evidence_root(u8::try_from(index).expect("joiner fits u8"))
+        .expect("resolve FullNode fatal evidence root");
+    let mut evidence = std::fs::read_dir(&evidence_root)
+        .expect("read durable FullNode fatal evidence")
+        .map(|entry| entry.expect("read fatal evidence entry").path())
+        .collect::<Vec<_>>();
+    evidence.sort();
+    assert_eq!(
+        evidence.len(),
+        2,
+        "mismatch and sticky evidence are both durable"
+    );
+    let joined = evidence
+        .iter()
+        .map(|path| std::fs::read_to_string(path).expect("read fatal evidence file"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(joined.contains(&format!("job_id={job_id}")));
+    assert!(joined.contains("local_result_digest="));
+    assert!(joined.contains("canonical_result_digest="));
+    world.state.ocomp_full_node_mismatch_job_id = Some(job_id);
+    world.state.ocomp_full_node_mismatch_evidence_files = evidence
+        .iter()
+        .map(|path| {
+            path.file_name()
+                .expect("fatal evidence file name")
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    world.state.ocomp_finality_before_fault = world.rpc.finalized(world.validators.primary_port());
+}
+
+#[when("the mismatched keyless FullNode restarts with preserved data")]
+fn restart_mismatched_keyless_full_node(world: &mut World) {
+    let index = world.validators.joiner_index();
+    let validator_index = u8::try_from(index).expect("joiner fits u8");
+    world
+        .ocomp
+        .stop_keyless_full_node_roles(validator_index)
+        .expect("stop external FullNode clients before sticky-fatal restart");
+    world.localnet.stop_joiner_full_node(index);
+    launch_preserved_keyless_full_node(world);
+}
+
+#[then("it fails closed from sticky evidence while validators keep finalizing")]
+fn sticky_mismatch_remains_isolated(world: &mut World) {
+    let index = world.validators.joiner_index();
+    let timeout = Instant::now() + Duration::from_secs(60);
+    while !world.localnet.joiner_full_node_exited(index) {
+        assert!(
+            Instant::now() < timeout,
+            "FullNode restart ignored sticky fatal evidence"
+        );
+        sleep(Duration::from_millis(250));
+    }
+    assert!(world
+        .localnet
+        .log_has(index, "embedded OCOMP persisted fatal evidence"));
+    let before = world
+        .state
+        .ocomp_finality_before_fault
+        .expect("finality before FullNode mismatch restart");
+    let primary = world.validators.primary_port();
+    assert!(world
+        .rpc
+        .wait_finalized_at_least(primary, before.saturating_add(2), 60));
+    world
+        .localnet
+        .ensure_committee_alive()
+        .expect("all validators remain alive after isolated FullNode fatal");
+}
+
 #[then("job A opens with four members and quorum three while job B remains scheduled")]
 fn job_a_opens_on_the_historical_four_validator_snapshot(world: &mut World) {
     let worldwide_days = world.state.ocomp_dynamic_worldwide_days.clone();
@@ -4259,8 +4864,8 @@ mod tests {
     use super::{
         bounded_completion_decision, dynamic_live_ports_after_jail,
         first_protocol_cycle_at_or_after_interval, joiner_restart_is_in_safe_early_epoch_window,
-        post_restart_convergence_target, BoundedCompletionDecision,
-        OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
+        monotonic_progress_decision, post_restart_convergence_target, BoundedCompletionDecision,
+        ProgressWaitDecision, OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
     };
 
     #[test]
@@ -4313,6 +4918,36 @@ mod tests {
     #[test]
     fn capacity_population_submits_two_tributes_per_round() {
         assert_eq!(OCOMP_CAPACITY_SUBMISSION_CONCURRENCY, 2);
+    }
+
+    #[test]
+    fn job_intent_schedule_waits_while_canonical_time_keeps_advancing() {
+        let now = std::time::Instant::now();
+        let progress_deadline = now + std::time::Duration::from_secs(120);
+
+        assert_eq!(
+            monotonic_progress_decision(200, 600, 199, now, progress_deadline),
+            ProgressWaitDecision::Progressed
+        );
+        assert_eq!(
+            monotonic_progress_decision(200, 600, 200, now, progress_deadline),
+            ProgressWaitDecision::Waiting
+        );
+    }
+
+    #[test]
+    fn job_intent_schedule_reaches_boundary_and_rejects_a_real_stall() {
+        let now = std::time::Instant::now();
+
+        assert_eq!(
+            monotonic_progress_decision(600, 600, 599, now, now),
+            ProgressWaitDecision::Reached,
+            "the exact schedule boundary wins over the stall deadline"
+        );
+        assert_eq!(
+            monotonic_progress_decision(599, 600, 599, now, now),
+            ProgressWaitDecision::Stalled
+        );
     }
 
     #[test]

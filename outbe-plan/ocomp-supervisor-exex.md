@@ -549,8 +549,45 @@ Hot files и допустимые semantic passes:
 регрессиями. Любая необходимость менять второй production-файл или canonical поведение
 снова останавливает работу и требует нового re-plan.
 
-Третий semantic pass, новый canonical type, новый transport, новый durable queue или путь вне
-карты требует остановки и повторного architecture review.
+Release SGX/no-attest verification subsequently exposed one incorrect private classifier row:
+the canonical and already-existing `AwaitingFinality(finalized)` phase was rejected before its
+exact `open_height`. After three independent audits and explicit user authorization,
+`bin/outbe-chain/src/ocomp_exex.rs` receives one additional correction pass limited to restoring
+that row: discover and materialize the finalized job while leaving any durable local result dormant
+until `VotingOpen`. The canonical record, Metadosis transitions, embedded FSM/runtime, ABI, storage,
+wire types, timing, and harness semantics remain unchanged. The inline classifier matrix and the
+release `@ocomp-late-local-result` SGX/no-attest scenario are the required evidence. No other
+production path is approved by this correction.
+
+The next exact release run reached quorum and exposed a separate composition defect: the durable
+checkpoint pruned a terminal job before an already-owned compute/vote callback arrived, so the
+strict reducer reported `UnknownJob` and the node published a generic fatal. A full FSM audit also
+proved that canonical `Completed` is not locally terminal for a FullNode still awaiting exact local
+verification, and that restart currently restores a durable result before applying canonical
+terminal authority.
+
+After three independent audits and explicit user authorization, one correction slice is approved:
+
+- `bin/outbe-chain/src/ocomp_exex.rs`: classify private callbacks against both runtime/reducer
+  generations before side effects; both absent after checkpoint pruning is a `ProtocolOwned` no-op,
+  one-sided or mismatched presence is fatal; apply canonical disposition before restoring durable
+  local results;
+- `bin/outbe-ocomp/src/embedded.rs`: `LocalFailed` is state-based—current FullNode
+  `Computing | WaitAtDeadline` is `FatalLocalFailure`, current Validator is `Abstain`, and already
+  locally terminal states are `ProtocolOwned`;
+- tests are limited to inline ExEx tests and
+  `bin/outbe-ocomp/tests/embedded_state.rs`.
+
+`FinalizedAwaitingOpen` leaves durable local results dormant until `VotingOpen`; `Completed` is
+observed before FullNode restore/verification and never starts a Validator vote; closed terminals
+cancel without restore. Checkpoint pruning remains immediate and bounded. The public reducer keeps
+strict `UnknownJob`; arbitrary unknown events, duplicate conflicting compute callbacks, new durable
+queues, and changes to protocol/state, `embedded_runtime.rs`, ABI, storage, wire, timing, SGX, or
+harness semantics are non-goals. These two production files receive exactly this authorized
+integration-correction pass. Any further production path or semantic correction stops the slice.
+
+Any semantic pass beyond the explicitly frozen corrections above, a new canonical type, new
+transport, new durable queue, or path outside the map requires another stop and architecture review.
 
 ## 15. Вопросы независимой проверки
 

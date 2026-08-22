@@ -148,6 +148,10 @@ pub async fn run() {
 
     let writer = World::cucumber()
         .max_concurrent_scenarios(1)
+        // An undefined step is an invalid acceptance test, not a successful
+        // partial scenario. Environment-ineligible scenarios are filtered out
+        // before execution and therefore never reach this writer policy.
+        .fail_on_skipped()
         .before(move |feature, _rule, scenario, _world| {
             // Only reachable for unmet scenarios in `--all` mode (the filter
             // excludes them otherwise); panic so they count as failures.
@@ -178,6 +182,7 @@ pub async fn run() {
                         .then_some(world.state.proposed_version)
                         .flatten(),
                     world.state.expected_dkg_reveal.as_deref(),
+                    world.state.ocomp_full_node_mismatch_job_id,
                 );
                 let audit = match audit {
                     Ok(audit) => audit,

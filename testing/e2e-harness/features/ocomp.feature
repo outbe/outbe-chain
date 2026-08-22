@@ -91,6 +91,51 @@ Feature: Off-chain computation and Metadosis
     Then consensus finality advances while only that worker remains stopped
     And validator 0 OCOMP worker restarts through the typed topology
 
+  @ocomp-late-local-result
+  Scenario: A validator accepts its local result after the network completes the job
+    Given a fresh four-validator OCOMP public measurement localnet
+    When validator 3 OCOMP worker is stopped before the job
+    And an operator submits one encrypted tribute offer
+    Then the tribute transaction succeeds and supply becomes one
+    And every validator projects the same tribute and indexes
+    Then Metadosis creates one finalized JobIntent from that public Tribute
+    When the production OCOMP domains process that finalized JobIntent
+    Then validators 0, 1 and 2 finalize the result quorum while validator 3 remains computing
+    When validator 3 OCOMP worker restarts after the finalized quorum
+    Then validator 3 accepts its late local result without shutting down
+
+  @ocomp-fullnode-deadline
+  Scenario: A FullNode restores its deadline barrier and resumes after an exact late result
+    Given a fresh four-validator OCOMP public measurement localnet
+    When a fifth node syncs as a non-voting FullNode
+    When the keyless FullNode compute roles stop before the job
+    And an operator submits one encrypted tribute offer
+    Then the tribute transaction succeeds and supply becomes one
+    And every validator projects the same tribute and indexes
+    Then Metadosis creates one finalized JobIntent from that public Tribute
+    When the production OCOMP domains process that finalized JobIntent
+    Then three matching validator domains atomically apply Lysis and create the Nod
+    And the keyless FullNode holds at the exclusive deadline while validators keep finalizing
+    When the unresolved keyless FullNode restarts with preserved data
+    Then the restarted keyless FullNode restores the same deadline barrier without voting
+    When the keyless FullNode compute roles restart after the canonical quorum
+    Then the keyless FullNode verifies the exact result and resumes finalized catch-up without voting
+
+  @ocomp-fullnode-mismatch
+  Scenario: A FullNode mismatch is sticky and isolated from validator finality
+    Given a fresh four-validator OCOMP public measurement localnet
+    When a fifth node syncs as a non-voting FullNode
+    When the keyless FullNode arms one valid local-result mismatch
+    And an operator submits one encrypted tribute offer
+    Then the tribute transaction succeeds and supply becomes one
+    And every validator projects the same tribute and indexes
+    Then Metadosis creates one finalized JobIntent from that public Tribute
+    When the production OCOMP domains process that finalized JobIntent
+    Then three matching validator domains atomically apply Lysis and create the Nod
+    And only the keyless FullNode shuts down with durable mismatch evidence
+    When the mismatched keyless FullNode restarts with preserved data
+    Then it fails closed from sticky evidence while validators keep finalizing
+
   @ocomp-public-expiry
   # OCOMP-TEST-ID: OCM-PUB-003
   Scenario: Two timely votes cannot prevent exclusive-deadline expiry
@@ -109,6 +154,7 @@ Feature: Off-chain computation and Metadosis
   # OCOMP-TEST-ID: OCM-PUB-002
   Scenario: A changed binding cannot mutate a non-quorum job or prevent exact recovery
     Given a fresh four-validator OCOMP public measurement localnet
+    When a fifth node syncs as a non-voting FullNode
     When validators 1, 2 and 3 OCOMP workers are stopped before the job
     And an operator submits one encrypted tribute offer
     Then the tribute transaction succeeds and supply becomes one
@@ -116,5 +162,8 @@ Feature: Off-chain computation and Metadosis
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When the production OCOMP domains process that finalized JobIntent
     And one valid vote is finalized and a changed-binding vote is submitted
+    Then the keyless FullNode computes its local result before canonical quorum
+    When the keyless FullNode restarts with that preserved local result
     And the three stopped workers restart and form the remaining quorum
     Then three matching validator domains atomically apply Lysis and create the Nod
+    And the keyless FullNode verifies the same finalized Nod body through its local proof path

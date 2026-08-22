@@ -1577,7 +1577,6 @@ impl Rpc {
         Some(r.status.to_string())
     }
 
-    #[cfg(feature = "ocomp-integration")]
     pub fn metadosis_wwd_state_on(
         &self,
         port: u16,

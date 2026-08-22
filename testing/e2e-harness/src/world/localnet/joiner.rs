@@ -93,6 +93,14 @@ impl Localnet {
         self.followers.remove(&format!("joiner-full-node-{index}"));
     }
 
+    /// Whether the owned non-voting FullNode process has exited.
+    pub fn joiner_full_node_exited(&mut self, index: usize) -> bool {
+        match self.followers.get_mut(&format!("joiner-full-node-{index}")) {
+            Some(guard) => guard.exited(),
+            None => true,
+        }
+    }
+
     /// Generate a reusable EOA + individual MinPk BLS identity and its exact
     /// chain-and-address-bound registration PoP.
     ///

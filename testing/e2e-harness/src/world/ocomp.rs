@@ -54,7 +54,7 @@ use outbe_primitives::{
     OutbeHeader,
 };
 #[cfg(feature = "ocomp-integration")]
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 #[cfg(feature = "ocomp-integration")]
 use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
 #[cfg(feature = "ocomp-integration")]
@@ -104,7 +104,7 @@ pub const OCOMP_MEASUREMENT_ACTIVATION_HEIGHT: u64 =
 #[cfg(feature = "ocomp-integration")]
 const OCOMP_MEASUREMENT_BLOCK_GAS_LIMIT: u64 = 40_000_000;
 #[cfg(feature = "ocomp-integration")]
-const OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS: u64 = 120;
+pub(crate) const OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS: u64 = 600;
 #[cfg(feature = "ocomp-integration")]
 pub(crate) const OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS: u64 = 3_600;
 #[cfg(feature = "ocomp-integration")]
@@ -1565,6 +1565,37 @@ impl OcompTopology {
             self.stop_owned(worker);
         }
         Ok(())
+    }
+
+    /// Arm the test-only local-result mutation for one keyless FullNode job.
+    /// The production binary claims and binds this empty marker to the first
+    /// observed JobId; the harness never supplies a digest or result payload.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn arm_keyless_full_node_result_mismatch(&self, validator_index: u8) -> Result<PathBuf> {
+        let root = self
+            .keyless_full_node_domain(validator_index)?
+            .root
+            .join("test-faults");
+        fs::create_dir_all(&root)?;
+        let marker = root.join("local-result-mismatch.once");
+        let file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o600)
+            .open(&marker)?;
+        file.sync_all()?;
+        File::open(&root)?.sync_all()?;
+        Ok(marker)
+    }
+
+    /// Durable fatal-evidence directory owned by the embedded FullNode ExEx.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn keyless_full_node_fatal_evidence_root(&self, validator_index: u8) -> Result<PathBuf> {
+        Ok(self
+            .keyless_full_node_domain(validator_index)?
+            .root
+            .join("node-v1")
+            .join("fatal-evidence"))
     }
 
     /// Network identity pinned when the genesis validator roles were started.
@@ -3827,6 +3858,27 @@ mod tests {
         assert!(!root.join("ocomp-evm-key.hex").exists());
     }
 
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn keyless_full_node_mismatch_marker_is_empty_and_one_shot() {
+        let mut topology = topology_with_validators(4);
+        prepare_measurement_genesis_fixture(&topology);
+        let prepared = topology.prepare_measurement_fork_install().unwrap();
+        topology.launch_identity = Some(prepared.launch_identity());
+        topology.stage_keyless_full_node_domain(4).unwrap();
+
+        let marker = topology.arm_keyless_full_node_result_mismatch(4).unwrap();
+        assert_eq!(fs::read(&marker).unwrap(), Vec::<u8>::new());
+        assert!(topology.arm_keyless_full_node_result_mismatch(4).is_err());
+        assert_eq!(
+            topology.keyless_full_node_fatal_evidence_root(4).unwrap(),
+            topology
+                .cfg
+                .validator_dir(4)
+                .join("ocomp/domain-v1/node-v1/fatal-evidence")
+        );
+    }
+
     #[test]
     fn fork_restart_evidence_requires_recovery_on_each_side_of_h() {
         let mut topology = topology();
@@ -4281,6 +4333,12 @@ mod tests {
             );
             assert_eq!(day.status, WwdStatus::Offering);
             assert_eq!(day.day_type, WwdDayType::Green);
+            assert_eq!(
+                day.offering_end - genesis_timestamp,
+                OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS,
+                "the hardware-SGX fixture must retain the frozen public offering allowance"
+            );
+            assert_eq!(day.scheduled_process_time, day.offering_end);
             assert!(day.metadosis_limit_amount > U256::ZERO);
             assert!(day.previous_vwap > U256::ZERO);
             assert!(day.current_vwap > day.previous_vwap);
