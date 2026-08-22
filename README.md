@@ -594,6 +594,37 @@ point, lag, readiness, outage duration, and structured failure class. Prometheus
 `outbe_projection_*` readiness, checkpoint, lag, topology, reconnect, and failure metrics. These are
 local operational signals, not consensus acknowledgements.
 
+### TEE enclave session and canary observability
+
+The mandatory enclave sidecar is a synchronous protocol component: block execution decrypts tribute
+offers through it. The node therefore observes it continuously and survives its restart:
+
+- **Session reconnect.** The process-global enclave session performs one bounded reconnect with
+  identity re-validation when a request fails with a connection-class fault, then retries the
+  request once (idempotent requests only). A reconnected enclave must present the byte-identical
+  pinned identity (measurements, attestation key, Noise static, resident offer key); any mismatch
+  permanently revokes the session (fail-closed) and enclave-backed execution on this node fails
+  with `tee_sidecar_unavailable` `Fatal` errors — a node-local fault, never a deterministic revert.
+  Restarting the enclave sidecar (with its sealed state) no longer requires a node restart.
+- **Canary.** A periodic worker (`--tee-canary.interval-secs`, default 30, `0` disables;
+  `--tee-canary.failure-threshold`, default 3) sends a known-plaintext offer through the real
+  `ProcessTributeOfferBatch` path plus an enclave `Health` telemetry probe, and publishes the
+  result as `outbe_consensusStatus.enclave` (`state`: `disabled` | `starting` | `ready` |
+  `degraded` | `unavailable`, plus offer-key readiness, last latency, failure streak, enclave
+  uptime and self-observed heap). Signal only — a failing canary never gates consensus
+  participation. `outbe-cli monitor readiness` consumes the field: `degraded`/`unavailable` is a
+  readiness failure, `starting`/`disabled`/absent is a warning.
+- **Metrics.** Prometheus exports `outbe_tee_request_duration_ms{request}`,
+  `outbe_tee_request_errors_total{request,class}`, `outbe_tee_reconnect_total{result}`,
+  `outbe_tee_session_generation`, `outbe_tee_canary_*`, `outbe_tee_heap_bytes{kind}`, and
+  `outbe_tee_enclave_uptime_seconds`. Alert templates live in
+  `scripts/monitoring/alerts.example.yaml` (group `outbe-chain.tee`).
+- **Enclave request log.** The enclave emits one stderr line per served request —
+  `outbe-tee-enclave: req=<label> peer=<dev|local|remote> outcome=<ok|err|denied> dur_ms=<n>
+  ts=<unix>` — and localnet/testnet tooling persists the full container log with rotation.
+  A systemd unit template for production sidecars is `deploy/systemd/outbe-tee-enclave.service`
+  (journald logging; `Restart=on-failure` is safe only with a persistent `--tee-dir`).
+
 ### Required compressed-entity persistence barrier
 
 Compressed-entity execution uses the exact finalized parent root in EVM slot 1 and a separate CE

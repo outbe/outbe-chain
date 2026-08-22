@@ -273,6 +273,39 @@ async fn run_readiness(
                     ready = false;
                 }
             }
+
+            // Enclave canary health (`enclave` object; absent on older nodes).
+            match status.get("enclave") {
+                Some(enclave) => {
+                    let state = enclave
+                        .get("state")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let enclave_ready = enclave
+                        .get("ready")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let latency = enclave.get("lastCanaryLatencyMs").and_then(|v| v.as_u64());
+                    match state {
+                        _ if enclave_ready => match latency {
+                            Some(ms) => println!("[OK]  enclave canary ready (latency {ms}ms)"),
+                            None => println!("[OK]  enclave canary ready"),
+                        },
+                        "degraded" | "unavailable" => {
+                            let failure = enclave
+                                .get("lastFailureClass")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
+                            println!("[FAIL] enclave canary {state} ({failure})");
+                            ready = false;
+                        }
+                        "starting" => println!("[WARN] enclave canary starting"),
+                        "disabled" => println!("[WARN] enclave canary disabled"),
+                        other => println!("[WARN] enclave canary state: {other}"),
+                    }
+                }
+                None => println!("[WARN] enclave health not reported by node"),
+            }
         }
         Err(_) => {
             println!("[FAIL] consensus status unavailable");
@@ -479,6 +512,71 @@ mod tests {
                 "hasThresholdShares": true,
                 "connectedPeers": 3,
                 "lastFinalizedBlock": 99
+            })),
+            ..Default::default()
+        };
+        run_readiness(&mock, None).await.unwrap();
+    }
+
+    /// An `enclave` object absent from `outbe_consensusStatus` (older node) is
+    /// a warning, never a readiness failure — the happy test above covers it.
+    /// A ready canary keeps READY; degraded/unavailable flips to NOT READY.
+    #[tokio::test]
+    async fn test_run_readiness_enclave_ready_happy() {
+        let mock = MockRpc {
+            block_number: Ok(100),
+            consensus_status: Ok(serde_json::json!({
+                "isActive": true,
+                "hasThresholdShares": true,
+                "connectedPeers": 3,
+                "lastFinalizedBlock": 99,
+                "enclave": {
+                    "state": "ready",
+                    "ready": true,
+                    "offerKeyReady": true,
+                    "lastCanaryLatencyMs": 4,
+                    "consecutiveFailures": 0
+                }
+            })),
+            ..Default::default()
+        };
+        run_readiness(&mock, None).await.unwrap();
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "exit(1)")]
+    async fn test_run_readiness_enclave_degraded_exits() {
+        let mock = MockRpc {
+            block_number: Ok(100),
+            consensus_status: Ok(serde_json::json!({
+                "isActive": true,
+                "hasThresholdShares": true,
+                "connectedPeers": 3,
+                "lastFinalizedBlock": 99,
+                "enclave": {
+                    "state": "degraded",
+                    "ready": false,
+                    "offerKeyReady": true,
+                    "consecutiveFailures": 5,
+                    "lastFailureClass": "canary decrypt failed: io_timeout"
+                }
+            })),
+            ..Default::default()
+        };
+        let _ = run_readiness(&mock, None).await;
+    }
+
+    /// `starting`/`disabled` states warn without failing readiness.
+    #[tokio::test]
+    async fn test_run_readiness_enclave_starting_warns_only() {
+        let mock = MockRpc {
+            block_number: Ok(100),
+            consensus_status: Ok(serde_json::json!({
+                "isActive": true,
+                "hasThresholdShares": true,
+                "connectedPeers": 3,
+                "lastFinalizedBlock": 99,
+                "enclave": { "state": "starting", "ready": false }
             })),
             ..Default::default()
         };

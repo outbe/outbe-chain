@@ -9,6 +9,7 @@
 //! This crate MUST NOT contain secret-bearing cryptography — that lives only in
 //! `bin/outbe-tee-enclave`. Here we keep the message contract and transport.
 
+pub mod canary;
 pub mod client;
 pub mod client_global;
 pub mod codec;
@@ -18,14 +19,18 @@ pub mod dcap_v1;
 pub mod endorsement;
 pub mod errors;
 pub mod host_collateral;
+mod metrics;
 #[cfg(feature = "native-dcap")]
 pub mod native_qvl;
 pub mod node_host;
+pub mod offer_encrypt;
 pub mod protocol;
 pub mod quote;
 pub mod remote_session;
+pub mod session;
 pub mod tee_dkg;
 
+pub use canary::{TeeEnclaveHealthChannel, TeeEnclaveHealthSnapshot, TeeEnclaveHealthState};
 pub use client::{
     verify_fidelity_cohort_attestation, verify_fidelity_query_attestation,
     verify_fidelity_snapshot_attestation, verify_gratis_op_attestation, verify_peer_quote,
@@ -37,7 +42,7 @@ pub use client_global::{
     generate_dcap_quote_v1, install_authorized_enclave_client, install_enclave_client,
     is_enclave_configured, resident_offer_public_key_state_v1, resident_offer_public_key_v1,
     seal_offer_key_for_registry, try_with_enclave, verify_dcap_evidence_v1,
-    verify_dcap_registration_and_seal_v1, RuntimeEnclaveClient,
+    verify_dcap_registration_and_seal_v1, InstallError, RuntimeEnclaveClient,
 };
 #[cfg(feature = "native-dcap")]
 pub use dcap_v1::{dcap_collateral_validity_window_v1, DcapCollateralValidityWindowV1};
@@ -56,6 +61,7 @@ pub use remote_session::{
     FinalizedRegistryViewV1, RemoteSessionAdmissionError, RemoteSessionAdmissionV1,
     RemoteSessionExpectationV1, RpcTrustedRemoteSessionV1,
 };
+pub use session::EnclaveSession;
 pub use tee_dkg::{CeremonyCoordinator, CeremonyOutcome, EnclaveChannel};
 
 /// Noise pattern for the node <-> enclave channel: **IK** (the responder/enclave

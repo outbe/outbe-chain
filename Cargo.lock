@@ -9005,7 +9005,9 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
+ "x25519-dalek",
 ]
 
 [[package]]
@@ -9508,11 +9510,13 @@ dependencies = [
  "hex",
  "k256 0.13.4",
  "libc",
+ "metrics",
  "outbe-common",
  "outbe-primitives",
  "pem",
  "postcard",
  "rand 0.8.6",
+ "ring",
  "rustix",
  "serde",
  "serde_json",

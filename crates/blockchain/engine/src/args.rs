@@ -231,6 +231,18 @@ pub struct ConsensusArgs {
     #[arg(long = "tee-renewal.critical-blocks", default_value_t = 120)]
     pub tee_renewal_critical_blocks: u64,
 
+    /// Interval between TEE-enclave canary probes (known-plaintext decrypt +
+    /// health telemetry). `0` disables the canary. Signal only — it never gates
+    /// consensus participation.
+    #[arg(long = "tee-canary.interval-secs", default_value_t = 30)]
+    pub tee_canary_interval_secs: u64,
+
+    /// Consecutive canary failures before `outbe_consensusStatus.enclave`
+    /// reports `degraded` (transport-unreachable reports `unavailable`
+    /// immediately).
+    #[arg(long = "tee-canary.failure-threshold", default_value_t = 3)]
+    pub tee_canary_failure_threshold: u64,
+
     /// Heartwood native control socket used for bounded identity, configuration,
     /// and topology reconciliation. Required only in validator mode.
     #[arg(long = "radicle.control-socket", value_name = "PATH")]
@@ -531,6 +543,8 @@ mod tests {
             tee_renewal_poll_secs: 30,
             tee_renewal_warning_blocks: 600,
             tee_renewal_critical_blocks: 120,
+            tee_canary_interval_secs: 30,
+            tee_canary_failure_threshold: 3,
             upstream: None,
             upstream_nocertify: false,
             projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),

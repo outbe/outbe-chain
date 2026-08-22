@@ -158,12 +158,13 @@ impl TributeFactoryContract<'_> {
             tribute_price_minor,
             zk_context,
         };
-        let results = crate::enclave_offer::process_tribute_offer_batch_via_enclave(&[offer])
-            .map_err(|e| TributeFactoryError::DecryptionFailed(e.to_string()))?;
-        let result = results
-            .into_iter()
-            .next()
-            .ok_or_else(|| TributeFactoryError::DecryptionFailed("empty enclave result".into()))?;
+        // Node-local enclave faults (dead sidecar after the session's bounded
+        // reconnect+retry, non-determinism, bad attestation) are Fatal — see
+        // `enclave_offer` — never a deterministic revert.
+        let results = crate::enclave_offer::process_tribute_offer_batch_via_enclave(&[offer])?;
+        let result = results.into_iter().next().ok_or_else(|| {
+            PrecompileError::Fatal("enclave returned an empty tribute offer result".into())
+        })?;
 
         if let TributeOfferStatus::Rejected { reason } = &result.status {
             return Err(TributeFactoryError::EnclaveRejected(reason.clone()).into());

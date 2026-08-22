@@ -13,12 +13,17 @@
 //! ciphertext decrypts identically on all validators (re-execution agrees). The
 //! enclave call is a **blocking** UDS round-trip made straight from the precompile
 //! path — it never holds a `StorageHandle` across an await and never spawns a
-//! thread (the `StorageHandle` `!Send` constraint). A dead sidecar surfaces as a
-//! typed `tee_sidecar_unavailable` error (the offer reverts).
+//! thread (the `StorageHandle` `!Send` constraint). A dead sidecar (after the
+//! session's one bounded reconnect + retry) surfaces as `PrecompileError::Fatal`
+//! (`tee_sidecar_unavailable`) — a node-local fault, never a deterministic
+//! revert, matching the gratis/promis/fidelity enclave paths. Only per-offer
+//! rejections reported by the enclave inside the results are deterministic and
+//! revert.
 
 use std::path::Path;
 
 use alloy_primitives::B256;
+use outbe_primitives::error::PrecompileError;
 use outbe_tee::protocol::{
     EnclaveRequest, EnclaveResponse, EncryptedTributeOffer, TributeOfferResult,
 };
@@ -70,7 +75,7 @@ pub fn init_enclave_client(socket: &Path) -> eyre::Result<()> {
              provides no SGX confidentiality or DCAP admission"
         );
     }
-    outbe_tee::install_enclave_client(client).map_err(|e| eyre::eyre!(e))?;
+    outbe_tee::install_enclave_client(client, endpoint.to_owned()).map_err(|e| eyre::eyre!(e))?;
     Ok(())
 }
 
@@ -88,23 +93,30 @@ pub fn init_enclave_client(socket: &Path) -> eyre::Result<()> {
 /// (`tee_offer_attestation_invalid` on failure); the tag is
 /// then discarded (never written to chain state). Both checks live in
 /// [`validate_tribute_offer_batch_response`] so they are unit-testable without a sidecar.
+///
+/// Failure classification (aligned with `gratis::enclave_client::apply_gratis_op`):
+/// every failure of THIS function is a node-local fault (`PrecompileError::Fatal`) —
+/// dead sidecar, transport error after the session's bounded reconnect+retry,
+/// enclave authorization denial (keyless enclave), non-determinism, bad
+/// attestation. Executing the tx differently from healthy validators would
+/// diverge state, so the node fails the block instead. Deterministic per-offer
+/// rejections ride inside the returned results and are handled by the caller.
 pub fn process_tribute_offer_batch_via_enclave(
     offers: &[EncryptedTributeOffer],
-) -> eyre::Result<Vec<TributeOfferResult>> {
-    // Route through the process-global enclave client (shared with the TEE registry
-    // seal). Pin the attestation key from this authorized or structurally bound session before the
+) -> Result<Vec<TributeOfferResult>, PrecompileError> {
+    // Route through the process-global enclave session (shared with the TEE registry
+    // seal). Pin the attestation key from the installed identity before the
     // call. `None` means no client is configured → typed `tee_sidecar_unavailable`.
-    let (attestation_pub, response) = outbe_tee::try_with_enclave(|client| {
-        let attestation_pub = client.attestation_pub();
-        let response = client.request(&EnclaveRequest::ProcessTributeOfferBatch {
+    let (attestation_pub, response) = outbe_tee::try_with_enclave(|session| {
+        let attestation_pub = session.attestation_pub();
+        let response = session.request(&EnclaveRequest::ProcessTributeOfferBatch {
             offers: offers.to_vec(),
         });
         (attestation_pub, response)
     })
-    .ok_or_else(|| eyre::eyre!("enclave client not configured (tee_sidecar_unavailable)"))?;
-    let response = response.map_err(|e| {
-        eyre::eyre!("enclave ProcessTributeOfferBatch failed (tee_sidecar_unavailable): {e}")
-    })?;
+    .ok_or_else(|| PrecompileError::Fatal("tee_sidecar_unavailable".to_string()))?;
+    let response =
+        response.map_err(|e| PrecompileError::Fatal(format!("tee_sidecar_unavailable: {e}")))?;
 
     match response {
         EnclaveResponse::TributeOfferBatch {
@@ -118,7 +130,12 @@ pub fn process_tribute_offer_batch_via_enclave(
             &attestation_pub,
             &attestation_tag,
         ),
-        other => Err(eyre::eyre!("unexpected enclave response: {other:?}")),
+        EnclaveResponse::Error { message } => Err(PrecompileError::Fatal(format!(
+            "enclave ProcessTributeOfferBatch error: {message}"
+        ))),
+        other => Err(PrecompileError::Fatal(format!(
+            "unexpected enclave response: {other:?}"
+        ))),
     }
 }
 
@@ -126,6 +143,7 @@ pub fn process_tribute_offer_batch_via_enclave(
 /// equals the host's recompute over the exact request it sent (non-determinism
 /// detector → `tee_enclave_nondeterminism`); (2) the per-offer attestation tag
 /// verifies against the pinned attestation key (→ `tee_offer_attestation_invalid`).
+/// Both failures are node-local (`Fatal`), never deterministic reverts.
 /// Returns the results on success. Pure (no transport) so it is unit-testable.
 fn validate_tribute_offer_batch_response(
     offers: &[EncryptedTributeOffer],
@@ -133,11 +151,11 @@ fn validate_tribute_offer_batch_response(
     inputs_canonical_hash: B256,
     attestation_pub: &[u8; 32],
     attestation_tag: &[u8],
-) -> eyre::Result<Vec<TributeOfferResult>> {
+) -> Result<Vec<TributeOfferResult>, PrecompileError> {
     let expected = outbe_tee::protocol::inputs_canonical_hash(offers);
     if inputs_canonical_hash != expected {
-        return Err(eyre::eyre!(
-            "tee_enclave_nondeterminism: inputs_canonical_hash mismatch"
+        return Err(PrecompileError::Fatal(
+            "tee_enclave_nondeterminism: inputs_canonical_hash mismatch".to_string(),
         ));
     }
     verify_tribute_offer_attestation(
@@ -146,7 +164,7 @@ fn validate_tribute_offer_batch_response(
         &results,
         attestation_tag,
     )
-    .map_err(|e| eyre::eyre!("tee_offer_attestation_invalid: {e}"))?;
+    .map_err(|e| PrecompileError::Fatal(format!("tee_offer_attestation_invalid: {e}")))?;
     Ok(results)
 }
 
@@ -170,6 +188,24 @@ mod tests {
             exclude_from_intex_issuance: false,
             tribute_price_minor: U256::from(1_000u64),
             zk_context: None,
+        }
+    }
+
+    /// Regression (2026-08-22 testnet incident): a dead/unconfigured sidecar is
+    /// a NODE-LOCAL fault. It must surface as `PrecompileError::Fatal`, never as
+    /// a deterministic revert — reverting a tx that healthy validators execute
+    /// diverges state.
+    #[test]
+    fn transport_unavailability_is_fatal_not_revert() {
+        // No enclave session is installed in this test process.
+        let err = process_tribute_offer_batch_via_enclave(&[sample_tribute_offer()])
+            .expect_err("no enclave configured");
+        match err {
+            PrecompileError::Fatal(message) => assert!(
+                message.contains("tee_sidecar_unavailable"),
+                "unexpected fatal message: {message}"
+            ),
+            other => panic!("expected Fatal, got: {other:?}"),
         }
     }
 

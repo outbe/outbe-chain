@@ -327,9 +327,18 @@ do_start() {
             # count/order change requires a new genesis.
             local -a tee_dkg_arg=(--dkg-seed "$tee_dkg_seed")
             docker rm -f "$tee_ctr" >/dev/null 2>&1 || true
+            # Auto-restart only when sealing is on: an auto-restarted enclave
+            # WITHOUT a sealed offer key comes back keyless, turning a loud
+            # dead-socket failure into a quiet decrypt-failure mode.
+            local -a tee_restart_args=()
+            if [ -n "${OUTBE_TEE_SEAL:-}" ]; then
+                tee_restart_args=(--restart unless-stopped)
+            fi
             docker run -d --name "$tee_ctr" \
                 --security-opt seccomp=unconfined \
                 --network host \
+                --log-driver local --log-opt max-size=10m --log-opt max-file=3 \
+                "${tee_restart_args[@]}" \
                 "${sgx_dev[@]}" \
                 "${tee_seal_mount[@]}" \
                 -v "$(readlink -f "$tee_enclave_bin"):/app/outbe-tee-enclave:ro" \
@@ -342,7 +351,11 @@ do_start() {
                 (exec 3<>"/dev/tcp/127.0.0.1/$tee_port") 2>/dev/null && { exec 3>&- 2>/dev/null; tee_up=1; break; }
                 sleep 0.1
             done
-            docker logs "$tee_ctr" > "$validator_dir/enclave.log" 2>&1 || true
+            # Persistent stdout/stderr: follow the container log for the whole
+            # run (per-request telemetry lines + restarts land in enclave.log,
+            # not just a one-shot boot snapshot).
+            docker logs -f "$tee_ctr" > "$validator_dir/enclave.log" 2>&1 &
+            echo $! > "$PID_DIR/validator-$i.enclave-log.pid"
             # WS-M2 M6: fail loudly instead of silently proceeding — otherwise the node
             # would later fail-fast on the missing socket with a less obvious cause.
             if [ -z "$tee_up" ]; then
@@ -392,9 +405,13 @@ do_start() {
             echo "  Validator $i Radicle started (PID $radicle_pid, log: $radicle_log_file)"
         fi
         if [ -f "$validator_dir/reth-p2p-secret.hex" ]; then
+            # Pass the key as a FILE, never inline hex in argv: the command line
+            # is world-readable via `ps`. reth parses the file contents without
+            # trimming, so normalize it in place once (idempotent).
             local reth_p2p_secret
             reth_p2p_secret="$(tr -d '[:space:]' < "$validator_dir/reth-p2p-secret.hex")"
-            reth_p2p_args+=(--p2p-secret-key-hex "$reth_p2p_secret")
+            printf '%s' "$reth_p2p_secret" > "$validator_dir/reth-p2p-secret.hex"
+            reth_p2p_args+=(--p2p-secret-key "$validator_dir/reth-p2p-secret.hex")
         fi
 
         local -a consensus_material_args=()
@@ -579,6 +596,15 @@ do_stop() {
 
     # Stop any gramine-direct enclave containers (OUTBE_TEE_GRAMINE=1) — AFTER the
     # nodes have exited, so a node is never mid-request to an enclave being removed.
+    # Kill the enclave-log followers FIRST so no follower blocks on a removed
+    # container's log stream.
+    for lfile in "$PID_DIR"/validator-*.enclave-log.pid; do
+        [ -f "$lfile" ] || continue
+        local lpid
+        lpid=$(cat "$lfile")
+        kill "$lpid" 2>/dev/null || true
+        rm -f "$lfile"
+    done
     for dfile in "$PID_DIR"/validator-*.enclave.docker; do
         [ -f "$dfile" ] || continue
         local ctr

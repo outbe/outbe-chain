@@ -728,6 +728,11 @@ def command_lines(
         'export RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"',
         ': "${OUTBE_PROJECTION_MONGODB_URI:?set OUTBE_PROJECTION_MONGODB_URI}"',
         "",
+        # The p2p key is passed as a FILE (`--p2p-secret-key`), never inline hex
+        # in argv: the command line is world-readable via `ps`. reth parses the
+        # file contents without trimming, so normalize it in place (idempotent).
+        f"printf '%s' \"$(tr -d '[:space:]' < {shell_quote(p2p_secret_runtime_path)})\" > {shell_quote(p2p_secret_runtime_path)}",
+        "",
         f"{chain_binary} node \\",
         "  --validator \\",
         f"  --chain {shell_quote(genesis_runtime_path)} \\",
@@ -741,7 +746,7 @@ def command_lines(
         f"  --discovery.v5.addr {discv5_host} \\",
         f"  --discovery.v5.port {discv5_port} \\",
         f"  --bootnodes \"$(grep -v '^[[:space:]]*#' {shell_quote(bootnodes_runtime_path)} | paste -sd, -)\" \\",
-        f"  --p2p-secret-key-hex \"$(tr -d '[:space:]' < {shell_quote(p2p_secret_runtime_path)})\" \\",
+        f"  --p2p-secret-key {shell_quote(p2p_secret_runtime_path)} \\",
         f"  --authrpc.port {authrpc_port} \\",
         f"  --ipcpath {shell_quote(ipc_path)} \\",
         f"  --metrics {metrics_host}:{metrics_port} \\",
@@ -779,6 +784,9 @@ def enclave_command_lines(
         "docker run --rm \\",
         f"  --name {shell_quote(container_name)} \\",
         "  --network host \\",
+        # Bounded, rotated container log: the enclave now emits one stderr line
+        # per served request, so the log must never be unbounded or one-shot.
+        "  --log-driver local --log-opt max-size=10m --log-opt max-file=3 \\",
     ]
     if tee_mode == "dcap-required":
         common.extend(

@@ -802,6 +802,128 @@ pub enum EnclaveRequest {
     /// cohorts (signed, expiring authorization — see [`FidelityQueryRequest`]).
     /// NOT a consensus path — served via `eth_call`.
     QueryFidelityIndex { request: Box<FidelityQueryRequest> },
+
+    /// Read-only health/telemetry probe: uptime, request counters, offer-key
+    /// readiness and self-observed heap usage. Never touches keys or sealed
+    /// state. NOT a consensus path — served to the local NodeHost only.
+    ///
+    /// WIRE-COMPAT LAW: the codec encodes enums by variant declaration index
+    /// (postcard), so new variants are appended ONLY at the tail of
+    /// `EnclaveRequest` / `EnclaveResponse` and fields of existing wire structs
+    /// are never added, removed or reordered. Deployment order for a new
+    /// variant: enclave binary first, node second.
+    Health,
+}
+
+impl EnclaveRequest {
+    /// Stable snake_case label for this request, used as a metric/log key on
+    /// both the node client and the enclave server. Never wire data.
+    pub const fn label(&self) -> &'static str {
+        match self {
+            Self::GetQuote { .. } => "get_quote",
+            Self::GetInitializationChallenge => "get_initialization_challenge",
+            Self::Initialize { .. } => "initialize",
+            Self::OpenSession => "open_session",
+            Self::OpenRemoteSessionV1 { .. } => "open_remote_session_v1",
+            Self::SessionHandshake { .. } => "session_handshake",
+            Self::GetPublicKeys => "get_public_keys",
+            Self::AuthorizeRemoteSessionV1 { .. } => "authorize_remote_session_v1",
+            Self::GenerateDcapQuote { .. } => "generate_dcap_quote",
+            Self::SignRegistrationIntentDevV1 { .. } => "sign_registration_intent_dev_v1",
+            Self::BeginDcapVerificationV1 { .. } => "begin_dcap_verification_v1",
+            Self::BeginDcapOnboardingVerificationV1 { .. } => {
+                "begin_dcap_onboarding_verification_v1"
+            }
+            Self::DcapVerificationChunkV1 { .. } => "dcap_verification_chunk_v1",
+            Self::FinishDcapVerificationV1 { .. } => "finish_dcap_verification_v1",
+            Self::DkgOpen { .. } => "dkg_open",
+            Self::DkgStartDealer { .. } => "dkg_start_dealer",
+            Self::DkgPlayerIngest { .. } => "dkg_player_ingest",
+            Self::DkgDealerReceiveAck { .. } => "dkg_dealer_receive_ack",
+            Self::DkgDealerFinalize { .. } => "dkg_dealer_finalize",
+            Self::DkgPlayerFinalize { .. } => "dkg_player_finalize",
+            Self::DkgTributeOfferPartial { .. } => "dkg_tribute_offer_partial",
+            Self::DkgFinalizeTributeOffer { .. } => "dkg_finalize_tribute_offer",
+            Self::ProcessTributeOfferBatch { .. } => "process_tribute_offer_batch",
+            Self::IngestSealedOfferKeyForRegistry { .. } => "ingest_sealed_offer_key_for_registry",
+            Self::IngestDcapOnboardingArtifactV1 { .. } => "ingest_dcap_onboarding_artifact_v1",
+            Self::SealOfferKeyForRegistry { .. } => "seal_offer_key_for_registry",
+            Self::ApplyGratisOp { .. } => "apply_gratis_op",
+            Self::ApplyPromisOp { .. } => "apply_promis_op",
+            Self::DeriveAccountKeys { .. } => "derive_account_keys",
+            Self::ApplyFidelityCohortOp { .. } => "apply_fidelity_cohort_op",
+            Self::SnapshotFidelityLeagues { .. } => "snapshot_fidelity_leagues",
+            Self::QueryFidelityIndex { .. } => "query_fidelity_index",
+            Self::Health => "health",
+        }
+    }
+
+    /// True when re-sending this request after a lost response cannot
+    /// double-apply enclave state: the request is pure or deterministic, so the
+    /// reconnect-and-retry path may re-send it once. State-mutating requests
+    /// (initialization, DKG seams, artifact ingestion, session admission and
+    /// the multi-frame DCAP upload) must never be re-sent implicitly — the
+    /// exhaustive match forces every future variant to make this choice.
+    pub const fn is_idempotent(&self) -> bool {
+        match self {
+            Self::GetQuote { .. }
+            | Self::GetPublicKeys
+            | Self::GenerateDcapQuote { .. }
+            | Self::SignRegistrationIntentDevV1 { .. }
+            | Self::ProcessTributeOfferBatch { .. }
+            | Self::SealOfferKeyForRegistry { .. }
+            | Self::ApplyGratisOp { .. }
+            | Self::ApplyPromisOp { .. }
+            | Self::DeriveAccountKeys { .. }
+            | Self::ApplyFidelityCohortOp { .. }
+            | Self::SnapshotFidelityLeagues { .. }
+            | Self::QueryFidelityIndex { .. }
+            | Self::Health => true,
+            Self::GetInitializationChallenge
+            | Self::Initialize { .. }
+            | Self::OpenSession
+            | Self::OpenRemoteSessionV1 { .. }
+            | Self::SessionHandshake { .. }
+            | Self::AuthorizeRemoteSessionV1 { .. }
+            | Self::BeginDcapVerificationV1 { .. }
+            | Self::BeginDcapOnboardingVerificationV1 { .. }
+            | Self::DcapVerificationChunkV1 { .. }
+            | Self::FinishDcapVerificationV1 { .. }
+            | Self::DkgOpen { .. }
+            | Self::DkgStartDealer { .. }
+            | Self::DkgPlayerIngest { .. }
+            | Self::DkgDealerReceiveAck { .. }
+            | Self::DkgDealerFinalize { .. }
+            | Self::DkgPlayerFinalize { .. }
+            | Self::DkgTributeOfferPartial { .. }
+            | Self::DkgFinalizeTributeOffer { .. }
+            | Self::IngestSealedOfferKeyForRegistry { .. }
+            | Self::IngestDcapOnboardingArtifactV1 { .. } => false,
+        }
+    }
+}
+
+/// Self-observed enclave health snapshot returned by [`EnclaveRequest::Health`].
+///
+/// Heap fields come from the enclave binary's counting global allocator and are
+/// a proxy for EPC pressure (they exclude thread stacks, allocator overhead and
+/// direct mmaps); `0` means allocator accounting is not installed. Per-class
+/// counters are fixed fields, not maps, so the wire shape stays stable.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EnclaveHealthStatusV1 {
+    pub uptime_s: u64,
+    pub offer_key_ready: bool,
+    pub heap_current_bytes: u64,
+    pub heap_peak_bytes: u64,
+    pub requests_total: u64,
+    pub requests_errored: u64,
+    pub requests_denied: u64,
+    pub class_initialized: u64,
+    pub class_founding_keyless: u64,
+    pub class_keyless_onboarding: u64,
+    pub class_ready: u64,
+    pub class_dev_source_seal: u64,
+    pub class_dev_recipient_ingest: u64,
 }
 
 /// Domain-tagged message an account owner personal-signs to authorize Fidelity
@@ -1118,6 +1240,11 @@ pub enum EnclaveResponse {
     },
     Error {
         message: String,
+    },
+    /// Result of [`EnclaveRequest::Health`]. Appended at the tail per the
+    /// wire-compat law on [`EnclaveRequest`].
+    HealthStatus {
+        status: Box<EnclaveHealthStatusV1>,
     },
 }
 

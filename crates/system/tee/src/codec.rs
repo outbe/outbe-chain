@@ -127,4 +127,92 @@ mod tests {
             Err(TransportError::FrameTooLarge(_))
         ));
     }
+
+    /// Postcard encodes an enum as a varint of its variant declaration index, so
+    /// the on-wire index of every existing variant is part of the protocol. New
+    /// variants may be appended ONLY at the tail of `EnclaveRequest` /
+    /// `EnclaveResponse`; inserting, reordering or removing a variant — or
+    /// changing the fields of an existing wire struct — breaks a node and an
+    /// enclave built from different revisions. These fixtures pin the indices of
+    /// representative existing variants; if this test fails, the wire layout
+    /// changed and the change must be reverted, not the fixture updated.
+    #[test]
+    fn request_wire_indices_are_pinned() {
+        // Variant 0, unit-adjacent shape: GetQuote { nonce: [u8; 32] }.
+        let bytes = encode_request(&EnclaveRequest::GetQuote {
+            nonce: [0x11u8; 32],
+        })
+        .unwrap();
+        assert_eq!(bytes[0], 0, "GetQuote must stay wire variant 0");
+        assert_eq!(&bytes[1..33], &[0x11u8; 32]);
+
+        // Field-free variant: GetPublicKeys is wire variant 6.
+        let bytes = encode_request(&EnclaveRequest::GetPublicKeys).unwrap();
+        assert_eq!(bytes, vec![6], "GetPublicKeys must stay wire variant 6");
+
+        // Consensus hot path: ProcessTributeOfferBatch is wire variant 22.
+        let bytes =
+            encode_request(&EnclaveRequest::ProcessTributeOfferBatch { offers: Vec::new() })
+                .unwrap();
+        assert_eq!(
+            bytes,
+            vec![22, 0],
+            "ProcessTributeOfferBatch must stay wire variant 22"
+        );
+    }
+
+    #[test]
+    fn health_request_and_response_round_trip() {
+        let req = EnclaveRequest::Health;
+        let bytes = encode_request(&req).unwrap();
+        assert_eq!(decode_request(&bytes).unwrap(), req);
+
+        let resp = crate::protocol::EnclaveResponse::HealthStatus {
+            status: Box::new(crate::protocol::EnclaveHealthStatusV1 {
+                uptime_s: 7,
+                offer_key_ready: true,
+                heap_current_bytes: 1024,
+                heap_peak_bytes: 4096,
+                requests_total: 10,
+                requests_errored: 1,
+                requests_denied: 2,
+                class_initialized: 3,
+                class_founding_keyless: 0,
+                class_keyless_onboarding: 0,
+                class_ready: 4,
+                class_dev_source_seal: 0,
+                class_dev_recipient_ingest: 0,
+            }),
+        };
+        let bytes = encode_response(&resp).unwrap();
+        assert_eq!(decode_response(&bytes).unwrap(), resp);
+    }
+
+    #[test]
+    fn request_labels_are_unique_and_stable() {
+        let labels = [
+            EnclaveRequest::GetPublicKeys.label(),
+            EnclaveRequest::ProcessTributeOfferBatch { offers: Vec::new() }.label(),
+            EnclaveRequest::Health.label(),
+        ];
+        assert_eq!(labels[0], "get_public_keys");
+        assert_eq!(labels[1], "process_tribute_offer_batch");
+        assert_eq!(labels[2], "health");
+    }
+
+    #[test]
+    fn idempotency_allowlist_is_pinned() {
+        assert!(EnclaveRequest::GetPublicKeys.is_idempotent());
+        assert!(EnclaveRequest::ProcessTributeOfferBatch { offers: Vec::new() }.is_idempotent());
+        assert!(EnclaveRequest::Health.is_idempotent());
+        assert!(!EnclaveRequest::OpenSession.is_idempotent());
+        assert!(!EnclaveRequest::FinishDcapVerificationV1 {
+            request_hash: alloy_primitives::B256::ZERO,
+        }
+        .is_idempotent());
+        assert!(!EnclaveRequest::DkgStartDealer {
+            ceremony_id: alloy_primitives::B256::ZERO,
+        }
+        .is_idempotent());
+    }
 }
