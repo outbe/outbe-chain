@@ -63,6 +63,7 @@ sol!("../../contracts/precompiles/src/IZeroFee.sol");
 sol!("../../contracts/precompiles/src/IAgentReward.sol");
 sol!("../../contracts/precompiles/src/ITeeRegistryV1.sol");
 sol!("../../contracts/precompiles/src/ISlashIndicator.sol");
+sol!("../../contracts/precompiles/src/IRadicleRegistry.sol");
 
 // Negative-path tests submit this deliberately unsupported legacy selector and
 // assert that the canonical ValidatorSet ABI rejects it without mutation.

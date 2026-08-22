@@ -33,6 +33,7 @@ outbe-stablecoin.workspace = true
 outbe-stablecoinfactory.workspace = true
 outbe-teeregistry = { workspace = true, features = ["tee-attestation-v1"] }
 outbe-l2registry.workspace = true
+outbe-radicleregistry.workspace = true
 outbe-tee.workspace = true
 outbe-vote.workspace = true
 outbe-update.workspace = true
@@ -124,4 +125,3 @@ ignored = ["hex"]
 
 [lints]
 workspace = true
-

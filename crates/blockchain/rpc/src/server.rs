@@ -31,8 +31,13 @@ use std::sync::Arc;
 use crate::api::{
     ConsensusStatusInfo, EmissionInfo, EpochInfo, FinalizationProof, GratisKeysSealed,
     OutbeApiServer, ParticipationInfo, Phase1VerificationMode, ProjectionHealth,
-    ProjectionStatusInfo, SlashConfig, SlashInfo, SyncStatusInfo, ValidatorDetailInfo,
-    ValidatorInfo,
+    ProjectionStatusInfo, RadiclePeerInfo, RadiclePhaseErrorInfo, RadiclePhaseInfo,
+    RadicleRepositoryInfo, RadicleRepositoryStateInfo, RadicleStatusInfo, SlashConfig, SlashInfo,
+    SyncStatusInfo, ValidatorDetailInfo, ValidatorInfo,
+};
+use outbe_radicle::integration::{
+    RadicleRepositoryState, RadicleStatusHandle, RadicleStatusSnapshot, RadicleVotingGate,
+    RadicleVotingGateError,
 };
 
 fn read_effective_slash_config(
@@ -79,6 +84,7 @@ pub struct OutbeApiHandler<P> {
     point_reads: Option<PointReadRuntime>,
     tee_renewal_schedule: Option<TeeRenewalScheduleConfigV1>,
     ocomp_lysis_openings: Option<OcompLysisOpeningsRuntimeV1>,
+    radicle_status: RadicleStatusHandle,
 }
 
 type OcompLysisOpeningsBuilderV1 =
@@ -144,6 +150,7 @@ impl<P> OutbeApiHandler<P> {
             point_reads: None,
             tee_renewal_schedule: None,
             ocomp_lysis_openings: None,
+            radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
         }
     }
 
@@ -161,6 +168,7 @@ impl<P> OutbeApiHandler<P> {
             point_reads: None,
             tee_renewal_schedule: None,
             ocomp_lysis_openings: None,
+            radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
         }
     }
 
@@ -180,6 +188,7 @@ impl<P> OutbeApiHandler<P> {
             point_reads: None,
             tee_renewal_schedule: None,
             ocomp_lysis_openings: None,
+            radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
         }
     }
 
@@ -215,6 +224,122 @@ impl<P> OutbeApiHandler<P> {
     pub fn with_ocomp_lysis_openings(mut self, runtime: OcompLysisOpeningsRuntimeV1) -> Self {
         self.ocomp_lysis_openings = Some(runtime);
         self
+    }
+
+    #[must_use]
+    pub fn with_radicle_status(mut self, status: RadicleStatusHandle) -> Self {
+        self.radicle_status = status;
+        self
+    }
+}
+
+pub(crate) fn radicle_status_info(
+    snapshot: &RadicleStatusSnapshot,
+) -> Result<RadicleStatusInfo, String> {
+    let manager = &snapshot.manager;
+    let phase = match manager.phase {
+        outbe_radicle::manager::ManagerPhase::Disabled => RadiclePhaseInfo::Disabled,
+        outbe_radicle::manager::ManagerPhase::JoiningUnbound => RadiclePhaseInfo::JoiningUnbound,
+        outbe_radicle::manager::ManagerPhase::Ready => RadiclePhaseInfo::Ready,
+        outbe_radicle::manager::ManagerPhase::RuntimeDegraded => RadiclePhaseInfo::RuntimeDegraded,
+    };
+    let phase_error = match snapshot.voting_gate {
+        RadicleVotingGate::Fatal(error) => Some(match error {
+            RadicleVotingGateError::SidecarUnavailable => RadiclePhaseErrorInfo::SidecarUnavailable,
+            RadicleVotingGateError::LocalNodeIdUnavailable => {
+                RadiclePhaseErrorInfo::LocalNodeIdUnavailable
+            }
+            RadicleVotingGateError::BindingMismatch => RadiclePhaseErrorInfo::BindingMismatch,
+            RadicleVotingGateError::ActiveBindingMissing => {
+                RadiclePhaseErrorInfo::ActiveBindingMissing
+            }
+        }),
+        _ => manager.phase_error.map(|error| match error {
+            outbe_radicle::manager::PhaseError::SidecarUnavailable => {
+                RadiclePhaseErrorInfo::SidecarUnavailable
+            }
+            outbe_radicle::manager::PhaseError::LocalNodeIdUnavailable => {
+                RadiclePhaseErrorInfo::LocalNodeIdUnavailable
+            }
+            outbe_radicle::manager::PhaseError::BindingMismatch => {
+                RadiclePhaseErrorInfo::BindingMismatch
+            }
+        }),
+    };
+    let count = |value: usize| {
+        u64::try_from(value).map_err(|_| "Radicle status counter exceeds u64".to_owned())
+    };
+    Ok(RadicleStatusInfo {
+        phase,
+        phase_error,
+        local_node_id: snapshot.local_node_id.map(B256::from),
+        last_seen_finalized_number: manager.last_seen_finalized.map(|block| block.number),
+        last_seen_finalized_hash: manager.last_seen_finalized.map(|block| block.hash),
+        last_converged_finalized_number: manager.last_converged_finalized.map(|block| block.number),
+        last_converged_finalized_hash: manager.last_converged_finalized.map(|block| block.hash),
+        desired_repository_count: count(manager.desired_repository_count)?,
+        available_repository_count: count(manager.available_repository_count)?,
+        pending_repository_count: count(manager.pending_repository_count)?,
+        resolved_peer_count: count(manager.resolved_peer_count)?,
+        unresolved_peer_count: count(manager.unresolved_peer_count)?,
+        connected_peer_count: count(manager.connected_peer_count)?,
+        finality_regressions: manager.finality_regressions,
+        finality_conflicts: manager.finality_conflicts,
+        provider_failures: manager.provider_failures,
+        endpoint_failures: manager.endpoint_failures,
+        uds_failures: manager.uds_failures,
+        tcp_status_failures: manager.tcp_status_failures,
+    })
+}
+
+fn radicle_peer_info(
+    proof: &outbe_radicle::integration::SignedEndpointEvidence,
+) -> RadiclePeerInfo {
+    let body = proof.response.body();
+    RadiclePeerInfo {
+        validator: body.validator,
+        sender_bls_public_key: proof.peer.as_bytes().to_vec().into(),
+        request_id: B256::from(body.request_id),
+        chain_id: body.chain_id,
+        genesis_hash: body.genesis_hash,
+        node_id: B256::from(body.node_id),
+        addresses: body.addresses.iter().map(canonical_endpoint).collect(),
+        anchor_number: body.anchor_number,
+        anchor_hash: body.anchor_hash,
+        valid_until_height: body.valid_until,
+        signature: proof.response.signature().to_vec().into(),
+        encoded_frame: proof.encoded_frame.clone().into(),
+    }
+}
+
+fn canonical_endpoint(address: &outbe_radicle::endpoint::EndpointAddress) -> String {
+    let encoded = address.encode();
+    match encoded[0] {
+        0 => format!(
+            "{}:{}",
+            std::net::Ipv4Addr::new(encoded[1], encoded[2], encoded[3], encoded[4]),
+            u16::from_be_bytes([encoded[5], encoded[6]])
+        ),
+        1 => {
+            let octets: [u8; 16] = encoded[1..17].try_into().expect("canonical IPv6 endpoint");
+            format!(
+                "[{}]:{}",
+                std::net::Ipv6Addr::from(octets),
+                u16::from_be_bytes([encoded[17], encoded[18]])
+            )
+        }
+        2 => {
+            let length = usize::from(encoded[1]);
+            let host = std::str::from_utf8(&encoded[2..2 + length])
+                .expect("canonical DNS endpoint is ASCII");
+            let offset = 2 + length;
+            format!(
+                "{}:{}",
+                host,
+                u16::from_be_bytes([encoded[offset], encoded[offset + 1]])
+            )
+        }
+        _ => unreachable!("EndpointAddress has a canonical tag"),
     }
 }
 
@@ -695,6 +820,36 @@ where
         }
     }
 
+    async fn radicle_status(&self) -> RpcResult<RadicleStatusInfo> {
+        radicle_status_info(&self.radicle_status.snapshot()).map_err(internal_err)
+    }
+
+    async fn radicle_peers(&self) -> RpcResult<Vec<RadiclePeerInfo>> {
+        Ok(self
+            .radicle_status
+            .snapshot()
+            .signed_peers
+            .iter()
+            .map(radicle_peer_info)
+            .collect())
+    }
+
+    async fn radicle_repositories(&self) -> RpcResult<Vec<RadicleRepositoryInfo>> {
+        Ok(self
+            .radicle_status
+            .snapshot()
+            .repositories
+            .iter()
+            .map(|repository| RadicleRepositoryInfo {
+                repo_id: hex::encode(repository.repo_id),
+                state: match repository.state {
+                    RadicleRepositoryState::Available => RadicleRepositoryStateInfo::Available,
+                    RadicleRepositoryState::Pending => RadicleRepositoryStateInfo::Pending,
+                },
+            })
+            .collect())
+    }
+
     async fn get_finalization(&self, height: u64) -> RpcResult<FinalizationProof> {
         // Only nodes running consensus (or a follower that has itself synced the
         // height) can serve this — both install a finalization fetcher on the
@@ -788,8 +943,16 @@ fn invalid_params_err(msg: String) -> jsonrpsee::types::ErrorObject<'static> {
 #[cfg(test)]
 mod tests {
     use alloy_primitives::{Bytes, B256};
+    use commonware_cryptography::{bls12381, Signer as _};
+    use outbe_radicle::{
+        endpoint::{sign_response, EndpointAddress, EndpointFrame, EndpointResponseBody, PeerId},
+        integration::{RadicleStatusChannel, SignedEndpointEvidence},
+    };
 
-    use super::{read_effective_slash_config, OcompLysisOpeningsRuntimeV1};
+    use super::{
+        radicle_peer_info, radicle_status_info, read_effective_slash_config,
+        OcompLysisOpeningsRuntimeV1,
+    };
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 
     #[test]
@@ -805,6 +968,42 @@ mod tests {
         assert_eq!(config.voter_felony_threshold, 500);
         assert_eq!(config.slash_amount_percent, 5);
         assert_eq!(config.evidence_reward_percent, 10);
+    }
+
+    #[test]
+    fn radicle_rpc_reads_immutable_status() {
+        let status = radicle_status_info(&RadicleStatusChannel::disabled().snapshot()).unwrap();
+        assert_eq!(status.phase, crate::api::RadiclePhaseInfo::Disabled);
+        assert!(status.local_node_id.is_none());
+        assert_eq!(status.desired_repository_count, 0);
+    }
+
+    #[test]
+    fn radicle_rpc_evidence() {
+        let signer = bls12381::PrivateKey::from_seed(7);
+        let body = EndpointResponseBody {
+            request_id: [8_u8; 32],
+            chain_id: 54_322_345,
+            genesis_hash: B256::repeat_byte(0xaa),
+            validator: alloy_primitives::Address::repeat_byte(0x11),
+            node_id: [9_u8; 32],
+            addresses: vec![EndpointAddress::dns("peer.example.com", 8776).unwrap()],
+            anchor_number: 40,
+            anchor_hash: B256::repeat_byte(0x40),
+            valid_until: 80,
+        };
+        let response = sign_response(body, &signer).unwrap();
+        let evidence = SignedEndpointEvidence {
+            peer: PeerId::from_public_key(&signer.public_key()),
+            encoded_frame: EndpointFrame::Response(Box::new(response.clone())).encode(),
+            response,
+        };
+        let info = radicle_peer_info(&evidence);
+        assert_eq!(info.sender_bls_public_key.len(), 48);
+        assert_eq!(info.signature.len(), 96);
+        assert_eq!(info.encoded_frame.as_ref(), evidence.encoded_frame);
+        assert_eq!(info.addresses, ["peer.example.com:8776"]);
+        assert_eq!(info.valid_until_height, 80);
     }
 
     #[test]

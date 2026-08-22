@@ -22,10 +22,13 @@ mod follower;
 mod joiner;
 mod log_audit;
 mod probes;
+mod radicle;
 
 pub use bootstrap::BootstrapProfile;
 pub(crate) use log_audit::LogAudit;
 pub use probes::{CeStartupReplayObservationV1, OcompRuntimeTraceMarkerV1};
+#[cfg(feature = "ocomp-integration")]
+pub(crate) use radicle::RadicleRepositoryFixtureV1;
 
 use std::collections::HashMap;
 use std::fs;
@@ -103,6 +106,10 @@ pub struct Localnet {
     /// Owned validator-indexed nodes — the committee (`0..n`) and, when attached,
     /// the joiner (index = committee size).
     validators: HashMap<usize, ChildGuard>,
+    /// Operator-owned validator-indexed Radicle sidecars.
+    radicle_sidecars: HashMap<usize, ChildGuard>,
+    /// Independent non-validator source node used only by the Radicle E2E.
+    user_radicle: Option<ChildGuard>,
     /// Owned follower nodes, keyed by name (`follower`, `follower2`).
     followers: HashMap<String, ChildGuard>,
     /// Owned validator-indexed enclave containers (committee + joiner).
@@ -122,6 +129,8 @@ impl Localnet {
         Self {
             cfg,
             validators: HashMap::new(),
+            radicle_sidecars: HashMap::new(),
+            user_radicle: None,
             followers: HashMap::new(),
             enclaves: HashMap::new(),
             enclave_image_id: None,
@@ -378,6 +387,8 @@ impl Localnet {
         // stop-nodes-then-teardown-enclaves ordering `run-testnet.sh` used.
         self.validators.clear();
         self.followers.clear();
+        self.radicle_sidecars.clear();
+        self.user_radicle = None;
         self.enclaves.clear();
         // No settle needed here: clearing the maps dropped every guard, which
         // synchronously `kill()`s + `wait()`s the owned nodes/enclaves, and the
@@ -385,6 +396,8 @@ impl Localnet {
 
         let nodes = format!("outbe-chain node.*{}", self.dir());
         self.sh().sudo_best_effort("pkill", &["-9", "-f", &nodes]);
+        let radicle = format!("outbe-radicle.*{}", self.dir());
+        self.sh().sudo_best_effort("pkill", &["-9", "-f", &radicle]);
         if self.cfg.tee_mode.runs_native_host_enclave() {
             // Native enclaves are processes, not containers. Their `--tee-dir`
             // argv carries this run's dir, so the pattern is run-scoped exactly

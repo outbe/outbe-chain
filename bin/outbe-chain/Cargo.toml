@@ -29,6 +29,7 @@ outbe-engine.workspace = true
 outbe-metadosis.workspace = true
 outbe-nod.workspace = true
 outbe-primitives.workspace = true
+outbe-radicle.workspace = true
 outbe-operator.workspace = true
 outbe-tee.workspace = true
 outbe-validatorset.workspace = true

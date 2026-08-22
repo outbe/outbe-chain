@@ -24,6 +24,8 @@ pub mod lifecycle;
 #[cfg(feature = "ocomp-integration")]
 pub mod ocomp;
 pub mod origin_venue;
+#[cfg(feature = "ocomp-integration")]
+pub mod radicle;
 pub mod restart;
 pub mod stablecoin;
 pub mod stale_join;

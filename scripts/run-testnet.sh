@@ -64,6 +64,24 @@ locate_binary() {
     exit 1
 }
 
+locate_radicle_binary() {
+    if [ -n "${OUTBE_RADICLE_BINARY:-}" ]; then
+        if [ ! -x "$OUTBE_RADICLE_BINARY" ]; then
+            echo "Error: OUTBE_RADICLE_BINARY is set but not executable: $OUTBE_RADICLE_BINARY"
+            exit 1
+        fi
+        return
+    fi
+    for candidate in ./target/release/outbe-radicle; do
+        if [ -x "$candidate" ]; then
+            OUTBE_RADICLE_BINARY="$candidate"
+            return
+        fi
+    done
+    echo "Error: release outbe-radicle binary not found; set OUTBE_RADICLE_BINARY." >&2
+    exit 1
+}
+
 load_bootnodes() {
     if [ -n "$RETH_BOOTNODES" ]; then
         printf '%s' "$RETH_BOOTNODES"
@@ -95,6 +113,7 @@ do_start() {
     fi
 
     locate_binary
+    locate_radicle_binary
     if [ -z "${OUTBE_PROJECTION_MONGODB_URI:-}" ]; then
         echo "Error: OUTBE_PROJECTION_MONGODB_URI is required for every validator." >&2
         echo "  Point it at a transaction-capable replica set or sharded cluster." >&2
@@ -141,6 +160,8 @@ do_start() {
     local base_consensus=$((30400 + PORT_OFFSET))
     local base_authrpc=$((8551 + PORT_OFFSET))
     local base_metrics=$((9101 + PORT_OFFSET))
+    local base_radicle=$((8776 + PORT_OFFSET))
+    local base_radicle_status=$((8876 + PORT_OFFSET))
 
     # Mandatory per-validator GramineDirectDev enclave. The binary is
     # auto-detected in ./target or supplied via OUTBE_TEE_ENCLAVE_BINARY.
@@ -337,6 +358,39 @@ do_start() {
         if [ -n "$bootnodes" ]; then
             reth_p2p_args+=(--bootnodes "$bootnodes")
         fi
+
+        local radicle_pid_file="$PID_DIR/validator-$i.radicle.pid"
+        local radicle_exit_file="$PID_DIR/validator-$i.radicle.exit"
+        local radicle_log_file="$validator_dir/radicle.log"
+        local radicle_home="$validator_dir/radicle"
+        if [ -f "$radicle_pid_file" ] && kill -0 "$(cat "$radicle_pid_file")" 2>/dev/null; then
+            echo "  Validator $i Radicle already running (PID $(cat "$radicle_pid_file")), reusing"
+        else
+            rm -f "$radicle_pid_file" "$radicle_exit_file"
+            OUTBE_RADICLE_BINARY="$OUTBE_RADICLE_BINARY" \
+                nohup "$SCRIPT_DIR/run-supervised.sh" "$radicle_exit_file" \
+                "$SCRIPT_DIR/run-radicle.sh" \
+                "$radicle_home" \
+                "127.0.0.1:$((base_radicle + i))" \
+                "127.0.0.1:$((base_radicle_status + i))" \
+                "$n" \
+                "127.0.0.1:$((base_radicle + i))" \
+                > "$radicle_log_file" 2>&1 < /dev/null &
+            local radicle_pid=$!
+            echo "$radicle_pid" > "$radicle_pid_file"
+            local radicle_up=""
+            for _ in $(seq 1 100); do
+                (exec 3<>"/dev/tcp/127.0.0.1/$((base_radicle_status + i))") 2>/dev/null \
+                    && { exec 3>&- 2>/dev/null; radicle_up=1; break; }
+                kill -0 "$radicle_pid" 2>/dev/null || break
+                sleep 0.1
+            done
+            if [ -z "$radicle_up" ]; then
+                echo "Error: validator-$i Radicle sidecar failed to start; see $radicle_log_file" >&2
+                exit 1
+            fi
+            echo "  Validator $i Radicle started (PID $radicle_pid, log: $radicle_log_file)"
+        fi
         if [ -f "$validator_dir/reth-p2p-secret.hex" ]; then
             local reth_p2p_secret
             reth_p2p_secret="$(tr -d '[:space:]' < "$validator_dir/reth-p2p-secret.hex")"
@@ -385,6 +439,8 @@ do_start() {
         cmd+=(
             --consensus.listen-addr "127.0.0.1:$((base_consensus + i))"
             --consensus.use-local-defaults
+            --radicle.control-socket "$radicle_home/node/outbe-control.sock"
+            --radicle.status-address "127.0.0.1:$((base_radicle_status + i))"
         )
         if [ ${#tee_args[@]} -gt 0 ]; then
             cmd+=("${tee_args[@]}")
@@ -502,6 +558,23 @@ do_stop() {
         else
             echo "  Stopped $name"
         fi
+    done
+
+    for pid_file in "$PID_DIR"/validator-*.radicle.pid; do
+        [ -e "$pid_file" ] || continue
+        local pid name
+        pid="$(cat "$pid_file")"
+        name="$(basename "$pid_file" .pid)"
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "  Stopping $name (PID $pid)..."
+            kill "$pid" 2>/dev/null || true
+            for _ in $(seq 1 150); do
+                kill -0 "$pid" 2>/dev/null || break
+                sleep 0.1
+            done
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+        rm -f "$pid_file"
     done
 
     # Stop any gramine-direct enclave containers (OUTBE_TEE_GRAMINE=1) — AFTER the

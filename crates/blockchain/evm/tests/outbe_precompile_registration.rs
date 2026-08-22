@@ -48,6 +48,7 @@ fn expected_exact_addresses() -> [Address; 38] {
         L2_REGISTRY_ADDRESS,
         STABLECOIN_FACTORY_ADDRESS,
         STABLECOIN_POLICY_REGISTRY_ADDRESS,
+        RADICLE_REGISTRY_ADDRESS,
         GOVERNANCE_ADDRESS,
         VOTE_ADDRESS,
         UPDATE_ADDRESS,

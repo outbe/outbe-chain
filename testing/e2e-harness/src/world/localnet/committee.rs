@@ -80,6 +80,9 @@ impl Localnet {
             }
         }
         for &i in &launched {
+            self.start_radicle(i)?;
+        }
+        for &i in &launched {
             self.launch_validator(i, opts, bootnodes.as_deref())?;
         }
 
@@ -173,6 +176,7 @@ impl Localnet {
             let chain_id_hex = self.chain_id_hex()?;
             self.start_enclave(i, &chain_id_hex)?;
         }
+        self.start_radicle(i)?;
         self.launch_validator(i, &opts, bootnodes.as_deref())?;
         sleep(Duration::from_secs(2));
         if self
@@ -400,6 +404,10 @@ impl Localnet {
             "--consensus.listen-addr",
             format!("127.0.0.1:{}", self.cfg.consensus_port(i)),
             "--consensus.use-local-defaults",
+            "--radicle.control-socket",
+            self.radicle_control_socket(i).display(),
+            "--radicle.status-address",
+            format!("127.0.0.1:{}", self.cfg.radicle_status_port(i)),
         ]);
         if self.tee_enabled() {
             a.extend(args![

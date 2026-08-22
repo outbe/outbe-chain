@@ -228,6 +228,10 @@ pub const STABLECOIN_FACTORY_ADDRESS: Address =
 pub const STABLECOIN_POLICY_REGISTRY_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE10");
 
+/// Permissionless append-only registry of public Heartwood repository ids.
+pub const RADICLE_REGISTRY_ADDRESS: Address =
+    address!("0x000000000000000000000000000000000000EE11");
+
 /// Genesis-reserved two-byte class for dynamic stablecoin token addresses.
 pub const STABLECOIN_ADDRESS_PREFIX: [u8; 2] = [0x53, 0xc0];
 

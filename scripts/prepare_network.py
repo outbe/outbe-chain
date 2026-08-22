@@ -29,6 +29,7 @@ script never emits a knowingly partial launch command.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import re
@@ -375,7 +376,83 @@ def generated_wallet_private_keys(output_dir: Path, count: int) -> dict[int, str
     return keys
 
 
-def import_founder_material(source: Path, output_dir: Path, count: int) -> None:
+def radicle_node_id_from_public_key(path: Path) -> str:
+    try:
+        algorithm, encoded, *_ = path.read_text().split()
+    except (OSError, ValueError) as error:
+        raise ValueError(f"invalid Radicle public key {path}") from error
+    if algorithm != "ssh-ed25519":
+        raise ValueError(f"Radicle public key {path} must use ssh-ed25519")
+    try:
+        payload = base64.b64decode(encoded, validate=True)
+    except ValueError as error:
+        raise ValueError(f"invalid Radicle public key encoding in {path}") from error
+
+    def field(offset: int) -> tuple[bytes, int]:
+        if offset + 4 > len(payload):
+            raise ValueError(f"truncated Radicle public key {path}")
+        length = int.from_bytes(payload[offset : offset + 4], "big")
+        start = offset + 4
+        end = start + length
+        if end > len(payload):
+            raise ValueError(f"truncated Radicle public key {path}")
+        return payload[start:end], end
+
+    kind, offset = field(0)
+    node_id, offset = field(offset)
+    if kind != b"ssh-ed25519" or len(node_id) != 32 or offset != len(payload):
+        raise ValueError(f"invalid Ed25519 Radicle public key {path}")
+    return node_id.hex()
+
+
+def generate_founder_radicle_material(
+    *, keygen_binary: str, output_dir: Path, validators: list[dict[str, Any]]
+) -> None:
+    for index, validator in enumerate(validators):
+        home = output_dir / f"validator-{index}" / "radicle"
+        subprocess.run(
+            [keygen_binary, "radicle", "--output-dir", str(home)],
+            check=True,
+        )
+        validator["radicle_node_id"] = "0x" + radicle_node_id_from_public_key(
+            home / "keys" / "radicle.pub"
+        )
+
+
+def validate_founder_radicle_material(
+    validators: list[dict[str, Any]], material_dir: Path, count: int
+) -> None:
+    if len(validators) != count:
+        raise ValueError(
+            f"founder validator count {len(validators)} does not match material count {count}"
+        )
+    seen: set[str] = set()
+    for index, validator in enumerate(validators):
+        configured = normalize_hex(
+            str(validator.get("radicle_node_id", "")),
+            expected_len=64,
+            field=f"validator {index} radicle_node_id",
+        )
+        if configured == "00" * 32:
+            raise ValueError(f"validator {index} radicle_node_id must not be zero")
+        if configured in seen:
+            raise ValueError(f"duplicate Radicle NodeId for validator {index}")
+        seen.add(configured)
+        public_key = material_dir / f"validator-{index}" / "radicle/keys/radicle.pub"
+        secret_key = material_dir / f"validator-{index}" / "radicle/keys/radicle"
+        if not secret_key.is_file():
+            raise ValueError(f"founder material is missing {secret_key}")
+        actual = radicle_node_id_from_public_key(public_key)
+        if actual != configured:
+            raise ValueError(
+                f"validator-{index} Radicle NodeId does not match validators.json"
+            )
+
+
+def import_founder_material(
+    source: Path, output_dir: Path, count: int, validators: list[dict[str, Any]]
+) -> None:
+    validate_founder_radicle_material(validators, source, count)
     required_private = ("signing-key.hex", "evm-key.hex")
     for index in range(count):
         destination = output_dir / f"validator-{index}"
@@ -387,6 +464,10 @@ def import_founder_material(source: Path, output_dir: Path, count: int) -> None:
             destination_path = destination / name
             shutil.copyfile(source_path, destination_path)
             destination_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        shutil.copytree(
+            source / f"validator-{index}" / "radicle",
+            destination / "radicle",
+        )
 
 
 def verify_founder_material(
@@ -990,24 +1071,35 @@ def main() -> None:
             count=args.generate_validators,
         )
         validators_path = output_dir / "validators.json"
-        update_generated_validators(
+        validators = update_generated_validators(
             validators_path=validators_path,
             hosts=hosts,
             consensus_p2p_base_port=args.consensus_p2p_base_port,
             reth_p2p_base_port=args.reth_p2p_base_port,
         )
+        generate_founder_radicle_material(
+            keygen_binary=args.keygen_binary,
+            output_dir=output_dir,
+            validators=validators,
+        )
+        write_json(validators_path, validators)
         wallet_private_keys = generated_wallet_private_keys(
             output_dir,
             args.generate_validators,
         )
     else:
         validators_path = args.validators
+        external_validators = load_json(validators_path)
+        if not isinstance(external_validators, list):
+            raise ValueError("validators.json must contain a JSON array")
         verify_founder_material(
             chain_binary=args.chain_binary,
             validators_path=validators_path,
             material_dir=args.founder_material_dir,
         )
-        import_founder_material(args.founder_material_dir, output_dir, 4)
+        import_founder_material(
+            args.founder_material_dir, output_dir, 4, external_validators
+        )
 
     validators_raw = load_json(validators_path)
     if not isinstance(validators_raw, list) or not validators_raw:

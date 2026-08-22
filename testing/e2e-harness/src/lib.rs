@@ -223,6 +223,7 @@ pub async fn run() {
                     gramine_image_id: world.localnet.enclave_image_id(),
                     ocomp: &ocomp,
                     ocomp_public: &ocomp_public,
+                    radicle: &world.state.radicle,
                 }) {
                     panic!("E2E evidence write failed: {error:#}");
                 }

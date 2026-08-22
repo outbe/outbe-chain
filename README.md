@@ -169,6 +169,14 @@ offer caller is a registered L1 operator address and its network has
 commonware `sign_message` recipe) or the call reverts; unregistered callers and
 zk-disabled networks pass empty bytes.
 
+**Radicle repository registry.** The **RadicleRegistry** precompile at
+`0x000000000000000000000000000000000000EE11` (ABI:
+`contracts/precompiles/src/IRadicleRegistry.sol`) is a permissionless,
+append-only registry of public Heartwood RepoIds. `registerRepository(bytes20)`
+records the caller as registrant (not as repository owner); dense enumeration is
+bounded by the immutable `maxRepositories` value seeded in genesis. V1 exposes
+no unregister, deposit, lease, private-repository, retention, or deletion path.
+
 **Stablecoin Factory V1.** Fresh devnet/testnet genesis includes the fixed Factory
 at `0x...EE0F`, the shared Policy Registry at `0x...EE10`, and the CREATE/CREATE2
 guard for the dynamic `0x53c0` address class. Every registered token uses the exact

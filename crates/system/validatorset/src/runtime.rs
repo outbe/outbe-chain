@@ -693,7 +693,15 @@ impl ValidatorSet<'_> {
         validator_addr: Address,
         consensus_pubkey: &[u8; 48],
     ) -> Result<()> {
-        self.register_validator_inner(caller, validator_addr, consensus_pubkey, None, true)
+        let radicle_node_id = keccak256(validator_addr.as_slice());
+        self.register_validator_inner(
+            caller,
+            validator_addr,
+            consensus_pubkey,
+            radicle_node_id,
+            None,
+            true,
+        )
     }
 
     /// Registers a new validator with BLS proof-of-possession verification.
@@ -711,12 +719,14 @@ impl ValidatorSet<'_> {
         caller: Address,
         validator_addr: Address,
         consensus_pubkey: &[u8; 48],
+        radicle_node_id: B256,
         bls_signature: Option<&[u8; 96]>,
     ) -> Result<()> {
         self.register_validator_inner(
             caller,
             validator_addr,
             consensus_pubkey,
+            radicle_node_id,
             bls_signature,
             false,
         )
@@ -727,6 +737,7 @@ impl ValidatorSet<'_> {
         caller: Address,
         validator_addr: Address,
         consensus_pubkey: &[u8; 48],
+        radicle_node_id: B256,
         bls_signature: Option<&[u8; 96]>,
         allow_bootstrap_without_pop: bool,
     ) -> Result<()> {
@@ -744,6 +755,18 @@ impl ValidatorSet<'_> {
             ));
         }
         self.ensure_not_operational_delegate(validator_addr)?;
+        if radicle_node_id.is_zero() {
+            return Err(PrecompileError::Revert(
+                "Radicle NodeId must not be zero".into(),
+            ));
+        }
+
+        let radicle_owner = self.radicle_node_id_to_validator.read(&radicle_node_id)?;
+        if !radicle_owner.is_zero() && radicle_owner != validator_addr {
+            return Err(PrecompileError::Revert(
+                "Radicle NodeId already registered by another validator".into(),
+            ));
+        }
 
         // Every runtime registration requires proof of possession. The only
         // no-PoP path is the feature-gated bootstrap/test helper above; normal
@@ -754,6 +777,7 @@ impl ValidatorSet<'_> {
                 sig_bytes,
                 self.storage.chain_id()?,
                 validator_addr,
+                radicle_node_id,
             )?;
         } else if !allow_bootstrap_without_pop {
             return Err(PrecompileError::Revert(
@@ -802,6 +826,17 @@ impl ValidatorSet<'_> {
                     ));
                 }
             };
+            let stored_node_id = self.val_radicle_node_id.read(&validator_addr)?;
+            if stored_node_id != radicle_node_id {
+                return Err(PrecompileError::Revert(
+                    "inactive validator must keep its Radicle NodeId until final cleanup".into(),
+                ));
+            }
+            if radicle_owner != validator_addr {
+                return Err(PrecompileError::Fatal(
+                    "registered validator has inconsistent Radicle NodeId reverse binding".into(),
+                ));
+            }
             // Re-registration path: check cooldown then reuse existing index
             let cooldown = self.config_reregistration_cooldown.read()?;
             if cooldown > 0 {
@@ -900,6 +935,11 @@ impl ValidatorSet<'_> {
         )?;
 
         let guard = self.storage.checkpoint_guard();
+        if radicle_owner == validator_addr {
+            return Err(PrecompileError::Fatal(
+                "unregistered validator retains a Radicle NodeId reservation".into(),
+            ));
+        }
         self.address_to_index
             .write(&validator_addr, new_index_u64)?;
         self.index_to_address
@@ -910,6 +950,10 @@ impl ValidatorSet<'_> {
         let pk_hash = Self::consensus_pubkey_hash(consensus_pubkey);
         self.consensus_pubkey_hash_to_address
             .write(&pk_hash, validator_addr)?;
+        self.val_radicle_node_id
+            .write(&validator_addr, radicle_node_id)?;
+        self.radicle_node_id_to_validator
+            .write(&radicle_node_id, validator_addr)?;
 
         // Increment count
         self.validator_count.write(new_index)?;
@@ -2259,6 +2303,12 @@ impl ValidatorSet<'_> {
         let pk_hash = Self::consensus_pubkey_hash(&pubkey);
         self.consensus_pubkey_hash_to_address
             .write(&pk_hash, Address::ZERO)?;
+        let radicle_node_id = self.val_radicle_node_id.read(addr)?;
+        if !radicle_node_id.is_zero() {
+            self.radicle_node_id_to_validator
+                .write(&radicle_node_id, Address::ZERO)?;
+        }
+        self.val_radicle_node_id.write(addr, B256::ZERO)?;
 
         self.write_consensus_pubkey(addr, &[0u8; 48])?;
         self.val_stake.write(addr, U256::ZERO)?;
@@ -2294,6 +2344,16 @@ impl ValidatorSet<'_> {
     pub fn lookup_by_pubkey_hash(&self, pubkey_hash: B256) -> Result<Address> {
         self.consensus_pubkey_hash_to_address.read(&pubkey_hash)
     }
+
+    /// Returns the Radicle NodeId bound to `validator`, or zero when absent.
+    pub fn get_radicle_node_id(&self, validator: Address) -> Result<B256> {
+        self.val_radicle_node_id.read(&validator)
+    }
+
+    /// Returns the validator that owns `node_id`, or zero when unbound.
+    pub fn validator_by_radicle_node_id(&self, node_id: B256) -> Result<Address> {
+        self.radicle_node_id_to_validator.read(&node_id)
+    }
 }
 
 /// Verifies a BLS MinPk registration signature.
@@ -2307,6 +2367,7 @@ fn verify_bls_registration_sig(
     sig_bytes: &[u8; 96],
     chain_id: u64,
     validator_addr: Address,
+    radicle_node_id: B256,
 ) -> Result<()> {
     use blst::min_pk::{PublicKey, Signature};
     use blst::BLST_ERROR;
@@ -2316,7 +2377,7 @@ fn verify_bls_registration_sig(
     let sig = Signature::from_bytes(sig_bytes)
         .map_err(|_| PrecompileError::Revert("invalid BLS signature".into()))?;
 
-    let message = validator_registration_message(chain_id, validator_addr);
+    let message = validator_registration_message(chain_id, validator_addr, radicle_node_id);
     let result = sig.verify(true, &message, VALIDATOR_REGISTRATION_DST, &[], &pk, true);
     if result != BLST_ERROR::BLST_SUCCESS {
         return Err(PrecompileError::Revert(

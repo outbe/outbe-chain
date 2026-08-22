@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use alloy_primitives::{hex, Address, Bytes};
+use alloy_primitives::{hex, Address, Bytes, B256};
 use eyre::{eyre, Result};
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 
@@ -176,6 +176,28 @@ impl Localnet {
             };
             let address =
                 eth::address_of(&evm_key).ok_or_else(|| eyre!("bad generated EVM key"))?;
+            let (radicle_node_id, radicle_secret_key, radicle_public_key) =
+                if let Some(source) = eoa_source {
+                    (
+                        source.radicle_node_id(),
+                        source.radicle_secret_key().to_owned(),
+                        source.radicle_public_key().to_owned(),
+                    )
+                } else {
+                    let radicle_home = staging.join("radicle");
+                    let output = self.keygen(&[
+                        "radicle",
+                        "--output-dir",
+                        &radicle_home.display().to_string(),
+                    ])?;
+                    let node_id = first_hex(&output, 64)
+                        .ok_or_else(|| eyre!("no Radicle NodeId from keygen"))?;
+                    (
+                        B256::from_slice(&hex::decode(node_id)?),
+                        fs::read_to_string(radicle_home.join("keys/radicle"))?,
+                        fs::read_to_string(radicle_home.join("keys/radicle.pub"))?,
+                    )
+                };
             let chain_id = self.chain_id()?.to_string();
             let signature = first_hex(
                 &self.keygen(&[
@@ -186,6 +208,8 @@ impl Localnet {
                     &format!("{address:#x}"),
                     "--chain-id",
                     &chain_id,
+                    "--radicle-node-id",
+                    &format!("{radicle_node_id:#x}"),
                 ])?,
                 120,
             )
@@ -197,6 +221,9 @@ impl Localnet {
                 evm_key,
                 bls_private_key,
                 Bytes::from(hex::decode(bls)?),
+                radicle_node_id,
+                radicle_secret_key,
+                radicle_public_key,
                 Bytes::from(hex::decode(signature)?),
                 random_hex_32()?,
             ))
@@ -213,6 +240,27 @@ impl Localnet {
         identity: &RegistrationIdentity,
     ) -> Result<()> {
         identity.install_at(&self.cfg.validator_dir(index))
+    }
+
+    pub fn installed_registration_eoa_source(
+        &self,
+        index: usize,
+        address: Address,
+        evm_key: String,
+        radicle_node_id: B256,
+    ) -> Result<RegistrationIdentity> {
+        let validator_dir = self.cfg.validator_dir(index);
+        Ok(RegistrationIdentity::new(
+            address,
+            evm_key,
+            String::new(),
+            Bytes::new(),
+            radicle_node_id,
+            fs::read_to_string(validator_dir.join("radicle/keys/radicle"))?,
+            fs::read_to_string(validator_dir.join("radicle/keys/radicle.pub"))?,
+            Bytes::new(),
+            read_trimmed(&validator_dir.join("reth-p2p-secret.hex"))?,
+        ))
     }
 
     /// Provision a joiner: keygen, fund, register, p2p, enclave, `tee join`
@@ -243,6 +291,15 @@ impl Localnet {
             .ok_or_else(|| eyre!("no BLS pubkey from keygen"))?;
         let key = read_evm_key(&vd)?;
         let addr = eth::address_of(&key).ok_or_else(|| eyre!("bad joiner evm key"))?;
+        let radicle_output = self.keygen(&[
+            "radicle",
+            "--output-dir",
+            &vd.join("radicle").display().to_string(),
+        ])?;
+        let radicle_node_id = first_hex(&radicle_output, 64)
+            .and_then(|value| hex::decode(value).ok())
+            .map(|value| B256::from_slice(&value))
+            .ok_or_else(|| eyre!("no Radicle NodeId from keygen"))?;
         self.prepare_joiner_ocomp_identity(index, addr, &bls)?;
         let chain_id = self.chain_id()?.to_string();
         let sig = first_hex(
@@ -254,6 +311,8 @@ impl Localnet {
                 &format!("{addr:#x}"),
                 "--chain-id",
                 &chain_id,
+                "--radicle-node-id",
+                &format!("{radicle_node_id:#x}"),
             ])?,
             120,
         )
@@ -267,6 +326,7 @@ impl Localnet {
             addr,
             &key,
             Bytes::from(hex::decode(&bls)?),
+            radicle_node_id,
             Bytes::from(hex::decode(&sig)?),
         )
     }
@@ -288,6 +348,7 @@ impl Localnet {
             identity.address(),
             identity.evm_key(),
             identity.bls_public_key().clone(),
+            identity.radicle_node_id(),
             identity.registration_signature().clone(),
         )?;
         self.join_node_enclave(index)
@@ -333,6 +394,7 @@ impl Localnet {
         addr: Address,
         key: &str,
         bls_public_key: Bytes,
+        radicle_node_id: B256,
         registration_signature: Bytes,
     ) -> Result<()> {
         // Fund from validator-0, prove that an unrelated EOA cannot register
@@ -344,7 +406,8 @@ impl Localnet {
         let registration = IValidatorSet::registerValidatorCall {
             validatorAddress: addr,
             consensusPubkey: bls_public_key,
-            blsSignature: registration_signature,
+            radicleNodeId: radicle_node_id,
+            blsRegistrationSignature: registration_signature,
         };
         let unrelated = read_evm_key(&self.cfg.validator_dir(1))?;
         let unauthorized = eth::send_call(
@@ -560,6 +623,7 @@ impl Localnet {
         fs::create_dir_all(vd.join("data"))?;
         fs::create_dir_all(vd.join("logs"))?;
         let secret = read_trimmed(&vd.join("reth-p2p-secret.hex"))?;
+        self.start_radicle(index)?;
 
         let (public_polynomial, dkg_output) = verifier_material_paths(&self.cfg.dir);
         let mut a = self.reth_base_args(&vd, index);
@@ -586,6 +650,10 @@ impl Localnet {
             "--consensus.peers",
             self.consensus_peers()?,
             "--consensus.use-local-defaults",
+            "--radicle.control-socket",
+            self.radicle_control_socket(index).display(),
+            "--radicle.status-address",
+            format!("127.0.0.1:{}", self.cfg.radicle_status_port(index)),
             "--tee-enclave-socket",
             format!("127.0.0.1:{}", self.cfg.tee_port(index)),
             "--consensus.public-polynomial",
