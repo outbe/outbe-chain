@@ -744,6 +744,39 @@ pub(crate) fn send_value(url: &str, to: Address, key: &str, value: U256) -> Resu
     })
 }
 
+/// Submit a value transfer at an explicit nonce WITHOUT waiting for a receipt.
+///
+/// Used by the pool-eviction scenarios: a nonce ahead of the account's next
+/// nonce parks the transaction in the queued sub-pool, where it can never be
+/// mined and must age out. Returns the transaction hash.
+pub(crate) fn send_value_at_nonce(
+    url: &str,
+    to: Address,
+    key: &str,
+    value: U256,
+    nonce: u64,
+) -> Result<String> {
+    let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
+    let wallet = EthereumWallet::from(signer);
+    let url = url.to_string();
+    block_on(async move {
+        let provider = ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_http(url.parse()?);
+        let tx = TransactionRequest::default()
+            .to(to)
+            .value(value)
+            .nonce(nonce)
+            .gas_limit(21_000)
+            .max_fee_per_gas(GAS_PRICE_UNITS)
+            .max_priority_fee_per_gas(0);
+        // Deliberately no `get_receipt()`: this transaction is not expected to
+        // be mined.
+        let pending = provider.send_transaction(tx).await?;
+        Ok(format!("{:#x}", *pending.tx_hash()))
+    })
+}
+
 /// Current account balance.
 pub(crate) fn balance(url: &str, address: Address) -> Option<U256> {
     let url = url.to_string();

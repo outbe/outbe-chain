@@ -221,6 +221,9 @@ pub struct FixtureState {
     pub marker_height: Option<u64>,
     /// A log-line count captured before an action (e.g. DKG ceremony count).
     pub marker_count: Option<usize>,
+    /// Hash of a transaction that cannot be mined, submitted to observe pool
+    /// eviction (`features/txpool_eviction.feature`).
+    pub stuck_tx_hash: Option<String>,
     /// Exact offer public key observed from a registered joiner's enclave and
     /// matched against canonical chain state before an enclave restart.
     pub joiner_offer_public_before_restart: Option<[u8; 32]>,
@@ -405,6 +408,7 @@ impl Default for FixtureState {
             wwd: None,
             marker_height: None,
             marker_count: None,
+            stuck_tx_hash: None,
             joiner_offer_public_before_restart: None,
             vrf_expiry_height: None,
             lifecycle_stake_before_exit: None,

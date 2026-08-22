@@ -243,6 +243,16 @@ pub struct ConsensusArgs {
     #[arg(long = "tee-canary.failure-threshold", default_value_t = 3)]
     pub tee_canary_failure_threshold: u64,
 
+    /// Interval, in seconds of canonical block time, between pending-pool
+    /// snapshots. A transaction present in two consecutive snapshots has stayed
+    /// pending for at least one full interval without being mined and is
+    /// evicted, so the effective pending lifetime is one to two intervals.
+    /// Node-local pool policy; it never affects block validity. Keep the value
+    /// uniform across the fleet so every node sheds a stuck transaction at the
+    /// same rate.
+    #[arg(long = "txpool.outbe.pending-staleness-secs", default_value_t = 600)]
+    pub txpool_pending_staleness_secs: u64,
+
     /// Heartwood native control socket used for bounded identity, configuration,
     /// and topology reconciliation. Required only in validator mode.
     #[arg(long = "radicle.control-socket", value_name = "PATH")]
@@ -353,6 +363,9 @@ impl ConsensusArgs {
         }
         if self.tee_renewal_rpc_url.trim().is_empty() {
             eyre::bail!("--tee-renewal.rpc-url must not be empty");
+        }
+        if self.txpool_pending_staleness_secs == 0 {
+            eyre::bail!("--txpool.outbe.pending-staleness-secs must be greater than zero");
         }
         // Follower mode (`--upstream`) is the lightweight full-node path and must
         // not be combined with validator/consensus participation. (clap's
@@ -545,6 +558,7 @@ mod tests {
             tee_renewal_critical_blocks: 120,
             tee_canary_interval_secs: 30,
             tee_canary_failure_threshold: 3,
+            txpool_pending_staleness_secs: 600,
             upstream: None,
             upstream_nocertify: false,
             projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),

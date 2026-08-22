@@ -850,6 +850,10 @@ fn run_node() -> eyre::Result<()> {
     // `reqwest::blocking` internally and would panic from an async context.
     outbe_zkproof::init_crs()?;
 
+    // Pool lifetime hardening. Must run BEFORE CLI parsing: clap reads these as
+    // its own defaults, so explicit `--txpool.*` flags still win.
+    let _ = outbe_default_txpool_values().try_init();
+
     let mut cli = Cli::<OutbeChainSpecParser, ConsensusArgs, OutbeRpcModuleValidator>::parse();
     apply_outbe_gas_price_oracle_defaults(&mut cli.command);
 
@@ -1833,6 +1837,16 @@ fn run_node() -> eyre::Result<()> {
                 shutdown_token.clone(),
             ))
         });
+        // Pending staleness eviction. Node-local pool policy, so it runs in
+        // every mode — full nodes are the public RPC ingress and shed stuck
+        // transactions that would otherwise be re-gossiped to validators.
+        let txpool_maintenance_handle = tokio::spawn(outbe_txpool::maintain::maintain_outbe_pool(
+            node.provider.clone(),
+            node.pool.clone(),
+            outbe_txpool::maintain::OutbePoolMaintainConfig {
+                staleness_interval_secs: args.txpool_pending_staleness_secs,
+            },
+        ));
         let upgrade_promotion = Arc::new(tokio::sync::Notify::new());
         let upgrade_handle = if initial_tee_policy.attestation_mode
             == outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired
@@ -2000,6 +2014,16 @@ fn run_node() -> eyre::Result<()> {
         if let Some(handle) = tee_canary_handle {
             handle.await.wrap_err("TEE canary worker panicked")?;
         }
+        // The maintenance loop ends with its canonical-state stream; abort it
+        // explicitly so shutdown never waits on a live provider subscription.
+        txpool_maintenance_handle.abort();
+        match txpool_maintenance_handle.await {
+            Ok(()) => {}
+            Err(error) if error.is_cancelled() => {}
+            Err(error) => {
+                return Err(eyre::eyre!("txpool maintenance task panicked: {error}"));
+            }
+        }
         if let Some(handle) = upgrade_handle {
             handle.abort();
             match handle.await {
@@ -2040,6 +2064,36 @@ fn configure_outbe_engine_args(engine: &mut reth_node_core::args::EngineArgs) {
     engine.always_process_payload_attributes_on_canonical_head = true;
     engine.allow_unwind_canonical_header = true;
 }
+
+/// Outbe's transaction-pool defaults, installed before CLI parsing so operator
+/// `--txpool.*` flags still override them.
+///
+/// Rationale (2026-08-22 incident): a transaction that keeps landing in
+/// proposals which fail to finalize is re-injected by the reorg path and stays
+/// pending indefinitely. Two upstream defaults made that worse:
+///
+/// - `--txpool.lifetime` (parked sub-pools) defaults to 3 hours — far longer
+///   than any legitimate parked transaction needs on a two-second chain.
+/// - RPC-submitted transactions are treated as "local" and are exempt from
+///   lifetime eviction. The incident transactions arrived over public RPC, so
+///   the exemption applied to exactly the traffic that must be evictable.
+///
+/// The transactions backup journal is disabled for the same reason: a restart
+/// must not resurrect transactions the node deliberately evicted.
+fn outbe_default_txpool_values() -> reth_node_core::args::DefaultTxPoolValues {
+    reth_node_core::args::DefaultTxPoolValues::default()
+        .with_max_queued_lifetime(OUTBE_TXPOOL_QUEUED_LIFETIME)
+        .with_no_locals(OUTBE_TXPOOL_NO_LOCALS)
+        .with_disable_transactions_backup(OUTBE_TXPOOL_DISABLE_BACKUP)
+}
+
+/// Parked-transaction lifetime. Reth's own default is three hours — orders of
+/// magnitude longer than a two-second chain needs.
+const OUTBE_TXPOOL_QUEUED_LIFETIME: std::time::Duration = std::time::Duration::from_secs(120);
+/// RPC-submitted transactions must NOT be exempt from lifetime eviction.
+const OUTBE_TXPOOL_NO_LOCALS: bool = true;
+/// A restart must not resurrect transactions the node deliberately evicted.
+const OUTBE_TXPOOL_DISABLE_BACKUP: bool = true;
 
 #[cfg(test)]
 mod tests {
@@ -2233,6 +2287,35 @@ mod tests {
         let tree = engine.tree_config();
         assert!(tree.always_process_payload_attributes_on_canonical_head());
         assert!(tree.unwind_canonical_header());
+    }
+
+    /// Pool lifetime hardening: parked transactions must age out in minutes,
+    /// not hours, RPC submissions must not be exempt from that eviction, and a
+    /// restart must not resurrect what the node evicted.
+    ///
+    /// Asserted through `TxPoolArgs::default()`, which reads the installed
+    /// global defaults — the same values clap hands the node when no
+    /// `--txpool.*` flag is given.
+    #[test]
+    fn txpool_defaults_bound_transaction_lifetime() {
+        // Installing is idempotent-by-OnceLock; another test in this binary may
+        // have installed the same values first, which is equally correct.
+        let _ = super::outbe_default_txpool_values().try_init();
+
+        let args = reth_node_core::args::TxPoolArgs::default();
+        assert_eq!(
+            args.max_queued_lifetime,
+            std::time::Duration::from_secs(120),
+            "parked transactions must age out in minutes, not the upstream 3 hours"
+        );
+        assert!(
+            args.no_locals,
+            "RPC-submitted transactions must not be exempt from lifetime eviction"
+        );
+        assert!(
+            args.disable_transactions_backup,
+            "a restart must not resurrect evicted transactions"
+        );
     }
 
     #[test]

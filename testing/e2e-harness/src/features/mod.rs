@@ -32,6 +32,7 @@ pub mod stale_join;
 pub mod target_chain;
 pub mod tee_observability;
 pub mod tribute_projection;
+pub mod txpool_eviction;
 pub mod zerofee;
 
 pub mod validator_consistency_accounting;

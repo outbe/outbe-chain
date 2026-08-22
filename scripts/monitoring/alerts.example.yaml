@@ -350,3 +350,45 @@ groups:
           subsystem: tee
         annotations:
           summary: "enclave session reconnected >3 times in 15m (unstable sidecar)"
+
+  # --- Transaction pool eviction (2026-08-22 incident follow-up) ---
+  #
+  # Source metrics (emitted by the node-side pool maintenance loop in
+  # `crates/blockchain/txpool/src/maintain.rs`):
+  #   outbe_txpool_stale_evicted_total     - transactions evicted after
+  #                                          surviving two consecutive pending
+  #                                          snapshots (plus their descendants)
+  #   outbe_txpool_pending_snapshot_size   - pending-set size at the last snapshot
+  #
+  # Steady state is zero evictions: a healthy transaction is mined long before
+  # the staleness interval elapses. Sustained evictions mean transactions are
+  # entering the pool that the network cannot include — a stuck-transaction
+  # pattern, a builder that keeps skipping them, or a validator too slow to
+  # finalize the proposals carrying them.
+  - name: outbe-chain.txpool
+    interval: 30s
+    rules:
+      - alert: OutbeTxpoolSustainedStaleEviction
+        expr: increase(outbe_txpool_stale_evicted_total[15m]) > 0
+        for: 15m
+        labels:
+          severity: warning
+          subsystem: txpool
+        annotations:
+          summary: "pool is shedding stale transactions on {{ $labels.instance }}"
+          description: |
+            Transactions have been evicted after staying pending across two
+            snapshots for 15 minutes straight. Check whether one transaction
+            keeps re-entering the pool (gossip / reorg re-injection) and whether
+            block time has degraded.
+
+      - alert: OutbeTxpoolPendingBacklog
+        # Well below the 10k pending sub-pool cap; a sustained backlog on a
+        # low-traffic chain means transactions are not being drained.
+        expr: outbe_txpool_pending_snapshot_size > 1000
+        for: 15m
+        labels:
+          severity: warning
+          subsystem: txpool
+        annotations:
+          summary: "pending pool backlog above 1000 for 15 minutes"

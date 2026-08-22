@@ -277,8 +277,11 @@ impl Localnet {
             "0.0.0.0",
             "--http.port",
             self.cfg.http_port(i),
+            // `txpool` is required by the pool-eviction scenarios: the pool's
+            // real contents are only observable through `txpool_content` /
+            // `txpool_status` (`eth_pendingTransactions` does not reflect them).
             "--http.api",
-            "eth,net,web3,outbe,debug",
+            "eth,net,web3,outbe,debug,txpool",
             "--rpc.eth-proof-window",
             1868,
             "--port",
