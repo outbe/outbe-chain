@@ -7,7 +7,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{DirBuilder, File, OpenOptions},
-    io::Write,
+    io::{Read as _, Write},
     os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _},
     path::{Path, PathBuf},
     sync::{
@@ -26,7 +26,10 @@ use outbe_metadosis::precompile::IMetadosis;
 use outbe_ocomp::payout_submitter::PayoutTickOutcomeV1;
 use outbe_ocomp::{
     bundle::PinnedProtocolBundle,
-    embedded::{EmbeddedJobActionV1, EmbeddedJobStateV1, EmbeddedOcompJobsV1, EmbeddedOcompModeV1},
+    embedded::{
+        EmbeddedJobActionV1, EmbeddedJobEventV1, EmbeddedJobGenerationV1, EmbeddedJobStateV1,
+        EmbeddedOcompJobsV1, EmbeddedOcompModeV1, EmbeddedTerminalReasonV1,
+    },
     embedded_checkpoint::{OcompExExCheckpointStoreV1, OcompExExCheckpointV1},
     embedded_runtime::{
         EmbeddedComputeOutcomeV1, EmbeddedMaterializationOutcomeV1, EmbeddedNodePolicyV1,
@@ -97,11 +100,42 @@ struct RequestLocatorV1 {
 
 struct RuntimeJobV1 {
     record: DiscoveryRecord,
+    generation: EmbeddedJobGenerationV1,
     cancelled: Arc<AtomicBool>,
     compute_started: bool,
-    vote_eligible: bool,
+    vote_eligibility: LocalVoteEligibilityV1,
     vote_started: bool,
     canonical_result: Option<LysisResultV1>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LocalVoteEligibilityV1 {
+    Pending,
+    Eligible,
+    NotMember,
+}
+
+fn advance_vote_eligibility(
+    current: LocalVoteEligibilityV1,
+    observed: outbe_node::ocomp::retention::OcompSnapshotEligibilityV1,
+) -> eyre::Result<LocalVoteEligibilityV1> {
+    if current != LocalVoteEligibilityV1::Pending {
+        return Ok(current);
+    }
+    match observed {
+        outbe_node::ocomp::retention::OcompSnapshotEligibilityV1::Eligible => {
+            Ok(LocalVoteEligibilityV1::Eligible)
+        }
+        outbe_node::ocomp::retention::OcompSnapshotEligibilityV1::NotMember => {
+            Ok(LocalVoteEligibilityV1::NotMember)
+        }
+        outbe_node::ocomp::retention::OcompSnapshotEligibilityV1::Unavailable { .. } => {
+            Ok(LocalVoteEligibilityV1::Pending)
+        }
+        outbe_node::ocomp::retention::OcompSnapshotEligibilityV1::Corrupt { detail } => {
+            bail!("pinned OCOMP vote membership is corrupt: {detail}")
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -110,10 +144,113 @@ struct MaterializationAttemptKeyV1 {
     first_nod_ordinal: u32,
 }
 
+fn bound_materialization_attempts(
+    attempts: &mut BTreeMap<MaterializationAttemptKeyV1, u64>,
+    current: Option<MaterializationAttemptKeyV1>,
+) {
+    attempts.retain(|key, _| Some(*key) == current);
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FinalizedHeadPhaseV1 {
     StartupRecovery,
     Running,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CanonicalJobDispositionV1 {
+    AwaitingFinality,
+    FinalizedAwaitingOpen,
+    VotingOpen,
+    Completed,
+    Closed {
+        reason: EmbeddedTerminalReasonV1,
+        has_finalized_job: bool,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AsyncOutcomeProjectionV1 {
+    Active,
+    CheckpointPruned,
+}
+
+fn classify_async_outcome_projection(
+    runtime_generation: Option<EmbeddedJobGenerationV1>,
+    reducer_generation: Option<EmbeddedJobGenerationV1>,
+) -> eyre::Result<AsyncOutcomeProjectionV1> {
+    match (runtime_generation, reducer_generation) {
+        (Some(runtime), Some(reducer)) if runtime == reducer => {
+            Ok(AsyncOutcomeProjectionV1::Active)
+        }
+        (None, None) => Ok(AsyncOutcomeProjectionV1::CheckpointPruned),
+        (Some(_), Some(_)) => bail!("OCOMP runtime and reducer generations disagree"),
+        (Some(_), None) | (None, Some(_)) => {
+            bail!("OCOMP runtime and reducer projections disagree")
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LocalResultRestorePolicyV1 {
+    Never,
+    BeforeCompute,
+    AfterCanonicalCompleted,
+}
+
+fn local_result_restore_policy(
+    disposition: CanonicalJobDispositionV1,
+    policy: EmbeddedNodePolicyV1,
+    discovered: bool,
+    eligibility_became_available: bool,
+    compute_started: bool,
+) -> LocalResultRestorePolicyV1 {
+    match disposition {
+        CanonicalJobDispositionV1::VotingOpen
+            if discovered || eligibility_became_available || !compute_started =>
+        {
+            LocalResultRestorePolicyV1::BeforeCompute
+        }
+        CanonicalJobDispositionV1::Completed
+            if policy == EmbeddedNodePolicyV1::FullNode && (discovered || !compute_started) =>
+        {
+            LocalResultRestorePolicyV1::AfterCanonicalCompleted
+        }
+        CanonicalJobDispositionV1::AwaitingFinality
+        | CanonicalJobDispositionV1::FinalizedAwaitingOpen
+        | CanonicalJobDispositionV1::VotingOpen
+        | CanonicalJobDispositionV1::Completed
+        | CanonicalJobDispositionV1::Closed { .. } => LocalResultRestorePolicyV1::Never,
+    }
+}
+
+fn classify_canonical_job(
+    status: OcompJobStatus,
+    has_finalized_job: bool,
+) -> eyre::Result<CanonicalJobDispositionV1> {
+    Ok(match status {
+        OcompJobStatus::AwaitingFinality if !has_finalized_job => {
+            CanonicalJobDispositionV1::AwaitingFinality
+        }
+        OcompJobStatus::AwaitingFinality => CanonicalJobDispositionV1::FinalizedAwaitingOpen,
+        OcompJobStatus::VotingOpen if has_finalized_job => CanonicalJobDispositionV1::VotingOpen,
+        OcompJobStatus::Completed if has_finalized_job => CanonicalJobDispositionV1::Completed,
+        OcompJobStatus::Expired => CanonicalJobDispositionV1::Closed {
+            reason: EmbeddedTerminalReasonV1::Expired,
+            has_finalized_job,
+        },
+        OcompJobStatus::Conflicted => CanonicalJobDispositionV1::Closed {
+            reason: EmbeddedTerminalReasonV1::Conflicted,
+            has_finalized_job,
+        },
+        OcompJobStatus::Canceled => CanonicalJobDispositionV1::Closed {
+            reason: EmbeddedTerminalReasonV1::Canceled,
+            has_finalized_job,
+        },
+        OcompJobStatus::VotingOpen | OcompJobStatus::Completed => {
+            bail!("OCOMP canonical status/finalized payload shape is invalid")
+        }
+    })
 }
 
 /// What startup must do with a persisted watermark, given the canonical chain
@@ -244,6 +381,7 @@ struct EmbeddedOcompExExV1<P> {
     materialization_attempt_heights: BTreeMap<MaterializationAttemptKeyV1, u64>,
     chain_id: u64,
     genesis_hash: B256,
+    fatal: Option<ProjectionFailure>,
 }
 
 pub async fn run_ocomp_exex<Node>(
@@ -277,6 +415,18 @@ where
         limits: poc_schema_limits(),
     })
     .map_err(|error| eyre::eyre!("open Node-owned OCOMP domain: {error}"))?;
+    if let Some(detail) = load_persisted_fatal_evidence(domain.fatal_evidence_root())? {
+        let failure = ProjectionFailure::new(
+            ProjectionFailureClass::Other,
+            format!("embedded OCOMP persisted fatal evidence: {detail}"),
+        );
+        readiness.publish(ProjectionStatus::Fatal {
+            checkpoint: None,
+            error: failure.clone(),
+        });
+        let _ = exit.send(OcompExExExitV1 { failure });
+        wait_for_node_teardown().await;
+    }
     let mut checkpoint = OcompExExCheckpointStoreV1::open(domain.checkpoint_root())
         .wrap_err("open OCOMP ExEx checkpoint")?;
     let loaded_checkpoint = match checkpoint.load() {
@@ -370,6 +520,7 @@ where
         materialization_attempt_heights: BTreeMap::new(),
         chain_id: config.identity.chain_id,
         genesis_hash: config.genesis_hash,
+        fatal: None,
     };
 
     let mut poll = tokio::time::interval(POLL_INTERVAL);
@@ -392,17 +543,26 @@ where
             }
             _ = poll.tick() => {
                 if let Err(error) = runtime.reconcile() {
-                    runtime.publish_fatal(B256::ZERO, error.to_string());
+                    runtime.latch_fatal(B256::ZERO, error.to_string())?;
                     wait_for_node_teardown().await;
                 }
                 while let Ok(outcome) = runtime.compute_rx.try_recv() {
                     if let Err(error) = runtime.handle_compute(outcome) {
-                        runtime.publish_fatal(B256::ZERO, error.to_string());
+                        runtime.latch_fatal(B256::ZERO, error.to_string())?;
+                        wait_for_node_teardown().await;
+                    }
+                    if runtime.fatal.is_some() {
                         wait_for_node_teardown().await;
                     }
                 }
                 while let Ok(outcome) = runtime.vote_rx.try_recv() {
-                    runtime.handle_vote(outcome);
+                    if let Err(error) = runtime.handle_vote(outcome) {
+                        runtime.latch_fatal(B256::ZERO, error.to_string())?;
+                        wait_for_node_teardown().await;
+                    }
+                    if runtime.fatal.is_some() {
+                        wait_for_node_teardown().await;
+                    }
                 }
                 while let Ok(outcome) = runtime.materialization_rx.try_recv() {
                     runtime.handle_materialization(outcome);
@@ -580,9 +740,28 @@ where
                 &limits,
             )
             .wrap_err("read current exact OCOMP job record")?;
-            let Some(finalized) = record.finalized.as_ref() else {
-                continue;
-            };
+            let disposition = classify_canonical_job(record.status, record.finalized.is_some())?;
+            match disposition {
+                CanonicalJobDispositionV1::AwaitingFinality => continue,
+                CanonicalJobDispositionV1::Closed {
+                    has_finalized_job: false,
+                    ..
+                } => {
+                    self.materialized_requests.insert(locator.intent_id);
+                    continue;
+                }
+                CanonicalJobDispositionV1::FinalizedAwaitingOpen
+                | CanonicalJobDispositionV1::VotingOpen
+                | CanonicalJobDispositionV1::Completed
+                | CanonicalJobDispositionV1::Closed {
+                    has_finalized_job: true,
+                    ..
+                } => {}
+            }
+            let finalized = record
+                .finalized
+                .as_ref()
+                .ok_or_else(|| eyre::eyre!("OCOMP finalized payload disappeared"))?;
             if finalized.finalized_request_block_hash != locator.block_hash
                 || finalized.finalized_request_state_root != locator.state_root
             {
@@ -598,8 +777,8 @@ where
             let discovered = !self.jobs.contains_key(&job_id);
             if discovered {
                 let discovery = discovery_record(locator, &record, job_id, &limits)?;
-                let vote_eligible = self.validator_vote_eligible(locator, &record, job_id);
-                self.state
+                let generation = self
+                    .state
                     .observe_job(job_id, finalized.deadline_height)
                     .wrap_err("observe embedded OCOMP job")?;
                 let cancelled = Arc::new(AtomicBool::new(false));
@@ -607,31 +786,69 @@ where
                     job_id,
                     RuntimeJobV1 {
                         record: discovery,
+                        generation,
                         cancelled,
                         compute_started: false,
-                        vote_eligible,
+                        vote_eligibility: if self.policy == EmbeddedNodePolicyV1::Validator {
+                            LocalVoteEligibilityV1::Pending
+                        } else {
+                            LocalVoteEligibilityV1::NotMember
+                        },
                         vote_started: false,
                         canonical_result: None,
                     },
                 );
             }
-            if discovered {
-                self.restore_local_result(job_id)?;
-            }
             self.materialized_requests.insert(locator.intent_id);
 
-            match record.status {
-                OcompJobStatus::VotingOpen => self.ensure_compute_started(job_id)?,
-                OcompJobStatus::Completed => {
+            match disposition {
+                CanonicalJobDispositionV1::FinalizedAwaitingOpen => {}
+                CanonicalJobDispositionV1::VotingOpen => {
+                    let eligibility_became_available =
+                        self.refresh_vote_eligibility(locator, &record, job_id)?;
+                    let compute_started = self
+                        .jobs
+                        .get(&job_id)
+                        .ok_or_else(|| eyre::eyre!("embedded OCOMP job disappeared"))?
+                        .compute_started;
+                    if local_result_restore_policy(
+                        disposition,
+                        self.policy,
+                        discovered,
+                        eligibility_became_available,
+                        compute_started,
+                    ) == LocalResultRestorePolicyV1::BeforeCompute
+                    {
+                        self.restore_local_result(job_id)?;
+                    }
+                    self.ensure_compute_started(job_id)?;
+                }
+                CanonicalJobDispositionV1::Completed => {
+                    self.observe_completed(job_id, &record)?;
                     if self.policy == EmbeddedNodePolicyV1::FullNode {
+                        let compute_started = self
+                            .jobs
+                            .get(&job_id)
+                            .ok_or_else(|| eyre::eyre!("embedded OCOMP job disappeared"))?
+                            .compute_started;
+                        if local_result_restore_policy(
+                            disposition,
+                            self.policy,
+                            discovered,
+                            false,
+                            compute_started,
+                        ) == LocalResultRestorePolicyV1::AfterCanonicalCompleted
+                        {
+                            self.restore_local_result(job_id)?;
+                        }
                         self.ensure_compute_started(job_id)?;
                     }
-                    self.observe_completed(job_id, &record)?;
                 }
-                OcompJobStatus::Expired => self.observe_no_quorum(job_id)?,
-                OcompJobStatus::AwaitingFinality => {}
-                OcompJobStatus::Conflicted | OcompJobStatus::Canceled => {
-                    bail!("unsupported terminal OCOMP state without canonical result");
+                CanonicalJobDispositionV1::Closed { reason, .. } => {
+                    self.observe_terminal(job_id, reason)?;
+                }
+                CanonicalJobDispositionV1::AwaitingFinality => {
+                    unreachable!("awaiting-finality records returned before job discovery")
                 }
             }
             if height >= finalized.deadline_height
@@ -645,7 +862,7 @@ where
                 )
             {
                 self.state
-                    .observe_deadline(job_id)
+                    .reduce(job_id, EmbeddedJobEventV1::Deadline)
                     .wrap_err("observe OCOMP deadline")?;
             }
         }
@@ -662,6 +879,7 @@ where
         }
         self.domain.spawn_compute(
             job.record.clone(),
+            job.generation,
             Arc::clone(&job.cancelled),
             self.compute_tx.clone(),
         )?;
@@ -678,8 +896,14 @@ where
             .get_mut(&job_id)
             .ok_or_else(|| eyre::eyre!("restored OCOMP job is unknown"))?
             .compute_started = true;
+        let generation = self
+            .jobs
+            .get(&job_id)
+            .ok_or_else(|| eyre::eyre!("restored OCOMP job is unknown"))?
+            .generation;
         self.accept_local_result(
             job_id,
+            generation,
             loaded.committed.result_digest,
             loaded.canonical_result,
         )?;
@@ -722,8 +946,14 @@ where
             .canonical_result = Some(canonical.clone());
         let action = self
             .state
-            .record_canonical_result(job_id, digest)
-            .wrap_err("record canonical OCOMP result")?;
+            .reduce(
+                job_id,
+                EmbeddedJobEventV1::CanonicalCompleted {
+                    result_digest: digest,
+                },
+            )
+            .wrap_err("record canonical OCOMP result")?
+            .action;
         if matches!(action, EmbeddedJobActionV1::ReleaseProgress { .. }) {
             self.verify_full_node_exact(job_id, &canonical)?;
         } else if let EmbeddedJobActionV1::FatalMismatch {
@@ -741,74 +971,138 @@ where
         Ok(())
     }
 
-    fn observe_no_quorum(&mut self, job_id: B256) -> eyre::Result<()> {
-        if matches!(
-            self.state.state(job_id),
-            Some(EmbeddedJobStateV1::ClosedNoQuorum)
-        ) {
-            return Ok(());
-        }
+    fn observe_terminal(
+        &mut self,
+        job_id: B256,
+        reason: EmbeddedTerminalReasonV1,
+    ) -> eyre::Result<()> {
         self.state
-            .record_no_quorum(job_id)
-            .wrap_err("record finalized OCOMP no-quorum")?;
+            .reduce(job_id, EmbeddedJobEventV1::CanonicalClosed { reason })
+            .wrap_err("record finalized OCOMP terminal state")?;
         if let Some(job) = self.jobs.get(&job_id) {
             job.cancelled.store(true, Ordering::Release);
         }
-        info!(%job_id, "embedded OCOMP job closed without quorum");
+        info!(%job_id, ?reason, "embedded OCOMP job reached canonical terminal state");
         Ok(())
     }
 
     fn handle_compute(&mut self, outcome: EmbeddedComputeOutcomeV1) -> eyre::Result<()> {
-        let completed = match outcome {
-            EmbeddedComputeOutcomeV1::Completed(completed) => completed,
-            EmbeddedComputeOutcomeV1::Unrecoverable { job_id, detail } => {
-                persist_local_failure_evidence(self.domain.fatal_evidence_root(), job_id, &detail)?;
-                if local_compute_failure_is_fatal(self.policy) {
-                    self.publish_fatal(job_id, detail);
-                } else {
-                    error!(%job_id, %detail, "Validator OCOMP computation failed; abstaining from vote");
+        let (generation, completed) = match outcome {
+            EmbeddedComputeOutcomeV1::Completed {
+                generation,
+                completed,
+            } => (generation, completed),
+            EmbeddedComputeOutcomeV1::Unrecoverable {
+                job_id,
+                generation,
+                detail,
+            } => {
+                let Some(projection) = self.async_outcome_projection(job_id)? else {
+                    return Ok(());
+                };
+                if projection == AsyncOutcomeProjectionV1::CheckpointPruned {
+                    info!(%job_id, %detail, "ignored checkpoint-pruned OCOMP computation failure");
+                    return Ok(());
+                }
+                let action = self
+                    .state
+                    .reduce(job_id, EmbeddedJobEventV1::LocalFailed { generation })
+                    .wrap_err("reduce embedded OCOMP local failure")?
+                    .action;
+                match action {
+                    EmbeddedJobActionV1::FatalLocalFailure => {
+                        persist_local_failure_evidence(
+                            self.domain.fatal_evidence_root(),
+                            job_id,
+                            &detail,
+                        )?;
+                        self.latch_fatal(job_id, detail)?;
+                    }
+                    EmbeddedJobActionV1::Abstain => {
+                        error!(%job_id, %detail, "Validator OCOMP computation failed; abstaining from vote");
+                    }
+                    EmbeddedJobActionV1::ProtocolOwned => {
+                        info!(%job_id, %detail, "ignored late embedded OCOMP computation failure");
+                    }
+                    _ => bail!("unexpected embedded OCOMP local-failure action"),
                 }
                 return Ok(());
             }
         };
         let job_id = completed.job_id;
-        let committed = self.domain.commit_local_result(&completed)?;
-        self.accept_local_result(job_id, committed.result_digest, completed.canonical_result)
+        let Some(projection) = self.async_outcome_projection(job_id)? else {
+            return Ok(());
+        };
+        let committed = match self.domain.commit_local_result(&completed) {
+            Ok(committed) => committed,
+            Err(error) if projection == AsyncOutcomeProjectionV1::CheckpointPruned => {
+                warn!(%job_id, %error, "failed to persist checkpoint-pruned OCOMP local result");
+                return Ok(());
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if projection == AsyncOutcomeProjectionV1::CheckpointPruned {
+            info!(
+                %job_id,
+                result_digest = %committed.result_digest,
+                "persisted checkpoint-pruned OCOMP local result without reopening protocol state"
+            );
+            return Ok(());
+        }
+        self.accept_local_result(
+            job_id,
+            generation,
+            committed.result_digest,
+            completed.canonical_result,
+        )
     }
 
     fn accept_local_result(
         &mut self,
         job_id: B256,
+        generation: EmbeddedJobGenerationV1,
         result_digest: B256,
         canonical_result: Vec<u8>,
     ) -> eyre::Result<()> {
         let action = self
             .state
-            .record_local_result(job_id, result_digest)
-            .wrap_err("record embedded OCOMP local result")?;
+            .reduce(
+                job_id,
+                EmbeddedJobEventV1::LocalCompleted {
+                    generation,
+                    result_digest,
+                },
+            )
+            .wrap_err("record embedded OCOMP local result")?
+            .action;
         match action {
             EmbeddedJobActionV1::SubmitVote { .. } => {
                 let job = self
                     .jobs
                     .get_mut(&job_id)
                     .ok_or_else(|| eyre::eyre!("computed OCOMP job is unknown"))?;
-                if !job.vote_eligible {
-                    if !job.vote_started {
-                        info!(%job_id, "embedded OCOMP Validator is not in the pinned snapshot; abstaining");
+                match job.vote_eligibility {
+                    LocalVoteEligibilityV1::Pending => {
+                        info!(%job_id, "pinned OCOMP vote membership is temporarily unavailable; retaining local result");
+                    }
+                    LocalVoteEligibilityV1::NotMember => {
+                        if !job.vote_started {
+                            info!(%job_id, "embedded OCOMP Validator is not in the pinned snapshot; abstaining");
+                            job.vote_started = true;
+                        }
+                    }
+                    LocalVoteEligibilityV1::Eligible if !job.vote_started => {
+                        self.domain.spawn_validator_vote(
+                            job.record.clone(),
+                            job.generation,
+                            result_digest,
+                            canonical_result,
+                            Arc::clone(&job.cancelled),
+                            self.vote_tx.clone(),
+                        )?;
                         job.vote_started = true;
                     }
-                    return Ok(());
-                }
-                if !job.vote_started {
-                    self.domain.spawn_validator_vote(
-                        job.record.clone(),
-                        job_id,
-                        result_digest,
-                        canonical_result,
-                        Arc::clone(&job.cancelled),
-                        self.vote_tx.clone(),
-                    )?;
-                    job.vote_started = true;
+                    LocalVoteEligibilityV1::Eligible => {}
                 }
             }
             EmbeddedJobActionV1::ReleaseProgress { .. } => {
@@ -840,47 +1134,126 @@ where
             }
             EmbeddedJobActionV1::AwaitLocalResult { .. }
             | EmbeddedJobActionV1::HoldProgress { .. }
-            | EmbeddedJobActionV1::CloseNoQuorum { .. } => {
+            | EmbeddedJobActionV1::CloseTerminal { .. }
+            | EmbeddedJobActionV1::Abstain
+            | EmbeddedJobActionV1::FatalLocalFailure
+            | EmbeddedJobActionV1::VoteFinalized { .. }
+            | EmbeddedJobActionV1::FatalVoteFailure => {
                 bail!("unexpected embedded OCOMP local-result action");
             }
         }
         Ok(())
     }
 
-    fn validator_vote_eligible(
-        &self,
+    fn refresh_vote_eligibility(
+        &mut self,
         locator: RequestLocatorV1,
         record: &OcompJobRecordV1,
         job_id: B256,
-    ) -> bool {
+    ) -> eyre::Result<bool> {
         if self.policy != EmbeddedNodePolicyV1::Validator {
-            return false;
+            return Ok(false);
+        }
+        let current = self
+            .jobs
+            .get(&job_id)
+            .ok_or_else(|| eyre::eyre!("embedded OCOMP job disappeared"))?
+            .vote_eligibility;
+        if current != LocalVoteEligibilityV1::Pending {
+            return Ok(false);
         }
         let Some(ocomp_key_hash) = self.domain.validator_ocomp_key_hash() else {
-            error!(%job_id, "Validator OCOMP key hash is unavailable; abstaining");
-            return false;
+            bail!("Validator OCOMP key hash is unavailable");
         };
-        match outbe_node::ocomp::retention::ocomp_snapshot_contains_key_at(
+        let observed = outbe_node::ocomp::retention::ocomp_snapshot_contains_key_at(
             &self.provider,
             locator.block_hash,
             &record.intent,
             ocomp_key_hash,
-        ) {
-            Ok(eligible) => eligible,
-            Err(error) => {
-                error!(%job_id, %error, "pinned OCOMP vote membership is unavailable; abstaining");
-                false
-            }
+        );
+        if let outbe_node::ocomp::retention::OcompSnapshotEligibilityV1::Unavailable { detail } =
+            &observed
+        {
+            warn!(%job_id, %detail, "pinned OCOMP vote membership is temporarily unavailable");
         }
+        let resolved = advance_vote_eligibility(current, observed)?;
+        if resolved == LocalVoteEligibilityV1::Pending {
+            return Ok(false);
+        }
+        self.jobs
+            .get_mut(&job_id)
+            .ok_or_else(|| eyre::eyre!("embedded OCOMP job disappeared"))?
+            .vote_eligibility = resolved;
+        Ok(resolved == LocalVoteEligibilityV1::Eligible)
     }
 
-    fn handle_vote(&mut self, outcome: EmbeddedVoteOutcomeV1) {
-        match outcome {
-            EmbeddedVoteOutcomeV1::Finalized { job_id, success } => {
+    fn handle_vote(&mut self, outcome: EmbeddedVoteOutcomeV1) -> eyre::Result<()> {
+        let (job_id, event, detail) = match outcome {
+            EmbeddedVoteOutcomeV1::Finalized {
+                job_id,
+                generation,
+                success,
+            } => (
+                job_id,
+                EmbeddedJobEventV1::VoteFinalized {
+                    generation,
+                    success,
+                },
+                None,
+            ),
+            EmbeddedVoteOutcomeV1::Unrecoverable {
+                job_id,
+                generation,
+                detail,
+            } => (
+                job_id,
+                EmbeddedJobEventV1::VoteFailed { generation },
+                Some(detail),
+            ),
+        };
+        let Some(projection) = self.async_outcome_projection(job_id)? else {
+            return Ok(());
+        };
+        if projection == AsyncOutcomeProjectionV1::CheckpointPruned {
+            info!(%job_id, "ignored checkpoint-pruned embedded OCOMP vote outcome");
+            return Ok(());
+        }
+        match self
+            .state
+            .reduce(job_id, event)
+            .wrap_err("reduce embedded OCOMP vote outcome")?
+            .action
+        {
+            EmbeddedJobActionV1::VoteFinalized { success } => {
                 info!(%job_id, success, "embedded OCOMP vote finalized");
             }
-            EmbeddedVoteOutcomeV1::Unrecoverable { job_id, detail } => {
-                self.publish_fatal(job_id, detail);
+            EmbeddedJobActionV1::FatalVoteFailure => {
+                self.latch_fatal(
+                    job_id,
+                    detail.unwrap_or_else(|| "embedded OCOMP vote failed".to_owned()),
+                )?;
+            }
+            EmbeddedJobActionV1::ProtocolOwned => {
+                info!(%job_id, "ignored late embedded OCOMP vote outcome");
+            }
+            _ => bail!("unexpected embedded OCOMP vote action"),
+        }
+        Ok(())
+    }
+
+    fn async_outcome_projection(
+        &mut self,
+        job_id: B256,
+    ) -> eyre::Result<Option<AsyncOutcomeProjectionV1>> {
+        let classified = classify_async_outcome_projection(
+            self.jobs.get(&job_id).map(|job| job.generation),
+            self.state.generation(job_id),
+        );
+        match classified {
+            Ok(projection) => Ok(Some(projection)),
+            Err(error) => {
+                self.latch_fatal(job_id, error.to_string())?;
+                Ok(None)
             }
         }
     }
@@ -912,6 +1285,11 @@ where
         let head = outbe_nod::NodContract::new(storage.clone())
             .ocomp_materialization_head()
             .wrap_err("read finalized NOD materialization head")?;
+        let current_attempt = head.as_ref().map(|head| MaterializationAttemptKeyV1 {
+            queue_sequence: head.queue_sequence,
+            first_nod_ordinal: head.next_nod_ordinal,
+        });
+        bound_materialization_attempts(&mut self.materialization_attempt_heights, current_attempt);
         let profile = outbe_chain_constants::NodMaterializationProfileV1 {
             batch_subtree_height:
                 outbe_chain_constants::get_nod_materialization_batch_subtree_height(),
@@ -1062,7 +1440,7 @@ where
     }
 
     fn publish_readiness(&self, finalized_height: u64, finalized_hash: B256) -> eyre::Result<()> {
-        if self.policy != EmbeddedNodePolicyV1::FullNode {
+        if self.policy != EmbeddedNodePolicyV1::FullNode || self.fatal.is_some() {
             return Ok(());
         }
         let allowed = self.state.progress_limit(finalized_height);
@@ -1089,7 +1467,8 @@ where
     }
 
     fn advance_checkpoint(&mut self) -> eyre::Result<Option<OcompExExCheckpointV1>> {
-        if self.state.live_job_count() != 0
+        if self.fatal.is_some()
+            || self.state.live_job_count() != 0
             || self.scanned_height == 0
             || !all_requests_materialized(
                 self.requests.keys().copied(),
@@ -1103,27 +1482,40 @@ where
             block_hash: self.scanned_hash,
         };
         if self.checkpoint.load() == Some(next) {
+            self.prune_checkpointed_projection();
             return Ok(None);
         }
         self.checkpoint.persist(next)?;
+        self.prune_checkpointed_projection();
         Ok(Some(next))
     }
 
+    fn prune_checkpointed_projection(&mut self) {
+        debug_assert_eq!(self.state.live_job_count(), 0);
+        self.requests.clear();
+        self.materialized_requests.clear();
+        self.jobs.clear();
+        self.state.prune_terminal();
+    }
+
     fn persist_and_publish_mismatch(
-        &self,
+        &mut self,
         job_id: B256,
         local: B256,
         canonical: B256,
     ) -> eyre::Result<()> {
         persist_fatal_evidence(self.domain.fatal_evidence_root(), job_id, local, canonical)?;
-        self.publish_fatal(
+        self.latch_fatal(
             job_id,
             format!("local result {local} differs from canonical result {canonical}"),
-        );
-        Ok(())
+        )
     }
 
-    fn publish_fatal(&self, job_id: B256, detail: String) {
+    fn latch_fatal(&mut self, job_id: B256, detail: String) -> eyre::Result<()> {
+        if self.fatal.is_some() {
+            return Ok(());
+        }
+        persist_generic_fatal_evidence(self.domain.fatal_evidence_root(), job_id, &detail)?;
         error!(%job_id, %detail, "embedded OCOMP requested local node shutdown");
         let failure = ProjectionFailure::new(
             ProjectionFailureClass::Other,
@@ -1145,11 +1537,13 @@ where
                     block_hash,
                 })
         };
+        self.fatal = Some(failure.clone());
         self.readiness.publish(ProjectionStatus::Fatal {
             checkpoint,
             error: failure.clone(),
         });
         let _ = self.exit.send(OcompExExExitV1 { failure });
+        Ok(())
     }
 }
 
@@ -1319,6 +1713,56 @@ fn persist_fatal_evidence(
     Ok(())
 }
 
+const MAX_FATAL_EVIDENCE_BYTES: u64 = 64 * 1024;
+
+fn persist_generic_fatal_evidence(root: &Path, job_id: B256, detail: &str) -> eyre::Result<()> {
+    let mut builder = DirBuilder::new();
+    builder.mode(0o700).recursive(true).create(root)?;
+    let path = root.join("sticky-fatal-v1");
+    let mut file = match OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(&path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    writeln!(file, "job_id={job_id}")?;
+    writeln!(file, "detail={detail}")?;
+    file.sync_all()?;
+    File::open(root)?.sync_all()?;
+    Ok(())
+}
+
+fn load_persisted_fatal_evidence(root: &Path) -> eyre::Result<Option<String>> {
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    let mut paths = entries
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()?;
+    paths.sort();
+    let Some(path) = paths.into_iter().next() else {
+        return Ok(None);
+    };
+    let file = File::open(&path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() || metadata.len() > MAX_FATAL_EVIDENCE_BYTES {
+        bail!("embedded OCOMP fatal evidence has an invalid shape");
+    }
+    let mut detail = String::new();
+    file.take(MAX_FATAL_EVIDENCE_BYTES + 1)
+        .read_to_string(&mut detail)?;
+    if detail.is_empty() || detail.len() as u64 > MAX_FATAL_EVIDENCE_BYTES {
+        bail!("embedded OCOMP fatal evidence has an invalid length");
+    }
+    Ok(Some(detail))
+}
+
 fn persist_local_failure_evidence(root: &Path, job_id: B256, detail: &str) -> eyre::Result<()> {
     let mut builder = DirBuilder::new();
     builder.mode(0o700).recursive(true).create(root)?;
@@ -1338,10 +1782,6 @@ fn persist_local_failure_evidence(root: &Path, job_id: B256, detail: &str) -> ey
     file.sync_all()?;
     File::open(root)?.sync_all()?;
     Ok(())
-}
-
-fn local_compute_failure_is_fatal(policy: EmbeddedNodePolicyV1) -> bool {
-    policy == EmbeddedNodePolicyV1::FullNode
 }
 
 fn authenticated_finalized_proposer(
@@ -1417,6 +1857,204 @@ mod tests {
             block_number,
             block_hash: B256::repeat_byte(byte),
         }
+    }
+
+    #[test]
+    fn canonical_status_matrix_is_exhaustive() {
+        assert_eq!(
+            classify_canonical_job(OcompJobStatus::AwaitingFinality, false).unwrap(),
+            CanonicalJobDispositionV1::AwaitingFinality
+        );
+        assert_eq!(
+            classify_canonical_job(OcompJobStatus::AwaitingFinality, true).unwrap(),
+            CanonicalJobDispositionV1::FinalizedAwaitingOpen
+        );
+        assert_eq!(
+            classify_canonical_job(OcompJobStatus::VotingOpen, true).unwrap(),
+            CanonicalJobDispositionV1::VotingOpen
+        );
+        assert_eq!(
+            classify_canonical_job(OcompJobStatus::Completed, true).unwrap(),
+            CanonicalJobDispositionV1::Completed
+        );
+        for (status, reason) in [
+            (OcompJobStatus::Expired, EmbeddedTerminalReasonV1::Expired),
+            (
+                OcompJobStatus::Conflicted,
+                EmbeddedTerminalReasonV1::Conflicted,
+            ),
+            (OcompJobStatus::Canceled, EmbeddedTerminalReasonV1::Canceled),
+        ] {
+            for has_finalized_job in [false, true] {
+                assert_eq!(
+                    classify_canonical_job(status, has_finalized_job).unwrap(),
+                    CanonicalJobDispositionV1::Closed {
+                        reason,
+                        has_finalized_job,
+                    }
+                );
+            }
+        }
+        for (status, has_finalized_job) in [
+            (OcompJobStatus::VotingOpen, false),
+            (OcompJobStatus::Completed, false),
+        ] {
+            assert!(classify_canonical_job(status, has_finalized_job).is_err());
+        }
+    }
+
+    #[test]
+    fn async_outcome_projection_is_exact_or_retired() {
+        let mut jobs = EmbeddedOcompJobsV1::new(EmbeddedOcompModeV1::Validator);
+        let generation = jobs.observe_job(B256::repeat_byte(0x71), 70).unwrap();
+        let other_generation = jobs.observe_job(B256::repeat_byte(0x72), 71).unwrap();
+        assert_eq!(
+            classify_async_outcome_projection(Some(generation), Some(generation)).unwrap(),
+            AsyncOutcomeProjectionV1::Active
+        );
+        assert_eq!(
+            classify_async_outcome_projection(None, None).unwrap(),
+            AsyncOutcomeProjectionV1::CheckpointPruned
+        );
+        for (runtime, reducer) in [
+            (Some(generation), None),
+            (None, Some(generation)),
+            (Some(generation), Some(other_generation)),
+        ] {
+            assert!(classify_async_outcome_projection(runtime, reducer).is_err());
+        }
+    }
+
+    #[test]
+    fn canonical_restore_policy_never_runs_before_open_or_after_close() {
+        for disposition in [
+            CanonicalJobDispositionV1::AwaitingFinality,
+            CanonicalJobDispositionV1::FinalizedAwaitingOpen,
+            CanonicalJobDispositionV1::Closed {
+                reason: EmbeddedTerminalReasonV1::Expired,
+                has_finalized_job: true,
+            },
+            CanonicalJobDispositionV1::Closed {
+                reason: EmbeddedTerminalReasonV1::Conflicted,
+                has_finalized_job: true,
+            },
+            CanonicalJobDispositionV1::Closed {
+                reason: EmbeddedTerminalReasonV1::Canceled,
+                has_finalized_job: true,
+            },
+        ] {
+            for policy in [
+                EmbeddedNodePolicyV1::Validator,
+                EmbeddedNodePolicyV1::FullNode,
+            ] {
+                assert_eq!(
+                    local_result_restore_policy(disposition, policy, true, true, false),
+                    LocalResultRestorePolicyV1::Never
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn canonical_restore_policy_encodes_effect_order() {
+        assert_eq!(
+            local_result_restore_policy(
+                CanonicalJobDispositionV1::VotingOpen,
+                EmbeddedNodePolicyV1::Validator,
+                true,
+                false,
+                false,
+            ),
+            LocalResultRestorePolicyV1::BeforeCompute
+        );
+        assert_eq!(
+            local_result_restore_policy(
+                CanonicalJobDispositionV1::VotingOpen,
+                EmbeddedNodePolicyV1::FullNode,
+                false,
+                false,
+                false,
+            ),
+            LocalResultRestorePolicyV1::BeforeCompute,
+            "the FinalizedAwaitingOpen to VotingOpen transition restores before compute"
+        );
+        assert_eq!(
+            local_result_restore_policy(
+                CanonicalJobDispositionV1::VotingOpen,
+                EmbeddedNodePolicyV1::Validator,
+                false,
+                true,
+                true,
+            ),
+            LocalResultRestorePolicyV1::BeforeCompute
+        );
+        assert_eq!(
+            local_result_restore_policy(
+                CanonicalJobDispositionV1::Completed,
+                EmbeddedNodePolicyV1::FullNode,
+                true,
+                false,
+                false,
+            ),
+            LocalResultRestorePolicyV1::AfterCanonicalCompleted
+        );
+        assert_eq!(
+            local_result_restore_policy(
+                CanonicalJobDispositionV1::Completed,
+                EmbeddedNodePolicyV1::Validator,
+                true,
+                true,
+                false,
+            ),
+            LocalResultRestorePolicyV1::Never
+        );
+        assert_eq!(
+            local_result_restore_policy(
+                CanonicalJobDispositionV1::VotingOpen,
+                EmbeddedNodePolicyV1::FullNode,
+                false,
+                false,
+                true,
+            ),
+            LocalResultRestorePolicyV1::Never
+        );
+    }
+
+    #[test]
+    fn vote_eligibility_retries_only_unavailable_authority() {
+        use outbe_node::ocomp::retention::OcompSnapshotEligibilityV1;
+
+        let pending = advance_vote_eligibility(
+            LocalVoteEligibilityV1::Pending,
+            OcompSnapshotEligibilityV1::Unavailable {
+                detail: "provider lag".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(pending, LocalVoteEligibilityV1::Pending);
+        assert_eq!(
+            advance_vote_eligibility(pending, OcompSnapshotEligibilityV1::Eligible).unwrap(),
+            LocalVoteEligibilityV1::Eligible
+        );
+
+        let not_member = advance_vote_eligibility(
+            LocalVoteEligibilityV1::Pending,
+            OcompSnapshotEligibilityV1::NotMember,
+        )
+        .unwrap();
+        assert_eq!(not_member, LocalVoteEligibilityV1::NotMember);
+        assert_eq!(
+            advance_vote_eligibility(not_member, OcompSnapshotEligibilityV1::Eligible).unwrap(),
+            LocalVoteEligibilityV1::NotMember,
+            "exact non-membership is a terminal abstention"
+        );
+        assert!(advance_vote_eligibility(
+            LocalVoteEligibilityV1::Pending,
+            OcompSnapshotEligibilityV1::Corrupt {
+                detail: "binding mismatch".to_owned(),
+            },
+        )
+        .is_err());
     }
 
     #[test]
@@ -1617,6 +2255,23 @@ mod tests {
     }
 
     #[test]
+    fn materialization_retry_memory_tracks_only_the_current_head() {
+        let old = MaterializationAttemptKeyV1 {
+            queue_sequence: 1,
+            first_nod_ordinal: 0,
+        };
+        let current = MaterializationAttemptKeyV1 {
+            queue_sequence: 2,
+            first_nod_ordinal: 8,
+        };
+        let mut attempts = BTreeMap::from([(old, 10), (current, 20)]);
+        bound_materialization_attempts(&mut attempts, Some(current));
+        assert_eq!(attempts, BTreeMap::from([(current, 20)]));
+        bound_materialization_attempts(&mut attempts, None);
+        assert!(attempts.is_empty());
+    }
+
+    #[test]
     fn loaded_checkpoint_waits_for_provider_finality_before_entering_running() {
         let checkpoint_hash = B256::repeat_byte(0x18);
 
@@ -1730,12 +2385,30 @@ mod tests {
     }
 
     #[test]
-    fn local_compute_failure_stops_only_a_full_node() {
-        assert!(!local_compute_failure_is_fatal(
-            EmbeddedNodePolicyV1::Validator
-        ));
-        assert!(local_compute_failure_is_fatal(
-            EmbeddedNodePolicyV1::FullNode
-        ));
+    fn sticky_fatal_evidence_survives_restart_and_is_write_once() {
+        let root = tempfile::tempdir().unwrap();
+        let job_id = B256::repeat_byte(0x51);
+        persist_generic_fatal_evidence(root.path(), job_id, "first fatal").unwrap();
+        persist_generic_fatal_evidence(root.path(), B256::repeat_byte(0x52), "later fatal")
+            .unwrap();
+
+        let loaded = load_persisted_fatal_evidence(root.path())
+            .unwrap()
+            .expect("persisted fatal");
+        assert!(loaded.contains("first fatal"));
+        assert!(!loaded.contains("later fatal"));
+
+        let mismatch_root = tempfile::tempdir().unwrap();
+        persist_fatal_evidence(
+            mismatch_root.path(),
+            job_id,
+            B256::repeat_byte(0x61),
+            B256::repeat_byte(0x62),
+        )
+        .unwrap();
+        assert!(load_persisted_fatal_evidence(mismatch_root.path())
+            .unwrap()
+            .expect("mismatch evidence")
+            .contains("local_result_digest"));
     }
 }

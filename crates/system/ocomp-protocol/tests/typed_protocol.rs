@@ -49,8 +49,8 @@ use outbe_ocomp_protocol::{
     },
     shuffle::{ShufflePageSpanV1, ShuffleRunArtifactV1, ShuffleRunKindV1, ShuffleRunPayloadV1},
     state::{
-        ActiveGenerationV1, LysisTerminalV1, OcompFinalizedJobV1, OcompJobRecordV1, OcompJobStatus,
-        OcompTerminalOutcome,
+        ActiveGenerationV1, LysisTerminalV1, OcompCompletedBindingV1, OcompFinalizedJobV1,
+        OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome,
     },
     system_carrier::{
         classify_ocomp_system_carrier, OcompSystemCarrierCandidate, OcompSystemCarrierError,
@@ -816,6 +816,99 @@ fn conflict_receipt() -> AggregateActivationReceiptV1 {
         activated_at_height: 101,
         activated_at_time: 1_001,
     }
+}
+
+fn canceled_job_record(finalized: bool) -> OcompJobRecordV1 {
+    let intent = intent();
+    let finalized_request_block_hash = hash(46);
+    let finalized_request_state_root = hash(49);
+    let finalized = finalized.then(|| OcompFinalizedJobV1 {
+        job_id: intent
+            .job_id(
+                finalized_request_block_hash,
+                finalized_request_state_root,
+                &LIMITS,
+            )
+            .unwrap(),
+        finalized_request_block_hash,
+        finalized_request_state_root,
+        finality_recorded_height: 102,
+        open_height: 106,
+        deadline_height: 110,
+        quorum: None,
+    });
+    OcompJobRecordV1 {
+        intent,
+        intent_height: 100,
+        status: OcompJobStatus::Canceled,
+        finalized,
+        terminal: Some(LysisTerminalV1 {
+            outcome: OcompTerminalOutcome::Canceled,
+            terminal_height: 108,
+            terminal_time: 1_080,
+            next_pending_nonce: None,
+            completed_binding: None,
+        }),
+    }
+}
+
+fn dummy_completed_binding() -> OcompCompletedBindingV1 {
+    OcompCompletedBindingV1 {
+        job_id: hash(59),
+        activation_call_id: hash(83),
+        result_digest: hash(81),
+        quorum_height: 107,
+        quorum_signer_bitmap: vec![1],
+        quorum_evidence_hash: hash(84),
+        result_evidence_hash: hash(85),
+        terminal_receipt_hash: hash(86),
+        terminal_receipt: conflict_receipt(),
+    }
+}
+
+#[test]
+fn canceled_job_accepts_only_the_two_production_shapes() {
+    canceled_job_record(false)
+        .validate_semantics(&LIMITS)
+        .unwrap();
+    canceled_job_record(true)
+        .validate_semantics(&LIMITS)
+        .unwrap();
+
+    let mut with_next_nonce = canceled_job_record(false);
+    with_next_nonce
+        .terminal
+        .as_mut()
+        .unwrap()
+        .next_pending_nonce = Some(2);
+    assert!(with_next_nonce.validate_semantics(&LIMITS).is_err());
+
+    let mut with_completed_binding = canceled_job_record(false);
+    with_completed_binding
+        .terminal
+        .as_mut()
+        .unwrap()
+        .completed_binding = Some(dummy_completed_binding());
+    assert!(with_completed_binding.validate_semantics(&LIMITS).is_err());
+
+    let mut with_quorum = canceled_job_record(true);
+    with_quorum.finalized.as_mut().unwrap().quorum = Some(OcompQuorumV1 {
+        member_count: 1,
+        quorum_threshold: 1,
+        result_digest: hash(81),
+        quorum_height: 107,
+        signer_bitmap: vec![1],
+        evidence_hash: hash(84),
+    });
+    assert!(with_quorum.validate_semantics(&LIMITS).is_err());
+
+    let mut without_terminal = canceled_job_record(false);
+    without_terminal.terminal = None;
+    assert!(without_terminal.validate_semantics(&LIMITS).is_err());
+
+    let mut wrong_outcome = canceled_job_record(false);
+    wrong_outcome.terminal.as_mut().unwrap().outcome = OcompTerminalOutcome::Expired;
+    assert!(wrong_outcome.validate_semantics(&LIMITS).is_err());
 }
 
 macro_rules! assert_round_trip {

@@ -647,6 +647,20 @@ receipt block, and ahead/conflict/gap states stop startup. At live finality, pro
 accepted only after block assembly; validator imports without a candidate are reconstructed from
 durable canonical receipts after the same DB-only hash/root barrier.
 
+### Embedded OCOMP lifecycle
+
+Validator and FullNode processes use the same node-owned OCOMP ExEx and external Worker protocol.
+Validators sign and submit result votes only while they belong to the exact finalized OCOMP
+snapshot. A FullNode has no OCOMP voting key: it independently computes the result and compares it
+with the finalized validator quorum.
+
+Canonical terminal state is absorbing. Late local compute or vote outcomes cannot reopen a closed
+job, publish another vote, or turn a normal protocol-owned result into a node failure. A FullNode
+that reaches an exclusive deadline without its local result holds at `D-1`; restart restores the
+same barrier, and an exact late result releases catch-up. A valid-but-different local result writes
+durable evidence and shuts down only that FullNode. Restart remains fail-closed from the evidence,
+while validator finality is unaffected.
+
 ## Documentation
 
 - `docs/becoming-a-validator.md` — validator lifecycle and operator flow.

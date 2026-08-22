@@ -15,10 +15,28 @@ use crate::world::World;
 #[when("an operator submits one encrypted tribute offer")]
 fn submit_one_offer(world: &mut World) {
     let wwd = world.state.wwd.clone().expect("worldwide-day set at setup");
+    let worldwide_day = wwd
+        .parse::<u32>()
+        .expect("valid worldwide-day set at setup");
     let primary = world.validators.primary_port();
     let mut offering = false;
     for _ in 0..240 {
-        if world.rpc.wwd_status(primary, &wwd).as_deref() == Some("2") {
+        let state = world
+            .rpc
+            .metadosis_wwd_state_on(primary, worldwide_day)
+            .expect("read authoritative worldwide-day state before Tribute submission");
+        let head_timestamp = world
+            .rpc
+            .latest_block_timestamp(primary)
+            .expect("read canonical head timestamp before Tribute submission");
+        assert!(
+            head_timestamp < state.offering_end,
+            "worldwide-day {wwd} public OFFERING fixture expired before Tribute submission: \
+             canonical_head_timestamp={head_timestamp}, offering_end={}, status={}",
+            state.offering_end,
+            state.status,
+        );
+        if state.status == 2 {
             offering = true;
             break;
         }
