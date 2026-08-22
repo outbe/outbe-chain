@@ -632,6 +632,36 @@ impl Rpc {
         eth::block_number(&self.url(port))
     }
 
+    /// `(pending, queued)` transaction counts from `txpool_status`. This is the
+    /// pool's real state: `eth_pendingTransactions` does not reflect it.
+    pub fn txpool_status(&self, port: u16) -> Option<(u64, u64)> {
+        let status = eth::raw_json(&self.url(port), "txpool_status")?;
+        let count = |field: &str| -> Option<u64> {
+            let raw = status.get(field)?;
+            match raw {
+                serde_json::Value::String(text) => {
+                    u64::from_str_radix(text.trim_start_matches("0x"), 16).ok()
+                }
+                other => other.as_u64(),
+            }
+        };
+        Some((count("pending")?, count("queued")?))
+    }
+
+    /// Whether the node at `port` still holds `tx_hash` in either sub-pool.
+    pub fn txpool_has(&self, port: u16, tx_hash: &str) -> bool {
+        let Some(content) = eth::raw_json(&self.url(port), "txpool_content") else {
+            return false;
+        };
+        let needle = tx_hash.to_ascii_lowercase();
+        // `txpool_content` is {pending|queued: {sender: {nonce: tx}}}; the hash
+        // lives inside each tx object, so a serialized-contains check is both
+        // sufficient and immune to field-layout changes.
+        serde_json::to_string(&content)
+            .map(|text| text.to_ascii_lowercase().contains(&needle))
+            .unwrap_or(false)
+    }
+
     /// Chain identity reported by the node at `port`.
     pub fn chain_id(&self, port: u16) -> Option<u64> {
         eth::raw_json(&self.url(port), "eth_chainId")?

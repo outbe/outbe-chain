@@ -166,6 +166,87 @@ Use this checklist when deciding whether the code matches the intended behavior:
 7. The executor repeats the same authorization and zeroes fee fields only for the
    authorized transaction execution.
 
+## Pending staleness eviction
+
+A transaction the network cannot mine must not live in the pool forever. Two
+independent bounds enforce that, and both are node-local pool policy: neither
+affects block validity, because payload content is proposer-discretionary and
+block validation audits only parent binding, beneficiary and system-transaction
+layout.
+
+### 1. Parked lifetime (upstream mechanism, hardened defaults)
+
+Reth ages out parked (nonce-gapped, underpriced) transactions after
+`--txpool.lifetime`. Outbe changes three defaults, installed before CLI parsing
+so explicit operator flags still win:
+
+| Setting | Reth default | Outbe default | Why |
+|---|---|---|---|
+| `--txpool.lifetime` | 3 h | 120 s | Two-second blocks; a parked transaction that is still parked after two minutes is not going to be mined. |
+| `--txpool.no-locals` | off | on | RPC-submitted transactions are otherwise exempt from lifetime eviction — exactly the traffic that must be evictable on a public endpoint. |
+| `--txpool.disable-transactions-backup` | off | on | A restart must not resurrect transactions the node deliberately evicted. |
+
+### 2. Pending staleness (this crate, `maintain.rs`)
+
+Reth bounds only the parked sub-pools; a *pending* transaction has no lifetime
+at all. It is therefore re-selected by every payload build and, when a proposal
+containing it fails to finalize, re-injected by the reorg path — indefinitely.
+
+`maintain_outbe_pool` subscribes to the canonical-state stream (alongside the
+upstream maintenance task, which keeps owning nonce/balance pruning and reorg
+handling) and applies a two-snapshot rule:
+
+1. At most once per `--txpool.outbe.pending-staleness-secs` of **canonical block
+   time** (never wall clock), snapshot the pending-transaction hash set.
+2. A hash present in two consecutive snapshots has stayed pending for at least
+   one full interval without being mined: evict it, together with its
+   descendants (same-sender higher nonces, unincludable behind it anyway).
+
+Effective pending lifetime is therefore one to two intervals. Mined or dropped
+transactions simply vanish from the next snapshot; a re-added transaction (gossip
+or reorg re-injection) starts a fresh cycle and is evicted one interval later.
+Out-of-order tip timestamps — normal during pre-finalization head switches —
+never evict early.
+
+The default interval is 600 s. Keep it uniform across the fleet: a stuck
+transaction is shed at the rate of the slowest-configured node, since any node
+still holding it can propose it.
+
+Every eviction is logged, never silent:
+
+```
+WARN outbe::txpool tx_hash=0x… sender=0x… nonce=… reason=stale_pending
+     staleness_interval_secs=600 evicting stale pending transaction
+```
+
+`reason` is `stale_pending` for the transaction itself and
+`descendant_of_stale` for same-sender successors removed with it. Metrics:
+`outbe_txpool_stale_evicted_total` (counter) and
+`outbe_txpool_pending_snapshot_size` (gauge).
+
+### What eviction does and does not do
+
+Eviction bounds pool residency. It does not touch chain state, and the
+distinction matters when reasoning about a stuck sender:
+
+- **The transaction never stays forever.** Pending: one to two staleness
+  intervals. Parked (nonce gap, underpriced): the 120 s lifetime above. Both
+  paths apply to RPC-submitted transactions.
+- **The sender's nonce stays unconsumed.** A nonce is consumed only by
+  executing the transaction in a block. The pool cannot execute it, cannot sign
+  a replacement on the sender's behalf, and must not pretend locally that the
+  nonce advanced — that would diverge from chain state. Only the key holder can
+  close the gap, by submitting something at that nonce.
+- **Successors do not pile up.** Transactions the sender already sent at higher
+  nonces sit in the queued sub-pool behind the gap and age out on the same
+  120 s lifetime.
+- **Residual risk.** The sender (or anyone replaying the signed bytes) can
+  resubmit the same transaction; it is admitted again and evicted again after
+  one interval. That bounds each episode to roughly one staleness interval
+  instead of leaving it resident indefinitely, but it does not make repeated
+  submission free for the network. Bounding per-transaction validation cost is a
+  separate concern from pool residency and is not solved here.
+
 ## Tests
 
 Focused txpool tests:
