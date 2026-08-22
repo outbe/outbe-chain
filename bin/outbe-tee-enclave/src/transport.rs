@@ -487,6 +487,15 @@ fn serve_connection_with_resident_chain<S: EnclaveTransportStream>(
         write_frame(&mut stream, &ct[..n])?;
     }
 
+    // Telemetry-only peer class for the per-request log line.
+    let peer: &'static str = if initialization.mode() == InitializationMode::Development {
+        "dev"
+    } else if remote_session.is_some() {
+        "remote"
+    } else {
+        "local"
+    };
+
     // Resident DKG ceremonies for this connection. A ceremony spans many
     // request/response round-trips on one connection (PoC: one connection per
     // enclave for the whole ceremony).
@@ -538,9 +547,24 @@ fn serve_connection_with_resident_chain<S: EnclaveTransportStream>(
             .read_message(&frame, &mut pt)
             .map_err(|e| TransportError::Noise(e.to_string()))?;
         let req = decode_request(&pt[..n])?;
+        let req_label = req.label();
+        let req_class = crate::initialization::request_class_label(&req);
+        let req_started = std::time::SystemTime::now();
         if let Err(message) =
             initialization.authorize_command(&req, offer_key.get().is_some(), session_authority)
         {
+            let (ts, dur_ms) = crate::telemetry::now_unix_and_elapsed_ms(req_started);
+            crate::telemetry::record_request(req_class, crate::telemetry::RequestOutcome::Denied);
+            eprintln!(
+                "{}",
+                crate::telemetry::format_request_log(
+                    ts,
+                    req_label,
+                    peer,
+                    crate::telemetry::RequestOutcome::Denied,
+                    dur_ms,
+                )
+            );
             let response = EnclaveResponse::Error {
                 message: message.to_string(),
             };
@@ -605,6 +629,18 @@ fn serve_connection_with_resident_chain<S: EnclaveTransportStream>(
                 },
             ),
         };
+
+        let outcome = if matches!(resp, EnclaveResponse::Error { .. }) {
+            crate::telemetry::RequestOutcome::Err
+        } else {
+            crate::telemetry::RequestOutcome::Ok
+        };
+        let (ts, dur_ms) = crate::telemetry::now_unix_and_elapsed_ms(req_started);
+        crate::telemetry::record_request(req_class, outcome);
+        eprintln!(
+            "{}",
+            crate::telemetry::format_request_log(ts, req_label, peer, outcome, dur_ms)
+        );
 
         // Persist the offer key + share the first time it becomes available
         // (write-once).
@@ -728,6 +764,37 @@ fn dispatch_with_initialization(
             ) {
                 Ok(()) => EnclaveResponse::RemoteSessionAuthorizedV1 { ticket_id },
                 Err(message) => EnclaveResponse::Error { message },
+            }
+        }
+        EnclaveRequest::Health => {
+            let (
+                requests_total,
+                requests_errored,
+                requests_denied,
+                class_initialized,
+                class_founding_keyless,
+                class_keyless_onboarding,
+                class_ready,
+                class_dev_source_seal,
+                class_dev_recipient_ingest,
+            ) = crate::telemetry::counters_snapshot();
+            let (heap_current_bytes, heap_peak_bytes) = crate::telemetry::heap_snapshot();
+            EnclaveResponse::HealthStatus {
+                status: Box::new(outbe_tee::protocol::EnclaveHealthStatusV1 {
+                    uptime_s: crate::telemetry::uptime_s(),
+                    offer_key_ready: offer_key.get().is_some(),
+                    heap_current_bytes,
+                    heap_peak_bytes,
+                    requests_total,
+                    requests_errored,
+                    requests_denied,
+                    class_initialized,
+                    class_founding_keyless,
+                    class_keyless_onboarding,
+                    class_ready,
+                    class_dev_source_seal,
+                    class_dev_recipient_ingest,
+                }),
             }
         }
         EnclaveRequest::GetPublicKeys => EnclaveResponse::PublicKeys {
@@ -1597,6 +1664,55 @@ pub fn serve_tcp(
 mod tests {
     use super::*;
     use alloy_primitives::B256;
+
+    #[test]
+    fn health_reports_counters_uptime_and_offer_key_state() {
+        let keys = EnclaveKeys::new([0x51; 32], Some([0x51; 32])).unwrap();
+        let mut dkg = DkgSessionStore::new();
+        let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
+        let chain_id = B256::repeat_byte(0x52);
+
+        let response = dispatch(
+            EnclaveRequest::Health,
+            &keys,
+            &mut dkg,
+            &offer_key,
+            chain_id,
+        );
+        let EnclaveResponse::HealthStatus { status } = response else {
+            panic!("expected HealthStatus, got {response:?}");
+        };
+        assert!(!status.offer_key_ready, "keyless enclave reports not-ready");
+
+        // Counters are process-global: record a ready-class request and observe
+        // the delta through a second Health probe.
+        let before_ready = status.class_ready;
+        crate::telemetry::record_request(
+            crate::telemetry::RequestClassLabel::Ready,
+            crate::telemetry::RequestOutcome::Ok,
+        );
+        let resident = DerivedTributeOfferKey::from_secret_and_group_sig(
+            Zeroizing::new([0x53; 32]),
+            Zeroizing::new(vec![0x54; 96]),
+        );
+        offer_key.set(resident).ok().expect("install offer key");
+        let response = dispatch(
+            EnclaveRequest::Health,
+            &keys,
+            &mut dkg,
+            &offer_key,
+            chain_id,
+        );
+        let EnclaveResponse::HealthStatus { status } = response else {
+            panic!("expected HealthStatus, got {response:?}");
+        };
+        assert!(status.offer_key_ready, "resident key reports ready");
+        assert!(
+            status.class_ready > before_ready,
+            "ready-class counter must grow"
+        );
+        assert!(status.requests_total >= status.class_ready);
+    }
 
     #[test]
     fn generated_quote_binding_rejects_post_syscall_report_data_substitution() {

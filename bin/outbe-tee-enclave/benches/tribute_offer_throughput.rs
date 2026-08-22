@@ -20,12 +20,11 @@ use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Through
 use alloy_primitives::{Address, U256};
 use x25519_dalek::{PublicKey, StaticSecret};
 
+use outbe_tee::offer_encrypt::encrypt_tribute_offer_with;
 use outbe_tee::protocol::{EncryptedTributeOffer, WorldwideDay};
 use outbe_tee::OFFER_HKDF_SALT;
 use outbe_tee_enclave::compute::compute_token_id;
-use outbe_tee_enclave::crypto::{
-    chacha20poly1305_encrypt, ecdhe_tribute_offer_decrypt, hkdf_sha256,
-};
+use outbe_tee_enclave::crypto::ecdhe_tribute_offer_decrypt;
 use outbe_tee_enclave::process::{process_tribute_offer_batch, TributeOfferKeyMaterial};
 
 /// Enclave-resident offer secret (the DKG-derived key in production; a fixed test
@@ -57,20 +56,14 @@ fn key_material() -> TributeOfferKeyMaterial<'static> {
     }
 }
 
-/// Encrypt one offer exactly as a client would: ephemeral X25519 -> ECDHE with
-/// the offer public key -> HKDF -> ChaCha20Poly1305 over the JSON payload. This
-/// is the client's cost, done outside the timed region.
+/// Encrypt one offer exactly as a client would, via the shared recipe in
+/// `outbe_tee::offer_encrypt` (also used by `outbe-cli` and the node's canary).
+/// This is the client's cost, done outside the timed region.
 fn make_offer(owner: Address) -> EncryptedTributeOffer {
     let eph_sk = [9u8; 32];
     let eph_pub = PublicKey::from(&StaticSecret::from(eph_sk)).to_bytes();
-    let shared = StaticSecret::from(eph_sk).diffie_hellman(&PublicKey::from(offer_public()));
-    let key = hkdf_sha256(
-        &OFFER_HKDF_SALT,
-        shared.as_bytes(),
-        b"tribute-factory-encryption",
-    )
-    .unwrap();
-    let cipher_text = chacha20poly1305_encrypt(&key, &NONCE, GOOD_JSON.as_bytes()).unwrap();
+    let cipher_text =
+        encrypt_tribute_offer_with(&offer_public(), eph_sk, NONCE, GOOD_JSON.as_bytes()).unwrap();
     EncryptedTributeOffer {
         owner,
         cipher_text,

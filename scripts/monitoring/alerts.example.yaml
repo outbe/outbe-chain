@@ -259,3 +259,94 @@ groups:
             outbe_validator_pending_set_change has been 1 for over 30
             minutes. A reshare should have completed by now; check DKG
             progress and validator availability.
+
+  # --- TEE enclave observability (2026-08-22 incident follow-up) ---
+  #
+  # Source metrics (node-side, emitted by the tee-canary worker and the
+  # enclave-client session in `crates/system/tee` / `crates/blockchain/node`):
+  #   outbe_tee_canary_latency_ms              - canary decrypt round-trip
+  #   outbe_tee_canary_failures_total          - failed canary ticks
+  #   outbe_tee_canary_consecutive_failures    - current failure streak
+  #   outbe_tee_canary_last_ok_timestamp_seconds - unix time of last success
+  #   outbe_tee_heap_bytes{kind=current|peak}  - enclave self-observed heap
+  #                                              (allocator-level proxy for EPC
+  #                                              pressure; excludes stacks and
+  #                                              fragmentation)
+  #   outbe_tee_enclave_uptime_seconds         - enclave self-reported uptime
+  #                                              (drop to ~0 = silent restart)
+  #   outbe_tee_request_duration_ms{request}   - per-request client latency
+  #   outbe_tee_reconnect_total{result}        - session reconnects
+  #   outbe_tee_session_generation             - bumps on every reconnect
+  #
+  # Host-level RSS of the gramine loader (outside-the-enclave view), when
+  # needed manually:
+  #   PID=$(docker inspect -f '{{.State.Pid}}' <enclave-container>)
+  #   grep VmRSS /proc/$PID/status
+  # `sgx.enclave_size = "256M"` is pinned in the manifest templates; the heap
+  # thresholds below are fractions of that budget.
+  - name: outbe-chain.tee
+    interval: 30s
+    rules:
+      - alert: OutbeTeeCanaryFailing
+        expr: outbe_tee_canary_consecutive_failures >= 3
+        for: 2m
+        labels:
+          severity: critical
+          subsystem: tee
+        annotations:
+          summary: "TEE canary decrypt failing on {{ $labels.instance }}"
+          description: |
+            The enclave canary has failed 3+ consecutive probes. offerTribute
+            execution on this validator is degraded or broken; with a small
+            committee this slows every block (see the 2026-08-22 incident).
+
+      - alert: OutbeTeeCanaryStale
+        expr: time() - outbe_tee_canary_last_ok_timestamp_seconds > 300
+        labels:
+          severity: critical
+          subsystem: tee
+        annotations:
+          summary: "no successful TEE canary for >5 min on {{ $labels.instance }}"
+
+      - alert: OutbeTeeCanaryLatencyHigh
+        # NOTE: verify how the exporter renders histograms before deploying —
+        # metrics-exporter-prometheus may emit summary quantiles
+        # (outbe_tee_canary_latency_ms{quantile="0.99"}) instead of _bucket
+        # series; use whichever the running node actually exposes.
+        expr: histogram_quantile(0.99, sum by (le) (rate(outbe_tee_canary_latency_ms_bucket[10m]))) > 250
+        for: 10m
+        labels:
+          severity: warning
+          subsystem: tee
+        annotations:
+          summary: "TEE canary p99 latency >250ms on {{ $labels.instance }}"
+          description: |
+            The consensus-path decrypt is slowing down. At ~seconds per call a
+            single validator can stall every view (36 s/block incident mode).
+
+      - alert: OutbeTeeEnclaveHeapHigh
+        # 0.75 * 256MiB enclave budget.
+        expr: outbe_tee_heap_bytes{kind="current"} > 201326592
+        for: 10m
+        labels:
+          severity: warning
+          subsystem: tee
+        annotations:
+          summary: "enclave heap above 75% of the 256M enclave budget"
+
+      - alert: OutbeTeeEnclaveHeapGrowth
+        # >32MiB/h sustained growth = leak suspicion.
+        expr: delta(outbe_tee_heap_bytes{kind="current"}[1h]) > 33554432
+        labels:
+          severity: warning
+          subsystem: tee
+        annotations:
+          summary: "enclave heap grew >32MiB in the last hour (leak suspicion)"
+
+      - alert: OutbeTeeSessionReconnecting
+        expr: increase(outbe_tee_reconnect_total{result="ok"}[15m]) > 3
+        labels:
+          severity: warning
+          subsystem: tee
+        annotations:
+          summary: "enclave session reconnected >3 times in 15m (unstable sidecar)"

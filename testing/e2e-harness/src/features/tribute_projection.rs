@@ -73,6 +73,33 @@ fn successful_receipt_and_supply(world: &mut World) {
             world
                 .rpc
                 .trace_tribute_state(tx_hash, "state-visible", primary);
+            // The offer just went through every enclave: the per-request
+            // telemetry line must be on the enclave log, and each validator's
+            // canary-fed enclave status must not be failing.
+            for index in 0..world.validators.size() {
+                assert!(
+                    world
+                        .localnet
+                        .enclave_log_has(index, "req=process_tribute_offer_batch"),
+                    "validator-{index} enclave log lacks the offer telemetry line"
+                );
+                if let Some(raw) = world
+                    .rpc
+                    .consensus_status_field(world.validators.http_port(index), "enclave")
+                {
+                    let enclave: serde_json::Value =
+                        serde_json::from_str(&raw).expect("enclave status json");
+                    let state = enclave
+                        .get("state")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("unknown");
+                    assert!(
+                        state != "degraded" && state != "unavailable",
+                        "validator-{index} enclave canary is {state} right after a \
+                         successful enclave-backed offer"
+                    );
+                }
+            }
             return;
         }
         sleep(Duration::from_millis(500));

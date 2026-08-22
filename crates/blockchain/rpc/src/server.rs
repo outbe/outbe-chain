@@ -85,6 +85,7 @@ pub struct OutbeApiHandler<P> {
     tee_renewal_schedule: Option<TeeRenewalScheduleConfigV1>,
     ocomp_lysis_openings: Option<OcompLysisOpeningsRuntimeV1>,
     radicle_status: RadicleStatusHandle,
+    tee_enclave_health: outbe_tee::TeeEnclaveHealthChannel,
 }
 
 type OcompLysisOpeningsBuilderV1 =
@@ -151,6 +152,7 @@ impl<P> OutbeApiHandler<P> {
             tee_renewal_schedule: None,
             ocomp_lysis_openings: None,
             radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
+            tee_enclave_health: outbe_tee::TeeEnclaveHealthChannel::disabled(),
         }
     }
 
@@ -169,6 +171,7 @@ impl<P> OutbeApiHandler<P> {
             tee_renewal_schedule: None,
             ocomp_lysis_openings: None,
             radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
+            tee_enclave_health: outbe_tee::TeeEnclaveHealthChannel::disabled(),
         }
     }
 
@@ -189,6 +192,7 @@ impl<P> OutbeApiHandler<P> {
             tee_renewal_schedule: None,
             ocomp_lysis_openings: None,
             radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
+            tee_enclave_health: outbe_tee::TeeEnclaveHealthChannel::disabled(),
         }
     }
 
@@ -230,6 +234,50 @@ impl<P> OutbeApiHandler<P> {
     pub fn with_radicle_status(mut self, status: RadicleStatusHandle) -> Self {
         self.radicle_status = status;
         self
+    }
+
+    #[must_use]
+    pub fn with_tee_enclave_health(mut self, channel: outbe_tee::TeeEnclaveHealthChannel) -> Self {
+        self.tee_enclave_health = channel;
+        self
+    }
+}
+
+/// Map the canary snapshot into the RPC shape. Pure so it is unit-testable;
+/// `now_unix_ms` is passed in to keep assertions wall-clock-free.
+pub(crate) fn enclave_health_info(
+    snapshot: &outbe_tee::TeeEnclaveHealthSnapshot,
+    now_unix_ms: u64,
+) -> crate::api::EnclaveHealthInfo {
+    use crate::api::EnclaveHealth;
+    use outbe_tee::TeeEnclaveHealthState;
+    let state = match snapshot.state {
+        TeeEnclaveHealthState::Disabled => EnclaveHealth::Disabled,
+        TeeEnclaveHealthState::Starting => EnclaveHealth::Starting,
+        TeeEnclaveHealthState::Ready => EnclaveHealth::Ready,
+        TeeEnclaveHealthState::Degraded => EnclaveHealth::Degraded,
+        TeeEnclaveHealthState::Unavailable => EnclaveHealth::Unavailable,
+    };
+    crate::api::EnclaveHealthInfo {
+        state,
+        ready: matches!(state, EnclaveHealth::Ready),
+        offer_key_ready: snapshot.offer_key_ready,
+        last_ok_ago_millis: snapshot
+            .last_ok_unix_ms
+            .map(|ok_ms| now_unix_ms.saturating_sub(ok_ms)),
+        last_canary_latency_ms: snapshot.last_canary_latency_ms,
+        consecutive_failures: snapshot.consecutive_failures,
+        last_failure_class: snapshot.last_failure.clone(),
+        uptime_s: snapshot.enclave.as_ref().map(|status| status.uptime_s),
+        heap_current_bytes: snapshot
+            .enclave
+            .as_ref()
+            .map(|status| status.heap_current_bytes),
+        heap_peak_bytes: snapshot
+            .enclave
+            .as_ref()
+            .map(|status| status.heap_peak_bytes),
+        health_probe_supported: snapshot.health_probe_supported,
     }
 }
 
@@ -744,6 +792,13 @@ where
                 Phase1VerificationMode::TrustedFinality
             },
             projection,
+            enclave: enclave_health_info(
+                &self.tee_enclave_health.snapshot(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                    .map(|d| d.as_millis().min(u128::from(u64::MAX)) as u64)
+                    .unwrap_or(0),
+            ),
         })
     }
 
@@ -976,6 +1031,62 @@ mod tests {
         assert_eq!(status.phase, crate::api::RadiclePhaseInfo::Disabled);
         assert!(status.local_node_id.is_none());
         assert_eq!(status.desired_repository_count, 0);
+    }
+
+    #[test]
+    fn enclave_health_defaults_to_disabled() {
+        let info = super::enclave_health_info(
+            &outbe_tee::TeeEnclaveHealthChannel::disabled().snapshot(),
+            1_000_000,
+        );
+        assert_eq!(info.state, crate::api::EnclaveHealth::Disabled);
+        assert!(!info.ready);
+        assert!(info.last_ok_ago_millis.is_none());
+        assert!(info.health_probe_supported.is_none());
+    }
+
+    #[test]
+    fn enclave_health_maps_ready_snapshot() {
+        let channel = outbe_tee::TeeEnclaveHealthChannel::disabled();
+        channel.publish(outbe_tee::TeeEnclaveHealthSnapshot {
+            state: outbe_tee::TeeEnclaveHealthState::Ready,
+            last_ok_unix_ms: Some(900_000),
+            last_canary_latency_ms: Some(4),
+            consecutive_failures: 0,
+            last_failure: None,
+            offer_key_ready: true,
+            health_probe_supported: Some(true),
+            enclave: Some(outbe_tee::protocol::EnclaveHealthStatusV1 {
+                uptime_s: 77,
+                offer_key_ready: true,
+                heap_current_bytes: 1024,
+                heap_peak_bytes: 4096,
+                requests_total: 10,
+                requests_errored: 0,
+                requests_denied: 0,
+                class_initialized: 2,
+                class_founding_keyless: 0,
+                class_keyless_onboarding: 0,
+                class_ready: 8,
+                class_dev_source_seal: 0,
+                class_dev_recipient_ingest: 0,
+            }),
+        });
+        let info = super::enclave_health_info(&channel.snapshot(), 1_000_000);
+        assert_eq!(info.state, crate::api::EnclaveHealth::Ready);
+        assert!(info.ready);
+        assert_eq!(info.last_ok_ago_millis, Some(100_000));
+        assert_eq!(info.last_canary_latency_ms, Some(4));
+        assert_eq!(info.uptime_s, Some(77));
+        assert_eq!(info.heap_peak_bytes, Some(4096));
+        // Stable JSON vocabulary (camelCase, lowercase state labels).
+        let json = serde_json::to_string(&info).expect("serialize");
+        assert!(json.contains("\"state\":\"ready\""), "json: {json}");
+        assert!(json.contains("\"offerKeyReady\":true"), "json: {json}");
+        assert!(
+            json.contains("\"healthProbeSupported\":true"),
+            "json: {json}"
+        );
     }
 
     #[test]

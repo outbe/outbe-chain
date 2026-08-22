@@ -30,6 +30,7 @@ pub mod restart;
 pub mod stablecoin;
 pub mod stale_join;
 pub mod target_chain;
+pub mod tee_observability;
 pub mod tribute_projection;
 pub mod zerofee;
 

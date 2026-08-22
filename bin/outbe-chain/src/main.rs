@@ -1301,12 +1301,26 @@ fn run_node() -> eyre::Result<()> {
                 )
                 .wrap_err("NodeHost enclave initialization failed")?;
                 renewal_node_host_authority = Some(signing);
-                outbe_tee::install_authorized_enclave_client(client).map_err(eyre::Report::msg)?;
+                // Session material for reconnect-with-identity-revalidation:
+                // loaded once here (takes the NodeHost file lock), never in the
+                // request hot path.
+                let (manifest, node_host) =
+                    outbe_tee::node_host::committed_node_host_session_material(&node_data_dir)
+                        .wrap_err("committed NodeHost session material load failed")?;
+                outbe_tee::install_authorized_enclave_client(
+                    client,
+                    endpoint.to_owned(),
+                    node_data_dir.clone(),
+                    manifest,
+                    node_host,
+                )
+                .wrap_err("enclave session install failed")?;
             }
             outbe_engine::args::ResolvedTeeSession::Development => {
                 let client = outbe_tee::EnclaveClient::connect_endpoint(endpoint)
                     .wrap_err("development enclave connection failed")?;
-                outbe_tee::install_enclave_client(client).map_err(eyre::Report::msg)?;
+                outbe_tee::install_enclave_client(client, endpoint.to_owned())
+                    .wrap_err("enclave session install failed")?;
             }
         }
         info!(
@@ -1462,6 +1476,10 @@ fn run_node() -> eyre::Result<()> {
             tokio::sync::mpsc::unbounded_channel();
         let projection_readiness_for_rpc = projection_readiness.clone();
         let radicle_status_for_rpc = radicle_status.clone();
+        // Canary-fed enclave health: published by the tee-canary worker (spawned
+        // after node launch), read by `outbe_consensusStatus.enclave`.
+        let tee_canary_status = outbe_tee::TeeEnclaveHealthChannel::disabled();
+        let tee_canary_status_for_rpc = tee_canary_status.clone();
 
         let NodeHandle {
             node,
@@ -1507,6 +1525,7 @@ fn run_node() -> eyre::Result<()> {
                 let compressed_tree_service = compressed_tree_service.clone();
                 let proof_body_readers = proof_body_readers.clone();
                 let radicle_status = radicle_status_for_rpc.clone();
+                let tee_enclave_health = tee_canary_status_for_rpc.clone();
                 move |ctx| {
                     use outbe_rpc::OutbeApiServer as _;
                     let provider = Arc::new(ctx.provider().clone());
@@ -1604,7 +1623,8 @@ fn run_node() -> eyre::Result<()> {
                                 .map_err(|error| format!("encode OCOMP openings: {error}"))
                         }
                     }))
-                    .with_radicle_status(radicle_status.clone());
+                    .with_radicle_status(radicle_status.clone())
+                    .with_tee_enclave_health(tee_enclave_health.clone());
                     ctx.modules.merge_if_module_configured(
                         RethRpcModule::Other("outbe".to_owned()),
                         outbe_api.into_rpc(),
@@ -1800,6 +1820,19 @@ fn run_node() -> eyre::Result<()> {
         let renewal_handle = renewal_worker.map(|worker| {
             tokio::spawn(run_renewal_worker_v1(worker, shutdown_token.clone()))
         });
+        // Periodic enclave canary (signal only): known-plaintext decrypt +
+        // Health telemetry through the process-global session. `0` disables.
+        let tee_canary_handle = (args.tee_canary_interval_secs > 0).then(|| {
+            tokio::spawn(outbe_node::tee_canary::run_tee_canary_worker(
+                outbe_node::tee_canary::GlobalEnclaveRequester,
+                outbe_node::tee_canary::TeeCanaryConfig {
+                    interval: std::time::Duration::from_secs(args.tee_canary_interval_secs),
+                    failure_threshold: args.tee_canary_failure_threshold,
+                },
+                tee_canary_status.clone(),
+                shutdown_token.clone(),
+            ))
+        });
         let upgrade_promotion = Arc::new(tokio::sync::Notify::new());
         let upgrade_handle = if initial_tee_policy.attestation_mode
             == outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired
@@ -1963,6 +1996,9 @@ fn run_node() -> eyre::Result<()> {
         }
         if let Some(handle) = renewal_handle {
             handle.await.wrap_err("automatic DCAP renewal worker panicked")?;
+        }
+        if let Some(handle) = tee_canary_handle {
+            handle.await.wrap_err("TEE canary worker panicked")?;
         }
         if let Some(handle) = upgrade_handle {
             handle.abort();
