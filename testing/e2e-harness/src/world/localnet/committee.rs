@@ -13,7 +13,7 @@ use std::time::Duration;
 use eyre::ensure;
 use eyre::{bail, Result, WrapErr};
 
-use crate::internal::proc::{self, args, attach_log, read_trimmed, wait_tcp, SealSpec};
+use crate::internal::proc::{self, args, attach_log, wait_tcp, SealSpec};
 
 use super::{Localnet, StartOpts};
 
@@ -310,6 +310,45 @@ impl Localnet {
         Ok(())
     }
 
+    /// Restart ONLY validator `i`'s enclave sidecar, preserving its sealed TEE
+    /// state; the node keeps running. Its enclave session must reconnect (with
+    /// identity re-validation) on the next request — a node restart is not
+    /// required and this verb is the first that proves it.
+    pub fn restart_enclave_only(&mut self, i: usize) -> Result<()> {
+        self.enclaves.remove(&i);
+        let chain_id_hex = self.chain_id_hex()?;
+        let seed = self.default_dkg_seed(i);
+        self.start_enclave_with_seed(i, &chain_id_hex, seed)
+    }
+
+    /// Restart validator `i`'s enclave with a FRESH identity: wipe the sealed
+    /// TEE state and (in deterministic-seed lanes) switch the DKG seed. The
+    /// node's pinned enclave session must refuse the impostor (fail-closed
+    /// revocation), never silently adopt it.
+    pub fn restart_enclave_with_fresh_identity(&mut self, i: usize) -> Result<()> {
+        self.enclaves.remove(&i);
+        let tee_dir = self.cfg.validator_dir(i).join("tee");
+        if tee_dir.exists() {
+            fs::remove_dir_all(&tee_dir)
+                .wrap_err_with(|| format!("wipe sealed TEE state {}", tee_dir.display()))?;
+        }
+        let chain_id_hex = self.chain_id_hex()?;
+        let seed = self
+            .cfg
+            .tee_mode
+            .uses_deterministic_dkg_seed()
+            .then(|| format!("{:064x}", i + 101));
+        self.start_enclave_with_seed(i, &chain_id_hex, seed)
+    }
+
+    /// Whether committee validator `i`'s node process is still running (its
+    /// owned child guard exists and has not exited).
+    pub fn validator_running(&mut self, i: usize) -> bool {
+        self.validators
+            .get_mut(&i)
+            .is_some_and(|guard| !guard.exited())
+    }
+
     /// Relaunch one validator against an alternate immutable chain manifest.
     ///
     /// The manifest must describe the same genesis header; this hook exists only
@@ -385,7 +424,11 @@ impl Localnet {
         }
         let secret = vd.join("reth-p2p-secret.hex");
         if secret.exists() {
-            a.extend(args!["--p2p-secret-key-hex", read_trimmed(&secret)?]);
+            // File-based flag: the key must never appear in argv (`ps` leak).
+            a.extend(args![
+                "--p2p-secret-key",
+                proc::normalized_secret_file(&secret)?.display()
+            ]);
         }
         a.extend(args![
             "--validator",
@@ -408,11 +451,22 @@ impl Localnet {
             self.radicle_control_socket(i).display(),
             "--radicle.status-address",
             format!("127.0.0.1:{}", self.cfg.radicle_status_port(i)),
+            // Pool-eviction scenarios must converge in seconds, not the
+            // production 600s / 120s: shorten both the pending staleness
+            // interval and the parked lifetime.
+            "--txpool.outbe.pending-staleness-secs",
+            "20",
+            "--txpool.lifetime",
+            "30s",
         ]);
         if self.tee_enabled() {
             a.extend(args![
                 "--tee-enclave-socket",
-                format!("127.0.0.1:{}", self.cfg.tee_port(i))
+                format!("127.0.0.1:{}", self.cfg.tee_port(i)),
+                // Fast canary cadence so observability scenarios converge in
+                // seconds instead of the 30s production default.
+                "--tee-canary.interval-secs",
+                "5"
             ]);
             self.extend_real_sgx_startup_timeout(&mut a);
         }
@@ -432,9 +486,31 @@ impl Localnet {
         Ok(())
     }
 
+    /// The lane-default deterministic DKG seed for validator `i` (`None` where
+    /// the enclave self-seals its identity, e.g. real SGX).
+    fn default_dkg_seed(&self, i: usize) -> Option<String> {
+        self.cfg
+            .tee_mode
+            .uses_deterministic_dkg_seed()
+            .then(|| format!("{:064x}", i + 1))
+    }
+
     /// Launch validator `i`'s enclave container (`run-testnet.sh:215-293`), owned
     /// and foreground (no `-d`), and wait for its socket.
     fn start_enclave(&mut self, i: usize, chain_id_hex: &str) -> Result<()> {
+        let seed = self.default_dkg_seed(i);
+        self.start_enclave_with_seed(i, chain_id_hex, seed)
+    }
+
+    /// [`Self::start_enclave`] with an explicit DKG-seed override — the
+    /// fresh-identity restart verb uses a different seed so the relaunched
+    /// enclave presents different keys.
+    fn start_enclave_with_seed(
+        &mut self,
+        i: usize,
+        chain_id_hex: &str,
+        dkg_seed: Option<String>,
+    ) -> Result<()> {
         let vd = self.cfg.validator_dir(i);
         fs::create_dir_all(&vd)?;
         let port = self.cfg.tee_port(i);
@@ -449,11 +525,6 @@ impl Localnet {
             tee_dir: vd.join("tee"),
             chain_id_hex: chain_id_hex.to_string(),
         });
-        let dkg_seed = self
-            .cfg
-            .tee_mode
-            .uses_deterministic_dkg_seed()
-            .then(|| format!("{:064x}", i + 1));
 
         let guard = proc::spawn_enclave(proc::EnclaveSpec {
             name: self.cfg.tee_container(i),

@@ -373,6 +373,39 @@ pub fn load_committed_enclave_manifest_v1(
     Ok(manifest)
 }
 
+/// Load the committed manifest AND the persistent NodeHost Noise key for the
+/// process-global enclave session. Same bounded, owner-only state checks as
+/// [`load_committed_enclave_manifest_v1`]; called once at install time so the
+/// session can later reconnect without re-acquiring the NodeHost file lock in
+/// the hot path (the committed manifest is write-once, and a legitimately
+/// replaced enclave fails the Noise-IK handshake against the cached responder
+/// static — fail-closed, requiring the operator restart that replacement
+/// already demands).
+pub fn committed_node_host_session_material(
+    node_data_dir: &Path,
+) -> Result<(EnclaveInitializationManifestV1, NodeHostNoiseKey), TransportError> {
+    let paths = NodeHostPaths::new(node_data_dir);
+    ensure_private_directory(&paths.root)?;
+    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
+    if !path_exists(&paths.manifest)?
+        || !path_exists(&paths.noise_key)?
+        || path_exists(&paths.pending_manifest)?
+    {
+        return Err(TransportError::Codec(
+            "one committed production NodeHost manifest is required".into(),
+        ));
+    }
+    let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
+    reconcile_replacement_state(&paths, &node_host)?;
+    let manifest = read_manifest(&paths.manifest)?;
+    if manifest.node_host_noise_x25519 != node_host.public() {
+        return Err(TransportError::Codec(
+            "committed manifest does not match the persistent NodeHost key".into(),
+        ));
+    }
+    Ok((manifest, node_host))
+}
+
 /// Stage one fresh enclave under the already committed NodeHost identity
 /// and persistent NodeHost key. The committed enclave remains the normal
 /// startup target.

@@ -32,14 +32,14 @@ fn verifier_material_paths(run_dir: &Path) -> (PathBuf, PathBuf) {
 }
 
 fn full_node_joiner_role_args(
-    p2p_secret: &str,
+    p2p_secret_file: &str,
     tee_enclave_socket: &str,
     upstream: &str,
     consensus_listen_address: &str,
 ) -> Vec<String> {
     args![
-        "--p2p-secret-key-hex",
-        p2p_secret,
+        "--p2p-secret-key",
+        p2p_secret_file,
         "--tee-enclave-socket",
         tee_enclave_socket,
         "--upstream",
@@ -65,10 +65,11 @@ impl Localnet {
         fs::create_dir_all(vd.join("logs"))?;
         let secret_path = vd.join("reth-p2p-secret.hex");
         self.provision_full_node_node_host(index)?;
-        let secret = read_trimmed(&secret_path)?;
+        // File-based flag: the key must never appear in argv (`ps` leak).
+        let secret_file = proc::normalized_secret_file(&secret_path)?;
         let mut process_args = self.reth_base_args(&vd, index);
         process_args.extend(full_node_joiner_role_args(
-            &secret,
+            &secret_file.display().to_string(),
             &format!("127.0.0.1:{}", self.cfg.tee_port(index)),
             &format!("http://127.0.0.1:{}", self.cfg.http_port(upstream_slot)),
             &format!("127.0.0.1:{}", self.cfg.consensus_port(index)),
@@ -630,7 +631,8 @@ impl Localnet {
         let vd = self.cfg.validator_dir(index);
         fs::create_dir_all(vd.join("data"))?;
         fs::create_dir_all(vd.join("logs"))?;
-        let secret = read_trimmed(&vd.join("reth-p2p-secret.hex"))?;
+        // File-based flag: the key must never appear in argv (`ps` leak).
+        let secret_file = proc::normalized_secret_file(&vd.join("reth-p2p-secret.hex"))?;
         self.start_radicle(index)?;
 
         let (public_polynomial, dkg_output) = verifier_material_paths(&self.cfg.dir);
@@ -639,8 +641,8 @@ impl Localnet {
             "--validator",
             "--bootnodes",
             self.bootnodes().unwrap_or_default(),
-            "--p2p-secret-key-hex",
-            secret,
+            "--p2p-secret-key",
+            secret_file.display(),
             "--metrics",
             format!("0.0.0.0:{}", self.cfg.metrics_port(index)),
             "--consensus.signing-key",

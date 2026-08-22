@@ -35,6 +35,7 @@ pub mod process;
 pub mod promis;
 pub mod run;
 pub mod seal;
+pub mod telemetry;
 pub mod transport;
 pub mod zk_claim;
 

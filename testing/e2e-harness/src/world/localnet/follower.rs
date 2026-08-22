@@ -9,7 +9,7 @@ use eyre::{bail, eyre, Result};
 use crate::env::TeeMode;
 use crate::internal::{
     eth,
-    proc::{args, attach_log, random_hex_32, read_evm_key, read_trimmed},
+    proc::{self, args, attach_log, random_hex_32, read_evm_key},
     shell::Sh,
 };
 
@@ -94,11 +94,12 @@ impl Localnet {
     ) -> Result<()> {
         let node_dir = self.cfg.validator_dir(index);
         fs::create_dir_all(node_dir.join("logs"))?;
-        let p2p_secret = read_trimmed(&node_dir.join("reth-p2p-secret.hex"))?;
+        // File-based flag: the key must never appear in argv (`ps` leak).
+        let p2p_secret_file = proc::normalized_secret_file(&node_dir.join("reth-p2p-secret.hex"))?;
         let mut args = self.reth_base_args(&node_dir, index);
         args.extend(args![
-            "--p2p-secret-key-hex",
-            p2p_secret,
+            "--p2p-secret-key",
+            p2p_secret_file.display(),
             "--tee-enclave-socket",
             format!("127.0.0.1:{}", self.cfg.tee_port(index)),
             "--tee-renewal.relay-key",

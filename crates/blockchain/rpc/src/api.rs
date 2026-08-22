@@ -64,6 +64,61 @@ pub struct ConsensusStatusInfo {
     pub phase1_verification_mode: Phase1VerificationMode,
     /// Local Mongo materialization and business-readiness state.
     pub projection: ProjectionStatusInfo,
+    /// Canary-observed local TEE-enclave health. Local health, not consensus
+    /// data; `disabled` when the canary worker is off.
+    pub enclave: EnclaveHealthInfo,
+}
+
+/// Operator-visible local TEE-enclave health, fed by the node's periodic
+/// canary decrypt (`--tee-canary.*`). Mirrors [`ProjectionStatusInfo`]'s role:
+/// local observability only, never a consensus input.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnclaveHealthInfo {
+    pub state: EnclaveHealth,
+    /// True when the last canary decrypt succeeded.
+    pub ready: bool,
+    pub offer_key_ready: bool,
+    pub last_ok_ago_millis: Option<u64>,
+    pub last_canary_latency_ms: Option<u64>,
+    pub consecutive_failures: u64,
+    pub last_failure_class: Option<String>,
+    /// Self-reported enclave uptime (from `EnclaveRequest::Health`).
+    pub uptime_s: Option<u64>,
+    pub heap_current_bytes: Option<u64>,
+    pub heap_peak_bytes: Option<u64>,
+    /// `null` until feature detection ran; `false` = enclave binary predates
+    /// the Health probe (canary-decrypt-only mode).
+    pub health_probe_supported: Option<bool>,
+}
+
+/// Stable JSON enclave-health vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EnclaveHealth {
+    Disabled,
+    Starting,
+    Ready,
+    Degraded,
+    Unavailable,
+}
+
+impl Default for EnclaveHealthInfo {
+    fn default() -> Self {
+        Self {
+            state: EnclaveHealth::Disabled,
+            ready: false,
+            offer_key_ready: false,
+            last_ok_ago_millis: None,
+            last_canary_latency_ms: None,
+            consecutive_failures: 0,
+            last_failure_class: None,
+            uptime_s: None,
+            heap_current_bytes: None,
+            heap_peak_bytes: None,
+            health_probe_supported: None,
+        }
+    }
 }
 
 /// Operator-visible local projection state. This is local health, not consensus data.
@@ -475,6 +530,7 @@ mod tests {
             is_validator: true,
             phase1_verification_mode: Phase1VerificationMode::ValidatorEnforced,
             projection: ready_projection(),
+            enclave: EnclaveHealthInfo::default(),
         };
 
         let json = serde_json::to_string(&info).unwrap();
@@ -556,6 +612,7 @@ mod tests {
             is_validator: false,
             phase1_verification_mode: Phase1VerificationMode::TrustedFinality,
             projection: ready_projection(),
+            enclave: EnclaveHealthInfo::default(),
         };
 
         let json = serde_json::to_string(&info).unwrap();

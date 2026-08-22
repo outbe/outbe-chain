@@ -71,7 +71,7 @@ sol! {
 }
 /// Every probe below asks the same question of the chain — "what did this
 /// contract emit for this day?" — so the query shape lives here once.
-#[cfg(feature = "ocomp-integration")]
+#[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
 fn logs_of(
     url: &str,
     address: Address,
