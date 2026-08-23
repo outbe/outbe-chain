@@ -183,6 +183,10 @@ pub struct EnvCli {
     #[arg(long)]
     pub ocomp_bin: Option<PathBuf>,
 
+    /// `outbe-feeder` binary. Defaults to `<repo>/target/release/outbe-feeder`.
+    #[arg(long)]
+    pub feeder_bin: Option<PathBuf>,
+
     /// Optional prebuilt newer `outbe-chain` binary for operator replacement.
     /// When omitted, the update E2E builds the requested version itself from a
     /// temporary worktree of the source revision under test.
@@ -241,6 +245,7 @@ pub struct Environment {
     pub metadosis_p0: Option<MetadosisP0EnvironmentReceiptV1>,
     pub chain_bin: PathBuf,
     pub ocomp_bin: PathBuf,
+    pub feeder_bin: PathBuf,
     pub upgraded_chain_bin: Option<PathBuf>,
     pub cli_bin: PathBuf,
     pub keygen_bin: PathBuf,
@@ -283,6 +288,10 @@ impl Environment {
                 .ocomp_bin
                 .clone()
                 .unwrap_or_else(|| repo.join("target/release/outbe-ocomp")),
+            feeder_bin: cli
+                .feeder_bin
+                .clone()
+                .unwrap_or_else(|| repo.join("target/release/outbe-feeder")),
             upgraded_chain_bin: cli.upgraded_chain_bin.clone(),
             cli_bin: cli
                 .cli_bin
@@ -339,6 +348,7 @@ impl Default for Environment {
             metadosis_p0_case: None,
             chain_bin: None,
             ocomp_bin: None,
+            feeder_bin: None,
             upgraded_chain_bin: None,
             cli_bin: None,
             keygen_bin: None,

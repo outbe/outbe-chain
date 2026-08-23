@@ -174,6 +174,8 @@ pub async fn run() {
         // `World`, so there is nothing to stop.
         .after(move |feature, _rule, scenario, event, world| {
             if let Some(world) = world {
+                let price_oracle = world.price_oracle.evidence_snapshot();
+                world.price_oracle.teardown();
                 world.localnet.teardown();
                 let audit = world.localnet.audit_unexpected_logs(
                     world
@@ -228,6 +230,7 @@ pub async fn run() {
                     gramine_image_id: world.localnet.enclave_image_id(),
                     ocomp: &ocomp,
                     ocomp_public: &ocomp_public,
+                    price_oracle: &price_oracle,
                     radicle: &world.state.radicle,
                 }) {
                     panic!("E2E evidence write failed: {error:#}");

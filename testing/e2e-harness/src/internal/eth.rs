@@ -55,6 +55,18 @@ sol!("../../contracts/precompiles/src/ITribute.sol");
 sol!("../../contracts/precompiles/src/INod.sol");
 sol!("../../contracts/precompiles/src/INodFactory.sol");
 sol!("../../contracts/precompiles/src/IGratis.sol");
+#[cfg(feature = "ocomp-integration")]
+sol!("../../contracts/precompiles/src/IGratisFactory.sol");
+#[cfg(feature = "ocomp-integration")]
+sol!("../../contracts/precompiles/src/IPromis.sol");
+#[cfg(feature = "ocomp-integration")]
+sol!("../../contracts/precompiles/src/IPromisFactory.sol");
+#[cfg(feature = "ocomp-integration")]
+sol!("../../contracts/precompiles/src/IGem.sol");
+#[cfg(feature = "ocomp-integration")]
+sol!("../../contracts/precompiles/src/IGemFactory.sol");
+#[cfg(feature = "ocomp-integration")]
+sol!("../../contracts/precompiles/src/IVaultRouter.sol");
 sol!("../../contracts/precompiles/src/IMetadosis.sol");
 sol!("../../contracts/precompiles/src/IPromisLimit.sol");
 sol!("../../contracts/precompiles/src/IDesis.sol");
@@ -398,10 +410,21 @@ pub(crate) fn raw_json_result(
     })
 }
 
-/// Request the caller's Gratis modify key through the production enclave RPC
-/// and open the sealed response with a fresh client X25519 key.
 #[cfg(feature = "ocomp-integration")]
-pub(crate) fn derive_gratis_modify_key(url: &str, key: &str) -> Result<[u8; 32]> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ConfidentialAccountKeys {
+    pub view: [u8; 32],
+    pub modify: [u8; 32],
+}
+
+/// Request the caller's ledger keys through the production enclave RPC and
+/// open the sealed response with a fresh client X25519 key.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn derive_account_keys(
+    url: &str,
+    key: &str,
+    ledger: outbe_tee::protocol::Ledger,
+) -> Result<ConfidentialAccountKeys> {
     use outbe_tee::protocol::{derive_account_keys_message, eip191_hash, Ledger};
     use outbe_tee_enclave::crypto::{decrypt_share, x25519_public, EncryptedShare};
     use rand_core::RngCore as _;
@@ -414,18 +437,23 @@ pub(crate) fn derive_gratis_modify_key(url: &str, key: &str) -> Result<[u8; 32]>
     rand_core::OsRng.fill_bytes(&mut ephemeral_secret);
     let ephemeral_public = x25519_public(&ephemeral_secret);
     let digest = eip191_hash(&derive_account_keys_message(
-        Ledger::Gratis,
+        ledger,
         account,
         B256::from(ephemeral_public),
     ));
     let signature = signer
         .sign_hash_sync(&digest)
-        .map_err(|error| eyre!("sign Gratis key request: {error}"))?;
+        .map_err(|error| eyre!("sign confidential key request: {error}"))?;
+    let ledger_name = match ledger {
+        Ledger::Gratis => "Gratis",
+        Ledger::Promis => "Promis",
+        Ledger::Fidelity => "Fidelity",
+    };
     let response = raw_json_result(
         url,
         "outbe_deriveKeys",
         serde_json::json!([
-            "Gratis",
+            ledger_name,
             format!("{account:#x}"),
             format!("{:#x}", B256::from(ephemeral_public)),
             format!("0x{}", hex::encode(signature.as_bytes())),
@@ -454,16 +482,26 @@ pub(crate) fn derive_gratis_modify_key(url: &str, key: &str) -> Result<[u8; 32]>
             ciphertext: decode("sealed")?,
         },
     )
-    .map_err(|error| eyre!("open sealed Gratis keys: {error}"))?;
+    .map_err(|error| eyre!("open sealed {ledger_name} keys: {error}"))?;
     if plaintext.len() != 64 {
         return Err(eyre!(
             "outbe_deriveKeys plaintext is {} bytes instead of 64",
             plaintext.len()
         ));
     }
-    plaintext[32..]
-        .try_into()
-        .map_err(|_| eyre!("Gratis modify key is not 32 bytes"))
+    Ok(ConfidentialAccountKeys {
+        view: plaintext[..32]
+            .try_into()
+            .map_err(|_| eyre!("{ledger_name} view key is not 32 bytes"))?,
+        modify: plaintext[32..]
+            .try_into()
+            .map_err(|_| eyre!("{ledger_name} modify key is not 32 bytes"))?,
+    })
+}
+
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn derive_gratis_modify_key(url: &str, key: &str) -> Result<[u8; 32]> {
+    derive_account_keys(url, key, outbe_tee::protocol::Ledger::Gratis).map(|keys| keys.modify)
 }
 
 /// Broadcast one already signed public transaction without reconstructing or

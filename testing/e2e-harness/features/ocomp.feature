@@ -5,7 +5,7 @@ Feature: Off-chain computation and Metadosis
   WWD failure, or mutation transition. Validator membership is tested in the
   validator-lifecycle suite.
 
-  @ocomp-e2e @ocomp-e2e-001 @ocomp-e2e-008 @ocomp-public-apply @ocomp-delegated-signing @metadosis-fresh-devnet @pfs-011-01
+  @ocomp-e2e @ocomp-e2e-001 @ocomp-e2e-008 @ocomp-public-apply @ocomp-delegated-signing @metadosis-fresh-devnet @pfs-011-01 @nod-settlement
   # OCOMP-TEST-ID: OCM-E2E-001
   # OCOMP-TEST-ID: OCM-E2E-008
   # OCOMP-TEST-ID: OCM-TRC-001
@@ -15,6 +15,7 @@ Feature: Off-chain computation and Metadosis
   Scenario: A public Tribute completes real OCOMP, FullNode verification, NOD, replay, and contributor payout
     Given a fresh four-validator Metadosis capacity localnet at FORMING
     Then the fresh capacity day is created in FORMING by finalized block 1
+    And the controlled COEN USD quote is finalized through the real price feeder
     And every OCOMP transaction signer is distinct and scoped only to the OCOMP role
     When the committee logical clock reaches the fresh capacity OFFERING window
     Then the same fresh capacity day advances through LOOKBACK to OFFERING
@@ -48,6 +49,7 @@ Feature: Off-chain computation and Metadosis
     And that day has no open contributor payout round before proceeds arrive
     When the day's auction proceeds arrive from one chain
     Then every certified contributor is paid their share
+    And the public Tribute owner settles its Nod and redeems its exact Gratis into COEN
 
   @ocomp-materialization
   Scenario: A certified generation is materialized into user NODs in bounded batches
