@@ -236,8 +236,8 @@ mod tests {
             Address::ZERO,
             outbe_oracle::api::DAY_TYPE_PAIR,
             rate_6,
-            0,
-            0,
+            ctx.block.block_number,
+            ctx.block.timestamp,
         )
         .unwrap();
         // Register ISO 840 (USD) so mint_gem currency-validation passes.
