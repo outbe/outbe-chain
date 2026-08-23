@@ -949,6 +949,13 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
         for voter in voters {
             assert_eq!(gem.balance_of(voter).unwrap(), 0, "Gem mint must roll back");
         }
+        assert_eq!(
+            fire.storage
+                .balance(outbe_primitives::addresses::CCA_ADDRESS)
+                .unwrap(),
+            U256::ZERO,
+            "CCA credit before the terminal failure must roll back"
+        );
         let cycle: Cycle<'_> = fire.storage.contract::<Cycle<'_>>();
         assert_eq!(
             cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
@@ -968,18 +975,66 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
             .contract::<outbe_rewards::schema::Rewards<'_>>();
         assert!(rewards.daily_topup_settled.read(&20_240_101).unwrap());
         assert!(rewards.daily_settled.read(&20_240_101).unwrap());
-        assert!(outbe_metadosis::api::day_limit_formation_receipt(
+        let receipt = outbe_metadosis::api::day_limit_formation_receipt(
             retry.storage.clone(),
             outbe_common::WorldwideDay::new(20_240_101),
         )
         .unwrap()
-        .is_some());
+        .unwrap();
+
+        let allocations = outbe_emissionlimit::allocation::allocate_emission(
+            outbe_emissionlimit::day_emission::day_emission_limit(0),
+        )
+        .unwrap();
+        let amount_for = |id| {
+            allocations
+                .iter()
+                .find(|allocation| allocation.id == id)
+                .unwrap()
+                .amount
+        };
+        let validator_amount =
+            amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Validator);
+        let expected_gem_load = validator_amount / U256::from(voters.len());
+        let distributed = expected_gem_load * U256::from(voters.len());
+        let validator_residue = validator_amount.checked_sub(distributed).unwrap();
+        let expected_terminal =
+            amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Metadosis)
+                .checked_add(amount_for(
+                    outbe_emissionlimit::allocation::EmissionSinkId::Waa,
+                ))
+                .and_then(|amount| {
+                    amount.checked_add(amount_for(
+                        outbe_emissionlimit::allocation::EmissionSinkId::Sra,
+                    ))
+                })
+                .and_then(|amount| amount.checked_add(validator_residue))
+                .unwrap();
+        let outbe_metadosis::DayLimitFormationReceipt::Formed(formed) = receipt;
+        assert_eq!(formed.base_limit, expected_terminal);
+        assert_eq!(
+            retry
+                .storage
+                .balance(outbe_primitives::addresses::CCA_ADDRESS)
+                .unwrap(),
+            amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Cca),
+            "retry must credit CCA exactly once"
+        );
         let gem = outbe_gem::GemContract::new(retry.storage.clone());
         for voter in voters {
             assert_eq!(
                 gem.balance_of(voter).unwrap(),
                 1,
                 "retry must mint exactly one Gem"
+            );
+            let gem_id = gem.token_of_owner_by_index(voter, 0).unwrap();
+            assert_eq!(
+                outbe_gem::api::get_gem(&retry.storage, gem_id)
+                    .unwrap()
+                    .unwrap()
+                    .gem_load_minor,
+                expected_gem_load,
+                "retry must mint the exact proportional load"
             );
         }
         let cycle: Cycle<'_> = retry.storage.contract::<Cycle<'_>>();
@@ -1047,14 +1102,38 @@ fn open_day_preserves_an_already_settled_validator_topup_without_reminting() {
             "the prior Gem must remain unchanged"
         );
         assert!(rewards.daily_settled.read(&20_240_101).unwrap());
-        assert!(
-            outbe_metadosis::api::day_limit_formation_receipt(
-                ctx.storage.clone(),
-                outbe_common::WorldwideDay::new(20_240_101),
-            )
-            .unwrap()
-            .is_some(),
-            "the whole day must settle without halting"
+        let receipt = outbe_metadosis::api::day_limit_formation_receipt(
+            ctx.storage.clone(),
+            outbe_common::WorldwideDay::new(20_240_101),
+        )
+        .unwrap()
+        .unwrap();
+        let allocations = outbe_emissionlimit::allocation::allocate_emission(
+            outbe_emissionlimit::day_emission::day_emission_limit(0),
+        )
+        .unwrap();
+        let amount_for = |id| {
+            allocations
+                .iter()
+                .find(|allocation| allocation.id == id)
+                .unwrap()
+                .amount
+        };
+        let expected_terminal =
+            amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Metadosis)
+                .checked_add(amount_for(
+                    outbe_emissionlimit::allocation::EmissionSinkId::Waa,
+                ))
+                .and_then(|amount| {
+                    amount.checked_add(amount_for(
+                        outbe_emissionlimit::allocation::EmissionSinkId::Sra,
+                    ))
+                })
+                .unwrap();
+        let outbe_metadosis::DayLimitFormationReceipt::Formed(formed) = receipt;
+        assert_eq!(
+            formed.base_limit, expected_terminal,
+            "AlreadySettled must contribute no second validator top-up to the terminal sink"
         );
     });
 }
