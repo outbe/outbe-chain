@@ -100,11 +100,17 @@ pub fn allocate_emission_with_specs(
     for spec in specs {
         let amount = match spec.pct {
             Some(pct) => {
-                let amount = total * U256::from(pct) / hundred;
-                fixed_total += amount;
+                let amount = total.checked_mul(U256::from(pct)).ok_or_else(|| {
+                    PrecompileError::Revert("emission fixed-share multiplication overflow".into())
+                })? / hundred;
+                fixed_total = fixed_total.checked_add(amount).ok_or_else(|| {
+                    PrecompileError::Revert("emission fixed allocation total overflow".into())
+                })?;
                 amount
             }
-            None => total - fixed_total,
+            None => total.checked_sub(fixed_total).ok_or_else(|| {
+                PrecompileError::Revert("emission terminal allocation underflow".into())
+            })?,
         };
 
         allocations.push(EmissionAllocation {
@@ -324,6 +330,59 @@ mod tests {
             },
         ];
         assert!(allocate_emission_with_specs(U256::from(100u64), &over_allocated).is_err());
+    }
+
+    #[test]
+    fn allocation_rejects_fixed_share_multiplication_overflow() {
+        let specs = [
+            EmissionSinkSpec {
+                id: EmissionSinkId::Validator,
+                pct: Some(100),
+            },
+            EmissionSinkSpec {
+                id: EmissionSinkId::Metadosis,
+                pct: None,
+            },
+        ];
+
+        let error = allocate_emission_with_specs(U256::MAX, &specs).unwrap_err();
+        assert!(matches!(
+            error,
+            PrecompileError::Revert(message)
+                if message == "emission fixed-share multiplication overflow"
+        ));
+    }
+
+    #[test]
+    fn active_allocation_at_maximum_day_emission_is_pinned() {
+        let total = crate::day_emission::day_emission_limit(0);
+        assert_eq!(total, U256::from(1_073_741_824_000_000u64));
+
+        assert_eq!(
+            allocate_emission(total).unwrap(),
+            vec![
+                EmissionAllocation {
+                    id: EmissionSinkId::Validator,
+                    amount: U256::from(42_949_672_960_000u64),
+                },
+                EmissionAllocation {
+                    id: EmissionSinkId::Waa,
+                    amount: U256::from(42_949_672_960_000u64),
+                },
+                EmissionAllocation {
+                    id: EmissionSinkId::Sra,
+                    amount: U256::from(42_949_672_960_000u64),
+                },
+                EmissionAllocation {
+                    id: EmissionSinkId::Cca,
+                    amount: U256::from(42_949_672_960_000u64),
+                },
+                EmissionAllocation {
+                    id: EmissionSinkId::Metadosis,
+                    amount: U256::from(901_943_132_160_000u64),
+                },
+            ]
+        );
     }
 
     #[test]
