@@ -30,7 +30,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
     function setUp() public {
         _setUpBridge();
         intex = DeployProxy.intexNFT1155(address(this), address(this));
-        // The origin-as-target shape: markCalled has no holders to migrate, so the mark is a pure state flip.
+        // The origin-as-target shape: a mark is a pure state flip here as anywhere.
         router = DeployProxy.targetRouter(address(bridge), address(this), uint32(block.chainid));
 
         router.setRemoteMessenger(uint32(block.chainid), _interop(uint32(block.chainid), originSender));

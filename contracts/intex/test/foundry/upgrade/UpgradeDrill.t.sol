@@ -220,7 +220,6 @@ contract UpgradeDrillTest is CrossChainTest {
         address auction = makeAddr("auction");
         address intex = makeAddr("intex");
         address escrow = makeAddr("escrow");
-        address nftBridge = makeAddr("nftBridge");
         bytes memory remote = _interop(A_CHAIN_ID, address(0xCAFE));
 
         vm.startPrank(admin);

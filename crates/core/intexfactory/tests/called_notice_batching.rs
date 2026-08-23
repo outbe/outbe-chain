@@ -18,7 +18,7 @@ use outbe_primitives::storage::StorageHandle;
 const CHAIN_ID: u64 = 1;
 const NOW: u64 = 1_700_000_000;
 const DAY: u32 = 20_260_101;
-const CALLED_AT: u32 = 1_777_000_000;
+const CALLED_AT: u32 = NOW as u32 - 3_600;
 
 fn series(index: u32) -> SeriesId {
     let iso = [
@@ -53,6 +53,17 @@ fn drain(handle: &StorageHandle<'_>) {
     drain_notices(&ctx).expect("a dropped notice never fails the drain");
 }
 
+/// A provider whose OriginRouter accepts sends, so the drain exercises the path a live chain takes
+/// rather than the drop-and-log one a missing stub produces.
+fn provider() -> HashMapStorageProvider {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at(
+        outbe_intexfactory::constants::ORIGIN_ROUTER_ADDRESS,
+        alloy_primitives::Bytes::from(vec![0u8; 32]),
+    );
+    storage
+}
+
 fn bounds(handle: &StorageHandle<'_>) -> (u32, u32) {
     let factory = IntexFactoryContract::new(handle.clone());
     (
@@ -63,7 +74,7 @@ fn bounds(handle: &StorageHandle<'_>) -> (u32, u32) {
 
 #[test]
 fn a_run_longer_than_the_wire_cap_still_empties() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
         for index in 0..20 {
             push_called(&handle, index, CALLED_AT);
@@ -79,7 +90,7 @@ fn a_run_longer_than_the_wire_cap_still_empties() {
 
 #[test]
 fn a_run_never_reaches_past_the_chunk_limit() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
         let queued = NOTIFY_CHUNK_LIMIT + 5;
         for index in 0..queued {
@@ -123,7 +134,7 @@ fn a_run_takes_only_entries_sharing_the_day_and_the_call_time() {
 
 #[test]
 fn a_qualified_entry_ends_the_run() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
         push_called(&handle, 0, CALLED_AT);
         push(&handle, NOTICE_QUALIFIED, U256::from(1u64));
@@ -145,7 +156,7 @@ fn a_qualified_entry_ends_the_run() {
 
 #[test]
 fn a_different_call_time_ends_the_run() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
         push_called(&handle, 0, CALLED_AT);
         push_called(&handle, 1, CALLED_AT + 1);
@@ -162,7 +173,7 @@ fn a_different_call_time_ends_the_run() {
 
 #[test]
 fn a_run_that_hits_the_chunk_limit_is_split_not_overrun() {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
         // A qualified entry at 27 leaves the next Called run starting at 28, so it would reach
         // 35 if nothing stopped it — four entries past this firing's limit of 32.

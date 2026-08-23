@@ -242,7 +242,7 @@ contract GasBudgetTest is CrossChainTest {
         uint256 tokenId = intex.issuedTokenId(SERIES_PREFIX);
         intex.mint(sender, items, SERIES_PREFIX);
 
-        // One receiver that rejects every mint, so all 64 items take the recording path.
+        // One receiver that rejects every mint, so every item takes the recording path.
         RevertingReceiver rejecting = new RevertingReceiver();
         bytes32[] memory to = new bytes32[](items);
         uint256[] memory ids = new uint256[](items);

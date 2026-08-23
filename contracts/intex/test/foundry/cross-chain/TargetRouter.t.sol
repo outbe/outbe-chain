@@ -81,8 +81,6 @@ contract TargetRouterTest is CrossChainTest {
         auction.grantRole(auction.RELAYER_ROLE(), address(targetRouter));
         intex.grantRole(intex.RELAYER_ROLE(), address(targetRouter));
 
-        // Grant SYSTEM_RELAYER_ROLE to TargetRouter on batch adapter
-
         // Grant RELAYER_ROLE to batch adapter on intex (for crosschainBurn)
         intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
     }

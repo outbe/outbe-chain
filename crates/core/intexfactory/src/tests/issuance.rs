@@ -188,6 +188,14 @@ fn a_chains_series_travel_together_up_to_the_message_caps() {
     );
 }
 
+/// The codec enforces this same number on both encode and decode (`BridgeMsgCodec.sol`), and nothing
+/// links the two languages, so the value is pinned here: changing it must be a deliberate act.
+#[test]
+fn the_recipient_cap_matches_the_wire() {
+    assert_eq!(MAX_RECIPIENTS_PER_ISSUANCE, 32);
+    assert_eq!(MAX_SERIES_PER_MESSAGE, 8);
+}
+
 #[test]
 fn a_message_never_carries_more_winners_than_the_wire_allows() {
     // Two series whose winners together exceed the recipient cap: no message may overfill.
