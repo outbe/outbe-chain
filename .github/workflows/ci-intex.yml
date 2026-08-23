@@ -94,6 +94,11 @@ jobs:
       - name: Run Forge tests
         run: forge test -vv
 
+      # A cross-chain delivery is its own transaction against cold storage; the shared-context run above
+      # understates that by a third or more, and the destination-gas budgets are sized from it.
+      - name: Check destination-gas budgets against cold-storage cost
+        run: forge test --isolate --match-path 'test/foundry/cross-chain/GasBudget.t.sol' -vv
+
   abi:
     name: ABI Export Check
     runs-on: depot-ubuntu-24.04

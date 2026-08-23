@@ -8,48 +8,50 @@ pragma solidity 0.8.30;
 ///         wraps it as the ERC-7786 executionGasLimit attribute honored by whichever gateway is active. Swapping
 ///         transport never touches these values.
 /// @dev Every budget is 1.5x the measured cost of its heaviest message, taking the failure path where one
-///      exists. `test/foundry/cross-chain/GasBudget.t.sol` fails if a formula drifts under the measurement.
+///      exists. `test/foundry/cross-chain/GasBudget.t.sol` fails if a formula drifts under the measurement,
+///      and measures with `forge test --isolate`: a delivery is its own transaction against cold storage,
+///      which the default shared-context run understates by a third or more.
 library IntexGas {
     // --- Outbe -> target chain fixed-size messages (TargetRouter handlers) ---
     /// @dev auctionStart creates the series' auction on the target chain.
     /// @notice Fixed head of an AUCTION_STAGE_START, before its price rows.
-    /// @dev Measured at ~332k for the six-row maximum.
+    /// @dev Measured at ~361k for the six-row maximum.
     uint256 internal constant AUCTION_STAGE_START_BASE = 350_000;
     /// @notice Marginal cost of storing one reference-price row on the target.
-    uint256 internal constant AUCTION_STAGE_START_PER_PRICE = 25_000;
+    uint256 internal constant AUCTION_STAGE_START_PER_PRICE = 35_000;
     /// @dev Also relays the day's bids from inside the same delivery, a cost the origin cannot see, so the
     ///      target caps that relay and a heavier day parks. Measured at ~5.0M once the cap binds.
     uint256 internal constant AUCTION_STAGE_CLEARING = 7_500_000;
-    /// @dev Measured at ~66k.
-    uint256 internal constant AUCTION_RESULT = 100_000;
+    /// @dev Measured at ~125k.
+    uint256 internal constant AUCTION_RESULT = 200_000;
     /// @dev A mark is a bounded state flip. Measured: a batch of 8 takes ~177k applied and ~451k when
-    ///      every series slots instead, one series ~60k and ~67k. The slotting path sets the marginal.
+    ///      every series slots instead, one series ~97k and ~114k. The slotting path sets the marginal.
     uint256 internal constant MARK_CALLED_BASE = 100_000;
-    uint256 internal constant MARK_CALLED_PER_SERIES = 75_000;
+    uint256 internal constant MARK_CALLED_PER_SERIES = 80_000;
     uint256 internal constant MARK_QUALIFIED_BASE = 100_000;
-    uint256 internal constant MARK_QUALIFIED_PER_SERIES = 75_000;
+    uint256 internal constant MARK_QUALIFIED_PER_SERIES = 80_000;
     /// @dev Destination hook for composed proceeds: WCOEN unwrap + IntexFactory distribute registration.
     uint256 internal constant PROCEEDS_COMPOSE = 300_000;
 
     // --- Variable-size messages: base + per-item marginal ---
-    /// @notice Destination gas for a fixed-size BIDS_DONE completeness marker. Measured at ~43k.
-    uint256 internal constant BIDS_DONE = 70_000;
+    /// @notice Destination gas for a fixed-size BIDS_DONE completeness marker. Measured at ~66k.
+    uint256 internal constant BIDS_DONE = 100_000;
 
     /// @dev Outside the rule: the receiver forwards into the Desis precompile, which no test can execute.
     ///      The router's own share of a 64-bid batch is ~73k; the rest of this stands for the precompile.
     uint256 internal constant BIDS_BASE = 1_300_000;
     uint256 internal constant BIDS_PER_ITEM = 160_000;
-    /// @dev Handler overhead only; createSeries is charged per series. Measured ~6.0M at the recipient cap.
+    /// @dev Handler overhead only; createSeries is charged per series. Measured ~6.03M at the recipient cap.
     uint256 internal constant ISSUANCE_BASE = 200_000;
     uint256 internal constant ISSUANCE_PER_SERIES = 400_000;
     uint256 internal constant ISSUANCE_PER_ITEM = 270_000;
-    /// @dev Measured at ~3.58M for a full 64-bidder chunk against a live escrow.
+    /// @dev Measured at ~3.31M for a full 64-bidder chunk against a live escrow.
     uint256 internal constant REFUND_BASE = 250_000;
-    uint256 internal constant REFUND_PER_ITEM = 80_000;
+    uint256 internal constant REFUND_PER_ITEM = 75_000;
     /// @dev Sized on the failure path: a rejected item is recorded with its revert bytes while the tokens
-    ///      are already burned on the source. Measured ~131k per item landed, ~266k rejected.
+    ///      are already burned on the source. Measured ~4.64M for a full rejected batch.
     uint256 internal constant NFT_MINT_BASE = 150_000;
-    uint256 internal constant NFT_MINT_PER_ITEM = 400_000;
+    uint256 internal constant NFT_MINT_PER_ITEM = 430_000;
 
     /// @notice Destination gas for a BIDS_BATCH carrying `itemCount` bids.
     function bidsBatch(uint256 itemCount) internal pure returns (uint256) {
