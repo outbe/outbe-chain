@@ -221,6 +221,7 @@ impl LocalnetCli {
             metadosis_p0_case: None,
             chain_bin: Some(self.repo.join("target/release/outbe-chain")),
             ocomp_bin: Some(self.repo.join("target/release/outbe-ocomp")),
+            feeder_bin: Some(self.repo.join("target/release/outbe-feeder")),
             upgraded_chain_bin: None,
             cli_bin: Some(self.repo.join("target/release/outbe-cli")),
             keygen_bin: Some(self.repo.join("target/release/outbe-keygen")),

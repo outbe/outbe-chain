@@ -25,8 +25,12 @@ pub mod lifecycle;
 pub mod ocomp;
 pub mod origin_venue;
 #[cfg(feature = "ocomp-integration")]
+pub mod price_oracle;
+#[cfg(feature = "ocomp-integration")]
 pub mod radicle;
 pub mod restart;
+#[cfg(feature = "ocomp-integration")]
+pub mod settlement;
 pub mod stablecoin;
 pub mod stale_join;
 pub mod target_chain;

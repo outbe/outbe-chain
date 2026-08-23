@@ -10,7 +10,7 @@
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
 
-use outbe_credis::CredisContract;
+use outbe_credis::{CredisContract, CredisState};
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::runtime as gf;
@@ -151,13 +151,14 @@ pub fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
 /// across a floor. Distinct from the finalized daily series ([`set_vwap`]),
 /// which is what the daily scan reads.
 pub fn set_coen_rate(storage: &StorageHandle<'_>, coen_iso_rate: U256) {
+    let timestamp = storage.timestamp().unwrap().to::<u64>();
     outbe_oracle::api::set_exchange_rate(
         storage.clone(),
         Address::ZERO,
         outbe_oracle::api::DAY_TYPE_PAIR,
         coen_iso_rate,
-        0,
-        0,
+        1,
+        timestamp,
     )
     .unwrap();
 }
@@ -244,6 +245,9 @@ pub fn settle_principal(
     let position = CredisContract::new(storage.clone())
         .get_position(position_id)
         .unwrap();
+    if position.lifecycle_state().unwrap() == CredisState::Open {
+        set_coen_rate(storage, above_floor());
+    }
     let interest = CredisContract::accrued_interest(&position, now_of(storage)).unwrap();
     runtime::settle(storage.clone(), payer, position_id, interest + principal).unwrap()
 }

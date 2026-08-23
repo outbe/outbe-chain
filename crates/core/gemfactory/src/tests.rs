@@ -1,4 +1,5 @@
 use alloy_primitives::{address, Address, B256, U256};
+use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
 use outbe_gem::{api as gem_api, GemContract, GemState};
 use outbe_intex::SeriesId;
@@ -53,7 +54,7 @@ fn promis_auth(account: Address, amount: U256, nonce: u64) -> ModifyAuth {
 /// Units the stubbed `parkIntex` reports as burned (its `uint256` return).
 const PARK_UNITS: u64 = 100;
 
-fn with_storage<R>(rate: Option<U256>, f: impl FnOnce(&StorageHandle) -> R) -> R {
+fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(1);
     storage.set_timestamp(U256::from(T_NOW));
     // Stub IntexNFT1155: `parkIntex` returns PARK_UNITS (32-byte uint256).
@@ -90,16 +91,21 @@ fn with_storage<R>(rate: Option<U256>, f: impl FnOnce(&StorageHandle) -> R) -> R
                 Address::ZERO,
                 outbe_oracle::api::DAY_TYPE_PAIR,
                 rate,
-                0,
-                0,
+                1,
+                T_NOW,
             )
             .unwrap();
             // Register ISO 840 (USD) so mint_gem currency-validation passes.
             let oracle = OracleContract::new(handle.clone());
             oracle.reference_currencies.push(840u16).unwrap();
         }
-        f(&handle)
-    })
+    });
+    storage
+}
+
+fn with_storage<R>(rate: Option<U256>, f: impl FnOnce(&StorageHandle) -> R) -> R {
+    let mut storage = test_storage(rate);
+    StorageHandle::enter(&mut storage, |handle| f(&handle))
 }
 
 fn six_decimal_unit() -> U256 {
@@ -289,6 +295,41 @@ fn mint_no_oracle_setup_rejected() {
 }
 
 #[test]
+fn mint_rejects_a_stale_oracle_rate_before_writing_a_gem() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        outbe_oracle::api::set_exchange_rate(
+            storage.clone(),
+            Address::ZERO,
+            outbe_oracle::api::DAY_TYPE_PAIR,
+            rate,
+            1,
+            T_NOW - outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS - 1,
+        )
+        .unwrap();
+
+        let error = runtime::mint_gem(
+            storage,
+            ALICE,
+            GemTypes::Wallet,
+            six_decimal_unit(),
+            840,
+            840,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("stale"), "{error}");
+        assert_eq!(
+            GemFactoryContract::new(storage.clone())
+                .total_gems_issued
+                .read()
+                .unwrap(),
+            U256::ZERO
+        );
+    });
+}
+
+#[test]
 fn settle_wallet_settles_with_a_registered_asset() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
@@ -310,6 +351,84 @@ fn settle_wallet_settles_with_a_registered_asset() {
         assert_eq!(
             gem_api::get_gem(storage, gem_id).unwrap().unwrap().state,
             GemState::Settled as u8
+        );
+    });
+}
+
+#[test]
+fn settlement_event_reports_the_actual_fallback_currency() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(rate));
+    let gem_id = StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = runtime::mint_gem(
+            &storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(10u64) * six_decimal_unit(),
+            949,
+            840,
+        )
+        .unwrap();
+        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        runtime::settle_gem(&storage, ALICE, gem_id, STABLE).unwrap();
+        gem_id
+    });
+
+    let event = provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| crate::precompile::IGemFactory::GemSettled::decode_log(log).ok())
+        .next()
+        .expect("settlement emits GemSettled");
+    assert_eq!(event.gemId, gem_id);
+    assert_eq!(event.settlementCurrency, 840);
+}
+
+#[test]
+fn cross_currency_settlement_rejects_a_stale_leg_without_settling_the_gem() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        let eur_pair = outbe_oracle::api::AddressPair::new_coen_to(978);
+        outbe_oracle::api::register_pair(storage.clone(), eur_pair).unwrap();
+        outbe_oracle::api::set_exchange_rate(
+            storage.clone(),
+            Address::ZERO,
+            eur_pair,
+            six_decimal_unit(),
+            1,
+            T_NOW,
+        )
+        .unwrap();
+        OracleContract::new(storage.clone())
+            .reference_currencies
+            .push(978)
+            .unwrap();
+        let gem_id = runtime::mint_gem(
+            storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(10u64) * six_decimal_unit(),
+            840,
+            978,
+        )
+        .unwrap();
+        gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
+        outbe_oracle::api::set_exchange_rate(
+            storage.clone(),
+            Address::ZERO,
+            outbe_oracle::api::DAY_TYPE_PAIR,
+            rate,
+            1,
+            T_NOW - outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS - 1,
+        )
+        .unwrap();
+
+        let error = runtime::settle_gem(storage, ALICE, gem_id, STABLE).unwrap_err();
+
+        assert!(error.to_string().contains("stale"), "{error}");
+        assert_eq!(
+            gem_api::get_gem(storage, gem_id).unwrap().unwrap().state,
+            GemState::Qualified as u8
         );
     });
 }

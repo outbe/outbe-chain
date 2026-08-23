@@ -26,6 +26,8 @@ pub(crate) struct Config {
     /// `outbe-ocomp` role binary (`--ocomp-bin`).
     #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
     pub bin_ocomp: PathBuf,
+    /// Production Oracle price feeder (`--feeder-bin`).
+    pub bin_feeder: PathBuf,
     /// Newer node binary (`--upgraded-chain-bin`) for operator replacement E2E.
     pub bin_chain_upgraded: Option<PathBuf>,
     /// `outbe-cli` client binary (`--cli-bin`).
@@ -86,6 +88,7 @@ impl Config {
             dir: env.data_dir.clone(),
             bin_chain: env.chain_bin.clone(),
             bin_ocomp: env.ocomp_bin.clone(),
+            bin_feeder: env.feeder_bin.clone(),
             bin_chain_upgraded: env.upgraded_chain_bin.clone(),
             bin_cli: env.cli_bin.clone(),
             bin_keygen: env.keygen_bin.clone(),

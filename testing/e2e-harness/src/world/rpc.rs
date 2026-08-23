@@ -101,6 +101,14 @@ pub struct MetadosisWorldwideDayStartedV1 {
     pub block_hash: B256,
 }
 
+/// Latest canonical Oracle publication observed through a validator RPC.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct OracleRateDataV1 {
+    pub rate: U256,
+    pub last_block: u64,
+    pub last_timestamp: u64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct MetadosisWorldwideDayStatusChangeV1 {
     pub worldwide_day: u32,
@@ -436,7 +444,7 @@ impl Rpc {
     ) -> Result<()> {
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
-            let last_observation = match self.materialized_nod_for_owner_on(port, owner) {
+            let last_observation = match self.materialized_nod_for_owner(port, owner) {
                 Ok(Some((nod_id, body))) => {
                     if body.owner != owner || body.nodId.as_ref() != nod_id.as_slice() {
                         return Err(eyre!("owner enumeration and nodData disagree"));
@@ -530,7 +538,7 @@ impl Rpc {
     }
 
     #[cfg(feature = "ocomp-integration")]
-    fn materialized_nod_for_owner_on(
+    pub(crate) fn materialized_nod_for_owner(
         &self,
         port: u16,
         owner: Address,
@@ -2058,6 +2066,34 @@ impl Rpc {
             },
         )?;
         Some((vwap, curve.values.into_iter().max().unwrap_or(U256::ZERO)))
+    }
+
+    /// Read one canonical COEN/ISO rate together with its publication point.
+    pub fn oracle_rate_data(&self, port: u16, iso_code: u16) -> Option<OracleRateDataV1> {
+        let result = eth::read_call(
+            &self.url(port),
+            outbe_primitives::addresses::ORACLE_ADDRESS,
+            &IOracle::getExchangeRateDataCall {
+                base: Address::ZERO,
+                quote: outbe_primitives::asset_type::currency_address(iso_code),
+            },
+        )?;
+        Some(OracleRateDataV1 {
+            rate: result.rate,
+            last_block: result.lastBlock,
+            last_timestamp: result.lastTimestamp,
+        })
+    }
+
+    /// Read the canonical chain-owned Oracle vote period used by production
+    /// feeder preflight. Harness feeder config must match it exactly.
+    pub fn oracle_vote_period(&self, port: u16) -> Option<u64> {
+        eth::read_call(
+            &self.url(port),
+            outbe_primitives::addresses::ORACLE_ADDRESS,
+            &IOracle::getParamsCall {},
+        )
+        .map(|params| params.votePeriod)
     }
 
     /// Wait until the submitted transaction is mined and assert its receipt succeeded.

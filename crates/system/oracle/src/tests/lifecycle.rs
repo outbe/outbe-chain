@@ -355,6 +355,128 @@ fn run_tally_penalizes_a_voter_outside_the_reward_band() {
 }
 
 #[test]
+fn run_tally_counts_a_zero_rate_submission_as_a_miss_without_poisoning_price() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        oracle
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
+            .unwrap();
+
+        let valid = Address::new([0x11; 20]);
+        let invalid = Address::new([0x22; 20]);
+        register_validator(storage.clone(), valid, U256::in_units(100u64));
+        register_validator(storage.clone(), invalid, U256::in_units(100u64));
+        oracle
+            .submit_vote(valid, &[(COEN, USDT, fixed18(50), SCALE_1E18)])
+            .unwrap();
+        oracle
+            .submit_vote(invalid, &[(COEN, USDT, U256::ZERO, SCALE_1E18)])
+            .unwrap();
+
+        crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
+
+        assert_eq!(oracle.get_exchange_rate(COEN, USDT).unwrap(), fixed18(50));
+        assert_eq!(oracle.penalty_success_count.read(&valid).unwrap(), 1);
+        assert_eq!(oracle.penalty_miss_count.read(&invalid).unwrap(), 1);
+        assert_eq!(oracle.penalty_abstain_count.read(&invalid).unwrap(), 0);
+    });
+}
+
+#[test]
+fn run_tally_breaks_equal_reference_power_ties_by_larger_pair_index() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        let lower = AddressPair::from_addresses(COEN, USDT).to_canonical();
+        let higher = AddressPair::from_addresses(USDT, ETH).to_canonical();
+        oracle.register_pair(lower).unwrap();
+        oracle.register_pair(higher).unwrap();
+
+        let lower_voter = Address::new([0x11; 20]);
+        let higher_voter = Address::new([0x22; 20]);
+        register_validator(storage.clone(), lower_voter, U256::in_units(100u64));
+        register_validator(storage.clone(), higher_voter, U256::in_units(100u64));
+        oracle
+            .submit_vote(
+                lower_voter,
+                &[(lower.address1(), lower.address2(), fixed18(50), SCALE_1E18)],
+            )
+            .unwrap();
+        oracle
+            .submit_vote(
+                higher_voter,
+                &[(
+                    higher.address1(),
+                    higher.address2(),
+                    fixed18(2_000),
+                    SCALE_1E18,
+                )],
+            )
+            .unwrap();
+
+        crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
+
+        assert_eq!(
+            oracle
+                .get_exchange_rate(higher.address1(), higher.address2())
+                .unwrap(),
+            fixed18(2_000)
+        );
+        assert_eq!(
+            oracle
+                .get_exchange_rate(lower.address1(), lower.address2())
+                .unwrap(),
+            U256::ZERO
+        );
+    });
+}
+
+#[test]
+fn run_tally_cross_rate_overflow_rolls_back_every_tally_effect() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        let lower = AddressPair::from_addresses(COEN, USDT).to_canonical();
+        let higher = AddressPair::from_addresses(USDT, ETH).to_canonical();
+        oracle.register_pair(lower).unwrap();
+        oracle.register_pair(higher).unwrap();
+
+        let validator = Address::new([0x11; 20]);
+        register_validator(storage.clone(), validator, U256::in_units(100u64));
+        oracle
+            .submit_vote(
+                validator,
+                &[
+                    (
+                        lower.address1(),
+                        lower.address2(),
+                        U256::from(1u64),
+                        SCALE_1E18,
+                    ),
+                    (higher.address1(), higher.address2(), U256::MAX, SCALE_1E18),
+                ],
+            )
+            .unwrap();
+
+        let error = crate::tally::run_tally(&mut oracle, 2, 24).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("cross-currency conversion overflow"));
+        assert_eq!(
+            oracle
+                .get_exchange_rate(higher.address1(), higher.address2())
+                .unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 0);
+        assert_eq!(oracle.penalty_success_count.read(&validator).unwrap(), 0);
+        assert!(oracle.vote_exists.read(&validator).unwrap());
+    });
+}
+
+#[test]
 fn run_tally_counts_an_abstain_for_every_silent_validator() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());

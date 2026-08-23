@@ -1665,13 +1665,82 @@ fn fresh_domains_retain_authenticated_workers(world: &mut World) {
 /// keeps a loaded host from expiring a run that is still moving.
 const RATCHET_STALL_TIMEOUT: Duration = Duration::from_secs(180);
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct RestartBarrierState {
+    lifecycle_observed: bool,
+    publication_observed: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RestartBarrierDecision {
+    Continue(RestartBarrierState),
+    Complete,
+    HistoricalLifecycleRequired(RestartBarrierState),
+}
+
+fn restart_barrier_decision(
+    previous: RestartBarrierState,
+    lifecycle_observed_now: bool,
+    lifecycle_overshot_now: bool,
+    publication_observed_now: bool,
+) -> RestartBarrierDecision {
+    let next = RestartBarrierState {
+        lifecycle_observed: previous.lifecycle_observed || lifecycle_observed_now,
+        publication_observed: previous.publication_observed || publication_observed_now,
+    };
+    if next.lifecycle_observed && next.publication_observed {
+        RestartBarrierDecision::Complete
+    } else if !next.lifecycle_observed && lifecycle_overshot_now {
+        RestartBarrierDecision::HistoricalLifecycleRequired(next)
+    } else {
+        RestartBarrierDecision::Continue(next)
+    }
+}
+
+const MAX_HISTORICAL_LIFECYCLE_SCAN_BLOCKS: u64 = 256;
+
+fn historical_lifecycle_scan_heights(
+    minimum_height: u64,
+    current_height: u64,
+) -> Result<Vec<u64>, String> {
+    if current_height < minimum_height {
+        return Err(format!(
+            "current finalized height {current_height} precedes restart minimum {minimum_height}"
+        ));
+    }
+    let count = current_height
+        .checked_sub(minimum_height)
+        .and_then(|distance| distance.checked_add(1))
+        .ok_or_else(|| "historical lifecycle scan height arithmetic overflowed".to_string())?;
+    if count > MAX_HISTORICAL_LIFECYCLE_SCAN_BLOCKS {
+        return Err(format!(
+            "historical lifecycle scan spans {count} blocks; maximum is {MAX_HISTORICAL_LIFECYCLE_SCAN_BLOCKS}"
+        ));
+    }
+    Ok((minimum_height..=current_height).rev().collect())
+}
+
+fn fresh_wwd_lifecycle_overshot(expected_status: u8, observed: &[Option<u8>]) -> bool {
+    let Some(status) = observed.first().copied().flatten() else {
+        return false;
+    };
+    if !observed.iter().all(|candidate| *candidate == Some(status)) {
+        return false;
+    }
+    match expected_status {
+        2 => matches!(status, 3 | 4 | 6 | 7 | 8),
+        8 => matches!(status, 6 | 7),
+        _ => false,
+    }
+}
+
 fn advance_fresh_metadosis_time(
     world: &mut World,
     requested_timestamp: u64,
     expected_edges: &[(u8, u8)],
     expected_persisted_status: u8,
 ) {
-    let (offset, before_restart, minimum_height) =
+    let (offset, before_restart, minimum_height, pending_price_publication) =
         restart_committee_at_logical_time(world, requested_timestamp);
     let before_timestamp = before_restart[0].block_timestamp;
     let worldwide_day = fresh_metadosis_wwd(world);
@@ -1680,6 +1749,11 @@ fn advance_fresh_metadosis_time(
     // production without stalling it.
     let mut deadline = Instant::now() + RATCHET_STALL_TIMEOUT;
     let mut last_timestamp = before_timestamp;
+    let mut barrier = RestartBarrierState {
+        lifecycle_observed: false,
+        publication_observed: pending_price_publication.is_none(),
+    };
+    let mut lifecycle_observation = None;
     let (after_restart, changes) = loop {
         let points = finalized_points_at_common_height(world, minimum_height);
         let common_height = points[0].block_number;
@@ -1707,12 +1781,12 @@ fn advance_fresh_metadosis_time(
                     .finalized_metadosis_wwd_status_changes_on(port, worldwide_day)
             })
             .collect::<Vec<_>>();
-        if states.iter().all(|state| {
+        let lifecycle_now = states.iter().all(|state| {
             state
                 .as_ref()
                 .is_some_and(|state| state.status == expected_persisted_status)
-        }) && changes.iter().all(Option::is_some)
-        {
+        }) && changes.iter().all(Option::is_some);
+        let matching_changes = if lifecycle_now {
             let first = changes[0]
                 .clone()
                 .expect("finalized Metadosis status changes");
@@ -1724,8 +1798,67 @@ fn advance_fresh_metadosis_time(
                     .iter()
                     .all(|candidate| candidate.as_ref() == Some(&first))
             {
-                break (points, first);
+                Some(first)
+            } else {
+                None
             }
+        } else {
+            None
+        };
+        let lifecycle_now = matching_changes.is_some();
+        if lifecycle_observation.is_none() {
+            if let Some(first) = matching_changes {
+                lifecycle_observation = Some((points.clone(), first));
+            }
+        }
+        let publication_now = if barrier.publication_observed {
+            false
+        } else {
+            pending_price_publication.as_ref().is_some_and(|pending| {
+                crate::features::price_oracle::observe_pending_publication(world, pending)
+            })
+        };
+        let observed_statuses = states
+            .iter()
+            .map(|state| state.as_ref().map(|state| state.status))
+            .collect::<Vec<_>>();
+        match restart_barrier_decision(
+            barrier,
+            lifecycle_now,
+            fresh_wwd_lifecycle_overshot(expected_persisted_status, &observed_statuses),
+            publication_now,
+        ) {
+            RestartBarrierDecision::Complete => {
+                break lifecycle_observation
+                    .take()
+                    .expect("completed restart barrier has a lifecycle observation")
+            }
+            RestartBarrierDecision::HistoricalLifecycleRequired(next) => {
+                let observation = historical_lifecycle_observation(
+                    world,
+                    worldwide_day,
+                    minimum_height,
+                    common_height,
+                    expected_persisted_status,
+                    expected_edges,
+                )
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "fresh Metadosis WWD passed status {expected_persisted_status}, and the bounded canonical history did not prove the required transition: statuses={observed_statuses:?}; {error}"
+                    )
+                });
+                lifecycle_observation = Some(observation);
+                barrier = RestartBarrierState {
+                    lifecycle_observed: true,
+                    publication_observed: next.publication_observed,
+                };
+                if barrier.publication_observed {
+                    break lifecycle_observation
+                        .take()
+                        .expect("historical lifecycle proof completes the restart barrier");
+                }
+            }
+            RestartBarrierDecision::Continue(next) => barrier = next,
         }
         assert!(
             Instant::now() < deadline,
@@ -1791,13 +1924,102 @@ fn advance_fresh_metadosis_time(
     }
 }
 
+fn historical_lifecycle_observation(
+    world: &World,
+    worldwide_day: u32,
+    minimum_height: u64,
+    current_height: u64,
+    expected_status: u8,
+    expected_edges: &[(u8, u8)],
+) -> Result<
+    (
+        Vec<MetadosisFinalizedPointV1>,
+        Vec<crate::world::rpc::MetadosisWorldwideDayStatusChangeV1>,
+    ),
+    String,
+> {
+    let ports = world.validators.committee_ports();
+    let all_changes = ports
+        .iter()
+        .map(|port| {
+            world
+                .rpc
+                .finalized_metadosis_wwd_status_changes_on(*port, worldwide_day)
+                .ok_or_else(|| {
+                    format!(
+                        "validator RPC {port} did not return finalized WWD {worldwide_day} status changes"
+                    )
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    for height in historical_lifecycle_scan_heights(minimum_height, current_height)? {
+        let states = ports
+            .iter()
+            .map(|port| {
+                world
+                    .rpc
+                    .metadosis_wwd_state_at(*port, worldwide_day, height)
+            })
+            .collect::<Vec<_>>();
+        let Some(first_state) = states.first().and_then(Option::as_ref) else {
+            continue;
+        };
+        if first_state.status != expected_status
+            || !states
+                .iter()
+                .all(|candidate| candidate.as_ref() == Some(first_state))
+        {
+            continue;
+        }
+        let changes = all_changes
+            .iter()
+            .map(|validator_changes| {
+                validator_changes
+                    .iter()
+                    .filter(|edge| edge.block_number <= height)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let first_changes = &changes[0];
+        if !first_changes
+            .iter()
+            .map(|edge| (edge.old_status, edge.new_status))
+            .eq(expected_edges.iter().copied())
+            || !changes.iter().all(|candidate| candidate == first_changes)
+        {
+            continue;
+        }
+        let points = finalized_points_at_height(world, height);
+        if !points
+            .iter()
+            .all(|point| point.block_hash == points[0].block_hash)
+            || !points
+                .iter()
+                .all(|point| point.block_timestamp == points[0].block_timestamp)
+        {
+            continue;
+        }
+        return Ok((points, first_changes.clone()));
+    }
+    Err(format!(
+        "no unanimous status {expected_status} with edges {expected_edges:?} in finalized heights {minimum_height}..={current_height}"
+    ))
+}
+
 pub(crate) fn restart_committee_at_logical_time(
     world: &mut World,
     requested_timestamp: u64,
-) -> (i64, Vec<MetadosisFinalizedPointV1>, u64) {
+) -> (
+    i64,
+    Vec<MetadosisFinalizedPointV1>,
+    u64,
+    Option<crate::features::price_oracle::PendingPricePublication>,
+) {
     let before_restart = finalized_points_at_common_height(world, 1);
     let before_height = before_restart[0].block_number;
     let offset = logical_time_offset(requested_timestamp, unix_time_secs());
+    let price_publication = crate::features::price_oracle::stop_before_clock_restart(world);
     stop_ocomp_roles_before_committee_time_change(world);
     world
         .localnet
@@ -1813,8 +2035,15 @@ pub(crate) fn restart_committee_at_logical_time(
     // common finalized block before an exporter opens its projection.
     let minimum_height = before_height.saturating_add(1);
     let _ = finalized_points_at_common_height(world, minimum_height);
+    let pending_price_publication =
+        crate::features::price_oracle::resume_after_clock_restart(world, price_publication);
     restart_ocomp_roles_after_committee_time_change(world);
-    (offset, before_restart, minimum_height)
+    (
+        offset,
+        before_restart,
+        minimum_height,
+        pending_price_publication,
+    )
 }
 
 fn stop_ocomp_roles_before_committee_time_change(world: &mut World) {
@@ -1875,24 +2104,7 @@ fn finalized_points_at_common_height(
                 .min()
                 .expect("four finalized heights");
             if common_height >= minimum_height {
-                let points = ports
-                    .iter()
-                    .enumerate()
-                    .map(|(validator_index, port)| MetadosisFinalizedPointV1 {
-                        validator_index: u8::try_from(validator_index)
-                            .expect("validator index fits u8"),
-                        block_number: common_height,
-                        block_hash: world
-                            .rpc
-                            .block_hash(*port, common_height)
-                            .and_then(|hash| B256::from_str(&hash).ok())
-                            .expect("canonical finalized block hash"),
-                        block_timestamp: world
-                            .rpc
-                            .block_timestamp(*port, common_height)
-                            .expect("canonical finalized block timestamp"),
-                    })
-                    .collect::<Vec<_>>();
+                let points = finalized_points_at_height(world, common_height);
                 if points
                     .iter()
                     .all(|point| point.block_hash == points[0].block_hash)
@@ -1910,6 +2122,28 @@ fn finalized_points_at_common_height(
         );
         sleep(Duration::from_millis(250));
     }
+}
+
+fn finalized_points_at_height(world: &World, height: u64) -> Vec<MetadosisFinalizedPointV1> {
+    world
+        .validators
+        .committee_ports()
+        .iter()
+        .enumerate()
+        .map(|(validator_index, port)| MetadosisFinalizedPointV1 {
+            validator_index: u8::try_from(validator_index).expect("validator index fits u8"),
+            block_number: height,
+            block_hash: world
+                .rpc
+                .block_hash(*port, height)
+                .and_then(|hash| B256::from_str(&hash).ok())
+                .expect("canonical finalized block hash"),
+            block_timestamp: world
+                .rpc
+                .block_timestamp(*port, height)
+                .expect("canonical finalized block timestamp"),
+        })
+        .collect()
 }
 
 fn post_restart_convergence_target(finalized_heights: impl IntoIterator<Item = u64>) -> u64 {
@@ -4898,7 +5132,8 @@ mod tests {
         bounded_completion_decision, dynamic_live_ports_after_jail,
         first_protocol_cycle_at_or_after_interval, joiner_restart_is_in_safe_early_epoch_window,
         monotonic_progress_decision, post_restart_convergence_target, BoundedCompletionDecision,
-        ProgressWaitDecision, OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
+        ProgressWaitDecision, RestartBarrierDecision, RestartBarrierState,
+        OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
     };
 
     #[test]
@@ -4980,6 +5215,87 @@ mod tests {
         assert_eq!(
             monotonic_progress_decision(599, 600, 599, now, now),
             ProgressWaitDecision::Stalled
+        );
+    }
+
+    #[test]
+    fn restart_barrier_latches_the_transient_lifecycle_before_price_publication() {
+        let decision =
+            super::restart_barrier_decision(RestartBarrierState::default(), true, false, false);
+
+        assert_eq!(
+            decision,
+            RestartBarrierDecision::Continue(RestartBarrierState {
+                lifecycle_observed: true,
+                publication_observed: false,
+            })
+        );
+    }
+
+    #[test]
+    fn restart_barrier_completes_when_price_arrives_after_the_lifecycle_was_latched() {
+        let decision = super::restart_barrier_decision(
+            RestartBarrierState {
+                lifecycle_observed: true,
+                publication_observed: false,
+            },
+            false,
+            true,
+            true,
+        );
+
+        assert_eq!(decision, RestartBarrierDecision::Complete);
+    }
+
+    #[test]
+    fn restart_barrier_requires_bounded_historical_proof_when_current_state_overshoots() {
+        let decision =
+            super::restart_barrier_decision(RestartBarrierState::default(), false, true, true);
+
+        assert_eq!(
+            decision,
+            RestartBarrierDecision::HistoricalLifecycleRequired(RestartBarrierState {
+                lifecycle_observed: false,
+                publication_observed: true,
+            })
+        );
+        assert!(super::fresh_wwd_lifecycle_overshot(
+            8,
+            &[Some(6), Some(6), Some(6), Some(6)]
+        ));
+        assert!(super::fresh_wwd_lifecycle_overshot(
+            2,
+            &[Some(3), Some(3), Some(3), Some(3)]
+        ));
+    }
+
+    #[test]
+    fn historical_lifecycle_scan_is_descending_inclusive_and_bounded() {
+        assert_eq!(
+            super::historical_lifecycle_scan_heights(80, 84),
+            Ok(vec![84, 83, 82, 81, 80])
+        );
+        assert_eq!(
+            super::historical_lifecycle_scan_heights(84, 80),
+            Err("current finalized height 80 precedes restart minimum 84".to_string())
+        );
+        assert_eq!(
+            super::historical_lifecycle_scan_heights(1, 258),
+            Err("historical lifecycle scan spans 258 blocks; maximum is 256".to_string())
+        );
+    }
+
+    #[test]
+    fn restart_barrier_cannot_complete_from_price_publication_alone() {
+        let decision =
+            super::restart_barrier_decision(RestartBarrierState::default(), false, false, true);
+
+        assert_eq!(
+            decision,
+            RestartBarrierDecision::Continue(RestartBarrierState {
+                lifecycle_observed: false,
+                publication_observed: true,
+            })
         );
     }
 

@@ -11,6 +11,7 @@ use crate::env::Environment;
 use crate::ocomp_evidence::{hash_file, publish_member};
 use crate::world::localnet::LogAudit;
 use crate::world::ocomp::OcompScenarioTopologyV1;
+use crate::world::price_oracle::PriceOracleEvidenceV1;
 use crate::world::state::{OcompPublicScenarioEvidenceV1, RadicleScenarioEvidenceV1};
 
 pub(crate) struct ScenarioEvidence<'a> {
@@ -25,6 +26,7 @@ pub(crate) struct ScenarioEvidence<'a> {
     pub gramine_image_id: Option<&'a str>,
     pub ocomp: &'a OcompScenarioTopologyV1,
     pub ocomp_public: &'a OcompPublicScenarioEvidenceV1,
+    pub price_oracle: &'a PriceOracleEvidenceV1,
     pub radicle: &'a RadicleScenarioEvidenceV1,
 }
 
@@ -45,6 +47,7 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
         for (name, path) in [
             ("outbe_chain", input.env.chain_bin.as_path()),
             ("outbe_ocomp", input.env.ocomp_bin.as_path()),
+            ("outbe_feeder", input.env.feeder_bin.as_path()),
             ("outbe_cli", input.env.cli_bin.as_path()),
             ("outbe_keygen", input.env.keygen_bin.as_path()),
             ("outbe_e2e", current_exe.as_path()),
@@ -141,6 +144,7 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
             "topology": input.ocomp,
             "public_path": input.ocomp_public,
         },
+        "price_oracle": input.price_oracle,
         "radicle": {
             "exact_binaries": exact_radicle_binaries,
             "public_path": input.radicle,

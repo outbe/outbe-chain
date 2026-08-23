@@ -3,6 +3,7 @@
 //! Exposes read-only helpers that other modules call to validate
 //! currency support, without going through the precompile dispatch.
 
+use crate::constants::FX_RATE_MAX_AGE_SECONDS;
 use crate::errors::{OracleError, OracleOcompError};
 use crate::schema::{OracleContract, PairIndex};
 use crate::scurve;
@@ -140,6 +141,56 @@ pub fn coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option
     }
     let stored = oracle.exchange_rate.read(&index)?;
     Ok((!stored.is_zero()).then_some(stored))
+}
+
+/// Current COEN price for `iso_code`, accepted only when its canonical
+/// publication timestamp is non-zero and no older than six hours.
+pub fn fresh_coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<U256> {
+    let (_, index) = require_coen_pair(storage.clone(), iso_code)?;
+    fresh_rate_at_index(storage, index)?
+        .ok_or_else(|| OracleError::StaleCoenRate { iso_code }.into())
+}
+
+/// Hook-safe variant of [`fresh_coen_rate_for`]. An unregistered, unpublished or
+/// stale currency is not priceable in this block and therefore returns `None`;
+/// storage faults still propagate.
+pub fn fresh_coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option<U256>> {
+    let oracle = OracleContract::new(storage.clone());
+    let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
+    if index == 0 {
+        return Ok(None);
+    }
+    fresh_rate_at_index(storage, index)
+}
+
+/// Freshness-enforcing counterpart of [`currency_cross_rate`] for live economic
+/// paths. Equal currencies and zero amounts retain the no-read short circuit.
+pub fn fresh_currency_cross_rate(
+    storage: StorageHandle,
+    from_iso: u16,
+    to_iso: u16,
+    amount: U256,
+) -> Result<U256> {
+    if from_iso == to_iso || amount.is_zero() {
+        return Ok(amount);
+    }
+    let rate_from = fresh_coen_rate_for(storage.clone(), from_iso)?;
+    let rate_to = fresh_coen_rate_for(storage, to_iso)?;
+    let numerator = amount
+        .checked_mul(rate_to)
+        .ok_or(OracleError::CrossRateOverflow)?;
+    Ok(numerator.div_ceil(rate_from))
+}
+
+fn fresh_rate_at_index(storage: StorageHandle, index: PairIndex) -> Result<Option<U256>> {
+    let now = storage.timestamp()?.to::<u64>();
+    let oracle = OracleContract::new(storage);
+    let rate = oracle.exchange_rate.read(&index)?;
+    let published = oracle.exchange_rate_timestamp.read(&index)?;
+    Ok((!rate.is_zero()
+        && published != 0
+        && now.saturating_sub(published) <= FX_RATE_MAX_AGE_SECONDS)
+        .then_some(rate))
 }
 
 /// Registry index of the `COEN/<iso_code>` pair, or `None` when it was never registered.

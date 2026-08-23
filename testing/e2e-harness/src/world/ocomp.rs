@@ -3306,6 +3306,10 @@ fn seed_fresh_metadosis_oracle_input(
         let current_vwap = U256::from(2);
         let volume = U256::from(1_000_000_u64);
         let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+        // The scenario advances logical time by one hour per finalized block.
+        // A two-block test-genesis period keeps real feeder publications inside
+        // the production six-hour freshness bound without changing defaults.
+        oracle.config_vote_period.write(2)?;
         if oracle.pair_index_of(pair)? == 0 {
             return Err(outbe_primitives::error::PrecompileError::Fatal(
                 "fresh Metadosis Oracle pair is not registered".into(),
@@ -4909,6 +4913,8 @@ mod tests {
             .parse::<WorldwideDay>()
             .unwrap();
         StorageHandle::enter(&mut provider, |storage| {
+            let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+            assert_eq!(oracle.config_vote_period.read().unwrap(), 2);
             assert!(
                 outbe_metadosis::test_support::fresh_devnet_sentinel_is_pristine(
                     storage.clone(),
