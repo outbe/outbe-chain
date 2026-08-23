@@ -331,17 +331,17 @@ pub fn drain_notices(ctx: &BlockRuntimeContext) -> Result<()> {
         };
         index += consumed;
     }
-    if stop == tail {
+    if index >= tail {
         factory.notify_head.write(0)?;
         factory.notify_tail.write(0)?;
     } else {
-        factory.notify_head.write(stop)?;
+        factory.notify_head.write(index)?;
     }
     Ok(())
 }
 
 /// Send the run of Called entries starting at `at` that shares its day and call time. `stop` bounds the
-/// look-ahead to this firing's entries, so a run never consumes what the drain has not accounted for.
+/// look-ahead to this firing's entries; `notify_called` splits the run where the wire's cap forces it.
 fn drain_called_run(
     factory: &IntexFactoryContract,
     storage: &StorageHandle<'_>,
@@ -353,8 +353,8 @@ fn drain_called_run(
     let worldwide_day = first_id.worldwide_day();
     let mut run = vec![first_id];
 
-    let mut index = at + 1;
-    while index < stop && run.len() < MAX_SERIES_PER_MARK {
+    let mut index = at.saturating_add(1);
+    while index < stop {
         if factory.notify_kind.read(&index)? != NOTICE_CALLED {
             break;
         }
@@ -370,21 +370,38 @@ fn drain_called_run(
         factory.notify_at.clear(&slot)?;
         factory.notify_kind.clear(&slot)?;
     }
-    crate::called::notify_called(storage, worldwide_day, called_at, &run)?;
+    // Best-effort, like the Qualified branch: a batch that cannot be sent is dropped, never left to
+    // wedge the drain and with it the whole cycle trigger.
+    if let Err(error) = storage
+        .with_checkpoint(|| crate::called::notify_called(storage, worldwide_day, called_at, &run))
+    {
+        tracing::warn!(
+            target: "outbe::intexfactory",
+            worldwide_day = worldwide_day.value(),
+            called_at,
+            series = ?run.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+            error = ?error,
+            "called notice: dropping"
+        );
+    }
     Ok(index - at)
 }
 
 /// Send one Qualified notice. Called entries never reach here — the drain routes them through
 /// [`drain_called_run`] so a whole group leaves as one message.
 fn send_notice(storage: &StorageHandle<'_>, kind: u8, entry: U256) -> Result<()> {
-    debug_assert_ne!(
-        kind, NOTICE_CALLED,
-        "called notices leave through drain_called_run"
-    );
+    // Only the Qualified shape is readable here; anything else is a scoped key this cannot decode,
+    // and narrowing it would panic rather than revert.
+    if kind != NOTICE_QUALIFIED {
+        return Ok(());
+    }
+    let Ok(scoped) = u64::try_from(entry) else {
+        return Ok(());
+    };
     // A group that has since been called is gone from the index, and a Called
     // series would refuse the Qualified mark anyway — so an empty read is the
     // answer, not an error.
-    let (iso_code, worldwide_day) = IntexFactoryContract::unscoped(entry.to::<u64>());
+    let (iso_code, worldwide_day) = IntexFactoryContract::unscoped(scoped);
     let factory = IntexFactoryContract::new(storage.clone());
     let members = factory.qualified_group_members(iso_code, worldwide_day)?;
     if members.is_empty() {

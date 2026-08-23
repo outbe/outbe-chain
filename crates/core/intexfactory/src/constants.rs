@@ -57,8 +57,9 @@ pub const BIN_STEP_BP: u16 = 25;
 pub(crate) const MAX_GROUP_DECISIONS_PER_SWEEP: u32 = 256;
 pub(crate) const MAX_SERIES_ACTIONS_PER_SWEEP: u32 = 256;
 
-/// Queue entries drained per `intex_notify` firing. One entry can still fan out to several messages,
-/// so this bounds the entries taken from the queue, not the sends they produce.
+/// Queue entries drained per `intex_notify` firing. Bounds entries taken from the queue, not the sends
+/// they produce. It also sets how fast a called day reaches its targets, and the call deadline runs from
+/// the origin's stamp, so a backlog spends the holder's notice window rather than deferring it.
 pub const NOTIFY_CHUNK_LIMIT: u32 = 32;
 
 /// Markup rates in percentage points: price = entry * (PRICE_RATE_DEN + rate) / PRICE_RATE_DEN.
