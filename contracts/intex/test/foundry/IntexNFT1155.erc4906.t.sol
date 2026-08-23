@@ -91,7 +91,7 @@ contract IntexNFT1155Erc4906Test is Test {
         (count,) = _metadataUpdates();
         assertEq(count, 0, "burnSettled is supply-only");
 
-        nft.crosschainBurn(user, user,  iTok, 1);
+        nft.crosschainBurn(user, user, iTok, 1);
         nft.crosschainMint(user3, iTok, 1);
         (count,) = _metadataUpdates();
         assertEq(count, 0, "bridge moves are supply-only");

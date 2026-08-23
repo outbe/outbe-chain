@@ -285,7 +285,9 @@ contract BridgeMsgCodecGoldenTest is Test {
             this.exposedDecodeAuctionStageClearing(BridgeMsgCodec.encodeAuctionStageClearing(0x0A0B0C0D)), 0x0A0B0C0D
         );
         assertEq(
-            this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled(20260212, CALLED_AT, MarkBatchLib.one("20260212-TRY-U"))),
+            this.exposedDecodeMarkCalled(
+                BridgeMsgCodec.encodeMarkCalled(20260212, CALLED_AT, MarkBatchLib.one("20260212-TRY-U"))
+            ),
             bytes14("20260212-TRY-U")
         );
         assertEq(

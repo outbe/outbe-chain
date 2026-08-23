@@ -8,14 +8,8 @@ import {console} from "forge-std/console.sol";
 /// @dev Prints the CREATE3 address every intex proxy lands on for the current salt. The node pins two
 ///      of them as constants, so they have to be known before the deploy rather than read after it.
 contract PredictAddresses is BaseScript {
-    string[6] internal PREFIXES = [
-        "IntexAuction",
-        "EscrowAdapter",
-        "TargetRouter",
-        "OriginRouter",
-        "IntexNFT1155",
-        "IntexNFT1155Bridge"
-    ];
+    string[6] internal PREFIXES =
+        ["IntexAuction", "EscrowAdapter", "TargetRouter", "OriginRouter", "IntexNFT1155", "IntexNFT1155Bridge"];
 
     /// @dev Env: DEPLOYER_PRIVATE_KEY, same as the deploy scripts, since the deployer namespaces the salt.
     function run() external {

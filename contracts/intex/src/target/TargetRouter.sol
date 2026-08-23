@@ -167,10 +167,7 @@ contract TargetRouter is
 
     // --- Admin ---
     /// @inheritdoc ITargetRouter
-    function wire(address _auction, address _intex, address _escrowAdapter)
-        external
-        onlyRole(DEFAULT_ADMIN_ROLE)
-    {
+    function wire(address _auction, address _intex, address _escrowAdapter) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (_auction == address(0)) revert ZeroAddress("auction");
         if (_intex == address(0)) revert ZeroAddress("intex");
         if (_escrowAdapter == address(0)) revert ZeroAddress("escrowAdapter");

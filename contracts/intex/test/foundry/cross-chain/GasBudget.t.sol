@@ -280,11 +280,7 @@ contract GasBudgetTest is CrossChainTest {
         );
         bytes memory call = abi.encodeCall(
             bridge.deliverAs,
-            (
-                _interop(OUTBE_CHAIN_ID, originPeer),
-                _interop(uint32(block.chainid), address(mocked)),
-                packet
-            )
+            (_interop(OUTBE_CHAIN_ID, originPeer), _interop(uint32(block.chainid), address(mocked)), packet)
         );
         (bool ok,) = address(bridge).call{gas: IntexGas.markCalled(2)}(call);
 
@@ -448,8 +444,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
             paid[i] = 0;
         }
 
-        uint256 spent =
-            _deliver(BridgeMsgCodec.encodeRefundInstructions(WORLDWIDE_DAY, 0, 1, who, refunded, paid));
+        uint256 spent = _deliver(BridgeMsgCodec.encodeRefundInstructions(WORLDWIDE_DAY, 0, 1, who, refunded, paid));
 
         emit log_named_uint("refund_full_chunk", spent);
         assertLt(spent, IntexGas.refund(bidders), "the widest refund chunk must fit the quote");
@@ -492,9 +487,7 @@ contract ClearingRelayGasTest is CrossChainTest {
     function _clearingCost(uint256 bids) internal returns (uint256 spent) {
         stub.setBidCount(bids);
         uint256 before = gasleft();
-        _deliver(
-            OUTBE_CHAIN_ID, originPeer, address(router), BridgeMsgCodec.encodeAuctionStageClearing(WORLDWIDE_DAY)
-        );
+        _deliver(OUTBE_CHAIN_ID, originPeer, address(router), BridgeMsgCodec.encodeAuctionStageClearing(WORLDWIDE_DAY));
         spent = before - gasleft();
     }
 
@@ -628,8 +621,7 @@ contract DesisSink {
     }
 
     function processBidsBatch(uint32, uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata)
-        external
-    {}
+        external {}
 
     function processBidsDone(uint32, uint32, uint32, uint16, uint32) external {}
 

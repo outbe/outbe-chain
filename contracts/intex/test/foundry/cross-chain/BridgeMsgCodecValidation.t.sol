@@ -154,7 +154,9 @@ contract BridgeMsgCodecValidationTest is Test {
         (uint32 rs,,,) = this.exposedDecodeAuctionResult(BridgeMsgCodec.encodeAuctionResult(9, 1, 1, 1));
         assertEq(rs, 9, "result");
         assertEq(
-            this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled(20260212, CALLED_AT, MarkBatchLib.one("20260212-TRY-U"))),
+            this.exposedDecodeMarkCalled(
+                BridgeMsgCodec.encodeMarkCalled(20260212, CALLED_AT, MarkBatchLib.one("20260212-TRY-U"))
+            ),
             bytes14("20260212-TRY-U"),
             "markCalled"
         );

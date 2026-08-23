@@ -305,7 +305,7 @@ contract IntexNFT1155Test is Test {
     function test_CrosschainBurnNonexistentToken() public {
         vm.prank(bridger);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, TOKEN_ID_1));
-        nft.crosschainBurn(user, user,  TOKEN_ID_1, 5);
+        nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
     }
 
     function test_CrosschainBurnAndMint_AllowedInIssuedState() public {
@@ -314,7 +314,7 @@ contract IntexNFT1155Test is Test {
         nft.mint(user, 10, SERIES_ID_1);
 
         // Voluntary bridging is open while the series is tradable (Issued): burn out...
-        nft.crosschainBurn(user, user,  TOKEN_ID_1, 4);
+        nft.crosschainBurn(user, user, TOKEN_ID_1, 4);
         assertEq(nft.balanceOf(user, TOKEN_ID_1), 6);
 
         // ...and mint in (the destination side of the same hop).
@@ -329,12 +329,12 @@ contract IntexNFT1155Test is Test {
         nft.mint(user, 10, SERIES_ID_1);
 
         nft.markQualified(SERIES_ID_1);
-        nft.crosschainBurn(user, user,  TOKEN_ID_1, 3);
+        nft.crosschainBurn(user, user, TOKEN_ID_1, 3);
         assertEq(nft.balanceOf(user, TOKEN_ID_1), 7);
 
         nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
         // bridger holds SYSTEM_RELAYER_ROLE in setUp, so Called-state crosschainBurn is permitted.
-        nft.crosschainBurn(user, user,  TOKEN_ID_1, 2);
+        nft.crosschainBurn(user, user, TOKEN_ID_1, 2);
         assertEq(nft.balanceOf(user, TOKEN_ID_1), 5);
         vm.stopPrank();
     }
@@ -357,7 +357,7 @@ contract IntexNFT1155Test is Test {
                 IIntexNFT1155.BridgeStateForbidden.selector, TOKEN_ID_1, uint8(IIntexNFT1155.IntexState.Called)
             )
         );
-        nft.crosschainBurn(user, user,  TOKEN_ID_1, 1);
+        nft.crosschainBurn(user, user, TOKEN_ID_1, 1);
     }
 
     function test_ReadData() public {
@@ -498,7 +498,7 @@ contract IntexNFT1155Test is Test {
         vm.startPrank(bridger);
         nft.mint(user, quantity, SERIES_ID_1);
         nft.markQualified(SERIES_ID_1);
-        nft.crosschainBurn(user, user,  TOKEN_ID_1, burnAmount);
+        nft.crosschainBurn(user, user, TOKEN_ID_1, burnAmount);
         vm.stopPrank();
 
         assertEq(nft.balanceOf(user, TOKEN_ID_1), quantity - burnAmount);
@@ -512,7 +512,7 @@ contract IntexNFT1155Test is Test {
         vm.startPrank(bridger);
         nft.mint(user, quantity, SERIES_ID_1);
         nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
-        nft.crosschainBurn(user, user,  TOKEN_ID_1, burnAmount);
+        nft.crosschainBurn(user, user, TOKEN_ID_1, burnAmount);
         vm.stopPrank();
 
         assertEq(nft.balanceOf(user, TOKEN_ID_1), quantity - burnAmount);
@@ -525,7 +525,7 @@ contract IntexNFT1155Test is Test {
 
         vm.prank(user);
         vm.expectRevert();
-        nft.crosschainBurn(user, user,  TOKEN_ID_1, 5);
+        nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
     }
 
     function test_CrosschainMint() public {
@@ -564,7 +564,7 @@ contract IntexNFT1155Test is Test {
         // One second past the settlement deadline: even the system relayer is frozen out.
         vm.warp(uint256(deadline) + 1);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, TOKEN_ID_1, deadline));
-        nft.crosschainBurn(user, user,  TOKEN_ID_1, 5);
+        nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
         vm.stopPrank();
     }
 
@@ -594,7 +594,7 @@ contract IntexNFT1155Test is Test {
 
         // Exactly at the deadline is still inside the window (the gate is strict `>`).
         vm.warp(deadline);
-        nft.crosschainBurn(user, user,  TOKEN_ID_1, 5);
+        nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
         vm.stopPrank();
 
         assertEq(nft.balanceOf(user, TOKEN_ID_1), 5);
@@ -957,7 +957,7 @@ contract IntexNFT1155Test is Test {
         // crosschainBurn is gated by RELAYER_ROLE; bridger has it. Even so, Settled ids are rejected.
         vm.prank(bridger);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeOnSettledForbidden.selector, sTok));
-        nft.crosschainBurn(user, user,  sTok, 1);
+        nft.crosschainBurn(user, user, sTok, 1);
     }
 
     // --- Tests for Enumerable Functions ---
@@ -1085,13 +1085,13 @@ contract IntexNFT1155Test is Test {
 
         // Partial burn - should still own the series.
         vm.prank(bridger);
-        nft.crosschainBurn(user, user,  TOKEN_ID_1, 5);
+        nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
         assertEq(nft.ownedSeriesCount(user), 1);
         assertEq(nft.totalBalance(user), 5);
 
         // Full burn - should no longer own the series.
         vm.prank(bridger);
-        nft.crosschainBurn(user, user,  TOKEN_ID_1, 5);
+        nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
         assertEq(nft.ownedSeriesCount(user), 0);
         assertEq(nft.totalBalance(user), 0);
 
@@ -1188,13 +1188,13 @@ contract IntexNFT1155Test is Test {
 
         // Bridge crosschainBurn partial.
         vm.prank(bridger);
-        nft.crosschainBurn(user, user,  TOKEN_ID_1, 5);
+        nft.crosschainBurn(user, user, TOKEN_ID_1, 5);
         assertEq(nft.ownedSeriesCount(user), 1);
         assertEq(nft.totalBalance(user), 10);
 
         // Bridge crosschainBurn full.
         vm.prank(bridger);
-        nft.crosschainBurn(user, user,  TOKEN_ID_1, 10);
+        nft.crosschainBurn(user, user, TOKEN_ID_1, 10);
         assertEq(nft.ownedSeriesCount(user), 0);
         assertEq(nft.totalBalance(user), 0);
     }

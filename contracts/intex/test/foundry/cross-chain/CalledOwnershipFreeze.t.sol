@@ -40,12 +40,8 @@ contract CalledOwnershipFreezeTest is CrossChainTest {
     }
 
     function _param(address to, uint256 amount) internal view returns (SendParam memory) {
-        return SendParam({
-            dstChainId: DST_CHAIN_ID,
-            to: bytes32(uint256(uint160(to))),
-            tokenId: tokenId,
-            amount: amount
-        });
+        return
+            SendParam({dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(to))), tokenId: tokenId, amount: amount});
     }
 
     function test_AHolderMayCarryTheirOwnBalanceOut() public {
@@ -92,10 +88,7 @@ contract CalledOwnershipFreezeTest is CrossChainTest {
         vm.prank(holder);
         nftBridge.send(
             SendParam({
-                dstChainId: DST_CHAIN_ID,
-                to: bytes32(uint256(uint160(stranger))),
-                tokenId: openTokenId,
-                amount: 2
+                dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(stranger))), tokenId: openTokenId, amount: 2
             })
         );
 

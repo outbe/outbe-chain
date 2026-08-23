@@ -206,7 +206,7 @@ contract IntexNFT1155SupplyTest is Test {
         vm.startPrank(bridger);
         nft.mint(holderA, cap, SERIES_ID);
         nft.markQualified(SERIES_ID);
-        nft.crosschainBurn(holderA, holderA,  TOKEN_ID, 4);
+        nft.crosschainBurn(holderA, holderA, TOKEN_ID, 4);
         nft.crosschainMint(holderB, TOKEN_ID, 4);
         vm.stopPrank();
 

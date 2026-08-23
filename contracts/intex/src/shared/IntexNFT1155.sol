@@ -297,10 +297,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     ///        (voluntary, holder-initiated moves while the series is tradable).
     ///      - Series state `Called`: bridge allowed only for `SYSTEM_RELAYER_ROLE`, and only when the
     ///        destination holder is the source holder — ownership is frozen once a series is Called.
-    function crosschainBurn(address from, address to, uint256 tokenId, uint256 amount)
-        external
-        onlyRole(RELAYER_ROLE)
-    {
+    function crosschainBurn(address from, address to, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.status == IIntexNFT1155.IntexStatus.Settled) {
             revert BridgeOnSettledForbidden(tokenId);

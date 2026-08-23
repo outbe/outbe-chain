@@ -377,7 +377,10 @@ fn drain_called_run(
 /// Send one Qualified notice. Called entries never reach here — the drain routes them through
 /// [`drain_called_run`] so a whole group leaves as one message.
 fn send_notice(storage: &StorageHandle<'_>, kind: u8, entry: U256) -> Result<()> {
-    debug_assert_ne!(kind, NOTICE_CALLED, "called notices leave through drain_called_run");
+    debug_assert_ne!(
+        kind, NOTICE_CALLED,
+        "called notices leave through drain_called_run"
+    );
     // A group that has since been called is gone from the index, and a Called
     // series would refuse the Qualified mark anyway — so an empty read is the
     // answer, not an error.

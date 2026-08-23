@@ -50,9 +50,10 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
     }
 
     function _called() internal view returns (bytes memory) {
-        return BridgeMsgCodec.encodeMarkCalled(
-            DAY, uint32(block.timestamp), MarkBatchLib.one(CreateSeriesLib.seriesId(DAY))
-        );
+        return
+            BridgeMsgCodec.encodeMarkCalled(
+                DAY, uint32(block.timestamp), MarkBatchLib.one(CreateSeriesLib.seriesId(DAY))
+            );
     }
 
     function _issuance() internal returns (bytes memory) {

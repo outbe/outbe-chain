@@ -202,7 +202,11 @@ fn a_message_never_carries_more_winners_than_the_wire_allows() {
         );
     }
     let total: usize = shape(&messages).iter().map(|(_, _, r)| r).sum();
-    assert_eq!(total, 2 * per_series, "every winner is carried exactly once");
+    assert_eq!(
+        total,
+        2 * per_series,
+        "every winner is carried exactly once"
+    );
 }
 
 #[test]
