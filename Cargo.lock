@@ -8490,7 +8490,6 @@ dependencies = [
  "outbe-metadosis",
  "outbe-primitives",
  "serde_json",
- "tracing",
 ]
 
 [[package]]
