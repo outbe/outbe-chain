@@ -456,6 +456,9 @@ contract OriginRouter is
         payable
         onlyRole(INTEX_FACTORY_ROLE)
     {
+        // A target refuses these outright, and its refusal is acknowledged rather than retried, so the
+        // mark would be lost for good. Refuse here instead, where the caller still sees it.
+        if (calledAt == 0 || calledAt > block.timestamp) revert CalledAtInvalid(calledAt, uint32(block.timestamp));
         uint32[] memory snapshot = _os().seriesTargets[worldwideDay];
         if (snapshot.length == 0) revert NoTargets();
         bytes memory payload = BridgeMsgCodec.encodeMarkCalled(worldwideDay, calledAt, seriesIds);

@@ -371,12 +371,12 @@ contract TargetRouter is
         TargetRouterStorage storage $ = _ts();
         uint8 msgType = $.pendingMark[seriesId];
         if (msgType == 0) revert NoPendingMark(seriesId);
+        uint32 calledAt = $.pendingMarkCalledAt[seriesId];
         delete $.pendingMark[seriesId];
+        delete $.pendingMarkCalledAt[seriesId];
         if (msgType == BridgeMsgCodec.MSG_MARK_QUALIFIED) {
             $.intex.markQualified(seriesId);
         } else {
-            uint32 calledAt = $.pendingMarkCalledAt[seriesId];
-            delete $.pendingMarkCalledAt[seriesId];
             $.intex.markCalled(seriesId, calledAt);
         }
         emit PendingMarkApplied(seriesId, msgType);

@@ -29,8 +29,8 @@ struct SendParam {
 /// @title IIntexNFT1155Bridge
 /// @author Outbe
 /// @notice Interface for batch cross-chain ERC1155 transfers over the protocol-agnostic ERC-7786 bridge.
-/// @dev Supports single-recipient batch and multi-recipient modes, plus a system bridge for automated holder
-///      migration. Sends burn on the source and mint on the paired adapter registered as the remote messenger for a
+/// @dev Supports single-recipient batch and multi-recipient modes. Sends burn on the source and mint on the
+///      paired adapter registered as the remote messenger for a
 ///      chainId. `send*` return the bridge `sendId`; `quote*` return the native fee.
 interface IIntexNFT1155Bridge {
     // --- Events ---

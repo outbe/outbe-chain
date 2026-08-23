@@ -445,7 +445,6 @@ library TargetInbound {
     }
 
     /// @notice Decode MARK_QUALIFIED and apply it to every series it carries, parking the rest.
-    /// @dev A pure status flip, so unlike markCalled there is nothing to bridge back to Outbe.
     function handleMarkQualified(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
         (, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkQualified(message);
         for (uint256 i = 0; i < seriesIds.length; ++i) {
@@ -482,9 +481,12 @@ library TargetInbound {
             }
             return;
         }
-        // Applied, so nothing waits for this series any more — including a slot a redelivery has just settled.
-        delete $.pendingMark[seriesId];
-        delete $.pendingMarkCalledAt[seriesId];
+        // Applied, so its own slot is settled. A Qualified never clears a waiting Called: the two arrive
+        // independently, and the Called is the later decision even when it lands second.
+        if (msgType == BridgeMsgCodec.MSG_MARK_CALLED || $.pendingMark[seriesId] != BridgeMsgCodec.MSG_MARK_CALLED) {
+            delete $.pendingMark[seriesId];
+            delete $.pendingMarkCalledAt[seriesId];
+        }
         if (msgType == BridgeMsgCodec.MSG_MARK_CALLED) {
             emit ITargetRouter.MarkCalledReceived(srcChainId, seriesId);
         } else {
