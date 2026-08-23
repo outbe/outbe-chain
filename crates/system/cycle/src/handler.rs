@@ -152,10 +152,12 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
             e
         })?;
 
+    // `day_emission_limit` is floor-clamped to a non-zero `FLOOR_DAY_EMISSION`
+    // for every `u32` input, so there is no zero-cap day to short-circuit. The
+    // former early return skipped the day without a `daily_settled` marker or a
+    // Metadosis receipt while `run_protocol_cycle` still advanced the calendar
+    // cursor, leaving the day permanently unsettled and unrecorded.
     let cap = day_emission_limit(day_number);
-    if cap.is_zero() {
-        return Ok(());
-    }
 
     let allocations = allocate_emission(cap)?;
     let amount_for = |id: EmissionSinkId| -> U256 {
@@ -197,12 +199,22 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
         let topup = validator_amount
             .checked_sub(fees)
             .ok_or_else(|| PrecompileError::Revert("validator topup underflow".into()))?;
-        outbe_rewards::api::add_topup_for_voters(ctx, prev_day, topup, &voters)
+        let distributed = outbe_rewards::api::add_topup_for_voters(ctx, prev_day, topup, &voters)
                 .map_err(|e| {
                     tracing::error!(target: "outbe::cycle", step = "add_topup_for_voters", error = ?e, "emission_limit_daily step failed");
                     e
                 })?;
-        fees
+        // `add_topup_for_voters` floor-divides each voter's share, and returns
+        // `Ok(0)` without minting when its own replay guard trips or every
+        // participation count is zero. Whatever it did not mint is still part of
+        // the day cap, so it has to reach the terminal sink — dropping it here
+        // would break `Σ allocations == cap` by the rounding dust (and by the
+        // whole top-up on the no-mint paths).
+        let undelivered = topup.checked_sub(distributed).ok_or_else(|| {
+            PrecompileError::Revert("validator topup distributed more than allocated".into())
+        })?;
+        fees.checked_add(undelivered)
+            .ok_or_else(|| PrecompileError::Revert("validator excess overflow".into()))?
     };
 
     let g2 = gas(ctx);

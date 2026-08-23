@@ -738,6 +738,132 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
     });
 }
 
+/// Seeds the COEN/840 oracle pair so `add_topup_for_voters` -> `mint_gem` can
+/// resolve an entry price. Mirrors the helper in `outbe_rewards::api` tests.
+fn seed_reward_gem_oracle(ctx: &BlockRuntimeContext) {
+    outbe_oracle::api::set_exchange_rate(
+        ctx.storage.clone(),
+        Address::ZERO,
+        outbe_oracle::api::DAY_TYPE_PAIR,
+        U256::from(2_000_000u64),
+        0,
+        0,
+    )
+    .unwrap();
+    outbe_oracle::schema::OracleContract::new(ctx.storage.clone())
+        .reference_currencies
+        .push(840u16)
+        .unwrap();
+}
+
+/// Records `voters` as credited participants for `day` with the given counts,
+/// plus the day's raw fee sum. Writes the same fields
+/// `outbe_rewards::finalized_metadata_hook` maintains, so
+/// `read_voters_for_day` returns them in the seeded order.
+fn seed_day_participation(
+    ctx: &BlockRuntimeContext,
+    day: u32,
+    voters: &[(Address, u64)],
+    fees: U256,
+) {
+    let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
+    let at = rewards.daily_voter_at.get_nested(&day);
+    let participation = rewards.daily_participation.get_nested(&day);
+    let mut total = 0u64;
+    for (idx, (voter, count)) in voters.iter().enumerate() {
+        at.write(&(idx as u32), *voter).unwrap();
+        participation.write(voter, *count).unwrap();
+        total += *count;
+    }
+    rewards
+        .daily_voter_count
+        .write(&day, voters.len() as u32)
+        .unwrap();
+    rewards
+        .daily_total_participation
+        .write(&day, total)
+        .unwrap();
+    rewards.daily_fee_sum_raw.write(&day, fees).unwrap();
+}
+
+/// Settlement-level conservation: everything the day cap is split into must be
+/// delivered, with nothing evaporating between the allocation table and the
+/// sinks.
+///
+/// The five allocations are not the same kind of object, so the accounting
+/// closes like this (no tributes, so WAA and SRA are fully recycled as excess):
+///
+/// ```text
+/// cap == gems minted to voters + CCA accumulator + Metadosis base limit
+/// ```
+///
+/// The voter counts (1, 2, 4) deliberately do not divide the top-up, so
+/// `add_topup_for_voters` under-mints by the floor-division dust. That dust is
+/// still part of the cap and has to reach the terminal sink; before the handler
+/// captured the `distributed` return value it was dropped, and this identity
+/// came up short by exactly that amount.
+#[test]
+fn settled_day_conserves_the_whole_emission_cap() {
+    let mut storage = cycle_storage();
+    storage.enter(|handle| {
+        let anchor_ts = GENESIS_TS + 60;
+        let ctx_anchor = BlockRuntimeContext::new(block_ctx(1, anchor_ts), handle.clone());
+        anchor_genesis(&ctx_anchor);
+        seed_reward_gem_oracle(&ctx_anchor);
+        dispatch_triggers(&ctx_anchor).unwrap();
+
+        const PREV_DAY: u32 = 20_240_101;
+        let voters = [
+            (Address::repeat_byte(0xA1), 1u64),
+            (Address::repeat_byte(0xB2), 2u64),
+            (Address::repeat_byte(0xC3), 4u64),
+        ];
+        // Fees well below the validator slice so the top-up branch runs. The
+        // counts sum to 7, which does not divide the resulting top-up, so the
+        // per-voter shares round down and leave a shortfall.
+        let fees = U256::from(1_000u64);
+        seed_day_participation(&ctx_anchor, PREV_DAY, &voters, fees);
+
+        let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 60;
+        let ctx = BlockRuntimeContext::new(block_ctx(2, fire_ts), handle);
+        account_parent(&ctx, 2);
+        dispatch_triggers(&ctx).unwrap();
+
+        // prev_day is the genesis day, so day_number == 0 and cap == INITIAL.
+        let cap = outbe_emissionlimit::day_emission::day_emission_limit(0);
+        let validator_amount = cap * U256::from(4u64) / U256::from(100u64);
+        let topup = validator_amount - fees;
+
+        // What the voters actually received: floor(topup * count / total) each.
+        let total_count = U256::from(7u64);
+        let minted: U256 = voters
+            .iter()
+            .map(|(_, count)| topup * U256::from(*count) / total_count)
+            .fold(U256::ZERO, |acc, share| acc + share);
+        assert!(
+            minted < topup,
+            "test must exercise the rounding shortfall: {minted} == {topup}"
+        );
+
+        let cca = ctx
+            .storage
+            .balance(outbe_primitives::addresses::CCA_ADDRESS)
+            .unwrap();
+        let formation =
+            outbe_metadosis::api::day_limit_formation_receipt(ctx.storage.clone(), PREV_DAY.into())
+                .unwrap()
+                .expect("settled day must have a Metadosis day-limit receipt");
+        let outbe_metadosis::DayLimitFormationReceipt::Formed(formed) = formation;
+
+        assert_eq!(
+            minted + cca + formed.base_limit,
+            cap,
+            "gems + CCA + Metadosis base limit must account for the whole day cap \
+             (short by the validator top-up dust if the handler drops it)"
+        );
+    });
+}
+
 /// a second `run_emission_limit_daily` invocation for an already-settled
 /// `prev_day` is a no-op — the CCA agent pool (and terminal Metadosis)
 /// are NOT minted twice. Guards the per-day idempotency added on top of the

@@ -384,6 +384,60 @@ mod tests {
         });
     }
 
+    /// The three no-full-mint paths, pinned as a caller contract.
+    ///
+    /// `add_topup_for_voters` returns what it actually minted, which can be
+    /// *less* than `topup` in three ways: floor-divided shares leave dust, an
+    /// all-zero participation set mints nothing, and the replay guard mints
+    /// nothing. Whatever it did not mint is still part of the day's emission
+    /// cap, so the orchestrator has to route the difference to the terminal
+    /// sink. Dropping this return value silently delivers less than
+    /// `day_emission_limit(day)` for the day — see
+    /// `outbe_cycle::handler::settle_emission_day`.
+    #[test]
+    fn add_topup_for_voters_reports_the_shortfall_the_caller_must_recycle() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.enter(|handle| {
+            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
+            bootstrap_genesis(&ctx);
+            seed_oracle(&ctx, U256::from(2u64) * one_coen840());
+
+            // Rounding dust: counts 1+1+1 = 3 against a topup of 100 gives each
+            // voter floor(100/3) = 33, so 99 is minted and 1 unit is left over.
+            let topup = U256::from(100u64);
+            let voters = vec![(VAL_X, 1u64), (VAL_Y, 1u64), (VAL_Z, 1u64)];
+            let distributed = add_topup_for_voters(&ctx, 20240101, topup, &voters).unwrap();
+            assert_eq!(distributed, U256::from(99u64));
+            assert!(
+                distributed < topup,
+                "floor-divided shares must under-deliver the topup"
+            );
+            for voter in [VAL_X, VAL_Y, VAL_Z] {
+                assert_eq!(voter_gem_loads(&ctx, voter), vec![U256::from(33u64)]);
+            }
+
+            // Replay guard: the day is already settled, so a second call mints
+            // nothing and reports zero — the caller owes the terminal sink the
+            // whole topup, not just the dust.
+            let replay = add_topup_for_voters(&ctx, 20240101, topup, &voters).unwrap();
+            assert_eq!(replay, U256::ZERO);
+            for voter in [VAL_X, VAL_Y, VAL_Z] {
+                assert_eq!(
+                    voter_gem_loads(&ctx, voter),
+                    vec![U256::from(33u64)],
+                    "replay must not mint a second gem"
+                );
+            }
+
+            // All-zero participation: enumerated voters, nothing to weight by.
+            let zero_counts = vec![(VAL_X, 0u64), (VAL_Y, 0u64)];
+            let none = add_topup_for_voters(&ctx, 20240102, topup, &zero_counts).unwrap();
+            assert_eq!(none, U256::ZERO);
+            let rewards = ctx.storage.contract::<Rewards>();
+            assert!(rewards.daily_topup_settled.read(&20240102).unwrap());
+        });
+    }
+
     #[test]
     fn add_topup_for_voters_picks_genesis_vs_validator_by_window() {
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);
