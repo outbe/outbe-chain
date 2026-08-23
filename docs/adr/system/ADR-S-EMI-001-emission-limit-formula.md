@@ -123,6 +123,9 @@ Metadosis or Cycle state.
    independent high-precision reference and committed cross-language vectors.
 4. Exhaustively test monotonicity and floor bounds across all days `0..=2920`, not
    only the first year and threshold samples.
+6. `dispatch_allocations` implements best-effort per-sink fallback while the
+   production Cycle handler is all-or-nothing. Remove/relocate it or adopt one
+   explicitly tested failure contract.
 7. Terminal dispatch date anchoring must distinguish finalized-block UTC date from
    executing-block date and WorldwideDay; add boundary tests across midnight.
 8. CCA and Merchant sink ownership/withdrawal FSM remain unspecified; a percentage
