@@ -1373,6 +1373,8 @@ def seed_oracle(storage: StorageBuilder, config: dict):
         settlement holes; the settlement pair is derived as
         address_pair("COEN", "<iso>"))
       slot 55: reference_currencies (StorageVec<u16>)
+      slot 60: retired policy-rate mapping
+      slots 74-75: policy_rate_currencies / policy_rate
     """
     cfg = config.get("config", {})
     storage.set_slot(0, parse_int(cfg.get("vote_period", 2)))
@@ -1479,27 +1481,45 @@ def seed_oracle(storage: StorageBuilder, config: dict):
                 37, u32_bytes(idx), parse_int(sc["peak_price"])
             )  # scurve_peak_price
 
-    # Reference currencies (slot 55) with their annualized currency rate
-    # (slot 60, mapping(iso_code => rate), scale 1e6). Default: USD (840) at the
-    # configured USD reference rate (3.63%). The currency rate is read by the Credis Factory
-    # at issuance; the live data feed is out of scope (governance-updated).
-    # Reference-currency codes are stored as a StorageVec<u16>: length at slot 55,
-    # data at keccak256(55) + index. Both slots are verified by the
-    # `test_reference_currencies_slot_parity` / `test_reference_currency_rate_slot_parity`
-    # tests in `crates/system/oracle/src/tests.rs`; keep these constants in sync
-    # with the macro-assigned layout if `OracleContract` field order changes.
+    # Reference currencies and annual policy rates are independent registries.
+    # Both lists are canonical ascending ISO order. Slot 60 is retired.
     DEFAULT_USD_CURRENCY_RATE = 36_300  # 3.63% at scale 1e6
     reference_currencies = config.get(
         "reference_currencies",
-        [{"iso_code": 840, "currency_rate": DEFAULT_USD_CURRENCY_RATE}],
+        [156, 344, 392, 826, 840, 978],
     )
+    reference_currencies = [parse_int(iso_code) for iso_code in reference_currencies]
+    if len(reference_currencies) > 6:
+        raise ValueError("oracle reference currency count exceeds 6")
+    if any(iso_code == 0 for iso_code in reference_currencies):
+        raise ValueError("oracle reference iso_code must be non-zero")
+    if reference_currencies != sorted(set(reference_currencies)):
+        raise ValueError("oracle reference currencies must be sorted and unique")
+    if 840 not in reference_currencies:
+        raise ValueError("oracle reference currencies must include USD 840")
     storage.set_slot(55, len(reference_currencies))
-    for i, entry in enumerate(reference_currencies):
-        iso_code = parse_int(entry["iso_code"])
-        rate = parse_int(entry.get("currency_rate", DEFAULT_USD_CURRENCY_RATE))
+    for i, iso_code in enumerate(reference_currencies):
         storage.set_raw_slot(data_slot(55) + i, iso_code)
-        # reference_currency_rate: mapping(iso_code => rate) at slot 60.
-        storage.set_mapping(60, u32_bytes(iso_code), rate)
+
+    policy_rates = config.get(
+        "policy_rates",
+        [{"iso_code": 840, "annual_rate_1e6": DEFAULT_USD_CURRENCY_RATE}],
+    )
+    parsed_policy_rates = [
+        (parse_int(entry["iso_code"]), parse_int(entry["annual_rate_1e6"]))
+        for entry in policy_rates
+    ]
+    if any(iso_code == 0 for iso_code, _ in parsed_policy_rates):
+        raise ValueError("oracle policy iso_code must be non-zero")
+    if any(rate == 0 for _, rate in parsed_policy_rates):
+        raise ValueError("oracle policy rate must be non-zero")
+    policy_isos = [iso_code for iso_code, _ in parsed_policy_rates]
+    if policy_isos != sorted(set(policy_isos)):
+        raise ValueError("oracle policy rates must be sorted and unique")
+    storage.set_slot(74, len(parsed_policy_rates))
+    for i, (iso_code, rate) in enumerate(parsed_policy_rates):
+        storage.set_raw_slot(data_slot(74) + i, iso_code)
+        storage.set_mapping(75, u32_bytes(iso_code), rate)
 
 
 # --- External contracts ---

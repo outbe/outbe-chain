@@ -74,12 +74,25 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
                     self.assertEqual(nod["gratis_load"], "100000")
                     self.assertEqual(nod["floor_price"], "540000")
 
-    def test_default_usd_currency_rate_uses_scale_1e6_in_slot_60(self):
+    def test_default_reference_and_policy_registries_use_the_frozen_slots(self):
         storage = seed_genesis.StorageBuilder()
 
         seed_genesis.seed_oracle(storage, {})
 
-        slot = seed_genesis.mapping_key(seed_genesis.u32_bytes(840), 60)
+        self.assertEqual(storage.entries[seed_genesis.hex32(55)], seed_genesis.hex32(6))
+        for index, iso_code in enumerate((156, 344, 392, 826, 840, 978)):
+            self.assertEqual(
+                storage.entries[seed_genesis.hex32(seed_genesis.data_slot(55) + index)],
+                seed_genesis.hex32(iso_code),
+            )
+
+        self.assertNotIn(seed_genesis.mapping_key(seed_genesis.u32_bytes(840), 60), storage.entries)
+        self.assertEqual(storage.entries[seed_genesis.hex32(74)], seed_genesis.hex32(1))
+        self.assertEqual(
+            storage.entries[seed_genesis.hex32(seed_genesis.data_slot(74))],
+            seed_genesis.hex32(840),
+        )
+        slot = seed_genesis.mapping_key(seed_genesis.u32_bytes(840), 75)
         self.assertEqual(storage.entries[slot], seed_genesis.hex32(36_300))
 
     def test_optional_seed_profile_is_copied_to_genesis_config(self):

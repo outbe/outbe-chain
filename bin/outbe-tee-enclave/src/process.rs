@@ -80,16 +80,19 @@ fn process_one(
         return Err("amount must be positive".to_string());
     }
 
-    // The price is host-supplied and `compute_nominal` divides by it, so a zero
-    // is rejected here rather than trusted to the host's own filtering.
-    if offer.tribute_price_minor.is_zero() {
+    if offer.issuance_wwd_vwap_minor.is_zero() || offer.reference_wwd_vwap_minor.is_zero() {
         return Err(format!(
-            "nominal price unavailable for worldwide_day {}",
+            "required WorldwideDay VWAP unavailable for worldwide_day {}",
             offer.worldwide_day
         ));
     }
 
-    let nominal_amount_minor = compute_nominal(amount_minor, offer.tribute_price_minor)?;
+    let (nominal_amount_minor, effective_reference_price_minor) = compute_nominal(
+        amount_minor,
+        offer.issuance_wwd_vwap_minor,
+        offer.reference_wwd_vwap_minor,
+        offer.reference_scurve_minor,
+    )?;
 
     // token_id is Poseidon over owner + day. It is deterministic in
     // (owner, worldwide_day) so a duplicate offer for the same owner and day
@@ -103,6 +106,7 @@ fn process_one(
         owner: offer.owner,
         issuance_amount_minor: amount_minor,
         nominal_amount_minor,
+        effective_reference_price_minor,
         // Returned for the host's SU-hash used-marking + agent-reward routing
         // (public on-chain). Privacy-preserving markers-only form is a later
         // slice (see module doc / Enclave Return Rule).
@@ -123,6 +127,7 @@ fn rejected(reason: String) -> TributeOfferResult {
         owner: Address::ZERO,
         issuance_amount_minor: U256::ZERO,
         nominal_amount_minor: U256::ZERO,
+        effective_reference_price_minor: U256::ZERO,
         su_hashes: Vec::new(),
         wallet_addresses: Vec::new(),
         sra_addresses: Vec::new(),
@@ -165,7 +170,9 @@ mod tests {
             tribute_currency: 840,
             reference_currency: 840,
             exclude_from_intex_issuance: false,
-            tribute_price_minor: SCALE_1E6_U256,
+            issuance_wwd_vwap_minor: SCALE_1E6_U256,
+            reference_wwd_vwap_minor: SCALE_1E6_U256,
+            reference_scurve_minor: U256::ZERO,
             zk_context: None,
         }
     }
@@ -206,7 +213,8 @@ mod tests {
     fn batch_creates_tribute_with_correct_economics() {
         let owner = Address::repeat_byte(0xAB);
         let mut offer = make_tribute_offer(owner, GOOD_JSON);
-        offer.tribute_price_minor = U256::from(2u64) * SCALE_1E6_U256; // 2.0 COEN/840
+        offer.issuance_wwd_vwap_minor = U256::from(2u64) * SCALE_1E6_U256;
+        offer.reference_wwd_vwap_minor = offer.issuance_wwd_vwap_minor;
 
         let (results, hash) = process_tribute_offer_batch(&key(), &[offer]);
         assert_eq!(results.len(), 1);
@@ -215,6 +223,10 @@ mod tests {
         assert_eq!(r.owner, owner);
         assert_eq!(r.issuance_amount_minor, U256::from(100u64) * SCALE_1E6_U256);
         assert_eq!(r.nominal_amount_minor, U256::from(50u64) * SCALE_1E6_U256);
+        assert_eq!(
+            r.effective_reference_price_minor,
+            U256::from(2u64) * SCALE_1E6_U256
+        );
         assert_eq!(r.token_id, compute_token_id(owner, DAY, DRAFT).unwrap());
         assert_ne!(hash, B256::ZERO);
     }
@@ -227,7 +239,8 @@ mod tests {
         let mut offer = make_tribute_offer(owner, GOOD_JSON);
         offer.tribute_currency = 978;
         // Every stablecoin-backed COEN/ISO rate uses the six-decimal contract.
-        offer.tribute_price_minor = U256::from(4u64) * SCALE_1E6_U256;
+        offer.issuance_wwd_vwap_minor = U256::from(4u64) * SCALE_1E6_U256;
+        offer.reference_wwd_vwap_minor = offer.issuance_wwd_vwap_minor;
 
         let (results, _) = process_tribute_offer_batch(&key(), &[offer]);
         assert_eq!(results[0].status, TributeOfferStatus::Created);
@@ -241,10 +254,12 @@ mod tests {
     #[test]
     fn one_batch_prices_each_offer_from_its_own_field() {
         let mut usd = make_tribute_offer(Address::repeat_byte(0x01), GOOD_JSON);
-        usd.tribute_price_minor = U256::from(2u64) * SCALE_1E6_U256;
+        usd.issuance_wwd_vwap_minor = U256::from(2u64) * SCALE_1E6_U256;
+        usd.reference_wwd_vwap_minor = usd.issuance_wwd_vwap_minor;
         let mut eur = make_tribute_offer(Address::repeat_byte(0x0B), GOOD_JSON);
         eur.tribute_currency = 978;
-        eur.tribute_price_minor = U256::from(5u64) * SCALE_1E6_U256;
+        eur.issuance_wwd_vwap_minor = U256::from(5u64) * SCALE_1E6_U256;
+        eur.reference_wwd_vwap_minor = eur.issuance_wwd_vwap_minor;
 
         let (results, _) = process_tribute_offer_batch(&key(), &[usd, eur]);
         assert_eq!(results[0].status, TributeOfferStatus::Created);
@@ -272,6 +287,29 @@ mod tests {
             assert_eq!(result.issuance_amount_minor, U256::from(1_500_000u64));
             assert_eq!(result.nominal_amount_minor, U256::from(1_500_000u64));
         }
+    }
+
+    #[test]
+    fn cross_currency_golden_returns_effective_reference_price() {
+        let mut offer = make_tribute_offer(Address::repeat_byte(0x55), BASE_AND_ATTO_JSON);
+        offer.issuance_wwd_vwap_minor = U256::from(10_250_000u64);
+        offer.reference_wwd_vwap_minor = U256::from(250_000u64);
+        offer.reference_scurve_minor = U256::from(320_000u64);
+        let json = BASE_AND_ATTO_JSON
+            .replace(r#""amount_base": "1""#, r#""amount_base": "0""#)
+            .replace(r#""amount_atto": "500000""#, r#""amount_atto": "410000""#);
+        offer = make_tribute_offer(offer.owner, &json);
+        offer.issuance_wwd_vwap_minor = U256::from(10_250_000u64);
+        offer.reference_wwd_vwap_minor = U256::from(250_000u64);
+        offer.reference_scurve_minor = U256::from(320_000u64);
+
+        let (results, _) = process_tribute_offer_batch(&key(), &[offer]);
+        assert_eq!(results[0].status, TributeOfferStatus::Created);
+        assert_eq!(results[0].nominal_amount_minor, U256::from(31_250u64));
+        assert_eq!(
+            results[0].effective_reference_price_minor,
+            U256::from(320_000u64)
+        );
     }
 
     #[test]
@@ -412,7 +450,7 @@ mod tests {
         // Distinct owners so both offers are independent (one owner = at most one
         // Tribute per day); only the zero-price one is rejected.
         let mut bad = make_tribute_offer(Address::repeat_byte(0x01), GOOD_JSON);
-        bad.tribute_price_minor = U256::ZERO;
+        bad.issuance_wwd_vwap_minor = U256::ZERO;
         let good = make_tribute_offer(Address::repeat_byte(0x0B), GOOD_JSON);
 
         let (results, _) = process_tribute_offer_batch(&key(), &[bad, good]);
@@ -478,9 +516,9 @@ mod tests {
             (|o: &mut EncryptedTributeOffer| o.worldwide_day = NEXT_DAY) as fn(&mut _),
             |o: &mut EncryptedTributeOffer| o.tribute_currency = 978,
             |o: &mut EncryptedTributeOffer| o.exclude_from_intex_issuance = true,
-            |o: &mut EncryptedTributeOffer| {
-                o.tribute_price_minor = U256::from(2u64) * SCALE_1E6_U256
-            },
+            |o: &mut EncryptedTributeOffer| o.issuance_wwd_vwap_minor = U256::from(2u64),
+            |o: &mut EncryptedTributeOffer| o.reference_wwd_vwap_minor = U256::from(2u64),
+            |o: &mut EncryptedTributeOffer| o.reference_scurve_minor = U256::from(2u64),
         ] {
             let mut other = offers.clone();
             mutate(&mut other[0]);

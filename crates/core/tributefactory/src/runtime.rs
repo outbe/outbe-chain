@@ -122,15 +122,16 @@ impl TributeFactoryContract<'_> {
 
         // Priced against the tribute's own day, not whichever day happens to be
         // first in the OFFERING list.
-        let tribute_price_minor = outbe_oracle::api::coen_pair_price(
+        let pricing = outbe_oracle::api::tribute_pricing_inputs(
             self.storage.clone(),
             tribute_currency,
+            reference_currency,
             worldwide_day,
         )?
         .ok_or(TributeFactoryError::IssuanceCurrencyNotRegistered {
             issuance_currency: tribute_currency,
         })?;
-        if tribute_price_minor.is_zero() {
+        if pricing.issuance_wwd_vwap_minor.is_zero() || pricing.reference_wwd_vwap_minor.is_zero() {
             return Err(TributeFactoryError::NominalPriceUnavailable { worldwide_day }.into());
         }
 
@@ -142,7 +143,7 @@ impl TributeFactoryContract<'_> {
             None => None,
         };
 
-        // Hand the encrypted offer + its resolved price to the enclave. It
+        // Hand the encrypted offer + exact public Oracle inputs to the enclave. It
         // decrypts, computes economics (U256) + Poseidon token_id, and returns
         // only those. The host does not recompute private economics, but it can
         // and must verify the public owner/day identity recipe.
@@ -155,7 +156,9 @@ impl TributeFactoryContract<'_> {
             tribute_currency,
             reference_currency,
             exclude_from_intex_issuance,
-            tribute_price_minor,
+            issuance_wwd_vwap_minor: pricing.issuance_wwd_vwap_minor,
+            reference_wwd_vwap_minor: pricing.reference_wwd_vwap_minor,
+            reference_scurve_minor: pricing.reference_scurve_minor,
             zk_context,
         };
         // Node-local enclave faults (dead sidecar after the session's bounded
@@ -204,7 +207,7 @@ impl TributeFactoryContract<'_> {
                 nominal_amount_minor: result.nominal_amount_minor,
                 reference_currency,
                 exclude_from_intex_issuance,
-                tribute_price_minor,
+                tribute_price_minor: result.effective_reference_price_minor,
             },
         )?;
 

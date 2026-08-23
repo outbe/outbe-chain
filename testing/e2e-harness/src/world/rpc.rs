@@ -12,7 +12,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
-use alloy_sol_types::SolCall as _;
+use alloy_sol_types::{sol, SolCall as _};
 use eyre::{eyre, Result, WrapErr as _};
 #[cfg(feature = "ocomp-integration")]
 use outbe_common::WorldwideDay;
@@ -47,6 +47,9 @@ use crate::internal::{
 use crate::ocomp_evidence::sha256_hex;
 use crate::world::state::FixtureState;
 use crate::world::validators::{Operator, Validator};
+
+sol!("../../contracts/precompiles/src/IOracle.sol");
+sol!("../../contracts/precompiles/src/ITributeFactory.sol");
 
 #[derive(Debug, Clone)]
 pub struct Rpc {
@@ -1939,6 +1942,122 @@ impl Rpc {
             self.address_of(key).unwrap_or_else(|| "unknown".to_owned()),
         );
         Some(tx_hash)
+    }
+
+    /// Submit one real encrypted Tribute while keeping issuance and reference
+    /// currencies independent. The product CLI intentionally remains the
+    /// same-currency operator path; this narrow E2E helper exercises the
+    /// already-public ABI axis without adding a new product surface.
+    #[allow(clippy::too_many_arguments)]
+    pub fn tribute_cross_currency_offer(
+        &self,
+        key: &str,
+        wwd: &str,
+        amount_base: &str,
+        amount_atto: &str,
+        tribute_currency: u16,
+        reference_currency: u16,
+        exclude_from_intex_issuance: bool,
+    ) -> Option<String> {
+        let worldwide_day = wwd.parse::<u32>().ok()?;
+        let creator = eth::address_of(key)?;
+        let bootstrapped: bool = eth::read_call(
+            &self.cfg.rpc0,
+            outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+            &ITeeRegistryV1::isBootstrappedCall {},
+        )?;
+        if !bootstrapped {
+            return None;
+        }
+        let offer_public_key: U256 = eth::read_call(
+            &self.cfg.rpc0,
+            outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+            &ITeeRegistryV1::tributeOfferPublicKeyCall {},
+        )?;
+        let offer_public_key: [u8; 32] = offer_public_key.to_be_bytes();
+        let entropy = format!(
+            "cross-currency-tribute:{creator:#x}:{worldwide_day}:{}",
+            unix_time_millis()
+        );
+        let tribute_draft_id = keccak256(entropy.as_bytes());
+        let su_hash = keccak256([entropy.as_bytes(), b":su"].concat());
+        let plaintext = serde_json::to_vec(&serde_json::json!({
+            "creator": format!("{creator:?}"),
+            "tribute_draft_id": format!("{tribute_draft_id:#x}"),
+            "amount_base": amount_base,
+            "amount_atto": amount_atto,
+            "su_hashes": [format!("{su_hash:#x}")],
+            "wallet_addresses": [],
+            "sra_addresses": [],
+        }))
+        .ok()?;
+        let (cipher_text, nonce, ephemeral_public_key) =
+            outbe_tee::offer_encrypt::encrypt_tribute_offer(&offer_public_key, &plaintext).ok()?;
+        let call = ITributeFactory::offerTributeCall {
+            cipherText: cipher_text.into(),
+            nonce: nonce.to_vec().into(),
+            ephemeralPubkey: U256::from_be_bytes(ephemeral_public_key),
+            worldwideDay: worldwide_day,
+            tributeCurrency: tribute_currency,
+            referenceCurrency: reference_currency,
+            excludeFromIntexIssuance: exclude_from_intex_issuance,
+            zkProof: Bytes::new(),
+            zkVerificationKey: Bytes::new(),
+            zkPublicKey: Bytes::new(),
+            zkMerkleRoot: Bytes::new(),
+            signature: Bytes::new(),
+        };
+        let outcome = eth::send_call_outcome(
+            &self.cfg.rpc0,
+            outbe_primitives::addresses::TRIBUTE_FACTORY_ADDRESS,
+            key,
+            &call,
+            Some(U256::ZERO),
+        )
+        .ok()?;
+        eprintln!(
+            "E2E_TRIBUTE_TIMELINE stage=cross-currency-submitted wall_ms={} tx={} owner={creator:#x} wwd={worldwide_day} tribute_currency={tribute_currency} reference_currency={reference_currency}",
+            unix_time_millis(),
+            outcome.transaction_hash,
+        );
+        Some(outcome.transaction_hash)
+    }
+
+    /// Read the exact WWD VWAP and the maximum active S-curve value for one
+    /// COEN/ISO reference pair from the canonical Oracle precompile.
+    pub fn oracle_wwd_vwap_and_scurve(
+        &self,
+        port: u16,
+        worldwide_day: u32,
+        iso_code: u16,
+    ) -> Option<(U256, U256)> {
+        let oracle = outbe_primitives::addresses::ORACLE_ADDRESS;
+        let snapshot = eth::read_call(
+            &self.url(port),
+            oracle,
+            &IOracle::getWorldwideDayVwapSnapshotCall {
+                worldwideDay: worldwide_day,
+            },
+        )?;
+        let quote = outbe_primitives::asset_type::currency_address(iso_code);
+        let vwap = snapshot
+            .bases
+            .iter()
+            .zip(&snapshot.quotes)
+            .zip(&snapshot.vwaps)
+            .find_map(|((base, candidate_quote), value)| {
+                (*base == Address::ZERO && *candidate_quote == quote).then_some(*value)
+            })?;
+        let curve = eth::read_call(
+            &self.url(port),
+            oracle,
+            &IOracle::getScurveValuesCall {
+                base: Address::ZERO,
+                quote,
+                timestamp: outbe_primitives::time::date_key_to_utc_timestamp(worldwide_day),
+            },
+        )?;
+        Some((vwap, curve.values.into_iter().max().unwrap_or(U256::ZERO)))
     }
 
     /// Wait until the submitted transaction is mined and assert its receipt succeeded.

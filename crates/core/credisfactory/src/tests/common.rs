@@ -142,7 +142,7 @@ pub fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
     set_coen_rate(&storage, coen_iso_rate);
     let oracle = OracleContract::new(storage);
     oracle
-        .reference_currency_rate
+        .policy_rate
         .write(&ISSUANCE_ISO, policy_rate())
         .unwrap();
 }

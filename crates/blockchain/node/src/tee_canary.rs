@@ -221,7 +221,9 @@ pub fn run_canary_probe(
         tribute_currency: 840,
         reference_currency: 840,
         exclude_from_intex_issuance: false,
-        tribute_price_minor: U256::from(CANARY_PRICE_MINOR),
+        issuance_wwd_vwap_minor: U256::from(CANARY_PRICE_MINOR),
+        reference_wwd_vwap_minor: U256::from(CANARY_PRICE_MINOR),
+        reference_scurve_minor: U256::ZERO,
         zk_context: None,
     }];
     let started = SystemTime::now();
@@ -569,6 +571,7 @@ mod tests {
                 owner: CANARY_OWNER,
                 issuance_amount_minor: U256::from(1u64),
                 nominal_amount_minor: U256::from(1u64),
+                effective_reference_price_minor: U256::from(CANARY_PRICE_MINOR),
                 su_hashes: Vec::new(),
                 wallet_addresses: Vec::new(),
                 sra_addresses: Vec::new(),

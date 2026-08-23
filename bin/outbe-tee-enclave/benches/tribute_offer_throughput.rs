@@ -73,7 +73,9 @@ fn make_offer(owner: Address) -> EncryptedTributeOffer {
         tribute_currency: 840,
         reference_currency: 840,
         exclude_from_intex_issuance: false,
-        tribute_price_minor: U256::from(2_000_000u64),
+        issuance_wwd_vwap_minor: U256::from(2_000_000u64),
+        reference_wwd_vwap_minor: U256::from(2_000_000u64),
+        reference_scurve_minor: U256::ZERO,
         zk_context: None,
     }
 }

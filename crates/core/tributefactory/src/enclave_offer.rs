@@ -165,7 +165,38 @@ fn validate_tribute_offer_batch_response(
         attestation_tag,
     )
     .map_err(|e| PrecompileError::Fatal(format!("tee_offer_attestation_invalid: {e}")))?;
+    validate_effective_reference_prices(offers, &results)?;
     Ok(results)
+}
+
+fn validate_effective_reference_prices(
+    offers: &[EncryptedTributeOffer],
+    results: &[TributeOfferResult],
+) -> Result<(), PrecompileError> {
+    if offers.len() != results.len() {
+        return Err(PrecompileError::Fatal(format!(
+            "tee_enclave_nondeterminism: result count mismatch: expected {}, got {}",
+            offers.len(),
+            results.len()
+        )));
+    }
+    for (offer, result) in offers.iter().zip(results) {
+        if !matches!(
+            result.status,
+            outbe_tee::protocol::TributeOfferStatus::Created
+        ) {
+            continue;
+        }
+        let expected = offer
+            .reference_wwd_vwap_minor
+            .max(offer.reference_scurve_minor);
+        if result.effective_reference_price_minor != expected {
+            return Err(PrecompileError::Fatal(
+                "tee_enclave_nondeterminism: effective reference price mismatch".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -186,8 +217,25 @@ mod tests {
             tribute_currency: 840,
             reference_currency: 840,
             exclude_from_intex_issuance: false,
-            tribute_price_minor: U256::from(1_000u64),
+            issuance_wwd_vwap_minor: U256::from(1_000u64),
+            reference_wwd_vwap_minor: U256::from(2_000u64),
+            reference_scurve_minor: U256::from(3_000u64),
             zk_context: None,
+        }
+    }
+
+    fn sample_result() -> TributeOfferResult {
+        TributeOfferResult {
+            token_id: B256::repeat_byte(0x22),
+            owner: Address::repeat_byte(0x11),
+            issuance_amount_minor: U256::from(100u64),
+            nominal_amount_minor: U256::from(10u64),
+            effective_reference_price_minor: U256::from(3_000u64),
+            su_hashes: Vec::new(),
+            wallet_addresses: Vec::new(),
+            sra_addresses: Vec::new(),
+            zk_expected_hashes: None,
+            status: outbe_tee::protocol::TributeOfferStatus::Created,
         }
     }
 
@@ -241,7 +289,9 @@ mod tests {
         for mutate in [
             (|o: &mut EncryptedTributeOffer| o.worldwide_day = NEXT_DAY) as fn(&mut _),
             |o: &mut EncryptedTributeOffer| o.tribute_currency = 978,
-            |o: &mut EncryptedTributeOffer| o.tribute_price_minor = U256::from(2_000u64),
+            |o: &mut EncryptedTributeOffer| o.issuance_wwd_vwap_minor = U256::from(2_000u64),
+            |o: &mut EncryptedTributeOffer| o.reference_wwd_vwap_minor = U256::from(4_000u64),
+            |o: &mut EncryptedTributeOffer| o.reference_scurve_minor = U256::from(5_000u64),
         ] {
             let mut other = offers.clone();
             mutate(&mut other[0]);
@@ -260,5 +310,18 @@ mod tests {
                 "unexpected error: {err}"
             );
         }
+    }
+
+    #[test]
+    fn effective_reference_price_must_match_the_public_request_inputs() {
+        let offers = vec![sample_tribute_offer()];
+        let results = vec![sample_result()];
+        validate_effective_reference_prices(&offers, &results).unwrap();
+
+        let mut wrong = results;
+        wrong[0].effective_reference_price_minor -= U256::ONE;
+        let error = validate_effective_reference_prices(&offers, &wrong)
+            .expect_err("a forged enclave effective reference price must fail closed");
+        assert!(error.to_string().contains("tee_enclave_nondeterminism"));
     }
 }

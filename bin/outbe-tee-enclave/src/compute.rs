@@ -6,8 +6,8 @@
 //!
 //!   - checked arithmetic (no panics, per project safety rules — the host code
 //!     used unchecked ops); on overflow the offer is rejected, not aborted;
-//!   - the oracle price is an **input** (`tribute_price_minor`), read by the node
-//!     from committed Oracle state and identical on every validator.
+//!   - the exact WorldwideDay VWAP legs and reference S-curve are public inputs,
+//!     read by the node from committed Oracle state and identical on every validator.
 //!
 //! `tribute_id` is a Poseidon-BN254 hash over sensitive decrypted data, so it is
 //! computed only in the enclave.
@@ -19,7 +19,7 @@
 // `clippy::` tool lints are accepted (ignored) by plain rustc.
 #![deny(clippy::float_arithmetic)]
 
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, U256, U512};
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use outbe_poseidon::{Poseidon, PoseidonHasher};
@@ -107,32 +107,41 @@ pub fn compute_token_id(
     Ok(B256::from(poseidon_hash(&buf)?))
 }
 
-/// `nominal = floor(amount_minor * 1_000_000 / tribute_price_minor)` for the
-/// six-decimal COEN/ISO contract. Overflow and a positive result rounded to
-/// zero reject the offer.
+/// Computes the Tribute-only S-curve pricing contract:
+///
+/// `effective_ref = max(reference_vwap, reference_scurve)`
+/// `nominal = floor(amount * 1_000_000 * reference_vwap /
+///                  (issuance_vwap * effective_ref))`
+///
+/// Intermediate products are widened to 512 bits. Overflow, missing required
+/// VWAPs, and a positive result rounded to zero reject the offer.
 pub(crate) fn compute_nominal(
     amount_minor: U256,
-    tribute_price_minor: U256,
-) -> Result<U256, String> {
-    compute_nominal_at_scale(amount_minor, tribute_price_minor, SCALE_1E6_U256)
-}
-
-fn compute_nominal_at_scale(
-    amount_minor: U256,
-    tribute_price_minor: U256,
-    price_scale: U256,
-) -> Result<U256, String> {
-    if tribute_price_minor.is_zero() {
-        return Err("nominal price is zero".to_string());
+    issuance_wwd_vwap_minor: U256,
+    reference_wwd_vwap_minor: U256,
+    reference_scurve_minor: U256,
+) -> Result<(U256, U256), String> {
+    if issuance_wwd_vwap_minor.is_zero() {
+        return Err("issuance WorldwideDay VWAP is zero".to_string());
     }
-    let scaled = amount_minor
-        .checked_mul(price_scale)
+    if reference_wwd_vwap_minor.is_zero() {
+        return Err("reference WorldwideDay VWAP is zero".to_string());
+    }
+    let effective_reference_price_minor = reference_wwd_vwap_minor.max(reference_scurve_minor);
+    let numerator = U512::from(amount_minor)
+        .checked_mul(U512::from(SCALE_1E6_U256))
+        .and_then(|value| value.checked_mul(U512::from(reference_wwd_vwap_minor)))
         .ok_or_else(|| "nominal amount overflow".to_string())?;
-    let nominal = scaled / tribute_price_minor;
+    let denominator = U512::from(issuance_wwd_vwap_minor)
+        .checked_mul(U512::from(effective_reference_price_minor))
+        .ok_or_else(|| "nominal denominator overflow".to_string())?;
+    let quotient = numerator / denominator;
+    let nominal = U256::checked_from_limbs_slice(quotient.as_limbs())
+        .ok_or_else(|| "nominal amount overflow".to_string())?;
     if !amount_minor.is_zero() && nominal.is_zero() {
         return Err("nominal amount rounds to zero".to_string());
     }
-    Ok(nominal)
+    Ok((nominal, effective_reference_price_minor))
 }
 
 fn parse_canonical_u64(value: &str, field: &'static str) -> Result<u64, String> {
@@ -240,19 +249,47 @@ mod tests {
     }
 
     #[test]
-    fn nominal_division_uses_the_coen_iso_six_decimal_scale() {
+    fn same_currency_without_a_higher_curve_preserves_scale_six_nominal() {
         // amount=100 COEN, price=2.0 -> 50 COEN, all expressed as raw units.
         let amount = U256::from(100u64) * SCALE_1E6_U256;
         let price = U256::from(2u64) * SCALE_1E6_U256;
         assert_eq!(
-            compute_nominal(amount, price).unwrap(),
-            U256::from(50u64) * SCALE_1E6_U256
+            compute_nominal(amount, price, price, U256::ZERO).unwrap(),
+            (U256::from(50u64) * SCALE_1E6_U256, price)
+        );
+        assert_eq!(
+            compute_nominal(amount, price, price, SCALE_1E6_U256).unwrap(),
+            (U256::from(50u64) * SCALE_1E6_U256, price),
+            "a lower reference curve must not change the effective price"
         );
     }
 
     #[test]
-    fn positive_nominal_that_rounds_to_zero_is_rejected() {
-        assert!(compute_nominal(U256::ONE, U256::from(2_000_000u64)).is_err());
+    fn cross_currency_golden_applies_only_the_reference_curve_brake() {
+        assert_eq!(
+            compute_nominal(
+                U256::from(410_000u64),
+                U256::from(10_250_000u64),
+                U256::from(250_000u64),
+                U256::from(320_000u64),
+            )
+            .unwrap(),
+            (U256::from(31_250u64), U256::from(320_000u64))
+        );
+    }
+
+    #[test]
+    fn pricing_rejects_zero_required_inputs_overflow_and_positive_to_zero() {
+        for inputs in [
+            (U256::ONE, U256::ZERO, U256::ONE, U256::ZERO),
+            (U256::ONE, U256::ONE, U256::ZERO, U256::ZERO),
+        ] {
+            assert!(compute_nominal(inputs.0, inputs.1, inputs.2, inputs.3).is_err());
+        }
+        assert!(compute_nominal(U256::MAX, U256::ONE, U256::MAX, U256::ZERO).is_err());
+        assert!(
+            compute_nominal(U256::ONE, U256::from(2_000_000u64), U256::ONE, U256::ONE,).is_err()
+        );
     }
 
     const DRAFT_A: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";

@@ -294,7 +294,10 @@ pub fn dispatch(
             getReferenceCurrencies(_) => metadata::<IOracle::getReferenceCurrenciesCall>(|| {
                 oracle.reference_currencies.read_all()
             }),
-            getCurrencyRate(c) => view(c, |c| oracle.get_currency_rate(c.isoCode)),
+            getPolicyRateCurrencies(_) => metadata::<IOracle::getPolicyRateCurrenciesCall>(|| {
+                oracle.policy_rate_currencies.read_all()
+            }),
+            getPolicyRate(c) => view(c, |c| oracle.get_policy_rate(c.isoCode)),
             getNominalPrice(c) => view(c, |c| {
                 let pair = oracle.require_pair_from(c.base, c.quote)?;
                 let (nominal, _, _, _) = oracle.get_nominal_price_components(pair, c.timestamp)?;

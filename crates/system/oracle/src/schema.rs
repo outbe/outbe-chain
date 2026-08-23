@@ -223,13 +223,14 @@ pub struct OracleContract {
     // so every day <= this watermark is considered finalized.
     pub utc_day_vwap_last_finalized: Slot<u32>,
 
-    // slot 60: reference-currency annual rates, scale 1e6
-    pub reference_currency_rate: Mapping<u16, U256>,
+    // Slot 60 held annual policy rates while they were incorrectly coupled to
+    // reference-currency membership. It is retired; do not reuse.
 
     // === OCOMP PoC pre-admission projection (slots 61, 63-64) ===
     // These trailing fields are inert until the fresh-devnet fork handler sets
     // `ocomp_profile_ready`. Existing pre-fork Oracle writes therefore keep
     // their exact historical state footprint.
+    #[slot(61)]
     pub ocomp_profile_ready: Slot<bool>,
     // Slot 62 (`ocomp_day_type_pair_id`) is a retired hole. The day-type pair is
     // the compile-time `DAY_TYPE_PAIR_KEY`, so pinning its ordinal in storage
@@ -243,5 +244,23 @@ pub struct OracleContract {
     pub ocomp_state_version: Slot<u64>,
     // Slots 65-69 held the `quote` half of the five pair columns above, back
     // when a pair needed two parallel `Address` mappings. They are trailing
-    // retired holes: nothing follows, so nothing shifted when they went.
+    // retired holes. Do not reuse.
+
+    // === Exact WorldwideDay edge aggregates (slots 70-73) ===
+    // A WorldwideDay formation window starts at 10:00 UTC on the preceding
+    // calendar day and ends at 12:00 UTC on the following calendar day. These
+    // permanent partial-day aggregates let the canonical 50-hour VWAP compose
+    // that exact half-open interval without retaining or rescanning raw
+    // snapshots. Keys are (pair, UTC-midnight timestamp), like daily_pv_sum.
+    #[slot(70)]
+    pub wwd_suffix_pv_sum: Mapping<AddressPair, Mapping<u64, U256>>,
+    pub wwd_suffix_vol_sum: Mapping<AddressPair, Mapping<u64, U256>>,
+    pub wwd_prefix_pv_sum: Mapping<AddressPair, Mapping<u64, U256>>,
+    pub wwd_prefix_vol_sum: Mapping<AddressPair, Mapping<u64, U256>>,
+
+    // === Independent policy-rate registry (slots 74-75) ===
+    // Membership is enumerated independently of reference currencies and
+    // registered Oracle pairs. Rates are annualized at scale 1e6.
+    pub policy_rate_currencies: StorageVec<u16>,
+    pub policy_rate: Mapping<u16, U256>,
 }

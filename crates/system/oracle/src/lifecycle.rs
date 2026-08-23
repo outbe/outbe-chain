@@ -1,7 +1,6 @@
 use outbe_primitives::{
     block::{BlockLifecycle, BlockRuntimeContext},
     error::Result,
-    math::reference_price::is_coen_iso_market,
     time::{previous_date_key, timestamp_to_date_key},
 };
 
@@ -54,7 +53,8 @@ pub fn run_slash_window(ctx: &BlockRuntimeContext) -> Result<()> {
 /// At vote period boundaries: tallies votes, updates exchange rates, writes
 /// price snapshots, and counts miss/success/abstain per validator.
 ///
-/// At UTC day boundaries: runs S-curve peak detection for each active COEN/ISO pair.
+/// At UTC day boundaries: runs S-curve peak detection for each registered,
+/// active reference-currency COEN pair.
 ///
 /// Slash-window force-exits are deliberately deferred to the receipt-visible
 /// `OracleSlashWindow` system phase so a same-block `BoundaryOutcome` can
@@ -82,10 +82,9 @@ fn run_begin_block(ctx: &BlockRuntimeContext) -> Result<()> {
     let current_day = scurve::truncate_to_day(timestamp);
     let last_processed = oracle.scurve_last_processed_day.read()?;
     if current_day > last_processed && timestamp > 0 {
-        let pair_count = oracle.pair_count.read()?;
-        for pid in 1..=pair_count {
-            let pair = oracle.pair_at(pid)?;
-            if oracle.vote_target.read(&pair)? && is_coen_iso_market(pair) {
+        for iso_code in oracle.reference_currencies.read_all()? {
+            let pair = crate::types::AddressPair::new_coen_to(iso_code);
+            if oracle.pair_index_of(pair)? != 0 && oracle.vote_target.read(&pair)? {
                 scurve::process_daily_scurve(&mut oracle, pair, timestamp)?;
             }
         }

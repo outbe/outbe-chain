@@ -577,6 +577,95 @@ fn calculate_vwap_includes_only_snapshots_inside_the_window() {
 }
 
 #[test]
+fn calculate_vwap_excludes_the_half_open_end_boundary() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage);
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+        oracle
+            .write_snapshot(1_000, &[(pair, coen_iso(10), coen_iso(1))])
+            .unwrap();
+        oracle
+            .write_snapshot(2_000, &[(pair, coen_iso(900), coen_iso(1))])
+            .unwrap();
+
+        assert_eq!(
+            oracle.calculate_vwap(pair, 1_000, 2_000).unwrap(),
+            coen_iso(10)
+        );
+    });
+}
+
+#[test]
+fn write_snapshot_updates_exact_prefix_and_suffix_aggregates() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage);
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+        let day = 1_780_012_800u64;
+
+        for (offset, price, volume) in [
+            (9 * 60 * 60 + 59 * 60, 1, 2),
+            (10 * 60 * 60, 3, 4),
+            (11 * 60 * 60 + 59 * 60, 5, 6),
+            (12 * 60 * 60, 7, 8),
+        ] {
+            oracle
+                .write_snapshot(day + offset, &[(pair, coen_iso(price), coen_iso(volume))])
+                .unwrap();
+        }
+
+        let prefix_pv = oracle.wwd_prefix_pv_sum.get_nested(&pair);
+        let prefix_vol = oracle.wwd_prefix_vol_sum.get_nested(&pair);
+        let suffix_pv = oracle.wwd_suffix_pv_sum.get_nested(&pair);
+        let suffix_vol = oracle.wwd_suffix_vol_sum.get_nested(&pair);
+        assert_eq!(
+            prefix_pv.read(&day).unwrap(),
+            coen_iso(1) * coen_iso(2) + coen_iso(3) * coen_iso(4) + coen_iso(5) * coen_iso(6)
+        );
+        assert_eq!(prefix_vol.read(&day).unwrap(), coen_iso(12));
+        assert_eq!(
+            suffix_pv.read(&day).unwrap(),
+            coen_iso(3) * coen_iso(4) + coen_iso(5) * coen_iso(6) + coen_iso(7) * coen_iso(8)
+        );
+        assert_eq!(suffix_vol.read(&day).unwrap(), coen_iso(18));
+    });
+}
+
+#[test]
+fn partial_aggregate_overflow_rolls_back_the_entire_snapshot() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage);
+        let pair = AddressPair::new_coen_to(840);
+        oracle.register_pair(pair).unwrap();
+        let day = 1_780_012_800u64;
+        oracle
+            .wwd_prefix_pv_sum
+            .get_nested(&pair)
+            .write(&day, U256::MAX)
+            .unwrap();
+
+        let error = oracle
+            .write_snapshot(day + 60 * 60, &[(pair, coen_iso(1), coen_iso(1))])
+            .unwrap_err();
+        assert!(error.to_string().contains("VWAP overflow"));
+        assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 0);
+        assert_eq!(
+            oracle.daily_pv_sum.get_nested(&pair).read(&day).unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(
+            oracle
+                .wwd_prefix_pv_sum
+                .get_nested(&pair)
+                .read(&day)
+                .unwrap(),
+            U256::MAX
+        );
+    });
+}
+
+#[test]
 fn calculate_vwap_reverts_for_a_window_without_snapshots() {
     with_storage(|storage| {
         let oracle = OracleContract::new(storage.clone());
@@ -1238,6 +1327,49 @@ fn ocomp_opening_plan_slots_match_the_schema_layout() {
     });
 }
 
+#[test]
+fn worldwide_day_partial_aggregates_occupy_slots_70_through_73() {
+    use outbe_primitives::addresses::ORACLE_ADDRESS;
+    use outbe_primitives::storage::types::StorageKey;
+
+    with_storage(|storage| {
+        let oracle = OracleContract::new(storage.clone());
+        let pair = AddressPair::new_coen_to(840);
+        let day = 1_780_012_800u64;
+        let markers = [11u64, 12, 13, 14];
+        oracle
+            .wwd_suffix_pv_sum
+            .get_nested(&pair)
+            .write(&day, U256::from(markers[0]))
+            .unwrap();
+        oracle
+            .wwd_suffix_vol_sum
+            .get_nested(&pair)
+            .write(&day, U256::from(markers[1]))
+            .unwrap();
+        oracle
+            .wwd_prefix_pv_sum
+            .get_nested(&pair)
+            .write(&day, U256::from(markers[2]))
+            .unwrap();
+        oracle
+            .wwd_prefix_vol_sum
+            .get_nested(&pair)
+            .write(&day, U256::from(markers[3]))
+            .unwrap();
+
+        for (base, marker) in (70u64..=73).zip(markers) {
+            let outer = pair.mapping_slot(U256::from(base));
+            let slot = day.mapping_slot(outer);
+            assert_eq!(
+                storage.sload(ORACLE_ADDRESS, slot).unwrap(),
+                U256::from(marker),
+                "WWD partial aggregate moved from slot {base}"
+            );
+        }
+    });
+}
+
 /// Every retired slot in the settlement range must stay empty. Slots 41/42 are
 /// still opened by the frozen V1 plan, so a resurrected writer would change
 /// what that plan proves; 40/45/46 must stay clear so the holes remain
@@ -1278,12 +1410,8 @@ fn retired_settlement_slots_stay_zero_after_genesis() {
     });
 }
 
-/// Parity guard for the `reference_currency_rate` base slot used by
-/// `scripts/seed_genesis.py`. Writes a distinctive marker, then scans base
-/// slots 0..128 to recover the macro-assigned slot via the known
-/// `keccak256(left_pad(key, 32) || be(base, 32))` mapping derivation.
 #[test]
-fn reference_currency_rate_occupies_slot_60() {
+fn slot_60_is_retired_and_policy_registry_occupies_slots_74_and_75() {
     use alloy_primitives::keccak256;
     use outbe_primitives::addresses::ORACLE_ADDRESS;
 
@@ -1291,44 +1419,34 @@ fn reference_currency_rate_occupies_slot_60() {
         let oracle = OracleContract::new(storage.clone());
         let iso: u16 = 840;
         let marker = U256::from(0x00AB_CDEFu64);
-        oracle.reference_currency_rate.write(&iso, marker).unwrap();
+        oracle.policy_rate_currencies.push(iso).unwrap();
+        oracle.policy_rate.write(&iso, marker).unwrap();
 
-        for base in 0u64..128 {
-            let mut buf = [0u8; 64];
-            buf[30..32].copy_from_slice(&iso.to_be_bytes());
-            buf[32..64].copy_from_slice(&U256::from(base).to_be_bytes::<32>());
-            let slot = U256::from_be_bytes(keccak256(buf).0);
-            if storage.sload(ORACLE_ADDRESS, slot).unwrap() == marker {
-                assert_eq!(
-                    base, 60,
-                    "macro-assigned reference_currency_rate slot changed; \
-                     update scripts/seed_genesis.py"
-                );
-                return;
-            }
-        }
-        panic!("could not locate reference_currency_rate base slot in 0..128");
-    });
-}
-
-#[test]
-fn genesis_seeds_the_usd_currency_rate() {
-    with_storage(|storage| {
-        let mut oracle = OracleContract::new(storage.clone());
-        crate::genesis::init_from_genesis(
-            &mut oracle,
-            &crate::genesis::OracleGenesisConfig::default_config(),
-        )
-        .unwrap();
         assert_eq!(
-            oracle.get_currency_rate(840).unwrap(),
-            U256::from(36_300u64)
+            storage.sload(ORACLE_ADDRESS, U256::from(60)).unwrap(),
+            U256::ZERO
         );
+        assert_eq!(
+            storage.sload(ORACLE_ADDRESS, U256::from(74)).unwrap(),
+            U256::from(1)
+        );
+
+        let element_slot = U256::from_be_bytes(keccak256(U256::from(74).to_be_bytes::<32>()).0);
+        assert_eq!(
+            storage.sload(ORACLE_ADDRESS, element_slot).unwrap(),
+            U256::from(iso)
+        );
+
+        let mut buf = [0u8; 64];
+        buf[30..32].copy_from_slice(&iso.to_be_bytes());
+        buf[32..64].copy_from_slice(&U256::from(75).to_be_bytes::<32>());
+        let rate_slot = U256::from_be_bytes(keccak256(buf).0);
+        assert_eq!(storage.sload(ORACLE_ADDRESS, rate_slot).unwrap(), marker);
     });
 }
 
 #[test]
-fn get_currency_rate_reverts_for_an_unregistered_iso_code() {
+fn genesis_seeds_the_usd_policy_rate() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         crate::genesis::init_from_genesis(
@@ -1336,10 +1454,23 @@ fn get_currency_rate_reverts_for_an_unregistered_iso_code() {
             &crate::genesis::OracleGenesisConfig::default_config(),
         )
         .unwrap();
-        let err = oracle.get_currency_rate(978).unwrap_err();
+        assert_eq!(oracle.get_policy_rate(840).unwrap(), U256::from(36_300u64));
+    });
+}
+
+#[test]
+fn get_policy_rate_reverts_for_an_unregistered_iso_code() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        crate::genesis::init_from_genesis(
+            &mut oracle,
+            &crate::genesis::OracleGenesisConfig::default_config(),
+        )
+        .unwrap();
+        let err = oracle.get_policy_rate(978).unwrap_err();
         let msg = format!("{err:?}");
         assert!(
-            msg.contains("no currency rate for iso_code 978"),
+            msg.contains("no policy rate for iso_code 978"),
             "unexpected error: {msg}"
         );
     });
