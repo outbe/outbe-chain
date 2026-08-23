@@ -258,10 +258,10 @@ pub fn evaluate_oracle_opening_v1(
         return Err(OracleOcompError::NonCanonicalSlotSequence);
     }
 
-    let mut scurves = Vec::with_capacity((scurve_count - scurve_oldest) as usize);
+    let mut _scurves = Vec::with_capacity((scurve_count - scurve_oldest) as usize);
     for index in scurve_oldest..scurve_count {
         let pair_slot = mapping_slot(index, SCURVE_PAIR_BASE_SLOT);
-        scurves.push((
+        _scurves.push((
             checked_pair(value_at(pair_slot)?, value_at(next_slot(pair_slot))?),
             checked_u64(
                 value_at(mapping_slot(index, SCURVE_PEAK_DAY_BASE_SLOT))?,
@@ -281,10 +281,8 @@ pub fn evaluate_oracle_opening_v1(
         return Err(OracleOcompError::IsoNotAReferenceCurrency { iso: *iso });
     }
 
-    let target_day = crate::scurve::truncate_to_day(worldwide_day.to_timestamp_utc());
     let mut ordered_entry_prices = Vec::with_capacity(reference_isos.len());
     for (iso, index) in reference_isos.iter().copied().zip(pair_indices) {
-        let pair = AddressPair::new_coen_to(iso);
         // The proven index is both the registration witness and the key: a zero
         // means the verifier is pricing an unregistered pair.
         if index == 0 {
@@ -302,19 +300,7 @@ pub fn evaluate_oracle_opening_v1(
                 index,
             ))?
         };
-        let mut max_scurve = U256::ZERO;
-        for (entry_pair, peak_day, peak_price) in &scurves {
-            if !entry_pair.same_market(&pair) || target_day < *peak_day {
-                continue;
-            }
-            let days_since = ((target_day - *peak_day) / crate::scurve::DAY_SECONDS) as usize;
-            if days_since >= crate::scurve::PERIOD {
-                continue;
-            }
-            max_scurve =
-                max_scurve.max(crate::scurve::compute_scurve_value(*peak_price, days_since));
-        }
-        ordered_entry_prices.push((iso, vwap.max(max_scurve)));
+        ordered_entry_prices.push((iso, vwap));
     }
     Ok(OracleOpeningEvaluationV1 {
         ordered_entry_prices,

@@ -74,8 +74,8 @@ pub enum OracleError {
     // -- reference currencies -----------------------------------------------
     #[error("iso_code {iso_code} is not a registered reference currency")]
     NotReferenceCurrency { iso_code: u16 },
-    #[error("no currency rate for iso_code {iso_code}")]
-    NoCurrencyRate { iso_code: u16 },
+    #[error("no policy rate for iso_code {iso_code}")]
+    NoPolicyRate { iso_code: u16 },
 
     // -- slash window -------------------------------------------------------
     #[error("Oracle slash-window validator set size {actual} exceeds cap {cap}")]
@@ -92,6 +92,20 @@ pub enum OracleError {
     ReferenceIsoCodeZero,
     #[error("duplicate reference iso_code: {iso_code}")]
     DuplicateReferenceIsoCode { iso_code: u16 },
+    #[error("reference currencies must be sorted in ascending ISO order")]
+    ReferenceCurrenciesNotSorted,
+    #[error("reference currency count exceeds 6")]
+    ReferenceCurrencyCountExceedsMax,
+    #[error("reference currencies must include USD 840")]
+    MissingUsdReferenceCurrency,
+    #[error("policy iso_code must be non-zero")]
+    PolicyIsoCodeZero,
+    #[error("duplicate policy iso_code: {iso_code}")]
+    DuplicatePolicyIsoCode { iso_code: u16 },
+    #[error("policy rates must be sorted in ascending ISO order")]
+    PolicyRatesNotSorted,
+    #[error("policy rate must be non-zero for iso_code {iso_code}")]
+    PolicyRateZero { iso_code: u16 },
 
     // -- genesis aggregate votes --------------------------------------------
     #[error("aggregate vote validator must be non-zero")]
@@ -158,13 +172,20 @@ impl From<OracleError> for PrecompileError {
             | WorldwideDayVwapSnapshotNotFound
             | NoFinalizedUtcDayVwap
             | NotReferenceCurrency { .. }
-            | NoCurrencyRate { .. }
+            | NoPolicyRate { .. }
             | SlashWindowValidatorSetExceedsCap { .. }
             | VotePeriodZero
             | SlashWindowZero
             | LookbackExceedsRetention
             | ReferenceIsoCodeZero
             | DuplicateReferenceIsoCode { .. }
+            | ReferenceCurrenciesNotSorted
+            | ReferenceCurrencyCountExceedsMax
+            | MissingUsdReferenceCurrency
+            | PolicyIsoCodeZero
+            | DuplicatePolicyIsoCode { .. }
+            | PolicyRatesNotSorted
+            | PolicyRateZero { .. }
             | AggregateVoteValidatorZero
             | DuplicateAggregateVoteValidator
             | AggregateVoteAlreadyExists
@@ -294,7 +315,7 @@ mod tests {
             },
             OracleError::NoVwapData,
             OracleError::OnlySystem("activate vote target"),
-            OracleError::NoCurrencyRate { iso_code: 978 },
+            OracleError::NoPolicyRate { iso_code: 978 },
         ] {
             let message = err.to_string();
             assert!(

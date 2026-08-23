@@ -1853,6 +1853,7 @@ mod tests {
             owner: Address::repeat_byte(0x22),
             issuance_amount_minor: U256::from(1_000u64),
             nominal_amount_minor: U256::from(2_000u64),
+            effective_reference_price_minor: U256::from(3_000u64),
             su_hashes: vec!["0xabc".to_string()],
             wallet_addresses: vec![],
             sra_addresses: vec![],
@@ -1871,7 +1872,7 @@ mod tests {
 
         // Tampered result → reject.
         let mut tampered = results.clone();
-        tampered[0].owner = Address::repeat_byte(0x99);
+        tampered[0].effective_reference_price_minor += U256::ONE;
         assert!(verify_tribute_offer_attestation(&pk, hash, &tampered, &tag).is_err());
 
         // Tampered inputs hash → reject.

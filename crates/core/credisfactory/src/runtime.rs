@@ -5,7 +5,7 @@ use alloy_sol_types::SolCall;
 
 use outbe_credis::constants::{BP_DEN, POLICY_RATE_FACTOR_BP};
 use outbe_credis::{CredisContract, CredisState, OpenPositionParams};
-use outbe_oracle::api::{coen_rate_for_opt, get_currency_rate};
+use outbe_oracle::api::{coen_rate_for_opt, get_policy_rate};
 use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
@@ -159,7 +159,7 @@ pub fn request_credis(
 
 /// The currency's official annual policy rate, scaled by the policy-rate factor.
 fn policy_rate_for(storage: StorageHandle<'_>, issuance_currency: u16) -> Result<U256> {
-    let official = get_currency_rate(storage, issuance_currency)?;
+    let official = get_policy_rate(storage, issuance_currency)?;
     official
         .checked_mul(U256::from(POLICY_RATE_FACTOR_BP))
         .map(|v| v / U256::from(BP_DEN))

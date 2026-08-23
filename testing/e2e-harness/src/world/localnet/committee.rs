@@ -132,6 +132,22 @@ impl Localnet {
     /// quorum long enough to certify a new block between process exits, which
     /// is not a valid quiescent barrier for a test-only clock change.
     pub fn restart_committee_at_unix_time_offset(&mut self, offset_secs: i64) -> Result<()> {
+        self.stop_committee_preserving_enclaves()?;
+        let mut opts = self.start_opts.clone();
+        opts.unix_time_offset_secs = Some(offset_secs);
+        opts.genesis_timestamp_pre_shifted = true;
+        self.start(&opts)
+    }
+
+    /// Restart the complete validator cohort at one quiescent barrier while
+    /// preserving datadirs, running enclaves and the current logical clock.
+    pub fn restart_committee_preserving_enclaves(&mut self) -> Result<()> {
+        self.stop_committee_preserving_enclaves()?;
+        let opts = self.start_opts.clone();
+        self.start(&opts)
+    }
+
+    fn stop_committee_preserving_enclaves(&mut self) -> Result<()> {
         let validator_pids = self
             .validators
             .values()
@@ -149,10 +165,7 @@ impl Localnet {
         if !self.validators.is_empty() {
             bail!("committee stop barrier retained a validator process");
         }
-        let mut opts = self.start_opts.clone();
-        opts.unix_time_offset_secs = Some(offset_secs);
-        opts.genesis_timestamp_pre_shifted = true;
-        self.start(&opts)
+        Ok(())
     }
 
     /// Relaunch one exact stopped committee validator while leaving every other

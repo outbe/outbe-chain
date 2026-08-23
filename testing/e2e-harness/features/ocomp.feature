@@ -29,6 +29,7 @@ Feature: Off-chain computation and Metadosis
     Then Metadosis creates one finalized JobIntent from that public Tribute
     When the production OCOMP domains process that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod
+    And Lysis and OCOMP use the WWD VWAP below the active S-curve
     And the keyless FullNode verifies the same finalized Nod body through its local proof path
     And all four OCOMP domains run their node-facing production roles
     And each OCOMP domain retains isolated deterministic worker artifacts for that JobIntent

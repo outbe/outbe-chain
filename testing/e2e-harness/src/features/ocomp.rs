@@ -52,11 +52,11 @@ const OCOMP_CAPACITY_SUBMISSION_CONCURRENCY: usize = 2;
 // Sequential real-SGX offers remain inside the genesis-bound phase window;
 // the controlled-time step advances immediately after all receipts arrive.
 const METADOSIS_CAPACITY_OFFERING_SECONDS: u64 = 3_600;
-// Cycle forms the immutable limit for WWD D at UTC midnight D+1, exactly
-// 38 hours after the UTC+14 WWD boundary. Keep FORMING open for one additional
-// minute so the controlled-time E2E crosses that real production Cycle first;
-// never seed the receipt directly in the harness.
-const METADOSIS_FRESH_FORMING_SECONDS: u64 = 38 * 3_600 + 60;
+// Exact WorldwideDay VWAP formation always spans the canonical 50-hour window.
+// The scenario advances that interval with the controlled logical-time ratchet;
+// it must never shorten the consensus constant merely to make the E2E faster.
+const METADOSIS_FRESH_FORMING_SECONDS: u64 =
+    outbe_chain_constants::DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS;
 const OCOMP_TRACE_FOLLOWER_SLOT: usize = 14;
 // A one-Tribute scenario can reach request publication well before its
 // genesis-bound offering window closes, so the bounded wait includes the
@@ -1433,6 +1433,11 @@ fn fresh_capacity_day_is_created_in_forming(world: &mut World) {
         "fresh process evidence must use the immutable genesis FORMING duration"
     );
     assert_eq!(
+        protocol_constants.metadosis_forming_period_seconds,
+        outbe_chain_constants::DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS,
+        "fresh WWD fixture must preserve the canonical 50-hour VWAP window"
+    );
+    assert_eq!(
         state.lookback_end - state.forming_end,
         protocol_constants.metadosis_lookback_delay_seconds,
         "fresh process evidence must use the immutable genesis LOOKBACK duration"
@@ -2637,6 +2642,40 @@ fn held_vote_is_broadcast_at_deadline(world: &mut World) {
 #[then("three matching validator domains atomically apply Lysis and create the Nod")]
 fn quorum_applies_lysis_and_creates_nod(world: &mut World) {
     quorum_applies_lysis_and_creates_nod_with_vote_count(world, 4);
+}
+
+#[then("Lysis and OCOMP use the WWD VWAP below the active S-curve")]
+fn lysis_and_ocomp_use_wwd_below_scurve(world: &mut World) {
+    let activation = world
+        .state
+        .ocomp_activation
+        .as_ref()
+        .expect("finalized OCOMP activation");
+    let generation = world
+        .state
+        .ocomp_certified_generation
+        .as_ref()
+        .expect("certified Nod generation");
+    let actions = result_nod_actions_on(world, 0, generation.job_id);
+    let [action] = actions.as_slice() else {
+        panic!("single-Tribute pricing scenario must produce exactly one Nod action")
+    };
+    let (wwd_vwap, scurve) = world
+        .rpc
+        .oracle_wwd_vwap_and_scurve(
+            world.validators.primary_port(),
+            activation.worldwide_day,
+            840,
+        )
+        .expect("read canonical WWD VWAP and active S-curve");
+    assert!(
+        scurve > wwd_vwap,
+        "fixture must keep an active S-curve above the WWD VWAP"
+    );
+    assert_eq!(
+        action.entry_price_minor, wwd_vwap,
+        "Lysis/Nod must carry WWD VWAP rather than the higher S-curve"
+    );
 }
 
 #[then("three compatible validator domains atomically apply Lysis and create the Nod")]
@@ -4585,28 +4624,22 @@ fn restart_completed_network_and_ocomp_processes(world: &mut World) {
     // complete cohort before taking down any validator, exactly as the initial
     // production-shaped launch starts them only after committee readiness.
     stop_ocomp_roles_before_committee_time_change(world);
+    world
+        .localnet
+        .restart_committee_preserving_enclaves()
+        .unwrap_or_else(|error| {
+            panic!("restart complete committee with preserved datadirs and enclaves: {error:#}")
+        });
     for validator_index in 0..4 {
-        world
-            .localnet
-            .restart_validator_preserving_enclave(validator_index)
-            .unwrap_or_else(|error| {
-                panic!(
-                    "restart validator-{validator_index} with its preserved datadir and enclave: {error:#}"
-                )
-            });
         let port = world.validators.http_port(validator_index);
         assert!(
-            world
-                .rpc
-                .wait_block(port, before.saturating_add(1), 60)
-                .is_some(),
-            "validator-{validator_index} did not rejoin after preserved-datadir restart"
+            world.rpc.wait_block(port, before, 60).is_some(),
+            "validator-{validator_index} did not restore its preserved finalized head"
         );
     }
 
-    // A shared historical floor is not enough: sequential restarts can leave
-    // peers at different live heads. Require one fresh canonical finalization
-    // beyond the most advanced peer observed after the complete cohort is back.
+    // A shared historical floor is not enough: require one fresh canonical
+    // finalization after the complete cohort returns from the quiescent barrier.
     let convergence_target = post_restart_convergence_target(
         world.validators.committee_ports().into_iter().map(|port| {
             world

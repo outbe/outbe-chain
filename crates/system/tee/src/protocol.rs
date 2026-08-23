@@ -31,13 +31,14 @@ pub const MIN_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES: usize = 60;
 /// A single offer handed to the enclave.
 ///
 /// Fields mirror the part of `ITributeFactory.offerTribute` the enclave needs,
-/// plus the sender and the node-resolved price:
+/// plus the sender and the node-resolved public Oracle inputs:
 ///   - `cipherText`, `nonce`, `ephemeralPubkey`, `worldwideDay`,
 ///     `tributeCurrency`, `referenceCurrency`, `excludeFromIntexIssuance` (ABI);
 ///   - `owner` — the L1 `msg.sender`; the enclave binds it into the result and
 ///     into the `token_id` (computed in-enclave, see `TributeOfferResult`);
-///   - `tribute_price_minor` — resolved by the node from committed Oracle state
-///     for `(tribute_currency, worldwide_day)`; not an ABI field.
+///   - `issuance_wwd_vwap_minor`, `reference_wwd_vwap_minor`, and
+///     `reference_scurve_minor` — resolved by the node from committed Oracle
+///     state; not ABI fields.
 ///
 /// The ZK fields (`zkProof`/`zkVerificationKey`/`zkPublicKey`/`zkMerkleRoot`)
 /// are verified BEFORE the enclave call and are NOT forwarded.
@@ -67,8 +68,7 @@ pub struct EncryptedTributeOffer {
     /// rejects a mismatch, and every validator re-executes the call, so the
     /// chain — not a second in-enclave calendar — is what anchors this field.
     pub worldwide_day: WorldwideDay,
-    /// ABI `tributeCurrency`: ISO 4217 code the tribute amount is denominated
-    /// in, and the currency `tribute_price_minor` prices.
+    /// ABI `tributeCurrency`: ISO 4217 code the tribute amount is denominated in.
     pub tribute_currency: u16,
     /// ABI `referenceCurrency`. A separate axis from `tribute_currency` — it
     /// drives gem/intex qualification, not pricing.
@@ -76,10 +76,13 @@ pub struct EncryptedTributeOffer {
     /// ABI `excludeFromIntexIssuance`: when true, the resulting Tribute is
     /// excluded from Intex issuance.
     pub exclude_from_intex_issuance: bool,
-    /// Nominal COEN price for `COEN/<tribute_currency>` at `worldwide_day`,
-    /// Rate in the ISO stablecoin domain (scale 1e6), resolved by the node from
-    /// committed Oracle state.
-    pub tribute_price_minor: U256,
+    /// Exact WorldwideDay VWAP for `COEN/<tribute_currency>`, scale 1e6.
+    pub issuance_wwd_vwap_minor: U256,
+    /// Exact WorldwideDay VWAP for `COEN/<reference_currency>`, scale 1e6.
+    pub reference_wwd_vwap_minor: U256,
+    /// Continuous reference-currency S-curve value, scale 1e6. Zero means no
+    /// active curve and is valid.
+    pub reference_scurve_minor: U256,
     /// Public ZK claim context supplied only for registered L2 networks with
     /// ZK verification enabled. The owner is the first public input embedded
     /// in `zkProof`; the chain id is read from the local execution context.
@@ -128,6 +131,9 @@ pub struct TributeOfferResult {
     pub owner: Address,
     pub issuance_amount_minor: U256,
     pub nominal_amount_minor: U256,
+    /// `max(reference_wwd_vwap_minor, reference_scurve_minor)`, computed inside
+    /// the enclave and checked by the host against the public request inputs.
+    pub effective_reference_price_minor: U256,
     /// SU hashes (hex) — the host marks them used (replay prevention). Public
     /// on-chain as used-markers. The privacy-preserving markers-only form (rather
     /// than raw hashes) is a later slice (see `process.rs`).
@@ -969,7 +975,9 @@ pub fn inputs_canonical_hash(offers: &[EncryptedTributeOffer]) -> B256 {
         buf.extend_from_slice(&offer.tribute_currency.to_be_bytes());
         buf.extend_from_slice(&offer.reference_currency.to_be_bytes());
         buf.push(u8::from(offer.exclude_from_intex_issuance));
-        buf.extend_from_slice(&offer.tribute_price_minor.to_be_bytes::<32>());
+        buf.extend_from_slice(&offer.issuance_wwd_vwap_minor.to_be_bytes::<32>());
+        buf.extend_from_slice(&offer.reference_wwd_vwap_minor.to_be_bytes::<32>());
+        buf.extend_from_slice(&offer.reference_scurve_minor.to_be_bytes::<32>());
         match &offer.zk_context {
             Some(context) => {
                 buf.push(1);
