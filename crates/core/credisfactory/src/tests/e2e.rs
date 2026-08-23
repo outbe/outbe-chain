@@ -116,6 +116,39 @@ fn settle_is_rejected_until_the_price_crosses_the_floor() {
 }
 
 #[test]
+fn a_stale_live_price_does_not_latch_an_open_position() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let position_id = open(&storage, 1);
+        set_coen_rate(&storage, above_floor());
+        advance_to(
+            &storage,
+            CREATED_AT + outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS + 1,
+        );
+
+        let error = runtime::settle(
+            storage.clone(),
+            alice(),
+            position_id,
+            U256::from(1_000_000u64),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("not settleable"), "{error}");
+        assert_eq!(
+            CredisContract::new(storage.clone())
+                .get_position(position_id)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            CredisState::Open
+        );
+    });
+    teardown();
+}
+
+#[test]
 fn settlement_releases_collateral_proportionally_and_closes_without_dust() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
@@ -175,6 +208,7 @@ fn the_settle_abi_returns_the_principal_and_interest_split() {
         let position_id = open(&storage, 1);
         set_coen_rate(&storage, above_floor());
         advance_to(&storage, CREATED_AT + 30 * DAY);
+        set_coen_rate(&storage, above_floor());
 
         let position = CredisContract::new(storage.clone())
             .get_position(position_id)
@@ -217,6 +251,7 @@ fn settle_takes_only_what_the_position_needs() {
         let position_id = open(&storage, 1);
         set_coen_rate(&storage, above_floor());
         advance_to(&storage, CREATED_AT + 30 * DAY);
+        set_coen_rate(&storage, above_floor());
 
         let position = CredisContract::new(storage.clone())
             .get_position(position_id)

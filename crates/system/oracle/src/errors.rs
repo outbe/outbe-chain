@@ -62,6 +62,8 @@ pub enum OracleError {
     TwapOverflow,
     #[error("cross-currency conversion overflow")]
     CrossRateOverflow,
+    #[error("COEN rate for currency {iso_code} is stale")]
+    StaleCoenRate { iso_code: u16 },
     #[error("lookback_seconds must be > 0 and <= lookback_duration")]
     InvalidLookbackSeconds,
     #[error("start_time must be less than end_time")]
@@ -167,6 +169,7 @@ impl From<OracleError> for PrecompileError {
             | VwapOverflow(_)
             | TwapOverflow
             | CrossRateOverflow
+            | StaleCoenRate { .. }
             | InvalidLookbackSeconds
             | InvalidVwapRange
             | WorldwideDayVwapSnapshotNotFound

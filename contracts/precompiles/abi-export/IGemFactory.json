@@ -306,7 +306,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "issuanceCurrency",
+        "name": "settlementCurrency",
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"

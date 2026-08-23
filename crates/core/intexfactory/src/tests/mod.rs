@@ -143,4 +143,8 @@ fn write_rate(oracle: &OracleContract, iso_code: u16, pair_id: u32, rate: U256) 
     let pair = outbe_oracle::api::AddressPair::new_coen_to(iso_code);
     oracle.pair_to_index.write(&pair, pair_id).unwrap();
     oracle.exchange_rate.write(&pair_id, rate).unwrap();
+    oracle
+        .exchange_rate_timestamp
+        .write(&pair_id, ISSUED_AT as u64)
+        .unwrap();
 }

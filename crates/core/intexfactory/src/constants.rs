@@ -81,10 +81,6 @@ pub const CALL_THRESHOLD: u32 = 21 * 24 * 3600;
 /// adapter's six-decimal pin makes equal to the payment token's minor units.
 pub const COMMIT_BOND_MINOR: u128 = 100_000_000 * SCALE_1E6_U128;
 
-/// How old a COEN rate may be and still convert a settlement into the issuance currency.
-/// Seconds, not vote periods: those are counted in blocks and stretch under congestion.
-pub const FX_RATE_MAX_AGE_SECONDS: u64 = 6 * 3600;
-
 /// Series one ISSUANCE_INSTRUCTIONS message may carry, and recipients across them.
 /// Mirror the codec's `MAX_SERIES_PER_ISSUANCE` and `MAX_PAYLOAD_ARRAY_LEN`.
 pub const MAX_SERIES_PER_MESSAGE: usize = 8;

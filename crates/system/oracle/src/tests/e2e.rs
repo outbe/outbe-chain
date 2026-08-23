@@ -304,6 +304,111 @@ fn precompile_dispatch_round_trips_an_exchange_rate() {
         );
     });
 }
+
+#[test]
+fn fresh_rate_accepts_the_ttl_boundary_and_rejects_the_next_second() {
+    let published = 1_000u64;
+    with_storage_at(
+        published + crate::constants::FX_RATE_MAX_AGE_SECONDS,
+        |storage| {
+            let mut oracle = OracleContract::new(storage.clone());
+            oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
+            oracle
+                .set_exchange_rate(
+                    Address::ZERO,
+                    AddressPair::new_coen_to(840),
+                    coen_iso(123),
+                    42,
+                    published,
+                )
+                .unwrap();
+
+            assert_eq!(
+                crate::api::fresh_coen_rate_for(storage.clone(), 840).unwrap(),
+                coen_iso(123)
+            );
+            assert_eq!(
+                crate::api::fresh_coen_rate_for_opt(storage.clone(), 840).unwrap(),
+                Some(coen_iso(123))
+            );
+
+            storage
+                .set_block_timestamp(U256::from(
+                    published + crate::constants::FX_RATE_MAX_AGE_SECONDS + 1,
+                ))
+                .unwrap();
+            let error = crate::api::fresh_coen_rate_for(storage.clone(), 840).unwrap_err();
+            assert!(error.to_string().contains("stale"), "{error}");
+            assert_eq!(
+                crate::api::fresh_coen_rate_for_opt(storage, 840).unwrap(),
+                None
+            );
+        },
+    );
+}
+
+#[test]
+fn fresh_rate_rejects_a_zero_publication_timestamp_without_changing_raw_reads() {
+    with_storage_at(1_000, |storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
+        oracle
+            .set_exchange_rate(
+                Address::ZERO,
+                AddressPair::new_coen_to(840),
+                coen_iso(123),
+                0,
+                0,
+            )
+            .unwrap();
+
+        assert_eq!(
+            crate::api::coen_rate_for(storage.clone(), 840).unwrap(),
+            coen_iso(123)
+        );
+        assert!(crate::api::fresh_coen_rate_for(storage.clone(), 840).is_err());
+        assert_eq!(
+            crate::api::fresh_coen_rate_for_opt(storage, 840).unwrap(),
+            None
+        );
+    });
+}
+
+#[test]
+fn fresh_cross_rate_short_circuits_equal_currency_but_rejects_a_stale_leg() {
+    with_storage_at(10_000, |storage| {
+        let amount = U256::from(100u64);
+        assert_eq!(
+            crate::api::fresh_currency_cross_rate(storage.clone(), 840, 840, amount).unwrap(),
+            amount
+        );
+
+        let mut oracle = OracleContract::new(storage.clone());
+        for iso in [840, 978] {
+            oracle.register_pair(AddressPair::new_coen_to(iso)).unwrap();
+        }
+        oracle
+            .set_exchange_rate(
+                Address::ZERO,
+                AddressPair::new_coen_to(840),
+                coen_iso(2),
+                1,
+                10_000,
+            )
+            .unwrap();
+        oracle
+            .set_exchange_rate(
+                Address::ZERO,
+                AddressPair::new_coen_to(978),
+                coen_iso(1),
+                1,
+                0,
+            )
+            .unwrap();
+
+        assert!(crate::api::fresh_currency_cross_rate(storage, 840, 978, amount).is_err());
+    });
+}
 #[test]
 fn precompile_dispatch_round_trips_the_whole_query_surface() {
     with_storage_at(3_000, |storage| {
