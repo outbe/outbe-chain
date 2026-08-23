@@ -326,6 +326,21 @@ jobs:
           cache-on-failure: true
       - run: cargo +nightly miri test --lib
 
+  emission-reference:
+    name: emission reference
+    runs-on: depot-ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      # Consensus economics guard. `--mode check` does two things the Rust
+      # tests cannot: it re-derives testing/emission-reference/vectors.json and
+      # byte-compares it (so a hand-edited golden file is caught), and it runs
+      # the arbitrary-precision oracle against the closed form (so a wrong
+      # constant or a botched recurrence is caught even when the vectors were
+      # regenerated to match it). Pure stdlib, no toolchain needed.
+      - name: Verify daily emission curve against the high-precision oracle
+        run: python3 testing/emission-reference/reference.py --mode check
+
   ci-success:
     name: ci success
     runs-on: depot-ubuntu-latest
@@ -334,6 +349,7 @@ jobs:
       - fmt
       - clippy
       - test
+      - emission-reference
       - doctests
       - localnet
       - udeps
