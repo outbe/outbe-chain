@@ -59,7 +59,9 @@ The production daily orchestrator owns calls to sinks and completion/replay stat
 EmissionLimit may provide pure allocation and a narrow terminal-Metadosis helper,
 but it does not own sink balances, retries or `daily_settled`. Any generic
 per-sink fallback dispatcher is non-normative unless the production command adopts
-and tests that failure model explicitly.
+and tests that failure model explicitly. The former unused best-effort dispatcher
+has been removed so the repository exposes only the production all-or-nothing
+delivery policy.
 
 ## Invariants
 
