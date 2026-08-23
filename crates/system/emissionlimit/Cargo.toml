@@ -9,7 +9,6 @@ publish.workspace = true
 outbe-primitives.workspace = true
 outbe-metadosis.workspace = true
 alloy-primitives.workspace = true
-tracing.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

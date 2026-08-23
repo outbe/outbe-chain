@@ -152,6 +152,70 @@ mod tests {
         }
     }
 
+    /// `day_emission_limit` multiplies and accumulates with the bare operators.
+    /// `alloy_primitives::U256` implements `Mul`/`Add`/`Sub` over `wrapping_*`
+    /// — they do NOT panic on overflow, in debug builds either — so "the values
+    /// are comfortably within U256" has to be enforced, not asserted in a
+    /// comment. This re-runs the recurrence with checked arithmetic over every
+    /// day in the formula domain and fails if any step could wrap.
+    ///
+    /// It also pins the two other silent-degradation paths in the same loop:
+    /// the alternating partial sums never invert, so the `saturating_sub` at the
+    /// end of the formula never saturates into a spurious floor clamp.
+    #[test]
+    fn taylor_recurrence_never_overflows_or_inverts_over_the_formula_domain() {
+        let mut worst_intermediate = U256::ZERO;
+
+        for day_number in 0..FLOOR_DAY_THRESHOLD {
+            let day = U256::from(day_number);
+            let mut pos_sum = INITIAL_DAY_EMISSION;
+            let mut neg_sum = U256::ZERO;
+            let mut term = INITIAL_DAY_EMISSION;
+
+            for k in 1..TAYLOR_TERMS {
+                let scaled = term
+                    .checked_mul(K_NUM)
+                    .and_then(|t| t.checked_mul(day))
+                    .unwrap_or_else(|| {
+                        panic!("term numerator overflows at day {day_number}, k {k}")
+                    });
+                if scaled > worst_intermediate {
+                    worst_intermediate = scaled;
+                }
+                let divisor = K_DEN
+                    .checked_mul(U256::from(k as u64))
+                    .unwrap_or_else(|| panic!("term divisor overflows at k {k}"));
+                term = scaled / divisor;
+                if term.is_zero() {
+                    break;
+                }
+                if k % 2 == 1 {
+                    neg_sum = neg_sum
+                        .checked_add(term)
+                        .unwrap_or_else(|| panic!("neg_sum overflows at day {day_number}"));
+                } else {
+                    pos_sum = pos_sum
+                        .checked_add(term)
+                        .unwrap_or_else(|| panic!("pos_sum overflows at day {day_number}"));
+                }
+            }
+
+            assert!(
+                pos_sum > neg_sum,
+                "alternating sums inverted at day {day_number}: the production \
+                 saturating_sub would silently collapse to the floor"
+            );
+        }
+
+        // Headroom check: the worst intermediate must stay orders of magnitude
+        // below the type ceiling so a constant change cannot quietly approach it.
+        let ceiling = U256::MAX / U256::from(u128::MAX);
+        assert!(
+            worst_intermediate < ceiling,
+            "worst Taylor intermediate {worst_intermediate} is within 2^128 of U256::MAX"
+        );
+    }
+
     #[test]
     fn production_is_monotonic_for_the_full_emission_range() {
         let mut previous = day_emission_limit(0);
