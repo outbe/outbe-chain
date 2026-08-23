@@ -197,12 +197,21 @@ pub fn settle_emission_day(ctx: &BlockRuntimeContext, prev_day: u32) -> Result<(
         let topup = validator_amount
             .checked_sub(fees)
             .ok_or_else(|| PrecompileError::Revert("validator topup underflow".into()))?;
-        outbe_rewards::api::add_topup_for_voters(ctx, prev_day, topup, &voters)
-                .map_err(|e| {
-                    tracing::error!(target: "outbe::cycle", step = "add_topup_for_voters", error = ?e, "emission_limit_daily step failed");
-                    e
-                })?;
-        fees
+        let outcome = outbe_rewards::api::add_topup_for_voters(ctx, prev_day, topup, &voters)
+            .map_err(|e| {
+                tracing::error!(target: "outbe::cycle", step = "add_topup_for_voters", error = ?e, "emission_limit_daily step failed");
+                e
+            })?;
+        match outcome {
+            outbe_rewards::api::TopupSettlementOutcome::Settled { distributed } => {
+                validator_amount.checked_sub(distributed).ok_or_else(|| {
+                    PrecompileError::Revert(
+                        "validator topup distributed more than allocated".into(),
+                    )
+                })?
+            }
+            outbe_rewards::api::TopupSettlementOutcome::AlreadySettled => fees,
+        }
     };
 
     let g2 = gas(ctx);
