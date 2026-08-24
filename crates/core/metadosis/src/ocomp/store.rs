@@ -28,6 +28,37 @@ use super::{
     },
 };
 
+/// The single definition of which retained terminal shapes a retry may build on.
+pub(crate) fn classify_retained_terminal(
+    status: OcompJobStatus,
+    outcome: OcompTerminalOutcome,
+    has_completed_binding: bool,
+) -> Result<RetryTerminalOutcome> {
+    match (status, outcome) {
+        (OcompJobStatus::Expired, OcompTerminalOutcome::Expired) if !has_completed_binding => {
+            Ok(RetryTerminalOutcome::Expired)
+        }
+        (OcompJobStatus::Conflicted, OcompTerminalOutcome::Conflicted) if has_completed_binding => {
+            Ok(RetryTerminalOutcome::Conflicted)
+        }
+        // Completion clears the day's FSM in the same transition, so a
+        // completed entry surfacing through a live FSM read means the
+        // day's FSM was recreated after completion.
+        (OcompJobStatus::Completed, OcompTerminalOutcome::Completed) => Err(
+            storage_corruption_message("completed OCOMP WorldwideDay retains a live FSM"),
+        ),
+        (OcompJobStatus::Expired, _) | (_, OcompTerminalOutcome::Expired) => Err(
+            storage_corruption_message("OCOMP expired terminal entry has an inconsistent status/binding"),
+        ),
+        (OcompJobStatus::Conflicted, _) | (_, OcompTerminalOutcome::Conflicted) => Err(
+            storage_corruption_message("OCOMP conflicted terminal entry has an inconsistent status/binding"),
+        ),
+        _ => Err(storage_corruption_message(
+            "OCOMP terminal index points to a non-retry job",
+        )),
+    }
+}
+
 impl MetadosisContract<'_> {
     pub(crate) fn request_budget_receipt(
         &self,
@@ -182,41 +213,11 @@ impl MetadosisContract<'_> {
             let terminal = record.terminal.as_ref().ok_or_else(|| {
                 storage_corruption_message("OCOMP terminal job has no terminal evidence")
             })?;
-            let outcome = match (record.status, terminal.outcome) {
-                (OcompJobStatus::Expired, OcompTerminalOutcome::Expired)
-                    if terminal.completed_binding.is_none() =>
-                {
-                    RetryTerminalOutcome::Expired
-                }
-                (OcompJobStatus::Conflicted, OcompTerminalOutcome::Conflicted)
-                    if terminal.completed_binding.is_some() =>
-                {
-                    RetryTerminalOutcome::Conflicted
-                }
-                // Completion clears the day's FSM in the same transition, so a
-                // completed entry surfacing through a live FSM read means the
-                // day's FSM was recreated after completion.
-                (OcompJobStatus::Completed, OcompTerminalOutcome::Completed) => {
-                    return Err(storage_corruption_message(
-                        "completed OCOMP WorldwideDay retains a live FSM",
-                    ));
-                }
-                (OcompJobStatus::Expired, _) | (_, OcompTerminalOutcome::Expired) => {
-                    return Err(storage_corruption_message(
-                        "OCOMP expired terminal entry has an inconsistent status/binding",
-                    ));
-                }
-                (OcompJobStatus::Conflicted, _) | (_, OcompTerminalOutcome::Conflicted) => {
-                    return Err(storage_corruption_message(
-                        "OCOMP conflicted terminal entry has an inconsistent status/binding",
-                    ));
-                }
-                _ => {
-                    return Err(storage_corruption_message(
-                        "OCOMP terminal index points to a non-retry job",
-                    ))
-                }
-            };
+            let outcome = classify_retained_terminal(
+                record.status,
+                terminal.outcome,
+                terminal.completed_binding.is_some(),
+            )?;
             let next_pending_nonce = terminal.next_pending_nonce.ok_or_else(|| {
                 storage_corruption_message("retryable OCOMP terminal job lacks next nonce")
             })?;

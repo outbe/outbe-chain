@@ -403,9 +403,12 @@ fn build_and_commit_retry(
         .terminal
         .as_ref()
         .ok_or_else(|| storage_corruption_message("OCOMP retry source has no terminal evidence"))?;
-    if previous.status != outbe_ocomp_protocol::state::OcompJobStatus::Expired
-        || terminal.outcome != outbe_ocomp_protocol::state::OcompTerminalOutcome::Expired
-        || terminal.next_pending_nonce != Some(pending_nonce)
+    super::store::classify_retained_terminal(
+        previous.status,
+        terminal.outcome,
+        terminal.completed_binding.is_some(),
+    )?;
+    if terminal.next_pending_nonce != Some(pending_nonce)
         || previous.intent.wwd != wwd.value()
         || previous.intent.protocol_bundle_hash != profile.protocol_bundle_hash
         || previous.intent.chain_id != profile.chain_id
