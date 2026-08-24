@@ -13,9 +13,10 @@ import {WCOEN as NativeWCOEN} from "../../src/native/WCOEN.sol";
 import {BridgeableERC20 as SyntheticWCOEN} from "../../src/synthetic/BridgeableERC20.sol";
 
 /// @title WCOENDeploy
-/// @notice ERC-7786 / ERC-7802 deployment and configuration script for WCOEN(Outbe) <> WCOEN(BNB).
+/// @notice ERC-7786 / ERC-7802 deployment and configuration script for WCOEN(Outbe) <> WCOEN(target chain).
+/// @dev The target chain is whichever chain `BSC_CHAIN_ID` / `BSC_WCOEN_*` point at — BNB testnet, Sepolia, anvil.
+///      No chain id is hardcoded: adding a network is an env change, not a code change.
 contract WCOENDeploy is Script {
-    uint256 internal constant BSC_TESTNET_CHAIN_ID = 97;
     bytes4 internal constant SET_TOKEN_BRIDGE_SELECTOR = bytes4(keccak256("setTokenBridge(address)"));
 
     struct SourceDeployment {
@@ -64,8 +65,6 @@ contract WCOENDeploy is Script {
     }
 
     function _isGuardedChain() internal view returns (bool) {
-        if (block.chainid == BSC_TESTNET_CHAIN_ID) return true;
-
         uint256 bscChainId = vm.envOr("BSC_CHAIN_ID", uint256(0));
         if (bscChainId != 0 && block.chainid == bscChainId) return true;
 
