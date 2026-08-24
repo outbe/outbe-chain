@@ -9,3 +9,17 @@
 
 [alias]
 xtask = "run --locked --package xtask --"
+
+# Developer-only source override: consume the sibling `outbe-circuits`
+# checkout (which contains the frozen `outbe.emit.mint@1.0.0` circuit,
+# committed revision `c0c1c9e`) instead of the published `v0.11.0` tag, which
+# predates Emit. All four circuit packages are patched together so exactly one
+# `outbe-protocol` type identity is shared across `outbe-zk-canonical`,
+# `outbe-zk-backend`, the TEE enclave, and the E2E harness. Publishing/tagging
+# the circuit and removing this override is a separate release operation; the
+# canonical Git declarations in the root `Cargo.toml` stay unchanged.
+[patch."https://github.com/outbe/outbe-circuits.git"]
+outbe-zk-canonical = { path = "../outbe-circuits/crates/outbe-zk-canonical" }
+outbe-zk-backend = { path = "../outbe-circuits/crates/outbe-zk-backend" }
+outbe-protocol = { path = "../outbe-circuits/crates/outbe-protocol" }
+outbe-protocol-derive = { path = "../outbe-circuits/crates/outbe-protocol-derive" }

@@ -55,6 +55,7 @@ outbe-cycle.workspace = true
 outbe-accounting.workspace = true
 outbe-zkproof.workspace = true
 outbe-paynote.workspace = true
+outbe-emit.workspace = true
 
 # Alloy
 alloy-consensus.workspace = true
@@ -88,6 +89,11 @@ serde_json.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+# Emit integration-test fixtures: real witness construction and proving stay
+# test-only; no proving API enters production.
+outbe-zk-backend.workspace = true
+outbe-zk-canonical.workspace = true
+outbe-protocol.workspace = true
 outbe-chain-constants.workspace = true
 outbe-compressed-entities = { workspace = true, features = ["test-utils"] }
 outbe-node.workspace = true

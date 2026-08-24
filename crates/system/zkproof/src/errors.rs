@@ -20,7 +20,7 @@ pub enum ZkProofError {
     MalformedAbi(&'static str),
     #[error("zk_verify: combined proof is too short ({0} < 4 bytes)")]
     CombinedProofTooShort(usize),
-    #[error("zk_verify: full proof public input count is {actual}, expected {expected}")]
+    #[error("zk_verify: combined proof public input count is {actual}, expected {expected}")]
     WrongPublicInputCount { expected: usize, actual: usize },
     #[error("zk_verify: combined proof public inputs are truncated ({actual} < {expected} bytes)")]
     TruncatedPublicInputs { expected: usize, actual: usize },
@@ -28,6 +28,16 @@ pub enum ZkProofError {
     NonCanonicalPublicInput(usize),
     #[error("zk_verify: full combined proof length is {actual} bytes, expected {expected}")]
     WrongCombinedProofLength { expected: usize, actual: usize },
+    #[error("zk_verify: combined proof is too large ({actual} bytes, maximum {maximum})")]
+    CombinedProofTooLarge { maximum: usize, actual: usize },
+    #[error("zk_verify: combined proof has an empty proof section")]
+    EmptyProofSection,
+    #[error("zk_verify: combined proof section is {0} bytes, not a multiple of 32")]
+    UnalignedProofSection(usize),
+    #[error("zk_verify: emit owner word at index {0} is not a single padded byte")]
+    InvalidEmitOwnerByte(usize),
+    #[error("zk_verify: emit mint units word is not a right-aligned uint64")]
+    InvalidEmitMintUnits,
     #[error("zk verifier CRS initialization failed: {0}")]
     CrsInitialization(String),
     #[error("zk verification backend failed: {0}")]

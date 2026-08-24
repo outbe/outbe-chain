@@ -1,0 +1,1300 @@
+//! Unit and dispatch tests for the Emit precompile.
+//!
+//! Real proofs come from the dev-only `ProofGenerator` fixtures
+//! (`instance_id = 0`, matching the production profile); guard tests that run
+//! before verification use fabricated well-framed blobs. Burns simulate the
+//! EVM value boundary's credit by funding `EMIT_ADDRESS` first.
+
+use alloy_primitives::{Address, Bytes, LogData, B256, U256};
+use alloy_sol_types::{SolCall, SolEvent};
+use ark_ff::BigInteger as _;
+use ark_ff::PrimeField;
+use outbe_primitives::addresses::EMIT_ADDRESS;
+use outbe_primitives::error::PrecompileError;
+use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+use outbe_protocol::protocol::zk::ProofGenerator;
+use outbe_protocol::OutbeV1;
+use outbe_zk_backend::barretenberg::Barretenberg;
+use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
+
+use crate::hash::{
+    change_key, empty_subtrees, field_to_be_bytes, merkle_node, note_commitment,
+    note_sn as derive_note_sn, nullifier as derive_nullifier, pool_id, Field,
+};
+use crate::precompile::{base_gas, dispatch, IEmit, PAYABLE_SELECTORS};
+use crate::schema::{EmitContract, EMIT_TREE_CAPACITY, EMIT_TREE_DEPTH};
+
+const CHAIN_ID: u64 = 31_337;
+const OTHER_CHAIN_ID: u64 = 19_280_501;
+
+const ALICE: Address = Address::new([0x11; 20]);
+const BOB: Address = Address::new([0x22; 20]);
+const CAROL: Address = Address::new([0x33; 20]);
+const DAVE: Address = Address::new([0x44; 20]);
+
+fn assert_revert(result: Result<(), PrecompileError>, expected: &str) {
+    match result {
+        Err(PrecompileError::Revert(message)) => assert_eq!(message, expected),
+        other => panic!("expected revert `{expected}`, got {other:?}"),
+    }
+}
+
+fn b256(field: Field) -> B256 {
+    B256::new(field_to_be_bytes(field))
+}
+
+fn chain_pool() -> Field {
+    pool_id(CHAIN_ID, Field::from(0u64))
+}
+
+fn small_word(low_byte: u8) -> B256 {
+    let mut word = [0u8; 32];
+    word[31] = low_byte;
+    B256::new(word)
+}
+
+// ---- selectors, payable policy, gas ---------------------------------------
+
+#[test]
+fn selectors_and_gas_are_pinned() {
+    assert_eq!(
+        alloy_primitives::hex::encode(IEmit::burnCall::SELECTOR),
+        "08a1eee1"
+    );
+    assert_eq!(
+        alloy_primitives::hex::encode(IEmit::mintCall::SELECTOR),
+        "ea7c5b96"
+    );
+    assert_eq!(PAYABLE_SELECTORS, &[IEmit::burnCall::SELECTOR]);
+    assert_eq!(
+        base_gas(&IEmit::burnCall { noteSn: B256::ZERO }.abi_encode()),
+        530_000
+    );
+    assert_eq!(base_gas(&[0xee; 4]), 530_000);
+    let mint_calldata = IEmit::mintCall {
+        payoutRecipient: CAROL,
+        poolId: B256::ZERO,
+        root: B256::ZERO,
+        nullifier: B256::ZERO,
+        noteOwner: BOB,
+        mintUnits: 1,
+        changeCommitment: B256::ZERO,
+        proof: Bytes::new(),
+    }
+    .abi_encode();
+    assert_eq!(base_gas(&mint_calldata), 3_517_500);
+}
+
+// ---- PoC golden formula vector (generic profile, instance_id = 19) --------
+
+#[test]
+fn formulas_match_pinned_poc_cross_language_vector() {
+    let pool = pool_id(31_337, Field::from(19u64));
+    let owner = [0x22u8; 20];
+    let key = Field::from(17u64);
+    let serial = derive_note_sn(owner, key);
+    let commitment = note_commitment(pool, serial, 100);
+    let n = derive_nullifier(pool, serial, key);
+    let next_key = change_key(key, n);
+    let next_serial = derive_note_sn(owner, next_key);
+    let change = note_commitment(pool, next_serial, 60);
+    let next_n = derive_nullifier(pool, next_serial, next_key);
+
+    let zeros = empty_subtrees(pool, EMIT_TREE_DEPTH);
+    let mut root = merkle_node(0, commitment, zeros[0]);
+    for level in 1..EMIT_TREE_DEPTH {
+        root = merkle_node(level, root, zeros[level]);
+    }
+
+    let cases: [(Field, &str); 9] = [
+        (
+            pool,
+            "0x02248e222402cb4278d02bcbefb3395baa251ebeb8d0c88a0aae74fd06af8b22",
+        ),
+        (
+            serial,
+            "0x2f2f2ee38f7a4b57224b8fb5f0fcb28681ed43a1c032e6573b76cfae568b5d57",
+        ),
+        (
+            commitment,
+            "0x13b8e7117dcb246fe33b2083359297062a0d83725ce06484b3a7b5e749dfb2dd",
+        ),
+        (
+            n,
+            "0x2c1074d62504237ebfdf0fa85be8c3d62d1c1d9d63f8c5d9c4816ad5362debe5",
+        ),
+        (
+            next_key,
+            "0x2f72ffd2af510e22c1dfc4de2d75d8d2b4ccdcab59e96ca5ea909defe65fd252",
+        ),
+        (
+            next_serial,
+            "0x0a9f21589d6b6b83048bc60df6732327b1ab125a3272970ae175d09a84445c4e",
+        ),
+        (
+            change,
+            "0x0c173a5bc75f7efc602ab21f26677a20844f42f09981d80ac0a33dbf944bc845",
+        ),
+        (
+            next_n,
+            "0x20d512cb7ad6184ddb751aa3199786437ca28301237513a0f576e5917ca7d612",
+        ),
+        (
+            root,
+            "0x23127e4117a45403bded87c28b70e1862ece945f3d893666991f7f172960ca79",
+        ),
+    ];
+    for (actual, expected) in cases {
+        assert_eq!(format!("{:#x}", b256(actual)), expected);
+    }
+}
+
+// ---- in-memory reference tree (PoC semantics) ------------------------------
+
+/// Minimal reference tree mirroring the PoC's naive recompute semantics; used
+/// to derive witnesses and to cross-check the runtime's stored incremental
+/// tree.
+struct ReferenceTree {
+    leaves: Vec<Field>,
+    zeros: Vec<Field>,
+}
+
+impl ReferenceTree {
+    fn new(pool: Field) -> Self {
+        Self {
+            leaves: Vec::new(),
+            zeros: empty_subtrees(pool, EMIT_TREE_DEPTH),
+        }
+    }
+
+    fn append(&mut self, leaf: Field) -> u32 {
+        let index = self.leaves.len() as u32;
+        self.leaves.push(leaf);
+        index
+    }
+
+    fn root(&self) -> Field {
+        self.root_at(self.leaves.len())
+    }
+
+    /// Root as it was with only the first `count` leaves appended.
+    fn root_at(&self, count: usize) -> Field {
+        let mut nodes = self.leaves[..count].to_vec();
+        for level in 0..EMIT_TREE_DEPTH {
+            if nodes.len() % 2 == 1 {
+                nodes.push(self.zeros[level]);
+            }
+            nodes = nodes
+                .chunks_exact(2)
+                .map(|pair| merkle_node(level, pair[0], pair[1]))
+                .collect();
+        }
+        nodes[0]
+    }
+
+    fn path_at(&self, leaf_index: u32) -> [Field; EMIT_TREE_DEPTH] {
+        let mut index = leaf_index as usize;
+        let mut path = [Field::from(0u64); EMIT_TREE_DEPTH];
+        let mut nodes = self.leaves.clone();
+        for (level, sibling) in path.iter_mut().enumerate() {
+            *sibling = nodes.get(index ^ 1).copied().unwrap_or(self.zeros[level]);
+            if nodes.len() % 2 == 1 {
+                nodes.push(self.zeros[level]);
+            }
+            nodes = nodes
+                .chunks_exact(2)
+                .map(|pair| merkle_node(level, pair[0], pair[1]))
+                .collect();
+            index >>= 1;
+        }
+        path
+    }
+}
+
+// ---- real-proof fixture ----------------------------------------------------
+
+fn combined_from(public: &PublicInputs, proof_words: &[Vec<u8>]) -> Vec<u8> {
+    let fields =
+        <EmitMint as outbe_protocol::protocol::zk::Circuit<OutbeV1>>::public_inputs(public);
+    let mut combined = Vec::with_capacity(4 + 32 * (fields.len() + proof_words.len()));
+    combined.extend_from_slice(&(fields.len() as u32).to_be_bytes());
+    for f in fields {
+        let bytes = f.into_bigint().to_bytes_be();
+        combined.resize(combined.len() + 32 - bytes.len(), 0);
+        combined.extend_from_slice(&bytes);
+    }
+    for word in proof_words {
+        combined.extend_from_slice(word);
+    }
+    combined
+}
+
+/// Proves `(note_amount, key, leaf_index)` against the tree's root when only
+/// `root_leaf_count` leaves existed, for `mint_units`, with the deterministic
+/// change commitment (zero for a full mint).
+fn prove_mint(
+    tree: &ReferenceTree,
+    owner: Address,
+    key: Field,
+    note_amount: u64,
+    leaf_index: u32,
+    root_leaf_count: usize,
+    mint_units: u64,
+) -> Vec<u8> {
+    let pool = chain_pool();
+    let serial = derive_note_sn(owner.into(), key);
+    let nullifier = derive_nullifier(pool, serial, key);
+    let remaining = note_amount - mint_units;
+    let change = if remaining > 0 {
+        let next_key = change_key(key, nullifier);
+        note_commitment(pool, derive_note_sn(owner.into(), next_key), remaining)
+    } else {
+        Field::from(0u64)
+    };
+    let public = PublicInputs {
+        pool_id: pool,
+        root: tree.root_at(root_leaf_count),
+        nullifier,
+        note_owner: owner.into(),
+        mint_units,
+        change_commitment: change,
+    };
+    let witness = Witness {
+        note_amount,
+        note_spend_key: key,
+        leaf_index,
+        auth_path: tree.path_at(leaf_index),
+    };
+    let backend = Barretenberg::default();
+    let proof = ProofGenerator::<OutbeV1, EmitMint>::generate(&backend, &witness, &public)
+        .expect("emit mint proof generation");
+    combined_from(&public, &proof.proof)
+}
+
+/// A well-framed combined blob embedding exactly the given statement words
+/// plus a nonzero proof tail; passes the decoder but is not a valid proof.
+/// Used only for guards that fire before verification.
+fn fabricated_statement(
+    pool: B256,
+    root: B256,
+    nullifier: B256,
+    owner: Address,
+    units: u64,
+    change: B256,
+) -> Vec<u8> {
+    let mut combined = Vec::with_capacity(4 + 32 * 26);
+    combined.extend_from_slice(&25u32.to_be_bytes());
+    for word in [pool, root, nullifier] {
+        combined.extend_from_slice(word.as_slice());
+    }
+    for byte in owner.0 {
+        let mut word = [0u8; 32];
+        word[31] = byte;
+        combined.extend_from_slice(&word);
+    }
+    let mut units_word = [0u8; 32];
+    units_word[24..32].copy_from_slice(&units.to_be_bytes());
+    combined.extend_from_slice(&units_word);
+    combined.extend_from_slice(change.as_slice());
+    combined.extend_from_slice(&[7u8; 32]);
+    combined
+}
+
+fn burn_calldata(note_sn: B256) -> Vec<u8> {
+    IEmit::burnCall { noteSn: note_sn }.abi_encode()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn mint_calldata(
+    payout: Address,
+    pool: B256,
+    root: B256,
+    nullifier: B256,
+    owner: Address,
+    units: u64,
+    change: B256,
+    proof: &[u8],
+) -> Vec<u8> {
+    IEmit::mintCall {
+        payoutRecipient: payout,
+        poolId: pool,
+        root,
+        nullifier,
+        noteOwner: owner,
+        mintUnits: units,
+        changeCommitment: change,
+        proof: Bytes::copy_from_slice(proof),
+    }
+    .abi_encode()
+}
+
+/// The runtime-level note the plan scenario burns: Bob's serial under key 17.
+fn scenario_serial() -> Field {
+    derive_note_sn(BOB.into(), Field::from(17u64))
+}
+
+/// Simulates the EVM value boundary's credit, then runs a burn through the
+/// real dispatch.
+fn run_burn(
+    provider: &mut HashMapStorageProvider,
+    caller: Address,
+    value: u64,
+    note_sn: B256,
+) -> Result<(), PrecompileError> {
+    provider.enter(|storage| {
+        storage.increase_balance(EMIT_ADDRESS, U256::from(value))?;
+        let data = burn_calldata(note_sn);
+        dispatch(storage, &data, caller, U256::from(value)).map(|_| ())
+    })
+}
+
+/// Runs a burn through dispatch assuming the boundary credit already landed
+/// (used by the fault-injection sweeps, which set the fault after crediting).
+fn dispatch_credited_burn(
+    provider: &mut HashMapStorageProvider,
+    caller: Address,
+    value: u64,
+    note_sn: B256,
+) -> Result<(), PrecompileError> {
+    provider.enter(|storage| {
+        let data = burn_calldata(note_sn);
+        dispatch(storage, &data, caller, U256::from(value)).map(|_| ())
+    })
+}
+
+fn dispatch_mint(
+    provider: &mut HashMapStorageProvider,
+    caller: Address,
+    data: &[u8],
+) -> Result<(), PrecompileError> {
+    provider.enter(|storage| dispatch(storage, data, caller, U256::ZERO).map(|_| ()))
+}
+
+// ---- burn: lazy init, events, guards ---------------------------------------
+
+#[test]
+fn burn_initializes_lazily_and_emits_amount_bound_new_note() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let serial = scenario_serial();
+    let commitment = note_commitment(chain_pool(), serial, 100);
+    let mut reference = ReferenceTree::new(chain_pool());
+    reference.append(commitment);
+
+    run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
+
+    provider.enter(|storage| {
+        let emit: EmitContract<'_> = storage.contract();
+        assert_eq!(emit.schema_version.read().unwrap(), 1);
+        assert_eq!(emit.leaf_count.read().unwrap(), 1);
+        assert_eq!(emit.current_root.read().unwrap(), b256(reference.root()));
+        assert!(emit.commitments.read(&b256(commitment)).unwrap());
+        assert_eq!(emit.recent_roots.read_all().unwrap().len(), 2);
+    });
+    assert_eq!(provider.get_balance(EMIT_ADDRESS), U256::ZERO);
+
+    let events = provider.get_events(EMIT_ADDRESS);
+    assert_eq!(events.len(), 1, "burn emits exactly one NewNote");
+    let note = IEmit::NewNote::decode_log_data(&events[0]).unwrap();
+    assert_eq!(note.commitment, b256(commitment));
+    assert_eq!(note.leafIndex, 0);
+    assert_eq!(note.noteAmount, 100);
+    assert_eq!(note.rootAfter, b256(reference.root()));
+}
+
+#[test]
+fn burn_guards_revert_with_frozen_texts() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.enter(|storage| {
+        let data = burn_calldata(b256(scenario_serial()));
+        let result = dispatch(storage, &data, ALICE, U256::ZERO).map(|_| ());
+        assert_revert(result, "Emit burn value must be non-zero");
+    });
+    provider.enter(|storage| {
+        let data = burn_calldata(b256(scenario_serial()));
+        let result = dispatch(
+            storage,
+            &data,
+            ALICE,
+            U256::from(u64::MAX) + U256::from(1u64),
+        )
+        .map(|_| ());
+        assert_revert(result, "Emit burn value exceeds uint64");
+    });
+    let modulus = B256::new(alloy_primitives::hex!(
+        "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001"
+    ));
+    provider.enter(|storage| {
+        let data = burn_calldata(modulus);
+        let result = dispatch(storage, &data, ALICE, U256::from(1u64)).map(|_| ());
+        assert_revert(result, "Emit noteSn is not a canonical BN254 field");
+    });
+    provider.enter(|storage| {
+        let data = burn_calldata(B256::ZERO);
+        let result = dispatch(storage, &data, ALICE, U256::from(1u64)).map(|_| ());
+        assert_revert(result, "Emit noteSn must be non-zero");
+    });
+    provider.enter(|storage| {
+        let emit: EmitContract<'_> = storage.contract();
+        assert_eq!(emit.schema_version.read().unwrap(), 0);
+        assert_eq!(emit.leaf_count.read().unwrap(), 0);
+    });
+    assert!(provider.get_events(EMIT_ADDRESS).is_empty());
+}
+
+#[test]
+fn duplicate_burn_keys_the_full_commitment_not_the_serial() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let serial = scenario_serial();
+    run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
+
+    // Same serial and amount: the identical commitment is rejected.
+    let duplicate = run_burn(&mut provider, ALICE, 100, b256(serial));
+    assert_revert(duplicate, "Emit commitment already exists");
+
+    // Same serial, different amount: allowed. The nullifier is
+    // amount-independent, so the two notes share one nullifier and the first
+    // accepted mint strands the other (matching the PoC).
+    run_burn(&mut provider, ALICE, 60, b256(serial)).unwrap();
+    provider.enter(|storage| {
+        let emit: EmitContract<'_> = storage.contract();
+        assert_eq!(emit.leaf_count.read().unwrap(), 2);
+    });
+}
+
+// ---- mint guards (pre-verification paths, fabricated statements) -----------
+
+#[test]
+fn mint_before_any_burn_is_not_initialized() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let proof = fabricated_statement(
+        b256(chain_pool()),
+        small_word(2),
+        small_word(3),
+        BOB,
+        40,
+        small_word(25),
+    );
+    let data = mint_calldata(
+        CAROL,
+        b256(chain_pool()),
+        small_word(2),
+        small_word(3),
+        BOB,
+        40,
+        small_word(25),
+        &proof,
+    );
+    let result = dispatch_mint(&mut provider, BOB, &data);
+    assert_revert(result, "Emit is not initialized");
+}
+
+#[test]
+fn mint_noncanonical_statement_fields_revert_by_name() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    run_burn(&mut provider, ALICE, 100, b256(scenario_serial())).unwrap();
+    let modulus = B256::new(alloy_primitives::hex!(
+        "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001"
+    ));
+    // Head word offsets after the 4-byte selector.
+    for (field_name, offset) in [
+        ("poolId", 4 + 32),
+        ("root", 4 + 64),
+        ("nullifier", 4 + 96),
+        ("changeCommitment", 4 + 6 * 32),
+    ] {
+        let proof = fabricated_statement(
+            b256(chain_pool()),
+            small_word(2),
+            small_word(3),
+            BOB,
+            40,
+            small_word(25),
+        );
+        let mut data = mint_calldata(
+            CAROL,
+            b256(chain_pool()),
+            small_word(2),
+            small_word(3),
+            BOB,
+            40,
+            small_word(25),
+            &proof,
+        );
+        data[offset..offset + 32].copy_from_slice(modulus.as_slice());
+        let result = dispatch_mint(&mut provider, BOB, &data);
+        assert_revert(
+            result,
+            &format!("Emit {field_name} is not a canonical BN254 field"),
+        );
+    }
+}
+
+#[test]
+fn mint_statement_mismatch_and_malformed_framing_revert() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    run_burn(&mut provider, ALICE, 100, b256(scenario_serial())).unwrap();
+    let proof = fabricated_statement(
+        b256(chain_pool()),
+        small_word(2),
+        small_word(3),
+        BOB,
+        40,
+        small_word(25),
+    );
+
+    // Well-framed proof, but the explicit calldata disagrees on mintUnits.
+    let data = mint_calldata(
+        CAROL,
+        b256(chain_pool()),
+        small_word(2),
+        small_word(3),
+        BOB,
+        41,
+        small_word(25),
+        &proof,
+    );
+    let result = dispatch_mint(&mut provider, BOB, &data);
+    assert_revert(result, "Emit mint proof statement does not match calldata");
+
+    // Malformed framing: wrong public-input count.
+    let mut truncated = proof.clone();
+    truncated[..4].copy_from_slice(&24u32.to_be_bytes());
+    let data = mint_calldata(
+        CAROL,
+        b256(chain_pool()),
+        small_word(2),
+        small_word(3),
+        BOB,
+        40,
+        small_word(25),
+        &truncated,
+    );
+    let result = dispatch_mint(&mut provider, BOB, &data);
+    match result {
+        Err(PrecompileError::Revert(message)) => assert!(
+            message.starts_with("Emit mint proof is malformed:"),
+            "unexpected message {message}"
+        ),
+        other => panic!("expected malformed revert, got {other:?}"),
+    }
+}
+
+#[test]
+fn mint_wrong_caller_recipient_owner_units_and_pool_revert() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    run_burn(&mut provider, ALICE, 100, b256(scenario_serial())).unwrap();
+
+    let matching = |pool: B256, owner: Address, units: u64| {
+        let proof = fabricated_statement(
+            pool,
+            small_word(2),
+            small_word(3),
+            owner,
+            units,
+            small_word(25),
+        );
+        (proof, pool)
+    };
+
+    // Caller mismatch: statement owner is BOB, caller is ALICE.
+    let (proof, pool) = matching(b256(chain_pool()), BOB, 40);
+    let data = mint_calldata(
+        CAROL,
+        pool,
+        small_word(2),
+        small_word(3),
+        BOB,
+        40,
+        small_word(25),
+        &proof,
+    );
+    let result = dispatch_mint(&mut provider, ALICE, &data);
+    assert_revert(result, "Emit caller is not note owner");
+
+    // Zero recipient.
+    let data = mint_calldata(
+        Address::ZERO,
+        pool,
+        small_word(2),
+        small_word(3),
+        BOB,
+        40,
+        small_word(25),
+        &proof,
+    );
+    let result = dispatch_mint(&mut provider, BOB, &data);
+    assert_revert(result, "Emit payout recipient must be non-zero");
+
+    // Zero owner: the fabricated proof embeds the zero owner too, so the
+    // statement matches and the owner guard fires.
+    let (proof, pool) = matching(b256(chain_pool()), Address::ZERO, 40);
+    let data = mint_calldata(
+        CAROL,
+        pool,
+        small_word(2),
+        small_word(3),
+        Address::ZERO,
+        40,
+        small_word(25),
+        &proof,
+    );
+    let result = dispatch_mint(&mut provider, Address::ZERO, &data);
+    assert_revert(result, "Emit note owner must be non-zero");
+
+    // Zero units.
+    let (proof, pool) = matching(b256(chain_pool()), BOB, 0);
+    let data = mint_calldata(
+        CAROL,
+        pool,
+        small_word(2),
+        small_word(3),
+        BOB,
+        0,
+        small_word(25),
+        &proof,
+    );
+    let result = dispatch_mint(&mut provider, BOB, &data);
+    assert_revert(result, "Emit mint units must be non-zero");
+
+    // Pool mismatch: statement and proof carry the other chain's pool.
+    let other_pool = b256(pool_id(OTHER_CHAIN_ID, Field::from(0u64)));
+    let (proof, other_pool_word) = matching(other_pool, BOB, 40);
+    let data = mint_calldata(
+        CAROL,
+        other_pool_word,
+        small_word(2),
+        small_word(3),
+        BOB,
+        40,
+        small_word(25),
+        &proof,
+    );
+    let result = dispatch_mint(&mut provider, BOB, &data);
+    assert_revert(result, "Emit pool does not match chain ID");
+}
+
+#[test]
+fn mint_refuses_value_and_preflight_bounds_the_proof_argument() {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    run_burn(&mut provider, ALICE, 100, b256(scenario_serial())).unwrap();
+    let proof = fabricated_statement(
+        b256(chain_pool()),
+        small_word(2),
+        small_word(3),
+        BOB,
+        40,
+        small_word(25),
+    );
+    let data = mint_calldata(
+        CAROL,
+        b256(chain_pool()),
+        small_word(2),
+        small_word(3),
+        BOB,
+        40,
+        small_word(25),
+        &proof,
+    );
+
+    // Value on the mint selector is refused even though the route is payable.
+    provider.enter(|storage| {
+        let result = dispatch(storage, &data, BOB, U256::from(1u64)).map(|_| ());
+        assert_revert(result, "non-payable function called with value");
+    });
+
+    // Non-canonical dynamic offset.
+    let mut bad_offset = data.clone();
+    bad_offset[4 + 7 * 32 + 31] = 8; // offset 8 ≠ 256
+    let result = dispatch_mint(&mut provider, BOB, &bad_offset);
+    assert_revert(
+        result,
+        "Emit mint proof is malformed: non-canonical proof offset",
+    );
+
+    // Oversized proof length word.
+    let mut oversized = data.clone();
+    let mut len = [0u8; 32];
+    len[24..32].copy_from_slice(&16_385u64.to_be_bytes());
+    oversized[4 + 8 * 32..4 + 9 * 32].copy_from_slice(&len);
+    let result = dispatch_mint(&mut provider, BOB, &oversized);
+    assert_revert(
+        result,
+        "Emit mint proof is malformed: proof length outside the accepted range",
+    );
+
+    // Length word pointing past the calldata end.
+    let mut truncated = data;
+    let mut far = [0u8; 32];
+    far[24..32].copy_from_slice(&1_000u64.to_be_bytes());
+    truncated[4 + 8 * 32..4 + 9 * 32].copy_from_slice(&far);
+    let result = dispatch_mint(&mut provider, BOB, &truncated);
+    assert_revert(
+        result,
+        "Emit mint proof is malformed: proof section is truncated",
+    );
+}
+
+// ---- real-proof transitions ------------------------------------------------
+
+/// The plan scenario: Alice burns 100 into a Bob-owned serial; Bob partially
+/// mints 40 to Carol (change note appended at leaf 1); Bob fully mints the
+/// remaining 60 to Dave from the ratcheted change note. Replay of the first
+/// mint must fail without moving anything.
+#[test]
+fn plan_scenario_partial_then_full_mint_with_real_proofs() {
+    outbe_zkproof::init_crs().expect("CRS init");
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let pool = chain_pool();
+    let key = Field::from(17u64);
+
+    // Burn.
+    let serial = scenario_serial();
+    let mut tree = ReferenceTree::new(pool);
+    let note_leaf = tree.append(note_commitment(pool, serial, 100));
+    run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
+    let root_after_burn = tree.root_at(1);
+
+    // Partial mint of 40 to Carol.
+    let partial_proof = prove_mint(&tree, BOB, key, 100, note_leaf, 1, 40);
+    let nullifier = derive_nullifier(pool, serial, key);
+    let next_key = change_key(key, nullifier);
+    let change = note_commitment(pool, derive_note_sn(BOB.into(), next_key), 60);
+    let change_leaf = tree.append(change);
+    let root_after_change = tree.root_at(2);
+
+    let partial_data = mint_calldata(
+        CAROL,
+        b256(pool),
+        b256(root_after_burn),
+        b256(nullifier),
+        BOB,
+        40,
+        b256(change),
+        &partial_proof,
+    );
+    dispatch_mint(&mut provider, BOB, &partial_data).unwrap();
+    assert_eq!(provider.get_balance(CAROL), U256::from(40u64));
+    assert_eq!(provider.get_balance(EMIT_ADDRESS), U256::ZERO);
+
+    // Full mint of the remaining 60 from the change note to Dave.
+    let full_proof = prove_mint(&tree, BOB, next_key, 60, change_leaf, 2, 60);
+    let next_nullifier = derive_nullifier(pool, derive_note_sn(BOB.into(), next_key), next_key);
+    let full_data = mint_calldata(
+        DAVE,
+        b256(pool),
+        b256(root_after_change),
+        b256(next_nullifier),
+        BOB,
+        60,
+        B256::ZERO,
+        &full_proof,
+    );
+    dispatch_mint(&mut provider, BOB, &full_data).unwrap();
+    assert_eq!(provider.get_balance(DAVE), U256::from(60u64));
+
+    // Base-unit conservation: 40 + 60 public again, nothing stranded.
+    assert_eq!(provider.get_balance(EMIT_ADDRESS), U256::ZERO);
+    assert_eq!(
+        provider.get_balance(CAROL) + provider.get_balance(DAVE),
+        U256::from(100u64)
+    );
+
+    provider.enter(|storage| {
+        let emit: EmitContract<'_> = storage.contract();
+        assert_eq!(emit.leaf_count.read().unwrap(), 2);
+        assert_eq!(emit.current_root.read().unwrap(), b256(tree.root()));
+        assert!(emit.spent_nullifiers.read(&b256(nullifier)).unwrap());
+        assert!(emit.spent_nullifiers.read(&b256(next_nullifier)).unwrap());
+    });
+
+    // Partial mint emits NoteUsed first, then NewNote(change, index, root, 0).
+    let ordered = provider.get_ordered_events();
+    let emit_events: Vec<&LogData> = ordered
+        .iter()
+        .filter(|log| log.address == EMIT_ADDRESS)
+        .map(|log| &log.data)
+        .collect();
+    assert_eq!(
+        emit_events.len(),
+        4,
+        "NewNote(burn), NoteUsed(40), NewNote(change), NoteUsed(60)"
+    );
+    let burn_note = IEmit::NewNote::decode_log_data(emit_events[0]).unwrap();
+    assert_eq!(burn_note.noteAmount, 100);
+    let used = IEmit::NoteUsed::decode_log_data(emit_events[1]).unwrap();
+    assert_eq!(used.noteOwner, BOB);
+    assert_eq!(used.payoutRecipient, CAROL);
+    assert_eq!(used.nullifier, b256(nullifier));
+    assert_eq!(used.mintAmount, 40);
+    let change_note = IEmit::NewNote::decode_log_data(emit_events[2]).unwrap();
+    assert_eq!(change_note.commitment, b256(change));
+    assert_eq!(change_note.leafIndex, change_leaf);
+    assert_eq!(change_note.rootAfter, b256(root_after_change));
+    assert_eq!(
+        change_note.noteAmount, 0,
+        "private change uses the zero sentinel"
+    );
+
+    let final_use = IEmit::NoteUsed::decode_log_data(emit_events[3]).unwrap();
+    assert_eq!(final_use.noteOwner, BOB);
+    assert_eq!(final_use.payoutRecipient, DAVE);
+    assert_eq!(final_use.nullifier, b256(next_nullifier));
+    assert_eq!(final_use.mintAmount, 60);
+
+    // Replay of the first mint: rejected, nothing moves.
+    let result = dispatch_mint(&mut provider, BOB, &partial_data);
+    assert_revert(result, "Emit nullifier has already been spent");
+    assert_eq!(provider.get_balance(CAROL), U256::from(40u64));
+    assert_eq!(provider.get_balance(DAVE), U256::from(60u64));
+    provider.enter(|storage| {
+        let emit: EmitContract<'_> = storage.contract();
+        assert_eq!(emit.leaf_count.read().unwrap(), 2);
+    });
+}
+
+#[test]
+fn stale_root_past_the_32_window_is_rejected() {
+    outbe_zkproof::init_crs().expect("CRS init");
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let pool = chain_pool();
+    let mut tree = ReferenceTree::new(pool);
+
+    let serial = scenario_serial();
+    let leaf = tree.append(note_commitment(pool, serial, 100));
+    run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
+    let old_root = tree.root_at(1);
+    let proof = prove_mint(&tree, BOB, Field::from(17u64), 100, leaf, 1, 40);
+    let nullifier = derive_nullifier(pool, serial, Field::from(17u64));
+    let next_key = change_key(Field::from(17u64), nullifier);
+    let change = note_commitment(pool, derive_note_sn(BOB.into(), next_key), 60);
+
+    // 32 further appends evict the burn root from the window.
+    for index in 0..32u64 {
+        let sn = Field::from(1_000u64 + index);
+        tree.append(note_commitment(pool, sn, 1));
+        run_burn(&mut provider, ALICE, 1, b256(sn)).unwrap();
+    }
+    provider.enter(|storage| {
+        let emit: EmitContract<'_> = storage.contract();
+        assert!(!emit
+            .recent_roots
+            .read_all()
+            .unwrap()
+            .contains(&b256(old_root)));
+    });
+
+    let data = mint_calldata(
+        CAROL,
+        b256(pool),
+        b256(old_root),
+        b256(nullifier),
+        BOB,
+        40,
+        b256(change),
+        &proof,
+    );
+    let result = dispatch_mint(&mut provider, BOB, &data);
+    assert_revert(result, "Emit root is not recent");
+}
+
+#[test]
+fn payout_overflow_is_a_user_revert_before_mutation() {
+    outbe_zkproof::init_crs().expect("CRS init");
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let pool = chain_pool();
+    let serial = scenario_serial();
+    let key = Field::from(17u64);
+    let mut tree = ReferenceTree::new(pool);
+    let leaf = tree.append(note_commitment(pool, serial, 100));
+    run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
+    let proof = prove_mint(&tree, BOB, key, 100, leaf, 1, 40);
+    let nullifier = derive_nullifier(pool, serial, key);
+    let change = note_commitment(
+        pool,
+        derive_note_sn(BOB.into(), change_key(key, nullifier)),
+        60,
+    );
+
+    provider.set_balance(CAROL, U256::MAX);
+    let data = mint_calldata(
+        CAROL,
+        b256(pool),
+        b256(tree.root_at(1)),
+        b256(nullifier),
+        BOB,
+        40,
+        b256(change),
+        &proof,
+    );
+    let result = dispatch_mint(&mut provider, BOB, &data);
+    assert_revert(result, "Emit payout balance overflow");
+    assert_eq!(provider.get_balance(CAROL), U256::MAX);
+    provider.enter(|storage| {
+        let emit: EmitContract<'_> = storage.contract();
+        assert_eq!(emit.leaf_count.read().unwrap(), 1);
+        assert!(!emit.spent_nullifiers.read(&b256(nullifier)).unwrap());
+    });
+}
+
+#[test]
+fn full_tree_rejects_burns_and_partial_mints() {
+    outbe_zkproof::init_crs().expect("CRS init");
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let pool = chain_pool();
+    let serial = scenario_serial();
+
+    // Test-only leaf-count setup: the tree is artificially at capacity.
+    run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
+    provider.enter(|storage| {
+        let emit: EmitContract<'_> = storage.contract();
+        emit.leaf_count.write(EMIT_TREE_CAPACITY).unwrap();
+    });
+
+    let result = run_burn(&mut provider, ALICE, 1, b256(Field::from(777u64)));
+    assert_revert(result, "Emit commitment tree is full");
+
+    // A partial mint must also refuse to append past capacity; it needs a
+    // real proof because the capacity guard for change runs after
+    // verification.
+    let mut tree = ReferenceTree::new(pool);
+    let leaf = tree.append(note_commitment(pool, serial, 100));
+    let proof = prove_mint(&tree, BOB, Field::from(17u64), 100, leaf, 1, 40);
+    let nullifier = derive_nullifier(pool, serial, Field::from(17u64));
+    let change = note_commitment(
+        pool,
+        derive_note_sn(BOB.into(), change_key(Field::from(17u64), nullifier)),
+        60,
+    );
+    let data = mint_calldata(
+        CAROL,
+        b256(pool),
+        b256(tree.root_at(1)),
+        b256(nullifier),
+        BOB,
+        40,
+        b256(change),
+        &proof,
+    );
+    let result = dispatch_mint(&mut provider, BOB, &data);
+    assert_revert(result, "Emit commitment tree is full");
+    provider.enter(|storage| {
+        let emit: EmitContract<'_> = storage.contract();
+        assert_eq!(emit.leaf_count.read().unwrap(), EMIT_TREE_CAPACITY);
+        assert!(!emit.spent_nullifiers.read(&b256(nullifier)).unwrap());
+    });
+}
+
+#[test]
+fn deterministic_change_precreation_reverts_partial_mint_atomically() {
+    outbe_zkproof::init_crs().expect("CRS init");
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let pool = chain_pool();
+    let serial = scenario_serial();
+    let key = Field::from(17u64);
+    let mut tree = ReferenceTree::new(pool);
+
+    let leaf = tree.append(note_commitment(pool, serial, 100));
+    run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
+    let nullifier = derive_nullifier(pool, serial, key);
+    let next_key = change_key(key, nullifier);
+    let next_serial = derive_note_sn(BOB.into(), next_key);
+    let change = note_commitment(pool, next_serial, 60);
+
+    // Anyone pre-creates the deterministic change commitment by burning the
+    // successor serial with the matching amount.
+    let proof = prove_mint(&tree, BOB, key, 100, leaf, 1, 40);
+    tree.append(change);
+    run_burn(&mut provider, ALICE, 60, b256(next_serial)).unwrap();
+
+    let data = mint_calldata(
+        CAROL,
+        b256(pool),
+        b256(tree.root_at(1)),
+        b256(nullifier),
+        BOB,
+        40,
+        b256(change),
+        &proof,
+    );
+    let result = dispatch_mint(&mut provider, BOB, &data);
+    assert_revert(result, "Emit commitment already exists");
+    assert_eq!(provider.get_balance(CAROL), U256::ZERO);
+    provider.enter(|storage| {
+        let emit: EmitContract<'_> = storage.contract();
+        assert_eq!(emit.leaf_count.read().unwrap(), 2);
+        assert!(!emit.spent_nullifiers.read(&b256(nullifier)).unwrap());
+    });
+}
+
+// ---- two-chain separation ---------------------------------------------------
+
+#[test]
+fn pools_are_chain_derived_and_separate_without_stored_configuration() {
+    let pool_a = pool_id(CHAIN_ID, Field::from(0u64));
+    let pool_b = pool_id(OTHER_CHAIN_ID, Field::from(0u64));
+    assert_ne!(pool_a, pool_b);
+
+    let serial = scenario_serial();
+    let commitment_a = note_commitment(pool_a, serial, 100);
+    let commitment_b = note_commitment(pool_b, serial, 100);
+    assert_ne!(commitment_a, commitment_b);
+
+    let mut provider_a = HashMapStorageProvider::new(CHAIN_ID);
+    let mut provider_b = HashMapStorageProvider::new(OTHER_CHAIN_ID);
+    run_burn(&mut provider_a, ALICE, 100, b256(serial)).unwrap();
+    run_burn(&mut provider_b, ALICE, 100, b256(serial)).unwrap();
+
+    // The same serial+amount coexists on both chains with different roots.
+    let mut reference_a = ReferenceTree::new(pool_a);
+    reference_a.append(commitment_a);
+    let mut reference_b = ReferenceTree::new(pool_b);
+    reference_b.append(commitment_b);
+    provider_a.enter(|storage| {
+        let emit: EmitContract<'_> = storage.contract();
+        assert_eq!(emit.current_root.read().unwrap(), b256(reference_a.root()));
+    });
+    provider_b.enter(|storage| {
+        let emit: EmitContract<'_> = storage.contract();
+        assert_eq!(emit.current_root.read().unwrap(), b256(reference_b.root()));
+    });
+
+    // No pool or empty-ladder word is persisted anywhere at EMIT_ADDRESS on
+    // either chain.
+    let zeros_a = empty_subtrees(pool_a, EMIT_TREE_DEPTH);
+    let zeros_b = empty_subtrees(pool_b, EMIT_TREE_DEPTH);
+    for (name, provider) in [("a", &provider_a), ("b", &provider_b)] {
+        for ((address, _slot), value) in provider.storage.iter() {
+            if *address != EMIT_ADDRESS {
+                continue;
+            }
+            let word = B256::new(value.to_be_bytes::<32>());
+            let as_field = Field::from_be_bytes_mod_order(word.as_slice());
+            assert_ne!(
+                word,
+                b256(pool_a),
+                "chain {name}: pool id must not be persisted"
+            );
+            assert_ne!(
+                word,
+                b256(pool_b),
+                "chain {name}: pool id must not be persisted"
+            );
+            // Levels 0..20 are configuration the runtime must re-derive.
+            // zeros[20] — the empty root — is legitimate protocol data: the
+            // root window is seeded with it at initialization.
+            for zero in zeros_a
+                .iter()
+                .take(EMIT_TREE_DEPTH)
+                .chain(zeros_b.iter().take(EMIT_TREE_DEPTH))
+            {
+                assert_ne!(
+                    as_field, *zero,
+                    "chain {name}: empty-ladder word must not be persisted"
+                );
+            }
+        }
+    }
+}
+
+// ---- stored layout audit ----------------------------------------------------
+
+#[test]
+fn stored_layout_holds_no_leaves_right_nodes_or_ladder() {
+    outbe_zkproof::init_crs().expect("CRS init");
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let pool = chain_pool();
+    let serial = scenario_serial();
+    let key = Field::from(17u64);
+    let mut tree = ReferenceTree::new(pool);
+    let leaf = tree.append(note_commitment(pool, serial, 100));
+    run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
+
+    let proof = prove_mint(&tree, BOB, key, 100, leaf, 1, 40);
+    let nullifier = derive_nullifier(pool, serial, key);
+    let change = note_commitment(
+        pool,
+        derive_note_sn(BOB.into(), change_key(key, nullifier)),
+        60,
+    );
+    let data = mint_calldata(
+        CAROL,
+        b256(pool),
+        b256(tree.root_at(1)),
+        b256(nullifier),
+        BOB,
+        40,
+        b256(change),
+        &proof,
+    );
+    dispatch_mint(&mut provider, BOB, &data).unwrap();
+
+    // Audit the raw slots at EMIT_ADDRESS: direct writes only to the fixed
+    // slots 0, 1, 2, 4, 5 (the maps' base slots 3, 6, 7 are never written —
+    // their entries live under keccak-derived keys), plus keccak-derived
+    // mapping/buffer data slots, and nothing else — no leaves, right nodes,
+    // or ladder entries outside those namespaces.
+    let mut namespaces = std::collections::BTreeSet::new();
+    for ((address, slot), _value) in provider.storage.iter() {
+        if *address != EMIT_ADDRESS {
+            continue;
+        }
+        let fixed = slot <= &U256::from(7u64);
+        namespaces.insert(if fixed { 1000 + slot.to::<u64>() } else { 100 });
+    }
+    assert_eq!(
+        namespaces,
+        [1000u64, 1001, 1002, 1004, 1005, 100].into_iter().collect(),
+        "unexpected storage namespace at EMIT_ADDRESS"
+    );
+
+    // The leaf commitment itself is stored only inside the commitments map
+    // (slot 6), never as a tree node slot.
+    let leaf_word = b256(note_commitment(pool, serial, 100));
+    for ((address, slot), value) in provider.storage.iter() {
+        if *address != EMIT_ADDRESS {
+            continue;
+        }
+        let word = B256::new(value.to_be_bytes::<32>());
+        if word == leaf_word {
+            // keccak(6 ++ key) is far above slot 7; the fixed slots are 0..7.
+            assert!(
+                slot > &U256::from(7u64),
+                "the leaf commitment may live only in a mapping namespace"
+            );
+        }
+    }
+}
+
+// ---- checkpoint rollback under injected faults ------------------------------
+
+#[test]
+fn burn_rolls_back_fully_under_fault_injection_on_pristine_and_active_trees() {
+    let pristine_ops = {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        provider.enter(|storage| {
+            storage
+                .increase_balance(EMIT_ADDRESS, U256::from(100u64))
+                .unwrap();
+        });
+        provider.clear_mutation_failure();
+        let result = dispatch_credited_burn(&mut provider, ALICE, 100, b256(scenario_serial()));
+        result.unwrap();
+        provider.clear_mutation_failure()
+    };
+
+    for fault in 0..pristine_ops {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        provider.enter(|storage| {
+            storage
+                .increase_balance(EMIT_ADDRESS, U256::from(100u64))
+                .unwrap();
+        });
+        provider.fail_after_mutation_at(fault);
+        let result = dispatch_credited_burn(&mut provider, ALICE, 100, b256(scenario_serial()));
+        assert!(result.is_err(), "fault {fault} must fail the burn");
+        provider.enter(|storage| {
+            let emit: EmitContract<'_> = storage.contract();
+            assert_eq!(emit.schema_version.read().unwrap(), 0, "fault {fault}");
+            assert_eq!(emit.leaf_count.read().unwrap(), 0, "fault {fault}");
+            assert!(
+                emit.recent_roots.read_all().unwrap().is_empty(),
+                "fault {fault}"
+            );
+        });
+        assert!(
+            provider.get_events(EMIT_ADDRESS).is_empty(),
+            "fault {fault}"
+        );
+        assert_eq!(
+            provider.get_balance(EMIT_ADDRESS),
+            U256::from(100u64),
+            "fault {fault}: credited value must remain"
+        );
+    }
+
+    // Active tree: initialize, snapshot, then sweep faults over a second burn.
+    let active_ops = {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        run_burn(&mut provider, ALICE, 100, b256(scenario_serial())).unwrap();
+        provider.enter(|storage| {
+            storage
+                .increase_balance(EMIT_ADDRESS, U256::from(7u64))
+                .unwrap();
+        });
+        provider.clear_mutation_failure();
+        dispatch_credited_burn(&mut provider, ALICE, 7, b256(Field::from(9u64))).unwrap();
+        provider.clear_mutation_failure()
+    };
+    for fault in 0..active_ops {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        run_burn(&mut provider, ALICE, 100, b256(scenario_serial())).unwrap();
+        let baseline = provider.storage.clone();
+        let baseline_events = provider.get_events(EMIT_ADDRESS).len();
+        provider.enter(|storage| {
+            storage
+                .increase_balance(EMIT_ADDRESS, U256::from(7u64))
+                .unwrap();
+        });
+        provider.fail_after_mutation_at(fault);
+        let result = dispatch_credited_burn(&mut provider, ALICE, 7, b256(Field::from(9u64)));
+        assert!(result.is_err(), "fault {fault} must fail the active burn");
+        assert_eq!(
+            provider.storage, baseline,
+            "fault {fault}: storage must match the pre-call snapshot"
+        );
+        assert_eq!(provider.get_events(EMIT_ADDRESS).len(), baseline_events);
+        assert_eq!(provider.get_balance(EMIT_ADDRESS), U256::from(7u64));
+    }
+}
+
+#[test]
+fn mint_rolls_back_fully_under_fault_injection() {
+    outbe_zkproof::init_crs().expect("CRS init");
+    let pool = chain_pool();
+    let serial = scenario_serial();
+    let key = Field::from(17u64);
+    let mut tree = ReferenceTree::new(pool);
+    let leaf = tree.append(note_commitment(pool, serial, 100));
+    let nullifier = derive_nullifier(pool, serial, key);
+    let change = note_commitment(
+        pool,
+        derive_note_sn(BOB.into(), change_key(key, nullifier)),
+        60,
+    );
+
+    let proof = prove_mint(&tree, BOB, key, 100, leaf, 1, 40);
+    let data = mint_calldata(
+        CAROL,
+        b256(pool),
+        b256(tree.root_at(1)),
+        b256(nullifier),
+        BOB,
+        40,
+        b256(change),
+        &proof,
+    );
+
+    let mint_ops = {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
+        provider.clear_mutation_failure();
+        dispatch_mint(&mut provider, BOB, &data).unwrap();
+        provider.clear_mutation_failure()
+    };
+
+    for fault in 0..mint_ops {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
+        let baseline = provider.storage.clone();
+        let baseline_events = provider.get_events(EMIT_ADDRESS).len();
+        provider.fail_after_mutation_at(fault);
+        let result = dispatch_mint(&mut provider, BOB, &data);
+        assert!(result.is_err(), "fault {fault} must fail the mint");
+        assert_eq!(
+            provider.storage, baseline,
+            "fault {fault}: storage must match the pre-mint snapshot"
+        );
+        assert_eq!(provider.get_events(EMIT_ADDRESS).len(), baseline_events);
+        assert_eq!(provider.get_balance(CAROL), U256::ZERO, "fault {fault}");
+    }
+}
