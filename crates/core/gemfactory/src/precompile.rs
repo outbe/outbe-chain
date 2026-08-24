@@ -47,7 +47,7 @@ pub fn dispatch(
                     mac: c.mac.0,
                     op_nonce: c.opNonce,
                 };
-                runtime::mine_gem_promis(&storage, sender, c.gemId, c.nonce, auth)
+                runtime::mine_gem_promis(&storage, sender, c.gemId, U256::from(c.nonce), auth)
             }),
             getStatistics(_) => metadata::<IGemFactory::getStatisticsCall>(|| {
                 let factory = GemFactoryContract::new(storage.clone());

@@ -89,7 +89,7 @@ pub fn dispatch(
                         SeriesId::from(c.seriesId),
                         sender,
                         c.amount,
-                        c.nonce,
+                        U256::from(c.nonce),
                         auth,
                     )
                 }),
