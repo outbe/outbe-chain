@@ -248,6 +248,30 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
         chain_id,
     )?;
 
+    // Settlement burns Issued and mints Settled; the Promis burn path needs its own
+    // role. Production grants both through these tasks.
+    hardhat::task(
+        intex,
+        "settlement-grant-roles",
+        &[
+            ("--settlement-contract", INTEX_FACTORY.to_owned()),
+            ("--intex-contract", nft.clone()),
+        ],
+        url,
+        chain_id,
+    )?;
+
+    hardhat::task(
+        intex,
+        "promis-wire",
+        &[
+            ("--settlement-contract", INTEX_FACTORY.to_owned()),
+            ("--intex-contract", nft.clone()),
+        ],
+        url,
+        chain_id,
+    )?;
+
     let auction = format!("{:?}", contracts.intex_auction);
     let escrow = format!("{:?}", contracts.escrow);
 
