@@ -182,11 +182,11 @@ impl TributeFactoryContract<'_> {
         // checked against the whole digest rather than against the identity.
         let expected_digest = derive_poseidon_digest(caller, worldwide_day)
             .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
-        let tribute_id = WwdEntityId::from_day_and_digest(worldwide_day, expected_digest);
         if result.owner != caller || result.token_id != expected_digest {
             return Err(TributeFactoryError::InvalidCanonicalIdentity.into());
         }
 
+        let tribute_id = WwdEntityId::from_day_and_digest(worldwide_day, expected_digest);
         let tribute = TributeContract::new(self.storage.clone());
         if tribute.get_tribute(scope, parent, tribute_id)?.is_some() {
             return Err(TributeFactoryError::TributeAlreadyExists.into());
