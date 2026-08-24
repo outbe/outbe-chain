@@ -93,6 +93,8 @@ sol! {
 
     interface IOriginRouterStart {
         function sendAuctionStageStart(AuctionStageStartParams params) external payable;
+        function addTarget(uint32 chainId) external;
+        function setRouterWithChain(uint32 chainId, bytes32 remote) external;
     }
 
     interface IPromisMining {
@@ -367,5 +369,22 @@ pub fn seed_day_vwaps(
             value,
         },
         "seedDayVwapsForTest",
+    )
+}
+
+/// Register `chain_id` as a target the origin may address. The day's snapshot is
+/// taken at stage start, so this has to land before the day is opened.
+pub fn add_target(
+    url: &str,
+    sender_key: &str,
+    origin_router: Address,
+    chain_id: u32,
+) -> Result<()> {
+    send_checked(
+        url,
+        origin_router,
+        sender_key,
+        &IOriginRouterStart::addTargetCall { chainId: chain_id },
+        "addTarget",
     )
 }
