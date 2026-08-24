@@ -37,6 +37,7 @@ import base64
 import importlib.util
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -60,6 +61,11 @@ import launch_bundle  # noqa: E402  (sibling module, path set just above)
 BASE_PROFILE_PATH = SCRIPT_DIR / "testnet.yaml"
 
 DEFAULT_CHAIN_ID = 424242
+# A `gramine-direct-dev` enclave is unattested, so it is confined to the devnet
+# chain id; `dcap-required` is confined to the testnet one. Mixing them would
+# put an unattested enclave on an attested network, or the reverse.
+DEVNET_CHAIN_ID = 424242
+TESTNET_CHAIN_ID = 54322345
 DEFAULT_GAS_LIMIT = "0x1c9c380"
 DEFAULT_EPOCH_LENGTH_BLOCKS = 300
 DEFAULT_DKG_PREPARE_WINDOW_BLOCKS = 30
@@ -118,6 +124,7 @@ TOP_LEVEL_KEYS = {
     "canon_dir",
     "enclave_image",
     "node_binary",
+    "ocomp_binary",
     "radicle_binary",
     "feeder_binary",
     "remote_base_dir",
@@ -356,8 +363,46 @@ def validate_config(config: dict[str, Any]) -> None:
     unknown_tee = sorted(set(tee) - TEE_KEYS)
     if unknown_tee:
         raise ValueError(f"unknown tee key(s): {', '.join(unknown_tee)}")
-    if tee.get("mode") not in ("gramine-direct-dev", "dcap-required"):
+    mode = tee.get("mode")
+    if mode not in ("gramine-direct-dev", "dcap-required"):
         raise ValueError("tee.mode must be gramine-direct-dev or dcap-required")
+    chain_id = int(config.get("chain_id", DEFAULT_CHAIN_ID))
+    if mode == "gramine-direct-dev" and chain_id != DEVNET_CHAIN_ID:
+        raise ValueError(
+            f"tee.mode gramine-direct-dev is unattested and is allowed only on the "
+            f"devnet chain id {DEVNET_CHAIN_ID}, not {chain_id}"
+        )
+    if mode == "dcap-required":
+        if chain_id != TESTNET_CHAIN_ID:
+            raise ValueError(
+                f"tee.mode dcap-required requires the testnet chain id "
+                f"{TESTNET_CHAIN_ID}, not {chain_id}"
+            )
+        image = str(config.get("enclave_image", ""))
+        if re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image) is None:
+            raise ValueError(
+                "tee.mode dcap-required needs `enclave_image` pinned to an immutable "
+                "digest (name@sha256:<64 lowercase hex>), not a mutable tag"
+            )
+
+    # Every endpoint the launch scripts bind, on one machine.
+    ports = {
+        name: port_value
+        for name in launch_bundle.DEFAULT_PORTS
+        if (port_value := int(config.get(name, launch_bundle.DEFAULT_PORTS[name])))
+    }
+    ports["consensus_p2p_port"] = int(
+        config.get("consensus_p2p_port", DEFAULT_CONSENSUS_P2P_PORT)
+    )
+    seen: dict[int, str] = {}
+    for name, port_value in sorted(ports.items()):
+        if not 1 <= port_value <= 65535:
+            raise ValueError(f"{name} is outside 1..65535: {port_value}")
+        if port_value in seen:
+            raise ValueError(
+                f"port collision: {seen[port_value]} and {name} both use {port_value}"
+            )
+        seen[port_value] = name
 
 
 # ---------------------------------------------------------------------------

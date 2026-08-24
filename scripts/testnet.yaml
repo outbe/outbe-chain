@@ -51,6 +51,7 @@ tee:
 
 # Binaries on the validator machines; default to PATH lookups.
 # node_binary: outbe-chain
+# ocomp_binary: outbe-ocomp
 # radicle_binary: outbe-radicle
 # feeder_binary: outbe-feeder
 

@@ -168,6 +168,35 @@ class ConfigValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "tee.mode"):
             CG.validate_config(config)
 
+    def test_dev_enclave_is_confined_to_the_devnet_chain(self):
+        config = minimal_config("./keys") | {"chain_id": 54322345}
+        with self.assertRaisesRegex(ValueError, "unattested"):
+            CG.validate_config(config)
+
+    def test_dcap_requires_the_testnet_chain_and_a_pinned_digest(self):
+        config = minimal_config("./keys") | {
+            "chain_id": 424242,
+            "tee": {"mode": "dcap-required"},
+        }
+        with self.assertRaisesRegex(ValueError, "testnet chain id"):
+            CG.validate_config(config)
+
+        config["chain_id"] = 54322345
+        config["enclave_image"] = "outbe-tee-enclave:latest"
+        with self.assertRaisesRegex(ValueError, "immutable digest"):
+            CG.validate_config(config)
+
+        config["enclave_image"] = "outbe-tee-enclave@sha256:" + "ab" * 32
+        CG.validate_config(config)
+
+    def test_port_collisions_are_rejected(self):
+        config = minimal_config("./keys") | {"rpc_port": 9101}  # same as metrics
+        with self.assertRaisesRegex(ValueError, "port collision"):
+            CG.validate_config(config)
+        config = minimal_config("./keys") | {"rpc_port": 70000}
+        with self.assertRaisesRegex(ValueError, "outside 1..65535"):
+            CG.validate_config(config)
+
     def test_dcap_without_measurements_rejected_at_the_tee_stage(self):
         config = minimal_config("./keys")
         config["tee"] = {"mode": "dcap-required"}
