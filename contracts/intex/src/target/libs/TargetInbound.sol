@@ -6,6 +6,7 @@ import {IIntexNFT1155} from "../../shared/interfaces/IIntexNFT1155.sol";
 import {IEscrowAdapter} from "../interfaces/IEscrowAdapter.sol";
 import {ITargetRouter} from "../interfaces/ITargetRouter.sol";
 import {BridgeMsgCodec} from "../../shared/libs/BridgeMsgCodec.sol";
+import {IntexGas} from "../../shared/libs/IntexGas.sol";
 import {LowLevelCall} from "@openzeppelin/contracts/utils/LowLevelCall.sol";
 import {InboundReason} from "../../shared/libs/InboundReason.sol";
 import {
@@ -29,14 +30,6 @@ interface ITargetRouterShims {
 /// @notice Inbound message handlers of {TargetRouter}, linked as an external library so their bodies stay off
 ///         the router's EIP-170 runtime size. Every function runs via DELEGATECALL in the router's context.
 library TargetInbound {
-    /// @notice Ceiling on one series' mark, so a single runaway cannot starve the slot write and send the
-    ///         whole batch back into redelivery. It bounds one series; a batch of runaways is out of budget.
-    uint256 internal constant MARK_APPLY_GAS_CAP = 60_000;
-
-    /// @notice Ceiling on the bids relay an inbound CLEARING fires. Its cost grows with the day's bid count,
-    ///         which the origin cannot know, so beyond this the relay parks instead of failing the message.
-    uint256 internal constant RELAY_BIDS_GAS_CAP = 5_000_000;
-
     /// @notice Decode AUCTION_STAGE_START and forward the day state, schedule and params to the Auction contract.
     /// @dev An auction the day already has (same terms → duplicate, other terms → conflict), a schedule the day
     ///      can no longer honour, or an unknown day state are acknowledged without effect: no later state makes
@@ -106,7 +99,7 @@ library TargetInbound {
         if (!$.clearingRelayed[worldwideDay]) {
             $.clearingRelayed[worldwideDay] = true;
             // solhint-disable-next-line no-empty-blocks
-            try ITargetRouterShims(address(this)).relayBidsToOutbe{gas: RELAY_BIDS_GAS_CAP}(worldwideDay) {}
+            try ITargetRouterShims(address(this)).relayBidsToOutbe{gas: IntexGas.RELAY_BIDS_CAP}(worldwideDay) {}
             catch (bytes memory reason) {
                 uint256 idx = $.nextPendingBidsRelayIdx++;
                 $.pendingBidsRelays[idx] = PendingBidsRelay({worldwideDay: worldwideDay, exists: true, done: false});
@@ -467,7 +460,7 @@ library TargetInbound {
             return;
         }
         // solhint-disable-next-line no-empty-blocks
-        try ITargetRouterShims(address(this)).applyMarkOne{gas: MARK_APPLY_GAS_CAP}(seriesId, msgType, calledAt) {}
+        try ITargetRouterShims(address(this)).applyMarkOne{gas: IntexGas.MARK_APPLY_CAP}(seriesId, msgType, calledAt) {}
         catch (bytes memory reason) {
             if (_selectorOf(reason) == IIntexNFT1155.InvalidState.selector) {
                 IIntexNFT1155.IntexState state = $.intex.readData(seriesId).state;
@@ -522,7 +515,7 @@ library TargetInbound {
         uint32 calledAt = $.pendingMarkCalledAt[seriesId];
         delete $.pendingMark[seriesId];
         delete $.pendingMarkCalledAt[seriesId];
-        try ITargetRouterShims(address(this)).applyMarkOne{gas: MARK_APPLY_GAS_CAP}(seriesId, msgType, calledAt) {
+        try ITargetRouterShims(address(this)).applyMarkOne{gas: IntexGas.MARK_APPLY_CAP}(seriesId, msgType, calledAt) {
             emit ITargetRouter.PendingMarkApplied(seriesId, msgType);
         } catch {
             $.pendingMark[seriesId] = msgType;

@@ -32,6 +32,15 @@ library IntexGas {
     uint256 internal constant MARK_CALLED_PER_SERIES = 78_000;
     uint256 internal constant MARK_QUALIFIED_BASE = 110_000;
     uint256 internal constant MARK_QUALIFIED_PER_SERIES = 47_000;
+
+    /// @notice Ceiling the target puts on one series' mark. Uncapped, a runaway series takes 63/64 of the
+    ///         message's gas and starves the slot write, sending the whole batch into endless redelivery.
+    ///         Kept under what `markCalled` allows per series so a runaway still fits its own budget.
+    uint256 internal constant MARK_APPLY_CAP = 60_000;
+
+    /// @notice Ceiling the target puts on the bids relay an inbound CLEARING fires. Its cost grows with the
+    ///         day's bid count, which the origin cannot know, so past this the relay parks for a flush.
+    uint256 internal constant RELAY_BIDS_CAP = 5_000_000;
     /// @dev Destination hook for composed proceeds: WCOEN unwrap + IntexFactory distribute registration.
     uint256 internal constant PROCEEDS_COMPOSE = 300_000;
 
