@@ -11,243 +11,126 @@ This package bridges the project token pairs through the ERC-7786 bridge hub and
 
 ## Routes
 
-- USDT: external-chain canonical `USDT` + lock bridge ↔ Outbe ERC-7802 synthetic + Outbe mint/burn bridge.
-- WCOEN: Outbe canonical `WCOEN` + Outbe lock bridge ↔ external-chain synthetic `WCOEN` ERC-7802 token + mint/burn bridge.
-- Both synthetics are ERC-7802 bridgeable ERC20s.
+Every route runs between Outbe and one external EVM chain. `OUTBE_*` is always Outbe; `EXTERNAL_*` is whichever
+external chain this deployment targets — BNB testnet (`97`), Sepolia (`11155111`), anvil. No chain id and no network
+name is hardcoded, so pointing a route at another network is an env change only.
 
-### Outbe and the external chain
-
-Every route runs between Outbe and one external EVM chain. The env names say exactly that: `OUTBE_*` is always Outbe,
-`EXTERNAL_*` is whichever external chain this deployment targets — BNB testnet (`97`), Sepolia (`11155111`), anvil.
-No chain id and no network name is hardcoded in the scripts, so pointing a route at another network is an env change
-only:
-
-```bash
-export EXTERNAL_RPC=https://ethereum-sepolia-rpc.publicnode.com
-export EXTERNAL_CHAIN_ID=11155111
-```
-
-Which side holds the canonical token differs per route — that is what `deploySource()` / `deployTarget()` refer to:
-
-| | canonical + lock bridge | ERC-7802 synthetic + mint/burn bridge |
+| route | canonical + lock bridge | ERC-7802 synthetic + mint/burn bridge |
 |---|---|---|
-| usdt | external chain | Outbe |
-| wcoen | Outbe | external chain |
+| USDT | external chain | Outbe |
+| WCOEN | Outbe | external chain |
 
-Token and bridge addresses differ per external chain, so keep one env file per network —
-`deployments/usdt.bsc.env`, `deployments/usdt.sepolia.env` — and source the one you are deploying against.
+Which side is canonical on the connected chain is derived from `OUTBE_CHAIN_ID`, so the same command runs everywhere.
 
-Two guards follow from that declaration:
+## One address on every chain
 
-- the owner of the token and token bridge must be a contract (Safe/multisig) on both declared chains
-  (`EXTERNAL_CHAIN_ID`, `OUTBE_CHAIN_ID`), unless `ALLOW_EOA_OWNER=true`;
-- the mock `USDT` is only deployed when the connected chain equals `EXTERNAL_CHAIN_ID` and `EXTERNAL_USDT_TOKEN` is
+Contracts are deployed through a CREATE3 factory (`CreateX`), so an address depends only on
+`(factory, salt, deployer)` — never on the bytecode or the constructor arguments:
+
+```
+proxy    = CREATE2(factory, salt, keccak256(PROXY_BYTECODE))   // fixed 16-byte proxy
+deployed = CREATE(proxy, nonce = 1)
+```
+
+That is what lets **one address** hold the mock `USDT` on BSC and Sepolia and the ERC-7802 synthetic on Outbe, and one
+bridge address hold a `LockUnlock` bridge on one chain and a `BurnMint` bridge on another. The remote bridge therefore
+shares the local bridge's address, which is why `REMOTE_CHAIN_IDS` lists chain ids only — the same list works
+unchanged on every chain, and a chain can be wired before it is deployed.
+
+Salts are `keccak256(label, CONTRACT_SALT, deployer)` over four labels: `USDT`, `USDTBridge`, `WCOEN`, `WCOENBridge`.
+
+The property holds while all of these hold:
+
+1. the same `CONTRACT_SALT` on every chain;
+2. the same deployer key — it is part of every salt, so rotating it is a full redeploy;
+3. the same factory address: either `CREATEX_ADDRESS` pinned, or unchanged compiler settings (`solc`,
+   `optimizer_runs`, `via_ir`, `evm_version`, `bytecode_hash`, `cbor_metadata` all feed the factory's own address);
+4. `0x4e59b4488CE4Bd6E1BdD52D4bC0EE4Bf9E1C3A55` (the deterministic CREATE2 factory) present on every chain;
+5. `EXTERNAL_USDT_TOKEN` / `OUTBE_WCOEN_TOKEN` unset for that route.
+
+It does **not** depend on the owner, `BRIDGE_ADDRESS`, the bridge mode, the token metadata or the deployer's nonce.
+
+If a canonical token already exists on a chain (a real USDT on a real network), set `EXTERNAL_USDT_TOKEN` and that
+route uses it. Only the token half of the property is given up — the bridge address stays identical everywhere.
+
+## Guards
+
+- The owner of the token and token bridge must be a contract (Safe/multisig) on both declared chains
+  (`EXTERNAL_CHAIN_ID`, `OUTBE_CHAIN_ID`), unless `ALLOW_EOA_OWNER=true`.
+- The mock `USDT` is only deployed when the connected chain equals `EXTERNAL_CHAIN_ID` and `EXTERNAL_USDT_TOKEN` is
   unset — a wrong `--rpc-url` reverts instead of deploying a fake token onto the wrong network.
+- When the owner is a Safe, the owner-only calls are not broadcast: the scripts print `to` / `value` / `data` for you
+  to submit through the Safe. Re-running afterwards verifies the result and sends nothing.
 
-One Outbe-side synthetic can serve several external chains at once: `remoteBridges` is keyed by chain id, so running
-`configureTargetRemote()` once per external network adds each of them without overwriting the previous one. The
-CREATE2 addresses on Outbe do not depend on the external chain, so `deployTarget()` is a no-op on the second run.
+## Deploy
 
-## Scripts
+One command per chain. Every step self-checks against on-chain state, so a re-run on a finished chain sends no
+transactions.
 
-Use `script/usdt/USDTDeploy.s.sol:USDTDeploy` for USDT and `script/wcoen/WCOENDeploy.s.sol:WCOENDeploy` for WCOEN.
-
-Common required environment:
-
-- `PRIVATE_KEY`
-- `DEPLOYER_ADDRESS` — broadcaster/signer address derived from `PRIVATE_KEY`
-- `OWNER_ADDRESS` — owner for the ERC-7802 token and token bridge; use a pre-deployed Safe/multisig on guarded testnet chains
-- `ALLOW_EOA_OWNER` — optional emergency override; set to `true` to allow an EOA owner on a guarded chain
-- `BRIDGE_ADDRESS` — local ERC-7786 bridge hub facade
-- `EXTERNAL_CHAIN_ID`
-- `OUTBE_CHAIN_ID`
-
-USDT route outputs/inputs:
-
-- `EXTERNAL_USDT_TOKEN`
-- `EXTERNAL_USDT_BRIDGE`
-- `OUTBE_USDT_TOKEN`
-- `OUTBE_USDT_BRIDGE`
-
-WCOEN route outputs/inputs:
-
-- `OUTBE_WCOEN_TOKEN`
-- `OUTBE_WCOEN_BRIDGE`
-- `EXTERNAL_WCOEN_TOKEN`
-- `EXTERNAL_WCOEN_BRIDGE`
-
-Optional deployment inputs:
-
-- `TOKEN_NAME`, `TOKEN_SYMBOL`, `TOKEN_DECIMALS`
-- `TOKEN_CREATE2_SALT`
-- `TOKEN_BRIDGE_CREATE2_SALT`
-- `INITIAL_MINT_AMOUNT` for the USDT dev token
-- `WCOEN_TOKEN_CREATE2_SALT`
-- `WCOEN_BRIDGE_CREATE2_SALT`
-
-### Pure Forge USDT Flow
-
-Start from `contracts/tokens` and load the shared environment. The deploy scripts
-expect `PRIVATE_KEY`; this repo's `.env` may use `DEPLOYER_PK`, so export both.
-Point `EXTERNAL_RPC` and `EXTERNAL_CHAIN_ID` at the external chain you are deploying against.
+`NETWORK` is an alias from `[rpc_endpoints]` in `foundry.toml`: `outbe-testnet`, `outbe-dev`, `outbe-privnet`,
+`bsc-testnet`, `sepolia`, `local`.
 
 ```bash
-cd /c/Users/USER/Desktop/projects/outbe-chain/contracts/tokens
-
-set -a
-source .env
-set +a
-
-export PRIVATE_KEY="$DEPLOYER_PK"
-export DEPLOYER_ADDRESS="$(cast wallet address --private-key "$PRIVATE_KEY")"
-export EXTERNAL_CHAIN_ID=97          # or 11155111 for Sepolia
-export OUTBE_CHAIN_ID=54322345
-export OWNER_ADDRESS="$SAFE_ADDRESS"
+NETWORK=bsc-testnet   mise run deploy-all
+NETWORK=sepolia       mise run deploy-all
+NETWORK=outbe-testnet mise run deploy-all
 ```
 
-On the configured `EXTERNAL_CHAIN_ID` and `OUTBE_CHAIN_ID`,
-`OWNER_ADDRESS` must already be a deployed contract. This keeps the mint-trust
-root behind a Safe/multisig while `PRIVATE_KEY` remains only the broadcaster.
-Set `OWNER_ADDRESS=$DEPLOYER_ADDRESS` only for local/dev chains that are not
-guarded by the deploy scripts.
-
-For a temporary deployment where a Safe is not available yet, set
-`ALLOW_EOA_OWNER=true`. This explicitly bypasses the guarded-chain contract-owner
-check and leaves the deployer EOA in control of minting and bridge configuration.
-Keep the override unset or `false` for normal deployments. Because the owner is
-part of the CREATE2 initialization code, redeploying later with a Safe produces
-different token and bridge addresses.
-
-Deploy the external-chain contracts. If `EXTERNAL_USDT_TOKEN` is not set, this
-deploys the mintable mock `USDT`; it also deploys the `ERC7786TokenBridge`
-in `LockUnlock` mode. Copy the printed `EXTERNAL_USDT_TOKEN` and `EXTERNAL_USDT_BRIDGE`
-values into `deployments/usdt.env`.
+Or directly:
 
 ```bash
-forge script script/usdt/USDTDeploy.s.sol:USDTDeploy \
-  --sig "deploySource()" \
-  --rpc-url "$EXTERNAL_RPC" \
-  --broadcast \
-  --priority-gas-price 100000000
+forge script script/DeployAll.s.sol:DeployAll --rpc-url bsc-testnet --broadcast
+forge script script/DeployAll.s.sol:DeployAll --rpc-url outbe-testnet --broadcast
 ```
 
-Deploy the Outbe contracts. This deploys the synthetic USDT and the
-`ERC7786TokenBridge` in `BurnMint` mode. Copy the printed `OUTBE_USDT_TOKEN`
-and `OUTBE_USDT_BRIDGE` values into `deployments/usdt.env`.
+`DeployAll` runs four phases: CreateX factory → USDT route → WCOEN route → remote wiring. Individual phases are
+available as `script/0_DeployCreateX.s.sol`, `script/1_DeployRoutes.s.sol`, `script/2_ConfigureRemotes.s.sol`
+(`mise run deploy-createx` / `deploy-routes` / `configure-remotes`).
+
+**Simulate first.** Without `--broadcast` the scripts still print the four addresses. Run that on every chain and
+confirm the addresses match before sending anything — the cheapest possible proof that the deployment is coherent.
+
+Adding a network later: deploy it, then re-run `configure-remotes` on the existing chains so the wiring is
+bidirectional. `remoteBridges` is a mapping keyed by chain id, so this is additive.
+
+## Send
 
 ```bash
-forge script script/usdt/USDTDeploy.s.sol:USDTDeploy \
-  --sig "deployTarget()" \
-  --rpc-url "$OUTBE_RPC" \
-  --broadcast \
-  --priority-gas-price 100000000
+export ROUTE=usdt            # or wcoen
+export DEST_CHAIN_ID=54322345
+export RECIPIENT=0x...
+export SEND_AMOUNT_LD=1000000    # token decimals; USDT has 6, so this is 1 USDT
+
+NETWORK=bsc-testnet mise run send
 ```
 
-Reload the deployed addresses:
+The bridge address is derived from CREATE3 and the token is read off the bridge, so no address can drift out of sync
+with the deployment. The approval step follows the bridge's own mode: lock/unlock pulls the token, burn/mint does not.
+
+## Environment
+
+See `.env.example`. Required for a deploy: `NETWORK`, `DEPLOYER_PK`, `CONTRACT_SALT`, `BRIDGE_ADDRESS`, `OUTBE_CHAIN_ID`,
+`EXTERNAL_CHAIN_ID`. Optional: `OWNER_ADDRESS`, `ALLOW_EOA_OWNER`, `CREATEX_ADDRESS`, `REMOTE_CHAIN_IDS`,
+`EXTERNAL_USDT_TOKEN`, `OUTBE_WCOEN_TOKEN`, `INITIAL_MINT_AMOUNT`, `INITIAL_MINT_RECIPIENT`.
+
+Token and bridge addresses are computed, never configured — they only appear in the scripts' output.
+
+## Verify
 
 ```bash
-set -a
-source deployments/usdt.env
-set +a
+# same address, different code, correct role
+cast code $USDT_BRIDGE --rpc-url outbe-testnet | cast keccak
+cast call $USDT_BRIDGE "mode()(uint8)" --rpc-url outbe-testnet   # 1 = BurnMint
+cast call $USDT_BRIDGE "mode()(uint8)" --rpc-url bsc-testnet     # 0 = LockUnlock
+
+# wiring
+cast call $USDT_TOKEN  "tokenBridge()(address)" --rpc-url outbe-testnet
+cast call $USDT_BRIDGE "remoteBridges(uint32)(bytes)" 97 --rpc-url outbe-testnet
 ```
 
-Configure both remotes. The external-chain bridge stores the Outbe remote under `OUTBE_CHAIN_ID`;
-the Outbe bridge stores the external remote under `EXTERNAL_CHAIN_ID`.
-
-If `OWNER_ADDRESS` is a Safe/multisig, these scripts will not broadcast the
-owner-only calls directly. They print the Safe transaction `to`, `value`, and
-`data`; submit those through the owner Safe, then re-run the verification calls.
-If the owner is still an EOA on a guarded testnet chain, the scripts revert
-before configuration.
-
-```bash
-forge script script/usdt/USDTDeploy.s.sol:USDTDeploy \
-  --sig "configureSourceRemote()" \
-  --rpc-url "$EXTERNAL_RPC" \
-  --broadcast \
-  --priority-gas-price 100000000
-
-forge script script/usdt/USDTDeploy.s.sol:USDTDeploy \
-  --sig "configureTargetRemote()" \
-  --rpc-url "$OUTBE_RPC" \
-  --broadcast \
-  --priority-gas-price 100000000
-```
-
-Verify configuration:
-
-```bash
-cast call $EXTERNAL_USDT_BRIDGE "remoteBridges(uint32)(bytes)" $OUTBE_CHAIN_ID --rpc-url "$EXTERNAL_RPC"
-cast call $OUTBE_USDT_BRIDGE "remoteBridges(uint32)(bytes)" $EXTERNAL_CHAIN_ID --rpc-url "$OUTBE_RPC"
-```
-
-Mint test USDT on the external chain if needed:
-
-```bash
-cast send $EXTERNAL_USDT_TOKEN "mint(address,uint256)" $DEPLOYER_ADDRESS 100000000 \
-  --private-key "$PRIVATE_KEY" \
-  --rpc-url "$EXTERNAL_RPC" \
-  --priority-gas-price 100000000
-```
-
-Send from the external chain to Outbe. `SEND_AMOUNT_LD` uses local decimals; USDT uses
-6 decimals, so `1000000` is `1 USDT`.
-
-```bash
-export RECIPIENT="$DEPLOYER_ADDRESS"
-export SEND_AMOUNT_LD=1000000
-
-forge script script/usdt/SendSourceToTarget.s.sol \
-  --rpc-url "$EXTERNAL_RPC" \
-  --broadcast \
-  --priority-gas-price 100000000
-```
-
-Check the Outbe synthetic USDT balance:
-
-```bash
-cast call $OUTBE_USDT_TOKEN "balanceOf(address)(uint256)" $DEPLOYER_ADDRESS --rpc-url "$OUTBE_RPC"
-```
-
-Send back from Outbe to the external chain:
-
-```bash
-forge script script/usdt/SendTargetToSource.s.sol \
-  --rpc-url "$OUTBE_RPC" \
-  --broadcast \
-  --priority-gas-price 100000000
-```
-
-### Short Command Reference
-
-USDT:
-
-```bash
-forge script script/usdt/USDTDeploy.s.sol:USDTDeploy --sig "deploySource()" --rpc-url "$EXTERNAL_RPC" --broadcast
-forge script script/usdt/USDTDeploy.s.sol:USDTDeploy --sig "deployTarget()" --rpc-url "$OUTBE_RPC" --broadcast
-forge script script/usdt/USDTDeploy.s.sol:USDTDeploy --sig "configureSourceRemote()" --rpc-url "$EXTERNAL_RPC" --broadcast
-forge script script/usdt/USDTDeploy.s.sol:USDTDeploy --sig "configureTargetRemote()" --rpc-url "$OUTBE_RPC" --broadcast
-```
-
-WCOEN:
-
-```bash
-forge script script/wcoen/WCOENDeploy.s.sol:WCOENDeploy --sig "deploySource()" --rpc-url "$OUTBE_RPC" --broadcast
-forge script script/wcoen/WCOENDeploy.s.sol:WCOENDeploy --sig "deployTarget()" --rpc-url "$EXTERNAL_RPC" --broadcast
-forge script script/wcoen/WCOENDeploy.s.sol:WCOENDeploy --sig "configureSourceRemote()" --rpc-url "$OUTBE_RPC" --broadcast
-forge script script/wcoen/WCOENDeploy.s.sol:WCOENDeploy --sig "configureTargetRemote()" --rpc-url "$EXTERNAL_RPC" --broadcast
-```
-
-Send examples:
-
-```bash
-forge script script/usdt/SendSourceToTarget.s.sol --rpc-url "$EXTERNAL_RPC" --broadcast
-forge script script/usdt/SendTargetToSource.s.sol --rpc-url "$OUTBE_RPC" --broadcast
-forge script script/wcoen/SendSourceToTarget.s.sol --rpc-url "$OUTBE_RPC" --broadcast
-forge script script/wcoen/SendTargetToSource.s.sol --rpc-url "$EXTERNAL_RPC" --broadcast
-```
-
-Lock/unlock sends approve the local bridge first. Burn/mint sends do not require token approval because the local bridge is the authorized ERC-7802 token bridge.
+Because a CREATE3 address is bytecode-independent, anyone can occupy an unused salt on a permissionless factory.
+Deploy the chains back to back and compare the `cast code` hash against the local artifact on each chain before
+wiring; a mismatch is a stop, not a retry.
 
 ## References
 

@@ -3,12 +3,16 @@ pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 
-import {USDTDeploy} from "../../script/usdt/USDTDeploy.s.sol";
-import {WCOENDeploy} from "../../script/wcoen/WCOENDeploy.s.sol";
+import {CreateX} from "../../script/0_DeployCreateX.s.sol";
+import {TokenDeployBase} from "../../script/1_DeployRoutes.s.sol";
+import {DeployAll} from "../../script/DeployAll.s.sol";
+import {ConfigurableERC7802} from "../../src/ConfigurableERC7802.sol";
+import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
+import {MockERC7786Bridge} from "../mocks/MockERC7786Bridge.sol";
 
 contract ContractOwnerMock {}
 
-contract USDTDeployHarness is USDTDeploy {
+contract DeployHarness is DeployAll {
     function exposedRequireContractOwnerOnGuardedChain(address owner, bool allowEoaOwner) external view {
         _requireContractOwnerOnGuardedChain(owner, allowEoaOwner);
     }
@@ -16,34 +20,49 @@ contract USDTDeployHarness is USDTDeploy {
     function exposedRequireMockUSDTDeploymentAllowed() external view {
         _requireMockUSDTDeploymentAllowed();
     }
-}
 
-contract WCOENDeployHarness is WCOENDeploy {
-    function exposedRequireContractOwnerOnGuardedChain(address owner, bool allowEoaOwner) external view {
-        _requireContractOwnerOnGuardedChain(owner, allowEoaOwner);
+    function exposedBridgeAddress(address createX, string memory salt, Route route) external view returns (address) {
+        return _bridgeAddress(createX, salt, route);
+    }
+
+    /// @dev The harness is the deployer, so it can make the owner-only `setTokenBridge` call itself. Under a real
+    ///      run `vm.startBroadcast` puts the deployer key behind those calls; there is no broadcast in tests.
+    function _deployer() internal view override returns (address) {
+        return address(this);
     }
 }
 
-/// @dev The deploy guards decide which chains are part of the route purely from env, so a route is declared here once
-///      and every test varies only `vm.chainId()`. `vm.setEnv` writes the process environment while forge runs tests
-///      concurrently, so a test that sets its own env values races every sibling test — the route below is written
-///      identically by every `setUp`, which makes that race harmless.
+/// @dev Every test here relies on the constant env values written by `setUp`. That is load-bearing: `vm.setEnv` writes
+///      the process environment while forge runs test contracts — and tests within a contract — concurrently, so a
+///      test that sets its own env values would race its siblings. Anything computed (a deployed mock's address) is
+///      injected with `vm.etch` at a fixed address instead of being written into the environment.
+///
 ///      Sepolia is the declared external chain on purpose: it proves a new network needs env only, no code change.
 contract DeployGuardsTest is Test {
-    uint256 internal constant SOURCE_CHAIN = 11_155_111; // Sepolia, declared via EXTERNAL_CHAIN_ID
-    uint256 internal constant TARGET_CHAIN = 54_322_345;
-    uint256 internal constant UNDECLARED_CHAIN = 97; // BSC testnet — no longer privileged by hardcoded chain id
+    uint256 internal constant EXTERNAL_CHAIN = 11_155_111; // Sepolia
+    uint256 internal constant OUTBE_CHAIN = 54_322_345;
+    uint256 internal constant UNDECLARED_CHAIN = 97; // BSC testnet — no longer privileged by a hardcoded chain id
     uint256 internal constant LOCAL_CHAIN = 31_337;
 
-    USDTDeployHarness internal usdtDeploy;
-    WCOENDeployHarness internal wcoenDeploy;
+    address internal constant HUB = 0x0000000000000000000000000000000000B41D6E;
+    string internal constant SALT = "TEST_V1";
+
+    DeployHarness internal deploy;
+    CreateX internal createX;
 
     function setUp() public {
         vm.setEnv("EXTERNAL_CHAIN_ID", "11155111");
         vm.setEnv("OUTBE_CHAIN_ID", "54322345");
+        vm.setEnv("DEPLOYER_PK", "0xA11CE");
+        vm.setEnv("ALLOW_EOA_OWNER", "true");
+        vm.setEnv("BRIDGE_ADDRESS", "0x0000000000000000000000000000000000B41D6E");
 
-        usdtDeploy = new USDTDeployHarness();
-        wcoenDeploy = new WCOENDeployHarness();
+        // The hub only needs code for `_requireCode`. Deploying a mock and writing its address into the environment
+        // would put a computed value into shared state, which is exactly what the note above forbids.
+        vm.etch(HUB, address(new MockERC7786Bridge(EXTERNAL_CHAIN)).code);
+
+        deploy = new DeployHarness();
+        createX = new CreateX();
     }
 
     // === Owner guard ===
@@ -51,59 +70,49 @@ contract DeployGuardsTest is Test {
     // node, a scratch fork) stays unguarded so dev flows are not blocked.
 
     function test_Guards_RevertForEOAOwnerOnDeclaredExternalChain() public {
-        vm.chainId(SOURCE_CHAIN);
+        vm.chainId(EXTERNAL_CHAIN);
         address owner = makeAddr("owner");
 
-        vm.expectRevert(abi.encodeWithSelector(USDTDeploy.OwnerMustBeMultisigContract.selector, owner, SOURCE_CHAIN));
-        usdtDeploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
-
-        vm.expectRevert(abi.encodeWithSelector(WCOENDeploy.OwnerMustBeMultisigContract.selector, owner, SOURCE_CHAIN));
-        wcoenDeploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
+        vm.expectRevert(
+            abi.encodeWithSelector(TokenDeployBase.OwnerMustBeMultisigContract.selector, owner, EXTERNAL_CHAIN)
+        );
+        deploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
     }
 
     function test_Guards_RevertForEOAOwnerOnOutbeChain() public {
-        vm.chainId(TARGET_CHAIN);
+        vm.chainId(OUTBE_CHAIN);
         address owner = makeAddr("owner");
 
-        vm.expectRevert(abi.encodeWithSelector(USDTDeploy.OwnerMustBeMultisigContract.selector, owner, TARGET_CHAIN));
-        usdtDeploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
-
-        vm.expectRevert(abi.encodeWithSelector(WCOENDeploy.OwnerMustBeMultisigContract.selector, owner, TARGET_CHAIN));
-        wcoenDeploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
+        vm.expectRevert(
+            abi.encodeWithSelector(TokenDeployBase.OwnerMustBeMultisigContract.selector, owner, OUTBE_CHAIN)
+        );
+        deploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
     }
 
     function test_Guards_AllowContractOwnerOnGuardedChain() public {
-        vm.chainId(SOURCE_CHAIN);
-        address owner = address(new ContractOwnerMock());
+        vm.chainId(EXTERNAL_CHAIN);
 
-        usdtDeploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
-        wcoenDeploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
+        deploy.exposedRequireContractOwnerOnGuardedChain(address(new ContractOwnerMock()), false);
     }
 
     /// @dev BSC testnet used to be guarded by a hardcoded chain id; once it is not part of the declared route it must
     ///      behave like any other undeclared chain.
     function test_Guards_AllowEOAOwnerOnUndeclaredChain() public {
         vm.chainId(UNDECLARED_CHAIN);
-        address owner = makeAddr("owner");
 
-        usdtDeploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
-        wcoenDeploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
+        deploy.exposedRequireContractOwnerOnGuardedChain(makeAddr("owner"), false);
     }
 
     function test_Guards_AllowEOAOwnerOnLocalChain() public {
         vm.chainId(LOCAL_CHAIN);
-        address owner = makeAddr("owner");
 
-        usdtDeploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
-        wcoenDeploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
+        deploy.exposedRequireContractOwnerOnGuardedChain(makeAddr("owner"), false);
     }
 
     function test_Guards_AllowEOAOwnerOnGuardedChainWithExplicitOverride() public {
-        vm.chainId(SOURCE_CHAIN);
-        address owner = makeAddr("owner");
+        vm.chainId(EXTERNAL_CHAIN);
 
-        usdtDeploy.exposedRequireContractOwnerOnGuardedChain(owner, true);
-        wcoenDeploy.exposedRequireContractOwnerOnGuardedChain(owner, true);
+        deploy.exposedRequireContractOwnerOnGuardedChain(makeAddr("owner"), true);
     }
 
     // === Mock USDT guard ===
@@ -111,22 +120,92 @@ contract DeployGuardsTest is Test {
     // the external end of the route — never on whatever chain the RPC happens to point at.
 
     function test_MockUSDTDeploymentGuard_AllowsDeclaredExternalChain() public {
-        vm.chainId(SOURCE_CHAIN);
+        vm.chainId(EXTERNAL_CHAIN);
 
-        usdtDeploy.exposedRequireMockUSDTDeploymentAllowed();
+        deploy.exposedRequireMockUSDTDeploymentAllowed();
     }
 
     function test_MockUSDTDeploymentGuard_RevertsOnUndeclaredChain() public {
         vm.chainId(UNDECLARED_CHAIN);
 
-        vm.expectRevert(abi.encodeWithSelector(USDTDeploy.MockUSDTDeploymentNotAllowed.selector, UNDECLARED_CHAIN));
-        usdtDeploy.exposedRequireMockUSDTDeploymentAllowed();
+        vm.expectRevert(abi.encodeWithSelector(TokenDeployBase.MockUSDTDeploymentNotAllowed.selector, UNDECLARED_CHAIN));
+        deploy.exposedRequireMockUSDTDeploymentAllowed();
     }
 
     function test_MockUSDTDeploymentGuard_RevertsOnMainnet() public {
         vm.chainId(1);
 
-        vm.expectRevert(abi.encodeWithSelector(USDTDeploy.MockUSDTDeploymentNotAllowed.selector, uint256(1)));
-        usdtDeploy.exposedRequireMockUSDTDeploymentAllowed();
+        vm.expectRevert(abi.encodeWithSelector(TokenDeployBase.MockUSDTDeploymentNotAllowed.selector, uint256(1)));
+        deploy.exposedRequireMockUSDTDeploymentAllowed();
+    }
+
+    // === Deterministic addresses ===
+
+    /// @dev The headline invariant: the same four addresses come out on the external chain and on Outbe, even though
+    ///      each side deploys different contracts, with different constructor arguments and a different bridge mode.
+    ///      The bytecode assertion keeps the test from passing vacuously.
+    function test_Addresses_AreIdenticalInBothRoles() public {
+        uint256 snapshot = vm.snapshotState();
+
+        vm.chainId(EXTERNAL_CHAIN);
+        (address extUsdt, address extUsdtBridge) =
+            deploy.deployRoute(address(createX), SALT, TokenDeployBase.Route.USDT);
+        (address extWcoen, address extWcoenBridge) =
+            deploy.deployRoute(address(createX), SALT, TokenDeployBase.Route.WCOEN);
+        bytes memory extUsdtCode = extUsdt.code;
+        assertEq(uint8(ERC7786TokenBridge(extUsdtBridge).mode()), uint8(ERC7786TokenBridge.TokenBridgeMode.LockUnlock));
+
+        vm.revertToState(snapshot);
+
+        vm.chainId(OUTBE_CHAIN);
+        (address outUsdt, address outUsdtBridge) =
+            deploy.deployRoute(address(createX), SALT, TokenDeployBase.Route.USDT);
+        (address outWcoen, address outWcoenBridge) =
+            deploy.deployRoute(address(createX), SALT, TokenDeployBase.Route.WCOEN);
+        assertEq(uint8(ERC7786TokenBridge(outUsdtBridge).mode()), uint8(ERC7786TokenBridge.TokenBridgeMode.BurnMint));
+
+        assertEq(extUsdt, outUsdt, "USDT token address differs between chains");
+        assertEq(extUsdtBridge, outUsdtBridge, "USDT bridge address differs between chains");
+        assertEq(extWcoen, outWcoen, "WCOEN token address differs between chains");
+        assertEq(extWcoenBridge, outWcoenBridge, "WCOEN bridge address differs between chains");
+
+        assertTrue(keccak256(extUsdtCode) != keccak256(outUsdt.code), "same bytecode: the test proves nothing");
+    }
+
+    function test_Routes_AreDistinct() public {
+        vm.chainId(EXTERNAL_CHAIN);
+        (address usdt, address usdtBridge) = deploy.deployRoute(address(createX), SALT, TokenDeployBase.Route.USDT);
+        (address wcoen, address wcoenBridge) = deploy.deployRoute(address(createX), SALT, TokenDeployBase.Route.WCOEN);
+
+        assertTrue(usdt != usdtBridge && usdt != wcoen && usdt != wcoenBridge, "USDT address collides");
+        assertTrue(usdtBridge != wcoen && usdtBridge != wcoenBridge, "USDT bridge address collides");
+        assertTrue(wcoen != wcoenBridge, "WCOEN address collides");
+    }
+
+    function test_Salt_ChangesAddresses() public {
+        vm.chainId(EXTERNAL_CHAIN);
+
+        address a = deploy.exposedBridgeAddress(address(createX), "SALT_A", TokenDeployBase.Route.USDT);
+        address b = deploy.exposedBridgeAddress(address(createX), "SALT_B", TokenDeployBase.Route.USDT);
+
+        assertTrue(a != b, "salt does not change the address");
+    }
+
+    function test_Synthetic_IsWiredToBridge() public {
+        vm.chainId(OUTBE_CHAIN);
+        (address usdt, address usdtBridge) = deploy.deployRoute(address(createX), SALT, TokenDeployBase.Route.USDT);
+
+        assertEq(ConfigurableERC7802(usdt).tokenBridge(), usdtBridge, "synthetic not wired to its bridge");
+    }
+
+    /// @dev CreateX reverts on a re-used salt, so a re-run is only safe because of the code-existence guards.
+    function test_Rerun_IsNoop() public {
+        vm.chainId(EXTERNAL_CHAIN);
+        (address usdt, address usdtBridge) = deploy.deployRoute(address(createX), SALT, TokenDeployBase.Route.USDT);
+        (address usdtAgain, address usdtBridgeAgain) =
+            deploy.deployRoute(address(createX), SALT, TokenDeployBase.Route.USDT);
+
+        assertEq(usdt, usdtAgain);
+        assertEq(usdtBridge, usdtBridgeAgain);
     }
 }
