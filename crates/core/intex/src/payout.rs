@@ -14,8 +14,8 @@ use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::errors::IntexError;
 
-/// Canonical `ContributorActionV1` record: owner(20) ++ tribute id(36) ++ nominal(32).
-pub const CONTRIBUTOR_LEAF_BYTES: usize = 88;
+/// Canonical `ContributorActionV1` record: owner(20) ++ tribute id(32) ++ nominal(32).
+pub const CONTRIBUTOR_LEAF_BYTES: usize = 84;
 
 /// Result chunks hold at most 256 contributor records, so one batch is a
 /// chunk-aligned subtree eight levels deep.
@@ -30,7 +30,7 @@ const KIND: ListKind = ListKind::ContributorActions;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContributorLeafData {
     pub owner: Address,
-    pub source_tribute_id: [u8; 36],
+    pub source_tribute_id: B256,
     pub nominal: U256,
 }
 
@@ -38,19 +38,19 @@ pub struct ContributorLeafData {
 pub fn encode_contributor_leaf(leaf: &ContributorLeafData) -> [u8; CONTRIBUTOR_LEAF_BYTES] {
     let mut out = [0u8; CONTRIBUTOR_LEAF_BYTES];
     out[..20].copy_from_slice(leaf.owner.as_slice());
-    out[20..56].copy_from_slice(&leaf.source_tribute_id);
-    out[56..].copy_from_slice(&leaf.nominal.to_be_bytes::<32>());
+    out[20..52].copy_from_slice(leaf.source_tribute_id.as_slice());
+    out[52..].copy_from_slice(&leaf.nominal.to_be_bytes::<32>());
     out
 }
 
 /// Inverse of [`encode_contributor_leaf`].
 pub fn decode_contributor_leaf(bytes: &[u8; CONTRIBUTOR_LEAF_BYTES]) -> ContributorLeafData {
-    let mut source_tribute_id = [0u8; 36];
-    source_tribute_id.copy_from_slice(&bytes[20..56]);
+    let mut source_tribute_id = [0u8; 32];
+    source_tribute_id.copy_from_slice(&bytes[20..52]);
     ContributorLeafData {
         owner: Address::from_slice(&bytes[..20]),
-        source_tribute_id,
-        nominal: U256::from_be_slice(&bytes[56..]),
+        source_tribute_id: B256::from(source_tribute_id),
+        nominal: U256::from_be_slice(&bytes[52..]),
     }
 }
 
@@ -247,11 +247,11 @@ pub mod test_support {
     pub fn contributor_leaf(index: u32, nominal: u64) -> ContributorLeafData {
         let mut owner = [0u8; 20];
         owner[16..].copy_from_slice(&index.to_be_bytes());
-        let mut source_tribute_id = [0u8; 36];
-        source_tribute_id[32..].copy_from_slice(&index.to_be_bytes());
+        let mut source_tribute_id = [0u8; 32];
+        source_tribute_id[28..].copy_from_slice(&index.to_be_bytes());
         ContributorLeafData {
             owner: Address::from(owner),
-            source_tribute_id,
+            source_tribute_id: B256::from(source_tribute_id),
             nominal: U256::from(nominal),
         }
     }

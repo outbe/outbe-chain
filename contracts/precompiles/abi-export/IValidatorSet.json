@@ -166,6 +166,25 @@
   },
   {
     "type": "function",
+    "name": "getRadicleNodeId",
+    "inputs": [
+      {
+        "name": "validator",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getValidators",
     "inputs": [],
     "outputs": [
@@ -243,7 +262,12 @@
         "internalType": "bytes"
       },
       {
-        "name": "blsSignature",
+        "name": "radicleNodeId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "blsRegistrationSignature",
         "type": "bytes",
         "internalType": "bytes"
       }
@@ -473,6 +497,25 @@
         "name": "hasBLSShare",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "validatorByRadicleNodeId",
+    "inputs": [
+      {
+        "name": "nodeId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "view"

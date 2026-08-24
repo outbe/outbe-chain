@@ -592,16 +592,14 @@ pub(crate) fn contributor_payout_round(
     })
 }
 
-/// Rebuilds the canonical 36-byte tribute id from its ABI digest/index split.
+/// The 32-byte tribute id the ABI carries as one word. It used to arrive split
+/// across a `bytes32` and a `bytes4` because 36 bytes did not fit a word.
 fn decode_contributor_leaf(
     leaf: &crate::precompile::IIntexFactory::ContributorLeaf,
 ) -> ContributorLeafData {
-    let mut source_tribute_id = [0u8; 36];
-    source_tribute_id[..32].copy_from_slice(leaf.sourceTributeDigest.as_slice());
-    source_tribute_id[32..].copy_from_slice(leaf.sourceTributeIndex.as_slice());
     ContributorLeafData {
         owner: leaf.owner,
-        source_tribute_id,
+        source_tribute_id: B256::from(leaf.sourceTributeId.to_be_bytes::<32>()),
         nominal: leaf.nominal,
     }
 }

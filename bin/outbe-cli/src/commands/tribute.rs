@@ -42,7 +42,7 @@ pub enum TributeCmd {
     /// Show tribute metadata via tokenURI JSON
     Show {
         /// Tribute token ID (`0x`-hex)
-        token_id: Bytes,
+        token_id: U256,
     },
     /// Show aggregate totals for a WorldwideDay
     DayTotals {
@@ -64,7 +64,7 @@ pub enum TributeCmd {
     /// Show current owner for a Tribute token ID
     Owner {
         /// Tribute token ID (`0x`-hex)
-        token_id: Bytes,
+        token_id: U256,
     },
     /// Submit an encrypted tribute offer (decrypted inside the SGX enclave).
     /// Encrypts to the DKG-derived offer key registered in the TeeRegistry and
@@ -158,7 +158,7 @@ async fn fetch_total_supply(client: &(impl Rpc + Sync)) -> Result<U256> {
     Ok(ITribute::totalSupplyCall::abi_decode_returns(&result)?)
 }
 
-async fn fetch_owner_of(client: &(impl Rpc + Sync), token_id: Bytes) -> Result<Address> {
+async fn fetch_owner_of(client: &(impl Rpc + Sync), token_id: U256) -> Result<Address> {
     let call = ITribute::ownerOfCall {
         tributeId: token_id,
     };
@@ -166,7 +166,7 @@ async fn fetch_owner_of(client: &(impl Rpc + Sync), token_id: Bytes) -> Result<A
     Ok(ITribute::ownerOfCall::abi_decode_returns(&result)?)
 }
 
-async fn fetch_token_uri(client: &(impl Rpc + Sync), token_id: Bytes) -> Result<String> {
+async fn fetch_token_uri(client: &(impl Rpc + Sync), token_id: U256) -> Result<String> {
     let call = ITribute::tokenURICall {
         tributeId: token_id,
     };
@@ -207,10 +207,10 @@ async fn fetch_tributes_by_day(
     Ok(ITribute::getTributesByDayCall::abi_decode_returns(&result)?)
 }
 
-async fn show(client: &(impl Rpc + Sync), token_id: Bytes) -> Result<()> {
-    let token_uri = fetch_token_uri(client, token_id.clone()).await?;
+async fn show(client: &(impl Rpc + Sync), token_id: U256) -> Result<()> {
+    let token_uri = fetch_token_uri(client, token_id).await?;
 
-    println!("Token ID: {token_id}");
+    println!("Token ID: {token_id:#x}");
     if let Some(json_payload) = token_uri.strip_prefix(TOKEN_URI_JSON_PREFIX) {
         match serde_json::from_str::<Value>(json_payload) {
             Ok(json) => println!("{}", serde_json::to_string_pretty(&json)?),
@@ -261,9 +261,9 @@ async fn supply(client: &(impl Rpc + Sync)) -> Result<()> {
     Ok(())
 }
 
-async fn owner(client: &(impl Rpc + Sync), token_id: Bytes) -> Result<()> {
-    let token_owner = fetch_owner_of(client, token_id.clone()).await?;
-    println!("Token ID: {token_id}");
+async fn owner(client: &(impl Rpc + Sync), token_id: U256) -> Result<()> {
+    let token_owner = fetch_owner_of(client, token_id).await?;
+    println!("Token ID: {token_id:#x}");
     println!("Owner:    {token_owner:?}");
     Ok(())
 }
@@ -451,8 +451,8 @@ mod tests {
         .unwrap()
     }
 
-    fn sample_token_id() -> Bytes {
-        Bytes::from_static(&[0xaa])
+    fn sample_token_id() -> U256 {
+        U256::from(0xaa_u64)
     }
 
     fn tribute_mock() -> MockRpc {

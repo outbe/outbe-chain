@@ -9,7 +9,7 @@ use outbe_ocomp::{
     lysis_shuffle_adoption::{admit_reported_lysis_shuffle_unit, adopt_lysis_shuffle_descendants},
 };
 use outbe_ocomp_protocol::{
-    common::{BoundedBytes, EntityId36},
+    common::BoundedBytes,
     result::ContributorActionV1,
     shuffle::{build_owner_shuffle_run, verified_shuffle_run_records, ShuffleRunBuildContextV1},
     unit::{
@@ -32,11 +32,11 @@ const INBOX_LIMITS: WorkerInboxLimits = WorkerInboxLimits {
 fn contributor(index: u32) -> ContributorActionV1 {
     let mut owner = [0_u8; 20];
     owner[16..].copy_from_slice(&(index + 1).to_be_bytes());
-    let mut tribute = [0_u8; 36];
+    let mut tribute = [0_u8; 32];
     tribute[32..].copy_from_slice(&index.to_be_bytes());
     ContributorActionV1 {
         owner: Address::from(owner),
-        source_tribute_id: EntityId36(tribute),
+        source_tribute_id: B256::from(tribute),
         nominal_amount_minor: U256::from(index + 1),
     }
 }

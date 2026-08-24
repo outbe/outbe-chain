@@ -1,14 +1,14 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use alloy_primitives::{Address, Bytes, LogData, B256, U256};
+use alloy_primitives::{Address, LogData, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     begin_block, body_commitment, encode_nod_bucket_v1, encode_nod_item_v1, encode_tribute_v1,
     end_block, read, update, BodyInput, CandidateCacheLimits, CeMdbx, CeWorkConfig,
-    CompressedTreeService, EntityId36, EntityRef, EnvironmentIdentity, ExactParentIdentity,
-    ExecutionScope, FinalizedMarker, ParentBodySource, SealOutput, ACTIVE_COMMITMENT_SCHEME,
+    CompressedTreeService, EntityRef, EnvironmentIdentity, ExactParentIdentity, ExecutionScope,
+    FinalizedMarker, ParentBodySource, SealOutput, WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
     LOCAL_STORAGE_SCHEMA_VERSION,
 };
 use outbe_nod::{
@@ -28,9 +28,9 @@ use outbe_tribute::{
 
 #[derive(Default)]
 struct ObserverCommitments {
-    tributes: BTreeMap<EntityId36, B256>,
-    nod_items: BTreeMap<EntityId36, B256>,
-    nod_buckets: BTreeMap<EntityId36, B256>,
+    tributes: BTreeMap<WwdEntityId, B256>,
+    nod_items: BTreeMap<WwdEntityId, B256>,
+    nod_buckets: BTreeMap<WwdEntityId, B256>,
 }
 
 impl ObserverCommitments {
@@ -51,7 +51,7 @@ impl ObserverCommitments {
             let event = ITribute::TributeBodyStored::decode_log_data(data).unwrap();
             replay_stored(
                 &mut self.tributes,
-                parse_id(&event.tributeId),
+                WwdEntityId::from(event.tributeId),
                 event.commitmentSchemeVersion,
                 event.schemaVersion,
                 event.previousCommitment,
@@ -64,14 +64,14 @@ impl ObserverCommitments {
             let event = ITribute::TributeBodyDeleted::decode_log_data(data).unwrap();
             replay_deleted(
                 &mut self.tributes,
-                parse_id(&event.tributeId),
+                WwdEntityId::from(event.tributeId),
                 event.previousCommitment,
             );
         } else if emitter == NOD_ADDRESS && signature == INod::NodBodyStored::SIGNATURE_HASH {
             let event = INod::NodBodyStored::decode_log_data(data).unwrap();
             replay_stored(
                 &mut self.nod_items,
-                parse_id(&event.nodId),
+                WwdEntityId::from(event.nodId),
                 event.commitmentSchemeVersion,
                 event.schemaVersion,
                 event.previousCommitment,
@@ -82,14 +82,14 @@ impl ObserverCommitments {
             let event = INod::NodBodyDeleted::decode_log_data(data).unwrap();
             replay_deleted(
                 &mut self.nod_items,
-                parse_id(&event.nodId),
+                WwdEntityId::from(event.nodId),
                 event.previousCommitment,
             );
         } else if emitter == NOD_ADDRESS && signature == INod::NodBucketBodyStored::SIGNATURE_HASH {
             let event = INod::NodBucketBodyStored::decode_log_data(data).unwrap();
             replay_stored(
                 &mut self.nod_buckets,
-                parse_id(&event.bucketId),
+                WwdEntityId::from(event.bucketId),
                 event.commitmentSchemeVersion,
                 event.schemaVersion,
                 event.previousCommitment,
@@ -101,20 +101,16 @@ impl ObserverCommitments {
             let event = INod::NodBucketBodyDeleted::decode_log_data(data).unwrap();
             replay_deleted(
                 &mut self.nod_buckets,
-                parse_id(&event.bucketId),
+                WwdEntityId::from(event.bucketId),
                 event.previousCommitment,
             );
         }
     }
 }
 
-fn parse_id(bytes: &Bytes) -> EntityId36 {
-    EntityId36::try_from(bytes.as_ref()).unwrap()
-}
-
 fn replay_stored(
-    commitments: &mut BTreeMap<EntityId36, B256>,
-    identity: EntityId36,
+    commitments: &mut BTreeMap<WwdEntityId, B256>,
+    identity: WwdEntityId,
     scheme: u32,
     schema: u32,
     previous: B256,
@@ -132,8 +128,8 @@ fn replay_stored(
 }
 
 fn replay_deleted(
-    commitments: &mut BTreeMap<EntityId36, B256>,
-    identity: EntityId36,
+    commitments: &mut BTreeMap<WwdEntityId, B256>,
+    identity: WwdEntityId,
     previous: B256,
 ) {
     assert!(!previous.is_zero());
@@ -221,9 +217,9 @@ fn assert_execution_tree(
     tree: &CompressedTreeService,
     identity: ExactParentIdentity,
     observer: &ObserverCommitments,
-    tribute_id: EntityId36,
-    nod_id: EntityId36,
-    bucket_id: EntityId36,
+    tribute_id: WwdEntityId,
+    nod_id: WwdEntityId,
+    bucket_id: WwdEntityId,
 ) {
     let parent = tree.open_parent(identity).unwrap();
     for (entity, expected) in [
@@ -351,7 +347,7 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
         issued_at: 1_752_534_000,
         is_settled: false,
     };
-    let bucket_id = EntityId36::new(day, bucket_key.0);
+    let bucket_id = WwdEntityId::from_day_and_digest(day, bucket_key.0);
     let mut execution = HashMapStorageProvider::new(1);
     let empty_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
     StorageHandle::enter(&mut execution, |storage| {

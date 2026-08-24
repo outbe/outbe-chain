@@ -3,7 +3,6 @@ use std::collections::BTreeMap;
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_ocomp_protocol::{
     codec::CodecLimits,
-    common::EntityId36,
     control::CasObjectRefV1,
     registry::ObjectKind,
     result::ContributorActionV1,
@@ -35,10 +34,10 @@ fn hash(byte: u8) -> B256 {
     B256::repeat_byte(byte)
 }
 
-fn entity(index: u32) -> EntityId36 {
-    let mut bytes = [0_u8; 36];
-    bytes[32..].copy_from_slice(&index.to_be_bytes());
-    EntityId36(bytes)
+fn entity(index: u32) -> B256 {
+    let mut bytes = [0_u8; 32];
+    bytes[28..].copy_from_slice(&index.to_be_bytes());
+    B256::from(bytes)
 }
 
 fn owner(index: u32) -> Address {

@@ -11,7 +11,7 @@ use alloy_primitives::{Address, U256};
 use mongodb::sync::Client;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    decode_tribute_v1, encode_tribute_v1, EntityId36, IdPageRequest, StoredBody,
+    decode_tribute_v1, encode_tribute_v1, IdPageRequest, StoredBody, WwdEntityId,
 };
 use outbe_offchain_storage::{
     AtomicWriteBatch, Key, MemoryStorage, MongoStorage, MongoStorageConfig, Namespace,
@@ -26,7 +26,7 @@ use outbe_tribute::{
 fn tribute(tribute_id: U256, owner: Address, day: u32) -> TributeData {
     let worldwide_day = WorldwideDay::new(day);
     TributeData {
-        tribute_id: EntityId36::new(worldwide_day, tribute_id.to_be_bytes::<32>()),
+        tribute_id: WwdEntityId::from_day_and_digest(worldwide_day, tribute_id.to_be_bytes::<32>()),
         owner,
         worldwide_day,
         issuance_amount_minor: U256::MAX,
@@ -46,20 +46,20 @@ fn key(bytes: impl Into<Vec<u8>>) -> Key {
     Key::new(bytes).unwrap()
 }
 
-fn entity_id(id: U256, day: u32) -> EntityId36 {
-    EntityId36::new(WorldwideDay::new(day), id.to_be_bytes::<32>())
+fn entity_id(id: U256, day: u32) -> WwdEntityId {
+    WwdEntityId::from_day_and_digest(WorldwideDay::new(day), id.to_be_bytes::<32>())
 }
 
-fn id_key(id: EntityId36) -> Key {
-    key(id.as_bytes().to_vec())
+fn id_key(id: WwdEntityId) -> Key {
+    key(id.as_slice().to_vec())
 }
 
-fn owner_key(owner: Address, id: EntityId36) -> Key {
-    key([owner.as_slice(), id.as_bytes()].concat())
+fn owner_key(owner: Address, id: WwdEntityId) -> Key {
+    key([owner.as_slice(), id.as_slice()].concat())
 }
 
-fn day_key(day: u32, id: EntityId36) -> Key {
-    key([day.to_be_bytes().as_slice(), id.as_bytes()].concat())
+fn day_key(day: u32, id: WwdEntityId) -> Key {
+    key([day.to_be_bytes().as_slice(), id.as_slice()].concat())
 }
 
 #[test]

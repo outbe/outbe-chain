@@ -4,8 +4,8 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     begin_block, derive_poseidon_entity_id, end_block, mint, BodyInput, CandidateCacheLimits,
-    CeMdbx, CeWorkConfig, CompressedTreeService, EntityId36, EnvironmentIdentity,
-    ExactParentIdentity, ExecutionScope, FinalizedMarker, PartitionRef, SealOutput, StoredBody,
+    CeMdbx, CeWorkConfig, CompressedTreeService, EnvironmentIdentity, ExactParentIdentity,
+    ExecutionScope, FinalizedMarker, PartitionRef, SealOutput, StoredBody, WwdEntityId,
     ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
 };
 use outbe_offchain_storage::{
@@ -404,7 +404,7 @@ fn absence_corruption_and_unavailability_remain_distinct() {
     corrupt_writer
         .put(
             Namespace::new("tributes").unwrap(),
-            &Key::new(body.tribute_id.as_bytes().to_vec()).unwrap(),
+            &Key::new(body.tribute_id.as_slice().to_vec()).unwrap(),
             &Value::new([0xff]).unwrap(),
         )
         .unwrap();
@@ -448,7 +448,7 @@ fn every_tribute_body_input_schema_envelope_and_evm_leaf_is_authenticated() {
 
     let mut mutations = Vec::new();
     let mut changed = copy_tribute(&original);
-    changed.tribute_id = EntityId36::new(original.worldwide_day, [0x91; 32]);
+    changed.tribute_id = WwdEntityId::from_day_and_digest(original.worldwide_day, [0x91; 32]);
     mutations.push(("tribute_id", changed));
     let mut changed = copy_tribute(&original);
     changed.owner = Address::repeat_byte(0x62);
@@ -531,7 +531,7 @@ fn assert_raw_tribute_is_rejected(original: &TributeData, stored: Vec<u8>, field
     storage
         .put(
             Namespace::new("tributes").unwrap(),
-            &Key::new(original.tribute_id.as_bytes().to_vec()).unwrap(),
+            &Key::new(original.tribute_id.as_slice().to_vec()).unwrap(),
             &Value::new(stored).unwrap(),
         )
         .unwrap();

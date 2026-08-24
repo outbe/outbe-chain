@@ -25,7 +25,7 @@ const A = (hex: string): Address => getAddress(hex);
 export const CONTRACTS: Record<string, ContractEntry> = {
   tribute: {
     address: A("0x0000000000000000000000000000000000001101"),
-    note: "Tribute NFT — token ids are `bytes`, not uint256",
+    note: "Tribute NFT",
     abi: ABI.ITribute,
   },
 
@@ -37,7 +37,7 @@ export const CONTRACTS: Record<string, ContractEntry> = {
 
   nod: {
     address: A("0x0000000000000000000000000000000000001006"),
-    note: "Nod NFT — token ids are `bytes`, not uint256",
+    note: "Nod NFT",
     abi: ABI.INod,
   },
 

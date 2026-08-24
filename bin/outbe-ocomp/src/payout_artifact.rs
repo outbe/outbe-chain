@@ -116,7 +116,7 @@ pub fn write_contributor_payout_artifact(
                 for action in &chunk.chunk().ordered_eligible_contributors {
                     writer.push(&ContributorLeafData {
                         owner: action.owner,
-                        source_tribute_id: action.source_tribute_id.0,
+                        source_tribute_id: action.source_tribute_id,
                         nominal: action.nominal_amount_minor,
                     })?;
                 }
@@ -136,11 +136,12 @@ mod tests {
     use alloy_primitives::{Address, U256};
 
     use super::*;
+    use alloy_primitives::B256;
 
     fn leaf(index: u8) -> ContributorLeafData {
         ContributorLeafData {
             owner: Address::repeat_byte(index),
-            source_tribute_id: [index; 36],
+            source_tribute_id: B256::repeat_byte(index),
             nominal: U256::from(u64::from(index) + 1),
         }
     }

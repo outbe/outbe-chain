@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::EntityId36;
+use outbe_compressed_entities::WwdEntityId;
 use outbe_offchain_storage::{
     AtomicWriteBatch, Key, MemoryStorage, Namespace, StorageReaderHandle, StorageWriterHandle,
     Value,
@@ -15,7 +15,7 @@ use outbe_tribute::{
 
 fn tribute(day: WorldwideDay, discriminator: u8) -> TributeData {
     TributeData {
-        tribute_id: EntityId36::new(day, [discriminator; 32]),
+        tribute_id: WwdEntityId::from_day_and_digest(day, [discriminator; 32]),
         owner: Address::repeat_byte(discriminator),
         worldwide_day: day,
         issuance_amount_minor: U256::from(1_000_u64),
@@ -129,7 +129,7 @@ fn immutable_retained_key_rejects_changed_bytes_instead_of_overwriting_them() {
         [
             pin.input_lease_id.as_slice(),
             &day.value().to_be_bytes(),
-            body.tribute_id.as_bytes(),
+            body.tribute_id.as_slice(),
             reference.body_commitment.as_slice(),
         ]
         .concat(),
@@ -186,10 +186,12 @@ fn release_pages_across_the_work_shard_boundary_without_dropping_the_last_tribut
     let mut last_id = None;
 
     for ordinal in 0_u16..=256 {
+        // The identity keeps only `digest[4..]`, so a discriminator in the
+        // leading four bytes would collapse every ordinal onto one identity.
         let mut discriminator = [0_u8; 32];
-        discriminator[..2].copy_from_slice(&ordinal.to_be_bytes());
+        discriminator[4..6].copy_from_slice(&ordinal.to_be_bytes());
         let body = TributeData {
-            tribute_id: EntityId36::new(day, discriminator),
+            tribute_id: WwdEntityId::from_day_and_digest(day, discriminator),
             owner: Address::repeat_byte(0x82),
             worldwide_day: day,
             issuance_amount_minor: U256::from(1_000_u64),

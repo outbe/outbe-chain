@@ -2,7 +2,7 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    derive_poseidon_entity_id, EntityId36, ExecutionScope, ParentBodySource,
+    derive_poseidon_digest, ExecutionScope, ParentBodySource, WwdEntityId,
 };
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::stablecoin::iso_4217_alpha;
@@ -41,7 +41,7 @@ impl TributeFactoryContract<'_> {
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
         input: OfferTributeInput,
-    ) -> Result<EntityId36> {
+    ) -> Result<WwdEntityId> {
         let OfferTributeInput {
             caller,
             cipher_text,
@@ -178,9 +178,12 @@ impl TributeFactoryContract<'_> {
 
         // Recomputed from this call's own inputs, so it checks the enclave's
         // Poseidon rather than the enclave's own consistency with itself.
-        let tribute_id = derive_poseidon_entity_id(caller, worldwide_day)
+        // The identity keeps only the digest tail, so the enclave's token id is
+        // checked against the whole digest rather than against the identity.
+        let expected_digest = derive_poseidon_digest(caller, worldwide_day)
             .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
-        if result.owner != caller || result.token_id.0 != tribute_id.digest() {
+        let tribute_id = WwdEntityId::from_day_and_digest(worldwide_day, expected_digest);
+        if result.owner != caller || result.token_id != expected_digest {
             return Err(TributeFactoryError::InvalidCanonicalIdentity.into());
         }
 

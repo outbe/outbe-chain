@@ -68,7 +68,7 @@ pub fn dispatch(
                                 signature: c.signature,
                             },
                         )
-                        .map(|id| Bytes::copy_from_slice(id.as_bytes()))
+                        .map(|id| id.to_u256())
                 }),
             }
         },

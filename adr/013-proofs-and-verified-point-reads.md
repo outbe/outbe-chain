@@ -42,7 +42,7 @@ The client verifies the package locally. It derives identity, collection, key, s
 For independently supplied expected identity:
 
 ```text
-ExpectedEntity = (domain_id, raw_entity_id_36)
+ExpectedEntity = (domain_id, raw_wwd_entity_id)
 ```
 
 and a finalized block `H`, successful verification means:
@@ -53,7 +53,7 @@ VerifyPointPackage(ExpectedEntity, Header(H), Package(H)) = true
 
 only if all of the following hold:
 
-1. `Package(H)` identifies the exact expected chain, block, domain, and EntityId36;
+1. `Package(H)` identifies the exact expected chain, block, domain, and WwdEntityId;
 2. the client verifies that `Header(H)` is the canonical finalized header under its chain/light-client trust model;
 3. `H >= 1` and the client extracts the fork-active scheme and `R_sealed(H)` from mandatory tag `0x08`;
 4. the body, when present, strict-decodes and canonicalizes under the fork-active domain/schema rules and recomputes the authenticated non-zero leaf;
@@ -82,11 +82,11 @@ The v1 point request is conceptually:
 ```text
 PointReadRequestV1 {
     domain_id: u16,
-    raw_id: EntityId36,
+    raw_id: WwdEntityId,
 }
 ```
 
-`domain_id` must be one of the fork-active closed domain IDs. `raw_id` is exactly 36 bytes. Tribute derives its WWD partition from `raw_id[0..4]`; NodItem and NodBucket are singleton domains. The caller does not supply a block, collection key, tree key, shard, `K`, commitment, schema, root, or path direction.
+`domain_id` must be one of the fork-active closed domain IDs. `raw_id` is exactly 32 bytes. Tribute derives its WWD partition from `raw_id[0..4]`; NodItem and NodBucket are singleton domains. The caller does not supply a block, collection key, tree key, shard, `K`, commitment, schema, root, or path direction.
 
 The node selects the latest root-verified finalized CE MDBX marker visible when the one proof transaction opens. This may be behind a separately observed network tip while the local node is catching up; the response always states the selected block explicitly, and freshness remains client policy. V1 has no caller-selected block and no historical block selector.
 
@@ -193,7 +193,7 @@ PointProofCommonV1 {
     block_hash: B256,
 
     domain_id: u16,
-    raw_id: EntityId36,
+    raw_id: WwdEntityId,
 }
 
 PresentEvidenceV1 {
@@ -229,7 +229,7 @@ message StoredBody {
 The package does not duplicate `schema_version` or the payload as sibling fields. The verifier strict-decodes the envelope, requires byte-exact canonical re-encoding, validates the typed payload's embedded identity/WWD, obtains `schema_version` and `canonical_payload`, takes `commitment_scheme_version` only from the finalized header/fork schedule, and recomputes:
 
 ```text
-id_f   = PBytes(TAG_ID, EntityId36)
+id_f   = PBytes(TAG_ID, WwdEntityId)
 body_f = PBytes(TAG_BODY, canonical_payload)
 
 leaf_f = P(
@@ -439,7 +439,7 @@ Proof generation is an RPC/read service, not consensus execution and not the Mar
 
 After implementation:
 
-- a caller requests a Tribute, NodItem, or NodBucket by typed domain ID and exact EntityId36;
+- a caller requests a Tribute, NodItem, or NodBucket by typed domain ID and exact WwdEntityId;
 - the node opens one root-verified finalized CE MDBX snapshot and returns one present or absent proof package, or an explicit non-success outcome;
 - all shard, top, Catalog, marker, and root evidence in a successful package comes from that one snapshot;
 - the node never returns a body whose strict canonical commitment differs from the authenticated leaf;
@@ -561,7 +561,7 @@ Verify independently:
 Mutate every package component independently:
 
 - package chain ID, block number, and block hash;
-- domain, raw EntityId36 (including its derived Tribute WWD), `StoredBody` envelope/schema/payload byte, and body length;
+- domain, raw WwdEntityId (including its derived Tribute WWD), `StoredBody` envelope/schema/payload byte, and body length;
 - proof encoding version, CKB opcode, MergeValue, zero count, sibling, sibling order, proof truncation, and trailing byte;
 - shard-top sibling, count, order, level, derived direction, and `K`;
 - `Present`/`Absent` result discriminant and both absent-evidence discriminants;

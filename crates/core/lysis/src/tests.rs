@@ -4,9 +4,9 @@ use alloy_primitives::{Address, LogData, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    begin_block, decode_nod_item_v1, derive_poseidon_entity_id, end_block, EntityId36, EntityRef,
+    begin_block, decode_nod_item_v1, derive_poseidon_entity_id, end_block, EntityRef,
     ExecutionScope, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef,
-    StoredBody,
+    StoredBody, WwdEntityId,
 };
 use outbe_nod::{from_canonical_item, precompile::INod, NodContract, NodRepositoryReader};
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle};
@@ -29,7 +29,7 @@ struct TestBodyRepository {
 
 fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
     storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
         .unwrap();
     storage
         .sstore(
@@ -116,13 +116,13 @@ fn gas_audit_tribute(
     }
 }
 
-fn entity_id(worldwide_day: WorldwideDay, owner: Address) -> EntityId36 {
+fn entity_id(worldwide_day: WorldwideDay, owner: Address) -> WwdEntityId {
     derive_poseidon_entity_id(owner, worldwide_day).unwrap()
 }
 
 fn decode_nod_body_event(event: &LogData) -> outbe_nod::NodItemState {
     let decoded = INod::NodBodyStored::decode_log_data(event).unwrap();
-    let event_id = EntityId36::try_from(decoded.nodId.as_ref()).unwrap();
+    let event_id = WwdEntityId::from(decoded.nodId);
     let item = from_canonical_item(decode_nod_item_v1(&decoded.canonicalPayload).unwrap());
     assert_eq!(event_id, item.nod_id);
     item

@@ -744,7 +744,7 @@ impl LysisPlanAuditCursorV1<'_> {
                     })?;
             self.owner_tribute_search = Some(OwnerTributeSearchV1 {
                 owner,
-                tribute_id: tribute_id.as_bytes().to_vec(),
+                tribute_id: tribute_id.as_slice().to_vec(),
                 low: 0,
                 high: self.audit.plan.primary_work_unit_count,
             });
@@ -797,7 +797,7 @@ impl LysisPlanAuditCursorV1<'_> {
             .iter()
             .map(|record| decode_tribute_v1(&record.0))
             .find_map(|result| match result {
-                Ok(tribute) if tribute.tribute_id.as_bytes() == target => Some(Ok(tribute)),
+                Ok(tribute) if tribute.tribute_id.as_slice() == target => Some(Ok(tribute)),
                 Ok(_) => None,
                 Err(error) => Some(Err(error)),
             })

@@ -1024,10 +1024,7 @@ fn build_batch_calldata(
             let leaf = decode_contributor_leaf(record);
             IIntexFactory::ContributorLeaf {
                 owner: leaf.owner,
-                sourceTributeDigest: B256::from_slice(&leaf.source_tribute_id[..32]),
-                sourceTributeIndex: alloy_primitives::FixedBytes::<4>::from_slice(
-                    &leaf.source_tribute_id[32..],
-                ),
+                sourceTributeId: U256::from_be_bytes(leaf.source_tribute_id.0),
                 nominal: leaf.nominal,
             }
         })

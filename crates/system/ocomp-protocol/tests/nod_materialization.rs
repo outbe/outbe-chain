@@ -1,7 +1,6 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_ocomp_protocol::{
     abi::{encode_materialize_certified_nods_calldata, NOD_FACTORY_ADDRESS},
-    common::EntityId36,
     list::{ordered_list_root, streaming_ordered_list_membership_proof, OrderedListLimits},
     nod_materialization::{
         verify_nod_materialization_batch, NodMaterializationBatchV1, NodMaterializationHeadV1,
@@ -18,11 +17,11 @@ use outbe_ocomp_protocol::{
 
 const WWD: u32 = 20_260_812;
 
-fn entity_id(seed: u32) -> EntityId36 {
-    let mut bytes = [0_u8; 36];
+fn entity_id(seed: u32) -> B256 {
+    let mut bytes = [0_u8; 32];
     bytes[..4].copy_from_slice(&WWD.to_be_bytes());
-    bytes[32..].copy_from_slice(&seed.to_be_bytes());
-    EntityId36(bytes)
+    bytes[28..].copy_from_slice(&seed.to_be_bytes());
+    B256::from(bytes)
 }
 
 fn action(ordinal: u32) -> NodActionV1 {

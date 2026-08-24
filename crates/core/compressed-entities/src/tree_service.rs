@@ -615,7 +615,7 @@ impl AuthenticatedParentTree for MdbxAuthenticatedTree {
     }
 }
 
-fn entity_parts(entity: EntityRef) -> (CeDomain, Collection, crate::EntityId36) {
+fn entity_parts(entity: EntityRef) -> (CeDomain, Collection, crate::WwdEntityId) {
     match entity {
         EntityRef::Tribute(id) => (CeDomain::Tribute, Collection::Tribute, id),
         EntityRef::NodItem(id) => (CeDomain::NodItem, Collection::NodItem, id),

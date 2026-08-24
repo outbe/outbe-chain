@@ -10,9 +10,9 @@ use outbe_primitives::{
 
 use crate::{
     begin_block, end_block, mint, retire_partition, sealed_root, AuthenticatedParentTree,
-    AuthenticatedParentTreeFactory, BodyInput, Commitment, EntityId36, EntityRef,
-    ExactParentIdentity, ExecutionScope, FinalLeafMutation, PartitionRef, ProvisionalTreeBatch,
-    RetirementOutcome, TributeBodyV1, ACTIVE_COMMITMENT_SCHEME,
+    AuthenticatedParentTreeFactory, BodyInput, Commitment, EntityRef, ExactParentIdentity,
+    ExecutionScope, FinalLeafMutation, PartitionRef, ProvisionalTreeBatch, RetirementOutcome,
+    TributeBodyV1, WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
 };
 
 #[derive(Debug)]
@@ -87,7 +87,7 @@ fn with_active_scope(present: bool, test: impl FnOnce(StorageHandle<'_>, &Execut
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         storage
-            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
             .unwrap();
         storage
             .sstore(
@@ -112,7 +112,7 @@ fn with_active_scope(present: bool, test: impl FnOnce(StorageHandle<'_>, &Execut
 
 fn tribute(day: WorldwideDay) -> TributeBodyV1 {
     TributeBodyV1 {
-        tribute_id: EntityId36::new(day, [7; 32]),
+        tribute_id: WwdEntityId::from_day_and_digest(day, [7; 32]),
         owner: Address::repeat_byte(7),
         worldwide_day: day,
         issuance_amount_minor: U256::from(1),

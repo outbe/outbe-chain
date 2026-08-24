@@ -362,7 +362,7 @@ impl Rpc {
             WorldwideDay::new(generation.worldwide_day),
         )?;
         let call = INodFactory::mineGratisCall {
-            nodId: nod_id.into_bytes().to_vec().into(),
+            nodId: nod_id.to_u256(),
             nonce: U256::ZERO,
             mac: B256::ZERO,
             opNonce: 0,
@@ -446,7 +446,7 @@ impl Rpc {
         loop {
             let last_observation = match self.materialized_nod_for_owner(port, owner) {
                 Ok(Some((nod_id, body))) => {
-                    if body.owner != owner || body.nodId.as_ref() != nod_id.as_slice() {
+                    if body.owner != owner || body.nodId != U256::from_be_slice(&nod_id) {
                         return Err(eyre!("owner enumeration and nodData disagree"));
                     }
                     return Ok(());
@@ -479,7 +479,7 @@ impl Rpc {
         let body = self
             .nod_data_on(port, &nod_id)
             .map_err(|error| eyre!("capacity owner NOD body read failed: {error}"))?;
-        let entity = outbe_compressed_entities::EntityId36::try_from(nod_id.as_slice())?;
+        let entity = outbe_compressed_entities::WwdEntityId::try_from(nod_id.as_slice())?;
         let nonce = (0_u64..100_000)
             .map(U256::from)
             .find(|nonce| outbe_nodfactory::runtime::validate_pow(entity, *nonce).is_ok())
@@ -508,7 +508,7 @@ impl Rpc {
             addresses::NOD_FACTORY_ADDR,
             private_key,
             &INodFactory::mineGratisCall {
-                nodId: nod_id.into(),
+                nodId: U256::from_be_slice(&nod_id),
                 nonce,
                 mac: B256::from(mac),
                 opNonce: op_nonce,
@@ -581,7 +581,7 @@ impl Rpc {
                 index: U256::from(index),
             },
         )
-        .map(|value| value.to_vec());
+        .map(|value| value.to_be_bytes::<32>().to_vec());
         classify_owner_index_result(index, result)
     }
 
@@ -595,7 +595,7 @@ impl Rpc {
             &self.url(port),
             addresses::NOD_ADDR,
             &INod::nodDataCall {
-                nodId: nod_id.to_vec().into(),
+                nodId: U256::from_be_slice(nod_id),
             },
         )
     }
@@ -1588,7 +1588,7 @@ impl Rpc {
     }
 
     /// Canonical Tribute identities indexed by one owner.
-    pub fn tributes_by_owner(&self, port: u16, owner: Address) -> Option<Vec<Bytes>> {
+    pub fn tributes_by_owner(&self, port: u16, owner: Address) -> Option<Vec<U256>> {
         eth::read_call(
             &self.url(port),
             addresses::TRIBUTE_ADDR,
@@ -1597,7 +1597,7 @@ impl Rpc {
     }
 
     /// Canonical Tribute identities indexed by one Worldwide Day.
-    pub fn tributes_by_day(&self, port: u16, worldwide_day: u32) -> Option<Vec<Bytes>> {
+    pub fn tributes_by_day(&self, port: u16, worldwide_day: u32) -> Option<Vec<U256>> {
         eth::read_call(
             &self.url(port),
             addresses::TRIBUTE_ADDR,
@@ -3680,7 +3680,7 @@ fn classify_owner_index_result(
     result: std::result::Result<Vec<u8>, String>,
 ) -> std::result::Result<Option<Vec<u8>>, String> {
     match result {
-        Ok(nod_id) if nod_id.len() == outbe_compressed_entities::EntityId36::LEN => {
+        Ok(nod_id) if nod_id.len() == outbe_compressed_entities::WwdEntityId::len_bytes() => {
             Ok(Some(nod_id))
         }
         Ok(nod_id) => Err(format!(

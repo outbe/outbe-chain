@@ -93,7 +93,7 @@ TRIBUTE_FACTORY_ABI = json.loads(
          {"type":"bytes","name":"zkMerkleRoot"},
          {"type":"bytes","name":"signature"}
        ],
-       "outputs":[{"type":"bytes","name":"tributeId"}]}
+       "outputs":[{"type":"uint256","name":"tributeId"}]}
     ]"""
 )
 

@@ -4457,7 +4457,7 @@ mod tests {
             .sstore(
                 outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
                 U256::ZERO,
-                U256::from(3),
+                U256::from(4),
             )
             .unwrap();
         storage
@@ -9581,7 +9581,7 @@ mod tests {
             let readers = RuntimeBodyReaders::new(reader);
             assert!(readers
                 .nod()
-                .get_bucket(outbe_compressed_entities::EntityId36::new(
+                .get_bucket(outbe_compressed_entities::WwdEntityId::from_day_and_digest(
                     worldwide_day,
                     bucket_key.0,
                 ))

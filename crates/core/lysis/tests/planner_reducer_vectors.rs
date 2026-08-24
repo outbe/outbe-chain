@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::derive_poseidon_entity_id;
+use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_lysis::program_v1::artifacts::{
     decode_amount_run, decode_enumerated_run, decode_fidelity_map_output,
     decode_finalized_output_run, decode_fixed_reduce_output, decode_gratis_prefix_down_output,
@@ -37,7 +37,7 @@ use outbe_lysis::program_v1::{
     ProgramInputV1, TributeInputV1,
 };
 use outbe_ocomp_protocol::{
-    common::{BoundedBytes, EntityId36},
+    common::BoundedBytes,
     control::CasObjectRefV1,
     input::{InputChunkKind, InputChunkRefV1},
     local_control::poc_schema_limits,
@@ -82,7 +82,7 @@ fn observed(
     }
 }
 
-fn tribute_chunk_ref(ordinal: u32, ids: &[EntityId36], encoded_bytes: u64) -> InputChunkRefV1 {
+fn tribute_chunk_ref(ordinal: u32, ids: &[B256], encoded_bytes: u64) -> InputChunkRefV1 {
     InputChunkRefV1 {
         kind: InputChunkKind::Tribute,
         ordinal,
@@ -221,7 +221,7 @@ fn constant_size_coverage_carriers_merge_to_the_canonical_full_raw_root() {
     let limits = poc_schema_limits();
     for total_count in [1_u32, 255, 256, 257, 513] {
         let records = (0..total_count)
-            .map(|raw_ordinal| (raw_ordinal, entity_id(raw_ordinal).0))
+            .map(|raw_ordinal| (raw_ordinal, WwdEntityId::from(entity_id(raw_ordinal))))
             .collect::<Vec<_>>();
         let primary_count = total_count.div_ceil(PRIMARY_WORK_SHARD_SIZE);
         let mut carriers = (0..primary_count)
@@ -252,9 +252,9 @@ fn constant_size_coverage_carriers_merge_to_the_canonical_full_raw_root() {
         let expected_records = records
             .iter()
             .map(|(ordinal, id)| {
-                let mut encoded = [0_u8; 40];
+                let mut encoded = [0_u8; 36];
                 encoded[..4].copy_from_slice(&ordinal.to_be_bytes());
-                encoded[4..].copy_from_slice(id);
+                encoded[4..].copy_from_slice(id.as_slice());
                 encoded
             })
             .collect::<Vec<_>>();
@@ -283,7 +283,7 @@ fn constant_size_coverage_carriers_merge_to_the_canonical_full_raw_root() {
 fn coverage_carriers_reject_non_canonical_ranges_and_merge_order() {
     let total_count = 257_u32;
     let records = (0..total_count)
-        .map(|raw_ordinal| (raw_ordinal, entity_id(raw_ordinal).0))
+        .map(|raw_ordinal| (raw_ordinal, WwdEntityId::from(entity_id(raw_ordinal))))
         .collect::<Vec<_>>();
     let left = RawCoverageCarrierV1::from_records(total_count, &records[..256]).unwrap();
     let right = RawCoverageCarrierV1::from_records(total_count, &records[256..]).unwrap();
@@ -304,7 +304,7 @@ fn coverage_carriers_reject_non_canonical_ranges_and_merge_order() {
 fn fixed_reduce_output_is_canonical_and_binds_aggregate_carrier_and_fractions() {
     let limits = poc_schema_limits();
     let records = (0..257_u32)
-        .map(|raw_ordinal| (raw_ordinal, entity_id(raw_ordinal).0))
+        .map(|raw_ordinal| (raw_ordinal, WwdEntityId::from(entity_id(raw_ordinal))))
         .collect::<Vec<_>>();
     let left = RawCoverageCarrierV1::from_records(257, &records[..256]).unwrap();
     let right = RawCoverageCarrierV1::from_records(257, &records[256..]).unwrap();
@@ -2572,8 +2572,8 @@ fn gratis_prefix_treats_padding_as_identity_not_as_work() {
     assert!(children[1].is_none());
 }
 
-fn entity_id(ordinal: u32) -> EntityId36 {
-    let mut bytes = [0_u8; 36];
-    bytes[32..].copy_from_slice(&ordinal.to_be_bytes());
-    EntityId36(bytes)
+fn entity_id(ordinal: u32) -> B256 {
+    let mut bytes = [0_u8; 32];
+    bytes[28..].copy_from_slice(&ordinal.to_be_bytes());
+    B256::from(bytes)
 }
