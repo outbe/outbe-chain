@@ -10,6 +10,36 @@ use eyre::{eyre, Result};
 
 use crate::internal::eth;
 
+/// Send `call` and prove the receipt says success: a reverted transaction still
+/// returns a hash, so an unchecked send hides the failure it was meant to catch.
+fn send_checked<C: alloy_sol_types::SolCall>(
+    url: &str,
+    to: Address,
+    key: &str,
+    call: &C,
+    label: &str,
+) -> Result<()> {
+    let tx = eth::send_call(url, to, key, call, None)
+        .map_err(|error| eyre!("{label} was not sent: {error}"))?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        if let Some(receipt) = eth::receipt_json(url, &tx) {
+            let status = receipt
+                .get("status")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if status == "0x1" {
+                return Ok(());
+            }
+            return Err(eyre!("{label} reverted: {receipt}"));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(eyre!("{label} never produced a receipt"));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
 /// `IntexFactory`, the engine precompile.
 pub const INTEX_FACTORY: Address =
     alloy_primitives::address!("0x0000000000000000000000000000000000001015");
@@ -116,7 +146,7 @@ pub fn issue_series(
     let mut issued = Vec::with_capacity(specs.len());
     for spec in specs {
         let id = series_id(worldwide_day, spec.issuance, reference_byte);
-        eth::send_call(
+        send_checked(
             url,
             INTEX_FACTORY,
             sender_key,
@@ -133,9 +163,8 @@ pub fn issue_series(
                 recipientChains: vec![chain_id],
                 snapshotChains: vec![chain_id],
             },
-            None,
-        )
-        .map_err(|error| eyre!("issueForTest was refused: {error}"))?;
+            "issueForTest",
+        )?;
         issued.push(id);
     }
     Ok(issued)
@@ -147,14 +176,14 @@ pub fn fund_settler(url: &str, asset: Address, holder_key: &str, amount: U256) -
         .parse()
         .map_err(|error| eyre!("invalid holder key: {error}"))?;
     let holder = alloy_signer::Signer::address(&signer);
-    eth::send_call(
+    send_checked(
         url,
         asset,
         holder_key,
         &ITestToken::mintCall { to: holder, amount },
-        None,
+        "mint the settlement asset",
     )?;
-    eth::send_call(
+    send_checked(
         url,
         asset,
         holder_key,
@@ -162,7 +191,7 @@ pub fn fund_settler(url: &str, asset: Address, holder_key: &str, amount: U256) -
             spender: INTEX_FACTORY,
             amount,
         },
-        None,
+        "approve the engine",
     )?;
     Ok(())
 }
@@ -189,7 +218,7 @@ pub fn settle(
     amount: u32,
     payment_token: Address,
 ) -> Result<()> {
-    eth::send_call(
+    send_checked(
         url,
         INTEX_FACTORY,
         holder_key,
@@ -199,7 +228,7 @@ pub fn settle(
             amount: U256::from(amount),
             paymentToken: payment_token,
         },
-        None,
+        "settle",
     )
     .map_err(|error| eyre!("settle was refused: {error}"))?;
     Ok(())
@@ -249,7 +278,7 @@ pub fn mine_promis(
     mac: [u8; 32],
     op_nonce: u64,
 ) -> Result<()> {
-    eth::send_call(
+    send_checked(
         url,
         INTEX_FACTORY,
         holder_key,
@@ -260,7 +289,7 @@ pub fn mine_promis(
             mac: mac.into(),
             opNonce: op_nonce,
         },
-        None,
+        "minePromis",
     )
     .map_err(|error| eyre!("minePromis was refused: {error}"))?;
     Ok(())
@@ -301,12 +330,12 @@ pub fn open_day(
         commitBondMinor: 0,
         dayState: 1,
     };
-    eth::send_call(
+    send_checked(
         url,
         origin_router,
         sender_key,
         &IOriginRouterStart::sendAuctionStageStartCall { params },
-        None,
+        "sendAuctionStageStart",
     )
     .map_err(|error| eyre!("sendAuctionStageStart was refused: {error}"))?;
     Ok(())
