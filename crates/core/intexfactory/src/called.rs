@@ -12,7 +12,6 @@ use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
 use outbe_intex::SeriesId;
 use outbe_oracle::schema::{OracleContract, PairIndex};
-use outbe_primitives::storage::types::Storable;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PrecompileError, Result},
@@ -23,7 +22,7 @@ use outbe_primitives::{
 
 use outbe_intex::IntexState;
 
-use crate::constants::ORIGIN_ROUTER_ADDRESS;
+use crate::constants::{MAX_SERIES_PER_MARK, ORIGIN_ROUTER_ADDRESS};
 use crate::qualified::ScanBudget;
 use crate::schema::IntexFactoryContract;
 use crate::sol_ext::IOriginRouter;
@@ -383,14 +382,13 @@ pub(crate) fn try_call_group(
     }
     factory.remove_qualified_group(group.iso_code, group.worldwide_day)?;
 
-    // A slice of this sweep runs in a block hook, which cannot call contracts, so
-    // the notices leave from the `intex_notify` cycle trigger. One per series: the
-    // group is gone from the index by the time they are sent.
+    // A slice of this sweep runs in a block hook, which cannot call contracts, so the notices leave from
+    // the `intex_notify` trigger. Each carries its own series: the group has left the index by then.
     for &series_id in &group.members {
         crate::qualified::enqueue_notice(
             factory,
             crate::qualified::NOTICE_CALLED,
-            series_id.to_word(),
+            crate::qualified::pack_called_notice(series_id, called_at),
         )?;
     }
 
@@ -406,26 +404,41 @@ pub(crate) fn try_call_group(
     Ok(group.members.len() as u32)
 }
 
-/// One series per message, unlike the Qualified notice: applying a Called mark
-/// migrates the target's holders, an unbounded cost the origin cannot price, so
-/// sharing a budget would take a whole group down with one heavy series.
+/// One message per group, split only where the wire's cap forces it. `called_at`
+/// travels so every target derives the same deadline the origin did.
 pub(crate) fn notify_called(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,
+    called_at: u32,
     members: &[SeriesId],
 ) -> Result<()> {
-    for chunk in members.chunks(1) {
-        // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
-        storage.call(
-            ORIGIN_ROUTER_ADDRESS,
-            U256::ZERO,
-            IOriginRouter::sendMarkCalledCall {
-                worldwideDay: worldwide_day.value(),
-                seriesIds: chunk.iter().map(|id| (*id).into()).collect(),
-            }
-            .abi_encode()
-            .into(),
-        )?;
+    for chunk in members.chunks(MAX_SERIES_PER_MARK) {
+        // Best-effort, and the batch is the unit: a failure loses the mark for every series in it.
+        let sent = storage.with_checkpoint(|| {
+            // Relay-float-funded: value 0, so the router self-quotes and pays the fee from its float.
+            storage.call(
+                ORIGIN_ROUTER_ADDRESS,
+                U256::ZERO,
+                IOriginRouter::sendMarkCalledCall {
+                    worldwideDay: worldwide_day.value(),
+                    calledAt: called_at,
+                    seriesIds: chunk.iter().map(|id| (*id).into()).collect(),
+                }
+                .abi_encode()
+                .into(),
+            )?;
+            Ok(())
+        });
+        if let Err(error) = sent {
+            tracing::warn!(
+                target: "outbe::intexfactory",
+                worldwide_day = worldwide_day.value(),
+                called_at,
+                series = ?chunk.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+                error = ?error,
+                "called notice: dropping"
+            );
+        }
     }
     Ok(())
 }

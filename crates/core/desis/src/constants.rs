@@ -1,9 +1,9 @@
 use alloy_primitives::{address, Address};
 
 /// OriginRouter on Outbe (outbound ERC-7786 sends).
-/// CREATE3 proxy via outbe-intex Create3Factory, salt "outbe-intex:OriginRouter:v2.0.0".
+/// CREATE3 proxy via outbe-intex Create3Factory, salt "outbe-intex:OriginRouter:v3.0.0".
 #[cfg(not(feature = "e2e-test"))]
-pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x67129C422bDC2c8984DbF381B6ec4515fE2BbD29");
+pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0xCBfa290DCd34319Ff1aec79A4084f2C900977599");
 
 /// Same proxy under salt "outbe-intex:OriginRouter:e2e-test", deployed by the well-known
 /// anvil account so a throwaway chain needs no production key.
@@ -51,8 +51,8 @@ pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 300;
 pub const DAY_STATE_GREEN: u8 = 1;
 pub const DAY_STATE_RED: u8 = 2;
 
-/// Bidders per REFUND_INSTRUCTIONS message: the same per-message array cap the issuance
-/// fan-out uses, and the codec's `MAX_PAYLOAD_ARRAY_LEN`.
+/// Bidders per REFUND_INSTRUCTIONS message: the codec's `MAX_PAYLOAD_ARRAY_LEN`. Issuance uses its own,
+/// narrower cap — a recipient costs a mint, a bidder costs a lock update.
 pub use outbe_intexfactory::constants::MAX_RECIPIENTS_PER_MESSAGE as REFUND_CHUNK_LEN;
 
 /// Chunks one chain-day's refunds may span; mirrors the codec's `MAX_CHUNKS`.

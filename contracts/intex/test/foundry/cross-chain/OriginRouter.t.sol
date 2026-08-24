@@ -84,7 +84,7 @@ contract OriginRouterTest is CrossChainTest {
         originRouter.wire(desis, intexFactory);
 
         // Wire BNB adapter
-        targetRouter.wire(address(auction), address(intex), admin, address(nftBridge));
+        targetRouter.wire(address(auction), address(intex), admin);
     }
 
     // --- Helpers ---
@@ -162,7 +162,9 @@ contract OriginRouterTest is CrossChainTest {
     function test_sendMarkCalled_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendMarkCalled{value: 0.1 ether}(WORLDWIDE_DAY, MarkBatchLib.one(SERIES_ID));
+        originRouter.sendMarkCalled{value: 0.1 ether}(
+            WORLDWIDE_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID)
+        );
     }
 
     function test_sendAuctionStageClearing_revert_unauthorized() public {
@@ -336,7 +338,8 @@ contract OriginRouterTest is CrossChainTest {
     }
 
     function test_quoteSendMarkCalled() public view {
-        uint256 fee = originRouter.quoteSendMarkCalled(WORLDWIDE_DAY, MarkBatchLib.one(SERIES_ID));
+        uint256 fee =
+            originRouter.quoteSendMarkCalled(WORLDWIDE_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID));
 
         assertEq(fee, 0.001 ether);
     }

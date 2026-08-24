@@ -16,7 +16,7 @@ use outbe_vaultrouter::api::IVaultRouter;
 
 use crate::config;
 use crate::constants::{
-    DIST_CHUNK_LIMIT, INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_MESSAGE, MAX_SERIES_PER_MESSAGE,
+    DIST_CHUNK_LIMIT, INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE,
     ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS,
 };
 use crate::errors::IntexFactoryError;
@@ -140,7 +140,7 @@ pub struct IssuanceLeg {
 }
 
 /// Pack a day's legs into per-chain messages, up to `MAX_SERIES_PER_MESSAGE` series and
-/// `MAX_RECIPIENTS_PER_MESSAGE` recipients each. A series with more winners spans several,
+/// `MAX_RECIPIENTS_PER_ISSUANCE` recipients each. A series with more winners spans several,
 /// which the receiver's create-if-absent makes safe.
 pub fn pack_issuance_messages(
     legs: Vec<IssuanceLeg>,
@@ -158,7 +158,7 @@ pub fn pack_issuance_messages(
                 Some((_, message))
                     if message.len() < MAX_SERIES_PER_MESSAGE
                         && recipient_count(message) + slice.recipients.len()
-                            <= MAX_RECIPIENTS_PER_MESSAGE =>
+                            <= MAX_RECIPIENTS_PER_ISSUANCE =>
                 {
                     message.push(slice);
                 }
@@ -222,13 +222,13 @@ fn recipient_count(message: &[IssuanceInstructionsParams]) -> usize {
 
 /// One series' instructions cut into pieces a message can carry; only the winners differ.
 fn split_recipients(payload: IssuanceInstructionsParams) -> Vec<IssuanceInstructionsParams> {
-    if payload.recipients.len() <= MAX_RECIPIENTS_PER_MESSAGE {
+    if payload.recipients.len() <= MAX_RECIPIENTS_PER_ISSUANCE {
         return vec![payload];
     }
     (0..payload.recipients.len())
-        .step_by(MAX_RECIPIENTS_PER_MESSAGE)
+        .step_by(MAX_RECIPIENTS_PER_ISSUANCE)
         .map(|start| {
-            let end = (start + MAX_RECIPIENTS_PER_MESSAGE).min(payload.recipients.len());
+            let end = (start + MAX_RECIPIENTS_PER_ISSUANCE).min(payload.recipients.len());
             IssuanceInstructionsParams {
                 recipients: payload.recipients[start..end].to_vec(),
                 quantities: payload.quantities[start..end].to_vec(),

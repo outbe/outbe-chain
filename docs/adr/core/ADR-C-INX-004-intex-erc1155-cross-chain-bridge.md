@@ -28,12 +28,12 @@ MintFailed -> Minted | Reclaimed
 
 Exactly one terminal effect exists per item. Retry uses the stored immutable payload;
 reclaim sends a compensating mint to the authenticated source account and cannot race
-with retry. System holder migration is separately authorized and conservation-equivalent
-to ordinary holder-initiated transfer.
+with retry. A Called series is frozen in ownership, so a bridge hop may only return a
+holder's own balance to the chain that settles it.
 
 ## Authoritative interfaces
 
-`send`, `batchSend`, `multiSend` and `systemMultiSend` are outbound commands.
+`send`, `batchSend` and `multiSend` are outbound commands.
 Authenticated `_dispatch` plus `crosschainMintOne` owns inbound execution.
 `retryCrosschainMint` and `reclaimToSource` own recovery. `setRemoteMessenger`, upgrade
 and native sweep are privileged operations.

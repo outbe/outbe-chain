@@ -30,11 +30,11 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
     function setUp() public {
         _setUpBridge();
         intex = DeployProxy.intexNFT1155(address(this), address(this));
-        // The origin-as-target shape: markCalled has no holders to migrate, so the mark is a pure state flip.
+        // The origin-as-target shape: a mark is a pure state flip here as anywhere.
         router = DeployProxy.targetRouter(address(bridge), address(this), uint32(block.chainid));
 
         router.setRemoteMessenger(uint32(block.chainid), _interop(uint32(block.chainid), originSender));
-        router.wire(makeAddr("auction"), address(intex), makeAddr("escrow"), makeAddr("nftBridge"));
+        router.wire(makeAddr("auction"), address(intex), makeAddr("escrow"));
         intex.grantRole(intex.RELAYER_ROLE(), address(router));
         series = CreateSeriesLib.seriesId(DAY);
     }
@@ -49,8 +49,11 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         return BridgeMsgCodec.encodeMarkQualified(DAY, MarkBatchLib.one(CreateSeriesLib.seriesId(DAY)));
     }
 
-    function _called() internal pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeMarkCalled(DAY, MarkBatchLib.one(CreateSeriesLib.seriesId(DAY)));
+    function _called() internal view returns (bytes memory) {
+        return
+            BridgeMsgCodec.encodeMarkCalled(
+                DAY, uint32(block.timestamp), MarkBatchLib.one(CreateSeriesLib.seriesId(DAY))
+            );
     }
 
     function _issuance() internal returns (bytes memory) {
@@ -104,38 +107,19 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         assertEq(router.pendingMark(series), BridgeMsgCodec.MSG_MARK_CALLED, "Qualified cannot demote it");
     }
 
-    function test_ASlottedCalledWaitsForTheValveSoTheWinnersMintFirst() public {
+    /// @dev A mark moves no balances, so a waiting Called lands with the issuance that creates the series
+    ///      rather than holding for the valve.
+    function test_IssuanceCreatingTheSeriesAppliesAWaitingCalled() public {
         _deliver(_called());
-        _deliver(_issuance()); // the Called slot must not apply mid-issuance against the still-empty series
-        assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Issued), "winners minted into a live series");
-        assertEq(router.pendingMark(series), BridgeMsgCodec.MSG_MARK_CALLED, "the Called still waits");
+        _deliver(_issuance());
 
-        router.applyPendingMark(series);
-        assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "the valve applies it after the mints");
-    }
-
-    function test_OnARemoteTargetTheValveMigratesTheMintedHolders() public {
-        // Remote-target shape (OUTBE_CHAIN_ID != this chain): markCalled must bridge the holders minted
-        // by the issuance that preceded the valve. The stub bridge rejects the send, so the holders
-        // chunk parks — proving the migration ran against the real, non-empty holder set.
-        TargetRouter remote = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
-        remote.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
-        remote.wire(makeAddr("auction"), address(intex), makeAddr("escrow"), makeAddr("nftBridge"));
-        intex.grantRole(intex.RELAYER_ROLE(), address(remote));
-
-        _deliver(OUTBE_CHAIN_ID, originSender, address(remote), _called());
-        _deliver(OUTBE_CHAIN_ID, originSender, address(remote), _issuance());
-        assertEq(remote.pendingMark(series), BridgeMsgCodec.MSG_MARK_CALLED, "Called waits for the valve");
-
-        remote.applyPendingMark(series);
-        assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "applied");
-        (uint256 tokenId,,) = remote.pendingHoldersRelays(0);
-        assertEq(tokenId, intex.issuedTokenId(series), "the minted holders were snapshotted for migration");
+        assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "applied with the issuance");
+        assertEq(router.pendingMark(series), 0, "nothing waits any more");
     }
 
     function test_ARedeliveredMarkThatSettlesTheSlotClearsIt() public {
         _deliver(_called());
-        _deliver(_issuance()); // series created; the Called still waits for the valve
+        _deliver(_issuance()); // series created, and the waiting Called lands with it
         // The bridge redelivers the mark: it applies directly now, so nothing may keep waiting.
         _deliver(_called());
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "applied on redelivery");

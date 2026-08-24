@@ -284,7 +284,10 @@ interface IOriginRouter {
         uint128[] calldata paidAmounts
     ) external view returns (uint256 fee);
     /// @notice Native fee to broadcast mark-called (summed over the day's snapshot targets).
-    function quoteSendMarkCalled(uint32 worldwideDay, bytes14[] calldata seriesIds) external view returns (uint256 fee);
+    function quoteSendMarkCalled(uint32 worldwideDay, uint32 calledAt, bytes14[] calldata seriesIds)
+        external
+        view
+        returns (uint256 fee);
     /// @notice Native fee to broadcast mark-qualified (summed over the day's snapshot targets).
     function quoteSendMarkQualified(uint32 worldwideDay, bytes14[] calldata seriesIds)
         external
@@ -327,10 +330,10 @@ interface IOriginRouter {
         uint128[] calldata paidAmounts
     ) external payable returns (bytes32 sendId);
     /// @notice Broadcast mark-called for one day's series over its snapshot. A batch is one day's
-    ///         series in one reference currency, which share the decision that called them.
+    ///         series that share both the decision that called them and its timestamp.
     ///         Restricted to `INTEX_FACTORY_ROLE`.
-    /// @dev The settlement deadline is derived on the destination chain from `callNoticePeriod`.
-    function sendMarkCalled(uint32 worldwideDay, bytes14[] calldata seriesIds) external payable;
+    /// @dev `calledAt` is the origin's own stamp, so delivery lag never lengthens a target's deadline.
+    function sendMarkCalled(uint32 worldwideDay, uint32 calledAt, bytes14[] calldata seriesIds) external payable;
     /// @notice Broadcast mark-qualified for one day's series over its snapshot, flipping them to
     ///         Qualified. Restricted to `INTEX_FACTORY_ROLE`.
     function sendMarkQualified(uint32 worldwideDay, bytes14[] calldata seriesIds) external payable;
