@@ -33,7 +33,7 @@ fn contributor(index: u32) -> ContributorActionV1 {
     let mut owner = [0_u8; 20];
     owner[16..].copy_from_slice(&(index + 1).to_be_bytes());
     let mut tribute = [0_u8; 32];
-    tribute[32..].copy_from_slice(&index.to_be_bytes());
+    tribute[28..].copy_from_slice(&index.to_be_bytes());
     ContributorActionV1 {
         owner: Address::from(owner),
         source_tribute_id: B256::from(tribute),

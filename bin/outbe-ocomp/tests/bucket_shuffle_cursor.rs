@@ -39,9 +39,9 @@ fn bucket_record(index: u32) -> ShuffleBucketRecordV1 {
     let mut bucket_key = [0_u8; 32];
     bucket_key[28..].copy_from_slice(&index.to_be_bytes());
     let mut tribute_id = [0_u8; 32];
-    tribute_id[32..].copy_from_slice(&index.to_be_bytes());
+    tribute_id[28..].copy_from_slice(&index.to_be_bytes());
     let mut nod_id = [0_u8; 32];
-    nod_id[32..].copy_from_slice(&(index + 1).to_be_bytes());
+    nod_id[28..].copy_from_slice(&(index + 1).to_be_bytes());
     ShuffleBucketRecordV1 {
         bucket_key: B256::from(bucket_key),
         raw_ordinal: index,

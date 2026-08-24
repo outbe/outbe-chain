@@ -493,7 +493,7 @@ fn decode_stored_body(
 }
 
 pub(crate) fn primary_key(tribute_id: WwdEntityId) -> Result<Key, TributeRepositoryError> {
-    Ok(Key::new(tribute_id.as_slice().to_vec())?)
+    Ok(Key::new(tribute_id.to_vec())?)
 }
 
 pub(crate) fn owner_index_key(

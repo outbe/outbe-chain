@@ -635,7 +635,7 @@ fn abi_leaves(leaves: &[ContributorLeafData]) -> Vec<IIntexFactory::ContributorL
         .iter()
         .map(|leaf| IIntexFactory::ContributorLeaf {
             owner: leaf.owner,
-            sourceTributeId: U256::from_be_bytes(leaf.source_tribute_id.0),
+            sourceTributeId: leaf.source_tribute_id,
             nominal: leaf.nominal,
         })
         .collect()

@@ -928,7 +928,7 @@ fn canonical_leaf_encoding_matches_protocol_codec() {
     let leaf = contributor_leaf(7, 12_345);
     let action = ContributorActionV1 {
         owner: leaf.owner,
-        source_tribute_id: leaf.source_tribute_id,
+        source_tribute_id: alloy_primitives::B256::from(leaf.source_tribute_id.to_be_bytes::<32>()),
         nominal_amount_minor: leaf.nominal,
     };
     let expected = action

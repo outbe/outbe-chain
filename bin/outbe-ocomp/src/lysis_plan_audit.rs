@@ -744,7 +744,7 @@ impl LysisPlanAuditCursorV1<'_> {
                     })?;
             self.owner_tribute_search = Some(OwnerTributeSearchV1 {
                 owner,
-                tribute_id: tribute_id.as_slice().to_vec(),
+                tribute_id: tribute_id.to_vec(),
                 low: 0,
                 high: self.audit.plan.primary_work_unit_count,
             });

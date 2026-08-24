@@ -404,7 +404,7 @@ fn absence_corruption_and_unavailability_remain_distinct() {
     corrupt_writer
         .put(
             Namespace::new("tributes").unwrap(),
-            &Key::new(body.tribute_id.as_slice().to_vec()).unwrap(),
+            &Key::new(body.tribute_id.to_vec()).unwrap(),
             &Value::new([0xff]).unwrap(),
         )
         .unwrap();
@@ -531,7 +531,7 @@ fn assert_raw_tribute_is_rejected(original: &TributeData, stored: Vec<u8>, field
     storage
         .put(
             Namespace::new("tributes").unwrap(),
-            &Key::new(original.tribute_id.as_slice().to_vec()).unwrap(),
+            &Key::new(original.tribute_id.to_vec()).unwrap(),
             &Value::new(stored).unwrap(),
         )
         .unwrap();

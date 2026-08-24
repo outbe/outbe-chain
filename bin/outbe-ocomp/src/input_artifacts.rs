@@ -530,7 +530,7 @@ fn derive_input_chunk(
         match chunk.kind {
             InputChunkKind::Tribute => {
                 let tribute = decode_tribute_v1(&record.0)?;
-                keys.push(tribute.tribute_id.as_slice().to_vec());
+                keys.push(tribute.tribute_id.to_vec());
                 tribute_count = tribute_count
                     .checked_add(1)
                     .ok_or(InputArtifactError::CountOverflow)?;

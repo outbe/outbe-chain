@@ -30,7 +30,7 @@ const KIND: ListKind = ListKind::ContributorActions;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ContributorLeafData {
     pub owner: Address,
-    pub source_tribute_id: B256,
+    pub source_tribute_id: U256,
     pub nominal: U256,
 }
 
@@ -38,18 +38,16 @@ pub struct ContributorLeafData {
 pub fn encode_contributor_leaf(leaf: &ContributorLeafData) -> [u8; CONTRIBUTOR_LEAF_BYTES] {
     let mut out = [0u8; CONTRIBUTOR_LEAF_BYTES];
     out[..20].copy_from_slice(leaf.owner.as_slice());
-    out[20..52].copy_from_slice(leaf.source_tribute_id.as_slice());
+    out[20..52].copy_from_slice(&leaf.source_tribute_id.to_be_bytes::<32>());
     out[52..].copy_from_slice(&leaf.nominal.to_be_bytes::<32>());
     out
 }
 
 /// Inverse of [`encode_contributor_leaf`].
 pub fn decode_contributor_leaf(bytes: &[u8; CONTRIBUTOR_LEAF_BYTES]) -> ContributorLeafData {
-    let mut source_tribute_id = [0u8; 32];
-    source_tribute_id.copy_from_slice(&bytes[20..52]);
     ContributorLeafData {
         owner: Address::from_slice(&bytes[..20]),
-        source_tribute_id: B256::from(source_tribute_id),
+        source_tribute_id: U256::from_be_slice(&bytes[20..52]),
         nominal: U256::from_be_slice(&bytes[52..]),
     }
 }
@@ -247,11 +245,9 @@ pub mod test_support {
     pub fn contributor_leaf(index: u32, nominal: u64) -> ContributorLeafData {
         let mut owner = [0u8; 20];
         owner[16..].copy_from_slice(&index.to_be_bytes());
-        let mut source_tribute_id = [0u8; 32];
-        source_tribute_id[28..].copy_from_slice(&index.to_be_bytes());
         ContributorLeafData {
             owner: Address::from(owner),
-            source_tribute_id: B256::from(source_tribute_id),
+            source_tribute_id: U256::from(index),
             nominal: U256::from(nominal),
         }
     }

@@ -11,14 +11,11 @@ const WWD_PREFIX_LEN: usize = 4;
 wrap_fixed_bytes!(
     /// An entity identity: a big-endian WorldwideDay over a digest tail, 32 bytes.
     ///
-    /// Declared with the [`wrap_fixed_bytes!`] macro like [`AddressPair`], so it
+    /// Declared with the [`wrap_fixed_bytes!`] macro, so it
     /// inherits hex parsing, formatting, serde, and `FixedBytes` conversions.
     ///
     /// The day occupies the top four bytes, which is what makes the `uint256`
-    /// the ABI carries meaningful rather than opaque: `uint256(id) >> 224` is
-    /// the day, and ordering by the word orders by day and then by body.
-    ///
-    /// [`AddressPair`]: crate::address_pair::AddressPair
+    /// the ABI carries meaningful day, and ordering by the word orders by day and then by body.
     pub struct WwdEntityId<32>;
 );
 
@@ -76,10 +73,6 @@ impl From<U256> for WwdEntityId {
     }
 }
 
-/// Exactly one word wide, so unlike [`AddressPair`] this is a `Storable` value
-/// and not only a key.
-///
-/// [`AddressPair`]: crate::address_pair::AddressPair
 impl StorableType for WwdEntityId {
     const SLOTS: usize = 1;
 }

@@ -592,14 +592,14 @@ pub(crate) fn contributor_payout_round(
     })
 }
 
-/// The 32-byte tribute id the ABI carries as one word. It used to arrive split
-/// across a `bytes32` and a `bytes4` because 36 bytes did not fit a word.
+/// The ABI leaf and the canonical leaf carry the same three words, so this is a
+/// plain field copy.
 fn decode_contributor_leaf(
     leaf: &crate::precompile::IIntexFactory::ContributorLeaf,
 ) -> ContributorLeafData {
     ContributorLeafData {
         owner: leaf.owner,
-        source_tribute_id: B256::from(leaf.sourceTributeId.to_be_bytes::<32>()),
+        source_tribute_id: leaf.sourceTributeId,
         nominal: leaf.nominal,
     }
 }
