@@ -73,19 +73,6 @@
     },
     {
       "type": "function",
-      "name": "SYSTEM_RELAYER_ROLE",
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "",
-          "type": "bytes32",
-          "internalType": "bytes32"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
       "name": "UPGRADE_INTERFACE_VERSION",
       "inputs": [],
       "outputs": [
@@ -297,6 +284,11 @@
           "internalType": "address"
         },
         {
+          "name": "to",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
           "name": "tokenId",
           "type": "uint256",
           "internalType": "uint256"
@@ -366,50 +358,6 @@
           "name": "",
           "type": "uint16",
           "internalType": "uint16"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "getIssuedHoldersWithBalances",
-      "inputs": [
-        {
-          "name": "seriesId",
-          "type": "bytes14",
-          "internalType": "bytes14"
-        },
-        {
-          "name": "offset",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "limit",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "holders",
-          "type": "address[]",
-          "internalType": "address[]"
-        },
-        {
-          "name": "issuedBalances",
-          "type": "uint256[]",
-          "internalType": "uint256[]"
-        },
-        {
-          "name": "settledBalances",
-          "type": "uint256[]",
-          "internalType": "uint256[]"
-        },
-        {
-          "name": "total",
-          "type": "uint256",
-          "internalType": "uint256"
         }
       ],
       "stateMutability": "view"
@@ -545,122 +493,6 @@
           "name": "",
           "type": "bytes32",
           "internalType": "bytes32"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "getSeriesHolders",
-      "inputs": [
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "address[]",
-          "internalType": "address[]"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "getSeriesHoldersPaginated",
-      "inputs": [
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "offset",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "limit",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "holders",
-          "type": "address[]",
-          "internalType": "address[]"
-        },
-        {
-          "name": "total",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "getSeriesHoldersWithBalances",
-      "inputs": [
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "holders",
-          "type": "address[]",
-          "internalType": "address[]"
-        },
-        {
-          "name": "balances",
-          "type": "uint256[]",
-          "internalType": "uint256[]"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "getSeriesHoldersWithBalancesPaginated",
-      "inputs": [
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "offset",
-          "type": "uint256",
-          "internalType": "uint256"
-        },
-        {
-          "name": "limit",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "holders",
-          "type": "address[]",
-          "internalType": "address[]"
-        },
-        {
-          "name": "balances",
-          "type": "uint256[]",
-          "internalType": "uint256[]"
-        },
-        {
-          "name": "total",
-          "type": "uint256",
-          "internalType": "uint256"
         }
       ],
       "stateMutability": "view"
@@ -836,6 +668,11 @@
           "name": "seriesId",
           "type": "bytes14",
           "internalType": "bytes14"
+        },
+        {
+          "name": "calledAt",
+          "type": "uint32",
+          "internalType": "uint32"
         }
       ],
       "outputs": [],
@@ -1264,25 +1101,6 @@
           "name": "",
           "type": "bool",
           "internalType": "bool"
-        }
-      ],
-      "stateMutability": "view"
-    },
-    {
-      "type": "function",
-      "name": "seriesHolderCount",
-      "inputs": [
-        {
-          "name": "tokenId",
-          "type": "uint256",
-          "internalType": "uint256"
-        }
-      ],
-      "outputs": [
-        {
-          "name": "",
-          "type": "uint256",
-          "internalType": "uint256"
         }
       ],
       "stateMutability": "view"
@@ -1998,6 +1816,22 @@
     },
     {
       "type": "error",
+      "name": "CalledAtInvalid",
+      "inputs": [
+        {
+          "name": "calledAt",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "nowTs",
+          "type": "uint32",
+          "internalType": "uint32"
+        }
+      ]
+    },
+    {
+      "type": "error",
       "name": "ERC1155InsufficientBalance",
       "inputs": [
         {
@@ -2288,11 +2122,6 @@
     {
       "type": "error",
       "name": "ZeroIssuedIntexCount",
-      "inputs": []
-    },
-    {
-      "type": "error",
-      "name": "ZeroLimit",
       "inputs": []
     }
   ]

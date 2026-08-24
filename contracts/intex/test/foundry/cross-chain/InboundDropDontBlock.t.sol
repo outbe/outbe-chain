@@ -83,7 +83,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
         outbeRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
 
         // TM drives the local Intex on markCalled.
-        bnbRouter.wire(address(auction), address(intex), admin, admin);
+        bnbRouter.wire(address(auction), address(intex), admin);
         auction.grantRole(auction.RELAYER_ROLE(), address(bnbRouter));
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
 
@@ -117,7 +117,8 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     /// @notice MARK_CALLED for a series the BNB intex has never seen waits in its slot rather than rejecting:
     ///         a batch carries several series, and one of them missing must not reject the message.
     function test_TM_PrematureMarkCalled_Parks() public {
-        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, MarkBatchLib.one(SERIES_ID));
+        bytes memory packet =
+            BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID));
         _deliverToTM(packet);
 
         assertEq(bnbRouter.pendingMark(SERIES_ID), BridgeMsgCodec.MSG_MARK_CALLED, "the mark waits for its series");
@@ -126,7 +127,8 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     /// @notice Once the prerequisite (the series) lands, applying the slotted mark flips the series to
     ///         Called — the out-of-order arrival resolves without a redelivery.
     function test_TM_ParkedMarkCalledFlushesAfterSeriesLands() public {
-        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, MarkBatchLib.one(SERIES_ID));
+        bytes memory packet =
+            BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID));
 
         // Premature: no series yet → slotted.
         _deliverToTM(packet);

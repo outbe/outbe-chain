@@ -18,6 +18,9 @@ import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 ///      External wrappers expose the internal calldata-slice decoders so they can be
 ///      driven through `vm.expectRevert` (mirrors BodyVersion.t.sol).
 contract BridgeMsgCodecValidationTest is Test {
+    /// @dev Fixed call stamp; these tests exercise the wire, not the clock.
+    uint32 internal constant CALLED_AT = 1_777_000_000;
+
     // --- fixed-width decoders reject over-long payloads ---
 
     function test_AuctionStageStart_OverLong_Reverts() public {
@@ -151,7 +154,9 @@ contract BridgeMsgCodecValidationTest is Test {
         (uint32 rs,,,) = this.exposedDecodeAuctionResult(BridgeMsgCodec.encodeAuctionResult(9, 1, 1, 1));
         assertEq(rs, 9, "result");
         assertEq(
-            this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled(20260212, MarkBatchLib.one("20260212-TRY-U"))),
+            this.exposedDecodeMarkCalled(
+                BridgeMsgCodec.encodeMarkCalled(20260212, CALLED_AT, MarkBatchLib.one("20260212-TRY-U"))
+            ),
             bytes14("20260212-TRY-U"),
             "markCalled"
         );
@@ -173,7 +178,7 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     function test_EncodeBidsBatch_OverCap_Reverts() public {
-        uint16 n = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN + 1; // 65
+        uint16 n = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN + 1;
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.PayloadArrayTooLong.selector, uint256(n), BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN
@@ -193,12 +198,14 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     function test_EncodeIssuance_OverCap_Reverts() public {
-        uint16 n = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN + 1;
+        uint16 n = BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE + 1;
         // The cap is now on the recipients a whole message carries, however many series they are
         // spread over, so it reports the message's total rather than one array's length.
         vm.expectRevert(
             abi.encodeWithSelector(
-                BridgeMsgCodec.IssuanceBatchTooLarge.selector, uint256(n), uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN)
+                BridgeMsgCodec.IssuanceBatchTooLarge.selector,
+                uint256(n),
+                uint256(BridgeMsgCodec.MAX_RECIPIENTS_PER_ISSUANCE)
             )
         );
         this.exposedEncodeIssuance(n);
@@ -283,7 +290,7 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     function exposedEncodeMarkCalled(uint32 day, bytes14[] calldata ids) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeMarkCalled(day, ids);
+        return BridgeMsgCodec.encodeMarkCalled(day, CALLED_AT, ids);
     }
 
     function exposedEncodeMarkQualified(uint32 day, bytes14[] calldata ids) external pure returns (bytes memory) {
@@ -291,7 +298,7 @@ contract BridgeMsgCodecValidationTest is Test {
     }
 
     function exposedDecodeMarkCalled(bytes calldata p) external pure returns (bytes14) {
-        (, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(p);
+        (,, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeMarkCalled(p);
         return seriesIds[0];
     }
 

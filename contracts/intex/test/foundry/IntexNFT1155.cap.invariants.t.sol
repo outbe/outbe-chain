@@ -35,7 +35,7 @@ contract NFT1155CapHandler is Test {
         uint256 bal = intex.balanceOf(from, tokenId);
         if (bal == 0) return;
         uint256 qty = bound(qtySeed, 1, bal);
-        try intex.crosschainBurn(from, tokenId, qty) {} catch {}
+        try intex.crosschainBurn(from, from, tokenId, qty) {} catch {}
     }
 }
 

@@ -188,29 +188,52 @@ fn a_chains_series_travel_together_up_to_the_message_caps() {
     );
 }
 
+/// The codec enforces this same number on both encode and decode (`BridgeMsgCodec.sol`), and nothing
+/// links the two languages, so the value is pinned here: changing it must be a deliberate act.
+#[test]
+fn the_recipient_cap_matches_the_wire() {
+    assert_eq!(MAX_RECIPIENTS_PER_ISSUANCE, 24);
+    assert_eq!(MAX_SERIES_PER_MESSAGE, 8);
+}
+
 #[test]
 fn a_message_never_carries_more_winners_than_the_wire_allows() {
-    // Two series of 40 winners each: together they exceed the recipient cap, so the
-    // second starts a new message rather than overfilling the first.
-    let legs = vec![leg(10, 1, 40), leg(10, 2, 40)];
+    // Two series whose winners together exceed the recipient cap: no message may overfill.
+    let per_series = MAX_RECIPIENTS_PER_ISSUANCE - 1;
+    let legs = vec![leg(10, 1, per_series), leg(10, 2, per_series)];
+    let messages = runtime::pack_issuance_messages(legs);
+
+    for (_, _, recipients) in shape(&messages) {
+        assert!(
+            recipients <= MAX_RECIPIENTS_PER_ISSUANCE,
+            "a message carried {recipients} winners, over the wire's cap"
+        );
+    }
+    let total: usize = shape(&messages).iter().map(|(_, _, r)| r).sum();
     assert_eq!(
-        shape(&runtime::pack_issuance_messages(legs)),
-        vec![(10, 1, 40), (10, 1, 40)]
+        total,
+        2 * per_series,
+        "every winner is carried exactly once"
     );
 }
 
 #[test]
 fn one_series_with_more_winners_than_a_message_spans_several() {
-    // 150 winners of one series on one chain: three messages, and every piece repeats
-    // the series so whichever arrives first can create it.
-    let messages = runtime::pack_issuance_messages(vec![leg(10, 1, 150)]);
+    // One series far past the cap: it spans full messages plus a remainder, and every piece
+    // repeats the series so whichever arrives first can create it.
+    let winners = 5 * MAX_RECIPIENTS_PER_ISSUANCE - 10;
+    let messages = runtime::pack_issuance_messages(vec![leg(10, 1, winners)]);
+
+    let pieces = shape(&messages);
     assert_eq!(
-        shape(&messages),
-        vec![
-            (10, 1, MAX_RECIPIENTS_PER_MESSAGE),
-            (10, 1, MAX_RECIPIENTS_PER_MESSAGE),
-            (10, 1, 150 - 2 * MAX_RECIPIENTS_PER_MESSAGE)
-        ]
+        pieces.len(),
+        winners.div_ceil(MAX_RECIPIENTS_PER_ISSUANCE),
+        "one message per full slice plus the remainder"
+    );
+    assert_eq!(
+        pieces.iter().map(|(_, _, r)| r).sum::<usize>(),
+        winners,
+        "every winner is carried exactly once"
     );
     for (_, series) in &messages {
         assert_eq!(SeriesId::from(series[0].seriesId), sid(1));
@@ -246,23 +269,25 @@ fn run_shape(runs: &[runtime::IssuanceRun]) -> Vec<((u32, u32), Vec<usize>)> {
 #[test]
 fn a_chains_chunks_form_one_run_even_when_another_chain_interleaves() {
     // One day, one chain, winners spanning two messages, with another chain's message in between.
+    let full = MAX_RECIPIENTS_PER_ISSUANCE;
     let packed =
-        runtime::pack_issuance_messages(vec![leg(10, 1, 64), leg(20, 1, 5), leg(10, 1, 64)]);
+        runtime::pack_issuance_messages(vec![leg(10, 1, full), leg(20, 1, 5), leg(10, 1, full)]);
     let runs = runtime::chunk_issuance_messages(packed);
     assert_eq!(
         run_shape(&runs),
-        vec![((10, 1), vec![64, 64]), ((20, 1), vec![5])]
+        vec![((10, 1), vec![full, full]), ((20, 1), vec![5])]
     );
 }
 
 #[test]
 fn a_chains_days_are_numbered_as_separate_runs() {
     // `leg`'s series doubles as its worldwide day: each day carries its own chunk numbering.
-    let packed = runtime::pack_issuance_messages(vec![leg(10, 1, 64), leg(10, 2, 64)]);
+    let full = MAX_RECIPIENTS_PER_ISSUANCE;
+    let packed = runtime::pack_issuance_messages(vec![leg(10, 1, full), leg(10, 2, full)]);
     let runs = runtime::chunk_issuance_messages(packed);
     assert_eq!(
         run_shape(&runs),
-        vec![((10, 1), vec![64]), ((10, 2), vec![64])]
+        vec![((10, 1), vec![full]), ((10, 2), vec![full])]
     );
 }
 
