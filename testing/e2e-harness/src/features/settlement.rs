@@ -279,7 +279,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         mint_nonce,
         chain_id,
     );
-    let pow = find_u256_pow(U256::from_be_slice(&nod_id));
+    let pow = find_u256_pow(U256::from_be_slice(&nod_id)).to::<u64>();
     let mine_gratis = eth::send_call_outcome(
         &url,
         addresses::NOD_FACTORY_ADDR,

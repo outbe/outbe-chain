@@ -48,7 +48,7 @@ pub fn dispatch(
                     parent,
                     sender,
                     WwdEntityId::from(c.nodId),
-                    c.nonce,
+                    U256::from(c.nonce),
                     auth,
                 )
             }),

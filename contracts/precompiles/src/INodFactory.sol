@@ -65,7 +65,7 @@ interface INodFactory {
     ///         HMAC(modifyKey, op-preimage)` where `opNonce` MUST equal the
     ///         caller's current on-chain gratis op-nonce. The Nod owner is the
     ///         gratis recipient, so they can always supply this authorization.
-    function mineGratis(uint256 nodId, uint256 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
+    function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
 
     /// @notice Materialize the current certified FIFO head from one canonical
     ///         proof-backed OCOMP batch.
