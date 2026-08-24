@@ -23,6 +23,7 @@ import argparse
 import ipaddress
 import json
 import os
+import sys
 
 # --- Keccak256 ---
 
@@ -1659,64 +1660,40 @@ def override_worldwide_day(seed: dict, day: int) -> None:
         s["peak_day"] = day
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Seed genesis.json with precompile storage")
-    parser.add_argument("--genesis", required=True, help="Path to genesis.json")
-    parser.add_argument("--seed", required=True, help="Path to seed config JSON")
-    parser.add_argument("--validators", help="Path to validators.json for genesis validator set")
-    parser.add_argument("--output", required=True, help="Output path for patched genesis.json")
-    parser.add_argument(
-        "--contracts-dir",
-        help="Directory containing contract code/state files referenced from "
-             "seed['contracts']. Defaults to <seed-file-dir>/contracts.",
-    )
-    parser.add_argument(
-        "--canon-dir",
-        help="Directory holding metacanon.md and canon.md to seed into the "
-             "Governance precompile at version 1. Defaults to <script-dir>/canon. "
-             "When absent, the canon texts start empty and an authority sets them "
-             "post-genesis.",
-    )
-    parser.add_argument(
-        "--worldwide-day",
-        type=int,
-        help="Override the seeded active worldwide-day (YYYYMMDD): its S-curve peak "
-             "and NOD references too. Localnet bootstrap passes the genesis date so "
-             "the seeded OFFERING day tracks the chain's wall-clock; a stale "
-             "hardcoded day desyncs from the per-block "
-             "WorldwideDay::from_timestamp(block) and wedges metadosis processing.",
-    )
-    parser.add_argument(
-        "--fresh-metadosis",
-        action="store_true",
-        help="Do not seed an already-OFFERING WorldwideDay; block 1 creates it "
-             "from config.outbeProtocol timings in a test-protocol-overrides node. "
-             "Intended for production-shaped E2E.",
-    )
-    args = parser.parse_args()
+def apply_seed(
+    genesis: dict,
+    seed: dict,
+    validators: list | None = None,
+    *,
+    contracts_dir: str | None = None,
+    canon_dir: str | None = None,
+    worldwide_day: int | None = None,
+    fresh_metadosis: bool = False,
+) -> dict:
+    """Compute every derived value a genesis needs and write it into `genesis`.
 
-    with open(args.genesis) as f:
-        genesis = json.load(f)
+    This is the calculation half of genesis creation: storage slot layout for
+    each precompile, keccak-derived mapping keys, the active WorldwideDay
+    resolved against the genesis timestamp, marker bytecode, and balances that
+    must match seeded counters. `create_genesis.py` owns the declarative half
+    (what the network *is*, from a yaml) and calls this to render it.
 
-    with open(args.seed) as f:
-        seed = json.load(f)
+    `genesis` is mutated in place and returned.
+    """
 
     seed_protocol_constants(genesis, seed)
 
     # Retarget the seeded worldwide-day to the genesis (current) date when asked,
     # before any seeder consumes `seed`, so metadosis, the oracle S-curve, the
     # tribute day_totals init, and the NODs all agree on the same active day.
-    if args.worldwide_day is not None:
-        override_worldwide_day(seed, args.worldwide_day)
-    if args.fresh_metadosis:
+    if worldwide_day is not None:
+        override_worldwide_day(seed, worldwide_day)
+    if fresh_metadosis:
         clear_seeded_metadosis_days(seed)
 
-    validators = []
-    if args.validators:
-        with open(args.validators) as f:
-            validators = json.load(f)
-        if not isinstance(validators, list):
-            raise ValueError("validators.json must contain a JSON array")
+    validators = validators or []
+    if not isinstance(validators, list):
+        raise ValueError("validators must be a list")
 
     alloc = genesis.setdefault("alloc", {})
     validate_stablecoin_namespace_alloc(alloc, require_reserved_markers=False)
@@ -1823,7 +1800,7 @@ def main():
     # Governance: seed the authorities write-gate (validator addresses) and the
     # canon / meta-canon texts. Authorities are mandatory — an empty set means no
     # address can ever write the canon. Canon texts default to <script-dir>/canon.
-    canon_dir = args.canon_dir or os.path.join(
+    canon_dir = canon_dir or os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "canon"
     )
     governance_storage = StorageBuilder()
@@ -1977,9 +1954,8 @@ def main():
 
     # Seed externally-fetched contracts (e.g. CREATE2 deployer)
     if "contracts" in seed:
-        contracts_dir = args.contracts_dir or os.path.join(
-            os.path.dirname(os.path.abspath(args.seed)), "contracts"
-        )
+        if contracts_dir is None:
+            raise ValueError("contracts_dir is required to seed `contracts`")
         seed_external_contracts(alloc, seed["contracts"], contracts_dir)
 
     # reth v2.2 `GenesisAccount` requires an explicit `balance` on every alloc
@@ -1992,11 +1968,77 @@ def main():
 
     validate_stablecoin_namespace_alloc(alloc, require_reserved_markers=True)
 
+    return genesis
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Seed genesis.json with precompile storage")
+    parser.add_argument("--genesis", required=True, help="Path to genesis.json")
+    parser.add_argument("--seed", required=True, help="Path to seed config JSON")
+    parser.add_argument("--validators", help="Path to validators.json for genesis validator set")
+    parser.add_argument("--output", required=True, help="Output path for patched genesis.json")
+    parser.add_argument(
+        "--contracts-dir",
+        help="Directory containing contract code/state files referenced from "
+             "seed['contracts']. Defaults to <seed-file-dir>/contracts.",
+    )
+    parser.add_argument(
+        "--canon-dir",
+        help="Directory holding metacanon.md and canon.md to seed into the "
+             "Governance precompile at version 1. Defaults to <script-dir>/canon. "
+             "When absent, the canon texts start empty and an authority sets them "
+             "post-genesis.",
+    )
+    parser.add_argument(
+        "--worldwide-day",
+        type=int,
+        help="Override the seeded active worldwide-day (YYYYMMDD): its S-curve peak "
+             "and NOD references too. Localnet bootstrap passes the genesis date so "
+             "the seeded OFFERING day tracks the chain's wall-clock; a stale "
+             "hardcoded day desyncs from the per-block "
+             "WorldwideDay::from_timestamp(block) and wedges metadosis processing.",
+    )
+    parser.add_argument(
+        "--fresh-metadosis",
+        action="store_true",
+        help="Do not seed an already-OFFERING WorldwideDay; block 1 creates it "
+             "from config.outbeProtocol timings in a test-protocol-overrides node. "
+             "Intended for production-shaped E2E.",
+    )
+    args = parser.parse_args()
+
+    with open(args.genesis) as f:
+        genesis = json.load(f)
+    with open(args.seed) as f:
+        seed = json.load(f)
+    validators = []
+    if args.validators:
+        with open(args.validators) as f:
+            validators = json.load(f)
+
+    # Build the declarative config this profile describes and hand it to
+    # create_genesis, so this CLI — the one the e2e harness and the localnet
+    # scripts call — creates its genesis through the same path a yaml-driven
+    # deployment does. create_genesis calls apply_seed below to render it.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import create_genesis
+
+    genesis = create_genesis.seed_genesis_from_config(
+        base_genesis=genesis,
+        seed=seed,
+        validators=validators,
+        contracts_dir=args.contracts_dir
+        or os.path.join(os.path.dirname(os.path.abspath(args.seed)), "contracts"),
+        canon_dir=args.canon_dir,
+        worldwide_day=args.worldwide_day,
+        fresh_metadosis=args.fresh_metadosis,
+    )
+
     with open(args.output, "w") as f:
         json.dump(genesis, f, indent=2)
 
     total_storage = sum(
-        len(v.get("storage", {})) for v in alloc.values()
+        len(v.get("storage", {})) for v in genesis["alloc"].values()
     )
     print(f"\nGenesis written to {args.output}")
     print(f"Total storage entries: {total_storage}")
