@@ -672,6 +672,40 @@ class LaunchBundleTests(unittest.TestCase):
             self.assertIn("/dev/sgx_provision", script)
             self.assertNotIn("--dkg-seed", script)
 
+    def test_production_enclave_runs_natively_not_in_a_container(self):
+        """The live network runs gramine-sgx on the host: the SGX driver, the
+        AESM socket and the sealed state are all host-side."""
+        with tempfile.TemporaryDirectory() as tmp:
+            config = {
+                "chain_id": 54322345,
+                "tee": {
+                    "mode": "dcap-required",
+                    "mrenclave": "ab" * 32,
+                    "mrsigner": "cd" * 32,
+                    "isv_prod_id": 0,
+                    "minimum_isv_svn": 3,
+                    "minimum_tcb_evaluation_data_number": 17,
+                },
+            }
+            _, _, output_dir = self.render(tmp, config)
+            script = (output_dir / "validator-0" / "run-enclave.sh").read_text()
+            self.assertNotIn("docker run", script)
+            self.assertIn("/dev/sgx_enclave", script)
+            self.assertIn("aesmd.service", script)
+            node = (output_dir / "validator-0" / "run-node.sh").read_text()
+            self.assertIn("--tee-session-mode production-node-host", node)
+
+    def test_node_advertises_its_own_address_and_places_consensus_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            node = (output_dir / "validator-2" / "run-node.sh").read_text()
+            # Without --nat a machine behind one advertises the wrong address
+            # and its peers never dial back.
+            self.assertIn("--nat extip:10.0.0.3", node)
+            self.assertIn("--consensus.storage-dir", node)
+            # The dev lane must not pin the production session.
+            self.assertNotIn("--tee-session-mode", node)
+
     def test_dev_enclave_script_is_marked_unattested(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, _, output_dir = self.render(tmp)

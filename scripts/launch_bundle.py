@@ -177,6 +177,8 @@ echo "MongoDB ready on 127.0.0.1:$PORT (replica set rs0)"
 def enclave_script(*, config: dict[str, Any], index: int, base_dir: str) -> str:
     tee = config["tee"]
     mode = str(tee["mode"])
+    enclave_dir = str(config.get("enclave_dir", f"{base_dir}/enclave"))
+    enclave_runner = str(config.get("enclave_runner", "./run-enclave.sh"))
     chain_id_hex = f"0x{int(config['chain_id']):064x}"
     port = port_of(config, "tee_enclave_port")
     endpoint = f"127.0.0.1:{port}"
@@ -196,16 +198,27 @@ docker run -d --name {quote(name)} \\
   --log-driver local --log-opt max-size=10m --log-opt max-file=3 \\"""
 
     if mode == "dcap-required":
-        return header + f"""
-  --device /dev/sgx_enclave:/dev/sgx_enclave \\
-  --device /dev/sgx_provision:/dev/sgx_provision \\
-  -v {quote(validator_dir + "/tee")}:/var/lib/outbe/tee \\
-  {quote(image)} \\
-  --socket {quote(endpoint)} \\
-  --tee-dir /var/lib/outbe/tee \\
-  --chain-id {chain_id_hex}
+        # Production runs the enclave natively under gramine-sgx, the way the
+        # live network does: the SGX driver, the AESM socket and the sealed
+        # state all live on the host, and a container only adds a layer between
+        # the enclave and the hardware it must attest against.
+        return f"""
+# TEE enclave under gramine-sgx, on the host. Requires the SGX driver
+# (/dev/sgx_enclave, /dev/sgx_provision) and a running aesmd.service.
+# The node refuses to start until this answers on {endpoint}.
+mkdir -p {quote(validator_dir + "/tee")}
 
-echo "enclave started on {endpoint} (dcap-required)"
+for device in /dev/sgx_enclave /dev/sgx_provision; do
+  [ -e "$device" ] || {{ echo "missing $device: SGX driver not loaded" >&2; exit 1; }}
+done
+systemctl is-active --quiet aesmd.service \\
+  || {{ echo "aesmd.service is not running; DCAP quoting will fail" >&2; exit 1; }}
+
+cd {quote(enclave_dir)}
+exec {quote(enclave_runner)} \\
+  --socket {quote(endpoint)} \\
+  --tee-dir {quote(validator_dir + "/tee")} \\
+  --chain-id {chain_id_hex}
 """
     return header + f"""
   --security-opt seccomp=unconfined \\
@@ -249,8 +262,16 @@ def node_script(
     keys_dir: str,
     repo_root: str,
     consensus_port: int,
+    host: str,
 ) -> str:
     binary = str(config.get("node_binary", "outbe-chain"))
+    # Production pins the authenticated sealed session; the dev lane keeps the
+    # policy default so the mock transport stays reachable.
+    session_mode = (
+        "  --tee-session-mode production-node-host \\\n"
+        if config["tee"]["mode"] == "dcap-required"
+        else ""
+    )
     validator_keys = f"{keys_dir}/validator-{index}"
     validator_dir = f"{base_dir}/validator-{index}"
     radicle_home = f"{validator_keys}/radicle"
@@ -275,6 +296,7 @@ export RUST_MIN_STACK="${{RUST_MIN_STACK:-16777216}}"
 
 exec {quote(binary)} node \\
   --validator \\
+{session_mode}\
   --chain {quote(base_dir + "/genesis.json")} \\
   --datadir "$DATA" \\
   --engine.persistence-threshold 0 \\
@@ -282,6 +304,7 @@ exec {quote(binary)} node \\
   --consensus.signing-key "$KEYS/signing-key.hex" \\
   --validator.evm-key "$KEYS/evm-key.hex" \\
   --consensus.listen-addr 0.0.0.0:{consensus_port} \\
+  --consensus.storage-dir {quote(validator_dir + "/consensus")} \\
   --radicle.control-socket {quote(radicle_home + "/node/outbe-control.sock")} \\
   --radicle.status-address 127.0.0.1:{port_of(config, "radicle_status_port")} \\
   --tee-enclave-socket 127.0.0.1:{port_of(config, "tee_enclave_port")} \\
@@ -293,6 +316,7 @@ exec {quote(binary)} node \\
   --authrpc.port {port_of(config, "authrpc_port")} \\
   --port {port_of(config, "reth_p2p_port")} \\
   --discovery.port {port_of(config, "reth_p2p_port")} \\
+  --nat extip:{host} \\
   --discovery.v5.addr 0.0.0.0 \\
   --discovery.v5.port {port_of(config, "reth_discv5_port")} \\
   --p2p-secret-key "$KEYS/reth-p2p-secret.hex" \\
@@ -747,6 +771,7 @@ def render(
                 keys_dir=remote_keys_dir,
                 repo_root=str(repo_root),
                 consensus_port=int(consensus_port),
+                host=host,
             ),
         )
         write_script(

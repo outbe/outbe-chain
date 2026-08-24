@@ -47,7 +47,12 @@ tee:
 # remote_base_dir: /opt/outbe
 # remote_keys_dir: /opt/outbe/keys
 
+# Dev lane only: the container image the mock/gramine-direct enclave runs from.
 # enclave_image: outbe-tee-enclave:latest
+# Production (dcap-required) runs gramine-sgx on the host instead — point
+# these at the release enclave checkout on each machine.
+# enclave_dir: /opt/outbe-chain/enclave
+# enclave_runner: ./run-enclave.sh
 
 # Binaries on the validator machines; default to PATH lookups.
 # node_binary: outbe-chain

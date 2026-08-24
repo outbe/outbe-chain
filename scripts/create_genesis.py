@@ -123,6 +123,8 @@ TOP_LEVEL_KEYS = {
     "contracts_dir",
     "canon_dir",
     "enclave_image",
+    "enclave_dir",
+    "enclave_runner",
     "node_binary",
     "ocomp_binary",
     "radicle_binary",
@@ -1007,12 +1009,19 @@ def main() -> None:
             protocol_bundle_output=protocol_bundle_output,
             keys_dir=keys_dir,
         )
-        run_tee_stage(
-            chain_binary=chain_binary,
-            ocomp_genesis=ocomp_genesis,
-            output=output,
-            config=config,
-        )
+        try:
+            run_tee_stage(
+                chain_binary=chain_binary,
+                ocomp_genesis=ocomp_genesis,
+                output=output,
+                config=config,
+            )
+        except BaseException:
+            # A later stage failing must not leave the protocol bundle behind:
+            # the next run refuses to overwrite it and the operator is stuck
+            # with a half-written directory and no way forward.
+            protocol_bundle_output.unlink(missing_ok=True)
+            raise
 
     launch_bundle.render(
         config=config,
