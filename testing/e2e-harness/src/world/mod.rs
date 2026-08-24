@@ -15,6 +15,7 @@ pub mod ocomp;
 pub mod origin_venue;
 pub mod price_oracle;
 pub mod rpc;
+pub mod settlement_currency;
 pub mod state;
 pub mod target_chain;
 pub mod validators;
