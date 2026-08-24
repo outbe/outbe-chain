@@ -1,0 +1,606 @@
+"""Tests for scripts/create_genesis.py: the yaml subset parser, config
+validation, key-material discovery, the seed merge, and the python seeding
+stage. Stages that need the compiled binaries are skipped when those are
+absent (and exercised by the create_genesis smoke run instead)."""
+
+import base64
+import importlib.util
+import json
+import pathlib
+import tempfile
+import unittest
+
+MODULE_PATH = pathlib.Path(__file__).with_name("create_genesis.py")
+
+
+def load_module(name: str, path: pathlib.Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+CG = load_module("create_genesis", MODULE_PATH)
+LB = load_module("launch_bundle", MODULE_PATH.with_name("launch_bundle.py"))
+SEED_GENESIS = load_module("seed_genesis", MODULE_PATH.with_name("seed_genesis.py"))
+
+REPO_ROOT = MODULE_PATH.parents[1]
+
+
+def binary_path(name: str) -> pathlib.Path | None:
+    for build in ("release", "debug"):
+        candidate = REPO_ROOT / "target" / build / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def parse(text: str) -> dict:
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as handle:
+        handle.write(text)
+        path = pathlib.Path(handle.name)
+    try:
+        return CG.load_yaml(path)
+    finally:
+        path.unlink()
+
+
+def parse_error(text: str) -> str:
+    try:
+        parse(text)
+    except ValueError as error:
+        return str(error)
+    raise AssertionError("expected a parse error")
+
+
+def minimal_config(keys_dir: str) -> dict:
+    return {
+        "chain_id": 424242,
+        "validators": ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"],
+        "keys_dir": keys_dir,
+        "tee": {"mode": "gramine-direct-dev"},
+    }
+
+
+def write_ssh_ed25519_pub(path: pathlib.Path, node_id: bytes) -> None:
+    def field(value: bytes) -> bytes:
+        return len(value).to_bytes(4, "big") + value
+
+    payload = field(b"ssh-ed25519") + field(node_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"ssh-ed25519 {base64.b64encode(payload).decode()} outbe\n")
+
+
+class YamlParserTests(unittest.TestCase):
+    def test_scalars_lists_and_nesting(self):
+        config = parse(
+            "a: 1\n"
+            "b: true\n"
+            "c: plain string\n"
+            'd: "quoted: string"\n'
+            "nested:\n"
+            "  x: 2\n"
+            "  deeper:\n"
+            "    y: false\n"
+            "hosts:\n"
+            "  - 10.0.0.1\n"
+            "  - 10.0.0.2\n"
+            "items:\n"
+            '  - base: COEN\n'
+            '    quote: "840"\n'
+            "  - base: XYZ\n"
+            '    quote: "978"\n'
+        )
+        self.assertEqual(config["a"], 1)
+        self.assertIs(config["b"], True)
+        self.assertEqual(config["c"], "plain string")
+        self.assertEqual(config["d"], "quoted: string")
+        self.assertEqual(config["nested"]["deeper"]["y"], False)
+        self.assertEqual(config["hosts"], ["10.0.0.1", "10.0.0.2"])
+        self.assertEqual(
+            config["items"],
+            [{"base": "COEN", "quote": "840"}, {"base": "XYZ", "quote": "978"}],
+        )
+
+    def test_comments_and_blank_lines(self):
+        self.assertEqual(parse("# leading\n\na: 1  # trailing\n\n# done\n"), {"a": 1})
+
+    def test_quoted_hex_keys(self):
+        self.assertEqual(parse('balance:\n  "0xAb": "10"\n')["balance"], {"0xAb": "10"})
+
+    def test_empty_list_literal(self):
+        self.assertEqual(parse("tributes: []\n"), {"tributes": []})
+
+    def test_tab_rejected(self):
+        self.assertIn("tabs", parse_error("a:\n\tb: 1\n"))
+
+    def test_duplicate_key_rejected(self):
+        self.assertIn("duplicate", parse_error("a: 1\na: 2\n"))
+
+    def test_anchor_rejected(self):
+        self.assertIn("unsupported", parse_error("a: &anchor 1\n"))
+
+    def test_inline_mapping_rejected(self):
+        self.assertIn("unsupported", parse_error("a: {b: 1}\n"))
+
+    def test_dangling_key_rejected(self):
+        self.assertIn("has no value", parse_error("a:\n"))
+
+    def test_nested_structure_in_list_item_rejected(self):
+        self.assertIn(
+            "not supported", parse_error("items:\n  - a: 1\n    b:\n      c: 2\n")
+        )
+
+
+class ConfigValidationTests(unittest.TestCase):
+    def test_minimal_config_passes(self):
+        CG.validate_config(minimal_config("./keys"))
+
+    def test_unknown_top_level_key_rejected(self):
+        config = minimal_config("./keys")
+        config["bogus"] = 1
+        with self.assertRaisesRegex(ValueError, "bogus"):
+            CG.validate_config(config)
+
+    def test_wrong_validator_count_rejected(self):
+        config = minimal_config("./keys")
+        config["validators"] = config["validators"][:3]
+        with self.assertRaisesRegex(ValueError, "exactly 4"):
+            CG.validate_config(config)
+
+    def test_missing_keys_dir_rejected(self):
+        config = minimal_config("./keys")
+        del config["keys_dir"]
+        with self.assertRaisesRegex(ValueError, "keys_dir"):
+            CG.validate_config(config)
+
+    def test_non_string_validator_rejected(self):
+        config = minimal_config("./keys")
+        config["validators"][1] = {"host": "10.0.0.2"}
+        with self.assertRaisesRegex(ValueError, "host or IP string"):
+            CG.validate_config(config)
+
+    def test_bad_tee_mode_rejected(self):
+        config = minimal_config("./keys")
+        config["tee"]["mode"] = "trust-me"
+        with self.assertRaisesRegex(ValueError, "tee.mode"):
+            CG.validate_config(config)
+
+    def test_dcap_without_measurements_rejected_at_the_tee_stage(self):
+        config = minimal_config("./keys")
+        config["tee"] = {"mode": "dcap-required"}
+        with self.assertRaisesRegex(ValueError, "mrenclave"):
+            CG.run_tee_stage(
+                chain_binary="/nonexistent",
+                ocomp_genesis=pathlib.Path("/nonexistent"),
+                output=pathlib.Path("/nonexistent"),
+                config=config,
+            )
+
+
+class KeyDerivationTests(unittest.TestCase):
+    def test_evm_address_matches_known_secp256k1_vectors(self):
+        # Canonical secp256k1 vectors: private key 1 is the generator point.
+        vectors = {
+            1: "0x7e5f4552091a69125d5dfcb7b8c2659029395bdf",
+            2: "0x2b5ad5c4795c026514f8317c7a215e218dccd6cf",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            for scalar, expected in vectors.items():
+                path = pathlib.Path(tmp) / f"key-{scalar}.hex"
+                path.write_text(f"{scalar:064x}\n")
+                self.assertEqual(
+                    CG.evm_address_from_key_file(path, SEED_GENESIS.keccak256), expected
+                )
+
+    def test_evm_key_length_is_checked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "evm-key.hex"
+            path.write_text("dead\n")
+            with self.assertRaisesRegex(ValueError, "32-byte"):
+                CG.evm_address_from_key_file(path, SEED_GENESIS.keccak256)
+
+    def test_radicle_node_id_round_trips(self):
+        node_id = bytes(range(32))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "radicle.pub"
+            write_ssh_ed25519_pub(path, node_id)
+            self.assertEqual(
+                CG.radicle_node_id_from_public_key(path), node_id.hex()
+            )
+
+    def test_radicle_wrong_algorithm_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "radicle.pub"
+            path.write_text("ssh-rsa AAAA outbe\n")
+            with self.assertRaisesRegex(ValueError, "ssh-ed25519"):
+                CG.radicle_node_id_from_public_key(path)
+
+    def test_discover_reports_the_missing_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = minimal_config(tmp)
+            with self.assertRaisesRegex(ValueError, "missing key directory"):
+                CG.discover_validators(
+                    config=config,
+                    keys_dir=pathlib.Path(tmp),
+                    keygen_binary="/nonexistent",
+                    keccak256=SEED_GENESIS.keccak256,
+                )
+
+    def test_discover_reports_the_missing_key_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            keys_dir = pathlib.Path(tmp)
+            (keys_dir / "validator-0").mkdir()
+            config = minimal_config(tmp)
+            with self.assertRaisesRegex(ValueError, "signing-key.hex"):
+                CG.discover_validators(
+                    config=config,
+                    keys_dir=keys_dir,
+                    keygen_binary="/nonexistent",
+                    keccak256=SEED_GENESIS.keccak256,
+                )
+
+    @unittest.skipIf(binary_path("outbe-keygen") is None, "outbe-keygen not built")
+    def test_discover_reads_a_real_keygen_bundle(self):
+        import subprocess
+
+        keygen = str(binary_path("outbe-keygen"))
+        with tempfile.TemporaryDirectory() as tmp:
+            keys_dir = pathlib.Path(tmp)
+            for index in range(4):
+                subprocess.run(
+                    [
+                        keygen,
+                        "validator",
+                        "--output-dir",
+                        str(keys_dir / f"validator-{index}"),
+                        "--chain-id",
+                        "424242",
+                    ],
+                    check=True,
+                    capture_output=True,
+                )
+            validators = CG.discover_validators(
+                config=minimal_config(tmp),
+                keys_dir=keys_dir,
+                keygen_binary=keygen,
+                keccak256=SEED_GENESIS.keccak256,
+            )
+            self.assertEqual(len(validators), 4)
+            # Founders sit on separate machines, so they share one port.
+            self.assertEqual(validators[0]["p2p_address"], "10.0.0.1:30400")
+            self.assertEqual(validators[3]["p2p_address"], "10.0.0.4:30400")
+            for validator in validators:
+                self.assertEqual(len(validator["public_key"]), 96)
+                self.assertEqual(len(validator["address"]), 42)
+                self.assertEqual(len(validator["radicle_node_id"]), 66)
+            addresses = {validator["address"] for validator in validators}
+            self.assertEqual(len(addresses), 4)
+
+    @unittest.skipIf(binary_path("outbe-keygen") is None, "outbe-keygen not built")
+    def test_a_validator_entry_may_pin_its_own_port(self):
+        import subprocess
+
+        keygen = str(binary_path("outbe-keygen"))
+        with tempfile.TemporaryDirectory() as tmp:
+            keys_dir = pathlib.Path(tmp)
+            for index in range(4):
+                subprocess.run(
+                    [keygen, "validator", "--output-dir",
+                     str(keys_dir / f"validator-{index}"), "--chain-id", "424242"],
+                    check=True, capture_output=True,
+                )
+            config = minimal_config(tmp)
+            config["validators"][2] = "10.0.0.3:31555"
+            validators = CG.discover_validators(
+                config=config, keys_dir=keys_dir, keygen_binary=keygen,
+                keccak256=SEED_GENESIS.keccak256,
+            )
+            self.assertEqual(validators[2]["p2p_address"], "10.0.0.3:31555")
+            self.assertEqual(validators[1]["p2p_address"], "10.0.0.2:30400")
+
+
+class SeedMergeTests(unittest.TestCase):
+    def test_scalar_override_replaces_and_keeps_siblings(self):
+        seed = CG.build_seed({"staking": {"min_stake": "7"}})
+        base = CG.load_yaml(CG.BASE_PROFILE_PATH)
+        self.assertEqual(seed["staking"]["min_stake"], "7")
+        self.assertEqual(
+            seed["staking"]["unbonding_period"], base["staking"]["unbonding_period"]
+        )
+
+    def test_list_override_replaces_whole_list(self):
+        pairs = [{"base": "COEN", "quote": "978", "initial_rate": "2"}]
+        seed = CG.build_seed({"oracle": {"pairs": pairs}})
+        base = CG.load_yaml(CG.BASE_PROFILE_PATH)
+        self.assertEqual(seed["oracle"]["pairs"], pairs)
+        self.assertEqual(seed["oracle"]["config"], base["oracle"]["config"])
+
+    def test_untouched_sections_equal_the_baseline(self):
+        seed = CG.build_seed({})
+        base = CG.load_yaml(CG.BASE_PROFILE_PATH)
+        for section in ("rewards", "validator_set", "metadosis"):
+            self.assertEqual(seed[section], base[section])
+
+
+class SeedStageTests(unittest.TestCase):
+    """The python half of the pipeline runs for real: base genesis, prefund,
+    and seed_genesis.py storage seeding. The OCOMP and TEE stages need the node
+    binary; the smoke run covers those."""
+
+    def fake_validators(self) -> list[dict]:
+        return [
+            {
+                "address": f"0x{str(index + 1) * 40}",
+                "public_key": f"{index + 1:02x}" * 48,
+                "radicle_node_id": "0x" + f"{index + 9:02x}" * 32,
+                "p2p_address": f"10.0.0.{index + 1}:30400",
+            }
+            for index in range(4)
+        ]
+
+    def seed_once(self, work_dir: pathlib.Path, config: dict) -> dict:
+        validators = self.fake_validators()
+        base_genesis = CG.build_base_genesis(config)
+        CG.prefund_validators(base_genesis, config, validators)
+        path = CG.run_seed_stage(
+            module=SEED_GENESIS,
+            work_dir=work_dir,
+            base_genesis=base_genesis,
+            seed=CG.build_seed(config),
+            validators=validators,
+            config=config,
+            quiet=True,
+        )
+        return json.loads(path.read_text())
+
+    def test_seed_stage_produces_a_valid_seeded_genesis(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = minimal_config(tmp) | {"prefund_coen_units": 5_000_000}
+            seeded = self.seed_once(pathlib.Path(tmp), config)
+
+            self.assertEqual(seeded["config"]["chainId"], 424242)
+            self.assertEqual(seeded["config"]["epochLengthBlocks"], 300)
+            alloc = seeded["alloc"]
+            for validator in self.fake_validators():
+                self.assertEqual(alloc[validator["address"]]["balance"], hex(5_000_000))
+            validator_set = alloc[SEED_GENESIS.VALIDATOR_SET_ADDRESS]
+            slot20 = "0x" + f"{20:064x}"  # validator_count
+            self.assertEqual(int(validator_set["storage"][slot20], 16), 4)
+
+    def test_seeded_genesis_is_reproducible_for_a_pinned_timestamp(self):
+        """The OCOMP registrations sign the seeded genesis hash, so the same
+        yaml must always seed byte-identical state."""
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+            config = minimal_config(first) | {"timestamp": 1_756_032_000}
+            a = self.seed_once(pathlib.Path(first), config)
+            b = self.seed_once(pathlib.Path(second), config)
+            self.assertEqual(a, b)
+
+    def test_genesis_time_is_pinned_to_the_header_timestamp(self):
+        config = minimal_config("./keys") | {"timestamp": 1_756_032_000}
+        genesis = CG.build_base_genesis(config)
+        self.assertEqual(genesis["timestamp"], hex(1_756_032_000))
+        self.assertEqual(genesis["config"]["genesisTime"], "2025-08-24T10:40:00Z")
+
+
+class ExampleFileTests(unittest.TestCase):
+    EXAMPLE = MODULE_PATH.with_name("network.example.yaml")
+
+    def test_example_parses_and_validates(self):
+        config = CG.load_yaml(self.EXAMPLE)
+        CG.validate_config(config)
+        self.assertEqual(len(config["validators"]), 4)
+        self.assertEqual(config["keys_dir"], "./keys")
+
+    def test_example_commented_defaults_match_the_baseline(self):
+        """Uncomment the commented parameter block and check every section
+        equals the baseline profile, so the example can never show a stale
+        default."""
+        lines = []
+        for line in self.EXAMPLE.read_text().splitlines():
+            stripped = line.lstrip()
+            indent = line[: len(line) - len(stripped)]
+            if stripped.startswith("#") and not stripped.startswith("# -"):
+                candidate = stripped[1:].removeprefix(" ")
+                token = candidate.lstrip().split(" ")[0]
+                if token.endswith(":") or candidate.lstrip().startswith("- "):
+                    lines.append(indent + candidate.split("  #")[0].rstrip())
+                    continue
+            if not stripped.startswith("#"):
+                lines.append(line.split("  #")[0].rstrip())
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as handle:
+            handle.write("\n".join(lines) + "\n")
+            path = pathlib.Path(handle.name)
+        try:
+            config = CG.load_yaml(path)
+        finally:
+            path.unlink()
+
+        base = CG.load_yaml(CG.BASE_PROFILE_PATH)
+        for section in (
+            "staking",
+            "rewards",
+            "validator_set",
+            "radicle_registry",
+            "intex_factory",
+            "vault_router",
+            "oracle",
+            "metadosis",
+        ):
+            self.assertEqual(
+                config[section],
+                base[section],
+                f"example default for `{section}` differs from the baseline seed",
+            )
+        self.assertEqual(config["gas_limit"], CG.DEFAULT_GAS_LIMIT)
+        self.assertEqual(config["epoch_length_blocks"], CG.DEFAULT_EPOCH_LENGTH_BLOCKS)
+        self.assertEqual(config["prefund_coen_units"], CG.DEFAULT_PREFUND_COEN_UNITS)
+        self.assertEqual(config["consensus_p2p_port"], CG.DEFAULT_CONSENSUS_P2P_PORT)
+
+
+class BaselineProfileTests(unittest.TestCase):
+    def test_baseline_is_the_testnet_yaml(self):
+        self.assertEqual(CG.BASE_PROFILE_PATH.name, "testnet.yaml")
+        config = CG.load_yaml(CG.BASE_PROFILE_PATH)
+        CG.validate_config(config)
+        self.assertEqual(sorted(set(config) - CG.TOP_LEVEL_KEYS), [])
+
+    def test_baseline_still_matches_the_json_profile(self):
+        """`seed-testnet.json` still feeds prepare_network.py and the localnet
+        harness. Until those move over, the two must not drift."""
+        legacy = json.loads(
+            (CG.BASE_PROFILE_PATH.with_name("seed-testnet.json")).read_text()
+        )
+        baseline = CG.load_yaml(CG.BASE_PROFILE_PATH)
+        for section, value in legacy.items():
+            self.assertEqual(
+                baseline.get(section),
+                value,
+                f"`{section}` drifted between testnet.yaml and seed-testnet.json",
+            )
+
+    def test_every_seed_section_is_present_in_the_baseline(self):
+        baseline = CG.load_yaml(CG.BASE_PROFILE_PATH)
+        seed = CG.build_seed({})
+        for section in CG.SEED_SECTIONS:
+            if section in baseline:
+                self.assertEqual(seed[section], baseline[section])
+
+    def test_baseline_runs_as_its_own_network_file(self):
+        """testnet.yaml is not just a defaults bag: seeding it against itself
+        must be a fixed point."""
+        config = CG.load_yaml(CG.BASE_PROFILE_PATH)
+        self.assertEqual(CG.build_seed(config), CG.build_seed({}))
+
+
+class LaunchBundleTests(unittest.TestCase):
+    def fake_validators(self) -> list[dict]:
+        return [
+            {
+                "address": f"0x{str(index + 1) * 40}",
+                "public_key": f"{index + 1:02x}" * 48,
+                "radicle_node_id": "0x" + f"{index + 9:02x}" * 32,
+                "p2p_address": f"10.0.0.{index + 1}:30400",
+            }
+            for index in range(4)
+        ]
+
+    def render(self, tmp: str, config_overrides: dict | None = None):
+        root = pathlib.Path(tmp)
+        keys_dir = root / "keys"
+        output_dir = root / "net"
+        output_dir.mkdir(parents=True)
+        for index in range(4):
+            directory = keys_dir / f"validator-{index}"
+            directory.mkdir(parents=True)
+            (directory / "evm-key.hex").write_text(f"{index + 1:064x}\n")
+        genesis = output_dir / "genesis.json"
+        genesis.write_text("{}")
+        config = minimal_config(str(keys_dir)) | (config_overrides or {})
+        LB.render(
+            config=config,
+            validators=self.fake_validators(),
+            genesis_path=genesis,
+            keys_dir=keys_dir,
+            repo_root=REPO_ROOT,
+        )
+        return root, keys_dir, output_dir
+
+    def test_render_writes_every_script_and_they_are_valid_bash(self):
+        import subprocess
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            self.assertTrue((output_dir / "reth-bootnodes.txt").is_file())
+            self.assertTrue((output_dir / "DEPLOY.md").is_file())
+            for index in range(4):
+                directory = output_dir / f"validator-{index}"
+                for name in (
+                    "run-mongodb.sh",
+                    "run-enclave.sh",
+                    "run-radicle.sh",
+                    "run-node.sh",
+                    "run-feeder.sh",
+                    "start-all.sh",
+                    "stop-all.sh",
+                ):
+                    script = directory / name
+                    self.assertTrue(script.is_file(), f"{name} missing")
+                    self.assertTrue(script.stat().st_mode & 0o111, f"{name} not executable")
+                    subprocess.run(["bash", "-n", str(script)], check=True)
+                self.assertTrue((directory / "feeder.toml").is_file())
+
+    def test_bootnodes_are_stable_across_renders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            first = (output_dir / "reth-bootnodes.txt").read_text()
+            config = minimal_config(str(pathlib.Path(tmp) / "keys"))
+            LB.render(
+                config=config,
+                validators=self.fake_validators(),
+                genesis_path=output_dir / "genesis.json",
+                keys_dir=pathlib.Path(tmp) / "keys",
+                repo_root=REPO_ROOT,
+            )
+            self.assertEqual(first, (output_dir / "reth-bootnodes.txt").read_text())
+            self.assertEqual(len(first.strip().splitlines()), 4)
+            for line, validator in zip(
+                first.strip().splitlines(), self.fake_validators(), strict=True
+            ):
+                host = validator["p2p_address"].split(":")[0]
+                self.assertTrue(line.startswith("enode://"))
+                self.assertTrue(line.endswith(f"@{host}:30303"))
+
+    def test_ocomp_evm_key_defaults_to_the_validator_key(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, keys_dir, _ = self.render(tmp)
+            for index in range(4):
+                directory = keys_dir / f"validator-{index}"
+                self.assertEqual(
+                    (directory / "ocomp-evm-key.hex").read_text().strip(),
+                    (directory / "evm-key.hex").read_text().strip(),
+                )
+
+    def test_remote_paths_are_used_in_the_scripts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(
+                tmp, {"remote_base_dir": "/opt/outbe", "remote_keys_dir": "/opt/outbe/keys"}
+            )
+            node_script = (output_dir / "validator-1" / "run-node.sh").read_text()
+            self.assertIn("/opt/outbe/genesis.json", node_script)
+            self.assertIn("/opt/outbe/keys/validator-1", node_script)
+            self.assertIn("--consensus.listen-addr 0.0.0.0:30400", node_script)
+
+    def test_dcap_enclave_script_mounts_the_sgx_devices(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = {
+                "tee": {
+                    "mode": "dcap-required",
+                    "mrenclave": "aa" * 32,
+                    "mrsigner": "bb" * 32,
+                    "isv_prod_id": 0,
+                    "minimum_isv_svn": 0,
+                    "minimum_tcb_evaluation_data_number": 0,
+                }
+            }
+            _, _, output_dir = self.render(tmp, config)
+            script = (output_dir / "validator-0" / "run-enclave.sh").read_text()
+            self.assertIn("/dev/sgx_enclave", script)
+            self.assertIn("/dev/sgx_provision", script)
+            self.assertNotIn("--dkg-seed", script)
+
+    def test_dev_enclave_script_is_marked_unattested(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            script = (output_dir / "validator-0" / "run-enclave.sh").read_text()
+            self.assertIn("--dkg-seed", script)
+            self.assertIn("unattested", script)
+            deploy = (output_dir / "DEPLOY.md").read_text()
+            self.assertIn("unattested", deploy)
+
+
+if __name__ == "__main__":
+    unittest.main()
