@@ -1470,22 +1470,6 @@
     },
     {
       "type": "error",
-      "name": "CalledAtInvalid",
-      "inputs": [
-        {
-          "name": "calledAt",
-          "type": "uint32",
-          "internalType": "uint32"
-        },
-        {
-          "name": "nowTs",
-          "type": "uint32",
-          "internalType": "uint32"
-        }
-      ]
-    },
-    {
-      "type": "error",
       "name": "EmptyArray",
       "inputs": []
     },

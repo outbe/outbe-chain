@@ -23,13 +23,15 @@ library IntexGas {
     ///      target caps that relay and a heavier day parks. Measured at ~5.0M once the cap binds.
     uint256 internal constant AUCTION_STAGE_CLEARING = 7_500_000;
     /// @dev Measured at ~125k.
-    uint256 internal constant AUCTION_RESULT = 200_000;
-    /// @dev A mark is a bounded state flip. Measured: a batch of 8 takes ~177k applied and ~451k when
-    ///      every series slots instead, one series ~97k and ~114k. The slotting path sets the marginal.
-    uint256 internal constant MARK_CALLED_BASE = 100_000;
-    uint256 internal constant MARK_CALLED_PER_SERIES = 80_000;
-    uint256 internal constant MARK_QUALIFIED_BASE = 100_000;
-    uint256 internal constant MARK_QUALIFIED_PER_SERIES = 80_000;
+    uint256 internal constant AUCTION_RESULT = 190_000;
+    /// @dev A mark is a bounded state flip, and slotting one for a series that has not landed yet is the
+    ///      dearer path, so both budgets are cut from it. Called carries a call time and stores it beside
+    ///      the slot, which is why its marginal is the larger of the two. Called measured ~114k at one
+    ///      series and ~476k at eight; Qualified ~102k and ~318k.
+    uint256 internal constant MARK_CALLED_BASE = 95_000;
+    uint256 internal constant MARK_CALLED_PER_SERIES = 78_000;
+    uint256 internal constant MARK_QUALIFIED_BASE = 110_000;
+    uint256 internal constant MARK_QUALIFIED_PER_SERIES = 47_000;
     /// @dev Destination hook for composed proceeds: WCOEN unwrap + IntexFactory distribute registration.
     uint256 internal constant PROCEEDS_COMPOSE = 300_000;
 

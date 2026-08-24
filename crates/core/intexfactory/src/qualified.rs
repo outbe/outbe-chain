@@ -350,6 +350,18 @@ fn drain_called_run(
     first: U256,
 ) -> Result<u32> {
     let (first_id, called_at) = unpack_called_notice(first);
+    // A target refuses a zero stamp and its refusal is acknowledged, not retried, so such a mark would
+    // be lost silently. Only an entry written by an older binary carries one; drop it where it shows.
+    if called_at == 0 {
+        factory.notify_at.clear(&at)?;
+        factory.notify_kind.clear(&at)?;
+        tracing::warn!(
+            target: "outbe::intexfactory",
+            series = %first_id,
+            "called notice: dropping, no call time"
+        );
+        return Ok(1);
+    }
     let worldwide_day = first_id.worldwide_day();
     let mut run = vec![first_id];
 

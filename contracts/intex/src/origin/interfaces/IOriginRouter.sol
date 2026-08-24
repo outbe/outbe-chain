@@ -196,8 +196,6 @@ interface IOriginRouter {
     error TargetNotRegistered(uint32 chainId);
     /// @notice No targets are registered, so a broadcast has no destinations.
     error NoTargets();
-    /// @notice `sendMarkCalled` was given a call time no target could apply: zero, or ahead of this clock.
-    error CalledAtInvalid(uint32 calledAt, uint32 nowTs);
     /// @notice Addressed send targets a chain outside the series' STAGE_START snapshot.
     error NotSeriesTarget(uint32 worldwideDay, uint32 dstChainId);
     /// @notice `sendLeg` is an internal self-call seam; caller was not this contract.
