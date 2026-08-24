@@ -8,46 +8,50 @@ fn load_minor() -> U256 {
     U256::from(100_000u64) * U256::from(1_000_000u64)
 }
 
+fn product() -> U256 {
+    entry_price() * load_minor()
+}
+
 #[test]
 fn cost_amount_six_decimals() {
-    let cost = runtime::derived_cost_amount(entry_price(), load_minor(), 6).unwrap();
+    let cost = runtime::product_to_payment_units(product(), 6).unwrap();
     assert_eq!(cost, U256::from(50_000_000_000u64));
 }
 
 #[test]
 fn cost_amount_eighteen_decimals_is_1e12_larger() {
-    let six = runtime::derived_cost_amount(entry_price(), load_minor(), 6).unwrap();
-    let eighteen = runtime::derived_cost_amount(entry_price(), load_minor(), 18).unwrap();
+    let six = runtime::product_to_payment_units(product(), 6).unwrap();
+    let eighteen = runtime::product_to_payment_units(product(), 18).unwrap();
     assert_eq!(eighteen, six * U256::from(10u64).pow(U256::from(12u64)));
 }
 
 #[test]
 fn cost_amount_zero_decimals() {
-    let cost = runtime::derived_cost_amount(entry_price(), load_minor(), 0).unwrap();
+    let cost = runtime::product_to_payment_units(product(), 0).unwrap();
     assert_eq!(cost, U256::from(50_000u64));
 }
 
 #[test]
 fn cost_amount_twelve_decimals() {
-    let cost = runtime::derived_cost_amount(entry_price(), load_minor(), 12).unwrap();
+    let cost = runtime::product_to_payment_units(product(), 12).unwrap();
     assert_eq!(cost, U256::from(50_000_000_000_000_000u64));
 }
 
 #[test]
 fn cost_amount_rounds_positive_subunit_payment_up_to_one() {
-    let cost = runtime::derived_cost_amount(U256::ONE, U256::ONE, 0).unwrap();
+    let cost = runtime::product_to_payment_units(U256::ONE, 0).unwrap();
     assert_eq!(cost, U256::ONE);
 }
 
 #[test]
 fn cost_amount_rejects_unsupported_payment_decimals() {
-    let err = runtime::derived_cost_amount(entry_price(), load_minor(), 19).unwrap_err();
+    let err = runtime::product_to_payment_units(product(), 19).unwrap_err();
     assert!(err.to_string().contains("unsupported decimals"), "{err}");
 }
 
 #[test]
-fn cost_amount_rejects_product_overflow() {
-    let err = runtime::derived_cost_amount(U256::MAX, U256::from(2u64), 6).unwrap_err();
+fn cost_amount_rejects_scaling_overflow() {
+    let err = runtime::product_to_payment_units(U256::MAX, 18).unwrap_err();
     assert!(err.to_string().to_lowercase().contains("overflow"), "{err}");
 }
 
