@@ -31,9 +31,8 @@ serde_json.workspace = true
 # Signing
 k256.workspace = true
 
-# Offer encryption (client side: X25519 ECDHE + HKDF-SHA256 + ChaCha20Poly1305,
-# byte-identical to the enclave decrypt path).
-x25519-dalek.workspace = true
+# Offer encryption (client side; the X25519 ECDHE + HKDF-SHA256 +
+# ChaCha20Poly1305 seal itself lives in outbe-tributefactory).
 ring.workspace = true
 
 # Async

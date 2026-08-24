@@ -28,6 +28,10 @@ duckdb = "latest"
 # Localnet harness knobs (override per-invocation, e.g. `OUT_DIR=/tmp/x mise run localnet`).
 OUT_DIR            = "/tmp/outbe-testnet"
 VALIDATORS         = "4"
+# radicle-node (outbe-heartwood) bakes this in at compile time via `env!`;
+# without it every workspace-wide build fails. Release builds pass their own
+# value through the reproducible-build container args.
+SOURCE_DATE_EPOCH  = "0"
 # SEED_FILE is optional; localnet-bootstrap branches on whether it is set.
 # The persistent Rust harness owns the MongoDB replica set, mock enclaves, and
 # validator processes for the complete localnet-start → localnet-stop lifetime.

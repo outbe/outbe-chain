@@ -174,6 +174,9 @@ fn heap_add(bytes: usize) {
 
 fn heap_sub(bytes: usize) {
     // Saturating: a dealloc raced against process start can otherwise wrap.
+    // Nightly renames `fetch_update` to `try_update`; the replacement is not
+    // on stable 1.96 yet, so silence the nightly-only deprecation until then.
+    #[allow(deprecated)]
     let _ = HEAP_CURRENT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
         Some(current.saturating_sub(bytes as u64))
     });
