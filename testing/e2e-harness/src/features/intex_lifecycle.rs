@@ -27,13 +27,10 @@ const UNITS: u32 = 10;
 const REFERENCE_BYTE: u8 = b'U';
 /// The DEV profile qualifies a series a day after issuance; overshoot so the
 /// sweep sees the period closed rather than exactly met.
-const QUALIFICATION_PERIOD_SECS: u64 = 24 * 3600;
-const QUALIFICATION_MARGIN_SECS: u64 = 3600;
+const QUALIFICATION_PERIOD_SECS: u64 = 120;
+const QUALIFICATION_MARGIN_SECS: u64 = 30;
 /// Long enough for the chain to close a one-day gap, which it does per block.
 const CATCH_UP_TIMEOUT_SECS: u64 = 900;
-/// The catch-up ratchet moves a whole hour per block and stops before overshooting,
-/// so its last step lands one hour short. Ask for one step beyond what is needed.
-const RATCHET_STEP_SECS: u64 = 3600;
 /// The sweep runs in begin-block; a handful of blocks is plenty.
 const QUALIFY_SWEEP_TIMEOUT_SECS: u64 = 180;
 /// `IntexState::Qualified`.
@@ -41,8 +38,8 @@ const QUALIFIED: u8 = 1;
 /// `IntexState::Called`.
 const CALLED: u8 = 2;
 /// DEV calls a series once the VWAP held above the call price on two of three days.
-const CALL_WINDOW_DAYS: u64 = 3;
-const DAY_SECS: u64 = 24 * 3600;
+/// DEV requires two of the last three days above the trigger.
+const CALL_THRESHOLD_DAYS: u32 = 2;
 /// The call sweep is daily; give it a few blocks past the last rollover.
 const CALL_SWEEP_TIMEOUT_SECS: u64 = 300;
 
@@ -199,6 +196,8 @@ fn chain_worldwide_day(world: &World, port: u16) -> u32 {
 
 #[when("the day advances past the qualification period")]
 fn advance_past_qualification(world: &mut World) {
+    // Under the test build the period is seconds, not a day: jumping a day would
+    // crash the metadosis day machine, and the sweep's decision is what matters.
     let port = world.validators.primary_port();
     let target = world
         .rpc
@@ -206,9 +205,6 @@ fn advance_past_qualification(world: &mut World) {
         .expect("committee head timestamp")
         + QUALIFICATION_PERIOD_SECS
         + QUALIFICATION_MARGIN_SECS;
-
-    // The restart resumes the price feeder itself; only the catch-up is ours to await.
-    crate::features::ocomp::restart_committee_at_logical_time(world, target + RATCHET_STEP_SECS);
     wait_for_chain_time(world, port, target);
 }
 
@@ -436,21 +432,18 @@ fn call_trigger_holds(world: &mut World) {
         .expect("a series was issued");
     let (_, _, call_price) = venue_probes::series_prices(&url, nft, series).expect("series prices");
 
-    // The sweep counts closed days, and the Oracle finalizes each one in begin-block,
-    // so the rate has to stand above the call price across whole days rather than once.
-    for _ in 0..CALL_WINDOW_DAYS {
-        let target = world
-            .rpc
-            .latest_block_timestamp(port)
-            .expect("committee head timestamp")
-            + DAY_SECS;
-        crate::features::price_oracle::publish_controlled_quote(world, U256::from(call_price * 2));
-        crate::features::ocomp::restart_committee_at_logical_time(
-            world,
-            target + RATCHET_STEP_SECS,
-        );
-        wait_for_chain_time(world, port, target);
-    }
+    // DEV calls a series whose VWAP cleared the trigger on two of the last three
+    // days. Seed those days rather than living through them: the Oracle's own
+    // arithmetic is not what this scenario is about, and the sweep still walks its
+    // index, checks the watermark and counts the days itself.
+    test_issuance::seed_day_vwaps(
+        &url,
+        DEPLOYER_KEY,
+        settlement_currency::USD_ISO,
+        CALL_THRESHOLD_DAYS,
+        U256::from(call_price) * U256::from(2),
+    )
+    .expect("seed the call-window VWAPs");
 }
 
 #[then("both series become Called")]

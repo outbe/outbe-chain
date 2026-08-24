@@ -46,6 +46,7 @@ pub const INTEX_FACTORY: Address =
 
 sol! {
     interface IIntexFactoryTestArming {
+        function seedDayVwapsForTest(uint16 isoCode, uint32 days, uint256 value) external;
         function issueForTest(
             bytes14[] seriesIds,
             uint16[] issuanceCurrencies,
@@ -341,4 +342,27 @@ pub fn open_day(
     )
     .map_err(|error| eyre!("sendAuctionStageStart was refused: {error}"))?;
     Ok(())
+}
+
+/// Fill the last `days` closed UTC days with `value`, exactly as this module's own
+/// tests do: the per-day value plus the finalized watermark. The call sweep reads
+/// those days and counts how many cleared its trigger.
+pub fn seed_day_vwaps(
+    url: &str,
+    sender_key: &str,
+    iso_code: u16,
+    days: u32,
+    value: U256,
+) -> Result<()> {
+    send_checked(
+        url,
+        INTEX_FACTORY,
+        sender_key,
+        &IIntexFactoryTestArming::seedDayVwapsForTestCall {
+            isoCode: iso_code,
+            days,
+            value,
+        },
+        "seedDayVwapsForTest",
+    )
 }
