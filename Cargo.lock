@@ -8226,9 +8226,6 @@ dependencies = [
  "hex",
  "outbe-primitives",
  "ring",
- "serde",
- "serde_json",
- "time",
 ]
 
 [[package]]
@@ -9217,6 +9214,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.18",
+ "time",
  "tokio",
  "tracing",
  "trybuild",

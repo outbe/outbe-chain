@@ -172,7 +172,7 @@ fn with_execution_scope(
     f: impl FnOnce(&ExecutionScope, &TributeRepositoryReader) -> outbe_primitives::error::Result<()>,
 ) -> outbe_primitives::error::Result<()> {
     ctx.storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))?;
+        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))?;
     ctx.storage.sstore(
         COMPRESSED_ENTITIES_ADDRESS,
         U256::from(1),
@@ -358,7 +358,7 @@ fn block_1_begin_block_rejects_missing_genesis_ocomp_profile_without_partial_sta
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
     storage.enter(|handle| {
         handle
-            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
             .unwrap();
         handle
             .sstore(

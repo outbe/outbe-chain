@@ -556,8 +556,6 @@ fn distribute_receives_the_call_value() {
 
 // --- Certified contributor payout (OCOMP authority) ---
 
-use alloy_primitives::FixedBytes;
-
 use outbe_intex::payout::test_support::{
     contributor_leaf, contributor_range_proof, contributor_root, metadata_word,
 };
@@ -637,8 +635,7 @@ fn abi_leaves(leaves: &[ContributorLeafData]) -> Vec<IIntexFactory::ContributorL
         .iter()
         .map(|leaf| IIntexFactory::ContributorLeaf {
             owner: leaf.owner,
-            sourceTributeDigest: B256::from_slice(&leaf.source_tribute_id[..32]),
-            sourceTributeIndex: FixedBytes::<4>::from_slice(&leaf.source_tribute_id[32..]),
+            sourceTributeId: leaf.source_tribute_id,
             nominal: leaf.nominal,
         })
         .collect()

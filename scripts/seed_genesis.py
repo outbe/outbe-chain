@@ -197,7 +197,7 @@ ZEROFEE_ADDRESS = "000000000000000000000000000000000000ee09"
 # Compressed-entity EVM schema V3. ADR-011 adds the retirement journal.
 # Catalog, so slot 1 is non-zero even though no collection exists at genesis.
 COMPRESSED_ENTITIES_ADDRESS = "000000000000000000000000000000000000ee0d"
-COMPRESSED_ENTITIES_SCHEMA_VERSION = 3
+COMPRESSED_ENTITIES_SCHEMA_VERSION = 4
 COMPRESSED_ENTITIES_EMPTY_SEALED_ROOT = int(
     "086cb3c24884752e6453a9d44e15c1f465c0874e5312d18c05feaafec1587802", 16
 )
@@ -1292,7 +1292,7 @@ def seed_accounting_progress(storage: StorageBuilder):
 
 
 def seed_compressed_entities(storage: StorageBuilder):
-    """Seed EVM schema V2 and ADR-010's authoritative empty sealed root."""
+    """Seed the EVM schema version and ADR-010's authoritative empty sealed root."""
     storage.set_slot(0, COMPRESSED_ENTITIES_SCHEMA_VERSION)
     storage.set_slot(1, COMPRESSED_ENTITIES_EMPTY_SEALED_ROOT)
 

@@ -1,7 +1,7 @@
 //! Cross-module NodFactory API.
 
 use alloy_primitives::{Address, U256};
-use outbe_compressed_entities::{EntityId36, ExecutionScope, ParentBodySource};
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_nod::schema::NodIssueParams;
 use outbe_ocomp_protocol::{nod_materialization::NodMaterializationBatchV1, SchemaLimits};
 use outbe_primitives::{error::Result, storage::StorageHandle};
@@ -16,7 +16,7 @@ pub fn issue_nod(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     params: &NodIssueParams,
-) -> Result<EntityId36> {
+) -> Result<WwdEntityId> {
     runtime::issue_nod(storage, scope, parent, params)
 }
 
@@ -25,7 +25,7 @@ pub fn settle_nod(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     payer: Address,
-    nod_id: EntityId36,
+    nod_id: WwdEntityId,
 ) -> Result<U256> {
     runtime::settle_nod(storage, scope, parent, payer, nod_id)
 }
@@ -35,7 +35,7 @@ pub fn mine_gratis(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     caller: Address,
-    nod_id: EntityId36,
+    nod_id: WwdEntityId,
     nonce: U256,
     auth: outbe_gratisfactory::api::ModifyAuth,
 ) -> Result<U256> {

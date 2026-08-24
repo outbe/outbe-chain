@@ -592,16 +592,14 @@ pub(crate) fn contributor_payout_round(
     })
 }
 
-/// Rebuilds the canonical 36-byte tribute id from its ABI digest/index split.
+/// The ABI leaf and the canonical leaf carry the same three words, so this is a
+/// plain field copy.
 fn decode_contributor_leaf(
     leaf: &crate::precompile::IIntexFactory::ContributorLeaf,
 ) -> ContributorLeafData {
-    let mut source_tribute_id = [0u8; 36];
-    source_tribute_id[..32].copy_from_slice(leaf.sourceTributeDigest.as_slice());
-    source_tribute_id[32..].copy_from_slice(leaf.sourceTributeIndex.as_slice());
     ContributorLeafData {
         owner: leaf.owner,
-        source_tribute_id,
+        source_tribute_id: leaf.sourceTributeId,
         nominal: leaf.nominal,
     }
 }

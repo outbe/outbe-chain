@@ -40,6 +40,7 @@ pub mod tee_test_utils;
 pub mod time;
 pub mod units;
 pub mod validators;
+pub mod wwd_entity_id;
 pub mod zero_fee;
 
 pub use header::{

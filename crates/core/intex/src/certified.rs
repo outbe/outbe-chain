@@ -176,7 +176,6 @@ mod tests {
     use alloy_sol_types::SolEvent;
 
     use outbe_ocomp_protocol::{
-        common::EntityId36,
         profile::poc_schema_limits,
         receipts::{ContributorStateEventProjectionV1, EffectBindingV1},
         result::ContributorActionV1,
@@ -407,11 +406,11 @@ mod tests {
     fn contributor(index: u32, nominal_amount_minor: u128) -> ContributorActionV1 {
         let mut owner = [0_u8; 20];
         owner[16..].copy_from_slice(&(index + 1).to_be_bytes());
-        let mut source_tribute_id = [0_u8; 36];
-        source_tribute_id[32..].copy_from_slice(&index.to_be_bytes());
+        let mut source_tribute_id = [0_u8; 32];
+        source_tribute_id[28..].copy_from_slice(&index.to_be_bytes());
         ContributorActionV1 {
             owner: Address::from(owner),
-            source_tribute_id: EntityId36(source_tribute_id),
+            source_tribute_id: B256::from(source_tribute_id),
             nominal_amount_minor: U256::from(nominal_amount_minor),
         }
     }

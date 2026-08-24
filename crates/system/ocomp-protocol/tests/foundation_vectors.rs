@@ -41,7 +41,7 @@ fn production_scalar_bytes_match_independent_encoder() {
     production
         .write_address20(address!("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"))
         .unwrap();
-    production.write_entity_id36(&[0xcc; 36]).unwrap();
+    production.write_b256(B256::from([0xcc; 32])).unwrap();
     production.write_bool(false).unwrap();
     production.write_bool(true).unwrap();
     production
@@ -66,7 +66,7 @@ fn production_scalar_bytes_match_independent_encoder() {
     independent.fixed(&[0xff; 32]);
     independent.fixed(&[0xaa; 32]);
     independent.fixed(&[0xbb; 20]);
-    independent.fixed(&[0xcc; 36]);
+    independent.fixed(&[0xcc; 32]);
     independent.boolean(false);
     independent.boolean(true);
     independent.u8(0);
@@ -136,7 +136,7 @@ fn production_reader_round_trips_every_scalar_and_collection() {
     writer
         .write_address20(address!("0808080808080808080808080808080808080808"))
         .unwrap();
-    writer.write_entity_id36(&[9; 36]).unwrap();
+    writer.write_b256(B256::from([9; 32])).unwrap();
     writer.write_bool(true).unwrap();
     writer
         .write_option(Some(&10_u16), |output, value| output.write_u16(*value))
@@ -159,7 +159,7 @@ fn production_reader_round_trips_every_scalar_and_collection() {
         reader.read_address20().unwrap(),
         address!("0808080808080808080808080808080808080808")
     );
-    assert_eq!(reader.read_entity_id36().unwrap(), [9; 36]);
+    assert_eq!(reader.read_b256().unwrap(), B256::from([9; 32]));
     assert!(reader.read_bool().unwrap());
     assert_eq!(
         reader.read_option(CanonicalReader::read_u16).unwrap(),

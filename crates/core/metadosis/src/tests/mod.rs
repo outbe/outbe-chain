@@ -126,7 +126,7 @@ fn with_active_scope<R>(
         .is_zero()
     {
         storage
-            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
             .unwrap();
         storage
             .sstore(

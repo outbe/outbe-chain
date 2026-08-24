@@ -1,10 +1,10 @@
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolCall, SolInterface};
-use outbe_primitives::dispatch::{dispatch_call, mutate, preflight_dynamic_bytes_len, view};
+use alloy_sol_types::{sol, SolInterface};
+use outbe_primitives::dispatch::{dispatch_call, mutate, view};
 use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::runtime;
-use outbe_compressed_entities::{EntityId36, ExecutionScope, ParentBodySource};
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -26,7 +26,6 @@ pub fn dispatch(
     value: U256,
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
-    preflight_entity_id(data)?;
     if data.get(..4)
         == Some(outbe_ocomp_protocol::abi::MATERIALIZE_CERTIFIED_NODS_SELECTOR.as_slice())
     {
@@ -36,7 +35,7 @@ pub fn dispatch(
         use INodFactory::INodFactoryCalls::*;
         match call {
             settleNod(c) => mutate(c, caller, |sender, c| {
-                runtime::settle_nod(&storage, scope, parent, sender, parse_entity_id(&c.nodId)?)
+                runtime::settle_nod(&storage, scope, parent, sender, WwdEntityId::from(c.nodId))
             }),
             mineGratis(c) => mutate(c, caller, |sender, c| {
                 let auth = outbe_gratisfactory::api::ModifyAuth {
@@ -48,7 +47,7 @@ pub fn dispatch(
                     scope,
                     parent,
                     sender,
-                    parse_entity_id(&c.nodId)?,
+                    WwdEntityId::from(c.nodId),
                     c.nonce,
                     auth,
                 )
@@ -104,19 +103,4 @@ fn dispatch_materialization(
         .map_err(crate::materialization::typed_materialization_error)?;
         Ok(Bytes::new())
     })
-}
-
-fn preflight_entity_id(data: &[u8]) -> Result<()> {
-    for (selector, head_words) in [
-        (INodFactory::settleNodCall::SELECTOR, 1),
-        (INodFactory::mineGratisCall::SELECTOR, 4),
-    ] {
-        preflight_dynamic_bytes_len(data, selector, 0, head_words, EntityId36::LEN)?;
-    }
-    Ok(())
-}
-
-fn parse_entity_id(bytes: &Bytes) -> Result<EntityId36> {
-    EntityId36::try_from(bytes.as_ref())
-        .map_err(|error| outbe_primitives::error::PrecompileError::Revert(error.to_string()))
 }

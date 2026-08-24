@@ -314,7 +314,7 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
     provider.flush().unwrap();
 
     let calldata = INod::ownerOfCall {
-        nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+        nodId: nod_id.to_u256(),
     }
     .abi_encode();
     let mut ctx = Context::mainnet().with_db(database);

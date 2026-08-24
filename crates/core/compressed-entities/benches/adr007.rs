@@ -3,8 +3,8 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     list, mint, BodyInput, CompressedEntitiesLifecycle, CompressedEntitiesLifecycleContext,
-    EntityId36, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
-    ParentBodySourceError, QueryRef, StoredBody, TributeBodyV1,
+    EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError,
+    QueryRef, StoredBody, TributeBodyV1, WwdEntityId,
 };
 use outbe_primitives::{
     block::{BlockContext, BlockLifecycle, BlockRuntimeContext},
@@ -39,7 +39,7 @@ fn body(index: u32) -> TributeBodyV1 {
     let mut digest = [0_u8; 32];
     digest[28..].copy_from_slice(&index.to_be_bytes());
     TributeBodyV1 {
-        tribute_id: EntityId36::new(DAY, digest),
+        tribute_id: WwdEntityId::from_day_and_digest(DAY, digest),
         owner: OWNER,
         worldwide_day: DAY,
         issuance_amount_minor: U256::from(index + 1),

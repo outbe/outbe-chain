@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, path::PathBuf, str::FromStr};
 
 use alloy_primitives::{Address, U256};
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::{derive_poseidon_entity_id, EntityId36};
+use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_lysis::program_v1::{
     execute, FidelityPhaseV1, ObservationValueV1, ObservedTributeV1, ProgramErrorV1,
     ProgramInputV1, ProgramResultV1, SemanticObservationV1, TributeInputV1,
@@ -68,9 +68,9 @@ fn address(raw: &str) -> Address {
     Address::from_str(raw).expect("corpus owner is a valid address")
 }
 
-fn entity_id(raw: &str) -> EntityId36 {
+fn entity_id(raw: &str) -> WwdEntityId {
     let bytes = hex::decode(raw).expect("corpus entity ID is valid hex");
-    EntityId36::try_from(bytes.as_slice()).expect("corpus entity ID is exactly 36 bytes")
+    WwdEntityId::try_from(bytes.as_slice()).expect("corpus entity ID is exactly 32 bytes")
 }
 
 fn observed_value<T>(value: Option<T>) -> ObservationValueV1<T> {
@@ -163,7 +163,7 @@ fn success_json(input: &CorpusInput, result: ProgramResultV1) -> Value {
         .iter()
         .map(|action| {
             json!({
-                "source_tribute_id": hex::encode(action.source_tribute_id.as_bytes()),
+                "source_tribute_id": hex::encode(action.source_tribute_id.as_slice()),
                 "owner": lowercase_address(action.owner),
                 "worldwide_day": u32::from(action.worldwide_day),
                 "league": action.league_id,

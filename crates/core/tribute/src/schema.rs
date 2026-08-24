@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::EntityId36;
+use outbe_compressed_entities::WwdEntityId;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::TRIBUTE_ADDRESS;
 use serde::{Deserialize, Serialize};
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 #[storage_record(exists_field = owner)]
 pub struct TributeData {
     #[key]
-    pub tribute_id: EntityId36,
+    pub tribute_id: WwdEntityId,
 
     #[attribute(order = 0)]
     pub owner: Address,

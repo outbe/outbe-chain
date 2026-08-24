@@ -12,7 +12,7 @@ use mongodb::sync::Client;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, encode_nod_bucket_v1,
-    encode_nod_item_v1, EntityId36, IdPageRequest, StoredBody,
+    encode_nod_item_v1, IdPageRequest, StoredBody, WwdEntityId,
 };
 use outbe_nod::{
     canonical_bucket, canonical_item, from_canonical_bucket, from_canonical_item, NodBucketState,
@@ -24,19 +24,19 @@ use outbe_offchain_storage::{
     MAX_SCAN_ENTRIES,
 };
 
-fn entity(seed: U256, worldwide_day: WorldwideDay) -> EntityId36 {
-    EntityId36::new(worldwide_day, seed.to_be_bytes::<32>())
+fn entity(seed: U256, worldwide_day: WorldwideDay) -> WwdEntityId {
+    WwdEntityId::from_day_and_digest(worldwide_day, seed.to_be_bytes::<32>())
 }
 
-fn nod_id(seed: u64) -> EntityId36 {
+fn nod_id(seed: u64) -> WwdEntityId {
     entity(U256::from(seed), WorldwideDay::new(u32::MAX))
 }
 
-fn bucket_id(key: B256, worldwide_day: WorldwideDay) -> EntityId36 {
-    EntityId36::new(worldwide_day, key.0)
+fn bucket_id(key: B256, worldwide_day: WorldwideDay) -> WwdEntityId {
+    WwdEntityId::from_day_and_digest(worldwide_day, key.0)
 }
 
-fn nod(nod_id: EntityId36, owner: Address) -> NodItemState {
+fn nod(nod_id: WwdEntityId, owner: Address) -> NodItemState {
     NodItemState {
         nod_id,
         owner,
@@ -53,9 +53,18 @@ fn nod(nod_id: EntityId36, owner: Address) -> NodItemState {
     }
 }
 
-fn bucket(bucket_id: EntityId36) -> NodBucketState {
+/// `NodBucketBodyV1::entity_id` derives the identity as `wwd ++ key[4..]`, so
+/// the key's leading four bytes are not recoverable from it. Rebuild the one
+/// key that re-derives to this identity.
+fn bucket_key_for(id: WwdEntityId) -> B256 {
+    let mut key = [0_u8; 32];
+    key[4..].copy_from_slice(&id.body());
+    B256::from(key)
+}
+
+fn bucket(bucket_id: WwdEntityId) -> NodBucketState {
     NodBucketState {
-        bucket_key: B256::from(bucket_id.digest()),
+        bucket_key: bucket_key_for(bucket_id),
         worldwide_day: bucket_id.worldwide_day(),
         floor_price_minor: U256::MAX,
         is_qualified: false,
@@ -73,12 +82,12 @@ fn key(bytes: impl Into<Vec<u8>>) -> Key {
     Key::new(bytes).unwrap()
 }
 
-fn id_key(id: EntityId36) -> Key {
-    key(id.as_bytes().to_vec())
+fn id_key(id: WwdEntityId) -> Key {
+    key(id.as_slice().to_vec())
 }
 
-fn owner_key(owner: Address, id: EntityId36) -> Key {
-    key([owner.as_slice(), id.as_bytes()].concat())
+fn owner_key(owner: Address, id: WwdEntityId) -> Key {
+    key([owner.as_slice(), id.as_slice()].concat())
 }
 
 fn stored_nod(body: &NodItemState) -> Vec<u8> {
@@ -358,7 +367,14 @@ fn run_contract(reader: StorageReaderHandle, writer: StorageWriterHandle) {
         repository_writer.put_nod(&nod(id, owner_a)).unwrap();
     }
     repository_writer.put_nod(&nod(nod_id(4), owner_b)).unwrap();
-    let bucket_key = B256::repeat_byte(0x55);
+    // A bucket identity keeps only `key[4..]`, so a key with a non-zero first
+    // four bytes cannot round-trip through it. Pick one that can, so the
+    // assertion below still checks a real round trip.
+    let bucket_key = {
+        let mut key = [0x55_u8; 32];
+        key[..4].fill(0);
+        B256::from(key)
+    };
     let selected_bucket_id = bucket_id(bucket_key, WorldwideDay::new(0));
     repository_writer
         .put_bucket(&bucket(selected_bucket_id))

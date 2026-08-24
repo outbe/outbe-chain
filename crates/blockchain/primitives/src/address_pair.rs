@@ -78,7 +78,7 @@ impl AddressPair {
 impl StorageKey for AddressPair {
     /// Sorted, so `quoted(a, b)` and `quoted(b, a)` address the same slot.
     fn key_bytes(&self) -> Vec<u8> {
-        self.to_canonical().as_slice().to_vec()
+        self.to_canonical().to_vec()
     }
 
     /// Solidity left-pads a mapping key only when it is narrower than a word;

@@ -4,7 +4,7 @@ use alloy_primitives::{Address, Bytes};
 use alloy_sol_types::{SolError, SolEvent};
 use outbe_chain_constants::NodMaterializationProfileV1;
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::{EntityId36, ExecutionScope, ParentBodySource};
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_nod::{NodContract, NodIssueParams};
 use outbe_ocomp_protocol::{
     nod_materialization::{
@@ -171,7 +171,7 @@ pub(crate) fn materialize_after_attempt(
     let worldwide_day = WorldwideDay::new(head.worldwide_day);
     for action in verified.actions() {
         let derived_nod_id = NodContract::generate_nod_id(action.owner, worldwide_day)?;
-        let supplied_nod_id = EntityId36::try_from(action.nod_id.0.as_slice())
+        let supplied_nod_id = WwdEntityId::try_from(action.nod_id.0.as_slice())
             .map_err(|_| PrecompileError::from(NodFactoryError::InvalidMaterializationProof))?;
         let derived_bucket_key = NodContract::bucket_key(
             worldwide_day,

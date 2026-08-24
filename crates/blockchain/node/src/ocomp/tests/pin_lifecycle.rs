@@ -15,7 +15,7 @@ use std::{
 use alloy_primitives::{b256, keccak256, Bytes, Log, B256, U256};
 use alloy_sol_types::SolEvent as _;
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::EntityId36;
+use outbe_compressed_entities::WwdEntityId;
 use outbe_consensus::{
     block::ConsensusBlock, finalization::parent_cert_store::FinalizedParentCertStore,
     ocomp_retention::OcompRetentionHook,
@@ -1232,7 +1232,7 @@ fn tentative_pin_selects_exact_day_and_orphan_finality_garbage_collects_its_reta
         Some(pin)
     );
 
-    let tribute_id = EntityId36::new(day, [0x67; 32]);
+    let tribute_id = WwdEntityId::from_day_and_digest(day, [0x67; 32]);
     let tribute = TributeData {
         tribute_id,
         owner: alloy_primitives::Address::repeat_byte(0x68),
@@ -1420,7 +1420,7 @@ fn ocm_pin_001_export_terminal_release_and_generation_cas_survive_restart() {
     let root = tempfile::tempdir().expect("journal root");
     let storage = Arc::new(MemoryStorage::default());
     let day = WorldwideDay::new(candidate.wwd);
-    let tribute_id = EntityId36::new(day, [0x57; 32]);
+    let tribute_id = WwdEntityId::from_day_and_digest(day, [0x57; 32]);
     let tribute = TributeData {
         tribute_id,
         owner: alloy_primitives::Address::repeat_byte(0x58),
@@ -2105,7 +2105,7 @@ fn ocm_pin_001_shared_input_lease_is_collected_after_its_last_job_reference() {
     let root = tempfile::tempdir().expect("shared-lease journal root");
     let storage = Arc::new(MemoryStorage::default());
     let day = WorldwideDay::new(first_candidate.wwd);
-    let tribute_id = EntityId36::new(day, [0x61; 32]);
+    let tribute_id = WwdEntityId::from_day_and_digest(day, [0x61; 32]);
     let tribute = TributeData {
         tribute_id,
         owner: alloy_primitives::Address::repeat_byte(0x62),

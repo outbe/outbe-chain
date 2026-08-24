@@ -3,8 +3,8 @@ use std::{sync::Arc, time::Duration};
 use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, decode_stored_tribute_v1, EntityId36,
-    EntityRef, IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef,
+    decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, decode_stored_tribute_v1, EntityRef,
+    IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef, WwdEntityId,
 };
 use outbe_nod::{NodBucketState, NodItemState, NodRepositoryWriter};
 use outbe_offchain_data::RuntimeBodyReaders;
@@ -15,14 +15,14 @@ use outbe_offchain_storage::{
 };
 use outbe_tribute::{TributeData, TributeRepositoryWriter};
 
-fn entity(seed: u64) -> EntityId36 {
-    EntityId36::new(
+fn entity(seed: u64) -> WwdEntityId {
+    WwdEntityId::from_day_and_digest(
         WorldwideDay::new(20_260_715),
         U256::from(seed).to_be_bytes::<32>(),
     )
 }
 
-fn tribute(tribute_id: EntityId36) -> TributeData {
+fn tribute(tribute_id: WwdEntityId) -> TributeData {
     TributeData {
         tribute_id,
         owner: Address::repeat_byte(0x11),
@@ -75,7 +75,7 @@ fn supervised_bundle_reports_read_failures_to_its_lifecycle_owner() {
     ));
 }
 
-fn nod(nod_id: EntityId36, bucket_key: B256) -> NodItemState {
+fn nod(nod_id: WwdEntityId, bucket_key: B256) -> NodItemState {
     NodItemState {
         nod_id,
         owner: Address::repeat_byte(0x22),
@@ -114,7 +114,7 @@ fn typed_readers_share_one_memory_adapter() {
     let tribute_id = entity(1);
     let nod_id = entity(2);
     let bucket_key = B256::repeat_byte(0x33);
-    let bucket_id = EntityId36::new(WorldwideDay::new(20_260_715), bucket_key.0);
+    let bucket_id = WwdEntityId::from_day_and_digest(WorldwideDay::new(20_260_715), bucket_key.0);
 
     TributeRepositoryWriter::new(reader.clone(), writer.clone())
         .put(&tribute(tribute_id))
@@ -144,7 +144,7 @@ fn parent_body_source_gets_exact_bodies_and_lists_strict_id_pages() {
     let tribute_ids = [entity(1), entity(2), entity(3)];
     let nod_ids = [entity(11), entity(12), entity(13)];
     let bucket_key = B256::repeat_byte(0x33);
-    let bucket_id = EntityId36::new(WorldwideDay::new(20_260_715), bucket_key.0);
+    let bucket_id = WwdEntityId::from_day_and_digest(WorldwideDay::new(20_260_715), bucket_key.0);
 
     let tribute_writer = TributeRepositoryWriter::new(reader.clone(), writer.clone());
     let nod_writer = NodRepositoryWriter::new(reader, writer);
@@ -270,9 +270,9 @@ impl StorageReader for ScriptedScanReader {
     }
 }
 
-fn scan_entry(id: EntityId36) -> ScanEntry {
+fn scan_entry(id: WwdEntityId) -> ScanEntry {
     ScanEntry {
-        key: Key::new(id.as_bytes().to_vec()).unwrap(),
+        key: Key::new(id.as_slice().to_vec()).unwrap(),
         value: Value::new(Vec::new()).unwrap(),
         metadata: None,
     }
@@ -301,7 +301,7 @@ fn parent_body_source_classifies_backend_absence_and_canonical_failures() {
     corrupt_storage
         .put(
             Namespace::new("tributes").unwrap(),
-            &Key::new(entity(1).as_bytes().to_vec()).unwrap(),
+            &Key::new(entity(1).as_slice().to_vec()).unwrap(),
             &Value::new([0xff]).unwrap(),
         )
         .unwrap();
@@ -343,7 +343,7 @@ fn parent_body_source_classifies_backend_absence_and_canonical_failures() {
     let invalid_continuation = RuntimeBodyReaders::new(Arc::new(ScriptedScanReader {
         page: ScanPage {
             entries: vec![scan_entry(entity(1))],
-            next_after: Some(Key::new(entity(2).as_bytes().to_vec()).unwrap()),
+            next_after: Some(Key::new(entity(2).as_slice().to_vec()).unwrap()),
         },
     }));
     assert!(matches!(

@@ -334,7 +334,7 @@ fn real_worker_processes_execute_through_output_finalize() {
     let protocol_bundle_hash = bundle
         .protocol_bundle_hash(&limits)
         .expect("fixture bundle hash");
-    let interval_start = outbe_ocomp_protocol::common::EntityId36(*tribute.tribute_id.as_bytes());
+    let interval_start = *tribute.tribute_id;
     let spec = UnitSpecV1 {
         protocol_bundle_hash,
         job_id,
@@ -2026,10 +2026,10 @@ fn real_worker_materializes_and_adopts_two_leaf_shuffle_merges() {
         )
         .expect("finalize merge shard");
         let interval = EntityIdHalfOpenRange {
-            start: outbe_ocomp_protocol::common::EntityId36(*shard[0].0.as_bytes()),
-            end: identities.get(end as usize).map(|(tribute_id, _)| {
-                outbe_ocomp_protocol::common::EntityId36(*tribute_id.as_bytes())
-            }),
+            start: *shard[0].0,
+            end: identities
+                .get(end as usize)
+                .map(|(tribute_id, _)| **tribute_id),
         };
         let output_spec = UnitSpecV1 {
             protocol_bundle_hash,

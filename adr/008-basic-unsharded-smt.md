@@ -11,7 +11,7 @@ ADR-007 places Tribute, Nod item, and Nod bucket behind one compressed-entity li
 
 Direct mappings authenticate point reads but do not produce one compressed-entity root or portable inclusion/non-inclusion evidence. ADR-008 replaces only that backend with one unsharded sparse Merkle tree while retaining ADR-006 bodies/events and ADR-007's domain interface, body/index overlay, transition semantics, rollback, and same-block reads.
 
-ADR-008 adopts the ready CKB `sparse-merkle-tree` engine and finalized persistence mechanics selected by `compressed_entities_concept_v6_proposed_10-07-2026.md`. It does not design a new tree engine. The sequential ADRs remain authoritative where the older all-at-once concept differs: ADR-006 uses EntityId36 plus strict-canonical Protobuf; ADR-007 uses `0xEE0D`, domain-address mutation events, and body/index overlays; ADR-008 is deliberately one unsharded tree without the concept's domain registry, collection shards, Root Catalog, retirement, or header carrier. Those later capabilities remain separately staged.
+ADR-008 adopts the ready CKB `sparse-merkle-tree` engine and finalized persistence mechanics selected by `compressed_entities_concept_v6_proposed_10-07-2026.md`. It does not design a new tree engine. The sequential ADRs remain authoritative where the older all-at-once concept differs: ADR-006 uses WwdEntityId plus strict-canonical Protobuf; ADR-007 uses `0xEE0D`, domain-address mutation events, and body/index overlays; ADR-008 is deliberately one unsharded tree without the concept's domain registry, collection shards, Root Catalog, retirement, or header carrier. Those later capabilities remain separately staged.
 
 ADR-008 does not add sharding, collection roots, partition retirement, a header artifact, public proof RPC, portable snapshots, or production capacity claims.
 
@@ -21,7 +21,7 @@ The starting system has:
 
 - three logically separate direct commitment mappings at `0xEE0D`;
 - zero as canonical absence and non-zero ADR-006 leaves as current values;
-- a typed collection plus EntityId36 identifying each body;
+- a typed collection plus WwdEntityId identifying each body;
 - a journaled overlay with final Set/Delete state and a reversible body identity record;
 - exact-parent MongoDB bodies verified against the current commitment;
 - no single authenticated root or persistent tree materialization for all compressed entities.
@@ -91,7 +91,7 @@ There is no additional SMT leaf-wrapper hash. CKB deletion removes the leaf and 
 
 ### Tree key
 
-All three logical collections share this stage's one tree, so the key binds the fork-fixed typed collection outside EntityId36 and the ADR-006 leaf:
+All three logical collections share this stage's one tree, so the key binds the fork-fixed typed collection outside WwdEntityId and the ADR-006 leaf:
 
 ```text
 TAG_KEY = CES1_TAG_BASE + 5
@@ -103,12 +103,12 @@ tree_key_f = P(
   identity_f
 )
 
-identity_f = PBytes(TAG_ID, EntityId36)
+identity_f = PBytes(TAG_ID, WwdEntityId)
 commitment_scheme_version = 1
 collection_id = 1 Tribute | 2 NodItem | 3 NodBucket
 ```
 
-Collection is included because equal EntityId36/`identity_f` values in different typed collections must occupy different positions. Collection is selected by ADR-007's closed typed interface and is never caller-controlled.
+Collection is included because equal WwdEntityId/`identity_f` values in different typed collections must occupy different positions. Collection is selected by ADR-007's closed typed interface and is never caller-controlled.
 
 `tree_key_f` is a canonical Poseidon-BN254 output, never arbitrary bytes reduced modulo the field. Key zero is a valid position; zero is reserved only as the absent leaf value. This exact key recipe is normative for the unsharded reference stage. ADR-010 may supersede fixed `collection_id` with its final collection-key derivation before first activation without consuming a version. After scheme 1 is deployed, changing its tag/input order, collection derivation, H256 encoding, or CKB path semantics is a commitment-scheme change.
 

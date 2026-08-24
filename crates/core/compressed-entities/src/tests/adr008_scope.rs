@@ -127,7 +127,7 @@ fn finalized_rpc_scope_reads_without_opening_mutation_lifecycle() {
     assert_eq!(
         scope
             .read_parent_leaf_verified(
-                EntityRef::Tribute(crate::EntityId36::try_from([7_u8; 36].as_slice()).unwrap()),
+                EntityRef::Tribute(crate::WwdEntityId::from([7_u8; 32])),
                 root,
             )
             .unwrap(),

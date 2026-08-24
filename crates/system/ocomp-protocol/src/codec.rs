@@ -106,10 +106,6 @@ impl CanonicalWriter {
         self.write_raw(value.as_slice())
     }
 
-    pub fn write_entity_id36(&mut self, value: &[u8; 36]) -> Result<(), ProtocolError> {
-        self.write_raw(value)
-    }
-
     pub fn write_fixed<const N: usize>(&mut self, value: &[u8; N]) -> Result<(), ProtocolError> {
         self.write_raw(value)
     }
@@ -259,10 +255,6 @@ impl<'a> CanonicalReader<'a> {
 
     pub fn read_address20(&mut self) -> Result<Address, ProtocolError> {
         Ok(Address::from(self.take_array::<20>()?))
-    }
-
-    pub fn read_entity_id36(&mut self) -> Result<[u8; 36], ProtocolError> {
-        self.take_array()
     }
 
     pub fn read_fixed<const N: usize>(&mut self) -> Result<[u8; N], ProtocolError> {

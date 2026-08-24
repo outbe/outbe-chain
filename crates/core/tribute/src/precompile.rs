@@ -1,7 +1,7 @@
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolCall, SolInterface};
-use outbe_compressed_entities::{EntityId36, ExecutionScope, ParentBodySource};
-use outbe_primitives::dispatch::{dispatch_call, metadata, preflight_dynamic_bytes_len, view};
+use alloy_sol_types::{sol, SolInterface};
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
+use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
 
@@ -26,7 +26,6 @@ pub fn dispatch(
     value: U256,
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
-    preflight_entity_id(data)?;
     dispatch_call(data, ITribute::ITributeCalls::abi_decode, |call| {
         let tribute = TributeContract::new(storage);
         use ITribute::ITributeCalls::*;
@@ -42,10 +41,10 @@ pub fn dispatch(
                 ))
             }),
             ownerOf(c) => view(c, |c| {
-                tribute.owner_of(scope, parent, parse_entity_id(&c.tributeId)?)
+                tribute.owner_of(scope, parent, WwdEntityId::from(c.tributeId))
             }),
             tokenURI(c) => view(c, |c| {
-                tribute.token_uri(scope, parent, parse_entity_id(&c.tributeId)?)
+                tribute.token_uri(scope, parent, WwdEntityId::from(c.tributeId))
             }),
             getDayTotals(c) => view(c, |c| {
                 let dt = tribute.get_day_totals(c.worldwideDay.into())?;
@@ -55,14 +54,14 @@ pub fn dispatch(
                 Ok(tribute
                     .get_tribute_ids_by_owner(scope, parent, c.owner)?
                     .into_iter()
-                    .map(|id| Bytes::copy_from_slice(id.as_bytes()))
+                    .map(|id| id.to_u256())
                     .collect::<Vec<_>>())
             }),
             getTributesByDay(c) => view(c, |c| {
                 Ok(tribute
                     .get_tribute_ids_by_day(scope, parent, c.worldwideDay.into())?
                     .into_iter()
-                    .map(|id| Bytes::copy_from_slice(id.as_bytes()))
+                    .map(|id| id.to_u256())
                     .collect::<Vec<_>>())
             }),
             supportsInterface(c) => view(c, |c| {
@@ -71,19 +70,4 @@ pub fn dispatch(
             }),
         }
     })
-}
-
-fn preflight_entity_id(data: &[u8]) -> Result<()> {
-    for selector in [
-        ITribute::ownerOfCall::SELECTOR,
-        ITribute::tokenURICall::SELECTOR,
-    ] {
-        preflight_dynamic_bytes_len(data, selector, 0, 1, EntityId36::LEN)?;
-    }
-    Ok(())
-}
-
-fn parse_entity_id(bytes: &Bytes) -> Result<EntityId36> {
-    EntityId36::try_from(bytes.as_ref())
-        .map_err(|error| outbe_primitives::error::PrecompileError::Revert(error.to_string()))
 }

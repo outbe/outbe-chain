@@ -18,7 +18,7 @@ use crate::{
     encode_nod_bucket_v1, encode_nod_item_v1, encode_tribute_v1,
     schema::{Collection, DeltaStatus, IndexKind, IndexRecord, PendingWord},
     state::State,
-    Commitment, EntityId36, NodBucketBodyV1, NodItemBodyV1, StoredBody, TributeBodyV1,
+    Commitment, NodBucketBodyV1, NodItemBodyV1, StoredBody, TributeBodyV1, WwdEntityId,
     ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 
@@ -41,7 +41,7 @@ pub(crate) const PARENT_ID_GAS: u64 = 120;
 
 struct PreparedBody {
     collection: Collection,
-    entity_id: EntityId36,
+    entity_id: WwdEntityId,
     stored_body: StoredBody,
     commitment: Commitment,
     memberships: Vec<IndexRecord>,
@@ -410,7 +410,7 @@ fn verify_stored(
     })
 }
 
-fn calculate_commitment(entity_id: EntityId36, payload: &[u8]) -> Result<Commitment> {
+fn calculate_commitment(entity_id: WwdEntityId, payload: &[u8]) -> Result<Commitment> {
     body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, entity_id, payload)
         .map_err(|error| fatal(error.to_string()))
 }
@@ -419,7 +419,7 @@ fn current_commitment(
     scope: &ExecutionScope,
     state: &State<'_>,
     collection: Collection,
-    entity_id: EntityId36,
+    entity_id: WwdEntityId,
 ) -> Result<Option<Commitment>> {
     let (_, pending, body) = state.pending(collection, entity_id)?;
     match pending {
@@ -484,7 +484,7 @@ fn emit_stored(
     let previous = commitment_b256(previous);
     let new_commitment = commitment_b256(Some(body.commitment));
     let canonical_payload = Bytes::copy_from_slice(body.stored_body.payload());
-    let id = Bytes::copy_from_slice(body.entity_id.as_bytes());
+    let id = body.entity_id.to_u256();
     let event = match body.collection {
         Collection::Tribute => TributeBodyStored {
             tributeId: id,
@@ -528,7 +528,7 @@ fn emit_deleted(
     previous: Commitment,
 ) -> Result<()> {
     let previous = commitment_b256(Some(previous));
-    let id = Bytes::copy_from_slice(entity.entity_id().as_bytes());
+    let id = entity.entity_id().to_u256();
     let (emitter, event) = match entity {
         EntityRef::Tribute(_) => (
             TRIBUTE_ADDRESS,
@@ -574,7 +574,7 @@ fn validate_page_request(query: QueryRef, request: IdPageRequest) -> Result<()> 
 
 fn validate_parent_page(
     query: QueryRef,
-    after: Option<EntityId36>,
+    after: Option<WwdEntityId>,
     limit: u32,
     page: &crate::IdPage,
 ) -> Result<()> {
@@ -613,10 +613,10 @@ fn validate_parent_page(
 }
 
 fn merged_candidates(
-    parent: &BTreeSet<EntityId36>,
-    added: &BTreeSet<EntityId36>,
-    removed: &BTreeSet<EntityId36>,
-) -> Vec<EntityId36> {
+    parent: &BTreeSet<WwdEntityId>,
+    added: &BTreeSet<WwdEntityId>,
+    removed: &BTreeSet<WwdEntityId>,
+) -> Vec<WwdEntityId> {
     parent
         .difference(removed)
         .copied()
@@ -659,14 +659,14 @@ fn verified_matches_query(body: &VerifiedBody, query: QueryRef) -> bool {
     }
 }
 
-fn entity_for_query(query: QueryRef, id: EntityId36) -> EntityRef {
+fn entity_for_query(query: QueryRef, id: WwdEntityId) -> EntityRef {
     match query {
         QueryRef::TributeByOwner(_) | QueryRef::TributeByDay(_) => EntityRef::Tribute(id),
         QueryRef::NodByOwner(_) | QueryRef::NodAll => EntityRef::NodItem(id),
     }
 }
 
-const fn entity_from_parts(collection: Collection, id: EntityId36) -> EntityRef {
+const fn entity_from_parts(collection: Collection, id: WwdEntityId) -> EntityRef {
     match collection {
         Collection::Tribute => EntityRef::Tribute(id),
         Collection::NodItem => EntityRef::NodItem(id),
@@ -674,7 +674,7 @@ const fn entity_from_parts(collection: Collection, id: EntityId36) -> EntityRef 
     }
 }
 
-const fn entity_parts(entity: EntityRef) -> (Collection, EntityId36) {
+const fn entity_parts(entity: EntityRef) -> (Collection, WwdEntityId) {
     match entity {
         EntityRef::Tribute(id) => (Collection::Tribute, id),
         EntityRef::NodItem(id) => (Collection::NodItem, id),
