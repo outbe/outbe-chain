@@ -40,6 +40,8 @@ const CALLED: u8 = 2;
 /// DEV calls a series once the VWAP held above the call price on two of three days.
 /// DEV requires two of the last three days above the trigger.
 const CALL_THRESHOLD_DAYS: u32 = 2;
+/// How far back the series are issued so closed days exist after their issuance.
+const CALL_LOOKBACK_DAYS: u32 = 3;
 /// The call sweep is daily; give it a few blocks past the last rollover.
 const CALL_SWEEP_TIMEOUT_SECS: u64 = 300;
 
@@ -102,7 +104,9 @@ fn issue_two_series(world: &mut World) {
 
     // The router addresses an issuance leg only to a chain the day was started on,
     // so the day has to be opened before anything can be issued into it.
-    let day = chain_worldwide_day(world, port);
+    // Issued into a day already behind us: the call sweep counts breach days only
+    // from the issuance day forward, and only closed days exist to count.
+    let day = chain_worldwide_day_offset(world, port, -(i64::from(CALL_LOOKBACK_DAYS) * 86_400));
     let now = u32::try_from(
         world
             .rpc
@@ -186,12 +190,14 @@ fn holder_holds_issued_units(world: &mut World) {
 }
 
 /// The day the chain is in, taken from its own head rather than the host clock.
-fn chain_worldwide_day(world: &World, port: u16) -> u32 {
+fn chain_worldwide_day_offset(world: &World, port: u16, offset_secs: i64) -> u32 {
     let timestamp = world
         .rpc
         .latest_block_timestamp(port)
         .expect("committee head timestamp");
-    outbe_primitives::time::worldwide_day_from_timestamp(timestamp)
+    outbe_primitives::time::worldwide_day_from_timestamp(
+        timestamp.saturating_add_signed(offset_secs),
+    )
 }
 
 #[when("the day advances past the qualification period")]
