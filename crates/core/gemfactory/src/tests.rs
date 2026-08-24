@@ -119,9 +119,8 @@ fn err_msg<T>(r: outbe_primitives::error::Result<T>) -> String {
 /// Brute-force the lowest nonce that satisfies `validate_pow(gem_id, _)` for
 /// the current `POW_DIFFICULTY`. With difficulty=1 the expected loop length
 /// is ~256 iterations.
-fn find_valid_nonce(gem_id: U256) -> U256 {
-    for n in 0u64..u64::MAX {
-        let nonce = U256::from(n);
+fn find_valid_nonce(gem_id: U256) -> u64 {
+    for nonce in 0u64..u64::MAX {
         if runtime::validate_pow(gem_id, nonce).is_ok() {
             return nonce;
         }
@@ -545,7 +544,7 @@ fn mine_gem_promis_rejects_non_settled() {
         )
         .unwrap();
         // WALLET is Issued, not Settled — mine should reject before PoW.
-        let res = runtime::mine_gem_promis(storage, ALICE, gem_id, U256::ZERO, no_auth());
+        let res = runtime::mine_gem_promis(storage, ALICE, gem_id, 0, no_auth());
         assert!(err_msg(res).contains("invalid state"));
     });
 }
@@ -564,7 +563,7 @@ fn mine_gem_promis_rejects_non_owner() {
         )
         .unwrap();
         // mine_gem_promis checks ownership before state, so no settle needed.
-        let res = runtime::mine_gem_promis(storage, BOB, gem_id, U256::ZERO, no_auth());
+        let res = runtime::mine_gem_promis(storage, BOB, gem_id, 0, no_auth());
         assert!(err_msg(res).contains("not gem owner"));
     });
 }

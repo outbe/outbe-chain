@@ -86,9 +86,8 @@ fn word(value: U256) -> Bytes {
     Bytes::from(value.to_be_bytes::<32>().to_vec())
 }
 
-fn find_valid_nonce(nod_id: WwdEntityId) -> U256 {
+fn find_valid_nonce(nod_id: WwdEntityId) -> u64 {
     (0_u64..100_000)
-        .map(U256::from)
         .find(|nonce| runtime::validate_pow(nod_id, *nonce).is_ok())
         .expect("test identity has a nonce in the bounded search")
 }

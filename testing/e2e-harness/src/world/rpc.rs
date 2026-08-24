@@ -481,9 +481,7 @@ impl Rpc {
             .map_err(|error| eyre!("capacity owner NOD body read failed: {error}"))?;
         let entity = outbe_compressed_entities::WwdEntityId::try_from(nod_id.as_slice())?;
         let nonce = (0_u64..100_000)
-            .find(|nonce| {
-                outbe_nodfactory::runtime::validate_pow(entity, U256::from(*nonce)).is_ok()
-            })
+            .find(|nonce| outbe_nodfactory::runtime::validate_pow(entity, *nonce).is_ok())
             .ok_or_else(|| eyre!("find bounded mineGratis nonce"))?;
         let op_nonce = eth::read_call(
             &self.url(port),

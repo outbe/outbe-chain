@@ -575,7 +575,7 @@ fn chain_id_b256(world: &World) -> B256 {
 
 fn find_pow_nonce(id: U256) -> u64 {
     (0_u64..100_000)
-        .find(|nonce| outbe_common::pow::validate_pow(id, U256::from(*nonce)).is_ok())
+        .find(|nonce| outbe_common::pow::validate_pow(id, *nonce).is_ok())
         .expect("bounded PoW nonce")
 }
 

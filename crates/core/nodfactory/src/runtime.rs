@@ -202,7 +202,7 @@ pub fn mine_gratis(
     parent: &impl ParentBodySource,
     caller: Address,
     nod_id: WwdEntityId,
-    nonce: U256,
+    nonce: u64,
     auth: outbe_gratisfactory::api::ModifyAuth,
 ) -> Result<U256> {
     let item =
@@ -236,7 +236,7 @@ pub fn mine_gratis(
 struct MineGratisInput {
     caller: Address,
     nod_id: WwdEntityId,
-    nonce: U256,
+    nonce: u64,
     item: LoadedNodItem,
     bucket: LoadedNodBucket,
     auth: outbe_gratisfactory::api::ModifyAuth,
@@ -299,13 +299,13 @@ fn settlement_asset(storage: &StorageHandle<'_>, reference_currency: u16) -> Res
 
 /// PoW gate for `mine_gratis`, delegating to the shared [`outbe_common::pow`]
 /// scheme and mapping failures onto [`NodFactoryError`].
-pub fn validate_pow(nod_id: WwdEntityId, nonce: U256) -> Result<()> {
+pub fn validate_pow(nod_id: WwdEntityId, nonce: u64) -> Result<()> {
     pow::validate_pow(nod_id.to_u256(), nonce).map_err(|e| NodFactoryError::from(e).into())
 }
 
-/// Shared PoW hash over `ascii(hex(nod_id)) || nonce.to_be_bytes::<8>()`.
-pub fn compute_pow_hash(nod_id: WwdEntityId, nonce: U256) -> Result<[u8; 32]> {
-    pow::compute_pow_hash(nod_id.to_u256(), nonce).map_err(|e| NodFactoryError::from(e).into())
+/// Shared PoW hash over `ascii(hex(nod_id)) || nonce.to_be_bytes()`.
+pub fn compute_pow_hash(nod_id: WwdEntityId, nonce: u64) -> [u8; 32] {
+    pow::compute_pow_hash(nod_id.to_u256(), nonce)
 }
 
 fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {

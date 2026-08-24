@@ -604,7 +604,7 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
                 parent,
                 population.actions[0].owner,
                 nod_id,
-                U256::ZERO,
+                0,
                 dummy_auth(),
             )
         })

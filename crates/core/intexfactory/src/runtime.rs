@@ -972,7 +972,7 @@ pub fn mine_promis(
     series_id: SeriesId,
     holder: Address,
     amount: U256,
-    nonce: U256,
+    nonce: u64,
     auth: outbe_promisfactory::api::ModifyAuth,
 ) -> Result<U256> {
     if holder.is_zero() {
@@ -1042,11 +1042,8 @@ pub(crate) fn compute_pow_hash(
     promis_amount: U256,
     series_id: SeriesId,
     seq: u32,
-    nonce: U256,
-) -> Result<[u8; 32]> {
-    if nonce > U256::from(u64::MAX) {
-        return Err(PrecompileError::Revert("nonce exceeds uint64 range".into()));
-    }
+    nonce: u64,
+) -> [u8; 32] {
     let mut preimage = String::new();
     preimage.push_str(&hex::encode(holder.as_slice()));
     preimage.push_str(&hex::encode(promis_amount.to_be_bytes::<32>()));
@@ -1054,12 +1051,12 @@ pub(crate) fn compute_pow_hash(
     preimage.push_str(&hex::encode(seq.to_be_bytes()));
 
     let mut data = preimage.into_bytes();
-    data.extend_from_slice(&nonce.to::<u64>().to_be_bytes());
+    data.extend_from_slice(&nonce.to_be_bytes());
 
     let digest = ring::digest::digest(&ring::digest::SHA256, &data);
     let mut out = [0u8; 32];
     out.copy_from_slice(digest.as_ref());
-    Ok(out)
+    out
 }
 
 /// The PoW hash must have `POW_DIFFICULTY` leading zero bytes.
@@ -1068,9 +1065,9 @@ pub(crate) fn validate_pow(
     promis_amount: U256,
     series_id: SeriesId,
     seq: u32,
-    nonce: U256,
+    nonce: u64,
 ) -> Result<()> {
-    let hash = compute_pow_hash(holder, promis_amount, series_id, seq, nonce)?;
+    let hash = compute_pow_hash(holder, promis_amount, series_id, seq, nonce);
     for b in &hash[..POW_DIFFICULTY] {
         if *b != 0 {
             return Err(IntexFactoryError::InsufficientProofOfWork.into());
