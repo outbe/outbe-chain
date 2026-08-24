@@ -11,9 +11,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_primitives::units::SCALE_1E6_U256;
 
-use crate::constants::{
-    CALL_RATE_PCT, CALL_WINDOW_SECS, DAYS_PER_YEAR, FLOOR_RATE_PCT, PRICE_RATE_DEN,
-};
+use crate::constants::{CALL_RATE_PCT, CALL_WINDOW_SECS, DAYS_PER_YEAR, PRICE_RATE_DEN};
 use crate::errors::CredisError;
 use crate::precompile::ICredis;
 use crate::schema::{CredisContract, CredisState, Position};
@@ -77,7 +75,7 @@ pub struct Void {
     pub eoa_ct: Vec<u8>,
 }
 
-/// `price × (100 + rate_pct) / 100`. Used for both the floor and the call price.
+/// `price × (100 + rate_pct) / 100`. Used for the call price.
 pub fn marked_up(price: U256, rate_pct: u16) -> Result<U256> {
     price
         .checked_mul(U256::from(PRICE_RATE_DEN.saturating_add(rate_pct)))
@@ -122,8 +120,8 @@ impl CredisContract<'_> {
     /// Opens a position and returns its derived
     /// `position_id = keccak256(handle_id || smart_account)`.
     ///
-    /// Everything the position will ever need is sealed here: the floor and call
-    /// prices derive from `entry_price`, and `policy_rate` is pinned. Collateral
+    /// Everything the position will ever need is sealed here: the call price
+    /// derives from `entry_price`, and `policy_rate` is pinned. Collateral
     /// starts fully locked and the interest anchor starts at origination.
     pub fn open_position(&mut self, params: OpenPositionParams) -> Result<U256> {
         if params.principal.is_zero() || params.collateral.is_zero() {
@@ -148,7 +146,6 @@ impl CredisContract<'_> {
             collateral_locked: params.collateral,
             policy_rate: params.policy_rate,
             entry_price: params.entry_price,
-            floor_price: marked_up(params.entry_price, FLOOR_RATE_PCT)?,
             call_price: marked_up(params.entry_price, CALL_RATE_PCT)?,
             originated_at: params.originated_at,
             last_settled_at: params.originated_at,
@@ -170,35 +167,14 @@ impl CredisContract<'_> {
         Ok(position_id)
     }
 
-    /// Latches the position settleable. One-way: a later price fall never
-    /// re-locks it, and re-latching an already-latched position is a no-op.
-    ///
-    /// Returns whether this call performed the transition. The caller is
-    /// responsible for having established that the live price exceeds
-    /// `floor_price`.
-    pub fn mark_settleable(&mut self, position_id: U256) -> Result<bool> {
-        let mut position = self.load_position(position_id)?;
-        if position.lifecycle_state()? != CredisState::Open {
-            return Ok(false);
-        }
-        position.state = CredisState::Settleable as u8;
-        let floor_price = position.floor_price;
-        self.update_position_record(&position)?;
-        self.emit(ICredis::PositionSettleable {
-            positionId: position_id,
-            floorPrice: floor_price,
-        })?;
-        Ok(true)
-    }
-
-    /// Calls a settleable position, opening the settlement window. Settlement
-    /// terms are unchanged throughout it. Idempotent: an already-called position
+    /// Calls an open position, opening the settlement window. Settlement terms
+    /// are unchanged throughout it. Idempotent: an already-called position
     /// returns `false` without moving its deadline.
     ///
     /// The caller is responsible for having established the sustained breach.
     pub fn mark_called(&mut self, position_id: U256, now: u64) -> Result<bool> {
         let mut position = self.load_position(position_id)?;
-        if position.lifecycle_state()? != CredisState::Settleable {
+        if position.lifecycle_state()? != CredisState::Open {
             return Ok(false);
         }
         position.state = CredisState::Called as u8;
@@ -215,7 +191,7 @@ impl CredisContract<'_> {
 
     /// Applies a settlement of `amount` — interest first, principal second.
     ///
-    /// Any payer may settle any settleable or called position: the collateral
+    /// Any payer may settle any open or called position: the collateral
     /// released is owed to the pledger recorded on the position, so a payer can
     /// never redirect value to themselves.
     ///
@@ -229,11 +205,10 @@ impl CredisContract<'_> {
         let mut position = self.load_position(position_id)?;
         let state_before = position.lifecycle_state()?;
         match state_before {
-            CredisState::Open => return Err(CredisError::NotSettleable.into()),
             CredisState::Settled | CredisState::Void => {
                 return Err(CredisError::PositionClosed.into())
             }
-            CredisState::Settleable | CredisState::Called => {}
+            CredisState::Open | CredisState::Called => {}
         }
 
         let days = Self::elapsed_days(&position, now);

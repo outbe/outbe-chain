@@ -83,7 +83,6 @@ fn abi_position(p: &crate::schema::Position) -> ICredis::Position {
         collateralLocked: p.collateral_locked,
         policyRate: p.policy_rate,
         entryPrice: p.entry_price,
-        floorPrice: p.floor_price,
         callPrice: p.call_price,
         originatedAt: p.originated_at,
         lastSettledAt: p.last_settled_at,

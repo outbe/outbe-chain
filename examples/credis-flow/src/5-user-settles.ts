@@ -113,8 +113,7 @@ function decodeRevert(data: string): string {
 }
 
 /// Mirrors `enum State` in contracts/precompiles/src/ICredis.sol.
-const STATE_NAMES = ["Open", "Settleable", "Called", "Settled", "Void"];
-const STATE_OPEN = 0;
+const STATE_NAMES = ["Open", "Called", "Settled", "Void"];
 
 interface State {
   saErc20Balance: bigint;
@@ -207,18 +206,10 @@ async function main() {
   console.log(`  Outstanding:   ${formatTokenMeta(position.outstanding, erc20Meta)}`);
   console.log(`  Interest due:  ${formatTokenMeta(interest, erc20Meta)}`);
   console.log(`  Originated:    ${formatDate(position.originatedAt)}`);
-  console.log(`  Floor price:   ${position.floorPrice} (settlement unlocks above this)`);
 
   if (position.outstanding === 0n) {
     console.error("Position is fully settled. Nothing outstanding.");
     process.exit(1);
-  }
-
-  if (Number(position.state) === STATE_OPEN) {
-    console.log(
-      "\nNote: this position has never traded above its floor price. The settle call" +
-        " latches it if the live COEN price is above the floor right now, and reverts otherwise.",
-    );
   }
 
   // Interest is always collected in full before any principal, so a payment below

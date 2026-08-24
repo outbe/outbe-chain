@@ -1,13 +1,11 @@
-//! Daily price-path scan: latches, calls and voids positions off the Oracle's
+//! Daily price-path scan: calls and voids positions off the Oracle's
 //! finalized per-UTC-day VWAPs. Driven by the Cycle daily trigger.
 //!
-//! One pass over the dense active-position index applies up to three transitions
+//! One pass over the dense active-position index applies up to two transitions
 //! per position, in lifecycle order:
 //!
-//! - `Open -> Settleable` when the last closed day's reference price exceeded the
-//!   position's floor. One-way, per §4.
-//! - `Settleable -> Called` when the reference price sat at or above the call
-//!   price on [`CALL_BREACH_DAYS`] of the trailing [`CALL_LOOKBACK_DAYS`] days.
+//! - `Open -> Called` when the reference price sat at or above the call price on
+//!   [`CALL_BREACH_DAYS`] of the trailing [`CALL_LOOKBACK_DAYS`] days.
 //! - `Called -> Void` when the settlement window has lapsed with principal still
 //!   outstanding.
 //!
@@ -39,7 +37,7 @@ use crate::schema::CredisFactoryContract;
 pub(crate) const MAX_CREDIS_DAILY_VISITS: u32 = 4096;
 
 /// Max positions voided per daily run, far below [`MAX_CREDIS_DAILY_VISITS`]
-/// because a void is orders of magnitude more expensive than a latch or a call:
+/// because a void is orders of magnitude more expensive than a call:
 /// it makes two blocking TEE enclave round-trips (`reveal_owner` then
 /// `burn_pledged_with_fidelity`) on a process-global connection.
 ///
@@ -48,8 +46,8 @@ pub(crate) const MAX_CREDIS_DAILY_VISITS: u32 = 4096;
 /// days later they all lapse together. Without a separate cap one run would
 /// carry the whole burst.
 ///
-/// Spending it only declines further voids; the pass continues so the latch and
-/// call arms keep their full [`MAX_CREDIS_DAILY_VISITS`] reach.
+/// Spending it only declines further voids; the pass continues so the call arm
+/// keeps its full [`MAX_CREDIS_DAILY_VISITS`] reach.
 // ponytail: a backlog larger than this drains at one budget per day. Raise it
 // once real sidecar latency is measured, or batch the enclave round-trips.
 pub(crate) const MAX_CREDIS_VOIDS_PER_RUN: u32 = 64;
@@ -158,10 +156,10 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
                     // `void_due`, so nothing deterministic reaches here.
                     //
                     // A spent void budget declines further voids but must NOT
-                    // end the pass: all three arms share one cursor, so breaking
-                    // here would let a void backlog throttle the latch and call
-                    // arms down to the void rate and leave the rest of the book
-                    // unvisited for as many days as the backlog takes to drain.
+                    // end the pass: both arms share one cursor, so breaking here
+                    // would let a void backlog throttle the call arm down to the
+                    // void rate and leave the rest of the book unvisited for as
+                    // many days as the backlog takes to drain.
                     // A declined position keeps its place in the active index
                     // and is voided by a later run.
                     let did_void = visit.void_due && voided < MAX_CREDIS_VOIDS_PER_RUN;
@@ -170,7 +168,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
                         voided = voided.saturating_add(1);
                     }
                     // Mutually exclusive: the void needs `Called` at entry,
-                    // which is a state neither the latch nor the call acts on.
+                    // which is not a state the call arm acts on.
                     if visit.moved || did_void {
                         mutated = mutated.saturating_add(1);
                     }
@@ -203,16 +201,16 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 
 /// What one position's price-path arms decided.
 struct Visit {
-    /// Whether the latch or the call actually transitioned it.
+    /// Whether the call actually transitioned it.
     moved: bool,
     /// Whether the caller must now void the remainder.
     void_due: bool,
 }
 
-/// Applies the latch and the call, and reports whether the void is due.
+/// Applies the call, and reports whether the void is due.
 ///
-/// A currency this chain cannot price yields an empty window: no latch and no
-/// call, but the void arm still runs, so such a position is never stranded.
+/// A currency this chain cannot price yields an empty window: no call, but the
+/// void arm still runs, so such a position is never stranded.
 fn visit_price_path(
     credis: &mut CredisContract<'_>,
     window: &[(u32, Option<U256>)],
@@ -220,26 +218,9 @@ fn visit_price_path(
     now: u64,
 ) -> Result<Visit> {
     let entry_state = position.lifecycle_state()?;
-    let mut state = entry_state;
-    let mut moved = false;
-
-    if state == CredisState::Open
-        && window
-            .first()
-            .and_then(|(_, vwap)| *vwap)
-            .is_some_and(|vwap| vwap > position.floor_price)
-        && credis.mark_settleable(position.position_id)?
-    {
-        state = CredisState::Settleable;
-        moved = true;
-    }
-
-    if state == CredisState::Settleable
+    let moved = entry_state == CredisState::Open
         && breached_enough(window, position)
-        && credis.mark_called(position.position_id, now)?
-    {
-        moved = true;
-    }
+        && credis.mark_called(position.position_id, now)?;
 
     Ok(Visit {
         moved,
@@ -283,8 +264,8 @@ fn breached_enough(window: &[(u32, Option<U256>)], position: &Position) -> bool 
 /// newest first, filling it on first use. Only the currencies actually present
 /// in the active book are read — there is no registry walk.
 ///
-/// An unregistered pair caches an empty window: such a position can never latch
-/// or register a breach, but it must still reach the void arm, so this skips the
+/// An unregistered pair caches an empty window: such a position can never
+/// register a breach, but it must still reach the void arm, so this skips the
 /// price checks rather than the position.
 fn window_for(
     storage: &StorageHandle<'_>,

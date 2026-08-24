@@ -4,8 +4,8 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
 
 use outbe_credis::constants::{BP_DEN, POLICY_RATE_FACTOR_BP};
-use outbe_credis::{CredisContract, CredisState, OpenPositionParams};
-use outbe_oracle::api::{fresh_coen_rate_for_opt, get_policy_rate};
+use outbe_credis::{CredisContract, OpenPositionParams};
+use outbe_oracle::api::get_policy_rate;
 use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
@@ -31,7 +31,7 @@ use crate::sol_ext::IERC20;
 /// quoted and sealed into the pledge ticket by `pledgeGratis`, so the loan is issued at
 /// the price the pledger accepted rather than whatever the oracle reads now. Only the
 /// policy rate is pinned at issuance, because that belongs to the loan and not to the
-/// collateral. The floor and call prices derive from the sealed entry price, so the
+/// collateral. The call price derives from the sealed entry price, so the
 /// whole geometry of the position is fixed by the quote the pledger accepted.
 ///
 /// The pledger EOA is never in calldata: the enclave recovers it from the ticket and
@@ -208,7 +208,6 @@ pub fn settle(
 
     let current_time = storage.timestamp()?.to::<u64>();
     let mut credis = CredisContract::new(storage.clone());
-    latch_if_above_floor(&storage, &mut credis, position_id)?;
     let settlement = credis.settle(position_id, amount, current_time)?;
 
     // ERC20 + vault sequence, moving only what the position consumed. Sub-call reverts
@@ -279,34 +278,6 @@ fn release_cca_stake(storage: &StorageHandle<'_>, position_id: U256, cca: Addres
             amount: stake,
         }),
     )?;
-    Ok(())
-}
-
-/// Latches an Open position whose currency's live COEN price has crossed its floor.
-///
-/// The daily scan ([`crate::called`]) is the primary latch producer and reads the
-/// previous day's finalized reference price; this arm reads the live spot instead, so
-/// a settler who sees the price above their floor right now never waits for the next
-/// daily run. The latch is one-way once taken, whichever arm takes it. An unpriced
-/// currency simply does not latch here — `fresh_coen_rate_for_opt` reports that instead of
-/// reverting, so a cold oracle cannot block a position the scan already latched.
-/// A crossing that reverses before anyone settles is missed; the daily reference-price
-/// scan closes that gap when it lands.
-fn latch_if_above_floor(
-    storage: &StorageHandle<'_>,
-    credis: &mut CredisContract<'_>,
-    position_id: U256,
-) -> Result<()> {
-    let position = credis.get_position(position_id)?;
-    if position.lifecycle_state()? != CredisState::Open {
-        return Ok(());
-    }
-    let Some(rate) = fresh_coen_rate_for_opt(storage.clone(), position.issuance_currency)? else {
-        return Ok(());
-    };
-    if rate > position.floor_price {
-        credis.mark_settleable(position_id)?;
-    }
     Ok(())
 }
 

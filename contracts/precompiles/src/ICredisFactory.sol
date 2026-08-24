@@ -43,9 +43,8 @@ interface ICredisFactory {
 
     /// @notice Settle `amount` against a position and release the matching share of
     ///         collateral from the pledged lock ledger back to its balance.
-    ///         The position must be settleable: the live COEN price must have
-    ///         exceeded its floor price at least once. Payment is applied interest
-    ///         first, principal second, so an `amount` below the interest accrued
+    ///         A position is settleable from the moment it opens. Payment is applied
+    ///         interest first, principal second, so an `amount` below the interest accrued
     ///         since the last settlement is rejected — query
     ///         `ICredis.accruedInterest` for that floor. Collateral is released in
     ///         proportion to the principal covered, and the settlement that clears

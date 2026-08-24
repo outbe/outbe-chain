@@ -8,27 +8,25 @@ use crate::errors::CredisError;
 
 /// Position lifecycle state.
 ///
-/// `Open -> Settleable` is a one-way price latch; `Settleable -> Called` is the
+/// A position is settleable from the moment it opens; `Open -> Called` is the
 /// sustained-breach trigger. Both `Settled` (fully repaid) and `Void` (call
 /// window lapsed with a remainder) are terminal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum CredisState {
     Open = 0,
-    Settleable = 1,
-    Called = 2,
-    Settled = 3,
-    Void = 4,
+    Called = 1,
+    Settled = 2,
+    Void = 3,
 }
 
 impl CredisState {
     pub fn from_u8(value: u8) -> Result<Self, CredisError> {
         match value {
             0 => Ok(Self::Open),
-            1 => Ok(Self::Settleable),
-            2 => Ok(Self::Called),
-            3 => Ok(Self::Settled),
-            4 => Ok(Self::Void),
+            1 => Ok(Self::Called),
+            2 => Ok(Self::Settled),
+            3 => Ok(Self::Void),
             other => Err(CredisError::InvalidStateValue(other)),
         }
     }
@@ -101,30 +99,26 @@ pub struct Position {
     #[attribute(order = 10)]
     pub entry_price: U256,
 
-    /// `P₀ + 8%`. The price at which settlement unlocks.
+    /// `P₀ + 64%`. The price whose sustained breach triggers the call.
     #[attribute(order = 11)]
-    pub floor_price: U256,
-
-    /// `P₀ + 32%`. The price whose sustained breach triggers the call.
-    #[attribute(order = 12)]
     pub call_price: U256,
 
-    #[attribute(order = 13)]
+    #[attribute(order = 12)]
     pub originated_at: u64,
 
     /// Start of the current accrual period. Equals `originated_at` until the
     /// first settlement, then advances by the whole days each settlement
     /// charges — not to the settlement timestamp, so a sub-day remainder
     /// carries forward instead of being discarded.
-    #[attribute(order = 14)]
+    #[attribute(order = 13)]
     pub last_settled_at: u64,
 
     /// 0 until the position is called.
-    #[attribute(order = 15, default = 0)]
+    #[attribute(order = 14, default = 0)]
     pub called_at: u64,
 
     /// Lifecycle state as `u8`; decode via [`CredisState::from_u8`].
-    #[attribute(order = 16)]
+    #[attribute(order = 15)]
     pub state: u8,
 }
 
@@ -164,8 +158,8 @@ pub struct CredisContract {
     #[attribute(order = 4)]
     pub position_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
 
-    /// Dense index of the positions still on the price path — those in `Open`,
-    /// `Settleable` or `Called`. Membership invariant: a position is listed iff
+    /// Dense index of the positions still on the price path — those in `Open`
+    /// or `Called`. Membership invariant: a position is listed iff
     /// its state is non-terminal, so the daily scan visits only the positions
     /// that can still transition instead of the whole book.
     #[attribute(order = 5)]
