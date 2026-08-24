@@ -150,15 +150,13 @@ impl TargetChain {
             "CreateX deployed at:",
         )?;
 
-        // A mailbox the adapter can hold; delivery across two chains is a relay
-        // concern, not a deploy one.
+        // A mailbox the adapter can hold. Delivery across two chains stays a relay
+        // concern, and this mock is the half that makes one possible: it records a
+        // dispatch and emits it rather than delivering inline.
         let mailbox = address_from(
             &forge::run_with_ctor(
                 &crosschain,
-                &[
-                    "create",
-                    "test/mocks/MockHyperlaneMailbox.sol:MockHyperlaneMailbox",
-                ],
+                &["create", "test/mocks/MockRelayMailbox.sol:MockRelayMailbox"],
                 &[&chain_id],
                 &[],
                 &url,

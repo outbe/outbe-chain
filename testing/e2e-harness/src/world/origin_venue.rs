@@ -75,14 +75,12 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64) -> Result<OriginContracts> 
     )?;
 
     // The hyperlane adapter needs a mailbox to hold even when nothing remote is
-    // wired yet; the loopback route never touches it.
+    // wired yet; the loopback route never touches it. It is the relay-carried mock
+    // so a scenario that does reach a second chain has something to carry from.
     let mailbox = address_from(
         &forge::run_with_ctor(
             &crosschain,
-            &[
-                "create",
-                "test/mocks/MockHyperlaneMailbox.sol:MockHyperlaneMailbox",
-            ],
+            &["create", "test/mocks/MockRelayMailbox.sol:MockRelayMailbox"],
             &[&chain],
             &[],
             url,
