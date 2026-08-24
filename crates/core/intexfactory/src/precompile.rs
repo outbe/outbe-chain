@@ -39,6 +39,7 @@ sol! {
             bytes14[] seriesIds,
             uint16[] issuanceCurrencies,
             uint32 worldwideDay,
+            uint32 issuedAt,
             uint32 issuedIntexCount,
             uint128 promisLoadMinor,
             uint256 entryPriceMinor,
@@ -95,6 +96,7 @@ pub fn dispatch(
             ));
         }
         let mut legs = Vec::new();
+        let ids = call.seriesIds.clone();
         for (series_id, issuance_currency) in call
             .seriesIds
             .into_iter()
@@ -116,6 +118,14 @@ pub fn dispatch(
                     snapshot_chains: call.snapshotChains.clone(),
                 },
             )?);
+        }
+        // The Called sweep counts breach days from `issued_at`, so a scenario that
+        // seeds those days has to place issuance behind them. Zero keeps the stamp
+        // the engine wrote.
+        if call.issuedAt != 0 {
+            for series_id in ids {
+                outbe_intex::api::set_issued_at(&storage, SeriesId::from(series_id), call.issuedAt)?;
+            }
         }
         crate::api::send_issuance(&storage, legs)?;
         return Ok(Bytes::new());

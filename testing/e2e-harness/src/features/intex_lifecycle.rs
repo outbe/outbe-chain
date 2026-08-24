@@ -137,6 +137,15 @@ fn issue_two_series(world: &mut World) {
         &url,
         DEPLOYER_KEY,
         day,
+        // Issuance is stamped where the seeded days already lie behind it.
+        u32::try_from(
+            world
+                .rpc
+                .latest_block_timestamp(port)
+                .expect("committee head timestamp")
+                .saturating_sub(u64::from(CALL_LOOKBACK_DAYS) * 86_400),
+        )
+        .expect("backdated stamp fits a uint32"),
         settlement_currency::USD_ISO,
         REFERENCE_BYTE,
         U256::from(ENTRY_PRICE_MINOR),
