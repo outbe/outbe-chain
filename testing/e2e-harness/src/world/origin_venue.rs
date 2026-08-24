@@ -250,6 +250,25 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
 
     // Settlement burns Issued and mints Settled; the Promis burn path needs its own
     // role. Production grants both through these tasks.
+    // The lifecycle scenario opens a day itself instead of running an auction, and
+    // freezing the day's target set is DESIS_ROLE work. Granting the deploy account
+    // the same roles the begin-block caller holds lets it stand in for that one call.
+    hardhat::task(
+        intex,
+        "outbe-system-grant-roles",
+        &[
+            (
+                "--bridge-contract",
+                format!("{:?}", contracts.origin_router),
+            ),
+            ("--intex-contract", nft.clone()),
+            ("--system-address", DEPLOYER_ADDRESS.to_owned()),
+            ("--desis-contract", DESIS.to_owned()),
+        ],
+        url,
+        chain_id,
+    )?;
+
     hardhat::task(
         intex,
         "settlement-grant-roles",

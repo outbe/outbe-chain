@@ -100,12 +100,39 @@ fn issue_two_series(world: &mut World) {
     test_issuance::fund_settler(&url, asset, DEPLOYER_KEY, U256::from(u64::MAX))
         .expect("fund the settling holder");
 
+    // The router addresses an issuance leg only to a chain the day was started on,
+    // so the day has to be opened before anything can be issued into it.
+    let day = chain_worldwide_day(world, port);
+    let now = u32::try_from(
+        world
+            .rpc
+            .latest_block_timestamp(port)
+            .expect("committee head timestamp"),
+    )
+    .expect("timestamp fits a uint32");
+    test_issuance::open_day(
+        &url,
+        DEPLOYER_KEY,
+        world
+            .state
+            .origin_contracts
+            .as_ref()
+            .expect("intex engine was deployed")
+            .origin_router,
+        day,
+        now,
+        settlement_currency::USD_ISO,
+        ENTRY_PRICE_MINOR,
+        PROMIS_LOAD_MINOR,
+    )
+    .expect("open the day the series are issued into");
+
     // Same day and reference currency, different issuance currencies: one group,
     // two members, which is what makes the group promotion and the mark batch real.
     let series = test_issuance::issue_series(
         &url,
         DEPLOYER_KEY,
-        chain_worldwide_day(world, port),
+        day,
         settlement_currency::USD_ISO,
         REFERENCE_BYTE,
         U256::from(ENTRY_PRICE_MINOR),

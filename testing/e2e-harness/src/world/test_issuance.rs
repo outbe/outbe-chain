@@ -36,6 +36,33 @@ sol! {
         function quoteCostAmount(bytes14 seriesId, address paymentToken) external view returns (uint256 costAmountMinor);
     }
 
+    struct ReferenceCurrencyPrice {
+        uint16 isoCode;
+        uint64 entryPriceMinor;
+        uint64 floorPriceMinor;
+        uint64 callPriceMinor;
+    }
+
+    struct AuctionStageStartParams {
+        uint32 worldwideDay;
+        uint32 commitEnd;
+        uint32 revealEnd;
+        uint32 issuanceEnd;
+        uint128 promisLoadMinor;
+        uint32 minIntexBidRate;
+        ReferenceCurrencyPrice[] prices;
+        uint32 callNoticePeriod;
+        uint32 callWindow;
+        uint32 callThreshold;
+        uint16 minIntexBidQuantity;
+        uint128 commitBondMinor;
+        uint8 dayState;
+    }
+
+    interface IOriginRouterStart {
+        function sendAuctionStageStart(AuctionStageStartParams params) external payable;
+    }
+
     interface IPromisMining {
         function minePromis(bytes14 seriesId, uint256 amount, uint256 nonce, bytes32 mac, uint64 opNonce)
             external
@@ -236,5 +263,51 @@ pub fn mine_promis(
         None,
     )
     .map_err(|error| eyre!("minePromis was refused: {error}"))?;
+    Ok(())
+}
+
+/// Freeze the day's target set, which the router does at STAGE_START and without
+/// which it refuses to address an issuance leg to any chain.
+#[allow(clippy::too_many_arguments)]
+pub fn open_day(
+    url: &str,
+    sender_key: &str,
+    origin_router: Address,
+    worldwide_day: u32,
+    now: u32,
+    reference_currency: u16,
+    entry_price_minor: u64,
+    promis_load_minor: u128,
+) -> Result<()> {
+    // Stage ends sit in the past: the scenario issues directly, so no bid ever races
+    // them, and a day whose windows are open would only invite one.
+    let params = AuctionStageStartParams {
+        worldwideDay: worldwide_day,
+        commitEnd: now,
+        revealEnd: now,
+        issuanceEnd: now,
+        promisLoadMinor: promis_load_minor,
+        minIntexBidRate: 0,
+        prices: vec![ReferenceCurrencyPrice {
+            isoCode: reference_currency,
+            entryPriceMinor: entry_price_minor,
+            floorPriceMinor: entry_price_minor,
+            callPriceMinor: entry_price_minor,
+        }],
+        callNoticePeriod: 0,
+        callWindow: 0,
+        callThreshold: 0,
+        minIntexBidQuantity: 1,
+        commitBondMinor: 0,
+        dayState: 1,
+    };
+    eth::send_call(
+        url,
+        origin_router,
+        sender_key,
+        &IOriginRouterStart::sendAuctionStageStartCall { params },
+        None,
+    )
+    .map_err(|error| eyre!("sendAuctionStageStart was refused: {error}"))?;
     Ok(())
 }
