@@ -32,7 +32,7 @@ use outbe_lysis::program_v1::result::{
     RootReduceOutputV1, RootReduceSummaryV1,
 };
 use outbe_lysis::program_v1::{ObservationValueV1, ObservedTributeV1, TributeInputV1};
-use outbe_ocomp_protocol::common::{BoundedBytes, EntityId36 as ProtocolEntityId36};
+use outbe_ocomp_protocol::common::BoundedBytes;
 use outbe_ocomp_protocol::input::{
     AuthenticatedInputChunkV1, AuthenticatedOpeningV1, InputChunkKind, InputChunkRefV1,
     InputManifestV1, OpeningSourceKind,
@@ -705,15 +705,15 @@ fn execute_enumerate_unit(
     for record in &chunk.canonical_records_or_openings {
         require_lease_active(cancelled)?;
         let tribute = decode_tribute_v1(&record.0)?;
-        let id = tribute.tribute_id.as_bytes();
-        if id < &range.start.0 || range.end.is_some_and(|end| id >= &end.0) {
+        let id = *tribute.tribute_id;
+        if id < range.start || range.end.is_some_and(|end| id >= end) {
             return Err(WorkerError::UnitBindingMismatch);
         }
         tributes.push(TributeInputV1::from(&tribute));
     }
     if tributes
         .first()
-        .map(|tribute| tribute.tribute_id.as_bytes())
+        .map(|tribute| tribute.tribute_id.as_slice())
         != Some(&range.start.0)
     {
         return Err(WorkerError::UnitBindingMismatch);
@@ -1125,7 +1125,7 @@ fn decode_fixed_reduce_producer(
             let records = output
                 .observations
                 .iter()
-                .map(|observation| (observation.raw_ordinal, *observation.tribute_id.as_bytes()))
+                .map(|observation| (observation.raw_ordinal, observation.tribute_id))
                 .collect::<Vec<_>>();
             let coverage = RawCoverageCarrierV1::from_records(plan.tribute_count, &records)?;
             Ok(FixedReduceInputV1 {
@@ -1846,7 +1846,7 @@ fn execute_shuffle_unit(
                 .map(|record| {
                     Ok(ProtocolContributorActionV1 {
                         owner: record.owner,
-                        source_tribute_id: protocol_entity_id(record.source_tribute_id),
+                        source_tribute_id: *record.source_tribute_id,
                         nominal_amount_minor: record.nominal_amount_minor,
                     })
                 })
@@ -1861,8 +1861,8 @@ fn execute_shuffle_unit(
                     Ok(ShuffleBucketRecordV1 {
                         bucket_key: record.bucket_key,
                         raw_ordinal: record.raw_ordinal,
-                        tribute_id: protocol_entity_id(record.tribute_id),
-                        nod_id: protocol_entity_id(record.nod_id),
+                        tribute_id: *record.tribute_id,
+                        nod_id: *record.nod_id,
                     })
                 })
                 .collect::<Vec<_>>();
@@ -2300,8 +2300,8 @@ fn execute_root_reduce_leaf(
         .iter()
         .map(|record| ProtocolNodActionV1 {
             raw_ordinal: record.raw_ordinal,
-            tribute_id: protocol_entity_id(record.nod_action.source_tribute_id),
-            nod_id: protocol_entity_id(record.nod_action.nod_id),
+            tribute_id: *record.nod_action.source_tribute_id,
+            nod_id: *record.nod_action.nod_id,
             owner: record.nod_action.owner,
             wwd: record.nod_action.worldwide_day.value(),
             league_id: record.nod_action.league_id,
@@ -2663,10 +2663,6 @@ fn decode_shuffle_producer_root(
         return Err(WorkerError::UnitBindingMismatch);
     }
     Ok(root)
-}
-
-fn protocol_entity_id(value: outbe_compressed_entities::EntityId36) -> ProtocolEntityId36 {
-    ProtocolEntityId36(*value.as_bytes())
 }
 
 fn scan_producer_inputs(

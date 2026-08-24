@@ -183,6 +183,16 @@ fn committee_recovers_sealed_tee_state(world: &mut World) {
         world.rpc.offer_until_supply(&key, &wwd, primary, "1", 5),
         "post-committee-restart offer did not land (supply != 1)"
     );
+    // The offer above went through every restarted enclave — its per-request
+    // telemetry line proves the post-restart enclave served the decrypt.
+    for index in 0..world.validators.size() {
+        assert!(
+            world
+                .localnet
+                .enclave_log_has(index, "req=process_tribute_offer_batch"),
+            "validator-{index} restarted enclave log lacks the offer telemetry line"
+        );
+    }
 }
 
 /// The restarted node catches up and resumes signing WITHOUT a fresh ceremony

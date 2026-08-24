@@ -289,7 +289,7 @@ pub fn submit_verified_result_vote(
 mod tests {
     use alloy_primitives::{keccak256, Address, B256, U256};
     use outbe_common::WorldwideDay;
-    use outbe_compressed_entities::{begin_block, mint, BodyInput, EntityId36, TributeBodyV1};
+    use outbe_compressed_entities::{begin_block, mint, BodyInput, TributeBodyV1, WwdEntityId};
     use outbe_primitives::{
         addresses::COMPRESSED_ENTITIES_ADDRESS,
         block::{BlockContext, BlockRuntimeContext},
@@ -548,7 +548,7 @@ mod tests {
         let scope = ExecutionScope::new();
         StorageHandle::enter(&mut provider, |storage| {
             storage
-                .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+                .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
                 .unwrap();
             storage
                 .sstore(
@@ -580,7 +580,7 @@ mod tests {
                             effect_storage.clone(),
                             &scope,
                             BodyInput::Tribute(&TributeBodyV1 {
-                                tribute_id: EntityId36::new(wwd, [0x84; 32]),
+                                tribute_id: WwdEntityId::from_day_and_digest(wwd, [0x84; 32]),
                                 owner: Address::repeat_byte(0x85),
                                 worldwide_day: wwd,
                                 issuance_amount_minor: U256::from(1),

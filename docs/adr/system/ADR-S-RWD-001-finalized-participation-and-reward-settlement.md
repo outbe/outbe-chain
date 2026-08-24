@@ -113,6 +113,21 @@ thereafter. Integer-division remainder is returned implicitly as
 `topup_total - distributed`; its downstream owner must be explicit in the imported
 Cycle/EmissionLimit contract.
 
+For a fresh top-up settlement, Cycle owns exact reconciliation:
+
+```text
+distributed Gems + validator terminal excess = validator allocation
+validator terminal excess = validator allocation - distributed
+```
+
+An already-settled top-up is an idempotent no-remint outcome, not evidence that
+the whole top-up is newly undelivered; Cycle preserves only the existing fee
+excess in that case. Empty or zero-total participation creates no Gem and sends
+the complete validator allocation to the terminal sink without introducing a
+new chain-halting transition. Canonical participation writers still maintain
+positive indexed counts; this settlement adapter does not add a new corrupted-
+state recovery or validation policy.
+
 `daily_topup_settled` guards this one sub-effect; `daily_settled` guards the complete
 cross-module day dispatch. Neither marker may be written before all effects it
 claims are committed.
@@ -127,9 +142,10 @@ error restores the full economic pre-state.
 
 Daily top-up Gem mints and its guard must share the Cycle dispatch checkpoint. A
 later failure must not retain Gems while rolling back the day marker, or vice versa.
-Contradictory metadata, impossible indexes and conservation failure are fatal
-protocol outcomes, not retryable user reverts. A missing dependency or temporary
-execution failure may retry only from semantic pre-state.
+Contradictory metadata and conservation failures detected by their owning module
+remain fatal protocol outcomes, not retryable user reverts. This top-up
+reconciliation change does not introduce a new fatal index validator. A missing
+dependency or temporary execution failure may retry only from semantic pre-state.
 
 ## Determinism and bounds
 

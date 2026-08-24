@@ -178,10 +178,10 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @notice Settle attempted on a `Called` series after the settlement deadline
     ///         (`calledAt + callNoticePeriod`) has passed.
     error SettleAfterDeadline(uint256 tokenId, uint32 deadline);
+    /// @notice `markCalled` was given a call time of zero or one the destination clock has not reached.
+    error CalledAtInvalid(uint32 calledAt, uint32 nowTs);
     /// @notice A mint or batch sum would push `totalSupply` past `issuedIntexCount`.
     error SupplyCapExceeded(bytes14 seriesId, uint256 attempted, uint256 cap);
-    /// @notice Pagination was invoked with a zero page limit (`getIssuedHoldersWithBalances`).
-    error ZeroLimit();
 
     // --- Writes ---
 
@@ -217,7 +217,8 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
 
     /// @notice Mark a series as Called (Issued/Qualified -> Called).
     /// @param seriesId Series identifier.
-    function markCalled(bytes14 seriesId) external;
+    /// @param calledAt Unix time the origin marked the series Called; the deadline derives from it.
+    function markCalled(bytes14 seriesId, uint32 calledAt) external;
 
     /// @notice Burn `amount` Issued Intex from `from` and mint the same `amount` of Settled Intex to `to`.
     /// @dev Settlement-contract entry point under SETTLEMENT_ROLE. Series must be Qualified or Called.
@@ -292,29 +293,6 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param holder Holder address to read.
     /// @return The holder's Issued and Settled balance pair.
     function holderBalances(bytes14 seriesId, address holder) external view returns (HolderBalances memory);
-
-    /// @notice Paginated slice of Issued-token holders for a series, with both their Issued
-    ///         and Settled balances surfaced in one call.
-    /// @dev Iterates `_seriesHolders[issuedTokenId]` only; addresses that hold a Settled
-    ///      balance but no Issued balance are not enumerated by this view (no in-tree caller
-    ///      currently relies on that — a dedicated Settled-holders view can be added later
-    ///      if needed). `limit` must be > 0.
-    /// @param seriesId Series identifier.
-    /// @param offset Index into `_seriesHolders[issuedTokenId]`.
-    /// @param limit Maximum slice length to return.
-    /// @return holders Holder addresses in the requested slice.
-    /// @return issuedBalances Issued balances parallel to `holders`.
-    /// @return settledBalances Settled balances parallel to `holders` (read at the same block).
-    /// @return total Length of `_seriesHolders[issuedTokenId]` at call time.
-    function getIssuedHoldersWithBalances(bytes14 seriesId, uint256 offset, uint256 limit)
-        external
-        view
-        returns (
-            address[] memory holders,
-            uint256[] memory issuedBalances,
-            uint256[] memory settledBalances,
-            uint256 total
-        );
 
     /// @notice Total supply for a specific token id.
     /// @param tokenId Token id to read.
@@ -402,46 +380,4 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         external
         view
         returns (uint256[] memory ownedTokenIds, uint256[] memory balances, uint256 total);
-
-    /// @notice All holder addresses for a given series token id.
-    /// @param tokenId Series token id to read.
-    /// @return holders The holder addresses for that token id.
-    function getSeriesHolders(uint256 tokenId) external view returns (address[] memory holders);
-
-    /// @notice Paginated holder addresses for a given series token id.
-    /// @param tokenId Series token id to read.
-    /// @param offset Start index into the holder set.
-    /// @param limit Maximum number of entries to return.
-    /// @return holders The holder addresses in the `[offset, offset+limit)` window.
-    /// @return total Total number of holders (for computing further pages).
-    function getSeriesHoldersPaginated(uint256 tokenId, uint256 offset, uint256 limit)
-        external
-        view
-        returns (address[] memory holders, uint256 total);
-
-    /// @notice All holders and their balances for a given series token id.
-    /// @param tokenId Series token id to read.
-    /// @return holders The holder addresses for that token id.
-    /// @return balances Balances parallel to `holders`.
-    function getSeriesHoldersWithBalances(uint256 tokenId)
-        external
-        view
-        returns (address[] memory holders, uint256[] memory balances);
-
-    /// @notice Paginated holders and their balances for a given series token id.
-    /// @param tokenId Series token id to read.
-    /// @param offset Start index into the holder set.
-    /// @param limit Maximum number of entries to return.
-    /// @return holders The holder addresses in the `[offset, offset+limit)` window.
-    /// @return balances Balances parallel to `holders`.
-    /// @return total Total number of holders (for computing further pages).
-    function getSeriesHoldersWithBalancesPaginated(uint256 tokenId, uint256 offset, uint256 limit)
-        external
-        view
-        returns (address[] memory holders, uint256[] memory balances, uint256 total);
-
-    /// @notice Number of unique holders for a given series token id.
-    /// @param tokenId Series token id to read.
-    /// @return The count of unique holders for that token id.
-    function seriesHolderCount(uint256 tokenId) external view returns (uint256);
 }

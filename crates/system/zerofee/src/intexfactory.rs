@@ -99,7 +99,7 @@ impl ZeroFeeHook for IntexFactoryPayContributorBatchHook {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{address, Address, FixedBytes, B256};
+    use alloy_primitives::{address, Address, B256};
     use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 
     const VALIDATOR: Address = address!("0x1111111111111111111111111111111111111111");
@@ -112,8 +112,7 @@ mod tests {
             leaves: (0..leaves)
                 .map(|i| IIntexFactory::ContributorLeaf {
                     owner: Address::repeat_byte(u8::try_from(i % 251).unwrap()),
-                    sourceTributeDigest: B256::repeat_byte(7),
-                    sourceTributeIndex: FixedBytes::<4>::from([0, 0, 0, 1]),
+                    sourceTributeId: U256::from_be_bytes(B256::repeat_byte(7).0),
                     nominal: U256::from(1_u64),
                 })
                 .collect(),

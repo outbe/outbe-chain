@@ -145,6 +145,10 @@ pub fn dispatch(
                         .resolve_validator_for_role(c.signer, role)?
                         .unwrap_or(Address::ZERO))
                 }),
+                getRadicleNodeId(c) => view(c, |c| vs.get_radicle_node_id(c.validator)),
+                validatorByRadicleNodeId(c) => {
+                    view(c, |c| vs.validator_by_radicle_node_id(c.nodeId))
+                }
                 registerValidator(c) => mutate_void(c, caller, |sender, c| {
                     if c.consensusPubkey.len() != 48 {
                         return Err(PrecompileError::Revert(
@@ -154,8 +158,8 @@ pub fn dispatch(
                     let pubkey: [u8; 48] = c.consensusPubkey[..48].try_into().map_err(|_| {
                         PrecompileError::Revert("consensus pubkey conversion failed".into())
                     })?;
-                    let sig: &[u8; 96] = if c.blsSignature.len() == 96 {
-                        c.blsSignature[..96].try_into().map_err(|_| {
+                    let sig: &[u8; 96] = if c.blsRegistrationSignature.len() == 96 {
+                        c.blsRegistrationSignature[..96].try_into().map_err(|_| {
                             PrecompileError::Revert("BLS signature conversion failed".into())
                         })?
                     } else {
@@ -163,7 +167,13 @@ pub fn dispatch(
                             "BLS proof of possession must be exactly 96 bytes".into(),
                         ));
                     };
-                    vs.register_validator_with_sig(sender, c.validatorAddress, &pubkey, Some(sig))
+                    vs.register_validator_with_sig(
+                        sender,
+                        c.validatorAddress,
+                        &pubkey,
+                        c.radicleNodeId,
+                        Some(sig),
+                    )
                 }),
                 setP2pAddress(c) => mutate_void(c, caller, |sender, c| {
                     vs.set_p2p_address(sender, c.validatorAddress, c.version, &c.encoded)
@@ -183,4 +193,78 @@ pub fn dispatch(
             }
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::B256;
+    use alloy_sol_types::SolCall as _;
+    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+    use outbe_primitives::storage::StorageHandle;
+    use outbe_primitives::validators::{
+        validator_registration_message, VALIDATOR_REGISTRATION_DST,
+    };
+
+    #[test]
+    fn registration_v2_and_radicle_getters_round_trip_through_public_abi() {
+        let chain_id = 54322345;
+        let validator = Address::repeat_byte(0x61);
+        let node_id = B256::repeat_byte(0x71);
+        let secret = blst::min_pk::SecretKey::key_gen(&[0x41; 32], &[]).unwrap();
+        let public_key = secret.sk_to_pk().to_bytes();
+        let signature = secret
+            .sign(
+                &validator_registration_message(chain_id, validator, node_id),
+                VALIDATOR_REGISTRATION_DST,
+                &[],
+            )
+            .to_bytes();
+        let mut provider = HashMapStorageProvider::new(chain_id);
+        provider.set_block_number(1);
+
+        StorageHandle::enter(&mut provider, |storage| {
+            let vs = crate::schema::ValidatorSet::new(storage.clone());
+            vs.config_owner.write(validator).unwrap();
+            vs.config_max_validators.write(10).unwrap();
+
+            dispatch(
+                storage.clone(),
+                &IValidatorSet::registerValidatorCall {
+                    validatorAddress: validator,
+                    consensusPubkey: Bytes::copy_from_slice(&public_key),
+                    radicleNodeId: node_id,
+                    blsRegistrationSignature: Bytes::copy_from_slice(&signature),
+                }
+                .abi_encode(),
+                validator,
+                U256::ZERO,
+            )
+            .unwrap();
+
+            let forward = dispatch(
+                storage.clone(),
+                &IValidatorSet::getRadicleNodeIdCall { validator }.abi_encode(),
+                validator,
+                U256::ZERO,
+            )
+            .unwrap();
+            assert_eq!(
+                IValidatorSet::getRadicleNodeIdCall::abi_decode_returns(&forward).unwrap(),
+                node_id
+            );
+
+            let reverse = dispatch(
+                storage,
+                &IValidatorSet::validatorByRadicleNodeIdCall { nodeId: node_id }.abi_encode(),
+                validator,
+                U256::ZERO,
+            )
+            .unwrap();
+            assert_eq!(
+                IValidatorSet::validatorByRadicleNodeIdCall::abi_decode_returns(&reverse).unwrap(),
+                validator
+            );
+        });
+    }
 }

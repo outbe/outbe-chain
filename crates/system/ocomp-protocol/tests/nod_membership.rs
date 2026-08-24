@@ -1,6 +1,5 @@
 use alloy_primitives::{address, B256, U256};
 use outbe_ocomp_protocol::{
-    common::EntityId36,
     list::streaming_ordered_list_membership_proof,
     profile::poc_schema_limits,
     registry::ListKind,
@@ -10,11 +9,11 @@ use outbe_ocomp_protocol::{
 
 const WWD: u32 = 20_260_726;
 
-fn entity_id(seed: u8) -> EntityId36 {
-    let mut bytes = [0_u8; 36];
+fn entity_id(seed: u8) -> B256 {
+    let mut bytes = [0_u8; 32];
     bytes[..4].copy_from_slice(&WWD.to_be_bytes());
-    bytes[35] = seed;
-    EntityId36(bytes)
+    bytes[31] = seed;
+    B256::from(bytes)
 }
 
 fn action(ordinal: u32) -> NodActionV1 {

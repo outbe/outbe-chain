@@ -45,12 +45,11 @@ interface IIntexFactory {
     function distribute(uint32 worldwideDay, uint32 srcChainId) external payable;
 
     /// @notice One certified contributor record, exactly as Lysis committed it.
-    ///         The canonical 88-byte leaf the chain re-hashes is
-    ///         `owner ++ sourceTributeDigest ++ sourceTributeIndex ++ nominal`.
+    ///         The canonical 84-byte leaf the chain re-hashes is
+    ///         `owner ++ sourceTributeId ++ nominal`.
     struct ContributorLeaf {
         address owner;
-        bytes32 sourceTributeDigest;
-        bytes4 sourceTributeIndex;
+        uint256 sourceTributeId;
         uint256 nominal;
     }
 

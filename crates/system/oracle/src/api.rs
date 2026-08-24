@@ -3,6 +3,7 @@
 //! Exposes read-only helpers that other modules call to validate
 //! currency support, without going through the precompile dispatch.
 
+use crate::constants::FX_RATE_MAX_AGE_SECONDS;
 use crate::errors::{OracleError, OracleOcompError};
 use crate::schema::{OracleContract, PairIndex};
 use crate::scurve;
@@ -142,6 +143,56 @@ pub fn coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option
     Ok((!stored.is_zero()).then_some(stored))
 }
 
+/// Current COEN price for `iso_code`, accepted only when its canonical
+/// publication timestamp is non-zero and no older than six hours.
+pub fn fresh_coen_rate_for(storage: StorageHandle, iso_code: u16) -> Result<U256> {
+    let (_, index) = require_coen_pair(storage.clone(), iso_code)?;
+    fresh_rate_at_index(storage, index)?
+        .ok_or_else(|| OracleError::StaleCoenRate { iso_code }.into())
+}
+
+/// Hook-safe variant of [`fresh_coen_rate_for`]. An unregistered, unpublished or
+/// stale currency is not priceable in this block and therefore returns `None`;
+/// storage faults still propagate.
+pub fn fresh_coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option<U256>> {
+    let oracle = OracleContract::new(storage.clone());
+    let index = oracle.pair_index_of(AddressPair::new_coen_to(iso_code))?;
+    if index == 0 {
+        return Ok(None);
+    }
+    fresh_rate_at_index(storage, index)
+}
+
+/// Freshness-enforcing counterpart of [`currency_cross_rate`] for live economic
+/// paths. Equal currencies and zero amounts retain the no-read short circuit.
+pub fn fresh_currency_cross_rate(
+    storage: StorageHandle,
+    from_iso: u16,
+    to_iso: u16,
+    amount: U256,
+) -> Result<U256> {
+    if from_iso == to_iso || amount.is_zero() {
+        return Ok(amount);
+    }
+    let rate_from = fresh_coen_rate_for(storage.clone(), from_iso)?;
+    let rate_to = fresh_coen_rate_for(storage, to_iso)?;
+    let numerator = amount
+        .checked_mul(rate_to)
+        .ok_or(OracleError::CrossRateOverflow)?;
+    Ok(numerator.div_ceil(rate_from))
+}
+
+fn fresh_rate_at_index(storage: StorageHandle, index: PairIndex) -> Result<Option<U256>> {
+    let now = storage.timestamp()?.to::<u64>();
+    let oracle = OracleContract::new(storage);
+    let rate = oracle.exchange_rate.read(&index)?;
+    let published = oracle.exchange_rate_timestamp.read(&index)?;
+    Ok((!rate.is_zero()
+        && published != 0
+        && now.saturating_sub(published) <= FX_RATE_MAX_AGE_SECONDS)
+        .then_some(rate))
+}
+
 /// Registry index of the `COEN/<iso_code>` pair, or `None` when it was never registered.
 /// Unlike [`require_coen_pair`], which collapses both into an error.
 pub fn coen_pair_index_opt(storage: StorageHandle, iso_code: u16) -> Result<Option<PairIndex>> {
@@ -175,31 +226,59 @@ pub fn register_pair(storage: StorageHandle, pair: AddressPair) -> Result<PairIn
     oracle.register_pair(pair)
 }
 
-/// Nominal COEN price for `COEN/<iso_code>` at `worldwide_day`, in the pair's
-/// canonical scale (`COEN/ISO` is six-decimal):
-/// `max(WorldwideDay VWAP, highest active S-curve value)`.
+/// Public Oracle inputs used by the Tribute enclave.
 ///
-/// `None` when no `COEN/<iso_code>` pair is registered — the currency is not one
-/// this chain can price at all. `Some(0)` when the pair exists but the day has
-/// neither a VWAP snapshot nor a live S-curve entry, which is a transient
-/// oracle-cold condition rather than an unknown currency. Callers that must
-/// distinguish "unsupported" from "not priced yet" get that for free.
-pub fn coen_pair_price(
+/// Both VWAPs are exact WorldwideDay snapshots in the six-decimal COEN/ISO
+/// domain. The S-curve belongs only to the independently selected reference
+/// currency; the enclave owns the final `max(reference_vwap, reference_curve)`
+/// and cross-currency nominal arithmetic.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TributePricingInputs {
+    pub issuance_wwd_vwap_minor: U256,
+    pub reference_wwd_vwap_minor: U256,
+    pub reference_scurve_minor: U256,
+}
+
+/// Reads the three canonical public pricing inputs for one Tribute.
+///
+/// `None` means the issuance `COEN/<iso>` pair is not registered. Once the
+/// issuance pair exists, missing daily data or a missing reference pair is
+/// represented by zero fields so the Tribute host can reject the transient
+/// unpriced condition without collapsing it into an unsupported issuance.
+pub fn tribute_pricing_inputs(
     storage: StorageHandle,
-    iso_code: u16,
+    issuance_currency: u16,
+    reference_currency: u16,
     worldwide_day: WorldwideDay,
-) -> Result<Option<U256>> {
+) -> Result<Option<TributePricingInputs>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage.clone());
-    let pair = AddressPair::new_coen_to(iso_code);
-    let index = oracle.pair_index_of(pair)?;
-    if index == 0 {
+    let issuance_pair = AddressPair::new_coen_to(issuance_currency);
+    let issuance_index = oracle.pair_index_of(issuance_pair)?;
+    if issuance_index == 0 {
         return Ok(None);
     }
-    let vwap = oracle
-        .get_worldwide_day_vwap_for_pair(worldwide_day, index)?
+    let issuance_wwd_vwap_minor = oracle
+        .get_worldwide_day_vwap_for_pair(worldwide_day, issuance_index)?
         .unwrap_or(U256::ZERO);
-    let max_scurve = get_max_active_scurve_value(storage, worldwide_day, pair)?;
-    Ok(Some(vwap.max(max_scurve)))
+    let reference_pair = AddressPair::new_coen_to(reference_currency);
+    let reference_index = oracle.pair_index_of(reference_pair)?;
+    let reference_wwd_vwap_minor = if reference_index == 0 {
+        U256::ZERO
+    } else {
+        oracle
+            .get_worldwide_day_vwap_for_pair(worldwide_day, reference_index)?
+            .unwrap_or(U256::ZERO)
+    };
+    let reference_scurve_minor = if reference_index == 0 {
+        U256::ZERO
+    } else {
+        get_max_active_scurve_value(storage, worldwide_day, reference_pair)?
+    };
+    Ok(Some(TributePricingInputs {
+        issuance_wwd_vwap_minor,
+        reference_wwd_vwap_minor,
+        reference_scurve_minor,
+    }))
 }
 
 pub fn set_exchange_rate(
@@ -378,11 +457,10 @@ pub fn get_max_active_scurve_value(
     scurve::get_max_active_scurve_value(&oracle, pair, scurve_timestamp)
 }
 
-/// Annualized currency rate (scale `1e6`) for an ISO 4217 code, read from the
-/// reference-currency collection. Reverts when the code is not a registered
-/// reference currency or carries no (non-zero) rate. Called by the Credis
-/// Factory at issuance to pin the position's policy rate.
-pub fn get_currency_rate(storage: StorageHandle, iso_code: u16) -> Result<U256> {
+/// Annualized policy rate (scale `1e6`) for an independently registered ISO
+/// 4217 code. Called by the Credis Factory at issuance to pin the position's
+/// settlement policy without coupling it to reference-currency membership.
+pub fn get_policy_rate(storage: StorageHandle, iso_code: u16) -> Result<U256> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    oracle.get_currency_rate(iso_code)
+    oracle.get_policy_rate(iso_code)
 }

@@ -36,8 +36,8 @@
     "inputs": [
       {
         "name": "nodId",
-        "type": "bytes",
-        "internalType": "bytes"
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "nonce",
@@ -70,8 +70,8 @@
     "inputs": [
       {
         "name": "nodId",
-        "type": "bytes",
-        "internalType": "bytes"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -186,9 +186,9 @@
       },
       {
         "name": "nodId",
-        "type": "bytes",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "bytes"
+        "internalType": "uint256"
       },
       {
         "name": "gratisLoadMinor",
@@ -211,9 +211,9 @@
       },
       {
         "name": "nodId",
-        "type": "bytes",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "bytes"
+        "internalType": "uint256"
       },
       {
         "name": "worldwideDay",
@@ -321,9 +321,9 @@
       },
       {
         "name": "nodId",
-        "type": "bytes",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "bytes"
+        "internalType": "uint256"
       },
       {
         "name": "asset",

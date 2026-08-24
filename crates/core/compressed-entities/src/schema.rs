@@ -6,10 +6,9 @@ use outbe_primitives::{
     storage::types::{Mapping, Slot, StorageBytes, StorageVec},
 };
 
-use crate::{Commitment, EntityId36};
+use crate::{Commitment, WwdEntityId};
 
-pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 3;
-const BODY_RECORD_VERSION: u8 = 1;
+pub(crate) const STORAGE_SCHEMA_VERSION: u64 = 4;
 const INDEX_RECORD_VERSION: u8 = 1;
 const BODY_LOCATOR_PREFIX: &[u8] = b"OUTBE_CE_OVERLAY_V1";
 const INDEX_DELTA_PREFIX: &[u8] = b"OUTBE_CE_INDEX_DELTA_V1";
@@ -143,11 +142,11 @@ impl IndexKind {
 pub(crate) struct IndexRecord {
     pub(crate) kind: IndexKind,
     pub(crate) partition: Vec<u8>,
-    pub(crate) entity_id: EntityId36,
+    pub(crate) entity_id: WwdEntityId,
 }
 
 impl IndexRecord {
-    pub(crate) fn owner(kind: IndexKind, owner: Address, entity_id: EntityId36) -> Self {
+    pub(crate) fn owner(kind: IndexKind, owner: Address, entity_id: WwdEntityId) -> Self {
         Self {
             kind,
             partition: owner.as_slice().to_vec(),
@@ -155,7 +154,7 @@ impl IndexRecord {
         }
     }
 
-    pub(crate) fn day(day: WorldwideDay, entity_id: EntityId36) -> Self {
+    pub(crate) fn day(day: WorldwideDay, entity_id: WwdEntityId) -> Self {
         Self {
             kind: IndexKind::TributeByDay,
             partition: day.value().to_be_bytes().to_vec(),
@@ -163,7 +162,7 @@ impl IndexRecord {
         }
     }
 
-    pub(crate) fn nod_all(entity_id: EntityId36) -> Self {
+    pub(crate) fn nod_all(entity_id: WwdEntityId) -> Self {
         Self {
             kind: IndexKind::NodAll,
             partition: Vec::new(),
@@ -172,17 +171,17 @@ impl IndexRecord {
     }
 
     pub(crate) fn encode(&self) -> Vec<u8> {
-        let mut record = Vec::with_capacity(3 + self.partition.len() + EntityId36::LEN);
+        let mut record = Vec::with_capacity(3 + self.partition.len() + WwdEntityId::len_bytes());
         record.push(INDEX_RECORD_VERSION);
         record.push(self.kind.id());
         record.push(self.partition.len() as u8);
         record.extend_from_slice(&self.partition);
-        record.extend_from_slice(self.entity_id.as_bytes());
+        record.extend_from_slice(self.entity_id.as_slice());
         record
     }
 
     pub(crate) fn decode(bytes: &[u8]) -> outbe_primitives::error::Result<Self> {
-        if bytes.len() < 3 + EntityId36::LEN {
+        if bytes.len() < 3 + WwdEntityId::len_bytes() {
             return Err(fatal("compressed-entity index record is truncated"));
         }
         if bytes[0] != INDEX_RECORD_VERSION {
@@ -194,12 +193,12 @@ impl IndexRecord {
         let kind = IndexKind::from_id(bytes[1])?;
         let partition_len = usize::from(bytes[2]);
         if partition_len != kind.partition_len()
-            || bytes.len() != 3 + partition_len + EntityId36::LEN
+            || bytes.len() != 3 + partition_len + WwdEntityId::len_bytes()
         {
             return Err(fatal("non-canonical compressed-entity index record length"));
         }
         let partition = bytes[3..3 + partition_len].to_vec();
-        let entity_id = EntityId36::try_from(&bytes[3 + partition_len..])
+        let entity_id = WwdEntityId::try_from(&bytes[3 + partition_len..])
             .map_err(|error| fatal(error.to_string()))?;
         let record = Self {
             kind,
@@ -217,30 +216,9 @@ impl IndexRecord {
     }
 }
 
-pub(crate) fn body_identity_record(collection: Collection, entity_id: EntityId36) -> [u8; 38] {
-    let mut record = [0_u8; 38];
-    record[0] = BODY_RECORD_VERSION;
-    record[1] = collection.id();
-    record[2..].copy_from_slice(entity_id.as_bytes());
-    record
-}
-
-pub(crate) fn decode_body_identity_record(
-    bytes: &[u8],
-) -> outbe_primitives::error::Result<(Collection, EntityId36)> {
-    if bytes.len() != 38 || bytes[0] != BODY_RECORD_VERSION {
-        return Err(fatal(
-            "non-canonical compressed-entity body identity record",
-        ));
-    }
-    let collection = Collection::from_id(bytes[1])?;
-    let entity_id = EntityId36::try_from(&bytes[2..]).map_err(|error| fatal(error.to_string()))?;
-    Ok((collection, entity_id))
-}
-
 pub(crate) fn body_locator(
     collection: Collection,
-    entity_id: EntityId36,
+    entity_id: WwdEntityId,
 ) -> outbe_primitives::error::Result<B256> {
     let identity = crate::identity_field(entity_id).map_err(|error| fatal(error.to_string()))?;
     let mut preimage = Vec::with_capacity(BODY_LOCATOR_PREFIX.len() + 1 + 32);
@@ -264,9 +242,17 @@ fn fatal(message: impl Into<String>) -> outbe_primitives::error::PrecompileError
 /// Consensus storage schema at `0xEE0D`.
 ///
 /// Field order is protocol-critical: the declaration order below is exactly
-/// slots 0 through 12 through ADR-011. Slot 1 is the sole EVM authority for the
+/// slots 0 through 13. Slot 1 is the sole EVM authority for the
 /// compressed-entity tree. Slots 2 and 3 deliberately remain reserved; they
 /// must not be reused as direct commitment mappings.
+///
+/// Slot 10 changed meaning when identities narrowed to 32 bytes: it held a
+/// 38-byte dynamic `bytes` record (three slots — a length word plus two data
+/// words) and now holds the identity in one word, with slot 13 carrying the
+/// collection byte that record used to include. Repointing a live slot is
+/// normally forbidden; it is admissible only because that change ships as a
+/// clean break with no migration, and `STORAGE_SCHEMA_VERSION` is bumped to
+/// reject any state written under the old layout.
 #[contract(addr = COMPRESSED_ENTITIES_ADDRESS)]
 pub(crate) struct CompressedEntitiesSchema {
     /// Slot 0.
@@ -289,10 +275,17 @@ pub(crate) struct CompressedEntitiesSchema {
     pub index_delta_record: Mapping<B256, StorageBytes>,
     /// Slot 9.
     pub touched_index_deltas: StorageVec<B256>,
-    /// Slot 10.
-    pub body_identity_record: Mapping<B256, StorageBytes>,
+    /// Slot 10. One word: the identity is exactly 32 bytes.
+    pub body_identity: Mapping<B256, WwdEntityId>,
     /// Slot 11. Marker `1` means one trusted Tribute WWD retirement request.
     pub pending_retirement: Mapping<B256, U256>,
     /// Slot 12. Canonical WWD identities for unique first-touch cleanup/sealing.
     pub retirement_touched: StorageVec<u32>,
+    /// Slot 13. Collection of the identity at slot 10, and the presence marker
+    /// for it: `Collection::from_id` rejects 0, so a zero here means absent.
+    /// Kept out of slot 10 because a collection plus a full-width identity does
+    /// not fit one word, and stored at all because the cleanup and sealing scans
+    /// recover the collection from the value — the locator key is hashed and
+    /// cannot be inverted.
+    pub body_identity_collection: Mapping<B256, u8>,
 }

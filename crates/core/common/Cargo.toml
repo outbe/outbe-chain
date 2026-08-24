@@ -8,13 +8,8 @@ publish.workspace = true
 [dependencies]
 outbe-primitives.workspace = true
 alloy-primitives.workspace = true
-serde.workspace = true
-time.workspace = true
 ring.workspace = true
 hex.workspace = true
-
-[dev-dependencies]
-serde_json.workspace = true
 
 [lints]
 workspace = true

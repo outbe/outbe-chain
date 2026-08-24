@@ -220,11 +220,10 @@ contract UpgradeDrillTest is CrossChainTest {
         address auction = makeAddr("auction");
         address intex = makeAddr("intex");
         address escrow = makeAddr("escrow");
-        address nftBridge = makeAddr("nftBridge");
         bytes memory remote = _interop(A_CHAIN_ID, address(0xCAFE));
 
         vm.startPrank(admin);
-        target.wire(auction, intex, escrow, nftBridge);
+        target.wire(auction, intex, escrow);
         target.setRemoteMessenger(A_CHAIN_ID, remote);
         vm.stopPrank();
 
@@ -246,7 +245,7 @@ contract UpgradeDrillTest is CrossChainTest {
 
         vm.startPrank(admin);
         batch.setRemoteMessenger(B_CHAIN_ID, remote);
-        batch.grantRole(batch.SYSTEM_RELAYER_ROLE(), relayer);
+        batch.grantRole(batch.DEFAULT_ADMIN_ROLE(), relayer);
         vm.stopPrank();
 
         IntexNFT1155BridgeV2 newImpl = new IntexNFT1155BridgeV2(tokenAddr, address(bridge));
@@ -256,6 +255,6 @@ contract UpgradeDrillTest is CrossChainTest {
         _assertUpgraded(address(batch), address(newImpl));
         assertEq(batch.remoteMessenger(B_CHAIN_ID), remote, "remote messenger lost");
         assertEq(address(batch.token()), tokenAddr, "token immutable lost");
-        assertTrue(batch.hasRole(batch.SYSTEM_RELAYER_ROLE(), relayer), "role lost");
+        assertTrue(batch.hasRole(batch.DEFAULT_ADMIN_ROLE(), relayer), "role lost");
     }
 }

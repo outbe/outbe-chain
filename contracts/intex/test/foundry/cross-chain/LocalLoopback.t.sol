@@ -206,7 +206,7 @@ contract LocalLoopbackTest is Test {
         origin.addTarget(local);
         origin.setProceedsRoute(address(tokenBridge), address(wcoen));
 
-        target.wire(address(auction), address(intex), address(escrow), address(nftBridge));
+        target.wire(address(auction), address(intex), address(escrow));
         target.setProceedsRoute(address(tokenBridge), address(origin));
 
         auction.wire(address(escrow));

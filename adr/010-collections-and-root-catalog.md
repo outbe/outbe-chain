@@ -53,7 +53,7 @@ NodBucket
 
 NodItem and NodBucket share the Nod runtime owner and may participate in one business operation, but they have distinct authenticated collection keys, shard sets, collection roots, catalog leaves, and proof paths. A lookup never retries the sibling Nod domain on absence.
 
-For Tribute, the canonical partition key is the first four bytes of `EntityId36`, interpreted as the existing big-endian `WorldwideDay` value. The lifecycle derives it from the typed identity and rejects any independently supplied mismatch. NodItem and NodBucket have no partition key.
+For Tribute, the canonical partition key is the first four bytes of `WwdEntityId`, interpreted as the existing big-endian `WorldwideDay` value. The lifecycle derives it from the typed identity and rejects any independently supplied mismatch. NodItem and NodBucket have no partition key.
 
 A **collection instance** is identified conceptually by:
 
@@ -105,7 +105,7 @@ NodBucket:
   0x0003 || 0x00 || 0x00000000
 ```
 
-`partition_presence_u8` accepts only `0` or `1`. `0` requires zero length and no bytes; `1` requires the exact registered domain partition length/encoding. Tribute requires exactly four WWD bytes and equality with its EntityId36 prefix. Singleton domains reject any partition bytes. No address, emitter, event selector, schema version, body type name, or operator input enters the collection key.
+`partition_presence_u8` accepts only `0` or `1`. `0` requires zero length and no bytes; `1` requires the exact registered domain partition length/encoding. Tribute requires exactly four WWD bytes and equality with its WwdEntityId prefix. Singleton domains reject any partition bytes. No address, emitter, event selector, schema version, body type name, or operator input enters the collection key.
 
 Collection key zero is a valid CKB/Root Catalog key position; zero is reserved as absence only for leaf values. A local derivation mismatch is structured corruption/invalid input, never a fallback search by another key.
 
@@ -114,7 +114,7 @@ Collection key zero is a valid CKB/Root Catalog key position; zero is reserved a
 ADR-010 preserves ADR-006 identity and body-leaf commitments byte-for-byte:
 
 ```text
-id_f = PBytes(TAG_ID, EntityId36)
+id_f = PBytes(TAG_ID, WwdEntityId)
 
 body_f = PBytes(TAG_BODY, canonical_payload)
 
@@ -139,9 +139,9 @@ tree_key_f = P(
 )
 ```
 
-The existing direct `BE32(tree_key_f) -> CKB_H256` bridge and ADR-009 shard-index derivation remain unchanged. Tribute validates that the WWD encoded in `collection_key_f` equals the first four EntityId36 bytes before deriving the key. NodItem/NodBucket require their exact singleton domain key. Domain/collection selection remains closed typed Rust state, never calldata/operator input.
+The existing direct `BE32(tree_key_f) -> CKB_H256` bridge and ADR-009 shard-index derivation remain unchanged. Tribute validates that the WWD encoded in `collection_key_f` equals the first four WwdEntityId bytes before deriving the key. NodItem/NodBucket require their exact singleton domain key. Domain/collection selection remains closed typed Rust state, never calldata/operator input.
 
-A bare `leaf_f` is not a globally namespaced entity identifier and may be equal for equal ID/body bytes in different domains. Authenticated identity is the full chain `domain/partition -> collection_key -> tree_key -> leaf`; events and runtime capabilities retain their typed domain context. Proof/replay tooling must never accept a leaf without the expected domain, collection, raw EntityId36, and tree-key derivation.
+A bare `leaf_f` is not a globally namespaced entity identifier and may be equal for equal ID/body bytes in different domains. Authenticated identity is the full chain `domain/partition -> collection_key -> tree_key -> leaf`; events and runtime capabilities retain their typed domain context. Proof/replay tooling must never accept a leaf without the expected domain, collection, raw WwdEntityId, and tree-key derivation.
 
 This supersedes ADR-008's temporary `P(TAG_KEY; scheme, collection_id, id_f)` formula before any network activation. Body commitments, mutation event commitment fields, Mongo verification, and `VerifiedBody` equality do not change or require recommitment.
 
@@ -383,7 +383,7 @@ The cache is scoped to one exact parent and never survives block execution. It i
 
 Point reads execute:
 
-1. derive/validate domain, collection key, tree key, and shard from the requested typed EntityId36;
+1. derive/validate domain, collection key, tree key, and shard from the requested typed WwdEntityId;
 2. resolve ADR-007 overlay first (`Set` returns same-block body, `Deleted` returns absence);
 3. for `Untouched`, verify collection membership/non-membership through the parent Root Catalog and wrapper;
 4. absent parent collection returns entity absence without opening shard namespaces;
@@ -451,7 +451,7 @@ This yields one authority from genesis and no bootstrap exception. The cost is m
 Benefits:
 
 - preserves ADR-006–009's three typed namespaces and closed `EntityRef` model;
-- equal EntityId36 values in NodItem and NodBucket cannot collide or prove each other;
+- equal WwdEntityId values in NodItem and NodBucket cannot collide or prove each other;
 - collection/proof/replay derivation needs no new entity-kind discriminant;
 - Tribute WWD collections become independently addressable for later retirement;
 - one Nod runtime can still update both singleton domains atomically in one block candidate.

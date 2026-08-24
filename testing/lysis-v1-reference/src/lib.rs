@@ -458,7 +458,7 @@ fn validate_and_sort(input: &CorpusInput) -> Result<Vec<CorpusTribute>, Referenc
         let prefix_day = raw_id
             .get(..8)
             .and_then(|prefix| u32::from_str_radix(prefix, 16).ok());
-        if raw_id.len() != 72
+        if raw_id.len() != 64
             || raw_id != raw_id.to_ascii_lowercase()
             || !raw_id.bytes().all(|byte| byte.is_ascii_hexdigit())
             || prefix_day != Some(input.worldwide_day)

@@ -110,14 +110,14 @@ test("MCP formats Credis and Oracle annual rates with six decimals", () => {
     currencyRate: { raw: "43000", value: "0.043" },
   });
 
-  const getCurrencyRate = {
+  const getPolicyRate = {
     type: "function",
-    name: "getCurrencyRate",
+    name: "getPolicyRate",
     stateMutability: "view",
     inputs: [{ name: "isoCode", type: "uint16" }],
     outputs: [{ name: "rate", type: "uint256" }],
   } as AbiFunction;
-  assert.deepEqual(humanizeReturn(getCurrencyRate, 43_000n), {
+  assert.deepEqual(humanizeReturn(getPolicyRate, 43_000n), {
     rate: { raw: "43000", value: "0.043" },
   });
 
@@ -156,7 +156,7 @@ test("MCP Oracle views apply six decimals from the real call context", async () 
   assert.deepEqual(await read("getCoenExchangeRateFor", [840], 1_234_567n), {
     rate: { raw: "1234567", value: "1.234567" },
   });
-  assert.deepEqual(await read("getCurrencyRate", [840], 43_000n), {
+  assert.deepEqual(await read("getPolicyRate", [840], 43_000n), {
     rate: { raw: "43000", value: "0.043" },
   });
   assert.deepEqual(

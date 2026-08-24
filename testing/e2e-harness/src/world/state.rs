@@ -6,6 +6,56 @@
 
 use serde::Serialize;
 
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct RadicleScenarioEvidenceV1 {
+    pub genesis_hash: Option<String>,
+    pub repo_id: Option<String>,
+    pub repo_id_hex: Option<String>,
+    pub registration_transaction: Option<String>,
+    pub registration_finalized_height: Option<u64>,
+    pub issue_id: Option<String>,
+    pub patch_id: Option<String>,
+    pub pushed_commit: Option<String>,
+    pub source_home: Option<std::path::PathBuf>,
+    pub source_repository: Option<std::path::PathBuf>,
+    pub validator_node_ids: Vec<String>,
+    pub validator_native_node_ids: Vec<String>,
+    pub founder_validator_addresses: Vec<String>,
+    pub founder_onchain_node_ids: Vec<String>,
+    pub signed_endpoint_frames: Vec<Vec<serde_json::Value>>,
+    pub initial_native_session_sets: Vec<Vec<String>>,
+    pub initial_seed_scope_all_validators: Vec<usize>,
+    pub validator_sidecar_pids_before: Vec<u32>,
+    pub endpoint_node_pid_before: Option<u32>,
+    pub endpoint_node_pid_after: Option<u32>,
+    pub endpoint_sidecar_pid_before: Option<u32>,
+    pub endpoint_sidecar_pid_after: Option<u32>,
+    pub endpoint_old_port: Option<u16>,
+    pub endpoint_new_port: Option<u16>,
+    pub endpoint_replacement_signed_frames: Vec<serde_json::Value>,
+    pub endpoint_old_session_addresses: Vec<String>,
+    pub endpoint_new_session_addresses: Vec<String>,
+    pub endpoint_replacement_session_sets: Vec<Vec<String>>,
+    pub sidecar_fault_pid_before: Option<u32>,
+    pub sidecar_recovery_pid_after: Option<u32>,
+    pub finality_before_sidecar_fault: Option<u64>,
+    pub finality_after_sidecar_fault: Option<u64>,
+    pub sidecar_recovery_session_sets: Vec<Vec<String>>,
+    pub sidecar_recovery_seed_scope_all: Option<bool>,
+    pub node_restart_pid_before: Option<u32>,
+    pub node_restart_pid_after: Option<u32>,
+    pub node_restart_sidecar_pid_before: Option<u32>,
+    pub node_restart_sidecar_pid_after: Option<u32>,
+    pub finality_before_node_restart: Option<u64>,
+    pub finality_after_node_restart: Option<u64>,
+    pub node_recovery_session_sets: Vec<Vec<String>>,
+    pub node_recovery_seed_scope_all: Option<bool>,
+    pub joiner_node_id: Option<String>,
+    pub joiner_activation_finalized_height: Option<u64>,
+    pub final_native_session_sets: Vec<Vec<String>>,
+    pub final_seed_scope_all_validators: Vec<usize>,
+}
+
 /// Exact public-chain measurements for the q-forming S+1 capacity block.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct OcompPublicCapacityObservationV1 {
@@ -137,11 +187,18 @@ pub struct OcompPublicScenarioEvidenceV1 {
     pub metadosis_fresh_lifecycle: Option<MetadosisFreshLifecycleObservationV1>,
     pub execution_trace: Option<OcompExecutionTraceObservationV1>,
     pub restart_replay_verified: Option<bool>,
+    pub full_node_deadline_barrier_height: Option<u64>,
+    pub full_node_resumed_finalized_height: Option<u64>,
+    pub full_node_local_first_digest: Option<alloy_primitives::B256>,
+    pub full_node_mismatch_job_id: Option<alloy_primitives::B256>,
+    pub full_node_mismatch_evidence_files: Vec<String>,
 }
 
 /// Per-scenario state accumulated as the steps run.
 #[derive(Debug)]
 pub struct FixtureState {
+    /// Public-only Radicle operations and replication evidence.
+    pub radicle: RadicleScenarioEvidenceV1,
     /// Proposal id under test (always 1 in the update flow).
     pub proposal_id: u64,
     /// The protocol version we proposed (active + 1).
@@ -169,6 +226,9 @@ pub struct FixtureState {
     pub marker_height: Option<u64>,
     /// A log-line count captured before an action (e.g. DKG ceremony count).
     pub marker_count: Option<usize>,
+    /// Hash of a transaction that cannot be mined, submitted to observe pool
+    /// eviction (`features/txpool_eviction.feature`).
+    pub stuck_tx_hash: Option<String>,
     /// Exact offer public key observed from a registered joiner's enclave and
     /// matched against canonical chain state before an enclave restart.
     pub joiner_offer_public_before_restart: Option<[u8; 32]>,
@@ -263,6 +323,13 @@ pub struct FixtureState {
     pub metadosis_fresh_initial_unix_time_offset_secs: Option<i64>,
     pub ocomp_execution_trace_observation: Option<OcompExecutionTraceObservationV1>,
     pub ocomp_restart_replay_verified: Option<bool>,
+    /// FullNode-only lifecycle evidence captured by the Citadel closure lane.
+    pub ocomp_full_node_deadline_barrier_height: Option<u64>,
+    pub ocomp_full_node_resumed_finalized_height: Option<u64>,
+    pub ocomp_full_node_local_result_before_restart: Option<Vec<u8>>,
+    pub ocomp_full_node_local_first_digest: Option<alloy_primitives::B256>,
+    pub ocomp_full_node_mismatch_job_id: Option<alloy_primitives::B256>,
+    pub ocomp_full_node_mismatch_evidence_files: Vec<String>,
     /// Public pre-activation `submitLysisResult` outcome: inclusion evidence
     /// that the selector reverts (never aborts payload building) while the
     /// OCOMP lifecycle is inactive.
@@ -341,6 +408,7 @@ pub struct StablecoinFixture {
 impl Default for FixtureState {
     fn default() -> Self {
         Self {
+            radicle: RadicleScenarioEvidenceV1::default(),
             proposal_id: 1,
             proposed_version: None,
             activation_height: None,
@@ -352,6 +420,7 @@ impl Default for FixtureState {
             wwd: None,
             marker_height: None,
             marker_count: None,
+            stuck_tx_hash: None,
             joiner_offer_public_before_restart: None,
             vrf_expiry_height: None,
             lifecycle_stake_before_exit: None,
@@ -407,6 +476,12 @@ impl Default for FixtureState {
             metadosis_fresh_initial_unix_time_offset_secs: None,
             ocomp_execution_trace_observation: None,
             ocomp_restart_replay_verified: None,
+            ocomp_full_node_deadline_barrier_height: None,
+            ocomp_full_node_resumed_finalized_height: None,
+            ocomp_full_node_local_result_before_restart: None,
+            ocomp_full_node_local_first_digest: None,
+            ocomp_full_node_mismatch_job_id: None,
+            ocomp_full_node_mismatch_evidence_files: Vec::new(),
             l2_bls_private_hex: None,
             l2_chain_id: None,
             l2_rejected_offer_tx_hash: None,
@@ -472,6 +547,11 @@ impl FixtureState {
             metadosis_fresh_lifecycle: self.metadosis_fresh_lifecycle_observation.clone(),
             execution_trace: self.ocomp_execution_trace_observation.clone(),
             restart_replay_verified: self.ocomp_restart_replay_verified,
+            full_node_deadline_barrier_height: self.ocomp_full_node_deadline_barrier_height,
+            full_node_resumed_finalized_height: self.ocomp_full_node_resumed_finalized_height,
+            full_node_local_first_digest: self.ocomp_full_node_local_first_digest,
+            full_node_mismatch_job_id: self.ocomp_full_node_mismatch_job_id,
+            full_node_mismatch_evidence_files: self.ocomp_full_node_mismatch_evidence_files.clone(),
         }
     }
 }

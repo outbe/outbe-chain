@@ -13,8 +13,8 @@ use crate::{
     sharding::{aggregate_b256_shard_roots, shard_index},
     smt::{derive_tree_key, PoseidonSmt, TreeKey, TreeLeaf, TreeProof, TreeRoot},
     staging::{AuthenticatedCatalogView, StagingCkbStore},
-    CeDomain, CompressedTreeService, EntityId36, ExactParentIdentity, FinalizedMarker, StoredBody,
-    TreeNamespace, ACTIVE_COMMITMENT_SCHEME,
+    CeDomain, CompressedTreeService, ExactParentIdentity, FinalizedMarker, StoredBody,
+    TreeNamespace, WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
 };
 
 pub const PROOF_ENCODING_VERSION_V1: u32 = 1;
@@ -25,7 +25,7 @@ const MAX_CANONICAL_BODY_BYTES: usize = 8 * 1024 * 1024;
 pub struct PointReadRequestV1 {
     pub domain_id: u16,
     #[serde(with = "entity_id_hex")]
-    pub raw_id: EntityId36,
+    pub raw_id: WwdEntityId,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -36,7 +36,7 @@ pub struct PointProofCommonV1 {
     pub block_hash: B256,
     pub domain_id: u16,
     #[serde(with = "entity_id_hex")]
-    pub raw_id: EntityId36,
+    pub raw_id: WwdEntityId,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -196,7 +196,7 @@ impl CompressedTreeService {
     ) -> Result<PointReadResultV1, PointReadRequestError>
     where
         H: FnOnce(u64, B256) -> Option<SelectedHeaderV1>,
-        B: FnOnce(CeDomain, EntityId36) -> Option<Vec<u8>>,
+        B: FnOnce(CeDomain, WwdEntityId) -> Option<Vec<u8>>,
     {
         let domain = domain(request.domain_id)?;
         let frozen = match self.freeze_point_read(chain_id, request, domain) {
@@ -469,7 +469,7 @@ pub fn verify_point_read_v1(
 
 fn verify_collection(
     domain: CeDomain,
-    raw_id: EntityId36,
+    raw_id: WwdEntityId,
     collection: crate::CollectionKey,
     leaf: B256,
     evidence: &PresentEvidenceV1,
@@ -560,7 +560,7 @@ fn header_artifact(
 
 fn canonical_body_leaf(
     domain: CeDomain,
-    raw_id: EntityId36,
+    raw_id: WwdEntityId,
     bytes: &[u8],
 ) -> Result<B256, PointReadServiceError> {
     let stored = StoredBody::decode(bytes)
@@ -651,16 +651,16 @@ const fn collection_for_domain(domain: CeDomain) -> Collection {
 mod entity_id_hex {
     use serde::{de::Error as _, Deserialize, Deserializer, Serializer};
 
-    use crate::EntityId36;
+    use crate::WwdEntityId;
 
-    pub fn serialize<S>(value: &EntityId36, serializer: S) -> Result<S::Ok, S::Error>
+    pub fn serialize<S>(value: &WwdEntityId, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        serializer.serialize_str(&format!("0x{}", hex::encode(value.as_bytes())))
+        serializer.serialize_str(&format!("0x{}", hex::encode(value.as_slice())))
     }
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<EntityId36, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<WwdEntityId, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -669,7 +669,7 @@ mod entity_id_hex {
             .strip_prefix("0x")
             .ok_or_else(|| D::Error::custom("entity ID must have a 0x prefix"))?;
         let bytes = hex::decode(encoded).map_err(D::Error::custom)?;
-        EntityId36::try_from(bytes.as_slice()).map_err(D::Error::custom)
+        WwdEntityId::try_from(bytes.as_slice()).map_err(D::Error::custom)
     }
 }
 
@@ -766,7 +766,7 @@ mod tests {
         (directory, service, genesis_hash)
     }
 
-    fn bucket_body(last: u8) -> (EntityId36, Vec<u8>, crate::Commitment) {
+    fn bucket_body(last: u8) -> (WwdEntityId, Vec<u8>, crate::Commitment) {
         let body = NodBucketBodyV1 {
             bucket_key: B256::repeat_byte(last),
             worldwide_day: WorldwideDay::new(20_260_717),
@@ -788,7 +788,7 @@ mod tests {
         (id, stored.encode(), leaf)
     }
 
-    fn stored_body(id: EntityId36, payload: Vec<u8>) -> (Vec<u8>, crate::Commitment) {
+    fn stored_body(id: WwdEntityId, payload: Vec<u8>) -> (Vec<u8>, crate::Commitment) {
         let stored = StoredBody::new_v1(payload).unwrap();
         let leaf = body_commitment(
             ACTIVE_COMMITMENT_SCHEME,
@@ -1069,7 +1069,7 @@ mod tests {
         let _guard = proof_test_guard();
         let mut transport_hashes = Vec::new();
         let day = WorldwideDay::new(20_260_717);
-        let tribute_id = EntityId36::new(day, [0x31; 32]);
+        let tribute_id = WwdEntityId::from_day_and_digest(day, [0x31; 32]);
         let tribute = TributeBodyV1 {
             tribute_id,
             owner: Address::repeat_byte(0x41),
@@ -1081,7 +1081,7 @@ mod tests {
             tribute_price_minor: U256::from(12),
             exclude_from_intex_issuance: false,
         };
-        let nod_id = EntityId36::new(day, [0x32; 32]);
+        let nod_id = WwdEntityId::from_day_and_digest(day, [0x32; 32]);
         let nod = NodItemBodyV1 {
             nod_id,
             owner: Address::repeat_byte(0x42),
@@ -1150,7 +1150,7 @@ mod tests {
                 package
             );
 
-            let missing_id = EntityId36::new(id.worldwide_day(), [0x99; 32]);
+            let missing_id = WwdEntityId::from_day_and_digest(id.worldwide_day(), [0x99; 32]);
             let missing_request = PointReadRequestV1 {
                 domain_id: domain.id(),
                 raw_id: missing_id,
@@ -1209,31 +1209,31 @@ mod tests {
             transport_hashes,
             [
                 alloy_primitives::b256!(
-                    "249abe3c136ca2ebe2f70cf47b8081d0eeb6e2cfab9e3ffc9ed687463014d284"
+                    "122835a3da15ee4370013c6f90edcaa3bbaa636530d341b6d605d5a68ec889c6"
                 ),
                 alloy_primitives::b256!(
-                    "2039cb5ccd6794936d1eb126690435d05f1954fab64de0165ca2d674bd61d317"
+                    "157bbc65cbc812a2d6d3c376f666f245721d40f10abb844589c32b4ffe1886da"
                 ),
                 alloy_primitives::b256!(
-                    "2ac12ebe881cd29c53653daa4d837398235b2bbe8b9beba468a6beae229e3569"
+                    "a975d4736ef74939d9eca29e329d6ab1aa2aad157cc971d6315e3dc1bdf5fe9b"
                 ),
                 alloy_primitives::b256!(
-                    "c1fabc53b0cfe2f68936ea7888f2a0e45dd83cc1acb9fa930a44f209ddb4b3c7"
+                    "3d60818e4678f87ee55d08cb90aeaa516c7f6f8337f8958611380351530cf0c6"
                 ),
                 alloy_primitives::b256!(
-                    "f4e03453bd746ba474099373fca221b41cfd87f84c644dabc1438d8a234ec274"
+                    "626c8169b55c634a03fcd7abb71b5ec97d386b8cdc4b1fe6f4fa6a8dd2b18a36"
                 ),
                 alloy_primitives::b256!(
-                    "6ee7794258ab3871f1ce5a35eb8fb097d9354268ca00c0b1d4c92e1ec02e7935"
+                    "d4382908cd4da41da05e5df6cbe86c130c0609e7818077c7d38184b87d127748"
                 ),
                 alloy_primitives::b256!(
-                    "4b6f6412eb82bdbe53b79b1655a4c439a0ba5fcfcf77e0d46f1deb2e147b0768"
+                    "3a24b33f4a1b870ffaf9bff3aab2824df6982dcb96eced6dbc9dfdc35db740d9"
                 ),
                 alloy_primitives::b256!(
-                    "ba91d721be365a1df5277ca6f0c900bde30583283808a032df5100b1368e8c4f"
+                    "c20d4efc5ab9a3ceb5ecefe77fc9b4a581c4d84e810e0ca617e75acace9ae2d9"
                 ),
                 alloy_primitives::b256!(
-                    "b18365a42684056c32976e0eff1458f25534e3e425b79176693b4d9687b0d229"
+                    "c401b4fc8759510f0def36b6a90258d98bb4317347ecc84395a776fd5968b18f"
                 ),
             ],
             "exact present/entity-absent/collection-absent JSON transports for all domains"
@@ -1243,7 +1243,7 @@ mod tests {
     #[test]
     fn json_request_and_decoder_bounds_are_pinned() {
         let _guard = proof_test_guard();
-        let id = EntityId36::new(WorldwideDay::new(20_260_717), [0x55; 32]);
+        let id = WwdEntityId::from_day_and_digest(WorldwideDay::new(20_260_717), [0x55; 32]);
         let request = PointReadRequestV1 {
             domain_id: 2,
             raw_id: id,
@@ -1252,7 +1252,7 @@ mod tests {
             serde_json::to_string(&request).unwrap(),
             format!(
                 "{{\"domain_id\":2,\"raw_id\":\"0x{}\"}}",
-                hex::encode(id.as_bytes())
+                hex::encode(id.as_slice())
             )
         );
         assert_eq!(
@@ -1279,7 +1279,7 @@ mod tests {
                     "block_number": 1,
                     "block_hash": B256::ZERO,
                     "domain_id": 2,
-                    "raw_id": format!("0x{}", hex::encode(id.as_bytes()))
+                    "raw_id": format!("0x{}", hex::encode(id.as_slice()))
                 },
                 "body_bytes": format!("0x{}", "00".repeat(MAX_CANONICAL_BODY_BYTES + 1)),
                 "evidence": {
@@ -1313,7 +1313,7 @@ mod tests {
         assert!(verify_point_read_v1(7, request, &header, &wrong_chain).is_err());
         let mut wrong_identity = package.clone();
         if let PointReadResultV1::Present { common, .. } = &mut wrong_identity {
-            common.raw_id = EntityId36::new(id.worldwide_day(), [0x77; 32]);
+            common.raw_id = WwdEntityId::from_day_and_digest(id.worldwide_day(), [0x77; 32]);
         }
         assert!(verify_point_read_v1(7, request, &header, &wrong_identity).is_err());
         let mut wrong_body = package.clone();
@@ -1605,7 +1605,7 @@ mod tests {
         let _guard = proof_test_guard();
         let (_dir, service, genesis_hash) = service();
         let day = WorldwideDay::new(20_260_717);
-        let id = EntityId36::new(day, [0x71; 32]);
+        let id = WwdEntityId::from_day_and_digest(day, [0x71; 32]);
         let tribute = TributeBodyV1 {
             tribute_id: id,
             owner: Address::repeat_byte(0x72),

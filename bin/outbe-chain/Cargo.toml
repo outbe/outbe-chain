@@ -10,7 +10,10 @@ build = "build.rs"
 default = []
 test-marshal-drop = ["outbe-consensus/test-marshal-drop"]
 e2e-test = ["outbe-evm/e2e-test"]
-test-protocol-overrides = ["outbe-chain-constants/test-protocol-overrides"]
+test-protocol-overrides = [
+    "outbe-chain-constants/test-protocol-overrides",
+    "outbe-ocomp/test-protocol-overrides",
+]
 
 [[bin]]
 name = "outbe-chain"
@@ -29,8 +32,10 @@ outbe-engine.workspace = true
 outbe-metadosis.workspace = true
 outbe-nod.workspace = true
 outbe-primitives.workspace = true
+outbe-radicle.workspace = true
 outbe-operator.workspace = true
 outbe-tee.workspace = true
+outbe-txpool.workspace = true
 outbe-validatorset.workspace = true
 outbe-zkproof.workspace = true
 

@@ -52,7 +52,9 @@ fn encrypt_offer(
         tribute_currency: 840,
         reference_currency: 840,
         exclude_from_intex_issuance: false,
-        tribute_price_minor: price,
+        issuance_wwd_vwap_minor: price,
+        reference_wwd_vwap_minor: price,
+        reference_scurve_minor: U256::ZERO,
         zk_context: None,
     }
 }

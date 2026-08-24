@@ -98,7 +98,7 @@ contract IntexNFT1155MetadataTest is Test {
         vm.prank(bridger);
         token.markQualified(SERIES_ID);
         vm.prank(bridger);
-        token.markCalled(SERIES_ID);
+        token.markCalled(SERIES_ID, uint32(block.timestamp));
         uint256 calledAt = block.timestamp;
 
         bytes memory json = _json(iTok);
@@ -129,7 +129,7 @@ contract IntexNFT1155MetadataTest is Test {
         vm.prank(bridger);
         token.markQualified(SERIES_ID);
         vm.prank(bridger);
-        token.markCalled(SERIES_ID);
+        token.markCalled(SERIES_ID, uint32(block.timestamp));
         uint256 deadline = block.timestamp + CALL_PERIOD;
 
         vm.warp(deadline);

@@ -11,7 +11,7 @@ use outbe_sparse_merkle_tree_v061::{
 };
 
 use super::*;
-use crate::{schema::Collection, EntityId36, TAG_SMT_BASE, TAG_SMT_NORMAL, TAG_SMT_ZERO};
+use crate::{schema::Collection, WwdEntityId, TAG_SMT_BASE, TAG_SMT_NORMAL, TAG_SMT_ZERO};
 
 fn field_word(value: u64) -> [u8; 32] {
     let mut bytes = [0_u8; 32];
@@ -259,8 +259,8 @@ fn ckb_h256_uses_exact_bytes_little_bit_paths_and_reversed_byte_order() {
 
 #[test]
 fn tree_key_binds_collection_and_preserves_be32_without_reversal() {
-    let identity = EntityId36::try_from(
-        hex::decode("00000001000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+    let identity = WwdEntityId::try_from(
+        hex::decode("000000010405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
             .unwrap()
             .as_slice(),
     )

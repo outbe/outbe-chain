@@ -1,6 +1,6 @@
 //! Validator management commands.
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use alloy_sol_types::SolCall;
 use clap::{Subcommand, ValueEnum};
 use eyre::{ensure, Result, WrapErr as _};
@@ -38,6 +38,9 @@ pub enum ValidatorCmd {
         /// BLS consensus public key (hex)
         #[arg(long)]
         pubkey: String,
+        /// Radicle Ed25519 NodeId as 32-byte hex.
+        #[arg(long)]
+        radicle_node_id: B256,
         /// BLS registration signature (hex)
         #[arg(long)]
         bls_sig: String,
@@ -110,9 +113,11 @@ impl ValidatorCmd {
             } => list(client, active_only, status, sort).await,
             Self::Info { address } => info(client, address).await,
             Self::Participation => participation(client).await,
-            Self::Register { pubkey, bls_sig } => {
-                register(client, private_key, pubkey, bls_sig).await
-            }
+            Self::Register {
+                pubkey,
+                radicle_node_id,
+                bls_sig,
+            } => register(client, private_key, pubkey, radicle_node_id, bls_sig).await,
             Self::Deactivate => deactivate(client, private_key).await,
             Self::ConfirmReady { registration } => {
                 confirm_ready(client, private_key, registration).await
@@ -298,6 +303,7 @@ async fn register(
     client: &(impl Rpc + Sync),
     private_key: Option<&str>,
     pubkey: String,
+    radicle_node_id: B256,
     bls_sig: String,
 ) -> Result<()> {
     let signer = super::require_signer(private_key)?;
@@ -307,7 +313,8 @@ async fn register(
     let call = IValidatorSet::registerValidatorCall {
         validatorAddress: signer.address(),
         consensusPubkey: pubkey_bytes.into(),
-        blsSignature: sig_bytes.into(),
+        radicleNodeId: radicle_node_id,
+        blsRegistrationSignature: sig_bytes.into(),
     };
 
     let tx_hash = signer
@@ -765,10 +772,12 @@ mod tests {
         let signer = TxSigner::new(TEST_KEY).unwrap();
         let pubkey = vec![0xaa, 0xbb, 0xcc];
         let bls_sig = vec![0x11, 0x22, 0x33];
+        let radicle_node_id = B256::repeat_byte(0x44);
         let data = IValidatorSet::registerValidatorCall {
             validatorAddress: signer.address(),
             consensusPubkey: pubkey.clone().into(),
-            blsSignature: bls_sig.clone().into(),
+            radicleNodeId: radicle_node_id,
+            blsRegistrationSignature: bls_sig.clone().into(),
         }
         .abi_encode();
         let mock =
@@ -778,6 +787,7 @@ mod tests {
             &mock,
             Some(TEST_KEY),
             "0xaabbcc".to_string(),
+            radicle_node_id,
             "0x112233".to_string(),
         )
         .await
@@ -793,6 +803,7 @@ mod tests {
             &mock,
             Some(TEST_KEY),
             "not_hex".to_string(),
+            B256::repeat_byte(0x44),
             "0x112233".to_string(),
         )
         .await
@@ -811,9 +822,15 @@ mod tests {
     async fn test_register_no_private_key_errors_before_rpc() {
         let mock =
             recording_send_tx_rpc(TEST_KEY, abi::VALIDATOR_SET_ADDR, vec![], U256::ZERO).unwrap();
-        let err = register(&mock, None, "0xaabbcc".to_string(), "0x112233".to_string())
-            .await
-            .unwrap_err();
+        let err = register(
+            &mock,
+            None,
+            "0xaabbcc".to_string(),
+            B256::repeat_byte(0x44),
+            "0x112233".to_string(),
+        )
+        .await
+        .unwrap_err();
         assert!(
             err.to_string().contains("--private-key required"),
             "expected private-key error, got: {err}"

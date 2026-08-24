@@ -15,6 +15,12 @@
 
 use outbe_tee_enclave::run::{run, RunOpts};
 
+/// Same heap accounting as the production binary so mock-lane e2e observes the
+/// identical `Health` surface.
+#[global_allocator]
+static ALLOCATOR: outbe_tee_enclave::telemetry::CountingAllocator =
+    outbe_tee_enclave::telemetry::CountingAllocator;
+
 fn main() {
     std::process::exit(run(RunOpts::mock()));
 }

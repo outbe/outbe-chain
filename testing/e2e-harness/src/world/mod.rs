@@ -13,6 +13,7 @@ pub mod localnet;
 pub mod mongodb;
 pub mod ocomp;
 pub mod origin_venue;
+pub mod price_oracle;
 pub mod rpc;
 pub mod state;
 pub mod target_chain;
@@ -25,6 +26,7 @@ use crate::ocomp_capacity::OcompCapacityResourceMeterV1;
 use localnet::Localnet;
 use mongodb::MongoDb;
 use ocomp::OcompTopology;
+use price_oracle::PriceOracleTopology;
 use rpc::Rpc;
 use state::FixtureState;
 use std::time::Instant;
@@ -50,6 +52,8 @@ pub struct World {
     /// One isolated OCOMP domain per active validator. Processes are owned here
     /// so dropping a scenario cannot orphan compute work.
     pub ocomp: OcompTopology,
+    /// Harness-owned price source and the real feeder process that consumes it.
+    pub price_oracle: PriceOracleTopology,
     /// Present only when the Rust capacity runner explicitly starts this
     /// scenario inside its dedicated cold-run cgroup.
     pub(crate) capacity_meter: Option<OcompCapacityResourceMeterV1>,
@@ -83,7 +87,8 @@ impl Default for World {
             mongodb,
             rpc: Rpc::new(cfg.clone()),
             validators: Validators::new(cfg.clone(), env.validators),
-            ocomp: OcompTopology::new(cfg),
+            ocomp: OcompTopology::new(cfg.clone()),
+            price_oracle: PriceOracleTopology::new(cfg),
             capacity_meter,
             target_chain,
             state: FixtureState::default(),

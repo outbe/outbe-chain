@@ -2279,6 +2279,8 @@ fn build_ocomp_e2e_binaries(repository_root: &Path) -> Result<()> {
             "outbe-keygen",
             "--bin",
             "outbe-keygen",
+            "--features",
+            "outbe-chain/test-protocol-overrides",
         ],
     )?;
     cargo(repository_root, OCOMP_E2E_HARNESS_BUILD_ARGS)?;
@@ -2522,6 +2524,7 @@ fn exact_scenario_arguments(
         "--no-resolve-ports".to_owned(),
         "--tee".to_owned(),
         tee_mode.to_owned(),
+        "--sudo".to_owned(),
         "--all".to_owned(),
         "--repo".to_owned(),
         path_str(repository_root)?.to_owned(),
@@ -2700,6 +2703,7 @@ mod tests {
             .windows(2)
             .any(|pair| { pair == ["--enclave-bin", "/artifact-set/outbe-tee-enclave",] }));
         assert!(!arguments.iter().any(|argument| argument == "--mock-bin"));
+        assert!(arguments.iter().any(|argument| argument == "--sudo"));
         assert!(!arguments.iter().any(|argument| argument == "--no-sudo"));
     }
 
@@ -2720,6 +2724,7 @@ mod tests {
             .windows(2)
             .any(|pair| { pair == ["--enclave-bin", "/artifact-set/outbe-tee-enclave",] }));
         assert!(!arguments.iter().any(|argument| argument == "--mock-bin"));
+        assert!(arguments.iter().any(|argument| argument == "--sudo"));
         assert!(!arguments.iter().any(|argument| argument == "--no-sudo"));
     }
 

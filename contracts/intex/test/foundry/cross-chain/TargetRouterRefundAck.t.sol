@@ -53,7 +53,7 @@ contract TargetRouterRefundAckTest is CrossChainTest {
         _setUpBridge();
         target = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
         escrow = new ClosableEscrowAdapter(IERC20(address(new MockWCOEN())));
-        target.wire(makeAddr("auction"), makeAddr("intex"), address(escrow), makeAddr("nftBridge"));
+        target.wire(makeAddr("auction"), makeAddr("intex"), address(escrow));
         target.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
     }
 

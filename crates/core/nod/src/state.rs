@@ -1,7 +1,8 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
-    delete, derive_poseidon_entity_id, list, mint, read, update, BodyInput, EntityId36, EntityRef,
-    ExecutionScope, IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, MAX_ID_PAGE_LIMIT,
+    delete, derive_poseidon_entity_id, list, mint, read, update, BodyInput, EntityRef,
+    ExecutionScope, IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, WwdEntityId,
+    MAX_ID_PAGE_LIMIT,
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::math::{
@@ -19,19 +20,18 @@ use crate::{
 impl NodContract<'_> {
     // --- ID helpers ---
 
-    pub fn format_nod_id(nod_id: EntityId36) -> String {
+    pub fn format_nod_id(nod_id: WwdEntityId) -> String {
         nod_id.to_string()
     }
 
-    pub fn parse_nod_id(nod_id: &str) -> Result<EntityId36> {
+    pub fn parse_nod_id(nod_id: &str) -> Result<WwdEntityId> {
         let trimmed = nod_id.strip_prefix("0x").unwrap_or(nod_id);
-        if trimmed.len() != EntityId36::LEN * 2 {
+        if trimmed.len() != WwdEntityId::len_bytes() * 2 {
             return Err(NodError::InvalidNodIdLength.into());
         }
-        let mut buf = [0u8; EntityId36::LEN];
-        hex::decode_to_slice(trimmed, &mut buf).map_err(|_| NodError::InvalidNodIdHex)?;
-        EntityId36::try_from(buf.as_slice())
-            .map_err(|error| outbe_primitives::error::PrecompileError::Revert(error.to_string()))
+        trimmed
+            .parse::<WwdEntityId>()
+            .map_err(|_| NodError::InvalidNodIdHex.into())
     }
 
     // --- View functions ---
@@ -44,7 +44,7 @@ impl NodContract<'_> {
         &self,
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
-        nod_id: EntityId36,
+        nod_id: WwdEntityId,
     ) -> Result<Option<VerifiedBody>> {
         read(
             self.storage_handle(),
@@ -58,7 +58,7 @@ impl NodContract<'_> {
         &self,
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
-        bucket_id: EntityId36,
+        bucket_id: WwdEntityId,
     ) -> Result<Option<VerifiedBody>> {
         read(
             self.storage_handle(),
@@ -140,7 +140,7 @@ impl NodContract<'_> {
             ));
         }
 
-        let bucket_id = EntityId36::new(item.worldwide_day, item.bucket_key.0);
+        let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
         let current_bucket = self.get_bucket_verified(scope, parent, bucket_id)?;
         let final_bucket = match current_bucket.as_ref() {
             Some(current) => {
@@ -228,7 +228,7 @@ impl NodContract<'_> {
     ) -> Result<()> {
         let (item, current_item) = item.into_parts();
         let (mut bucket, current_bucket) = bucket.into_parts();
-        let bucket_id = EntityId36::new(item.worldwide_day, item.bucket_key.0);
+        let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
         if current_bucket.entity_id() != bucket_id {
             return Err(
                 outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(

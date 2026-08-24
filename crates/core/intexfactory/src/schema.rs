@@ -141,9 +141,8 @@ pub struct IntexFactoryContract {
     pub notify_head: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 28)]
     pub notify_tail: outbe_primitives::storage::dsl::Value<u32>,
-    /// Queue index -> `scoped(iso, day)` for a Qualified group, or the series word
-    /// for a Called one: a called group leaves the index, so its notice carries the
-    /// series itself while a qualified one is still readable from the index.
+    /// Queue index -> `scoped(iso, day)` for a Qualified group, or the series word packed with its
+    /// call time for a Called one: a called group has left the index, so its notice carries its own.
     #[attribute(order = 29)]
     pub notify_at: outbe_primitives::storage::dsl::Map<u32, U256>,
     /// Queue index -> which mark the notice carries; see `NOTICE_QUALIFIED`.

@@ -121,6 +121,35 @@ keeps block validity independent. Making txpool admission consensus-authoritativ
 was rejected because nodes observe different arrival/state snapshots. Giving every
 gasless hook high priority was rejected; priority is an explicit scarce policy.
 
+
+## Amendment 2026-08-22: pending staleness eviction and lifetime hardening
+
+Context: three transactions that could not finalize stayed in validator pools
+for 3.5 hours, were re-selected by every payload build, and were re-injected by
+the reorg path after each abandoned proposal, holding block time at ~36 s
+(`outbe-plan/txpool_stuck_tx_livelock_22-08-2026.md`).
+
+Decisions:
+
+1. **Bound pending residency.** `outbe-txpool` runs its own maintenance loop on
+   the canonical-state stream and evicts any transaction present in two
+   consecutive pending snapshots taken at most once per
+   `--txpool.outbe.pending-staleness-secs` of canonical block time. Descendants
+   are removed with it. Effective pending lifetime: one to two intervals.
+2. **Harden lifetime defaults.** Parked lifetime 3 h → 120 s; RPC submissions
+   lose the local-transaction eviction exemption; the transactions backup
+   journal is disabled so a restart cannot resurrect evicted transactions.
+   Installed as CLI defaults, so operator flags still override them.
+3. **No consensus coupling.** The consensus layer does not signal the pool and
+   does not read it. Eviction is node-local: block validity is unchanged
+   (payload content is proposer-discretionary), and pool membership was never a
+   consensus input.
+4. **No silent drops.** Every eviction emits a structured log line with tx hash,
+   sender, nonce and reason, plus `outbe_txpool_stale_evicted_total`.
+
+This resolves the "eviction" and "local exemptions" parts of the open question
+below; count/byte limits, replacement bump and blob persistence remain open.
+
 ## Open questions and technical debt
 
 - Add a production provider-backed test proving every inner-validator `Valid`

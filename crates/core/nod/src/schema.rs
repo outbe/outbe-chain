@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::{derive_poseidon_entity_id, EntityId36};
+use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_ocomp_protocol::nod_materialization::NodMaterializationHeadV1;
 use outbe_primitives::addresses::NOD_ADDRESS;
@@ -32,7 +32,7 @@ pub struct NodIssueParams {
 #[storage_record(exists_field = owner)]
 pub struct NodItemState {
     #[key]
-    pub nod_id: EntityId36,
+    pub nod_id: WwdEntityId,
 
     #[attribute(order = 0)]
     pub owner: Address,
@@ -317,7 +317,7 @@ impl<'storage> NodContract<'storage> {
     pub fn generate_nod_id(
         owner: Address,
         worldwide_day: WorldwideDay,
-    ) -> outbe_primitives::error::Result<EntityId36> {
+    ) -> outbe_primitives::error::Result<WwdEntityId> {
         derive_poseidon_entity_id(owner, worldwide_day)
             .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))
     }

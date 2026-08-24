@@ -30,11 +30,7 @@ pub fn compute_pow_hash(id: U256, nonce: U256) -> Result<[u8; 32], PowError> {
     compute_pow_hash_bytes(&id.to_be_bytes::<32>(), nonce)
 }
 
-/// SHA256 over `ascii(hex(id_bytes)) || nonce.to_be_bytes::<8>()`.
-///
-/// This is the canonical variant for fixed-width identifiers that are not
-/// representable as a `U256`, including ADR-006 `EntityId36` values.
-pub fn compute_pow_hash_bytes(id: &[u8], nonce: U256) -> Result<[u8; 32], PowError> {
+fn compute_pow_hash_bytes(id: &[u8], nonce: U256) -> Result<[u8; 32], PowError> {
     if nonce > U256::from(u64::MAX) {
         return Err(PowError::NonceExceedsUint64Range);
     }
@@ -55,8 +51,7 @@ pub fn validate_pow(id: U256, nonce: U256) -> Result<(), PowError> {
     validate_pow_bytes(&id.to_be_bytes::<32>(), nonce)
 }
 
-/// Validates PoW for an exact fixed-width identity byte string.
-pub fn validate_pow_bytes(id: &[u8], nonce: U256) -> Result<(), PowError> {
+fn validate_pow_bytes(id: &[u8], nonce: U256) -> Result<(), PowError> {
     let hash = compute_pow_hash_bytes(id, nonce)?;
     for byte in &hash[..POW_DIFFICULTY] {
         if *byte != 0 {

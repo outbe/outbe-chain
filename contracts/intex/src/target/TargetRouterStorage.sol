@@ -5,23 +5,11 @@ import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../shared/interfaces/IIntexNFT1155.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
 import {IERC7786TokenBridge} from "./interfaces/IERC7786TokenBridge.sol";
-import {IIntexNFT1155Bridge} from "../shared/interfaces/IIntexNFT1155Bridge.sol";
 
 /// @notice A bids relay parked because its outbound send reverted (e.g. relay float too low); retried via
 ///         `flushPendingBidsRelay`. Bids stay in auction state, so only the worldwideDay is snapshotted.
 struct PendingBidsRelay {
     uint32 worldwideDay;
-    bool exists;
-    bool done;
-}
-
-/// @notice A holders bridge chunk parked because `systemMultiSend` reverted; retried via
-///         `flushPendingHoldersRelay`. markCalled does not change balances, so the snapshot stays the canonical
-///         work. Holders migrate in `MAX_BATCH_SIZE` chunks, so each parked entry is one such chunk.
-struct PendingHoldersRelay {
-    uint256 tokenId;
-    address[] holders;
-    uint256[] amounts;
     bool exists;
     bool done;
 }
@@ -44,8 +32,6 @@ struct TargetRouterStorage {
     IIntexNFT1155 intex;
     /// @dev EscrowAdapter contract that refund instructions are forwarded to for finalization.
     IEscrowAdapter escrowAdapter;
-    /// @dev IntexNFT1155Bridge used to bridge series holders to Outbe on markCalled.
-    IIntexNFT1155Bridge nftBridge;
     /// @dev Parked BIDS_BATCH relays awaiting permissionless retry, keyed by enqueue index.
     mapping(uint256 idx => PendingBidsRelay) pendingBidsRelays;
     /// @dev Next index to assign in `pendingBidsRelays`; also the count of relays ever enqueued.
@@ -54,10 +40,6 @@ struct TargetRouterStorage {
     ///      replaces a lower generation's bids when a higher one arrives, so re-flushing a parked
     ///      relay cannot double-count demand.
     mapping(uint32 worldwideDay => uint32 generation) bidsRelayGeneration;
-    /// @dev Parked holders bridges awaiting permissionless retry, keyed by enqueue index.
-    mapping(uint256 idx => PendingHoldersRelay) pendingHoldersRelays;
-    /// @dev Next index to assign in `pendingHoldersRelays`; also the count of bridges ever enqueued.
-    uint256 nextPendingHoldersRelayIdx;
     /// @dev Parked issuance mints awaiting permissionless retry, keyed by enqueue index.
     mapping(uint256 idx => PendingIssuanceMint) pendingIssuanceMints;
     /// @dev Next index to assign in `pendingIssuanceMints`; also the count ever enqueued.
@@ -88,6 +70,9 @@ struct TargetRouterStorage {
     /// @dev Lifecycle mark waiting for its series to land here (codec msgType, 0 = none); Called overrides
     ///      Qualified. Applied when ISSUANCE creates the series, or via `applyPendingMark`.
     mapping(bytes14 seriesId => uint8 msgType) pendingMark;
+    /// @dev The origin's call time for a waiting Called mark, so a slot applied later still derives the
+    ///      deadline settlement honours rather than one from its own arrival.
+    mapping(bytes14 seriesId => uint32 calledAt) pendingMarkCalledAt;
     /// @dev Winners already issued their allocation of a series; a repeated instruction for the pair is ignored.
     mapping(bytes14 seriesId => mapping(address recipient => bool issued)) issued;
     /// @dev How many issuance chunks the day's run spans on this chain, as the first applied chunk declared.

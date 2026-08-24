@@ -85,14 +85,6 @@ interface ITargetRouter {
     /// @param worldwideDay Worldwide day (yyyymmdd) whose bids were forwarded.
     event BidsRelayFlushed(uint256 indexed idx, uint32 indexed worldwideDay);
 
-    /// @notice Emitted when the outbound holders bridge from `_handleMarkCalled` reverts and the
-    ///         holders+amounts snapshot is parked for later retry via `flushPendingHoldersRelay`.
-    /// @param idx Index of the parked relay slot.
-    /// @param tokenId Token id whose holders could not be bridged.
-    /// @param holdersCount Number of holders in the deferred snapshot.
-    /// @param reason Raw revert bytes from the failed `systemMultiSend`.
-    event HoldersRelayDeferred(uint256 indexed idx, uint256 indexed tokenId, uint256 holdersCount, bytes reason);
-
     /// @notice Emitted when finalized auction proceeds are routed cross-chain to the OriginRouter.
     event ProceedsRouted(uint32 indexed worldwideDay, uint256 amount);
     /// @notice Emitted when proceeds routing failed and the amount was parked for retry.
@@ -101,11 +93,6 @@ interface ITargetRouter {
     event ProceedsRouteFlushed(uint256 indexed idx, uint32 indexed worldwideDay);
     /// @notice Emitted when the proceeds route (token bridge + OriginRouter) is set.
     event ProceedsRouteSet(address tokenBridge, address originRouter);
-
-    /// @notice Emitted when `flushPendingHoldersRelay` successfully bridges a previously deferred snapshot.
-    /// @param idx Index of the parked relay slot that was flushed.
-    /// @param tokenId Token id whose holders were bridged.
-    event HoldersRelayFlushed(uint256 indexed idx, uint256 indexed tokenId);
 
     /// @notice Emitted when an issuance mint is parked after a recipient's ERC-1155 hook reverts.
     event IssuanceMintDeferred(uint256 indexed idx, bytes14 indexed seriesId, address indexed recipient, bytes reason);
@@ -142,9 +129,6 @@ interface ITargetRouter {
     error NotSelf();
     /// @notice `flushPendingBidsRelay` called for an index that was never enqueued.
     error NoSuchPendingBidsRelay(uint256 idx);
-    /// @notice `flushPendingHoldersRelay` called for an index that was never enqueued.
-    error NoSuchPendingHoldersRelay(uint256 idx);
-
     /// @notice No parked proceeds route at `idx`.
     error NoSuchPendingProceedsRoute(uint256 idx);
     /// @notice `flushPendingIssuanceMint` called for an index that was never enqueued.
@@ -159,8 +143,7 @@ interface ITargetRouter {
     /// @param auction Auction contract address.
     /// @param intex IntexNFT1155 contract address.
     /// @param escrowAdapter EscrowAdapter contract address.
-    /// @param nftBridge IntexNFT1155Bridge address (for system bridge on markCalled).
-    function wire(address auction, address intex, address escrowAdapter, address nftBridge) external;
+    function wire(address auction, address intex, address escrowAdapter) external;
 
     /// @notice Register (or clear) the matching messenger on `chainId` as an ERC-7930 interoperable address.
     /// @param chainId Destination/source chainId.

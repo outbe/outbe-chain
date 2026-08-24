@@ -214,6 +214,7 @@ fn register_self(world: &World, identity: &RegistrationIdentity) -> TxOutcome {
             identity.evm_key(),
             identity.address(),
             identity.bls_public_key(),
+            identity.radicle_node_id(),
             identity.registration_signature(),
         )
         .expect("submit self-registration transaction")
@@ -405,6 +406,7 @@ fn owner_submits_empty_proof_registration(world: &mut World) {
             &owner_key,
             identity.address(),
             identity.bls_public_key(),
+            identity.radicle_node_id(),
             &[],
         )
         .expect("submit owner registration without PoP");
@@ -791,14 +793,14 @@ fn validator_completes_cleanup_and_reregistration(world: &mut World) {
 
     // Generate the replacement key while the old identity is still live. Only
     // the EOA is inherited; the BLS key and PoP are freshly generated.
-    let eoa_source = RegistrationIdentity::new(
-        address,
-        key.clone(),
-        String::new(),
-        Bytes::new(),
-        Bytes::new(),
-        String::new(),
-    );
+    let node_id = world
+        .rpc
+        .validator_radicle_node_id(primary, &address_string(address))
+        .expect("registered validator Radicle NodeId");
+    let eoa_source = world
+        .localnet
+        .installed_registration_eoa_source(index, address, key.clone(), node_id)
+        .expect("load installed EOA and Radicle identity");
     let replacement = world
         .localnet
         .rotate_registration_bls(index + 16, &eoa_source)
@@ -883,6 +885,7 @@ fn validator_completes_cleanup_and_reregistration(world: &mut World) {
             &key,
             address,
             replacement.bls_public_key(),
+            replacement.radicle_node_id(),
             replacement.registration_signature(),
         )
         .expect("submit claim followed by same-EOA re-registration");
@@ -1000,6 +1003,7 @@ fn rejected_registration_variants_are_attempted(world: &mut World) {
             first.evm_key(),
             first.address(),
             first.bls_public_key(),
+            first.radicle_node_id(),
             &[0; 96],
         )
         .expect("submit invalid-PoP registration");

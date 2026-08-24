@@ -1160,7 +1160,7 @@ fn begin_activation_scope(provider: &mut HashMapStorageProvider) -> ExecutionSco
     );
     StorageHandle::enter(provider, |storage| {
         storage
-            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
             .unwrap();
         storage
             .sstore(

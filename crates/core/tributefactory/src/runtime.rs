@@ -2,7 +2,7 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    derive_poseidon_entity_id, EntityId36, ExecutionScope, ParentBodySource,
+    derive_poseidon_digest, ExecutionScope, ParentBodySource, WwdEntityId,
 };
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::stablecoin::iso_4217_alpha;
@@ -41,7 +41,7 @@ impl TributeFactoryContract<'_> {
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
         input: OfferTributeInput,
-    ) -> Result<EntityId36> {
+    ) -> Result<WwdEntityId> {
         let OfferTributeInput {
             caller,
             cipher_text,
@@ -122,15 +122,16 @@ impl TributeFactoryContract<'_> {
 
         // Priced against the tribute's own day, not whichever day happens to be
         // first in the OFFERING list.
-        let tribute_price_minor = outbe_oracle::api::coen_pair_price(
+        let pricing = outbe_oracle::api::tribute_pricing_inputs(
             self.storage.clone(),
             tribute_currency,
+            reference_currency,
             worldwide_day,
         )?
         .ok_or(TributeFactoryError::IssuanceCurrencyNotRegistered {
             issuance_currency: tribute_currency,
         })?;
-        if tribute_price_minor.is_zero() {
+        if pricing.issuance_wwd_vwap_minor.is_zero() || pricing.reference_wwd_vwap_minor.is_zero() {
             return Err(TributeFactoryError::NominalPriceUnavailable { worldwide_day }.into());
         }
 
@@ -142,7 +143,7 @@ impl TributeFactoryContract<'_> {
             None => None,
         };
 
-        // Hand the encrypted offer + its resolved price to the enclave. It
+        // Hand the encrypted offer + exact public Oracle inputs to the enclave. It
         // decrypts, computes economics (U256) + Poseidon token_id, and returns
         // only those. The host does not recompute private economics, but it can
         // and must verify the public owner/day identity recipe.
@@ -155,15 +156,18 @@ impl TributeFactoryContract<'_> {
             tribute_currency,
             reference_currency,
             exclude_from_intex_issuance,
-            tribute_price_minor,
+            issuance_wwd_vwap_minor: pricing.issuance_wwd_vwap_minor,
+            reference_wwd_vwap_minor: pricing.reference_wwd_vwap_minor,
+            reference_scurve_minor: pricing.reference_scurve_minor,
             zk_context,
         };
-        let results = crate::enclave_offer::process_tribute_offer_batch_via_enclave(&[offer])
-            .map_err(|e| TributeFactoryError::DecryptionFailed(e.to_string()))?;
-        let result = results
-            .into_iter()
-            .next()
-            .ok_or_else(|| TributeFactoryError::DecryptionFailed("empty enclave result".into()))?;
+        // Node-local enclave faults (dead sidecar after the session's bounded
+        // reconnect+retry, non-determinism, bad attestation) are Fatal — see
+        // `enclave_offer` — never a deterministic revert.
+        let results = crate::enclave_offer::process_tribute_offer_batch_via_enclave(&[offer])?;
+        let result = results.into_iter().next().ok_or_else(|| {
+            PrecompileError::Fatal("enclave returned an empty tribute offer result".into())
+        })?;
 
         if let TributeOfferStatus::Rejected { reason } = &result.status {
             return Err(TributeFactoryError::EnclaveRejected(reason.clone()).into());
@@ -174,12 +178,15 @@ impl TributeFactoryContract<'_> {
 
         // Recomputed from this call's own inputs, so it checks the enclave's
         // Poseidon rather than the enclave's own consistency with itself.
-        let tribute_id = derive_poseidon_entity_id(caller, worldwide_day)
+        // The identity keeps only the digest tail, so the enclave's token id is
+        // checked against the whole digest rather than against the identity.
+        let expected_digest = derive_poseidon_digest(caller, worldwide_day)
             .map_err(|error| PrecompileError::Fatal(error.to_string()))?;
-        if result.owner != caller || result.token_id.0 != tribute_id.digest() {
+        if result.owner != caller || result.token_id != expected_digest {
             return Err(TributeFactoryError::InvalidCanonicalIdentity.into());
         }
 
+        let tribute_id = WwdEntityId::from_day_and_digest(worldwide_day, expected_digest);
         let tribute = TributeContract::new(self.storage.clone());
         if tribute.get_tribute(scope, parent, tribute_id)?.is_some() {
             return Err(TributeFactoryError::TributeAlreadyExists.into());
@@ -203,7 +210,7 @@ impl TributeFactoryContract<'_> {
                 nominal_amount_minor: result.nominal_amount_minor,
                 reference_currency,
                 exclude_from_intex_issuance,
-                tribute_price_minor,
+                tribute_price_minor: result.effective_reference_price_minor,
             },
         )?;
 

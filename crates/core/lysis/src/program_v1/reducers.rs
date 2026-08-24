@@ -1,7 +1,7 @@
 //! Streaming, Lysis-specific merge reducers for bounded shuffle chunks.
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_compressed_entities::EntityId36;
+use outbe_compressed_entities::WwdEntityId;
 
 use super::{
     phases::{BucketRecordV1, FinalizedContributorV1},
@@ -223,12 +223,12 @@ fn validate_merge_inputs<E>(
     Ok(())
 }
 
-fn owner_key(value: &FinalizedContributorV1) -> (Address, EntityId36) {
+fn owner_key(value: &FinalizedContributorV1) -> (Address, WwdEntityId) {
     (value.owner, value.source_tribute_id)
 }
 
 fn validate_owner_input(
-    previous: &mut Option<(Address, EntityId36)>,
+    previous: &mut Option<(Address, WwdEntityId)>,
     item: &FinalizedContributorV1,
 ) -> Result<(), ProgramErrorV1> {
     let key = owner_key(item);

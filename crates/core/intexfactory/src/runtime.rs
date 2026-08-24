@@ -8,6 +8,7 @@ use outbe_intex::{SeriesId, SERIES_ID_LEN};
 use outbe_primitives::addresses::{INTEX_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::units::NATIVE_TOKEN_DECIMALS;
 
 use outbe_intex::payout::ContributorLeafData;
 use outbe_intex::IntexState;
@@ -15,9 +16,8 @@ use outbe_vaultrouter::api::IVaultRouter;
 
 use crate::config;
 use crate::constants::{
-    DIST_CHUNK_LIMIT, FX_RATE_MAX_AGE_SECONDS, INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_MESSAGE,
-    MAX_SERIES_PER_MESSAGE, ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PRICE_RATE_DEN,
-    PROCEEDS_FANIN_TIMEOUT_SECS,
+    DIST_CHUNK_LIMIT, INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE,
+    ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -140,7 +140,7 @@ pub struct IssuanceLeg {
 }
 
 /// Pack a day's legs into per-chain messages, up to `MAX_SERIES_PER_MESSAGE` series and
-/// `MAX_RECIPIENTS_PER_MESSAGE` recipients each. A series with more winners spans several,
+/// `MAX_RECIPIENTS_PER_ISSUANCE` recipients each. A series with more winners spans several,
 /// which the receiver's create-if-absent makes safe.
 pub fn pack_issuance_messages(
     legs: Vec<IssuanceLeg>,
@@ -158,7 +158,7 @@ pub fn pack_issuance_messages(
                 Some((_, message))
                     if message.len() < MAX_SERIES_PER_MESSAGE
                         && recipient_count(message) + slice.recipients.len()
-                            <= MAX_RECIPIENTS_PER_MESSAGE =>
+                            <= MAX_RECIPIENTS_PER_ISSUANCE =>
                 {
                     message.push(slice);
                 }
@@ -222,13 +222,13 @@ fn recipient_count(message: &[IssuanceInstructionsParams]) -> usize {
 
 /// One series' instructions cut into pieces a message can carry; only the winners differ.
 fn split_recipients(payload: IssuanceInstructionsParams) -> Vec<IssuanceInstructionsParams> {
-    if payload.recipients.len() <= MAX_RECIPIENTS_PER_MESSAGE {
+    if payload.recipients.len() <= MAX_RECIPIENTS_PER_ISSUANCE {
         return vec![payload];
     }
     (0..payload.recipients.len())
-        .step_by(MAX_RECIPIENTS_PER_MESSAGE)
+        .step_by(MAX_RECIPIENTS_PER_ISSUANCE)
         .map(|start| {
-            let end = (start + MAX_RECIPIENTS_PER_MESSAGE).min(payload.recipients.len());
+            let end = (start + MAX_RECIPIENTS_PER_ISSUANCE).min(payload.recipients.len());
             IssuanceInstructionsParams {
                 recipients: payload.recipients[start..end].to_vec(),
                 quantities: payload.quantities[start..end].to_vec(),
@@ -273,57 +273,32 @@ pub fn marked_up(entry_price: U256, rate: u16) -> Result<U256> {
         .ok_or_else(|| PrecompileError::Revert("marked-up price overflow".into()))
 }
 
-/// Per-Intex cost in the payment token's minor units. Entry price and PROMIS load are both
-/// six-decimal, so their product carries twelve decimals. Positive sub-units round up.
-pub(crate) fn derived_cost_amount(
-    entry_price: U256,
-    promis_load_minor: U256,
-    payment_decimals: u8,
-) -> Result<U256> {
-    let product = entry_price
-        .checked_mul(promis_load_minor)
-        .ok_or_else(|| PrecompileError::Revert("cost amount overflow".into()))?;
-    product_to_payment_units(product, U256::ONE, U256::ONE, payment_decimals)
-}
+/// Decimals a price x PROMIS load product carries: both factors sit on the
+/// native six-decimal scale.
+const PRODUCT_DECIMALS: u32 = 2 * NATIVE_TOKEN_DECIMALS as u32;
 
-/// Converts a price (scale 1e6) x PROMIS load (scale 1e6) product into
-/// payment-token minor units and optionally applies
-/// an ISO/ISO rate. Scaling is cancelled before multiplication where possible and the result is
-/// rounded up exactly once, in favor of the reserve receiving the settlement.
-fn product_to_payment_units(
-    product: U256,
-    rate_numerator: U256,
-    rate_denominator: U256,
-    payment_decimals: u8,
-) -> Result<U256> {
-    const PRODUCT_DECIMALS: u32 = 12;
+/// Converts a price (scale 1e6) x PROMIS load (scale 1e6) product into payment-token
+/// minor units, rounded up in favor of the reserve receiving the settlement.
+pub(crate) fn product_to_payment_units(product: U256, payment_decimals: u8) -> Result<U256> {
     const MAX_PAYMENT_DECIMALS: u8 = 18;
 
     if payment_decimals > MAX_PAYMENT_DECIMALS {
         return Err(IntexFactoryError::UnsupportedPaymentDecimals(payment_decimals).into());
     }
-    if rate_denominator.is_zero() {
-        return Err(PrecompileError::Revert(
-            "settlement rate denominator is zero".into(),
-        ));
-    }
 
-    let mut numerator = product
-        .checked_mul(rate_numerator)
-        .ok_or_else(|| PrecompileError::Revert("settlement conversion overflow".into()))?;
-    let mut denominator = rate_denominator;
     let payment_decimals = u32::from(payment_decimals);
     if payment_decimals < PRODUCT_DECIMALS {
-        denominator = denominator
-            .checked_mul(U256::from(10u64).pow(U256::from(PRODUCT_DECIMALS - payment_decimals)))
-            .ok_or_else(|| PrecompileError::Revert("settlement conversion overflow".into()))?;
+        Ok(
+            product
+                .div_ceil(U256::from(10u64).pow(U256::from(PRODUCT_DECIMALS - payment_decimals))),
+        )
     } else if payment_decimals > PRODUCT_DECIMALS {
-        numerator = numerator
+        product
             .checked_mul(U256::from(10u64).pow(U256::from(payment_decimals - PRODUCT_DECIMALS)))
-            .ok_or_else(|| PrecompileError::Revert("settlement conversion overflow".into()))?;
+            .ok_or_else(|| PrecompileError::Revert("settlement conversion overflow".into()))
+    } else {
+        Ok(product)
     }
-
-    Ok(numerator.div_ceil(denominator))
 }
 
 /// Set the dual-wallet authorized settler for `holder`'s position in `series_id`.
@@ -617,16 +592,14 @@ pub(crate) fn contributor_payout_round(
     })
 }
 
-/// Rebuilds the canonical 36-byte tribute id from its ABI digest/index split.
+/// The ABI leaf and the canonical leaf carry the same three words, so this is a
+/// plain field copy.
 fn decode_contributor_leaf(
     leaf: &crate::precompile::IIntexFactory::ContributorLeaf,
 ) -> ContributorLeafData {
-    let mut source_tribute_id = [0u8; 36];
-    source_tribute_id[..32].copy_from_slice(leaf.sourceTributeDigest.as_slice());
-    source_tribute_id[32..].copy_from_slice(leaf.sourceTributeIndex.as_slice());
     ContributorLeafData {
         owner: leaf.owner,
-        source_tribute_id,
+        source_tribute_id: leaf.sourceTributeId,
         nominal: leaf.nominal,
     }
 }
@@ -907,9 +880,10 @@ enum PaymentCurrency {
     Issuance,
 }
 
-/// Per-Intex cost in `token`'s minor units. The reference currency needs no rate; the
-/// issuance currency converts through COEN — `cost_ref * rate(COEN/iss) / rate(COEN/ref)`
-/// — with the decimals scaling folded into the same division, so it rounds once.
+/// Per-Intex cost in `token`'s minor units. The Cost Amount is denominated in the
+/// reference currency; an issuance-currency token is charged at the live COEN cross
+/// rate. Multiplying scaling is exact and precedes the conversion; dividing scaling
+/// follows it, and nested ceilings collapse to one net rounding, always upwards.
 fn cost_in_token(
     storage: &StorageHandle<'_>,
     series: &outbe_intex::SeriesRecord,
@@ -917,43 +891,27 @@ fn cost_in_token(
     currency: PaymentCurrency,
 ) -> Result<U256> {
     let payment_decimals = erc20_decimals(storage, token)?;
-    if currency == PaymentCurrency::Reference {
-        return derived_cost_amount(
-            series.entry_price_minor,
-            series.promis_load_minor,
-            payment_decimals,
-        );
-    }
-
     let product = series
         .entry_price_minor
         .checked_mul(series.promis_load_minor)
         .ok_or_else(|| PrecompileError::Revert("cost amount overflow".into()))?;
-
-    let now = storage.timestamp()?.to::<u64>();
-    let rate_issuance = fresh_coen_rate(storage, series.issuance_currency, now)?;
-    let rate_reference = fresh_coen_rate(storage, series.reference_currency, now)?;
-    product_to_payment_units(product, rate_issuance, rate_reference, payment_decimals)
-}
-
-/// The oracle's COEN price in `iso_code`, refused when absent or older than
-/// [`FX_RATE_MAX_AGE_SECONDS`].
-fn fresh_coen_rate(storage: &StorageHandle<'_>, iso_code: u16, now: u64) -> Result<U256> {
-    // A missing pair is an answer; a failed read is not, and must not look like one.
-    let Some(pair_index) = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso_code)?
-    else {
-        return Err(IntexFactoryError::FxRateUnavailable(iso_code).into());
+    let target_iso = match currency {
+        PaymentCurrency::Reference => series.reference_currency,
+        PaymentCurrency::Issuance => series.issuance_currency,
     };
-    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-    let rate = oracle.exchange_rate.read(&pair_index)?;
-    if rate.is_zero() {
-        return Err(IntexFactoryError::FxRateUnavailable(iso_code).into());
+    let convert = |amount| {
+        outbe_oracle::api::fresh_currency_cross_rate(
+            storage.clone(),
+            series.reference_currency,
+            target_iso,
+            amount,
+        )
+    };
+    if u32::from(payment_decimals) >= PRODUCT_DECIMALS {
+        convert(product_to_payment_units(product, payment_decimals)?)
+    } else {
+        product_to_payment_units(convert(product)?, payment_decimals)
     }
-    let published = oracle.exchange_rate_timestamp.read(&pair_index)?;
-    if now.saturating_sub(published) > FX_RATE_MAX_AGE_SECONDS {
-        return Err(IntexFactoryError::FxRateStale(iso_code).into());
-    }
-    Ok(rate)
 }
 
 /// Rejects `token` unless the router holds a vault for it and the token reports

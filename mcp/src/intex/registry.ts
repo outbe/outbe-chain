@@ -61,14 +61,14 @@ const a = (s: string): Address => getAddress(s);
 
 const OUTBE = "outbe-testnet";
 
-// The app contracts are CREATE3 proxies (salt "outbe-intex:<Name>:v2.0.0"), so
+// The app contracts are CREATE3 proxies (salt "outbe-intex:<Name>:v3.0.0"), so
 // each one shares a single address on every chain; only the wCOEN payment token
 // is a per-chain deployment. Networks gate availability, addresses do not.
 const APP = {
-  auction: a("0xCf7c1b2107a0025a6ce82442473Cb4f7A8dF2E0b"),
-  escrow: a("0x9eC00F7e603f56d5eDfc866aF7CC9E6f6Fa26A8E"),
-  nft: a("0x4Ccbc413a5f159Da316178F8b7576C923b4D1e5d"),
-  nftBridge: a("0xD905a9Af95330d9725Cf060f6A89Ef48FB4A7Dfc"),
+  auction: a("0x3EB42c05F1bF00CdAaF9F825b2DDA3fc93D20d7f"),
+  escrow: a("0x88C521C9A79b16a00aa2e4285670246cC2dbe868"),
+  nft: a("0x4b25C6af5C45240D9cE546AF223Dd7132C7E39Af"),
+  nftBridge: a("0x4056B412a0D3A0931FE2078Be8Ec4a57ADDb3958"),
 };
 
 /** outbe runtime precompiles (addresses.rs) + the fan-out router. */
@@ -78,8 +78,8 @@ const OUTBE_ONLY = {
   promis: a("0x0000000000000000000000000000000000001337"),
   desis: a("0x0000000000000000000000000000000000001016"),
   vaultRouter: a("0x0000000000000000000000000000000000001017"),
-  // CREATE3 proxy, salt "outbe-intex:OriginRouter:v2.0.0".
-  originRouter: a("0x67129C422bDC2c8984DbF381B6ec4515fE2BbD29"),
+  // CREATE3 proxy, salt "outbe-intex:OriginRouter:v3.0.0".
+  originRouter: a("0xCBfa290DCd34319Ff1aec79A4084f2C900977599"),
 };
 
 /** Networks where the auction/escrow pair is live. The NFT pair runs on the origin

@@ -3,6 +3,7 @@
 //! `python3 seed_genesis.py`); the genesis skeleton, port rewrite, and dev felony
 //! patch are native Rust.
 
+use std::collections::HashSet;
 #[cfg(all(test, unix))]
 use std::fs::Permissions;
 use std::fs::{self, OpenOptions};
@@ -43,6 +44,9 @@ const LOCALNET_OCOMP_VOTE_WINDOW_BLOCKS: u64 = 120;
 const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 300;
 const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 30;
 const DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS: u64 = 30;
+const RADICLE_REGISTRY_ADDRESS: &str = "000000000000000000000000000000000000ee11";
+const RADICLE_MAX_REPOSITORIES_SLOT: &str =
+    "0x0000000000000000000000000000000000000000000000000000000000000005";
 
 /// Valid, scenario-local genesis choices used by lifecycle E2E tests.
 ///
@@ -552,6 +556,10 @@ impl Localnet {
         ]);
         self.run_setup(&mut cmd, "outbe-chain dkg bootstrap")?;
 
+        // Registration V2 binds every founder to the native Heartwood identity
+        // that its sidecar will load from this validator directory.
+        self.materialize_radicle_identities(n)?;
+
         // Step 1b: point the baked consensus/reth p2p endpoints at the resolved
         // ports (a no-op under the default layout).
         self.rewrite_ports()?;
@@ -620,6 +628,49 @@ impl Localnet {
             }
             fs::write(&bpath, out)?;
         }
+        Ok(())
+    }
+
+    fn materialize_radicle_identities(&self, n: usize) -> Result<()> {
+        let validators_path = self.cfg.dir.join("validators.json");
+        let mut validators: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&validators_path)?)?;
+        let entries = validators
+            .as_array_mut()
+            .ok_or_else(|| eyre!("validators.json is not an array"))?;
+        eyre::ensure!(entries.len() == n, "validators.json founder count mismatch");
+
+        let mut node_ids = HashSet::with_capacity(n);
+        for (index, validator) in entries.iter_mut().enumerate() {
+            let home = self.cfg.validator_dir(index).join("radicle");
+            let output = proc::run_capture(
+                &self.cfg.bin_keygen,
+                &["radicle", "--output-dir", &home.display().to_string()],
+            )?;
+            let node_id = output
+                .lines()
+                .find_map(|line| {
+                    line.split_once("node id hex:")
+                        .map(|(_, value)| value.trim())
+                })
+                .ok_or_else(|| eyre!("outbe-keygen did not print validator-{index} NodeId"))?;
+            eyre::ensure!(
+                node_id.len() == 64 && node_id.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                "outbe-keygen printed invalid validator-{index} NodeId"
+            );
+            eyre::ensure!(
+                node_ids.insert(node_id.to_owned()),
+                "duplicate founder Radicle NodeId"
+            );
+            validator
+                .as_object_mut()
+                .ok_or_else(|| eyre!("validator-{index} manifest entry is not an object"))?
+                .insert("radicle_node_id".into(), json!(format!("0x{node_id}")));
+        }
+        fs::write(
+            validators_path,
+            serde_json::to_string_pretty(&validators)? + "\n",
+        )?;
         Ok(())
     }
 
@@ -739,7 +790,7 @@ impl Localnet {
             .arg("--genesis")
             .arg(&genesis)
             .arg("--seed")
-            .arg(seed)
+            .arg(&seed)
             // The typed profile is written to a scenario-local seed copy. Keep
             // external contract artifacts anchored to the repository seed
             // directory instead of letting seed_genesis.py infer a nonexistent
@@ -753,7 +804,11 @@ impl Localnet {
             .arg("--fresh-metadosis")
             .arg("--output")
             .arg(&genesis);
-        self.run_setup(&mut cmd, "seed_genesis.py")
+        self.run_setup(&mut cmd, "seed_genesis.py")?;
+
+        let seed: serde_json::Value = serde_json::from_str(&fs::read_to_string(seed)?)?;
+        let genesis: serde_json::Value = serde_json::from_str(&fs::read_to_string(genesis)?)?;
+        validate_radicle_registry_genesis(&seed, &genesis)
     }
 
     /// Lower the SlashIndicator felony thresholds so downtime slashing triggers
@@ -1003,6 +1058,62 @@ fn json_u32(value: &serde_json::Value) -> Option<u32> {
         .or_else(|| value.as_str().and_then(|raw| raw.parse::<u32>().ok()))
 }
 
+fn validate_radicle_registry_genesis(
+    seed: &serde_json::Value,
+    genesis: &serde_json::Value,
+) -> Result<()> {
+    let Some(configured) = seed.pointer("/radicle_registry/max_repositories") else {
+        return Ok(());
+    };
+    let parsed = configured.as_i64().map(i128::from).or_else(|| {
+        configured.as_str().and_then(|raw| {
+            raw.strip_prefix("0x").map_or_else(
+                || raw.parse::<i128>().ok(),
+                |hex| i128::from_str_radix(hex, 16).ok(),
+            )
+        })
+    });
+    let maximum = match parsed {
+        Some(-1) => u32::MAX,
+        Some(value) if (1..i128::from(u32::MAX)).contains(&value) => value as u32,
+        _ => {
+            return Err(eyre!(
+                "radicle_registry.max_repositories must be -1 or in 1..=4294967294"
+            ));
+        }
+    };
+
+    let alloc = genesis
+        .get("alloc")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| eyre!("generated genesis has no alloc object"))?;
+    let account = alloc
+        .iter()
+        .find_map(|(address, account)| {
+            let address = address.to_ascii_lowercase();
+            let address = address.strip_prefix("0x").unwrap_or(&address);
+            (address.len() <= 40
+                && address.bytes().all(|byte| byte.is_ascii_hexdigit())
+                && format!("{address:0>40}") == RADICLE_REGISTRY_ADDRESS)
+                .then_some(account)
+        })
+        .ok_or_else(|| eyre!("generated genesis has no RadicleRegistry marker account"))?;
+    eyre::ensure!(
+        account.get("code").and_then(serde_json::Value::as_str) == Some("0xef"),
+        "generated genesis has an invalid RadicleRegistry marker"
+    );
+    let actual = account
+        .pointer(&format!("/storage/{RADICLE_MAX_REPOSITORIES_SLOT}"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| eyre!("generated genesis has no RadicleRegistry maxRepositories slot"))?;
+    let expected = format!("0x{maximum:064x}");
+    eyre::ensure!(
+        actual.eq_ignore_ascii_case(&expected),
+        "generated genesis RadicleRegistry maxRepositories mismatch: expected {expected}, got {actual}"
+    );
+    Ok(())
+}
+
 /// Whether an alloc key normalizes (lowercase, `0x`-stripped, left-padded to 40)
 /// to a SlashIndicator address ending in `ee01` (`bootstrap-testnet.sh:244`).
 fn ends_with_ee01(key: &str) -> bool {
@@ -1028,6 +1139,60 @@ fn localnet_forming_period_seconds(now: u64) -> Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn radicle_registry_genesis() {
+        let seed = json!({ "radicle_registry": { "max_repositories": "0x25" } });
+        let genesis = json!({
+            "alloc": {
+                "0x000000000000000000000000000000000000EE11": {
+                    "code": "0xef",
+                    "storage": {
+                        RADICLE_MAX_REPOSITORIES_SLOT:
+                            "0x0000000000000000000000000000000000000000000000000000000000000025"
+                    }
+                }
+            }
+        });
+
+        validate_radicle_registry_genesis(&seed, &genesis).unwrap();
+        validate_radicle_registry_genesis(&json!({}), &json!({})).unwrap();
+
+        let mut wrong = genesis;
+        wrong["alloc"]["0x000000000000000000000000000000000000EE11"]["storage"]
+            [RADICLE_MAX_REPOSITORIES_SLOT] = json!("0x01");
+        assert!(validate_radicle_registry_genesis(&seed, &wrong)
+            .unwrap_err()
+            .to_string()
+            .contains("maxRepositories mismatch"));
+    }
+
+    #[test]
+    fn radicle_registry_unlimited_genesis() {
+        let seed = json!({ "radicle_registry": { "max_repositories": -1 } });
+        let genesis = json!({
+            "alloc": {
+                "0x000000000000000000000000000000000000EE11": {
+                    "code": "0xef",
+                    "storage": {
+                        RADICLE_MAX_REPOSITORIES_SLOT:
+                            "0x00000000000000000000000000000000000000000000000000000000ffffffff"
+                    }
+                }
+            }
+        });
+
+        validate_radicle_registry_genesis(&seed, &genesis).unwrap();
+        for invalid in [
+            json!(-2),
+            json!(0),
+            json!(4_294_967_295_u64),
+            json!(4_294_967_296_u64),
+        ] {
+            let invalid_seed = json!({ "radicle_registry": { "max_repositories": invalid } });
+            assert!(validate_radicle_registry_genesis(&invalid_seed, &genesis).is_err());
+        }
+    }
 
     #[test]
     fn rebootstrap_preserves_the_scenario_signing_key_across_wipe() {

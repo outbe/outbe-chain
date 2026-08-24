@@ -8,6 +8,7 @@ use std::io::{BufWriter, Write};
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 
+use alloy_primitives::U256;
 use outbe_intex::payout::{encode_contributor_leaf, ContributorLeafData};
 use thiserror::Error;
 
@@ -116,7 +117,7 @@ pub fn write_contributor_payout_artifact(
                 for action in &chunk.chunk().ordered_eligible_contributors {
                     writer.push(&ContributorLeafData {
                         owner: action.owner,
-                        source_tribute_id: action.source_tribute_id.0,
+                        source_tribute_id: U256::from_be_bytes(action.source_tribute_id.0),
                         nominal: action.nominal_amount_minor,
                     })?;
                 }
@@ -140,7 +141,7 @@ mod tests {
     fn leaf(index: u8) -> ContributorLeafData {
         ContributorLeafData {
             owner: Address::repeat_byte(index),
-            source_tribute_id: [index; 36],
+            source_tribute_id: U256::from(index),
             nominal: U256::from(u64::from(index) + 1),
         }
     }

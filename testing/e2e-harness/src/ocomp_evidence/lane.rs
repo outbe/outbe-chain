@@ -19,10 +19,11 @@ use super::{
     MemberDigestV1, PlanningLedger, RunManifestV1, RUNTIME_SCHEMA_VERSION,
 };
 
-const REQUIRED_SCENARIO_BINARIES: [&str; 6] = [
+const REQUIRED_SCENARIO_BINARIES: [&str; 7] = [
     "outbe_chain",
     "outbe_cli",
     "outbe_e2e",
+    "outbe_feeder",
     "outbe_keygen",
     "outbe_ocomp",
     "outbe_tee_enclave",

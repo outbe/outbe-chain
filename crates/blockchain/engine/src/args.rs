@@ -231,6 +231,39 @@ pub struct ConsensusArgs {
     #[arg(long = "tee-renewal.critical-blocks", default_value_t = 120)]
     pub tee_renewal_critical_blocks: u64,
 
+    /// Interval between TEE-enclave canary probes (known-plaintext decrypt +
+    /// health telemetry). `0` disables the canary. Signal only — it never gates
+    /// consensus participation.
+    #[arg(long = "tee-canary.interval-secs", default_value_t = 30)]
+    pub tee_canary_interval_secs: u64,
+
+    /// Consecutive canary failures before `outbe_consensusStatus.enclave`
+    /// reports `degraded` (transport-unreachable reports `unavailable`
+    /// immediately).
+    #[arg(long = "tee-canary.failure-threshold", default_value_t = 3)]
+    pub tee_canary_failure_threshold: u64,
+
+    /// Interval, in seconds of canonical block time, between pending-pool
+    /// snapshots. A transaction present in two consecutive snapshots has stayed
+    /// pending for at least one full interval without being mined and is
+    /// evicted, so the effective pending lifetime is one to two intervals.
+    /// Node-local pool policy; it never affects block validity. Keep the value
+    /// uniform across the fleet so every node sheds a stuck transaction at the
+    /// same rate.
+    #[arg(long = "txpool.outbe.pending-staleness-secs", default_value_t = 600)]
+    pub txpool_pending_staleness_secs: u64,
+
+    /// Heartwood native control socket used for bounded identity, configuration,
+    /// and topology reconciliation. Required only in validator mode.
+    #[arg(long = "radicle.control-socket", value_name = "PATH")]
+    pub radicle_control_socket: Option<PathBuf>,
+
+    /// Loopback-only read-only status endpoint exposed by `outbe-radicle`.
+    /// Repository availability is observable through this endpoint but never
+    /// gates consensus.
+    #[arg(long = "radicle.status-address", value_name = "SOCKET")]
+    pub radicle_status_address: Option<SocketAddr>,
+
     /// Run as a FOLLOWER: cold-sync finalized blocks from this upstream node and
     /// verify them against the committee (anchored on the genesis validator set,
     /// read from the node's own genesis state), instead of running the consensus
@@ -292,6 +325,14 @@ impl fmt::Debug for ConsensusArgs {
             )
             .field("tee_renewal_rpc_url", &self.tee_renewal_rpc_url)
             .field("tee_renewal_poll_secs", &self.tee_renewal_poll_secs)
+            .field(
+                "radicle_control_socket_configured",
+                &self.radicle_control_socket.is_some(),
+            )
+            .field(
+                "radicle_status_address_configured",
+                &self.radicle_status_address.is_some(),
+            )
             .field("upstream_configured", &self.upstream.is_some())
             .field(
                 "offchain_data_configured",
@@ -323,6 +364,9 @@ impl ConsensusArgs {
         if self.tee_renewal_rpc_url.trim().is_empty() {
             eyre::bail!("--tee-renewal.rpc-url must not be empty");
         }
+        if self.txpool_pending_staleness_secs == 0 {
+            eyre::bail!("--txpool.outbe.pending-staleness-secs must be greater than zero");
+        }
         // Follower mode (`--upstream`) is the lightweight full-node path and must
         // not be combined with validator/consensus participation. (clap's
         // `conflicts_with` also enforces this on the CLI; this covers programmatic
@@ -338,6 +382,19 @@ impl ConsensusArgs {
                 "--validator requires --consensus.signing-key. \
                  Provide the path to your BLS signing key file."
             );
+        }
+        if self.is_validator {
+            if self.radicle_control_socket.is_none() {
+                eyre::bail!("--validator requires --radicle.control-socket");
+            }
+            let status = self
+                .radicle_status_address
+                .ok_or_else(|| eyre::eyre!("--validator requires --radicle.status-address"))?;
+            if !status.ip().is_loopback() {
+                eyre::bail!("--radicle.status-address must be loopback-only");
+            }
+        } else if self.radicle_control_socket.is_some() || self.radicle_status_address.is_some() {
+            eyre::bail!("Radicle flags require --validator");
         }
         if !self.is_validator && self.signing_key.is_some() {
             tracing::warn!(
@@ -499,11 +556,16 @@ mod tests {
             tee_renewal_poll_secs: 30,
             tee_renewal_warning_blocks: 600,
             tee_renewal_critical_blocks: 120,
+            tee_canary_interval_secs: 30,
+            tee_canary_failure_threshold: 3,
+            txpool_pending_staleness_secs: 600,
             upstream: None,
             upstream_nocertify: false,
             projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),
             projection_mongodb_database: Some("outbe_projection".to_owned()),
             projection_start_block: 1,
+            radicle_control_socket: None,
+            radicle_status_address: None,
         }
     }
 
@@ -666,7 +728,61 @@ mod tests {
         let mut args = default_args();
         args.is_validator = true;
         args.signing_key = Some(PathBuf::from("/tmp/key.hex"));
+        args.radicle_control_socket = Some(PathBuf::from("/tmp/radicle.sock"));
+        args.radicle_status_address = Some("127.0.0.1:8777".parse().unwrap());
         assert!(args.validate().is_ok());
+    }
+
+    #[test]
+    fn radicle_flags_are_required_for_validators() {
+        let mut args = default_args();
+        args.is_validator = true;
+        args.signing_key = Some(PathBuf::from("/tmp/key.hex"));
+
+        let error = args.validate().unwrap_err().to_string();
+        assert!(error.contains("--radicle.control-socket"), "error: {error}");
+
+        args.radicle_control_socket = Some(PathBuf::from("/tmp/radicle.sock"));
+        let error = args.validate().unwrap_err().to_string();
+        assert!(error.contains("--radicle.status-address"), "error: {error}");
+    }
+
+    #[test]
+    fn radicle_status_must_be_loopback() {
+        let mut args = default_args();
+        args.is_validator = true;
+        args.signing_key = Some(PathBuf::from("/tmp/key.hex"));
+        args.radicle_control_socket = Some(PathBuf::from("/tmp/radicle.sock"));
+        args.radicle_status_address = Some("192.0.2.1:8777".parse().unwrap());
+
+        let error = args.validate().unwrap_err().to_string();
+        assert!(error.contains("loopback"), "error: {error}");
+    }
+
+    #[test]
+    fn radicle_flags_are_rejected_outside_validator_mode() {
+        let mut args = default_args();
+        args.radicle_control_socket = Some(PathBuf::from("/tmp/radicle.sock"));
+        assert!(args
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("--validator"));
+
+        args.radicle_control_socket = None;
+        args.radicle_status_address = Some("127.0.0.1:8777".parse().unwrap());
+        assert!(args
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("--validator"));
+
+        args.upstream = Some("http://upstream:8545".to_owned());
+        assert!(args
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("--validator"));
     }
 
     #[test]
