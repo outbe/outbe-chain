@@ -232,12 +232,22 @@ pub const STABLECOIN_POLICY_REGISTRY_ADDRESS: Address =
 pub const RADICLE_REGISTRY_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE11");
 
+// OCOMP landed on EE12 in main PR #307; Emit moves to the next free slot.
+// Keep OCOMP (main), re-address Emit to EE13.
 /// OCOMP protocol authority registry precompile.
 ///
 /// Owns the genesis, active, staged, and retiring protocol bundles. OCOMP
 /// consumers such as Metadosis pin work to an authority exposed here rather
 /// than storing a private copy of the protocol policy.
 pub const OCOMP_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE12");
+/// Emit private-note pool precompile address (stateful).
+///
+/// Hosts the single per-chain Emit pool: a Tornado-style depth-20 incremental
+/// commitment tree seeded lazily by the first `burn`, permanent
+/// commitment/nullifier sets, and a 32-root acceptance window. `burn` is the
+/// only payable selector; `mint` consumes the frozen
+/// `outbe.emit.mint@1.3.0` UltraHonkKeccak proof. See `outbe-emit`.
+pub const EMIT_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE13");
 
 /// Genesis-reserved two-byte class for dynamic stablecoin token addresses.
 pub const STABLECOIN_ADDRESS_PREFIX: [u8; 2] = [0x53, 0xc0];

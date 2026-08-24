@@ -831,17 +831,19 @@ mod boundary_value_tests {
     use crate::precompile_routes::{self, ValuePolicy};
     use alloy_primitives::{Address, U256};
     use outbe_primitives::addresses::{
-        CREDIS_FACTORY_ADDRESS, DESIS_ADDRESS, GRATIS_ADDRESS, INTEX_FACTORY_ADDRESS,
+        CREDIS_FACTORY_ADDRESS, DESIS_ADDRESS, EMIT_ADDRESS, GRATIS_ADDRESS, INTEX_FACTORY_ADDRESS,
         STAKING_ADDRESS, VOTE_ADDRESS,
     };
     use revm::interpreter::CallValue;
 
-    const PAYABLE: [Address; 4] = [
+    const PAYABLE: [Address; 5] = [
         STAKING_ADDRESS,
         INTEX_FACTORY_ADDRESS,
         VOTE_ADDRESS,
         // requestCredis takes the originating CCA's matching COEN stake.
         CREDIS_FACTORY_ADDRESS,
+        // burn is the pool's only value-carrying entry point.
+        EMIT_ADDRESS,
     ];
 
     fn policy(address: Address) -> ValuePolicy {
