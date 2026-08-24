@@ -36,6 +36,12 @@ sol! {
         function quoteCostAmount(bytes14 seriesId, address paymentToken) external view returns (uint256 costAmountMinor);
     }
 
+    interface IPromisMining {
+        function minePromis(bytes14 seriesId, uint256 amount, uint256 nonce, bytes32 mac, uint64 opNonce)
+            external
+            returns (uint256 promisAmount);
+    }
+
     interface ITestToken {
         function mint(address to, uint256 amount) external;
         function approve(address spender, uint256 amount) external returns (bool);
@@ -169,5 +175,66 @@ pub fn settle(
         None,
     )
     .map_err(|error| eyre!("settle was refused: {error}"))?;
+    Ok(())
+}
+
+/// The SHA-256 preimage `validate_pow` rebuilds: the hex spelling of holder, amount,
+/// series and sequence, then the nonce's own eight bytes.
+fn pow_hash(
+    holder: Address,
+    promis_amount: U256,
+    series: FixedBytes<14>,
+    seq: u32,
+    nonce: u64,
+) -> [u8; 32] {
+    use sha2::{Digest as _, Sha256};
+    let mut preimage = String::new();
+    preimage.push_str(&alloy_primitives::hex::encode(holder.as_slice()));
+    preimage.push_str(&alloy_primitives::hex::encode(
+        promis_amount.to_be_bytes::<32>(),
+    ));
+    preimage.push_str(&alloy_primitives::hex::encode(series.as_slice()));
+    preimage.push_str(&alloy_primitives::hex::encode(seq.to_be_bytes()));
+    let mut data = preimage.into_bytes();
+    data.extend_from_slice(&nonce.to_be_bytes());
+    Sha256::digest(&data).into()
+}
+
+/// A nonce whose hash carries the one leading zero byte the engine demands.
+pub fn mine_nonce(
+    holder: Address,
+    promis_amount: U256,
+    series: FixedBytes<14>,
+    seq: u32,
+) -> Option<u64> {
+    (0_u64..1_000_000).find(|nonce| pow_hash(holder, promis_amount, series, seq, *nonce)[0] == 0)
+}
+
+/// Burn settled units into Promis. `mac` authorizes the confidential mint, and the
+/// proof of work is what the engine checks before it will call it at all.
+#[allow(clippy::too_many_arguments)]
+pub fn mine_promis(
+    url: &str,
+    holder_key: &str,
+    series: FixedBytes<14>,
+    amount: u32,
+    nonce: u64,
+    mac: [u8; 32],
+    op_nonce: u64,
+) -> Result<()> {
+    eth::send_call(
+        url,
+        INTEX_FACTORY,
+        holder_key,
+        &IPromisMining::minePromisCall {
+            seriesId: series,
+            amount: U256::from(amount),
+            nonce: U256::from(nonce),
+            mac: mac.into(),
+            opNonce: op_nonce,
+        },
+        None,
+    )
+    .map_err(|error| eyre!("minePromis was refused: {error}"))?;
     Ok(())
 }

@@ -567,3 +567,13 @@ pub(crate) fn series_prices(
         )
     })
 }
+
+/// PROMIS-units the series carries per Intex unit.
+pub(crate) fn series_promis_load(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+) -> Option<u128> {
+    eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series })
+        .map(|data| data.promisLoadMinor)
+}

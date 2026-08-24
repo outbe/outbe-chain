@@ -4,6 +4,10 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use alloy_primitives::U256;
+use alloy_sol_types::sol;
+use outbe_tee::protocol::{Ledger, PromisOp};
+
+use crate::internal::{addresses, eth};
 use cucumber::{then, when};
 
 use crate::env::environment;
@@ -31,6 +35,13 @@ const CATCH_UP_TIMEOUT_SECS: u64 = 600;
 const QUALIFY_SWEEP_TIMEOUT_SECS: u64 = 180;
 /// `IntexState::Qualified`.
 const QUALIFIED: u8 = 1;
+/// `IntexState::Called`.
+const CALLED: u8 = 2;
+/// DEV calls a series once the VWAP held above the call price on two of three days.
+const CALL_WINDOW_DAYS: u64 = 3;
+const DAY_SECS: u64 = 24 * 3600;
+/// The call sweep is daily; give it a few blocks past the last rollover.
+const CALL_SWEEP_TIMEOUT_SECS: u64 = 300;
 
 #[when("the settlement currency is registered on the committee chain")]
 fn register_settlement_currency(world: &mut World) {
@@ -296,4 +307,170 @@ fn payment_in_vault(world: &mut World) {
         !held.is_zero(),
         "the reserve vault holds nothing after settlement"
     );
+}
+
+#[when("the holder mines Promis against their settled units")]
+fn mine_promis(world: &mut World) {
+    let port = world.validators.primary_port();
+    let url = world.rpc.url(port);
+    let nft = intex_nft(world);
+    let holder = crate::world::origin_venue::deployer_address();
+    let chain_id = world.rpc.chain_id(port).expect("committee chain id");
+
+    let keys = eth::derive_account_keys(&url, DEPLOYER_KEY, Ledger::Promis)
+        .expect("derive the holder's Promis modify key");
+
+    for series in world.state.lifecycle_series.clone() {
+        let settled = venue_probes::series_balances(&url, nft, series, holder)
+            .expect("series balances")
+            .1;
+        assert!(settled > 0, "series {series} has nothing settled to mine");
+
+        // Promis is minted per unit at the series' load, and the engine derives the
+        // same figure — a mismatch here would fail the proof rather than the mint.
+        let promis_load =
+            venue_probes::series_promis_load(&url, nft, series).expect("series promis load");
+        let amount = U256::from(promis_load) * U256::from(settled);
+        let op_nonce = eth::read_call(
+            &url,
+            addresses::PROMIS_ADDR,
+            &IPromisNonce::opNonceOfCall { account: holder },
+        )
+        .expect("read the holder's Promis op nonce");
+        let nonce = test_issuance::mine_nonce(holder, amount, series, 0)
+            .expect("a nonce clearing one leading zero byte");
+        let mac = outbe_tee_enclave::promis::modify_mac(
+            &keys.modify,
+            holder,
+            PromisOp::Mint,
+            amount,
+            op_nonce,
+            chain_b256(chain_id),
+        );
+
+        test_issuance::mine_promis(
+            &url,
+            DEPLOYER_KEY,
+            series,
+            u32::try_from(settled).expect("settled units fit a uint32"),
+            nonce,
+            mac,
+            op_nonce,
+        )
+        .expect("mine Promis from the settled units");
+    }
+}
+
+#[then("the settled units are burned and Promis is minted")]
+fn settled_burned_into_promis(world: &mut World) {
+    let url = world.rpc.url(world.validators.primary_port());
+    let nft = intex_nft(world);
+    let holder = crate::world::origin_venue::deployer_address();
+
+    for series in &world.state.lifecycle_series {
+        assert_eq!(
+            venue_probes::series_balances(&url, nft, *series, holder).map(|(_, settled)| settled),
+            Some(0),
+            "series {series} still holds settled units after mining"
+        );
+    }
+}
+
+/// The chain id as the enclave binds it into a MAC.
+fn chain_b256(chain_id: u64) -> alloy_primitives::B256 {
+    alloy_primitives::B256::from(U256::from(chain_id))
+}
+
+sol! {
+    interface IPromisNonce {
+        function opNonceOf(address account) external view returns (uint64);
+    }
+}
+
+#[when("the call trigger holds above the call price across the call window")]
+fn call_trigger_holds(world: &mut World) {
+    let port = world.validators.primary_port();
+    let url = world.rpc.url(port);
+    let nft = intex_nft(world);
+    let series = *world
+        .state
+        .lifecycle_series
+        .first()
+        .expect("a series was issued");
+    let (_, _, call_price) = venue_probes::series_prices(&url, nft, series).expect("series prices");
+
+    // The sweep counts closed days, and the Oracle finalizes each one in begin-block,
+    // so the rate has to stand above the call price across whole days rather than once.
+    for _ in 0..CALL_WINDOW_DAYS {
+        let target = world
+            .rpc
+            .latest_block_timestamp(port)
+            .expect("committee head timestamp")
+            + DAY_SECS;
+        crate::features::price_oracle::publish_controlled_quote(world, U256::from(call_price * 2));
+        crate::features::ocomp::restart_committee_at_logical_time(world, target);
+        wait_for_chain_time(world, port, target);
+    }
+}
+
+#[then("both series become Called")]
+fn both_series_called(world: &mut World) {
+    let url = world.rpc.url(world.validators.primary_port());
+    let nft = intex_nft(world);
+    let deadline = Instant::now() + Duration::from_secs(CALL_SWEEP_TIMEOUT_SECS);
+
+    for series in world.state.lifecycle_series.clone() {
+        loop {
+            if venue_probes::series_state(&url, nft, series) == Some(CALLED) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "series {series} never reached Called; the call sweep did not fire"
+            );
+            sleep(Duration::from_secs(2));
+        }
+    }
+}
+
+#[when("the holder settles the remaining units inside the notice period")]
+fn settle_remainder(world: &mut World) {
+    let url = world.rpc.url(world.validators.primary_port());
+    let nft = intex_nft(world);
+    let currency = world
+        .state
+        .settlement_currency
+        .expect("settlement currency was registered");
+    let holder = crate::world::origin_venue::deployer_address();
+
+    for series in world.state.lifecycle_series.clone() {
+        let issued = venue_probes::series_balances(&url, nft, series, holder)
+            .expect("series balances")
+            .0;
+        assert!(issued > 0, "series {series} has nothing left to settle");
+        test_issuance::settle(
+            &url,
+            DEPLOYER_KEY,
+            series,
+            holder,
+            u32::try_from(issued).expect("issued units fit a uint32"),
+            currency.asset,
+        )
+        .expect("settle the remainder under Called");
+    }
+}
+
+#[then("no issued units remain and every unit is settled")]
+fn everything_settled(world: &mut World) {
+    let url = world.rpc.url(world.validators.primary_port());
+    let nft = intex_nft(world);
+    let holder = crate::world::origin_venue::deployer_address();
+
+    for series in &world.state.lifecycle_series {
+        assert_eq!(
+            venue_probes::series_balances(&url, nft, *series, holder),
+            Some((0, u64::from(UNITS))),
+            "series {series} did not end with every unit settled"
+        );
+    }
 }

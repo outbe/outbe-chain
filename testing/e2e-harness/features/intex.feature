@@ -35,7 +35,7 @@ Feature: Intex from auction to Promis
     And the escrow settles the day and returns what the bids did not buy
 
   @intex-lifecycle
-  Scenario: Two Intex series qualify as one group and settle from Qualified
+  Scenario: Two Intex series qualify as one group, settle from both states, and burn into Promis
     Given a fresh four-validator OCOMP public capacity localnet
     When the intex engine is deployed on the committee chain
     Then the committee chain hosts the intex engine
@@ -49,3 +49,9 @@ Feature: Intex from auction to Promis
     When the holder settles part of their units
     Then those units move from issued to settled
     And the settlement payment lands in the reserve vault
+    When the call trigger holds above the call price across the call window
+    Then both series become Called
+    When the holder settles the remaining units inside the notice period
+    Then no issued units remain and every unit is settled
+    When the holder mines Promis against their settled units
+    Then the settled units are burned and Promis is minted
