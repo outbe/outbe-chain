@@ -35,7 +35,7 @@ Feature: Intex from auction to Promis
     And the escrow settles the day and returns what the bids did not buy
 
   @intex-lifecycle
-  Scenario: Two Intex series are issued into the engine and held by one settler
+  Scenario: Two Intex series qualify as one group and settle from Qualified
     Given a fresh four-validator OCOMP public capacity localnet
     When the intex engine is deployed on the committee chain
     Then the committee chain hosts the intex engine
@@ -43,3 +43,9 @@ Feature: Intex from auction to Promis
     Then holders may settle in that currency
     When two test Intex series sharing a reference currency are issued to a funded holder
     Then the holder holds issued units of both series and none are settled
+    When the day advances past the qualification period
+    And the reference rate stands above the series floor
+    Then both series qualify in one group decision
+    When the holder settles part of their units
+    Then those units move from issued to settled
+    And the settlement payment lands in the reserve vault

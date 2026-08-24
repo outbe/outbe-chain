@@ -393,11 +393,37 @@ pub(crate) fn parked_origin_sends(world: &World) -> u32 {
 }
 sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
+    struct IntexCallTrigger {
+        uint32 callWindow;
+        uint32 callThreshold;
+        uint32 callNoticePeriod;
+    }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    struct SeriesData {
+        uint16 issuanceCurrency;
+        uint16 referenceCurrency;
+        uint32 issuedIntexCount;
+        uint128 promisLoadMinor;
+        uint64 entryPriceMinor;
+        uint64 floorPriceMinor;
+        uint64 callPriceMinor;
+        IntexCallTrigger callTrigger;
+        uint32 issuedAt;
+        uint32 calledAt;
+        uint32 totalSupply;
+        uint8 status;
+        uint8 state;
+        uint32 worldwideDay;
+    }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
     interface IIssuedSeries {
         function seriesExists(bytes14 seriesId) external view returns (bool);
         function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
         function settledTokenId(bytes14 seriesId) external pure returns (uint256);
         function statusOf(uint256 tokenId) external view returns (uint8);
+        function readData(bytes14 seriesId) external view returns (SeriesData);
         function balanceOf(address account, uint256 id) external view returns (uint256);
     }
 }
@@ -515,4 +541,29 @@ pub(crate) fn series_exists(
         &IIssuedSeries::seriesExistsCall { seriesId: series },
     )
     .unwrap_or_default()
+}
+
+/// A series' lifecycle state as the collection has it: 0 Issued, 1 Qualified, 2 Called.
+pub(crate) fn series_state(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+) -> Option<u8> {
+    eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series })
+        .map(|data| data.state)
+}
+
+/// The prices the engine derived at issuance: entry, floor, and call.
+pub(crate) fn series_prices(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+) -> Option<(u64, u64, u64)> {
+    eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series }).map(|data| {
+        (
+            data.entryPriceMinor,
+            data.floorPriceMinor,
+            data.callPriceMinor,
+        )
+    })
 }

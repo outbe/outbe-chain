@@ -31,6 +31,11 @@ sol! {
         ) external;
     }
 
+    interface IIntexSettlement {
+        function settle(bytes14 seriesId, address intexHolder, uint256 amount, address paymentToken) external;
+        function quoteCostAmount(bytes14 seriesId, address paymentToken) external view returns (uint256 costAmountMinor);
+    }
+
     interface ITestToken {
         function mint(address to, uint256 amount) external;
         function approve(address spender, uint256 amount) external returns (bool);
@@ -126,5 +131,43 @@ pub fn fund_settler(url: &str, asset: Address, holder_key: &str, amount: U256) -
         },
         None,
     )?;
+    Ok(())
+}
+
+/// What one unit of `series` costs in `payment_token`'s minor units. Reverts on a
+/// token the series does not accept, which is the check worth failing loudly.
+pub fn quote_cost(url: &str, series: FixedBytes<14>, payment_token: Address) -> Option<U256> {
+    eth::read_call(
+        url,
+        INTEX_FACTORY,
+        &IIntexSettlement::quoteCostAmountCall {
+            seriesId: series,
+            paymentToken: payment_token,
+        },
+    )
+}
+
+/// Settle `amount` units of `series` held by the caller, paying in `payment_token`.
+pub fn settle(
+    url: &str,
+    holder_key: &str,
+    series: FixedBytes<14>,
+    holder: Address,
+    amount: u32,
+    payment_token: Address,
+) -> Result<()> {
+    eth::send_call(
+        url,
+        INTEX_FACTORY,
+        holder_key,
+        &IIntexSettlement::settleCall {
+            seriesId: series,
+            intexHolder: holder,
+            amount: U256::from(amount),
+            paymentToken: payment_token,
+        },
+        None,
+    )
+    .map_err(|error| eyre!("settle was refused: {error}"))?;
     Ok(())
 }

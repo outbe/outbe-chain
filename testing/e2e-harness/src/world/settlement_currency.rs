@@ -141,3 +141,18 @@ pub(crate) fn registered_vaults(url: &str, asset: Address) -> Vec<Address> {
 pub(crate) fn iso_code(url: &str, asset: Address) -> Option<u16> {
     eth::read_call(url, asset, &ISettlementAsset::isoCodeCall {})
 }
+
+/// What the reserve vault holds of the settlement asset.
+pub(crate) fn vault_balance(url: &str, asset: Address, vault: Address) -> Option<U256> {
+    eth::read_call(
+        url,
+        asset,
+        &ISettlementAssetBalance::balanceOfCall { account: vault },
+    )
+}
+
+sol! {
+    interface ISettlementAssetBalance {
+        function balanceOf(address account) external view returns (uint256);
+    }
+}
