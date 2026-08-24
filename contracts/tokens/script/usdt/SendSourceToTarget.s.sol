@@ -9,7 +9,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 
 /// @title SendSourceToTarget
-/// @notice Lock USDT on BNB and mint USDT0 on Outbe through ERC-7786.
+/// @notice Lock USDT on the external chain and mint USDT on Outbe through ERC-7786.
 contract SendSourceToTarget is Script {
     error InsufficientTokenBalance(address signer, uint256 balance, uint256 required);
     error InsufficientNativeBalance(address signer, uint256 balance, uint256 required);
@@ -30,8 +30,8 @@ contract SendSourceToTarget is Script {
         address signer = vm.addr(pk);
         uint32 destinationChainId = _toDomain(vm.envUint("OUTBE_CHAIN_ID"));
         address recipient = vm.envAddress("RECIPIENT");
-        address configuredToken = vm.envAddress("BSC_USDT_TOKEN");
-        address tokenBridge = vm.envAddress("BSC_USDT_BRIDGE");
+        address configuredToken = vm.envAddress("EXTERNAL_USDT_TOKEN");
+        address tokenBridge = vm.envAddress("EXTERNAL_USDT_BRIDGE");
         uint256 amount = vm.envUint("SEND_AMOUNT_LD");
 
         ERC7786TokenBridge bridge = ERC7786TokenBridge(tokenBridge);
@@ -49,7 +49,7 @@ contract SendSourceToTarget is Script {
         sendId = bridge.send{value: nativeFee}(destinationChainId, recipient, amount);
         vm.stopBroadcast();
 
-        console2.log("Sent USDT from BNB to Outbe:");
+        console2.log("Sent USDT from the external chain to Outbe:");
         console2.logBytes32(sendId);
         console2.log("  Native fee:", nativeFee);
         console2.log("  Amount:", amount);

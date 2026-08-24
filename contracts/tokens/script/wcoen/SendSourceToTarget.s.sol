@@ -9,7 +9,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 
 /// @title SendSourceToTarget
-/// @notice Lock WCOEN on Outbe and mint WCOEN on BNB through ERC-7786.
+/// @notice Lock WCOEN on Outbe and mint WCOEN on the external chain through ERC-7786.
 contract SendSourceToTarget is Script {
     error InsufficientTokenBalance(address signer, uint256 balance, uint256 required);
     error InsufficientNativeBalance(address signer, uint256 balance, uint256 required);
@@ -28,7 +28,7 @@ contract SendSourceToTarget is Script {
     function run() external returns (bytes32 sendId, uint256 nativeFee) {
         uint256 pk = _getPrivateKey();
         address signer = vm.addr(pk);
-        uint32 destinationChainId = _toDomain(vm.envUint("BSC_CHAIN_ID"));
+        uint32 destinationChainId = _toDomain(vm.envUint("EXTERNAL_CHAIN_ID"));
         address recipient = vm.envAddress("RECIPIENT");
         address configuredToken = vm.envAddress("OUTBE_WCOEN_TOKEN");
         address tokenBridge = vm.envAddress("OUTBE_WCOEN_BRIDGE");
@@ -49,7 +49,7 @@ contract SendSourceToTarget is Script {
         sendId = bridge.send{value: nativeFee}(destinationChainId, recipient, amount);
         vm.stopBroadcast();
 
-        console2.log("Sent WCOEN from Outbe to BNB:");
+        console2.log("Sent WCOEN from Outbe to the external chain:");
         console2.logBytes32(sendId);
         console2.log("  Native fee:", nativeFee);
         console2.log("  Amount:", amount);

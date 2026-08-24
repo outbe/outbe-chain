@@ -13,9 +13,10 @@ import {WCOEN as NativeWCOEN} from "../../src/native/WCOEN.sol";
 import {BridgeableERC20 as SyntheticWCOEN} from "../../src/synthetic/BridgeableERC20.sol";
 
 /// @title WCOENDeploy
-/// @notice ERC-7786 / ERC-7802 deployment and configuration script for WCOEN(Outbe) <> WCOEN(target chain).
-/// @dev The target chain is whichever chain `BSC_CHAIN_ID` / `BSC_WCOEN_*` point at — BNB testnet, Sepolia, anvil.
-///      No chain id is hardcoded: adding a network is an env change, not a code change.
+/// @notice ERC-7786 / ERC-7802 deployment and configuration script for WCOEN: canonical on Outbe,
+///         ERC-7802 synthetic on the external chain.
+/// @dev The external chain is whichever chain `EXTERNAL_CHAIN_ID` / `EXTERNAL_WCOEN_*` point at — BNB testnet,
+///      Sepolia, anvil. No chain id and no network name is hardcoded: adding a network is an env change.
 contract WCOENDeploy is Script {
     bytes4 internal constant SET_TOKEN_BRIDGE_SELECTOR = bytes4(keccak256("setTokenBridge(address)"));
 
@@ -65,8 +66,8 @@ contract WCOENDeploy is Script {
     }
 
     function _isGuardedChain() internal view returns (bool) {
-        uint256 bscChainId = vm.envOr("BSC_CHAIN_ID", uint256(0));
-        if (bscChainId != 0 && block.chainid == bscChainId) return true;
+        uint256 externalChainId = vm.envOr("EXTERNAL_CHAIN_ID", uint256(0));
+        if (externalChainId != 0 && block.chainid == externalChainId) return true;
 
         uint256 outbeChainId = vm.envOr("OUTBE_CHAIN_ID", uint256(0));
         return outbeChainId != 0 && block.chainid == outbeChainId;
@@ -243,18 +244,18 @@ contract WCOENDeploy is Script {
     function setTargetTokenBridge() external {
         uint256 pk = _getPrivateKey();
         address signer = vm.addr(pk);
-        _setTokenBridge(pk, signer, vm.envAddress("BSC_WCOEN_TOKEN"), vm.envAddress("BSC_WCOEN_BRIDGE"));
+        _setTokenBridge(pk, signer, vm.envAddress("EXTERNAL_WCOEN_TOKEN"), vm.envAddress("EXTERNAL_WCOEN_BRIDGE"));
     }
 
     function configureSourceRemote() external {
         _configureRemote(
-            vm.envAddress("OUTBE_WCOEN_BRIDGE"), vm.envUint("BSC_CHAIN_ID"), vm.envAddress("BSC_WCOEN_BRIDGE")
+            vm.envAddress("OUTBE_WCOEN_BRIDGE"), vm.envUint("EXTERNAL_CHAIN_ID"), vm.envAddress("EXTERNAL_WCOEN_BRIDGE")
         );
     }
 
     function configureTargetRemote() external {
         _configureRemote(
-            vm.envAddress("BSC_WCOEN_BRIDGE"), vm.envUint("OUTBE_CHAIN_ID"), vm.envAddress("OUTBE_WCOEN_BRIDGE")
+            vm.envAddress("EXTERNAL_WCOEN_BRIDGE"), vm.envUint("OUTBE_CHAIN_ID"), vm.envAddress("OUTBE_WCOEN_BRIDGE")
         );
     }
 
@@ -349,8 +350,8 @@ contract WCOENDeploy is Script {
     }
 
     function _logTarget(TargetDeployment memory target) internal pure {
-        console2.log("BSC_WCOEN_TOKEN=", target.token);
-        console2.log("BSC_WCOEN_BRIDGE=", target.tokenBridge);
+        console2.log("EXTERNAL_WCOEN_TOKEN=", target.token);
+        console2.log("EXTERNAL_WCOEN_BRIDGE=", target.tokenBridge);
         console2.log("CREATE2_FACTORY=", CREATE2_FACTORY);
         console2.log("TOKEN_CREATE2_SALT=");
         console2.logBytes32(target.tokenSalt);
