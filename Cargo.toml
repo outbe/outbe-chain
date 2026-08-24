@@ -32,6 +32,7 @@ members = [
     "crates/system/update",
     "crates/system/vote",
     "crates/system/offchain-data",
+    "crates/system/emit",
     "crates/system/ocomp-protocol",
     "crates/system/ocompregistry",
     "crates/core/compressed-entities",
@@ -131,6 +132,7 @@ outbe-emissionlimit = { path = "crates/system/emissionlimit" }
 outbe-cycle = { path = "crates/system/cycle" }
 outbe-accounting = { path = "crates/system/accounting" }
 outbe-zkproof = { path = "crates/system/zkproof" }
+outbe-emit = { path = "crates/system/emit" }
 outbe-tee = { path = "crates/system/tee", default-features = false }
 outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 outbe-teeregistry = { path = "crates/system/teeregistry" }

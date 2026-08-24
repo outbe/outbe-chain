@@ -8499,6 +8499,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-emit"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "ark-bn254 0.6.0",
+ "ark-ff 0.6.0",
+ "outbe-macros",
+ "outbe-poseidon",
+ "outbe-primitives",
+ "outbe-protocol",
+ "outbe-zk-backend",
+ "outbe-zk-canonical",
+ "outbe-zkproof",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "outbe-engine"
 version = "0.1.0"
 dependencies = [
@@ -8585,6 +8603,7 @@ dependencies = [
  "outbe-credisfactory",
  "outbe-cycle",
  "outbe-desis",
+ "outbe-emit",
  "outbe-fidelity",
  "outbe-gem",
  "outbe-gemfactory",
@@ -8608,6 +8627,7 @@ dependencies = [
  "outbe-promis",
  "outbe-promisfactory",
  "outbe-promislimit",
+ "outbe-protocol",
  "outbe-radicleregistry",
  "outbe-rewards",
  "outbe-slashindicator",
@@ -8626,6 +8646,8 @@ dependencies = [
  "outbe-vaultrouter",
  "outbe-vote",
  "outbe-zerofee",
+ "outbe-zk-backend",
+ "outbe-zk-canonical",
  "outbe-zkproof",
  "proptest",
  "rand_core 0.6.4",

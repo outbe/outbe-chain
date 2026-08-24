@@ -392,6 +392,7 @@ define_exact_routes! {
     DEBUG_SUBCALL_PRECOMPILE_ADDRESS => (DispatchAdapter::Basic(crate::debug_subcall::dispatch), default_base_gas, ValuePolicy::Reject, crate::debug_subcall::PAYABLE_SELECTORS),
     ZKPROOF_POSEIDON_ADDRESS => (DispatchAdapter::Basic(outbe_zkproof::dispatch_poseidon), outbe_zkproof::poseidon_base_gas, ValuePolicy::Reject, outbe_zkproof::precompile::POSEIDON_PAYABLE_SELECTORS),
     ZKPROOF_GROTH16_ADDRESS => (DispatchAdapter::Basic(outbe_zkproof::dispatch_groth16), outbe_zkproof::groth16_base_gas, ValuePolicy::Reject, outbe_zkproof::precompile::GROTH16_PAYABLE_SELECTORS),
+    EMIT_ADDRESS => (DispatchAdapter::Basic(outbe_emit::precompile::dispatch), outbe_emit::precompile::base_gas, ValuePolicy::Payable, outbe_emit::precompile::PAYABLE_SELECTORS),
     TEE_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_teeregistry::v1_precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_teeregistry::v1_precompile::PAYABLE_SELECTORS),
     L2_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_l2registry::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_l2registry::precompile::PAYABLE_SELECTORS),
     STABLECOIN_FACTORY_ADDRESS => (DispatchAdapter::Basic(stablecoin_factory_dispatch), default_base_gas, ValuePolicy::Reject, outbe_stablecoinfactory::precompile::PAYABLE_SELECTORS),
