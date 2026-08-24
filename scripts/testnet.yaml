@@ -92,6 +92,24 @@ tee:
 # contracts_dir: scripts/contracts
 # canon_dir: scripts/canon
 
+# Protocol timings, copied verbatim into config.outbeProtocol.
+# ONLY a `test-protocol-overrides` build accepts this field; a production
+# binary rejects the genesis outright. Use it for localnet and E2E networks,
+# never for a production one, which runs the built-in schedule. Omit the
+# section to run on the built-in defaults (50h forming, 502h lookback delay,
+# 50h offering). A short-window network must state them here.
+# protocol_constants:
+#   schemaVersion: 1
+#   metadosis:
+#     formingPeriodSeconds: 180000
+#     lookbackDelaySeconds: 1807200
+#     offeringPeriodSeconds: 180000
+#     waitingPeriodSeconds: 43200
+#     bootstrapDurationSeconds: 300
+#     advanceIntervalSeconds: 10
+#   ocomp:
+#     computeVoteWindowBlocks: 120
+
 # --- Protocol parameters ---------------------------------------------------
 # A network.yaml of your own may override any of these. Scalars replace, lists
 # replace as a whole, mappings merge key by key.

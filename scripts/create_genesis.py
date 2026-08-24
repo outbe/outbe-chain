@@ -77,6 +77,11 @@ SECP256K1_G = (
 
 # Protocol sections forwarded to the seeder, deep-merged over the baseline.
 SEED_SECTIONS = (
+    # Protocol timings. seed_genesis copies these into config.outbeProtocol,
+    # where the runtime reads the Metadosis day windows and the OCOMP vote
+    # window from; leaving them out means the chain runs on its built-in
+    # defaults, which is rarely what a devnet or a test network wants.
+    "protocol_constants",
     "balance",
     "staking",
     "rewards",
