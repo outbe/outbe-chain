@@ -133,6 +133,9 @@ fn series_id(worldwide_day: u32, issuance: [u8; 3], reference: u8) -> FixedBytes
 
 /// Issue every spec into the same worldwide day and reference currency, so the
 /// sweeps see one group rather than a group per series.
+///
+/// `units_per_chain` is parallel to `chains`: the holder ends up with that many
+/// units of every series on each chain named there.
 #[allow(clippy::too_many_arguments)]
 pub fn issue_series(
     url: &str,
@@ -144,10 +147,11 @@ pub fn issue_series(
     entry_price_minor: U256,
     promis_load_minor: u128,
     holder: Address,
-    units: u32,
-    chain_id: u32,
+    units_per_chain: &[u32],
+    chains: &[u32],
     specs: &[SeriesSpec],
 ) -> Result<Vec<FixedBytes<14>>> {
+    let units: u32 = units_per_chain.iter().sum();
     let ids: Vec<FixedBytes<14>> = specs
         .iter()
         .map(|spec| series_id(worldwide_day, spec.issuance, reference_byte))
@@ -168,10 +172,12 @@ pub fn issue_series(
             promisLoadMinor: promis_load_minor,
             entryPriceMinor: entry_price_minor,
             referenceCurrency: reference_currency,
-            recipients: vec![holder],
-            quantities: vec![U256::from(units)],
-            recipientChains: vec![chain_id],
-            snapshotChains: vec![chain_id],
+            // One recipient leg per chain: the holder ends up with units on each,
+            // which is what makes bringing them home a real step later.
+            recipients: vec![holder; chains.len()],
+            quantities: units_per_chain.iter().copied().map(U256::from).collect(),
+            recipientChains: chains.to_vec(),
+            snapshotChains: chains.to_vec(),
         },
         "issueForTest",
     )?;

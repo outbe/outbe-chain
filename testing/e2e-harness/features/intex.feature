@@ -55,12 +55,16 @@ Feature: Intex from auction to Promis
   @intex-lifecycle
   Scenario: Two Intex series qualify as one group, settle from both states, and burn into Promis
     Given a fresh four-validator OCOMP public capacity localnet
+    When a local target chain is started
+    And the intex venue is deployed on the target chain
+    And the intex venue is wired
     When the intex engine is deployed on the committee chain
     Then the committee chain hosts the intex engine
-    When the settlement currency is registered on the committee chain
+    When a relay carries messages between the two chains
+    And the settlement currency is registered on the committee chain
     Then holders may settle in that currency
     When two test Intex series sharing a reference currency are issued to a funded holder
-    Then the holder holds issued units of both series and none are settled
+    Then the holder holds issued units of both series on each chain
     When the day advances past the qualification period
     Then the controlled COEN USD quote is finalized through the real price feeder
     When the reference rate stands above the series floor

@@ -23,7 +23,11 @@ const ENTRY_PRICE_MINOR: u64 = 1_000_000;
 /// PROMIS-units per Intex unit, on the wire scale.
 const PROMIS_LOAD_MINOR: u128 = 100_000;
 /// Units each series mints to the holder; settled in two goes, so keep it even.
-const UNITS: u32 = 10;
+/// Units each series mints per chain. The holding is split so bringing units home
+/// is a real step rather than a formality.
+const COMMITTEE_UNITS: u32 = 4;
+const TARGET_UNITS: u32 = 6;
+const UNITS: u32 = COMMITTEE_UNITS + TARGET_UNITS;
 /// USD (840) as the reference for both series, spelled `U` in the series id.
 const REFERENCE_BYTE: u8 = b'U';
 /// The DEV profile qualifies a series a day after issuance; overshoot so the
@@ -43,6 +47,8 @@ const CALLED: u8 = 2;
 const CALL_THRESHOLD_DAYS: u32 = 2;
 /// How far back the series are issued so closed days exist after their issuance.
 const CALL_LOOKBACK_DAYS: u32 = 3;
+/// A relayed message is asynchronous; scenarios wait for arrival rather than assume it.
+const DELIVERY_TIMEOUT_SECS: u64 = 180;
 /// The call sweep is daily; give it a few blocks past the last rollover.
 const CALL_SWEEP_TIMEOUT_SECS: u64 = 300;
 
@@ -103,6 +109,23 @@ fn issue_two_series(world: &mut World) {
     test_issuance::fund_settler(&url, asset, DEPLOYER_KEY, U256::from(u64::MAX))
         .expect("fund the settling holder");
 
+    let origin_router = world
+        .state
+        .origin_contracts
+        .as_ref()
+        .expect("intex engine was deployed")
+        .origin_router;
+
+    // The day freezes its target set at stage start, so the second chain has to be
+    // a registered target before the day is opened, not after.
+    test_issuance::add_target(
+        &url,
+        DEPLOYER_KEY,
+        origin_router,
+        u32::try_from(world.target_chain.chain_id()).expect("target chain id fits a uint32"),
+    )
+    .expect("register the target chain as an issuance target");
+
     // The router addresses an issuance leg only to a chain the day was started on,
     // so the day has to be opened before anything can be issued into it.
     // Issued into a day already behind us: the call sweep counts breach days only
@@ -118,12 +141,7 @@ fn issue_two_series(world: &mut World) {
     test_issuance::open_day(
         &url,
         DEPLOYER_KEY,
-        world
-            .state
-            .origin_contracts
-            .as_ref()
-            .expect("intex engine was deployed")
-            .origin_router,
+        origin_router,
         day,
         now,
         settlement_currency::USD_ISO,
@@ -152,8 +170,11 @@ fn issue_two_series(world: &mut World) {
         U256::from(ENTRY_PRICE_MINOR),
         PROMIS_LOAD_MINOR,
         holder,
-        UNITS,
-        u32::try_from(chain_id).expect("committee chain id fits a uint32"),
+        &[COMMITTEE_UNITS, TARGET_UNITS],
+        &[
+            u32::try_from(chain_id).expect("committee chain id fits a uint32"),
+            u32::try_from(world.target_chain.chain_id()).expect("target chain id fits a uint32"),
+        ],
         &[
             SeriesSpec {
                 issuance: *b"USD",
@@ -170,14 +191,19 @@ fn issue_two_series(world: &mut World) {
     world.state.lifecycle_series = series;
 }
 
-#[then("the holder holds issued units of both series and none are settled")]
+#[then("the holder holds issued units of both series on each chain")]
 fn holder_holds_issued_units(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
-    let nft = world
+    let target_url = world
+        .target_chain
+        .rpc_url()
+        .expect("target chain is running");
+    let nft = intex_nft(world);
+    let target_nft = world
         .state
-        .origin_contracts
+        .target_contracts
         .as_ref()
-        .expect("intex engine was deployed")
+        .expect("intex venue was deployed on the target chain")
         .intex_nft;
     let holder = crate::world::origin_venue::deployer_address();
 
@@ -186,28 +212,32 @@ fn holder_holds_issued_units(world: &mut World) {
         2,
         "the scenario issues two series"
     );
-    for series in &world.state.lifecycle_series {
+
+    // The target-chain leg travels as a real message, so give the relay its round.
+    let deadline = Instant::now() + Duration::from_secs(DELIVERY_TIMEOUT_SECS);
+    for series in world.state.lifecycle_series.clone() {
         assert!(
-            venue_probes::series_exists(&url, nft, *series),
-            "the collection does not know series {series}"
+            venue_probes::series_exists(&url, nft, series),
+            "the committee collection does not know series {series}"
         );
         assert_eq!(
-            venue_probes::series_balances(&url, nft, *series, holder),
-            Some((u64::from(UNITS), 0)),
-            "series {series} did not mint its units to the holder"
+            venue_probes::series_balances(&url, nft, series, holder),
+            Some((u64::from(COMMITTEE_UNITS), 0)),
+            "series {series} did not mint its committee units to the holder"
         );
+        loop {
+            if venue_probes::series_balances(&target_url, target_nft, series, holder)
+                == Some((u64::from(TARGET_UNITS), 0))
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "series {series} never reached the target chain; the relay carried nothing"
+            );
+            sleep(Duration::from_secs(2));
+        }
     }
-}
-
-/// The day the chain is in, taken from its own head rather than the host clock.
-fn chain_worldwide_day_offset(world: &World, port: u16, offset_secs: i64) -> u32 {
-    let timestamp = world
-        .rpc
-        .latest_block_timestamp(port)
-        .expect("committee head timestamp");
-    outbe_primitives::time::worldwide_day_from_timestamp(
-        timestamp.saturating_add_signed(offset_secs),
-    )
 }
 
 #[when("the day advances past the qualification period")]
@@ -554,4 +584,15 @@ fn start_relay(world: &mut World) {
     };
 
     world.relay = Some(Relay::start(committee, target, DEPLOYER_KEY.to_owned()));
+}
+
+/// The day the chain is in, taken from its own head rather than the host clock.
+fn chain_worldwide_day_offset(world: &World, port: u16, offset_secs: i64) -> u32 {
+    let timestamp = world
+        .rpc
+        .latest_block_timestamp(port)
+        .expect("committee head timestamp");
+    outbe_primitives::time::worldwide_day_from_timestamp(
+        timestamp.saturating_add_signed(offset_secs),
+    )
 }
