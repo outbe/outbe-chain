@@ -382,6 +382,8 @@ pub struct FixtureState {
     pub target_contracts: Option<crate::world::target_chain::TargetContracts>,
     /// Addresses the origin-side deploy reported.
     pub origin_contracts: Option<crate::world::origin_venue::OriginContracts>,
+    /// The series the lifecycle scenario issued, in the order it issued them.
+    pub lifecycle_series: Vec<alloy_primitives::FixedBytes<14>>,
     /// The stablecoin holders settle Intex in, and its reserve vault.
     pub settlement_currency: Option<crate::world::settlement_currency::SettlementCurrency>,
     pub auction_bidders: Vec<crate::world::bidders::Bidder>,
@@ -412,6 +414,7 @@ impl Default for FixtureState {
         Self {
             radicle: RadicleScenarioEvidenceV1::default(),
             settlement_currency: None,
+            lifecycle_series: Vec::new(),
             proposal_id: 1,
             proposed_version: None,
             activation_height: None,

@@ -34,6 +34,19 @@ sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IIntexFactoryTestArming {
         function armProceedsForTest(uint32 worldwideDay, uint32[] chains, uint64 deadline) external;
+        function issueForTest(
+            bytes14 seriesId,
+            uint32 worldwideDay,
+            uint32 issuedIntexCount,
+            uint128 promisLoadMinor,
+            uint256 entryPriceMinor,
+            uint16 issuanceCurrency,
+            uint16 referenceCurrency,
+            address[] recipients,
+            uint256[] quantities,
+            uint32[] recipientChains,
+            uint32[] snapshotChains
+        ) external;
     }
 }
 
@@ -46,6 +59,29 @@ pub fn dispatch(
     // IntexFactory is a payable route, so the boundary credits value to this
     // address; every selector the module has not published refuses it here.
     reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
+    #[cfg(feature = "e2e-test")]
+    if let Ok(call) = IIntexFactoryTestArming::issueForTestCall::abi_decode(data) {
+        // The same two calls the clearing engine makes, so the series is indexed for
+        // the qualify sweep and its mints travel as real issuance instructions.
+        let legs = crate::api::issue(
+            &storage,
+            crate::schema::IssuanceParams {
+                series_id: SeriesId::from(call.seriesId),
+                worldwide_day: call.worldwideDay.into(),
+                issued_intex_count: call.issuedIntexCount,
+                promis_load_minor: call.promisLoadMinor,
+                entry_price_minor: call.entryPriceMinor,
+                issuance_currency: call.issuanceCurrency,
+                reference_currency: call.referenceCurrency,
+                recipients: call.recipients,
+                quantities: call.quantities,
+                recipient_chains: call.recipientChains,
+                snapshot_chains: call.snapshotChains,
+            },
+        )?;
+        crate::api::send_issuance(&storage, legs)?;
+        return Ok(Bytes::new());
+    }
     #[cfg(feature = "e2e-test")]
     if let Ok(call) = IIntexFactoryTestArming::armProceedsForTestCall::abi_decode(data) {
         outbe_intex::api::arm_proceeds(

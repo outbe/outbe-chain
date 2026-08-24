@@ -35,9 +35,11 @@ Feature: Intex from auction to Promis
     And the escrow settles the day and returns what the bids did not buy
 
   @intex-lifecycle
-  Scenario: An Intex settles in the currency its series is measured in
+  Scenario: Two Intex series are issued into the engine and held by one settler
     Given a fresh four-validator OCOMP public capacity localnet
     When the intex engine is deployed on the committee chain
     Then the committee chain hosts the intex engine
     When the settlement currency is registered on the committee chain
     Then holders may settle in that currency
+    When two test Intex series sharing a reference currency are issued to a funded holder
+    Then the holder holds issued units of both series and none are settled

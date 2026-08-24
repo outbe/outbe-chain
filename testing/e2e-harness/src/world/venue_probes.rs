@@ -396,6 +396,8 @@ sol! {
     interface IIssuedSeries {
         function seriesExists(bytes14 seriesId) external view returns (bool);
         function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
+        function settledTokenId(bytes14 seriesId) external pure returns (uint256);
+        function statusOf(uint256 tokenId) external view returns (uint8);
         function balanceOf(address account, uint256 id) external view returns (uint256);
     }
 }
@@ -463,4 +465,54 @@ pub(crate) fn cleared_empty(url: &str, worldwide_day: u32) -> Option<bool> {
         return Some(false);
     }
     None
+}
+
+/// What `holder` owns of `series`: units still issued, and units already settled.
+pub(crate) fn series_balances(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+    holder: Address,
+) -> Option<(u64, u64)> {
+    let issued_id = eth::read_call(
+        url,
+        nft,
+        &IIssuedSeries::issuedTokenIdCall { seriesId: series },
+    )?;
+    let settled_id = eth::read_call(
+        url,
+        nft,
+        &IIssuedSeries::settledTokenIdCall { seriesId: series },
+    )?;
+    let issued = eth::read_call(
+        url,
+        nft,
+        &IIssuedSeries::balanceOfCall {
+            account: holder,
+            id: issued_id,
+        },
+    )?;
+    let settled = eth::read_call(
+        url,
+        nft,
+        &IIssuedSeries::balanceOfCall {
+            account: holder,
+            id: settled_id,
+        },
+    )?;
+    Some((issued.to::<u64>(), settled.to::<u64>()))
+}
+
+/// Whether the collection knows the series at all.
+pub(crate) fn series_exists(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+) -> bool {
+    eth::read_call(
+        url,
+        nft,
+        &IIssuedSeries::seriesExistsCall { seriesId: series },
+    )
+    .unwrap_or_default()
 }

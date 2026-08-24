@@ -18,6 +18,7 @@ pub mod rpc;
 pub mod settlement_currency;
 pub mod state;
 pub mod target_chain;
+pub mod test_issuance;
 pub mod validators;
 pub mod venue_probes;
 
