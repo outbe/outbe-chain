@@ -44,7 +44,8 @@ Feature: Intex from auction to Promis
     When two test Intex series sharing a reference currency are issued to a funded holder
     Then the holder holds issued units of both series and none are settled
     When the day advances past the qualification period
-    And the reference rate stands above the series floor
+    Then the controlled COEN USD quote is finalized through the real price feeder
+    When the reference rate stands above the series floor
     Then both series qualify in one group decision
     When the holder settles part of their units
     Then those units move from issued to settled
