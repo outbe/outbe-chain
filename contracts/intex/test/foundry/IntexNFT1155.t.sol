@@ -556,7 +556,7 @@ contract IntexNFT1155Test is Test {
         nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
         uint32 deadline = calledAt + callPeriod;
 
-        // One second past the settlement deadline: even the system relayer is frozen out.
+        // One second past the settlement deadline: the holder is frozen out too.
         vm.warp(uint256(deadline) + 1);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, TOKEN_ID_1, deadline));
         nft.crosschainBurn(user, user, TOKEN_ID_1, 5);

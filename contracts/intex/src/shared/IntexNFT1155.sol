@@ -304,9 +304,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         if (data.state == IIntexNFT1155.IntexState.Called) {
             // A bridge hop that changes holder is a transfer, which Called forbids.
             if (to != from) revert TransferOnCalledForbidden(tokenId);
-            // Bridge moves are confined to the call window: once `calledAt + callTrigger.callNoticePeriod`
-            // passes the series is settlement-complete and balances must stay frozen, otherwise
-            // a system relayer could keep moving (and `crosschainMint` could re-inflate) post-lifecycle.
+            // Past `calledAt + callNoticePeriod` the series is settlement-complete and balances freeze,
+            // so no hop may still move one out (or `crosschainMint` re-inflate one back in).
             uint32 derivedDeadline = data.calledAt + data.callTrigger.callNoticePeriod;
             if (block.timestamp > derivedDeadline) {
                 revert BridgeAfterDeadline(tokenId, derivedDeadline);
