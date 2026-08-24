@@ -227,16 +227,22 @@ fn resolve_entry_price_minor(
     worldwide_day: WorldwideDay,
     iso_code: u16,
 ) -> Result<U256> {
-    let (pair, index) = outbe_oracle::api::require_coen_pair(storage.clone(), iso_code)?;
-    let vwap =
-        outbe_oracle::api::get_worldwide_day_vwap_for_pair(storage.clone(), worldwide_day, index)?
-            .unwrap_or(U256::ZERO);
-    let max_scurve = outbe_oracle::api::get_max_active_scurve_value(storage, worldwide_day, pair)?;
-    let nominal = vwap.max(max_scurve);
-    if nominal.is_zero() {
+    let (_, index) = outbe_oracle::api::require_coen_pair(storage.clone(), iso_code)?;
+    let vwap = outbe_oracle::api::get_worldwide_day_vwap_for_pair(storage, worldwide_day, index)?
+        .unwrap_or(U256::ZERO);
+    if vwap.is_zero() {
         return Err(PrecompileError::Revert(
-            "nominal price is zero: no VWAP or S-curve data available for this WorldwideDay".into(),
+            "Lysis WWD VWAP is missing or zero for this reference currency".into(),
         ));
     }
-    Ok(nominal)
+    Ok(vwap)
+}
+
+#[cfg(test)]
+pub(crate) fn resolve_entry_price_minor_for_test(
+    storage: StorageHandle,
+    worldwide_day: WorldwideDay,
+    iso_code: u16,
+) -> Result<U256> {
+    resolve_entry_price_minor(storage, worldwide_day, iso_code)
 }

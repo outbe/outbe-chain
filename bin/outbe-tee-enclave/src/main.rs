@@ -17,6 +17,13 @@
 
 use outbe_tee_enclave::run::{run, RunOpts};
 
+/// Heap accounting for `EnclaveRequest::Health` (EPC-pressure proxy).
+/// Installed only in the binary roots so library users, tests and benches keep
+/// the plain system allocator.
+#[global_allocator]
+static ALLOCATOR: outbe_tee_enclave::telemetry::CountingAllocator =
+    outbe_tee_enclave::telemetry::CountingAllocator;
+
 fn main() {
     std::process::exit(run(RunOpts::prod()));
 }

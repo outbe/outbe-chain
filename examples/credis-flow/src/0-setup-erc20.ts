@@ -28,6 +28,8 @@ const { envPath } = loadEnv(import.meta.url, envName, { deploymentEnv: true });
 const rpcUrl = requireEnv("RPC_URL", envPath);
 const ownerPrivateKey = requireEnv("PRIVATE_KEY", envPath);
 const holderPrivateKey = requireEnv("ERC20_HOLDER_PRIVATE_KEY", envPath);
+// Optional: the VaultRouter owner may be a third key, distinct from owner/holder.
+const vaultRouterPrivateKey = process.env.VAULT_ROUTER_PRIVATE_KEY;
 const userAddress = requireEnv("USER_ADDRESS", envPath);
 const erc20Address = requireEnv("ERC20_ADDRESS", envPath);
 const vaultRouterAddress = requireEnv("VAULT_ROUTER_ADDRESS", envPath);
@@ -36,6 +38,7 @@ async function main() {
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const ownerWallet = new Wallet(ownerPrivateKey, provider);
   const holderWallet = new Wallet(holderPrivateKey, provider);
+  const vaultRouterWallet = vaultRouterPrivateKey ? new Wallet(vaultRouterPrivateKey, provider) : undefined;
 
   const tokenAsOwner = IERC20__factory.connect(erc20Address, ownerWallet);
   const tokenAsHolder = IERC20__factory.connect(erc20Address, holderWallet);
@@ -136,14 +139,17 @@ async function main() {
     if (alreadyRegistered) {
       console.log(`    Holder already registered as liquidity source`);
     } else {
-      let signerForRegistration: Wallet;
-      if (vaultRouterOwner.toLowerCase() === ownerWallet.address.toLowerCase()) {
-        signerForRegistration = ownerWallet;
-      } else if (vaultRouterOwner.toLowerCase() === holderWallet.address.toLowerCase()) {
-        signerForRegistration = holderWallet;
-      } else {
+      const candidates = [ownerWallet, holderWallet, vaultRouterWallet].filter(
+        (w): w is Wallet => w !== undefined,
+      );
+      const signerForRegistration = candidates.find(
+        (w) => w.address.toLowerCase() === vaultRouterOwner.toLowerCase(),
+      );
+      if (!signerForRegistration) {
         throw new Error(
-          `VaultRouter owner ${vaultRouterOwner} is neither PRIVATE_KEY (${ownerWallet.address}) nor ERC20_HOLDER_PRIVATE_KEY (${holderWallet.address}); cannot register holder as liquidity source`,
+          `VaultRouter owner ${vaultRouterOwner} matches none of PRIVATE_KEY / ERC20_HOLDER_PRIVATE_KEY / VAULT_ROUTER_PRIVATE_KEY (${candidates
+            .map((w) => w.address)
+            .join(", ")}); cannot register holder as liquidity source`,
         );
       }
       const vaultRouterForRegistration = IVaultRouter__factory.connect(vaultRouterAddress, signerForRegistration);

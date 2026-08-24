@@ -39,6 +39,7 @@ sol!("../../contracts/precompiles/src/IOracle.sol");
 sol!("../../contracts/precompiles/src/IUpdate.sol");
 sol!("../../contracts/precompiles/src/IVote.sol");
 sol!("../../contracts/precompiles/src/IStablecoinPolicyRegistry.sol");
+sol!("../../contracts/precompiles/src/IRadicleRegistry.sol");
 
 pub const ORACLE_ADDR: Address = address!("0x000000000000000000000000000000000000EE05");
 

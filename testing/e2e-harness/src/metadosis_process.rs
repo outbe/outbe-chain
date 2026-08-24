@@ -25,6 +25,18 @@ const FRESH_SCENARIO: &str =
     "A public Tribute completes real OCOMP, FullNode verification, NOD, replay, and contributor payout";
 const P0_SCENARIO: &str = "A shard-cap-plus-one public population is completely processed";
 
+fn fresh_node_build_args() -> [&'static str; 7] {
+    [
+        "--release",
+        "-p",
+        "outbe-chain",
+        "--features",
+        "e2e-test",
+        "--bin",
+        "outbe-chain",
+    ]
+}
+
 pub fn run_fresh_devnet(repo: &Path, output: &Path) -> Result<()> {
     let lane = Lane::prepare(repo, output)?;
     fs::create_dir(lane.output.join("evidence"))
@@ -34,16 +46,17 @@ pub fn run_fresh_devnet(repo: &Path, output: &Path) -> Result<()> {
     let target = build.path();
     let build_log = lane.output.join("build.log");
 
+    cargo_build(&lane, target, &fresh_node_build_args(), &build_log)?;
     cargo_build(
         &lane,
         target,
-        &["--release", "-p", "outbe-chain", "--bin", "outbe-chain"],
+        &["--release", "-p", "outbe-ocomp", "--bin", "outbe-ocomp"],
         &build_log,
     )?;
     cargo_build(
         &lane,
         target,
-        &["--release", "-p", "outbe-ocomp", "--bin", "outbe-ocomp"],
+        &["--release", "-p", "outbe-feeder", "--bin", "outbe-feeder"],
         &build_log,
     )?;
     cargo_build(
@@ -91,6 +104,7 @@ pub fn run_fresh_devnet(repo: &Path, output: &Path) -> Result<()> {
     for binary in [
         "outbe-chain",
         "outbe-ocomp",
+        "outbe-feeder",
         "outbe-cli",
         "outbe-keygen",
         "outbe-tee-enclave",
@@ -106,6 +120,7 @@ pub fn run_fresh_devnet(repo: &Path, output: &Path) -> Result<()> {
         .args(["--evidence-dir", path(&lane.output.join("evidence"))])
         .args(["--chain-bin", path(&artifacts.join("outbe-chain"))])
         .args(["--ocomp-bin", path(&artifacts.join("outbe-ocomp"))])
+        .args(["--feeder-bin", path(&artifacts.join("outbe-feeder"))])
         .args(["--cli-bin", path(&artifacts.join("outbe-cli"))])
         .args(["--keygen-bin", path(&artifacts.join("outbe-keygen"))])
         .args(["--enclave-bin", path(&artifacts.join("outbe-tee-enclave"))])
@@ -545,6 +560,22 @@ mod command_tests {
                 "--validators",
                 "4",
                 "--all",
+            ]
+        );
+    }
+
+    #[test]
+    fn fresh_devnet_node_build_enables_only_the_required_test_arming_surface() {
+        assert_eq!(
+            super::fresh_node_build_args(),
+            [
+                "--release",
+                "-p",
+                "outbe-chain",
+                "--features",
+                "e2e-test",
+                "--bin",
+                "outbe-chain",
             ]
         );
     }

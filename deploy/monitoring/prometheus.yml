@@ -2,11 +2,19 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# Alert rules: copy scripts/monitoring/alerts.example.yaml (the maintained
+# template, incl. the outbe-chain.tee group) to this path and keep in sync.
+rule_files:
+  - /etc/prometheus/rules/outbe-chain.yaml
+
 scrape_configs:
   - job_name: 'outbe-chain'
     static_configs:
       - targets:
-          - 'localhost:9001'
+          # run-testnet.sh / prepare_network.py expose `--metrics 0.0.0.0:9101+i`
+          # (add :9102..:910N for more validators). Production units choose their
+          # own port — keep this target in sync with the unit's `--metrics` flag.
+          - 'localhost:9101'
         labels:
           chain: 'outbe'
           role: 'validator'

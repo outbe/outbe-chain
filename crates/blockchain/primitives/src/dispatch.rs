@@ -173,6 +173,29 @@ pub fn mutate_void_payable<T: SolCall>(
     Ok(Bytes::new())
 }
 
+/// Mutate payable helper: a state-changing function that accepts msg.value and
+/// returns a value.
+///
+/// [`mutate_void_payable`] with a return value; the same
+/// `payable_selectors` guard applies, so an undeclared selector is refused its
+/// value rather than handed it.
+#[inline]
+pub fn mutate_payable<T: SolCall>(
+    call: T,
+    payable_selectors: &[[u8; 4]],
+    sender: Address,
+    value: U256,
+    f: impl FnOnce(Address, T, U256) -> Result<T::Return>,
+) -> Result<Bytes> {
+    if !value.is_zero() && !payable_selectors.contains(&T::SELECTOR) {
+        return Err(PrecompileError::Revert(
+            "payable selector is not declared in PAYABLE_SELECTORS".into(),
+        ));
+    }
+    let ret = f(sender, call, value)?;
+    Ok(Bytes::from(T::abi_encode_returns(&ret)))
+}
+
 /// Refuses native value for any selector the module has not published as
 /// payable.
 ///

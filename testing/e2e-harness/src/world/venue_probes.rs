@@ -5,7 +5,9 @@
 //! and returns a human sentence rather than a value, so a panic message reads
 //! as a diagnosis instead of a mismatch.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::Address;
+#[cfg(feature = "ocomp-integration")]
+use alloy_primitives::U256;
 use alloy_sol_types::sol;
 
 use crate::internal::eth;
@@ -69,6 +71,7 @@ sol! {
 }
 /// Every probe below asks the same question of the chain — "what did this
 /// contract emit for this day?" — so the query shape lives here once.
+#[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
 fn logs_of(
     url: &str,
     address: Address,

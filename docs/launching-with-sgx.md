@@ -203,8 +203,8 @@ compare its resident permanent key with canonical chain state:
 
 ```sh
 target/debug/outbe-cli tee pubkey \
-  --enclave-socket 127.0.0.1:7000 \
-  --rpc-url http://127.0.0.1:8545 \
+  --enclave-socket 127.0.0.1:17000 \
+  --rpc-url http://127.0.0.1:18545 \
   --diff-chain
 ```
 

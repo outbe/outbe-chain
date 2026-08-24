@@ -212,6 +212,111 @@ fn later_nod_failure_rolls_back_the_complete_lysis_attempt() {
 }
 
 #[test]
+fn non_usd_lysis_price_ignores_a_higher_scurve() {
+    let wwd = WorldwideDay::new(20_260_718);
+    let mut storage = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut storage, |storage| {
+        let pair = outbe_oracle::api::AddressPair::new_coen_to(978);
+        let index = outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+        let oracle = OracleContract::new(storage.clone());
+        oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
+        oracle
+            .worldwide_day_vwap_value
+            .get_nested(&wwd)
+            .write(&index, U256::from(250_000_u64))
+            .unwrap();
+        outbe_oracle::scurve::store_scurve_entry(
+            &mut OracleContract::new(storage.clone()),
+            pair,
+            wwd.to_timestamp_utc(),
+            U256::from(320_000_u64),
+        )
+        .unwrap();
+
+        assert_eq!(
+            crate::runtime::resolve_entry_price_minor_for_test(storage, wwd, 978).unwrap(),
+            U256::from(250_000_u64),
+            "Lysis must use the EUR WWD VWAP rather than its higher S-curve"
+        );
+    });
+}
+
+#[test]
+fn positive_scurve_cannot_replace_a_missing_or_zero_lysis_vwap() {
+    const T_NOW: u64 = 1_700_000_000;
+    let wwd = WorldwideDay::new(20_260_719);
+    let nominal = coen(100_u64);
+
+    for explicitly_write_zero in [false, true] {
+        let mut storage = HashMapStorageProvider::new(1);
+        outbe_fidelity::enclave_client::test_enclave::install();
+        storage.set_timestamp(U256::from(T_NOW));
+        let bodies = TestBodyRepository::new();
+        StorageHandle::enter(&mut storage, |storage| {
+            let scope = ExecutionScope::new();
+            seed_compressed_entities_genesis(&storage);
+            begin_block(storage.clone(), &scope).unwrap();
+
+            let usd = outbe_oracle::api::DAY_TYPE_PAIR;
+            let eur = outbe_oracle::api::AddressPair::new_coen_to(978);
+            let usd_index = outbe_oracle::api::register_pair(storage.clone(), usd).unwrap();
+            let eur_index = outbe_oracle::api::register_pair(storage.clone(), eur).unwrap();
+            let oracle = OracleContract::new(storage.clone());
+            oracle.worldwide_day_vwap_exists.write(&wwd, true).unwrap();
+            let values = oracle.worldwide_day_vwap_value.get_nested(&wwd);
+            values.write(&usd_index, U256::from(500_000_u64)).unwrap();
+            if explicitly_write_zero {
+                values.write(&eur_index, U256::ZERO).unwrap();
+            }
+            outbe_oracle::scurve::store_scurve_entry(
+                &mut OracleContract::new(storage.clone()),
+                eur,
+                wwd.to_timestamp_utc(),
+                U256::from(900_000_u64),
+            )
+            .unwrap();
+
+            let owner = Address::repeat_byte(if explicitly_write_zero { 0x42 } else { 0x41 });
+            let mut input = gas_audit_tribute(1, owner, wwd, nominal);
+            input.reference_currency = 978;
+            let mut tribute = TributeContract::new(storage.clone());
+            tribute.unseal_day(wwd).unwrap();
+            bodies.issue(&mut tribute, &scope, &input);
+            tribute.seal_day(wwd).unwrap();
+            let before = tribute.get_day_totals(wwd).unwrap();
+
+            let error = match crate::runtime::lysis(
+                storage.clone(),
+                &scope,
+                &bodies,
+                wwd,
+                nominal / U256::from(10_u64),
+            ) {
+                Ok(_) => panic!("S-curve must not substitute for a missing or zero WWD VWAP"),
+                Err(error) => error,
+            };
+            assert!(error.to_string().contains("WWD VWAP"));
+            let after = TributeContract::new(storage.clone())
+                .get_day_totals(wwd)
+                .unwrap();
+            assert_eq!(after.tribute_count, before.tribute_count);
+            assert_eq!(after.tribute_nominal_amount, before.tribute_nominal_amount);
+            assert_eq!(
+                TributeContract::new(storage.clone())
+                    .total_supply()
+                    .unwrap(),
+                1
+            );
+            assert_eq!(NodContract::new(storage.clone()).total_supply().unwrap(), 0);
+            assert!(outbe_intex::api::read_contributors(&storage, wwd)
+                .unwrap()
+                .is_empty());
+        });
+        assert!(storage.get_events(NOD_ADDRESS).is_empty());
+    }
+}
+
+#[test]
 fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
     const DENSE_TRIBUTE_COUNT: u64 = 512;
     const T_NOW: u64 = 1_700_000_000;
@@ -241,7 +346,6 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
             .get_nested(&wwd)
             .write(&pair_index, cost_of_gratis)
             .unwrap();
-
         let mut tribute = TributeContract::new(storage.clone());
         tribute.unseal_day(wwd).unwrap();
         for token_id in 1..=DENSE_TRIBUTE_COUNT {
@@ -662,6 +766,23 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
             .get_nested(&wwd)
             .write(&pair_index, cost_of_gratis)
             .unwrap();
+        outbe_oracle::scurve::store_scurve_entry(
+            &mut OracleContract::new(s.clone()),
+            outbe_oracle::api::DAY_TYPE_PAIR,
+            wwd.to_timestamp_utc(),
+            U256::from(900_000u64),
+        )
+        .unwrap();
+        assert_eq!(
+            outbe_oracle::api::get_max_active_scurve_value(
+                s.clone(),
+                wwd,
+                outbe_oracle::api::DAY_TYPE_PAIR,
+            )
+            .unwrap(),
+            U256::from(900_000u64),
+            "fixture must prove an S-curve above the WWD VWAP"
+        );
 
         // Seed compact lifecycle state plus the canonical direct-map commitment,
         // then materialize only the off-chain body. No legacy full EVM body or
@@ -743,7 +864,8 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
     assert_eq!(
         item.cost_amount_minor,
         expected,
-        "cost_amount_minor must equal cost_of_gratis * gratis_load / SIX_DECIMAL_SCALE; \
+        "cost_amount_minor must use the WWD VWAP below the active S-curve and equal \
+         cost_of_gratis * gratis_load / SIX_DECIMAL_SCALE; \
          pre-fix value (missing /SCALE) would be {}",
         cost_of_gratis * item.gratis_load_minor
     );

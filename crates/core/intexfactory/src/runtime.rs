@@ -15,9 +15,8 @@ use outbe_vaultrouter::api::IVaultRouter;
 
 use crate::config;
 use crate::constants::{
-    DIST_CHUNK_LIMIT, FX_RATE_MAX_AGE_SECONDS, INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_ISSUANCE,
-    MAX_SERIES_PER_MESSAGE, ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PRICE_RATE_DEN,
-    PROCEEDS_FANIN_TIMEOUT_SECS,
+    DIST_CHUNK_LIMIT, INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE,
+    ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -930,30 +929,11 @@ fn cost_in_token(
         .checked_mul(series.promis_load_minor)
         .ok_or_else(|| PrecompileError::Revert("cost amount overflow".into()))?;
 
-    let now = storage.timestamp()?.to::<u64>();
-    let rate_issuance = fresh_coen_rate(storage, series.issuance_currency, now)?;
-    let rate_reference = fresh_coen_rate(storage, series.reference_currency, now)?;
+    let rate_issuance =
+        outbe_oracle::api::fresh_coen_rate_for(storage.clone(), series.issuance_currency)?;
+    let rate_reference =
+        outbe_oracle::api::fresh_coen_rate_for(storage.clone(), series.reference_currency)?;
     product_to_payment_units(product, rate_issuance, rate_reference, payment_decimals)
-}
-
-/// The oracle's COEN price in `iso_code`, refused when absent or older than
-/// [`FX_RATE_MAX_AGE_SECONDS`].
-fn fresh_coen_rate(storage: &StorageHandle<'_>, iso_code: u16, now: u64) -> Result<U256> {
-    // A missing pair is an answer; a failed read is not, and must not look like one.
-    let Some(pair_index) = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso_code)?
-    else {
-        return Err(IntexFactoryError::FxRateUnavailable(iso_code).into());
-    };
-    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-    let rate = oracle.exchange_rate.read(&pair_index)?;
-    if rate.is_zero() {
-        return Err(IntexFactoryError::FxRateUnavailable(iso_code).into());
-    }
-    let published = oracle.exchange_rate_timestamp.read(&pair_index)?;
-    if now.saturating_sub(published) > FX_RATE_MAX_AGE_SECONDS {
-        return Err(IntexFactoryError::FxRateStale(iso_code).into());
-    }
-    Ok(rate)
 }
 
 /// Rejects `token` unless the router holds a vault for it and the token reports

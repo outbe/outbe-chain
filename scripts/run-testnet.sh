@@ -64,6 +64,24 @@ locate_binary() {
     exit 1
 }
 
+locate_radicle_binary() {
+    if [ -n "${OUTBE_RADICLE_BINARY:-}" ]; then
+        if [ ! -x "$OUTBE_RADICLE_BINARY" ]; then
+            echo "Error: OUTBE_RADICLE_BINARY is set but not executable: $OUTBE_RADICLE_BINARY"
+            exit 1
+        fi
+        return
+    fi
+    for candidate in ./target/release/outbe-radicle; do
+        if [ -x "$candidate" ]; then
+            OUTBE_RADICLE_BINARY="$candidate"
+            return
+        fi
+    done
+    echo "Error: release outbe-radicle binary not found; set OUTBE_RADICLE_BINARY." >&2
+    exit 1
+}
+
 load_bootnodes() {
     if [ -n "$RETH_BOOTNODES" ]; then
         printf '%s' "$RETH_BOOTNODES"
@@ -95,6 +113,7 @@ do_start() {
     fi
 
     locate_binary
+    locate_radicle_binary
     if [ -z "${OUTBE_PROJECTION_MONGODB_URI:-}" ]; then
         echo "Error: OUTBE_PROJECTION_MONGODB_URI is required for every validator." >&2
         echo "  Point it at a transaction-capable replica set or sharded cluster." >&2
@@ -135,12 +154,14 @@ do_start() {
         fi
     fi
 
-    local base_rpc=$((8545 + PORT_OFFSET))
+    local base_rpc=$((18545 + PORT_OFFSET))
     local base_p2p=$((30303 + PORT_OFFSET))
     local base_discv5=$((31303 + PORT_OFFSET))
     local base_consensus=$((30400 + PORT_OFFSET))
     local base_authrpc=$((8551 + PORT_OFFSET))
     local base_metrics=$((9101 + PORT_OFFSET))
+    local base_radicle=$((8776 + PORT_OFFSET))
+    local base_radicle_status=$((8876 + PORT_OFFSET))
 
     # Mandatory per-validator GramineDirectDev enclave. The binary is
     # auto-detected in ./target or supplied via OUTBE_TEE_ENCLAVE_BINARY.
@@ -306,9 +327,18 @@ do_start() {
             # count/order change requires a new genesis.
             local -a tee_dkg_arg=(--dkg-seed "$tee_dkg_seed")
             docker rm -f "$tee_ctr" >/dev/null 2>&1 || true
+            # Auto-restart only when sealing is on: an auto-restarted enclave
+            # WITHOUT a sealed offer key comes back keyless, turning a loud
+            # dead-socket failure into a quiet decrypt-failure mode.
+            local -a tee_restart_args=()
+            if [ -n "${OUTBE_TEE_SEAL:-}" ]; then
+                tee_restart_args=(--restart unless-stopped)
+            fi
             docker run -d --name "$tee_ctr" \
                 --security-opt seccomp=unconfined \
                 --network host \
+                --log-driver local --log-opt max-size=10m --log-opt max-file=3 \
+                "${tee_restart_args[@]}" \
                 "${sgx_dev[@]}" \
                 "${tee_seal_mount[@]}" \
                 -v "$(readlink -f "$tee_enclave_bin"):/app/outbe-tee-enclave:ro" \
@@ -321,7 +351,11 @@ do_start() {
                 (exec 3<>"/dev/tcp/127.0.0.1/$tee_port") 2>/dev/null && { exec 3>&- 2>/dev/null; tee_up=1; break; }
                 sleep 0.1
             done
-            docker logs "$tee_ctr" > "$validator_dir/enclave.log" 2>&1 || true
+            # Persistent stdout/stderr: follow the container log for the whole
+            # run (per-request telemetry lines + restarts land in enclave.log,
+            # not just a one-shot boot snapshot).
+            docker logs -f "$tee_ctr" > "$validator_dir/enclave.log" 2>&1 &
+            echo $! > "$PID_DIR/validator-$i.enclave-log.pid"
             # WS-M2 M6: fail loudly instead of silently proceeding — otherwise the node
             # would later fail-fast on the missing socket with a less obvious cause.
             if [ -z "$tee_up" ]; then
@@ -337,10 +371,47 @@ do_start() {
         if [ -n "$bootnodes" ]; then
             reth_p2p_args+=(--bootnodes "$bootnodes")
         fi
+
+        local radicle_pid_file="$PID_DIR/validator-$i.radicle.pid"
+        local radicle_exit_file="$PID_DIR/validator-$i.radicle.exit"
+        local radicle_log_file="$validator_dir/radicle.log"
+        local radicle_home="$validator_dir/radicle"
+        if [ -f "$radicle_pid_file" ] && kill -0 "$(cat "$radicle_pid_file")" 2>/dev/null; then
+            echo "  Validator $i Radicle already running (PID $(cat "$radicle_pid_file")), reusing"
+        else
+            rm -f "$radicle_pid_file" "$radicle_exit_file"
+            OUTBE_RADICLE_BINARY="$OUTBE_RADICLE_BINARY" \
+                nohup "$SCRIPT_DIR/run-supervised.sh" "$radicle_exit_file" \
+                "$SCRIPT_DIR/run-radicle.sh" \
+                "$radicle_home" \
+                "127.0.0.1:$((base_radicle + i))" \
+                "127.0.0.1:$((base_radicle_status + i))" \
+                "$n" \
+                "127.0.0.1:$((base_radicle + i))" \
+                > "$radicle_log_file" 2>&1 < /dev/null &
+            local radicle_pid=$!
+            echo "$radicle_pid" > "$radicle_pid_file"
+            local radicle_up=""
+            for _ in $(seq 1 100); do
+                (exec 3<>"/dev/tcp/127.0.0.1/$((base_radicle_status + i))") 2>/dev/null \
+                    && { exec 3>&- 2>/dev/null; radicle_up=1; break; }
+                kill -0 "$radicle_pid" 2>/dev/null || break
+                sleep 0.1
+            done
+            if [ -z "$radicle_up" ]; then
+                echo "Error: validator-$i Radicle sidecar failed to start; see $radicle_log_file" >&2
+                exit 1
+            fi
+            echo "  Validator $i Radicle started (PID $radicle_pid, log: $radicle_log_file)"
+        fi
         if [ -f "$validator_dir/reth-p2p-secret.hex" ]; then
+            # Pass the key as a FILE, never inline hex in argv: the command line
+            # is world-readable via `ps`. reth parses the file contents without
+            # trimming, so normalize it in place once (idempotent).
             local reth_p2p_secret
             reth_p2p_secret="$(tr -d '[:space:]' < "$validator_dir/reth-p2p-secret.hex")"
-            reth_p2p_args+=(--p2p-secret-key-hex "$reth_p2p_secret")
+            printf '%s' "$reth_p2p_secret" > "$validator_dir/reth-p2p-secret.hex"
+            reth_p2p_args+=(--p2p-secret-key "$validator_dir/reth-p2p-secret.hex")
         fi
 
         local -a consensus_material_args=()
@@ -385,6 +456,8 @@ do_start() {
         cmd+=(
             --consensus.listen-addr "127.0.0.1:$((base_consensus + i))"
             --consensus.use-local-defaults
+            --radicle.control-socket "$radicle_home/node/outbe-control.sock"
+            --radicle.status-address "127.0.0.1:$((base_radicle_status + i))"
         )
         if [ ${#tee_args[@]} -gt 0 ]; then
             cmd+=("${tee_args[@]}")
@@ -504,8 +577,34 @@ do_stop() {
         fi
     done
 
+    for pid_file in "$PID_DIR"/validator-*.radicle.pid; do
+        [ -e "$pid_file" ] || continue
+        local pid name
+        pid="$(cat "$pid_file")"
+        name="$(basename "$pid_file" .pid)"
+        if kill -0 "$pid" 2>/dev/null; then
+            echo "  Stopping $name (PID $pid)..."
+            kill "$pid" 2>/dev/null || true
+            for _ in $(seq 1 150); do
+                kill -0 "$pid" 2>/dev/null || break
+                sleep 0.1
+            done
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+        rm -f "$pid_file"
+    done
+
     # Stop any gramine-direct enclave containers (OUTBE_TEE_GRAMINE=1) — AFTER the
     # nodes have exited, so a node is never mid-request to an enclave being removed.
+    # Kill the enclave-log followers FIRST so no follower blocks on a removed
+    # container's log stream.
+    for lfile in "$PID_DIR"/validator-*.enclave-log.pid; do
+        [ -f "$lfile" ] || continue
+        local lpid
+        lpid=$(cat "$lfile")
+        kill "$lpid" 2>/dev/null || true
+        rm -f "$lfile"
+    done
     for dfile in "$PID_DIR"/validator-*.enclave.docker; do
         [ -f "$dfile" ] || continue
         local ctr

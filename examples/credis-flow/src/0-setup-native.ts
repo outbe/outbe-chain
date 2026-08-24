@@ -3,17 +3,23 @@
  *
  * Ensures user and CCA have sufficient native (COEN) balances.
  *
- *   1. Ensure user has native balance (10 COEN if zero)
- *   2. Ensure CCA has native balance (5 COEN if < 5 COEN)
+ *   1. Ensure user has native balance (funds gas + the EntryPoint deposit step 5 needs)
+ *   2. Ensure CCA has native balance (gas, its EntryPoint deposit, and the COEN stake
+ *      requestCredis now takes — see CCA_MIN_NATIVE)
  *
  * Usage: npx tsx src/0-setup-native.ts [envName]
  */
 
 import { ethers, Wallet } from "ethers";
-import { DEFAULT_ENV, loadEnv, requireEnv } from "./utils.js";
+import { coen, formatCoen, DEFAULT_ENV, loadEnv, requireEnv } from "./utils.js";
 
-const CCA_MIN_NATIVE = ethers.parseEther("5");      // 5 COEN
-const USER_FUND_NATIVE = ethers.parseEther("10");    // 10 COEN
+// `requestCredis` is payable and takes a stake equal to the pledged collateral, so
+// the CCA needs COEN proportional to the credit it originates — at the seeded
+// COEN/USD rate a 1-stable pledge costs 1 COEN — plus gas and its EntryPoint
+// deposit. 50 COEN covers the documented pledges with headroom and stays far under
+// the ~10,000 COEN a genesis account is prefunded with.
+const CCA_MIN_NATIVE = coen("50");
+const USER_FUND_NATIVE = coen("100");
 
 const envName = process.argv[2] || DEFAULT_ENV;
 const { envPath } = loadEnv(import.meta.url, envName, { deploymentEnv: true });
@@ -38,12 +44,12 @@ async function main() {
 
   console.log("\n[1] Checking user native balance...");
   const userNative = await provider.getBalance(userAddress);
-  console.log(`    Current: ${ethers.formatEther(userNative)} COEN`);
+  console.log(`    Current: ${formatCoen(userNative)} COEN`);
 
-  if (userNative === 0n) {
+  if (userNative < USER_FUND_NATIVE) {
     const tx = await ownerWallet.sendTransaction({ to: userAddress, value: USER_FUND_NATIVE });
     await tx.wait();
-    console.log(`    Funded user with 10 COEN (tx: ${tx.hash})`);
+    console.log(`    Funded user with ${formatCoen(USER_FUND_NATIVE)} COEN (tx: ${tx.hash})`);
   } else {
     console.log("    Sufficient — skipping");
   }
@@ -52,12 +58,12 @@ async function main() {
 
   console.log("\n[2] Checking CCA native balance...");
   const ccaNative = await provider.getBalance(ccaAddress);
-  console.log(`    Current: ${ethers.formatEther(ccaNative)} COEN`);
+  console.log(`    Current: ${formatCoen(ccaNative)} COEN`);
 
   if (ccaNative < CCA_MIN_NATIVE) {
     const tx = await ownerWallet.sendTransaction({ to: ccaAddress, value: CCA_MIN_NATIVE });
     await tx.wait();
-    console.log(`    Funded CCA with 5 COEN (tx: ${tx.hash})`);
+    console.log(`    Funded CCA with ${formatCoen(CCA_MIN_NATIVE)} COEN (tx: ${tx.hash})`);
   } else {
     console.log("    Sufficient — skipping");
   }

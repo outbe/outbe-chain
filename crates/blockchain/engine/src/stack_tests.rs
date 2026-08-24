@@ -31,6 +31,7 @@ use outbe_consensus::{
     reporter::ReporterContinuity,
 };
 use outbe_primitives::OutbeHeader;
+use outbe_radicle::integration::{RadicleStatusChannel, RadicleVotingGate, RadicleVotingGateError};
 use reth_ethereum::{
     primitives::{Header, SealedBlock, SealedHeader},
     Block,
@@ -47,6 +48,43 @@ use std::{
 };
 
 static STACK_MARSHAL_TEST_ID: AtomicU64 = AtomicU64::new(0);
+
+#[test]
+fn radicle_channel_is_frozen_before_network_start() {
+    assert_eq!(radicle_channel_config(), (8, 32, config::CHANNEL_BACKLOG));
+}
+
+#[test]
+fn radicle_gate_controls_signing() {
+    assert!(!radicle_signer_enabled(RadicleVotingGate::Verifier, true).unwrap());
+    assert!(radicle_signer_enabled(RadicleVotingGate::SignerAllowed, true).unwrap());
+    assert!(!radicle_signer_enabled(RadicleVotingGate::SignerAllowed, false).unwrap());
+
+    let error = radicle_signer_enabled(
+        RadicleVotingGate::Fatal(RadicleVotingGateError::BindingMismatch),
+        true,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("binding mismatch"), "error: {error}");
+}
+
+#[tokio::test]
+async fn radicle_fatal_notifies_epoch() {
+    let (publisher, handle) = RadicleStatusChannel::enabled(Address::repeat_byte(1), [1_u8; 32]);
+    let mut updates = handle.subscribe();
+    let waiter = tokio::spawn(async move { wait_for_radicle_fatal(&mut updates).await });
+    publisher.set_voting_gate(RadicleVotingGate::Fatal(
+        RadicleVotingGateError::BindingMismatch,
+    ));
+    let error = tokio::time::timeout(Duration::from_millis(20), waiter)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("binding mismatch"), "error: {error}");
+}
 
 #[test]
 fn testnet_clock_offset_is_rejected_for_unregistered_networks() {
@@ -2185,6 +2223,11 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         tee_renewal_poll_secs: 30,
         tee_renewal_warning_blocks: 600,
         tee_renewal_critical_blocks: 120,
+        tee_canary_interval_secs: 30,
+        tee_canary_failure_threshold: 3,
+        txpool_pending_staleness_secs: 600,
+        radicle_control_socket: None,
+        radicle_status_address: None,
         upstream: None,
         upstream_nocertify: false,
         projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),
@@ -3376,6 +3419,11 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         tee_renewal_poll_secs: 30,
         tee_renewal_warning_blocks: 600,
         tee_renewal_critical_blocks: 120,
+        tee_canary_interval_secs: 30,
+        tee_canary_failure_threshold: 3,
+        txpool_pending_staleness_secs: 600,
+        radicle_control_socket: None,
+        radicle_status_address: None,
         upstream: None,
         upstream_nocertify: false,
         projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),
@@ -3877,6 +3925,11 @@ mod restart_recovery {
             tee_renewal_poll_secs: 30,
             tee_renewal_warning_blocks: 600,
             tee_renewal_critical_blocks: 120,
+            tee_canary_interval_secs: 30,
+            tee_canary_failure_threshold: 3,
+            txpool_pending_staleness_secs: 600,
+            radicle_control_socket: None,
+            radicle_status_address: None,
             upstream: None,
             upstream_nocertify: false,
             projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),

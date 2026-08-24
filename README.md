@@ -169,6 +169,14 @@ offer caller is a registered L1 operator address and its network has
 commonware `sign_message` recipe) or the call reverts; unregistered callers and
 zk-disabled networks pass empty bytes.
 
+**Radicle repository registry.** The **RadicleRegistry** precompile at
+`0x000000000000000000000000000000000000EE11` (ABI:
+`contracts/precompiles/src/IRadicleRegistry.sol`) is a permissionless,
+append-only registry of public Heartwood RepoIds. `registerRepository(bytes20)`
+records the caller as registrant (not as repository owner); dense enumeration is
+bounded by the immutable `maxRepositories` value seeded in genesis. V1 exposes
+no unregister, deposit, lease, private-repository, retention, or deletion path.
+
 **Stablecoin Factory V1.** Fresh devnet/testnet genesis includes the fixed Factory
 at `0x...EE0F`, the shared Policy Registry at `0x...EE10`, and the CREATE/CREATE2
 guard for the dynamic `0x53c0` address class. Every registered token uses the exact
@@ -471,6 +479,10 @@ tool. The explicit `localnet-sgx-*` command family is currently fail-closed and
 tracked by Beads issue `outbe-chain-8lp`; it never falls back to the mock dev
 enclave. Bootstrap resolves a free complete service-port layout and persists it
 in `<OUT_DIR>/localnet-bootstrap-v1.json`; `start` reuses that exact layout.
+The scan starts at `18545` and hands each validator one contiguous 13-port
+block with RPC first, so on a free machine the four RPCs are `18545`, `18558`,
+`18571`, and `18584` — read `rpc_ports` from that file instead of assuming
+consecutive ports.
 For each genesis validator the persistent owner also starts one OCOMP Supervisor,
 one SnapshotExporter and Worker ordinal 0. `start` and `status` succeed only when
 every Worker is registered and connected to its own Supervisor.
@@ -495,8 +507,12 @@ boots four validator nodes, and succeeds only after:
 - the primary RPC reaches block 1.
 
 The task prints RPC URLs, the MongoDB URI, database prefix, and data directory
-for use by any manual flow. Stop services while retaining chain and projection
-data, or remove everything, with:
+for use by any manual flow. With the default `LOCALNET_STACK_PORT_OFFSET=1000`
+the four validator RPCs are `http://127.0.0.1:19545` through `19548` (the shell
+localnet's base RPC port is `18545`, shifted by `PORT_OFFSET`).
+
+Stop services while retaining chain and projection data, or remove everything,
+with:
 
 ```bash
 mise run localnet-stack-stop
@@ -578,6 +594,37 @@ point, lag, readiness, outage duration, and structured failure class. Prometheus
 `outbe_projection_*` readiness, checkpoint, lag, topology, reconnect, and failure metrics. These are
 local operational signals, not consensus acknowledgements.
 
+### TEE enclave session and canary observability
+
+The mandatory enclave sidecar is a synchronous protocol component: block execution decrypts tribute
+offers through it. The node therefore observes it continuously and survives its restart:
+
+- **Session reconnect.** The process-global enclave session performs one bounded reconnect with
+  identity re-validation when a request fails with a connection-class fault, then retries the
+  request once (idempotent requests only). A reconnected enclave must present the byte-identical
+  pinned identity (measurements, attestation key, Noise static, resident offer key); any mismatch
+  permanently revokes the session (fail-closed) and enclave-backed execution on this node fails
+  with `tee_sidecar_unavailable` `Fatal` errors — a node-local fault, never a deterministic revert.
+  Restarting the enclave sidecar (with its sealed state) no longer requires a node restart.
+- **Canary.** A periodic worker (`--tee-canary.interval-secs`, default 30, `0` disables;
+  `--tee-canary.failure-threshold`, default 3) sends a known-plaintext offer through the real
+  `ProcessTributeOfferBatch` path plus an enclave `Health` telemetry probe, and publishes the
+  result as `outbe_consensusStatus.enclave` (`state`: `disabled` | `starting` | `ready` |
+  `degraded` | `unavailable`, plus offer-key readiness, last latency, failure streak, enclave
+  uptime and self-observed heap). Signal only — a failing canary never gates consensus
+  participation. `outbe-cli monitor readiness` consumes the field: `degraded`/`unavailable` is a
+  readiness failure, `starting`/`disabled`/absent is a warning.
+- **Metrics.** Prometheus exports `outbe_tee_request_duration_ms{request}`,
+  `outbe_tee_request_errors_total{request,class}`, `outbe_tee_reconnect_total{result}`,
+  `outbe_tee_session_generation`, `outbe_tee_canary_*`, `outbe_tee_heap_bytes{kind}`, and
+  `outbe_tee_enclave_uptime_seconds`. Alert templates live in
+  `scripts/monitoring/alerts.example.yaml` (group `outbe-chain.tee`).
+- **Enclave request log.** The enclave emits one stderr line per served request —
+  `outbe-tee-enclave: req=<label> peer=<dev|local|remote> outcome=<ok|err|denied> dur_ms=<n>
+  ts=<unix>` — and localnet/testnet tooling persists the full container log with rotation.
+  A systemd unit template for production sidecars is `deploy/systemd/outbe-tee-enclave.service`
+  (journald logging; `Restart=on-failure` is safe only with a persistent `--tee-dir`).
+
 ### Required compressed-entity persistence barrier
 
 Compressed-entity execution uses the exact finalized parent root in EVM slot 1 and a separate CE
@@ -599,6 +646,20 @@ finalized checkpoint. An equal marker resumes, a behind marker replays every con
 receipt block, and ahead/conflict/gap states stop startup. At live finality, proposer candidates are
 accepted only after block assembly; validator imports without a candidate are reconstructed from
 durable canonical receipts after the same DB-only hash/root barrier.
+
+### Embedded OCOMP lifecycle
+
+Validator and FullNode processes use the same node-owned OCOMP ExEx and external Worker protocol.
+Validators sign and submit result votes only while they belong to the exact finalized OCOMP
+snapshot. A FullNode has no OCOMP voting key: it independently computes the result and compares it
+with the finalized validator quorum.
+
+Canonical terminal state is absorbing. Late local compute or vote outcomes cannot reopen a closed
+job, publish another vote, or turn a normal protocol-owned result into a node failure. A FullNode
+that reaches an exclusive deadline without its local result holds at `D-1`; restart restores the
+same barrier, and an exact late result releases catch-up. A valid-but-different local result writes
+durable evidence and shuts down only that FullNode. Restart remains fail-closed from the evidence,
+while validator finality is unaffected.
 
 ## Documentation
 

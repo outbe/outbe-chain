@@ -76,6 +76,9 @@ export MONGO_PORT=27027
 export DB_PREFIX=outbe_localnet_stack
 ```
 
+The RPC port is `18545 + PORT_OFFSET`, so these defaults put the four validators
+on `http://127.0.0.1:19545` through `19548`.
+
 This localnet does not create a Tribute automatically. Create the offer and check
 MongoDB as described in sections 2 and 3; skip section 1 after starting the network
 through `mise`. When finished:
@@ -119,7 +122,7 @@ export OUTBE_TEE_ENCLAVE_BINARY="$PWD/target/release/outbe-tee-enclave-mock"
 Wait until the block number is greater than zero:
 
 ```sh
-RPC_PORT=$((8545 + PORT_OFFSET))
+RPC_PORT=$((18545 + PORT_OFFSET))
 cast block-number --rpc-url "http://127.0.0.1:$RPC_PORT"
 ```
 

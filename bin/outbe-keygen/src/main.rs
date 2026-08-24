@@ -36,7 +36,7 @@ use rand_core::RngCore as _;
 use std::{
     fs::{File, OpenOptions},
     io::Write as _,
-    os::unix::fs::OpenOptionsExt as _,
+    os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _},
     path::{Path, PathBuf},
 };
 use zeroize::Zeroizing;
@@ -102,6 +102,10 @@ enum Commands {
         /// Chain ID on which this registration proof will be accepted.
         #[arg(long)]
         chain_id: u64,
+
+        /// Radicle Ed25519 NodeId bound atomically to this validator.
+        #[arg(long)]
+        radicle_node_id: B256,
     },
 
     /// Verify integrity of a BLS key file.
@@ -115,6 +119,13 @@ enum Commands {
     Hybrid {
         /// Directory to save both key files. Defaults to current directory.
         #[arg(long, default_value = ".")]
+        output_dir: PathBuf,
+    },
+
+    /// Generate a Heartwood-compatible Radicle Ed25519 identity.
+    Radicle {
+        /// Radicle home directory that will receive keys/radicle and keys/radicle.pub.
+        #[arg(long)]
         output_dir: PathBuf,
     },
 
@@ -147,9 +158,11 @@ fn main() -> Result<()> {
             key,
             validator_address,
             chain_id,
-        } => cmd_sign_registration(key, validator_address, chain_id, &backend),
+            radicle_node_id,
+        } => cmd_sign_registration(key, validator_address, chain_id, radicle_node_id, &backend),
         Commands::Verify { key } => cmd_verify(key, &backend),
         Commands::Hybrid { output_dir } => cmd_hybrid(output_dir, &backend),
+        Commands::Radicle { output_dir } => cmd_radicle(output_dir),
         Commands::Ocomp {
             output_dir,
             chain_id,
@@ -239,6 +252,7 @@ fn cmd_sign_registration(
     key_path: PathBuf,
     validator_address: Address,
     chain_id: u64,
+    radicle_node_id: B256,
     backend: &KeyBackend,
 ) -> Result<()> {
     let key = load_key(&key_path, backend)?;
@@ -250,14 +264,64 @@ fn cmd_sign_registration(
     let blst_sk = blst::min_pk::SecretKey::from_bytes(&sk_bytes)
         .map_err(|e| eyre::eyre!("failed to create blst SecretKey: {e:?}"))?;
 
-    let message = validator_registration_message(chain_id, validator_address);
+    let message = validator_registration_message(chain_id, validator_address, radicle_node_id);
     let sig = blst_sk.sign(&message, VALIDATOR_REGISTRATION_DST, &[]);
     let sig_bytes = sig.to_bytes();
 
-    println!("registration signature for {validator_address} on chain {chain_id}:");
+    println!(
+        "registration signature for {validator_address} and Radicle NodeId {radicle_node_id} on chain {chain_id}:"
+    );
     println!("  pubkey:    {}", hex::encode(&pk_bytes));
     println!("  signature: {}", hex::encode(sig_bytes));
 
+    Ok(())
+}
+
+/// Generate the native unencrypted OpenSSH Ed25519 identity expected by Heartwood.
+fn cmd_radicle(output_dir: PathBuf) -> Result<()> {
+    use radicle_crypto::{ssh::Keystore, Seed};
+
+    std::fs::create_dir_all(&output_dir)
+        .wrap_err_with(|| format!("failed to create Radicle home: {}", output_dir.display()))?;
+    std::fs::set_permissions(&output_dir, std::fs::Permissions::from_mode(0o700))
+        .wrap_err_with(|| format!("failed to protect Radicle home: {}", output_dir.display()))?;
+
+    let keys = output_dir.join("keys");
+    std::fs::create_dir_all(&keys)
+        .wrap_err_with(|| format!("failed to create Radicle key directory: {}", keys.display()))?;
+    std::fs::set_permissions(&keys, std::fs::Permissions::from_mode(0o700)).wrap_err_with(
+        || {
+            format!(
+                "failed to protect Radicle key directory: {}",
+                keys.display()
+            )
+        },
+    )?;
+
+    let mut seed = [0u8; Seed::BYTES];
+    rand_core::OsRng.fill_bytes(&mut seed);
+    let keystore = Keystore::new(&keys);
+    let node_id = keystore
+        .init("outbe-radicle", None, Seed::new(seed))
+        .wrap_err("failed to create Heartwood-compatible Radicle identity")?;
+    std::fs::set_permissions(
+        keystore.secret_key_path(),
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .wrap_err_with(|| {
+        format!(
+            "failed to protect Radicle secret: {}",
+            keystore.secret_key_path().display()
+        )
+    })?;
+
+    println!("Radicle identity generated");
+    println!("  private key: {}", keystore.secret_key_path().display());
+    if let Some(public_path) = keystore.public_key_path() {
+        println!("  public key:  {}", public_path.display());
+    }
+    println!("  node id:     {node_id}");
+    println!("  node id hex: {}", hex::encode(node_id.into_inner()));
     Ok(())
 }
 
@@ -512,6 +576,12 @@ mod tests {
     }
 
     #[test]
+    fn radicle_subcommand_parses_without_bls_backend_inputs() {
+        let cli = make_cli(&["radicle", "--output-dir", "/tmp/radicle-home"]);
+        assert!(matches!(cli.command, Commands::Radicle { .. }));
+    }
+
+    #[test]
     fn test_resolve_backend_plaintext_explicit() {
         let cli = make_cli(&[
             "--key-backend",
@@ -590,6 +660,46 @@ mod tests {
     }
 
     #[test]
+    fn radicle_command_creates_native_heartwood_identity_with_strict_modes() {
+        use radicle_crypto::Signer as _;
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        cmd_radicle(dir.path().to_path_buf()).unwrap();
+
+        let keys = dir.path().join("keys");
+        let secret = keys.join("radicle");
+        let public = keys.join("radicle.pub");
+        assert_eq!(
+            std::fs::metadata(&keys).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(&secret).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(public.is_file());
+
+        let keystore = radicle_crypto::ssh::Keystore::new(&keys);
+        let secret_key = keystore.secret_key(None).unwrap().unwrap();
+        let public_key = keystore.public_key().unwrap().unwrap();
+        assert_eq!(secret_key.public_key(), &public_key);
+    }
+
+    #[test]
+    fn radicle_command_refuses_to_overwrite_an_existing_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        cmd_radicle(dir.path().to_path_buf()).unwrap();
+        let first_secret = std::fs::read(dir.path().join("keys/radicle")).unwrap();
+
+        assert!(cmd_radicle(dir.path().to_path_buf()).is_err());
+        assert_eq!(
+            std::fs::read(dir.path().join("keys/radicle")).unwrap(),
+            first_secret
+        );
+    }
+
+    #[test]
     fn test_cmd_generate_encrypted_backend() {
         let dir = tempfile::tempdir().unwrap();
         let backend = KeyBackend::Encrypted("testpass".to_string());
@@ -620,7 +730,14 @@ mod tests {
         let addr: Address = "0x1111111111111111111111111111111111111111"
             .parse()
             .unwrap();
-        cmd_sign_registration(key_path, addr, 1, &KeyBackend::Plaintext).unwrap();
+        cmd_sign_registration(
+            key_path,
+            addr,
+            1,
+            B256::repeat_byte(0x11),
+            &KeyBackend::Plaintext,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -629,8 +746,13 @@ mod tests {
         let addr: Address = "0x1111111111111111111111111111111111111111"
             .parse()
             .unwrap();
-        let result =
-            cmd_sign_registration(dir.path().join("none.hex"), addr, 1, &KeyBackend::Plaintext);
+        let result = cmd_sign_registration(
+            dir.path().join("none.hex"),
+            addr,
+            1,
+            B256::repeat_byte(0x11),
+            &KeyBackend::Plaintext,
+        );
         assert!(result.is_err());
     }
 
@@ -652,7 +774,8 @@ mod tests {
         // Sign the same way cmd_sign_registration does
         let sk_bytes = key.encode();
         let blst_sk = blst::min_pk::SecretKey::from_bytes(&sk_bytes).unwrap();
-        let message = validator_registration_message(chain_id, addr);
+        let node_id = B256::repeat_byte(0x12);
+        let message = validator_registration_message(chain_id, addr, node_id);
         let sig = blst_sk.sign(&message, VALIDATOR_REGISTRATION_DST, &[]);
 
         // Verify
@@ -667,7 +790,7 @@ mod tests {
         );
         assert_eq!(result, blst::BLST_ERROR::BLST_SUCCESS);
 
-        let other_chain_message = validator_registration_message(chain_id + 1, addr);
+        let other_chain_message = validator_registration_message(chain_id + 1, addr, node_id);
         let replay_result = sig.verify(
             true,
             &other_chain_message,
@@ -677,6 +800,18 @@ mod tests {
             true,
         );
         assert_ne!(replay_result, blst::BLST_ERROR::BLST_SUCCESS);
+
+        let other_node_message =
+            validator_registration_message(chain_id, addr, B256::repeat_byte(0x13));
+        let node_replay_result = sig.verify(
+            true,
+            &other_node_message,
+            VALIDATOR_REGISTRATION_DST,
+            &[],
+            &blst_pk,
+            true,
+        );
+        assert_ne!(node_replay_result, blst::BLST_ERROR::BLST_SUCCESS);
     }
 
     #[test]

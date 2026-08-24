@@ -93,6 +93,11 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::stablecoin::StablecoinCmd,
     },
+    /// Public Radicle repository registry.
+    Radicle {
+        #[command(subcommand)]
+        cmd: commands::radicle::RadicleCmd,
+    },
 }
 
 #[tokio::main]
@@ -114,6 +119,7 @@ async fn main() -> Result<()> {
         Commands::Tee { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
         Commands::Vote { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
         Commands::Stablecoin { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
+        Commands::Radicle { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
     }
 }
 

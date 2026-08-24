@@ -238,25 +238,6 @@
   },
   {
     "type": "function",
-    "name": "getCurrencyRate",
-    "inputs": [
-      {
-        "name": "isoCode",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "rate",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getDayVwap",
     "inputs": [
       {
@@ -515,6 +496,38 @@
         "name": "enabled",
         "type": "bool",
         "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPolicyRate",
+    "inputs": [
+      {
+        "name": "isoCode",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "rate",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPolicyRateCurrencies",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "isoCodes",
+        "type": "uint16[]",
+        "internalType": "uint16[]"
       }
     ],
     "stateMutability": "view"

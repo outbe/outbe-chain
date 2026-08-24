@@ -21,6 +21,7 @@ use crate::client::{AuthorizedEnclaveClient, EnclaveClient, GeneratedDcapQuoteV1
 use crate::dcap_protocol::{DcapOnboardingVerificationResultV1, DcapVerificationOutcomeV1};
 use crate::errors::TransportError;
 use crate::protocol::{EnclaveRequest, EnclaveResponse};
+use crate::session::EnclaveSession;
 use outbe_primitives::tee_attestation_v1::RegistrationIntentV1;
 
 // Stored once in a process-global OnceLock<Mutex<_>> — a single instance for the
@@ -34,10 +35,19 @@ pub enum RuntimeEnclaveClient {
 
 impl RuntimeEnclaveClient {
     pub fn request(&mut self, request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
-        match self {
+        let label = request.label();
+        let started = std::time::Instant::now();
+        let result = match self {
             Self::Development(client) => client.request(request),
             Self::Production(client) => client.request(request),
+        };
+        // Per-attempt telemetry: a session-level retry records two samples.
+        // Short-lived DKG/bootstrap/CLI clients report through the same series.
+        crate::metrics::record_request_duration(label, started.elapsed());
+        if let Err(error) = &result {
+            crate::metrics::record_request_error(label, error.metric_class());
         }
+        result
     }
 
     pub fn attestation_pub(&self) -> [u8; 32] {
@@ -48,66 +58,90 @@ impl RuntimeEnclaveClient {
     }
 }
 
-static ENCLAVE_CLIENT: OnceLock<Mutex<RuntimeEnclaveClient>> = OnceLock::new();
-
-/// True once a process-global enclave client is installed.
-pub fn is_enclave_configured() -> bool {
-    ENCLAVE_CLIENT.get().is_some()
+/// Install-time failure for the process-global enclave session.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum InstallError {
+    #[error("enclave client already initialized")]
+    AlreadyInitialized,
+    #[error("enclave install probe failed: {0}")]
+    Probe(#[from] TransportError),
 }
 
-/// Install the separate dev/mock client once.
-pub fn install_enclave_client(client: EnclaveClient) -> Result<(), &'static str> {
-    ENCLAVE_CLIENT
-        .set(Mutex::new(RuntimeEnclaveClient::Development(Box::new(
-            client,
-        ))))
-        .map_err(|_| "enclave client already initialized")
+static ENCLAVE_SESSION: OnceLock<Mutex<EnclaveSession>> = OnceLock::new();
+
+/// True once a process-global enclave session is installed.
+pub fn is_enclave_configured() -> bool {
+    ENCLAVE_SESSION.get().is_some()
+}
+
+/// Install the separate dev/mock client once. `endpoint` is retained so the
+/// session can reconnect (with identity re-validation) after an enclave
+/// sidecar restart.
+pub fn install_enclave_client(client: EnclaveClient, endpoint: String) -> Result<(), InstallError> {
+    let session = EnclaveSession::development(client, endpoint)?;
+    ENCLAVE_SESSION
+        .set(Mutex::new(session))
+        .map_err(|_| InstallError::AlreadyInitialized)
 }
 
 /// Install a production NodeHost-authorized client once. Initialization and
-/// manifest validation are completed by `AuthorizedEnclaveClient` before this.
+/// manifest validation are completed by `AuthorizedEnclaveClient` before this;
+/// `manifest` + `node_host` are the committed session material
+/// (`committed_node_host_session_material`) the session reconnects with.
 pub fn install_authorized_enclave_client(
     client: AuthorizedEnclaveClient,
-) -> Result<(), &'static str> {
-    ENCLAVE_CLIENT
-        .set(Mutex::new(RuntimeEnclaveClient::Production(client)))
-        .map_err(|_| "enclave client already initialized")
+    endpoint: String,
+    node_data_dir: std::path::PathBuf,
+    manifest: outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1,
+    node_host: crate::client::NodeHostNoiseKey,
+) -> Result<(), InstallError> {
+    let session = EnclaveSession::production(client, endpoint, node_data_dir, manifest, node_host)?;
+    ENCLAVE_SESSION
+        .set(Mutex::new(session))
+        .map_err(|_| InstallError::AlreadyInitialized)
 }
-/// Run `f` against the process-global enclave client. Returns `None` if no client
-/// is configured or the mutex is poisoned (the caller maps that to a typed
-/// `tee_sidecar_unavailable` error).
+
+/// Run `f` against the process-global enclave session. Returns `None` ONLY when
+/// no session is configured. A poisoned mutex is recovered: the interrupted
+/// request's connection is dropped once and the next request reconnects cleanly
+/// (poison no longer masquerades as "not configured").
 ///
 /// TODO(tee-perf): every enclave call — consensus-path ops (gratis/promis,
 /// begin-block sweeps, per-WWD snapshot batches) and read-only queries (e.g.
 /// eth_call fidelity index with signed auth) — serializes on this single
-/// Mutex-guarded blocking connection. A query storm on an RPC node can stall
-/// block execution behind it. Future optimization: split read-only traffic onto
-/// a separate enclave connection (or a small pool), and/or rate-limit
-/// query-path calls so consensus-path requests never queue behind them.
-pub fn try_with_enclave<R>(f: impl FnOnce(&mut RuntimeEnclaveClient) -> R) -> Option<R> {
-    let mutex = ENCLAVE_CLIENT.get()?;
-    let mut client = mutex.lock().ok()?;
-    Some(f(&mut client))
+/// Mutex-guarded blocking connection, and a request that times out (30s),
+/// reconnects and retries can hold it for two timeout windows. A query storm on
+/// an RPC node can stall block execution behind it. Future optimization: split
+/// read-only traffic onto a separate enclave connection (or a small pool),
+/// and/or rate-limit query-path calls so consensus-path requests never queue
+/// behind them.
+pub fn try_with_enclave<R>(f: impl FnOnce(&mut EnclaveSession) -> R) -> Option<R> {
+    let mutex = ENCLAVE_SESSION.get()?;
+    let mut session = match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            let mut guard = poisoned.into_inner();
+            guard.recover_from_poison();
+            guard
+        }
+    };
+    Some(f(&mut session))
 }
 
 /// Invoke the full verifier only through a production NodeHost-authorized
-/// Gramine enclave. Missing/poisoned/development clients are local fatal inputs
-/// to the consensus caller, never deterministic evidence rejection.
+/// Gramine enclave. Missing/development clients are local fatal inputs to the
+/// consensus caller, never deterministic evidence rejection.
 pub fn verify_dcap_evidence_v1(
     evidence: &[u8],
     policy: &[u8],
     block_timestamp: u64,
 ) -> Result<DcapVerificationOutcomeV1, TransportError> {
-    let Some(result) = try_with_enclave(|client| match client {
-        RuntimeEnclaveClient::Production(client) => {
-            client.verify_dcap_evidence_v1(evidence, policy, block_timestamp)
-        }
-        RuntimeEnclaveClient::Development(_) => Err(TransportError::DcapVerification(
-            "development enclave client cannot verify consensus DCAP evidence".into(),
-        )),
+    let Some(result) = try_with_enclave(|session| {
+        session.verify_dcap_evidence_v1(evidence, policy, block_timestamp)
     }) else {
         return Err(TransportError::DcapVerification(
-            "production enclave client is not configured or its lock is poisoned".into(),
+            "production enclave client is not configured".into(),
         ));
     };
     result
@@ -119,14 +153,9 @@ pub fn verify_dcap_evidence_v1(
 pub fn generate_dcap_quote_v1(
     intent: &RegistrationIntentV1,
 ) -> Result<GeneratedDcapQuoteV1, TransportError> {
-    let Some(result) = try_with_enclave(|client| match client {
-        RuntimeEnclaveClient::Production(client) => client.generate_dcap_quote(intent),
-        RuntimeEnclaveClient::Development(_) => Err(TransportError::Attestation(
-            "development enclave client cannot generate production renewal quotes".into(),
-        )),
-    }) else {
+    let Some(result) = try_with_enclave(|session| session.generate_dcap_quote(intent)) else {
         return Err(TransportError::Attestation(
-            "production enclave client is not configured or its lock is poisoned".into(),
+            "production enclave client is not configured".into(),
         ));
     };
     result
@@ -145,8 +174,8 @@ pub fn verify_dcap_registration_and_seal_v1(
     key_epoch: u64,
     tribute_offer_epoch: u64,
 ) -> Result<DcapOnboardingVerificationResultV1, TransportError> {
-    let Some(result) = try_with_enclave(|client| match client {
-        RuntimeEnclaveClient::Production(client) => client.verify_dcap_registration_and_seal_v1(
+    let Some(result) = try_with_enclave(|session| {
+        session.verify_dcap_registration_and_seal_v1(
             evidence,
             policy,
             block_timestamp,
@@ -155,13 +184,10 @@ pub fn verify_dcap_registration_and_seal_v1(
             expected_tribute_offer_public,
             key_epoch,
             tribute_offer_epoch,
-        ),
-        RuntimeEnclaveClient::Development(_) => Err(TransportError::DcapVerification(
-            "development enclave client cannot issue DCAP onboarding artifacts".into(),
-        )),
+        )
     }) else {
         return Err(TransportError::DcapVerification(
-            "production enclave client is not configured or its lock is poisoned".into(),
+            "production enclave client is not configured".into(),
         ));
     };
     result
@@ -170,10 +196,10 @@ pub fn verify_dcap_registration_and_seal_v1(
 /// Read whether the permanent tribute-offer key is ready in the mandatory local
 /// enclave. `None` is a fresh/keyless state, not a replacement or recovery path.
 pub fn resident_offer_public_key_state_v1() -> Result<Option<B256>, TransportError> {
-    let Some(result) = try_with_enclave(|client| client.request(&EnclaveRequest::GetPublicKeys))
+    let Some(result) = try_with_enclave(|session| session.request(&EnclaveRequest::GetPublicKeys))
     else {
         return Err(TransportError::EnclaveError(
-            "mandatory enclave client is not configured or its lock is poisoned".into(),
+            "mandatory enclave client is not configured".into(),
         ));
     };
     match result? {
@@ -219,8 +245,8 @@ pub fn resident_offer_public_key_v1() -> Result<B256, TransportError> {
 /// the event. `Ok(Some(blob))` is success and `Err` reports an enclave or transport
 /// failure.
 pub fn seal_offer_key_for_registry(recipient_x25519: [u8; 32]) -> Result<Option<Vec<u8>>, String> {
-    let Some(result) = try_with_enclave(|client| {
-        client.request(&EnclaveRequest::SealOfferKeyForRegistry { recipient_x25519 })
+    let Some(result) = try_with_enclave(|session| {
+        session.request(&EnclaveRequest::SealOfferKeyForRegistry { recipient_x25519 })
     }) else {
         return Ok(None);
     };

@@ -26,8 +26,15 @@ fn request_credis_seals_the_position_geometry_from_the_pledge_quote() {
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
 
         let spend = credis_spend_auth(alice(), handle, alice());
-        let (position_id, amount_stables) =
-            runtime::request_credis(storage.clone(), cca(), alice(), handle, spend).unwrap();
+        let (position_id, amount_stables) = runtime::request_credis(
+            storage.clone(),
+            cca(),
+            alice(),
+            handle,
+            spend,
+            pledge_cost(),
+        )
+        .unwrap();
 
         // The collateral moved into alice's OWN pledged ledger.
         assert_eq!(view_pledged(&storage, alice()), pledge_cost());
@@ -109,6 +116,39 @@ fn settle_is_rejected_until_the_price_crosses_the_floor() {
 }
 
 #[test]
+fn a_stale_live_price_does_not_latch_an_open_position() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let position_id = open(&storage, 1);
+        set_coen_rate(&storage, above_floor());
+        advance_to(
+            &storage,
+            CREATED_AT + outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS + 1,
+        );
+
+        let error = runtime::settle(
+            storage.clone(),
+            alice(),
+            position_id,
+            U256::from(1_000_000u64),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("not settleable"), "{error}");
+        assert_eq!(
+            CredisContract::new(storage.clone())
+                .get_position(position_id)
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            CredisState::Open
+        );
+    });
+    teardown();
+}
+
+#[test]
 fn settlement_releases_collateral_proportionally_and_closes_without_dust() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
@@ -168,6 +208,7 @@ fn the_settle_abi_returns_the_principal_and_interest_split() {
         let position_id = open(&storage, 1);
         set_coen_rate(&storage, above_floor());
         advance_to(&storage, CREATED_AT + 30 * DAY);
+        set_coen_rate(&storage, above_floor());
 
         let position = CredisContract::new(storage.clone())
             .get_position(position_id)
@@ -210,6 +251,7 @@ fn settle_takes_only_what_the_position_needs() {
         let position_id = open(&storage, 1);
         set_coen_rate(&storage, above_floor());
         advance_to(&storage, CREATED_AT + 30 * DAY);
+        set_coen_rate(&storage, above_floor());
 
         let position = CredisContract::new(storage.clone())
             .get_position(position_id)
@@ -275,9 +317,16 @@ fn request_credis_rejects_an_owner_with_an_unresolved_call() {
         let second_handle = pledge(&storage, alice(), 2);
 
         let first_spend = credis_spend_auth(alice(), first_handle, alice());
-        let (first, _) =
-            runtime::request_credis(storage.clone(), cca(), alice(), first_handle, first_spend)
-                .unwrap();
+        fund_stake(&storage, pledge_cost());
+        let (first, _) = runtime::request_credis(
+            storage.clone(),
+            cca(),
+            alice(),
+            first_handle,
+            first_spend,
+            pledge_cost(),
+        )
+        .unwrap();
 
         // Latch and call the first position.
         set_coen_rate(&storage, above_floor());
@@ -288,13 +337,29 @@ fn request_credis_rejects_an_owner_with_an_unresolved_call() {
         }
 
         let spend = credis_spend_auth(alice(), second_handle, alice());
-        let err = runtime::request_credis(storage.clone(), cca(), alice(), second_handle, spend)
-            .unwrap_err();
+        let err = runtime::request_credis(
+            storage.clone(),
+            cca(),
+            alice(),
+            second_handle,
+            spend,
+            pledge_cost(),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("called position"), "got: {err}");
 
         // Settling the call in full clears the block.
         settle_principal(&storage, alice(), first, pledge_stables());
-        runtime::request_credis(storage.clone(), cca(), alice(), second_handle, spend).unwrap();
+        fund_stake(&storage, pledge_cost());
+        runtime::request_credis(
+            storage.clone(),
+            cca(),
+            alice(),
+            second_handle,
+            spend,
+            pledge_cost(),
+        )
+        .unwrap();
     });
     teardown();
 }
@@ -304,9 +369,15 @@ fn request_credis_rejects_zero_smart_account() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     StorageHandle::enter(&mut storage, |storage| {
-        let err =
-            runtime::request_credis(storage.clone(), cca(), Address::ZERO, B256::ZERO, [0u8; 32])
-                .unwrap_err();
+        let err = runtime::request_credis(
+            storage.clone(),
+            cca(),
+            Address::ZERO,
+            B256::ZERO,
+            [0u8; 32],
+            U256::ZERO,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("smart account"), "got: {err}");
     });
 }
@@ -459,6 +530,160 @@ fn a_position_settled_inside_the_window_is_never_voided() {
                 .unwrap(),
             U256::ZERO
         );
+    });
+    teardown();
+}
+
+// ---------------------------------------------------------------------------
+// The originating CCA's matching COEN stake
+// ---------------------------------------------------------------------------
+
+fn staked(storage: &StorageHandle<'_>, position_id: U256) -> U256 {
+    crate::schema::CredisFactoryContract::new(storage.clone())
+        .cca_stake
+        .read(&position_id)
+        .unwrap()
+}
+
+fn factory_balance(storage: &StorageHandle<'_>) -> U256 {
+    storage
+        .balance(outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS)
+        .unwrap()
+}
+
+/// The stake must equal the pledged collateral exactly. Both directions are
+/// rejected: under-staking would let a CCA originate cheaply, over-staking would
+/// strand COEN the escrow has no way to return.
+#[test]
+fn request_credis_requires_the_stake_to_equal_the_collateral() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost() * U256::from(3u64));
+
+        for (i, wrong) in [
+            U256::ZERO,
+            pledge_cost() - U256::from(1u64),
+            pledge_cost() + U256::from(1u64),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            // Each pledge consumes the next op nonce.
+            let handle = pledge(&storage, alice(), i as u64 + 1);
+            let spend = credis_spend_auth(alice(), handle, alice());
+            let err =
+                runtime::request_credis(storage.clone(), cca(), alice(), handle, spend, wrong)
+                    .unwrap_err();
+            assert!(
+                err.to_string().contains("attached COEN"),
+                "stake {wrong} should be rejected, got: {err}"
+            );
+        }
+    });
+    teardown();
+}
+
+/// The escrow is recorded against the position and the COEN stays with the factory
+/// until the position resolves.
+#[test]
+fn request_credis_escrows_the_stake_against_the_position() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let position_id = open(&storage, 1);
+
+        assert_eq!(staked(&storage, position_id), pledge_cost());
+        assert_eq!(factory_balance(&storage), pledge_cost());
+        assert_eq!(
+            storage.balance(cca()).unwrap(),
+            U256::ZERO,
+            "not yet returned"
+        );
+    });
+    teardown();
+}
+
+/// Settling the last of the principal returns the stake to the originating CCA.
+#[test]
+fn the_closing_settlement_returns_the_stake_to_the_cca() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let position_id = open(&storage, 1);
+        set_coen_rate(&storage, above_floor());
+
+        // A partial settlement must not release anything: the position is still open.
+        settle_principal(
+            &storage,
+            alice(),
+            position_id,
+            pledge_stables() / U256::from(2u64),
+        );
+        assert_eq!(
+            staked(&storage, position_id),
+            pledge_cost(),
+            "stake stays escrowed while principal is outstanding"
+        );
+        assert_eq!(storage.balance(cca()).unwrap(), U256::ZERO);
+
+        // Clearing the remainder closes the position and returns the stake.
+        settle_principal(&storage, alice(), position_id, pledge_stables());
+        assert_eq!(staked(&storage, position_id), U256::ZERO, "claim cleared");
+        assert_eq!(storage.balance(cca()).unwrap(), pledge_cost());
+        assert_eq!(factory_balance(&storage), U256::ZERO);
+    });
+    teardown();
+}
+
+/// A void burns the stake: it leaves the factory's balance and goes to no one.
+#[test]
+fn the_void_burns_the_cca_stake() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let position_id = open(&storage, 1);
+        set_coen_rate(&storage, above_floor());
+
+        let called_at = now_of(&storage);
+        {
+            let mut credis = CredisContract::new(storage.clone());
+            assert!(credis.mark_settleable(position_id).unwrap());
+            assert!(credis.mark_called(position_id, called_at).unwrap());
+        }
+
+        let deadline = called_at + 14 * DAY;
+        advance_to(&storage, deadline);
+        finalize_through(&storage, deadline);
+        assert_eq!(scan(&storage, deadline), 1);
+
+        assert_eq!(staked(&storage, position_id), U256::ZERO, "claim cleared");
+        assert_eq!(
+            storage.balance(cca()).unwrap(),
+            U256::ZERO,
+            "never returned"
+        );
+        assert_eq!(factory_balance(&storage), U256::ZERO, "burned, not held");
+    });
+    teardown();
+}
+
+/// The loan is delivered by a call into the smart account, which would silently
+/// succeed against a codeless address.
+#[test]
+fn request_credis_rejects_an_undeployed_smart_account() {
+    let mut storage = env();
+    StorageHandle::enter(&mut storage, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let handle = pledge(&storage, alice(), 1);
+        // A valid auth bound to bob, so the rejection can only come from the
+        // deployment guard and not from a bad authorization.
+        let spend = credis_spend_auth(alice(), handle, bob());
+
+        // bob was never bootstrapped, so it has no code.
+        let err =
+            runtime::request_credis(storage.clone(), cca(), bob(), handle, spend, pledge_cost())
+                .unwrap_err();
+        assert!(err.to_string().contains("not deployed"), "got: {err}");
     });
     teardown();
 }

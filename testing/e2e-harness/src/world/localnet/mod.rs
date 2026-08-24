@@ -22,10 +22,13 @@ mod follower;
 mod joiner;
 mod log_audit;
 mod probes;
+mod radicle;
 
 pub use bootstrap::BootstrapProfile;
 pub(crate) use log_audit::LogAudit;
 pub use probes::{CeStartupReplayObservationV1, OcompRuntimeTraceMarkerV1};
+#[cfg(feature = "ocomp-integration")]
+pub(crate) use radicle::RadicleRepositoryFixtureV1;
 
 use std::collections::HashMap;
 use std::fs;
@@ -103,6 +106,10 @@ pub struct Localnet {
     /// Owned validator-indexed nodes — the committee (`0..n`) and, when attached,
     /// the joiner (index = committee size).
     validators: HashMap<usize, ChildGuard>,
+    /// Operator-owned validator-indexed Radicle sidecars.
+    radicle_sidecars: HashMap<usize, ChildGuard>,
+    /// Independent non-validator source node used only by the Radicle E2E.
+    user_radicle: Option<ChildGuard>,
     /// Owned follower nodes, keyed by name (`follower`, `follower2`).
     followers: HashMap<String, ChildGuard>,
     /// Owned validator-indexed enclave containers (committee + joiner).
@@ -122,6 +129,8 @@ impl Localnet {
         Self {
             cfg,
             validators: HashMap::new(),
+            radicle_sidecars: HashMap::new(),
+            user_radicle: None,
             followers: HashMap::new(),
             enclaves: HashMap::new(),
             enclave_image_id: None,
@@ -219,11 +228,11 @@ impl Localnet {
 
     /// Five-second RPC polls allowed for block-1 TEE bootstrap. Consecutive
     /// four-enclave real-SGX evidence exceeded the production-oriented node and
-    /// per-request deadlines; keep the harness outside its five-minute
+    /// per-request deadlines; keep the harness outside its ten-minute
     /// co-located-EPC allowance so it observes the node's verdict.
     pub fn tee_bootstrap_wait_attempts(&self) -> u32 {
         if self.cfg.tee_mode.passes_sgx_devices() {
-            72
+            132
         } else {
             18
         }
@@ -243,7 +252,7 @@ impl Localnet {
     /// for the deployment topology by its operator.
     fn extend_real_sgx_startup_timeout(&self, args: &mut Vec<String>) {
         if self.cfg.tee_mode.passes_sgx_devices() {
-            args.extend(args!["--tee-bootstrap-timeout-secs", "300"]);
+            args.extend(args!["--tee-bootstrap-timeout-secs", "600"]);
         }
     }
 
@@ -268,8 +277,11 @@ impl Localnet {
             "0.0.0.0",
             "--http.port",
             self.cfg.http_port(i),
+            // `txpool` is required by the pool-eviction scenarios: the pool's
+            // real contents are only observable through `txpool_content` /
+            // `txpool_status` (`eth_pendingTransactions` does not reflect them).
             "--http.api",
-            "eth,net,web3,outbe,debug",
+            "eth,net,web3,outbe,debug,txpool",
             "--rpc.eth-proof-window",
             1868,
             "--port",
@@ -374,10 +386,16 @@ impl Localnet {
     /// run's unique data subdir + enclave run tag, so it never touches another
     /// run's nodes/containers.
     fn shutdown(&mut self) {
+        // Stateless signal-path backstop for the harness-owned price feeder.
+        // Its config argv is rooted under this run/scenario directory.
+        let feeder = format!("outbe-feeder.*{}", self.dir());
+        self.sh().sudo_best_effort("pkill", &["-9", "-f", &feeder]);
         // Nodes first (release MDBX locks), then their enclaves — matching the
         // stop-nodes-then-teardown-enclaves ordering `run-testnet.sh` used.
         self.validators.clear();
         self.followers.clear();
+        self.radicle_sidecars.clear();
+        self.user_radicle = None;
         self.enclaves.clear();
         // No settle needed here: clearing the maps dropped every guard, which
         // synchronously `kill()`s + `wait()`s the owned nodes/enclaves, and the
@@ -385,6 +403,8 @@ impl Localnet {
 
         let nodes = format!("outbe-chain node.*{}", self.dir());
         self.sh().sudo_best_effort("pkill", &["-9", "-f", &nodes]);
+        let radicle = format!("outbe-radicle.*{}", self.dir());
+        self.sh().sudo_best_effort("pkill", &["-9", "-f", &radicle]);
         if self.cfg.tee_mode.runs_native_host_enclave() {
             // Native enclaves are processes, not containers. Their `--tee-dir`
             // argv carries this run's dir, so the pattern is run-scoped exactly
@@ -563,7 +583,14 @@ mod tests {
             .expect("allocate deterministic scenario ports");
         let localnet = Localnet::new(Config::for_scenario(&env, 1));
 
-        assert_eq!(localnet.tee_bootstrap_wait_attempts(), 72);
+        assert_eq!(localnet.tee_bootstrap_wait_attempts(), 132);
+        let mut args = Vec::new();
+        localnet.extend_real_sgx_startup_timeout(&mut args);
+        assert_eq!(
+            args,
+            ["--tee-bootstrap-timeout-secs", "600"],
+            "the node deadline must stay inside the harness observation envelope"
+        );
     }
 
     #[test]

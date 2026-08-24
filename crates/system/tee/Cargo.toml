@@ -18,11 +18,13 @@ outbe-primitives = { workspace = true, features = ["tee-attestation-v1"] }
 outbe-common.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["raw_value"] }
+metrics.workspace = true
 postcard.workspace = true
 snow.workspace = true
 thiserror.workspace = true
 rand.workspace = true
 ed25519-dalek.workspace = true
+ring.workspace = true
 x25519-dalek.workspace = true
 zeroize.workspace = true
 rustix.workspace = true

@@ -95,6 +95,10 @@ use outbe_primitives::storage::types::{Mapping, Slot, StorageBytes};
 ///   56: committee_snapshot_ocomp_key_lo_at — mapping(bytes32 => mapping(uint64 => bytes32))
 ///   57: committee_snapshot_ocomp_key_hi_at — mapping(bytes32 => mapping(uint64 => bytes32))
 ///   58: committee_snapshot_ocomp_key_epoch_at — mapping(bytes32 => mapping(uint64 => uint64))
+///   59: val_radicle_node_id — mapping(address => bytes32)
+///       immutable Radicle transport identity bound during validator registration.
+///   60: radicle_node_id_to_validator — mapping(bytes32 => address)
+///       reverse uniqueness reservation for Radicle transport identities.
 #[contract(addr = VALIDATOR_SET_ADDRESS)]
 pub struct ValidatorSet {
     // Config (slots 0-4)
@@ -257,4 +261,10 @@ pub struct ValidatorSet {
     pub committee_snapshot_ocomp_key_lo_at: Mapping<B256, Mapping<u64, B256>>,
     pub committee_snapshot_ocomp_key_hi_at: Mapping<B256, Mapping<u64, B256>>,
     pub committee_snapshot_ocomp_key_epoch_at: Mapping<B256, Mapping<u64, u64>>,
+
+    /// Slot 59 — Radicle Ed25519 NodeId bound atomically during registration.
+    pub val_radicle_node_id: Mapping<Address, B256>,
+
+    /// Slot 60 — unique validator owner of a non-zero Radicle NodeId.
+    pub radicle_node_id_to_validator: Mapping<B256, Address>,
 }

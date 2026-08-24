@@ -8,8 +8,9 @@
 //! stubbed via `enable_sub_call_stub` (returns `default_success()`).
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
+use outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
 
-use outbe_credis::CredisContract;
+use outbe_credis::{CredisContract, CredisState};
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::runtime as gf;
@@ -17,7 +18,7 @@ use outbe_oracle::schema::OracleContract;
 use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::storage::{Bytecode, StorageHandle};
 use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 use outbe_primitives::units::SCALE_1E6_U256;
 use outbe_tee::protocol::{GratisOp, ModifyAuth};
@@ -118,8 +119,9 @@ pub fn open(storage: &StorageHandle<'_>, nonce: u64) -> U256 {
 pub fn open_for(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> U256 {
     let handle = pledge(storage, who, nonce);
     let spend = credis_spend_auth(who, handle, who);
+    fund_stake(storage, pledge_cost());
     let (position_id, _) =
-        runtime::request_credis(storage.clone(), cca(), who, handle, spend).unwrap();
+        runtime::request_credis(storage.clone(), cca(), who, handle, spend, pledge_cost()).unwrap();
     position_id
 }
 
@@ -140,7 +142,7 @@ pub fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
     set_coen_rate(&storage, coen_iso_rate);
     let oracle = OracleContract::new(storage);
     oracle
-        .reference_currency_rate
+        .policy_rate
         .write(&ISSUANCE_ISO, policy_rate())
         .unwrap();
 }
@@ -149,13 +151,14 @@ pub fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
 /// across a floor. Distinct from the finalized daily series ([`set_vwap`]),
 /// which is what the daily scan reads.
 pub fn set_coen_rate(storage: &StorageHandle<'_>, coen_iso_rate: U256) {
+    let timestamp = storage.timestamp().unwrap().to::<u64>();
     outbe_oracle::api::set_exchange_rate(
         storage.clone(),
         Address::ZERO,
         outbe_oracle::api::DAY_TYPE_PAIR,
         coen_iso_rate,
-        0,
-        0,
+        1,
+        timestamp,
     )
     .unwrap();
 }
@@ -242,6 +245,9 @@ pub fn settle_principal(
     let position = CredisContract::new(storage.clone())
         .get_position(position_id)
         .unwrap();
+    if position.lifecycle_state().unwrap() == CredisState::Open {
+        set_coen_rate(storage, above_floor());
+    }
     let interest = CredisContract::accrued_interest(&position, now_of(storage)).unwrap();
     runtime::settle(storage.clone(), payer, position_id, interest + principal).unwrap()
 }
@@ -333,6 +339,27 @@ pub fn bootstrap_for(storage: &StorageHandle<'_>, who: Address, amount: U256) {
     .unwrap();
     seed_fidelity(storage.clone(), who);
     seed_oracle(storage.clone(), oracle_rate());
+    deploy_smart_account(storage, who);
+}
+
+/// Gives `who` non-empty code so `request_credis`'s deployed-account guard passes.
+/// The bytes are never executed — `HashMapStorageProvider` runs no EVM — only the
+/// code hash is read.
+pub fn deploy_smart_account(storage: &StorageHandle<'_>, who: Address) {
+    storage
+        .set_code(who, Bytecode::new_raw(Bytes::from_static(&[0xef])))
+        .unwrap();
+}
+
+/// Credits the factory with the stake the payable boundary would have credited.
+///
+/// Tests drive `runtime::request_credis` directly, below the precompile boundary that
+/// moves `msg.value`, so without this the escrow would have a claim with no COEN
+/// behind it and the release would underflow.
+pub fn fund_stake(storage: &StorageHandle<'_>, amount: U256) {
+    storage
+        .increase_balance(CREDIS_FACTORY_ADDRESS, amount)
+        .unwrap();
 }
 
 pub fn teardown() {

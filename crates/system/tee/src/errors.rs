@@ -49,4 +49,55 @@ pub enum TransportError {
 
     #[error("enclave returned error: {0}")]
     EnclaveError(String),
+
+    #[error("enclave identity mismatch after reconnect: {0}")]
+    IdentityMismatch(String),
+
+    #[error("enclave session permanently revoked: {0}")]
+    SessionRevoked(&'static str),
+}
+
+impl TransportError {
+    /// True when the error means the connection itself is broken or
+    /// desynchronized, so a bounded reconnect + one retry may help:
+    /// - `Io` / `IoTimeout`: socket-level fault;
+    /// - `Noise`: after any failed round-trip the initiator nonce has advanced,
+    ///   so the cipher state is unusable regardless of the cause;
+    /// - `FrameTooLarge` on read: corrupt stream.
+    ///
+    /// Deliberately excluded:
+    /// - `Handshake` — also produced by local policy rejections
+    ///   (e.g. `AuthorizeRemoteSessionV1` misuse), not only by transport;
+    /// - `EnclaveError` — the enclave answered; the connection is healthy and
+    ///   the answer is deterministic;
+    /// - `Codec` / `UnexpectedResponse` / attestation errors — post-decryption
+    ///   protocol or enclave faults a fresh connection deterministically repeats.
+    pub fn is_connection_fault(&self) -> bool {
+        matches!(
+            self,
+            Self::Io(_) | Self::IoTimeout { .. } | Self::Noise(_) | Self::FrameTooLarge(_)
+        )
+    }
+
+    /// Stable label for the `outbe_tee_request_errors_total{class}` counter.
+    pub fn metric_class(&self) -> &'static str {
+        match self {
+            Self::Io(_) => "io",
+            Self::IoTimeout { .. } => "io_timeout",
+            Self::FrameTooLarge(_) => "frame_too_large",
+            Self::Codec(_) => "codec",
+            Self::Noise(_) => "noise",
+            Self::Handshake(_) => "handshake",
+            Self::Attestation(_) => "attestation",
+            Self::TributeOfferAttestation(_) => "tribute_offer_attestation",
+            Self::GratisOpAttestation(_) => "gratis_op_attestation",
+            Self::PromisOpAttestation(_) => "promis_op_attestation",
+            Self::DcapVerification(_) => "dcap_verification",
+            Self::FidelityAttestation(_) => "fidelity_attestation",
+            Self::UnexpectedResponse => "unexpected_response",
+            Self::EnclaveError(_) => "enclave_error",
+            Self::IdentityMismatch(_) => "identity_mismatch",
+            Self::SessionRevoked(_) => "session_revoked",
+        }
+    }
 }

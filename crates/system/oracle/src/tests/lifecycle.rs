@@ -34,18 +34,15 @@ fn ocomp_pre_admission_selects_stored_price_and_reads_bounded_counts() {
         assert_eq!(uninitialized.oracle_state_version, 0);
 
         crate::api::initialize_fresh_ocomp_profile(storage.clone()).unwrap();
+        let forming_start = wwd.start_timestamp();
         oracle
             .write_snapshot(
-                last_closed_start + 100,
+                forming_start + 100,
                 &[(pair_key(COEN, usd()), last_closed_price, coen_iso(1))],
             )
             .unwrap();
         oracle
-            .store_worldwide_day_vwap_snapshot(
-                wwd,
-                last_closed_start,
-                last_closed_start + outbe_primitives::time::SECONDS_PER_DAY,
-            )
+            .store_worldwide_day_vwap_snapshot(wwd, forming_start, forming_start + 50 * 60 * 60)
             .unwrap();
         oracle.finalize_utc_day_vwap(last_closed).unwrap();
         crate::scurve::store_scurve_entry(
@@ -161,11 +158,6 @@ fn ocomp_oracle_owner_mutations_roll_back_every_partial_write_boundary() {
             "store_scurve_entry",
             seed_ocomp_oracle,
             store_scurve_mutation,
-        ),
-        (
-            "evict_expired_scurves",
-            seed_ocomp_oracle_with_scurve,
-            evict_scurve_mutation,
         ),
         (
             "process_daily_scurve",
@@ -359,6 +351,128 @@ fn run_tally_penalizes_a_voter_outside_the_reward_band() {
         assert_eq!(oracle.penalty_success_count.read(&v1).unwrap(), 1);
         assert_eq!(oracle.penalty_success_count.read(&v2).unwrap(), 1);
         assert_eq!(oracle.penalty_miss_count.read(&v3).unwrap(), 1);
+    });
+}
+
+#[test]
+fn run_tally_counts_a_zero_rate_submission_as_a_miss_without_poisoning_price() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        oracle
+            .register_pair(AddressPair::from_addresses(COEN, USDT))
+            .unwrap();
+
+        let valid = Address::new([0x11; 20]);
+        let invalid = Address::new([0x22; 20]);
+        register_validator(storage.clone(), valid, U256::in_units(100u64));
+        register_validator(storage.clone(), invalid, U256::in_units(100u64));
+        oracle
+            .submit_vote(valid, &[(COEN, USDT, fixed18(50), SCALE_1E18)])
+            .unwrap();
+        oracle
+            .submit_vote(invalid, &[(COEN, USDT, U256::ZERO, SCALE_1E18)])
+            .unwrap();
+
+        crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
+
+        assert_eq!(oracle.get_exchange_rate(COEN, USDT).unwrap(), fixed18(50));
+        assert_eq!(oracle.penalty_success_count.read(&valid).unwrap(), 1);
+        assert_eq!(oracle.penalty_miss_count.read(&invalid).unwrap(), 1);
+        assert_eq!(oracle.penalty_abstain_count.read(&invalid).unwrap(), 0);
+    });
+}
+
+#[test]
+fn run_tally_breaks_equal_reference_power_ties_by_larger_pair_index() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        let lower = AddressPair::from_addresses(COEN, USDT).to_canonical();
+        let higher = AddressPair::from_addresses(USDT, ETH).to_canonical();
+        oracle.register_pair(lower).unwrap();
+        oracle.register_pair(higher).unwrap();
+
+        let lower_voter = Address::new([0x11; 20]);
+        let higher_voter = Address::new([0x22; 20]);
+        register_validator(storage.clone(), lower_voter, U256::in_units(100u64));
+        register_validator(storage.clone(), higher_voter, U256::in_units(100u64));
+        oracle
+            .submit_vote(
+                lower_voter,
+                &[(lower.address1(), lower.address2(), fixed18(50), SCALE_1E18)],
+            )
+            .unwrap();
+        oracle
+            .submit_vote(
+                higher_voter,
+                &[(
+                    higher.address1(),
+                    higher.address2(),
+                    fixed18(2_000),
+                    SCALE_1E18,
+                )],
+            )
+            .unwrap();
+
+        crate::tally::run_tally(&mut oracle, 2, 24).unwrap();
+
+        assert_eq!(
+            oracle
+                .get_exchange_rate(higher.address1(), higher.address2())
+                .unwrap(),
+            fixed18(2_000)
+        );
+        assert_eq!(
+            oracle
+                .get_exchange_rate(lower.address1(), lower.address2())
+                .unwrap(),
+            U256::ZERO
+        );
+    });
+}
+
+#[test]
+fn run_tally_cross_rate_overflow_rolls_back_every_tally_effect() {
+    with_storage(|storage| {
+        let mut oracle = OracleContract::new(storage.clone());
+        init_oracle(&mut oracle);
+        let lower = AddressPair::from_addresses(COEN, USDT).to_canonical();
+        let higher = AddressPair::from_addresses(USDT, ETH).to_canonical();
+        oracle.register_pair(lower).unwrap();
+        oracle.register_pair(higher).unwrap();
+
+        let validator = Address::new([0x11; 20]);
+        register_validator(storage.clone(), validator, U256::in_units(100u64));
+        oracle
+            .submit_vote(
+                validator,
+                &[
+                    (
+                        lower.address1(),
+                        lower.address2(),
+                        U256::from(1u64),
+                        SCALE_1E18,
+                    ),
+                    (higher.address1(), higher.address2(), U256::MAX, SCALE_1E18),
+                ],
+            )
+            .unwrap();
+
+        let error = crate::tally::run_tally(&mut oracle, 2, 24).unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("cross-currency conversion overflow"));
+        assert_eq!(
+            oracle
+                .get_exchange_rate(higher.address1(), higher.address2())
+                .unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 0);
+        assert_eq!(oracle.penalty_success_count.read(&validator).unwrap(), 0);
+        assert!(oracle.vote_exists.read(&validator).unwrap());
     });
 }
 
@@ -598,6 +712,7 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
+        oracle.reference_currencies.push(840).unwrap();
         oracle.register_pair(AddressPair::new_coen_to(840)).unwrap();
 
         let day_1 = crate::scurve::DAY_SECONDS;
@@ -646,30 +761,69 @@ fn begin_block_scurve_hook_records_the_daily_peak() {
                 .unwrap();
         assert!(!active_value.is_zero());
         assert!(active_value < coen_iso(150));
+
+        // The begin-block owner must keep the same chain alive after the first
+        // 128-day coefficient period; no expiry/eviction or successor row is
+        // required for continuation.
+        let day_130 = day_2 + 128 * crate::scurve::DAY_SECONDS;
+        let runtime_ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(130, day_130 + 120, 1),
+            storage,
+        );
+        <crate::lifecycle::OracleLifecycle as BlockLifecycle>::begin_block(&runtime_ctx).unwrap();
+        assert_eq!(oracle.scurve_count.read().unwrap(), 1);
+        assert_eq!(
+            crate::scurve::get_max_active_scurve_value(&oracle, pair_key(COEN, usd()), day_130)
+                .unwrap(),
+            crate::scurve::compute_scurve_value(coen_iso(150), 128)
+        );
     });
 }
 
 #[test]
-fn begin_block_scurve_hook_processes_every_coen_iso_and_skips_generic_markets() {
+fn begin_block_scurve_hook_processes_only_registered_reference_pairs() {
     with_storage(|storage| {
         let mut oracle = OracleContract::new(storage.clone());
         init_oracle(&mut oracle);
+        oracle.reference_currencies.push(840).unwrap();
+        oracle.reference_currencies.push(978).unwrap();
+        oracle.reference_currencies.push(392).unwrap(); // no pair: no-op
 
         let usd_pair = AddressPair::new_coen_to(840);
         let eur_pair = AddressPair::new_coen_to(978);
+        let cad_pair = AddressPair::new_coen_to(124); // active, priced, non-reference
         let generic_pair = AddressPair::from_addresses(COEN, USDT);
         oracle.register_pair(usd_pair).unwrap();
         oracle.register_pair(eur_pair).unwrap();
+        oracle.register_pair(cad_pair).unwrap();
         oracle.register_pair(generic_pair).unwrap();
 
         let day_1 = crate::scurve::DAY_SECONDS;
         let day_2 = 2 * crate::scurve::DAY_SECONDS;
         let day_3 = 3 * crate::scurve::DAY_SECONDS;
         let day_4 = 4 * crate::scurve::DAY_SECONDS;
-        for (timestamp, usd_price, eur_price, generic_price) in [
-            (day_1 + 60, coen_iso(100), coen_iso(90), fixed18(2)),
-            (day_2 + 60, coen_iso(150), coen_iso(140), fixed18(3)),
-            (day_3 + 60, coen_iso(120), coen_iso(110), fixed18(2)),
+        for (timestamp, usd_price, eur_price, cad_price, generic_price) in [
+            (
+                day_1 + 60,
+                coen_iso(100),
+                coen_iso(90),
+                coen_iso(80),
+                fixed18(2),
+            ),
+            (
+                day_2 + 60,
+                coen_iso(150),
+                coen_iso(140),
+                coen_iso(130),
+                fixed18(3),
+            ),
+            (
+                day_3 + 60,
+                coen_iso(120),
+                coen_iso(110),
+                coen_iso(100),
+                fixed18(2),
+            ),
         ] {
             oracle
                 .write_snapshot(
@@ -677,6 +831,7 @@ fn begin_block_scurve_hook_processes_every_coen_iso_and_skips_generic_markets() 
                     &[
                         (usd_pair, usd_price, coen_iso(1)),
                         (eur_pair, eur_price, coen_iso(1)),
+                        (cad_pair, cad_price, coen_iso(1)),
                         (generic_pair, generic_price, SCALE_1E18),
                     ],
                 )
@@ -694,6 +849,8 @@ fn begin_block_scurve_hook_processes_every_coen_iso_and_skips_generic_markets() 
         assert_eq!(oracle.scurve_pair.read_pair(&1).unwrap(), eur_pair);
         assert_eq!(oracle.scurve_peak_price.read(&0).unwrap(), coen_iso(150));
         assert_eq!(oracle.scurve_peak_price.read(&1).unwrap(), coen_iso(140));
+        assert_ne!(oracle.scurve_pair.read_pair(&0).unwrap(), cad_pair);
+        assert_ne!(oracle.scurve_pair.read_pair(&1).unwrap(), cad_pair);
         assert_eq!(oracle.scurve_last_processed_day.read().unwrap(), day_4);
     });
 }

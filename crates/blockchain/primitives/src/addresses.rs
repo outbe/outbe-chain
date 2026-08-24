@@ -74,6 +74,12 @@ pub const PROMIS_LIMIT_ADDRESS: Address = address!("0x00000000000000000000000000
 /// at UTC midnight. See epic, Phase 5.
 pub const CYCLE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001010");
 
+/// Credis Card Agent precompile. Two roles at one address: the accumulator that
+/// receives the daily CCA emission pool, and the registry answering an agent's
+/// standing (`ICca.getCcaState`).
+///
+/// The registry side currently answers from a stub with no storage of its own;
+/// see `outbe_cca::precompile`.
 pub const CCA_ADDRESS: Address = address!("0x0000000000000000000000000000000000001011");
 
 // ---------------------------------------------------------------------------
@@ -221,6 +227,10 @@ pub const STABLECOIN_FACTORY_ADDRESS: Address =
 /// Shared stablecoin Policy Registry precompile address.
 pub const STABLECOIN_POLICY_REGISTRY_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE10");
+
+/// Permissionless append-only registry of public Heartwood repository ids.
+pub const RADICLE_REGISTRY_ADDRESS: Address =
+    address!("0x000000000000000000000000000000000000EE11");
 
 /// Genesis-reserved two-byte class for dynamic stablecoin token addresses.
 pub const STABLECOIN_ADDRESS_PREFIX: [u8; 2] = [0x53, 0xc0];

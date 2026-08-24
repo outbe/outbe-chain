@@ -26,12 +26,20 @@ pub(crate) struct Config {
     /// `outbe-ocomp` role binary (`--ocomp-bin`).
     #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
     pub bin_ocomp: PathBuf,
+    /// Production Oracle price feeder (`--feeder-bin`).
+    pub bin_feeder: PathBuf,
     /// Newer node binary (`--upgraded-chain-bin`) for operator replacement E2E.
     pub bin_chain_upgraded: Option<PathBuf>,
     /// `outbe-cli` client binary (`--cli-bin`).
     pub bin_cli: PathBuf,
     /// `outbe-keygen` binary (`--keygen-bin`). Used by the joiner flow.
     pub bin_keygen: PathBuf,
+    /// `outbe-radicle` sidecar binary (`--radicle-bin`).
+    pub bin_radicle: PathBuf,
+    /// Heartwood `rad` client (`--rad-bin`).
+    pub bin_rad: PathBuf,
+    /// Heartwood Git remote helper (`--git-remote-rad-bin`).
+    pub bin_git_remote_rad: PathBuf,
     /// Production enclave binary (`--enclave-bin`).
     pub bin_enclave: PathBuf,
     /// Mock enclave binary (`--mock-bin`).
@@ -80,9 +88,21 @@ impl Config {
             dir: env.data_dir.clone(),
             bin_chain: env.chain_bin.clone(),
             bin_ocomp: env.ocomp_bin.clone(),
+            bin_feeder: env.feeder_bin.clone(),
             bin_chain_upgraded: env.upgraded_chain_bin.clone(),
             bin_cli: env.cli_bin.clone(),
             bin_keygen: env.keygen_bin.clone(),
+            bin_radicle: env.repo.join("target/release/outbe-radicle"),
+            bin_rad: env
+                .repo
+                .parent()
+                .unwrap_or(&env.repo)
+                .join("outbe-heartwood/target/release/rad"),
+            bin_git_remote_rad: env
+                .repo
+                .parent()
+                .unwrap_or(&env.repo)
+                .join("outbe-heartwood/target/release/git-remote-rad"),
             bin_enclave: env.enclave_bin.clone(),
             bin_mock: env.mock_bin.clone(),
             seed: env.seed.clone(),
@@ -156,6 +176,16 @@ impl Config {
     /// Consensus listen port for validator index `i`.
     pub fn consensus_port(&self, i: usize) -> u16 {
         self.ports.port(Service::Consensus, i)
+    }
+
+    /// Heartwood peer port for validator index `i`.
+    pub fn radicle_port(&self, i: usize) -> u16 {
+        self.ports.port(Service::Radicle, i)
+    }
+
+    /// Loopback read-only `outbe-radicle` status port for validator index `i`.
+    pub fn radicle_status_port(&self, i: usize) -> u16 {
+        self.ports.port(Service::RadicleStatus, i)
     }
 
     /// Loopback HTTP port where validator `i`'s OCOMP Supervisor accepts workers.

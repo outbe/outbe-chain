@@ -94,7 +94,7 @@ python3 "$SCRIPT_DIR/prepare_network.py" \
   --consensus-p2p-base-port "$((30400 + PORT_OFFSET))" \
   --reth-p2p-base-port "$((30303 + PORT_OFFSET))" \
   --reth-discv5-base-port "$((31303 + PORT_OFFSET))" \
-  --rpc-base-port "$((8545 + PORT_OFFSET))" \
+  --rpc-base-port "$((18545 + PORT_OFFSET))" \
   --authrpc-base-port "$((8551 + PORT_OFFSET))" \
   --metrics-base-port "$((9101 + PORT_OFFSET))" \
   --tee-enclave-base-port "$((17000 + PORT_OFFSET))" \

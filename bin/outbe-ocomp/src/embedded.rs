@@ -1,8 +1,9 @@
-//! Local OCOMP job state shared by the embedded Validator and FullNode policies.
+//! Local OCOMP lifecycle shared by embedded Validator and FullNode policies.
 //!
-//! This is deliberately not a scheduler or replay ledger. Canonical block
-//! notifications reconstruct it, while the existing runner and retention/CAS
-//! modules own computation and artifacts.
+//! Canonical state is the authority. Every asynchronous result is correlated
+//! with the process-local generation that started it and is reduced here before
+//! callers perform effects. This keeps terminal authority absorbing even when a
+//! worker or transaction outcome was already queued.
 
 use std::collections::BTreeMap;
 
@@ -15,14 +16,57 @@ pub enum EmbeddedOcompModeV1 {
     FullNode,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct EmbeddedJobGenerationV1(u64);
+
+impl EmbeddedJobGenerationV1 {
+    #[must_use]
+    pub const fn get(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EmbeddedTerminalReasonV1 {
+    Completed,
+    Expired,
+    Conflicted,
+    Canceled,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EmbeddedJobStateV1 {
     Computing,
     WaitAtDeadline,
     LocalReady,
     Verified,
-    ClosedNoQuorum,
+    Closed,
     FatalMismatch,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EmbeddedJobEventV1 {
+    LocalCompleted {
+        generation: EmbeddedJobGenerationV1,
+        result_digest: B256,
+    },
+    LocalFailed {
+        generation: EmbeddedJobGenerationV1,
+    },
+    Deadline,
+    CanonicalCompleted {
+        result_digest: B256,
+    },
+    CanonicalClosed {
+        reason: EmbeddedTerminalReasonV1,
+    },
+    VoteFinalized {
+        generation: EmbeddedJobGenerationV1,
+        success: bool,
+    },
+    VoteFailed {
+        generation: EmbeddedJobGenerationV1,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,23 +93,39 @@ pub enum EmbeddedJobActionV1 {
         local_result_digest: B256,
         canonical_result_digest: B256,
     },
-    CloseNoQuorum {
+    CloseTerminal {
         job_id: B256,
+        reason: EmbeddedTerminalReasonV1,
     },
+    Abstain,
+    FatalLocalFailure,
+    VoteFinalized {
+        success: bool,
+    },
+    FatalVoteFailure,
     ProtocolOwned,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EmbeddedTransitionPlanV1 {
+    pub generation: EmbeddedJobGenerationV1,
+    pub action: EmbeddedJobActionV1,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct EmbeddedJobV1 {
+    generation: EmbeddedJobGenerationV1,
     deadline_height: u64,
     local_result_digest: Option<B256>,
     canonical_result_digest: Option<B256>,
+    terminal_reason: Option<EmbeddedTerminalReasonV1>,
     state: EmbeddedJobStateV1,
 }
 
 #[derive(Debug)]
 pub struct EmbeddedOcompJobsV1 {
     mode: EmbeddedOcompModeV1,
+    next_generation: u64,
     jobs: BTreeMap<B256, EmbeddedJobV1>,
 }
 
@@ -74,6 +134,7 @@ impl EmbeddedOcompJobsV1 {
     pub const fn new(mode: EmbeddedOcompModeV1) -> Self {
         Self {
             mode,
+            next_generation: 1,
             jobs: BTreeMap::new(),
         }
     }
@@ -82,174 +143,154 @@ impl EmbeddedOcompJobsV1 {
         &mut self,
         job_id: B256,
         deadline_height: u64,
-    ) -> Result<(), EmbeddedOcompStateErrorV1> {
+    ) -> Result<EmbeddedJobGenerationV1, EmbeddedOcompStateErrorV1> {
         if job_id.is_zero() || deadline_height == 0 {
             return Err(EmbeddedOcompStateErrorV1::InvalidJob);
         }
         match self.jobs.get(&job_id) {
-            Some(existing) if existing.deadline_height == deadline_height => Ok(()),
+            Some(existing) if existing.deadline_height == deadline_height => {
+                Ok(existing.generation)
+            }
             Some(_) => Err(EmbeddedOcompStateErrorV1::ConflictingReplay { job_id }),
             None => {
+                let generation = EmbeddedJobGenerationV1(self.next_generation);
+                self.next_generation = self
+                    .next_generation
+                    .checked_add(1)
+                    .ok_or(EmbeddedOcompStateErrorV1::GenerationExhausted)?;
                 self.jobs.insert(
                     job_id,
                     EmbeddedJobV1 {
+                        generation,
                         deadline_height,
                         local_result_digest: None,
                         canonical_result_digest: None,
+                        terminal_reason: None,
                         state: EmbeddedJobStateV1::Computing,
                     },
                 );
-                Ok(())
+                Ok(generation)
             }
         }
     }
 
-    pub fn record_local_result(
+    pub fn reduce(
         &mut self,
         job_id: B256,
-        result_digest: B256,
-    ) -> Result<EmbeddedJobActionV1, EmbeddedOcompStateErrorV1> {
-        if result_digest.is_zero() {
-            return Err(EmbeddedOcompStateErrorV1::InvalidResult);
-        }
+        event: EmbeddedJobEventV1,
+    ) -> Result<EmbeddedTransitionPlanV1, EmbeddedOcompStateErrorV1> {
         let job = self
             .jobs
             .get_mut(&job_id)
             .ok_or(EmbeddedOcompStateErrorV1::UnknownJob { job_id })?;
-        if job
-            .local_result_digest
-            .is_some_and(|existing| existing != result_digest)
-        {
-            return Err(EmbeddedOcompStateErrorV1::ConflictingLocalResult { job_id });
-        }
-        job.local_result_digest = Some(result_digest);
-        job.state = EmbeddedJobStateV1::LocalReady;
-        Ok(match self.mode {
-            EmbeddedOcompModeV1::Validator if job.canonical_result_digest.is_some() => {
-                job.state = EmbeddedJobStateV1::Verified;
-                EmbeddedJobActionV1::ProtocolOwned
+        let action = match event {
+            EmbeddedJobEventV1::LocalCompleted {
+                generation,
+                result_digest,
+            } => {
+                if result_digest.is_zero() {
+                    return Err(EmbeddedOcompStateErrorV1::InvalidResult);
+                }
+                if generation != job.generation {
+                    EmbeddedJobActionV1::ProtocolOwned
+                } else {
+                    reduce_local_completed(self.mode, job_id, job, result_digest)?
+                }
             }
-            EmbeddedOcompModeV1::Validator => match job.canonical_result_digest {
-                None => EmbeddedJobActionV1::SubmitVote {
-                    job_id,
-                    result_digest,
-                },
-                Some(canonical) if canonical == result_digest => {
-                    job.state = EmbeddedJobStateV1::Verified;
-                    EmbeddedJobActionV1::ReleaseProgress { job_id }
-                }
-                Some(canonical) => {
-                    job.state = EmbeddedJobStateV1::FatalMismatch;
-                    EmbeddedJobActionV1::FatalMismatch {
-                        job_id,
-                        local_result_digest: result_digest,
-                        canonical_result_digest: canonical,
+            EmbeddedJobEventV1::LocalFailed { generation } => {
+                if generation != job.generation {
+                    EmbeddedJobActionV1::ProtocolOwned
+                } else {
+                    match job.state {
+                        EmbeddedJobStateV1::Computing | EmbeddedJobStateV1::WaitAtDeadline
+                            if self.mode == EmbeddedOcompModeV1::FullNode =>
+                        {
+                            EmbeddedJobActionV1::FatalLocalFailure
+                        }
+                        EmbeddedJobStateV1::Computing | EmbeddedJobStateV1::WaitAtDeadline => {
+                            EmbeddedJobActionV1::Abstain
+                        }
+                        EmbeddedJobStateV1::LocalReady
+                        | EmbeddedJobStateV1::Verified
+                        | EmbeddedJobStateV1::Closed
+                        | EmbeddedJobStateV1::FatalMismatch => EmbeddedJobActionV1::ProtocolOwned,
                     }
                 }
-            },
-            EmbeddedOcompModeV1::FullNode => match job.canonical_result_digest {
-                None => EmbeddedJobActionV1::AwaitCanonical { job_id },
-                Some(canonical) if canonical == result_digest => {
-                    job.state = EmbeddedJobStateV1::Verified;
-                    EmbeddedJobActionV1::ReleaseProgress { job_id }
-                }
-                Some(canonical) => {
-                    job.state = EmbeddedJobStateV1::FatalMismatch;
-                    EmbeddedJobActionV1::FatalMismatch {
+            }
+            EmbeddedJobEventV1::Deadline => {
+                if job.terminal_reason.is_some() || self.mode == EmbeddedOcompModeV1::Validator {
+                    EmbeddedJobActionV1::ProtocolOwned
+                } else if job.local_result_digest.is_some() {
+                    EmbeddedJobActionV1::AwaitCanonical { job_id }
+                } else {
+                    job.state = EmbeddedJobStateV1::WaitAtDeadline;
+                    EmbeddedJobActionV1::HoldProgress {
                         job_id,
-                        local_result_digest: result_digest,
-                        canonical_result_digest: canonical,
+                        through_height: job.deadline_height,
                     }
                 }
-            },
-        })
-    }
-
-    pub fn observe_deadline(
-        &mut self,
-        job_id: B256,
-    ) -> Result<EmbeddedJobActionV1, EmbeddedOcompStateErrorV1> {
-        let job = self
-            .jobs
-            .get_mut(&job_id)
-            .ok_or(EmbeddedOcompStateErrorV1::UnknownJob { job_id })?;
-        if self.mode == EmbeddedOcompModeV1::Validator {
-            return Ok(EmbeddedJobActionV1::ProtocolOwned);
-        }
-        if job.local_result_digest.is_some() {
-            return Ok(EmbeddedJobActionV1::AwaitCanonical { job_id });
-        }
-        job.state = EmbeddedJobStateV1::WaitAtDeadline;
-        Ok(EmbeddedJobActionV1::HoldProgress {
-            job_id,
-            through_height: job.deadline_height,
-        })
-    }
-
-    pub fn record_canonical_result(
-        &mut self,
-        job_id: B256,
-        result_digest: B256,
-    ) -> Result<EmbeddedJobActionV1, EmbeddedOcompStateErrorV1> {
-        if result_digest.is_zero() {
-            return Err(EmbeddedOcompStateErrorV1::InvalidResult);
-        }
-        let job = self
-            .jobs
-            .get_mut(&job_id)
-            .ok_or(EmbeddedOcompStateErrorV1::UnknownJob { job_id })?;
-        if job
-            .canonical_result_digest
-            .is_some_and(|existing| existing != result_digest)
-        {
-            return Err(EmbeddedOcompStateErrorV1::ConflictingCanonicalResult { job_id });
-        }
-        job.canonical_result_digest = Some(result_digest);
-        if self.mode == EmbeddedOcompModeV1::Validator {
-            job.state = EmbeddedJobStateV1::Verified;
-            return Ok(EmbeddedJobActionV1::ProtocolOwned);
-        }
-        let Some(local) = job.local_result_digest else {
-            return Ok(EmbeddedJobActionV1::AwaitLocalResult { job_id });
+            }
+            EmbeddedJobEventV1::CanonicalCompleted { result_digest } => {
+                if result_digest.is_zero() {
+                    return Err(EmbeddedOcompStateErrorV1::InvalidResult);
+                }
+                reduce_canonical_completed(self.mode, job_id, job, result_digest)?
+            }
+            EmbeddedJobEventV1::CanonicalClosed { reason } => {
+                if reason == EmbeddedTerminalReasonV1::Completed {
+                    return Err(EmbeddedOcompStateErrorV1::InvalidTerminalReason);
+                }
+                match job.terminal_reason {
+                    Some(existing) if existing != reason => {
+                        return Err(EmbeddedOcompStateErrorV1::ConflictingCanonicalTerminal {
+                            job_id,
+                        });
+                    }
+                    Some(_) => {}
+                    None => {
+                        job.terminal_reason = Some(reason);
+                        job.state = EmbeddedJobStateV1::Closed;
+                    }
+                }
+                EmbeddedJobActionV1::CloseTerminal { job_id, reason }
+            }
+            EmbeddedJobEventV1::VoteFinalized {
+                generation,
+                success,
+            } => {
+                if generation != job.generation || job.terminal_reason.is_some() {
+                    EmbeddedJobActionV1::ProtocolOwned
+                } else {
+                    EmbeddedJobActionV1::VoteFinalized { success }
+                }
+            }
+            EmbeddedJobEventV1::VoteFailed { generation } => {
+                if generation != job.generation || job.terminal_reason.is_some() {
+                    EmbeddedJobActionV1::ProtocolOwned
+                } else {
+                    EmbeddedJobActionV1::FatalVoteFailure
+                }
+            }
         };
-        if local == result_digest {
-            job.state = EmbeddedJobStateV1::Verified;
-            Ok(EmbeddedJobActionV1::ReleaseProgress { job_id })
-        } else {
-            job.state = EmbeddedJobStateV1::FatalMismatch;
-            Ok(EmbeddedJobActionV1::FatalMismatch {
-                job_id,
-                local_result_digest: local,
-                canonical_result_digest: result_digest,
-            })
-        }
+        Ok(EmbeddedTransitionPlanV1 {
+            generation: job.generation,
+            action,
+        })
     }
 
-    pub fn record_no_quorum(
-        &mut self,
-        job_id: B256,
-    ) -> Result<EmbeddedJobActionV1, EmbeddedOcompStateErrorV1> {
-        let job = self
-            .jobs
-            .get_mut(&job_id)
-            .ok_or(EmbeddedOcompStateErrorV1::UnknownJob { job_id })?;
-        match job.state {
-            EmbeddedJobStateV1::Computing
-            | EmbeddedJobStateV1::WaitAtDeadline
-            | EmbeddedJobStateV1::LocalReady => {
-                job.state = EmbeddedJobStateV1::ClosedNoQuorum;
-                Ok(EmbeddedJobActionV1::CloseNoQuorum { job_id })
-            }
-            EmbeddedJobStateV1::ClosedNoQuorum => Ok(EmbeddedJobActionV1::CloseNoQuorum { job_id }),
-            EmbeddedJobStateV1::Verified | EmbeddedJobStateV1::FatalMismatch => {
-                Err(EmbeddedOcompStateErrorV1::TerminalJob { job_id })
-            }
-        }
+    #[must_use]
+    pub fn generation(&self, job_id: B256) -> Option<EmbeddedJobGenerationV1> {
+        self.jobs.get(&job_id).map(|job| job.generation)
     }
 
     #[must_use]
     pub fn state(&self, job_id: B256) -> Option<EmbeddedJobStateV1> {
         self.jobs.get(&job_id).map(|job| job.state)
+    }
+
+    #[must_use]
+    pub fn terminal_reason(&self, job_id: B256) -> Option<EmbeddedTerminalReasonV1> {
+        self.jobs.get(&job_id).and_then(|job| job.terminal_reason)
     }
 
     #[must_use]
@@ -267,12 +308,22 @@ impl EmbeddedOcompJobsV1 {
             .count()
     }
 
+    /// Drop only terminal process-local projections after their covering
+    /// checkpoint is durable. Live jobs are never removed by this operation.
+    pub fn prune_terminal(&mut self) -> usize {
+        let before = self.jobs.len();
+        self.jobs.retain(|_, job| {
+            matches!(
+                job.state,
+                EmbeddedJobStateV1::Computing
+                    | EmbeddedJobStateV1::WaitAtDeadline
+                    | EmbeddedJobStateV1::LocalReady
+            )
+        });
+        before - self.jobs.len()
+    }
+
     /// Highest finalized height a FullNode may expose to its execution gate.
-    ///
-    /// A job becomes a barrier at its deadline and remains one until the local
-    /// result is verified against canonical authority or the chain closes it
-    /// without quorum. This intentionally includes `LocalReady`: having a local
-    /// answer is not enough until the finalized quorum answer is known.
     #[must_use]
     pub fn progress_limit(&self, finalized_height: u64) -> u64 {
         if self.mode == EmbeddedOcompModeV1::Validator {
@@ -282,16 +333,119 @@ impl EmbeddedOcompJobsV1 {
             .values()
             .filter(|job| {
                 job.deadline_height <= finalized_height
-                    && matches!(
-                        job.state,
-                        EmbeddedJobStateV1::Computing
-                            | EmbeddedJobStateV1::WaitAtDeadline
-                            | EmbeddedJobStateV1::LocalReady
-                    )
+                    && match job.terminal_reason {
+                        None | Some(EmbeddedTerminalReasonV1::Completed) => {
+                            job.state != EmbeddedJobStateV1::Verified
+                        }
+                        Some(
+                            EmbeddedTerminalReasonV1::Expired
+                            | EmbeddedTerminalReasonV1::Conflicted
+                            | EmbeddedTerminalReasonV1::Canceled,
+                        ) => false,
+                    }
             })
             .fold(finalized_height, |limit, job| {
                 limit.min(job.deadline_height.saturating_sub(1))
             })
+    }
+}
+
+fn reduce_local_completed(
+    mode: EmbeddedOcompModeV1,
+    job_id: B256,
+    job: &mut EmbeddedJobV1,
+    result_digest: B256,
+) -> Result<EmbeddedJobActionV1, EmbeddedOcompStateErrorV1> {
+    if job.terminal_reason == Some(EmbeddedTerminalReasonV1::Completed)
+        && matches!(
+            job.state,
+            EmbeddedJobStateV1::Verified | EmbeddedJobStateV1::FatalMismatch
+        )
+    {
+        return Ok(EmbeddedJobActionV1::ProtocolOwned);
+    }
+    if job
+        .local_result_digest
+        .is_some_and(|existing| existing != result_digest)
+    {
+        return Err(EmbeddedOcompStateErrorV1::ConflictingLocalResult { job_id });
+    }
+    if matches!(
+        job.terminal_reason,
+        Some(
+            EmbeddedTerminalReasonV1::Expired
+                | EmbeddedTerminalReasonV1::Conflicted
+                | EmbeddedTerminalReasonV1::Canceled
+        )
+    ) {
+        return Ok(EmbeddedJobActionV1::ProtocolOwned);
+    }
+    job.local_result_digest = Some(result_digest);
+    match (mode, job.canonical_result_digest) {
+        (EmbeddedOcompModeV1::Validator, Some(_)) => {
+            job.state = EmbeddedJobStateV1::Verified;
+            Ok(EmbeddedJobActionV1::ProtocolOwned)
+        }
+        (EmbeddedOcompModeV1::Validator, None) => {
+            job.state = EmbeddedJobStateV1::LocalReady;
+            Ok(EmbeddedJobActionV1::SubmitVote {
+                job_id,
+                result_digest,
+            })
+        }
+        (EmbeddedOcompModeV1::FullNode, None) => {
+            job.state = EmbeddedJobStateV1::LocalReady;
+            Ok(EmbeddedJobActionV1::AwaitCanonical { job_id })
+        }
+        (EmbeddedOcompModeV1::FullNode, Some(canonical)) if canonical == result_digest => {
+            job.state = EmbeddedJobStateV1::Verified;
+            Ok(EmbeddedJobActionV1::ReleaseProgress { job_id })
+        }
+        (EmbeddedOcompModeV1::FullNode, Some(canonical)) => {
+            job.state = EmbeddedJobStateV1::FatalMismatch;
+            Ok(EmbeddedJobActionV1::FatalMismatch {
+                job_id,
+                local_result_digest: result_digest,
+                canonical_result_digest: canonical,
+            })
+        }
+    }
+}
+
+fn reduce_canonical_completed(
+    mode: EmbeddedOcompModeV1,
+    job_id: B256,
+    job: &mut EmbeddedJobV1,
+    result_digest: B256,
+) -> Result<EmbeddedJobActionV1, EmbeddedOcompStateErrorV1> {
+    if job
+        .canonical_result_digest
+        .is_some_and(|existing| existing != result_digest)
+        || job
+            .terminal_reason
+            .is_some_and(|reason| reason != EmbeddedTerminalReasonV1::Completed)
+    {
+        return Err(EmbeddedOcompStateErrorV1::ConflictingCanonicalTerminal { job_id });
+    }
+    job.canonical_result_digest = Some(result_digest);
+    job.terminal_reason = Some(EmbeddedTerminalReasonV1::Completed);
+    if mode == EmbeddedOcompModeV1::Validator {
+        job.state = EmbeddedJobStateV1::Verified;
+        return Ok(EmbeddedJobActionV1::ProtocolOwned);
+    }
+    let Some(local) = job.local_result_digest else {
+        return Ok(EmbeddedJobActionV1::AwaitLocalResult { job_id });
+    };
+    if local == result_digest {
+        job.state = EmbeddedJobStateV1::Verified;
+        Ok(EmbeddedJobActionV1::ReleaseProgress { job_id })
+    } else {
+        job.state = EmbeddedJobStateV1::FatalMismatch;
+        Ok(EmbeddedJobActionV1::FatalMismatch {
+            job_id,
+            local_result_digest: local,
+            canonical_result_digest: result_digest,
+        })
     }
 }
 
@@ -301,14 +455,16 @@ pub enum EmbeddedOcompStateErrorV1 {
     InvalidJob,
     #[error("embedded OCOMP local result digest is invalid")]
     InvalidResult,
+    #[error("embedded OCOMP terminal reason is invalid for this event")]
+    InvalidTerminalReason,
+    #[error("embedded OCOMP generation space is exhausted")]
+    GenerationExhausted,
     #[error("embedded OCOMP replay conflicts for job {job_id}")]
     ConflictingReplay { job_id: B256 },
     #[error("embedded OCOMP local result conflicts for job {job_id}")]
     ConflictingLocalResult { job_id: B256 },
-    #[error("embedded OCOMP canonical result conflicts for job {job_id}")]
-    ConflictingCanonicalResult { job_id: B256 },
+    #[error("embedded OCOMP canonical terminal conflicts for job {job_id}")]
+    ConflictingCanonicalTerminal { job_id: B256 },
     #[error("embedded OCOMP job {job_id} is unknown")]
     UnknownJob { job_id: B256 },
-    #[error("embedded OCOMP job {job_id} is already terminal")]
-    TerminalJob { job_id: B256 },
 }

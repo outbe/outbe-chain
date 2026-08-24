@@ -702,6 +702,17 @@ pub(crate) fn read_trimmed(path: &Path) -> Result<String> {
         .collect())
 }
 
+/// Normalize a hex secret file in place (strip whitespace/newlines) so it can
+/// be passed to reth's file-based `--p2p-secret-key` flag, which parses the
+/// file contents without trimming. The file stays where it is; inlining the
+/// hex into argv (`--p2p-secret-key-hex`) would expose the key to every local
+/// user via `ps`.
+pub(crate) fn normalized_secret_file(path: &Path) -> Result<PathBuf> {
+    let trimmed = read_trimmed(path)?;
+    fs::write(path, &trimmed)?;
+    Ok(path.to_path_buf())
+}
+
 /// The `0x`-prefixed EVM key from `<vd>/evm-key.hex`.
 pub(crate) fn read_evm_key(vd: &Path) -> Result<String> {
     let hex = read_trimmed(&vd.join("evm-key.hex"))?;

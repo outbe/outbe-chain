@@ -258,8 +258,12 @@ impl OcompJobRecordV1 {
                     "conflict resolved receipt",
                 )
             }
-            (OcompJobStatus::Canceled, _, Some(terminal)) => require(
-                terminal.outcome == OcompTerminalOutcome::Canceled
+            (OcompJobStatus::Canceled, finalized, Some(terminal)) => require(
+                finalized
+                    .as_ref()
+                    .is_none_or(|finalized| finalized.quorum.is_none())
+                    && terminal.outcome == OcompTerminalOutcome::Canceled
+                    && terminal.next_pending_nonce.is_none()
                     && terminal.completed_binding.is_none(),
                 "canceled terminal shape",
             ),

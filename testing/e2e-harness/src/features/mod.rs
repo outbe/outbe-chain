@@ -24,11 +24,19 @@ pub mod lifecycle;
 #[cfg(feature = "ocomp-integration")]
 pub mod ocomp;
 pub mod origin_venue;
+#[cfg(feature = "ocomp-integration")]
+pub mod price_oracle;
+#[cfg(feature = "ocomp-integration")]
+pub mod radicle;
 pub mod restart;
+#[cfg(feature = "ocomp-integration")]
+pub mod settlement;
 pub mod stablecoin;
 pub mod stale_join;
 pub mod target_chain;
+pub mod tee_observability;
 pub mod tribute_projection;
+pub mod txpool_eviction;
 pub mod zerofee;
 
 pub mod validator_consistency_accounting;

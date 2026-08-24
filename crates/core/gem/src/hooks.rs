@@ -1,6 +1,6 @@
 use alloy_primitives::U256;
 use outbe_oracle::{
-    api::{coen_rate_for_opt, get_all_reference_currencies},
+    api::{fresh_coen_rate_for_opt, get_all_reference_currencies},
     schema::OracleContract,
 };
 use outbe_primitives::{
@@ -42,7 +42,7 @@ pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<()> {
         if budget == 0 {
             break;
         }
-        let Some(rate) = coen_rate_for_opt(ctx.storage.clone(), iso_code)? else {
+        let Some(rate) = fresh_coen_rate_for_opt(ctx.storage.clone(), iso_code)? else {
             continue;
         };
         let inspected = qualify_with_rate(ctx, iso_code, rate, budget)?;

@@ -393,7 +393,7 @@ fn an_unpriced_issuance_currency_cannot_be_settled_in() {
         );
         // No euro pair at all.
         let err = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap_err();
-        assert!(err.to_string().contains("no COEN rate published"), "{err}");
+        assert!(err.to_string().contains("not registered"), "{err}");
     });
 }
 
@@ -413,11 +413,11 @@ fn a_stale_rate_cannot_be_settled_in() {
             EUR_ISO,
             EUR_PAIR_ID,
             COEN_ISO_RATE_SCALE,
-            crate::constants::FX_RATE_MAX_AGE_SECONDS + 1,
+            outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS + 1,
         );
 
         let err = runtime::quote_cost_amount(&s, sid(7), payment_token()).unwrap_err();
-        assert!(err.to_string().contains("too old"), "{err}");
+        assert!(err.to_string().contains("stale"), "{err}");
     });
 }
 

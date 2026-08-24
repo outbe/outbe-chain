@@ -11,7 +11,7 @@ use revm::{
     database_interface::EmptyDB, handler::PrecompileProvider, primitives::hardfork::SpecId,
 };
 
-fn expected_exact_addresses() -> [Address; 37] {
+fn expected_exact_addresses() -> [Address; 38] {
     [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
@@ -28,6 +28,7 @@ fn expected_exact_addresses() -> [Address; 37] {
         VAULT_ROUTER_ADDRESS,
         CREDIS_ADDRESS,
         CREDIS_FACTORY_ADDRESS,
+        CCA_ADDRESS,
         TRIBUTE_FACTORY_ADDRESS,
         VALIDATOR_SET_ADDRESS,
         SLASH_INDICATOR_ADDRESS,
@@ -47,6 +48,7 @@ fn expected_exact_addresses() -> [Address; 37] {
         L2_REGISTRY_ADDRESS,
         STABLECOIN_FACTORY_ADDRESS,
         STABLECOIN_POLICY_REGISTRY_ADDRESS,
+        RADICLE_REGISTRY_ADDRESS,
         GOVERNANCE_ADDRESS,
         VOTE_ADDRESS,
         UPDATE_ADDRESS,

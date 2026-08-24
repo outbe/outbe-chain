@@ -193,7 +193,7 @@ export function proposalStatusCode(name: ProposalStatusName): number {
 }
 
 // Gem lifecycle state (crates/core/gem/src/schema.rs::GemState).
-export const GEM_STATE = ["Issued", "Qualified", "Settled"] as const;
+export const GEM_STATE = ["Issued", "Qualified", "Called", "Settled"] as const;
 
 // ISO 4217 numeric → symbol. Chain currently accepts 840 (USD) only; the rest
 // are convenience labels for display.

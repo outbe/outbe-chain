@@ -68,6 +68,10 @@ fn dummy_consensus_pubkey(seed: u8) -> [u8; 48] {
     pk
 }
 
+fn test_radicle_node_id(validator: Address) -> B256 {
+    keccak256(validator.as_slice())
+}
+
 fn ocomp_registration(
     validator: Address,
     consensus_pubkey: &[u8; 48],
@@ -253,7 +257,13 @@ fn test_register_self_without_sig_rejected() {
 
     with_vs_configured(10, |vs| {
         // Self-registration without BLS signature must fail
-        let result = vs.register_validator_with_sig(val_addr, val_addr, &pk, None);
+        let result = vs.register_validator_with_sig(
+            val_addr,
+            val_addr,
+            &pk,
+            test_radicle_node_id(val_addr),
+            None,
+        );
         assert!(
             result.is_err(),
             "self-registration without BLS sig must be rejected"
@@ -2438,7 +2448,13 @@ fn test_register_self_invalid_sig_rejected() {
         let pk = dummy_consensus_pubkey(45);
         let bad_sig = [0xFFu8; 96]; // garbage signature
 
-        let result = vs.register_validator_with_sig(val, val, &pk, Some(&bad_sig));
+        let result = vs.register_validator_with_sig(
+            val,
+            val,
+            &pk,
+            test_radicle_node_id(val),
+            Some(&bad_sig),
+        );
         assert!(result.is_err(), "invalid BLS sig must be rejected");
     });
 }
@@ -2461,7 +2477,8 @@ fn m27_self_registration_capped_owner_bypasses() {
         ab[0] = 0x5a;
         let val = Address::from(ab);
         let pk: [u8; 48] = sk.sk_to_pk().to_bytes();
-        let message = validator_registration_message(CHAIN_ID, val);
+        let node_id = test_radicle_node_id(val);
+        let message = validator_registration_message(CHAIN_ID, val, node_id);
         let sig: [u8; 96] = sk
             .sign(&message, VALIDATOR_REGISTRATION_DST, &[])
             .to_bytes();
@@ -2473,7 +2490,7 @@ fn m27_self_registration_capped_owner_bypasses() {
     with_vs_configured(200, |vs| {
         for i in 0..MAX_SELF_REGISTERED_UNSTAKED {
             let (val, pk, sig) = self_reg_inputs(i);
-            vs.register_validator_with_sig(val, val, &pk, Some(&sig))
+            vs.register_validator_with_sig(val, val, &pk, test_radicle_node_id(val), Some(&sig))
                 .unwrap_or_else(|e| panic!("self-registration {i} within cap must succeed: {e}"));
         }
         assert_eq!(
@@ -2485,7 +2502,7 @@ fn m27_self_registration_capped_owner_bypasses() {
         // The next self-registration is rejected before consuming a slot.
         let (val, pk, sig) = self_reg_inputs(MAX_SELF_REGISTERED_UNSTAKED);
         let err = vs
-            .register_validator_with_sig(val, val, &pk, Some(&sig))
+            .register_validator_with_sig(val, val, &pk, test_radicle_node_id(val), Some(&sig))
             .unwrap_err();
         assert!(
             err.to_string().contains("self-registration limit reached"),
@@ -2498,12 +2515,19 @@ fn m27_self_registration_capped_owner_bypasses() {
         ikm[28..].copy_from_slice(&(MAX_SELF_REGISTERED_UNSTAKED + 1).to_be_bytes());
         let owner_sk = SecretKey::key_gen(&ikm, &[]).unwrap();
         let owner_pk: [u8; 48] = owner_sk.sk_to_pk().to_bytes();
-        let owner_message = validator_registration_message(CHAIN_ID, owner_val);
+        let owner_node_id = test_radicle_node_id(owner_val);
+        let owner_message = validator_registration_message(CHAIN_ID, owner_val, owner_node_id);
         let owner_sig: [u8; 96] = owner_sk
             .sign(&owner_message, VALIDATOR_REGISTRATION_DST, &[])
             .to_bytes();
-        vs.register_validator_with_sig(OWNER, owner_val, &owner_pk, Some(&owner_sig))
-            .expect("owner registration must bypass the self-registration cap");
+        vs.register_validator_with_sig(
+            OWNER,
+            owner_val,
+            &owner_pk,
+            owner_node_id,
+            Some(&owner_sig),
+        )
+        .expect("owner registration must bypass the self-registration cap");
         assert!(vs.is_validator(owner_val).unwrap());
     });
 }
@@ -2519,11 +2543,12 @@ fn test_register_self_valid_sig_accepted() {
         let pk = sk.sk_to_pk();
         let pk_bytes: [u8; 48] = pk.to_bytes();
 
-        let message = validator_registration_message(CHAIN_ID, val);
+        let node_id = test_radicle_node_id(val);
+        let message = validator_registration_message(CHAIN_ID, val, node_id);
         let sig = sk.sign(&message, VALIDATOR_REGISTRATION_DST, &[]);
         let sig_bytes: [u8; 96] = sig.to_bytes();
 
-        vs.register_validator_with_sig(val, val, &pk_bytes, Some(&sig_bytes))
+        vs.register_validator_with_sig(val, val, &pk_bytes, node_id, Some(&sig_bytes))
             .unwrap();
         assert!(vs.is_validator(val).unwrap());
     });
@@ -2536,7 +2561,8 @@ fn registration_pop_cannot_be_replayed_on_another_chain() {
     let val = address!("0x4747474747474747474747474747474747474747");
     let sk = SecretKey::key_gen(&[47u8; 32], &[]).unwrap();
     let pk: [u8; 48] = sk.sk_to_pk().to_bytes();
-    let message = validator_registration_message(1, val);
+    let node_id = test_radicle_node_id(val);
+    let message = validator_registration_message(1, val, node_id);
     let sig: [u8; 96] = sk
         .sign(&message, VALIDATOR_REGISTRATION_DST, &[])
         .to_bytes();
@@ -2547,7 +2573,7 @@ fn registration_pop_cannot_be_replayed_on_another_chain() {
             let mut vs = ValidatorSet::new(storage);
             vs.config_owner.write(OWNER).unwrap();
             vs.config_max_validators.write(10).unwrap();
-            vs.register_validator_with_sig(val, val, &pk, Some(&sig))
+            vs.register_validator_with_sig(val, val, &pk, node_id, Some(&sig))
         })
     };
 
@@ -2556,6 +2582,240 @@ fn registration_pop_cannot_be_replayed_on_another_chain() {
         register_on_chain(2).is_err(),
         "registration proof from chain 1 must be rejected on chain 2"
     );
+}
+
+fn signed_radicle_registration(
+    seed: u8,
+    chain_id: u64,
+    validator: Address,
+    node_id: B256,
+) -> ([u8; 48], [u8; 96]) {
+    use blst::min_pk::SecretKey;
+
+    let sk = SecretKey::key_gen(&[seed; 32], &[]).unwrap();
+    let public_key = sk.sk_to_pk().to_bytes();
+    let message = validator_registration_message(chain_id, validator, node_id);
+    let signature = sk
+        .sign(&message, VALIDATOR_REGISTRATION_DST, &[])
+        .to_bytes();
+    (public_key, signature)
+}
+
+#[test]
+fn radicle_node_id_registration_is_bidirectional_and_signature_bound() {
+    let validator = Address::repeat_byte(0x71);
+    let node_id = B256::repeat_byte(0x81);
+    let other_node_id = B256::repeat_byte(0x82);
+    let (public_key, signature) = signed_radicle_registration(0x31, CHAIN_ID, validator, node_id);
+
+    with_vs_configured(10, |vs| {
+        vs.register_validator_with_sig(
+            validator,
+            validator,
+            &public_key,
+            node_id,
+            Some(&signature),
+        )
+        .unwrap();
+
+        assert_eq!(vs.get_radicle_node_id(validator).unwrap(), node_id);
+        assert_eq!(vs.validator_by_radicle_node_id(node_id).unwrap(), validator);
+        assert!(vs
+            .validator_by_radicle_node_id(other_node_id)
+            .unwrap()
+            .is_zero());
+    });
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_block_number(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut vs = ValidatorSet::new(storage);
+        vs.config_owner.write(OWNER).unwrap();
+        vs.set_config_max_validators(10).unwrap();
+        let err = vs
+            .register_validator_with_sig(
+                validator,
+                validator,
+                &public_key,
+                other_node_id,
+                Some(&signature),
+            )
+            .unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("invalid BLS registration signature"));
+    });
+}
+
+#[test]
+fn radicle_node_id_rejects_zero_and_duplicate_without_partial_state() {
+    let first = Address::repeat_byte(0x72);
+    let second = Address::repeat_byte(0x73);
+    let node_id = B256::repeat_byte(0x83);
+    let (first_key, first_signature) = signed_radicle_registration(0x32, CHAIN_ID, first, node_id);
+    let (second_key, second_signature) =
+        signed_radicle_registration(0x33, CHAIN_ID, second, node_id);
+    let (zero_key, zero_signature) =
+        signed_radicle_registration(0x34, CHAIN_ID, second, B256::ZERO);
+
+    with_vs_configured(10, |vs| {
+        let zero = vs
+            .register_validator_with_sig(
+                second,
+                second,
+                &zero_key,
+                B256::ZERO,
+                Some(&zero_signature),
+            )
+            .unwrap_err();
+        assert!(zero.to_string().contains("Radicle NodeId must not be zero"));
+        assert_eq!(vs.validator_count().unwrap(), 0);
+
+        vs.register_validator_with_sig(first, first, &first_key, node_id, Some(&first_signature))
+            .unwrap();
+        let duplicate = vs
+            .register_validator_with_sig(
+                second,
+                second,
+                &second_key,
+                node_id,
+                Some(&second_signature),
+            )
+            .unwrap_err();
+        assert!(duplicate
+            .to_string()
+            .contains("Radicle NodeId already registered"));
+        assert_eq!(vs.validator_count().unwrap(), 1);
+        assert!(vs.get_radicle_node_id(second).unwrap().is_zero());
+        assert_eq!(vs.validator_by_radicle_node_id(node_id).unwrap(), first);
+    });
+}
+
+#[test]
+fn inactive_reregistration_preserves_node_id_until_final_cleanup() {
+    let validator = Address::repeat_byte(0x74);
+    let first_node_id = B256::repeat_byte(0x84);
+    let second_node_id = B256::repeat_byte(0x85);
+    let (first_key, first_signature) =
+        signed_radicle_registration(0x35, CHAIN_ID, validator, first_node_id);
+    let (second_key, first_node_signature) =
+        signed_radicle_registration(0x36, CHAIN_ID, validator, first_node_id);
+    let (_, second_node_signature) =
+        signed_radicle_registration(0x36, CHAIN_ID, validator, second_node_id);
+
+    with_vs_configured(10, |vs| {
+        vs.register_validator_with_sig(
+            validator,
+            validator,
+            &first_key,
+            first_node_id,
+            Some(&first_signature),
+        )
+        .unwrap();
+        make_inactive_for_test(vs, validator);
+
+        let changed = vs
+            .register_validator_with_sig(
+                validator,
+                validator,
+                &second_key,
+                second_node_id,
+                Some(&second_node_signature),
+            )
+            .unwrap_err();
+        assert!(changed
+            .to_string()
+            .contains("inactive validator must keep its Radicle NodeId"));
+
+        vs.register_validator_with_sig(
+            validator,
+            validator,
+            &second_key,
+            first_node_id,
+            Some(&first_node_signature),
+        )
+        .unwrap();
+        assert_eq!(vs.get_radicle_node_id(validator).unwrap(), first_node_id);
+
+        make_inactive_for_test(vs, validator);
+        assert_eq!(vs.cleanup_inactive_validators(0).unwrap(), 1);
+        assert!(vs.get_radicle_node_id(validator).unwrap().is_zero());
+        assert!(vs
+            .validator_by_radicle_node_id(first_node_id)
+            .unwrap()
+            .is_zero());
+
+        vs.register_validator_with_sig(
+            validator,
+            validator,
+            &second_key,
+            second_node_id,
+            Some(&second_node_signature),
+        )
+        .unwrap();
+        assert_eq!(vs.get_radicle_node_id(validator).unwrap(), second_node_id);
+    });
+}
+
+#[test]
+fn every_radicle_registration_mutation_rolls_back_atomically() {
+    let validator = Address::repeat_byte(0x75);
+    let node_id = B256::repeat_byte(0x86);
+    let (public_key, signature) = signed_radicle_registration(0x37, CHAIN_ID, validator, node_id);
+
+    let configured_provider = || {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        provider.set_block_number(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let vs = ValidatorSet::new(storage);
+            vs.config_owner.write(OWNER).unwrap();
+            vs.config_max_validators.write(10).unwrap();
+        });
+        provider
+    };
+
+    let mut measured = configured_provider();
+    measured.fail_after_mutation_at(usize::MAX);
+    StorageHandle::enter(&mut measured, |storage| {
+        ValidatorSet::new(storage)
+            .register_validator_with_sig(
+                validator,
+                validator,
+                &public_key,
+                node_id,
+                Some(&signature),
+            )
+            .unwrap();
+    });
+    let operation_count = measured.clear_mutation_failure();
+    assert!(operation_count > 2);
+
+    for failure_at in 0..operation_count {
+        let mut provider = configured_provider();
+        provider.fail_after_mutation_at(failure_at);
+        StorageHandle::enter(&mut provider, |storage| {
+            assert!(ValidatorSet::new(storage)
+                .register_validator_with_sig(
+                    validator,
+                    validator,
+                    &public_key,
+                    node_id,
+                    Some(&signature),
+                )
+                .is_err());
+        });
+        provider.clear_mutation_failure();
+        StorageHandle::enter(&mut provider, |storage| {
+            let vs = ValidatorSet::new(storage);
+            assert_eq!(vs.validator_count().unwrap(), 0);
+            assert!(vs.get_radicle_node_id(validator).unwrap().is_zero());
+            assert!(vs.validator_by_radicle_node_id(node_id).unwrap().is_zero());
+            assert!(!vs.is_validator(validator).unwrap());
+        });
+        assert!(provider
+            .get_events(outbe_primitives::addresses::VALIDATOR_SET_ADDRESS)
+            .is_empty());
+    }
 }
 
 // ---- Step 8: idempotent record_finalized_participation hook tests --------

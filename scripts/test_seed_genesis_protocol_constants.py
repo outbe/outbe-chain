@@ -74,12 +74,25 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
                     self.assertEqual(nod["gratis_load"], "100000")
                     self.assertEqual(nod["floor_price"], "540000")
 
-    def test_default_usd_currency_rate_uses_scale_1e6_in_slot_60(self):
+    def test_default_reference_and_policy_registries_use_the_frozen_slots(self):
         storage = seed_genesis.StorageBuilder()
 
         seed_genesis.seed_oracle(storage, {})
 
-        slot = seed_genesis.mapping_key(seed_genesis.u32_bytes(840), 60)
+        self.assertEqual(storage.entries[seed_genesis.hex32(55)], seed_genesis.hex32(6))
+        for index, iso_code in enumerate((156, 344, 392, 826, 840, 978)):
+            self.assertEqual(
+                storage.entries[seed_genesis.hex32(seed_genesis.data_slot(55) + index)],
+                seed_genesis.hex32(iso_code),
+            )
+
+        self.assertNotIn(seed_genesis.mapping_key(seed_genesis.u32_bytes(840), 60), storage.entries)
+        self.assertEqual(storage.entries[seed_genesis.hex32(74)], seed_genesis.hex32(1))
+        self.assertEqual(
+            storage.entries[seed_genesis.hex32(seed_genesis.data_slot(74))],
+            seed_genesis.hex32(840),
+        )
+        slot = seed_genesis.mapping_key(seed_genesis.u32_bytes(840), 75)
         self.assertEqual(storage.entries[slot], seed_genesis.hex32(36_300))
 
     def test_optional_seed_profile_is_copied_to_genesis_config(self):
@@ -147,6 +160,82 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
         seed_genesis.seed_cycle(storage, seed_genesis.parse_header_timestamp(genesis))
 
         self.assertEqual(storage.entries[seed_genesis.hex32(2)], seed_genesis.hex32(20240101))
+
+    def test_founder_radicle_bindings_are_complete_unique_and_bidirectional(self):
+        validators = [
+            {
+                "address": "0x1111111111111111111111111111111111111111",
+                "public_key": "11" * 48,
+                "radicle_node_id": "21" * 32,
+            },
+            {
+                "address": "0x2222222222222222222222222222222222222222",
+                "public_key": "12" * 48,
+                "radicle_node_id": "22" * 32,
+            },
+        ]
+        storage = seed_genesis.StorageBuilder()
+
+        seed_genesis.seed_validator_set(
+            storage,
+            validators,
+            {},
+            epoch_length_blocks=300,
+            epoch_start_timestamp=1,
+            min_stake=1,
+            validator_stake=1,
+        )
+
+        for validator in validators:
+            address = seed_genesis.address_bytes(validator["address"])
+            node_id = bytes.fromhex(validator["radicle_node_id"])
+            self.assertEqual(
+                storage.entries[seed_genesis.mapping_key(address, 59)],
+                "0x" + node_id.hex(),
+            )
+            self.assertEqual(
+                storage.entries[seed_genesis.mapping_key(node_id, 60)],
+                seed_genesis.hex32(seed_genesis.address_as_u256(validator["address"])),
+            )
+
+        missing = [dict(validators[0])]
+        missing[0].pop("radicle_node_id")
+        with self.assertRaisesRegex(ValueError, "radicle_node_id"):
+            seed_genesis.seed_validator_set(
+                seed_genesis.StorageBuilder(),
+                missing,
+                {},
+                epoch_length_blocks=300,
+                epoch_start_timestamp=1,
+                min_stake=1,
+                validator_stake=1,
+            )
+
+        duplicate = [dict(validators[0]), dict(validators[1])]
+        duplicate[1]["radicle_node_id"] = duplicate[0]["radicle_node_id"]
+        with self.assertRaisesRegex(ValueError, "duplicate Radicle NodeId"):
+            seed_genesis.seed_validator_set(
+                seed_genesis.StorageBuilder(),
+                duplicate,
+                {},
+                epoch_length_blocks=300,
+                epoch_start_timestamp=1,
+                min_stake=1,
+                validator_stake=1,
+            )
+
+        zero = [dict(validators[0])]
+        zero[0]["radicle_node_id"] = "00" * 32
+        with self.assertRaisesRegex(ValueError, "must not be zero"):
+            seed_genesis.seed_validator_set(
+                seed_genesis.StorageBuilder(),
+                zero,
+                {},
+                epoch_length_blocks=300,
+                epoch_start_timestamp=1,
+                min_stake=1,
+                validator_stake=1,
+            )
 
 
 if __name__ == "__main__":
