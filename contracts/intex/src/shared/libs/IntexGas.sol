@@ -52,9 +52,9 @@ library IntexGas {
     ///      The router's own share of a 64-bid batch is ~73k; the rest of this stands for the precompile.
     uint256 internal constant BIDS_BASE = 1_300_000;
     uint256 internal constant BIDS_PER_ITEM = 160_000;
-    /// @dev Handler overhead only; createSeries is charged per series. Measured ~6.03M at the recipient cap.
+    /// @dev Handler overhead only; createSeries is charged per series. Measured ~6.02M for the widest chunk.
     uint256 internal constant ISSUANCE_BASE = 200_000;
-    uint256 internal constant ISSUANCE_PER_SERIES = 400_000;
+    uint256 internal constant ISSUANCE_PER_SERIES = 305_000;
     uint256 internal constant ISSUANCE_PER_ITEM = 270_000;
     /// @dev Measured at ~3.31M for a full 64-bidder chunk against a live escrow.
     uint256 internal constant REFUND_BASE = 250_000;

@@ -45,7 +45,7 @@ library BridgeMsgCodec {
 
     /// @notice Recipients one ISSUANCE_INSTRUCTIONS may carry across all its series. Narrower than
     ///         `MAX_PAYLOAD_ARRAY_LEN`: a recipient costs a mint, so a wider day spans several messages.
-    uint16 internal constant MAX_RECIPIENTS_PER_ISSUANCE = 32;
+    uint16 internal constant MAX_RECIPIENTS_PER_ISSUANCE = 24;
 
     /// @notice Series one MARK_CALLED or MARK_QUALIFIED message may carry. A batch is one day's series
     ///         that took the same decision at the same moment, so it is short.

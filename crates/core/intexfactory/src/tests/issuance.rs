@@ -192,7 +192,7 @@ fn a_chains_series_travel_together_up_to_the_message_caps() {
 /// links the two languages, so the value is pinned here: changing it must be a deliberate act.
 #[test]
 fn the_recipient_cap_matches_the_wire() {
-    assert_eq!(MAX_RECIPIENTS_PER_ISSUANCE, 32);
+    assert_eq!(MAX_RECIPIENTS_PER_ISSUANCE, 24);
     assert_eq!(MAX_SERIES_PER_MESSAGE, 8);
 }
 
