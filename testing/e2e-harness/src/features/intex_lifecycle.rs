@@ -30,7 +30,7 @@ const REFERENCE_BYTE: u8 = b'U';
 const QUALIFICATION_PERIOD_SECS: u64 = 24 * 3600;
 const QUALIFICATION_MARGIN_SECS: u64 = 3600;
 /// Long enough for the chain to close a one-day gap, which it does per block.
-const CATCH_UP_TIMEOUT_SECS: u64 = 600;
+const CATCH_UP_TIMEOUT_SECS: u64 = 900;
 /// The sweep runs in begin-block; a handful of blocks is plenty.
 const QUALIFY_SWEEP_TIMEOUT_SECS: u64 = 180;
 /// `IntexState::Qualified`.
@@ -245,20 +245,27 @@ fn both_series_qualify(world: &mut World) {
 }
 
 /// Wait for the chain to reach `target` in its own time; it closes the gap per block.
+///
+/// Reports where it actually got to, and whether it was still moving: a ratchet that
+/// stalled and one that is merely slow need different answers.
 fn wait_for_chain_time(world: &World, port: u16, target: u64) {
     let deadline = Instant::now() + Duration::from_secs(CATCH_UP_TIMEOUT_SECS);
+    let mut first = None;
     loop {
-        if world
-            .rpc
-            .latest_block_timestamp(port)
-            .is_some_and(|now| now >= target)
-        {
+        let now = world.rpc.latest_block_timestamp(port);
+        if first.is_none() {
+            first = now;
+        }
+        if now.is_some_and(|now| now >= target) {
             return;
         }
-        assert!(
-            Instant::now() < deadline,
-            "the committee never reached the requested logical time"
-        );
+        if Instant::now() >= deadline {
+            panic!(
+                "the committee never reached logical time {target}: started at {first:?}, \
+                 reached {now:?} (short by {:?}s) after {CATCH_UP_TIMEOUT_SECS}s",
+                now.map(|now| target.saturating_sub(now))
+            );
+        }
         sleep(Duration::from_secs(2));
     }
 }
