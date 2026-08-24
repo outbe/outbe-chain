@@ -11,7 +11,9 @@ use alloy_primitives::Address;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use outbe_zk_canonical::noir::CIRCUIT_REGISTRY;
-use outbe_zk_canonical::noir::{full_proof::FullProof, paynote::Paynote as PayNote};
+use outbe_zk_canonical::noir::{
+    emit_mint::EmitMint, full_proof::FullProof, paynote::Paynote as PayNote,
+};
 use outbe_zk_canonical::{CircuitId, RegistryEntry};
 use tracing::{info, trace};
 
@@ -31,6 +33,17 @@ const FULL_PROOF_PUBLIC_INPUT_COUNT: usize = 4;
 const FULL_PROOF_PROOF_FIELD_COUNT: usize = 274;
 pub const FULL_PROOF_COMBINED_LEN: usize =
     4 + (FULL_PROOF_PUBLIC_INPUT_COUNT + FULL_PROOF_PROOF_FIELD_COUNT) * 32;
+
+/// Public-input count fixed by the `outbe.emit.mint@1.0.0` ABI: `pool_id`,
+/// `root`, `nullifier`, twenty flattened owner bytes, `mint_units`,
+/// `change_commitment`.
+const EMIT_MINT_PUBLIC_INPUT_COUNT: usize = 25;
+/// Byte length of the combined-proof public section: 4-byte count header plus
+/// 25 canonical 32-byte words.
+const EMIT_MINT_PUBLIC_PREFIX_LEN: usize = 4 + EMIT_MINT_PUBLIC_INPUT_COUNT * 32;
+/// Hard cap on the whole combined Emit proof (public section plus proof
+/// words), bounded before any consumer copies the dynamic ABI argument.
+pub const EMIT_MINT_MAX_COMBINED_LEN: usize = 16_384;
 
 /// Public claim carried by the canonical `outbe.full_proof@1.0.0`
 /// combined-proof format.
@@ -71,6 +84,19 @@ pub struct PayNotePublicInputs {
     pub asset: Address,
     pub spender: Address,
     pub spend_amount: u128,
+    pub change_commitment: [u8; 32],
+}
+
+/// Public claim carried by the canonical `outbe.emit.mint@1.0.0`
+/// combined-proof format, in circuit order: `pool_id`, `root`, `nullifier`,
+/// twenty flattened owner bytes, `mint_units`, `change_commitment`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EmitMintPublicInputs {
+    pub pool_id: [u8; 32],
+    pub root: [u8; 32],
+    pub nullifier: [u8; 32],
+    pub note_owner: Address,
+    pub mint_units: u64,
     pub change_commitment: [u8; 32],
 }
 
@@ -267,6 +293,93 @@ pub fn decode_paynote_public_inputs(
 pub fn verify_paynote(combined_proof: &[u8]) -> Result<bool, ZkProofError> {
     decode_paynote_public_inputs(combined_proof)?;
     verify_inner(PayNote::VK_BYTES, combined_proof)
+}
+
+/// Decode and validate the 25 public inputs embedded in a canonical
+/// `outbe.emit.mint@1.0.0` combined proof.
+///
+/// Accepts only the exact wire the frozen circuit fixes: a 25-count header,
+/// canonical BN254 field words at indices `0..=2` and `24`, twenty one-byte
+/// owner words at `3..=22` (upper 31 bytes zero), one right-aligned `u64`
+/// word at `23`, and a nonempty, 32-byte-aligned proof tail within the
+/// [`EMIT_MINT_MAX_COMBINED_LEN`] cap. The proof bytes remain self-contained
+/// and are passed unchanged to Barretenberg after callers compare this claim
+/// with their expected values.
+pub fn decode_emit_mint_public_inputs(
+    combined_proof: &[u8],
+) -> Result<EmitMintPublicInputs, ZkProofError> {
+    let header = combined_proof
+        .get(..4)
+        .ok_or(ZkProofError::CombinedProofTooShort(combined_proof.len()))?;
+    let count = u32::from_be_bytes(header.try_into().expect("four-byte slice")) as usize;
+    if count != EMIT_MINT_PUBLIC_INPUT_COUNT {
+        return Err(ZkProofError::WrongPublicInputCount {
+            expected: EMIT_MINT_PUBLIC_INPUT_COUNT,
+            actual: count,
+        });
+    }
+    if combined_proof.len() > EMIT_MINT_MAX_COMBINED_LEN {
+        return Err(ZkProofError::CombinedProofTooLarge {
+            maximum: EMIT_MINT_MAX_COMBINED_LEN,
+            actual: combined_proof.len(),
+        });
+    }
+    if combined_proof.len() < EMIT_MINT_PUBLIC_PREFIX_LEN {
+        return Err(ZkProofError::TruncatedPublicInputs {
+            expected: EMIT_MINT_PUBLIC_PREFIX_LEN,
+            actual: combined_proof.len(),
+        });
+    }
+
+    let words: Vec<[u8; 32]> = combined_proof[4..EMIT_MINT_PUBLIC_PREFIX_LEN]
+        .chunks_exact(32)
+        .map(|word| {
+            let mut buf = [0u8; 32];
+            buf.copy_from_slice(word);
+            buf
+        })
+        .collect();
+    for index in [0, 1, 2, 24] {
+        if !is_canonical_field_word(&words[index]) {
+            return Err(ZkProofError::NonCanonicalPublicInput(index));
+        }
+    }
+    for (slot, word) in words.iter().enumerate().take(23).skip(3) {
+        if word[..31].iter().any(|&byte| byte != 0) {
+            return Err(ZkProofError::InvalidEmitOwnerByte(slot));
+        }
+    }
+    let mint_units = read_u64_be_padded(&words[23]).ok_or(ZkProofError::InvalidEmitMintUnits)?;
+    let mut note_owner = [0u8; 20];
+    for (slot, byte) in note_owner.iter_mut().enumerate() {
+        *byte = words[3 + slot][31];
+    }
+
+    let tail_len = combined_proof.len() - EMIT_MINT_PUBLIC_PREFIX_LEN;
+    if tail_len == 0 {
+        return Err(ZkProofError::EmptyProofSection);
+    }
+    if tail_len % 32 != 0 {
+        return Err(ZkProofError::UnalignedProofSection(tail_len));
+    }
+
+    Ok(EmitMintPublicInputs {
+        pool_id: words[0],
+        root: words[1],
+        nullifier: words[2],
+        note_owner: Address::new(note_owner),
+        mint_units,
+        change_commitment: words[24],
+    })
+}
+
+/// Verify the pinned canonical `outbe.emit.mint@1.0.0` circuit.
+///
+/// Malformed combined proofs are errors. Well-formed proofs that do not
+/// verify return `Ok(false)`.
+pub fn verify_emit_mint(combined_proof: &[u8]) -> Result<bool, ZkProofError> {
+    decode_emit_mint_public_inputs(combined_proof)?;
+    verify_inner(EmitMint::VK_BYTES, combined_proof)
 }
 
 /// Stateless lookup against `outbe-zk-canonical`'s static circuit registry.

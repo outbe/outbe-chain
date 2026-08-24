@@ -325,3 +325,308 @@ fn dispatch_groth16_unknown_circuit_returns_zero_bytes() {
     let out = dispatch_groth16(storage, &input, Address::ZERO, U256::ZERO).unwrap();
     assert_eq!(out.as_ref(), &[0u8; 32]);
 }
+
+// ---- emit mint -----------------------------------------------------------
+
+use crate::verify::{decode_emit_mint_public_inputs, verify_emit_mint, EMIT_MINT_MAX_COMBINED_LEN};
+
+const EMIT_MINT_FIELD_WORDS: usize = 25;
+
+fn owner_word(byte: u8) -> [u8; 32] {
+    let mut word = [0u8; 32];
+    word[31] = byte;
+    word
+}
+
+fn u64_word(value: u64) -> [u8; 32] {
+    let mut word = [0u8; 32];
+    word[24..32].copy_from_slice(&value.to_be_bytes());
+    word
+}
+
+fn valid_emit_words() -> [[u8; 32]; EMIT_MINT_FIELD_WORDS] {
+    let mut words = [[0u8; 32]; EMIT_MINT_FIELD_WORDS];
+    words[0] = fr_be(&Fr::from(101u64));
+    words[1] = fr_be(&Fr::from(102u64));
+    words[2] = fr_be(&Fr::from(103u64));
+    for (_slot, word) in words.iter_mut().enumerate().take(23).skip(3) {
+        *word = owner_word(0x22);
+    }
+    words[23] = u64_word(40);
+    words[24] = fr_be(&Fr::from(104u64));
+    words
+}
+
+fn combined_emit_proof(words: &[[u8; 32]; EMIT_MINT_FIELD_WORDS], proof_words: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + 32 * (EMIT_MINT_FIELD_WORDS + proof_words));
+    out.extend_from_slice(&(EMIT_MINT_FIELD_WORDS as u32).to_be_bytes());
+    for word in words {
+        out.extend_from_slice(word);
+    }
+    out.resize(out.len() + proof_words * 32, 0);
+    out
+}
+
+#[test]
+fn emit_mint_public_inputs_are_decoded_in_circuit_order() {
+    let words = valid_emit_words();
+    let proof = combined_emit_proof(&words, 64);
+
+    let decoded = decode_emit_mint_public_inputs(&proof).unwrap();
+
+    assert_eq!(decoded.pool_id, words[0]);
+    assert_eq!(decoded.root, words[1]);
+    assert_eq!(decoded.nullifier, words[2]);
+    assert_eq!(decoded.note_owner.0.as_slice(), &[0x22; 20]);
+    assert_eq!(decoded.mint_units, 40);
+    assert_eq!(decoded.change_commitment, words[24]);
+}
+
+#[test]
+fn emit_mint_rejects_wrong_public_input_count() {
+    for count in [24u32, 26u32] {
+        let mut proof = combined_emit_proof(&valid_emit_words(), 1);
+        proof[..4].copy_from_slice(&count.to_be_bytes());
+        assert!(matches!(
+            decode_emit_mint_public_inputs(&proof),
+            Err(ZkProofError::WrongPublicInputCount { actual, .. }) if actual == count as usize
+        ));
+    }
+}
+
+#[test]
+fn emit_mint_rejects_truncated_public_inputs() {
+    let proof = combined_emit_proof(&valid_emit_words(), 1);
+    // Longer than the 4-byte header, shorter than the 804-byte public prefix.
+    assert!(matches!(
+        decode_emit_mint_public_inputs(&proof[..500]),
+        Err(ZkProofError::TruncatedPublicInputs { .. })
+    ));
+}
+
+#[test]
+fn emit_mint_rejects_oversized_combined_proof() {
+    // The cap sits on the whole blob, not the proof tail: pad a valid framing
+    // past `EMIT_MINT_MAX_COMBINED_LEN` with aligned words.
+    let words = valid_emit_words();
+    let tail_words = (EMIT_MINT_MAX_COMBINED_LEN - 4 - 32 * EMIT_MINT_FIELD_WORDS) / 32 + 1;
+    let proof = combined_emit_proof(&words, tail_words);
+    assert!(proof.len() > EMIT_MINT_MAX_COMBINED_LEN);
+    assert!(matches!(
+        decode_emit_mint_public_inputs(&proof),
+        Err(ZkProofError::CombinedProofTooLarge { actual, .. }) if actual == proof.len()
+    ));
+}
+
+#[test]
+fn emit_mint_accepts_the_largest_aligned_length_within_the_cap() {
+    let words = valid_emit_words();
+    // 16,384 is not of the form 4 + 32·k, so the largest aligned blob within
+    // the cap is 4 + 32·511 = 16,356 bytes.
+    let tail_words = 511 - EMIT_MINT_FIELD_WORDS;
+    let proof = combined_emit_proof(&words, tail_words);
+    assert_eq!(proof.len(), 16_356);
+    assert!(proof.len() <= EMIT_MINT_MAX_COMBINED_LEN);
+    assert!(decode_emit_mint_public_inputs(&proof).is_ok());
+}
+
+#[test]
+fn emit_mint_rejects_non_canonical_field_word() {
+    // The BN254 scalar modulus itself reduces to zero, so its exact
+    // big-endian encoding violates the canonical-representation rule.
+    let modulus_bytes: [u8; 32] =
+        alloy_primitives::hex!("30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001");
+    for slot in [0usize, 1, 2, 24] {
+        let mut words = valid_emit_words();
+        words[slot] = modulus_bytes;
+        let proof = combined_emit_proof(&words, 1);
+        assert!(matches!(
+            decode_emit_mint_public_inputs(&proof),
+            Err(ZkProofError::NonCanonicalPublicInput(index)) if index == slot
+        ));
+    }
+}
+
+#[test]
+fn emit_mint_rejects_invalid_owner_byte_word() {
+    let mut words = valid_emit_words();
+    words[7][0] = 1;
+    let proof = combined_emit_proof(&words, 1);
+    assert!(matches!(
+        decode_emit_mint_public_inputs(&proof),
+        Err(ZkProofError::InvalidEmitOwnerByte(7))
+    ));
+}
+
+#[test]
+fn emit_mint_rejects_invalid_mint_units_word() {
+    let mut words = valid_emit_words();
+    words[23][0] = 1;
+    let proof = combined_emit_proof(&words, 1);
+    assert!(matches!(
+        decode_emit_mint_public_inputs(&proof),
+        Err(ZkProofError::InvalidEmitMintUnits)
+    ));
+}
+
+#[test]
+fn emit_mint_rejects_empty_proof_section() {
+    let words = valid_emit_words();
+    let proof = combined_emit_proof(&words, 0);
+    assert!(matches!(
+        decode_emit_mint_public_inputs(&proof),
+        Err(ZkProofError::EmptyProofSection)
+    ));
+}
+
+#[test]
+fn emit_mint_rejects_unaligned_proof_section() {
+    let mut proof = combined_emit_proof(&valid_emit_words(), 1);
+    proof.push(0);
+    assert!(matches!(
+        decode_emit_mint_public_inputs(&proof),
+        Err(ZkProofError::UnalignedProofSection(33))
+    ));
+}
+
+#[test]
+fn emit_mint_rejects_short_header() {
+    assert!(matches!(
+        decode_emit_mint_public_inputs(&[0u8; 3]),
+        Err(ZkProofError::CombinedProofTooShort(3))
+    ));
+}
+
+#[test]
+fn emit_mint_combined_wrong_count_text_is_circuit_generic() {
+    let mut proof = combined_emit_proof(&valid_emit_words(), 1);
+    proof[..4].copy_from_slice(&24u32.to_be_bytes());
+    let error = decode_emit_mint_public_inputs(&proof)
+        .unwrap_err()
+        .to_string();
+    assert_eq!(
+        error,
+        "zk_verify: combined proof public input count is 24, expected 25"
+    );
+}
+
+/// Real prove→verify round trip through the pinned Emit mint VK. The proof
+/// must verify as submitted and stop verifying when any public input word is
+/// changed, binding the combined wire to the frozen circuit identity.
+#[test]
+fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
+    use ark_ff::PrimeField as _;
+    use outbe_protocol::primitive::hash::FieldHasher;
+    use outbe_protocol::protocol::zk::ProofGenerator;
+    use outbe_protocol::{OutbeV1, Suite};
+    use outbe_zk_backend::barretenberg::Barretenberg;
+    use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
+
+    crate::verify::init_crs().expect("CRS init");
+    type Field = <OutbeV1 as Suite>::Field;
+
+    let h2 = |left: Field, right: Field| -> Field {
+        <<OutbeV1 as Suite>::Hash as FieldHasher<Field>>::hash(&[left, right]).unwrap()
+    };
+    let ascii = |text: &str| Field::from_be_bytes_mod_order(text.as_bytes());
+    let emit_hash = |tag: &str, values: &[Field]| -> Field {
+        let mut state = h2(ascii("OUTBE_EMIT"), ascii(tag));
+        state = h2(state, Field::from(values.len() as u64));
+        for value in values {
+            state = h2(state, *value);
+        }
+        state
+    };
+    let owner = [0x22u8; 20];
+    let spend_key = Field::from(17u64);
+    let pool = emit_hash("EMIT_POOL", &[Field::from(31_337u64), Field::from(0u64)]);
+    let serial = emit_hash(
+        "EMIT_NOTE_SN",
+        &[Field::from_be_bytes_mod_order(&owner), spend_key],
+    );
+    let commitment = emit_hash("EMIT_COMMITMENT", &[pool, serial, Field::from(100u64)]);
+    let mut path = [Field::from(0u64); 20];
+    path[0] = emit_hash("EMIT_EMPTY", &[pool]);
+    for level in 1..20 {
+        path[level] = emit_hash(
+            "EMIT_NODE",
+            &[
+                Field::from((level - 1) as u64),
+                path[level - 1],
+                path[level - 1],
+            ],
+        );
+    }
+    let mut root = commitment;
+    for (level, sibling) in path.iter().copied().enumerate() {
+        root = emit_hash("EMIT_NODE", &[Field::from(level as u64), root, sibling]);
+    }
+    let nullifier = emit_hash("EMIT_NULLIFIER", &[pool, serial, spend_key]);
+    let next_key = emit_hash("EMIT_CHANGE_KEY", &[spend_key, nullifier]);
+    let change = emit_hash(
+        "EMIT_COMMITMENT",
+        &[
+            pool,
+            emit_hash(
+                "EMIT_NOTE_SN",
+                &[Field::from_be_bytes_mod_order(&owner), next_key],
+            ),
+            Field::from(60u64),
+        ],
+    );
+
+    let public = PublicInputs {
+        pool_id: pool,
+        root,
+        nullifier,
+        note_owner: owner,
+        mint_units: 40,
+        change_commitment: change,
+    };
+    let witness = Witness {
+        note_amount: 100,
+        note_spend_key: spend_key,
+        leaf_index: 0,
+        auth_path: path,
+    };
+    let backend = Barretenberg::default();
+    let proof = ProofGenerator::<OutbeV1, EmitMint>::generate(&backend, &witness, &public)
+        .expect("emit mint proof generation");
+
+    let field_word = |field: &Field| -> [u8; 32] {
+        let mut word = [0u8; 32];
+        let bytes = field.into_bigint().to_bytes_be();
+        word[32 - bytes.len()..].copy_from_slice(&bytes);
+        word
+    };
+    let mut combined = Vec::with_capacity(4 + 32 * (25 + proof.proof.len()));
+    combined.extend_from_slice(&25u32.to_be_bytes());
+    for word in <EmitMint as outbe_protocol::protocol::zk::Circuit<OutbeV1>>::public_inputs(&public)
+    {
+        combined.extend_from_slice(&field_word(&word));
+    }
+    for word in &proof.proof {
+        combined.extend_from_slice(word);
+    }
+
+    assert!(
+        verify_emit_mint(&combined).expect("emit verify executes"),
+        "real emit mint proof must verify through the pinned VK"
+    );
+
+    // Flip exactly one public word per round: the decode stays valid (the
+    // mutation keeps canonical shape) but verification must turn false.
+    for slot in 0..25 {
+        let mut tampered = combined.clone();
+        let start = 4 + slot * 32;
+        match slot {
+            3..=22 => tampered[start + 31] ^= 1,
+            23 => tampered[start + 31] ^= 1,
+            _ => tampered[start] ^= 1,
+        }
+        assert!(
+            !verify_emit_mint(&tampered).expect("tampered emit verify executes"),
+            "mutating public word {slot} must invalidate the proof"
+        );
+    }
+}
