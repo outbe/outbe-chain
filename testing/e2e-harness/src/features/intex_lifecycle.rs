@@ -12,6 +12,7 @@ use cucumber::{then, when};
 
 use crate::env::environment;
 use crate::world::forge::DEPLOYER_KEY;
+use crate::world::relay::{Relay, RelayEnd};
 use crate::world::settlement_currency::{self, SettlementCurrency};
 use crate::world::test_issuance::{self, SeriesSpec};
 use crate::world::{venue_probes, World};
@@ -521,4 +522,36 @@ fn everything_settled(world: &mut World) {
             "series {series} did not end with every unit settled"
         );
     }
+}
+
+#[when("a relay carries messages between the two chains")]
+fn start_relay(world: &mut World) {
+    let port = world.validators.primary_port();
+    let committee = RelayEnd {
+        url: world.rpc.url(port),
+        mailbox: world
+            .state
+            .origin_contracts
+            .as_ref()
+            .expect("intex engine was deployed")
+            .mailbox,
+        domain: u32::try_from(world.rpc.chain_id(port).expect("committee chain id"))
+            .expect("committee chain id fits a uint32"),
+    };
+    let target = RelayEnd {
+        url: world
+            .target_chain
+            .rpc_url()
+            .expect("target chain is running"),
+        mailbox: world
+            .state
+            .target_contracts
+            .as_ref()
+            .expect("intex venue was deployed on the target chain")
+            .mailbox,
+        domain: u32::try_from(world.target_chain.chain_id())
+            .expect("target chain id fits a uint32"),
+    };
+
+    world.relay = Some(Relay::start(committee, target, DEPLOYER_KEY.to_owned()));
 }

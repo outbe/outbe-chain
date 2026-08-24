@@ -43,6 +43,7 @@ pub struct RelayEnd {
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 /// A running pump. Dropping it stops the thread.
+#[derive(Debug)]
 pub struct Relay {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,

@@ -62,6 +62,9 @@ pub struct World {
     pub(crate) capacity_meter: Option<OcompCapacityResourceMeterV1>,
     /// Local EVM chain the committee bridges to. Idle until a scenario starts it.
     pub target_chain: TargetChain,
+    /// Carries mailbox dispatches between the two chains. Dropping it stops the pump,
+    /// so it lives with the scenario rather than with either chain.
+    pub relay: Option<crate::world::relay::Relay>,
     /// Scratch state threaded across the scenario's steps.
     pub state: FixtureState,
 }
@@ -85,6 +88,7 @@ impl Default for World {
         let mongodb = MongoDb::connect_or_start(&mut cfg).expect("prepare projection MongoDB");
         let target_chain = TargetChain::new(cfg.clone());
         Self {
+            relay: None,
             started_at: Instant::now(),
             localnet: Localnet::new(cfg.clone()),
             mongodb,
