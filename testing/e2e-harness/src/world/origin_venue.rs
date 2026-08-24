@@ -288,10 +288,6 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
             ("--intex-auction-contract", auction.clone()),
             ("--intex-contract", nft.clone()),
             ("--escrow-contract", escrow.clone()),
-            (
-                "--nft-bridge-contract",
-                format!("{:?}", contracts.nft_bridge),
-            ),
         ],
         url,
         chain_id,
