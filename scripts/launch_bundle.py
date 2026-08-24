@@ -11,6 +11,7 @@ same network.yaml, and the identities come from the key directory.
 
 from __future__ import annotations
 
+import json
 import secrets
 import shlex
 import stat
@@ -30,6 +31,7 @@ DEFAULT_PORTS = {
     "tee_enclave_port": 17000,
     "feeder_health_port": 9002,
     "mongodb_port": 27017,
+    "ocomp_supervisor_port": 9765,
 }
 
 SECP256K1_P = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
@@ -381,11 +383,25 @@ done
 nohup ./run-feeder.sh > logs/feeder.log 2>&1 &
 echo $! > feeder.pid
 
+# OCOMP runs as its own processes: the node's ExEx drives them but does not
+# host them. The Supervisor must answer before the Worker can register.
+nohup ./run-ocomp-supervisor.sh > logs/ocomp-supervisor.log 2>&1 &
+echo $! > ocomp-supervisor.pid
+for _ in $(seq 1 60); do
+  if (exec 3<>/dev/tcp/127.0.0.1/{{SUPERVISOR_PORT}}) 2>/dev/null; then exec 3>&-; break; fi
+  sleep 1
+done
+nohup ./run-ocomp-exporter.sh > logs/ocomp-exporter.log 2>&1 &
+echo $! > ocomp-exporter.pid
+nohup ./run-ocomp-worker.sh > logs/ocomp-worker.log 2>&1 &
+echo $! > ocomp-worker.pid
+
 echo
 echo "validator-{index} started:"
 echo "  node:    logs/node.log    (pid $(cat node.pid))"
 echo "  radicle: logs/radicle.log (pid $(cat radicle.pid))"
 echo "  feeder:  logs/feeder.log  (pid $(cat feeder.pid))"
+echo "  ocomp:   logs/ocomp-supervisor.log, logs/ocomp-exporter.log, logs/ocomp-worker.log"
 echo "  enclave: docker logs outbe-enclave-{index}"
 echo "  mongo:   docker logs outbe-mongo-{index}"
 """
@@ -395,7 +411,7 @@ def stop_all_script(*, index: int, base_dir: str) -> str:
     directory = f"{base_dir}/validator-{index}"
     return f"""
 cd {quote(directory)}
-for name in feeder node radicle; do
+for name in ocomp-worker ocomp-exporter ocomp-supervisor feeder node radicle; do
   if [ -f "$name.pid" ]; then
     pid="$(cat "$name.pid")"
     if kill -0 "$pid" 2>/dev/null; then
@@ -409,6 +425,115 @@ docker stop outbe-enclave-{index} >/dev/null 2>&1 && echo "stopped enclave" || t
 echo "MongoDB left running; stop it with: docker stop outbe-mongo-{index}"
 """
 
+
+# ---------------------------------------------------------------------------
+# OCOMP roles
+# ---------------------------------------------------------------------------
+
+
+def ocomp_identity(genesis_path: Path, keys_dir: Path) -> dict[str, Any]:
+    """Read the identity the OCOMP roles must be started with.
+
+    chain id, genesis hash and install hash are plain fields of the genesis.
+    The protocol bundle hash is not: it sits inside the canonical install
+    bytes, right after the genesis hash and the fork id, both of which are
+    known here — so it is located by anchoring on the genesis hash rather than
+    by a bare offset. Every role validates the value against the bundle file it
+    loads and exits with `HashMismatch` if it disagrees, so a wrong read fails
+    immediately and loudly instead of producing a subtly wrong network.
+    """
+    genesis = json.loads(genesis_path.read_text())
+    config = genesis.get("config", {})
+    install = config.get("ocompForkInstallV1")
+    if not install:
+        raise ValueError(f"{genesis_path} has no OCOMP install; cannot launch OCOMP roles")
+    canonical = bytes.fromhex(str(install["canonicalBytes"]).removeprefix("0x"))
+    genesis_hash = bytes.fromhex(genesis_hash_of(keys_dir).removeprefix("0x"))
+    anchor = canonical.find(genesis_hash)
+    if anchor < 0:
+        raise ValueError("OCOMP install does not carry this genesis hash")
+    # request profile order: genesis_hash, fork_id, protocol_bundle_hash
+    bundle_hash = canonical[anchor + 64 : anchor + 96]
+    if len(bundle_hash) != 32:
+        raise ValueError("OCOMP install is truncated before the protocol bundle hash")
+    return {
+        "chain_id": int(config["chainId"]),
+        "genesis_hash": "0x" + genesis_hash.hex(),
+        "protocol_bundle_hash": "0x" + bundle_hash.hex(),
+        "install_hash": str(install["installHash"]),
+    }
+
+
+def genesis_hash_of(keys_dir: Path) -> str:
+    """The genesis hash the OCOMP registrations were minted against.
+
+    create_genesis.py records it beside each registration it mints, which is
+    exactly the value the install document carries.
+    """
+    for marker in sorted(keys_dir.glob("validator-*/ocomp-registration-v1.genesis-hash")):
+        return marker.read_text().strip()
+    raise ValueError(
+        f"no OCOMP registration marker under {keys_dir}; cannot identify the genesis "
+        f"the OCOMP roles must run against"
+    )
+
+
+def ocomp_role_preamble(*, config: dict[str, Any], index: int, base_dir: str, identity: dict[str, Any]) -> str:
+    return f"""
+export OUTBE_OCOMP_BASE_PATH={quote(base_dir)}
+export OCOMP_VALIDATOR_INDEX={index}
+export OCOMP_CHAIN_ID={identity["chain_id"]}
+export OCOMP_GENESIS_HASH={identity["genesis_hash"]}
+export OCOMP_BOOT_NONCE=0x{f"{index + 1:02x}" * 32}
+export OCOMP_PROTOCOL_BUNDLE_HASH={identity["protocol_bundle_hash"]}
+export OCOMP_REGISTRY_GENERATION=1
+export OUTBE_OCOMP_RPC_URL="http://127.0.0.1:{port_of(config, "rpc_port")}"
+"""
+
+
+def ocomp_supervisor_script(*, config: dict[str, Any], index: int, base_dir: str, identity: dict[str, Any]) -> str:
+    binary = str(config.get("ocomp_binary", "outbe-ocomp"))
+    return f"""
+# OCOMP Supervisor: hands work to the Workers and submits their results.
+# Runs as its own process; the node only talks to it over loopback.
+{ocomp_role_preamble(config=config, index=index, base_dir=base_dir, identity=identity).strip()}
+
+exec {quote(binary)} supervisor \\
+  --supervisor-address 127.0.0.1:{port_of(config, "ocomp_supervisor_port")}
+"""
+
+
+def ocomp_exporter_script(*, config: dict[str, Any], index: int, base_dir: str, identity: dict[str, Any]) -> str:
+    binary = str(config.get("ocomp_binary", "outbe-ocomp"))
+    database = f"outbe_projection_validator_{index}_ocomp"
+    return f"""
+# OCOMP SnapshotExporter: materializes the finalized inputs the Workers read.
+{ocomp_role_preamble(config=config, index=index, base_dir=base_dir, identity=identity).strip()}
+export OUTBE_OCOMP_PROJECTION_MONGODB_URI="mongodb://127.0.0.1:{port_of(config, "mongodb_port")}/?replicaSet=rs0"
+export OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE={quote(database)}
+
+exec {quote(binary)} snapshot-exporter \\
+  --supervisor-address 127.0.0.1:{port_of(config, "ocomp_supervisor_port")}
+"""
+
+
+def ocomp_worker_script(*, config: dict[str, Any], index: int, base_dir: str, identity: dict[str, Any], ordinal: int = 0) -> str:
+    binary = str(config.get("ocomp_binary", "outbe-ocomp"))
+    # Same shape the harness uses: first byte identifies the host, the last
+    # four the worker ordinal, so every worker process gets a distinct nonce.
+    nonce = f"{index + 1:02x}" + "00" * 27 + f"{ordinal:08x}"
+    return f"""
+# OCOMP Worker {ordinal}: runs the actual computation and signs its result.
+{ocomp_role_preamble(config=config, index=index, base_dir=base_dir, identity=identity).strip()}
+
+exec {quote(binary)} worker \\
+  --chain-id {identity["chain_id"]} \\
+  --genesis-hash {identity["genesis_hash"]} \\
+  --boot-nonce 0x{nonce} \\
+  --worker-ordinal {ordinal} \\
+  --protocol-bundle-hash {identity["protocol_bundle_hash"]} \\
+  --supervisor-address 127.0.0.1:{port_of(config, "ocomp_supervisor_port")}
+"""
 
 # ---------------------------------------------------------------------------
 # DEPLOY.md
@@ -490,7 +615,7 @@ metrics `{port_of(config, "metrics_port")}`, Radicle status
 
 - Docker — MongoDB and the TEE enclave run as containers
 - `outbe-cli` on the machine you verify from (step 5)
-- the `outbe-chain`, `outbe-radicle` and `outbe-feeder` binaries on `PATH`
+- the `outbe-chain`, `outbe-ocomp`, `outbe-radicle` and `outbe-feeder` binaries on `PATH`
   (or set `node_binary`, `radicle_binary` and `feeder_binary` in the yaml to
   absolute paths and regenerate)
 - for `dcap-required`: SGX hardware exposing `/dev/sgx_enclave` and
@@ -538,7 +663,9 @@ number and `validator list` shows four active validators.
 | Component | Process | Notes |
 |---|---|---|
 | Execution + consensus | `outbe-chain node` | one binary, no Engine API split |
-| OCOMP | inside `outbe-chain` | embedded runtime, **no separate daemon** |
+| OCOMP Supervisor | `outbe-ocomp supervisor` | own process; hands out work, submits results |
+| OCOMP SnapshotExporter | `outbe-ocomp snapshot-exporter` | own process; materializes finalized inputs |
+| OCOMP Worker | `outbe-ocomp worker` | own process, ordinal 0 |
 | TEE enclave | Docker container | the node refuses to start without it |
 | Radicle | `outbe-radicle` | validator startup requires its control socket |
 | Price feeder | `outbe-feeder` | submits oracle votes |
@@ -546,7 +673,10 @@ number and `validator list` shows four active validators.
 
 ## Notes
 
-- The embedded OCOMP runtime signs its submissions with `ocomp-evm-key.hex`,
+- OCOMP is three separate processes per validator, not something the node
+  hosts: the node carries only the ExEx that drives them. They are started by
+  `start-all.sh` after the node and talk to it over loopback.
+- The OCOMP roles sign their submissions with `ocomp-evm-key.hex`,
   which defaults to a copy of the validator's own EVM key. To use a dedicated
   operational key, replace that file and register it on-chain with
   `outbe-cli validator delegate ocomp <address>`.
@@ -587,6 +717,7 @@ def render(
             f"enode://{node_id}@{format_enode_host(host)}:{port_of(config, 'reth_p2p_port')}"
         )
     (output_dir / "reth-bootnodes.txt").write_text("\n".join(enodes) + "\n")
+    identity = ocomp_identity(genesis_path, keys_dir)
 
     for index, validator in enumerate(validators):
         directory = output_dir / f"validator-{index}"
@@ -622,6 +753,24 @@ def render(
             directory / "run-feeder.sh",
             feeder_script(config=config, index=index, base_dir=base_dir, repo_root=str(repo_root)),
         )
+        write_script(
+            directory / "run-ocomp-supervisor.sh",
+            ocomp_supervisor_script(
+                config=config, index=index, base_dir=base_dir, identity=identity
+            ),
+        )
+        write_script(
+            directory / "run-ocomp-exporter.sh",
+            ocomp_exporter_script(
+                config=config, index=index, base_dir=base_dir, identity=identity
+            ),
+        )
+        write_script(
+            directory / "run-ocomp-worker.sh",
+            ocomp_worker_script(
+                config=config, index=index, base_dir=base_dir, identity=identity
+            ),
+        )
         signer_key = (
             (keys_dir / f"validator-{index}" / "evm-key.hex")
             .read_text()
@@ -637,7 +786,9 @@ def render(
         feeder_path.chmod(0o600)
         write_script(
             directory / "start-all.sh",
-            start_all_script(config=config, index=index, base_dir=base_dir),
+            start_all_script(config=config, index=index, base_dir=base_dir).replace(
+                "{SUPERVISOR_PORT}", str(port_of(config, "ocomp_supervisor_port"))
+            ),
         )
         write_script(directory / "stop-all.sh", stop_all_script(index=index, base_dir=base_dir))
 

@@ -498,7 +498,22 @@ class LaunchBundleTests(unittest.TestCase):
             directory.mkdir(parents=True)
             (directory / "evm-key.hex").write_text(f"{index + 1:064x}\n")
         genesis = output_dir / "genesis.json"
-        genesis.write_text("{}")
+        # render() reads the OCOMP identity out of the install document, and
+        # locates the bundle hash by anchoring on the genesis hash, so the
+        # fixture has to carry a well-formed one.
+        genesis_hash = "0x" + "ab" * 32
+        canonical = ("00" * 33) + "ab" * 32 + "01" * 32 + "cd" * 32 + "0c" * 32
+        genesis.write_text(json.dumps({
+            "config": {
+                "chainId": 424242,
+                "ocompForkInstallV1": {
+                    "canonicalBytes": "0x" + canonical,
+                    "installHash": "0x" + "ee" * 32,
+                },
+            },
+        }))
+        marker = keys_dir / "validator-0" / "ocomp-registration-v1.genesis-hash"
+        marker.write_text(genesis_hash + "\n")
         config = minimal_config(str(keys_dir)) | (config_overrides or {})
         LB.render(
             config=config,
@@ -524,6 +539,9 @@ class LaunchBundleTests(unittest.TestCase):
                     "run-radicle.sh",
                     "run-node.sh",
                     "run-feeder.sh",
+                    "run-ocomp-supervisor.sh",
+                    "run-ocomp-exporter.sh",
+                    "run-ocomp-worker.sh",
                     "start-all.sh",
                     "stop-all.sh",
                 ):
@@ -532,6 +550,39 @@ class LaunchBundleTests(unittest.TestCase):
                     self.assertTrue(script.stat().st_mode & 0o111, f"{name} not executable")
                     subprocess.run(["bash", "-n", str(script)], check=True)
                 self.assertTrue((directory / "feeder.toml").is_file())
+
+    def test_ocomp_identity_is_read_from_the_install_document(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            script = (output_dir / "validator-2" / "run-ocomp-worker.sh").read_text()
+            # The bundle hash sits after the genesis hash and the fork id.
+            self.assertIn("--protocol-bundle-hash 0x" + "cd" * 32, script)
+            self.assertIn("--chain-id 424242", script)
+            self.assertIn("--genesis-hash 0x" + "ab" * 32, script)
+            # Each host gets a distinct boot nonce, ordinal in the low bytes.
+            self.assertIn("--boot-nonce 0x03" + "00" * 27 + "00000000", script)
+
+    def test_every_ocomp_role_gets_the_shared_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            for role in ("supervisor", "exporter", "worker"):
+                script = (output_dir / "validator-0" / f"run-ocomp-{role}.sh").read_text()
+                for var in ("OUTBE_OCOMP_BASE_PATH", "OCOMP_VALIDATOR_INDEX",
+                            "OCOMP_CHAIN_ID", "OCOMP_GENESIS_HASH", "OCOMP_BOOT_NONCE",
+                            "OCOMP_PROTOCOL_BUNDLE_HASH", "OCOMP_REGISTRY_GENERATION"):
+                    self.assertIn(var, script, f"{role} script is missing {var}")
+
+    def test_start_all_waits_for_the_supervisor_before_the_worker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            start = (output_dir / "validator-0" / "start-all.sh").read_text()
+            self.assertLess(
+                start.index("run-ocomp-supervisor.sh"),
+                start.index("run-ocomp-worker.sh"),
+                "the worker must not start before its supervisor",
+            )
+            stop = (output_dir / "validator-0" / "stop-all.sh").read_text()
+            self.assertIn("ocomp-worker", stop)
 
     def test_bootnodes_are_stable_across_renders(self):
         with tempfile.TemporaryDirectory() as tmp:
