@@ -35,12 +35,12 @@ sol! {
     interface IIntexFactoryTestArming {
         function armProceedsForTest(uint32 worldwideDay, uint32[] chains, uint64 deadline) external;
         function issueForTest(
-            bytes14 seriesId,
+            bytes14[] seriesIds,
+            uint16[] issuanceCurrencies,
             uint32 worldwideDay,
             uint32 issuedIntexCount,
             uint128 promisLoadMinor,
             uint256 entryPriceMinor,
-            uint16 issuanceCurrency,
             uint16 referenceCurrency,
             address[] recipients,
             uint256[] quantities,
@@ -61,24 +61,37 @@ pub fn dispatch(
     reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
     #[cfg(feature = "e2e-test")]
     if let Ok(call) = IIntexFactoryTestArming::issueForTestCall::abi_decode(data) {
-        // The same two calls the clearing engine makes, so the series is indexed for
-        // the qualify sweep and its mints travel as real issuance instructions.
-        let legs = crate::api::issue(
-            &storage,
-            crate::schema::IssuanceParams {
-                series_id: SeriesId::from(call.seriesId),
-                worldwide_day: call.worldwideDay.into(),
-                issued_intex_count: call.issuedIntexCount,
-                promis_load_minor: call.promisLoadMinor,
-                entry_price_minor: call.entryPriceMinor,
-                issuance_currency: call.issuanceCurrency,
-                reference_currency: call.referenceCurrency,
-                recipients: call.recipients,
-                quantities: call.quantities,
-                recipient_chains: call.recipientChains,
-                snapshot_chains: call.snapshotChains,
-            },
-        )?;
+        // Mirrors the clearing engine: issue every series first, then send the day's
+        // legs once. Sending per series would declare a one-chunk day twice, and the
+        // second delivery is dropped as a conflicting repeat rather than applied.
+        if call.seriesIds.len() != call.issuanceCurrencies.len() {
+            return Err(outbe_primitives::error::PrecompileError::Revert(
+                "issueForTest: a currency per series".into(),
+            ));
+        }
+        let mut legs = Vec::new();
+        for (series_id, issuance_currency) in call
+            .seriesIds
+            .into_iter()
+            .zip(call.issuanceCurrencies.into_iter())
+        {
+            legs.extend(crate::api::issue(
+                &storage,
+                crate::schema::IssuanceParams {
+                    series_id: SeriesId::from(series_id),
+                    worldwide_day: call.worldwideDay.into(),
+                    issued_intex_count: call.issuedIntexCount,
+                    promis_load_minor: call.promisLoadMinor,
+                    entry_price_minor: call.entryPriceMinor,
+                    issuance_currency,
+                    reference_currency: call.referenceCurrency,
+                    recipients: call.recipients.clone(),
+                    quantities: call.quantities.clone(),
+                    recipient_chains: call.recipientChains.clone(),
+                    snapshot_chains: call.snapshotChains.clone(),
+                },
+            )?);
+        }
         crate::api::send_issuance(&storage, legs)?;
         return Ok(Bytes::new());
     }

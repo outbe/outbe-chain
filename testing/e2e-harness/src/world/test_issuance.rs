@@ -47,12 +47,12 @@ pub const INTEX_FACTORY: Address =
 sol! {
     interface IIntexFactoryTestArming {
         function issueForTest(
-            bytes14 seriesId,
+            bytes14[] seriesIds,
+            uint16[] issuanceCurrencies,
             uint32 worldwideDay,
             uint32 issuedIntexCount,
             uint128 promisLoadMinor,
             uint256 entryPriceMinor,
-            uint16 issuanceCurrency,
             uint16 referenceCurrency,
             address[] recipients,
             uint256[] quantities,
@@ -143,31 +143,33 @@ pub fn issue_series(
     chain_id: u32,
     specs: &[SeriesSpec],
 ) -> Result<Vec<FixedBytes<14>>> {
-    let mut issued = Vec::with_capacity(specs.len());
-    for spec in specs {
-        let id = series_id(worldwide_day, spec.issuance, reference_byte);
-        send_checked(
-            url,
-            INTEX_FACTORY,
-            sender_key,
-            &IIntexFactoryTestArming::issueForTestCall {
-                seriesId: id,
-                worldwideDay: worldwide_day,
-                issuedIntexCount: units,
-                promisLoadMinor: promis_load_minor,
-                entryPriceMinor: entry_price_minor,
-                issuanceCurrency: spec.issuance_currency,
-                referenceCurrency: reference_currency,
-                recipients: vec![holder],
-                quantities: vec![U256::from(units)],
-                recipientChains: vec![chain_id],
-                snapshotChains: vec![chain_id],
-            },
-            "issueForTest",
-        )?;
-        issued.push(id);
-    }
-    Ok(issued)
+    let ids: Vec<FixedBytes<14>> = specs
+        .iter()
+        .map(|spec| series_id(worldwide_day, spec.issuance, reference_byte))
+        .collect();
+
+    // One call for the whole day: the engine counts issuance chunks over the legs it
+    // is handed, so a second send would announce a one-chunk day twice.
+    send_checked(
+        url,
+        INTEX_FACTORY,
+        sender_key,
+        &IIntexFactoryTestArming::issueForTestCall {
+            seriesIds: ids.clone(),
+            issuanceCurrencies: specs.iter().map(|spec| spec.issuance_currency).collect(),
+            worldwideDay: worldwide_day,
+            issuedIntexCount: units,
+            promisLoadMinor: promis_load_minor,
+            entryPriceMinor: entry_price_minor,
+            referenceCurrency: reference_currency,
+            recipients: vec![holder],
+            quantities: vec![U256::from(units)],
+            recipientChains: vec![chain_id],
+            snapshotChains: vec![chain_id],
+        },
+        "issueForTest",
+    )?;
+    Ok(ids)
 }
 
 /// Give `holder` enough of `asset` to settle with, and let the engine pull it.
