@@ -92,10 +92,10 @@ jobs:
           working-directory: contracts/intex
 
       - name: Run Forge tests
-        run: forge test -vv
+        run: forge test -vv --no-match-path 'test/foundry/cross-chain/GasBudget.t.sol'
 
-      # A cross-chain delivery is its own transaction against cold storage; the shared-context run above
-      # understates that by a third or more, and the destination-gas budgets are sized from it.
+      # Runs apart because it needs `--isolate`: a delivery is its own transaction against cold storage,
+      # and the shared-context run understates that by a third or more. The budgets are sized from it.
       - name: Check destination-gas budgets against cold-storage cost
         run: forge test --isolate --match-path 'test/foundry/cross-chain/GasBudget.t.sol' -vv
 
