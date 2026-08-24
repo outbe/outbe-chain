@@ -129,6 +129,26 @@ enum Commands {
         output_dir: PathBuf,
     },
 
+    /// Generate the complete key bundle for one validator: BLS consensus key,
+    /// EVM artifact signer, Radicle identity, the ValidatorSet registration
+    /// signature, and (when --genesis-hash is known) OCOMP result-signing
+    /// artifacts.
+    Validator {
+        /// Directory that receives every generated key artifact.
+        #[arg(long, default_value = ".")]
+        output_dir: PathBuf,
+
+        /// Chain ID bound by the registration signature and OCOMP registration.
+        #[arg(long)]
+        chain_id: u64,
+
+        /// Genesis hash for the OCOMP registration. Omit while the genesis is
+        /// not sealed yet; generate OCOMP artifacts later with
+        /// `outbe-keygen ocomp`.
+        #[arg(long)]
+        genesis_hash: Option<B256>,
+    },
+
     /// Generate a dedicated OCOMP result-signing key and PoP registration.
     Ocomp {
         /// Directory for the immutable secret and public registration artifacts.
@@ -163,6 +183,11 @@ fn main() -> Result<()> {
         Commands::Verify { key } => cmd_verify(key, &backend),
         Commands::Hybrid { output_dir } => cmd_hybrid(output_dir, &backend),
         Commands::Radicle { output_dir } => cmd_radicle(output_dir),
+        Commands::Validator {
+            output_dir,
+            chain_id,
+            genesis_hash,
+        } => cmd_validator(output_dir, chain_id, genesis_hash, &backend),
         Commands::Ocomp {
             output_dir,
             chain_id,
@@ -277,13 +302,21 @@ fn cmd_sign_registration(
     Ok(())
 }
 
+/// A freshly generated Heartwood-compatible Radicle identity.
+struct RadicleIdentity {
+    key_path: PathBuf,
+    public_path: Option<PathBuf>,
+    node_id: String,
+    node_id_bytes: B256,
+}
+
 /// Generate the native unencrypted OpenSSH Ed25519 identity expected by Heartwood.
-fn cmd_radicle(output_dir: PathBuf) -> Result<()> {
+fn generate_radicle_identity(output_dir: &Path) -> Result<RadicleIdentity> {
     use radicle_crypto::{ssh::Keystore, Seed};
 
-    std::fs::create_dir_all(&output_dir)
+    std::fs::create_dir_all(output_dir)
         .wrap_err_with(|| format!("failed to create Radicle home: {}", output_dir.display()))?;
-    std::fs::set_permissions(&output_dir, std::fs::Permissions::from_mode(0o700))
+    std::fs::set_permissions(output_dir, std::fs::Permissions::from_mode(0o700))
         .wrap_err_with(|| format!("failed to protect Radicle home: {}", output_dir.display()))?;
 
     let keys = output_dir.join("keys");
@@ -315,13 +348,195 @@ fn cmd_radicle(output_dir: PathBuf) -> Result<()> {
         )
     })?;
 
+    let node_id_display = node_id.to_string();
+    let inner = node_id.into_inner();
+    let node_id_slice: &[u8] = inner.as_ref();
+    eyre::ensure!(
+        node_id_slice.len() == 32,
+        "Radicle NodeId is not a 32-byte Ed25519 key"
+    );
+    Ok(RadicleIdentity {
+        key_path: keystore.secret_key_path().to_path_buf(),
+        public_path: keystore.public_key_path().map(Path::to_path_buf),
+        node_id: node_id_display,
+        node_id_bytes: B256::from_slice(node_id_slice),
+    })
+}
+
+fn cmd_radicle(output_dir: PathBuf) -> Result<()> {
+    let identity = generate_radicle_identity(&output_dir)?;
+
     println!("Radicle identity generated");
-    println!("  private key: {}", keystore.secret_key_path().display());
-    if let Some(public_path) = keystore.public_key_path() {
+    println!("  private key: {}", identity.key_path.display());
+    if let Some(public_path) = &identity.public_path {
         println!("  public key:  {}", public_path.display());
     }
-    println!("  node id:     {node_id}");
-    println!("  node id hex: {}", hex::encode(node_id.into_inner()));
+    println!("  node id:     {}", identity.node_id);
+    println!("  node id hex: {}", hex::encode(identity.node_id_bytes));
+    Ok(())
+}
+
+/// Everything `validator` generates besides the optional OCOMP artifacts.
+struct ValidatorBundle {
+    bls_key_path: PathBuf,
+    bls_public_key: [u8; 48],
+    bls_pubkey_hash: B256,
+    evm_key_path: PathBuf,
+    validator_address: Address,
+    radicle: RadicleIdentity,
+    registration_signature: [u8; 96],
+}
+
+/// Generate the BLS consensus key, EVM signer, Radicle identity, and the
+/// ValidatorSet registration signature binding all three to `chain_id`.
+fn generate_validator_bundle(
+    output_dir: &Path,
+    chain_id: u64,
+    backend: &KeyBackend,
+) -> Result<ValidatorBundle> {
+    std::fs::create_dir_all(output_dir)
+        .wrap_err_with(|| format!("failed to create output dir: {}", output_dir.display()))?;
+
+    let bls_key_path = output_dir.join("signing-key.hex");
+    let evm_key_path = output_dir.join("evm-key.hex");
+    let radicle_home = output_dir.join("radicle");
+    let radicle_key_path = radicle_home.join("keys").join("radicle");
+    let preexisting: Vec<String> = [&bls_key_path, &evm_key_path, &radicle_key_path]
+        .into_iter()
+        .filter(|path| path.exists())
+        .map(|path| path.display().to_string())
+        .collect();
+    if !preexisting.is_empty() {
+        eyre::bail!(
+            "validator key artifacts already exist, refusing to overwrite: {}",
+            preexisting.join(", ")
+        );
+    }
+
+    // 1. BLS12-381 MinPk consensus key.
+    let bls_key = bls12381::PrivateKey::random(rand_core::OsRng);
+    let bls_pk_bytes = bls_key.public_key().encode();
+    let bls_public_key: [u8; 48] = bls_pk_bytes
+        .as_ref()
+        .try_into()
+        .map_err(|_| eyre::eyre!("BLS MinPk public key is not 48 bytes"))?;
+    let bls_pubkey_hash = keccak256(bls_public_key);
+    bls::save_individual_key(&bls_key_path, &bls_key, backend)
+        .wrap_err_with(|| format!("failed to write BLS key: {}", bls_key_path.display()))?;
+
+    // 2. ECDSA secp256k1 EVM signer; the validator address derives from it.
+    let evm_signing_key = SigningKey::random(&mut rand_core::OsRng);
+    let evm_key_hex = Zeroizing::new(hex::encode(evm_signing_key.to_bytes()));
+    write_secret_hex_file(&evm_key_path, &evm_key_hex)
+        .wrap_err_with(|| format!("failed to write EVM key: {}", evm_key_path.display()))?;
+    let evm_public_key = evm_signing_key.verifying_key().to_encoded_point(false);
+    let evm_public_key_raw = evm_public_key
+        .as_bytes()
+        .get(1..)
+        .filter(|raw| raw.len() == 64)
+        .ok_or_else(|| eyre::eyre!("EVM public key is not an uncompressed SEC1-65 point"))?;
+    let validator_address = Address::from_raw_public_key(evm_public_key_raw);
+
+    // 3. Radicle Ed25519 identity, bound atomically by the registration.
+    let radicle = generate_radicle_identity(&radicle_home)?;
+
+    // 4. Registration signature for the ValidatorSet precompile.
+    let sk_bytes = bls_key.encode();
+    let blst_sk = blst::min_pk::SecretKey::from_bytes(&sk_bytes)
+        .map_err(|e| eyre::eyre!("failed to create blst SecretKey: {e:?}"))?;
+    let message =
+        validator_registration_message(chain_id, validator_address, radicle.node_id_bytes);
+    let registration_signature = blst_sk
+        .sign(&message, VALIDATOR_REGISTRATION_DST, &[])
+        .to_bytes();
+
+    Ok(ValidatorBundle {
+        bls_key_path,
+        bls_public_key,
+        bls_pubkey_hash,
+        evm_key_path,
+        validator_address,
+        radicle,
+        registration_signature,
+    })
+}
+
+/// Generate all key material one validator needs, in one pass.
+fn cmd_validator(
+    output_dir: PathBuf,
+    chain_id: u64,
+    genesis_hash: Option<B256>,
+    backend: &KeyBackend,
+) -> Result<()> {
+    let bundle = generate_validator_bundle(&output_dir, chain_id, backend)?;
+
+    println!("validator key bundle generated (chain {chain_id})");
+    println!();
+    println!("BLS12-381 consensus key:");
+    println!("  private key:  {}", bundle.bls_key_path.display());
+    println!("  public key:   {}", hex::encode(bundle.bls_public_key));
+    println!("  pubkey hash:  {}", bundle.bls_pubkey_hash);
+    println!();
+    println!("EVM artifact signer (secp256k1):");
+    println!("  private key:  {}", bundle.evm_key_path.display());
+    println!("  address:      {}", bundle.validator_address);
+    println!();
+    println!("Radicle identity:");
+    println!("  private key:  {}", bundle.radicle.key_path.display());
+    if let Some(public_path) = &bundle.radicle.public_path {
+        println!("  public key:   {}", public_path.display());
+    }
+    println!("  node id:      {}", bundle.radicle.node_id);
+    println!(
+        "  node id hex:  {}",
+        hex::encode(bundle.radicle.node_id_bytes)
+    );
+    println!();
+
+    if let Some(genesis_hash) = genesis_hash {
+        cmd_ocomp(
+            output_dir,
+            OcompRegistrationArgs {
+                chain_id,
+                genesis_hash,
+                validator_address: bundle.validator_address,
+                consensus_bls_min_pk: bundle.bls_public_key,
+            },
+        )?;
+    } else {
+        println!("OCOMP result-signing key: SKIPPED (no --genesis-hash)");
+        println!("  generate it once the genesis hash is known:");
+        println!(
+            "  outbe-keygen ocomp --output-dir {} --chain-id {chain_id} \\",
+            output_dir.display()
+        );
+        println!("    --genesis-hash <hash> \\");
+        println!("    --validator-address {} \\", bundle.validator_address);
+        println!(
+            "    --consensus-bls-min-pk {}",
+            hex::encode(bundle.bls_public_key)
+        );
+    }
+    println!();
+    println!("registration (fund {} first):", bundle.validator_address);
+    println!("  outbe-cli --private-key <evm-key> validator register \\");
+    println!("    --pubkey {} \\", hex::encode(bundle.bls_public_key));
+    println!(
+        "    --radicle-node-id 0x{} \\",
+        hex::encode(bundle.radicle.node_id_bytes)
+    );
+    println!(
+        "    --bls-sig {}",
+        hex::encode(bundle.registration_signature)
+    );
+    println!();
+    println!("node startup flags:");
+    println!(
+        "  --validator --consensus.signing-key {} --validator.evm-key {}",
+        bundle.bls_key_path.display(),
+        bundle.evm_key_path.display()
+    );
+
     Ok(())
 }
 
@@ -915,6 +1130,147 @@ mod tests {
         assert_eq!(
             std::fs::read(&key_path).expect("read unchanged OCOMP secret"),
             original_secret
+        );
+    }
+
+    #[test]
+    fn validator_subcommand_parses_with_and_without_genesis_hash() {
+        let cli = make_cli(&["validator", "--output-dir", "/tmp/v", "--chain-id", "7"]);
+        assert!(matches!(
+            cli.command,
+            Commands::Validator {
+                genesis_hash: None,
+                chain_id: 7,
+                ..
+            }
+        ));
+
+        let cli = make_cli(&[
+            "validator",
+            "--output-dir",
+            "/tmp/v",
+            "--chain-id",
+            "7",
+            "--genesis-hash",
+            "0x1111111111111111111111111111111111111111111111111111111111111111",
+        ]);
+        assert!(matches!(
+            cli.command,
+            Commands::Validator {
+                genesis_hash: Some(_),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn validator_bundle_creates_all_keys_and_valid_registration_signature() {
+        let dir = tempfile::tempdir().unwrap();
+        let chain_id = 54321;
+        let bundle =
+            generate_validator_bundle(dir.path(), chain_id, &KeyBackend::Plaintext).unwrap();
+
+        // All on-disk artifacts exist.
+        assert!(dir.path().join("signing-key.hex").is_file());
+        assert!(dir.path().join("evm-key.hex").is_file());
+        assert!(dir.path().join("radicle/keys/radicle").is_file());
+        assert!(dir.path().join("radicle/keys/radicle.pub").is_file());
+
+        // The validator address is derivable from the written EVM key file.
+        let evm_hex = std::fs::read_to_string(dir.path().join("evm-key.hex")).unwrap();
+        let evm_key = SigningKey::from_slice(&hex::decode(evm_hex.trim()).unwrap()).unwrap();
+        let point = evm_key.verifying_key().to_encoded_point(false);
+        assert_eq!(
+            bundle.validator_address,
+            Address::from_raw_public_key(&point.as_bytes()[1..])
+        );
+
+        // The BLS public key matches the written signing key file.
+        let bls_key = load_key(&bundle.bls_key_path, &KeyBackend::Plaintext).unwrap();
+        assert_eq!(
+            bls_key.public_key().encode().as_ref(),
+            bundle.bls_public_key
+        );
+
+        // The registration signature verifies for the bundle's own binding.
+        let message = validator_registration_message(
+            chain_id,
+            bundle.validator_address,
+            bundle.radicle.node_id_bytes,
+        );
+        let blst_pk = blst::min_pk::PublicKey::from_bytes(&bundle.bls_public_key).unwrap();
+        let sig = blst::min_pk::Signature::from_bytes(&bundle.registration_signature).unwrap();
+        assert_eq!(
+            sig.verify(
+                true,
+                &message,
+                VALIDATOR_REGISTRATION_DST,
+                &[],
+                &blst_pk,
+                true
+            ),
+            blst::BLST_ERROR::BLST_SUCCESS
+        );
+    }
+
+    #[test]
+    fn validator_command_with_genesis_hash_creates_matching_ocomp_registration() {
+        let dir = tempfile::tempdir().unwrap();
+        let chain_id = 42;
+        let genesis_hash = B256::repeat_byte(0x22);
+        cmd_validator(
+            dir.path().to_path_buf(),
+            chain_id,
+            Some(genesis_hash),
+            &KeyBackend::Plaintext,
+        )
+        .unwrap();
+
+        // Recompute the validator identity from the written key files.
+        let evm_hex = std::fs::read_to_string(dir.path().join("evm-key.hex")).unwrap();
+        let evm_key = SigningKey::from_slice(&hex::decode(evm_hex.trim()).unwrap()).unwrap();
+        let point = evm_key.verifying_key().to_encoded_point(false);
+        let validator_address = Address::from_raw_public_key(&point.as_bytes()[1..]);
+        let bls_key =
+            load_key(&dir.path().join("signing-key.hex"), &KeyBackend::Plaintext).unwrap();
+        let bls_pk: [u8; 48] = bls_key.public_key().encode().as_ref().try_into().unwrap();
+
+        let registration = OcompKeyRegistrationV1::decode_canonical(
+            &std::fs::read(dir.path().join(OCOMP_REGISTRATION_FILENAME)).unwrap(),
+            &poc_schema_limits(),
+        )
+        .unwrap();
+        assert_eq!(registration.core.chain_id, chain_id);
+        assert_eq!(registration.core.genesis_hash, genesis_hash);
+        assert_eq!(
+            registration.core.validator_identity_hash,
+            validator_identity_hash_v1(validator_address, &bls_pk).unwrap()
+        );
+        assert!(dir.path().join(OCOMP_KEY_FILENAME).is_file());
+    }
+
+    #[test]
+    fn validator_command_without_genesis_hash_skips_ocomp() {
+        let dir = tempfile::tempdir().unwrap();
+        cmd_validator(dir.path().to_path_buf(), 1, None, &KeyBackend::Plaintext).unwrap();
+        assert!(dir.path().join("signing-key.hex").is_file());
+        assert!(!dir.path().join(OCOMP_KEY_FILENAME).exists());
+        assert!(!dir.path().join(OCOMP_REGISTRATION_FILENAME).exists());
+    }
+
+    #[test]
+    fn validator_command_refuses_existing_artifacts() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("evm-key.hex"), "0011").unwrap();
+        let result = cmd_validator(dir.path().to_path_buf(), 1, None, &KeyBackend::Plaintext);
+        assert!(result.is_err());
+        // Nothing else was written next to the pre-existing artifact.
+        assert!(!dir.path().join("signing-key.hex").exists());
+        assert!(!dir.path().join("radicle").exists());
+        // The pre-existing file is untouched.
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("evm-key.hex")).unwrap(),
+            "0011"
         );
     }
 
