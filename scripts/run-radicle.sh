@@ -42,20 +42,15 @@ if [ ! -f "$RADICLE_HOME/keys/radicle.pub" ] || [ -L "$RADICLE_HOME/keys/radicle
     exit 1
 fi
 
-# Lock the existing home inode before changing anything under it. Locking the
-# directory itself creates no file and prevents a losing launcher from touching
-# a live sidecar's profile.
-exec 9<"$RADICLE_HOME"
-if ! flock -n 9; then
-    echo "Error: another outbe-radicle instance owns $RADICLE_HOME" >&2
-    exit 1
-fi
-if [ ! "$RADICLE_HOME" -ef "/proc/$$/fd/9" ]; then
-    echo "Error: Radicle home changed while acquiring ownership: $RADICLE_HOME" >&2
-    exit 1
-fi
-
 RADICLE_OWNER_UID=$(id -u)
+
+# GNU stat spells this `-c '%u %a'`; BSD stat (macOS) spells it `-f '%u %Lp'`.
+# Pick the dialect once instead of assuming the GNU one.
+if stat -f '%u' . >/dev/null 2>&1; then
+    stat_owner_and_mode() { stat -f '%u %Lp' "$1"; }
+else
+    stat_owner_and_mode() { stat -c '%u %a' "$1"; }
+fi
 
 require_owned_directory() {
     local path=$1
@@ -64,8 +59,10 @@ require_owned_directory() {
         echo "Error: expected non-symlink directory: $path" >&2
         exit 1
     fi
-    if [ "$(stat -c '%u' -- "$path")" != "$RADICLE_OWNER_UID" ] || \
-       [ "$(stat -c '%a' -- "$path")" != "$mode" ]; then
+    read -r actual_uid actual_mode <<EOF
+$(stat_owner_and_mode "$path")
+EOF
+    if [ "$actual_uid" != "$RADICLE_OWNER_UID" ] || [ "$actual_mode" != "$mode" ]; then
         echo "Error: $path must be owned by uid $RADICLE_OWNER_UID with mode $mode" >&2
         exit 1
     fi
@@ -78,8 +75,10 @@ require_owned_file() {
         echo "Error: expected non-symlink regular file: $path" >&2
         exit 1
     fi
-    if [ "$(stat -c '%u' -- "$path")" != "$RADICLE_OWNER_UID" ] || \
-       [ "$(stat -c '%a' -- "$path")" != "$mode" ]; then
+    read -r actual_uid actual_mode <<EOF
+$(stat_owner_and_mode "$path")
+EOF
+    if [ "$actual_uid" != "$RADICLE_OWNER_UID" ] || [ "$actual_mode" != "$mode" ]; then
         echo "Error: $path must be owned by uid $RADICLE_OWNER_UID with mode $mode" >&2
         exit 1
     fi
@@ -88,7 +87,7 @@ require_owned_file() {
 require_owned_directory "$RADICLE_HOME" 700
 require_owned_directory "$RADICLE_HOME/keys" 700
 require_owned_file "$RADICLE_HOME/keys/radicle" 600
-if [ "$(stat -c '%u' -- "$RADICLE_HOME/keys/radicle.pub")" != "$RADICLE_OWNER_UID" ]; then
+if [ "$(stat_owner_and_mode "$RADICLE_HOME/keys/radicle.pub" | cut -d' ' -f1)" != "$RADICLE_OWNER_UID" ]; then
     echo "Error: $RADICLE_HOME/keys/radicle.pub must be owned by uid $RADICLE_OWNER_UID" >&2
     exit 1
 fi
