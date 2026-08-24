@@ -33,7 +33,6 @@ contract IntexNFT1155Erc4906Test is Test {
         nft.grantRole(nft.SETTLEMENT_ROLE(), bridger);
         nft.grantRole(nft.PROMIS_ROLE(), bridger);
         nft.grantRole(nft.GEM_ROLE(), bridger);
-        nft.grantRole(nft.SYSTEM_RELAYER_ROLE(), bridger);
         vm.stopPrank();
         (iTok, sTok) = nft.tokenIds(SERIES_ID);
     }

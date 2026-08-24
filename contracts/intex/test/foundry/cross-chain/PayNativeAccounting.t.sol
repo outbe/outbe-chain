@@ -68,9 +68,7 @@ contract PayNativeAccountingTest is CrossChainTest {
         StubAuction stubAuction = new StubAuction();
         bnbRouter.wire(address(stubAuction), address(intex), admin);
 
-        // `crosschainBurn` is `RELAYER_ROLE`-gated and additionally requires `SYSTEM_RELAYER_ROLE` once the
-        // series is Called, so the adapter needs both roles on the token.
-        intex.grantRole(intex.SYSTEM_RELAYER_ROLE(), address(nftBridge));
+        // `crosschainBurn` is `RELAYER_ROLE`-gated, so the adapter needs it on the token.
         intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
 

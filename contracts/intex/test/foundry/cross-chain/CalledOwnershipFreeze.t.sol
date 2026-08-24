@@ -31,7 +31,6 @@ contract CalledOwnershipFreezeTest is CrossChainTest {
         nftBridge.setRemoteMessenger(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(0xD57)));
 
         intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
-        intex.grantRole(intex.SYSTEM_RELAYER_ROLE(), address(nftBridge));
 
         intex.createSeries(CreateSeriesLib.params(WORLDWIDE_DAY, 10_000, 1 days));
         intex.mint(holder, 10, SERIES_ID);

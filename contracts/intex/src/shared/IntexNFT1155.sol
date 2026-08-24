@@ -33,10 +33,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     bytes32 public constant PROMIS_ROLE = keccak256("PROMIS_ROLE");
     /// @notice Gem factory role; allowed to call `parkIntex`.
     bytes32 public constant GEM_ROLE = keccak256("GEM_ROLE");
-    /// @notice Role the NFT bridge holds, so a holder can still carry their own balance during `Called`.
-    /// @dev Holders of this role can `crosschainBurn` even while the series is `Called`. Regular `RELAYER_ROLE`
-    ///      can only `crosschainBurn` while the series is `Qualified`.
-    bytes32 public constant SYSTEM_RELAYER_ROLE = keccak256("SYSTEM_RELAYER_ROLE");
 
     /// @dev Domain prefix for `settledTokenId` derivation; isolates Settled ids from the
     ///      issued token-id space.
@@ -295,8 +291,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     ///      - Settled token ids are soulbound — always reverts.
     ///      - Series states `Issued` and `Qualified`: bridge allowed for `RELAYER_ROLE`
     ///        (voluntary, holder-initiated moves while the series is tradable).
-    ///      - Series state `Called`: bridge allowed only for `SYSTEM_RELAYER_ROLE`, and only when the
-    ///        destination holder is the source holder — ownership is frozen once a series is Called.
+    ///      - Series state `Called`: allowed only when the destination holder is the source holder —
+    ///        ownership is frozen once a series is Called — and only inside the call window.
     function crosschainBurn(address from, address to, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.status == IIntexNFT1155.IntexStatus.Settled) {
@@ -306,9 +302,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         if (from == address(0)) revert ZeroAddress("from", from);
 
         if (data.state == IIntexNFT1155.IntexState.Called) {
-            if (!hasRole(SYSTEM_RELAYER_ROLE, msg.sender)) {
-                revert BridgeStateForbidden(tokenId, uint8(data.state));
-            }
             // A bridge hop that changes holder is a transfer, which Called forbids.
             if (to != from) revert TransferOnCalledForbidden(tokenId);
             // Bridge moves are confined to the call window: once `calledAt + callTrigger.callNoticePeriod`
@@ -328,8 +321,8 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IERC1155Bridgeable
-    /// @dev Bridge crosschainMint mirrors `crosschainBurn`. Same state gates apply: `Issued`/`Qualified`
-    ///      are open to `RELAYER_ROLE`, `Called` is reserved for `SYSTEM_RELAYER_ROLE`.
+    /// @dev Bridge crosschainMint mirrors `crosschainBurn`: `RELAYER_ROLE` throughout, and inside the
+    ///      call window a Called series may still be minted into so a bridged balance lands.
     function crosschainMint(address to, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
         if (to == address(0)) revert ZeroAddress("to", to);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
@@ -339,9 +332,6 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         if (data.issuedAt == 0) revert NonexistentToken(tokenId);
 
         if (data.state == IIntexNFT1155.IntexState.Called) {
-            if (!hasRole(SYSTEM_RELAYER_ROLE, msg.sender)) {
-                revert BridgeStateForbidden(tokenId, uint8(data.state));
-            }
             // Mirror of `crosschainBurn`: no bridge-in past the settlement deadline.
             uint32 derivedDeadline = data.calledAt + data.callTrigger.callNoticePeriod;
             if (block.timestamp > derivedDeadline) {

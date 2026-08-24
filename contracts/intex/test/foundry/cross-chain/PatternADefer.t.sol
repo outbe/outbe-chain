@@ -98,9 +98,8 @@ contract PatternADeferTest is CrossChainTest {
         stubAuction = new StubAuctionWithBids();
         bnbRouter.wire(address(stubAuction), address(intex), admin);
 
-        // The bridge burns on the local Intex: RELAYER_ROLE in general, SYSTEM_RELAYER_ROLE inside the call window.
+        // The bridge burns on the local Intex.
         intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
-        intex.grantRole(intex.SYSTEM_RELAYER_ROLE(), address(nftBridge));
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
 
         // Series so markCalled + holder enumeration work.

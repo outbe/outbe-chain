@@ -801,45 +801,6 @@ const grantRelayerRole = task(
   .setAction(lazy(grantRelayerRoleAction));
 
 // ============================================================================
-// Grant SYSTEM_RELAYER_ROLE (user bridging inside the call window)
-// ============================================================================
-
-const grantSystemRelayerRoleAction = async (args: GrantRelayerRoleArgs, hre: unknown) => {
-  const viem = await getViemForWire(hre);
-  const contractName = args.contract || "IntexNFT1155";
-
-  console.log(`Granting SYSTEM_RELAYER_ROLE on ${contractName} @ ${args.token} to ${args.adapter}...`);
-
-  const token = (await viem.getContractAt(contractName, args.token as `0x${string}`)) as {
-    read: {
-      SYSTEM_RELAYER_ROLE: () => Promise<`0x${string}`>;
-      hasRole: (args: [`0x${string}`, `0x${string}`]) => Promise<boolean>;
-    };
-    write: {
-      grantRole: (args: [`0x${string}`, `0x${string}`]) => Promise<`0x${string}`>;
-    };
-  };
-
-  const role = await token.read.SYSTEM_RELAYER_ROLE();
-  if (await token.read.hasRole([role, args.adapter as `0x${string}`])) {
-    console.log("✅ SYSTEM_RELAYER_ROLE already granted");
-    return;
-  }
-
-  const txHash = await sendAndWait(viem, () => token.write.grantRole([role, args.adapter as `0x${string}`]));
-  console.log(`✅ SYSTEM_RELAYER_ROLE granted. Tx: ${txHash}`);
-};
-
-const grantSystemRelayerRole = task(
-  "grant-system-relayer-role",
-  "Grant SYSTEM_RELAYER_ROLE on IntexNFT1155 to IntexNFT1155Bridge - without it no user can bridge a Called series",
-)
-  .addOption({ name: "token", description: "IntexNFT1155 contract address", defaultValue: "" })
-  .addOption({ name: "adapter", description: "IntexNFT1155Bridge to grant SYSTEM_RELAYER_ROLE to", defaultValue: "" })
-  .addOption({ name: "contract", description: "Contract name (default: IntexNFT1155)", defaultValue: "" })
-  .setAction(lazy(grantSystemRelayerRoleAction));
-
-// ============================================================================
 // Export
 // ============================================================================
 
@@ -854,5 +815,4 @@ export const wireTasks = [
   promisWire.build(),
   gemWire.build(),
   grantRelayerRole.build(),
-  grantSystemRelayerRole.build(),
 ];

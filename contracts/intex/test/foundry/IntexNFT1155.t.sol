@@ -71,12 +71,6 @@ contract IntexNFT1155Test is Test {
 
     function setUp() public {
         nft = DeployProxy.intexNFT1155(admin, bridger);
-        // Most existing bridge tests exercise both Qualified (user-driven) and Called (system)
-        // bridge paths; granting SYSTEM_RELAYER_ROLE to `bridger` keeps role-orthogonal tests
-        // focused on state and balance semantics. Role-specific gating is covered separately.
-        vm.startPrank(admin);
-        nft.grantRole(nft.SYSTEM_RELAYER_ROLE(), bridger);
-        vm.stopPrank();
     }
 
     /// @dev Create a series with the standard parameters and a given call period.
@@ -333,13 +327,14 @@ contract IntexNFT1155Test is Test {
         assertEq(nft.balanceOf(user, TOKEN_ID_1), 7);
 
         nft.markCalled(SERIES_ID_1, uint32(block.timestamp));
-        // bridger holds SYSTEM_RELAYER_ROLE in setUp, so Called-state crosschainBurn is permitted.
         nft.crosschainBurn(user, user, TOKEN_ID_1, 2);
         assertEq(nft.balanceOf(user, TOKEN_ID_1), 5);
         vm.stopPrank();
     }
 
-    function test_CrosschainBurn_RevertsInCalled_ForPlainRelayer() public {
+    /// @dev In Called the gate is the holder, not the caller: any relayer may move a balance, but only
+    ///      back to the same holder.
+    function test_CrosschainBurn_InCalled_RefusesAChangeOfHolder() public {
         address plainRelayer = address(0x9999);
         vm.startPrank(admin);
         nft.grantRole(nft.RELAYER_ROLE(), plainRelayer);
@@ -352,12 +347,12 @@ contract IntexNFT1155Test is Test {
         vm.stopPrank();
 
         vm.prank(plainRelayer);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IIntexNFT1155.BridgeStateForbidden.selector, TOKEN_ID_1, uint8(IIntexNFT1155.IntexState.Called)
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.TransferOnCalledForbidden.selector, TOKEN_ID_1));
+        nft.crosschainBurn(user, user2, TOKEN_ID_1, 1);
+
+        vm.prank(plainRelayer);
         nft.crosschainBurn(user, user, TOKEN_ID_1, 1);
+        assertEq(nft.balanceOf(user, TOKEN_ID_1), 9, "the holder may still carry their own balance");
     }
 
     function test_ReadData() public {
