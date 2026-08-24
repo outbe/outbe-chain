@@ -5,7 +5,9 @@ import {console2} from "forge-std/console2.sol";
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-import {TokenDeployBase} from "./1_DeployRoutes.s.sol";
+import {RouteSpec} from "./routes/BaseRoute.sol";
+import {UsdtRoute} from "./routes/UsdtRoute.sol";
+import {WcoenRoute} from "./routes/WcoenRoute.sol";
 import {ERC7786TokenBridge} from "../src/ERC7786TokenBridge.sol";
 
 /// @dev Sends tokens across one route, in either direction. The bridge address is derived from CREATE3 and the token
@@ -14,7 +16,7 @@ import {ERC7786TokenBridge} from "../src/ERC7786TokenBridge.sol";
 ///
 /// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATEX_ADDRESS`, `ROUTE` ("usdt" | "wcoen"),
 ///   `DEST_CHAIN_ID`, `RECIPIENT`, `SEND_AMOUNT_LD` (in the token's own decimals).
-contract Send is TokenDeployBase {
+contract Send is UsdtRoute, WcoenRoute {
     error InsufficientTokenBalance(address signer, uint256 balance, uint256 required);
     error InsufficientNativeBalance(address signer, uint256 balance, uint256 required);
     error UnknownRoute(string route);
@@ -23,13 +25,12 @@ contract Send is TokenDeployBase {
         address signer = _deployer();
         address createX = vm.envAddress("CREATEX_ADDRESS");
         string memory salt = vm.envString("CONTRACT_SALT");
-        Route route = _route(vm.envString("ROUTE"));
 
         uint32 destinationDomain = _toDomain(vm.envUint("DEST_CHAIN_ID"));
         address recipient = vm.envAddress("RECIPIENT");
         uint256 amount = vm.envUint("SEND_AMOUNT_LD");
 
-        ERC7786TokenBridge bridge = ERC7786TokenBridge(_bridgeAddress(createX, salt, route));
+        ERC7786TokenBridge bridge = ERC7786TokenBridge(_bridgeAddress(createX, salt, _spec(vm.envString("ROUTE"))));
         _requireCode(address(bridge));
         IERC20 token = bridge.token();
 
@@ -52,10 +53,11 @@ contract Send is TokenDeployBase {
         console2.log("  native fee:", nativeFee);
     }
 
-    function _route(string memory route) internal pure returns (Route) {
+    /// @dev The one place that maps the `ROUTE` env value onto a route.
+    function _spec(string memory route) internal pure returns (RouteSpec memory) {
         bytes32 hash = keccak256(bytes(route));
-        if (hash == keccak256("usdt")) return Route.USDT;
-        if (hash == keccak256("wcoen")) return Route.WCOEN;
+        if (hash == keccak256("usdt")) return usdtSpec();
+        if (hash == keccak256("wcoen")) return wcoenSpec();
         revert UnknownRoute(route);
     }
 }

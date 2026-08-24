@@ -22,7 +22,7 @@ import {ConfigureRemotes} from "./2_ConfigureRemotes.s.sol";
 ///
 /// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `BRIDGE_ADDRESS`, `OUTBE_CHAIN_ID`, `EXTERNAL_CHAIN_ID`.
 /// Optional env: `CREATEX_ADDRESS`, `OWNER_ADDRESS`, `ALLOW_EOA_OWNER`, `REMOTE_CHAIN_IDS`,
-///   `EXTERNAL_USDT_TOKEN`, `OUTBE_WCOEN_TOKEN`, `INITIAL_MINT_AMOUNT`, `INITIAL_MINT_RECIPIENT`.
+///   `INITIAL_MINT_AMOUNT`, `INITIAL_MINT_RECIPIENT`.
 contract DeployAll is DeployCreateXDeterministic, DeployRoutes, ConfigureRemotes {
     function run() public override(DeployCreateXDeterministic, DeployRoutes, ConfigureRemotes) {
         string memory salt = vm.envString("CONTRACT_SALT");
@@ -37,10 +37,10 @@ contract DeployAll is DeployCreateXDeterministic, DeployRoutes, ConfigureRemotes
         if (createX == address(0)) createX = deployCreateX(salt);
 
         console2.log("[2/4] USDT route...");
-        (address usdt, address usdtBridge) = deployRoute(createX, salt, Route.USDT);
+        (address usdt, address usdtBridge) = deployUsdt(createX, salt);
 
         console2.log("[3/4] WCOEN route...");
-        (address wcoen, address wcoenBridge) = deployRoute(createX, salt, Route.WCOEN);
+        (address wcoen, address wcoenBridge) = deployWcoen(createX, salt);
 
         console2.log("[4/4] Configure remotes...");
         configureRemotes(createX, salt);

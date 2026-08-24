@@ -6,16 +6,18 @@ import {console2} from "forge-std/console2.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
-import {TokenDeployBase} from "./1_DeployRoutes.s.sol";
+import {RouteSpec} from "./routes/BaseRoute.sol";
+import {UsdtRoute} from "./routes/UsdtRoute.sol";
+import {WcoenRoute} from "./routes/WcoenRoute.sol";
 import {ERC7786TokenBridge} from "../src/ERC7786TokenBridge.sol";
 
-/// @dev Registers the matching bridge on every remote chain, for both routes. Bridges share one CREATE3 address
+/// @dev Registers the matching bridge on every remote chain, for every route. Bridges share one CREATE3 address
 ///      across chains, so the remote address equals the local one — `REMOTE_CHAIN_IDS` lists chain ids only, and the
 ///      same list can be used unchanged on every chain (the local id is skipped).
 ///
 /// Required env: `DEPLOYER_PK`, `CONTRACT_SALT`, `CREATEX_ADDRESS`, `OUTBE_CHAIN_ID`.
 /// Optional env: `REMOTE_CHAIN_IDS` (csv; no-op when unset).
-contract ConfigureRemotes is TokenDeployBase {
+contract ConfigureRemotes is UsdtRoute, WcoenRoute {
     function run() public virtual {
         string memory salt = vm.envString("CONTRACT_SALT");
         address createX = vm.envAddress("CREATEX_ADDRESS");
@@ -27,12 +29,12 @@ contract ConfigureRemotes is TokenDeployBase {
 
     function configureRemotes(address createX, string memory salt) public {
         uint256[] memory remotes = vm.envOr("REMOTE_CHAIN_IDS", ",", new uint256[](0));
-        _wire(createX, salt, Route.USDT, remotes);
-        _wire(createX, salt, Route.WCOEN, remotes);
+        _wire(createX, salt, usdtSpec(), remotes);
+        _wire(createX, salt, wcoenSpec(), remotes);
     }
 
-    function _wire(address createX, string memory salt, Route route, uint256[] memory remotes) internal {
-        address local = _bridgeAddress(createX, salt, route);
+    function _wire(address createX, string memory salt, RouteSpec memory spec, uint256[] memory remotes) internal {
+        address local = _bridgeAddress(createX, salt, spec);
         _requireCode(local);
 
         address owner = Ownable(local).owner();
@@ -51,7 +53,7 @@ contract ConfigureRemotes is TokenDeployBase {
             if (!_shouldBroadcastOwnerCall(_deployer(), owner, local, data, "Configure remote bridge")) continue;
 
             ERC7786TokenBridge(local).setRemoteBridge(domain, remoteInterop);
-            console2.log("  wired remote chainId:", remotes[i]);
+            console2.log(string.concat("  ", spec.tokenLabel, " wired to chainId:"), remotes[i]);
         }
     }
 }

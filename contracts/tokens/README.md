@@ -46,19 +46,22 @@ The property holds while all of these hold:
 3. the same factory address: either `CREATEX_ADDRESS` pinned, or unchanged compiler settings (`solc`,
    `optimizer_runs`, `via_ir`, `evm_version`, `bytecode_hash`, `cbor_metadata` all feed the factory's own address);
 4. `0x4e59b4488CE4Bd6E1BdD52D4bC0EE4Bf9E1C3A55` (the deterministic CREATE2 factory) present on every chain;
-5. `EXTERNAL_USDT_TOKEN` / `OUTBE_WCOEN_TOKEN` unset for that route.
+5. `CANONICAL_USDT_TOKEN` / `CANONICAL_WCOEN_TOKEN` unset for that route.
+
+If a canonical token already exists and is not ours to place — the issuer's USDT on a real network — set
+`CANONICAL_USDT_TOKEN` and that route adopts it instead of deploying. Only that token's address is given up; the
+bridge address stays identical everywhere, because the token only enters the bridge's constructor arguments and
+CREATE3 ignores those.
 
 It does **not** depend on the owner, `BRIDGE_ADDRESS`, the bridge mode, the token metadata or the deployer's nonce.
-
-If a canonical token already exists on a chain (a real USDT on a real network), set `EXTERNAL_USDT_TOKEN` and that
-route uses it. Only the token half of the property is given up — the bridge address stays identical everywhere.
 
 ## Guards
 
 - The owner of the token and token bridge must be a contract (Safe/multisig) on both declared chains
   (`EXTERNAL_CHAIN_ID`, `OUTBE_CHAIN_ID`), unless `ALLOW_EOA_OWNER=true`.
-- The mock `USDT` is only deployed when the connected chain equals `EXTERNAL_CHAIN_ID` and `EXTERNAL_USDT_TOKEN` is
-  unset — a wrong `--rpc-url` reverts instead of deploying a fake token onto the wrong network.
+- Nothing is deployed onto a chain that is neither `EXTERNAL_CHAIN_ID` nor `OUTBE_CHAIN_ID`. A wrong `--rpc-url`
+  reverts with `UndeclaredChain` — without it an unrecognised chain would count as "not Outbe", i.e. as the external
+  end of every route, and a full set of contracts including the mintable USDT mock would land on it.
 - When the owner is a Safe, the owner-only calls are not broadcast: the scripts print `to` / `value` / `data` for you
   to submit through the Safe. Re-running afterwards verifies the result and sends nothing.
 
@@ -87,6 +90,18 @@ forge script script/DeployAll.s.sol:DeployAll --rpc-url outbe-testnet --broadcas
 available as `script/0_DeployCreateX.s.sol`, `script/1_DeployRoutes.s.sol`, `script/2_ConfigureRemotes.s.sol`
 (`mise run deploy-createx` / `deploy-routes` / `configure-remotes`).
 
+Script layout:
+
+| file | role |
+|---|---|
+| `routes/BaseRoute.sol` | route-agnostic: guards, salts, address prediction, the deploy sequence |
+| `routes/UsdtRoute.sol` | everything specific to USDT — labels, which side is canonical, metadata, dev mock |
+| `routes/WcoenRoute.sol` | the same for WCOEN |
+| `1_DeployRoutes.s.sol` | assembles the routes and deploys them |
+
+Adding a token is a new file under `routes/` plus two lines in the assembler — the shared code does not change. The
+salt labels in each route file are part of the CREATE3 address: editing one relocates that token everywhere.
+
 **Simulate first.** Without `--broadcast` the scripts still print the four addresses. Run that on every chain and
 confirm the addresses match before sending anything — the cheapest possible proof that the deployment is coherent.
 
@@ -111,7 +126,7 @@ with the deployment. The approval step follows the bridge's own mode: lock/unloc
 
 See `.env.example`. Required for a deploy: `NETWORK`, `DEPLOYER_PK`, `CONTRACT_SALT`, `BRIDGE_ADDRESS`, `OUTBE_CHAIN_ID`,
 `EXTERNAL_CHAIN_ID`. Optional: `OWNER_ADDRESS`, `ALLOW_EOA_OWNER`, `CREATEX_ADDRESS`, `REMOTE_CHAIN_IDS`,
-`EXTERNAL_USDT_TOKEN`, `OUTBE_WCOEN_TOKEN`, `INITIAL_MINT_AMOUNT`, `INITIAL_MINT_RECIPIENT`.
+`CANONICAL_USDT_TOKEN`, `CANONICAL_WCOEN_TOKEN`, `INITIAL_MINT_AMOUNT`, `INITIAL_MINT_RECIPIENT`.
 
 Token and bridge addresses are computed, never configured — they only appear in the scripts' output.
 

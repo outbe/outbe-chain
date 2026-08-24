@@ -4,10 +4,11 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 
 import {CreateX} from "../../script/0_DeployCreateX.s.sol";
-import {TokenDeployBase} from "../../script/1_DeployRoutes.s.sol";
+import {RouteSpec, BaseRoute} from "../../script/routes/BaseRoute.sol";
 import {DeployAll} from "../../script/DeployAll.s.sol";
 import {ConfigurableERC7802} from "../../src/ConfigurableERC7802.sol";
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
+import {USDT} from "../../src/native/USDT.sol";
 import {MockERC7786Bridge} from "../mocks/MockERC7786Bridge.sol";
 
 contract ContractOwnerMock {}
@@ -17,12 +18,23 @@ contract DeployHarness is DeployAll {
         _requireContractOwnerOnGuardedChain(owner, allowEoaOwner);
     }
 
-    function exposedRequireMockUSDTDeploymentAllowed() external view {
-        _requireMockUSDTDeploymentAllowed();
+    function exposedRequireDeclaredChain() external view {
+        _requireDeclaredChain();
     }
 
-    function exposedBridgeAddress(address createX, string memory salt, Route route) external view returns (address) {
-        return _bridgeAddress(createX, salt, route);
+    function exposedDeployRoute(address createX, string memory salt, RouteSpec memory spec, bytes memory tokenInitCode)
+        external
+        returns (address, address)
+    {
+        return _deployRoute(createX, salt, spec, tokenInitCode);
+    }
+
+    function exposedBridgeAddress(address createX, string memory salt, RouteSpec memory spec)
+        external
+        view
+        returns (address)
+    {
+        return _bridgeAddress(createX, salt, spec);
     }
 
     /// @dev The harness is the deployer, so it can make the owner-only `setTokenBridge` call itself. Under a real
@@ -45,6 +57,8 @@ contract DeployGuardsTest is Test {
     uint256 internal constant LOCAL_CHAIN = 31_337;
 
     address internal constant HUB = 0x0000000000000000000000000000000000B41D6E;
+    /// @dev Stands in for a canonical token that already exists on chain — see the adoption test.
+    address internal constant ADOPTED_USDT = address(uint160(0xADD7ED));
     string internal constant SALT = "TEST_V1";
 
     DeployHarness internal deploy;
@@ -59,7 +73,10 @@ contract DeployGuardsTest is Test {
 
         // The hub only needs code for `_requireCode`. Deploying a mock and writing its address into the environment
         // would put a computed value into shared state, which is exactly what the note above forbids.
+        vm.setEnv("ADOPTED_USDT_TOKEN", "0x0000000000000000000000000000000000ADD7ED");
+
         vm.etch(HUB, address(new MockERC7786Bridge(EXTERNAL_CHAIN)).code);
+        vm.etch(ADOPTED_USDT, address(new USDT()).code);
 
         deploy = new DeployHarness();
         createX = new CreateX();
@@ -73,9 +90,7 @@ contract DeployGuardsTest is Test {
         vm.chainId(EXTERNAL_CHAIN);
         address owner = makeAddr("owner");
 
-        vm.expectRevert(
-            abi.encodeWithSelector(TokenDeployBase.OwnerMustBeMultisigContract.selector, owner, EXTERNAL_CHAIN)
-        );
+        vm.expectRevert(abi.encodeWithSelector(BaseRoute.OwnerMustBeMultisigContract.selector, owner, EXTERNAL_CHAIN));
         deploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
     }
 
@@ -83,9 +98,7 @@ contract DeployGuardsTest is Test {
         vm.chainId(OUTBE_CHAIN);
         address owner = makeAddr("owner");
 
-        vm.expectRevert(
-            abi.encodeWithSelector(TokenDeployBase.OwnerMustBeMultisigContract.selector, owner, OUTBE_CHAIN)
-        );
+        vm.expectRevert(abi.encodeWithSelector(BaseRoute.OwnerMustBeMultisigContract.selector, owner, OUTBE_CHAIN));
         deploy.exposedRequireContractOwnerOnGuardedChain(owner, false);
     }
 
@@ -115,28 +128,46 @@ contract DeployGuardsTest is Test {
         deploy.exposedRequireContractOwnerOnGuardedChain(makeAddr("owner"), true);
     }
 
-    // === Mock USDT guard ===
-    // The mock stands in for a canonical USDT the external chain lacks, so it may only land on the chain declared as
-    // the external end of the route — never on whatever chain the RPC happens to point at.
+    // === Declared-chain guard ===
+    // A wrong `--rpc-url` must not deploy anything. Without this an unrecognised chain counts as "not Outbe", i.e. as
+    // the external end of every route, and a full set of contracts — including the mintable USDT mock — lands on it.
 
-    function test_MockUSDTDeploymentGuard_AllowsDeclaredExternalChain() public {
+    function test_DeclaredChainGuard_AllowsExternalChain() public {
         vm.chainId(EXTERNAL_CHAIN);
 
-        deploy.exposedRequireMockUSDTDeploymentAllowed();
+        deploy.exposedRequireDeclaredChain();
     }
 
-    function test_MockUSDTDeploymentGuard_RevertsOnUndeclaredChain() public {
+    function test_DeclaredChainGuard_AllowsOutbe() public {
+        vm.chainId(OUTBE_CHAIN);
+
+        deploy.exposedRequireDeclaredChain();
+    }
+
+    function test_DeclaredChainGuard_RevertsOnUndeclaredChain() public {
         vm.chainId(UNDECLARED_CHAIN);
 
-        vm.expectRevert(abi.encodeWithSelector(TokenDeployBase.MockUSDTDeploymentNotAllowed.selector, UNDECLARED_CHAIN));
-        deploy.exposedRequireMockUSDTDeploymentAllowed();
+        vm.expectRevert(abi.encodeWithSelector(BaseRoute.UndeclaredChain.selector, UNDECLARED_CHAIN));
+        deploy.exposedRequireDeclaredChain();
     }
 
-    function test_MockUSDTDeploymentGuard_RevertsOnMainnet() public {
+    function test_DeclaredChainGuard_RevertsOnMainnet() public {
         vm.chainId(1);
 
-        vm.expectRevert(abi.encodeWithSelector(TokenDeployBase.MockUSDTDeploymentNotAllowed.selector, uint256(1)));
-        deploy.exposedRequireMockUSDTDeploymentAllowed();
+        vm.expectRevert(abi.encodeWithSelector(BaseRoute.UndeclaredChain.selector, uint256(1)));
+        deploy.exposedRequireDeclaredChain();
+    }
+
+    /// @dev The guard has to bite through the deploy entrypoint, not only in isolation — that is where a wrong
+    ///      `--rpc-url` actually arrives.
+    function test_DeployRoute_RevertsOnUndeclaredChain() public {
+        vm.chainId(UNDECLARED_CHAIN);
+
+        vm.expectRevert(abi.encodeWithSelector(BaseRoute.UndeclaredChain.selector, UNDECLARED_CHAIN));
+        deploy.deployUsdt(address(createX), SALT);
+
+        vm.expectRevert(abi.encodeWithSelector(BaseRoute.UndeclaredChain.selector, UNDECLARED_CHAIN));
+        deploy.deployWcoen(address(createX), SALT);
     }
 
     // === Deterministic addresses ===
@@ -148,20 +179,16 @@ contract DeployGuardsTest is Test {
         uint256 snapshot = vm.snapshotState();
 
         vm.chainId(EXTERNAL_CHAIN);
-        (address extUsdt, address extUsdtBridge) =
-            deploy.deployRoute(address(createX), SALT, TokenDeployBase.Route.USDT);
-        (address extWcoen, address extWcoenBridge) =
-            deploy.deployRoute(address(createX), SALT, TokenDeployBase.Route.WCOEN);
+        (address extUsdt, address extUsdtBridge) = deploy.deployUsdt(address(createX), SALT);
+        (address extWcoen, address extWcoenBridge) = deploy.deployWcoen(address(createX), SALT);
         bytes memory extUsdtCode = extUsdt.code;
         assertEq(uint8(ERC7786TokenBridge(extUsdtBridge).mode()), uint8(ERC7786TokenBridge.TokenBridgeMode.LockUnlock));
 
         vm.revertToState(snapshot);
 
         vm.chainId(OUTBE_CHAIN);
-        (address outUsdt, address outUsdtBridge) =
-            deploy.deployRoute(address(createX), SALT, TokenDeployBase.Route.USDT);
-        (address outWcoen, address outWcoenBridge) =
-            deploy.deployRoute(address(createX), SALT, TokenDeployBase.Route.WCOEN);
+        (address outUsdt, address outUsdtBridge) = deploy.deployUsdt(address(createX), SALT);
+        (address outWcoen, address outWcoenBridge) = deploy.deployWcoen(address(createX), SALT);
         assertEq(uint8(ERC7786TokenBridge(outUsdtBridge).mode()), uint8(ERC7786TokenBridge.TokenBridgeMode.BurnMint));
 
         assertEq(extUsdt, outUsdt, "USDT token address differs between chains");
@@ -174,8 +201,8 @@ contract DeployGuardsTest is Test {
 
     function test_Routes_AreDistinct() public {
         vm.chainId(EXTERNAL_CHAIN);
-        (address usdt, address usdtBridge) = deploy.deployRoute(address(createX), SALT, TokenDeployBase.Route.USDT);
-        (address wcoen, address wcoenBridge) = deploy.deployRoute(address(createX), SALT, TokenDeployBase.Route.WCOEN);
+        (address usdt, address usdtBridge) = deploy.deployUsdt(address(createX), SALT);
+        (address wcoen, address wcoenBridge) = deploy.deployWcoen(address(createX), SALT);
 
         assertTrue(usdt != usdtBridge && usdt != wcoen && usdt != wcoenBridge, "USDT address collides");
         assertTrue(usdtBridge != wcoen && usdtBridge != wcoenBridge, "USDT bridge address collides");
@@ -185,15 +212,33 @@ contract DeployGuardsTest is Test {
     function test_Salt_ChangesAddresses() public {
         vm.chainId(EXTERNAL_CHAIN);
 
-        address a = deploy.exposedBridgeAddress(address(createX), "SALT_A", TokenDeployBase.Route.USDT);
-        address b = deploy.exposedBridgeAddress(address(createX), "SALT_B", TokenDeployBase.Route.USDT);
+        address a = deploy.exposedBridgeAddress(address(createX), "SALT_A", deploy.usdtSpec());
+        address b = deploy.exposedBridgeAddress(address(createX), "SALT_B", deploy.usdtSpec());
 
         assertTrue(a != b, "salt does not change the address");
     }
 
+    /// @dev On a real network the canonical USDT already exists at the issuer's address, so the script must adopt it
+    ///      instead of deploying a mock next to it — and the bridge address must not move because of that.
+    ///      The spec is returned by value, so the test can point it at a fixed env var rather than writing a computed
+    ///      address into the shared environment.
+    function test_CanonicalToken_AdoptsConfiguredAddress() public {
+        vm.chainId(EXTERNAL_CHAIN);
+
+        RouteSpec memory spec = deploy.usdtSpec();
+        address predictedBridge = deploy.exposedBridgeAddress(address(createX), SALT, spec);
+        spec.canonicalTokenEnv = "ADOPTED_USDT_TOKEN";
+
+        (address token, address tokenBridge) = deploy.exposedDeployRoute(address(createX), SALT, spec, "");
+
+        assertEq(token, ADOPTED_USDT, "did not adopt the configured canonical token");
+        assertEq(tokenBridge, predictedBridge, "bridge address moved because of the adopted token");
+        assertEq(address(ERC7786TokenBridge(tokenBridge).token()), ADOPTED_USDT, "bridge points at the wrong token");
+    }
+
     function test_Synthetic_IsWiredToBridge() public {
         vm.chainId(OUTBE_CHAIN);
-        (address usdt, address usdtBridge) = deploy.deployRoute(address(createX), SALT, TokenDeployBase.Route.USDT);
+        (address usdt, address usdtBridge) = deploy.deployUsdt(address(createX), SALT);
 
         assertEq(ConfigurableERC7802(usdt).tokenBridge(), usdtBridge, "synthetic not wired to its bridge");
     }
@@ -201,9 +246,8 @@ contract DeployGuardsTest is Test {
     /// @dev CreateX reverts on a re-used salt, so a re-run is only safe because of the code-existence guards.
     function test_Rerun_IsNoop() public {
         vm.chainId(EXTERNAL_CHAIN);
-        (address usdt, address usdtBridge) = deploy.deployRoute(address(createX), SALT, TokenDeployBase.Route.USDT);
-        (address usdtAgain, address usdtBridgeAgain) =
-            deploy.deployRoute(address(createX), SALT, TokenDeployBase.Route.USDT);
+        (address usdt, address usdtBridge) = deploy.deployUsdt(address(createX), SALT);
+        (address usdtAgain, address usdtBridgeAgain) = deploy.deployUsdt(address(createX), SALT);
 
         assertEq(usdt, usdtAgain);
         assertEq(usdtBridge, usdtBridgeAgain);
