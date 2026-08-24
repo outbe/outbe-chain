@@ -56,7 +56,14 @@ pub fn deployer_address() -> alloy_primitives::Address {
         .expect("deployer address is canonical")
 }
 
-pub fn deploy(repo: &Path, url: &str, chain_id: u64) -> Result<OriginContracts> {
+/// `remote_chain_ids` peers this chain's bridge with the chains named there. Empty
+/// leaves the deploy exactly as it was: the configure step is a no-op without it.
+pub fn deploy(
+    repo: &Path,
+    url: &str,
+    chain_id: u64,
+    remote_chain_ids: &[u64],
+) -> Result<OriginContracts> {
     let crosschain: PathBuf = repo.join("contracts/crosschain");
     let intex: PathBuf = repo.join("contracts/intex");
     let chain = chain_id.to_string();
@@ -92,6 +99,14 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64) -> Result<OriginContracts> 
         &crosschain,
         &["script", "script/DeployAll.s.sol:DeployAll"],
         &[
+            (
+                "REMOTE_CHAIN_IDS",
+                remote_chain_ids
+                    .iter()
+                    .map(u64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
             ("CONTRACT_SALT", SALT_VERSION.to_owned()),
             ("BRIDGE_OWNER", DEPLOYER_ADDRESS.to_owned()),
             ("CREATEX_ADDRESS", format!("{create_x:?}")),

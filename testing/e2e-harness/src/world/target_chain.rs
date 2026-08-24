@@ -169,6 +169,9 @@ impl TargetChain {
                 &crosschain,
                 &["script", "script/DeployAll.s.sol:DeployAll"],
                 &[
+                    // The bridge has to know the way home before anything is
+                    // addressed back to the committee.
+                    ("REMOTE_CHAIN_IDS", origin_chain_id.to_string()),
                     ("CONTRACT_SALT", SALT_VERSION.to_owned()),
                     ("BRIDGE_OWNER", DEPLOYER_ADDRESS.to_owned()),
                     ("CREATEX_ADDRESS", format!("{create_x:?}")),
