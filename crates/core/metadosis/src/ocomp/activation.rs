@@ -91,6 +91,7 @@ pub(crate) struct QuorumApplyContext<'a, 'storage> {
 }
 
 impl<'a, 'storage> QuorumApplyContext<'a, 'storage> {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) const fn new(
         storage: &'a StorageHandle<'storage>,
         scope: &'a ExecutionScope,

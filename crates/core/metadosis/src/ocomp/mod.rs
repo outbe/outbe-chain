@@ -23,6 +23,7 @@ pub mod views;
 pub mod vote;
 
 pub(crate) use index::ResponseDeadlineKey;
+pub(crate) use store::classify_retained_terminal;
 pub(crate) use profile::poc_schema_limits;
 #[cfg(test)]
 pub(crate) use terminal_index::terminal_entry_key;

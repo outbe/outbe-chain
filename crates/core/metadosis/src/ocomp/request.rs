@@ -403,7 +403,7 @@ fn build_and_commit_retry(
         .terminal
         .as_ref()
         .ok_or_else(|| storage_corruption_message("OCOMP retry source has no terminal evidence"))?;
-    super::store::classify_retained_terminal(
+    super::classify_retained_terminal(
         previous.status,
         terminal.outcome,
         terminal.completed_binding.is_some(),
