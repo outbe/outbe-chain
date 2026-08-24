@@ -31,6 +31,9 @@ const QUALIFICATION_PERIOD_SECS: u64 = 24 * 3600;
 const QUALIFICATION_MARGIN_SECS: u64 = 3600;
 /// Long enough for the chain to close a one-day gap, which it does per block.
 const CATCH_UP_TIMEOUT_SECS: u64 = 900;
+/// The catch-up ratchet moves a whole hour per block and stops before overshooting,
+/// so its last step lands one hour short. Ask for one step beyond what is needed.
+const RATCHET_STEP_SECS: u64 = 3600;
 /// The sweep runs in begin-block; a handful of blocks is plenty.
 const QUALIFY_SWEEP_TIMEOUT_SECS: u64 = 180;
 /// `IntexState::Qualified`.
@@ -205,7 +208,7 @@ fn advance_past_qualification(world: &mut World) {
         + QUALIFICATION_MARGIN_SECS;
 
     // The restart resumes the price feeder itself; only the catch-up is ours to await.
-    crate::features::ocomp::restart_committee_at_logical_time(world, target);
+    crate::features::ocomp::restart_committee_at_logical_time(world, target + RATCHET_STEP_SECS);
     wait_for_chain_time(world, port, target);
 }
 
@@ -442,7 +445,10 @@ fn call_trigger_holds(world: &mut World) {
             .expect("committee head timestamp")
             + DAY_SECS;
         crate::features::price_oracle::publish_controlled_quote(world, U256::from(call_price * 2));
-        crate::features::ocomp::restart_committee_at_logical_time(world, target);
+        crate::features::ocomp::restart_committee_at_logical_time(
+            world,
+            target + RATCHET_STEP_SECS,
+        );
         wait_for_chain_time(world, port, target);
     }
 }
