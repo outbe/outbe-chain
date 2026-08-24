@@ -325,7 +325,7 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
         (auction, target_router.clone(), "IntexAuction"),
         (escrow, target_router.clone(), "EscrowAdapter"),
         (nft.clone(), target_router, "IntexNFT1155"),
-        (nft.clone(), nft_bridge.clone(), "IntexNFT1155"),
+        (nft, nft_bridge, "IntexNFT1155"),
     ] {
         hardhat::task(
             intex,
@@ -340,17 +340,5 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
         )?;
     }
 
-    // A loopback target keeps its winners on the shared collection and never
-    // drives migration, so it skips the bridge-side wiring a remote target needs.
-    hardhat::task(
-        intex,
-        "grant-system-relayer-role",
-        &[
-            ("--token", nft),
-            ("--adapter", nft_bridge),
-            ("--contract", "IntexNFT1155".to_owned()),
-        ],
-        url,
-        chain_id,
-    )
+    Ok(())
 }
