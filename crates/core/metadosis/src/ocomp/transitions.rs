@@ -559,14 +559,15 @@ impl MetadosisContract<'_> {
         at_time: u64,
         schema_limits: &SchemaLimits,
         fsm_limits: JobFsmLimits,
-    ) -> Result<u64> {
+    ) -> Result<OcompExpiryDisposition> {
         (|| {
             if !matches!(
                 outer_transition.kind(),
                 OuterWwdTransitionKind::OcompRetryScheduled(OcompRetryCause::Conflicted)
+                    | OuterWwdTransitionKind::OcompAttemptsExhausted
             ) {
                 return Err(storage_corruption_message(
-                    "OCOMP conflict requires the typed conflicted-retry outer transition",
+                    "OCOMP conflict requires the typed conflicted-retry or attempts-exhausted outer transition",
                 ));
             }
             let mut state = self
@@ -677,6 +678,46 @@ impl MetadosisContract<'_> {
             self.write_ocomp_job_record(intent_id, &record, schema_limits)?;
             self.push_terminal_intent(wwd, intent_id, fsm_limits.max_terminal_records)?;
 
+            if projection.terminal_records == fsm_limits.max_terminal_records {
+                if !matches!(
+                    outer_transition.kind(),
+                    OuterWwdTransitionKind::OcompAttemptsExhausted
+                ) {
+                    return Err(storage_corruption_message(
+                        "terminal OCOMP conflict requires the attempts-exhausted outer transition",
+                    ));
+                }
+                let retained_lysis_budget = projection.retained_lysis_budget.ok_or_else(|| {
+                    storage_corruption_message("terminal OCOMP conflict has no retained Lysis budget")
+                })?;
+                if retained_lysis_budget != record.intent.frozen_metadosis_values.lysis_budget {
+                    return Err(storage_corruption_message(
+                        "terminal OCOMP conflict retained budget mismatch",
+                    ));
+                }
+                if self
+                    .read_ready_index()?
+                    .iter()
+                    .any(|key| key.worldwide_day == wwd)
+                {
+                    return Err(storage_corruption_message(
+                        "terminal no-retry WWD unexpectedly remains in READY index",
+                    ));
+                }
+                return Ok(OcompExpiryDisposition::TerminalNoRetry {
+                    next_pending_nonce: terminal.next_pending_nonce,
+                    retained_lysis_budget,
+                });
+            }
+
+            if !matches!(
+                outer_transition.kind(),
+                OuterWwdTransitionKind::OcompRetryScheduled(OcompRetryCause::Conflicted)
+            ) {
+                return Err(storage_corruption_message(
+                    "retryable OCOMP conflict requires the typed conflicted-retry outer transition",
+                ));
+            }
             commit_outer_transition(self, wwd, outer_transition, at_height)?;
             let ready_key = ReadyIndexKey::from_projection(projection)?;
             let mut ready_index = self.read_ready_index()?;
@@ -684,7 +725,9 @@ impl MetadosisContract<'_> {
             self.write_ocomp_state(&state)?;
             self.write_ready_index(&ready_index)?;
             self.remove_live_scheduler(intent_id)?;
-            Ok(terminal.next_pending_nonce)
+            Ok(OcompExpiryDisposition::RetryScheduled {
+                next_pending_nonce: terminal.next_pending_nonce,
+            })
         })()
     }
 

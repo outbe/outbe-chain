@@ -638,7 +638,9 @@ fn certified_conflict_is_terminal_for_the_old_job_and_requeues_the_same_budget()
                     fsm_limits,
                 )
                 .unwrap(),
-            1
+            OcompExpiryDisposition::RetryScheduled {
+                next_pending_nonce: 1
+            }
         );
 
         assert_eq!(contract.get_wwd_status(WWD).unwrap(), status::READY);

@@ -41,7 +41,9 @@ use crate::{
     schema::MetadosisContract,
 };
 
-use super::{profile::OcompRequestProfile, state::JobFsmLimits};
+use super::{
+    profile::OcompRequestProfile, state::JobFsmLimits, transitions::OcompExpiryDisposition,
+};
 
 /// Complete immutable consensus authority used by public LYSIS_V1 activation.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -82,6 +84,7 @@ pub(crate) struct QuorumApplyContext<'a, 'storage> {
     scope: &'a ExecutionScope,
     completed_transition: &'a OuterWwdTransition,
     conflict_transition: &'a OuterWwdTransition,
+    conflict_exhausted_transition: &'a OuterWwdTransition,
     current_height: u64,
     current_time: u64,
     limits: &'a SchemaLimits,
@@ -93,6 +96,7 @@ impl<'a, 'storage> QuorumApplyContext<'a, 'storage> {
         scope: &'a ExecutionScope,
         completed_transition: &'a OuterWwdTransition,
         conflict_transition: &'a OuterWwdTransition,
+        conflict_exhausted_transition: &'a OuterWwdTransition,
         current_height: u64,
         current_time: u64,
         limits: &'a SchemaLimits,
@@ -102,6 +106,7 @@ impl<'a, 'storage> QuorumApplyContext<'a, 'storage> {
             scope,
             completed_transition,
             conflict_transition,
+            conflict_exhausted_transition,
             current_height,
             current_time,
             limits,
@@ -309,7 +314,19 @@ fn commit_conflict(
     result_evidence_hash: B256,
     fsm_limits: JobFsmLimits,
 ) -> PrecompileResult<Bytes> {
-    let outer_transition = context.conflict_transition;
+    let projection = metadosis
+        .live_ocomp_fsm_state_by_intent(plan.binding().intent_id, context.limits, fsm_limits)?
+        .ok_or_else(|| storage_corruption_message("OCOMP conflict has no live job"))?
+        .projection();
+    let exhausts_attempts = projection
+        .terminal_records
+        .checked_add(1)
+        .is_some_and(|count| count == fsm_limits.max_terminal_records);
+    let outer_transition = if exhausts_attempts {
+        context.conflict_exhausted_transition
+    } else {
+        context.conflict_transition
+    };
     let current_height = context.current_height;
     let current_time = context.current_time;
     let limits = context.limits;
@@ -346,7 +363,7 @@ fn commit_conflict(
         terminal_receipt_hash,
         terminal_receipt: receipt,
     };
-    let next_pending_nonce = metadosis.commit_ocomp_conflict(
+    let disposition = metadosis.commit_ocomp_conflict(
         outer_transition,
         binding.intent_id,
         completed_binding,
@@ -356,14 +373,34 @@ fn commit_conflict(
         limits,
         fsm_limits,
     )?;
-    metadosis.emit(IMetadosis::OffchainJobConflicted {
-        intentId: binding.intent_id,
-        jobId: binding.job_id,
-        attempt: binding.attempt,
-        oldPendingNonce: plan.call_core().terminal_pending_nonce,
-        nextPendingNonce: next_pending_nonce,
-        resultDigest: binding.result_digest,
-    })?;
+    match disposition {
+        OcompExpiryDisposition::RetryScheduled { next_pending_nonce } => {
+            metadosis.emit(IMetadosis::OffchainJobConflicted {
+                intentId: binding.intent_id,
+                jobId: binding.job_id,
+                attempt: binding.attempt,
+                oldPendingNonce: plan.call_core().terminal_pending_nonce,
+                nextPendingNonce: next_pending_nonce,
+                resultDigest: binding.result_digest,
+            })?;
+        }
+        // No retry follows, so the day fails here rather than announcing a
+        // continuation nonce nothing will claim.
+        OcompExpiryDisposition::TerminalNoRetry {
+            retained_lysis_budget,
+            ..
+        } => {
+            crate::terminal::fail_exhausted_ocomp_day(
+                context.storage.clone(),
+                current_height,
+                context.scope,
+                projection.worldwide_day,
+                binding.intent_id,
+                retained_lysis_budget,
+                outer_transition,
+            )?;
+        }
+    }
     Ok(encode_activation_return(
         binding.activation_call_id,
         binding.result_digest,
