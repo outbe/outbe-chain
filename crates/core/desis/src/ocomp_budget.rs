@@ -12,7 +12,6 @@ use outbe_ocomp_protocol::receipts::desis_request_brief_hash;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 
-use crate::runtime;
 use crate::schema::ReferenceCurrencyPrice;
 
 /// Apply the day's immutable `auction_base` and return the canonical hash
@@ -28,9 +27,6 @@ pub fn apply_request_auction_base(
     green: bool,
 ) -> Result<B256> {
     let briefed_supply = if green { auction_base } else { U256::ZERO };
-    let supply_u128 = u128::try_from(briefed_supply).map_err(|_| {
-        PrecompileError::Revert("OCOMP auction_base exceeds Desis u128 supply".into())
-    })?;
     let brief_hash = desis_request_brief_hash(
         protocol_bundle_hash,
         worldwide_day.value(),
@@ -39,21 +35,22 @@ pub fn apply_request_auction_base(
         logical_anchor,
     )
     .map_err(|error| PrecompileError::Revert(format!("invalid OCOMP Desis brief hash: {error}")))?;
-    storage.with_checkpoint(|| {
-        runtime::record_brief(
-            storage.clone(),
-            worldwide_day,
-            supply_u128,
-            auction_entry_prices
-                .iter()
-                .map(|row| ReferenceCurrencyPrice {
-                    iso_code: row.reference_currency,
-                    entry_price_minor: row.entry_price_minor,
-                })
-                .collect(),
-            green,
-            logical_anchor,
-        )
-    })?;
+    // Same door as the settlement paths; only the overflow policy differs,
+    // because this receipt commits a hash a rejection could not fill.
+    crate::api::dispatch_auction_brief(
+        storage,
+        worldwide_day,
+        briefed_supply,
+        auction_entry_prices
+            .iter()
+            .map(|row| ReferenceCurrencyPrice {
+                iso_code: row.reference_currency,
+                entry_price_minor: row.entry_price_minor,
+            })
+            .collect(),
+        green,
+        logical_anchor,
+        crate::api::BriefOverflowPolicy::Reject,
+    )?;
     Ok(brief_hash)
 }

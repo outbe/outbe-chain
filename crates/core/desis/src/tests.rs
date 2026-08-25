@@ -65,6 +65,7 @@ fn brief_at(s: &StorageHandle, worldwide_day: WorldwideDay, supply_promis: u128,
             entry_price_rows(),
             green,
             NOW,
+            crate::api::BriefOverflowPolicy::CarryOver,
         )
         .unwrap(),
         AuctionBriefReceipt::Accepted
@@ -160,6 +161,7 @@ fn dispatch_auction_brief_records_the_brief() {
             entry_price_rows(),
             true,
             NOW,
+            crate::api::BriefOverflowPolicy::CarryOver,
         )
         .unwrap();
         assert_eq!(receipt, AuctionBriefReceipt::Accepted);
@@ -200,6 +202,7 @@ fn dispatch_auction_brief_records_a_red_day() {
             entry_price_rows(),
             false,
             NOW,
+            crate::api::BriefOverflowPolicy::CarryOver,
         )
         .unwrap();
         assert_eq!(receipt, AuctionBriefReceipt::Accepted);
@@ -455,6 +458,7 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
                 entry_price_rows(),
                 true,
                 NOW,
+                crate::api::BriefOverflowPolicy::CarryOver,
             )
             .unwrap(),
             AuctionBriefReceipt::Accepted
@@ -466,6 +470,7 @@ fn dispatch_auction_brief_duplicate_propagates_without_committed_failure_event()
             entry_price_rows(),
             true,
             NOW,
+            crate::api::BriefOverflowPolicy::CarryOver,
         )
         .is_err());
         let contract = s.contract::<DesisContract>();
@@ -497,6 +502,7 @@ fn dispatch_auction_brief_oversized_supply_returns_typed_full_carry_over() {
                 entry_price_rows(),
                 true,
                 NOW,
+                crate::api::BriefOverflowPolicy::CarryOver,
             )
             .unwrap(),
             AuctionBriefReceipt::RejectedToCarryOver {
@@ -537,6 +543,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
                 entry_price_rows(),
                 true,
                 NOW,
+                crate::api::BriefOverflowPolicy::CarryOver,
             )
             .unwrap(),
             AuctionBriefReceipt::Accepted
@@ -554,6 +561,7 @@ fn auction_domain_boundary_accepts_u128_max_and_rejects_the_next_value() {
                 entry_price_rows(),
                 true,
                 NOW,
+                crate::api::BriefOverflowPolicy::CarryOver,
             )
             .unwrap(),
             AuctionBriefReceipt::RejectedToCarryOver {
@@ -590,6 +598,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
             entry_price_rows(),
             true,
             NOW,
+            crate::api::BriefOverflowPolicy::CarryOver,
         )
         .is_err());
 
@@ -601,6 +610,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
             entry_price_rows(),
             true,
             NOW,
+            crate::api::BriefOverflowPolicy::CarryOver,
         )
         .is_err());
 
@@ -616,6 +626,7 @@ fn invalid_day_duplicate_and_anchor_overflow_are_errors_without_business_events(
             entry_price_rows(),
             true,
             late,
+            crate::api::BriefOverflowPolicy::CarryOver,
         )
         .is_err());
     });
@@ -636,6 +647,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
                 entry_price_rows(),
                 true,
                 NOW,
+                crate::api::BriefOverflowPolicy::CarryOver,
             )
         });
         assert_eq!(result.unwrap(), AuctionBriefReceipt::Accepted);
@@ -654,6 +666,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
                 entry_price_rows(),
                 true,
                 NOW,
+                crate::api::BriefOverflowPolicy::CarryOver,
             )
         });
         assert!(result.is_err(), "mutation {operation} must propagate");
@@ -674,6 +687,7 @@ fn auction_brief_rolls_back_every_partial_write_and_event_fault() {
             entry_price_rows(),
             true,
             NOW,
+            crate::api::BriefOverflowPolicy::CarryOver,
         )
     });
     assert!(result.is_err());
@@ -696,6 +710,7 @@ fn brief_anchor_at(now: u64) -> u64 {
                 entry_price_rows(),
                 true,
                 now,
+                crate::api::BriefOverflowPolicy::CarryOver,
             )
             .unwrap(),
             AuctionBriefReceipt::Accepted
@@ -733,6 +748,7 @@ fn schedule_starts_a_deferred_brief_at_the_next_midnight() {
                 entry_price_rows(),
                 true,
                 noon,
+                crate::api::BriefOverflowPolicy::CarryOver,
             )
             .unwrap(),
             AuctionBriefReceipt::Accepted
@@ -1908,6 +1924,7 @@ fn open_clearing_priced(s: &StorageHandle, units: u128, references: &[u16]) {
             rows,
             true,
             NOW,
+            crate::api::BriefOverflowPolicy::CarryOver,
         )
         .unwrap(),
         AuctionBriefReceipt::Accepted
@@ -2066,6 +2083,7 @@ fn a_day_nobody_could_price_is_cancelled_rather_than_failed() {
                 Vec::new(),
                 true,
                 NOW,
+                crate::api::BriefOverflowPolicy::CarryOver,
             )
             .unwrap(),
             AuctionBriefReceipt::Accepted

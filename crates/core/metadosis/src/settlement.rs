@@ -7,8 +7,6 @@ use outbe_desis::ReferenceCurrencyPrice;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::Result,
-    storage::StorageHandle,
-    time::{previous_date_key, timestamp_to_date_key},
 };
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
@@ -212,7 +210,7 @@ fn process_local_terminal_outcome(
             day_type,
             day_limit,
         } => {
-            let to_promis = dispatch_brief(ctx, metadosis, day_type, wwd, day_limit)?;
+            let to_promis = dispatch_brief(ctx, metadosis, day_type, wwd, day_limit, current.current_vwap)?;
             commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)?;
             TributeContract::new(metadosis.storage.clone())
                 .retire_completed_partition(scope, wwd)?;
@@ -232,7 +230,7 @@ fn process_local_terminal_outcome(
             calculation,
         } => {
             let remainder = calculation.metadosis_limit_remainder;
-            let to_promis = dispatch_brief(ctx, metadosis, day_type, wwd, remainder)?;
+            let to_promis = dispatch_brief(ctx, metadosis, day_type, wwd, remainder, current.current_vwap)?;
             promis_limit.add_to_total_unallocated(to_promis)?;
             commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)?;
             metadosis.emit(IMetadosis::MetadosisExecuted {
@@ -257,8 +255,9 @@ fn dispatch_brief(
     dtype: WwdDayType,
     wwd: WorldwideDay,
     supply: U256,
+    current_vwap: U256,
 ) -> Result<U256> {
-    let reference_prices = resolve_reference_entry_prices(metadosis, ctx, wwd)?;
+    let reference_prices = day_entry_prices(metadosis, ctx, wwd, current_vwap)?;
     let is_green = dtype == WwdDayType::Green;
     let brief_supply = if is_green { supply } else { U256::ZERO };
     let receipt = outbe_desis::api::dispatch_auction_brief(
@@ -268,6 +267,7 @@ fn dispatch_brief(
         reference_prices,
         is_green,
         ctx.block.timestamp,
+        outbe_desis::api::BriefOverflowPolicy::CarryOver,
     )?;
     match receipt {
         outbe_desis::api::AuctionBriefReceipt::Accepted => {
@@ -292,54 +292,38 @@ fn dispatch_brief(
     }
 }
 
-/// One entry price per reference currency the oracle can price for the day: the previous
-/// closed UTC day's VWAP of that currency's COEN pair, falling back to the worldwide day's
-/// own. A currency it cannot price is left out with an event, and the table may come back
-/// empty — an unpriced day still has to settle, so the auction decides what that means.
-fn resolve_reference_entry_prices(
+/// The day's entry prices, from the same projection the OCOMP request seals into
+/// its envelope: the previous closed UTC day's VWAP per pair, with a current-VWAP
+/// fallback for the day-type currency alone. A currency the projection cannot
+/// price is announced and left out.
+pub(crate) fn day_entry_prices(
     metadosis: &mut MetadosisContract,
     ctx: &BlockRuntimeContext,
     wwd: WorldwideDay,
+    current_vwap: U256,
 ) -> Result<Vec<ReferenceCurrencyPrice>> {
-    let last_closed = previous_date_key(timestamp_to_date_key(ctx.block.timestamp));
-    let storage = metadosis.storage.clone();
-    let mut rows = Vec::new();
-
+    let projection = outbe_oracle::api::ocomp_pre_admission_projection(
+        ctx.storage.clone(),
+        wwd,
+        current_vwap,
+        ctx.block.timestamp,
+    )?;
+    let priced = projection.auction_entry_prices;
     for iso_code in outbe_oracle::api::get_all_reference_currencies(ctx)? {
-        let priced = match outbe_oracle::api::require_coen_pair(storage.clone(), iso_code) {
-            Ok((_, index)) => resolve_pair_entry_price(storage.clone(), wwd, last_closed, index)?,
-            Err(_) => None,
-        };
-        match priced {
-            Some(entry_price_minor) => rows.push(ReferenceCurrencyPrice {
-                iso_code,
-                entry_price_minor,
-            }),
-            None => metadosis.emit(IMetadosis::ReferenceCurrencyUnpriced {
+        if !priced.iter().any(|row| row.reference_currency == iso_code) {
+            metadosis.emit(IMetadosis::ReferenceCurrencyUnpriced {
                 worldwideDay: wwd.into(),
                 isoCode: iso_code,
-            })?,
+            })?;
         }
     }
-
-    Ok(rows)
-}
-
-fn resolve_pair_entry_price(
-    storage: StorageHandle<'_>,
-    wwd: WorldwideDay,
-    last_closed: u32,
-    index: outbe_oracle::schema::PairIndex,
-) -> Result<Option<U256>> {
-    if let Some(vwap) = outbe_oracle::api::get_utc_day_vwap(storage.clone(), last_closed, index)? {
-        if !vwap.is_zero() {
-            return Ok(Some(vwap));
-        }
-    }
-    Ok(
-        outbe_oracle::api::get_worldwide_day_vwap_for_pair(storage, wwd, index)?
-            .filter(|vwap| !vwap.is_zero()),
-    )
+    Ok(priced
+        .into_iter()
+        .map(|row| ReferenceCurrencyPrice {
+            iso_code: row.reference_currency,
+            entry_price_minor: row.entry_price_minor,
+        })
+        .collect())
 }
 
 fn emit_failed_execution(
