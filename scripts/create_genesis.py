@@ -125,12 +125,20 @@ TOP_LEVEL_KEYS = {
     "enclave_image",
     "enclave_dir",
     "enclave_runner",
+    "enclave_sgx",
+    "signed_enclave_dir",
+    "allow_unattested_chain_id",
+    "allow_stale_timestamp",
     "node_binary",
     "ocomp_binary",
     "radicle_binary",
+    "radicle_external_inbound_reserve",
     "feeder_binary",
     "remote_base_dir",
     "remote_keys_dir",
+    "price_provider",
+    "public_rpc_port",
+    "public_radicle_status_port",
     "price_feed_rest",
     "price_feed_websocket",
     *launch_bundle.DEFAULT_PORTS,
@@ -369,10 +377,16 @@ def validate_config(config: dict[str, Any]) -> None:
     if mode not in ("gramine-direct-dev", "dcap-required"):
         raise ValueError("tee.mode must be gramine-direct-dev or dcap-required")
     chain_id = int(config.get("chain_id", DEFAULT_CHAIN_ID))
-    if mode == "gramine-direct-dev" and chain_id != DEVNET_CHAIN_ID:
+    if (
+        mode == "gramine-direct-dev"
+        and chain_id != DEVNET_CHAIN_ID
+        and not config.get("allow_unattested_chain_id")
+    ):
         raise ValueError(
             f"tee.mode gramine-direct-dev is unattested and is allowed only on the "
-            f"devnet chain id {DEVNET_CHAIN_ID}, not {chain_id}"
+            f"devnet chain id {DEVNET_CHAIN_ID}, not {chain_id}. A deliberate "
+            f"non-devnet network on a real SGX enclave without Intel collateral "
+            f"must say so with `allow_unattested_chain_id: true`"
         )
     if mode == "dcap-required":
         if chain_id != TESTNET_CHAIN_ID:
@@ -546,8 +560,23 @@ def discover_validators(
 # ---------------------------------------------------------------------------
 
 
+# A genesis carries a TEE lease that starts counting at its own timestamp. Boot
+# a chain from a genesis stamped far in the past and block 1 dies on
+# `requested lease is already expired` — a runtime revert that says nothing
+# about the real cause. Refuse to build one instead.
+MAX_GENESIS_AGE_SECONDS = 6 * 60 * 60
+
+
 def build_base_genesis(config: dict[str, Any]) -> dict[str, Any]:
     timestamp = int(config.get("timestamp", int(time.time())))
+    age = int(time.time()) - timestamp
+    if age > MAX_GENESIS_AGE_SECONDS and not config.get("allow_stale_timestamp"):
+        raise ValueError(
+            f"`timestamp: {timestamp}` is {age // 3600}h in the past. The TEE lease "
+            f"runs from the genesis timestamp, so block 1 would fail with "
+            f"'requested lease is already expired'. Drop the key to stamp now, or "
+            f"set `allow_stale_timestamp: true` to reproduce an existing genesis."
+        )
     # An explicit genesisTime pins the ValidatorSet epoch start; without it the
     # seeder falls back to the wall clock and the genesis hash — which the
     # OCOMP registrations sign — changes on every run.

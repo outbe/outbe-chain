@@ -12,7 +12,10 @@ same network.yaml, and the identities come from the key directory.
 from __future__ import annotations
 
 import json
+import hashlib
 import secrets
+import shutil
+import tarfile
 import shlex
 import stat
 from pathlib import Path
@@ -31,6 +34,8 @@ DEFAULT_PORTS = {
     "tee_enclave_port": 17000,
     "feeder_health_port": 9002,
     "mongodb_port": 27017,
+    "public_rpc_port": 80,
+    "public_radicle_status_port": 8080,
     "ocomp_supervisor_port": 9765,
 }
 
@@ -186,17 +191,6 @@ def enclave_script(*, config: dict[str, Any], index: int, base_dir: str) -> str:
     validator_dir = f"{base_dir}/validator-{index}"
     name = f"outbe-enclave-{index}"
 
-    header = f"""
-# TEE enclave serving the tribute-offer key over a loopback socket. The node
-# refuses to start until this answers.
-mkdir -p {quote(validator_dir + "/tee")}
-docker rm -f {quote(name)} >/dev/null 2>&1 || true
-
-docker run -d --name {quote(name)} \\
-  --network host \\
-  --restart unless-stopped \\
-  --log-driver local --log-opt max-size=10m --log-opt max-file=3 \\"""
-
     if mode == "dcap-required":
         # Production runs the enclave natively under gramine-sgx, the way the
         # live network does: the SGX driver, the AESM socket and the sealed
@@ -220,7 +214,39 @@ exec {quote(enclave_runner)} \\
   --tee-dir {quote(validator_dir + "/tee")} \\
   --chain-id {chain_id_hex}
 """
-    return header + f"""
+    # The dev lane still runs the real enclave: on a host with SGX it goes
+    # through gramine-sgx with remote attestation switched off, which is the
+    # `GramineDirectDev` profile — real hardware, no Intel collateral. The
+    # container image is the fallback for a host without SGX.
+    manifest = f"{enclave_dir}/outbe-tee-enclave.manifest.sgx"
+    return f"""
+# TEE enclave, unattested development profile. The node refuses to start
+# until this answers on {endpoint}.
+mkdir -p {quote(validator_dir + "/tee")}
+
+if [ -e /dev/sgx_enclave ] && [ -f {quote(manifest)} ]; then
+  # Real SGX hardware with a signed manifest: run it natively.
+  #
+  # The sealing directory is the one baked into the signed manifest, not a
+  # per-validator path: Gramine only lets the enclave touch files the manifest
+  # declares, so passing anything else fails with a bare "Permission denied".
+  # One signed manifest per host therefore means one sealing directory per
+  # host, which is what a real deployment has anyway.
+  cd {quote(enclave_dir)}
+  # `sudo` only when not already root: under systemd the unit runs as root and
+  # sudo may not even be present in the service environment.
+  exec ${{SUDO:-$([ "$(id -u)" = 0 ] || echo sudo)}} gramine-sgx outbe-tee-enclave \\
+    --socket {quote(endpoint)} \\
+    --tee-dir {quote(enclave_dir + "/tee")} \\
+    --chain-id {chain_id_hex}
+fi
+
+# No SGX on this host: fall back to the container, which runs the enclave
+# under gramine-direct (LibOS only, no hardware isolation).
+docker rm -f {quote(name)} >/dev/null 2>&1 || true
+exec docker run --rm --name {quote(name)} \\
+  --network host \\
+  --log-driver local --log-opt max-size=10m --log-opt max-file=3 \\
   --security-opt seccomp=unconfined \\
   -v {quote(base_dir + "/test-sgx-signing-key.pem")}:/run/secrets/outbe-test-sgx-key.pem:ro \\
   -v {quote(validator_dir + "/tee")}:/tee \\
@@ -229,8 +255,6 @@ exec {quote(enclave_runner)} \\
   --dkg-seed {index + 1:064x} \\
   --tee-dir /tee \\
   --chain-id {chain_id_hex}
-
-echo "enclave started on {endpoint} (gramine-direct-dev: unattested, dev only)"
 """
 
 
@@ -244,12 +268,29 @@ def radicle_script(
     return f"""
 # Validator-owned Radicle sidecar. The node refuses to start as a validator
 # without its control socket, and the status endpoint must stay loopback-only.
+#
+# `outbe-keygen validator` creates only keys/; the sidecar additionally
+# requires its working directories to exist, owner-only, before it will start.
+for directory in storage node cobs; do
+  path={quote(home)}/"$directory"
+  [ -d "$path" ] || mkdir -m 700 -- "$path"
+done
+
+# A crash or a hard restart leaves the control socket behind, and Heartwood
+# then refuses to start believing another node holds it. Clear it when nothing
+# is actually listening, so a systemd restart recovers on its own.
+socket={quote(home + "/node/outbe-control.sock")}
+if [ -S "$socket" ] && ! pgrep -f "outbe-radicle .*{quote(home)}" >/dev/null 2>&1; then
+  rm -f "$socket"
+fi
+
 exec {quote(binary)} \\
   --home {quote(home)} \\
   --control-socket {quote(home + "/node/outbe-control.sock")} \\
   --listen 0.0.0.0:{port} \\
   --status-listen 127.0.0.1:{status_port} \\
   --max-validators 4 \\
+  --external-inbound-reserve {int(config.get("radicle_external_inbound_reserve", 16))} \\
   --advertise {quote(f"{host}:{port}")}
 """
 
@@ -265,11 +306,17 @@ def node_script(
     host: str,
 ) -> str:
     binary = str(config.get("node_binary", "outbe-chain"))
-    # Production pins the authenticated sealed session; the dev lane keeps the
-    # policy default so the mock transport stays reachable.
+    # Which TEE transport the node must speak. `dcap-required` always uses the
+    # authenticated sealed session. `gramine-direct-dev` is ambiguous on its
+    # own: the genesis says "no Intel collateral", but the enclave may still be
+    # a real gramine-sgx one — that is the SGX-without-DCAP profile — and a
+    # real enclave speaks the production session, not the mock transport. The
+    # policy default would pick the mock one and the node would fail with
+    # "development enclave connection failed", so state it explicitly.
     session_mode = (
         "  --tee-session-mode production-node-host \\\n"
         if config["tee"]["mode"] == "dcap-required"
+        or config.get("enclave_sgx", True)
         else ""
     )
     validator_keys = f"{keys_dir}/validator-{index}"
@@ -286,6 +333,9 @@ DOMAIN={quote(validator_dir + "/ocomp/domain-v1")}
 mkdir -p "$DATA" "$DOMAIN" {quote(validator_dir + "/logs")}
 install -m 600 "$KEYS/ocomp-key-v1.hex" "$DOMAIN/ocomp-key-v1.hex"
 install -m 600 "$KEYS/ocomp-evm-key.hex" "$DOMAIN/ocomp-evm-key.hex"
+# Every OCOMP role loads the bundle from the domain and checks it against the
+# hash it was started with, so stage it alongside the keys.
+install -m 640 {quote(base_dir + "/protocol-bundle-v1.ocb1")} "$DOMAIN/protocol-bundle-v1.ocb1"
 
 # reth reads the p2p key from the file verbatim, so normalize it in place.
 printf '%s' "$(tr -d '[:space:]' < "$KEYS/reth-p2p-secret.hex")" > "$KEYS/reth-p2p-secret.hex"
@@ -331,6 +381,7 @@ def feeder_config(
     *, config: dict[str, Any], index: int, validator: dict[str, Any], signer_key: str
 ) -> str:
     oracle = config.get("oracle", {}).get("config", {})
+    price_provider = str(config.get("price_provider", "mock_http"))
     return f"""# Price oracle feeder for validator-{index}.
 [chain]
 rpc_endpoint = "http://127.0.0.1:{port_of(config, "rpc_port")}"
@@ -349,8 +400,12 @@ poll_interval_secs = 2
 enabled = true
 bind_address = "127.0.0.1:{port_of(config, "feeder_health_port")}"
 
+# The feeder only accepts provider names from its built-in list (mock, pyth,
+# chainlink, binance, kraken, okx, gate, huobi, mexc, coinbase, mock_http); an
+# invented name is rejected at startup. `mock_http` is the plain REST client
+# the Outbe price service speaks.
 [[provider_endpoints]]
-name = "outbe_prices"
+name = "{price_provider}"
 rest = "{config.get("price_feed_rest", "https://prc.testnet.outbe.net")}"
 websocket = "{config.get("price_feed_websocket", "prc.testnet.outbe.net")}"
 
@@ -358,7 +413,7 @@ websocket = "{config.get("price_feed_websocket", "prc.testnet.outbe.net")}"
 base = "COEN"
 quote = "840"
 chain_denom = "unit"
-providers = ["outbe_prices"]
+providers = ["{price_provider}"]
 
 [[deviation_thresholds]]
 base = "COEN"
@@ -386,7 +441,16 @@ cd {quote(directory)}
 mkdir -p logs
 
 ./run-mongodb.sh
-./run-enclave.sh
+
+# run-enclave.sh execs into the enclave, so it must be backgrounded: calling it
+# directly would replace this script and nothing below would ever run.
+nohup ./run-enclave.sh > logs/enclave.log 2>&1 &
+echo $! > enclave.pid
+echo "waiting for the enclave..."
+for _ in $(seq 1 60); do
+  if (exec 3<>/dev/tcp/127.0.0.1/{{TEE_PORT}}) 2>/dev/null; then exec 3>&-; break; fi
+  sleep 1
+done
 
 nohup ./run-radicle.sh > logs/radicle.log 2>&1 &
 echo $! > radicle.pid
@@ -435,7 +499,7 @@ def stop_all_script(*, index: int, base_dir: str) -> str:
     directory = f"{base_dir}/validator-{index}"
     return f"""
 cd {quote(directory)}
-for name in ocomp-worker ocomp-exporter ocomp-supervisor feeder node radicle; do
+for name in ocomp-worker ocomp-exporter ocomp-supervisor feeder node radicle enclave; do
   if [ -f "$name.pid" ]; then
     pid="$(cat "$name.pid")"
     if kill -0 "$pid" 2>/dev/null; then
@@ -560,6 +624,368 @@ exec {quote(binary)} worker \\
 """
 
 # ---------------------------------------------------------------------------
+# Signed enclave
+# ---------------------------------------------------------------------------
+#
+# The enclave is signed ONCE, where the signing key lives, and the signed
+# artifacts travel in the bundle. Signing per machine instead gives every host
+# its own mr_signer — four different enclave identities on one network, which
+# a `dcap-required` genesis (it pins a single mrsigner) would reject outright.
+# The private key never enters the bundle.
+
+SIGNED_ENCLAVE_FILES = (
+    "outbe-tee-enclave",
+    "outbe-tee-enclave.manifest",
+    "outbe-tee-enclave.manifest.sgx",
+    "outbe-tee-enclave.sig",
+)
+
+
+def stage_signed_enclave(*, config: dict[str, Any], output_dir: Path) -> dict[str, str] | None:
+    """Copy the signed enclave into the bundle and report its identity.
+
+    `signed_enclave_dir` points at the directory holding the artifacts produced
+    by `gramine-sgx-sign` on the build host. Without it the bundle carries no
+    enclave and each machine has to sign its own — allowed, but it is the very
+    thing that produces mismatched identities, so say so out loud.
+    """
+    source = config.get("signed_enclave_dir")
+    if not source:
+        return None
+    source_dir = Path(str(source))
+    staged = output_dir / "enclave"
+    staged.mkdir(parents=True, exist_ok=True)
+    for name in SIGNED_ENCLAVE_FILES:
+        origin = source_dir / name
+        if not origin.is_file():
+            raise ValueError(
+                f"`signed_enclave_dir` is missing {name}. Sign the enclave on the "
+                f"build host first (gramine-manifest + gramine-sgx-sign) and point "
+                f"this at the directory holding the result."
+            )
+        shutil.copy2(origin, staged / name)
+    # A private key in the bundle would be handed to every machine; refuse.
+    for stray in source_dir.glob("*.pem"):
+        if (staged / stray.name).exists():
+            (staged / stray.name).unlink()
+    return {"path": str(staged)}
+
+
+# ---------------------------------------------------------------------------
+# Public entry point (caddy)
+# ---------------------------------------------------------------------------
+#
+# The node binds RPC to loopback on purpose, so something has to publish it.
+# caddy terminates the public listener and reverse-proxies to 127.0.0.1, which
+# keeps the node itself unreachable from the internet and gives one place to
+# add CORS, TLS or auth later. This mirrors how the live testnet is fronted.
+
+
+def caddyfile(*, config: dict[str, Any], host: str) -> str:
+    """Caddy site for one validator: RPC and the Radicle status endpoint.
+
+    Radicle's replication port is raw p2p, not HTTP, so it stays a plain port
+    (already opened between the machines) and is not proxied here.
+    """
+    rpc_port = port_of(config, "rpc_port")
+    status_port = port_of(config, "radicle_status_port")
+    public_rpc = int(config.get("public_rpc_port", 80))
+    public_radicle = int(config.get("public_radicle_status_port", 8080))
+    return f"""# Generated for {host}. Plain HTTP on the public address: no TLS,
+# because these hosts are addressed by IP and have no certificate names.
+{{
+	auto_https off
+	admin off
+}}
+
+# Ethereum JSON-RPC
+:{public_rpc} {{
+	@options method OPTIONS
+	handle @options {{
+		header {{
+			Access-Control-Allow-Origin *
+			Access-Control-Allow-Methods "GET, POST, OPTIONS"
+			Access-Control-Allow-Headers "Content-Type"
+			Access-Control-Max-Age 86400
+		}}
+		respond 204
+	}}
+	handle {{
+		reverse_proxy 127.0.0.1:{rpc_port} {{
+			header_up X-Real-IP {{remote_host}}
+			header_down -Access-Control-Allow-Origin
+		}}
+		header Access-Control-Allow-Origin *
+	}}
+}}
+
+# Radicle sidecar status (read-only JSON)
+:{public_radicle} {{
+	handle {{
+		reverse_proxy 127.0.0.1:{status_port} {{
+			header_up X-Real-IP {{remote_host}}
+		}}
+		header Access-Control-Allow-Origin *
+	}}
+}}
+"""
+
+
+def caddy_install_script(*, config: dict[str, Any], base_dir: str, index: int) -> str:
+    public_rpc = int(config.get("public_rpc_port", 80))
+    public_radicle = int(config.get("public_radicle_status_port", 8080))
+    return f"""
+# Publish this validator's RPC and Radicle status through caddy.
+if ! command -v caddy >/dev/null; then
+  echo "installing caddy..."
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https curl >/dev/null
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \\
+    | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \\
+    | sudo tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq caddy >/dev/null
+fi
+
+sudo install -m 644 {quote(base_dir + f"/validator-{index}/Caddyfile")} /etc/caddy/Caddyfile
+sudo systemctl enable --now caddy
+sudo systemctl reload caddy 2>/dev/null || sudo systemctl restart caddy
+
+# Let the world reach the published ports; the node's own ports stay loopback.
+sudo ufw allow {public_rpc}/tcp >/dev/null 2>&1 || true
+sudo ufw allow {public_radicle}/tcp >/dev/null 2>&1 || true
+
+echo "published:"
+echo "  RPC            http://$(curl -s -m 5 ifconfig.me || echo '<this-host>'):{public_rpc}"
+echo "  Radicle status http://$(curl -s -m 5 ifconfig.me || echo '<this-host>'):{public_radicle}"
+"""
+
+
+# ---------------------------------------------------------------------------
+# systemd units
+# ---------------------------------------------------------------------------
+#
+# The run-*.sh scripts each exec one process in the foreground, which is
+# exactly what a systemd service wants. Units give us what a shell-launched
+# background process cannot: the processes survive the session that started
+# them, restart on failure, order themselves by dependency, and are inspected
+# with journalctl instead of scattered log files.
+
+
+UNIT_ROLES = (
+    ("enclave", "TEE enclave", None),
+    ("radicle", "Radicle sidecar", "outbe-enclave@%i.service"),
+    ("node", "validator node", "outbe-radicle@%i.service"),
+    ("ocomp-supervisor", "OCOMP Supervisor", "outbe-node@%i.service"),
+    ("ocomp-exporter", "OCOMP SnapshotExporter", "outbe-ocomp-supervisor@%i.service"),
+    ("ocomp-worker", "OCOMP Worker", "outbe-ocomp-supervisor@%i.service"),
+    ("feeder", "price oracle feeder", "outbe-node@%i.service"),
+)
+
+
+def systemd_unit(*, role: str, description: str, after: str | None, base_dir: str) -> str:
+    """One templated unit per role; %i is the validator index."""
+    ordering = ""
+    if after:
+        ordering = f"After={after}\nRequires={after}\n"
+    # The enclave runs under sudo inside the script, so let systemd own it as
+    # root directly and drop the sudo indirection.
+    user = "root" if role == "enclave" else "ubuntu"
+    return f"""[Unit]
+Description=Outbe {description} (validator %i)
+After=network-online.target{"" if not after else ""}
+{ordering}
+[Service]
+Type=simple
+User={user}
+WorkingDirectory={base_dir}/validator-%i
+ExecStart={base_dir}/validator-%i/run-{role}.sh
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+"""
+
+
+def write_systemd_units(output_dir: Path, base_dir: str) -> None:
+    unit_dir = output_dir / "systemd"
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    for role, description, after in UNIT_ROLES:
+        unit = systemd_unit(
+            role=role, description=description, after=after, base_dir=base_dir
+        )
+        (unit_dir / f"outbe-{role}@.service").write_text(unit)
+
+    install = f"""
+# Install and start every Outbe service for validator $1 on this machine.
+INDEX="${{1:?usage: install-systemd.sh <validator-index>}}"
+
+sudo install -m 644 {quote(base_dir)}/systemd/outbe-*@.service /etc/systemd/system/
+sudo systemctl daemon-reload
+
+# MongoDB stays a container; bring it up before anything that projects into it.
+{quote(base_dir)}/validator-"$INDEX"/run-mongodb.sh
+
+for role in enclave radicle node ocomp-supervisor ocomp-exporter ocomp-worker feeder; do
+  sudo systemctl enable --now "outbe-$role@$INDEX.service"
+done
+
+echo
+echo "services for validator $INDEX:"
+systemctl list-units 'outbe-*' --no-pager --no-legend | sed 's/^/  /'
+echo
+echo "follow one with: journalctl -u outbe-node@$INDEX -f"
+"""
+    write_script(output_dir / "install-systemd.sh", install)
+
+
+def preflight_script(*, config: dict[str, Any], base_dir: str, index: int) -> str:
+    """Check, on this machine, everything that silently breaks a launch.
+
+    Every item here cost a real debugging session: a genesis that differs
+    between machines, a mismatched enclave identity, leftover state from an
+    earlier genesis, and ports already held by a previous run.
+    """
+    tee_port = port_of(config, "tee_enclave_port")
+    rpc_port = port_of(config, "rpc_port")
+    return f"""
+# Read-only pre-launch check for validator {index}. Exits non-zero on anything
+# that would make the network fail after start rather than before.
+cd {quote(base_dir)}
+fail=0
+note() {{ printf '  %-42s %s\\n' "$1" "$2"; }}
+
+note "genesis sha256" "$(sha256sum genesis.json | cut -c1-16)"
+note "protocol bundle sha256" "$(sha256sum protocol-bundle-v1.ocb1 | cut -c1-16)"
+echo "  ^ these two must be identical on every machine"
+
+if [ -f outbe-tee-enclave.sig ]; then
+  note "enclave mr_enclave" "$(gramine-sgx-sigstruct-view outbe-tee-enclave.sig 2>/dev/null | grep -oE 'mr_enclave: [0-9a-f]+' | cut -c13-28)"
+  note "enclave mr_signer" "$(gramine-sgx-sigstruct-view outbe-tee-enclave.sig 2>/dev/null | grep -oE 'mr_signer: [0-9a-f]+' | cut -c12-27)"
+  echo "  ^ mr_signer must match across machines; a per-host key breaks dcap-required"
+else
+  note "enclave signature" "MISSING"; fail=1
+fi
+
+# State from an earlier genesis makes the node exit with
+# 'projection identity does not match configured chain'.
+for stale in validator-{index}/data validator-{index}/consensus tee; do
+  [ -e "$stale" ] && {{ note "leftover state" "$stale — remove before a new genesis"; fail=1; }}
+done
+if command -v docker >/dev/null; then
+  dbs=$(docker exec outbe-mongo-{index} mongosh --quiet --eval \\
+    'db.adminCommand({{listDatabases:1}}).databases.map(x=>x.name).filter(n=>/outbe/.test(n)).length' 2>/dev/null | tail -1)
+  [ "${{dbs:-0}}" != "0" ] && {{ note "mongo projections" "$dbs left from an earlier run"; fail=1; }}
+fi
+
+for port in {tee_port} {rpc_port}; do
+  ss -ltn 2>/dev/null | grep -q ":$port " && {{ note "port $port" "already in use"; fail=1; }}
+done
+
+if [ "$fail" = 0 ]; then echo; echo "  preflight OK"; else echo; echo "  preflight FAILED"; fi
+exit "$fail"
+"""
+
+
+# ---------------------------------------------------------------------------
+# Per-machine distribution
+# ---------------------------------------------------------------------------
+#
+# The point of the bundle is that nothing is assembled by hand afterwards.
+# Each machine gets one archive holding everything it needs and nothing that
+# belongs to another validator, plus a checksum manifest so a half-finished
+# copy is caught before the network is started rather than after.
+
+
+def build_distribution(
+    *,
+    output_dir: Path,
+    validators: list[dict[str, Any]],
+    keys_dir: Path,
+    base_dir: str,
+) -> list[str]:
+    """Pack one self-contained archive per machine. Returns their names."""
+    dist = output_dir / "dist"
+    if dist.exists():
+        shutil.rmtree(dist)
+    dist.mkdir(parents=True)
+
+    shared = [
+        output_dir / "genesis.json",
+        output_dir / "protocol-bundle-v1.ocb1",
+        output_dir / "reth-bootnodes.txt",
+        output_dir / "DEPLOY.md",
+        output_dir / "install-systemd.sh",
+    ]
+    enclave_dir = output_dir / "enclave"
+    systemd_dir = output_dir / "systemd"
+
+    names = []
+    for index in range(len(validators)):
+        staging = dist / f"validator-{index}"
+        staging.mkdir()
+        for item in shared:
+            if item.is_file():
+                shutil.copy2(item, staging / item.name)
+        if systemd_dir.is_dir():
+            shutil.copytree(systemd_dir, staging / "systemd")
+        if enclave_dir.is_dir():
+            shutil.copytree(enclave_dir, staging / "enclave")
+        # This machine's run scripts and ONLY this machine's key material.
+        shutil.copytree(output_dir / f"validator-{index}", staging / f"validator-{index}")
+        keys_target = staging / "keys" / f"validator-{index}"
+        keys_target.parent.mkdir(exist_ok=True)
+        shutil.copytree(keys_dir / f"validator-{index}", keys_target)
+
+        archive = dist / f"validator-{index}.tgz"
+        with tarfile.open(archive, "w:gz") as tar:
+            for entry in sorted(staging.iterdir()):
+                tar.add(entry, arcname=entry.name)
+        shutil.rmtree(staging)
+        names.append(archive.name)
+
+    # One manifest over the archives: a truncated copy or a stale archive from
+    # an earlier run is then a checksum mismatch, not a mystery at boot.
+    lines = []
+    for name in names:
+        digest = hashlib.sha256((dist / name).read_bytes()).hexdigest()
+        lines.append(f"{digest}  {name}")
+    (dist / "SHA256SUMS").write_text("\n".join(lines) + "\n")
+
+    unpack = f"""
+# Unpack this machine's archive into {base_dir}. Run it ON the target machine,
+# from the directory holding validator-<index>.tgz.
+INDEX="${{1:?usage: unpack.sh <validator-index>}}"
+ARCHIVE="validator-$INDEX.tgz"
+
+[ -f "$ARCHIVE" ] || {{ echo "no $ARCHIVE here" >&2; exit 1; }}
+if command -v sha256sum >/dev/null && [ -f SHA256SUMS ]; then
+  grep " $ARCHIVE\\$" SHA256SUMS | sha256sum -c - || {{ echo "checksum mismatch" >&2; exit 1; }}
+fi
+
+sudo mkdir -p {quote(base_dir)}
+sudo chown "$USER" {quote(base_dir)}
+tar xzf "$ARCHIVE" -C {quote(base_dir)}
+chmod -R go-rwx {quote(base_dir)}/keys
+
+# The signed enclave, when the bundle carries one, belongs next to the binaries.
+if [ -d {quote(base_dir)}/enclave ]; then
+  sudo install -m 755 {quote(base_dir)}/enclave/outbe-tee-enclave {quote(base_dir)}/
+  sudo install -m 644 {quote(base_dir)}/enclave/outbe-tee-enclave.manifest* {quote(base_dir)}/
+  sudo install -m 644 {quote(base_dir)}/enclave/outbe-tee-enclave.sig {quote(base_dir)}/
+fi
+
+echo "unpacked into {base_dir}; next: ./install-systemd.sh $INDEX"
+"""
+    write_script(dist / "unpack.sh", unpack)
+    return names
+
+
+# ---------------------------------------------------------------------------
 # DEPLOY.md
 # ---------------------------------------------------------------------------
 
@@ -649,8 +1075,15 @@ metrics `{port_of(config, "metrics_port")}`, Radicle status
 
 ```bash
 cd {base_dir}/validator-N
-./start-all.sh
+./preflight.sh N        # verifies genesis/enclave/state before anything starts
+sudo {base_dir}/install-systemd.sh N
 ```
+
+`install-systemd.sh` installs one templated unit per role and starts them in
+dependency order, so the processes outlive the shell that launched them and
+come back on failure. `preflight.sh` is read-only: run it first and compare the
+genesis and enclave digests it prints across all four machines — they must be
+identical.
 
 `start-all.sh` starts the components in dependency order — MongoDB, enclave,
 Radicle sidecar, node, feeder — and writes pids and logs into
@@ -778,6 +1211,15 @@ def render(
             directory / "run-feeder.sh",
             feeder_script(config=config, index=index, base_dir=base_dir, repo_root=str(repo_root)),
         )
+        (directory / "Caddyfile").write_text(caddyfile(config=config, host=host))
+        write_script(
+            directory / "preflight.sh",
+            preflight_script(config=config, base_dir=base_dir, index=index),
+        )
+        write_script(
+            directory / "install-caddy.sh",
+            caddy_install_script(config=config, base_dir=base_dir, index=index),
+        )
         write_script(
             directory / "run-ocomp-supervisor.sh",
             ocomp_supervisor_script(
@@ -811,11 +1253,21 @@ def render(
         feeder_path.chmod(0o600)
         write_script(
             directory / "start-all.sh",
-            start_all_script(config=config, index=index, base_dir=base_dir).replace(
-                "{SUPERVISOR_PORT}", str(port_of(config, "ocomp_supervisor_port"))
-            ),
+            start_all_script(config=config, index=index, base_dir=base_dir)
+            .replace("{SUPERVISOR_PORT}", str(port_of(config, "ocomp_supervisor_port")))
+            .replace("{TEE_PORT}", str(port_of(config, "tee_enclave_port"))),
         )
         write_script(directory / "stop-all.sh", stop_all_script(index=index, base_dir=base_dir))
+
+    stage_signed_enclave(config=config, output_dir=output_dir)
+    write_systemd_units(output_dir, base_dir)
+
+    build_distribution(
+        output_dir=output_dir,
+        validators=validators,
+        keys_dir=keys_dir,
+        base_dir=base_dir,
+    )
 
     (output_dir / "DEPLOY.md").write_text(
         deploy_markdown(

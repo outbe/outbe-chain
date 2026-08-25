@@ -7,7 +7,9 @@ import base64
 import importlib.util
 import json
 import pathlib
+import re
 import tempfile
+import time
 import unittest
 
 MODULE_PATH = pathlib.Path(__file__).with_name("create_genesis.py")
@@ -172,6 +174,12 @@ class ConfigValidationTests(unittest.TestCase):
         config = minimal_config("./keys") | {"chain_id": 54322345}
         with self.assertRaisesRegex(ValueError, "unattested"):
             CG.validate_config(config)
+
+    def test_unattested_on_a_non_devnet_chain_needs_an_explicit_opt_in(self):
+        config = minimal_config("./keys") | {"chain_id": 54322345}
+        with self.assertRaisesRegex(ValueError, "allow_unattested_chain_id"):
+            CG.validate_config(config)
+        CG.validate_config(config | {"allow_unattested_chain_id": True})
 
     def test_dcap_requires_the_testnet_chain_and_a_pinned_digest(self):
         config = minimal_config("./keys") | {
@@ -403,13 +411,27 @@ class SeedStageTests(unittest.TestCase):
         """The OCOMP registrations sign the seeded genesis hash, so the same
         yaml must always seed byte-identical state."""
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
-            config = minimal_config(first) | {"timestamp": 1_756_032_000}
+            config = minimal_config(first) | {"timestamp": 1_756_032_000, "allow_stale_timestamp": True}
             a = self.seed_once(pathlib.Path(first), config)
             b = self.seed_once(pathlib.Path(second), config)
             self.assertEqual(a, b)
 
+    def test_a_stale_timestamp_is_refused(self):
+        """A genesis stamped in the past fails at block 1 with an unrelated-
+        looking revert; catch it while it is still cheap to fix."""
+        stale = int(time.time()) - 48 * 3600
+        with self.assertRaisesRegex(ValueError, "lease is already expired"):
+            CG.build_base_genesis(minimal_config("./keys") | {"timestamp": stale})
+        # Reproducing an existing genesis is legitimate, but must be deliberate.
+        pinned = CG.build_base_genesis(
+            minimal_config("./keys") | {"timestamp": stale, "allow_stale_timestamp": True}
+        )
+        self.assertEqual(int(pinned["timestamp"], 16), stale)
+        # A fresh stamp always passes.
+        CG.build_base_genesis(minimal_config("./keys"))
+
     def test_genesis_time_is_pinned_to_the_header_timestamp(self):
-        config = minimal_config("./keys") | {"timestamp": 1_756_032_000}
+        config = minimal_config("./keys") | {"timestamp": 1_756_032_000, "allow_stale_timestamp": True}
         genesis = CG.build_base_genesis(config)
         self.assertEqual(genesis["timestamp"], hex(1_756_032_000))
         self.assertEqual(genesis["config"]["genesisTime"], "2025-08-24T10:40:00Z")
@@ -613,6 +635,107 @@ class LaunchBundleTests(unittest.TestCase):
             stop = (output_dir / "validator-0" / "stop-all.sh").read_text()
             self.assertIn("ocomp-worker", stop)
 
+    def test_feeder_provider_name_is_one_the_binary_accepts(self):
+        """outbe-feeder validates provider names against a fixed list and
+        refuses to start on anything else."""
+        known = {"mock", "pyth", "chainlink", "binance", "kraken", "okx",
+                 "gate", "huobi", "mexc", "coinbase", "mock_http"}
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            toml = (output_dir / "validator-0" / "feeder.toml").read_text()
+            names = re.findall(r'name = "([^"]+)"', toml)
+            providers = re.findall(r'providers = \["([^"]+)"\]', toml)
+            self.assertTrue(names and providers)
+            for value in names + providers:
+                self.assertIn(value, known, f"{value} is not a provider the feeder knows")
+            # And the two must agree, or the pair references a missing endpoint.
+            self.assertEqual(set(names), set(providers))
+
+    def test_distribution_is_one_self_contained_archive_per_machine(self):
+        """The whole point: after one run there is nothing left to assemble by
+        hand, and no machine receives another validator's key material."""
+        import tarfile as tf
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            dist = output_dir / "dist"
+            self.assertTrue((dist / "SHA256SUMS").is_file())
+            self.assertTrue((dist / "unpack.sh").stat().st_mode & 0o111)
+
+            for index in range(4):
+                archive = dist / f"validator-{index}.tgz"
+                self.assertTrue(archive.is_file(), f"validator-{index}.tgz missing")
+                with tf.open(archive) as tar:
+                    names = tar.getnames()
+                joined = "\n".join(names)
+                for required in ("genesis.json", "reth-bootnodes.txt",
+                                 f"validator-{index}", "systemd", "install-systemd.sh"):
+                    self.assertIn(required, joined, f"{required} missing from archive {index}")
+                # Only this validator's keys travel in this archive.
+                self.assertIn(f"keys/validator-{index}", joined)
+                for other in range(4):
+                    if other != index:
+                        self.assertNotIn(f"keys/validator-{other}", joined)
+
+            # The manifest must actually match the archives.
+            for line in (dist / "SHA256SUMS").read_text().splitlines():
+                digest, name = line.split("  ")
+                import hashlib as hl
+                self.assertEqual(hl.sha256((dist / name).read_bytes()).hexdigest(), digest)
+
+    def test_a_private_signing_key_never_reaches_the_bundle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            signed = pathlib.Path(tmp) / "signed"
+            signed.mkdir()
+            for name in LB.SIGNED_ENCLAVE_FILES:
+                (signed / name).write_bytes(b"x")
+            (signed / "enclave-key.pem").write_bytes(b"PRIVATE")
+            _, _, output_dir = self.render(tmp, {"signed_enclave_dir": str(signed)})
+            staged = list((output_dir / "enclave").iterdir())
+            self.assertEqual(
+                sorted(p.name for p in staged), sorted(LB.SIGNED_ENCLAVE_FILES)
+            )
+            self.assertNotIn("enclave-key.pem", [p.name for p in staged])
+
+    def test_caddy_publishes_rpc_without_exposing_the_node(self):
+        """The node binds RPC to loopback, so caddy is what makes it reachable;
+        the raw Radicle replication port is p2p and must not be proxied."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            caddyfile = (output_dir / "validator-0" / "Caddyfile").read_text()
+            self.assertIn("reverse_proxy 127.0.0.1:8545", caddyfile)
+            self.assertIn("reverse_proxy 127.0.0.1:8876", caddyfile)
+            self.assertNotIn("8776", caddyfile)
+            # No certificate names here: these hosts are addressed by IP.
+            self.assertIn("auto_https off", caddyfile)
+            installer = output_dir / "validator-0" / "install-caddy.sh"
+            self.assertTrue(installer.stat().st_mode & 0o111)
+            node = (output_dir / "validator-0" / "run-node.sh").read_text()
+            self.assertIn("--http.addr 127.0.0.1", node)
+
+    def test_systemd_units_are_generated_and_ordered(self):
+        """A shell-launched background process dies with its session; systemd
+        units are what actually survives, restarts and orders the stack."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            unit_dir = output_dir / "systemd"
+            for role in ("enclave", "radicle", "node", "ocomp-supervisor",
+                         "ocomp-exporter", "ocomp-worker", "feeder"):
+                unit = unit_dir / f"outbe-{role}@.service"
+                self.assertTrue(unit.is_file(), f"{role} unit missing")
+                text = unit.read_text()
+                self.assertIn("Restart=on-failure", text)
+                self.assertIn(f"run-{role}.sh", text)
+            # The node must not start before the enclave and Radicle it needs.
+            node = (unit_dir / "outbe-node@.service").read_text()
+            self.assertIn("outbe-radicle@%i.service", node)
+            radicle = (unit_dir / "outbe-radicle@.service").read_text()
+            self.assertIn("outbe-enclave@%i.service", radicle)
+            # The enclave needs root for /dev/sgx_*.
+            self.assertIn("User=root", (unit_dir / "outbe-enclave@.service").read_text())
+            installer = output_dir / "install-systemd.sh"
+            self.assertTrue(installer.stat().st_mode & 0o111)
+
     def test_bootnodes_are_stable_across_renders(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, _, output_dir = self.render(tmp)
@@ -703,7 +826,17 @@ class LaunchBundleTests(unittest.TestCase):
             # and its peers never dial back.
             self.assertIn("--nat extip:10.0.0.3", node)
             self.assertIn("--consensus.storage-dir", node)
-            # The dev lane must not pin the production session.
+            # A real gramine-sgx enclave speaks the production session even on
+            # the dev genesis profile; only a mock enclave uses the development
+            # transport, and that is what `enclave_sgx: false` selects.
+            self.assertIn("--tee-session-mode production-node-host", node)
+            # All three OCOMP roles read the bundle from the domain directory.
+            self.assertIn("protocol-bundle-v1.ocb1", node)
+
+    def test_a_mock_enclave_keeps_the_development_transport(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp, {"enclave_sgx": False})
+            node = (output_dir / "validator-0" / "run-node.sh").read_text()
             self.assertNotIn("--tee-session-mode", node)
 
     def test_dev_enclave_script_is_marked_unattested(self):
