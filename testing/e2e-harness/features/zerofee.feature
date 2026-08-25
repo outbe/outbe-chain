@@ -42,6 +42,7 @@ Feature: EIP-7702 ZeroFee sponsorship, replay, and daily quota
   Scenario: Exhausted quota resets lazily across the worldwide-day boundary
     Given a fresh localnet near the next UTC worldwide-day boundary
     And the committee has reached a usable height
+    Then the controlled COEN USD quote is finalized through the real price feeder
     When a funded fresh account delegates to ZeroFee with EIP-7702
     Then the exact ZeroFee delegation designator is installed
     When the account submits eight eligible sponsored reward calls

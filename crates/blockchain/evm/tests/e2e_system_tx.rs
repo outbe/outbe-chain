@@ -100,6 +100,7 @@ fn input_for(kind: SystemTxKind) -> SystemTxInputV2 {
         },
         SystemTxKind::OcompLifecycleBegin => SystemTxInputV2::OcompLifecycleBegin,
         SystemTxKind::CycleTick => SystemTxInputV2::CycleTick,
+        SystemTxKind::RewardsGemDelivery => SystemTxInputV2::RewardsGemDelivery,
         SystemTxKind::BoundaryOutcome => SystemTxInputV2::BoundaryOutcome {
             artifact: sample_boundary(),
         },
@@ -163,9 +164,10 @@ fn full_begin_system_prefix_validates_before_user_transactions() {
         system_tx(SystemTxKind::CertifiedParentAccounting, 0),
         system_tx(SystemTxKind::LateFinalizeCredits, 1),
         system_tx(SystemTxKind::CycleTick, 2),
-        system_tx(SystemTxKind::BoundaryOutcome, 3),
-        system_tx(SystemTxKind::OracleSlashWindow, 4),
-        system_tx(SystemTxKind::HookEvents, 5),
+        system_tx(SystemTxKind::RewardsGemDelivery, 3),
+        system_tx(SystemTxKind::BoundaryOutcome, 4),
+        system_tx(SystemTxKind::OracleSlashWindow, 5),
+        system_tx(SystemTxKind::HookEvents, 6),
         user_tx(),
     ];
 
@@ -181,6 +183,7 @@ fn full_begin_system_prefix_validates_before_user_transactions() {
             SystemTxKind::CertifiedParentAccounting,
             SystemTxKind::LateFinalizeCredits,
             SystemTxKind::CycleTick,
+            SystemTxKind::RewardsGemDelivery,
             SystemTxKind::BoundaryOutcome,
             SystemTxKind::OracleSlashWindow,
             SystemTxKind::HookEvents,
@@ -264,23 +267,28 @@ fn gas_12_system_prefix_aggregate_visible_gas_must_fit_block_cap() {
         ),
         signed_system_tx(SystemTxKind::CycleTick, 2, SystemTxInputV2::CycleTick),
         signed_system_tx(
-            SystemTxKind::BoundaryOutcome,
+            SystemTxKind::RewardsGemDelivery,
             3,
+            SystemTxInputV2::RewardsGemDelivery,
+        ),
+        signed_system_tx(
+            SystemTxKind::BoundaryOutcome,
+            4,
             SystemTxInputV2::BoundaryOutcome {
                 artifact: large_boundary(),
             },
         ),
         signed_system_tx(
             SystemTxKind::OracleSlashWindow,
-            4,
+            5,
             SystemTxInputV2::OracleSlashWindow,
         ),
-        signed_system_tx(SystemTxKind::HookEvents, 5, SystemTxInputV2::HookEvents),
+        signed_system_tx(SystemTxKind::HookEvents, 6, SystemTxInputV2::HookEvents),
     ];
     let layout = split_system_layout(&txs).expect("worst-case system prefix layout splits");
     validate_active_system_tx_set(&layout, BLOCK_NUMBER, true, false)
         .expect("worst-case active system tx set validates");
-    assert_eq!(txs.len(), 6);
+    assert_eq!(txs.len(), 7);
     assert!(txs.len() <= usize::from(MAX_SYSTEM_TXS_PER_BLOCK));
 
     let aggregate_envelope_gas: u64 = txs.iter().map(|tx| tx.gas_limit()).sum();

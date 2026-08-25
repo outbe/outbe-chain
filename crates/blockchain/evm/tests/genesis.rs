@@ -490,14 +490,15 @@ fn runtime_genesis_dkg_boundary_seeds_epoch0_vrf_snapshot_before_block2() {
     let block1 = expected_begin_block_kinds(1, true, false);
     let expected_block1 = vec![
         SystemTxKind::CycleTick,
+        SystemTxKind::RewardsGemDelivery,
         SystemTxKind::BoundaryOutcome,
         SystemTxKind::OracleSlashWindow,
         SystemTxKind::HookEvents,
     ];
     assert_eq!(
         block1, expected_block1,
-        "block 1 V2 layout pins to [CycleTick, BoundaryOutcome, \
-         OracleSlashWindow]; BoundaryOutcome is the genesis DKG VRF \
+        "block 1 V2 layout pins to [CycleTick, RewardsGemDelivery, \
+         BoundaryOutcome, OracleSlashWindow]; BoundaryOutcome is the genesis DKG VRF \
          snapshot writer"
     );
 }

@@ -2785,7 +2785,6 @@ dependencies = [
 [[package]]
 name = "commonware-consensus"
 version = "2026.5.0"
-source = "git+https://github.com/commonwarexyz/monorepo?tag=v2026.5.0#b8b0a8d8919a66b5649c9fdaceb881a55fbe5876"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -9381,6 +9380,7 @@ dependencies = [
  "proptest",
  "rand 0.8.6",
  "rand_chacha 0.3.1",
+ "tracing",
 ]
 
 [[package]]
@@ -9648,10 +9648,12 @@ dependencies = [
  "reth-primitives-traits",
  "reth-provider",
  "reth-storage-api",
+ "reth-tasks",
  "reth-transaction-pool",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "tracing-subscriber 0.3.23",
 ]
 
 [[package]]
@@ -13737,7 +13739,6 @@ dependencies = [
 [[package]]
 name = "reth-transaction-pool"
 version = "2.2.0"
-source = "git+https://github.com/paradigmxyz/reth.git?tag=v2.2.0#88505c7fcbfdebfd3b56d88c86b62e950043c6c4"
 dependencies = [
  "alloy-consensus",
  "alloy-eips 2.0.4",

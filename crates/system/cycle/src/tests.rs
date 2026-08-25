@@ -776,7 +776,7 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
 }
 
 #[test]
-fn validator_topup_rounding_residue_reaches_the_terminal_sink() {
+fn prepared_validator_topup_and_terminal_residue_conserve_the_allocation() {
     let mut storage = cycle_storage();
     storage.enter(|handle| {
         let anchor = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle.clone());
@@ -814,15 +814,19 @@ fn validator_topup_rounding_residue_reaches_the_terminal_sink() {
                 outbe_emissionlimit::allocation::EmissionSinkId::Sra,
             ))
             .unwrap();
-        let distributed = voters.iter().fold(U256::ZERO, |sum, voter| {
-            let gem = outbe_gem::GemContract::new(ctx.storage.clone());
-            let gem_id = gem.token_of_owner_by_index(*voter, 0).unwrap();
-            let load = outbe_gem::api::get_gem(&ctx.storage, gem_id)
-                .unwrap()
-                .unwrap()
-                .gem_load_minor;
-            sum + load
-        });
+        let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
+        let planned = rewards
+            .reward_gem_planned_load_amount
+            .read(&20_240_101)
+            .unwrap();
+        let gem = outbe_gem::GemContract::new(ctx.storage.clone());
+        for voter in voters {
+            assert_eq!(
+                gem.balance_of(voter).unwrap(),
+                0,
+                "Cycle prepares the batch but does not mint Gems"
+            );
+        }
         let formation = outbe_metadosis::api::day_limit_formation_receipt(
             ctx.storage.clone(),
             outbe_common::WorldwideDay::new(20_240_101),
@@ -837,9 +841,9 @@ fn validator_topup_rounding_residue_reaches_the_terminal_sink() {
             .unwrap();
 
         assert_eq!(
-            distributed.checked_add(validator_terminal).unwrap(),
+            planned.checked_add(validator_terminal).unwrap(),
             validator_amount,
-            "minted Gems plus terminal residue must conserve the validator allocation"
+            "prepared Gem liability plus terminal residue must conserve the validator allocation"
         );
     });
 }
@@ -858,8 +862,11 @@ fn zero_total_validator_participation_routes_the_pool_without_halting() {
         run_emission_limit_daily(&ctx).unwrap();
 
         let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
+        assert!(rewards.daily_topup_prepared.read(&20_240_101).unwrap());
         assert!(rewards.daily_topup_settled.read(&20_240_101).unwrap());
         assert!(rewards.daily_settled.read(&20_240_101).unwrap());
+        assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 0);
+        assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 0);
         let gem = outbe_gem::GemContract::new(ctx.storage.clone());
         for voter in voters {
             assert_eq!(gem.balance_of(voter).unwrap(), 0, "no Gem may be minted");
@@ -937,8 +944,11 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
         let rewards = fire
             .storage
             .contract::<outbe_rewards::schema::Rewards<'_>>();
+        assert!(!rewards.daily_topup_prepared.read(&20_240_101).unwrap());
         assert!(!rewards.daily_topup_settled.read(&20_240_101).unwrap());
         assert!(!rewards.daily_settled.read(&20_240_101).unwrap());
+        assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 0);
+        assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 0);
         assert!(outbe_metadosis::api::day_limit_formation_receipt(
             fire.storage.clone(),
             outbe_common::WorldwideDay::new(20_240_101),
@@ -973,8 +983,11 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
         let rewards = retry
             .storage
             .contract::<outbe_rewards::schema::Rewards<'_>>();
-        assert!(rewards.daily_topup_settled.read(&20_240_101).unwrap());
+        assert!(rewards.daily_topup_prepared.read(&20_240_101).unwrap());
+        assert!(!rewards.daily_topup_settled.read(&20_240_101).unwrap());
         assert!(rewards.daily_settled.read(&20_240_101).unwrap());
+        assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 0);
+        assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 1);
         let receipt = outbe_metadosis::api::day_limit_formation_receipt(
             retry.storage.clone(),
             outbe_common::WorldwideDay::new(20_240_101),
@@ -1024,19 +1037,17 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
         for voter in voters {
             assert_eq!(
                 gem.balance_of(voter).unwrap(),
-                1,
-                "retry must mint exactly one Gem"
-            );
-            let gem_id = gem.token_of_owner_by_index(voter, 0).unwrap();
-            assert_eq!(
-                outbe_gem::api::get_gem(&retry.storage, gem_id)
-                    .unwrap()
-                    .unwrap()
-                    .gem_load_minor,
-                expected_gem_load,
-                "retry must mint the exact proportional load"
+                0,
+                "Cycle retry prepares exactly once; delivery owns Gem creation"
             );
         }
+        assert_eq!(
+            rewards
+                .reward_gem_planned_load_amount
+                .read(&20_240_101)
+                .unwrap(),
+            expected_gem_load * U256::from(voters.len())
+        );
         let cycle: Cycle<'_> = retry.storage.contract::<Cycle<'_>>();
         assert_eq!(
             cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
@@ -1046,7 +1057,7 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
 }
 
 #[test]
-fn open_day_preserves_an_already_settled_validator_topup_without_reminting() {
+fn open_day_preserves_an_already_delivered_validator_batch_without_reminting() {
     let mut storage = cycle_storage();
     storage.enter(|handle| {
         let anchor = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle.clone());
@@ -1067,19 +1078,18 @@ fn open_day_preserves_an_already_settled_validator_topup_without_reminting() {
         })
         .unwrap()
         .amount;
-        let outcome = outbe_rewards::api::add_topup_for_voters(
+        let outcome = outbe_rewards::api::prepare_daily_validator_gem_batch(
             &ctx,
             20_240_101,
             validator_amount,
             &[(voter, 1)],
         )
         .unwrap();
-        assert_eq!(
+        assert!(matches!(
             outcome,
-            outbe_rewards::api::TopupSettlementOutcome::Settled {
-                distributed: validator_amount,
-            }
-        );
+            outbe_rewards::api::RewardGemPreparationOutcome::Prepared(_)
+        ));
+        outbe_rewards::api::deliver_oldest_reward_gem_batch(&ctx).unwrap();
 
         let gem = outbe_gem::GemContract::new(ctx.storage.clone());
         assert_eq!(gem.balance_of(voter).unwrap(), 1);

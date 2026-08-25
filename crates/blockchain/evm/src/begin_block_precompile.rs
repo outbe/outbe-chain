@@ -244,6 +244,10 @@ fn dispatch_inner(
                 }
             }
         }
+        SystemTxInputV2::RewardsGemDelivery => {
+            let ctx = block_runtime_context_from_storage(storage, false)?;
+            outbe_rewards::api::deliver_oldest_reward_gem_batch(&ctx)?;
+        }
         SystemTxInputV2::BoundaryOutcome { artifact } => {
             let ctx = block_runtime_context_from_storage(storage, true)?;
             run_boundary_outcome(&ctx, &artifact)?;
