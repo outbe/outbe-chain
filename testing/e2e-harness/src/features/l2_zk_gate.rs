@@ -1,7 +1,7 @@
 //! L2Registry zk signature gate on `offerTribute` (PFS-001-10 / PFS-001-11).
 //!
 //! The harness plays the L2 network: it generates a BLS MinSig keypair,
-//! registers the operator's EOA as the network's L1 address, and drives the
+//! registers the operator's EOA through validator governance, and governs the
 //! `zk_enabled` toggle. With the gate enabled an unsigned offer must revert;
 //! a real `outbe.full_proof@1.0.0` whose root is signed with the registered key
 //! must pass the full gate and issue the canonical Tribute through the normal
@@ -29,7 +29,10 @@ use outbe_zk_canonical::full::FullProvable;
 use outbe_zk_canonical::noir::full_proof::FullProof;
 use outbe_zk_canonical::INCLUSION_DEPTH;
 use rand::{rngs::StdRng, SeedableRng};
+use std::thread::sleep;
+use std::time::Duration;
 
+use crate::internal::addresses::L2_REGISTRY_ADDR;
 use crate::world::rpc::TributeZkOffer;
 use crate::world::World;
 
@@ -159,6 +162,67 @@ fn operator_address(world: &World, key: &str) -> Address {
         .expect("operator address hex")
 }
 
+fn approve_l2_registry_proposal(world: &mut World, proposal_id: u64, payload: String) {
+    let operator = world
+        .validators
+        .operator("validator-0")
+        .expect("validator-0 operator");
+    let tx = world
+        .rpc
+        .send_propose(&operator, &format!("{L2_REGISTRY_ADDR:#x}"), &payload)
+        .expect("submit L2 registry proposal");
+    assert!(world.rpc.wait_tx(&tx, 40), "proposal tx not mined: {tx}");
+
+    let mut proposal = world.rpc.vote_status(proposal_id);
+    for _ in 0..10 {
+        if proposal.visible {
+            break;
+        }
+        sleep(Duration::from_secs(2));
+        proposal = world.rpc.vote_status(proposal_id);
+    }
+    assert!(proposal.visible, "proposal #{proposal_id} is not visible");
+    assert_eq!(proposal.status, "pending");
+    assert!(
+        proposal
+            .target
+            .eq_ignore_ascii_case(&format!("{L2_REGISTRY_ADDR:#x}")),
+        "proposal target {} is not L2Registry",
+        proposal.target
+    );
+
+    for name in ["validator-0", "validator-1", "validator-2"] {
+        let validator = world.validators.by_name(name).expect("validator");
+        world
+            .rpc
+            .cast_vote(&validator, proposal_id, true)
+            .expect("cast L2 registry vote");
+    }
+    let mut proposal = world.rpc.vote_status(proposal_id);
+    for _ in 0..10 {
+        if proposal.yes == 3 {
+            break;
+        }
+        sleep(Duration::from_secs(2));
+        proposal = world.rpc.vote_status(proposal_id);
+    }
+    assert_eq!(proposal.status, "pending");
+    assert_eq!(proposal.yes, 3);
+    let deadline = proposal.deadline.expect("proposal deadline");
+    let height = world
+        .rpc
+        .wait_block_gt(world.validators.primary_port(), deadline, 80)
+        .unwrap_or_default();
+    assert!(
+        height > deadline,
+        "did not pass proposal deadline {deadline}"
+    );
+    assert!(
+        world.rpc.wait_vote_status(proposal_id, "approved", 60),
+        "L2 registry proposal #{proposal_id} was not approved"
+    );
+}
+
 #[when("an L2 network is registered for the operator with zk enabled")]
 fn register_l2_network_with_zk(world: &mut World) {
     let key = operator_key(world);
@@ -169,24 +233,39 @@ fn register_l2_network_with_zk(world: &mut World) {
     world.state.l2_bls_private_hex = Some(hex::encode(private.encode()));
     world.state.l2_chain_id = Some(L2_CHAIN_ID);
 
-    world
-        .rpc
-        .l2_register_network(&key, L2_CHAIN_ID, l1_address, &public)
-        .expect("registerNetwork succeeds");
-    world
-        .rpc
-        .l2_set_zk_enabled(&key, L2_CHAIN_ID, true)
-        .expect("setZkEnabled(true) succeeds");
+    let payload = serde_json::json!({
+        "operation": "register",
+        "chainId": L2_CHAIN_ID,
+        "l1Address": format!("{l1_address:#x}"),
+        "publicKey": format!("0x{}", hex::encode(&public)),
+        "zkEnabled": true,
+    })
+    .to_string();
+    approve_l2_registry_proposal(world, 1, payload);
+
+    let registered = world.rpc.l2_network(L2_CHAIN_ID).expect("registered L2");
+    assert_eq!(registered, (l1_address, public, true));
 }
 
 #[when("zk verification is disabled for the registered L2 network")]
 fn disable_l2_zk(world: &mut World) {
-    let key = operator_key(world);
     let chain_id = world.state.l2_chain_id.expect("registered L2 chain id");
-    world
-        .rpc
-        .l2_set_zk_enabled(&key, chain_id, false)
-        .expect("setZkEnabled(false) succeeds");
+    let payload = serde_json::json!({
+        "operation": "setZkEnabled",
+        "chainId": chain_id,
+        "enabled": false,
+    })
+    .to_string();
+    approve_l2_registry_proposal(world, 2, payload);
+    let (_, _, enabled) = world.rpc.l2_network(chain_id).expect("registered L2");
+    assert!(!enabled, "governed L2 ZK disable did not apply");
+}
+
+#[then("the governed L2 network is registered with zk enabled")]
+fn governed_l2_is_registered(world: &mut World) {
+    let (_, public_key, enabled) = world.rpc.l2_network(L2_CHAIN_ID).expect("registered L2");
+    assert_eq!(public_key.len(), 96);
+    assert!(enabled);
 }
 
 #[when("the operator submits an encrypted tribute offer without an L2 signature")]

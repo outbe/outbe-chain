@@ -8,12 +8,23 @@ use crate::precompile::IL2Registry;
 use crate::schema::{L2NetworkRecord, L2RegistryContract, BLS_PUBLIC_KEY_LEN};
 
 impl L2RegistryContract<'_> {
-    /// Registers an L2 network. Permissionless; validation only.
+    /// Registers an L2 network with ZK verification disabled.
     pub fn register_network(
         &mut self,
         chain_id: u64,
         l1_address: Address,
         public_key: &[u8],
+    ) -> Result<()> {
+        self.register_network_with_zk(chain_id, l1_address, public_key, false)
+    }
+
+    /// Atomically registers an L2 network with its approved initial ZK policy.
+    pub fn register_network_with_zk(
+        &mut self,
+        chain_id: u64,
+        l1_address: Address,
+        public_key: &[u8],
+        zk_enabled: bool,
     ) -> Result<()> {
         if chain_id == 0 {
             return Err(L2RegistryError::InvalidChainId.into());
@@ -43,23 +54,32 @@ impl L2RegistryContract<'_> {
             .into());
         }
 
-        let (pubkey_lo, pubkey_mid, pubkey_hi) = L2NetworkRecord::split_public_key(pubkey);
-        self.networks.create(&L2NetworkRecord {
-            chain_id,
-            l1_address,
-            pubkey_lo,
-            pubkey_mid,
-            pubkey_hi,
-            zk_enabled: false,
-        })?;
-        self.l1_to_chain.write(&l1_address, chain_id)?;
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            let (pubkey_lo, pubkey_mid, pubkey_hi) = L2NetworkRecord::split_public_key(pubkey);
+            self.networks.create(&L2NetworkRecord {
+                chain_id,
+                l1_address,
+                pubkey_lo,
+                pubkey_mid,
+                pubkey_hi,
+                zk_enabled,
+            })?;
+            self.l1_to_chain.write(&l1_address, chain_id)?;
 
-        self.emit(IL2Registry::L2NetworkRegistered {
-            chainId: chain_id,
-            l1Address: l1_address,
-            publicKey: Bytes::copy_from_slice(public_key),
-        })?;
-        Ok(())
+            self.emit(IL2Registry::L2NetworkRegistered {
+                chainId: chain_id,
+                l1Address: l1_address,
+                publicKey: Bytes::copy_from_slice(public_key),
+            })?;
+            if zk_enabled {
+                self.emit(IL2Registry::L2NetworkZkSet {
+                    chainId: chain_id,
+                    enabled: true,
+                })?;
+            }
+            Ok(())
+        })
     }
 
     /// Enables or disables ZK verification for a registered network.
@@ -74,13 +94,20 @@ impl L2RegistryContract<'_> {
         Ok(())
     }
 
-    /// Removes a registered network and its reverse index entry.
-    pub fn remove_network(&mut self, chain_id: u64) -> Result<()> {
+    /// Removes a registered network when `caller` is its stored L1 owner.
+    pub fn remove_network(&mut self, caller: Address, chain_id: u64) -> Result<()> {
         let record = self.load_network(chain_id)?;
-        self.networks.delete(chain_id)?;
-        self.l1_to_chain.clear(&record.l1_address)?;
-        self.emit(IL2Registry::L2NetworkRemoved { chainId: chain_id })?;
-        Ok(())
+        if caller != record.l1_address {
+            return Err(L2RegistryError::NotNetworkOwner { caller, chain_id }.into());
+        }
+
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.networks.delete(chain_id)?;
+            self.l1_to_chain.clear(&record.l1_address)?;
+            self.emit(IL2Registry::L2NetworkRemoved { chainId: chain_id })?;
+            Ok(())
+        })
     }
 
     /// Loads a registration or reverts with `NetworkNotRegistered`.

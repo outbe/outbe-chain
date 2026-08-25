@@ -8824,9 +8824,13 @@ dependencies = [
  "commonware-codec",
  "commonware-cryptography",
  "commonware-math",
+ "hex",
  "outbe-macros",
  "outbe-primitives",
+ "outbe-vote",
  "rand_core 0.6.4",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
