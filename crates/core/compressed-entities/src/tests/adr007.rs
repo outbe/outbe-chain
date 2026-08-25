@@ -4,7 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use alloy_primitives::{address, b256, keccak256, Address, Bytes, B256, U256};
+use alloy_primitives::{address, b256, keccak256, Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
 use outbe_primitives::{
@@ -16,9 +16,9 @@ use outbe_primitives::{
 use crate::{
     begin_block, body_commitment, delete, encode_nod_bucket_v1, encode_nod_item_v1,
     encode_tribute_v1, end_block, list, mint, read, update, AuthenticatedParentTree, BodyInput,
-    CeWorkConfig, EntityId36, EntityRef, ExecutionScope, FinalLeafMutation, IdPage, IdPageRequest,
+    CeWorkConfig, EntityRef, ExecutionScope, FinalLeafMutation, IdPage, IdPageRequest,
     NodBucketBodyV1, NodItemBodyV1, ParentBodySource, ParentBodySourceError, PartitionRef,
-    ProvisionalTreeBatch, QueryRef, StoredBody, TributeBodyV1, VerifiedBody,
+    ProvisionalTreeBatch, QueryRef, StoredBody, TributeBodyV1, VerifiedBody, WwdEntityId,
     ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, MAX_ID_PAGE_LIMIT,
 };
 use crate::{
@@ -27,8 +27,8 @@ use crate::{
         READ_FIXED_GAS, READ_GAS_PER_CANONICAL_BYTE,
     },
     schema::{
-        body_identity_record, body_locator, decode_body_identity_record, Collection,
-        CompressedEntitiesSchema, DeltaStatus, IndexKind, IndexRecord, PendingWord,
+        body_locator, Collection, CompressedEntitiesSchema, DeltaStatus, IndexKind, IndexRecord,
+        PendingWord,
     },
     state::{
         State, BODY_TOUCHED_LENGTH_CLEANUP_GAS, FIRST_BODY_TOUCH_CLEANUP_GAS,
@@ -104,7 +104,7 @@ fn scope_with_tree(tree: Arc<TestAuthenticatedTree>) -> ExecutionScope {
 fn overlay_leaf(
     storage: StorageHandle<'_>,
     collection: Collection,
-    id: EntityId36,
+    id: WwdEntityId,
 ) -> Option<crate::Commitment> {
     match State::new(storage).pending(collection, id).unwrap().1 {
         PendingWord::Set(commitment) => Some(commitment),
@@ -115,10 +115,10 @@ fn overlay_leaf(
 #[derive(Default)]
 struct MemoryParent {
     bodies: HashMap<EntityRef, StoredBody>,
-    tribute_by_owner: HashMap<Address, Vec<EntityId36>>,
-    tribute_by_day: HashMap<WorldwideDay, Vec<EntityId36>>,
-    nod_by_owner: HashMap<Address, Vec<EntityId36>>,
-    nod_all: Vec<EntityId36>,
+    tribute_by_owner: HashMap<Address, Vec<WwdEntityId>>,
+    tribute_by_day: HashMap<WorldwideDay, Vec<WwdEntityId>>,
+    nod_by_owner: HashMap<Address, Vec<WwdEntityId>>,
+    nod_all: Vec<WwdEntityId>,
     get_calls: Cell<u32>,
     list_calls: Cell<u32>,
     reverse_pages: bool,
@@ -167,7 +167,7 @@ impl MemoryParent {
         self.nod_all.sort_unstable();
     }
 
-    fn ids(&self, query: QueryRef) -> Vec<EntityId36> {
+    fn ids(&self, query: QueryRef) -> Vec<WwdEntityId> {
         match query {
             QueryRef::TributeByOwner(owner) => self
                 .tribute_by_owner
@@ -243,11 +243,11 @@ impl ParentBodySource for ScriptedParent {
     }
 }
 
-fn entity(day: u32, suffix: u8) -> EntityId36 {
-    EntityId36::new(WorldwideDay::new(day), [suffix; 32])
+fn entity(day: u32, suffix: u8) -> WwdEntityId {
+    WwdEntityId::from_day_and_digest(WorldwideDay::new(day), [suffix; 32])
 }
 
-fn tribute(id: EntityId36, owner: Address, price: u64) -> TributeBodyV1 {
+fn tribute(id: WwdEntityId, owner: Address, price: u64) -> TributeBodyV1 {
     TributeBodyV1 {
         tribute_id: id,
         owner,
@@ -261,7 +261,7 @@ fn tribute(id: EntityId36, owner: Address, price: u64) -> TributeBodyV1 {
     }
 }
 
-fn nod_item(id: EntityId36, owner: Address) -> NodItemBodyV1 {
+fn nod_item(id: WwdEntityId, owner: Address) -> NodItemBodyV1 {
     NodItemBodyV1 {
         nod_id: id,
         owner,
@@ -471,6 +471,17 @@ fn exercise_transition_sequence(
         .get_ordered_events()
         .iter()
         .all(|event| event.address == original.emitter()));
+}
+
+/// The bucket key an identity is consistent with.
+///
+/// `NodBucketBodyV1::entity_id` derives the identity as `wwd ++ key[4..]`, so
+/// the key's leading four bytes are not recoverable from it. Fixtures that
+/// start from an identity rebuild the one key that re-derives to it.
+fn bucket_key_for(id: WwdEntityId) -> B256 {
+    let mut key = [0_u8; 32];
+    key[4..].copy_from_slice(&id.body());
+    B256::from(key)
 }
 
 #[test]
@@ -859,7 +870,7 @@ fn untouched_reads_use_parent_once_and_classify_missing_committed_body() {
     let stale_nod = nod_item(entity(8, 28), owner);
     let stale_bucket_id = entity(8, 29);
     let stale_bucket = NodBucketBodyV1 {
-        bucket_key: B256::from(stale_bucket_id.digest()),
+        bucket_key: bucket_key_for(stale_bucket_id),
         worldwide_day: stale_bucket_id.worldwide_day(),
         floor_price_minor: U256::from(4),
         is_qualified: false,
@@ -869,7 +880,7 @@ fn untouched_reads_use_parent_once_and_classify_missing_committed_body() {
     };
     let missing_bucket_id = entity(8, 30);
     let missing_bucket = NodBucketBodyV1 {
-        bucket_key: B256::from(missing_bucket_id.digest()),
+        bucket_key: bucket_key_for(missing_bucket_id),
         worldwide_day: missing_bucket_id.worldwide_day(),
         floor_price_minor: U256::from(6),
         is_qualified: true,
@@ -981,7 +992,7 @@ fn canonical_events_use_domain_emitters_and_survive_as_ordered_operations() {
     let mint_event = TributeBodyStored::decode_log_data(&logs[0].data).unwrap();
     let update_event = TributeBodyStored::decode_log_data(&logs[1].data).unwrap();
     let delete_event = TributeBodyDeleted::decode_log_data(&logs[2].data).unwrap();
-    assert_eq!(mint_event.tributeId, Bytes::copy_from_slice(id.as_bytes()));
+    assert_eq!(mint_event.tributeId, id.to_u256());
     assert_eq!(mint_event.previousCommitment, B256::ZERO);
     assert_eq!(
         mint_event.canonicalPayload,
@@ -1219,11 +1230,11 @@ fn cleanup_zeroes_overlay_and_phase_rejects_post_end_access() {
         assert_eq!(schema.touched_index_deltas.len().unwrap(), 0);
         assert!(schema.pending_word.read(&locator).unwrap().is_zero());
         assert!(schema.pending_body.get_bytes(&locator).is_empty().unwrap());
-        assert!(schema
-            .body_identity_record
-            .get_bytes(&locator)
-            .is_empty()
-            .unwrap());
+        assert_eq!(
+            schema.body_identity_collection.read(&locator).unwrap(),
+            0,
+            "cleanup must clear the identity presence marker"
+        );
         assert!(matches!(
             read(
                 storage.clone(),
@@ -1854,7 +1865,7 @@ fn every_cleanup_write_boundary_rolls_back_the_complete_end_block_cleanup() {
 }
 
 #[test]
-fn storage_layout_uses_exact_slots_zero_through_twelve() {
+fn storage_layout_uses_exact_slots_zero_through_thirteen() {
     let owner = address!("9000000000000000000000000000000000000009");
     let body = tribute(entity(15, 9), owner, 100);
     let scope = ExecutionScope::new();
@@ -1868,10 +1879,11 @@ fn storage_layout_uses_exact_slots_zero_through_twelve() {
     });
 
     let pending_slot = locator.mapping_slot(U256::from(4));
-    let identity_record_slot = locator.mapping_slot(U256::from(10));
+    let identity_slot = locator.mapping_slot(U256::from(10));
+    let identity_collection_slot = locator.mapping_slot(U256::from(13));
     assert_eq!(
         provider.storage[&(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO)],
-        U256::from(3)
+        U256::from(4)
     );
     assert_eq!(
         provider
@@ -1899,14 +1911,19 @@ fn storage_layout_uses_exact_slots_zero_through_twelve() {
         provider.storage[&(COMPRESSED_ENTITIES_ADDRESS, U256::from(6))],
         U256::from(1)
     );
-    assert_ne!(
-        provider.storage[&(COMPRESSED_ENTITIES_ADDRESS, identity_record_slot)],
-        U256::ZERO
+    // One word each: the identity at slot 10 and its collection marker at 13.
+    assert_eq!(
+        provider.storage[&(COMPRESSED_ENTITIES_ADDRESS, identity_slot)],
+        body.tribute_id.to_u256()
     );
-    // ADR-011 reserves slots 11-12 for retirement; no base slot exists beyond 12.
+    assert_eq!(
+        provider.storage[&(COMPRESSED_ENTITIES_ADDRESS, identity_collection_slot)],
+        U256::from(Collection::Tribute.id())
+    );
+    // No base slot exists beyond 13.
     assert!(!provider
         .storage
-        .contains_key(&(COMPRESSED_ENTITIES_ADDRESS, U256::from(13))));
+        .contains_key(&(COMPRESSED_ENTITIES_ADDRESS, U256::from(14))));
 }
 
 #[test]
@@ -1972,51 +1989,40 @@ fn body_codecs_cover_all_three_closed_variants() {
     // Pin the central event signatures independently from their Rust types.
     assert_eq!(
         TributeBodyStored::SIGNATURE_HASH,
-        keccak256("TributeBodyStored(bytes,uint32,uint32,bytes32,bytes32,bytes)")
+        keccak256("TributeBodyStored(uint256,uint32,uint32,bytes32,bytes32,bytes)")
     );
     assert_eq!(
         NodBodyStored::SIGNATURE_HASH,
-        keccak256("NodBodyStored(bytes,uint32,uint32,bytes32,bytes32,bytes)")
+        keccak256("NodBodyStored(uint256,uint32,uint32,bytes32,bytes32,bytes)")
     );
 }
 
 #[test]
 fn exact_overlay_locator_and_record_vectors_are_protocol_pinned() {
-    let id = EntityId36::new(WorldwideDay::new(42), [0x11; 32]);
+    let id = WwdEntityId::from_day_and_digest(WorldwideDay::new(42), [0x11; 32]);
     let cases = [
         (
             Collection::Tribute,
-            b256!("3356337959a5e563c030ac2b90e8865a5eb03910600d0308b9a649107973f878"),
+            b256!("efe7430ecc84638c827107a7b8c81e65149beafaaa94bf3ccdd5a7ce047a7e27"),
         ),
         (
             Collection::NodItem,
-            b256!("6965874280900188b663f3b23a514ff2d9fa7905f973725f8656bcf28d243ee5"),
+            b256!("d6a30f530d7d202867408fcdb9dd825155f914cd830a3b5db6f599e710ef27ba"),
         ),
         (
             Collection::NodBucket,
-            b256!("1a34a80b8bd45e9c160c3bf941443b5389176f3024ba284d1a93a30c9f42a958"),
+            b256!("c4f00d37b7f206de8ac85d35728a73ecba6856f54bd9ead4fd2a42e80562f32f"),
         ),
     ];
 
     for (collection, expected_locator) in cases {
-        let record = body_identity_record(collection, id);
-        let mut expected_record = [0_u8; 38];
-        expected_record[0] = 1;
-        expected_record[1] = collection.id();
-        expected_record[2..6].copy_from_slice(&42_u32.to_be_bytes());
-        expected_record[6..].fill(0x11);
-        assert_eq!(record, expected_record);
-        assert_eq!(
-            decode_body_identity_record(&record).unwrap(),
-            (collection, id)
-        );
         assert_eq!(body_locator(collection, id).unwrap(), expected_locator);
     }
 }
 
 #[test]
 fn exact_index_record_key_and_status_vectors_are_protocol_pinned() {
-    let id = EntityId36::new(WorldwideDay::new(42), [0x11; 32]);
+    let id = WwdEntityId::from_day_and_digest(WorldwideDay::new(42), [0x11; 32]);
     let owner = Address::repeat_byte(0x22);
     let cases = [
         (
@@ -2025,17 +2031,17 @@ fn exact_index_record_key_and_status_vectors_are_protocol_pinned() {
                 "010114",
                 "2222222222222222222222222222222222222222",
                 "0000002a",
-                "1111111111111111111111111111111111111111111111111111111111111111"
+                "11111111111111111111111111111111111111111111111111111111"
             ),
-            b256!("0e268c587c867de1282d3fc167d077e5348c119a859d72f8244a179e5d7dbc1e"),
+            b256!("c3acc7bd8c73c96af18b80b2415d643c6d68e64573cc620ed0e086b13b79e165"),
         ),
         (
             IndexRecord::day(WorldwideDay::new(42), id),
             concat!(
                 "0102040000002a0000002a",
-                "1111111111111111111111111111111111111111111111111111111111111111"
+                "11111111111111111111111111111111111111111111111111111111"
             ),
-            b256!("6dcc91f2e9813e4334bea7c0d2224a94628dc9fee9f72a235b1940a03e85f8cd"),
+            b256!("b31e3d821bf8623570743703cba38e51b5f66dbed443719bc06b95f7405148bb"),
         ),
         (
             IndexRecord::owner(IndexKind::NodByOwner, owner, id),
@@ -2043,17 +2049,17 @@ fn exact_index_record_key_and_status_vectors_are_protocol_pinned() {
                 "010314",
                 "2222222222222222222222222222222222222222",
                 "0000002a",
-                "1111111111111111111111111111111111111111111111111111111111111111"
+                "11111111111111111111111111111111111111111111111111111111"
             ),
-            b256!("d2e4c35a1a17fa5876f5b03bd1e5bea6cc86d33db3d3718687d0c427c25ef873"),
+            b256!("d74fd5e8d1103a315a0503320b48ae5d88cd7a48ce67781bd9c8b6bbd2868ae6"),
         ),
         (
             IndexRecord::nod_all(id),
             concat!(
                 "0104000000002a",
-                "1111111111111111111111111111111111111111111111111111111111111111"
+                "11111111111111111111111111111111111111111111111111111111"
             ),
-            b256!("0faceed4453b5846c1f15dd4895045bd10e30a7847bf9985a9a74d2ac9824de6"),
+            b256!("638c71f7b03c234465ab777494472e896c80f87cf31e7afb7a8b2b441ccd661f"),
         ),
     ];
 
@@ -2088,7 +2094,7 @@ fn exact_index_record_key_and_status_vectors_are_protocol_pinned() {
 
 #[test]
 fn overlay_wire_decoders_reject_every_noncanonical_boundary_class() {
-    let id = EntityId36::new(WorldwideDay::new(42), [0x11; 32]);
+    let id = WwdEntityId::from_day_and_digest(WorldwideDay::new(42), [0x11; 32]);
     let owner = Address::repeat_byte(0x22);
     let modulus = U256::from_be_bytes::<32>(
         hex::decode("30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001")
@@ -2109,29 +2115,11 @@ fn overlay_wire_decoders_reject_every_noncanonical_boundary_class() {
         ));
     }
 
-    let valid_body_record = body_identity_record(Collection::Tribute, id);
-    for invalid in [
-        valid_body_record[..37].to_vec(),
-        {
-            let mut value = valid_body_record.to_vec();
-            value[0] = 2;
-            value
-        },
-        {
-            let mut value = valid_body_record.to_vec();
-            value[1] = 4;
-            value
-        },
-        {
-            let mut value = valid_body_record.to_vec();
-            value.push(0);
-            value
-        },
-    ] {
-        assert!(matches!(
-            decode_body_identity_record(&invalid),
-            Err(PrecompileError::Fatal(_))
-        ));
+    for invalid in [0_u8, 4, u8::MAX] {
+        assert!(
+            matches!(Collection::from_id(invalid), Err(PrecompileError::Fatal(_))),
+            "collection id {invalid} must not decode"
+        );
     }
 
     let valid_index = IndexRecord::owner(IndexKind::TributeByOwner, owner, id).encode();
@@ -2168,7 +2156,7 @@ fn overlay_wire_decoders_reject_every_noncanonical_boundary_class() {
 #[test]
 fn maximum_v1_body_footprint_and_storage_tail_cleanup_are_exact() {
     let day = WorldwideDay::new(u32::MAX);
-    let id = EntityId36::new(day, [0xff; 32]);
+    let id = WwdEntityId::from_day_and_digest(day, [0xff; 32]);
     let maximum = NodItemBodyV1 {
         nod_id: id,
         owner: Address::repeat_byte(0xff),
@@ -2275,7 +2263,7 @@ fn golden_read_list_and_first_touch_gas_coefficients_are_exact() {
     assert_eq!(READ_GAS_PER_CANONICAL_BYTE, 8);
     assert_eq!(INDEX_RECORD_SCAN_GAS, 300);
     assert_eq!(PARENT_ID_GAS, 120);
-    assert_eq!(FIRST_BODY_TOUCH_CLEANUP_GAS, 70_000);
+    assert_eq!(FIRST_BODY_TOUCH_CLEANUP_GAS, 65_000);
     assert_eq!(BODY_TOUCHED_LENGTH_CLEANUP_GAS, 5_000);
     assert_eq!(FIRST_INDEX_TOUCH_CLEANUP_GAS, 25_000);
     assert_eq!(INDEX_TOUCHED_LENGTH_CLEANUP_GAS, 5_000);

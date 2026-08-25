@@ -63,6 +63,7 @@ impl RunOpts {
 
 /// Run the enclave server. Returns a process exit code (0 = success).
 pub fn run(opts: RunOpts) -> i32 {
+    crate::telemetry::mark_process_start();
     let args: Vec<String> = std::env::args().collect();
 
     // Diagnostic mode: read the real Gramine /dev/attestation surface and exit.

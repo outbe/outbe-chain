@@ -2,7 +2,7 @@ use crate::program_v1::{self, ProgramErrorV1, TributeInputV1};
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    list, EntityId36, ExecutionScope, IdPageRequest, ParentBodySource, QueryRef, MAX_ID_PAGE_LIMIT,
+    list, ExecutionScope, IdPageRequest, ParentBodySource, QueryRef, WwdEntityId, MAX_ID_PAGE_LIMIT,
 };
 use outbe_primitives::{
     error::{PrecompileError, Result},
@@ -11,8 +11,8 @@ use outbe_primitives::{
 
 /// Result of a lysis execution.
 pub struct LysisResult {
-    pub nod_ids: Vec<EntityId36>,
-    pub tribute_ids: Vec<EntityId36>,
+    pub nod_ids: Vec<WwdEntityId>,
+    pub tribute_ids: Vec<WwdEntityId>,
     pub remaining_gratis: U256,
 }
 
@@ -227,16 +227,22 @@ fn resolve_entry_price_minor(
     worldwide_day: WorldwideDay,
     iso_code: u16,
 ) -> Result<U256> {
-    let (pair, index) = outbe_oracle::api::require_coen_pair(storage.clone(), iso_code)?;
-    let vwap =
-        outbe_oracle::api::get_worldwide_day_vwap_for_pair(storage.clone(), worldwide_day, index)?
-            .unwrap_or(U256::ZERO);
-    let max_scurve = outbe_oracle::api::get_max_active_scurve_value(storage, worldwide_day, pair)?;
-    let nominal = vwap.max(max_scurve);
-    if nominal.is_zero() {
+    let (_, index) = outbe_oracle::api::require_coen_pair(storage.clone(), iso_code)?;
+    let vwap = outbe_oracle::api::get_worldwide_day_vwap_for_pair(storage, worldwide_day, index)?
+        .unwrap_or(U256::ZERO);
+    if vwap.is_zero() {
         return Err(PrecompileError::Revert(
-            "nominal price is zero: no VWAP or S-curve data available for this WorldwideDay".into(),
+            "Lysis WWD VWAP is missing or zero for this reference currency".into(),
         ));
     }
-    Ok(nominal)
+    Ok(vwap)
+}
+
+#[cfg(test)]
+pub(crate) fn resolve_entry_price_minor_for_test(
+    storage: StorageHandle,
+    worldwide_day: WorldwideDay,
+    iso_code: u16,
+) -> Result<U256> {
+    resolve_entry_price_minor(storage, worldwide_day, iso_code)
 }

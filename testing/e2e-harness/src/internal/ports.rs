@@ -1,6 +1,8 @@
 //! Per-node port allocation for the localnet.
 //!
-//! Every node owns one **contiguous block** of ports, one per service:
+//! Every node owns one **contiguous legacy block** of chain/OCOMP ports plus a
+//! separate two-port Radicle block. Keeping the allocators separate prevents a
+//! new sidecar from renumbering consensus ports embedded in existing fixtures.
 //!
 //! ```text
 //! OCOMP reserves six consecutive TCP slots at the end of each node block:
@@ -60,6 +62,8 @@ pub(crate) enum Service {
     Authrpc,
     Metrics,
     Consensus,
+    Radicle,
+    RadicleStatus,
     OcompSupervisor,
     OcompMessage,
     OcompWorker0,
@@ -69,8 +73,28 @@ pub(crate) enum Service {
 }
 
 impl Service {
-    /// Block order. Adding a service widens [`BLOCK`] and renumbers every node.
-    const ALL: [Service; 13] = [
+    /// Every service known to collision and preflight checks.
+    #[cfg(test)]
+    const ALL: [Service; 15] = [
+        Self::Http,
+        Self::Tee,
+        Self::P2p,
+        Self::Discv5,
+        Self::Authrpc,
+        Self::Metrics,
+        Self::Consensus,
+        Self::OcompSupervisor,
+        Self::OcompMessage,
+        Self::OcompWorker0,
+        Self::OcompWorker1,
+        Self::OcompWorker2,
+        Self::OcompWorker3,
+        Self::Radicle,
+        Self::RadicleStatus,
+    ];
+
+    /// Frozen chain/OCOMP block order. Never insert a new service here.
+    const CORE: [Service; 13] = [
         Self::Http,
         Self::Tee,
         Self::P2p,
@@ -85,6 +109,12 @@ impl Service {
         Self::OcompWorker2,
         Self::OcompWorker3,
     ];
+
+    const RADICLE: [Service; 2] = [Self::Radicle, Self::RadicleStatus];
+
+    fn is_radicle(self) -> bool {
+        matches!(self, Self::Radicle | Self::RadicleStatus)
+    }
 
     /// This service's slot within a node's block.
     fn offset(self) -> u16 {
@@ -102,6 +132,8 @@ impl Service {
             Self::OcompWorker1 => 10,
             Self::OcompWorker2 => 11,
             Self::OcompWorker3 => 12,
+            Self::Radicle => 0,
+            Self::RadicleStatus => 1,
         }
     }
 
@@ -115,7 +147,9 @@ impl Service {
 }
 
 /// Ports per node block.
-const BLOCK: u16 = Service::ALL.len() as u16;
+const BLOCK: u16 = Service::CORE.len() as u16;
+const RADICLE_BLOCK: u16 = Service::RADICLE.len() as u16;
+const RADICLE_BASE: u16 = 50_000;
 
 /// Port allocator shared by every [`Config`](crate::internal::config::Config)
 /// clone of a run.
@@ -132,8 +166,12 @@ pub(crate) struct Ports {
 struct Resolver {
     /// Node index → first port of its block.
     blocks: HashMap<usize, u16>,
+    /// Node index → first port of its separate Radicle block.
+    radicle_blocks: HashMap<usize, u16>,
     /// Lowest port not yet handed out. Only ever moves forward.
     cursor: u16,
+    /// Lowest Radicle port not yet handed out.
+    radicle_cursor: u16,
     /// Probe the OS for a free window, rather than taking the cursor verbatim.
     scan: bool,
 }
@@ -147,7 +185,9 @@ impl Ports {
         Self {
             inner: Arc::new(Mutex::new(Resolver {
                 blocks: HashMap::new(),
+                radicle_blocks: HashMap::new(),
                 cursor: NODE_BASE,
+                radicle_cursor: RADICLE_BASE,
                 scan,
             })),
         }
@@ -178,7 +218,9 @@ impl Ports {
         Ok(Self {
             inner: Arc::new(Mutex::new(Resolver {
                 blocks: starts.iter().copied().enumerate().collect(),
+                radicle_blocks: HashMap::new(),
                 cursor,
+                radicle_cursor: RADICLE_BASE,
                 scan: false,
             })),
         })
@@ -193,6 +235,7 @@ impl Ports {
     pub fn start_scenario(&self, n: usize) -> Result<()> {
         let mut r = lock(&self.inner);
         r.blocks.clear();
+        r.radicle_blocks.clear();
         (0..n).try_for_each(|i| r.block_start(i).map(drop))
     }
 
@@ -210,9 +253,13 @@ impl Ports {
     /// Panics only when the port space above the cursor is exhausted — an
     /// unrecoverable property of the machine, not of the caller.
     pub(crate) fn port(&self, svc: Service, i: usize) -> u16 {
-        let start = lock(&self.inner)
-            .block_start(i)
-            .unwrap_or_else(|e| panic!("e2e ports: {e}"));
+        let mut resolver = lock(&self.inner);
+        let start = if svc.is_radicle() {
+            resolver.radicle_block_start(i)
+        } else {
+            resolver.block_start(i)
+        }
+        .unwrap_or_else(|e| panic!("e2e ports: {e}"));
         start + svc.offset()
     }
 
@@ -226,7 +273,16 @@ impl Ports {
         let mut resolver = lock(&self.inner);
         for index in 0..nodes {
             let start = resolver.block_start(index)?;
-            for service in Service::ALL {
+            for service in Service::CORE {
+                let port = start + service.offset();
+                if !is_free(port, service.proto()) {
+                    bail!(
+                        "LocalNet port preflight failed: validator-{index} {service:?} port {port} is already in use"
+                    );
+                }
+            }
+            let start = resolver.radicle_block_start(index)?;
+            for service in Service::RADICLE {
                 let port = start + service.offset();
                 if !is_free(port, service.proto()) {
                     bail!(
@@ -258,6 +314,15 @@ impl Resolver {
         Ok(start)
     }
 
+    fn radicle_block_start(&mut self, i: usize) -> Result<u16> {
+        if let Some(&start) = self.radicle_blocks.get(&i) {
+            return Ok(start);
+        }
+        let start = self.alloc_radicle()?;
+        self.radicle_blocks.insert(i, start);
+        Ok(start)
+    }
+
     /// Take the next block at or above the cursor, and advance the cursor past it.
     fn alloc(&mut self) -> Result<u16> {
         let mut candidate = u64::from(self.cursor);
@@ -272,19 +337,41 @@ impl Resolver {
             candidate = u64::from(start) + 1;
         }
     }
+
+    fn alloc_radicle(&mut self) -> Result<u16> {
+        let mut candidate = u64::from(self.radicle_cursor);
+        loop {
+            let start = fits_width(candidate, RADICLE_BLOCK)?;
+            if !self.scan || radicle_window_free(start) {
+                self.radicle_cursor = start.saturating_add(RADICLE_BLOCK);
+                return Ok(start);
+            }
+            candidate = u64::from(start) + 1;
+        }
+    }
 }
 
 /// `start` as a `u16`, once we know a whole block fits at or above it.
 fn fits(start: u64) -> Result<u16> {
-    if start + u64::from(BLOCK) - 1 > u64::from(u16::MAX) {
-        bail!("no free {BLOCK}-port block at or above {start}");
+    fits_width(start, BLOCK)
+}
+
+fn fits_width(start: u64, width: u16) -> Result<u16> {
+    if start + u64::from(width) - 1 > u64::from(u16::MAX) {
+        bail!("no free {width}-port block at or above {start}");
     }
     Ok(start as u16)
 }
 
 /// Whether every port of the block starting at `start` is bindable.
 fn window_free(start: u16) -> bool {
-    Service::ALL
+    Service::CORE
+        .iter()
+        .all(|svc| is_free(start + svc.offset(), svc.proto()))
+}
+
+fn radicle_window_free(start: u16) -> bool {
+    Service::RADICLE
         .iter()
         .all(|svc| is_free(start + svc.offset(), svc.proto()))
 }
@@ -336,8 +423,11 @@ mod tests {
         assert_eq!(p.port(Tee, 0), 18546);
         assert_eq!(p.port(Consensus, 0), 18551);
         assert_eq!(p.port(OcompSupervisor, 0), 18552);
+        assert_eq!(p.port(Radicle, 0), RADICLE_BASE);
+        assert_eq!(p.port(RadicleStatus, 0), RADICLE_BASE + 1);
         assert_eq!(p.port(Http, 1), NODE_BASE + BLOCK);
         assert_eq!(p.port(Tee, 1), NODE_BASE + BLOCK + 1);
+        assert_eq!(p.port(Radicle, 1), RADICLE_BASE + RADICLE_BLOCK);
     }
 
     #[test]
@@ -381,18 +471,16 @@ mod tests {
     #[test]
     fn scenarios_never_reuse_ports() {
         let p = static_ports(2);
-        let first: Vec<u16> = [0, 1, 2, 14]
+        let first: HashSet<u16> = [0, 1, 2, 14]
             .iter()
             .flat_map(|&i| Service::ALL.map(|svc| p.port(svc, i)))
             .collect();
-        let high = *first.iter().max().expect("ports");
 
         p.start_scenario(2).expect("second scenario");
-        assert_ne!(p.port(Http, 0), first[0], "validator-0 must move");
         for i in [0, 1, 2, 14] {
             for svc in Service::ALL {
                 assert!(
-                    p.port(svc, i) > high,
+                    !first.contains(&p.port(svc, i)),
                     "{svc:?} of node {i} reuses a port from the previous scenario"
                 );
             }
@@ -512,7 +600,7 @@ mod tests {
             p.start_scenario(2).expect("scan");
             let first = p.port(Http, 0);
             assert_ne!(first, NODE_BASE, "should skip the held port");
-            for service in Service::ALL {
+            for service in Service::CORE {
                 assert_eq!(
                     p.port(service, 0),
                     first + service.offset(),
@@ -522,6 +610,11 @@ mod tests {
             assert!(
                 p.port(Http, 1) - first >= BLOCK,
                 "the next block follows the cursor"
+            );
+            assert_eq!(
+                p.port(RadicleStatus, 0),
+                p.port(Radicle, 0) + 1,
+                "the separate Radicle block stays contiguous"
             );
         }
     }

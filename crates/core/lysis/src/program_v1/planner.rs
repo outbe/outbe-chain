@@ -2,7 +2,6 @@ use core::fmt;
 
 use alloy_primitives::{B256, U256};
 use outbe_ocomp_protocol::{
-    common::EntityId36,
     generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1,
     input::{InputChunkKind, InputChunkRefV1},
     registry::ListKind,
@@ -245,16 +244,13 @@ pub fn primary_work_unit_count(tribute_count: u32) -> Result<u32, PlannerErrorV1
         + u32::from(!tribute_count.is_multiple_of(PRIMARY_WORK_SHARD_SIZE)))
 }
 
-fn chunk_first_id(
-    chunk: &InputChunkRefV1,
-    shard_ordinal: u32,
-) -> Result<EntityId36, PlannerErrorV1> {
-    let bytes: [u8; 36] = chunk.first_key.0.as_slice().try_into().map_err(|_| {
+fn chunk_first_id(chunk: &InputChunkRefV1, shard_ordinal: u32) -> Result<B256, PlannerErrorV1> {
+    let bytes: [u8; 32] = chunk.first_key.0.as_slice().try_into().map_err(|_| {
         PlannerErrorV1::InvalidTributeChunk {
             ordinal: shard_ordinal,
         }
     })?;
-    Ok(EntityId36(bytes))
+    Ok(B256::from(bytes))
 }
 
 impl LysisPlannerV1 {
@@ -1004,8 +1000,8 @@ impl LysisPlannerV1 {
         self,
         root: &mut StreamingOrderedListRoot,
         shard: PrimaryShardV1,
-        start: EntityId36,
-        end: Option<EntityId36>,
+        start: B256,
+        end: Option<B256>,
         tribute_chunk: &InputChunkRefV1,
         limits: &SchemaLimits,
     ) -> Result<(), PlannerErrorV1> {
@@ -1048,8 +1044,8 @@ impl LysisPlannerV1 {
     fn primary_unit_for_range(
         self,
         shard: PrimaryShardV1,
-        start: EntityId36,
-        end: Option<EntityId36>,
+        start: B256,
+        end: Option<B256>,
         tribute_chunk: &InputChunkRefV1,
         limits: &SchemaLimits,
     ) -> Result<UnitSpecV1, PlannerErrorV1> {
@@ -1057,8 +1053,8 @@ impl LysisPlannerV1 {
         if tribute_chunk.kind != InputChunkKind::Tribute
             || tribute_chunk.ordinal != shard.ordinal
             || tribute_chunk.record_count != shard.record_count()
-            || tribute_chunk.first_key.0.as_slice() != start.0
-            || tribute_chunk.last_key_inclusive.0.len() != 36
+            || tribute_chunk.first_key.0.as_slice() != start.as_slice()
+            || tribute_chunk.last_key_inclusive.0.len() != 32
             || tribute_chunk.last_key_inclusive.0.as_slice() < start.0.as_slice()
             || end.is_some_and(|end| {
                 tribute_chunk.last_key_inclusive.0.as_slice() >= end.0.as_slice()

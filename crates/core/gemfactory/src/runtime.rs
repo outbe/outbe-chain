@@ -2,7 +2,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
 use outbe_intex::SeriesId;
-use outbe_oracle::api::{coen_rate_for, require_coen_pair};
+use outbe_oracle::api::{fresh_coen_rate_for, fresh_currency_cross_rate, require_coen_pair};
 use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
@@ -46,7 +46,7 @@ pub fn mint_gem(
 
     // Entry/floor/call are measured against the reference currency (the same
     // COEN/<reference> rate the qualify/call scans compare against).
-    let coen_rate = read_oracle_rate(storage, reference_currency)?;
+    let coen_rate = read_reference_oracle_rate(storage, reference_currency)?;
     let issued_at = storage.timestamp()?.to::<u64>();
     let (cost_amount, floor_price, initial_state) = compute_params(gem_type, gem_load, coen_rate)?;
     let entry_price = coen_rate;
@@ -199,7 +199,7 @@ pub fn mint_merchant_gem(
         .checked_sub(gem_load)
         .ok_or(GemFactoryError::InsufficientCapacity)?;
 
-    let coen_rate = read_oracle_rate(storage, record.reference_currency)?;
+    let coen_rate = read_reference_oracle_rate(storage, record.reference_currency)?;
     let entry_price = coen_rate.max(record.source_entry_price);
     let cost_amount = compute_cost(entry_price, gem_load, 100)?;
     let floor_price = derived_floor(entry_price)?.max(record.source_floor_price);
@@ -299,7 +299,7 @@ pub fn settle_gem(
 
     // The Cost Amount is denominated in the reference currency, so a settlement
     // that resolves to the issuance currency is charged at the live cross rate.
-    let amount_paid = outbe_oracle::api::currency_cross_rate(
+    let amount_paid = fresh_currency_cross_rate(
         storage.clone(),
         item.reference_currency,
         expected,
@@ -320,7 +320,7 @@ pub fn settle_gem(
             gemId: gem_id,
             owner: caller,
             amountPaid: amount_paid,
-            issuanceCurrency: item.issuance_currency,
+            settlementCurrency: expected,
         },
     )?;
 
@@ -378,7 +378,7 @@ pub fn mine_gem_promis(
     storage: &StorageHandle<'_>,
     caller: Address,
     gem_id: U256,
-    nonce: U256,
+    nonce: u64,
     auth: outbe_promisfactory::api::ModifyAuth,
 ) -> Result<U256> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
@@ -410,12 +410,14 @@ pub fn mine_gem_promis(
     Ok(item.gem_load_minor)
 }
 
-/// Looks up the COEN/`issuance_currency` rate via Oracle's derived pair
-/// lookup. Reverts with
-/// `IssuanceCurrencyNotRegistered` if the pair is not registered, or
-/// `OracleUnavailable` if the pair exists but no rate has been published.
-fn read_oracle_rate(storage: &StorageHandle<'_>, issuance_currency: u16) -> Result<U256> {
-    let rate = coen_rate_for(storage.clone(), issuance_currency)?;
+/// Looks up the COEN/`reference_currency` rate via Oracle's derived pair
+/// lookup. Propagates Oracle's typed missing/stale errors and maps an unusable
+/// zero rate to `OracleUnavailable`.
+fn read_reference_oracle_rate(
+    storage: &StorageHandle<'_>,
+    reference_currency: u16,
+) -> Result<U256> {
+    let rate = fresh_coen_rate_for(storage.clone(), reference_currency)?;
     if rate.is_zero() {
         return Err(GemFactoryError::OracleUnavailable.into());
     }
@@ -499,6 +501,6 @@ fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> 
 
 /// PoW gate for `mine_gem_promis`, delegating to the shared
 /// [`outbe_common::pow`] scheme and mapping failures onto [`GemFactoryError`].
-pub fn validate_pow(gem_id: U256, nonce: U256) -> Result<()> {
+pub fn validate_pow(gem_id: U256, nonce: u64) -> Result<()> {
     pow::validate_pow(gem_id, nonce).map_err(|e| GemFactoryError::from(e).into())
 }

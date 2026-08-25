@@ -1,5 +1,5 @@
 use alloy_primitives::U256;
-use outbe_compressed_entities::{update, BodyInput, EntityId36, ExecutionScope, ParentBodySource};
+use outbe_compressed_entities::{update, BodyInput, ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_primitives::error::{PrecompileError, Result};
 
 use crate::{
@@ -18,7 +18,7 @@ impl NodContract<'_> {
         bucket_key: alloy_primitives::B256,
     ) -> Result<()> {
         let worldwide_day = self.bucket_worldwide_day.read(&bucket_key)?;
-        let bucket_id = EntityId36::new(worldwide_day, bucket_key.0);
+        let bucket_id = WwdEntityId::from_day_and_digest(worldwide_day, bucket_key.0);
         let current = crate::api::load_bucket(&self.storage_handle(), scope, parent, bucket_id)?
             .ok_or_else(|| PrecompileError::Revert("qualify_bucket: bucket missing".into()))?;
         self.qualify_bucket_loaded(scope, current)

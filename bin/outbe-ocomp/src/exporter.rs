@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 use alloy_primitives::{B256, U256};
 use outbe_compressed_entities::{
     body_commitment, decode_tribute_v1, tribute_partition_root_from_leaves,
-    AuthenticatedTributePartition, CanonicalBodyError, EntityId36, IdPageRequest, TributeBodyV1,
+    AuthenticatedTributePartition, CanonicalBodyError, IdPageRequest, TributeBodyV1, WwdEntityId,
     ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_offchain_data::{
@@ -261,7 +261,7 @@ pub struct ReconstructedTributePartition {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AuthenticatedTributeRecord {
-    pub tribute_id: EntityId36,
+    pub tribute_id: WwdEntityId,
     pub commitment: B256,
     pub canonical_body: Vec<u8>,
     pub body: TributeBodyV1,
@@ -282,7 +282,7 @@ pub struct AuthenticatedTributeStream<'source, 'view> {
     partition: &'view AuthenticatedTributePartition<'view>,
     expected_count: u32,
     expected_nominal_total: U256,
-    previous_id: Option<EntityId36>,
+    previous_id: Option<WwdEntityId>,
     record_count: u32,
     nominal_total: U256,
     exact_body_bytes: u64,
@@ -446,7 +446,7 @@ impl AuthenticatedTributeStream<'_, '_> {
 
 #[derive(Clone, Copy)]
 struct BodyCandidate {
-    tribute_id: EntityId36,
+    tribute_id: WwdEntityId,
     retained_commitment: Option<B256>,
 }
 
@@ -454,8 +454,8 @@ struct CurrentPager<'a> {
     reader: &'a TributeRepositoryReader,
     day: outbe_common::WorldwideDay,
     limit: u32,
-    cursor: Option<EntityId36>,
-    buffered: VecDeque<EntityId36>,
+    cursor: Option<WwdEntityId>,
+    buffered: VecDeque<WwdEntityId>,
     complete: bool,
 }
 
@@ -476,7 +476,7 @@ impl<'a> CurrentPager<'a> {
         })
     }
 
-    fn peek(&mut self) -> Result<Option<EntityId36>, FinalizedTributeError> {
+    fn peek(&mut self) -> Result<Option<WwdEntityId>, FinalizedTributeError> {
         self.fill()?;
         Ok(self.buffered.front().copied())
     }
@@ -581,15 +581,18 @@ pub enum FinalizedTributeError {
     #[error("current/retained Tribute union is not strictly ascending")]
     NonAscendingUnion,
     #[error("candidate Tribute {0} has no authenticated CE leaf")]
-    UnauthenticatedCandidate(EntityId36),
+    UnauthenticatedCandidate(WwdEntityId),
     #[error("retained index commitment differs from exact CE leaf for Tribute {0}")]
-    RetainedIndexCommitmentMismatch(EntityId36),
+    RetainedIndexCommitmentMismatch(WwdEntityId),
     #[error("canonical current/retained body is missing for Tribute {0}")]
-    MissingBody(EntityId36),
+    MissingBody(WwdEntityId),
     #[error("Tribute {tribute_id} uses unsupported stored-body schema {actual}")]
-    UnsupportedBodySchema { tribute_id: EntityId36, actual: u32 },
+    UnsupportedBodySchema {
+        tribute_id: WwdEntityId,
+        actual: u32,
+    },
     #[error("canonical body identity/day differs from candidate Tribute {0}")]
-    BodyIdentityMismatch(EntityId36),
+    BodyIdentityMismatch(WwdEntityId),
     #[error("authenticated CE read failed: {0}")]
     Ce(String),
     #[error("Tribute record count overflow")]

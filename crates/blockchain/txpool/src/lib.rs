@@ -3,6 +3,8 @@
 //! The pool keeps standard Reth validation and adds deterministic ZeroFee
 //! guards for whitelisted validator transactions.
 
+pub mod maintain;
+
 use alloy_eips::{eip7840::BlobParams, merge::EPOCH_SLOTS};
 use alloy_primitives::{Address, B256, U256};
 use outbe_ocomp_protocol::system_carrier::{

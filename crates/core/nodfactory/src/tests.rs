@@ -3,7 +3,7 @@ use std::sync::Arc;
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::{begin_block, EntityId36, ExecutionScope};
+use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::api::ModifyAuth;
 use outbe_nod::{
@@ -46,7 +46,7 @@ fn mine_auth(owner: Address, amount: U256) -> ModifyAuth {
 
 fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
     storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
         .unwrap();
     storage
         .sstore(
@@ -87,9 +87,8 @@ fn word(value: U256) -> Bytes {
     Bytes::from(value.to_be_bytes::<32>().to_vec())
 }
 
-fn find_valid_nonce(nod_id: EntityId36) -> U256 {
+fn find_valid_nonce(nod_id: WwdEntityId) -> u64 {
     (0_u64..100_000)
-        .map(U256::from)
         .find(|nonce| runtime::validate_pow(nod_id, *nonce).is_ok())
         .expect("test identity has a nonce in the bounded search")
 }
@@ -126,16 +125,16 @@ impl World {
         StorageHandle::enter(&mut self.provider, |storage| call(storage, scope, &parent))
     }
 
-    fn issue(&mut self, input: &NodIssueParams) -> EntityId36 {
+    fn issue(&mut self, input: &NodIssueParams) -> WwdEntityId {
         self.enter(|storage, scope, parent| api::issue_nod(&storage, scope, parent, input))
             .unwrap()
     }
 
-    fn settle(&mut self, nod_id: EntityId36, payer: Address) -> U256 {
+    fn settle(&mut self, nod_id: WwdEntityId, payer: Address) -> U256 {
         self.try_settle(nod_id, payer).unwrap()
     }
 
-    fn try_settle(&mut self, nod_id: EntityId36, payer: Address) -> Result<U256, PrecompileError> {
+    fn try_settle(&mut self, nod_id: WwdEntityId, payer: Address) -> Result<U256, PrecompileError> {
         self.enter(|storage, scope, parent| api::settle_nod(&storage, scope, parent, payer, nod_id))
     }
 
@@ -168,7 +167,7 @@ impl World {
         );
     }
 
-    fn is_settled(&mut self, nod_id: EntityId36) -> bool {
+    fn is_settled(&mut self, nod_id: WwdEntityId) -> bool {
         self.enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
             .unwrap()
             .unwrap()
@@ -178,7 +177,7 @@ impl World {
     /// Stamps the bucket's call directly. The scan that decides *when* to stamp
     /// is covered in `outbe_nod::called_tests`; what matters here is the gate
     /// `mine_gratis` applies once it is stamped.
-    fn mark_called(&mut self, nod_id: EntityId36, at: u64) {
+    fn mark_called(&mut self, nod_id: WwdEntityId, at: u64) {
         self.enter(|storage, scope, parent| {
             let item = nod_api::get_item(&storage, scope, parent, nod_id)
                 .unwrap()
@@ -194,7 +193,7 @@ impl World {
         self.provider.set_timestamp(U256::from(timestamp));
     }
 
-    fn qualify(&mut self, nod_id: EntityId36) {
+    fn qualify(&mut self, nod_id: WwdEntityId) {
         self.enter(|storage, scope, parent| {
             let item = nod_api::get_item(&storage, scope, parent, nod_id)
                 .unwrap()
@@ -257,7 +256,7 @@ fn second_same_block_issue_updates_the_pending_bucket_without_parent_projection(
         first.floor_price_minor,
         first.reference_currency,
     );
-    let bucket_id = EntityId36::new(first.worldwide_day, bucket_key.0);
+    let bucket_id = WwdEntityId::from_day_and_digest(first.worldwide_day, bucket_key.0);
     let bucket = world
         .enter(|storage, scope, parent| nod_api::get_bucket(&storage, scope, parent, bucket_id))
         .unwrap()
@@ -387,7 +386,7 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
         input.floor_price_minor,
         input.reference_currency,
     );
-    let bucket_id = EntityId36::new(input.worldwide_day, bucket_key.0);
+    let bucket_id = WwdEntityId::from_day_and_digest(input.worldwide_day, bucket_key.0);
     assert!(world
         .enter(|storage, scope, parent| { nod_api::get_bucket(&storage, scope, parent, bucket_id) })
         .unwrap()

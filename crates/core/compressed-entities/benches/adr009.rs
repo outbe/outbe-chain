@@ -10,8 +10,8 @@ use alloy_primitives::{keccak256, B256};
 use criterion::{black_box, BenchmarkId, Criterion};
 use outbe_compressed_entities::{
     bench_support::{aggregate_shard_roots, candidate_checksum, derived_shard, field_word},
-    CandidateCacheLimits, CeMdbx, Commitment, CompressedTreeService, EntityId36, EntityRef,
-    EnvironmentIdentity, ExactParentIdentity, FinalLeafMutation, FinalizedMarker,
+    CandidateCacheLimits, CeMdbx, Commitment, CompressedTreeService, EntityRef,
+    EnvironmentIdentity, ExactParentIdentity, FinalLeafMutation, FinalizedMarker, WwdEntityId,
     ACTIVE_COMMITMENT_SCHEME, K_CANDIDATES, LOCAL_STORAGE_SCHEMA_VERSION,
 };
 use tempfile::TempDir;
@@ -131,10 +131,10 @@ struct Workload {
 static MANIFEST: OnceLock<Mutex<BTreeMap<String, String>>> = OnceLock::new();
 
 fn entity(counter: u64) -> EntityRef {
-    let mut bytes = [0_u8; EntityId36::LEN];
+    let mut bytes = [0_u8; WwdEntityId::len_bytes()];
     bytes[..4].copy_from_slice(&(counter as u32).to_be_bytes());
     bytes[28..].copy_from_slice(&counter.to_be_bytes());
-    let identity = EntityId36::try_from(bytes.as_slice()).expect("fixed benchmark identity");
+    let identity = WwdEntityId::try_from(bytes.as_slice()).expect("fixed benchmark identity");
     match counter % 3 {
         0 => EntityRef::Tribute(identity),
         1 => EntityRef::NodItem(identity),
@@ -184,7 +184,7 @@ fn dataset_checksum(entities: impl IntoIterator<Item = EntityRef>) -> B256 {
             EntityRef::NodItem(_) => 2,
             EntityRef::NodBucket(_) => 3,
         });
-        bytes.extend_from_slice(entity.entity_id().as_bytes());
+        bytes.extend_from_slice(entity.entity_id().as_slice());
     }
     keccak256(bytes)
 }

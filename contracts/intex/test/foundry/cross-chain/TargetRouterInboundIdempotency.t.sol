@@ -38,7 +38,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
         router = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
 
         router.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
-        router.wire(address(auction), address(intex), makeAddr("escrow"), makeAddr("nftBridge"));
+        router.wire(address(auction), address(intex), makeAddr("escrow"));
         auction.grantRole(auction.RELAYER_ROLE(), address(router));
         intex.grantRole(intex.RELAYER_ROLE(), address(router));
     }

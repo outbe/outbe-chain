@@ -1,9 +1,9 @@
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolCall, SolInterface};
+use alloy_sol_types::{sol, SolInterface};
 use base64::Engine;
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::{EntityId36, ExecutionScope, ParentBodySource};
-use outbe_primitives::dispatch::{dispatch_call, metadata, preflight_dynamic_bytes_len, view};
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
+use outbe_primitives::dispatch::{dispatch_call, metadata, view};
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::error::Result;
 
@@ -31,7 +31,6 @@ pub fn dispatch(
     value: U256,
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
-    preflight_entity_id(data)?;
     dispatch_call(data, INod::INodCalls::abi_decode, |call| {
         let nod = NodContract::new(storage.clone());
         use INod::INodCalls::*;
@@ -50,16 +49,17 @@ pub fn dispatch(
                 Ok(U256::from(count))
             }),
             ownerOf(c) => view(c, |c| {
-                let nod_id = parse_entity_id(&c.nodId)?;
+                let nod_id = WwdEntityId::from(c.nodId);
                 Ok(api::get_item(&storage, scope, parent, nod_id)?
                     .ok_or(NodError::NodNotFound)?
                     .owner)
             }),
             tokenURI(c) => view(c, |c| {
-                let nod_id = parse_entity_id(&c.nodId)?;
+                let nod_id = WwdEntityId::from(c.nodId);
                 let item =
                     api::get_item(&storage, scope, parent, nod_id)?.ok_or(NodError::NodNotFound)?;
-                let bucket_id = EntityId36::new(item.worldwide_day, item.bucket_key.0);
+                let bucket_id =
+                    WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
                 let bucket = api::get_bucket(&storage, scope, parent, bucket_id)?
                     .ok_or(NodError::BucketNotFound)?;
                 token_uri(&item, &bucket)
@@ -68,21 +68,22 @@ pub fn dispatch(
                 let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
                 api::list_all(&storage, scope, parent)?
                     .get(idx)
-                    .map(|item| Bytes::copy_from_slice(item.nod_id.as_bytes()))
+                    .map(|item| item.nod_id.to_u256())
                     .ok_or_else(|| NodError::IndexOutOfBounds.into())
             }),
             tokenOfOwnerByIndex(c) => view(c, |c| {
                 let idx = usize::try_from(c.index).map_err(|_| NodError::IndexOutOfBounds)?;
                 api::list_by_owner(&storage, scope, parent, c.owner)?
                     .get(idx)
-                    .map(|item| Bytes::copy_from_slice(item.nod_id.as_bytes()))
+                    .map(|item| item.nod_id.to_u256())
                     .ok_or_else(|| NodError::IndexOutOfBounds.into())
             }),
             nodData(c) => view(c, |c| {
-                let nod_id = parse_entity_id(&c.nodId)?;
+                let nod_id = WwdEntityId::from(c.nodId);
                 let item =
                     api::get_item(&storage, scope, parent, nod_id)?.ok_or(NodError::NodNotFound)?;
-                let bucket_id = EntityId36::new(item.worldwide_day, item.bucket_key.0);
+                let bucket_id =
+                    WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
                 let bucket = api::get_bucket(&storage, scope, parent, bucket_id)?
                     .ok_or(NodError::BucketNotFound)?;
                 let called_at = nod.bucket_called_at.read(&item.bucket_key)?;
@@ -99,26 +100,15 @@ pub fn dispatch(
     })
 }
 
-fn preflight_entity_id(data: &[u8]) -> Result<()> {
-    for selector in [
-        INod::ownerOfCall::SELECTOR,
-        INod::tokenURICall::SELECTOR,
-        INod::nodDataCall::SELECTOR,
-    ] {
-        preflight_dynamic_bytes_len(data, selector, 0, 1, EntityId36::LEN)?;
-    }
-    Ok(())
-}
-
 fn token_uri(item: &NodItemState, bucket: &NodBucketState) -> Result<String> {
-    let nod_id_str = NodContract::format_nod_id(item.nod_id);
+    let nod_id_str = item.nod_id.to_u256().to_string();
     let json = format!(
         "{{\"name\":\"Nod #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"token_id\",\"value\":\"{}\"}},{{\"trait_type\":\"worldwide_day\",\"value\":{}}},{{\"trait_type\":\"league_id\",\"value\":{}}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"gratis_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_of_gratis_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"is_qualified\",\"value\":{}}},{{\"trait_type\":\"is_settled\",\"value\":{}}},{{\"trait_type\":\"issued_at\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}}]}}",
-        &nod_id_str[..8],
+        nod_id_str,
         crate::constants::TOKEN_DESCRIPTION,
         crate::constants::TOKEN_IMAGE_BASE,
         nod_id_str,
-        item.nod_id,
+        nod_id_str,
         item.worldwide_day,
         item.league_id,
         item.floor_price_minor,
@@ -137,7 +127,7 @@ fn token_uri(item: &NodItemState, bucket: &NodBucketState) -> Result<String> {
 
 fn to_abi_data(item: &NodItemState, bucket: &NodBucketState, called_at: u64) -> INod::NodData {
     INod::NodData {
-        nodId: Bytes::copy_from_slice(item.nod_id.as_bytes()),
+        nodId: item.nod_id.to_u256(),
         owner: item.owner,
         worldwideDay: item.worldwide_day.into(),
         leagueId: item.league_id,
@@ -188,9 +178,4 @@ fn to_abi_certified_generation(
             issuedAt: 0,
         },
     }
-}
-
-fn parse_entity_id(bytes: &Bytes) -> Result<EntityId36> {
-    EntityId36::try_from(bytes.as_ref())
-        .map_err(|error| outbe_primitives::error::PrecompileError::Revert(error.to_string()))
 }

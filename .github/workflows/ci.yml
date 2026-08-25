@@ -16,6 +16,10 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # radicle-node (outbe-heartwood) bakes this in at compile time via `env!`;
+  # without it every workspace-wide build fails. Release builds pass their own
+  # value through the reproducible-build container args.
+  SOURCE_DATE_EPOCH: "0"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}

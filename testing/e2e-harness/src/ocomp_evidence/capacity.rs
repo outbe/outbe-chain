@@ -20,10 +20,11 @@ use super::hash_file;
 const SOURCE_REVISION_DOMAIN: &[u8] = b"OUTBE_OCOMP_SOURCE_REVISION_V1";
 const ARTIFACT_SET_DOMAIN: &[u8] = b"OUTBE_OCOMP_CAPACITY_ARTIFACT_SET_V2";
 const COLD_NAMESPACE_DOMAIN: &[u8] = b"OUTBE_OCOMP_COLD_NAMESPACE_V1";
-const REQUIRED_BINARIES: [&str; 6] = [
+const REQUIRED_BINARIES: [&str; 7] = [
     "outbe_chain",
     "outbe_cli",
     "outbe_e2e",
+    "outbe_feeder",
     "outbe_keygen",
     "outbe_ocomp",
     "outbe_tee_enclave",

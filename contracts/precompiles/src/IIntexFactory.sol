@@ -27,7 +27,7 @@ interface IIntexFactory {
     ///         op-nonce (fetch via `outbe_deriveKeys` + `IPromis.opNonceOf`) and the
     ///         bound amount is `promis_load_minor * amount`. Returns the minted
     ///         Promis amount.
-    function minePromis(bytes14 seriesId, uint256 amount, uint256 nonce, bytes32 mac, uint64 opNonce)
+    function minePromis(bytes14 seriesId, uint256 amount, uint64 nonce, bytes32 mac, uint64 opNonce)
         external
         returns (uint256 promisAmount);
 
@@ -45,12 +45,11 @@ interface IIntexFactory {
     function distribute(uint32 worldwideDay, uint32 srcChainId) external payable;
 
     /// @notice One certified contributor record, exactly as Lysis committed it.
-    ///         The canonical 88-byte leaf the chain re-hashes is
-    ///         `owner ++ sourceTributeDigest ++ sourceTributeIndex ++ nominal`.
+    ///         The canonical 84-byte leaf the chain re-hashes is
+    ///         `owner ++ sourceTributeId ++ nominal`.
     struct ContributorLeaf {
         address owner;
-        bytes32 sourceTributeDigest;
-        bytes4 sourceTributeIndex;
+        uint256 sourceTributeId;
         uint256 nominal;
     }
 

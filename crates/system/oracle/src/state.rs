@@ -14,6 +14,40 @@ use crate::constants::{reciprocal_scale, zero_volume_weight, MAX_SNAPSHOT_RETENT
 use crate::errors::OracleError;
 use crate::schema::{OracleContract, PairIndex};
 
+const WWD_SUFFIX_START_SECONDS: u64 = 10 * 60 * 60;
+const WWD_PREFIX_END_SECONDS: u64 = 12 * 60 * 60;
+
+fn add_vwap_aggregate(
+    pair: AddressPair,
+    day: u64,
+    pv: U256,
+    volume: U256,
+    pv_sum: &outbe_primitives::storage::types::Mapping<'_, u64, U256>,
+    vol_sum: &outbe_primitives::storage::types::Mapping<'_, u64, U256>,
+    errors: (&'static str, &'static str),
+) -> Result<()> {
+    let previous_pv = pv_sum.read(&day)?;
+    let previous_volume = vol_sum.read(&day)?;
+    if is_coen_iso_market(pair) {
+        pv_sum.write(
+            &day,
+            previous_pv
+                .checked_add(pv)
+                .ok_or(OracleError::VwapOverflow(errors.0))?,
+        )?;
+        vol_sum.write(
+            &day,
+            previous_volume
+                .checked_add(volume)
+                .ok_or(OracleError::VwapOverflow(errors.1))?,
+        )?;
+    } else {
+        pv_sum.write(&day, previous_pv.saturating_add(pv))?;
+        vol_sum.write(&day, previous_volume.saturating_add(volume))?;
+    }
+    Ok(())
+}
+
 /// `(exists, bases, quotes, rates, volumes)` — pending aggregate vote.
 type AggregateVote = (bool, Vec<Address>, Vec<Address>, Vec<U256>, Vec<U256>);
 
@@ -236,13 +270,12 @@ impl OracleContract<'_> {
         Ok((rate, block, ts))
     }
 
-    /// Annualized currency rate (scale `1e6`) for an ISO 4217 code, as pinned
-    /// on the reference-currency collection at genesis. Reverts when the code is
-    /// not a registered reference currency or carries no (non-zero) rate.
-    pub fn get_currency_rate(&self, iso_code: u16) -> Result<U256> {
-        let rate = self.reference_currency_rate.read(&iso_code)?;
+    /// Annualized policy rate (scale `1e6`) for an independently registered
+    /// ISO 4217 code. Reverts when no non-zero policy exists for the code.
+    pub fn get_policy_rate(&self, iso_code: u16) -> Result<U256> {
+        let rate = self.policy_rate.read(&iso_code)?;
         if rate.is_zero() {
-            return Err(OracleError::NoCurrencyRate { iso_code }.into());
+            return Err(OracleError::NoPolicyRate { iso_code }.into());
         }
         Ok(rate)
     }
@@ -434,36 +467,56 @@ impl OracleContract<'_> {
         self.snapshot_write_idx.write(next_snapshot_idx)?;
 
         let utc_day_ts = timestamp - (timestamp % 86_400);
+        let seconds_since_midnight = timestamp % 86_400;
         for (pair, rate, volume) in entries {
             let vol = if volume.is_zero() {
                 zero_volume_weight(*pair)
             } else {
                 *volume
             };
+            let pv = if is_coen_iso_market(*pair) {
+                rate.checked_mul(vol)
+                    .ok_or(OracleError::VwapOverflow("rate * volume"))?
+            } else {
+                rate.checked_mul(vol).unwrap_or(U256::MAX)
+            };
             let day_pv = self.daily_pv_sum.get_nested(pair);
             let day_vol = self.daily_vol_sum.get_nested(pair);
-            let prev_pv = day_pv.read(&utc_day_ts).unwrap_or(U256::ZERO);
-            let prev_vol = day_vol.read(&utc_day_ts).unwrap_or(U256::ZERO);
-            if is_coen_iso_market(*pair) {
-                let pv = rate
-                    .checked_mul(vol)
-                    .ok_or(OracleError::VwapOverflow("rate * volume"))?;
-                day_pv.write(
-                    &utc_day_ts,
-                    prev_pv
-                        .checked_add(pv)
-                        .ok_or(OracleError::VwapOverflow("sum accumulation"))?,
+            add_vwap_aggregate(
+                *pair,
+                utc_day_ts,
+                pv,
+                vol,
+                &day_pv,
+                &day_vol,
+                ("daily sum accumulation", "daily volume sum"),
+            )?;
+
+            if seconds_since_midnight >= WWD_SUFFIX_START_SECONDS {
+                let suffix_pv = self.wwd_suffix_pv_sum.get_nested(pair);
+                let suffix_vol = self.wwd_suffix_vol_sum.get_nested(pair);
+                add_vwap_aggregate(
+                    *pair,
+                    utc_day_ts,
+                    pv,
+                    vol,
+                    &suffix_pv,
+                    &suffix_vol,
+                    ("WWD suffix sum accumulation", "WWD suffix volume sum"),
                 )?;
-                day_vol.write(
-                    &utc_day_ts,
-                    prev_vol
-                        .checked_add(vol)
-                        .ok_or(OracleError::VwapOverflow("volume sum"))?,
+            }
+            if seconds_since_midnight < WWD_PREFIX_END_SECONDS {
+                let prefix_pv = self.wwd_prefix_pv_sum.get_nested(pair);
+                let prefix_vol = self.wwd_prefix_vol_sum.get_nested(pair);
+                add_vwap_aggregate(
+                    *pair,
+                    utc_day_ts,
+                    pv,
+                    vol,
+                    &prefix_pv,
+                    &prefix_vol,
+                    ("WWD prefix sum accumulation", "WWD prefix volume sum"),
                 )?;
-            } else {
-                let pv = rate.checked_mul(vol).unwrap_or(U256::MAX);
-                day_pv.write(&utc_day_ts, prev_pv.saturating_add(pv))?;
-                day_vol.write(&utc_day_ts, prev_vol.saturating_add(vol))?;
             }
         }
 

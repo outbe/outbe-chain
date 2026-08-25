@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
+use outbe_compressed_entities::WwdEntityId;
 use outbe_compressed_entities::{begin_block, ExecutionScope};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
@@ -14,7 +15,7 @@ use outbe_primitives::{
 
 fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
     storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
         .unwrap();
     storage
         .sstore(
@@ -82,30 +83,18 @@ fn reverted_issuance_rolls_back_overlay_compact_state_and_events() {
 }
 
 #[test]
-fn nod_identity_and_abi_boundary_preserve_exact_36_bytes() {
+fn nod_identity_and_abi_boundary_preserve_exact_32_bytes() {
     let body = item(Address::repeat_byte(0x33));
-    let encoded = NodContract::format_nod_id(body.nod_id);
+    let encoded = body.nod_id.to_string();
     assert_eq!(NodContract::parse_nod_id(&encoded).unwrap(), body.nod_id);
-    assert!(NodContract::parse_nod_id(&encoded[..70]).is_err());
+    assert!(NodContract::parse_nod_id(&encoded[..62]).is_err());
 
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
-    let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::new();
-    let call = crate::precompile::INod::ownerOfCall {
-        nodId: Bytes::from(vec![0x11; 35]),
-    }
-    .abi_encode();
-    StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
-        begin_block(storage.clone(), &scope).unwrap();
-        let error =
-            crate::precompile::dispatch(storage, &scope, &parent, &call, Address::ZERO, U256::ZERO)
-                .unwrap_err();
-        assert!(matches!(
-            error,
-            PrecompileError::Revert(ref reason) if reason == "invalid bytes length: expected 36"
-        ));
-    });
+    // The ABI carries the identity as one word, so a wrong-width id is no
+    // longer representable: the round trip through `uint256` is total, and the
+    // old "invalid bytes length" revert has no input that can reach it.
+    let word = body.nod_id.to_u256();
+    assert_eq!(WwdEntityId::from(word), body.nod_id);
+    assert_eq!(word.to_be_bytes::<32>(), body.nod_id.0 .0);
 }
 
 #[test]

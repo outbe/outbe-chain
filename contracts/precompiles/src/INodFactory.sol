@@ -4,7 +4,7 @@ pragma solidity ^0.8.30;
 interface INodFactory {
     event NodIssued(
         address indexed owner,
-        bytes nodId,
+        uint256 nodId,
         uint256 worldwideDay,
         uint256 leagueId,
         uint256 floorPriceMinor,
@@ -13,7 +13,7 @@ interface INodFactory {
         uint256 costAmountMinor
     );
 
-    event NodBurned(address indexed owner, bytes nodId, uint256 gratisLoadMinor);
+    event NodBurned(address indexed owner, uint256 nodId, uint256 gratisLoadMinor);
 
     event NodMaterializationProgress(
         uint64 indexed queueSequence,
@@ -27,7 +27,7 @@ interface INodFactory {
 
     error NodMaterializationRejected(uint8 code);
 
-    event NodSettled(address indexed owner, address indexed payer, bytes nodId, address asset, uint256 amountPaid);
+    event NodSettled(address indexed owner, address indexed payer, uint256 nodId, address asset, uint256 amountPaid);
 
     /// @notice Constant-size owner event for one certified OCOMP generation.
     ///         There is deliberately no matching public installation selector.
@@ -58,14 +58,14 @@ interface INodFactory {
     ///         that asset beforehand; the `NodSettled` log names it. A zero-cost
     ///         Nod is settled without any transfer and resolves no asset.
     /// @return The amount paid.
-    function settleNod(bytes calldata nodId) external returns (uint256);
+    function settleNod(uint256 nodId) external returns (uint256);
 
     /// @notice Burn the caller-owned, settled Nod and mint its gratis load to
     ///         the caller. Authorized by the caller's Gratis modify key: `mac =
     ///         HMAC(modifyKey, op-preimage)` where `opNonce` MUST equal the
     ///         caller's current on-chain gratis op-nonce. The Nod owner is the
     ///         gratis recipient, so they can always supply this authorization.
-    function mineGratis(bytes calldata nodId, uint256 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
+    function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
 
     /// @notice Materialize the current certified FIFO head from one canonical
     ///         proof-backed OCOMP batch.

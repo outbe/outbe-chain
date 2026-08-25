@@ -118,8 +118,8 @@
     "inputs": [
       {
         "name": "nodId",
-        "type": "bytes",
-        "internalType": "bytes"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -130,8 +130,8 @@
         "components": [
           {
             "name": "nodId",
-            "type": "bytes",
-            "internalType": "bytes"
+            "type": "uint256",
+            "internalType": "uint256"
           },
           {
             "name": "owner",
@@ -209,8 +209,8 @@
     "inputs": [
       {
         "name": "nodId",
-        "type": "bytes",
-        "internalType": "bytes"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -267,8 +267,8 @@
     "outputs": [
       {
         "name": "",
-        "type": "bytes",
-        "internalType": "bytes"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -291,8 +291,8 @@
     "outputs": [
       {
         "name": "",
-        "type": "bytes",
-        "internalType": "bytes"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -303,8 +303,8 @@
     "inputs": [
       {
         "name": "nodId",
-        "type": "bytes",
-        "internalType": "bytes"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -335,9 +335,9 @@
     "inputs": [
       {
         "name": "nodId",
-        "type": "bytes",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "bytes"
+        "internalType": "uint256"
       },
       {
         "name": "previousCommitment",
@@ -354,9 +354,9 @@
     "inputs": [
       {
         "name": "nodId",
-        "type": "bytes",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "bytes"
+        "internalType": "uint256"
       },
       {
         "name": "commitmentSchemeVersion",
@@ -397,9 +397,9 @@
     "inputs": [
       {
         "name": "bucketId",
-        "type": "bytes",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "bytes"
+        "internalType": "uint256"
       },
       {
         "name": "previousCommitment",
@@ -416,9 +416,9 @@
     "inputs": [
       {
         "name": "bucketId",
-        "type": "bytes",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "bytes"
+        "internalType": "uint256"
       },
       {
         "name": "commitmentSchemeVersion",
@@ -527,9 +527,9 @@
       },
       {
         "name": "nodId",
-        "type": "bytes",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "bytes"
+        "internalType": "uint256"
       },
       {
         "name": "gratisLoadMinor",

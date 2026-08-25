@@ -20,12 +20,14 @@ impl Localnet {
         &self,
         unsupported_version: Option<u64>,
         expected_dkg_reveal: Option<&str>,
+        expected_ocomp_full_node_mismatch: Option<B256>,
     ) -> Result<LogAudit> {
         audit_runtime_logs(
             &self.cfg.dir,
             self.cfg.validators,
             unsupported_version,
             expected_dkg_reveal,
+            expected_ocomp_full_node_mismatch,
         )
     }
 }
@@ -42,6 +44,7 @@ struct LogCounts {
     expected_update_fatal: usize,
     expected_dkg_reveal: usize,
     expected_request_deadline_cancellation: usize,
+    expected_ocomp_full_node_mismatch: usize,
 }
 
 impl LogCounts {
@@ -73,6 +76,7 @@ impl LogCounts {
             "expected_update_fatal": self.expected_update_fatal,
             "expected_dkg_reveal": self.expected_dkg_reveal,
             "expected_request_deadline_cancellation": self.expected_request_deadline_cancellation,
+            "expected_ocomp_full_node_mismatch": self.expected_ocomp_full_node_mismatch,
         })
     }
 }
@@ -128,6 +132,7 @@ pub(super) fn audit_runtime_logs(
     validators: usize,
     unsupported_version: Option<u64>,
     expected_dkg_reveal: Option<&str>,
+    expected_ocomp_full_node_mismatch: Option<B256>,
 ) -> Result<LogAudit> {
     let mut paths = Vec::new();
     collect_logs(root, &mut paths)?;
@@ -146,12 +151,13 @@ pub(super) fn audit_runtime_logs(
         validators,
         unsupported_version,
         expected_dkg_reveal,
+        expected_ocomp_full_node_mismatch,
     ))
 }
 
 #[cfg(test)]
 fn audit_loaded_logs(logs: &[(PathBuf, String)]) -> LogAudit {
-    audit_loaded_logs_with_expectations(logs, usize::MAX, None, None)
+    audit_loaded_logs_with_expectations(logs, usize::MAX, None, None, None)
 }
 
 fn audit_loaded_logs_with_expectations(
@@ -159,6 +165,7 @@ fn audit_loaded_logs_with_expectations(
     validators: usize,
     unsupported_version: Option<u64>,
     expected_dkg_reveal: Option<&str>,
+    expected_ocomp_full_node_mismatch: Option<B256>,
 ) -> LogAudit {
     let mut findings = Vec::new();
     let mut counts = LogCounts {
@@ -168,6 +175,16 @@ fn audit_loaded_logs_with_expectations(
     let mut cancellations = BTreeSet::new();
     let mut failures = BTreeMap::<PayloadIdentity, BTreeMap<(B256, String), String>>::new();
     let expected_request_deadlines = legacy_request_deadline_cancellations(logs, validators);
+    let expected_ocomp_mismatch_records = expected_ocomp_full_node_mismatch
+        .map(|job_id| expected_ocomp_full_node_mismatch_records(logs, validators, job_id))
+        .transpose();
+    let expected_ocomp_mismatch_records = match expected_ocomp_mismatch_records {
+        Ok(records) => records.unwrap_or_default(),
+        Err(reason) => {
+            findings.push(reason);
+            BTreeSet::new()
+        }
+    };
     let expected_fragment = unsupported_version.map(|version| {
         format!(
             "cannot activate protocol version v{}.{} ({version}): binary supports at most v",
@@ -196,18 +213,28 @@ fn audit_loaded_logs_with_expectations(
                     &mut expected_reveal_by_validator,
                 )
             });
+            let accepted_ocomp_mismatch =
+                expected_ocomp_mismatch_records.contains(&(path.clone(), index));
             if accepted_update {
                 counts.expected_update_fatal += 1;
             }
             if accepted_reveal {
                 counts.expected_dkg_reveal += 1;
             }
-            if !accepted_legacy_deadline && !accepted_update && !accepted_reveal {
+            if accepted_ocomp_mismatch {
+                counts.expected_ocomp_full_node_mismatch += 1;
+            }
+            if !accepted_legacy_deadline
+                && !accepted_update
+                && !accepted_reveal
+                && !accepted_ocomp_mismatch
+            {
                 counts.observe(line);
             }
             if !accepted_legacy_deadline
                 && !accepted_update
                 && !accepted_reveal
+                && !accepted_ocomp_mismatch
                 && unexpected_log_line(line)
             {
                 findings.push(format!("{location}: {line}"));
@@ -630,6 +657,100 @@ fn accept_expected_dkg_reveal(
     true
 }
 
+fn expected_ocomp_full_node_mismatch_records(
+    logs: &[(PathBuf, String)],
+    validators: usize,
+    job_id: B256,
+) -> Result<BTreeSet<(PathBuf, usize)>, String> {
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum Record {
+        Evidence,
+        Engine,
+        Cli,
+    }
+
+    let mut accepted = BTreeSet::new();
+    let mut sinks = BTreeSet::new();
+    for (path, content) in logs {
+        if validator_log_index(path, validators.saturating_add(1)) != Some(validators) {
+            continue;
+        }
+        let Some(sink) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !matches!(sink, "node.log" | "reth.log") {
+            continue;
+        }
+
+        let records = content
+            .lines()
+            .enumerate()
+            .filter_map(|(index, line)| {
+                if exact_ocomp_mismatch_evidence(line, job_id) {
+                    Some((index, Record::Evidence))
+                } else if exact_engine_fatal_trailer(line) {
+                    Some((index, Record::Engine))
+                } else if exact_cli_fatal_trailer(line) {
+                    Some((index, Record::Cli))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        if records.is_empty() {
+            continue;
+        }
+        let kinds = records
+            .iter()
+            .map(|(_, record)| *record)
+            .collect::<Vec<_>>();
+        if kinds != [Record::Evidence, Record::Engine, Record::Cli] {
+            return Err(format!(
+                "malformed expected OCOMP FullNode mismatch shutdown bundle in {}: {kinds:?}",
+                path.display()
+            ));
+        }
+        if !sinks.insert(sink) {
+            return Err(format!(
+                "duplicate expected OCOMP FullNode mismatch shutdown sink {sink}"
+            ));
+        }
+        accepted.extend(records.into_iter().map(|(index, _)| (path.clone(), index)));
+    }
+
+    if sinks != BTreeSet::from(["node.log", "reth.log"]) {
+        return Err(format!(
+            "expected one node.log and one reth.log OCOMP FullNode mismatch shutdown bundle for job {job_id:#x}, observed {sinks:?}"
+        ));
+    }
+    Ok(accepted)
+}
+
+fn exact_ocomp_mismatch_evidence(line: &str, job_id: B256) -> bool {
+    let line = line.to_ascii_lowercase();
+    fatal_at_runtime_severity(&line)
+        && line.trim_end().ends_with(&format!(
+            "embedded ocomp persisted fatal evidence: job_id={job_id:#x}"
+        ))
+        && !contains_nonfatal_alarm(&line)
+}
+
+fn exact_engine_fatal_trailer(line: &str) -> bool {
+    let line = line.to_ascii_lowercase();
+    fatal_at_runtime_severity(&line)
+        && line.trim_end().ends_with("engine::tree: fatal error")
+        && !contains_nonfatal_alarm(&line)
+}
+
+fn exact_cli_fatal_trailer(line: &str) -> bool {
+    let line = line.to_ascii_lowercase();
+    fatal_at_runtime_severity(&line)
+        && line
+            .trim_end()
+            .ends_with("reth::cli: fatal error in consensus engine")
+        && !contains_nonfatal_alarm(&line)
+}
+
 fn exact_expected_dkg_reveal(line: &str, expected_public_key: &str) -> bool {
     let line = line.to_ascii_lowercase();
     line.matches("dkg: a validator's individual share was revealed")
@@ -669,6 +790,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{audit_loaded_logs, audit_loaded_logs_with_expectations};
+    use alloy_primitives::B256;
     use outbe_primitives::runtime_audit_v1::{
         BODY_READ_REQUEST_DEADLINE, OTHER_PAYLOAD_EXECUTION_FAILURE, PAYLOAD_EXECUTION_FAILED,
         PROCESS_INSTANCE_FIELD, PROPOSAL_VIEW_CANCELLED, SCHEMA_VERSION,
@@ -960,8 +1082,13 @@ mod tests {
     #[test]
     fn legacy_new_payload_adapter_preserves_the_existing_exact_rule() {
         let hash = "0x36aded35254849d7f72af50566e7ef7b799b8d970741319889c63b3ae292ce3a";
-        let accepted =
-            audit_loaded_logs_with_expectations(&legacy_deadline_bundle(hash, hash), 4, None, None);
+        let accepted = audit_loaded_logs_with_expectations(
+            &legacy_deadline_bundle(hash, hash),
+            4,
+            None,
+            None,
+            None,
+        );
         assert!(accepted.is_clean(), "{:?}", accepted.findings);
         assert_eq!(accepted.counts.expected_request_deadline_cancellation, 1);
 
@@ -969,6 +1096,7 @@ mod tests {
         assert!(!audit_loaded_logs_with_expectations(
             &legacy_deadline_bundle(hash, other),
             4,
+            None,
             None,
             None,
         )
@@ -982,7 +1110,8 @@ mod tests {
             "ERROR fatal: cannot activate protocol version v3.0 (50331648): binary supports at most v0.1 (1)"
                 .to_owned(),
         )];
-        let update_audit = audit_loaded_logs_with_expectations(&update, 1, Some(50_331_648), None);
+        let update_audit =
+            audit_loaded_logs_with_expectations(&update, 1, Some(50_331_648), None, None);
         assert!(update_audit.is_clean(), "{:?}", update_audit.findings);
         assert_eq!(update_audit.counts.expected_update_fatal, 1);
 
@@ -994,9 +1123,97 @@ mod tests {
                  revealed_validator={key}"
             ),
         )];
-        let reveal_audit = audit_loaded_logs_with_expectations(&reveal, 1, None, Some(key));
+        let reveal_audit = audit_loaded_logs_with_expectations(&reveal, 1, None, Some(key), None);
         assert!(reveal_audit.is_clean(), "{:?}", reveal_audit.findings);
         assert_eq!(reveal_audit.counts.expected_dkg_reveal, 1);
+    }
+
+    #[test]
+    fn full_node_mismatch_requires_the_exact_two_sink_shutdown_bundle() {
+        let job_id = B256::repeat_byte(0x42);
+        let anchor =
+            format!("ERROR failure=embedded OCOMP persisted fatal evidence: job_id={job_id:#x}");
+        let engine = "ERROR poll_next_event: engine::tree: Fatal error";
+        let cli = "ERROR reth::cli: Fatal error in consensus engine";
+        let expected = vec![
+            (
+                PathBuf::from("scenario-1/validator-4/node.log"),
+                format!("{anchor}\nERROR engine::tree: Fatal error\n{cli}"),
+            ),
+            (
+                PathBuf::from("scenario-1/validator-4/logs/54322345/reth.log"),
+                format!("{anchor}\n{engine}\n{cli}"),
+            ),
+        ];
+        let audit = audit_loaded_logs_with_expectations(&expected, 4, None, None, Some(job_id));
+        assert!(audit.is_clean(), "{:?}", audit.findings);
+        assert_eq!(audit.counts.expected_ocomp_full_node_mismatch, 6);
+
+        let wrong_job = audit_loaded_logs_with_expectations(
+            &expected,
+            4,
+            None,
+            None,
+            Some(B256::repeat_byte(0x43)),
+        );
+        assert!(!wrong_job.is_clean());
+        let wrong_node = expected
+            .iter()
+            .map(|(path, content)| {
+                (
+                    PathBuf::from(path.to_string_lossy().replace("validator-4", "validator-3")),
+                    content.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            !audit_loaded_logs_with_expectations(&wrong_node, 4, None, None, Some(job_id),)
+                .is_clean()
+        );
+
+        let missing_sink = vec![expected[0].clone()];
+        assert!(
+            !audit_loaded_logs_with_expectations(&missing_sink, 4, None, None, Some(job_id))
+                .is_clean()
+        );
+
+        let mut unrelated_fatal = expected.clone();
+        unrelated_fatal[0]
+            .1
+            .push_str("\nERROR outbe_chain: unrelated fatal condition");
+        assert!(!audit_loaded_logs_with_expectations(
+            &unrelated_fatal,
+            4,
+            None,
+            None,
+            Some(job_id),
+        )
+        .is_clean());
+
+        let reordered = expected
+            .iter()
+            .map(|(path, _)| (path.clone(), format!("{engine}\n{anchor}\n{cli}")))
+            .collect::<Vec<_>>();
+        assert!(
+            !audit_loaded_logs_with_expectations(&reordered, 4, None, None, Some(job_id))
+                .is_clean()
+        );
+
+        let mut duplicated = expected.clone();
+        duplicated[1].1.push_str(&format!("\n{anchor}"));
+        assert!(
+            !audit_loaded_logs_with_expectations(&duplicated, 4, None, None, Some(job_id))
+                .is_clean()
+        );
+
+        let mut panic = expected.clone();
+        panic[0].1.push_str("\nERROR panic in unrelated teardown");
+        assert!(
+            !audit_loaded_logs_with_expectations(&panic, 4, None, None, Some(job_id)).is_clean()
+        );
+
+        let absent = audit_loaded_logs_with_expectations(&[], 4, None, None, Some(job_id));
+        assert!(!absent.is_clean());
     }
 
     #[test]

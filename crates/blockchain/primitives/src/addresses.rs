@@ -228,6 +228,10 @@ pub const STABLECOIN_FACTORY_ADDRESS: Address =
 pub const STABLECOIN_POLICY_REGISTRY_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE10");
 
+/// Permissionless append-only registry of public Heartwood repository ids.
+pub const RADICLE_REGISTRY_ADDRESS: Address =
+    address!("0x000000000000000000000000000000000000EE11");
+
 /// Genesis-reserved two-byte class for dynamic stablecoin token addresses.
 pub const STABLECOIN_ADDRESS_PREFIX: [u8; 2] = [0x53, 0xc0];
 
@@ -322,4 +326,4 @@ pub const GOVERNANCE_ADDRESS: Address = address!("0x0000000000000000000000000000
 /// (Issued/Settled tokens). A permanent CREATE3 proxy (not a low-range
 /// precompile). Called by IntexFactory (settle/burnSettled) and by GemFactory
 /// (`parkIntex`, gated by `GEM_ROLE`) to burn a merchant's parked Intex.
-pub const INTEX_NFT1155_ADDRESS: Address = address!("0x4Ccbc413a5f159Da316178F8b7576C923b4D1e5d");
+pub const INTEX_NFT1155_ADDRESS: Address = address!("0x4b25C6af5C45240D9cE546AF223Dd7132C7E39Af");

@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::{derive_poseidon_entity_id, EntityId36};
+use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_nod::NodContract;
 
 use crate::constants::calc_floor_price;
@@ -22,7 +22,7 @@ use super::planner::PRIMARY_WORK_SHARD_SIZE;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FidelityObservationV1 {
     pub raw_ordinal: u32,
-    pub tribute_id: EntityId36,
+    pub tribute_id: WwdEntityId,
     pub pre_distribution_league: u16,
     pub issuance_league: u16,
     pub nominal_amount_minor: U256,
@@ -53,7 +53,7 @@ pub struct FidelityMapOutputV1 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AmountRecordV1 {
     pub raw_ordinal: u32,
-    pub tribute_id: EntityId36,
+    pub tribute_id: WwdEntityId,
     pub owner: Address,
     pub worldwide_day: WorldwideDay,
     pub league_id: u16,
@@ -86,7 +86,7 @@ pub struct FinalizedOutputRecordV1 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FinalizedContributorV1 {
     pub owner: Address,
-    pub source_tribute_id: EntityId36,
+    pub source_tribute_id: WwdEntityId,
     pub nominal_amount_minor: U256,
 }
 
@@ -109,8 +109,8 @@ pub struct OwnerOrderedRunV1 {
 pub struct BucketRecordV1 {
     pub bucket_key: B256,
     pub raw_ordinal: u32,
-    pub tribute_id: EntityId36,
-    pub nod_id: EntityId36,
+    pub tribute_id: WwdEntityId,
+    pub nod_id: WwdEntityId,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

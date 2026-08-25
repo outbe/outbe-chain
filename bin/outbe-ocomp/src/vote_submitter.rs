@@ -113,6 +113,12 @@ pub enum VoteSubmissionOutcomeV1 {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum VoteSubmissionFailureClassV1 {
+    Retryable,
+    Unrecoverable,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct VoteReceiptV1 {
     pub transaction_hash: B256,
     pub block_number: u64,
@@ -319,12 +325,30 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
         match record.stage {
             VoteSubmissionStageV1::Prepared => self.submit(record),
             VoteSubmissionStageV1::Submitted => self.observe_submission(record),
-            VoteSubmissionStageV1::Included => self.observe_inclusion(record),
+            VoteSubmissionStageV1::Included => self.observe_inclusion(
+                preparer,
+                job_id,
+                result_digest,
+                canonical_result,
+                finalized,
+                record,
+            ),
             VoteSubmissionStageV1::Finalized => {
                 let inclusion = record
                     .inclusion
                     .ok_or(VoteSubmissionErrorV1::InvalidJournal)?;
-                Ok(VoteSubmissionOutcomeV1::Finalized(inclusion))
+                if inclusion.success {
+                    Ok(VoteSubmissionOutcomeV1::Finalized(inclusion))
+                } else {
+                    self.prepare(
+                        preparer,
+                        job_id,
+                        result_digest,
+                        canonical_result,
+                        finalized,
+                        next_generation(record.generation)?,
+                    )
+                }
             }
         }
     }
@@ -420,8 +444,13 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
         Ok(VoteSubmissionOutcomeV1::Included(inclusion))
     }
 
-    fn observe_inclusion(
+    fn observe_inclusion<P: VoteTransactionPreparerV1>(
         &mut self,
+        preparer: &P,
+        job_id: B256,
+        result_digest: B256,
+        canonical_result: &[u8],
+        finalized_job: &FinalizedJobSpecV1,
         mut record: VoteSubmissionRecordV1,
     ) -> Result<VoteSubmissionOutcomeV1, VoteSubmissionErrorV1> {
         let prior = record
@@ -447,6 +476,16 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
         let finalized = self.rpc.finalized_block().map_err(rpc_error)?;
         if finalized.number < inclusion.block_number {
             return Ok(VoteSubmissionOutcomeV1::Included(inclusion));
+        }
+        if !inclusion.success {
+            return self.prepare(
+                preparer,
+                job_id,
+                result_digest,
+                canonical_result,
+                finalized_job,
+                next_generation(record.generation)?,
+            );
         }
         record.stage = VoteSubmissionStageV1::Finalized;
         record.inclusion = Some(inclusion);
@@ -607,8 +646,15 @@ fn next_generation(generation: u64) -> Result<u64, VoteSubmissionErrorV1> {
         .ok_or(VoteSubmissionErrorV1::JournalGenerationOverflow)
 }
 
-fn rpc_error(error: impl std::error::Error) -> VoteSubmissionErrorV1 {
-    VoteSubmissionErrorV1::Rpc(error.to_string())
+fn rpc_error(error: impl std::error::Error + 'static) -> VoteSubmissionErrorV1 {
+    let retryable = (&error as &dyn std::error::Error)
+        .downcast_ref::<PublicVoteRpcErrorV1>()
+        .is_none_or(|error| error.is_retryable());
+    if retryable {
+        VoteSubmissionErrorV1::RetryableRpc(error.to_string())
+    } else {
+        VoteSubmissionErrorV1::UnrecoverableRpc(error.to_string())
+    }
 }
 
 fn preparer_error(error: impl std::error::Error) -> VoteSubmissionErrorV1 {
@@ -1229,8 +1275,10 @@ pub enum VoteSubmissionErrorV1 {
     Protocol(#[from] ProtocolError),
     #[error("vote transaction preparation failed: {0}")]
     Preparer(String),
-    #[error("vote submission public RPC failed: {0}")]
-    Rpc(String),
+    #[error("vote submission public RPC temporarily failed: {0}")]
+    RetryableRpc(String),
+    #[error("vote submission public RPC returned an unrecoverable response: {0}")]
+    UnrecoverableRpc(String),
     #[error("vote submission RPC is for chain {actual}, expected {expected}")]
     WrongRpcChain { expected: u64, actual: u64 },
     #[error("transaction preparer returned a result for another job or digest")]
@@ -1268,6 +1316,33 @@ pub enum VoteSubmissionErrorV1 {
     },
 }
 
+impl VoteSubmissionErrorV1 {
+    #[must_use]
+    pub const fn class(&self) -> VoteSubmissionFailureClassV1 {
+        match self {
+            Self::RetryableRpc(_) => VoteSubmissionFailureClassV1::Retryable,
+            Self::Protocol(_)
+            | Self::Preparer(_)
+            | Self::UnrecoverableRpc(_)
+            | Self::WrongRpcChain { .. }
+            | Self::PreparerChangedResult
+            | Self::InvalidPreparedTransaction(_)
+            | Self::RawTransactionTooLarge
+            | Self::EmptyCanonicalResult
+            | Self::TransactionHashMismatch { .. }
+            | Self::DifferentResultForJournaledJob
+            | Self::JournalGenerationOverflow
+            | Self::InvalidJournal
+            | Self::JournalChecksumMismatch
+            | Self::UnsupportedJournalVersion(_)
+            | Self::JournalTooLarge
+            | Self::AmbiguousJournal(_)
+            | Self::UnsafePath(_)
+            | Self::Io { .. } => VoteSubmissionFailureClassV1::Unrecoverable,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum PublicVoteRpcErrorV1 {
     #[error("invalid public vote RPC configuration")]
@@ -1284,6 +1359,15 @@ pub enum PublicVoteRpcErrorV1 {
     MissingBlock,
     #[error("public vote RPC field {0} is not a canonical hex quantity")]
     InvalidQuantity(&'static str),
+}
+
+impl PublicVoteRpcErrorV1 {
+    const fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::Transport(_) | Self::Remote { .. } | Self::MissingBlock
+        )
+    }
 }
 
 #[cfg(test)]
@@ -1969,6 +2053,7 @@ mod tests {
 
     struct NonceRpcState {
         nonce: u64,
+        fail_chain_id_once: bool,
         receipt: Option<VoteReceiptV1>,
         canonical: Option<VoteBlockV1>,
         finalized: VoteBlockV1,
@@ -1980,6 +2065,7 @@ mod tests {
             Self {
                 state: Arc::new(Mutex::new(NonceRpcState {
                     nonce: 7,
+                    fail_chain_id_once: false,
                     receipt: None,
                     canonical: None,
                     finalized: VoteBlockV1 {
@@ -1995,18 +2081,30 @@ mod tests {
             self.state.lock().unwrap().nonce = nonce;
         }
 
+        fn fail_next_chain_id(&self) {
+            self.state.lock().unwrap().fail_chain_id_once = true;
+        }
+
         fn include(&self, transaction_hash: B256) {
+            self.include_with_status(transaction_hash, true);
+        }
+
+        fn include_with_status(&self, transaction_hash: B256, success: bool) {
             let mut state = self.state.lock().unwrap();
             state.receipt = Some(VoteReceiptV1 {
                 transaction_hash,
                 block_number: 1,
                 block_hash: BLOCK_A,
-                success: true,
+                success,
             });
             state.canonical = Some(VoteBlockV1 {
                 number: 1,
                 hash: BLOCK_A,
             });
+        }
+
+        fn finalize(&self, number: u64, hash: B256) {
+            self.state.lock().unwrap().finalized = VoteBlockV1 { number, hash };
         }
 
         fn broadcasts(&self) -> usize {
@@ -2018,6 +2116,14 @@ mod tests {
         type Error = std::io::Error;
 
         fn chain_id(&self) -> Result<u64, Self::Error> {
+            let mut state = self.state.lock().unwrap();
+            if state.fail_chain_id_once {
+                state.fail_chain_id_once = false;
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "transient RPC outage",
+                ));
+            }
             Ok(42)
         }
 
@@ -2209,6 +2315,110 @@ mod tests {
             VoteSubmissionOutcomeV1::Submitted
         );
         assert_eq!(rpc.broadcasts(), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn a_finalized_revert_prepares_a_fresh_vote_envelope() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut submitter, rpc, preparer, calls, last_nonce) = nonce_fixture(directory.path());
+
+        assert_eq!(
+            heal_reconcile(&mut submitter, &preparer),
+            VoteSubmissionOutcomeV1::Prepared
+        );
+        assert_eq!(
+            heal_reconcile(&mut submitter, &preparer),
+            VoteSubmissionOutcomeV1::Submitted
+        );
+        let first = submitter.journal.load(JOB_ID).unwrap().unwrap();
+        rpc.include_with_status(first.transaction_hash, false);
+        assert!(matches!(
+            heal_reconcile(&mut submitter, &preparer),
+            VoteSubmissionOutcomeV1::Included(VoteInclusionV1 { success: false, .. })
+        ));
+
+        rpc.bypass_nonce(8);
+        rpc.finalize(1, BLOCK_A);
+        assert_eq!(
+            heal_reconcile(&mut submitter, &preparer),
+            VoteSubmissionOutcomeV1::Prepared
+        );
+        let replacement = submitter.journal.load(JOB_ID).unwrap().unwrap();
+        assert_eq!(replacement.stage, VoteSubmissionStageV1::Prepared);
+        assert!(replacement.generation > first.generation);
+        assert_eq!(replacement.nonce, 8);
+        assert_ne!(replacement.transaction_hash, first.transaction_hash);
+        assert_eq!(last_nonce.load(Ordering::SeqCst), 8);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+        drop(submitter);
+        let signer = OutbeEvmSigner::from_secret_bytes([9; 32]).expect("test signer");
+        let restarted = SupervisorVoteSubmitterV1::open(
+            VoteSubmissionConfigV1 {
+                journal_root: directory.path().to_path_buf(),
+                expected_chain_id: 42,
+                sender_address: signer.address(),
+                limits: poc_schema_limits(),
+            },
+            rpc,
+        )
+        .expect("restarted vote submitter");
+        assert_eq!(
+            restarted.journal.load(JOB_ID).unwrap().unwrap(),
+            replacement
+        );
+    }
+
+    #[test]
+    fn submission_error_classification_is_fail_closed() {
+        assert_eq!(
+            rpc_error(std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                "temporarily unavailable",
+            ))
+            .class(),
+            VoteSubmissionFailureClassV1::Retryable
+        );
+        assert_eq!(
+            rpc_error(PublicVoteRpcErrorV1::Malformed(
+                "invalid receipt".to_owned()
+            ))
+            .class(),
+            VoteSubmissionFailureClassV1::Unrecoverable
+        );
+        for error in [
+            VoteSubmissionErrorV1::Preparer("invalid attestation".to_owned()),
+            VoteSubmissionErrorV1::InvalidJournal,
+            VoteSubmissionErrorV1::JournalChecksumMismatch,
+            VoteSubmissionErrorV1::DifferentResultForJournaledJob,
+        ] {
+            assert_eq!(error.class(), VoteSubmissionFailureClassV1::Unrecoverable);
+        }
+    }
+
+    #[test]
+    fn a_retryable_rpc_failure_recovers_without_journaling_partial_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut submitter, rpc, preparer, calls, _) = nonce_fixture(directory.path());
+        rpc.fail_next_chain_id();
+
+        let error = submitter
+            .reconcile(
+                &preparer,
+                JOB_ID,
+                result_digest(),
+                &canonical_result(),
+                &finalized_job_spec(),
+            )
+            .expect_err("first RPC probe fails");
+        assert_eq!(error.class(), VoteSubmissionFailureClassV1::Retryable);
+        assert!(submitter.journal.load(JOB_ID).unwrap().is_none());
+
+        assert_eq!(
+            heal_reconcile(&mut submitter, &preparer),
+            VoteSubmissionOutcomeV1::Prepared
+        );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

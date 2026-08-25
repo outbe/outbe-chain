@@ -9,7 +9,6 @@ mod collection;
 mod commitment;
 mod errors;
 mod export_view;
-mod identity;
 mod lifecycle;
 mod persistence;
 mod proof;
@@ -41,18 +40,19 @@ pub use collection::{
     tribute_partition_root_from_leaves, CeDomain, CeTopologyV1, CollectionKey, K_PROVISIONAL,
 };
 pub use commitment::{
-    body_commitment, derive_poseidon_entity_id, identity_field, pbytes, Commitment,
-    CommitmentError, ACTIVE_COMMITMENT_SCHEME, CES1_TAG_BASE, TAG_BODY, TAG_BYTES_ABSORB,
-    TAG_BYTES_FINAL, TAG_BYTES_INIT, TAG_COLLECTION_KEY, TAG_COLLECTION_ROOT, TAG_ID, TAG_KEY,
-    TAG_LEAF, TAG_SEALED_ROOT, TAG_SMT_BASE, TAG_SMT_NORMAL, TAG_SMT_ZERO, TAG_TOP_NODE,
+    body_commitment, derive_poseidon_digest, derive_poseidon_entity_id, identity_field, pbytes,
+    Commitment, CommitmentError, ACTIVE_COMMITMENT_SCHEME, CES1_TAG_BASE, TAG_BODY,
+    TAG_BYTES_ABSORB, TAG_BYTES_FINAL, TAG_BYTES_INIT, TAG_COLLECTION_KEY, TAG_COLLECTION_ROOT,
+    TAG_ID, TAG_KEY, TAG_LEAF, TAG_SEALED_ROOT, TAG_SMT_BASE, TAG_SMT_NORMAL, TAG_SMT_ZERO,
+    TAG_TOP_NODE,
 };
 pub use errors::ParentBodySourceError;
 pub use export_view::{AuthenticatedExportView, AuthenticatedTributePartition, ExportViewError};
-pub use identity::{EntityId36, EntityIdError};
 pub use lifecycle::{
     preview_end_block as preview_lifecycle_end_block, CompressedEntitiesLifecycle,
     CompressedEntitiesLifecycleContext, SealOutput,
 };
+pub use outbe_primitives::wwd_entity_id::WwdEntityId;
 pub use persistence::{
     classify_restart, ApplyOutcome, CeMdbx, CeMdbxReadOnly, CeRetentionCursor,
     DurableFinalizedCheckpoint, EnvironmentIdentity, ExactParentIdentity, FinalizationStage,

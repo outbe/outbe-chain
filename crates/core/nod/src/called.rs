@@ -22,7 +22,7 @@
 //! call reads the *finalized daily VWAP*. Gem splits the two feeds the same way.
 
 use alloy_primitives::{B256, U256};
-use outbe_compressed_entities::{EntityId36, ExecutionScope, ParentBodySource};
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{
     block::BlockRuntimeContext,
@@ -223,17 +223,16 @@ fn forfeit_members(
         let Some(last) = count.checked_sub(1) else {
             break;
         };
-        let digest = nod
+        let nod_id = nod
             .bucket_nods
             .read(&NodContract::bucket_nod_key(bucket_key, last))?;
-        if digest.is_zero() {
+        if nod_id.is_zero() {
             return Err(
                 outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
                     "Nod bucket {bucket_key} member slot {last} is empty during forfeit"
                 )),
             );
         }
-        let nod_id = EntityId36::new(worldwide_day, digest.0);
         let item = api::load_item(storage, scope, parent, nod_id)?.ok_or_else(|| {
             outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
                 "Nod bucket {bucket_key} member {nod_id} has no body during forfeit"
@@ -241,7 +240,7 @@ fn forfeit_members(
         })?;
         let owner = item.body().owner;
         let gratis_load_minor = item.body().gratis_load_minor;
-        let bucket_id = EntityId36::new(worldwide_day, bucket_key.0);
+        let bucket_id = WwdEntityId::from_day_and_digest(worldwide_day, bucket_key.0);
         let bucket = api::load_bucket(storage, scope, parent, bucket_id)?.ok_or_else(|| {
             outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
                 "Nod bucket {bucket_key} has no body during forfeit"
@@ -250,7 +249,7 @@ fn forfeit_members(
         api::remove_nod(storage, scope, item, bucket)?;
         nod.emit(INod::NodForfeited {
             owner,
-            nodId: alloy_primitives::Bytes::copy_from_slice(nod_id.as_bytes()),
+            nodId: nod_id.to_u256(),
             gratisLoadMinor: gratis_load_minor,
         })?;
         burned = burned.saturating_add(1);

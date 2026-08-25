@@ -148,6 +148,10 @@ pub async fn run() {
 
     let writer = World::cucumber()
         .max_concurrent_scenarios(1)
+        // An undefined step is an invalid acceptance test, not a successful
+        // partial scenario. Environment-ineligible scenarios are filtered out
+        // before execution and therefore never reach this writer policy.
+        .fail_on_skipped()
         .before(move |feature, _rule, scenario, _world| {
             // Only reachable for unmet scenarios in `--all` mode (the filter
             // excludes them otherwise); panic so they count as failures.
@@ -170,6 +174,8 @@ pub async fn run() {
         // `World`, so there is nothing to stop.
         .after(move |feature, _rule, scenario, event, world| {
             if let Some(world) = world {
+                let price_oracle = world.price_oracle.evidence_snapshot();
+                world.price_oracle.teardown();
                 world.localnet.teardown();
                 let audit = world.localnet.audit_unexpected_logs(
                     world
@@ -178,6 +184,7 @@ pub async fn run() {
                         .then_some(world.state.proposed_version)
                         .flatten(),
                     world.state.expected_dkg_reveal.as_deref(),
+                    world.state.ocomp_full_node_mismatch_job_id,
                 );
                 let audit = match audit {
                     Ok(audit) => audit,
@@ -223,6 +230,8 @@ pub async fn run() {
                     gramine_image_id: world.localnet.enclave_image_id(),
                     ocomp: &ocomp,
                     ocomp_public: &ocomp_public,
+                    price_oracle: &price_oracle,
+                    radicle: &world.state.radicle,
                 }) {
                     panic!("E2E evidence write failed: {error:#}");
                 }

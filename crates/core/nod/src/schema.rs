@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::{derive_poseidon_entity_id, EntityId36};
+use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_ocomp_protocol::nod_materialization::NodMaterializationHeadV1;
 use outbe_primitives::addresses::NOD_ADDRESS;
@@ -32,7 +32,7 @@ pub struct NodIssueParams {
 #[storage_record(exists_field = owner)]
 pub struct NodItemState {
     #[key]
-    pub nod_id: EntityId36,
+    pub nod_id: WwdEntityId,
 
     #[attribute(order = 0)]
     pub owner: Address,
@@ -287,24 +287,22 @@ pub struct NodContract {
     pub ocomp_materialization_attempt_count: outbe_primitives::storage::dsl::Value<u16>,
 
     // --- Bucket member index: lets the forfeit sweep enumerate a bucket's Nods,
-    // which the compressed-entity store cannot do on its own. Values are the
-    // 32-byte `EntityId36` digest rather than the id, because `EntityId36` is 36
-    // bytes and has no `Storable` impl. The day prefix comes back from
-    // `bucket_worldwide_day`, so the id rebuilds as `EntityId36::new(wwd, digest)`.
+    // which the compressed-entity store cannot do on its own. `WwdEntityId` is a
+    // single storage word, so ids are stored whole and need no rebuilding.
     /// Mirror of the bucket body's `total_nods`, written from the loaded body so
     /// the two cannot drift.
     #[attribute(order = 35)]
     pub bucket_nod_count: outbe_primitives::storage::dsl::Map<B256, u32>,
 
-    /// `bucket_nod_key(bucket_key, index)` -> Nod digest. Insertion-ordered and
+    /// `bucket_nod_key(bucket_key, index)` -> Nod id. Insertion-ordered and
     /// swap-popped, matching the unqualified-bin index.
     #[attribute(order = 36)]
-    pub bucket_nods: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub bucket_nods: Mapping<B256, WwdEntityId>,
 
-    /// Nod digest -> position in its bucket, for O(1) swap-remove. A Nod belongs
-    /// to exactly one bucket, so one global map suffices.
+    /// Nod id -> position in its bucket, for O(1) swap-remove. A Nod belongs to
+    /// exactly one bucket, so one global map suffices.
     #[attribute(order = 37)]
-    pub bucket_nod_index: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub bucket_nod_index: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
 
     // --- Callable-bucket index: dense list of the buckets the daily call scan
     // visits. Membership invariant: a bucket is listed iff it has qualified and
@@ -365,7 +363,7 @@ impl<'storage> NodContract<'storage> {
     pub fn generate_nod_id(
         owner: Address,
         worldwide_day: WorldwideDay,
-    ) -> outbe_primitives::error::Result<EntityId36> {
+    ) -> outbe_primitives::error::Result<WwdEntityId> {
         derive_poseidon_entity_id(owner, worldwide_day)
             .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))
     }

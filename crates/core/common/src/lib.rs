@@ -1,7 +1,3 @@
 pub mod pow;
-pub mod worldwideday;
 
-pub use worldwideday::WorldwideDay;
-
-#[cfg(test)]
-mod tests;
+pub use outbe_primitives::time::WorldwideDay;

@@ -11,7 +11,8 @@ use crate::env::Environment;
 use crate::ocomp_evidence::{hash_file, publish_member};
 use crate::world::localnet::LogAudit;
 use crate::world::ocomp::OcompScenarioTopologyV1;
-use crate::world::state::OcompPublicScenarioEvidenceV1;
+use crate::world::price_oracle::PriceOracleEvidenceV1;
+use crate::world::state::{OcompPublicScenarioEvidenceV1, RadicleScenarioEvidenceV1};
 
 pub(crate) struct ScenarioEvidence<'a> {
     pub env: &'a Environment,
@@ -25,6 +26,8 @@ pub(crate) struct ScenarioEvidence<'a> {
     pub gramine_image_id: Option<&'a str>,
     pub ocomp: &'a OcompScenarioTopologyV1,
     pub ocomp_public: &'a OcompPublicScenarioEvidenceV1,
+    pub price_oracle: &'a PriceOracleEvidenceV1,
+    pub radicle: &'a RadicleScenarioEvidenceV1,
 }
 
 pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
@@ -44,6 +47,7 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
         for (name, path) in [
             ("outbe_chain", input.env.chain_bin.as_path()),
             ("outbe_ocomp", input.env.ocomp_bin.as_path()),
+            ("outbe_feeder", input.env.feeder_bin.as_path()),
             ("outbe_cli", input.env.cli_bin.as_path()),
             ("outbe_keygen", input.env.keygen_bin.as_path()),
             ("outbe_e2e", current_exe.as_path()),
@@ -70,6 +74,33 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
         Some(serde_json::Value::Object(binaries))
     } else {
         None
+    };
+    let exact_radicle_binaries = if input.radicle.validator_node_ids.is_empty() {
+        None
+    } else {
+        let heartwood_target = input
+            .env
+            .repo
+            .parent()
+            .unwrap_or(&input.env.repo)
+            .join("outbe-heartwood/target/release");
+        let mut binaries = serde_json::Map::new();
+        for (name, path) in [
+            (
+                "outbe_radicle",
+                input.env.repo.join("target/release/outbe-radicle"),
+            ),
+            ("rad", heartwood_target.join("rad")),
+            ("git_remote_rad", heartwood_target.join("git-remote-rad")),
+        ] {
+            binaries.insert(
+                name.to_owned(),
+                serde_json::to_value(
+                    hash_file(&path).wrap_err_with(|| format!("hash exact {name} binary"))?,
+                )?,
+            );
+        }
+        Some(serde_json::Value::Object(binaries))
     };
     let metadosis_p0 = input
         .env
@@ -112,6 +143,11 @@ pub(crate) fn write_scenario(input: ScenarioEvidence<'_>) -> Result<()> {
             "exact_binaries": exact_ocomp_binaries,
             "topology": input.ocomp,
             "public_path": input.ocomp_public,
+        },
+        "price_oracle": input.price_oracle,
+        "radicle": {
+            "exact_binaries": exact_radicle_binaries,
+            "public_path": input.radicle,
         },
     });
     let mut bytes = serde_json::to_vec_pretty(&document)?;

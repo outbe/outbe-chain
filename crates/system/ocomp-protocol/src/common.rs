@@ -4,31 +4,6 @@ use crate::{
     schema::{require, NestedCodec, SchemaLimits},
 };
 
-/// Consensus entity identifier: a 32-byte digest followed by a 4-byte index.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct EntityId36(pub [u8; 36]);
-
-impl NestedCodec for EntityId36 {
-    fn validate(&self, _limits: &SchemaLimits) -> Result<(), ProtocolError> {
-        Ok(())
-    }
-
-    fn encode_nested(
-        &self,
-        output: &mut CanonicalWriter,
-        _limits: &SchemaLimits,
-    ) -> Result<(), ProtocolError> {
-        output.write_entity_id36(&self.0)
-    }
-
-    fn decode_nested(
-        input: &mut CanonicalReader<'_>,
-        _limits: &SchemaLimits,
-    ) -> Result<Self, ProtocolError> {
-        Ok(Self(input.read_entity_id36()?))
-    }
-}
-
 /// Length-prefixed bytes governed by the bundle's ordinary field cap.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BoundedBytes(pub Vec<u8>);

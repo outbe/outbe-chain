@@ -431,7 +431,8 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::BeginDcapVerificationV1 { .. }
         | EnclaveRequest::BeginDcapOnboardingVerificationV1 { .. }
         | EnclaveRequest::DcapVerificationChunkV1 { .. }
-        | EnclaveRequest::FinishDcapVerificationV1 { .. } => CommandClass::Initialized,
+        | EnclaveRequest::FinishDcapVerificationV1 { .. }
+        | EnclaveRequest::Health => CommandClass::Initialized,
         EnclaveRequest::DkgOpen { .. }
         | EnclaveRequest::DkgStartDealer { .. }
         | EnclaveRequest::DkgPlayerIngest { .. }
@@ -458,6 +459,22 @@ fn command_class(request: &EnclaveRequest) -> CommandClass {
         | EnclaveRequest::OpenSession
         | EnclaveRequest::OpenRemoteSessionV1 { .. }
         | EnclaveRequest::SessionHandshake { .. } => CommandClass::Never,
+    }
+}
+
+/// Health-counter bucket for `request` — the telemetry-facing name of the
+/// private capability matrix above. Authorization stays with
+/// [`InitializationState::authorize_command`]; this only labels counters.
+pub(crate) fn request_class_label(request: &EnclaveRequest) -> crate::telemetry::RequestClassLabel {
+    use crate::telemetry::RequestClassLabel;
+    match command_class(request) {
+        CommandClass::Never => RequestClassLabel::Never,
+        CommandClass::Initialized => RequestClassLabel::Initialized,
+        CommandClass::FoundingKeyless => RequestClassLabel::FoundingKeyless,
+        CommandClass::KeylessOnboardingArtifact => RequestClassLabel::KeylessOnboarding,
+        CommandClass::Ready => RequestClassLabel::Ready,
+        CommandClass::DevSourceSeal => RequestClassLabel::DevSourceSeal,
+        CommandClass::DevRecipientIngest => RequestClassLabel::DevRecipientIngest,
     }
 }
 
@@ -572,6 +589,22 @@ mod tests {
     use alloy_primitives::B256;
     use k256::ecdsa::{signature::hazmat::PrehashSigner as _, SigningKey};
     use outbe_primitives::tee_attestation_v1::{AttestationOperationV1, NodeIdV1};
+
+    /// `Health` is an `Initialized`-class probe: allowed in every
+    /// post-handshake state (keyless included), denied only pre-handshake.
+    #[test]
+    fn health_is_initialized_class_and_allowed_keyless() {
+        assert_eq!(
+            command_class(&EnclaveRequest::Health),
+            CommandClass::Initialized
+        );
+        assert!(command_allowed_for_environment(CommandClass::Initialized, false, false).is_ok());
+        assert!(command_allowed_for_environment(CommandClass::Initialized, true, false).is_ok());
+        assert_eq!(
+            crate::telemetry::RequestClassLabel::Initialized,
+            request_class_label(&EnclaveRequest::Health)
+        );
+    }
 
     fn signed_manifest(
         keys: &EnclaveKeys,

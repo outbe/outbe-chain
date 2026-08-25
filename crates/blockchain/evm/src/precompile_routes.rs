@@ -395,6 +395,7 @@ define_exact_routes! {
     L2_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_l2registry::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_l2registry::precompile::PAYABLE_SELECTORS),
     STABLECOIN_FACTORY_ADDRESS => (DispatchAdapter::Basic(stablecoin_factory_dispatch), default_base_gas, ValuePolicy::Reject, outbe_stablecoinfactory::precompile::PAYABLE_SELECTORS),
     STABLECOIN_POLICY_REGISTRY_ADDRESS => (DispatchAdapter::Basic(stablecoin_policy_dispatch), default_base_gas, ValuePolicy::Reject, outbe_stablecoinpolicy::precompile::PAYABLE_SELECTORS),
+    RADICLE_REGISTRY_ADDRESS => (DispatchAdapter::Basic(outbe_radicleregistry::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_radicleregistry::precompile::PAYABLE_SELECTORS),
     GOVERNANCE_ADDRESS => (DispatchAdapter::Basic(outbe_governance::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_governance::precompile::PAYABLE_SELECTORS),
     VOTE_ADDRESS => (DispatchAdapter::Basic(vote_dispatch), default_base_gas, ValuePolicy::Payable, outbe_vote::precompile::PAYABLE_SELECTORS),
     UPDATE_ADDRESS => (DispatchAdapter::Basic(outbe_update::precompile::dispatch), default_base_gas, ValuePolicy::Reject, outbe_update::precompile::PAYABLE_SELECTORS),
@@ -554,6 +555,20 @@ mod tests {
         assert_eq!(
             lookup(&VOTE_ADDRESS).unwrap().reader_mode(),
             ReaderMode::None
+        );
+        assert_eq!(
+            lookup(&RADICLE_REGISTRY_ADDRESS).unwrap().reader_mode(),
+            ReaderMode::None
+        );
+    }
+
+    #[test]
+    fn radicle_registry_route_uses_standard_base_gas() {
+        let route = lookup(&RADICLE_REGISTRY_ADDRESS).expect("RadicleRegistry route");
+        assert_eq!(route.base_gas(&[]), PRECOMPILE_BASE_GAS);
+        assert_eq!(
+            route.base_gas(&[0xde, 0xad, 0xbe, 0xef]),
+            PRECOMPILE_BASE_GAS
         );
     }
 

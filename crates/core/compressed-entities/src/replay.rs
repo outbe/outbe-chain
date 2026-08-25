@@ -16,7 +16,7 @@ use crate::{
     body_commitment, decode_nod_bucket_v1, decode_nod_item_v1, decode_tribute_v1,
     runtime::{NodBodyDeleted, NodBodyStored, NodBucketBodyDeleted, NodBucketBodyStored},
     runtime::{TributeBodyDeleted, TributeBodyStored, TributePartitionRetired},
-    Commitment, EntityId36, EntityRef, FinalLeafMutation, PartitionRef, ACTIVE_COMMITMENT_SCHEME,
+    Commitment, EntityRef, FinalLeafMutation, PartitionRef, WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
     BODY_SCHEMA_V1,
 };
 
@@ -63,7 +63,7 @@ pub fn decode_canonical_body_event(
         let event = TributeBodyStored::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
         validate_versions(event.commitmentSchemeVersion, event.schemaVersion)?;
-        let id = entity_id(&event.tributeId)?;
+        let id = WwdEntityId::from(event.tributeId);
         let body = decode_tribute_v1(&event.canonicalPayload)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
         if body.tribute_id != id {
@@ -81,7 +81,7 @@ pub fn decode_canonical_body_event(
         let event = TributeBodyDeleted::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
         return deleted_event(
-            EntityRef::Tribute(entity_id(&event.tributeId)?),
+            EntityRef::Tribute(WwdEntityId::from(event.tributeId)),
             event.previousCommitment,
         )
         .map(Some);
@@ -90,7 +90,7 @@ pub fn decode_canonical_body_event(
         let event = NodBodyStored::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
         validate_versions(event.commitmentSchemeVersion, event.schemaVersion)?;
-        let id = entity_id(&event.nodId)?;
+        let id = WwdEntityId::from(event.nodId);
         let body = decode_nod_item_v1(&event.canonicalPayload)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
         if body.nod_id != id {
@@ -108,7 +108,7 @@ pub fn decode_canonical_body_event(
         let event = NodBodyDeleted::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
         return deleted_event(
-            EntityRef::NodItem(entity_id(&event.nodId)?),
+            EntityRef::NodItem(WwdEntityId::from(event.nodId)),
             event.previousCommitment,
         )
         .map(Some);
@@ -117,7 +117,7 @@ pub fn decode_canonical_body_event(
         let event = NodBucketBodyStored::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
         validate_versions(event.commitmentSchemeVersion, event.schemaVersion)?;
-        let id = entity_id(&event.bucketId)?;
+        let id = WwdEntityId::from(event.bucketId);
         let body = decode_nod_bucket_v1(&event.canonicalPayload)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
         if body.entity_id() != id {
@@ -135,7 +135,7 @@ pub fn decode_canonical_body_event(
         let event = NodBucketBodyDeleted::decode_log_data(data)
             .map_err(|error| ReplayEventError::Malformed(error.to_string()))?;
         return deleted_event(
-            EntityRef::NodBucket(entity_id(&event.bucketId)?),
+            EntityRef::NodBucket(WwdEntityId::from(event.bucketId)),
             event.previousCommitment,
         )
         .map(Some);
@@ -234,10 +234,6 @@ fn validate_versions(scheme: u32, schema: u32) -> Result<(), ReplayEventError> {
     Ok(())
 }
 
-fn entity_id(bytes: &[u8]) -> Result<EntityId36, ReplayEventError> {
-    EntityId36::try_from(bytes).map_err(|error| ReplayEventError::Malformed(error.to_string()))
-}
-
 fn optional_commitment(value: B256) -> Result<Option<Commitment>, ReplayEventError> {
     if value.is_zero() {
         Ok(None)
@@ -284,8 +280,8 @@ mod tests {
     use super::*;
     use crate::{encode_tribute_v1, TributeBodyV1};
 
-    fn entity(byte: u8) -> EntityId36 {
-        EntityId36::new(WorldwideDay::new(17), [byte; 32])
+    fn entity(byte: u8) -> WwdEntityId {
+        WwdEntityId::from_day_and_digest(WorldwideDay::new(17), [byte; 32])
     }
 
     fn commitment(byte: u8) -> Commitment {
@@ -336,7 +332,7 @@ mod tests {
         let expected =
             body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, id, &payload).unwrap();
         let data = TributeBodyStored {
-            tributeId: Bytes::copy_from_slice(id.as_bytes()),
+            tributeId: id.to_u256(),
             commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
             schemaVersion: BODY_SCHEMA_V1,
             previousCommitment: B256::ZERO,

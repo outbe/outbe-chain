@@ -6,7 +6,7 @@ use alloy_primitives::{address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_compressed_entities::{
     begin_block, decode_tribute_v1, derive_poseidon_entity_id, encode_tribute_v1, end_block,
-    EntityId36, ExecutionScope, PartitionRef,
+    ExecutionScope, PartitionRef, WwdEntityId,
 };
 use outbe_offchain_storage::{MemoryStorage, StorageReaderHandle, StorageWriterHandle};
 use outbe_primitives::addresses::{COMPRESSED_ENTITIES_ADDRESS, TRIBUTE_ADDRESS};
@@ -41,7 +41,7 @@ impl TestTribute<'_, '_> {
         self.contract.issue(self.scope, &self.reader, tribute)
     }
 
-    fn burn(&mut self, tribute_id: EntityId36) -> PrecompileResult<()> {
+    fn burn(&mut self, tribute_id: WwdEntityId) -> PrecompileResult<()> {
         self.contract.burn(self.scope, &self.reader, tribute_id)
     }
 
@@ -49,7 +49,7 @@ impl TestTribute<'_, '_> {
         self.contract.burn_all_by_wwd(self.scope, &self.reader, day)
     }
 
-    fn get_tribute(&self, tribute_id: EntityId36) -> PrecompileResult<Option<TributeData>> {
+    fn get_tribute(&self, tribute_id: WwdEntityId) -> PrecompileResult<Option<TributeData>> {
         self.contract
             .get_tribute(self.scope, &self.reader, tribute_id)
     }
@@ -58,7 +58,7 @@ impl TestTribute<'_, '_> {
         self.contract.balance_of(self.scope, &self.reader, owner)
     }
 
-    fn token_uri(&self, tribute_id: EntityId36) -> PrecompileResult<String> {
+    fn token_uri(&self, tribute_id: WwdEntityId) -> PrecompileResult<String> {
         self.contract
             .token_uri(self.scope, &self.reader, tribute_id)
     }
@@ -66,7 +66,7 @@ impl TestTribute<'_, '_> {
     fn get_tribute_ids_by_owner(
         &self,
         owner: alloy_primitives::Address,
-    ) -> PrecompileResult<Vec<EntityId36>> {
+    ) -> PrecompileResult<Vec<WwdEntityId>> {
         self.contract
             .get_tribute_ids_by_owner(self.scope, &self.reader, owner)
     }
@@ -74,7 +74,7 @@ impl TestTribute<'_, '_> {
     fn get_tribute_ids_by_day(
         &self,
         day: outbe_common::WorldwideDay,
-    ) -> PrecompileResult<Vec<EntityId36>> {
+    ) -> PrecompileResult<Vec<WwdEntityId>> {
         self.contract
             .get_tribute_ids_by_day(self.scope, &self.reader, day)
     }
@@ -108,7 +108,7 @@ fn body_repository() -> (TributeRepositoryReader, TributeRepositoryWriter) {
 
 fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
     storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
         .unwrap();
     storage
         .sstore(
@@ -172,7 +172,7 @@ fn sample_tribute() -> TributeData {
     }
 }
 
-fn entity_id(seed: u64, day: outbe_common::WorldwideDay) -> EntityId36 {
+fn entity_id(seed: u64, day: outbe_common::WorldwideDay) -> WwdEntityId {
     derive_poseidon_entity_id(alloy_primitives::Address::repeat_byte(seed as u8), day).unwrap()
 }
 
@@ -893,7 +893,7 @@ fn test_events_emitted_for_issue_and_burn() {
         );
         let stored = crate::precompile::ITribute::TributeBodyStored::decode_log_data(&events[1])
             .expect("issue must emit a decodable full-body event first");
-        assert_eq!(stored.tributeId.as_ref(), tribute.tribute_id.as_bytes());
+        assert_eq!(stored.tributeId, tribute.tribute_id.to_u256());
         let event_body =
             crate::from_canonical_body(decode_tribute_v1(&stored.canonicalPayload).unwrap());
         assert_eq!(event_body.tribute_id, tribute.tribute_id);
@@ -922,7 +922,7 @@ fn test_events_emitted_for_issue_and_burn() {
         assert_eq!(events.len(), 5, "burn projection/product events expected");
         let deleted = crate::precompile::ITribute::TributeBodyDeleted::decode_log_data(&events[3])
             .expect("burn must emit identity-only deletion first");
-        assert_eq!(deleted.tributeId.as_ref(), tribute.tribute_id.as_bytes());
+        assert_eq!(deleted.tributeId, tribute.tribute_id.to_u256());
         assert_eq!(deleted.previousCommitment, stored.newCommitment);
         assert_eq!(
             events[4].topics()[0],

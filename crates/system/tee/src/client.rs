@@ -77,6 +77,10 @@ struct QuoteIdentity {
     mrsigner: B256,
     isv_svn: u16,
     attestation_pub: [u8; 32],
+    /// The enclave's Noise static key as pinned by [`verify_quote`] — the key
+    /// the Noise-IK handshake actually authenticated. Retained so a session
+    /// reconnect can require the byte-identical peer.
+    noise_static_pub: [u8; 32],
     /// The attestation environment the enclave self-reported (e.g.
     /// `none (gramine-direct / no SGX)`).
     attestation: String,
@@ -357,6 +361,12 @@ impl EnclaveClient {
         self.identity.attestation_pub
     }
 
+    /// The enclave Noise static key this session's handshake authenticated,
+    /// pinned from the structurally validated quote at connect time.
+    pub fn noise_static_pub(&self) -> [u8; 32] {
+        self.identity.noise_static_pub
+    }
+
     /// Connect using an endpoint string: `host:port` → TCP, otherwise a UDS path.
     pub fn connect_endpoint(endpoint: &str) -> Result<Self, TransportError> {
         if endpoint.contains(':') {
@@ -383,7 +393,7 @@ impl EnclaveClient {
             "quote response read",
         )?)?;
         let enclave_static = verify_quote(&quote)?;
-        let identity = quote_identity(&quote)?;
+        let identity = quote_identity(&quote, enclave_static)?;
 
         // 2. Noise-IK handshake (initiator). The host static key is ephemeral
         //    per connection; the enclave static key is the bound, pinned one.
@@ -1237,7 +1247,10 @@ fn connect_endpoint_transport(endpoint: &str) -> Result<Transport, TransportErro
 }
 
 /// Extract the enclave identity fields from the quote response.
-fn quote_identity(quote: &EnclaveResponse) -> Result<QuoteIdentity, TransportError> {
+fn quote_identity(
+    quote: &EnclaveResponse,
+    noise_static_pub: [u8; 32],
+) -> Result<QuoteIdentity, TransportError> {
     let EnclaveResponse::Quote {
         mrenclave,
         mrsigner,
@@ -1254,6 +1267,7 @@ fn quote_identity(quote: &EnclaveResponse) -> Result<QuoteIdentity, TransportErr
         mrsigner: *mrsigner,
         isv_svn: *isv_svn,
         attestation_pub: *attestation_pub,
+        noise_static_pub,
         attestation: attestation.clone(),
     })
 }
@@ -1839,6 +1853,7 @@ mod tests {
             owner: Address::repeat_byte(0x22),
             issuance_amount_minor: U256::from(1_000u64),
             nominal_amount_minor: U256::from(2_000u64),
+            effective_reference_price_minor: U256::from(3_000u64),
             su_hashes: vec!["0xabc".to_string()],
             wallet_addresses: vec![],
             sra_addresses: vec![],
@@ -1857,7 +1872,7 @@ mod tests {
 
         // Tampered result → reject.
         let mut tampered = results.clone();
-        tampered[0].owner = Address::repeat_byte(0x99);
+        tampered[0].effective_reference_price_minor += U256::ONE;
         assert!(verify_tribute_offer_attestation(&pk, hash, &tampered, &tag).is_err());
 
         // Tampered inputs hash → reject.

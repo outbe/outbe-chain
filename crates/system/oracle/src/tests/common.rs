@@ -62,11 +62,11 @@ pub(super) fn pair_key(base: Address, quote: Address) -> AddressPair {
 /// `ReferenceCurrency` genesis entries.
 pub(super) const TEST_RATE: U256 = U256::from_limbs([43_000u64, 0, 0, 0]);
 
-/// Builds a `ReferenceCurrency` with the test currency rate.
-pub(super) fn ref_cur(iso_code: u16) -> crate::genesis::ReferenceCurrency {
-    crate::genesis::ReferenceCurrency {
+/// Builds an independent policy-rate entry for genesis tests.
+pub(super) fn policy_rate(iso_code: u16) -> crate::genesis::PolicyRate {
+    crate::genesis::PolicyRate {
         iso_code,
-        currency_rate: TEST_RATE,
+        annual_rate_1e6: TEST_RATE,
     }
 }
 
@@ -92,19 +92,6 @@ pub(super) fn seed_ocomp_oracle_with_snapshot(provider: &mut HashMapStorageProvi
                 &[(pair_key(COEN, usd()), coen_iso(125), coen_iso(2))],
             )
             .unwrap();
-    });
-}
-
-pub(super) fn seed_ocomp_oracle_with_scurve(provider: &mut HashMapStorageProvider) {
-    seed_ocomp_oracle(provider);
-    StorageHandle::enter(provider, |storage| {
-        crate::scurve::store_scurve_entry(
-            &mut OracleContract::new(storage),
-            pair_key(COEN, usd()),
-            ATOMIC_DAY_START,
-            coen_iso(125),
-        )
-        .unwrap();
     });
 }
 
@@ -164,10 +151,12 @@ pub(super) fn write_snapshot_mutation(storage: StorageHandle<'_>) -> PrecompileR
 }
 
 pub(super) fn store_wwd_snapshot_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
+    let worldwide_day = outbe_common::WorldwideDay::from_timestamp(ATOMIC_DAY_START);
+    let start_time = worldwide_day.start_timestamp();
     OracleContract::new(storage).store_worldwide_day_vwap_snapshot(
-        outbe_common::WorldwideDay::from_timestamp(ATOMIC_DAY_START),
-        ATOMIC_DAY_START,
-        ATOMIC_DAY_START + outbe_primitives::time::SECONDS_PER_DAY,
+        worldwide_day,
+        start_time,
+        start_time + 50 * 60 * 60,
     )?;
     Ok(())
 }
@@ -184,14 +173,6 @@ pub(super) fn store_scurve_mutation(storage: StorageHandle<'_>) -> PrecompileRes
         pair_key(COEN, usd()),
         ATOMIC_DAY_START,
         coen_iso(125),
-    )
-}
-
-pub(super) fn evict_scurve_mutation(storage: StorageHandle<'_>) -> PrecompileResult<()> {
-    crate::scurve::evict_expired_scurves(
-        &mut OracleContract::new(storage),
-        ATOMIC_DAY_START
-            + (u64::try_from(crate::scurve::PERIOD).unwrap() + 1) * crate::scurve::DAY_SECONDS,
     )
 }
 

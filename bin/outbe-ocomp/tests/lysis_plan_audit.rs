@@ -28,7 +28,7 @@ use outbe_ocomp::{
     nod_proof::{build_certified_nod_proof, NodProofBuildError},
 };
 use outbe_ocomp_protocol::{
-    common::{BoundedBytes, EntityId36, ProofBytes},
+    common::{BoundedBytes, ProofBytes},
     input::{
         materialize_authenticated_openings, AuthenticatedInputChunkV1, CheckpointIdentityV1,
         InputChunkKind, InputManifestV1,
@@ -152,7 +152,7 @@ fn synthetic_fixture_with_options(
         .iter()
         .map(|tribute| ContributorActionV1 {
             owner: tribute.owner,
-            source_tribute_id: EntityId36(*tribute.tribute_id.as_bytes()),
+            source_tribute_id: *tribute.tribute_id,
             nominal_amount_minor: tribute.nominal_amount_minor,
         })
         .collect::<Vec<_>>();
@@ -376,7 +376,7 @@ fn synthetic_fixture_with_options(
                     .iter()
                     .enumerate()
                     .map(|(local, tribute)| {
-                        let tribute_id = EntityId36(*tribute.tribute_id.as_bytes());
+                        let tribute_id = *tribute.tribute_id;
                         NodActionV1 {
                             raw_ordinal: u32::try_from(start + local).unwrap(),
                             tribute_id,

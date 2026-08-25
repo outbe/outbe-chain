@@ -23,6 +23,7 @@ import argparse
 import ipaddress
 import json
 import os
+import sys
 
 # --- Keccak256 ---
 
@@ -196,7 +197,7 @@ ZEROFEE_ADDRESS = "000000000000000000000000000000000000ee09"
 # Compressed-entity EVM schema V3. ADR-011 adds the retirement journal.
 # Catalog, so slot 1 is non-zero even though no collection exists at genesis.
 COMPRESSED_ENTITIES_ADDRESS = "000000000000000000000000000000000000ee0d"
-COMPRESSED_ENTITIES_SCHEMA_VERSION = 3
+COMPRESSED_ENTITIES_SCHEMA_VERSION = 4
 COMPRESSED_ENTITIES_EMPTY_SEALED_ROOT = int(
     "086cb3c24884752e6453a9d44e15c1f465c0874e5312d18c05feaafec1587802", 16
 )
@@ -212,6 +213,7 @@ TEE_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee0a"
 # before production dispatch activates.
 STABLECOIN_FACTORY_ADDRESS = "000000000000000000000000000000000000ee0f"
 STABLECOIN_POLICY_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee10"
+RADICLE_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee11"
 STABLECOIN_ADDRESS_PREFIX = "53c0"
 OUTBE_SYSTEM_TX_ADDRESS = "ff00000000000000000000000000000000000001"
 
@@ -235,6 +237,7 @@ ALL_PRECOMPILE_ADDRESSES = [
     CYCLE_ADDRESS, CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS,
     GOVERNANCE_ADDRESS, STABLECOIN_FACTORY_ADDRESS,
     STABLECOIN_POLICY_REGISTRY_ADDRESS,
+    RADICLE_REGISTRY_ADDRESS,
     VALIDATOR_SET_ADDRESS, SLASH_INDICATOR_ADDRESS,
     STAKING_ADDRESS, REWARDS_ADDRESS, ACCOUNTING_PROGRESS_ADDRESS, ORACLE_ADDRESS,
     ZEROFEE_ADDRESS, COMPRESSED_ENTITIES_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS,
@@ -404,6 +407,26 @@ def pubkey_bytes(hex_str: str) -> bytes:
     if len(h) != 96:
         raise ValueError(f"invalid BLS public key length: {hex_str}")
     return bytes.fromhex(h)
+
+
+def radicle_node_id_bytes(value: object, *, validator_index: int) -> bytes:
+    """Parse one founder's required non-zero 32-byte Radicle NodeId."""
+    if not isinstance(value, str):
+        raise ValueError(f"validator {validator_index} radicle_node_id is required")
+    raw = value.removeprefix("0x").removeprefix("0X")
+    if len(raw) != 64:
+        raise ValueError(
+            f"validator {validator_index} radicle_node_id must be 64 hex chars"
+        )
+    try:
+        node_id = bytes.fromhex(raw)
+    except ValueError as error:
+        raise ValueError(
+            f"validator {validator_index} radicle_node_id must be hexadecimal"
+        ) from error
+    if node_id == bytes(32):
+        raise ValueError(f"validator {validator_index} radicle_node_id must not be zero")
+    return node_id
 
 
 def address_as_u256(addr_hex: str) -> int:
@@ -1091,7 +1114,15 @@ def seed_validator_set(
       slots 21-26: epoch / consensus-set tracking
       slot 27: re-registration cooldown
       slots 28-29: versioned Commonware P2P address registry
+      slots 59-60: Radicle NodeId forward and reverse indexes
     """
+    radicle_node_ids = [
+        radicle_node_id_bytes(validator.get("radicle_node_id"), validator_index=index)
+        for index, validator in enumerate(validators)
+    ]
+    if len(set(radicle_node_ids)) != len(radicle_node_ids):
+        raise ValueError("duplicate Radicle NodeId in founder validators")
+
     storage.set_slot(0, address_as_u256(config.get("owner", "0x0000000000000000000000000000000000000000")))
     storage.set_slot(1, parse_int(config.get("max_validators", 128)))
     if "epoch_duration" in config:
@@ -1112,7 +1143,9 @@ def seed_validator_set(
         DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS,
     )))
 
-    for index, validator in enumerate(validators, start=1):
+    for index, (validator, radicle_node_id) in enumerate(
+        zip(validators, radicle_node_ids, strict=True), start=1
+    ):
         addr = validator["address"]
         pk = pubkey_bytes(validator["public_key"])
         pk_hi = pk[32:] + (b"\x00" * 16)
@@ -1127,6 +1160,8 @@ def seed_validator_set(
         storage.set_mapping(17, u64_bytes(index), address_as_u256(addr))
         storage.set_mapping(18, pk_hash, address_as_u256(addr))
         storage.set_mapping(24, address_bytes(addr), 1)
+        storage.set_mapping_b256(59, address_bytes(addr), radicle_node_id)
+        storage.set_mapping(60, radicle_node_id, address_as_u256(addr))
         p2p_seed = encode_p2p_address_payload(validator.get("p2p_address"))
         if p2p_seed is not None:
             version, payload = p2p_seed
@@ -1257,7 +1292,7 @@ def seed_accounting_progress(storage: StorageBuilder):
 
 
 def seed_compressed_entities(storage: StorageBuilder):
-    """Seed EVM schema V2 and ADR-010's authoritative empty sealed root."""
+    """Seed the EVM schema version and ADR-010's authoritative empty sealed root."""
     storage.set_slot(0, COMPRESSED_ENTITIES_SCHEMA_VERSION)
     storage.set_slot(1, COMPRESSED_ENTITIES_EMPTY_SEALED_ROOT)
 
@@ -1339,6 +1374,8 @@ def seed_oracle(storage: StorageBuilder, config: dict):
         settlement holes; the settlement pair is derived as
         address_pair("COEN", "<iso>"))
       slot 55: reference_currencies (StorageVec<u16>)
+      slot 60: retired policy-rate mapping
+      slots 74-75: policy_rate_currencies / policy_rate
     """
     cfg = config.get("config", {})
     storage.set_slot(0, parse_int(cfg.get("vote_period", 2)))
@@ -1445,27 +1482,45 @@ def seed_oracle(storage: StorageBuilder, config: dict):
                 37, u32_bytes(idx), parse_int(sc["peak_price"])
             )  # scurve_peak_price
 
-    # Reference currencies (slot 55) with their annualized currency rate
-    # (slot 60, mapping(iso_code => rate), scale 1e6). Default: USD (840) at the
-    # configured USD reference rate (3.63%). The currency rate is read by the Credis Factory
-    # at issuance; the live data feed is out of scope (governance-updated).
-    # Reference-currency codes are stored as a StorageVec<u16>: length at slot 55,
-    # data at keccak256(55) + index. Both slots are verified by the
-    # `test_reference_currencies_slot_parity` / `test_reference_currency_rate_slot_parity`
-    # tests in `crates/system/oracle/src/tests.rs`; keep these constants in sync
-    # with the macro-assigned layout if `OracleContract` field order changes.
+    # Reference currencies and annual policy rates are independent registries.
+    # Both lists are canonical ascending ISO order. Slot 60 is retired.
     DEFAULT_USD_CURRENCY_RATE = 36_300  # 3.63% at scale 1e6
     reference_currencies = config.get(
         "reference_currencies",
-        [{"iso_code": 840, "currency_rate": DEFAULT_USD_CURRENCY_RATE}],
+        [156, 344, 392, 826, 840, 978],
     )
+    reference_currencies = [parse_int(iso_code) for iso_code in reference_currencies]
+    if len(reference_currencies) > 6:
+        raise ValueError("oracle reference currency count exceeds 6")
+    if any(iso_code == 0 for iso_code in reference_currencies):
+        raise ValueError("oracle reference iso_code must be non-zero")
+    if reference_currencies != sorted(set(reference_currencies)):
+        raise ValueError("oracle reference currencies must be sorted and unique")
+    if 840 not in reference_currencies:
+        raise ValueError("oracle reference currencies must include USD 840")
     storage.set_slot(55, len(reference_currencies))
-    for i, entry in enumerate(reference_currencies):
-        iso_code = parse_int(entry["iso_code"])
-        rate = parse_int(entry.get("currency_rate", DEFAULT_USD_CURRENCY_RATE))
+    for i, iso_code in enumerate(reference_currencies):
         storage.set_raw_slot(data_slot(55) + i, iso_code)
-        # reference_currency_rate: mapping(iso_code => rate) at slot 60.
-        storage.set_mapping(60, u32_bytes(iso_code), rate)
+
+    policy_rates = config.get(
+        "policy_rates",
+        [{"iso_code": 840, "annual_rate_1e6": DEFAULT_USD_CURRENCY_RATE}],
+    )
+    parsed_policy_rates = [
+        (parse_int(entry["iso_code"]), parse_int(entry["annual_rate_1e6"]))
+        for entry in policy_rates
+    ]
+    if any(iso_code == 0 for iso_code, _ in parsed_policy_rates):
+        raise ValueError("oracle policy iso_code must be non-zero")
+    if any(rate == 0 for _, rate in parsed_policy_rates):
+        raise ValueError("oracle policy rate must be non-zero")
+    policy_isos = [iso_code for iso_code, _ in parsed_policy_rates]
+    if policy_isos != sorted(set(policy_isos)):
+        raise ValueError("oracle policy rates must be sorted and unique")
+    storage.set_slot(74, len(parsed_policy_rates))
+    for i, (iso_code, rate) in enumerate(parsed_policy_rates):
+        storage.set_raw_slot(data_slot(74) + i, iso_code)
+        storage.set_mapping(75, u32_bytes(iso_code), rate)
 
 
 # --- External contracts ---
@@ -1483,6 +1538,19 @@ def seed_intex_factory(storage: StorageBuilder, config: dict):
     if selector == 0:
         return
     storage.set_slot(13, selector)
+
+
+def seed_radicle_registry(storage: StorageBuilder, config: dict):
+    """Seed immutable RadicleRegistry V1 capacity at slot 5."""
+    if not isinstance(config, dict):
+        raise ValueError("radicle_registry must be a JSON object")
+    configured = parse_int(config.get("max_repositories", 0))
+    maximum = 0xFFFFFFFF if configured == -1 else configured
+    if maximum <= 0 or maximum >= 0xFFFFFFFF and configured != -1:
+        raise ValueError(
+            "radicle_registry.max_repositories must be -1 or in 1..=4294967294"
+        )
+    storage.set_slot(5, maximum)
 
 
 def seed_external_contracts(alloc, contracts_list, contracts_dir):
@@ -1592,64 +1660,40 @@ def override_worldwide_day(seed: dict, day: int) -> None:
         s["peak_day"] = day
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Seed genesis.json with precompile storage")
-    parser.add_argument("--genesis", required=True, help="Path to genesis.json")
-    parser.add_argument("--seed", required=True, help="Path to seed config JSON")
-    parser.add_argument("--validators", help="Path to validators.json for genesis validator set")
-    parser.add_argument("--output", required=True, help="Output path for patched genesis.json")
-    parser.add_argument(
-        "--contracts-dir",
-        help="Directory containing contract code/state files referenced from "
-             "seed['contracts']. Defaults to <seed-file-dir>/contracts.",
-    )
-    parser.add_argument(
-        "--canon-dir",
-        help="Directory holding metacanon.md and canon.md to seed into the "
-             "Governance precompile at version 1. Defaults to <script-dir>/canon. "
-             "When absent, the canon texts start empty and an authority sets them "
-             "post-genesis.",
-    )
-    parser.add_argument(
-        "--worldwide-day",
-        type=int,
-        help="Override the seeded active worldwide-day (YYYYMMDD): its S-curve peak "
-             "and NOD references too. Localnet bootstrap passes the genesis date so "
-             "the seeded OFFERING day tracks the chain's wall-clock; a stale "
-             "hardcoded day desyncs from the per-block "
-             "WorldwideDay::from_timestamp(block) and wedges metadosis processing.",
-    )
-    parser.add_argument(
-        "--fresh-metadosis",
-        action="store_true",
-        help="Do not seed an already-OFFERING WorldwideDay; block 1 creates it "
-             "from config.outbeProtocol timings in a test-protocol-overrides node. "
-             "Intended for production-shaped E2E.",
-    )
-    args = parser.parse_args()
+def apply_seed(
+    genesis: dict,
+    seed: dict,
+    validators: list | None = None,
+    *,
+    contracts_dir: str | None = None,
+    canon_dir: str | None = None,
+    worldwide_day: int | None = None,
+    fresh_metadosis: bool = False,
+) -> dict:
+    """Compute every derived value a genesis needs and write it into `genesis`.
 
-    with open(args.genesis) as f:
-        genesis = json.load(f)
+    This is the calculation half of genesis creation: storage slot layout for
+    each precompile, keccak-derived mapping keys, the active WorldwideDay
+    resolved against the genesis timestamp, marker bytecode, and balances that
+    must match seeded counters. `create_genesis.py` owns the declarative half
+    (what the network *is*, from a yaml) and calls this to render it.
 
-    with open(args.seed) as f:
-        seed = json.load(f)
+    `genesis` is mutated in place and returned.
+    """
 
     seed_protocol_constants(genesis, seed)
 
     # Retarget the seeded worldwide-day to the genesis (current) date when asked,
     # before any seeder consumes `seed`, so metadosis, the oracle S-curve, the
     # tribute day_totals init, and the NODs all agree on the same active day.
-    if args.worldwide_day is not None:
-        override_worldwide_day(seed, args.worldwide_day)
-    if args.fresh_metadosis:
+    if worldwide_day is not None:
+        override_worldwide_day(seed, worldwide_day)
+    if fresh_metadosis:
         clear_seeded_metadosis_days(seed)
 
-    validators = []
-    if args.validators:
-        with open(args.validators) as f:
-            validators = json.load(f)
-        if not isinstance(validators, list):
-            raise ValueError("validators.json must contain a JSON array")
+    validators = validators or []
+    if not isinstance(validators, list):
+        raise ValueError("validators must be a list")
 
     alloc = genesis.setdefault("alloc", {})
     validate_stablecoin_namespace_alloc(alloc, require_reserved_markers=False)
@@ -1756,7 +1800,7 @@ def main():
     # Governance: seed the authorities write-gate (validator addresses) and the
     # canon / meta-canon texts. Authorities are mandatory — an empty set means no
     # address can ever write the canon. Canon texts default to <script-dir>/canon.
-    canon_dir = args.canon_dir or os.path.join(
+    canon_dir = canon_dir or os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "canon"
     )
     governance_storage = StorageBuilder()
@@ -1797,6 +1841,17 @@ def main():
         "  CompressedEntities: slot 0 = 3, "
         "slot 1 = ADR-010 empty sealed Root Catalog root"
     )
+
+    if "radicle_registry" in seed:
+        radicle_registry_storage = StorageBuilder()
+        seed_radicle_registry(radicle_registry_storage, seed["radicle_registry"])
+        alloc[RADICLE_REGISTRY_ADDRESS].setdefault("storage", {}).update(
+            radicle_registry_storage.entries
+        )
+        print(
+            "  RadicleRegistry: maxRepositories="
+            f"{seed['radicle_registry']['max_repositories']}"
+        )
 
     # ZeroFee paymaster: slot 0 = schema version (1). Honors the README
     # rule "All precompiles storage versioned (slot 0 = version)" and
@@ -1899,9 +1954,8 @@ def main():
 
     # Seed externally-fetched contracts (e.g. CREATE2 deployer)
     if "contracts" in seed:
-        contracts_dir = args.contracts_dir or os.path.join(
-            os.path.dirname(os.path.abspath(args.seed)), "contracts"
-        )
+        if contracts_dir is None:
+            raise ValueError("contracts_dir is required to seed `contracts`")
         seed_external_contracts(alloc, seed["contracts"], contracts_dir)
 
     # reth v2.2 `GenesisAccount` requires an explicit `balance` on every alloc
@@ -1914,11 +1968,77 @@ def main():
 
     validate_stablecoin_namespace_alloc(alloc, require_reserved_markers=True)
 
+    return genesis
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Seed genesis.json with precompile storage")
+    parser.add_argument("--genesis", required=True, help="Path to genesis.json")
+    parser.add_argument("--seed", required=True, help="Path to seed config JSON")
+    parser.add_argument("--validators", help="Path to validators.json for genesis validator set")
+    parser.add_argument("--output", required=True, help="Output path for patched genesis.json")
+    parser.add_argument(
+        "--contracts-dir",
+        help="Directory containing contract code/state files referenced from "
+             "seed['contracts']. Defaults to <seed-file-dir>/contracts.",
+    )
+    parser.add_argument(
+        "--canon-dir",
+        help="Directory holding metacanon.md and canon.md to seed into the "
+             "Governance precompile at version 1. Defaults to <script-dir>/canon. "
+             "When absent, the canon texts start empty and an authority sets them "
+             "post-genesis.",
+    )
+    parser.add_argument(
+        "--worldwide-day",
+        type=int,
+        help="Override the seeded active worldwide-day (YYYYMMDD): its S-curve peak "
+             "and NOD references too. Localnet bootstrap passes the genesis date so "
+             "the seeded OFFERING day tracks the chain's wall-clock; a stale "
+             "hardcoded day desyncs from the per-block "
+             "WorldwideDay::from_timestamp(block) and wedges metadosis processing.",
+    )
+    parser.add_argument(
+        "--fresh-metadosis",
+        action="store_true",
+        help="Do not seed an already-OFFERING WorldwideDay; block 1 creates it "
+             "from config.outbeProtocol timings in a test-protocol-overrides node. "
+             "Intended for production-shaped E2E.",
+    )
+    args = parser.parse_args()
+
+    with open(args.genesis) as f:
+        genesis = json.load(f)
+    with open(args.seed) as f:
+        seed = json.load(f)
+    validators = []
+    if args.validators:
+        with open(args.validators) as f:
+            validators = json.load(f)
+
+    # Build the declarative config this profile describes and hand it to
+    # create_genesis, so this CLI — the one the e2e harness and the localnet
+    # scripts call — creates its genesis through the same path a yaml-driven
+    # deployment does. create_genesis calls apply_seed below to render it.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import create_genesis
+
+    genesis = create_genesis.seed_genesis_from_config(
+        base_genesis=genesis,
+        seed=seed,
+        validators=validators,
+        contracts_dir=args.contracts_dir
+        or os.path.join(os.path.dirname(os.path.abspath(args.seed)), "contracts"),
+        canon_dir=args.canon_dir,
+        worldwide_day=args.worldwide_day,
+        fresh_metadosis=args.fresh_metadosis,
+    )
+
     with open(args.output, "w") as f:
         json.dump(genesis, f, indent=2)
 
     total_storage = sum(
-        len(v.get("storage", {})) for v in alloc.values()
+        len(v.get("storage", {})) for v in genesis["alloc"].values()
     )
     print(f"\nGenesis written to {args.output}")
     print(f"Total storage entries: {total_storage}")

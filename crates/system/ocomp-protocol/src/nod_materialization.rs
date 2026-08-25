@@ -13,7 +13,7 @@ use crate::{
 
 pub const MAX_NOD_MATERIALIZATION_ACTIONS: usize = 256;
 pub const MAX_NOD_MATERIALIZATION_ROOT_PATH: usize = 32;
-const NOD_ACTION_CANONICAL_BYTES: usize = 274;
+const NOD_ACTION_CANONICAL_BYTES: usize = 266;
 
 wire_struct! {
     pub struct NodMaterializationHeadV1 {

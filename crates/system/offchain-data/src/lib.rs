@@ -25,7 +25,7 @@ use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     body_commitment, decode_nod_bucket_v1, decode_nod_item_v1, decode_tribute_v1,
     derive_poseidon_entity_id, encode_nod_bucket_v1, encode_nod_item_v1, encode_tribute_v1,
-    EntityId36, IdPageRequest, StoredBody, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    IdPageRequest, StoredBody, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
     MAX_ID_PAGE_LIMIT,
 };
 use outbe_nod::{
@@ -726,7 +726,7 @@ fn validate_existing_record<T>(
 }
 
 fn validate_tribute_transition(
-    identity: EntityId36,
+    identity: WwdEntityId,
     old: Option<&TributeData>,
     previous: B256,
     first_in_block: bool,
@@ -749,7 +749,7 @@ fn validate_tribute_transition(
 }
 
 fn validate_nod_transition(
-    identity: EntityId36,
+    identity: WwdEntityId,
     old: Option<&NodItemState>,
     previous: B256,
     first_in_block: bool,
@@ -772,7 +772,7 @@ fn validate_nod_transition(
 }
 
 fn validate_bucket_transition(
-    identity: EntityId36,
+    identity: WwdEntityId,
     old: Option<&NodBucketState>,
     previous: B256,
     first_in_block: bool,
@@ -796,7 +796,7 @@ fn validate_bucket_transition(
 
 fn validate_transition(
     entity: &'static str,
-    identity: EntityId36,
+    identity: WwdEntityId,
     current: B256,
     previous: B256,
 ) -> Result<(), ProjectionError> {
@@ -819,20 +819,20 @@ enum NextBlock {
 
 #[derive(Clone, Copy)]
 enum EntityIdentity {
-    Tribute(EntityId36),
-    Nod(EntityId36),
-    Bucket(EntityId36),
+    Tribute(WwdEntityId),
+    Nod(WwdEntityId),
+    Bucket(WwdEntityId),
 }
 
 enum ProjectionEvent {
     TributeStored {
         source: ProjectionSource,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
         stored_body: Value,
         previous_commitment: B256,
     },
     TributeDeleted {
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
         previous_commitment: B256,
     },
     TributePartitionRetired {
@@ -840,22 +840,22 @@ enum ProjectionEvent {
     },
     NodStored {
         source: ProjectionSource,
-        nod_id: EntityId36,
+        nod_id: WwdEntityId,
         stored_body: Value,
         previous_commitment: B256,
     },
     NodDeleted {
-        nod_id: EntityId36,
+        nod_id: WwdEntityId,
         previous_commitment: B256,
     },
     BucketStored {
         source: ProjectionSource,
-        bucket_id: EntityId36,
+        bucket_id: WwdEntityId,
         stored_body: Value,
         previous_commitment: B256,
     },
     BucketDeleted {
-        bucket_id: EntityId36,
+        bucket_id: WwdEntityId,
         previous_commitment: B256,
     },
 }
@@ -897,7 +897,7 @@ fn decode_event(
         let event = ITribute::TributeBodyStored::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
         validate_versions(source, event.commitmentSchemeVersion, event.schemaVersion)?;
-        let tribute_id = decode_entity_id(source, &event.tributeId)?;
+        let tribute_id = WwdEntityId::from(event.tributeId);
         let canonical = decode_tribute_v1(&event.canonicalPayload)
             .map_err(|error| malformed_event(source, error))?;
         if canonical.tribute_id != tribute_id {
@@ -933,7 +933,7 @@ fn decode_event(
             .map_err(|error| malformed_event(source, error))?;
         validate_deleted_commitment(source, event.previousCommitment)?;
         Some(ProjectionEvent::TributeDeleted {
-            tribute_id: decode_entity_id(source, &event.tributeId)?,
+            tribute_id: WwdEntityId::from(event.tributeId),
             previous_commitment: event.previousCommitment,
         })
     } else if source.emitter == TRIBUTE_ADDRESS
@@ -950,7 +950,7 @@ fn decode_event(
         let event = INod::NodBodyStored::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
         validate_versions(source, event.commitmentSchemeVersion, event.schemaVersion)?;
-        let nod_id = decode_entity_id(source, &event.nodId)?;
+        let nod_id = WwdEntityId::from(event.nodId);
         let canonical = decode_nod_item_v1(&event.canonicalPayload)
             .map_err(|error| malformed_event(source, error))?;
         if canonical.nod_id != nod_id {
@@ -986,7 +986,7 @@ fn decode_event(
             .map_err(|error| malformed_event(source, error))?;
         validate_deleted_commitment(source, event.previousCommitment)?;
         Some(ProjectionEvent::NodDeleted {
-            nod_id: decode_entity_id(source, &event.nodId)?,
+            nod_id: WwdEntityId::from(event.nodId),
             previous_commitment: event.previousCommitment,
         })
     } else if source.emitter == NOD_ADDRESS
@@ -995,7 +995,7 @@ fn decode_event(
         let event = INod::NodBucketBodyStored::decode_log_data(data)
             .map_err(|error| malformed_event(source, error))?;
         validate_versions(source, event.commitmentSchemeVersion, event.schemaVersion)?;
-        let bucket_id = decode_entity_id(source, &event.bucketId)?;
+        let bucket_id = WwdEntityId::from(event.bucketId);
         let canonical = decode_nod_bucket_v1(&event.canonicalPayload)
             .map_err(|error| malformed_event(source, error))?;
         if canonical.entity_id() != bucket_id {
@@ -1024,7 +1024,7 @@ fn decode_event(
             .map_err(|error| malformed_event(source, error))?;
         validate_deleted_commitment(source, event.previousCommitment)?;
         Some(ProjectionEvent::BucketDeleted {
-            bucket_id: decode_entity_id(source, &event.bucketId)?,
+            bucket_id: WwdEntityId::from(event.bucketId),
             previous_commitment: event.previousCommitment,
         })
     } else {
@@ -1033,14 +1033,10 @@ fn decode_event(
     Ok(decoded)
 }
 
-fn decode_entity_id(source: ProjectionSource, bytes: &[u8]) -> Result<EntityId36, ProjectionError> {
-    EntityId36::try_from(bytes).map_err(|error| malformed_event(source, error))
-}
-
 fn validate_poseidon_identity(
     source: ProjectionSource,
     entity: &'static str,
-    actual: EntityId36,
+    actual: WwdEntityId,
     owner: Address,
     worldwide_day: outbe_common::WorldwideDay,
 ) -> Result<(), ProjectionError> {
@@ -1087,7 +1083,7 @@ fn validate_versions(
 
 fn validate_stored_commitment(
     source: ProjectionSource,
-    identity: EntityId36,
+    identity: WwdEntityId,
     payload: &[u8],
     previous: B256,
     new: B256,
@@ -1299,7 +1295,7 @@ pub enum ProjectionError {
     )]
     CommitmentTransitionMismatch {
         entity: &'static str,
-        identity: EntityId36,
+        identity: WwdEntityId,
         expected_previous: B256,
         actual: B256,
     },

@@ -13,9 +13,10 @@ import {USDT} from "../../src/native/USDT.sol";
 import {BridgeableERC20Stable} from "../../src/synthetic/BridgeableERC20Stable.sol";
 
 /// @title USDT0Deploy
-/// @notice ERC-7786 / ERC-7802 deployment and configuration script for USDT(BNB) <> USDT0(Outbe).
+/// @notice ERC-7786 / ERC-7802 deployment and configuration script for USDT(source chain) <> USDT0(Outbe).
+/// @dev The source chain is whichever chain `BSC_CHAIN_ID` / `BSC_USDT_*` point at — BNB testnet, Sepolia, anvil.
+///      No chain id is hardcoded: adding a network is an env change, not a code change.
 contract USDT0Deploy is Script {
-    uint256 internal constant BSC_TESTNET_CHAIN_ID = 97;
     bytes4 internal constant SET_TOKEN_BRIDGE_SELECTOR = bytes4(keccak256("setTokenBridge(address)"));
 
     struct TargetDeployment {
@@ -26,8 +27,6 @@ contract USDT0Deploy is Script {
         bytes tokenCreationCode;
         bytes bridgeCreationCode;
     }
-
-    uint256 private constant ANVIL_CHAIN_ID = 31_337;
 
     error MissingCode(address target);
     error UnauthorizedSigner(address signer, address expectedOwner);
@@ -63,15 +62,15 @@ contract USDT0Deploy is Script {
         if (signer != expectedOwner) revert UnauthorizedSigner(signer, expectedOwner);
     }
 
+    /// @dev The mock USDT stands in for a canonical USDT that does not exist on the source chain, so it may only be
+    ///      deployed on the chain the operator declared as the source chain. Any other chain (a wrong `--rpc-url`, a
+    ///      mainnet) is a mistake, not a deployment.
     function _requireMockUSDTDeploymentAllowed() internal view {
-        if (block.chainid != BSC_TESTNET_CHAIN_ID && block.chainid != ANVIL_CHAIN_ID) {
-            revert MockUSDTDeploymentNotAllowed(block.chainid);
-        }
+        // An unset `BSC_CHAIN_ID` reads as 0, which no chain reports, so it fails this check too.
+        if (block.chainid != vm.envOr("BSC_CHAIN_ID", uint256(0))) revert MockUSDTDeploymentNotAllowed(block.chainid);
     }
 
     function _isGuardedChain() internal view returns (bool) {
-        if (block.chainid == BSC_TESTNET_CHAIN_ID) return true;
-
         uint256 bscChainId = vm.envOr("BSC_CHAIN_ID", uint256(0));
         if (bscChainId != 0 && block.chainid == bscChainId) return true;
 

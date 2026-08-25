@@ -14,7 +14,7 @@ use outbe_sparse_merkle_tree_v061::{
 use thiserror::Error;
 
 use super::codec::{hash_error, is_canonical, PoseidonCkbHasher};
-use crate::{schema::Collection, EntityId36};
+use crate::{schema::Collection, WwdEntityId};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct TreeKey([u8; 32]);
@@ -278,7 +278,7 @@ impl<S: StoreReadOps<H256> + StoreWriteOps<H256>> PoseidonSmt<S> {
 
 pub(crate) fn derive_tree_key(
     collection: Collection,
-    identity: EntityId36,
+    identity: WwdEntityId,
 ) -> Result<TreeKey, TreeError> {
     crate::collection::tree_key_bytes(collection.into(), identity)
         .map_err(|error| TreeError::Poseidon(error.to_string()))

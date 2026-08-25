@@ -32,7 +32,7 @@
 
 use alloy_primitives::U256;
 use outbe_compressed_entities::{
-    EntityId36, ExecutionScope, ParentBodySource, ParentBodySourceRef,
+    ExecutionScope, ParentBodySource, ParentBodySourceRef, WwdEntityId,
 };
 use outbe_oracle::api::{coen_rate_for_opt, get_all_reference_currencies};
 use outbe_primitives::{
@@ -164,7 +164,7 @@ pub fn qualify_buckets_with_rate(
                 );
             }
             let worldwide_day = nod.bucket_worldwide_day.read(&bucket_key)?;
-            let bucket_id = EntityId36::new(worldwide_day, bucket_key.0);
+            let bucket_id = WwdEntityId::from_day_and_digest(worldwide_day, bucket_key.0);
             let loaded =
                 api::load_bucket(&ctx.storage, scope, parent, bucket_id)?.ok_or_else(|| {
                     outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(

@@ -5,7 +5,7 @@ use alloy_sol_types::SolCall;
 
 use outbe_credis::constants::{BP_DEN, POLICY_RATE_FACTOR_BP};
 use outbe_credis::{CredisContract, CredisState, OpenPositionParams};
-use outbe_oracle::api::{coen_rate_for_opt, get_currency_rate};
+use outbe_oracle::api::{fresh_coen_rate_for_opt, get_policy_rate};
 use outbe_primitives::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
@@ -159,7 +159,7 @@ pub fn request_credis(
 
 /// The currency's official annual policy rate, scaled by the policy-rate factor.
 fn policy_rate_for(storage: StorageHandle<'_>, issuance_currency: u16) -> Result<U256> {
-    let official = get_currency_rate(storage, issuance_currency)?;
+    let official = get_policy_rate(storage, issuance_currency)?;
     official
         .checked_mul(U256::from(POLICY_RATE_FACTOR_BP))
         .map(|v| v / U256::from(BP_DEN))
@@ -288,7 +288,7 @@ fn release_cca_stake(storage: &StorageHandle<'_>, position_id: U256, cca: Addres
 /// previous day's finalized reference price; this arm reads the live spot instead, so
 /// a settler who sees the price above their floor right now never waits for the next
 /// daily run. The latch is one-way once taken, whichever arm takes it. An unpriced
-/// currency simply does not latch here — `coen_rate_for_opt` reports that instead of
+/// currency simply does not latch here — `fresh_coen_rate_for_opt` reports that instead of
 /// reverting, so a cold oracle cannot block a position the scan already latched.
 /// A crossing that reverses before anyone settles is missed; the daily reference-price
 /// scan closes that gap when it lands.
@@ -301,7 +301,7 @@ fn latch_if_above_floor(
     if position.lifecycle_state()? != CredisState::Open {
         return Ok(());
     }
-    let Some(rate) = coen_rate_for_opt(storage.clone(), position.issuance_currency)? else {
+    let Some(rate) = fresh_coen_rate_for_opt(storage.clone(), position.issuance_currency)? else {
         return Ok(());
     };
     if rate > position.floor_price {

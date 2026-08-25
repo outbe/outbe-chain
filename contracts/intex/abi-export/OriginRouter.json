@@ -642,6 +642,11 @@
           "internalType": "uint32"
         },
         {
+          "name": "calledAt",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
           "name": "seriesIds",
           "type": "bytes14[]",
           "internalType": "bytes14[]"
@@ -1139,6 +1144,11 @@
       "inputs": [
         {
           "name": "worldwideDay",
+          "type": "uint32",
+          "internalType": "uint32"
+        },
+        {
+          "name": "calledAt",
           "type": "uint32",
           "internalType": "uint32"
         },

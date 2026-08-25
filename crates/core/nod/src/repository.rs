@@ -3,8 +3,8 @@
 use alloy_primitives::Address;
 use outbe_compressed_entities::{
     decode_stored_nod_bucket_v1, decode_stored_nod_item_v1, encode_nod_bucket_v1,
-    encode_nod_item_v1, CanonicalBodyError, EntityId36, EntityRef, IdPage, IdPageRequest,
-    NodBucketBodyV1, NodItemBodyV1, ParentBodySource, ParentBodySourceError, QueryRef, StoredBody,
+    encode_nod_item_v1, CanonicalBodyError, EntityRef, IdPage, IdPageRequest, NodBucketBodyV1,
+    NodItemBodyV1, ParentBodySource, ParentBodySourceError, QueryRef, StoredBody, WwdEntityId,
 };
 use outbe_offchain_storage::{
     Key, Namespace, ScanEntry, ScanRequest, StorageError, StorageMetadata, StorageReaderHandle,
@@ -17,14 +17,14 @@ use crate::{NodBucketState, NodItemState};
 pub(crate) const NODS_NAMESPACE: &str = "nods";
 pub(crate) const NOD_BUCKETS_NAMESPACE: &str = "nod_buckets";
 pub(crate) const NODS_BY_OWNER_NAMESPACE: &str = "nods_by_owner";
-const PRIMARY_KEY_LEN: usize = EntityId36::LEN;
+const PRIMARY_KEY_LEN: usize = WwdEntityId::len_bytes();
 const OWNER_INDEX_KEY_LEN: usize = 20 + PRIMARY_KEY_LEN;
 
 /// Domain-level request for one ascending page of Nods.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NodPageRequest {
     /// Exclusive Nod ID cursor.
-    pub after: Option<EntityId36>,
+    pub after: Option<WwdEntityId>,
     /// Requested number of records, in `1..=MAX_SCAN_ENTRIES`.
     pub limit: usize,
 }
@@ -34,7 +34,7 @@ pub struct NodPage {
     /// Decoded Nod item bodies.
     pub records: Vec<NodItemState>,
     /// Exclusive cursor for the next page, when more records exist.
-    pub next_after: Option<EntityId36>,
+    pub next_after: Option<WwdEntityId>,
 }
 
 /// One decoded Nod item and optional primary storage metadata.
@@ -69,16 +69,16 @@ pub enum NodRepositoryError {
     IndexMetadata,
     /// An owner index selects a missing primary body.
     #[error("Nod owner index points to missing body {nod_id}")]
-    DanglingIndex { nod_id: EntityId36 },
+    DanglingIndex { nod_id: WwdEntityId },
     /// The selecting primary key and embedded body ID disagree.
     #[error("Nod primary key/body mismatch: expected {expected}, found {actual}")]
     PrimaryKeyBodyMismatch {
-        expected: EntityId36,
-        actual: EntityId36,
+        expected: WwdEntityId,
+        actual: WwdEntityId,
     },
     /// An owner index selected a body owned by someone else.
     #[error("Nod owner index/body mismatch for {nod_id}")]
-    IndexedOwnerMismatch { nod_id: EntityId36 },
+    IndexedOwnerMismatch { nod_id: WwdEntityId },
     /// An ID-only repository page is not strictly ascending after its cursor.
     #[error("Nod {index} ID page is not strictly ascending")]
     NonAscendingIdPage { index: &'static str },
@@ -88,14 +88,14 @@ pub enum NodRepositoryError {
     /// The selecting bucket key and embedded body key disagree.
     #[error("Nod bucket ID/body mismatch: expected {expected}, found {actual}")]
     BucketIdBodyMismatch {
-        expected: EntityId36,
-        actual: EntityId36,
+        expected: WwdEntityId,
+        actual: WwdEntityId,
     },
     /// A projection session may mutate only identities loaded into its repository snapshot.
     #[error("{entity} projection identity {identity} was not loaded")]
     UntrackedProjectionIdentity {
         entity: &'static str,
-        identity: EntityId36,
+        identity: WwdEntityId,
     },
 }
 
@@ -113,7 +113,7 @@ impl NodRepositoryReader {
     }
 
     /// Loads one Nod item and verifies its embedded identity.
-    pub fn get(&self, nod_id: EntityId36) -> Result<Option<NodItemState>, NodRepositoryError> {
+    pub fn get(&self, nod_id: WwdEntityId) -> Result<Option<NodItemState>, NodRepositoryError> {
         Ok(self
             .get_with_metadata(nod_id)?
             .map(|(body, _metadata)| body))
@@ -122,7 +122,7 @@ impl NodRepositoryReader {
     /// Loads the exact canonical item StoredBody used by the execution parent seam.
     pub fn get_stored_item(
         &self,
-        nod_id: EntityId36,
+        nod_id: WwdEntityId,
     ) -> Result<Option<StoredBody>, NodRepositoryError> {
         let key = item_key(nod_id)?;
         let Some(record) = self.storage.get_record(namespace(NODS_NAMESPACE)?, &key)? else {
@@ -134,7 +134,7 @@ impl NodRepositoryReader {
     /// Loads one Nod item together with optional primary provenance.
     pub fn get_with_metadata(
         &self,
-        nod_id: EntityId36,
+        nod_id: WwdEntityId,
     ) -> Result<Option<(NodItemState, Option<StorageMetadata>)>, NodRepositoryError> {
         let key = item_key(nod_id)?;
         let Some(record) = self.storage.get_record(namespace(NODS_NAMESPACE)?, &key)? else {
@@ -146,7 +146,7 @@ impl NodRepositoryReader {
     /// Batch-loads Nod items and metadata in the same order as the supplied identities.
     pub fn get_many_with_metadata(
         &self,
-        nod_ids: &[EntityId36],
+        nod_ids: &[WwdEntityId],
     ) -> Result<Vec<Option<NodItemRecordWithMetadata>>, NodRepositoryError> {
         let keys = nod_ids
             .iter()
@@ -171,7 +171,7 @@ impl NodRepositoryReader {
     /// Loads one Nod bucket and verifies its embedded key.
     pub fn get_bucket(
         &self,
-        bucket_id: EntityId36,
+        bucket_id: WwdEntityId,
     ) -> Result<Option<NodBucketState>, NodRepositoryError> {
         Ok(self
             .get_bucket_with_metadata(bucket_id)?
@@ -181,7 +181,7 @@ impl NodRepositoryReader {
     /// Loads the exact canonical bucket StoredBody used by the execution parent seam.
     pub fn get_stored_bucket(
         &self,
-        bucket_id: EntityId36,
+        bucket_id: WwdEntityId,
     ) -> Result<Option<StoredBody>, NodRepositoryError> {
         let key = bucket_storage_key(bucket_id)?;
         let Some(record) = self
@@ -196,7 +196,7 @@ impl NodRepositoryReader {
     /// Loads one Nod bucket together with optional primary provenance.
     pub fn get_bucket_with_metadata(
         &self,
-        bucket_id: EntityId36,
+        bucket_id: WwdEntityId,
     ) -> Result<Option<(NodBucketState, Option<StorageMetadata>)>, NodRepositoryError> {
         let key = bucket_storage_key(bucket_id)?;
         let Some(record) = self
@@ -211,7 +211,7 @@ impl NodRepositoryReader {
     /// Batch-loads Nod buckets and metadata in the supplied key order.
     pub fn get_buckets_with_metadata(
         &self,
-        bucket_ids: &[EntityId36],
+        bucket_ids: &[WwdEntityId],
     ) -> Result<Vec<Option<NodBucketRecordWithMetadata>>, NodRepositoryError> {
         let keys = bucket_ids
             .iter()
@@ -236,8 +236,8 @@ impl NodRepositoryReader {
     /// Loads an opaque repository-owned snapshot for item/bucket planning and in-block overlay.
     pub fn projection_session(
         &self,
-        nod_ids: &[EntityId36],
-        bucket_ids: &[EntityId36],
+        nod_ids: &[WwdEntityId],
+        bucket_ids: &[WwdEntityId],
     ) -> Result<crate::projection::NodProjectionSession, NodRepositoryError> {
         let items = self.get_many_with_metadata(nod_ids)?;
         let buckets = self.get_buckets_with_metadata(bucket_ids)?;
@@ -392,7 +392,7 @@ impl NodRepositoryWriter {
     }
 
     /// Deletes a Nod item and its owner index. Missing bodies are a success.
-    pub fn delete_nod(&self, nod_id: EntityId36) -> Result<(), NodRepositoryError> {
+    pub fn delete_nod(&self, nod_id: WwdEntityId) -> Result<(), NodRepositoryError> {
         let mut session = self.reader.projection_session(&[nod_id], &[])?;
         let batch = session.delete_item(nod_id)?;
         self.writer.apply_atomic(&batch)?;
@@ -409,7 +409,7 @@ impl NodRepositoryWriter {
     }
 
     /// Deletes one Nod bucket. Missing buckets are a success.
-    pub fn delete_bucket(&self, bucket_id: EntityId36) -> Result<(), NodRepositoryError> {
+    pub fn delete_bucket(&self, bucket_id: WwdEntityId) -> Result<(), NodRepositoryError> {
         let mut session = self.reader.projection_session(&[], &[bucket_id])?;
         let batch = session.delete_bucket(bucket_id)?;
         self.writer.apply_atomic(&batch)?;
@@ -427,7 +427,7 @@ pub(crate) fn encode_item(nod: &NodItemState) -> Result<Value, NodRepositoryErro
 }
 
 pub(crate) fn decode_item(
-    nod_id: EntityId36,
+    nod_id: WwdEntityId,
     bytes: &[u8],
 ) -> Result<NodItemState, NodRepositoryError> {
     let body = from_canonical_item(decode_stored_nod_item_v1(bytes)?);
@@ -440,7 +440,7 @@ pub(crate) fn decode_item(
     Ok(body)
 }
 
-fn decode_stored_item(nod_id: EntityId36, bytes: &[u8]) -> Result<StoredBody, NodRepositoryError> {
+fn decode_stored_item(nod_id: WwdEntityId, bytes: &[u8]) -> Result<StoredBody, NodRepositoryError> {
     let stored = StoredBody::decode(bytes)?;
     let body = decode_stored_nod_item_v1(bytes)?;
     if body.nod_id != nod_id {
@@ -458,7 +458,7 @@ pub(crate) fn encode_bucket(bucket: &NodBucketState) -> Result<Value, NodReposit
 }
 
 pub(crate) fn decode_bucket(
-    bucket_id: EntityId36,
+    bucket_id: WwdEntityId,
     bytes: &[u8],
 ) -> Result<NodBucketState, NodRepositoryError> {
     let body = from_canonical_bucket(decode_stored_nod_bucket_v1(bytes)?);
@@ -473,7 +473,7 @@ pub(crate) fn decode_bucket(
 }
 
 fn decode_stored_bucket(
-    bucket_id: EntityId36,
+    bucket_id: WwdEntityId,
     bytes: &[u8],
 ) -> Result<StoredBody, NodRepositoryError> {
     let stored = StoredBody::decode(bytes)?;
@@ -488,29 +488,29 @@ fn decode_stored_bucket(
     Ok(stored)
 }
 
-pub(crate) fn item_key(nod_id: EntityId36) -> Result<Key, NodRepositoryError> {
-    Ok(Key::new(nod_id.as_bytes().to_vec())?)
+pub(crate) fn item_key(nod_id: WwdEntityId) -> Result<Key, NodRepositoryError> {
+    Ok(Key::new(nod_id.as_slice().to_vec())?)
 }
 
-pub(crate) fn bucket_storage_key(bucket_id: EntityId36) -> Result<Key, NodRepositoryError> {
-    Ok(Key::new(bucket_id.as_bytes().to_vec())?)
+pub(crate) fn bucket_storage_key(bucket_id: WwdEntityId) -> Result<Key, NodRepositoryError> {
+    Ok(Key::new(bucket_id.as_slice().to_vec())?)
 }
 
 pub(crate) fn owner_index_key(
     owner: Address,
-    nod_id: EntityId36,
+    nod_id: WwdEntityId,
 ) -> Result<Key, NodRepositoryError> {
     let mut bytes = Vec::with_capacity(OWNER_INDEX_KEY_LEN);
     bytes.extend_from_slice(owner.as_slice());
-    bytes.extend_from_slice(nod_id.as_bytes());
+    bytes.extend_from_slice(nod_id.as_slice());
     Ok(Key::new(bytes)?)
 }
 
-fn parse_primary_key(bytes: &[u8]) -> Result<EntityId36, NodRepositoryError> {
-    EntityId36::try_from(bytes).map_err(|_| NodRepositoryError::MalformedPrimaryKey)
+fn parse_primary_key(bytes: &[u8]) -> Result<WwdEntityId, NodRepositoryError> {
+    WwdEntityId::try_from(bytes).map_err(|_| NodRepositoryError::MalformedPrimaryKey)
 }
 
-fn parse_owner_index(entry: &ScanEntry, owner: Address) -> Result<EntityId36, NodRepositoryError> {
+fn parse_owner_index(entry: &ScanEntry, owner: Address) -> Result<WwdEntityId, NodRepositoryError> {
     if !entry.value.as_bytes().is_empty() {
         return Err(NodRepositoryError::NonEmptyIndexValue);
     }
@@ -557,9 +557,9 @@ fn validate_id_page_request(request: IdPageRequest) -> Result<usize, NodReposito
 
 fn id_page_from_entries(
     page: outbe_offchain_storage::ScanPage,
-    after: Option<EntityId36>,
+    after: Option<WwdEntityId>,
     index: &'static str,
-    mut parse: impl FnMut(&ScanEntry) -> Result<EntityId36, NodRepositoryError>,
+    mut parse: impl FnMut(&ScanEntry) -> Result<WwdEntityId, NodRepositoryError>,
 ) -> Result<IdPage, NodRepositoryError> {
     if let Some(continuation) = &page.next_after {
         if page.entries.last().map(|entry| &entry.key) != Some(continuation) {
@@ -588,7 +588,7 @@ fn id_page_from_entries(
     Ok(IdPage { ids, next_after })
 }
 
-fn next_cursor(has_more: bool, records: &[NodItemState]) -> Option<EntityId36> {
+fn next_cursor(has_more: bool, records: &[NodItemState]) -> Option<WwdEntityId> {
     has_more
         .then(|| records.last().map(|record| record.nod_id))
         .flatten()
@@ -626,7 +626,7 @@ pub fn canonical_bucket(body: &NodBucketState) -> NodBucketBodyV1 {
 }
 
 /// Reconstructs the canonical bucket identity from the body.
-pub fn canonical_bucket_id(body: &NodBucketState) -> EntityId36 {
+pub fn canonical_bucket_id(body: &NodBucketState) -> WwdEntityId {
     canonical_bucket(body).entity_id()
 }
 

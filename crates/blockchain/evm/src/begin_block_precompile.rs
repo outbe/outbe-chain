@@ -1202,7 +1202,7 @@ mod tests {
                 .sstore(
                     outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
                     U256::ZERO,
-                    U256::from(3),
+                    U256::from(4),
                 )
                 .unwrap();
             storage

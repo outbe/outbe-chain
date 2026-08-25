@@ -32,7 +32,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         router = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
 
         router.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
-        router.wire(makeAddr("auction"), address(intex), makeAddr("escrow"), makeAddr("nftBridge"));
+        router.wire(makeAddr("auction"), address(intex), makeAddr("escrow"));
         intex.grantRole(intex.RELAYER_ROLE(), address(router));
         intex.grantRole(intex.GEM_ROLE(), address(this));
     }

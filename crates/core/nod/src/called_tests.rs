@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::{begin_block, EntityId36, ExecutionScope};
+use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_oracle::{api::AddressPair, schema::OracleContract};
 use outbe_primitives::{
@@ -61,7 +61,7 @@ fn below_call() -> U256 {
 
 fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
     storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
         .unwrap();
     storage
         .sstore(
@@ -442,7 +442,7 @@ fn forfeiting_the_last_member_drops_the_bucket_from_the_callable_index() {
         assert_eq!(nod.bucket_nod_count.read(&item.bucket_key).unwrap(), 0);
         assert_eq!(nod.total_supply().unwrap(), 0);
         // The bucket body is gone with its last member.
-        let bucket_id = EntityId36::new(item.worldwide_day, item.bucket_key.0);
+        let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
         assert!(api::get_bucket(storage, scope, parent, bucket_id)
             .unwrap()
             .is_none());
@@ -463,7 +463,7 @@ fn the_member_index_tracks_the_bucket_body_count() {
 
         let nod = NodContract::new(storage.clone());
         assert_eq!(nod.bucket_nod_count.read(&a.bucket_key).unwrap(), 2);
-        let bucket_id = EntityId36::new(a.worldwide_day, a.bucket_key.0);
+        let bucket_id = WwdEntityId::from_day_and_digest(a.worldwide_day, a.bucket_key.0);
         assert_eq!(
             api::get_bucket(storage, scope, parent, bucket_id)
                 .unwrap()
@@ -491,9 +491,7 @@ fn the_member_index_tracks_the_bucket_body_count() {
             1
         );
         assert_eq!(
-            nod.bucket_nod_index
-                .read(&B256::from(a.nod_id.digest()))
-                .unwrap(),
+            nod.bucket_nod_index.read(&a.nod_id).unwrap(),
             0,
             "the removed Nod's reverse index entry is cleared"
         );
@@ -502,7 +500,7 @@ fn the_member_index_tracks_the_bucket_body_count() {
             nod.bucket_nods
                 .read(&NodContract::bucket_nod_key(a.bucket_key, 0))
                 .unwrap(),
-            B256::from(b_item.nod_id.digest())
+            b_item.nod_id
         );
     });
 }

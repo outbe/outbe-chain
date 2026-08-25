@@ -11,9 +11,30 @@ This package bridges the project token pairs through the ERC-7786 bridge hub and
 
 ## Routes
 
-- USDT: BNB canonical `USDT` + BNB lock bridge ↔ Outbe `USDT0` ERC-7802 token + Outbe mint/burn bridge.
-- WCOEN: Outbe canonical `WCOEN` + Outbe lock bridge ↔ BNB synthetic `WCOEN` ERC-7802 token + BNB mint/burn bridge.
+- USDT: external-chain canonical `USDT` + lock bridge ↔ Outbe `USDT0` ERC-7802 token + Outbe mint/burn bridge.
+- WCOEN: Outbe canonical `WCOEN` + Outbe lock bridge ↔ external-chain synthetic `WCOEN` ERC-7802 token + mint/burn bridge.
 - `USDT0` and synthetic `WCOEN` are ERC-7802 bridgeable ERC20s.
+
+### Networks
+
+The external side of both routes is whichever chain `BSC_RPC` / `BSC_CHAIN_ID` and the `BSC_*` addresses point at —
+BNB testnet (`97`) or Sepolia (`11155111`). No chain id is hardcoded in the scripts, so adding a network is an env
+change only; keep one deployments file per network (`deployments/usdt0.bsc.env`, `deployments/usdt0.sepolia.env`) as
+token and bridge addresses differ per chain.
+
+For Sepolia, run the same commands with:
+
+```bash
+export BSC_RPC="$SEPOLIA_RPC"
+export BSC_CHAIN_ID=11155111
+```
+
+Two guards follow that declaration:
+
+- the owner of the token and token bridge must be a contract (Safe/multisig) on every declared chain
+  (`BSC_CHAIN_ID`, `OUTBE_CHAIN_ID`), unless `ALLOW_EOA_OWNER=true`;
+- the mock `USDT` is only deployed when the connected chain equals `BSC_CHAIN_ID` and `BSC_USDT_TOKEN` is unset —
+  a wrong `--rpc-url` reverts instead of deploying a fake token.
 
 ## Scripts
 
@@ -71,7 +92,7 @@ export BSC_CHAIN_ID=97
 export OWNER_ADDRESS="$SAFE_ADDRESS"
 ```
 
-On BSC testnet (`BSC_CHAIN_ID=97`) and on the configured `OUTBE_CHAIN_ID`,
+On the configured `BSC_CHAIN_ID` and `OUTBE_CHAIN_ID`,
 `OWNER_ADDRESS` must already be a deployed contract. This keeps the mint-trust
 root behind a Safe/multisig while `PRIVATE_KEY` remains only the broadcaster.
 Set `OWNER_ADDRESS=$DEPLOYER_ADDRESS` only for local/dev chains that are not

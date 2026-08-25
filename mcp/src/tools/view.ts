@@ -50,7 +50,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "tribute_get",
     "Tribute metadata by token id: owner + decoded attributes (worldwide_day, currency, amounts).",
-    { id: z.string().describe("Tribute token id as 0x hex bytes") },
+    { id: z.string().describe("Tribute token id as a uint256 (decimal or 0x hex)") },
     handler(async ({ id }) => {
       const [metadata, owner] = await Promise.all([
         view(ctx, "tribute", "tokenURI", [id]),
@@ -89,7 +89,7 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "nod_get",
     "Nod NFT data by token id (decoded) plus parsed tokenURI metadata.",
-    { id: z.string().describe("Nod token id as 0x hex bytes") },
+    { id: z.string().describe("Nod token id as a uint256 (decimal or 0x hex)") },
     handler(async ({ id }) => {
       const [data, metadata] = await Promise.all([
         view(ctx, "nod", "nodData", [id]),

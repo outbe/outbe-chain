@@ -1,8 +1,8 @@
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    derive_poseidon_entity_id, list, read, EntityId36, EntityRef, ExecutionScope, IdPageRequest,
-    ParentBodySource, QueryRef, VerifiedBody, MAX_ID_PAGE_LIMIT,
+    derive_poseidon_entity_id, list, read, EntityRef, ExecutionScope, IdPageRequest,
+    ParentBodySource, QueryRef, VerifiedBody, WwdEntityId, MAX_ID_PAGE_LIMIT,
 };
 use outbe_primitives::error::Result;
 
@@ -51,7 +51,7 @@ impl TributeContract<'_> {
         &self,
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     ) -> Result<Address> {
         let tribute = self
             .get_tribute(scope, parent, tribute_id)?
@@ -76,7 +76,7 @@ impl TributeContract<'_> {
         &self,
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     ) -> Result<String> {
         let tribute = self
             .get_tribute(scope, parent, tribute_id)?
@@ -98,7 +98,7 @@ impl TributeContract<'_> {
         &self,
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     ) -> Result<Option<TributeData>> {
         read(
             self.storage_handle(),
@@ -161,7 +161,7 @@ impl TributeContract<'_> {
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
         owner: Address,
-    ) -> Result<Vec<EntityId36>> {
+    ) -> Result<Vec<WwdEntityId>> {
         Ok(self
             .read_all_by_owner(scope, parent, owner)?
             .into_iter()
@@ -174,7 +174,7 @@ impl TributeContract<'_> {
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
         day: WorldwideDay,
-    ) -> Result<Vec<EntityId36>> {
+    ) -> Result<Vec<WwdEntityId>> {
         Ok(self
             .read_all_by_day(scope, parent, day)?
             .into_iter()

@@ -56,8 +56,8 @@ mod adr010_tests {
     use super::*;
     use crate::{
         api::{AuthenticatedParentTree, EntityRef, FinalLeafMutation},
-        collection_key, sealed_root, CeDomain, CeTopologyV1, Commitment, EntityId36,
-        MdbxAuthenticatedTree, ACTIVE_COMMITMENT_SCHEME, K_PROVISIONAL,
+        collection_key, sealed_root, CeDomain, CeTopologyV1, Commitment, MdbxAuthenticatedTree,
+        WwdEntityId, ACTIVE_COMMITMENT_SCHEME, K_PROVISIONAL,
     };
 
     const VENDOR: &str = "ad555350c866b2265d87d2d7fbd146fbc918bfe5";
@@ -85,11 +85,11 @@ mod adr010_tests {
         }
     }
 
-    fn tribute_id(day: u32, suffix: u8) -> EntityId36 {
-        let mut bytes = [0_u8; 36];
+    fn tribute_id(day: u32, suffix: u8) -> WwdEntityId {
+        let mut bytes = [0_u8; 32];
         bytes[..4].copy_from_slice(&day.to_be_bytes());
-        bytes[35] = suffix;
-        EntityId36::try_from(bytes.as_slice()).unwrap()
+        bytes[31] = suffix;
+        WwdEntityId::try_from(bytes.as_slice()).unwrap()
     }
 
     #[test]
@@ -2475,7 +2475,7 @@ mod tests {
 
     #[test]
     fn v3_tree_namespaces_are_typed_canonical_and_domain_bounded() {
-        let entity = crate::EntityId36::try_from([7_u8; 36].as_slice()).unwrap();
+        let entity = crate::WwdEntityId::from([7_u8; 32]);
         let collection = crate::collection_key(crate::CeDomain::NodItem, entity).unwrap();
         let namespaces = [
             TreeNamespace::Catalog,

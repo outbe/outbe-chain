@@ -87,7 +87,7 @@ contract IntexNFT1155SupplyTest is Test {
         nft.mint(holderA, mintAmount, SERIES_ID);
         if (callBeforeSettle) {
             vm.prank(bridger);
-            nft.markCalled(SERIES_ID);
+            nft.markCalled(SERIES_ID, uint32(block.timestamp));
         } else {
             vm.prank(bridger);
             nft.markQualified(SERIES_ID);
@@ -206,7 +206,7 @@ contract IntexNFT1155SupplyTest is Test {
         vm.startPrank(bridger);
         nft.mint(holderA, cap, SERIES_ID);
         nft.markQualified(SERIES_ID);
-        nft.crosschainBurn(holderA, TOKEN_ID, 4);
+        nft.crosschainBurn(holderA, holderA, TOKEN_ID, 4);
         nft.crosschainMint(holderB, TOKEN_ID, 4);
         vm.stopPrank();
 
@@ -263,97 +263,5 @@ contract IntexNFT1155SupplyTest is Test {
         );
         nft.crosschainMint(holderB, TOKEN_ID, 1);
         vm.stopPrank();
-    }
-
-    // --- getIssuedHoldersWithBalances pagination ---
-
-    function _seedHolders(uint32 cap, uint256 count, uint256 perHolder) internal returns (address[] memory holders) {
-        _createSeries(cap);
-        holders = new address[](count);
-        vm.startPrank(bridger);
-        for (uint256 i = 0; i < count; i++) {
-            address h = address(uint160(0x1000 + i));
-            holders[i] = h;
-            nft.mint(h, perHolder, SERIES_ID);
-        }
-        vm.stopPrank();
-    }
-
-    function test_GetIssuedHolders_ZeroLimit_Reverts() public {
-        _createSeries(10);
-        vm.expectRevert(IIntexNFT1155.ZeroLimit.selector);
-        nft.getIssuedHoldersWithBalances(SERIES_ID, 0, 0);
-    }
-
-    function test_GetIssuedHolders_OffsetBeyondLength_ReturnsEmpty() public {
-        address[] memory seeded = _seedHolders(50, 3, 5);
-        (address[] memory holders, uint256[] memory issued, uint256[] memory settled, uint256 total) =
-            nft.getIssuedHoldersWithBalances(SERIES_ID, 999, 100);
-        assertEq(holders.length, 0);
-        assertEq(issued.length, 0);
-        assertEq(settled.length, 0);
-        assertEq(total, seeded.length);
-    }
-
-    function test_W13_GetIssuedHolders_OffsetPlusLimitOverflow_ClipsCleanly() public {
-        // Pre-fix: `end = offset + limit` overflows uint256 and reverts the call.
-        // Post-fix: limit is clipped to `total - offset` first; the view returns a slice
-        // rather than panicking — callers can safely pass `type(uint256).max` as a sentinel.
-        address[] memory seeded = _seedHolders(50, 4, 2);
-
-        (address[] memory holders, uint256[] memory issued, uint256[] memory settled, uint256 total) =
-            nft.getIssuedHoldersWithBalances(SERIES_ID, 1, type(uint256).max);
-
-        assertEq(total, seeded.length);
-        assertEq(holders.length, seeded.length - 1, "clip to total - offset");
-        assertEq(issued.length, holders.length);
-        assertEq(settled.length, holders.length);
-        for (uint256 i = 0; i < holders.length; i++) {
-            assertEq(issued[i], 2);
-        }
-    }
-
-    function test_GetIssuedHolders_SliceClipsToTotal() public {
-        address[] memory seeded = _seedHolders(50, 5, 2);
-
-        (address[] memory holders, uint256[] memory issued, uint256[] memory settled, uint256 total) =
-            nft.getIssuedHoldersWithBalances(SERIES_ID, 3, 10);
-
-        assertEq(total, seeded.length);
-        assertEq(holders.length, 2);
-        assertEq(issued.length, 2);
-        assertEq(settled.length, 2);
-        for (uint256 i = 0; i < holders.length; i++) {
-            assertEq(issued[i], 2);
-            assertEq(settled[i], 0);
-        }
-    }
-
-    function test_GetIssuedHolders_ReportsBothIssuedAndSettledForListedHolders() public {
-        _createSeries(20);
-        vm.startPrank(bridger);
-        nft.mint(holderA, 10, SERIES_ID);
-        nft.mint(holderB, 6, SERIES_ID);
-        nft.markCalled(SERIES_ID);
-        vm.stopPrank();
-
-        vm.prank(settler);
-        nft.settle(SERIES_ID, holderA, holderA, 4);
-
-        (address[] memory holders, uint256[] memory issued, uint256[] memory settled, uint256 total) =
-            nft.getIssuedHoldersWithBalances(SERIES_ID, 0, type(uint256).max);
-
-        assertEq(total, 2);
-        assertEq(holders.length, 2);
-        for (uint256 i = 0; i < holders.length; i++) {
-            if (holders[i] == holderA) {
-                assertEq(issued[i], 6);
-                assertEq(settled[i], 4);
-            } else {
-                assertEq(holders[i], holderB);
-                assertEq(issued[i], 6);
-                assertEq(settled[i], 0);
-            }
-        }
     }
 }

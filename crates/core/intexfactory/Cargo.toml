@@ -16,7 +16,6 @@ outbe-oracle.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 ring.workspace = true
-hex.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 

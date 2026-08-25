@@ -7,7 +7,7 @@
 
 ## Context
 
-ADR-006 gives Tribute, Nod item, and Nod bucket bodies exact 36-byte identities, strict-canonical Protobuf envelopes, direct typed EVM commitment mappings, verified MongoDB point reads, and public commitment-transition events.
+ADR-006 gives Tribute, Nod item, and Nod bucket bodies exact 32-byte identities, strict-canonical Protobuf envelopes, direct typed EVM commitment mappings, verified MongoDB point reads, and public commitment-transition events.
 
 MongoDB remains a finalized-parent materialization. After a successful body mutation in block `B`, a later call in the same block must observe the new body or deletion even though ExEx cannot project block `B` until finality. Per-domain ad hoc handling would duplicate existence transitions, same-block rules, rollback behavior, and cleanup.
 
@@ -107,7 +107,7 @@ The internal fixed collection IDs are:
 3 = NodBucket
 ```
 
-They select a typed namespace only. They are not caller-controlled, do not alter EntityId36, and are not added to the ADR-006 leaf preimage.
+They select a typed namespace only. They are not caller-controlled, do not alter WwdEntityId, and are not added to the ADR-006 leaf preimage.
 
 The shared overlay locator is:
 
@@ -127,7 +127,7 @@ Because the hashed locator is not reversible, first touch also stores:
 body_identity_record[locator] =
   record_version_u8 = 1
   || collection_id_u8
-  || EntityId36
+  || WwdEntityId
 ```
 
 The 38-byte record must recompute the same `identity_f` and locator on every access. It lets cleanup validate the touched entry and lets ADR-008 consume the final pending set with its original collection/identity instead of redesigning the permanent overlay. Later touches require exact record equality.
@@ -232,7 +232,7 @@ NodAll
 Conceptually:
 
 ```text
-index_delta[index_kind, partition, EntityId36] =
+index_delta[index_kind, partition, WwdEntityId] =
     NeverTouched
   | Added
   | Removed
@@ -264,11 +264,11 @@ Calling add for an already-current member or remove for a non-current member is 
 A list read:
 
 1. selects all touched delta records matching the typed query/partition;
-2. forms deterministic sorted Added and Removed EntityId36 sets;
+2. forms deterministic sorted Added and Removed WwdEntityId sets;
 3. reads finalized-parent Mongo IDs after the exclusive cursor, fetching additional bounded pages when removals reduce the candidate count;
-4. removes `Removed`, unions `Added`, sorts/deduplicates by canonical EntityId36 byte order, and takes the requested page plus lookahead;
+4. removes `Removed`, unions `Added`, sorts/deduplicates by canonical WwdEntityId byte order, and takes the requested page plus lookahead;
 5. resolves every selected body through the same overlay-first verified point read;
-6. returns the normal typed page and exclusive EntityId36 cursor.
+6. returns the normal typed page and exclusive WwdEntityId cursor.
 
 No same-block list query is fenced or allowed to observe stale Mongo membership. Index deltas use ordinary journaled EVM storage, revert with the surrounding mutation, and are cleared by the same end-block lifecycle. They are derived state and do not introduce separate canonical events.
 
@@ -292,7 +292,7 @@ record_version_u8 = 1
 || index_kind_u8
 || partition_len_u8
 || partition_bytes
-|| EntityId36
+|| WwdEntityId
 ```
 
 The partition length must be exactly 20, 4, 20, or 0 for the selected kind. `delta_key` is:
@@ -339,12 +339,12 @@ enum QueryRef {
 
 For an exclusive `{ after, limit }` request, the module:
 
-1. validates non-zero repository-bounded `limit`, exact EntityId36 cursor length, and WWD-prefix equality for `TributeByDay`;
+1. validates non-zero repository-bounded `limit`, exact WwdEntityId cursor length, and WWD-prefix equality for `TributeByDay`;
 2. scans the journaled index-delta touched list, validates every stored record/hash/status, and selects the requested kind/partition;
-3. forms deterministic `BTreeSet<EntityId36>` Added and Removed sets after the cursor;
+3. forms deterministic `BTreeSet<WwdEntityId>` Added and Removed sets after the cursor;
 4. reads strictly ascending, duplicate-free parent pages and repeatedly computes `(parent_seen - Removed) union Added`;
 5. stops only when the parent is exhausted, or when a `limit + 1` merged lookahead exists and the last consumed parent ID is greater than or equal to that lookahead; strict parent ordering then proves every unseen parent ID sorts after the candidate page;
-6. sorts/deduplicates by raw EntityId36 byte order and retains one lookahead;
+6. sorts/deduplicates by raw WwdEntityId byte order and retains one lookahead;
 7. returns at most `limit` IDs with `next_after = last_returned` only when the lookahead proves more data;
 8. resolves every selected body through overlay-first verified `read` and requires its current typed payload to satisfy the requested owner/day/global predicate.
 
@@ -443,15 +443,15 @@ enum BodyInput<'a> {
 }
 
 enum EntityRef {
-    Tribute(EntityId36),
-    NodItem(EntityId36),
-    NodBucket(EntityId36),
+    Tribute(WwdEntityId),
+    NodItem(WwdEntityId),
+    NodBucket(WwdEntityId),
 }
 
 struct VerifiedBody {
     // Private proof/capability fields; no public constructor.
     collection: TypedCollection,
-    entity_id: EntityId36,
+    entity_id: WwdEntityId,
     commitment: B256,
     stored_body: StoredBody,
     payload: VerifiedPayload,
@@ -468,7 +468,7 @@ enum VerifiedPayload {
 
 `VerifiedBody` is an opaque value capability constructed only by successful module reads. Domain code receives typed read-only accessors for the semantic payload, but cannot construct or mutate its private collection, identity, commitment, or canonical envelope evidence.
 
-Capability validity is value-based, not mutation-generation-based: update/delete accept it when the overlay-aware current collection, EntityId36, and leaf still match. An intervening same-leaf update or delete→mint of the identical ID/body may produce ABA and leaves the old capability valid because the current authenticated value is equal. Strict mutation freshness would require a revision counter and is deliberately not claimed.
+Capability validity is value-based, not mutation-generation-based: update/delete accept it when the overlay-aware current collection, WwdEntityId, and leaf still match. An intervening same-leaf update or delete→mint of the identical ID/body may produce ABA and leaves the old capability valid because the current authenticated value is equal. Strict mutation freshness would require a revision counter and is deliberately not claimed.
 
 The narrow interface is conceptually:
 
@@ -498,7 +498,7 @@ read(
 
 For mint, the module derives the new identity, requires overlay-aware absence, encodes the active schema, calculates the leaf, derives new query memberships, writes state/overlay/index deltas, and emits the Stored event.
 
-For update/delete, the module first re-reads the overlay-aware current commitment and requires exact equality with the consumed `VerifiedBody` capability. Update also requires equal collection and EntityId36 between `current` and `new_body`; WWD cannot move. A capability whose current identity/leaf no longer matches, a wrong typed body, or a mismatched identity fails before mutation.
+For update/delete, the module first re-reads the overlay-aware current commitment and requires exact equality with the consumed `VerifiedBody` capability. Update also requires equal collection and WwdEntityId between `current` and `new_body`; WWD cannot move. A capability whose current identity/leaf no longer matches, a wrong typed body, or a mismatched identity fails before mutation.
 
 The verified current payload supplies old owner/day/global memberships without a second Mongo read. Update compares those memberships with the new typed body; delete removes them. The operation then updates the direct map, body overlay, index deltas, touched lists, and canonical event in one checkpoint.
 
@@ -535,7 +535,7 @@ Each public mutation method applies its own local `StorageHandle::with_checkpoin
 
 Deterministic operation reverts include:
 
-- invalid EntityId36 length, collection variant, or WWD-prefix/body identity;
+- invalid WwdEntityId length, collection variant, or WWD-prefix/body identity;
 - mint of overlay-aware present state;
 - update/delete of overlay-aware absent state;
 - `VerifiedBody` whose identity/current leaf no longer matches, wrong collection, or update identity mismatch;

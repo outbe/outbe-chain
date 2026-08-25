@@ -11,9 +11,9 @@ use crate::env::environment;
 use crate::internal::eth;
 #[cfg(feature = "ocomp-integration")]
 use crate::world::bidders;
-use crate::world::venue_probes::{
-    IAuctionStage, IIssuedSeries, IParkedWork, IPaymentToken, IProceedsRoute,
-};
+use crate::world::venue_probes::{IAuctionStage, IProceedsRoute};
+#[cfg(feature = "ocomp-integration")]
+use crate::world::venue_probes::{IIssuedSeries, IParkedWork, IPaymentToken};
 use crate::world::{origin_venue, venue_probes, World};
 
 #[when("the intex engine is deployed on the committee chain")]

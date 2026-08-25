@@ -88,8 +88,14 @@ interface IValidatorSet {
     function revokeDelegate(uint8 role) external;
     function getDelegate(address validator, uint8 role) external view returns (address);
     function resolveValidator(uint8 role, address signer) external view returns (address);
-    function registerValidator(address validatorAddress, bytes calldata consensusPubkey, bytes calldata blsSignature)
-        external;
+    function registerValidator(
+        address validatorAddress,
+        bytes calldata consensusPubkey,
+        bytes32 radicleNodeId,
+        bytes calldata blsRegistrationSignature
+    ) external;
+    function getRadicleNodeId(address validator) external view returns (bytes32);
+    function validatorByRadicleNodeId(bytes32 nodeId) external view returns (address);
     function setP2pAddress(address validatorAddress, uint8 version, bytes calldata encoded) external;
     function getP2pAddress(address validatorAddress) external view returns (uint8 version, bytes memory encoded);
     function deactivateValidator(address validatorAddress) external;

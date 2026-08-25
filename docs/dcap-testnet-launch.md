@@ -204,14 +204,18 @@ Only after `tee join` succeeds, start it:
 ```bash
 : "${OUTBE_PROJECTION_MONGODB_URI:?set OUTBE_PROJECTION_MONGODB_URI}"
 
+# The p2p key is passed as a FILE, never inline hex in argv (`ps` is
+# world-readable). reth parses the file without trimming — normalize it once.
+printf '%s' "$(tr -d '[:space:]' < /var/lib/outbe/testnet/fullnode/reth-p2p-secret.hex)" \
+  > /var/lib/outbe/testnet/fullnode/reth-p2p-secret.hex
+
 /usr/local/bin/outbe-chain node \
   --chain /var/lib/outbe/testnet/genesis.json \
   --datadir /var/lib/outbe/testnet/fullnode/data \
   --consensus.storage-dir /var/lib/outbe/testnet/fullnode/consensus \
   --engine.persistence-threshold 0 \
   --engine.memory-block-buffer-target 0 \
-  --p2p-secret-key-hex "$(tr -d '[:space:]' < \
-    /var/lib/outbe/testnet/fullnode/reth-p2p-secret.hex)" \
+  --p2p-secret-key /var/lib/outbe/testnet/fullnode/reth-p2p-secret.hex \
   --bootnodes "$(paste -sd, /var/lib/outbe/testnet/reth-bootnodes.txt)" \
   --upstream http://<certified-validator-rpc>:<RPC_PORT> \
   --http --http.addr 127.0.0.1 --http.port 8545 \

@@ -5,6 +5,14 @@
 //! is the only calendar; `worldwide_day_from_timestamp` shifts by +14h
 //! (UTC+14) for Metadosis-internal "Worldwide Day" semantics.
 
+use alloy_primitives::U256;
+use serde::{Deserialize, Serialize};
+use std::{fmt, str::FromStr};
+// This module is itself named `time`, so the extern crate needs an absolute path.
+use ::time::{Date, Month};
+
+use crate::storage::types::{Storable, StorableType, StorageKey};
+
 /// Seconds in one calendar day. Public so consumers can do day-aligned
 /// timestamp arithmetic without redefining the constant.
 pub const SECONDS_PER_DAY: u64 = 86_400;
@@ -127,6 +135,121 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     era * 146097 + doe - 719468
 }
 
+/// Typed worldwide day identifier in YYYYMMDD format.
+#[repr(transparent)]
+#[derive(
+    Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct WorldwideDay(u32);
+
+impl WorldwideDay {
+    pub const fn new(value: u32) -> Self {
+        Self(value)
+    }
+
+    pub const fn value(self) -> u32 {
+        self.0
+    }
+
+    /// Returns true if this value encodes a valid YYYYMMDD calendar date.
+    pub fn is_valid(self) -> bool {
+        let (year, month, day) = self.parse_wwd_to_nums();
+        let Ok(month) = Month::try_from(month) else {
+            return false;
+        };
+        Date::from_calendar_date(year, month, day).is_ok()
+    }
+
+    fn parse_wwd_to_nums(self) -> (i32, u8, u8) {
+        let raw = self.0;
+        let year = (raw / 10_000) as i32;
+        let month = ((raw / 100) % 100) as u8;
+        let day = (raw % 100) as u8;
+        (year, month, day)
+    }
+
+    /// Returns the worldwide day key for a unix timestamp (UTC+14).
+    pub fn from_timestamp(timestamp: u64) -> Self {
+        Self(timestamp_to_date_key(timestamp + UTC_PLUS_14_OFFSET))
+    }
+
+    /// Returns the forming-start timestamp for this worldwide day.
+    pub fn start_timestamp(self) -> u64 {
+        date_key_to_utc_timestamp(self.0).saturating_sub(UTC_PLUS_14_OFFSET)
+    }
+
+    /// Returns the previous calendar day.
+    pub fn previous_date_key(self) -> Self {
+        Self(previous_date_key(self.0))
+    }
+
+    /// Returns the WWD in UNIX timestamp seconds.
+    pub fn to_timestamp_utc(self) -> u64 {
+        date_key_to_utc_timestamp(self.0)
+    }
+}
+
+impl fmt::Display for WorldwideDay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<u32> for WorldwideDay {
+    fn from(value: u32) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<WorldwideDay> for u32 {
+    fn from(value: WorldwideDay) -> Self {
+        value.value()
+    }
+}
+
+impl From<WorldwideDay> for u64 {
+    fn from(val: WorldwideDay) -> Self {
+        u64::from(val.0)
+    }
+}
+
+impl FromStr for WorldwideDay {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let raw = s
+            .parse::<u32>()
+            .map_err(|_| "worldwide_day must be a valid u32 value".to_string())?;
+        let value = Self::new(raw);
+        if !value.is_valid() {
+            return Err("worldwide_day must be a valid YYYYMMDD date".to_string());
+        }
+        Ok(value)
+    }
+}
+
+/// Storage implementation for WorldwideDay as a single 32-bit word.
+impl StorableType for WorldwideDay {
+    const SLOTS: usize = 1;
+}
+
+impl Storable for WorldwideDay {
+    fn from_word(word: U256) -> Self {
+        Self(word.to::<u32>())
+    }
+
+    fn to_word(&self) -> U256 {
+        U256::from(self.0)
+    }
+}
+
+impl StorageKey for WorldwideDay {
+    fn key_bytes(&self) -> Vec<u8> {
+        self.0.to_be_bytes().to_vec()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,5 +324,136 @@ mod tests {
                 genesis_utc_day: 20240101,
             })
         );
+    }
+
+    // --- WorldwideDay ---
+
+    use crate::storage::{
+        hashmap::HashMapStorageProvider,
+        types::{Mapping, Slot, Storable, StorableType, StorageKey},
+        StorageHandle,
+    };
+    use alloy_primitives::{address, U256};
+
+    #[test]
+    fn worldwide_day_to_utc_timestamp_roundtrip_known_midnight() {
+        let wwd = WorldwideDay::new(20241220);
+        // Midnight UTC of 2024-12-20
+        assert_eq!(date_key_to_utc_timestamp(wwd.value()), 1_734_652_800);
+    }
+
+    #[test]
+    fn is_valid_accepts_basic_valid_dates() {
+        assert!(WorldwideDay::new(20240101).is_valid());
+        assert!(WorldwideDay::new(20000229).is_valid());
+    }
+
+    #[test]
+    fn is_valid_rejects_basic_invalid_dates() {
+        assert!(!WorldwideDay::new(0).is_valid());
+        assert!(!WorldwideDay::new(20240001).is_valid());
+        assert!(!WorldwideDay::new(20241301).is_valid());
+        assert!(!WorldwideDay::new(20240100).is_valid());
+        assert!(!WorldwideDay::new(20240431).is_valid());
+        assert!(!WorldwideDay::new(20230229).is_valid());
+        assert!(!WorldwideDay::new(19000229).is_valid());
+    }
+
+    #[test]
+    fn serde_is_transparent_u32() {
+        let wwd = WorldwideDay::new(20241220);
+        let encoded = serde_json::to_string(&wwd).expect("serialize worldwideday");
+        assert_eq!(encoded, "20241220");
+
+        let decoded: WorldwideDay =
+            serde_json::from_str(&encoded).expect("deserialize worldwideday");
+        assert_eq!(decoded, wwd);
+    }
+
+    #[test]
+    fn storage_word_roundtrip() {
+        let wwd = WorldwideDay::new(20251231);
+        let word = wwd.to_word();
+        let decoded = WorldwideDay::from_word(word);
+        assert_eq!(decoded, wwd);
+    }
+
+    #[test]
+    fn storage_key_is_big_endian_u32() {
+        let wwd = WorldwideDay::new(0x0102_0304);
+        assert_eq!(wwd.key_bytes(), vec![0x01, 0x02, 0x03, 0x04]);
+    }
+
+    /// Storage-compatible with the raw `u32` day key it replaced: schemas that
+    /// retyped a `Map<u32, _>` / `Map<_, u32>` day slot must address and store the
+    /// exact same bytes, or live state silently moves.
+    #[test]
+    fn storage_encoding_is_identical_to_the_raw_u32_day() {
+        for raw in [0u32, 1, 20_260_101, u32::MAX] {
+            let wwd = WorldwideDay::new(raw);
+            assert_eq!(wwd.key_bytes(), raw.key_bytes(), "mapping key moved");
+            assert_eq!(wwd.to_word(), raw.to_word(), "stored word moved");
+            assert_eq!(
+                <WorldwideDay as StorableType>::SLOTS,
+                <u32 as StorableType>::SLOTS,
+                "slot count moved"
+            );
+        }
+    }
+
+    #[test]
+    fn storage_slot_roundtrip_is_raw_u32_word() {
+        let contract = address!("0x0000000000000000000000000000000000001003");
+        let slot_index = U256::from(7u64);
+        let value = WorldwideDay::new(20241220);
+
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let slot: Slot<WorldwideDay> = Slot::new(slot_index, contract, storage.clone());
+            slot.write(value).expect("write worldwideday slot");
+
+            let decoded = slot.read().expect("read worldwideday slot");
+            assert_eq!(decoded, value);
+
+            let raw = storage
+                .sload(contract, slot_index)
+                .expect("read raw storage word");
+            assert_eq!(raw, U256::from(value.value()));
+        });
+    }
+
+    #[test]
+    fn storage_mapping_roundtrip_as_key_and_value() {
+        let contract = address!("0x0000000000000000000000000000000000001003");
+        let key = WorldwideDay::new(20250101);
+        let value = WorldwideDay::new(20251231);
+
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let mapping: Mapping<WorldwideDay, WorldwideDay> =
+                Mapping::new(U256::from(9u64), contract, storage);
+
+            mapping
+                .write(&key, value)
+                .expect("write worldwideday mapping");
+            let decoded = mapping.read(&key).expect("read worldwideday mapping");
+            assert_eq!(decoded, value);
+        });
+    }
+
+    #[test]
+    fn display_and_parse_roundtrip() {
+        let wwd = WorldwideDay::new(20241220);
+        let encoded = wwd.to_string();
+        assert_eq!(encoded, "20241220");
+
+        let decoded: WorldwideDay = encoded.parse().expect("parse worldwideday");
+        assert_eq!(decoded, wwd);
+    }
+
+    #[test]
+    fn parse_rejects_invalid_date() {
+        let err = "20240230".parse::<WorldwideDay>().unwrap_err();
+        assert!(err.contains("valid YYYYMMDD"));
     }
 }
