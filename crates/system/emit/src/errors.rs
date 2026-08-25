@@ -3,8 +3,12 @@
 //! User-facing failures are `Error(string)`-style reverts with frozen texts
 //! (the `Emit …` list in the precompile plan). Infrastructure and
 //! invariant failures — unsupported schema, a credited balance smaller than
-//! the burn, verifier/CRS unavailability — map to
-//! [`PrecompileError::Fatal`] and are never converted into "invalid proof".
+//! the burn, CRS initialization — map to [`PrecompileError::Fatal`] and are
+//! never converted into "invalid proof". Verification-phase backend errors
+//! are raised on caller-supplied proof bytes, cannot be distinguished from
+//! rejected input at the backend seam, and therefore revert (see
+//! `runtime::mint`); promoting them to fatal would let any caller trigger a
+//! consensus-visible fatal error with a malformed proof tail.
 
 use alloy_primitives::U256;
 use outbe_primitives::error::PrecompileError;
@@ -54,7 +58,9 @@ pub enum EmitError {
     /// can never be smaller than the burn unless accounting is corrupted.
     #[error("Emit balance is smaller than the credited burn ({balance} < {credited})")]
     UnderfundedBurn { balance: U256, credited: U256 },
-    /// Fatal: Barretenberg CRS/backend failure, never a user proof verdict.
+    /// Fatal: Barretenberg CRS initialization failure, never a user proof
+    /// verdict. Backend errors raised while verifying caller-supplied bytes
+    /// revert as malformed proofs instead (see `runtime::mint`).
     #[error("ZK verifier unavailable: {0}")]
     VerifierUnavailable(String),
 }
