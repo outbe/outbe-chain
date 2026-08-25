@@ -27,15 +27,9 @@ pub fn dispatch(
         use IL2Registry::IL2RegistryCalls::*;
         let mut registry = L2RegistryContract::new(storage);
         match call {
-            registerNetwork(c) => mutate_void(c, caller, |_sender, c| {
-                registry.register_network(c.chainId, c.l1Address, &c.publicKey)
+            removeNetwork(c) => mutate_void(c, caller, |sender, c| {
+                registry.remove_network(sender, c.chainId)
             }),
-            setZkEnabled(c) => mutate_void(c, caller, |_sender, c| {
-                registry.set_zk_enabled(c.chainId, c.enabled)
-            }),
-            removeNetwork(c) => {
-                mutate_void(c, caller, |_sender, c| registry.remove_network(c.chainId))
-            }
             getNetwork(c) => view(c, |c| {
                 let record = registry.load_network(c.chainId)?;
                 Ok(IL2Registry::getNetworkReturn {
