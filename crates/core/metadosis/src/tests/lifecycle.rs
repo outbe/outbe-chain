@@ -519,6 +519,39 @@ fn seed_forming_day_for_advance(
     })
 }
 
+fn seed_unformed_missed_offering_day(
+    provider: &mut HashMapStorageProvider,
+    wwd: outbe_common::WorldwideDay,
+    carry_over: U256,
+) -> u64 {
+    provider.enable_metadosis_mutation_frame(
+        outbe_primitives::storage::MetadosisMutationPurposeTag::CycleLifecycle,
+    );
+    StorageHandle::enter(provider, |storage| {
+        arm_genesis_ocomp(&storage, CHAIN_ID);
+        PromisLimitContract::new(storage.clone())
+            .checked_add_carry_over(carry_over)
+            .unwrap();
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        metadosis
+            .create_worldwide_day(
+                wwd,
+                wwd.start_timestamp(),
+                LOOKBACK_DELAY_HOURS,
+                OFFERING_PERIOD_HOURS,
+            )
+            .unwrap();
+        metadosis.add_active_wwd(wwd).unwrap();
+        TributeContract::new(storage.clone()).seal_day(wwd).unwrap();
+        metadosis
+            .worldwide_days
+            .entry(wwd)
+            .offering_end()
+            .read()
+            .unwrap()
+    })
+}
+
 fn assert_opened_offering_once(
     provider: &mut HashMapStorageProvider,
     wwd: outbe_common::WorldwideDay,
@@ -3382,4 +3415,60 @@ fn the_local_brief_prices_a_day_by_the_canonical_projection() {
             .expect("the day-type currency is priced from the day's own VWAP");
         assert_eq!(day_type_row.entry_price_minor, current_vwap);
     });
+}
+
+#[test]
+fn missed_offering_terminalizes_a_day_that_never_formed_its_limit() {
+    let wwd = outbe_common::WorldwideDay::new(2026_0803);
+    let carry_over = U256::from(11);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let offering_end = seed_unformed_missed_offering_day(&mut provider, wwd, carry_over);
+    let (scope, _parent) = begin_persistent_active_scope(&mut provider);
+
+    run_missed_offering_command(&mut provider, &scope, 2, offering_end).unwrap();
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let metadosis = MetadosisContract::new(storage.clone());
+        assert_eq!(metadosis.get_wwd_status(wwd).unwrap(), status::FAILED);
+        assert!(!metadosis.active_wwd.read_all().unwrap().contains(&wwd));
+        let receipt = metadosis
+            .read_missed_offering_receipt(wwd)
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.value_routed, U256::ZERO);
+        assert_eq!(receipt.carry_over_before, carry_over);
+        assert_eq!(receipt.carry_over_after, carry_over);
+        assert_eq!(
+            PromisLimitContract::new(storage.clone())
+                .get_total_unallocated()
+                .unwrap(),
+            carry_over
+        );
+    });
+
+    end_persistent_active_scope(&mut provider, &scope);
+}
+
+#[test]
+fn missed_offering_rejects_a_day_limit_with_no_formation() {
+    let wwd = outbe_common::WorldwideDay::new(2026_0804);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let offering_end = seed_unformed_missed_offering_day(&mut provider, wwd, U256::ZERO);
+    StorageHandle::enter(&mut provider, |storage| {
+        MetadosisContract::new(storage)
+            .worldwide_days
+            .entry(wwd)
+            .metadosis_limit_amount()
+            .write(U256::from(5))
+            .unwrap();
+    });
+    let (scope, _parent) = begin_persistent_active_scope(&mut provider);
+
+    let error = run_missed_offering_command(&mut provider, &scope, 2, offering_end).unwrap_err();
+    assert!(
+        format!("{error:?}").contains("has a day limit with no formation"),
+        "unexpected error: {error:?}"
+    );
+
+    end_persistent_active_scope(&mut provider, &scope);
 }

@@ -256,17 +256,21 @@ fn apply_capacity_forfeiture(
             "active CapacityForfeiture victim already has a receipt".into(),
         ));
     }
-    let formation = metadosis
-        .ocomp_day_limit_formation(current.worldwide_day)?
-        .ok_or_else(|| {
-            crate::errors::storage_corruption(
-                "CapacityForfeiture requires an immutable formed day limit".into(),
-            )
-        })?;
-    if formation.day_limit != current.metadosis_limit_amount {
-        return Err(crate::errors::storage_corruption(
-            "CapacityForfeiture formed day limit does not match WWD state".into(),
-        ));
+    // A day limit is written only together with its formation, so an absent
+    // formation must mean an untouched limit; anything else is real corruption.
+    match metadosis.ocomp_day_limit_formation(current.worldwide_day)? {
+        Some(formation) if formation.day_limit == current.metadosis_limit_amount => {}
+        Some(_) => {
+            return Err(crate::errors::storage_corruption(
+                "CapacityForfeiture formed day limit does not match WWD state".into(),
+            ));
+        }
+        None if current.metadosis_limit_amount.is_zero() => {}
+        None => {
+            return Err(crate::errors::storage_corruption(
+                "CapacityForfeiture has a day limit with no formation".into(),
+            ));
+        }
     }
 
     let max_retained_wwds = u32::try_from(MAX_RETAINED_WWDS)
@@ -331,17 +335,21 @@ fn apply_missed_offering(
     current: &WwdProjection,
     transition: &OuterWwdTransition,
 ) -> Result<()> {
-    let formation = metadosis
-        .ocomp_day_limit_formation(current.worldwide_day)?
-        .ok_or_else(|| {
-            crate::errors::storage_corruption(
-                "MissedOffering requires an immutable formed day limit".into(),
-            )
-        })?;
-    if formation.day_limit != current.metadosis_limit_amount {
-        return Err(crate::errors::storage_corruption(
-            "MissedOffering formed day limit does not match WWD state".into(),
-        ));
+    // A day limit is written only together with its formation, so an absent
+    // formation must mean an untouched limit; anything else is real corruption.
+    match metadosis.ocomp_day_limit_formation(current.worldwide_day)? {
+        Some(formation) if formation.day_limit == current.metadosis_limit_amount => {}
+        Some(_) => {
+            return Err(crate::errors::storage_corruption(
+                "MissedOffering formed day limit does not match WWD state".into(),
+            ));
+        }
+        None if current.metadosis_limit_amount.is_zero() => {}
+        None => {
+            return Err(crate::errors::storage_corruption(
+                "MissedOffering has a day limit with no formation".into(),
+            ));
+        }
     }
     if metadosis
         .read_missed_offering_receipt(current.worldwide_day)?
