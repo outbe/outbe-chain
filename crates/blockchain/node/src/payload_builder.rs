@@ -939,7 +939,7 @@ mod tests {
             let root = outbe_compressed_entities::sealed_root(B256::ZERO)
                 .expect("CE genesis root is deterministic");
             storage
-                .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+                .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
                 .expect("CE schema version seed succeeds");
             storage
                 .sstore(

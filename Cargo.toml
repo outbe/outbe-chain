@@ -13,6 +13,7 @@ members = [
     "crates/blockchain/node",
     "crates/blockchain/offchain-storage",
     "crates/blockchain/operator",
+    "crates/blockchain/radicle",
     # system
     "crates/system/validatorset",
     "crates/system/slashindicator",
@@ -27,6 +28,7 @@ members = [
     "crates/system/tee",
     "crates/system/teeregistry",
     "crates/system/l2registry",
+    "crates/system/radicleregistry",
     "crates/system/update",
     "crates/system/vote",
     "crates/system/offchain-data",
@@ -68,10 +70,16 @@ members = [
     "bin/outbe-cli",
     "bin/outbe-feeder",
     "bin/outbe-ocomp",
+    "bin/outbe-radicle",
     "bin/outbe-tee-enclave",
     # testing
     "testing/e2e-harness",
     "testing/lysis-v1-reference",
+]
+exclude = [
+    "vendor/commonware-consensus",
+    "vendor/commonware-runtime",
+    "vendor/reth-transaction-pool",
 ]
 resolver = "2"
 
@@ -108,6 +116,7 @@ outbe-txpool = { path = "crates/blockchain/txpool" }
 outbe-node = { path = "crates/blockchain/node" }
 outbe-offchain-storage = { path = "crates/blockchain/offchain-storage" }
 outbe-operator = { path = "crates/blockchain/operator" }
+outbe-radicle = { path = "crates/blockchain/radicle" }
 # Internal — system
 outbe-validatorset = { path = "crates/system/validatorset" }
 outbe-slashindicator = { path = "crates/system/slashindicator" }
@@ -123,11 +132,15 @@ outbe-tee = { path = "crates/system/tee", default-features = false }
 outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 outbe-teeregistry = { path = "crates/system/teeregistry" }
 outbe-l2registry = { path = "crates/system/l2registry" }
+outbe-radicleregistry = { path = "crates/system/radicleregistry" }
 outbe-update = { path = "crates/system/update" }
 outbe-vote = { path = "crates/system/vote" }
 outbe-offchain-data = { path = "crates/system/offchain-data" }
 outbe-ocomp-protocol = { path = "crates/system/ocomp-protocol" }
 outbe-ocomp = { path = "bin/outbe-ocomp" }
+heartwood-outbe-radicle = { package = "outbe-radicle", git = "https://github.com/outbe/outbe-heartwood.git", rev = "b76a17801329291153585ed31db61ee3c658046e" }
+radicle-log = { git = "https://github.com/outbe/outbe-heartwood.git", rev = "b76a17801329291153585ed31db61ee3c658046e" }
+radicle-signals = { git = "https://github.com/outbe/outbe-heartwood.git", rev = "b76a17801329291153585ed31db61ee3c658046e" }
 outbe-compressed-entities = { path = "crates/core/compressed-entities" }
 # Core — outbe
 outbe-gratis = { path = "crates/core/gratis" }
@@ -166,6 +179,7 @@ alloy-sol-types = { version = "=1.5.7", default-features = false }
 alloy-rlp = { version = "0.3.13", default-features = false }
 alloy-trie = { version = "0.9.5" }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio"] }
+log = "0.4.17"
 
 # Alloy — high-level (alloy-rs/alloy): 2.0.x, pinned to match reth v2.2.0
 alloy-consensus = { version = "2.0.4", default-features = false }
@@ -266,6 +280,8 @@ ark-ff = { version = "0.6", features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml_ng = "0.10"
+idna = "1.1"
+multibase = "0.9"
 # Compact binary serde format for the node<->enclave wire (postcard): the offer
 # ciphertext rides as length-prefixed raw bytes (1x) instead of a JSON number
 # array (~4x), and alloy U256/Address/B256 serialize as bytes, not hex strings.
@@ -337,3 +353,10 @@ debug = 0
 # stateful precompiles. Pinned by exact commit revision for reproducible builds.
 [patch.crates-io]
 alloy-evm = { git = "https://github.com/outbedev/alloy-evm", rev = "88e239e601eea130ef6644ffa672970e39332f70" }
+
+[patch."https://github.com/commonwarexyz/monorepo"]
+commonware-consensus = { path = "vendor/commonware-consensus" }
+commonware-runtime = { path = "vendor/commonware-runtime" }
+
+[patch."https://github.com/paradigmxyz/reth.git"]
+reth-transaction-pool = { path = "vendor/reth-transaction-pool" }

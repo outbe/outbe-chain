@@ -39,6 +39,8 @@ mod marshal_resolver_p2p_tests;
 mod marshal_tests;
 pub mod marshal_types;
 #[cfg(test)]
+mod shutdown_tests;
+#[cfg(test)]
 mod telemetry_label_tests;
 
 #[cfg(any(test, feature = "test-utils"))]

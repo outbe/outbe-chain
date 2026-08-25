@@ -11,8 +11,8 @@ use outbe_common::WorldwideDay;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::{
-    errors::ParentBodySourceError, lifecycle, runtime, EntityId36, NodBucketBodyV1, NodItemBodyV1,
-    StoredBody, TributeBodyV1,
+    errors::ParentBodySourceError, lifecycle, runtime, NodBucketBodyV1, NodItemBodyV1, StoredBody,
+    TributeBodyV1, WwdEntityId,
 };
 
 /// Fork-fixed upper bound shared by execution merge logic and parent adapters.
@@ -21,9 +21,9 @@ pub const MAX_ID_PAGE_LIMIT: u32 = 1_024;
 /// One of the fork-fixed compressed-body namespaces.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum EntityRef {
-    Tribute(EntityId36),
-    NodItem(EntityId36),
-    NodBucket(EntityId36),
+    Tribute(WwdEntityId),
+    NodItem(WwdEntityId),
+    NodBucket(WwdEntityId),
 }
 
 /// Closed collection-level lifecycle authority. ADR-011 intentionally exposes
@@ -374,7 +374,7 @@ impl AuthenticatedParentTree for EmptyAuthenticatedTree {
 
 impl EntityRef {
     #[must_use]
-    pub const fn entity_id(self) -> EntityId36 {
+    pub const fn entity_id(self) -> WwdEntityId {
         match self {
             Self::Tribute(id) | Self::NodItem(id) | Self::NodBucket(id) => id,
         }
@@ -402,15 +402,15 @@ pub enum QueryRef {
 /// Exclusive ID-only parent-page request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct IdPageRequest {
-    pub after: Option<EntityId36>,
+    pub after: Option<WwdEntityId>,
     pub limit: u32,
 }
 
 /// Strictly ascending ID-only finalized-parent page.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct IdPage {
-    pub ids: Vec<EntityId36>,
-    pub next_after: Option<EntityId36>,
+    pub ids: Vec<WwdEntityId>,
+    pub next_after: Option<WwdEntityId>,
 }
 
 /// Consumer-owned finalized-parent body/index seam.
@@ -510,7 +510,7 @@ impl VerifiedBody {
     }
 
     #[must_use]
-    pub const fn entity_id(&self) -> EntityId36 {
+    pub const fn entity_id(&self) -> WwdEntityId {
         self.entity.entity_id()
     }
 
@@ -529,11 +529,11 @@ impl VerifiedBody {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedBodyPage {
     bodies: Vec<VerifiedBody>,
-    next_after: Option<EntityId36>,
+    next_after: Option<WwdEntityId>,
 }
 
 impl VerifiedBodyPage {
-    pub(crate) fn new(bodies: Vec<VerifiedBody>, next_after: Option<EntityId36>) -> Self {
+    pub(crate) fn new(bodies: Vec<VerifiedBody>, next_after: Option<WwdEntityId>) -> Self {
         Self { bodies, next_after }
     }
 
@@ -548,7 +548,7 @@ impl VerifiedBodyPage {
     }
 
     #[must_use]
-    pub const fn next_after(&self) -> Option<EntityId36> {
+    pub const fn next_after(&self) -> Option<WwdEntityId> {
         self.next_after
     }
 }

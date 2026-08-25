@@ -10,7 +10,6 @@ use alloy_primitives::{keccak256, Address, B256};
 
 use crate::{
     codec::{CanonicalReader, CanonicalWriter},
-    common::EntityId36,
     control::CasObjectRefV1,
     error::ProtocolError,
     hash::hash_framed,
@@ -64,7 +63,7 @@ where
     leaf_count: u32,
     previous_leaf_record_count: Option<u32>,
     yielded_record_count: u32,
-    previous_owner: Option<(Address, EntityId36)>,
+    previous_owner: Option<(Address, B256)>,
     previous_bucket: Option<(B256, u32)>,
     finished: bool,
 }
@@ -83,7 +82,7 @@ where
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum VerifiedShuffleRecordKeyV1 {
-    Owner(Address, EntityId36),
+    Owner(Address, B256),
     Bucket(B256, u32),
 }
 
@@ -489,7 +488,7 @@ where
 fn validate_build_record(
     kind: ShuffleRunKindV1,
     record: &VerifiedShuffleRecordV1,
-    previous_owner: &mut Option<(Address, EntityId36)>,
+    previous_owner: &mut Option<(Address, B256)>,
     previous_bucket: &mut Option<(B256, u32)>,
 ) -> Result<(), ProtocolError> {
     match record {
@@ -1091,8 +1090,8 @@ wire_struct! {
     pub struct ShuffleBucketRecordV1 {
         pub bucket_key: B256,
         pub raw_ordinal: u32,
-        pub tribute_id: EntityId36,
-        pub nod_id: EntityId36,
+        pub tribute_id: B256,
+        pub nod_id: B256,
     }
 }
 

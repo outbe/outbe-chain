@@ -37,6 +37,14 @@ Direct `setExchangeRate` is a system-only bootstrap path and records zero
 block/timestamp in the current ABI implementation. Normal rates are written only by
 the tally lifecycle with canonical block number/time.
 
+Raw Oracle getters remain historical/state-inspection interfaces and do not impose
+freshness. Live economic consumers use the Oracle-owned six-hour FX policy instead:
+a nonzero rate is fresh through `published_at + 21_600` seconds (inclusive), while
+timestamp zero and any older observation are stale. Transaction paths fail with a
+typed Oracle revert; qualification hooks treat an unavailable or stale rate as an
+ineligible candidate and continue scanning. Equal-currency and zero-amount
+conversions short-circuit without requiring an Oracle observation.
+
 Each registered validator may self-feed or delegate one feeder address. Vote
 submission resolves caller to exactly one validator, rejects an existing vote for
 the period, validates unique active pair tuples and stores rate/volume under the
@@ -54,6 +62,20 @@ At each nonzero block divisible by `vote_period`, begin-block tally:
 6. writes nonzero rates with canonical block/time and one price snapshot;
 7. increments exactly one success/abstain/miss result per active validator; and
 8. clears the complete period vote state.
+
+Only rows with positive tally power and a positive rate participate in the
+reference selection, median, deviation, reward band, price snapshot and volume.
+Submission is tracked before that filter: a validator that submitted an
+ineligible row or lacks the reference leg for a cross-rate is a miss for the
+round, not an abstention and not a synthetic zero-price winner.
+
+The weighted median is the first sorted rate whose cumulative power reaches
+`ceil(total_power / 2)`. For an even exact half this deliberately selects the
+lower rate. If reference pairs have equal eligible submitted power, the pair
+with the larger stable registry id is selected. Cross-rate multiplication is
+checked; overflow aborts and rolls back the complete tally rather than producing
+a zero row or partial rate/counter update. The existing population standard
+deviation and configured reward-band policy are unchanged.
 
 The current design intentionally uses stake/active membership at tally time rather
 than a period-start snapshot. This remains an explicit policy requiring acceptance.
@@ -96,10 +118,14 @@ resetting counters. Validator-set cardinality is capped for this mandatory phase
 - Settlement/reference ISO indexes are unique and resolve to valid metadata/rates.
 - At most one complete vote exists per validator/period; voter list, existence flag,
   tuple count and tuple maps agree bidirectionally.
-- Vote tuples contain unique active registered pairs and bounded canonical values.
+- Vote tuples contain unique active registered pairs. Only positive-power,
+  positive-rate rows are price/reward eligible; all accepted tuples still count
+  as participation.
 - A successful tally clears all vote records and advances each active validator's
   one penalty classification exactly once.
 - Rate, block and timestamp update atomically and describe the same tally result.
+- Live economic reads apply one Oracle-owned six-hour freshness boundary; raw ABI
+  reads retain their existing inspection semantics.
 - Snapshot head/tail and every nested entry are dense, bounded and chronological.
 - Daily aggregate sums equal accepted snapshot entries within checked arithmetic.
 - UTC/WWD snapshot entries refer only to registered pair ids; watermarks and exists
@@ -141,8 +167,10 @@ not Oracle authorization.
 
 System caller paths, protected-validator configuration, pair/currency registries and
 penalty parameters are governance/activation authority. Downstream consumers must
-read canonical execution state, define freshness/finality requirements and snapshot
-rates when future obligations depend on them.
+read canonical execution state and define freshness/finality requirements. Rewards
+validator Gem obligations are the explicit exception to price-at-obligation-time:
+they snapshot owner/type/load/currencies only, store no stale price, and GemFactory
+uses the first fresh canonical rate at actual FIFO delivery.
 
 ## Compatibility and activation
 
@@ -179,57 +207,53 @@ instead of being folded into an “Oracle subsystem” ADR.
 
 ## Open questions and technical debt
 
-1. `standard_deviation` returns zero on multiplication/sum overflow, and several
-   cross-rate paths use `unwrap_or(U256::ZERO)`. Replace semantic fallback with
-   checked bounds/invariant errors.
+1. `standard_deviation` returns zero on multiplication/sum overflow. Replace that
+   semantic fallback with checked bounds/invariant errors without changing the
+   approved adaptive-deviation policy.
 2. Volume totals and voting-power sums use saturating/unchecked arithmetic. Define
    maximum validators, stake, pairs, rate and volume and enforce them on input.
-3. Weighted median threshold uses `total_power / 2` with `>=`; specify exact even/
-   tie behavior and add independent vectors.
-4. Reference pair is chosen by submitted power at tally time; ties depend on
-   iterator/max semantics. Make tie-breaking explicit and test pair permutations.
-5. Validator set and stake are sampled at tally time, not period start. Accept this
+3. Validator set and stake are sampled at tally time, not period start. Accept this
    economically or persist an exact period committee/power snapshot.
-6. `resolve_validator_for_feeder` scans all validators twice and permits one feeder
+4. `resolve_validator_for_feeder` scans all validators twice and permits one feeder
    to be delegated by multiple validators ambiguously. Add reverse mapping,
    uniqueness policy and bounded lookup.
-7. Feeder delegation currently accepts zero/self and replacement without a pending
+5. Feeder delegation currently accepts zero/self and replacement without a pending
    consent/rotation delay. Define revocation, compromise and uniqueness semantics.
-8. Direct system `setExchangeRate` stores block/time zero and emits while ignoring
+6. Direct system `setExchangeRate` stores block/time zero and emits while ignoring
    event-emission errors in observed code. Restrict it to genesis or supply canonical
    context; never ignore consensus event failure silently.
-9. Several event emissions assign results to `_`. Decide whether events are
+7. Several event emissions assign results to `_`. Decide whether events are
    consensus receipt obligations and propagate failures consistently.
-10. Vote rate/volume zero and maximum bounds need explicit validation; malformed but
-    authorized feeds can influence abstain/winner behavior.
-11. Vote tuple and voter cleanup must prove all nested slots are cleared; add
+8. Vote rate/volume maximum bounds need explicit validation. Zero rates are accepted
+   participation but are excluded from price/reward eligibility and classify as a miss.
+9. Vote tuple and voter cleanup must prove all nested slots are cleared; add
     structural closure and replay tests after restart/export/import.
-12. Snapshot circular-buffer retention versus maximum VWAP lookback and root/day
+10. Snapshot circular-buffer retention versus maximum VWAP lookback and root/day
     backfill needs a formal capacity equation.
-13. UTC backfill skips older days beyond its cap and advances watermark to the most
+11. UTC backfill skips older days beyond its cap and advances watermark to the most
     recent closed day. Specify skipped-day semantics permanently and expose them to
     consumers distinctly from finalized-empty.
-14. UTC date and WorldwideDay use different calendars but similar integer keys.
+12. UTC date and WorldwideDay use different calendars but similar integer keys.
     Continue replacing raw integers with distinct types at every API/storage seam.
-15. Daily price-volume accumulation requires checked arithmetic and proof that
+13. Daily price-volume accumulation requires checked arithmetic and proof that
     snapshot eviction cannot destroy data before daily finalization.
-16. S-curve economics, peak detection, retention and bounds need their own reviewed
+14. S-curve economics, peak detection, retention and bounds need their own reviewed
     mathematical specification and reference vectors.
-17. Protected validators and slash thresholds are genesis/system configuration with
+15. Protected validators and slash thresholds are genesis/system configuration with
     no documented governance/timelock/activation workflow.
-18. Oracle underperformance currently crosses directly into jail/slash. Prove
+16. Oracle underperformance currently crosses directly into jail/slash. Prove
     offense idempotency, evidence attribution, event ordering and rollback with
     ADR-S-VAL-001 and ADR-S-SLS-001.
-19. Penalty `success + abstain + miss` uses unchecked `u64` addition and reset window
+17. Penalty `success + abstain + miss` uses unchecked `u64` addition and reset window
     semantics need generated long-run tests.
-20. currency rates are described as genesis-pinned; define activated update and
+18. currency rates are described as genesis-pinned; define activated update and
     historical snapshot policy before rates can change.
-21. Pair deactivation zeroes rates in a separate cleanup method. Define atomic
+19. Pair deactivation zeroes rates in a separate cleanup method. Define atomic
     activation/deactivation and what existing obligations/readers observe.
-22. Full state export requires an externally supplied validator list to discover
+20. Full state export requires an externally supplied validator list to discover
     delegation/counters/protection. Add enumerable Oracle-owned indexes or prove the
     supplied list is complete and canonical.
-23. Add production e2e from feeder submission through zero-fee admission, tally,
+21. Add production e2e from feeder submission through zero-fee admission, tally,
     finality, daily VWAP, consumer read and penalty/restart behavior.
-24. Add a generated reference model covering votes, committee changes, periods,
+22. Add a generated reference model covering votes, committee changes, periods,
     snapshots, UTC gaps, S-curve, export/import and every arithmetic boundary.

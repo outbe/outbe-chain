@@ -376,6 +376,35 @@ pub fn x25519_public(secret: &[u8; 32]) -> [u8; 32] {
 mod tests {
     use super::*;
 
+    /// The shared client-side encryptor (`outbe_tee::offer_encrypt`, used by
+    /// outbe-cli, the bench and the node canary) must round-trip with THIS
+    /// decrypt path byte-for-byte — the canary asserts exactly this in prod.
+    #[test]
+    fn shared_offer_encrypt_helper_round_trips_with_decrypt() {
+        let offer_sk = [7u8; 32];
+        let offer_pub = x25519_public(&offer_sk);
+        let eph_sk = [9u8; 32];
+        let nonce = [1u8; 12];
+        let plaintext = outbe_tee::offer_encrypt::canary_offer_json(20250115);
+        let cipher_text = outbe_tee::offer_encrypt::encrypt_tribute_offer_with(
+            &offer_pub,
+            eph_sk,
+            nonce,
+            plaintext.as_bytes(),
+        )
+        .expect("encrypt");
+        let eph_pub = x25519_public(&eph_sk);
+        let decrypted = ecdhe_tribute_offer_decrypt(
+            &offer_sk,
+            &outbe_tee::OFFER_HKDF_SALT,
+            &eph_pub,
+            &nonce,
+            &cipher_text,
+        )
+        .expect("decrypt");
+        assert_eq!(decrypted, plaintext.as_bytes());
+    }
+
     fn onboarding_context(
         recipient_x25519: [u8; 32],
         tribute_offer_public: [u8; 32],

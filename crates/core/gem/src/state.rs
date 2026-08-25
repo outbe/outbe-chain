@@ -22,10 +22,6 @@ impl GemContract<'_> {
         TOKEN_SYMBOL
     }
 
-    pub fn format_gem_id(gem_id: U256) -> String {
-        hex::encode(gem_id.to_be_bytes::<32>())
-    }
-
     pub fn parse_gem_id(gem_id: &str) -> Result<U256> {
         let trimmed = gem_id.strip_prefix("0x").unwrap_or(gem_id);
         if trimmed.len() != 64 {
@@ -64,14 +60,14 @@ impl GemContract<'_> {
 
     pub fn token_uri(&self, gem_id: U256) -> Result<String> {
         let item = self.gem_items.get(gem_id)?.ok_or(GemError::GemNotFound)?;
-        let gem_id_hex = Self::format_gem_id(gem_id);
+        let gem_id_str = gem_id.to_string();
         // TODO: replace hand-rolled JSON with type-safe serialization (serde struct).
         let json = format!(
             "{{\"name\":\"Gem #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"gem_id\",\"value\":\"{}\"}},{{\"trait_type\":\"gem_type\",\"value\":{}}},{{\"trait_type\":\"state\",\"value\":{}}},{{\"trait_type\":\"gem_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"entry_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}}]}}",
-            &gem_id_hex[..8],
+            gem_id,
             TOKEN_DESCRIPTION,
             TOKEN_IMAGE_BASE,
-            gem_id_hex,
+            gem_id_str,
             gem_id,
             item.gem_type,
             item.state,

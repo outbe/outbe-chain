@@ -1111,7 +1111,7 @@ mod tests {
     use super::*;
     use std::io::Write as _;
 
-    use outbe_ocomp_protocol::common::{BoundedBytes, EntityId36};
+    use outbe_ocomp_protocol::common::BoundedBytes;
     use outbe_ocomp_protocol::unit::{EntityIdHalfOpenRange, UnitInterval, UnitPhase, UnitSpecV1};
     use zeromq::util::PeerIdentity;
 
@@ -1132,7 +1132,7 @@ mod tests {
             attempt: 1,
             phase: UnitPhase::Enumerate,
             interval: UnitInterval::EntityIdRange(EntityIdHalfOpenRange {
-                start: EntityId36([marker; 36]),
+                start: B256::from([marker; 32]),
                 end: None,
             }),
             canonical_ordered_inputs: Vec::new(),

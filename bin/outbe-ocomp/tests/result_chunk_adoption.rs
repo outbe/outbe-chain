@@ -16,7 +16,7 @@ use outbe_ocomp::{
     },
 };
 use outbe_ocomp_protocol::{
-    common::{BoundedBytes, EntityId36},
+    common::BoundedBytes,
     result::{ContributorActionV1, NodActionV1, OutputManifestEntryV1, ResultChunkV1},
     unit::{
         BinaryReducerNode, CanonicalInputRefV1, InputPurpose, InputSourceKind, UnitArtifactV1,
@@ -35,8 +35,8 @@ const INBOX_LIMITS: WorkerInboxLimits = WorkerInboxLimits {
     max_total_bytes: 16_777_216,
 };
 
-fn entity(marker: u8) -> EntityId36 {
-    EntityId36([marker; 36])
+fn entity(marker: u8) -> B256 {
+    B256::from([marker; 32])
 }
 
 fn leaf_spec(chunk_ordinal: u32) -> UnitSpecV1 {

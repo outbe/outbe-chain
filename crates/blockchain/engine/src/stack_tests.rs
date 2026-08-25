@@ -1,27 +1,35 @@
 use super::*;
 use alloy_primitives::{Address, Bytes, B256};
-use commonware_actor::Feedback;
+use commonware_actor::{Feedback, Unreliable};
 use commonware_consensus::{
     marshal::{self, core::Buffer, resolver::handler, Start, Update},
     simplex::{
-        elector::{Config as _, Elector as _},
+        elector::{Config as _, Elector as _, RoundRobin},
         types::{Activity, Finalization, Finalize, Proposal, Subject},
+        Config as SimplexConfig, Engine as SimplexEngine, Floor, ForwardingPolicy,
     },
     types::{Epoch, FixedEpocher, Height, Round, View, ViewDelta},
     Reporter,
 };
+use commonware_cryptography::bls12381::{primitives::variant::MinSig, PrivateKey};
 use commonware_cryptography::certificate::{Provider as _, Scheme as _};
 use commonware_cryptography::sha256::Digest as Sha256Digest;
-use commonware_cryptography::Hasher as _;
+use commonware_cryptography::{Hasher as _, Sha256};
 use commonware_math::algebra::Random;
-use commonware_p2p::Recipients;
+use commonware_p2p::{Blocker, CheckedSender, LimitedSender, Message, Receiver, Recipients};
 use commonware_parallel::Sequential;
 use commonware_resolver::Resolver;
 use commonware_resolver::TargetedResolver;
-use commonware_runtime::{buffer::paged::CacheRef, Runner as _, Supervisor as _};
+use commonware_runtime::{
+    buffer::paged::CacheRef, tokio as commonware_tokio, IoBufs, Runner as _, Supervisor as _,
+};
 use commonware_storage::archive::immutable;
 use commonware_utils::{
-    acknowledgement::Acknowledgement, channel::oneshot, ordered::Quorum as _, vec::NonEmptyVec,
+    acknowledgement::Acknowledgement,
+    channel::oneshot,
+    ordered::{Quorum as _, Set},
+    vec::NonEmptyVec,
+    NZUsize,
 };
 use outbe_consensus::{
     block::ConsensusBlock,
@@ -29,8 +37,10 @@ use outbe_consensus::{
     committee_provider::CommitteeProvider,
     hybrid::{HybridScheme, HybridSchemeProvider, VrfMaterialProvider},
     reporter::ReporterContinuity,
+    test_harness::{mock_genesis, MockAutomaton, MockRelay, MockReporter},
 };
 use outbe_primitives::OutbeHeader;
+use outbe_radicle::integration::{RadicleStatusChannel, RadicleVotingGate, RadicleVotingGateError};
 use reth_ethereum::{
     primitives::{Header, SealedBlock, SealedHeader},
     Block,
@@ -38,15 +48,317 @@ use reth_ethereum::{
 use reth_provider::ProviderResult;
 use std::{
     collections::BTreeMap,
+    convert::Infallible,
+    marker::PhantomData,
     num::{NonZeroU16, NonZeroU64, NonZeroUsize},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex as StdMutex,
+        mpsc, Arc, Barrier, Mutex as StdMutex,
     },
     time::{Duration, SystemTime},
 };
 
 static STACK_MARSHAL_TEST_ID: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone)]
+struct ShutdownNullSender<P> {
+    participants: Vec<P>,
+}
+
+struct ShutdownNullCheckedSender<P> {
+    recipients: Vec<P>,
+}
+
+impl<P> CheckedSender for ShutdownNullCheckedSender<P>
+where
+    P: commonware_cryptography::PublicKey,
+{
+    type PublicKey = P;
+
+    fn recipients(&self) -> Vec<Self::PublicKey> {
+        self.recipients.clone()
+    }
+
+    fn send(self, _message: impl Into<IoBufs> + Send, _priority: bool) -> Unreliable<Feedback> {
+        Unreliable::Outcome(Feedback::Ok)
+    }
+}
+
+impl<P> LimitedSender for ShutdownNullSender<P>
+where
+    P: commonware_cryptography::PublicKey,
+{
+    type PublicKey = P;
+    type Checked<'a>
+        = ShutdownNullCheckedSender<P>
+    where
+        Self: 'a;
+
+    fn check(
+        &mut self,
+        recipients: Recipients<Self::PublicKey>,
+    ) -> Result<Self::Checked<'_>, SystemTime> {
+        let recipients = match recipients {
+            Recipients::All => self.participants.clone(),
+            Recipients::Some(recipients) => recipients,
+            Recipients::One(recipient) => vec![recipient],
+        };
+        Ok(ShutdownNullCheckedSender { recipients })
+    }
+}
+
+#[derive(Debug)]
+struct ShutdownNullReceiver<P>(PhantomData<P>);
+
+impl<P> Receiver for ShutdownNullReceiver<P>
+where
+    P: commonware_cryptography::PublicKey,
+{
+    type Error = Infallible;
+    type PublicKey = P;
+
+    async fn recv(&mut self) -> Result<Message<Self::PublicKey>, Self::Error> {
+        std::future::pending().await
+    }
+}
+
+#[derive(Clone)]
+struct ShutdownNullBlocker<P>(PhantomData<P>);
+
+impl<P> Blocker for ShutdownNullBlocker<P>
+where
+    P: commonware_cryptography::PublicKey,
+{
+    type PublicKey = P;
+
+    fn block(&mut self, _peer: Self::PublicKey) -> Feedback {
+        Feedback::Ok
+    }
+}
+
+#[test]
+fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
+    let _expected_owner = StackShutdownOrNetworkExit::GlobalStop;
+    let storage = tempfile::tempdir().expect("stack shutdown test storage");
+    let config = commonware_tokio::Config::default()
+        .with_worker_threads(1)
+        .with_max_blocking_threads(1)
+        .with_catch_panics(true)
+        .with_storage_directory(storage.path());
+    let runner = commonware_tokio::Runner::new(config);
+
+    runner.start(|context| async move {
+        let epoch = Epoch::new(1);
+        let signing_key = PrivateKey::from_seed(7);
+        let public_key = signing_key.public_key();
+        let participants = Set::from_iter_dedup([public_key.clone()]);
+        let dkg = bootstrap_dkg(1).expect("single-validator DKG fixture");
+        let scheme = HybridScheme::<MinSig>::signer(
+            &outbe_consensus::config::outbe_app_namespace(),
+            participants,
+            signing_key,
+            dkg.polynomial,
+            dkg.shares[0].clone(),
+        )
+        .expect("single-validator hybrid signer");
+
+        let sender = ShutdownNullSender {
+            participants: vec![public_key.clone()],
+        };
+        let vote_network = (
+            sender.clone(),
+            ShutdownNullReceiver::<commonware_cryptography::bls12381::PublicKey>(PhantomData),
+        );
+        let certificate_network = (
+            sender.clone(),
+            ShutdownNullReceiver::<commonware_cryptography::bls12381::PublicKey>(PhantomData),
+        );
+        let resolver_network = (
+            sender,
+            ShutdownNullReceiver::<commonware_cryptography::bls12381::PublicKey>(PhantomData),
+        );
+
+        let engine_config = SimplexConfig {
+            scheme,
+            elector: RoundRobin::<Sha256>::default(),
+            blocker: ShutdownNullBlocker(PhantomData),
+            automaton: MockAutomaton::new(public_key),
+            relay: MockRelay::new(),
+            reporter: MockReporter::new(),
+            strategy: Sequential,
+            forwarding: ForwardingPolicy::Disabled,
+            partition: "stack_shutdown_voter_journal".to_owned(),
+            epoch,
+            floor: Floor::Genesis(mock_genesis(epoch)),
+            mailbox_size: NZUsize!(64),
+            leader_timeout: Duration::from_millis(10),
+            certification_timeout: Duration::from_millis(20),
+            timeout_retry: Duration::from_millis(40),
+            activity_timeout: ViewDelta::new(16),
+            skip_timeout: ViewDelta::new(4),
+            fetch_timeout: Duration::from_millis(20),
+            fetch_concurrent: NZUsize!(2),
+            replay_buffer: NZUsize!(64 * 1024),
+            write_buffer: NZUsize!(4 * 1024),
+            page_cache: CacheRef::from_pooler(
+                &context,
+                NonZeroU16::new(1024).unwrap(),
+                NZUsize!(10),
+            ),
+        };
+        let engine = SimplexEngine::new(context.child("engine"), engine_config);
+        let engine_handle = engine.start(vote_network, certificate_network, resolver_network);
+
+        context.sleep(Duration::from_millis(75)).await;
+
+        let (started_tx, started_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let _blocking_handle =
+            context
+                .child("blocking_gate")
+                .shared(true)
+                .spawn(move |_| async move {
+                    started_tx.send(()).expect("report blocking worker start");
+                    let _ = release_rx.recv();
+                });
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("sole blocking worker must be occupied");
+
+        let network_handle = context.child("network").spawn(|network| async move {
+            let _ = network.stopped().await;
+        });
+        let mut stack_owner = context.child("stack_owner").spawn(move |owner| async move {
+            let mut shutdown = owner.stopped();
+            let mut network_handle = network_handle;
+            let engine_handle = engine_handle;
+            match wait_for_stack_shutdown_or_network_exit(&mut shutdown, &mut network_handle).await
+            {
+                StackShutdownOrNetworkExit::GlobalStop => {
+                    engine_handle
+                        .await
+                        .expect("simplex engine must drain on global stop");
+                }
+                StackShutdownOrNetworkExit::NetworkExit => {}
+            }
+        });
+
+        let stop_handle = context
+            .child("shutdown")
+            .spawn(|shutdown| async move { shutdown.stop(0, Some(Duration::from_secs(1))).await });
+
+        commonware_macros::select! {
+            result = &mut stack_owner => {
+                panic!("consensus stack owner resolved before voter journal flush: {result:?}");
+            },
+            _ = context.sleep(Duration::from_millis(50)) => {},
+        }
+
+        release_tx.send(()).expect("release blocking worker");
+        stack_owner
+            .await
+            .expect("stack owner must finish after journal flush");
+        stop_handle
+            .await
+            .expect("shutdown driver must finish")
+            .expect("global shutdown must complete");
+    });
+}
+
+#[test]
+fn radicle_channel_is_frozen_before_network_start() {
+    assert_eq!(radicle_channel_config(), (8, 32, config::CHANNEL_BACKLOG));
+}
+
+#[test]
+fn radicle_gate_controls_signing() {
+    assert!(!radicle_signer_enabled(RadicleVotingGate::Verifier, true).unwrap());
+    assert!(radicle_signer_enabled(RadicleVotingGate::SignerAllowed, true).unwrap());
+    assert!(!radicle_signer_enabled(RadicleVotingGate::SignerAllowed, false).unwrap());
+
+    let error = radicle_signer_enabled(
+        RadicleVotingGate::Fatal(RadicleVotingGateError::BindingMismatch),
+        true,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("binding mismatch"), "error: {error}");
+}
+
+#[tokio::test]
+async fn radicle_fatal_notifies_epoch() {
+    let (publisher, handle) = RadicleStatusChannel::enabled(Address::repeat_byte(1), [1_u8; 32]);
+    let mut updates = handle.subscribe();
+    let waiter =
+        tokio::spawn(async move { wait_for_radicle_role_change(&mut updates, false, true).await });
+    publisher.set_voting_gate(RadicleVotingGate::Fatal(
+        RadicleVotingGateError::BindingMismatch,
+    ));
+    let error = tokio::time::timeout(Duration::from_millis(20), waiter)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("binding mismatch"), "error: {error}");
+}
+
+#[tokio::test]
+async fn canonical_signer_permission_wakes_a_running_verifier_epoch() {
+    let (publisher, handle) = RadicleStatusChannel::enabled(Address::repeat_byte(1), [1_u8; 32]);
+    let mut updates = handle.subscribe();
+    let waiter =
+        tokio::spawn(async move { wait_for_radicle_role_change(&mut updates, false, true).await });
+
+    // The epoch was built as a verifier while the canonical ValidatorSet still
+    // classified the joining node as pending. Once the next finalized block
+    // admits that node, the lifecycle must wake so the already-loaded share can
+    // be installed in a replacement engine for the same epoch.
+    publisher.set_voting_gate(RadicleVotingGate::SignerAllowed);
+
+    let desired_signer = tokio::time::timeout(Duration::from_millis(20), waiter)
+        .await
+        .expect("SignerAllowed must wake a running verifier epoch")
+        .expect("role watcher task must not panic")
+        .expect("SignerAllowed is a non-fatal lifecycle transition");
+    assert!(desired_signer);
+}
+
+#[tokio::test]
+async fn signer_permission_without_a_share_does_not_wake_a_verifier_epoch() {
+    let (publisher, handle) = RadicleStatusChannel::enabled(Address::repeat_byte(1), [1_u8; 32]);
+    let mut updates = handle.subscribe();
+    let mut waiter =
+        tokio::spawn(async move { wait_for_radicle_role_change(&mut updates, false, false).await });
+
+    publisher.set_voting_gate(RadicleVotingGate::SignerAllowed);
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), &mut waiter)
+            .await
+            .is_err(),
+        "SignerAllowed must not manufacture a missing threshold share"
+    );
+    waiter.abort();
+}
+
+#[tokio::test]
+async fn canonical_verifier_gate_wakes_a_running_signer_epoch() {
+    let (publisher, handle) = RadicleStatusChannel::enabled(Address::repeat_byte(1), [1_u8; 32]);
+    publisher.set_voting_gate(RadicleVotingGate::SignerAllowed);
+    let mut updates = handle.subscribe();
+    let waiter =
+        tokio::spawn(async move { wait_for_radicle_role_change(&mut updates, true, true).await });
+
+    publisher.set_voting_gate(RadicleVotingGate::Verifier);
+
+    let desired_signer = tokio::time::timeout(Duration::from_millis(20), waiter)
+        .await
+        .expect("Verifier must wake a running signer epoch")
+        .expect("role watcher task must not panic")
+        .expect("Verifier is a non-fatal lifecycle transition");
+    assert!(!desired_signer);
+}
 
 #[test]
 fn testnet_clock_offset_is_rejected_for_unregistered_networks() {
@@ -224,6 +536,88 @@ fn run_test_dkg() -> (
     (keys, participants, _output, polynomial)
 }
 
+#[allow(clippy::type_complexity)]
+fn signed_dkg_logs(
+    round: u64,
+) -> (
+    commonware_utils::ordered::Set<bls12381::PublicKey>,
+    Vec<Bytes>,
+) {
+    use commonware_codec::Encode as _;
+    use commonware_cryptography::bls12381::dkg::feldman_desmedt::{Dealer, Info, Player};
+    use commonware_cryptography::bls12381::primitives::sharing::Mode;
+    use commonware_utils::{N3f1, TryCollect as _};
+
+    let mut keys: Vec<bls12381::PrivateKey> =
+        (1..=4).map(bls12381::PrivateKey::from_seed).collect();
+    keys.sort_by_key(|key| key.public_key().encode());
+    let participants: commonware_utils::ordered::Set<bls12381::PublicKey> = keys
+        .iter()
+        .map(|key| key.public_key())
+        .try_collect()
+        .unwrap();
+    let info = Info::<MinSig, bls12381::PublicKey>::new::<N3f1>(
+        &config::outbe_app_namespace(),
+        round,
+        None,
+        Mode::NonZeroCounter,
+        participants.clone(),
+        participants.clone(),
+    )
+    .unwrap();
+
+    let mut dealers = Vec::new();
+    let mut public_messages = Vec::new();
+    let mut private_messages = Vec::new();
+    for key in &keys {
+        let (dealer, public, private) = Dealer::<MinSig, bls12381::PrivateKey>::start::<N3f1>(
+            rand_core::OsRng,
+            info.clone(),
+            key.clone(),
+            None,
+        )
+        .unwrap();
+        dealers.push(dealer);
+        public_messages.push(public);
+        private_messages.push(private);
+    }
+
+    let mut players: Vec<Player<MinSig, bls12381::PrivateKey>> = keys
+        .iter()
+        .map(|key| Player::new(info.clone(), key.clone()).unwrap())
+        .collect();
+    for (dealer_index, (public, private)) in public_messages
+        .iter()
+        .zip(private_messages.iter())
+        .enumerate()
+    {
+        let dealer = keys[dealer_index].public_key();
+        for (player, share) in private {
+            let player_index = keys
+                .iter()
+                .position(|key| key.public_key() == *player)
+                .unwrap();
+            if let Some(ack) = players[player_index].dealer_message::<N3f1>(
+                dealer.clone(),
+                public.clone(),
+                share.clone(),
+            ) {
+                dealers[dealer_index]
+                    .receive_player_ack(player.clone(), ack)
+                    .unwrap();
+            }
+        }
+    }
+
+    let mut encoded = BTreeMap::new();
+    for dealer in dealers {
+        let signed = dealer.finalize::<N3f1>();
+        let (dealer, _) = signed.clone().check(&info).expect("valid dealer log");
+        encoded.insert(dealer, Bytes::from(signed.encode()));
+    }
+    (participants, encoded.into_values().collect())
+}
+
 fn sample_certificate() -> outbe_consensus::hybrid::HybridCertificate<MinSig> {
     let mut keys: Vec<bls12381::PrivateKey> = (0..3)
         .map(|i| bls12381::PrivateKey::from_seed((i + 1) as u64))
@@ -273,9 +667,10 @@ struct MockBlockHashProvider {
     hashes: BTreeMap<u64, B256>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct MockFinalizedHeaderProvider {
     headers: BTreeMap<u64, SealedHeader<OutbeHeader>>,
+    sealed_header_barrier: Option<(u64, Arc<Barrier>, Arc<Barrier>)>,
 }
 
 impl MockFinalizedHeaderProvider {
@@ -295,6 +690,22 @@ impl MockFinalizedHeaderProvider {
                 ..Default::default()
             })),
         );
+    }
+
+    fn block_sealed_header_at(
+        &mut self,
+        number: u64,
+        entered: Arc<Barrier>,
+        release: Arc<Barrier>,
+    ) {
+        self.sealed_header_barrier = Some((number, entered, release));
+    }
+
+    fn without_sealed_header_barrier(&self) -> Self {
+        Self {
+            headers: self.headers.clone(),
+            sealed_header_barrier: None,
+        }
     }
 }
 
@@ -333,6 +744,12 @@ impl HeaderProvider for MockFinalizedHeaderProvider {
     }
 
     fn sealed_header(&self, number: u64) -> ProviderResult<Option<SealedHeader<Self::Header>>> {
+        if let Some((blocked_number, entered, release)) = &self.sealed_header_barrier {
+            if number == *blocked_number {
+                entered.wait();
+                release.wait();
+            }
+        }
         Ok(self.headers.get(&number).cloned())
     }
 
@@ -2185,6 +2602,11 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         tee_renewal_poll_secs: 30,
         tee_renewal_warning_blocks: 600,
         tee_renewal_critical_blocks: 120,
+        tee_canary_interval_secs: 30,
+        tee_canary_failure_threshold: 3,
+        txpool_pending_staleness_secs: 600,
+        radicle_control_socket: None,
+        radicle_status_address: None,
         upstream: None,
         upstream_nocertify: false,
         projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),
@@ -2570,6 +2992,245 @@ fn finalized_preannounce_scan_fails_closed_on_a_finalized_provider_gap() {
 }
 
 #[test]
+fn dkg_retry_replays_to_verified_tip_not_stale_scheduling_height() {
+    let round = 17;
+    let (participants, logs) = signed_dkg_logs(round);
+    assert_eq!(logs.len(), 4);
+
+    let mut provider = MockFinalizedHeaderProvider::default();
+    for height in 40..=96 {
+        provider.insert(height, None);
+    }
+    provider.insert(
+        97,
+        Some(ConsensusHeaderArtifact::DealerLog(logs[0].clone())),
+    );
+    provider.insert(
+        98,
+        Some(ConsensusHeaderArtifact::DealerLog(logs[1].clone())),
+    );
+    provider.insert(
+        99,
+        Some(ConsensusHeaderArtifact::DealerLog(logs[2].clone())),
+    );
+    let tip_hash = provider.block_hash(98).unwrap().unwrap();
+    let verified_tip = crate::marshal_update_reporter::ConsensusTip {
+        round: Round::new(Epoch::new(0), View::new(98)),
+        height: Height::new(98),
+        digest: outbe_consensus::digest::Digest(tip_hash),
+    };
+
+    let retry = DkgManagerMailbox::new();
+    retry
+        .note_ceremony_started(Epoch::new(0), round, None, participants.clone())
+        .unwrap();
+    for height in [97, 98] {
+        let header = provider.sealed_header(height).unwrap().unwrap();
+        let artifact = decode_outbe_block_artifacts(header.header().inner.extra_data.as_ref())
+            .unwrap()
+            .consensus_header_artifact;
+        retry.note_finalized_header_artifact_at(height, header.hash(), artifact.as_ref());
+    }
+    assert!(retry.canonical_output(Epoch::new(0)).is_none());
+
+    restart_dkg_manager_from_finalized_history(
+        &provider,
+        &retry,
+        DkgCeremonyReplaySpec {
+            epoch: Epoch::new(0),
+            round,
+            previous_output: None,
+            participants: participants.clone(),
+            finalized_dealer_log_tx: None,
+        },
+        40,
+        41,
+        || verified_tip,
+    )
+    .unwrap();
+    let header_99 = provider.sealed_header(99).unwrap().unwrap();
+    let artifact_99 = decode_outbe_block_artifacts(header_99.header().inner.extra_data.as_ref())
+        .unwrap()
+        .consensus_header_artifact;
+    retry.note_finalized_header_artifact_at(99, header_99.hash(), artifact_99.as_ref());
+
+    let uninterrupted = DkgManagerMailbox::new();
+    uninterrupted
+        .note_ceremony_started(Epoch::new(0), round, None, participants)
+        .unwrap();
+    let mut next_height = 40;
+    replay_finalized_dealer_logs_into_manager(&provider, &mut next_height, 99, &uninterrupted)
+        .unwrap();
+    let expected = uninterrupted
+        .canonical_output(Epoch::new(0))
+        .expect("the uninterrupted canonical prefix reaches threshold");
+
+    assert_eq!(
+        retry.canonical_output(Epoch::new(0)),
+        Some(expected),
+        "retry must rebuild through the verified canonical tip, not the stale queued scheduling height"
+    );
+}
+
+#[test]
+fn live_finalized_dkg_log_cannot_overtake_retry_replay_prefix() {
+    let round = 18;
+    let (participants, logs) = signed_dkg_logs(round);
+    assert_eq!(logs.len(), 4);
+
+    let entered = Arc::new(Barrier::new(2));
+    let release = Arc::new(Barrier::new(2));
+    let mut provider = MockFinalizedHeaderProvider::default();
+    for height in 40..=96 {
+        provider.insert(height, None);
+    }
+    for (height, log) in [
+        (97, &logs[0]),
+        (98, &logs[1]),
+        (99, &logs[2]),
+        (100, &logs[3]),
+    ] {
+        provider.insert(
+            height,
+            Some(ConsensusHeaderArtifact::DealerLog(log.clone())),
+        );
+    }
+    provider.block_sealed_header_at(96, entered.clone(), release.clone());
+    let control_provider = provider.without_sealed_header_barrier();
+    let tip_hash = provider.block_hash(99).unwrap().unwrap();
+    let verified_tip = crate::marshal_update_reporter::ConsensusTip {
+        round: Round::new(Epoch::new(0), View::new(99)),
+        height: Height::new(99),
+        digest: outbe_consensus::digest::Digest(tip_hash),
+    };
+
+    let retry = DkgManagerMailbox::new();
+    let retry_task = retry.clone();
+    let retry_participants = participants.clone();
+    let replay = std::thread::spawn(move || {
+        restart_dkg_manager_from_finalized_history(
+            &provider,
+            &retry_task,
+            DkgCeremonyReplaySpec {
+                epoch: Epoch::new(0),
+                round,
+                previous_output: None,
+                participants: retry_participants,
+                finalized_dealer_log_tx: None,
+            },
+            40,
+            41,
+            || verified_tip,
+        )
+    });
+
+    entered.wait();
+    let live_header = control_provider.sealed_header(100).unwrap().unwrap();
+    let live_artifact =
+        decode_outbe_block_artifacts(live_header.header().inner.extra_data.as_ref())
+            .unwrap()
+            .consensus_header_artifact;
+    let live_started = Arc::new(Barrier::new(2));
+    let live_started_task = live_started.clone();
+    let live_retry = retry.clone();
+    let live_delivery = std::thread::spawn(move || {
+        live_started_task.wait();
+        live_retry.note_finalized_header_artifact_at(
+            100,
+            live_header.hash(),
+            live_artifact.as_ref(),
+        );
+    });
+    live_started.wait();
+    release.wait();
+    replay.join().unwrap().unwrap();
+    live_delivery.join().unwrap();
+
+    let uninterrupted = DkgManagerMailbox::new();
+    uninterrupted
+        .note_ceremony_started(Epoch::new(0), round, None, participants)
+        .unwrap();
+    let mut next_height = 40;
+    replay_finalized_dealer_logs_into_manager(
+        &control_provider,
+        &mut next_height,
+        100,
+        &uninterrupted,
+    )
+    .unwrap();
+    let expected = uninterrupted
+        .canonical_output(Epoch::new(0))
+        .expect("the uninterrupted canonical prefix reaches threshold");
+
+    assert_eq!(
+        retry.canonical_output(Epoch::new(0)),
+        Some(expected),
+        "a later live DealerLog must not overtake the canonical retry replay prefix"
+    );
+}
+
+#[test]
+fn dkg_recovery_provider_gap_preserves_existing_ceremony() {
+    let round = 19;
+    let (participants, logs) = signed_dkg_logs(round);
+    assert_eq!(logs.len(), 4);
+
+    let manager = DkgManagerMailbox::new();
+    manager
+        .note_ceremony_started(Epoch::new(0), round, None, participants.clone())
+        .unwrap();
+    for (height, bytes) in [(70, &logs[0]), (71, &logs[1]), (72, &logs[2])] {
+        manager.note_finalized_header_artifact_at(
+            height,
+            B256::with_last_byte(height as u8),
+            Some(&ConsensusHeaderArtifact::DealerLog(bytes.clone())),
+        );
+    }
+    let expected = manager
+        .canonical_output(Epoch::new(0))
+        .expect("the existing ceremony has already frozen a canonical output");
+
+    let mut provider = MockFinalizedHeaderProvider::default();
+    for height in 40..=98 {
+        if height != 80 {
+            provider.insert(height, None);
+        }
+    }
+    let tip_hash = provider.block_hash(98).unwrap().unwrap();
+    let verified_tip = crate::marshal_update_reporter::ConsensusTip {
+        round: Round::new(Epoch::new(0), View::new(98)),
+        height: Height::new(98),
+        digest: outbe_consensus::digest::Digest(tip_hash),
+    };
+    let (finalized_log_tx, mut finalized_log_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let error = restart_dkg_manager_from_finalized_history(
+        &provider,
+        &manager,
+        DkgCeremonyReplaySpec {
+            epoch: Epoch::new(0),
+            round,
+            previous_output: None,
+            participants,
+            finalized_dealer_log_tx: Some(finalized_log_tx),
+        },
+        40,
+        41,
+        || verified_tip,
+    )
+    .unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("missing finalized header at height 80"));
+    assert_eq!(manager.canonical_output(Epoch::new(0)), Some(expected));
+    assert!(
+        finalized_log_rx.try_recv().is_err(),
+        "a failed replay must not publish a partial DealerLog prefix to the actor"
+    );
+}
+
+#[test]
 fn dealer_only_handoff_requires_the_same_exact_finalized_carrier() {
     let boundary = test_boundary_with_vrf_hash(B256::with_last_byte(0x55), 9);
     let pending = DealerOnlyDkgActivation {
@@ -2876,6 +3537,7 @@ fn ordered_set_index_shift_on_prefix_join() {
 // =============================================================================
 #[cfg(test)]
 mod muxer_contract {
+    use commonware_consensus::types::Epoch;
     use commonware_cryptography::ed25519::{PrivateKey as Ed25519PrivateKey, PublicKey};
     use commonware_cryptography::Signer as _;
     use commonware_p2p::{
@@ -2883,7 +3545,9 @@ mod muxer_contract {
         utils::mux::{Builder as _, Muxer},
         Channel, Receiver as _, Recipients, Sender as _,
     };
-    use commonware_runtime::{deterministic, Clock as _, IoBuf, Quota, Runner, Supervisor as _};
+    use commonware_runtime::{
+        deterministic, Clock as _, IoBuf, Quota, Runner, Spawner as _, Supervisor as _,
+    };
     use std::{num::NonZeroU32, time::Duration};
 
     const LINK: Link = Link {
@@ -2923,6 +3587,77 @@ mod muxer_contract {
     ) {
         oracle.add_link(a.clone(), b.clone(), LINK).await.unwrap();
         oracle.add_link(b, a, LINK).await.unwrap();
+    }
+
+    #[test]
+    fn same_epoch_routes_are_reacquired_only_after_old_receivers_drop() {
+        let executor = deterministic::Runner::timed(Duration::from_secs(10));
+        executor.start(|context| async move {
+            let oracle = start_network(context.child("network_owner"));
+            let peer = pk(0);
+            let control = oracle.control(peer);
+
+            let (vote_sender, vote_receiver) = control
+                .register(PHYSICAL_CHANNEL, TEST_QUOTA)
+                .await
+                .unwrap();
+            let (vote_muxer, mut vote_mux) = Muxer::new(
+                context.child("vote_mux"),
+                vote_sender,
+                vote_receiver,
+                CAPACITY,
+            );
+            vote_muxer.start();
+
+            let (cert_sender, cert_receiver) = control
+                .register(PHYSICAL_CHANNEL + 1, TEST_QUOTA)
+                .await
+                .unwrap();
+            let (cert_muxer, mut cert_mux) = Muxer::new(
+                context.child("cert_mux"),
+                cert_sender,
+                cert_receiver,
+                CAPACITY,
+            );
+            cert_muxer.start();
+
+            let (res_sender, res_receiver) = control
+                .register(PHYSICAL_CHANNEL + 2, TEST_QUOTA)
+                .await
+                .unwrap();
+            let (res_muxer, mut res_mux) =
+                Muxer::new(context.child("res_mux"), res_sender, res_receiver, CAPACITY);
+            res_muxer.start();
+
+            let epoch = Epoch::new(EPOCH_SUBCHANNEL);
+            let old = outbe_consensus::epoch_subchannels::register_epoch_subchannels(
+                epoch,
+                &mut vote_mux,
+                &mut cert_mux,
+                &mut res_mux,
+            )
+            .await
+            .unwrap();
+            context
+                .child("drop_old_epoch_receivers")
+                .spawn(move |drop_context| async move {
+                    drop_context.sleep(Duration::from_millis(50)).await;
+                    drop(old);
+                });
+
+            let replacement = outbe_consensus::epoch_subchannels::reacquire_epoch_subchannels(
+                epoch,
+                &context,
+                Duration::from_secs(1),
+                Duration::from_millis(10),
+                &mut vote_mux,
+                &mut cert_mux,
+                &mut res_mux,
+            )
+            .await
+            .expect("same-epoch routes must become available after old receivers drop");
+            assert_eq!(replacement.epoch, epoch);
+        });
     }
 
     /// Without `.with_backup()`, a message sent to a sub-channel that the
@@ -3376,6 +4111,11 @@ fn evm_signer_validation_allows_active_validator_waiting_for_live_join_share() {
         tee_renewal_poll_secs: 30,
         tee_renewal_warning_blocks: 600,
         tee_renewal_critical_blocks: 120,
+        tee_canary_interval_secs: 30,
+        tee_canary_failure_threshold: 3,
+        txpool_pending_staleness_secs: 600,
+        radicle_control_socket: None,
+        radicle_status_address: None,
         upstream: None,
         upstream_nocertify: false,
         projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),
@@ -3877,6 +4617,11 @@ mod restart_recovery {
             tee_renewal_poll_secs: 30,
             tee_renewal_warning_blocks: 600,
             tee_renewal_critical_blocks: 120,
+            tee_canary_interval_secs: 30,
+            tee_canary_failure_threshold: 3,
+            txpool_pending_staleness_secs: 600,
+            radicle_control_socket: None,
+            radicle_status_address: None,
             upstream: None,
             upstream_nocertify: false,
             projection_mongodb_uri: Some("mongodb://localhost:27017".to_owned()),

@@ -20,6 +20,42 @@ use crate::schema::OracleContract;
 /// carrying the orientation it was registered in.
 type PairSeries = (Vec<AddressPair>, Vec<U256>, Vec<u64>);
 
+#[derive(Clone, Copy, Default)]
+struct VwapAccumulator {
+    price_volume: U256,
+    volume: U256,
+}
+
+impl VwapAccumulator {
+    fn add(
+        &mut self,
+        pair: AddressPair,
+        price_volume: U256,
+        volume: U256,
+        price_volume_error: &'static str,
+        volume_error: &'static str,
+    ) -> Result<()> {
+        if is_coen_iso_market(pair) {
+            self.price_volume = self
+                .price_volume
+                .checked_add(price_volume)
+                .ok_or(OracleError::VwapOverflow(price_volume_error))?;
+            self.volume = self
+                .volume
+                .checked_add(volume)
+                .ok_or(OracleError::VwapOverflow(volume_error))?;
+        } else {
+            self.price_volume = self.price_volume.saturating_add(price_volume);
+            self.volume = self.volume.saturating_add(volume);
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> Option<U256> {
+        (!self.volume.is_zero()).then(|| self.price_volume / self.volume)
+    }
+}
+
 impl OracleContract<'_> {
     /// Initializes the fixed OCOMP Oracle projection for a fresh devnet.
     pub fn initialize_fresh_ocomp_profile(&mut self) -> Result<()> {
@@ -153,46 +189,83 @@ impl OracleContract<'_> {
         Ok(validator)
     }
 
-    fn try_daily_aggregate_vwap(
+    fn add_daily_aggregates(
         &self,
         pair: AddressPair,
         start_time: u64,
         end_time: u64,
-    ) -> Result<Option<U256>> {
-        if end_time.saturating_sub(start_time) < 86_400 {
-            return Ok(None);
-        }
-
-        let mut pv_total = U256::ZERO;
-        let mut vol_total = U256::ZERO;
+        total: &mut VwapAccumulator,
+    ) -> Result<()> {
         let day_pv = self.daily_pv_sum.get_nested(&pair);
         let day_vol = self.daily_vol_sum.get_nested(&pair);
-
-        let start_day = start_time - (start_time % 86_400);
-        let mut day = start_day;
-        while day + 86_400 <= end_time {
-            let pv = day_pv.read(&day).unwrap_or(U256::ZERO);
-            let vol = day_vol.read(&day).unwrap_or(U256::ZERO);
-            if !pv.is_zero() {
-                if is_coen_iso_market(pair) {
-                    pv_total = pv_total
-                        .checked_add(pv)
-                        .ok_or(OracleError::VwapOverflow("daily sum accumulation"))?;
-                    vol_total = vol_total
-                        .checked_add(vol)
-                        .ok_or(OracleError::VwapOverflow("daily volume sum"))?;
-                } else {
-                    pv_total = pv_total.saturating_add(pv);
-                    vol_total = vol_total.saturating_add(vol);
-                }
+        let mut day = start_time;
+        while day < end_time {
+            let pv = day_pv.read(&day)?;
+            let volume = day_vol.read(&day)?;
+            if !volume.is_zero() {
+                total.add(
+                    pair,
+                    pv,
+                    volume,
+                    "daily sum accumulation",
+                    "daily volume sum",
+                )?;
             }
-            day += 86_400;
+            day = day
+                .checked_add(SECONDS_PER_DAY)
+                .ok_or(OracleError::InvalidVwapRange)?;
+        }
+        Ok(())
+    }
+
+    fn add_raw_snapshots(
+        &self,
+        pair: AddressPair,
+        start_time: u64,
+        end_time: u64,
+        total: &mut VwapAccumulator,
+    ) -> Result<()> {
+        if start_time >= end_time {
+            return Ok(());
+        }
+        let write_idx = self.snapshot_write_idx.read()?;
+        let oldest_idx = self.snapshot_oldest_idx.read()?;
+        if write_idx <= oldest_idx {
+            if oldest_idx > 0 {
+                return Err(OracleError::NoVwapData.into());
+            }
+            return Ok(());
+        }
+        if oldest_idx > 0 && start_time < self.snapshot_timestamp.read(&oldest_idx)? {
+            return Err(OracleError::NoVwapData.into());
         }
 
-        if vol_total.is_zero() {
-            return Ok(None);
+        let range_start = self.binary_search_snapshot_idx(start_time, oldest_idx, write_idx)?;
+        let range_end = self.binary_search_snapshot_idx(end_time, oldest_idx, write_idx)?;
+        for idx in range_start..range_end {
+            let pair_count = self.snapshot_pair_count.read(&idx)?;
+            let pair_map = self.snapshot_pair.get_nested(&idx);
+            let rate_map = self.snapshot_rate.get_nested(&idx);
+            let volume_map = self.snapshot_volume.get_nested(&idx);
+            for entry in 0..pair_count {
+                if !pair_map.read_pair(&entry)?.same_market(&pair) {
+                    continue;
+                }
+                let rate = rate_map.read(&entry)?;
+                let stored_volume = volume_map.read(&entry)?;
+                let volume = if stored_volume.is_zero() {
+                    zero_volume_weight(pair)
+                } else {
+                    stored_volume
+                };
+                let price_volume = rate
+                    .checked_mul(volume)
+                    .ok_or(OracleError::VwapOverflow("rate * volume"))?;
+                total.add(pair, price_volume, volume, "sum accumulation", "volume sum")?;
+                break;
+            }
         }
-        Ok(Some(pv_total / vol_total))
+        Ok(())
     }
 
     /// Calculates VWAP for a specific pair over a time range.
@@ -219,63 +292,67 @@ impl OracleContract<'_> {
         start_time: u64,
         end_time: u64,
     ) -> Result<Option<U256>> {
-        match self.try_daily_aggregate_vwap(pair, start_time, end_time) {
-            Ok(Some(vwap)) => return Ok(Some(vwap)),
-            Ok(None) if end_time.saturating_sub(start_time) >= 86_400 => return Ok(None),
-            Ok(None) => {}
-            Err(e) => return Err(e),
+        if start_time >= end_time {
+            return Err(OracleError::InvalidVwapRange.into());
         }
-
-        let write_idx = self.snapshot_write_idx.read()?;
-        let oldest_idx = self.snapshot_oldest_idx.read()?;
-
-        if write_idx <= oldest_idx {
-            return Ok(None);
+        let first_full_day = if start_time.is_multiple_of(SECONDS_PER_DAY) {
+            start_time
+        } else {
+            start_time
+                .checked_add(SECONDS_PER_DAY - start_time % SECONDS_PER_DAY)
+                .ok_or(OracleError::InvalidVwapRange)?
+        };
+        let complete_days_end = end_time - end_time % SECONDS_PER_DAY;
+        let mut total = VwapAccumulator::default();
+        if first_full_day < complete_days_end {
+            self.add_raw_snapshots(pair, start_time, first_full_day, &mut total)?;
+            self.add_daily_aggregates(pair, first_full_day, complete_days_end, &mut total)?;
+            self.add_raw_snapshots(pair, complete_days_end, end_time, &mut total)?;
+        } else {
+            self.add_raw_snapshots(pair, start_time, end_time, &mut total)?;
         }
+        Ok(total.finish())
+    }
 
-        let range_start = self.binary_search_snapshot_idx(start_time, oldest_idx, write_idx)?;
-        let range_end = self.binary_search_snapshot_idx(end_time + 1, oldest_idx, write_idx)?;
-
-        let mut price_volume_sum = U256::ZERO;
-        let mut volume_sum = U256::ZERO;
-
-        for idx in range_start..range_end {
-            let pc = self.snapshot_pair_count.read(&idx)?;
-            let pair_map = self.snapshot_pair.get_nested(&idx);
-            let rate_map = self.snapshot_rate.get_nested(&idx);
-            let volume_map = self.snapshot_volume.get_nested(&idx);
-
-            for p in 0..pc {
-                if !pair_map.read_pair(&p)?.same_market(&pair) {
-                    continue;
-                }
-
-                let rate = rate_map.read(&p)?;
-                let volume = volume_map.read(&p)?;
-                let vol = if volume.is_zero() {
-                    zero_volume_weight(pair)
-                } else {
-                    volume
-                };
-
-                price_volume_sum = price_volume_sum
-                    .checked_add(
-                        rate.checked_mul(vol)
-                            .ok_or(OracleError::VwapOverflow("rate * volume"))?,
-                    )
-                    .ok_or(OracleError::VwapOverflow("sum accumulation"))?;
-                volume_sum = volume_sum
-                    .checked_add(vol)
-                    .ok_or(OracleError::VwapOverflow("volume sum"))?;
-                break;
+    fn try_worldwide_day_vwap(&self, pair: AddressPair, start_time: u64) -> Result<Option<U256>> {
+        let suffix_day = start_time - start_time % SECONDS_PER_DAY;
+        let full_day = suffix_day
+            .checked_add(SECONDS_PER_DAY)
+            .ok_or(OracleError::InvalidVwapRange)?;
+        let prefix_day = full_day
+            .checked_add(SECONDS_PER_DAY)
+            .ok_or(OracleError::InvalidVwapRange)?;
+        let components = [
+            (
+                self.wwd_suffix_pv_sum.get_nested(&pair).read(&suffix_day)?,
+                self.wwd_suffix_vol_sum
+                    .get_nested(&pair)
+                    .read(&suffix_day)?,
+            ),
+            (
+                self.daily_pv_sum.get_nested(&pair).read(&full_day)?,
+                self.daily_vol_sum.get_nested(&pair).read(&full_day)?,
+            ),
+            (
+                self.wwd_prefix_pv_sum.get_nested(&pair).read(&prefix_day)?,
+                self.wwd_prefix_vol_sum
+                    .get_nested(&pair)
+                    .read(&prefix_day)?,
+            ),
+        ];
+        let mut total = VwapAccumulator::default();
+        for (price_volume, volume) in components {
+            if !volume.is_zero() {
+                total.add(
+                    pair,
+                    price_volume,
+                    volume,
+                    "WWD sum accumulation",
+                    "WWD volume sum",
+                )?;
             }
         }
-
-        if volume_sum.is_zero() {
-            return Ok(None);
-        }
-
-        Ok(Some(price_volume_sum / volume_sum))
+        Ok(total.finish())
     }
 
     /// Calculates TWAP (time-weighted average price) for a pair.
@@ -464,14 +541,10 @@ impl OracleContract<'_> {
         start_time: u64,
         end_time: u64,
     ) -> Result<bool> {
-        if self.ocomp_profile_ready.read()? {
-            let storage = self.storage.clone();
-            storage.with_checkpoint(|| {
-                self.store_worldwide_day_vwap_snapshot_inner(worldwide_day, start_time, end_time)
-            })
-        } else {
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
             self.store_worldwide_day_vwap_snapshot_inner(worldwide_day, start_time, end_time)
-        }
+        })
     }
 
     fn store_worldwide_day_vwap_snapshot_inner(
@@ -480,9 +553,33 @@ impl OracleContract<'_> {
         start_time: u64,
         end_time: u64,
     ) -> Result<bool> {
-        let Some((pairs, vwaps, _)) = self.try_calculate_vwaps(start_time, end_time)? else {
+        // The forming window is a protocol parameter, not an oracle constant:
+        // a chain that shortens it (localnet, E2E) still hands Metadosis'
+        // real window here, and a second hardcoded copy would reject it.
+        let expected_start = worldwide_day.start_timestamp();
+        let expected_end = expected_start
+            .checked_add(outbe_chain_constants::get_metadosis_forming_period_seconds())
+            .ok_or(OracleError::InvalidVwapRange)?;
+        if !worldwide_day.is_valid() || start_time != expected_start || end_time != expected_end {
+            return Err(OracleError::InvalidVwapRange.into());
+        }
+
+        let pair_count = self.pair_count.read()?;
+        let mut pairs = Vec::new();
+        let mut vwaps = Vec::new();
+        for pair_index in 1..=pair_count {
+            let pair = self.pair_at(pair_index)?;
+            if !self.vote_target.read(&pair)? {
+                continue;
+            }
+            if let Some(vwap) = self.try_worldwide_day_vwap(pair, start_time)? {
+                pairs.push(pair);
+                vwaps.push(vwap);
+            }
+        }
+        if pairs.is_empty() {
             return Ok(false);
-        };
+        }
         let next_ocomp_version = self.next_ocomp_state_version()?;
 
         self.worldwide_day_vwap_exists.write(&worldwide_day, true)?;

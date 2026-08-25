@@ -12,7 +12,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
-use alloy_sol_types::SolCall as _;
+use alloy_sol_types::{sol, SolCall as _};
 use eyre::{eyre, Result, WrapErr as _};
 #[cfg(feature = "ocomp-integration")]
 use outbe_common::WorldwideDay;
@@ -37,8 +37,9 @@ use crate::internal::{
     addresses,
     config::Config,
     eth::{
-        self, IGovernance, IL2Registry, IMetadosis, INod, ISlashIndicator, IStaking,
-        ITeeRegistryV1, ITribute, IUpdate, IValidatorSet, IValidatorSetRaw, IVote, IZeroFee,
+        self, IGovernance, IL2Registry, IMetadosis, INod, IRadicleRegistry, ISlashIndicator,
+        IStaking, ITeeRegistryV1, ITribute, IUpdate, IValidatorSet, IValidatorSetRaw, IVote,
+        IZeroFee,
     },
     parse::{self, ScheduledUpdate, VoteStatus},
     shell::Sh,
@@ -46,6 +47,9 @@ use crate::internal::{
 use crate::ocomp_evidence::sha256_hex;
 use crate::world::state::FixtureState;
 use crate::world::validators::{Operator, Validator};
+
+sol!("../../contracts/precompiles/src/IOracle.sol");
+sol!("../../contracts/precompiles/src/ITributeFactory.sol");
 
 #[derive(Debug, Clone)]
 pub struct Rpc {
@@ -58,6 +62,17 @@ pub struct TributeZkOffer<'a> {
     pub merkle_root_hex: &'a str,
     pub proof_hex: &'a str,
     pub signature_hex: &'a str,
+}
+
+fn zerofee_rollover_wait_budget_secs(latest_timestamp: u64) -> u64 {
+    const SECONDS_PER_DAY: u64 = 86_400;
+    const MINIMUM_WAIT_SECONDS: u64 = 150;
+    const FINALITY_SLACK_SECONDS: u64 = 60;
+
+    let remaining = SECONDS_PER_DAY - latest_timestamp % SECONDS_PER_DAY;
+    remaining
+        .saturating_add(FINALITY_SLACK_SECONDS)
+        .max(MINIMUM_WAIT_SECONDS)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -95,6 +110,14 @@ pub struct MetadosisWorldwideDayStartedV1 {
     pub scheduled_process_time: u64,
     pub block_number: u64,
     pub block_hash: B256,
+}
+
+/// Latest canonical Oracle publication observed through a validator RPC.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct OracleRateDataV1 {
+    pub rate: U256,
+    pub last_block: u64,
+    pub last_timestamp: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -162,6 +185,36 @@ struct NodMaterializationProgressV1 {
     next_nod_ordinal: u32,
     completed: bool,
     block_number: u64,
+}
+
+#[cfg(feature = "ocomp-integration")]
+struct MaterializationStallDeadline {
+    last_progress: u32,
+    deadline: Instant,
+    stall: Duration,
+}
+
+#[cfg(feature = "ocomp-integration")]
+impl MaterializationStallDeadline {
+    fn new(now: Instant, stall: Duration) -> Self {
+        Self {
+            last_progress: 0,
+            deadline: now + stall,
+            stall,
+        }
+    }
+
+    fn last_progress(&self) -> u32 {
+        self.last_progress
+    }
+
+    fn observe(&mut self, now: Instant, progress: u32) -> bool {
+        if progress > self.last_progress {
+            self.last_progress = progress;
+            self.deadline = now + self.stall;
+        }
+        now >= self.deadline
+    }
 }
 
 /// One public `submitLysisResult(bytes)` transaction observed in a canonical
@@ -350,8 +403,8 @@ impl Rpc {
             WorldwideDay::new(generation.worldwide_day),
         )?;
         let call = INodFactory::mineGratisCall {
-            nodId: nod_id.into_bytes().to_vec().into(),
-            nonce: U256::ZERO,
+            nodId: nod_id.to_u256(),
+            nonce: 0,
             mac: B256::ZERO,
             opNonce: 0,
         };
@@ -380,12 +433,39 @@ impl Rpc {
         generation: &OcompCertifiedGenerationV1,
         timeout_seconds: u64,
     ) -> Option<NodMaterializationObservationV1> {
-        let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
+        let stall = Duration::from_secs(timeout_seconds);
+        let mut deadline = MaterializationStallDeadline::new(Instant::now(), stall);
         loop {
             if let Some(completed) = self.completed_nod_materialization(port, generation) {
                 return Some(completed);
             }
-            if Instant::now() >= deadline {
+            let head_progress = self
+                .nod_materialization_head_on(port)
+                .filter(|head| {
+                    head.worldwide_day == generation.worldwide_day
+                        && head.generation == generation.generation
+                })
+                .map_or(deadline.last_progress(), |head| head.next_nod_ordinal);
+            let finalized_progress = if head_progress > deadline.last_progress() {
+                self.materialization_progress_on(
+                    port,
+                    generation.worldwide_day,
+                    generation.generation,
+                )
+                .and_then(|events| events.into_iter().map(|event| event.next_nod_ordinal).max())
+                .unwrap_or(deadline.last_progress())
+            } else {
+                deadline.last_progress()
+            };
+            if deadline.observe(Instant::now(), finalized_progress) {
+                eprintln!(
+                    "NOD materialization made no finalized progress for {timeout_seconds}s: \
+                     worldwide_day={} generation={} cursor={}/{}",
+                    generation.worldwide_day,
+                    generation.generation,
+                    deadline.last_progress(),
+                    generation.nod_count,
+                );
                 return None;
             }
             sleep(Duration::from_millis(250));
@@ -432,9 +512,9 @@ impl Rpc {
     ) -> Result<()> {
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
-            let last_observation = match self.materialized_nod_for_owner_on(port, owner) {
+            let last_observation = match self.materialized_nod_for_owner(port, owner) {
                 Ok(Some((nod_id, body))) => {
-                    if body.owner != owner || body.nodId.as_ref() != nod_id.as_slice() {
+                    if body.owner != owner || body.nodId != U256::from_be_slice(&nod_id) {
                         return Err(eyre!("owner enumeration and nodData disagree"));
                     }
                     return Ok(());
@@ -467,9 +547,8 @@ impl Rpc {
         let body = self
             .nod_data_on(port, &nod_id)
             .map_err(|error| eyre!("capacity owner NOD body read failed: {error}"))?;
-        let entity = outbe_compressed_entities::EntityId36::try_from(nod_id.as_slice())?;
+        let entity = outbe_compressed_entities::WwdEntityId::try_from(nod_id.as_slice())?;
         let nonce = (0_u64..100_000)
-            .map(U256::from)
             .find(|nonce| outbe_nodfactory::runtime::validate_pow(entity, *nonce).is_ok())
             .ok_or_else(|| eyre!("find bounded mineGratis nonce"))?;
         let op_nonce = eth::read_call(
@@ -496,7 +575,7 @@ impl Rpc {
             addresses::NOD_FACTORY_ADDR,
             private_key,
             &INodFactory::mineGratisCall {
-                nodId: nod_id.into(),
+                nodId: U256::from_be_slice(&nod_id),
                 nonce,
                 mac: B256::from(mac),
                 opNonce: op_nonce,
@@ -526,7 +605,7 @@ impl Rpc {
     }
 
     #[cfg(feature = "ocomp-integration")]
-    fn materialized_nod_for_owner_on(
+    pub(crate) fn materialized_nod_for_owner(
         &self,
         port: u16,
         owner: Address,
@@ -569,7 +648,7 @@ impl Rpc {
                 index: U256::from(index),
             },
         )
-        .map(|value| value.to_vec());
+        .map(|value| value.to_be_bytes::<32>().to_vec());
         classify_owner_index_result(index, result)
     }
 
@@ -583,7 +662,7 @@ impl Rpc {
             &self.url(port),
             addresses::NOD_ADDR,
             &INod::nodDataCall {
-                nodId: nod_id.to_vec().into(),
+                nodId: U256::from_be_slice(nod_id),
             },
         )
     }
@@ -629,6 +708,36 @@ impl Rpc {
     /// Head block number on the node at `port` (`eth_blockNumber`).
     pub fn head(&self, port: u16) -> Option<u64> {
         eth::block_number(&self.url(port))
+    }
+
+    /// `(pending, queued)` transaction counts from `txpool_status`. This is the
+    /// pool's real state: `eth_pendingTransactions` does not reflect it.
+    pub fn txpool_status(&self, port: u16) -> Option<(u64, u64)> {
+        let status = eth::raw_json(&self.url(port), "txpool_status")?;
+        let count = |field: &str| -> Option<u64> {
+            let raw = status.get(field)?;
+            match raw {
+                serde_json::Value::String(text) => {
+                    u64::from_str_radix(text.trim_start_matches("0x"), 16).ok()
+                }
+                other => other.as_u64(),
+            }
+        };
+        Some((count("pending")?, count("queued")?))
+    }
+
+    /// Whether the node at `port` still holds `tx_hash` in either sub-pool.
+    pub fn txpool_has(&self, port: u16, tx_hash: &str) -> bool {
+        let Some(content) = eth::raw_json(&self.url(port), "txpool_content") else {
+            return false;
+        };
+        let needle = tx_hash.to_ascii_lowercase();
+        // `txpool_content` is {pending|queued: {sender: {nonce: tx}}}; the hash
+        // lives inside each tx object, so a serialized-contains check is both
+        // sufficient and immune to field-layout changes.
+        serde_json::to_string(&content)
+            .map(|text| text.to_ascii_lowercase().contains(&needle))
+            .unwrap_or(false)
     }
 
     /// Chain identity reported by the node at `port`.
@@ -1341,6 +1450,34 @@ impl Rpc {
         })
     }
 
+    pub fn validator_radicle_node_id(&self, port: u16, addr: &str) -> Option<B256> {
+        let validator_address = addr.parse().ok()?;
+        eth::read_call(
+            &self.url(port),
+            addresses::VS_ADDR,
+            &IValidatorSet::getRadicleNodeIdCall {
+                validator: validator_address,
+            },
+        )
+    }
+
+    pub fn validator_radicle_node_id_at(
+        &self,
+        port: u16,
+        addr: &str,
+        block_number: u64,
+    ) -> Option<B256> {
+        let validator_address = addr.parse().ok()?;
+        eth::read_call_at(
+            &self.url(port),
+            addresses::VS_ADDR,
+            &IValidatorSet::getRadicleNodeIdCall {
+                validator: validator_address,
+            },
+            block_number,
+        )
+    }
+
     /// Status code: 0 REGISTERED, 1 PENDING, 2 ACTIVE, 3 EXITING,
     /// 4 UNBONDING, 5 INACTIVE, 6 JAILED.
     pub fn validator_status(&self, port: u16, addr: &str) -> Option<u64> {
@@ -1518,7 +1655,7 @@ impl Rpc {
     }
 
     /// Canonical Tribute identities indexed by one owner.
-    pub fn tributes_by_owner(&self, port: u16, owner: Address) -> Option<Vec<Bytes>> {
+    pub fn tributes_by_owner(&self, port: u16, owner: Address) -> Option<Vec<U256>> {
         eth::read_call(
             &self.url(port),
             addresses::TRIBUTE_ADDR,
@@ -1527,7 +1664,7 @@ impl Rpc {
     }
 
     /// Canonical Tribute identities indexed by one Worldwide Day.
-    pub fn tributes_by_day(&self, port: u16, worldwide_day: u32) -> Option<Vec<Bytes>> {
+    pub fn tributes_by_day(&self, port: u16, worldwide_day: u32) -> Option<Vec<U256>> {
         eth::read_call(
             &self.url(port),
             addresses::TRIBUTE_ADDR,
@@ -1548,7 +1685,6 @@ impl Rpc {
         Some(r.status.to_string())
     }
 
-    #[cfg(feature = "ocomp-integration")]
     pub fn metadosis_wwd_state_on(
         &self,
         port: u16,
@@ -1738,6 +1874,61 @@ impl Rpc {
             .as_bool()
     }
 
+    /// Immutable Radicle integration status as published by validator `port`.
+    pub fn radicle_status(&self, port: u16) -> Option<serde_json::Value> {
+        eth::raw_json(&self.url(port), "outbe_radicleStatus")
+    }
+
+    /// Canonical signed endpoint evidence known by validator `port`.
+    pub fn radicle_peers(&self, port: u16) -> Option<serde_json::Value> {
+        eth::raw_json(&self.url(port), "outbe_radiclePeers")
+    }
+
+    /// Finalized desired repositories and their local availability state.
+    pub fn radicle_repositories(&self, port: u16) -> Option<serde_json::Value> {
+        eth::raw_json(&self.url(port), "outbe_radicleRepositories")
+    }
+
+    /// Permissionlessly register one public Heartwood repository.
+    pub fn register_radicle_repository(&self, key: &str, repo_id: [u8; 20]) -> Result<String> {
+        let tx = eth::send_call(
+            &self.cfg.rpc0,
+            outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS,
+            key,
+            &IRadicleRegistry::registerRepositoryCall {
+                repoId: repo_id.into(),
+            },
+            None,
+        )?;
+        if !self.wait_successful_receipt(&tx, 240) {
+            return Err(eyre!(
+                "Radicle repository registration receipt was not successful: {tx}"
+            ));
+        }
+        Ok(tx)
+    }
+
+    /// `(count, generation, maximum)` from the finalized repository registry view.
+    pub fn radicle_registry_state(&self) -> Option<(u32, u64, u32)> {
+        let address = outbe_primitives::addresses::RADICLE_REGISTRY_ADDRESS;
+        let count: u32 = eth::read_call(
+            &self.cfg.rpc0,
+            address,
+            &IRadicleRegistry::repositoryCountCall {},
+        )?;
+        let generation: u64 = eth::read_call(
+            &self.cfg.rpc0,
+            address,
+            &IRadicleRegistry::registryGenerationCall {},
+        )?;
+        let maximum: u32 = eth::read_call(
+            &self.cfg.rpc0,
+            address,
+            &IRadicleRegistry::maxRepositoriesCall {},
+        )?;
+        Some((count, generation, maximum))
+    }
+
     /// Canonical voter-miss counter for `validator` as observed on `port`.
     pub fn voter_miss_count(&self, port: u16, validator: &str) -> Option<u64> {
         let value = eth::raw_json_with_params(
@@ -1826,6 +2017,150 @@ impl Rpc {
             self.address_of(key).unwrap_or_else(|| "unknown".to_owned()),
         );
         Some(tx_hash)
+    }
+
+    /// Submit one real encrypted Tribute while keeping issuance and reference
+    /// currencies independent. The product CLI intentionally remains the
+    /// same-currency operator path; this narrow E2E helper exercises the
+    /// already-public ABI axis without adding a new product surface.
+    #[allow(clippy::too_many_arguments)]
+    pub fn tribute_cross_currency_offer(
+        &self,
+        key: &str,
+        wwd: &str,
+        amount_base: &str,
+        amount_atto: &str,
+        tribute_currency: u16,
+        reference_currency: u16,
+        exclude_from_intex_issuance: bool,
+    ) -> Option<String> {
+        let worldwide_day = wwd.parse::<u32>().ok()?;
+        let creator = eth::address_of(key)?;
+        let bootstrapped: bool = eth::read_call(
+            &self.cfg.rpc0,
+            outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+            &ITeeRegistryV1::isBootstrappedCall {},
+        )?;
+        if !bootstrapped {
+            return None;
+        }
+        let offer_public_key: U256 = eth::read_call(
+            &self.cfg.rpc0,
+            outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+            &ITeeRegistryV1::tributeOfferPublicKeyCall {},
+        )?;
+        let offer_public_key: [u8; 32] = offer_public_key.to_be_bytes();
+        let entropy = format!(
+            "cross-currency-tribute:{creator:#x}:{worldwide_day}:{}",
+            unix_time_millis()
+        );
+        let tribute_draft_id = keccak256(entropy.as_bytes());
+        let su_hash = keccak256([entropy.as_bytes(), b":su"].concat());
+        let plaintext = serde_json::to_vec(&serde_json::json!({
+            "creator": format!("{creator:?}"),
+            "tribute_draft_id": format!("{tribute_draft_id:#x}"),
+            "amount_base": amount_base,
+            "amount_atto": amount_atto,
+            "su_hashes": [format!("{su_hash:#x}")],
+            "wallet_addresses": [],
+            "sra_addresses": [],
+        }))
+        .ok()?;
+        let (cipher_text, nonce, ephemeral_public_key) =
+            outbe_tee::offer_encrypt::encrypt_tribute_offer(&offer_public_key, &plaintext).ok()?;
+        let call = ITributeFactory::offerTributeCall {
+            cipherText: cipher_text.into(),
+            nonce: nonce.to_vec().into(),
+            ephemeralPubkey: U256::from_be_bytes(ephemeral_public_key),
+            worldwideDay: worldwide_day,
+            tributeCurrency: tribute_currency,
+            referenceCurrency: reference_currency,
+            excludeFromIntexIssuance: exclude_from_intex_issuance,
+            zkProof: Bytes::new(),
+            zkVerificationKey: Bytes::new(),
+            zkPublicKey: Bytes::new(),
+            zkMerkleRoot: Bytes::new(),
+            signature: Bytes::new(),
+        };
+        let outcome = eth::send_call_outcome(
+            &self.cfg.rpc0,
+            outbe_primitives::addresses::TRIBUTE_FACTORY_ADDRESS,
+            key,
+            &call,
+            Some(U256::ZERO),
+        )
+        .ok()?;
+        eprintln!(
+            "E2E_TRIBUTE_TIMELINE stage=cross-currency-submitted wall_ms={} tx={} owner={creator:#x} wwd={worldwide_day} tribute_currency={tribute_currency} reference_currency={reference_currency}",
+            unix_time_millis(),
+            outcome.transaction_hash,
+        );
+        Some(outcome.transaction_hash)
+    }
+
+    /// Read the exact WWD VWAP and the maximum active S-curve value for one
+    /// COEN/ISO reference pair from the canonical Oracle precompile.
+    pub fn oracle_wwd_vwap_and_scurve(
+        &self,
+        port: u16,
+        worldwide_day: u32,
+        iso_code: u16,
+    ) -> Option<(U256, U256)> {
+        let oracle = outbe_primitives::addresses::ORACLE_ADDRESS;
+        let snapshot = eth::read_call(
+            &self.url(port),
+            oracle,
+            &IOracle::getWorldwideDayVwapSnapshotCall {
+                worldwideDay: worldwide_day,
+            },
+        )?;
+        let quote = outbe_primitives::asset_type::currency_address(iso_code);
+        let vwap = snapshot
+            .bases
+            .iter()
+            .zip(&snapshot.quotes)
+            .zip(&snapshot.vwaps)
+            .find_map(|((base, candidate_quote), value)| {
+                (*base == Address::ZERO && *candidate_quote == quote).then_some(*value)
+            })?;
+        let curve = eth::read_call(
+            &self.url(port),
+            oracle,
+            &IOracle::getScurveValuesCall {
+                base: Address::ZERO,
+                quote,
+                timestamp: outbe_primitives::time::date_key_to_utc_timestamp(worldwide_day),
+            },
+        )?;
+        Some((vwap, curve.values.into_iter().max().unwrap_or(U256::ZERO)))
+    }
+
+    /// Read one canonical COEN/ISO rate together with its publication point.
+    pub fn oracle_rate_data(&self, port: u16, iso_code: u16) -> Option<OracleRateDataV1> {
+        let result = eth::read_call(
+            &self.url(port),
+            outbe_primitives::addresses::ORACLE_ADDRESS,
+            &IOracle::getExchangeRateDataCall {
+                base: Address::ZERO,
+                quote: outbe_primitives::asset_type::currency_address(iso_code),
+            },
+        )?;
+        Some(OracleRateDataV1 {
+            rate: result.rate,
+            last_block: result.lastBlock,
+            last_timestamp: result.lastTimestamp,
+        })
+    }
+
+    /// Read the canonical chain-owned Oracle vote period used by production
+    /// feeder preflight. Harness feeder config must match it exactly.
+    pub fn oracle_vote_period(&self, port: u16) -> Option<u64> {
+        eth::read_call(
+            &self.url(port),
+            outbe_primitives::addresses::ORACLE_ADDRESS,
+            &IOracle::getParamsCall {},
+        )
+        .map(|params| params.votePeriod)
     }
 
     /// Wait until the submitted transaction is mined and assert its receipt succeeded.
@@ -2519,6 +2854,7 @@ impl Rpc {
         caller_key: &str,
         validator: Address,
         consensus_pubkey: &[u8],
+        radicle_node_id: B256,
         bls_signature: &[u8],
     ) -> Result<TxOutcome> {
         eth::send_call_outcome(
@@ -2528,7 +2864,8 @@ impl Rpc {
             &IValidatorSet::registerValidatorCall {
                 validatorAddress: validator,
                 consensusPubkey: Bytes::copy_from_slice(consensus_pubkey),
-                blsSignature: Bytes::copy_from_slice(bls_signature),
+                radicleNodeId: radicle_node_id,
+                blsRegistrationSignature: Bytes::copy_from_slice(bls_signature),
             },
             None,
         )
@@ -2687,13 +3024,15 @@ impl Rpc {
         key: &str,
         validator: Address,
         consensus_pubkey: &[u8],
+        radicle_node_id: B256,
         bls_signature: &[u8],
     ) -> Result<[TxOutcome; 2]> {
         let claim = IStaking::claimUnbondedCall {};
         let register = IValidatorSet::registerValidatorCall {
             validatorAddress: validator,
             consensusPubkey: Bytes::copy_from_slice(consensus_pubkey),
-            blsSignature: Bytes::copy_from_slice(bls_signature),
+            radicleNodeId: radicle_node_id,
+            blsRegistrationSignature: Bytes::copy_from_slice(bls_signature),
         };
         let outcomes = eth::send_prepared_calls_outcomes(
             &self.cfg.rpc0,
@@ -2929,7 +3268,11 @@ impl Rpc {
         let address =
             eth::address_of(key).ok_or_else(|| eyre!("derive ZeroFee fixture address"))?;
         let funder_key = funder.evm_key()?;
-        eth::send_value(&self.cfg.rpc0, address, &funder_key, eth::coen(1))?;
+        // This signer must pay for the EIP-7702 delegation and, in the quota
+        // lifecycle scenario, one deliberately non-sponsored fallback call.
+        // Sponsored calls themselves must leave this post-delegation balance
+        // unchanged; the assertions below verify that separately.
+        eth::send_value(&self.cfg.rpc0, address, &funder_key, eth::coen(10))?;
 
         let auth = eth::read_call(
             &self.cfg.rpc0,
@@ -3199,7 +3542,10 @@ impl Rpc {
     ) -> Result<()> {
         let key = "0x2222222222222222222222222222222222222222222222222222222222222222";
         let address = eth::address_of(key).ok_or_else(|| eyre!("derive negative signer"))?;
-        let funding = self.fund_key(funder, key, 1)?;
+        // The negative lane deliberately submits several ordinary paid
+        // authorization/call envelopes; funding one COEN only covered a single
+        // envelope's gas reservation on the fresh-chain base fee.
+        let funding = self.fund_key(funder, key, 10)?;
         if !self.wait_successful_receipt(&funding, 20) {
             return Err(eyre!("negative signer COEN funding failed: {funding}"));
         }
@@ -3321,10 +3667,16 @@ impl Rpc {
         }
         state.zerofee_day_before_rollover = Some(before.0);
 
+        let start_timestamp = self
+            .latest_block_timestamp(self.cfg.primary_port())
+            .ok_or_else(|| eyre!("read canonical timestamp before ZeroFee rollover"))?;
+        let wait_budget_secs = zerofee_rollover_wait_budget_secs(start_timestamp);
         let mut reset = None;
-        for _ in 0..150 {
+        let mut latest_observation = None;
+        for _ in 0..wait_budget_secs {
             let latest_timestamp = self.latest_block_timestamp(self.cfg.primary_port());
             let current = self.zerofee_counter(address);
+            latest_observation = Some((latest_timestamp, current));
             if latest_timestamp.is_some_and(|timestamp| timestamp % 86_400 < 200)
                 && current.is_some_and(|value| value.0 != before.0 && value.1 == 0)
             {
@@ -3333,7 +3685,12 @@ impl Rpc {
             }
             sleep(Duration::from_secs(1));
         }
-        let _reset = reset.ok_or_else(|| eyre!("ZeroFee counter did not lazily reset"))?;
+        let _reset = reset.ok_or_else(|| {
+            eyre!(
+                "ZeroFee counter did not lazily reset within {wait_budget_secs}s: \
+                 start_timestamp={start_timestamp}, last={latest_observation:?}"
+            )
+        })?;
         state.zerofee_new_day_balance_before = eth::balance(&self.cfg.rpc0, address);
         state.zerofee_new_day_receipt = Some(eth::send_reward_call(
             &self.cfg.rpc0,
@@ -3408,7 +3765,7 @@ fn classify_owner_index_result(
     result: std::result::Result<Vec<u8>, String>,
 ) -> std::result::Result<Option<Vec<u8>>, String> {
     match result {
-        Ok(nod_id) if nod_id.len() == outbe_compressed_entities::EntityId36::LEN => {
+        Ok(nod_id) if nod_id.len() == outbe_compressed_entities::WwdEntityId::len_bytes() => {
             Ok(Some(nod_id))
         }
         Ok(nod_id) => Err(format!(
@@ -3710,6 +4067,31 @@ mod ocomp_tests {
 
     #[cfg(feature = "ocomp-integration")]
     #[test]
+    fn materialization_stall_deadline_resets_only_for_strict_progress() {
+        let started = Instant::now();
+        let stall = Duration::from_secs(10);
+        let mut deadline = MaterializationStallDeadline::new(started, stall);
+
+        assert!(!deadline.observe(started + Duration::from_secs(9), 0));
+        assert!(!deadline.observe(started + Duration::from_secs(9), 8));
+        assert!(!deadline.observe(started + Duration::from_secs(18), 8));
+        assert!(deadline.observe(started + Duration::from_secs(19), 8));
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn materialization_stall_deadline_ignores_regressing_observations() {
+        let started = Instant::now();
+        let stall = Duration::from_secs(10);
+        let mut deadline = MaterializationStallDeadline::new(started, stall);
+
+        assert!(!deadline.observe(started + Duration::from_secs(5), 16));
+        assert!(!deadline.observe(started + Duration::from_secs(9), 8));
+        assert!(deadline.observe(started + Duration::from_secs(15), 16));
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
     fn first_owner_index_revert_is_not_reported_as_an_absent_nod() {
         let error = classify_owner_index_result(
             0,
@@ -3743,5 +4125,11 @@ mod ocomp_tests {
             .expect("the canonical bounds error is an expected absence"),
             None,
         );
+    }
+
+    #[test]
+    fn zerofee_rollover_wait_budget_covers_the_canonical_distance_to_boundary() {
+        assert_eq!(zerofee_rollover_wait_budget_secs(1_787_615_641), 419);
+        assert_eq!(zerofee_rollover_wait_budget_secs(1_787_615_950), 150);
     }
 }

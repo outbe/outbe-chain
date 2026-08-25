@@ -27,6 +27,28 @@ def project_binary(name: str) -> Path:
     raise unittest.SkipTest(f"{name} is not built")
 
 
+def add_radicle_founder_material(keygen: Path, material: Path, count: int = 4) -> None:
+    validators_path = material / "validators.json"
+    validators = json.loads(validators_path.read_text())
+    for index in range(count):
+        result = subprocess.run(
+            [
+                str(keygen),
+                "radicle",
+                "--output-dir",
+                str(material / f"validator-{index}" / "radicle"),
+            ],
+            cwd=REPO_ROOT,
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+        )
+        marker = "node id hex:"
+        line = next(line for line in result.stdout.splitlines() if marker in line)
+        validators[index]["radicle_node_id"] = "0x" + line.split(marker, 1)[1].strip()
+    validators_path.write_text(json.dumps(validators, indent=2) + "\n")
+
+
 class PrepareNetworkTests(unittest.TestCase):
     def test_prefund_cli_names_raw_coen_units_without_legacy_aliases(self) -> None:
         result = subprocess.run(
@@ -66,6 +88,7 @@ class PrepareNetworkTests(unittest.TestCase):
                 cwd=REPO_ROOT,
                 check=True,
             )
+            add_radicle_founder_material(keygen, material)
 
             subprocess.run(
                 [
@@ -123,6 +146,7 @@ class PrepareNetworkTests(unittest.TestCase):
                 cwd=REPO_ROOT,
                 check=True,
             )
+            add_radicle_founder_material(keygen, material)
             (material / "validator-0" / "signing-key.hex").write_bytes(
                 (material / "validator-1" / "signing-key.hex").read_bytes()
             )
@@ -184,6 +208,7 @@ class PrepareNetworkTests(unittest.TestCase):
                 cwd=REPO_ROOT,
                 check=True,
             )
+            add_radicle_founder_material(keygen, material)
             (material / "validator-0" / "evm-key.hex").write_bytes(
                 (material / "validator-1" / "evm-key.hex").read_bytes()
             )
@@ -219,6 +244,69 @@ class PrepareNetworkTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn(
                 "validator-0 EVM signing key does not match validators.json",
+                result.stderr,
+            )
+            self.assertFalse((output / "genesis.json").exists())
+            self.assertFalse((output / "commands").exists())
+
+    def test_existing_founders_reject_mismatched_radicle_identity(self) -> None:
+        chain = project_binary("outbe-chain")
+        keygen = project_binary("outbe-keygen")
+
+        with tempfile.TemporaryDirectory(prefix="outbe-prepare-network-") as temporary:
+            root = Path(temporary)
+            material = root / "founders"
+            output = root / "network"
+            subprocess.run(
+                [
+                    str(chain),
+                    "dkg",
+                    "identities",
+                    "--output-dir",
+                    str(material),
+                    "--validators",
+                    "4",
+                ],
+                cwd=REPO_ROOT,
+                check=True,
+            )
+            add_radicle_founder_material(keygen, material)
+            validators_path = material / "validators.json"
+            validators = json.loads(validators_path.read_text())
+            validators[0]["radicle_node_id"] = "0x" + "11" * 32
+            validators_path.write_text(json.dumps(validators, indent=2) + "\n")
+
+            result = subprocess.run(
+                [
+                    "python3",
+                    str(PREPARE_NETWORK),
+                    "--seed",
+                    str(SEED),
+                    "--validators",
+                    str(validators_path),
+                    "--founder-material-dir",
+                    str(material),
+                    "--output-dir",
+                    str(output),
+                    "--chain-binary",
+                    str(chain),
+                    "--keygen-binary",
+                    str(keygen),
+                    "--tee-mode",
+                    "gramine-direct-dev",
+                    "--enclave-image",
+                    "outbe-tee-enclave-gramine-test:local",
+                    "--use-local-defaults",
+                ],
+                cwd=REPO_ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "validator-0 Radicle NodeId does not match validators.json",
                 result.stderr,
             )
             self.assertFalse((output / "genesis.json").exists())
@@ -390,6 +478,7 @@ class PrepareNetworkTests(unittest.TestCase):
             self.assertEqual(len(validators), 4)
             self.assertEqual(len({entry["p2p_address"] for entry in validators}), 4)
             self.assertEqual(len({entry["reth_p2p_address"] for entry in validators}), 4)
+            self.assertEqual(len({entry["radicle_node_id"] for entry in validators}), 4)
 
             node_scripts = []
             enclave_scripts = []
@@ -398,6 +487,8 @@ class PrepareNetworkTests(unittest.TestCase):
                 validator_dir = output / f"validator-{index}"
                 self.assertTrue((validator_dir / "ocomp-key-v1.hex").is_file())
                 self.assertTrue((validator_dir / "ocomp-registration-v1.ocb1").is_file())
+                self.assertTrue((validator_dir / "radicle/keys/radicle").is_file())
+                self.assertTrue((validator_dir / "radicle/keys/radicle.pub").is_file())
                 self.assertFalse((validator_dir / "signing-share.hex").exists())
 
                 node_script = output / "commands" / f"validator-{index}.sh"

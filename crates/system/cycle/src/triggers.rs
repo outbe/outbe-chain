@@ -26,7 +26,8 @@ pub enum TriggerId {
     AuctionClearing = 5,
     IntexNotify = 6,
     CredisCallDaily = 7,
-    PledgeReservationSweep = 8,
+    NodCallDaily = 8,
+    PledgeReservationSweep = 9,
 }
 
 impl TriggerId {
@@ -75,6 +76,7 @@ pub enum TriggerHandler {
     AuctionClearing,
     IntexNotify,
     CredisCallDaily,
+    NodCallDaily,
     PledgeReservationSweep,
 }
 
@@ -93,6 +95,7 @@ impl TriggerHandler {
             Self::AuctionClearing => outbe_desis::tick_gate(ctx),
             Self::IntexNotify => outbe_intexfactory::qualified::drain_notices(ctx),
             Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
+            Self::NodCallDaily => outbe_nod::called::run_call_daily(ctx, scope, parent),
             Self::PledgeReservationSweep => outbe_gratisfactory::lifecycle::run_sweep(ctx),
         }
     }
@@ -115,7 +118,7 @@ const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 30;
 /// fires triggers independently per slot.
 /// Active trigger table in permanent numeric-id order. The dispatcher walks
 /// this order when several handlers are due in the same block.
-pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 8] {
+pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 9] {
     [
         TriggerSpec {
             id: TriggerId::ProtocolCycle.as_u32(),
@@ -202,6 +205,18 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             handler: TriggerHandler::CredisCallDaily,
         },
         TriggerSpec {
+            id: TriggerId::NodCallDaily.as_u32(),
+            label: "nod_call_daily",
+            period_seconds: 86_400,
+            start_offset_seconds: 0,
+            // Reads finalized oracle VWAP history to force-call Nod buckets and
+            // forfeit-burn their Nods; no dependency on the parent block's
+            // settlement accounting.
+            requires_accounting_window: false,
+            coalesces_backlog: false,
+            handler: TriggerHandler::NodCallDaily,
+        },
+        TriggerSpec {
             id: TriggerId::PledgeReservationSweep.as_u32(),
             label: "pledge_reservation_sweep",
             // The pledge quote TTL is 15 minutes, so a daily slot would strand
@@ -218,7 +233,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
     ]
 }
 
-pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 8] =
+pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 9] =
     active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
 pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &ACTIVE_TRIGGER_ARRAY;
 
@@ -279,11 +294,17 @@ mod protocol_parameter_tests {
             configured[6].handler,
             TriggerHandler::CredisCallDaily
         ));
-        assert_eq!(configured[7].period_seconds, 300);
+        assert_eq!(configured[7].period_seconds, 86_400);
         assert_eq!(configured[7].start_offset_seconds, 0);
-        assert!(configured[7].coalesces_backlog);
         assert!(matches!(
             configured[7].handler,
+            TriggerHandler::NodCallDaily
+        ));
+        assert_eq!(configured[8].period_seconds, 300);
+        assert_eq!(configured[8].start_offset_seconds, 0);
+        assert!(configured[8].coalesces_backlog);
+        assert!(matches!(
+            configured[8].handler,
             TriggerHandler::PledgeReservationSweep
         ));
 

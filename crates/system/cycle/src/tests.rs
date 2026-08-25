@@ -120,6 +120,43 @@ fn anchor_genesis(ctx: &BlockRuntimeContext) {
     outbe_rewards::runtime::ensure_genesis_anchor(ctx).unwrap();
 }
 
+fn seed_fresh_reward_oracle(ctx: &BlockRuntimeContext) {
+    outbe_oracle::api::set_exchange_rate(
+        ctx.storage.clone(),
+        Address::ZERO,
+        outbe_oracle::api::DAY_TYPE_PAIR,
+        U256::from(2_000_000u64),
+        ctx.block.block_number,
+        ctx.block.timestamp,
+    )
+    .unwrap();
+    ctx.storage
+        .contract::<outbe_oracle::schema::OracleContract<'_>>()
+        .reference_currencies
+        .push(840)
+        .unwrap();
+}
+
+fn seed_daily_voters(ctx: &BlockRuntimeContext, day: u32, voters: &[(Address, u64)]) {
+    let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
+    let voter_at = rewards.daily_voter_at.get_nested(&day);
+    let participation = rewards.daily_participation.get_nested(&day);
+    let mut total = 0u64;
+    for (index, (voter, count)) in voters.iter().enumerate() {
+        voter_at.write(&(index as u32), *voter).unwrap();
+        participation.write(voter, *count).unwrap();
+        total = total.checked_add(*count).unwrap();
+    }
+    rewards
+        .daily_voter_count
+        .write(&day, voters.len() as u32)
+        .unwrap();
+    rewards
+        .daily_total_participation
+        .write(&day, total)
+        .unwrap();
+}
+
 /// seed V2 Phase 1 accounting progress so the dispatcher's
 /// new gate (`last_accounted_block_number >= block_number - 1`) is
 /// satisfied for tests that fire the trigger at `block_number >= 2`.
@@ -135,7 +172,7 @@ fn with_execution_scope(
     f: impl FnOnce(&ExecutionScope, &TributeRepositoryReader) -> outbe_primitives::error::Result<()>,
 ) -> outbe_primitives::error::Result<()> {
     ctx.storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))?;
+        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))?;
     ctx.storage.sstore(
         COMPRESSED_ENTITIES_ADDRESS,
         U256::from(1),
@@ -321,7 +358,7 @@ fn block_1_begin_block_rejects_missing_genesis_ocomp_profile_without_partial_sta
     storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
     storage.enter(|handle| {
         handle
-            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
             .unwrap();
         handle
             .sstore(
@@ -735,6 +772,379 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
             .balance(outbe_primitives::addresses::CCA_ADDRESS)
             .unwrap();
         assert!(!cca.is_zero(), "CCA accumulator received its 4 %");
+    });
+}
+
+#[test]
+fn prepared_validator_topup_and_terminal_residue_conserve_the_allocation() {
+    let mut storage = cycle_storage();
+    storage.enter(|handle| {
+        let anchor = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle.clone());
+        anchor_genesis(&anchor);
+        let ctx = BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
+
+        seed_fresh_reward_oracle(&ctx);
+
+        let voters = [
+            Address::repeat_byte(0x31),
+            Address::repeat_byte(0x32),
+            Address::repeat_byte(0x33),
+        ];
+        seed_daily_voters(&ctx, 20_240_101, &voters.map(|voter| (voter, 1)));
+
+        run_emission_limit_daily(&ctx).unwrap();
+
+        let allocations = outbe_emissionlimit::allocation::allocate_emission(
+            outbe_emissionlimit::day_emission::day_emission_limit(0),
+        )
+        .unwrap();
+        let amount_for = |id| {
+            allocations
+                .iter()
+                .find(|allocation| allocation.id == id)
+                .unwrap()
+                .amount
+        };
+        let validator_amount =
+            amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Validator);
+        let metadosis_amount =
+            amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Metadosis);
+        let agent_terminal = amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Waa)
+            .checked_add(amount_for(
+                outbe_emissionlimit::allocation::EmissionSinkId::Sra,
+            ))
+            .unwrap();
+        let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
+        let planned = rewards
+            .reward_gem_planned_load_amount
+            .read(&20_240_101)
+            .unwrap();
+        let gem = outbe_gem::GemContract::new(ctx.storage.clone());
+        for voter in voters {
+            assert_eq!(
+                gem.balance_of(voter).unwrap(),
+                0,
+                "Cycle prepares the batch but does not mint Gems"
+            );
+        }
+        let formation = outbe_metadosis::api::day_limit_formation_receipt(
+            ctx.storage.clone(),
+            outbe_common::WorldwideDay::new(20_240_101),
+        )
+        .unwrap()
+        .unwrap();
+        let outbe_metadosis::DayLimitFormationReceipt::Formed(formed) = formation;
+        let validator_terminal = formed
+            .base_limit
+            .checked_sub(metadosis_amount)
+            .and_then(|amount| amount.checked_sub(agent_terminal))
+            .unwrap();
+
+        assert_eq!(
+            planned.checked_add(validator_terminal).unwrap(),
+            validator_amount,
+            "prepared Gem liability plus terminal residue must conserve the validator allocation"
+        );
+    });
+}
+
+#[test]
+fn zero_total_validator_participation_routes_the_pool_without_halting() {
+    let mut storage = cycle_storage();
+    storage.enter(|handle| {
+        let anchor = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle.clone());
+        anchor_genesis(&anchor);
+        let ctx = BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
+
+        let voters = [Address::repeat_byte(0x51), Address::repeat_byte(0x52)];
+        seed_daily_voters(&ctx, 20_240_101, &voters.map(|voter| (voter, 0)));
+
+        run_emission_limit_daily(&ctx).unwrap();
+
+        let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
+        assert!(rewards.daily_topup_prepared.read(&20_240_101).unwrap());
+        assert!(rewards.daily_topup_settled.read(&20_240_101).unwrap());
+        assert!(rewards.daily_settled.read(&20_240_101).unwrap());
+        assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 0);
+        assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 0);
+        let gem = outbe_gem::GemContract::new(ctx.storage.clone());
+        for voter in voters {
+            assert_eq!(gem.balance_of(voter).unwrap(), 0, "no Gem may be minted");
+        }
+
+        let allocations = outbe_emissionlimit::allocation::allocate_emission(
+            outbe_emissionlimit::day_emission::day_emission_limit(0),
+        )
+        .unwrap();
+        let amount_for = |id| {
+            allocations
+                .iter()
+                .find(|allocation| allocation.id == id)
+                .unwrap()
+                .amount
+        };
+        let expected_terminal =
+            amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Metadosis)
+                .checked_add(amount_for(
+                    outbe_emissionlimit::allocation::EmissionSinkId::Validator,
+                ))
+                .and_then(|amount| {
+                    amount.checked_add(amount_for(
+                        outbe_emissionlimit::allocation::EmissionSinkId::Waa,
+                    ))
+                })
+                .and_then(|amount| {
+                    amount.checked_add(amount_for(
+                        outbe_emissionlimit::allocation::EmissionSinkId::Sra,
+                    ))
+                })
+                .unwrap();
+        let receipt = outbe_metadosis::api::day_limit_formation_receipt(
+            ctx.storage.clone(),
+            outbe_common::WorldwideDay::new(20_240_101),
+        )
+        .unwrap()
+        .unwrap();
+        let outbe_metadosis::DayLimitFormationReceipt::Formed(formed) = receipt;
+        assert_eq!(formed.base_limit, expected_terminal);
+    });
+}
+
+#[test]
+fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() {
+    let mut storage = cycle_storage();
+    let anchor_ts = GENESIS_TS + 60;
+    storage.enter(|handle| {
+        let anchor = BlockRuntimeContext::new(block_ctx(1, anchor_ts), handle);
+        anchor_genesis(&anchor);
+        dispatch_triggers(&anchor).unwrap();
+    });
+
+    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 0);
+    let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 60;
+    let voters = [
+        Address::repeat_byte(0x61),
+        Address::repeat_byte(0x62),
+        Address::repeat_byte(0x63),
+    ];
+    storage.enter(|handle| {
+        let fire = BlockRuntimeContext::new(block_ctx(2, fire_ts), handle);
+        account_parent(&fire, 2);
+        seed_fresh_reward_oracle(&fire);
+        seed_daily_voters(&fire, 20_240_101, &voters.map(|voter| (voter, 1)));
+
+        let error = dispatch_triggers(&fire).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("no matching Metadosis mutation lease"),
+            "the injected downstream failure must reach the terminal sink: {error}"
+        );
+
+        let rewards = fire
+            .storage
+            .contract::<outbe_rewards::schema::Rewards<'_>>();
+        assert!(!rewards.daily_topup_prepared.read(&20_240_101).unwrap());
+        assert!(!rewards.daily_topup_settled.read(&20_240_101).unwrap());
+        assert!(!rewards.daily_settled.read(&20_240_101).unwrap());
+        assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 0);
+        assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 0);
+        assert!(outbe_metadosis::api::day_limit_formation_receipt(
+            fire.storage.clone(),
+            outbe_common::WorldwideDay::new(20_240_101),
+        )
+        .unwrap()
+        .is_none());
+        let gem = outbe_gem::GemContract::new(fire.storage.clone());
+        for voter in voters {
+            assert_eq!(gem.balance_of(voter).unwrap(), 0, "Gem mint must roll back");
+        }
+        assert_eq!(
+            fire.storage
+                .balance(outbe_primitives::addresses::CCA_ADDRESS)
+                .unwrap(),
+            U256::ZERO,
+            "CCA credit before the terminal failure must roll back"
+        );
+        let cycle: Cycle<'_> = fire.storage.contract::<Cycle<'_>>();
+        assert_eq!(
+            cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
+            anchor_ts,
+            "the failed trigger must remain due for retry"
+        );
+        assert_eq!(cycle.active_utc_day.read().unwrap(), 20_240_101);
+    });
+
+    storage.enable_metadosis_mutation_frames(MetadosisMutationPurposeTag::CycleLifecycle, 4);
+    storage.enter(|handle| {
+        let retry = BlockRuntimeContext::new(block_ctx(2, fire_ts), handle);
+        dispatch_triggers(&retry).unwrap();
+
+        let rewards = retry
+            .storage
+            .contract::<outbe_rewards::schema::Rewards<'_>>();
+        assert!(rewards.daily_topup_prepared.read(&20_240_101).unwrap());
+        assert!(!rewards.daily_topup_settled.read(&20_240_101).unwrap());
+        assert!(rewards.daily_settled.read(&20_240_101).unwrap());
+        assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 0);
+        assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 1);
+        let receipt = outbe_metadosis::api::day_limit_formation_receipt(
+            retry.storage.clone(),
+            outbe_common::WorldwideDay::new(20_240_101),
+        )
+        .unwrap()
+        .unwrap();
+
+        let allocations = outbe_emissionlimit::allocation::allocate_emission(
+            outbe_emissionlimit::day_emission::day_emission_limit(0),
+        )
+        .unwrap();
+        let amount_for = |id| {
+            allocations
+                .iter()
+                .find(|allocation| allocation.id == id)
+                .unwrap()
+                .amount
+        };
+        let validator_amount =
+            amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Validator);
+        let expected_gem_load = validator_amount / U256::from(voters.len());
+        let distributed = expected_gem_load * U256::from(voters.len());
+        let validator_residue = validator_amount.checked_sub(distributed).unwrap();
+        let expected_terminal =
+            amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Metadosis)
+                .checked_add(amount_for(
+                    outbe_emissionlimit::allocation::EmissionSinkId::Waa,
+                ))
+                .and_then(|amount| {
+                    amount.checked_add(amount_for(
+                        outbe_emissionlimit::allocation::EmissionSinkId::Sra,
+                    ))
+                })
+                .and_then(|amount| amount.checked_add(validator_residue))
+                .unwrap();
+        let outbe_metadosis::DayLimitFormationReceipt::Formed(formed) = receipt;
+        assert_eq!(formed.base_limit, expected_terminal);
+        assert_eq!(
+            retry
+                .storage
+                .balance(outbe_primitives::addresses::CCA_ADDRESS)
+                .unwrap(),
+            amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Cca),
+            "retry must credit CCA exactly once"
+        );
+        let gem = outbe_gem::GemContract::new(retry.storage.clone());
+        for voter in voters {
+            assert_eq!(
+                gem.balance_of(voter).unwrap(),
+                0,
+                "Cycle retry prepares exactly once; delivery owns Gem creation"
+            );
+        }
+        assert_eq!(
+            rewards
+                .reward_gem_planned_load_amount
+                .read(&20_240_101)
+                .unwrap(),
+            expected_gem_load * U256::from(voters.len())
+        );
+        let cycle: Cycle<'_> = retry.storage.contract::<Cycle<'_>>();
+        assert_eq!(
+            cycle.last_executed_at.read(&EMISSION_LIMIT_1_ID).unwrap(),
+            GENESIS_TS + SECONDS_PER_DAY
+        );
+    });
+}
+
+#[test]
+fn open_day_preserves_an_already_delivered_validator_batch_without_reminting() {
+    let mut storage = cycle_storage();
+    storage.enter(|handle| {
+        let anchor = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle.clone());
+        anchor_genesis(&anchor);
+        let ctx = BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
+
+        let voter = Address::repeat_byte(0x41);
+        seed_fresh_reward_oracle(&ctx);
+        seed_daily_voters(&ctx, 20_240_101, &[(voter, 1)]);
+
+        let validator_amount = outbe_emissionlimit::allocation::allocate_emission(
+            outbe_emissionlimit::day_emission::day_emission_limit(0),
+        )
+        .unwrap()
+        .into_iter()
+        .find(|allocation| {
+            allocation.id == outbe_emissionlimit::allocation::EmissionSinkId::Validator
+        })
+        .unwrap()
+        .amount;
+        let outcome = outbe_rewards::api::prepare_daily_validator_gem_batch(
+            &ctx,
+            20_240_101,
+            validator_amount,
+            &[(voter, 1)],
+        )
+        .unwrap();
+        assert!(matches!(
+            outcome,
+            outbe_rewards::api::RewardGemPreparationOutcome::Prepared(_)
+        ));
+        outbe_rewards::api::deliver_oldest_reward_gem_batch(&ctx).unwrap();
+
+        let gem = outbe_gem::GemContract::new(ctx.storage.clone());
+        assert_eq!(gem.balance_of(voter).unwrap(), 1);
+        let gem_id = gem.token_of_owner_by_index(voter, 0).unwrap();
+        let load_before = outbe_gem::api::get_gem(&ctx.storage, gem_id)
+            .unwrap()
+            .unwrap()
+            .gem_load_minor;
+
+        let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
+        run_emission_limit_daily(&ctx).unwrap();
+
+        assert_eq!(gem.balance_of(voter).unwrap(), 1, "top-up must not remint");
+        assert_eq!(
+            outbe_gem::api::get_gem(&ctx.storage, gem_id)
+                .unwrap()
+                .unwrap()
+                .gem_load_minor,
+            load_before,
+            "the prior Gem must remain unchanged"
+        );
+        assert!(rewards.daily_settled.read(&20_240_101).unwrap());
+        let receipt = outbe_metadosis::api::day_limit_formation_receipt(
+            ctx.storage.clone(),
+            outbe_common::WorldwideDay::new(20_240_101),
+        )
+        .unwrap()
+        .unwrap();
+        let allocations = outbe_emissionlimit::allocation::allocate_emission(
+            outbe_emissionlimit::day_emission::day_emission_limit(0),
+        )
+        .unwrap();
+        let amount_for = |id| {
+            allocations
+                .iter()
+                .find(|allocation| allocation.id == id)
+                .unwrap()
+                .amount
+        };
+        let expected_terminal =
+            amount_for(outbe_emissionlimit::allocation::EmissionSinkId::Metadosis)
+                .checked_add(amount_for(
+                    outbe_emissionlimit::allocation::EmissionSinkId::Waa,
+                ))
+                .and_then(|amount| {
+                    amount.checked_add(amount_for(
+                        outbe_emissionlimit::allocation::EmissionSinkId::Sra,
+                    ))
+                })
+                .unwrap();
+        let outbe_metadosis::DayLimitFormationReceipt::Formed(formed) = receipt;
+        assert_eq!(
+            formed.base_limit, expected_terminal,
+            "AlreadySettled must contribute no second validator top-up to the terminal sink"
+        );
     });
 }
 

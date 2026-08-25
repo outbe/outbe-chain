@@ -23,6 +23,21 @@ pub(crate) const NOD_FACTORY_ADDR: Address = address!("0x00000000000000000000000
 /// Confidential Gratis ledger (`opNonceOf`).
 #[cfg(feature = "ocomp-integration")]
 pub(crate) const GRATIS_ADDR: Address = address!("0x0000000000000000000000000000000000001003");
+#[cfg(feature = "ocomp-integration")]
+pub(crate) const GRATIS_FACTORY_ADDR: Address =
+    address!("0x0000000000000000000000000000000000002003");
+#[cfg(feature = "ocomp-integration")]
+pub(crate) const PROMIS_ADDR: Address = address!("0x0000000000000000000000000000000000001337");
+#[cfg(feature = "ocomp-integration")]
+pub(crate) const PROMIS_FACTORY_ADDR: Address =
+    address!("0x0000000000000000000000000000000000002337");
+#[cfg(feature = "ocomp-integration")]
+pub(crate) const GEM_ADDR: Address = address!("0x0000000000000000000000000000000000001013");
+#[cfg(feature = "ocomp-integration")]
+pub(crate) const GEM_FACTORY_ADDR: Address = address!("0x0000000000000000000000000000000000002013");
+#[cfg(feature = "ocomp-integration")]
+pub(crate) const VAULT_ROUTER_ADDR: Address =
+    address!("0x0000000000000000000000000000000000001017");
 /// Metadosis worldwide-day registry (`getWorldwideDay(uint32)`).
 pub(crate) const WWD_ADDR: Address = address!("0x000000000000000000000000000000000000100E");
 /// PromiseLimit carry-over ledger (`totalUnallocated()`).

@@ -4,7 +4,7 @@ pragma solidity ^0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {IERC7802} from "@openzeppelin/contracts/interfaces/draft-IERC7802.sol";
 
-import {ConfigurableERC7802} from "../../src/ConfigurableERC7802.sol";
+import {BridgeableERC20} from "../../src/synthetic/BridgeableERC20.sol";
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 import {IReferenceCurrency} from "../../src/interfaces/IReferenceCurrency.sol";
 import {BridgeableERC20Stable} from "../../src/synthetic/BridgeableERC20Stable.sol";
@@ -63,7 +63,7 @@ contract BridgeableERC20StableTest is Test {
         );
 
         vm.expectEmit(true, true, false, true);
-        emit ConfigurableERC7802.TokenBridgeUpdated(address(tokenBridge), address(nextBridge));
+        emit BridgeableERC20.TokenBridgeUpdated(address(tokenBridge), address(nextBridge));
         token.setTokenBridge(address(nextBridge));
         assertEq(token.tokenBridge(), address(nextBridge));
     }
@@ -78,9 +78,7 @@ contract BridgeableERC20StableTest is Test {
         token.setTokenBridge(address(nextBridge));
 
         vm.prank(address(tokenBridge));
-        vm.expectRevert(
-            abi.encodeWithSelector(ConfigurableERC7802.UnauthorizedTokenBridge.selector, address(tokenBridge))
-        );
+        vm.expectRevert(abi.encodeWithSelector(BridgeableERC20.UnauthorizedTokenBridge.selector, address(tokenBridge)));
         token.crosschainMint(alice, 100);
 
         vm.prank(address(nextBridge));
@@ -91,7 +89,7 @@ contract BridgeableERC20StableTest is Test {
     function test_CrosschainMintAndBurn_OnlyTokenBridge() public {
         address alice = makeAddr("alice");
 
-        vm.expectRevert(abi.encodeWithSelector(ConfigurableERC7802.UnauthorizedTokenBridge.selector, address(this)));
+        vm.expectRevert(abi.encodeWithSelector(BridgeableERC20.UnauthorizedTokenBridge.selector, address(this)));
         token.crosschainMint(alice, 100);
 
         token.setTokenBridge(address(tokenBridge));

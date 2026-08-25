@@ -42,6 +42,9 @@
   "max_validators": 128,
   "reregistration_cooldown_blocks": 151200
  },
+ "radicle_registry": {
+  "max_repositories": -1
+ },
  "staking": {
   "min_stake": "1000000000",
   "genesis_validator_stake": "100000000000",

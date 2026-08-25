@@ -8,6 +8,9 @@ import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 /// @dev MARK_CALLED and MARK_QUALIFIED carry one day's series in one reference currency, so both
 ///      round-trip a batch and both refuse an empty or over-sized one.
 contract BridgeMsgCodecMarkBatchTest is Test {
+    /// @dev Fixed call stamp; these tests exercise the wire, not the clock.
+    uint32 internal constant CALLED_AT = 1_777_000_000;
+
     uint32 internal constant WORLDWIDE_DAY = 20260212;
     bytes14 internal constant FIRST = "20260212-USD-U";
     bytes14 internal constant SECOND = "20260212-EUR-U";
@@ -15,7 +18,7 @@ contract BridgeMsgCodecMarkBatchTest is Test {
     function exposedDecodeMarkCalled(bytes calldata p)
         external
         pure
-        returns (uint32 worldwideDay, bytes14[] memory seriesIds)
+        returns (uint32 worldwideDay, uint32 calledAt, bytes14[] memory seriesIds)
     {
         return BridgeMsgCodec.decodeMarkCalled(p);
     }
@@ -29,7 +32,7 @@ contract BridgeMsgCodecMarkBatchTest is Test {
     }
 
     function exposedEncodeMarkCalled(uint32 day, bytes14[] calldata ids) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeMarkCalled(day, ids);
+        return BridgeMsgCodec.encodeMarkCalled(day, CALLED_AT, ids);
     }
 
     function exposedEncodeMarkQualified(uint32 day, bytes14[] calldata ids) external pure returns (bytes memory) {
@@ -37,9 +40,9 @@ contract BridgeMsgCodecMarkBatchTest is Test {
     }
 
     function test_markCalledRoundTripsTheWholeBatch() public view {
-        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, MarkBatchLib.two(FIRST, SECOND));
+        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, CALLED_AT, MarkBatchLib.two(FIRST, SECOND));
 
-        (uint32 day, bytes14[] memory ids) = this.exposedDecodeMarkCalled(packet);
+        (uint32 day,, bytes14[] memory ids) = this.exposedDecodeMarkCalled(packet);
 
         assertEq(day, WORLDWIDE_DAY, "worldwideDay survives");
         assertEq(ids.length, 2, "both series survive");
@@ -60,7 +63,8 @@ contract BridgeMsgCodecMarkBatchTest is Test {
         uint256 max = BridgeMsgCodec.MAX_SERIES_PER_MARK;
         bytes14[] memory batch = MarkBatchLib.sized(FIRST, max);
 
-        (, bytes14[] memory ids) = this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, batch));
+        (,, bytes14[] memory ids) =
+            this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, CALLED_AT, batch));
 
         assertEq(ids.length, max, "the cap round-trips");
         for (uint256 i = 0; i < max; ++i) {
@@ -71,7 +75,7 @@ contract BridgeMsgCodecMarkBatchTest is Test {
     }
 
     function test_theHeaderNamesTheMessageType() public view {
-        bytes memory called = BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, MarkBatchLib.one(FIRST));
+        bytes memory called = BridgeMsgCodec.encodeMarkCalled(WORLDWIDE_DAY, CALLED_AT, MarkBatchLib.one(FIRST));
         bytes memory qualified = BridgeMsgCodec.encodeMarkQualified(WORLDWIDE_DAY, MarkBatchLib.one(FIRST));
 
         assertEq(uint8(called[0]), BridgeMsgCodec.BODY_VERSION_V1, "called version");

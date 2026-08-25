@@ -35,7 +35,7 @@ fn fresh_stablecoin_localnet(world: &mut World, window: u64) {
 /// changes only the generated E2E genesis, never the production seed defaults.
 #[given(expr = "a fresh lifecycle localnet with a {int}-block voting window")]
 fn fresh_lifecycle_localnet(world: &mut World, window: u64) {
-    boot_localnet(
+    boot_bounded_tribute_localnet(
         world,
         window,
         &[
@@ -46,6 +46,22 @@ fn fresh_lifecycle_localnet(world: &mut World, window: u64) {
             ("TESTNET_DKG_ACTIVATION_GRACE_BLOCKS", "120".to_string()),
         ],
     );
+}
+
+/// Prepare the existing bounded Oracle/Metadosis OFFERING fixture before node
+/// startup, then preserve any scenario-specific genesis tuning.
+pub(crate) fn boot_bounded_tribute_localnet(
+    world: &mut World,
+    window: u64,
+    tuning: &[(&str, String)],
+) {
+    bootstrap_localnet(world, window, tuning);
+    let worldwide_day = world
+        .ocomp
+        .prepare_cross_currency_tribute_fixture()
+        .expect("prepare bounded Tribute OFFERING fixture before node start");
+    world.state.wwd = Some(worldwide_day.to_string());
+    start_bootstrapped_localnet(world, &StartOpts::with_voting_window(window));
 }
 
 /// Shared localnet setup used by every flow: cleanup, bootstrap N (with optional

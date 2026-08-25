@@ -96,7 +96,7 @@ fn seed_oracle_for_pre_exec(storage: StorageHandle) {
 fn seed_compressed_entities_genesis(storage: StorageHandle) {
     let root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
     storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
         .unwrap();
     storage
         .sstore(

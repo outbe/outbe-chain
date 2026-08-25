@@ -27,29 +27,33 @@ Consensus state stores the expected current commitment for each complete body. A
 
 ## Decision
 
-### Canonical 36-byte entity identity and namespace
+### Canonical 32-byte entity identity and namespace
 
-The logical address of a body is its domain-owned typed collection plus one exact 36-byte ID:
+The logical address of a body is its domain-owned typed collection plus one exact 32-byte ID:
 
 ```text
-entity_id_36 = worldwide_day_be4 || digest_be32
+wwd_entity_id = worldwide_day_be4 || digest_tail_be28
 ```
 
-`worldwide_day_be4` is the existing `WorldwideDay`/`u32` encoded unsigned big-endian and is the future `partition_id`. Narrowing it to `u16`/BE2 is forbidden. `digest_be32` is never truncated.
+`worldwide_day_be4` is the existing `WorldwideDay`/`u32` encoded unsigned big-endian and is the future `partition_id`. Narrowing it to `u16`/BE2 is forbidden. `digest_tail_be28` is the digest's **last 28 bytes**; its leading four bytes are discarded to make room for the day prefix, which is what keeps the whole identity inside one 32-byte word.
 
 The three typed identities are:
 
-- Tribute: `tribute_id = worldwide_day_be4 || tribute_poseidon_digest_be32`;
-- Nod item: `nod_id = worldwide_day_be4 || nod_poseidon_digest_be32`;
-- Nod bucket: `bucket_id = worldwide_day_be4 || bucket_key_be32`.
+- Tribute: `tribute_id = worldwide_day_be4 || tribute_poseidon_digest_tail_be28`;
+- Nod item: `nod_id = worldwide_day_be4 || nod_poseidon_digest_tail_be28`;
+- Nod bucket: `bucket_id = worldwide_day_be4 || bucket_key_tail_be28`.
 
-Tribute and Nod item creation derive the full 32-byte canonical Poseidon-BN254 digest from the domain's deterministic owner/WWD recipe, then prefix the same WWD. The existing Tribute digest recipe remains `Poseidon(owner_as_canonical_Fr, worldwide_day_as_Fr)`; Nod moves from its old Keccak ID recipe to the same full-width Poseidon input recipe in its own typed collection. Collection/domain separation is external, so equal digest bytes across collections are not an identity collision. Nod bucket `bucket_key_be32` remains its domain-derived 32-byte bucket digest and is prefixed by the bucket WWD for the canonical bucket ID.
+Tribute and Nod item creation derive the full 32-byte canonical Poseidon-BN254 digest from the domain's deterministic owner/WWD recipe, keep its last 28 bytes, and prefix the same WWD. A caller that must check the whole digest — verifying an enclave-returned token id, for one — takes it from `derive_poseidon_digest` and not from the identity, which no longer carries it. The existing Tribute digest recipe remains `Poseidon(owner_as_canonical_Fr, worldwide_day_as_Fr)`; Nod moves from its old Keccak ID recipe to the same full-width Poseidon input recipe in its own typed collection. Collection/domain separation is external, so equal digest bytes across collections are not an identity collision. Nod bucket `bucket_key` remains its domain-derived 32-byte bucket digest; the canonical bucket ID prefixes the bucket WWD to that key's last 28 bytes. The key is therefore not recoverable from the identity and must be read from the bucket body.
 
-The collection/domain namespace is not duplicated inside the 36 bytes. There is no additional `BodyKind`: equal 36-byte values in different typed collections remain different logical entities.
+The collection/domain namespace is not duplicated inside the 32 bytes. There is no additional `BodyKind`: equal 32-byte values in different typed collections remain different logical entities.
 
-Runtime code uses a fixed Rust newtype over `[u8; 36]`. The reset changes `TributeData.token_id: U256` into `tribute_id: EntityId36` and changes `NodItemState.nod_id: U256` into `nod_id: EntityId36`; active APIs do not keep parallel old/new ID fields. Solidity ABI boundaries use `bytes` and reject any length other than 36 before state access, allocation-dependent work, or hashing. There is no `uint256` surrogate ID, compatibility overload, or legacy fallback. Tribute/Nod methods and list results therefore use custom bytes IDs rather than claiming ERC-721 `uint256 tokenId` compatibility.
+Runtime code uses `WwdEntityId`, a `wrap_fixed_bytes!` newtype over `[u8; 32]` living in `outbe-primitives` beside `AddressPair`. `TributeData.tribute_id` and `NodItemState.nod_id` both carry it; active APIs do not keep parallel old/new ID fields.
 
-MongoDB primary keys use the exact lowercase hexadecimal encoding of the 36-byte ID. Repository point keys, list records, and pagination cursors use the same fixed ID. The payload's WWD must equal `entity_id_36[0..4]`; Tribute/Nod payload IDs must equal the complete 36 bytes, and a Nod bucket payload must reproduce `WWD || bucket_key`. WWD is immutable because it is part of identity: an update cannot move an existing entity between partitions.
+Solidity ABI boundaries carry the identity as `uint256`, big-endian, so `uint256(id) >> 224` is the WorldwideDay and ordering by the word orders by day and then by digest tail. A `uint256` is fixed-width, so there is no length to validate: the pre-decode `bytes`-length guards that the 36-byte encoding required are gone, and decoding an identity from calldata or an event is infallible. Because the identity is exactly one word it is also `Storable`, so it can be a stored value and not only a mapping key.
+
+Collision margin: the digest tail is 224 bits over a deterministic `(owner, worldwide_day)` input, so a collision needs two distinct owner/day pairs to collide — a birthday bound of 2^112, down from 2^128.
+
+MongoDB primary keys use the exact lowercase hexadecimal encoding of the 32-byte ID (64 characters). Repository point keys, list records, and pagination cursors use the same fixed ID. The payload's WWD must equal `wwd_entity_id[0..4]`; Tribute/Nod payload IDs must equal the complete 32 bytes, and a Nod bucket payload's `bucket_key` must re-derive its identity as `WWD || bucket_key[4..]`. WWD is immutable because it is part of identity: an update cannot move an existing entity between partitions.
 
 ### Append-only canonical Protobuf with per-body schema version
 
@@ -70,7 +74,7 @@ The v1 typed payloads are:
 
 ```protobuf
 message TributeBody {
-  bytes tribute_id = 1;                  // exact EntityId36
+  bytes tribute_id = 1;                  // exact WwdEntityId (32 bytes)
   bytes owner = 2;                       // Address, 20 bytes
   uint32 worldwide_day = 3;
   bytes issuance_amount_minor = 4;       // U256 BE32
@@ -82,7 +86,7 @@ message TributeBody {
 }
 
 message NodItemBody {
-  bytes nod_id = 1;                      // exact EntityId36
+  bytes nod_id = 1;                      // exact WwdEntityId (32 bytes)
   bytes owner = 2;                       // Address, 20 bytes
   bytes gratis_load_minor = 3;           // U256 BE32
   uint32 worldwide_day = 4;
@@ -168,7 +172,7 @@ result  = P(TAG_BYTES_FINAL;  object_tag, byte_len, n, s_n)
 For a typed-collection body:
 
 ```text
-identity_bytes = entity_id_36
+identity_bytes = wwd_entity_id
 identity_f     = PBytes(TAG_ID, identity_bytes)
 body_f         = PBytes(TAG_BODY, canonical_payload_bytes)
 
@@ -186,7 +190,7 @@ commitment = BE32(leaf_f)
 
 `commitment_scheme_version = 1` is fork-global: exactly one commitment scheme is active for every current body at a given height. It is therefore carried in public mutation events for independent replay but is not duplicated in each `StoredBody` or direct-map entry. An event declaring anything other than the fork-active scheme is invalid.
 
-Commitment schemes do not coexist. ADR-006 through ADR-010 are implemented without intermediate testnet activation, so their direct-map/unsharded/sharded milestones do not consume versions: the first deployed complete collection/Root Catalog construction is commitment scheme 1. Only a semantic change after that first activation increases `commitment_scheme_version` and requires fork-governed migration/reset/recommit (or a later ADR adding coexistence metadata); an operator cannot switch it locally. `schema_version` is taken from the canonical `StoredBody` envelope. The typed collection/domain is the external commitment namespace and is not duplicated in the 36-byte identity or leaf preimage.
+Commitment schemes do not coexist. ADR-006 through ADR-010 are implemented without intermediate testnet activation, so their direct-map/unsharded/sharded milestones do not consume versions: the first deployed complete collection/Root Catalog construction is commitment scheme 1. Only a semantic change after that first activation increases `commitment_scheme_version` and requires fork-governed migration/reset/recommit (or a later ADR adding coexistence metadata); an operator cannot switch it locally. `schema_version` is taken from the canonical `StoredBody` envelope. The typed collection/domain is the external commitment namespace and is not duplicated in the 32-byte identity or leaf preimage.
 
 The output must be a canonical BN254 field element. Zero is the unique absent/delete sentinel. A computed zero for a present body is never interpreted as absence: creation/update fails closed before state mutation or event emission. A schema version may select a different registered body-to-commitment recipe within the active scheme. After the first scheme-1 activation, any authenticated-tree semantic change listed above requires a new `commitment_scheme_version`; pre-activation implementation milestones do not. Local MDBX schema/vendor metadata does not version network roots.
 
@@ -195,18 +199,18 @@ The output must be a canonical BN254 field element. Zero is the unique absent/de
 ADR-006 does not build an SMT. The current commitment authority is three distinct typed EVM mappings:
 
 ```text
-identity_f = PBytes(TAG_ID, entity_id_36)
+identity_f = PBytes(TAG_ID, wwd_entity_id)
 
 Tribute commitment[identity_f]    -> leaf commitment
 Nod item commitment[identity_f]   -> leaf commitment
 Nod bucket commitment[identity_f] -> leaf commitment
 ```
 
-The mappings are distinct collection/domain namespaces. Every point API already receives the complete 36-byte ID, so it can derive `identity_f`, extract WWD, and authenticate absence before reading MongoDB.
+The mappings are distinct collection/domain namespaces. Every point API already receives the complete 32-byte ID, so it can derive `identity_f`, extract WWD, and authenticate absence before reading MongoDB.
 
 A zero mapping value is canonical absence. A non-zero value requires a matching MongoDB body:
 
-1. validate the exact 36-byte requested ID and derive `identity_f`;
+1. validate the exact 32-byte requested ID and derive `identity_f`;
 2. read the typed EVM commitment by `identity_f`;
 3. zero returns the normal canonical `NotFound` result without trusting a stale Mongo row;
 4. non-zero requires the repository to return a body rather than `None`;
@@ -226,7 +230,7 @@ Stored events carry the complete transition inputs, conceptually:
 
 ```solidity
 event TributeBodyStored(
-    bytes tributeId, // exact EntityId36
+    uint256 tributeId, // exact WwdEntityId
     uint32 commitmentSchemeVersion,
     uint32 schemaVersion,
     bytes32 previousCommitment,
@@ -235,7 +239,7 @@ event TributeBodyStored(
 );
 
 event NodBodyStored(
-    bytes nodId, // exact EntityId36
+    uint256 nodId, // exact WwdEntityId
     uint32 commitmentSchemeVersion,
     uint32 schemaVersion,
     bytes32 previousCommitment,
@@ -244,7 +248,7 @@ event NodBodyStored(
 );
 
 event NodBucketBodyStored(
-    bytes bucketId, // exact EntityId36
+    bytes bucketId, // exact WwdEntityId
     uint32 commitmentSchemeVersion,
     uint32 schemaVersion,
     bytes32 previousCommitment,
@@ -257,17 +261,17 @@ Delete events carry the complete identity and prior leaf:
 
 ```solidity
 event TributeBodyDeleted(
-    bytes tributeId, // exact EntityId36
+    uint256 tributeId, // exact WwdEntityId
     bytes32 previousCommitment
 );
 
 event NodBodyDeleted(
-    bytes nodId, // exact EntityId36
+    uint256 nodId, // exact WwdEntityId
     bytes32 previousCommitment
 );
 
 event NodBucketBodyDeleted(
-    bytes bucketId, // exact EntityId36
+    bytes bucketId, // exact WwdEntityId
     bytes32 previousCommitment
 );
 ```
@@ -279,7 +283,7 @@ For Stored, zero `previousCommitment` means mint and non-zero means update. `new
 Execution and an independent observer can verify the complete transition:
 
 1. derive the typed collection from emitter and signature;
-2. validate the exact 36-byte event ID and derive `identity_f`;
+2. validate the exact 32-byte event ID and derive `identity_f`;
 3. select the declared commitment/body schema rules;
 4. strict-decode, validate, and canonical re-encode the payload;
 5. require embedded ID/WWD equality with the event ID and its prefix;
@@ -299,7 +303,7 @@ Until a later SMT/header root, an observer verifies the finalized event replay a
 
 ADR-006 authenticates point bodies. A direct point lookup first reads the EVM commitment; zero is canonical absence, while non-zero requires an available matching MongoDB body.
 
-For a MongoDB owner/day/global page, every returned 36-byte ID/body is subjected to the same point commitment verification before use. Dangling indexes, zero commitments for returned IDs, identity/version/canonicalization mismatches, duplicates, malformed ordering, and missing bodies fail explicitly.
+For a MongoDB owner/day/global page, every returned 32-byte ID/body is subjected to the same point commitment verification before use. Dangling indexes, zero commitments for returned IDs, identity/version/canonicalization mismatches, duplicates, malformed ordering, and missing bodies fail explicitly.
 
 ADR-006 does not authenticate secondary-index completeness, omitted IDs, or page continuation. That limitation already belongs to the ADR-005 testnet trust model and is not solved or redesigned here. An authenticated entity SMT alone will not prove a secondary list complete; any production completeness claim requires a separate authenticated-index design.
 
@@ -364,7 +368,7 @@ After implementation:
 - Three domain mappings temporarily duplicate the eventual authenticated-tree responsibility.
 - Protobuf becomes a consensus codec and requires pinned generation, strict-profile enforcement, and golden vectors.
 - Full payload bytes plus previous/new commitments increase receipt size.
-- Tribute/Nod use custom 36-byte `bytes` IDs and no longer claim ERC-721 `uint256 tokenId` compatibility.
+- Tribute/Nod use custom 32-byte `bytes` IDs and no longer claim ERC-721 `uint256 tokenId` compatibility.
 - Adding a committed field requires a new per-body schema version and coordinated fork-active validation rules.
 - Verified list members do not imply a complete list.
 
@@ -406,7 +410,7 @@ For every v1 body type:
 
 - publish normative `.proto`, payload, and `StoredBody` golden bytes;
 - cover zero/minimum and maximum integer values, zero/non-zero addresses and IDs, and both boolean values;
-- assert exact EntityId36/20-byte/32-byte length, ID-prefix/WWD equality, and `u16` range validation;
+- assert exact WwdEntityId/20-byte/32-byte length, ID-prefix/WWD equality, and `u16` range validation;
 - reject unknown fields for the declared version, duplicate singular fields, out-of-order fields, non-minimal varints, explicit non-optional defaults, malformed lengths, empty payloads, and schema version zero;
 - prove decode -> validate -> canonical re-encode byte equality;
 - reserve removed field numbers and test append-only schema fixtures when the first extension is introduced.
@@ -417,7 +421,7 @@ Publish cross-implementation golden vectors for:
 
 - every CES1 tag used by ADR-006;
 - `PBytes` for empty, 1, 30, 31, 32, 61, and 62-byte inputs;
-- all three 36-byte identity forms;
+- all three 32-byte identity forms;
 - all three v1 body payloads and final leaves;
 - different schema versions plus rejection of a non-fork-active commitment-scheme version;
 - one-bit changes in identity and payload;
@@ -430,7 +434,7 @@ Vectors must agree with the pinned `outbe-poseidon` implementation and an indepe
 
 For Tribute, Nod item, and Nod bucket independently:
 
-- the exact 36-byte ID derives `identity_f` and selects the typed mapping entry;
+- the exact 32-byte ID derives `identity_f` and selects the typed mapping entry;
 - mint requires zero and stores the emitted non-zero leaf;
 - update requires/records the prior leaf, preserves the ID/WWD partition, and replaces it;
 - delete records the prior leaf and clears to zero;
@@ -445,7 +449,7 @@ For Tribute, Nod item, and Nod bucket independently:
 
 Verify for every Stored/Delete event:
 
-- exact emitter/signature and raw EntityId36 event data;
+- exact emitter/signature and raw WwdEntityId event data;
 - declared versions are fork-supported;
 - canonical payload re-encoding and embedded ID/WWD-prefix equality;
 - recomputed new leaf equals `newCommitment`;

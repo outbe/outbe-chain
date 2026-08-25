@@ -13,7 +13,7 @@ use outbe_primitives::time::{date_key_to_utc_timestamp, previous_date_key, times
 
 use crate::called;
 use crate::constants::{
-    CALL_RATE, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE, MAX_RECIPIENTS_PER_MESSAGE,
+    CALL_RATE, CALL_THRESHOLD, CALL_WINDOW, FLOOR_RATE, MAX_RECIPIENTS_PER_ISSUANCE,
     MAX_SERIES_PER_MESSAGE, QUALIFICATION_PERIOD,
 };
 use crate::precompile::{self, IIntexFactory};
@@ -143,4 +143,8 @@ fn write_rate(oracle: &OracleContract, iso_code: u16, pair_id: u32, rate: U256) 
     let pair = outbe_oracle::api::AddressPair::new_coen_to(iso_code);
     oracle.pair_to_index.write(&pair, pair_id).unwrap();
     oracle.exchange_rate.write(&pair_id, rate).unwrap();
+    oracle
+        .exchange_rate_timestamp
+        .write(&pair_id, ISSUED_AT as u64)
+        .unwrap();
 }

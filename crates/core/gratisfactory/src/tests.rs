@@ -105,8 +105,8 @@ fn seed_oracle(storage: StorageHandle<'_>, rate: U256) {
         Address::ZERO,
         outbe_oracle::api::DAY_TYPE_PAIR,
         rate,
-        0,
-        0,
+        1,
+        CREATED_AT,
     )
     .unwrap();
 }
@@ -259,6 +259,49 @@ fn pledge_debits_the_oracle_derived_gratis_and_parks_it_in_the_ticket() {
         assert_eq!(
             outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
             pledge_cost()
+        );
+    });
+}
+
+#[test]
+fn pledge_rejects_a_stale_oracle_rate_without_debiting_gratis() {
+    with_env(|storage| {
+        let seed = pledge_cost() * U256::from(2u64);
+        outbe_gratis::api::mint(
+            storage.clone(),
+            alice(),
+            seed,
+            auth(GratisOp::Mint, alice(), seed, 0),
+        )
+        .unwrap();
+        seed_fidelity(storage.clone(), alice());
+        outbe_oracle::api::set_exchange_rate(
+            storage.clone(),
+            Address::ZERO,
+            outbe_oracle::api::DAY_TYPE_PAIR,
+            oracle_rate(),
+            1,
+            CREATED_AT - outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS - 1,
+        )
+        .unwrap();
+
+        let error = dispatch(
+            storage.clone(),
+            &pledge_call(
+                auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
+                pledge_stables(),
+                U256::MAX,
+            ),
+            alice(),
+            U256::ZERO,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("stale"), "{error}");
+        assert_eq!(view_balance(&storage, alice()), seed);
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage).unwrap(),
+            U256::ZERO
         );
     });
 }

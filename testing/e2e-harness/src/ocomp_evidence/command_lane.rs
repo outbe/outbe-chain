@@ -22,10 +22,11 @@ use super::{
 };
 
 const COMMAND_RUN_FILE: &str = "command-lane-run-v1.json";
-const REQUIRED_ARTIFACTS: [(&str, &str); 6] = [
+const REQUIRED_ARTIFACTS: [(&str, &str); 7] = [
     ("outbe_chain", "outbe-chain"),
     ("outbe_cli", "outbe-cli"),
     ("outbe_e2e", "outbe-e2e"),
+    ("outbe_feeder", "outbe-feeder"),
     ("outbe_keygen", "outbe-keygen"),
     ("outbe_ocomp", "outbe-ocomp"),
     ("outbe_tee_enclave", "outbe-tee-enclave"),

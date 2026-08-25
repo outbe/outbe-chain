@@ -3,14 +3,14 @@
 //! The current repository remains the execution projection. This module owns
 //! the one additional PoC namespace that preserves exact canonical body bytes
 //! across a partition retirement. Every retained key binds the node-derived
-//! `InputLeaseId`, WWD, complete `EntityId36`, and CES1 body commitment.
+//! `InputLeaseId`, WWD, complete `WwdEntityId`, and CES1 body commitment.
 
 use std::collections::BTreeSet;
 
 use alloy_primitives::B256;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    body_commitment, decode_stored_tribute_v1, EntityId36, StoredBody, ACTIVE_COMMITMENT_SCHEME,
+    body_commitment, decode_stored_tribute_v1, StoredBody, WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
 };
 use outbe_ocomp_protocol::generated_shape::OCOMP_POC_CANDIDATE_LIMITS_V1;
 use outbe_offchain_storage::{
@@ -30,7 +30,7 @@ pub const OCOMP_RETAINED_TRIBUTES_BY_DAY_NAMESPACE: &str = "ocomp_retained_tribu
 
 const JOB_PREFIX_LEN: usize = 32;
 const DAY_PREFIX_LEN: usize = JOB_PREFIX_LEN + 4;
-const ID_PREFIX_LEN: usize = DAY_PREFIX_LEN + EntityId36::LEN;
+const ID_PREFIX_LEN: usize = DAY_PREFIX_LEN + WwdEntityId::len_bytes();
 const RETAINED_KEY_LEN: usize = ID_PREFIX_LEN + 32;
 const RETAINED_RELEASE_PAGE_LIMIT: usize =
     OCOMP_POC_CANDIDATE_LIMITS_V1.max_tributes_per_work_shard as usize;
@@ -45,14 +45,14 @@ pub struct RetainedTributePin {
 /// One authenticated retained-index entry.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct RetainedTributeRef {
-    pub tribute_id: EntityId36,
+    pub tribute_id: WwdEntityId,
     pub body_commitment: B256,
 }
 
 /// Exclusive cursor for the retained day index.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RetainedTributeCursor {
-    pub tribute_id: EntityId36,
+    pub tribute_id: WwdEntityId,
     pub body_commitment: B256,
 }
 
@@ -83,7 +83,7 @@ impl RetainedTributeReader {
     pub fn plan_retain_current(
         &self,
         pin: RetainedTributePin,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     ) -> Result<AtomicWriteBatch, TributeRepositoryError> {
         let current_key = primary_key(tribute_id)?;
         let current = self
@@ -96,7 +96,7 @@ impl RetainedTributeReader {
     pub(crate) fn plan_retain_stored(
         &self,
         pin: RetainedTributePin,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
         stored_body: Value,
     ) -> Result<AtomicWriteBatch, TributeRepositoryError> {
         ensure_pin_day(pin, tribute_id)?;
@@ -167,7 +167,7 @@ impl RetainedTributeReader {
     pub fn get_current_or_retained(
         &self,
         pin: RetainedTributePin,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
         expected_commitment: B256,
     ) -> Result<Option<StoredBody>, TributeRepositoryError> {
         ensure_pin_day(pin, tribute_id)?;
@@ -372,7 +372,7 @@ impl RetainedTributeWriter {
 
 fn ensure_pin_day(
     pin: RetainedTributePin,
-    tribute_id: EntityId36,
+    tribute_id: WwdEntityId,
 ) -> Result<(), TributeRepositoryError> {
     if tribute_id.worldwide_day() != pin.worldwide_day {
         return Err(TributeRepositoryError::RetainedDayMismatch {
@@ -385,7 +385,7 @@ fn ensure_pin_day(
 }
 
 fn commitment_for_stored_bytes(
-    tribute_id: EntityId36,
+    tribute_id: WwdEntityId,
     bytes: &[u8],
 ) -> Result<B256, TributeRepositoryError> {
     let stored = StoredBody::decode(bytes)?;
@@ -415,17 +415,17 @@ fn retained_day_prefix(pin: RetainedTributePin) -> [u8; DAY_PREFIX_LEN] {
 
 fn retained_identity_prefix(
     pin: RetainedTributePin,
-    tribute_id: EntityId36,
+    tribute_id: WwdEntityId,
 ) -> [u8; ID_PREFIX_LEN] {
     let mut bytes = [0_u8; ID_PREFIX_LEN];
     bytes[..DAY_PREFIX_LEN].copy_from_slice(&retained_day_prefix(pin));
-    bytes[DAY_PREFIX_LEN..].copy_from_slice(tribute_id.as_bytes());
+    bytes[DAY_PREFIX_LEN..].copy_from_slice(tribute_id.as_slice());
     bytes
 }
 
 fn retained_key(
     pin: RetainedTributePin,
-    tribute_id: EntityId36,
+    tribute_id: WwdEntityId,
     commitment: B256,
 ) -> Result<Key, TributeRepositoryError> {
     ensure_pin_day(pin, tribute_id)?;
@@ -454,7 +454,7 @@ fn parse_retained_entry(
             index: "OCOMP retained",
         });
     }
-    let tribute_id = EntityId36::try_from(&bytes[DAY_PREFIX_LEN..ID_PREFIX_LEN])?;
+    let tribute_id = WwdEntityId::try_from(&bytes[DAY_PREFIX_LEN..ID_PREFIX_LEN])?;
     ensure_pin_day(pin, tribute_id)?;
     if !index && entry.metadata.is_some() {
         return Err(TributeRepositoryError::RetainedMetadata {
@@ -484,7 +484,7 @@ fn validate_retained_index_record(
     let entry = storage
         .get_record(namespace(OCOMP_RETAINED_TRIBUTES_BY_DAY_NAMESPACE)?, key)?
         .ok_or_else(|| {
-            let tribute_id = EntityId36::try_from(&key.as_bytes()[DAY_PREFIX_LEN..ID_PREFIX_LEN])
+            let tribute_id = WwdEntityId::try_from(&key.as_bytes()[DAY_PREFIX_LEN..ID_PREFIX_LEN])
                 .expect("validated retained key");
             TributeRepositoryError::MissingRetainedIndex {
                 job_id: pin.input_lease_id,

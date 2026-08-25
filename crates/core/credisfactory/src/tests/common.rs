@@ -61,26 +61,20 @@ pub fn policy_rate() -> U256 {
 }
 
 /// COEN/840 rate these tests seed: 2.0 at scale 1e6. This is the entry price of
-/// every position opened here, so floor = 2.16 and call = 2.64.
+/// every position opened here, so call = 3.28.
 pub fn oracle_rate() -> U256 {
     U256::from(2u64) * SCALE_1E6_U256
 }
 
-/// Exactly every position's floor (2.16). The latch test is strict `>`, so a day
-/// at this value must NOT latch.
-pub fn at_floor() -> U256 {
-    U256::from(2_160_000u64)
-}
-
-/// A price above every position's floor (2.16), so the settlement latch trips.
-pub fn above_floor() -> U256 {
+/// A price below every position's call price (3.28), so such a day is not a breach.
+pub fn below_call() -> U256 {
     U256::from(2_200_000u64)
 }
 
-/// Exactly every position's call price (2.64). The breach test is `>=`, so a day
+/// Exactly every position's call price (3.28). The breach test is `>=`, so a day
 /// at this value counts.
 pub fn at_call() -> U256 {
-    U256::from(2_640_000u64)
+    U256::from(3_280_000u64)
 }
 
 /// Credit a pledge asks for: $2.00 in 6-decimal minor units. At [`oracle_rate`] that
@@ -142,7 +136,7 @@ pub fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
     set_coen_rate(&storage, coen_iso_rate);
     let oracle = OracleContract::new(storage);
     oracle
-        .reference_currency_rate
+        .policy_rate
         .write(&ISSUANCE_ISO, policy_rate())
         .unwrap();
 }
@@ -151,13 +145,14 @@ pub fn seed_oracle(storage: StorageHandle<'_>, coen_iso_rate: U256) {
 /// across a floor. Distinct from the finalized daily series ([`set_vwap`]),
 /// which is what the daily scan reads.
 pub fn set_coen_rate(storage: &StorageHandle<'_>, coen_iso_rate: U256) {
+    let timestamp = storage.timestamp().unwrap().to::<u64>();
     outbe_oracle::api::set_exchange_rate(
         storage.clone(),
         Address::ZERO,
         outbe_oracle::api::DAY_TYPE_PAIR,
         coen_iso_rate,
-        0,
-        0,
+        1,
+        timestamp,
     )
     .unwrap();
 }

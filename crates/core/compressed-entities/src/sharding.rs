@@ -121,7 +121,7 @@ mod tests {
     use serde::Deserialize;
 
     use super::*;
-    use crate::{schema::Collection, smt::derive_tree_key, EntityId36, K_PROVISIONAL};
+    use crate::{schema::Collection, smt::derive_tree_key, WwdEntityId, K_PROVISIONAL};
 
     fn key(bytes: [u8; 32]) -> TreeKey {
         TreeKey::from_be_bytes(bytes).unwrap()
@@ -190,8 +190,8 @@ mod tests {
 
     #[test]
     fn real_collection_keys_have_cross_architecture_pinned_shards() {
-        let identity = EntityId36::try_from(
-            hex::decode("00000001000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+        let identity = WwdEntityId::try_from(
+            hex::decode("000000010405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
                 .unwrap()
                 .as_slice(),
         )
@@ -203,7 +203,7 @@ mod tests {
         ]
         .map(|tree_key| shard_index(tree_key, K_PROVISIONAL).unwrap());
 
-        assert_eq!(actual, [1, 1, 10]);
+        assert_eq!(actual, [5, 4, 2]);
     }
 
     #[derive(Deserialize)]
@@ -245,7 +245,7 @@ mod tests {
         }
 
         let identity_bytes = hex::decode(vectors.identity_hex).unwrap();
-        let identity = EntityId36::try_from(identity_bytes.as_slice()).unwrap();
+        let identity = WwdEntityId::try_from(identity_bytes.as_slice()).unwrap();
         for vector in vectors.real {
             let collection = match vector.collection.as_str() {
                 "Tribute" => Collection::Tribute,

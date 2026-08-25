@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::{
     commitment::{field_to_be32, poseidon},
-    pbytes, EntityId36, PartitionRef, TAG_COLLECTION_KEY, TAG_COLLECTION_ROOT, TAG_KEY,
+    pbytes, PartitionRef, WwdEntityId, TAG_COLLECTION_KEY, TAG_COLLECTION_ROOT, TAG_KEY,
     TAG_SEALED_ROOT,
 };
 
@@ -127,7 +127,7 @@ pub enum CollectionError {
 
 pub fn collection_key(
     domain: CeDomain,
-    entity_id: EntityId36,
+    entity_id: WwdEntityId,
 ) -> Result<CollectionKey, CollectionError> {
     let mut input = Vec::with_capacity(11);
     input.extend_from_slice(&domain.id().to_be_bytes());
@@ -135,7 +135,7 @@ pub fn collection_key(
         PartitionPolicy::WwdBe4 => {
             input.push(1);
             input.extend_from_slice(&4_u32.to_be_bytes());
-            input.extend_from_slice(&entity_id.as_bytes()[..4]);
+            input.extend_from_slice(&entity_id.as_slice()[..4]);
         }
         PartitionPolicy::Singleton => {
             input.push(0);
@@ -155,7 +155,7 @@ pub fn partition_collection_key(
             if !day.is_valid() {
                 return Err(CollectionError::InvalidTributeWwd(day.value()));
             }
-            let id = EntityId36::new(day, [0_u8; 32]);
+            let id = WwdEntityId::from_day_and_digest(day, B256::ZERO);
             collection_key(CeDomain::Tribute, id).map(|key| (CeDomain::Tribute, key))
         }
     }
@@ -163,7 +163,7 @@ pub fn partition_collection_key(
 
 pub(crate) fn tree_key_bytes(
     domain: CeDomain,
-    entity_id: EntityId36,
+    entity_id: WwdEntityId,
 ) -> Result<[u8; 32], CollectionError> {
     let collection = collection_key(domain, entity_id)?;
     let identity = crate::identity_field(entity_id)
@@ -211,7 +211,7 @@ pub fn collection_root(
 /// to the collection root committed by the finalized `JobIntent`.
 pub fn tribute_partition_root_from_leaves(
     day: outbe_common::WorldwideDay,
-    leaves: impl IntoIterator<Item = (EntityId36, crate::Commitment)>,
+    leaves: impl IntoIterator<Item = (WwdEntityId, crate::Commitment)>,
 ) -> Result<B256, CollectionError> {
     use crate::{
         schema::Collection,
@@ -315,9 +315,9 @@ impl CeTopologyV1 {
 mod tests {
     use super::*;
 
-    fn identity() -> EntityId36 {
-        EntityId36::try_from(
-            hex::decode("00000001000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+    fn identity() -> WwdEntityId {
+        WwdEntityId::try_from(
+            hex::decode("000000010405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
                 .unwrap()
                 .as_slice(),
         )
@@ -351,9 +351,9 @@ mod tests {
         assert_ne!(keys[0], keys[1]);
         assert_ne!(keys[1], keys[2]);
 
-        let mut next_day = *id.as_bytes();
+        let mut next_day: [u8; 32] = id.into();
         next_day[..4].copy_from_slice(&2_u32.to_be_bytes());
-        let next_day = EntityId36::try_from(next_day.as_slice()).unwrap();
+        let next_day = WwdEntityId::from(next_day);
         assert_ne!(
             collection_key(CeDomain::Tribute, id).unwrap(),
             collection_key(CeDomain::Tribute, next_day).unwrap()

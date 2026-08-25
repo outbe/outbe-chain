@@ -10,7 +10,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, B256};
 use eyre::{eyre, Result, WrapErr};
 
 use crate::internal::config::Config;
@@ -66,6 +66,9 @@ pub struct RegistrationIdentity {
     evm_private_key: String,
     bls_private_key: String,
     bls_public_key: Bytes,
+    radicle_node_id: B256,
+    radicle_secret_key: String,
+    radicle_public_key: String,
     registration_signature: Bytes,
     reth_p2p_secret: String,
 }
@@ -76,20 +79,26 @@ impl fmt::Debug for RegistrationIdentity {
             .debug_struct("RegistrationIdentity")
             .field("address", &self.address)
             .field("bls_public_key", &self.bls_public_key)
+            .field("radicle_node_id", &self.radicle_node_id)
             .field("registration_signature", &self.registration_signature)
             .field("evm_private_key", &"<redacted>")
             .field("bls_private_key", &"<redacted>")
+            .field("radicle_secret_key", &"<redacted>")
             .field("reth_p2p_secret", &"<redacted>")
             .finish()
     }
 }
 
 impl RegistrationIdentity {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         address: Address,
         evm_private_key: String,
         bls_private_key: String,
         bls_public_key: Bytes,
+        radicle_node_id: B256,
+        radicle_secret_key: String,
+        radicle_public_key: String,
         registration_signature: Bytes,
         reth_p2p_secret: String,
     ) -> Self {
@@ -98,6 +107,9 @@ impl RegistrationIdentity {
             evm_private_key,
             bls_private_key,
             bls_public_key,
+            radicle_node_id,
+            radicle_secret_key,
+            radicle_public_key,
             registration_signature,
             reth_p2p_secret,
         }
@@ -115,6 +127,18 @@ impl RegistrationIdentity {
         &self.bls_public_key
     }
 
+    pub fn radicle_node_id(&self) -> B256 {
+        self.radicle_node_id
+    }
+
+    pub(crate) fn radicle_secret_key(&self) -> &str {
+        &self.radicle_secret_key
+    }
+
+    pub(crate) fn radicle_public_key(&self) -> &str {
+        &self.radicle_public_key
+    }
+
     pub fn registration_signature(&self) -> &Bytes {
         &self.registration_signature
     }
@@ -125,6 +149,14 @@ impl RegistrationIdentity {
 
     pub(crate) fn install_at(&self, dir: &Path) -> Result<()> {
         fs::create_dir_all(dir)?;
+        let radicle_keys = dir.join("radicle/keys");
+        fs::create_dir_all(&radicle_keys)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(dir.join("radicle"), fs::Permissions::from_mode(0o700))?;
+            fs::set_permissions(&radicle_keys, fs::Permissions::from_mode(0o700))?;
+        }
         let secrets = [
             (dir.join("signing-key.hex"), self.bls_private_key.as_str()),
             (
@@ -134,6 +166,14 @@ impl RegistrationIdentity {
             (
                 dir.join("reth-p2p-secret.hex"),
                 self.reth_p2p_secret.as_str(),
+            ),
+            (
+                radicle_keys.join("radicle"),
+                self.radicle_secret_key.as_str(),
+            ),
+            (
+                radicle_keys.join("radicle.pub"),
+                self.radicle_public_key.as_str(),
             ),
         ];
         if let Some((path, _)) = secrets.iter().find(|(path, _)| path.exists()) {
@@ -302,6 +342,9 @@ mod tests {
             "0xevm-secret".into(),
             "bls-secret".into(),
             Bytes::from_static(&[1; 48]),
+            B256::repeat_byte(3),
+            "radicle-secret".into(),
+            "radicle-public".into(),
             Bytes::from_static(&[2; 96]),
             "p2p-secret".into(),
         );
@@ -309,6 +352,7 @@ mod tests {
         assert!(debug.contains("<redacted>"));
         assert!(!debug.contains("evm-secret"));
         assert!(!debug.contains("bls-secret"));
+        assert!(!debug.contains("radicle-secret"));
         assert!(!debug.contains("p2p-secret"));
     }
 }

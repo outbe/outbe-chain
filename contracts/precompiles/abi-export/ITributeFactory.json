@@ -67,8 +67,8 @@
     "outputs": [
       {
         "name": "tributeId",
-        "type": "bytes",
-        "internalType": "bytes"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "nonpayable"

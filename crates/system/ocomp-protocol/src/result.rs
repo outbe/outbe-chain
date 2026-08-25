@@ -4,7 +4,6 @@ use alloy_primitives::{Address, B256, U256};
 
 use crate::{
     codec::{require_canonical_reencoding, CanonicalReader, CanonicalWriter},
-    common::EntityId36,
     control::CasObjectRefV1,
     error::ProtocolError,
     hash::hash_framed,
@@ -29,8 +28,8 @@ wire_enum_u8! {
 wire_struct! {
     pub struct NodActionV1 {
         pub raw_ordinal: u32,
-        pub tribute_id: EntityId36,
-        pub nod_id: EntityId36,
+        pub tribute_id: B256,
+        pub nod_id: B256,
         pub owner: Address,
         pub wwd: u32,
         pub league_id: u16,
@@ -79,7 +78,7 @@ wire_struct! {
 wire_struct! {
     pub struct ContributorActionV1 {
         pub owner: Address,
-        pub source_tribute_id: EntityId36,
+        pub source_tribute_id: B256,
         pub nominal_amount_minor: U256,
     }
 }

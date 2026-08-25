@@ -10,28 +10,28 @@ use crate::{
     api::{EntityRef, ExecutionScope},
     collection_key, partition_collection_key,
     schema::{
-        body_identity_record, body_locator, decode_body_identity_record, Collection,
-        CompressedEntitiesSchema, DeltaStatus, IndexRecord, PendingWord, STORAGE_SCHEMA_VERSION,
+        body_locator, Collection, CompressedEntitiesSchema, DeltaStatus, IndexRecord, PendingWord,
+        STORAGE_SCHEMA_VERSION,
     },
-    CeDomain, Commitment, EntityId36, PartitionRef, RetirementOutcome,
+    CeDomain, Commitment, PartitionRef, RetirementOutcome, WwdEntityId,
 };
 
 // Cleanup is prepaid on the first touch. The provider separately meters the
 // transaction's immediate SLOAD/SSTORE work. These reserves cover the later
 // no-refund end-block zeroing only.
 const SSTORE_RESET_GAS: u64 = 5_000;
-pub(crate) const MAX_STORED_BODY_BYTES_V1: usize = 232;
-const BODY_RECORD_BYTES: usize = 38;
-const MAX_INDEX_RECORD_BYTES: usize = 59;
+pub(crate) const MAX_STORED_BODY_BYTES_V1: usize = 228;
+/// The identity is two plain words now (slot 10 and slot 13), not a
+/// dynamic byte record, so cleanup zeroes exactly two slots.
+const BODY_IDENTITY_SLOTS: u64 = 2;
+const MAX_INDEX_RECORD_BYTES: usize = 55;
 
 const fn dynamic_storage_slots(bytes: usize) -> u64 {
     1 + bytes.div_ceil(32) as u64
 }
 
 pub(crate) const FIRST_BODY_TOUCH_CLEANUP_GAS: u64 = SSTORE_RESET_GAS
-    * (1 + dynamic_storage_slots(MAX_STORED_BODY_BYTES_V1)
-        + dynamic_storage_slots(BODY_RECORD_BYTES)
-        + 1);
+    * (1 + dynamic_storage_slots(MAX_STORED_BODY_BYTES_V1) + BODY_IDENTITY_SLOTS + 1);
 pub(crate) const FIRST_INDEX_TOUCH_CLEANUP_GAS: u64 =
     SSTORE_RESET_GAS * (1 + dynamic_storage_slots(MAX_INDEX_RECORD_BYTES) + 1);
 pub(crate) const BODY_TOUCHED_LENGTH_CLEANUP_GAS: u64 = SSTORE_RESET_GAS;
@@ -140,31 +140,31 @@ impl<'storage> State<'storage> {
     pub(crate) fn pending(
         &self,
         collection: Collection,
-        entity_id: EntityId36,
+        entity_id: WwdEntityId,
     ) -> Result<(B256, PendingWord, Vec<u8>)> {
         self.validate_schema_for_read()?;
         let locator = body_locator(collection, entity_id)?;
         let schema = self.schema();
         let pending = PendingWord::decode(schema.pending_word.read(&locator)?)?;
         let body = schema.pending_body.get_bytes(&locator).read()?;
-        let identity_record = schema.body_identity_record.get_bytes(&locator).read()?;
+        let identity_record = self.read_body_identity(locator)?;
 
         match pending {
             PendingWord::Untouched => {
-                if !body.is_empty() || !identity_record.is_empty() {
+                if !body.is_empty() || identity_record.is_some() {
                     return Err(fatal(
                         "untouched compressed-entity locator has residual dynamic state",
                     ));
                 }
             }
             PendingWord::Set(_) => {
-                self.validate_body_record(locator, collection, entity_id, &identity_record)?;
+                self.validate_body_record(locator, collection, entity_id, identity_record)?;
                 if body.is_empty() {
                     return Err(fatal("compressed-entity Set entry has no pending body"));
                 }
             }
             PendingWord::Deleted => {
-                self.validate_body_record(locator, collection, entity_id, &identity_record)?;
+                self.validate_body_record(locator, collection, entity_id, identity_record)?;
                 if !body.is_empty() {
                     return Err(fatal(
                         "compressed-entity Deleted entry retains pending body",
@@ -179,14 +179,17 @@ impl<'storage> State<'storage> {
         &self,
         locator: B256,
         collection: Collection,
-        entity_id: EntityId36,
-        bytes: &[u8],
+        entity_id: WwdEntityId,
+        stored: Option<(Collection, WwdEntityId)>,
     ) -> Result<()> {
-        let (stored_collection, stored_id) = decode_body_identity_record(bytes)?;
+        let Some((stored_collection, stored_id)) = stored else {
+            return Err(fatal(
+                "compressed-entity body identity record/hash mismatch",
+            ));
+        };
         if stored_collection != collection
             || stored_id != entity_id
             || body_locator(stored_collection, stored_id)? != locator
-            || bytes != body_identity_record(collection, entity_id)
         {
             return Err(fatal(
                 "compressed-entity body identity record/hash mismatch",
@@ -195,11 +198,51 @@ impl<'storage> State<'storage> {
         Ok(())
     }
 
+    /// The identity at `locator`, or `None` when the locator is untouched.
+    /// Absence is carried by the collection byte, not by a zero identity:
+    /// `Collection::from_id` rejects 0, and a zero identity is a representable
+    /// value rather than a sentinel.
+    fn read_body_identity(&self, locator: B256) -> Result<Option<(Collection, WwdEntityId)>> {
+        let schema = self.schema();
+        let collection_id = schema.body_identity_collection.read(&locator)?;
+        if collection_id == 0 {
+            return Ok(None);
+        }
+        let collection = Collection::from_id(collection_id)?;
+        Ok(Some((collection, schema.body_identity.read(&locator)?)))
+    }
+
+    /// Writes both words. A half-written pair decodes as a different identity
+    /// rather than a missing one, so callers holding a checkpoint must keep
+    /// this inside it.
+    fn write_body_identity(
+        &self,
+        locator: B256,
+        collection: Collection,
+        entity_id: WwdEntityId,
+    ) -> Result<()> {
+        let schema = self.schema();
+        schema.body_identity.write(&locator, entity_id)?;
+        schema
+            .body_identity_collection
+            .write(&locator, collection.id())
+    }
+
+    fn clear_body_identity(&self, locator: B256) -> Result<()> {
+        let schema = self.schema();
+        schema.body_identity.write(&locator, WwdEntityId::ZERO)?;
+        schema.body_identity_collection.write(&locator, 0)
+    }
+
+    fn has_body_identity(&self, locator: B256) -> Result<bool> {
+        Ok(self.schema().body_identity_collection.read(&locator)? != 0)
+    }
+
     pub(crate) fn prepare_body_touch(
         &self,
         scope: &ExecutionScope,
         collection: Collection,
-        entity_id: EntityId36,
+        entity_id: WwdEntityId,
     ) -> Result<B256> {
         let (locator, pending, _) = self.pending(collection, entity_id)?;
         let entity = match collection {
@@ -240,10 +283,7 @@ impl<'storage> State<'storage> {
                     0
                 };
             scope.deduct_explicit_gas(&self.storage, cleanup_gas)?;
-            schema
-                .body_identity_record
-                .get_bytes(&locator)
-                .write(&body_identity_record(collection, entity_id))?;
+            self.write_body_identity(locator, collection, entity_id)?;
             schema.touched.push(locator)?;
         }
         Ok(locator)
@@ -326,7 +366,7 @@ impl<'storage> State<'storage> {
     ) -> Result<()> {
         self.ensure_schema()?;
         let schema = self.schema();
-        if schema.body_identity_record.get_bytes(&locator).is_empty()? {
+        if !self.has_body_identity(locator)? {
             return Err(fatal("pending Set was not prepared by first-touch logic"));
         }
         schema.pending_body.get_bytes(&locator).write(stored_body)?;
@@ -338,7 +378,7 @@ impl<'storage> State<'storage> {
     pub(crate) fn set_deleted_prepared(&self, locator: B256) -> Result<()> {
         self.ensure_schema()?;
         let schema = self.schema();
-        if schema.body_identity_record.get_bytes(&locator).is_empty()? {
+        if !self.has_body_identity(locator)? {
             return Err(fatal(
                 "pending Deleted was not prepared by first-touch logic",
             ));
@@ -464,7 +504,7 @@ impl<'storage> State<'storage> {
 
     pub(crate) fn final_body_mutations(
         &self,
-    ) -> Result<Vec<(Collection, EntityId36, Option<Commitment>)>> {
+    ) -> Result<Vec<(Collection, WwdEntityId, Option<Commitment>)>> {
         self.validate_schema_for_read()?;
         let schema = self.schema();
         let locators = schema.touched.read_all()?;
@@ -475,8 +515,9 @@ impl<'storage> State<'storage> {
             if !unique_locators.insert(locator) {
                 return Err(fatal("duplicate compressed-entity touched body locator"));
             }
-            let identity_bytes = schema.body_identity_record.get_bytes(&locator).read()?;
-            let (collection, entity_id) = decode_body_identity_record(&identity_bytes)?;
+            let (collection, entity_id) = self
+                .read_body_identity(locator)?
+                .ok_or_else(|| fatal("touched compressed-entity body has no identity"))?;
             if body_locator(collection, entity_id)? != locator {
                 return Err(fatal("compressed-entity touched body locator mismatch"));
             }
@@ -504,8 +545,9 @@ impl<'storage> State<'storage> {
             if !unique_bodies.insert(*locator) {
                 return Err(fatal("duplicate compressed-entity touched body locator"));
             }
-            let identity_bytes = schema.body_identity_record.get_bytes(locator).read()?;
-            let (collection, entity_id) = decode_body_identity_record(&identity_bytes)?;
+            let (collection, entity_id) = self
+                .read_body_identity(*locator)?
+                .ok_or_else(|| fatal("compressed-entity cleanup body has no identity"))?;
             if body_locator(collection, entity_id)? != *locator {
                 return Err(fatal("compressed-entity cleanup body locator mismatch"));
             }
@@ -526,7 +568,7 @@ impl<'storage> State<'storage> {
                 _ => {}
             }
             schema.pending_body.get_bytes(locator).clear()?;
-            schema.body_identity_record.get_bytes(locator).clear()?;
+            self.clear_body_identity(*locator)?;
             schema.pending_word.write(locator, U256::ZERO)?;
         }
 
@@ -584,7 +626,7 @@ impl<'storage> State<'storage> {
         for locator in body_keys {
             if !schema.pending_word.read(&locator)?.is_zero()
                 || !schema.pending_body.get_bytes(&locator).is_empty()?
-                || !schema.body_identity_record.get_bytes(&locator).is_empty()?
+                || self.has_body_identity(locator)?
             {
                 return Err(fatal(
                     "compressed-entity body cleanup post-condition failed",

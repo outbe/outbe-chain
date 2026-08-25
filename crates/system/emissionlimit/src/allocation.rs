@@ -1,8 +1,5 @@
 use alloy_primitives::U256;
-use outbe_primitives::{
-    error::{PrecompileError, Result},
-    storage::StorageHandle,
-};
+use outbe_primitives::error::{PrecompileError, Result};
 
 /// Emission sink allocation percentages (integer, denominator = 100).
 ///
@@ -100,11 +97,17 @@ pub fn allocate_emission_with_specs(
     for spec in specs {
         let amount = match spec.pct {
             Some(pct) => {
-                let amount = total * U256::from(pct) / hundred;
-                fixed_total += amount;
+                let amount = total.checked_mul(U256::from(pct)).ok_or_else(|| {
+                    PrecompileError::Revert("emission fixed-share multiplication overflow".into())
+                })? / hundred;
+                fixed_total = fixed_total.checked_add(amount).ok_or_else(|| {
+                    PrecompileError::Revert("emission fixed allocation total overflow".into())
+                })?;
                 amount
             }
-            None => total - fixed_total,
+            None => total.checked_sub(fixed_total).ok_or_else(|| {
+                PrecompileError::Revert("emission terminal allocation underflow".into())
+            })?,
         };
 
         allocations.push(EmissionAllocation {
@@ -114,62 +117,6 @@ pub fn allocate_emission_with_specs(
     }
 
     Ok(allocations)
-}
-
-/// Applies non-terminal sinks under local checkpoints and sends all failed or
-/// unused amounts to the terminal sink.
-pub fn dispatch_allocations(
-    storage: StorageHandle,
-    allocations: &[EmissionAllocation],
-    mut apply: impl FnMut(EmissionSinkId, U256) -> Result<U256>,
-) -> Result<()> {
-    let Some((terminal, non_terminal)) = allocations.split_last() else {
-        return Ok(());
-    };
-
-    let mut terminal_extra = U256::ZERO;
-
-    for allocation in non_terminal {
-        if allocation.amount.is_zero() {
-            continue;
-        }
-
-        match storage.with_checkpoint(|| {
-            let unused_amount = apply(allocation.id, allocation.amount)?;
-            if unused_amount > allocation.amount {
-                return Err(PrecompileError::Revert(
-                    "emission sink returned more unused amount than it received".into(),
-                ));
-            }
-            Ok(unused_amount)
-        }) {
-            Ok(unused_amount) => terminal_extra += unused_amount,
-            Err(error) => {
-                tracing::warn!(
-                    target: "outbe::emissionlimit",
-                    sink = ?allocation.id,
-                    amount = %allocation.amount,
-                    error = %error,
-                    "non-terminal emission sink failed; rolling allocation into terminal sink"
-                );
-                terminal_extra += allocation.amount;
-            }
-        }
-    }
-
-    let terminal_amount = terminal.amount + terminal_extra;
-    if terminal_amount.is_zero() {
-        return Ok(());
-    }
-
-    let terminal_unused = apply(terminal.id, terminal_amount)?;
-    if !terminal_unused.is_zero() {
-        return Err(PrecompileError::Revert(
-            "terminal emission sink returned unused amount".into(),
-        ));
-    }
-
-    Ok(())
 }
 
 fn validate_sink_specs(specs: &[EmissionSinkSpec]) -> Result<()> {
@@ -215,11 +162,6 @@ fn validate_sink_specs(specs: &[EmissionSinkSpec]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{address, Address};
-    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
-
-    const CHAIN_ID: u64 = 1;
-    const TEST_ADDRESS: Address = address!("0x1111111111111111111111111111111111111111");
 
     #[test]
     fn test_allocation_invariant() {
@@ -327,6 +269,59 @@ mod tests {
     }
 
     #[test]
+    fn allocation_rejects_fixed_share_multiplication_overflow() {
+        let specs = [
+            EmissionSinkSpec {
+                id: EmissionSinkId::Validator,
+                pct: Some(100),
+            },
+            EmissionSinkSpec {
+                id: EmissionSinkId::Metadosis,
+                pct: None,
+            },
+        ];
+
+        let error = allocate_emission_with_specs(U256::MAX, &specs).unwrap_err();
+        assert!(matches!(
+            error,
+            PrecompileError::Revert(message)
+                if message == "emission fixed-share multiplication overflow"
+        ));
+    }
+
+    #[test]
+    fn active_allocation_at_maximum_day_emission_is_pinned() {
+        let total = crate::day_emission::day_emission_limit(0);
+        assert_eq!(total, U256::from(1_073_741_824_000_000u64));
+
+        assert_eq!(
+            allocate_emission(total).unwrap(),
+            vec![
+                EmissionAllocation {
+                    id: EmissionSinkId::Validator,
+                    amount: U256::from(42_949_672_960_000u64),
+                },
+                EmissionAllocation {
+                    id: EmissionSinkId::Waa,
+                    amount: U256::from(42_949_672_960_000u64),
+                },
+                EmissionAllocation {
+                    id: EmissionSinkId::Sra,
+                    amount: U256::from(42_949_672_960_000u64),
+                },
+                EmissionAllocation {
+                    id: EmissionSinkId::Cca,
+                    amount: U256::from(42_949_672_960_000u64),
+                },
+                EmissionAllocation {
+                    id: EmissionSinkId::Metadosis,
+                    amount: U256::from(901_943_132_160_000u64),
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn test_allocation_rounding_dust_goes_to_terminal_sink() {
         // 4 × 4 % = 16 % → each non-terminal sink gets floor(101 * 4 / 100) = 4.
         // Sum of fixed shares = 16. Metadosis terminal absorbs the
@@ -352,194 +347,6 @@ mod tests {
             "Metadosis terminal absorbs the dust"
         );
         assert_eq!(allocation_sum(&allocations), total);
-    }
-
-    #[test]
-    fn test_non_terminal_sink_failure_falls_back_to_terminal() {
-        let allocations = [
-            EmissionAllocation {
-                id: EmissionSinkId::Validator,
-                amount: U256::from(100u64),
-            },
-            EmissionAllocation {
-                id: EmissionSinkId::Waa,
-                amount: U256::from(200u64),
-            },
-            EmissionAllocation {
-                id: EmissionSinkId::Metadosis,
-                amount: U256::from(700u64),
-            },
-        ];
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-
-        StorageHandle::enter(&mut storage, |storage| {
-            dispatch_allocations(storage.clone(), &allocations, |id, amount| match id {
-                EmissionSinkId::Validator => {
-                    storage.sstore(TEST_ADDRESS, U256::from(1u64), amount)?;
-                    Err(PrecompileError::Revert("validator sink failed".into()))
-                }
-                EmissionSinkId::Waa => {
-                    storage.sstore(TEST_ADDRESS, U256::from(2u64), amount)?;
-                    Ok(U256::ZERO)
-                }
-                EmissionSinkId::Metadosis => {
-                    storage.sstore(TEST_ADDRESS, U256::from(3u64), amount)?;
-                    Ok(U256::ZERO)
-                }
-                EmissionSinkId::Sra | EmissionSinkId::Cca => Ok(U256::ZERO),
-            })
-            .unwrap();
-
-            assert_eq!(
-                storage.sload(TEST_ADDRESS, U256::from(1u64)).unwrap(),
-                U256::ZERO,
-                "failed sink writes must be reverted"
-            );
-            assert_eq!(
-                storage.sload(TEST_ADDRESS, U256::from(2u64)).unwrap(),
-                U256::from(200u64)
-            );
-            assert_eq!(
-                storage.sload(TEST_ADDRESS, U256::from(3u64)).unwrap(),
-                U256::from(800u64),
-                "terminal sink must receive base remainder plus failed sink amount"
-            );
-        });
-    }
-
-    #[test]
-    fn test_non_terminal_unused_amount_falls_back_to_terminal() {
-        let allocations = [
-            EmissionAllocation {
-                id: EmissionSinkId::Validator,
-                amount: U256::from(1000u64),
-            },
-            EmissionAllocation {
-                id: EmissionSinkId::Metadosis,
-                amount: U256::from(9000u64),
-            },
-        ];
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-
-        StorageHandle::enter(&mut storage, |storage| {
-            dispatch_allocations(storage.clone(), &allocations, |id, amount| match id {
-                EmissionSinkId::Validator => {
-                    let unused = U256::from(400u64);
-                    storage.sstore(TEST_ADDRESS, U256::from(1u64), amount - unused)?;
-                    Ok(unused)
-                }
-                EmissionSinkId::Metadosis => {
-                    storage.sstore(TEST_ADDRESS, U256::from(2u64), amount)?;
-                    Ok(U256::ZERO)
-                }
-                EmissionSinkId::Waa | EmissionSinkId::Sra | EmissionSinkId::Cca => Ok(U256::ZERO),
-            })
-            .unwrap();
-
-            assert_eq!(
-                storage.sload(TEST_ADDRESS, U256::from(1u64)).unwrap(),
-                U256::from(600u64),
-                "successful sink should keep only the used amount"
-            );
-            assert_eq!(
-                storage.sload(TEST_ADDRESS, U256::from(2u64)).unwrap(),
-                U256::from(9400u64),
-                "terminal sink must receive base remainder plus unused amount"
-            );
-        });
-    }
-
-    #[test]
-    fn test_invalid_unused_amount_reverts_sink_and_falls_back_full_amount() {
-        let allocations = [
-            EmissionAllocation {
-                id: EmissionSinkId::Validator,
-                amount: U256::from(100u64),
-            },
-            EmissionAllocation {
-                id: EmissionSinkId::Metadosis,
-                amount: U256::from(900u64),
-            },
-        ];
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-
-        StorageHandle::enter(&mut storage, |storage| {
-            dispatch_allocations(storage.clone(), &allocations, |id, amount| match id {
-                EmissionSinkId::Validator => {
-                    storage.sstore(TEST_ADDRESS, U256::from(1u64), amount)?;
-                    Ok(amount + U256::from(1u64))
-                }
-                EmissionSinkId::Metadosis => {
-                    storage.sstore(TEST_ADDRESS, U256::from(2u64), amount)?;
-                    Ok(U256::ZERO)
-                }
-                EmissionSinkId::Waa | EmissionSinkId::Sra | EmissionSinkId::Cca => Ok(U256::ZERO),
-            })
-            .unwrap();
-
-            assert_eq!(
-                storage.sload(TEST_ADDRESS, U256::from(1u64)).unwrap(),
-                U256::ZERO,
-                "invalid unused amount must revert the non-terminal sink"
-            );
-            assert_eq!(
-                storage.sload(TEST_ADDRESS, U256::from(2u64)).unwrap(),
-                U256::from(1000u64),
-                "terminal sink must receive the full invalid sink allocation"
-            );
-        });
-    }
-
-    #[test]
-    fn test_terminal_sink_failure_is_fatal_to_pipeline() {
-        let allocations = [
-            EmissionAllocation {
-                id: EmissionSinkId::Validator,
-                amount: U256::from(100u64),
-            },
-            EmissionAllocation {
-                id: EmissionSinkId::Metadosis,
-                amount: U256::from(900u64),
-            },
-        ];
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-
-        StorageHandle::enter(&mut storage, |storage| {
-            let result =
-                dispatch_allocations(storage.clone(), &allocations, |id, amount| match id {
-                    EmissionSinkId::Validator => {
-                        storage.sstore(TEST_ADDRESS, U256::from(1u64), amount)?;
-                        Ok(U256::ZERO)
-                    }
-                    EmissionSinkId::Metadosis => {
-                        storage.sstore(TEST_ADDRESS, U256::from(2u64), amount)?;
-                        Err(PrecompileError::Revert("metadosis sink failed".into()))
-                    }
-                    EmissionSinkId::Waa | EmissionSinkId::Sra | EmissionSinkId::Cca => {
-                        Ok(U256::ZERO)
-                    }
-                });
-
-            assert!(result.is_err(), "terminal failure must fail the pipeline");
-        });
-    }
-
-    #[test]
-    fn test_terminal_unused_amount_is_fatal_to_pipeline() {
-        let allocations = [EmissionAllocation {
-            id: EmissionSinkId::Metadosis,
-            amount: U256::from(1000u64),
-        }];
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-
-        StorageHandle::enter(&mut storage, |storage| {
-            let result = dispatch_allocations(storage.clone(), &allocations, |_, amount| {
-                storage.sstore(TEST_ADDRESS, U256::from(1u64), amount)?;
-                Ok(U256::from(1u64))
-            });
-
-            assert!(result.is_err(), "terminal sink cannot return unused amount");
-        });
     }
 
     fn allocation_sum(allocations: &[EmissionAllocation]) -> U256 {

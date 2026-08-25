@@ -25,7 +25,7 @@ A position is created once from a globally unique id derived as
 `keccak256(pledge_handle ‖ smart_account)`. It seals, and never afterwards changes:
 smart account, originating agent, settlement asset and ISO currency, the sealed pledger
 ciphertext, principal `P`, collateral `G`, policy rate `r`, entry price `P₀`, the derived
-floor price `P₀ + 8%` and call price `P₀ + 32%`, and the origination timestamp. Only
+call price `P₀ + 64%`, and the origination timestamp. Only
 `outstanding`, `collateral_locked`, the accrual anchor, `called_at` and `state` move over
 the position's life.
 
@@ -33,14 +33,13 @@ The FSM is explicit and stored as a `u8` decoded through `CredisState::from_u8`,
 unknown byte is rejected rather than silently reinterpreted:
 
 ```text
-Open --mark_settleable--> Settleable --mark_called--> Called
-Settleable|Called --settle(P_out -> 0)--> Settled     (terminal)
+Open --mark_called--> Called
+Open|Called --settle(P_out -> 0)--> Settled            (terminal)
 Called --void_position--> Void                         (terminal)
 ```
 
-`Open -> Settleable` is a one-way price latch: a later price fall never re-locks it.
-`Settleable -> Called` is the sustained-breach trigger. Both `Settled` and `Void` are
-terminal.
+A position is settleable from the moment it opens; no price condition gates settlement.
+`Open -> Called` is the sustained-breach trigger. Both `Settled` and `Void` are terminal.
 
 **Interest** is not accrued per block. It is computed at settlement as simple,
 non-compounding, ACT/365 interest on the outstanding principal over the **whole** UTC
@@ -85,7 +84,7 @@ pledger recorded on the position, so a payer can never redirect value to themsel
 - Every account index entry points to an existing position owned by that account; every
   position appears exactly once in its owner's dense index.
 - A position appears in the dense active index iff its state is non-terminal
-  (`Open`, `Settleable` or `Called`); `Settled` and `Void` are swap-popped out, and
+  (`Open` or `Called`); `Settled` and `Void` are swap-popped out, and
   `active_position_index` always holds the entry's current slot. This is what lets the
   daily scan visit only the positions that can still transition instead of the whole book.
 - `called_position_counts[account]` equals the number of that account's positions in
@@ -114,22 +113,24 @@ bookkeeping is rolled back with CredisFactory's token pull, vault deposit and co
 release. Position identity guards duplicate creation; the terminal states guard replay —
 a `Settled` or `Void` position rejects further settlement with `PositionClosed`.
 
-Missing record, closed position, unlatched position and a payment below accrued interest
+Missing record, closed position and a payment below accrued interest
 are business/state errors. Broken indexes, arithmetic mismatch and underflow are
 invariant failures. No getter may silently skip corrupt records and still report a
 healthy position.
 
 ## Determinism, bounds and compatibility
 
-The interest formula and its rounding direction, the day-count convention, the floor and
-call markups, the currency/rate scale, field widths, the state discriminants and
+The interest formula and its rounding direction, the day-count convention, the call
+markup, the currency/rate scale, field widths, the state discriminants and
 position-id derivation are consensus formats. Changes require migration and before/after
 vectors. Per-account scans require a maximum or pagination before they may be used in
 transaction admission at unbounded size.
 
 The v2 layout is a **clean break**: `Position` and the contract's top-level slots were
 renumbered wholesale with no reserved or deprecated fields, on the accepted basis that no
-environment holds live Credis positions. Any such environment must be re-genesised.
+environment holds live Credis positions. Any such environment must be re-genesised. On the
+same basis, dropping `floor_price` and the `Settleable` discriminant (2026-08-24) closed
+the gaps rather than reserving them.
 
 ## Production-interface verification evidence
 
@@ -163,7 +164,7 @@ accrual state exists and nothing schedules off a position's creation date.
 1. **Resolved 2026-08-18** — outstanding subtraction now uses `checked_sub` with an
    explicit `ArithmeticOverflow` invariant failure.
 2. **Resolved 2026-08-18** — there are no due dates, so early payment is not a concept.
-   Settlement is open at any time once the floor latch has been taken.
+   Settlement is open at any time from the moment the position opens.
 3. **Resolved 2026-08-18** — position status is now an explicit stored `u8` decoded via
    `CredisState::from_u8`, replacing the cursor-derived status.
 4. **Resolved 2026-08-19** — the `credis_call_daily` scan (ADR-C-CRD-002) arms the call
@@ -189,6 +190,6 @@ accrual state exists and nothing schedules off a position's creation date.
 12. Define historical retention after closure and whether terminal positions may ever be
     pruned without breaking auditability.
 13. Decide the product paper's §11.1 downside resolution: a position whose price never
-    reaches the floor currently waits forever with no write-off path.
+    reaches its call price currently waits forever with no write-off path.
 14. The originating agent is recorded as `cca` but is neither authorized at opening nor
     held accountable at void; the CCA program is not yet implemented.

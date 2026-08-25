@@ -118,8 +118,8 @@
     "inputs": [
       {
         "name": "nodId",
-        "type": "bytes",
-        "internalType": "bytes"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -130,8 +130,8 @@
         "components": [
           {
             "name": "nodId",
-            "type": "bytes",
-            "internalType": "bytes"
+            "type": "uint256",
+            "internalType": "uint256"
           },
           {
             "name": "owner",
@@ -192,6 +192,11 @@
             "name": "issuedAt",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "calledAt",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }
@@ -204,8 +209,8 @@
     "inputs": [
       {
         "name": "nodId",
-        "type": "bytes",
-        "internalType": "bytes"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -262,8 +267,8 @@
     "outputs": [
       {
         "name": "",
-        "type": "bytes",
-        "internalType": "bytes"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -286,8 +291,8 @@
     "outputs": [
       {
         "name": "",
-        "type": "bytes",
-        "internalType": "bytes"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -298,8 +303,8 @@
     "inputs": [
       {
         "name": "nodId",
-        "type": "bytes",
-        "internalType": "bytes"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -330,9 +335,9 @@
     "inputs": [
       {
         "name": "nodId",
-        "type": "bytes",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "bytes"
+        "internalType": "uint256"
       },
       {
         "name": "previousCommitment",
@@ -349,9 +354,9 @@
     "inputs": [
       {
         "name": "nodId",
-        "type": "bytes",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "bytes"
+        "internalType": "uint256"
       },
       {
         "name": "commitmentSchemeVersion",
@@ -392,9 +397,9 @@
     "inputs": [
       {
         "name": "bucketId",
-        "type": "bytes",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "bytes"
+        "internalType": "uint256"
       },
       {
         "name": "previousCommitment",
@@ -411,9 +416,9 @@
     "inputs": [
       {
         "name": "bucketId",
-        "type": "bytes",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "bytes"
+        "internalType": "uint256"
       },
       {
         "name": "commitmentSchemeVersion",
@@ -444,6 +449,31 @@
         "type": "bytes",
         "indexed": false,
         "internalType": "bytes"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "NodBucketCalled",
+    "inputs": [
+      {
+        "name": "bucketKey",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "calledAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "settlementDeadline",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
       }
     ],
     "anonymous": false
@@ -481,6 +511,31 @@
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "NodForfeited",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "nodId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "gratisLoadMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false

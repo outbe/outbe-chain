@@ -123,20 +123,15 @@ fn oracle_opening_plan_reads_the_exact_raw_slots_used_by_runtime_semantics() {
                 .get_worldwide_day_vwap_for_pair(day, oracle.pair_index_of(pair).unwrap())
                 .unwrap()
                 .unwrap_or(U256::ZERO);
-            let runtime_scurve = outbe_oracle::scurve::get_max_active_scurve_value(
-                &oracle,
-                pair,
-                day.to_timestamp_utc(),
-            )
-            .unwrap();
             assert_eq!(
                 evaluated.entry_price(iso),
-                Some(runtime_vwap.max(runtime_scurve))
+                Some(runtime_vwap),
+                "authenticated OCOMP entry prices use WWD VWAP only"
             );
         }
         assert_eq!(
             evaluated.entry_price(840),
-            Some(scaled(300, COEN_ISO_SCALE))
+            Some(scaled(100, COEN_ISO_SCALE))
         );
         assert_eq!(
             evaluated.entry_price(978),
@@ -252,7 +247,7 @@ fn oracle_opening_prices_a_pair_registered_after_the_day_was_written() {
         assert_eq!(evaluated.entry_price(826), Some(U256::ZERO));
         assert_eq!(
             evaluated.entry_price(840),
-            Some(scaled(300, COEN_ISO_SCALE))
+            Some(scaled(100, COEN_ISO_SCALE))
         );
         assert_eq!(
             evaluated.entry_price(978),

@@ -1,11 +1,11 @@
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use outbe_common::WorldwideDay;
 use outbe_poseidon::{Poseidon, PoseidonHasher};
 use thiserror::Error;
 
-use crate::EntityId36;
+use crate::WwdEntityId;
 
 pub const CES1_TAG_BASE: u64 = 0x4345_5331_0000_0000;
 pub const TAG_BYTES_INIT: u64 = CES1_TAG_BASE + 1;
@@ -60,11 +60,15 @@ impl TryFrom<[u8; 32]> for Commitment {
     }
 }
 
-/// Derives the full Poseidon digest from `(owner, worldwide_day)` and prefixes WWD BE4.
-pub fn derive_poseidon_entity_id(
+/// The full Poseidon digest of `(owner, worldwide_day)`.
+///
+/// [`derive_poseidon_entity_id`] keeps only its last 28 bytes, so a caller that
+/// has to check the whole digest — verifying an enclave-returned token id, for
+/// one — must take it from here and not from the identity.
+pub fn derive_poseidon_digest(
     owner: Address,
     worldwide_day: WorldwideDay,
-) -> Result<EntityId36, CommitmentError> {
+) -> Result<B256, CommitmentError> {
     let mut hasher = Poseidon::<Fr>::new_circom(2)
         .map_err(|error| CommitmentError::Poseidon(error.to_string()))?;
     let digest = hasher
@@ -73,19 +77,30 @@ pub fn derive_poseidon_entity_id(
             Fr::from(worldwide_day.value()),
         ])
         .map_err(|error| CommitmentError::Poseidon(error.to_string()))?;
-    Ok(EntityId36::new(worldwide_day, field_to_be32(digest)))
+    Ok(B256::from(field_to_be32(digest)))
 }
 
-/// Derives the canonical field input from the exact 36-byte identity.
-pub fn identity_field(identity: EntityId36) -> Result<[u8; 32], CommitmentError> {
-    pbytes(TAG_ID, identity.as_bytes())
+/// Derives the Poseidon digest from `(owner, worldwide_day)` and prefixes WWD BE4.
+pub fn derive_poseidon_entity_id(
+    owner: Address,
+    worldwide_day: WorldwideDay,
+) -> Result<WwdEntityId, CommitmentError> {
+    Ok(WwdEntityId::from_day_and_digest(
+        worldwide_day,
+        derive_poseidon_digest(owner, worldwide_day)?,
+    ))
+}
+
+/// Derives the canonical field input from the exact 32-byte identity.
+pub fn identity_field(identity: WwdEntityId) -> Result<[u8; 32], CommitmentError> {
+    pbytes(TAG_ID, identity.as_slice())
 }
 
 /// Computes the active CES1 leaf for a canonical typed payload.
 pub fn body_commitment(
     commitment_scheme_version: u32,
     schema_version: u32,
-    identity: EntityId36,
+    identity: WwdEntityId,
     canonical_payload: &[u8],
 ) -> Result<Commitment, CommitmentError> {
     if commitment_scheme_version != ACTIVE_COMMITMENT_SCHEME {

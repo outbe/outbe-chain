@@ -42,7 +42,7 @@ pub enum TributeCmd {
     /// Show tribute metadata via tokenURI JSON
     Show {
         /// Tribute token ID (`0x`-hex)
-        token_id: Bytes,
+        token_id: U256,
     },
     /// Show aggregate totals for a WorldwideDay
     DayTotals {
@@ -64,7 +64,7 @@ pub enum TributeCmd {
     /// Show current owner for a Tribute token ID
     Owner {
         /// Tribute token ID (`0x`-hex)
-        token_id: Bytes,
+        token_id: U256,
     },
     /// Submit an encrypted tribute offer (decrypted inside the SGX enclave).
     /// Encrypts to the DKG-derived offer key registered in the TeeRegistry and
@@ -158,7 +158,7 @@ async fn fetch_total_supply(client: &(impl Rpc + Sync)) -> Result<U256> {
     Ok(ITribute::totalSupplyCall::abi_decode_returns(&result)?)
 }
 
-async fn fetch_owner_of(client: &(impl Rpc + Sync), token_id: Bytes) -> Result<Address> {
+async fn fetch_owner_of(client: &(impl Rpc + Sync), token_id: U256) -> Result<Address> {
     let call = ITribute::ownerOfCall {
         tributeId: token_id,
     };
@@ -166,7 +166,7 @@ async fn fetch_owner_of(client: &(impl Rpc + Sync), token_id: Bytes) -> Result<A
     Ok(ITribute::ownerOfCall::abi_decode_returns(&result)?)
 }
 
-async fn fetch_token_uri(client: &(impl Rpc + Sync), token_id: Bytes) -> Result<String> {
+async fn fetch_token_uri(client: &(impl Rpc + Sync), token_id: U256) -> Result<String> {
     let call = ITribute::tokenURICall {
         tributeId: token_id,
     };
@@ -207,10 +207,10 @@ async fn fetch_tributes_by_day(
     Ok(ITribute::getTributesByDayCall::abi_decode_returns(&result)?)
 }
 
-async fn show(client: &(impl Rpc + Sync), token_id: Bytes) -> Result<()> {
-    let token_uri = fetch_token_uri(client, token_id.clone()).await?;
+async fn show(client: &(impl Rpc + Sync), token_id: U256) -> Result<()> {
+    let token_uri = fetch_token_uri(client, token_id).await?;
 
-    println!("Token ID: {token_id}");
+    println!("Token ID: {token_id:#x}");
     if let Some(json_payload) = token_uri.strip_prefix(TOKEN_URI_JSON_PREFIX) {
         match serde_json::from_str::<Value>(json_payload) {
             Ok(json) => println!("{}", serde_json::to_string_pretty(&json)?),
@@ -261,9 +261,9 @@ async fn supply(client: &(impl Rpc + Sync)) -> Result<()> {
     Ok(())
 }
 
-async fn owner(client: &(impl Rpc + Sync), token_id: Bytes) -> Result<()> {
-    let token_owner = fetch_owner_of(client, token_id.clone()).await?;
-    println!("Token ID: {token_id}");
+async fn owner(client: &(impl Rpc + Sync), token_id: U256) -> Result<()> {
+    let token_owner = fetch_owner_of(client, token_id).await?;
+    println!("Token ID: {token_id:#x}");
     println!("Owner:    {token_owner:?}");
     Ok(())
 }
@@ -342,12 +342,12 @@ async fn offer(
     });
     let plaintext = serde_json::to_vec(&payload)?;
 
-    // 3. Encrypt to the offer key. The HKDF salt is the protocol constant
-    //    `OFFER_HKDF_SALT` shared with the enclave decrypt path — NOT the legacy
-    //    `[0x03; 32]`, which silently produces a different AEAD key (offer rejected
-    //    `AEAD decryption failed`).
-    let salt = outbe_tee::OFFER_HKDF_SALT;
-    let (cipher_text, nonce, eph_pub) = encrypt_offer(&offer_pub, &salt, &plaintext)?;
+    // 3. Encrypt to the offer key via the shared recipe (protocol
+    //    `OFFER_HKDF_SALT` + ChaCha20Poly1305), byte-compatible with the enclave
+    //    decrypt path and the node's canary probe.
+    let (cipher_text, nonce, eph_pub) =
+        outbe_tee::offer_encrypt::encrypt_tribute_offer(&offer_pub, &plaintext)
+            .map_err(|e| eyre::eyre!("offer encryption failed: {e}"))?;
 
     // 4. Build + send `offerTribute` (msg.value MUST be 0).
     let call = ITributeFactory::offerTributeCall {
@@ -421,75 +421,6 @@ fn offer_hex32(value: Option<&str>, flag: &str, required: bool) -> Result<String
     Ok(format!("0x{}", hex::encode(bytes)))
 }
 
-/// Encrypt an offer payload to `offer_pub`: ephemeral X25519 ECDHE → HKDF-SHA256
-/// → ChaCha20Poly1305 (empty AAD). Byte-identical to the enclave decrypt path
-/// (`outbe_tee_enclave::crypto::ecdhe_offer_decrypt`). Returns
-/// `(cipher_text, nonce, ephemeral_pub)`.
-fn encrypt_offer(
-    offer_pub: &[u8; 32],
-    salt: &[u8; 32],
-    plaintext: &[u8],
-) -> Result<(Vec<u8>, [u8; 12], [u8; 32])> {
-    use ring::rand::SecureRandom;
-    use x25519_dalek::{PublicKey, StaticSecret};
-
-    let rng = ring::rand::SystemRandom::new();
-    let mut eph_bytes = [0u8; 32];
-    rng.fill(&mut eph_bytes)
-        .map_err(|_| eyre::eyre!("rng failure"))?;
-    let eph_secret = StaticSecret::from(eph_bytes);
-    let eph_pub = PublicKey::from(&eph_secret).to_bytes();
-
-    let shared = eph_secret.diffie_hellman(&PublicKey::from(*offer_pub));
-    let key = hkdf_sha256(salt, shared.as_bytes(), b"tribute-factory-encryption")?;
-
-    let mut nonce = [0u8; 12];
-    rng.fill(&mut nonce)
-        .map_err(|_| eyre::eyre!("rng failure"))?;
-    let cipher_text = chacha20poly1305_encrypt(&key, &nonce, plaintext)?;
-    Ok((cipher_text, nonce, eph_pub))
-}
-
-/// HKDF-SHA256 extract+expand to 32 bytes (matches the enclave).
-fn hkdf_sha256(salt: &[u8], ikm: &[u8], info: &[u8]) -> Result<[u8; 32]> {
-    use ring::hkdf;
-    struct Len32;
-    impl hkdf::KeyType for Len32 {
-        fn len(&self) -> usize {
-            32
-        }
-    }
-    let salt = hkdf::Salt::new(hkdf::HKDF_SHA256, salt);
-    let prk = salt.extract(ikm);
-    // Bind to a `let` so the `[info]` array outlives the `Okm` that borrows it.
-    let info_refs: &[&[u8]] = &[info];
-    let okm = prk
-        .expand(info_refs, Len32)
-        .map_err(|_| eyre::eyre!("hkdf expand"))?;
-    let mut out = [0u8; 32];
-    okm.fill(&mut out).map_err(|_| eyre::eyre!("hkdf fill"))?;
-    Ok(out)
-}
-
-/// ChaCha20Poly1305 AEAD encrypt with empty AAD (matches the enclave).
-fn chacha20poly1305_encrypt(key: &[u8; 32], nonce: &[u8; 12], plaintext: &[u8]) -> Result<Vec<u8>> {
-    use ring::aead::{self, BoundKey as _};
-    struct OneNonce([u8; 12]);
-    impl aead::NonceSequence for OneNonce {
-        fn advance(&mut self) -> std::result::Result<aead::Nonce, ring::error::Unspecified> {
-            Ok(aead::Nonce::assume_unique_for_key(self.0))
-        }
-    }
-    let unbound = aead::UnboundKey::new(&aead::CHACHA20_POLY1305, key)
-        .map_err(|_| eyre::eyre!("aead key"))?;
-    let mut sealing = aead::SealingKey::new(unbound, OneNonce(*nonce));
-    let mut in_out = plaintext.to_vec();
-    sealing
-        .seal_in_place_append_tag(aead::Aad::empty(), &mut in_out)
-        .map_err(|_| eyre::eyre!("aead seal"))?;
-    Ok(in_out)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -520,8 +451,8 @@ mod tests {
         .unwrap()
     }
 
-    fn sample_token_id() -> Bytes {
-        Bytes::from_static(&[0xaa])
+    fn sample_token_id() -> U256 {
+        U256::from(0xaa_u64)
     }
 
     fn tribute_mock() -> MockRpc {

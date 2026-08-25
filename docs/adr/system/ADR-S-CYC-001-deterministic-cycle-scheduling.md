@@ -81,9 +81,11 @@ creates the current WWD when needed, advances every active WWD across all due
 phase boundaries, and selects at most one READY WWD in its canonical order.
 Cycle does not own those WWD economic branches.
 
-Each completed-day settlement has two coordinated facts: Rewards'
-`daily_settled[previous_day]` schedule marker and Metadosis'
-`DayLimitFormationReceipt`. Both are written in the same outer checkpoint.
+Each completed-day settlement has three coordinated facts: Rewards' immutable
+validator Gem preparation, Rewards' `daily_settled[previous_day]` schedule marker
+and Metadosis'
+`DayLimitFormationReceipt`. All three are written in the same outer checkpoint.
+The planned Gem total is reconciled as a liability, not a completed mint.
 `true/receipt` replays without effects; `false/no receipt` proceeds;
 `true/no receipt` or `false/receipt` is fatal before mutation.
 
@@ -111,6 +113,7 @@ non-coalescing triggers retain their existing per-slot behavior.
 | UTC-day ownership | `Cycle.active_utc_day` |
 | Handler transaction boundary | per-trigger checkpoint |
 | Parent-accounting prerequisite | trigger metadata plus Rewards query |
+| Deferred validator Gem FIFO and retry | Rewards / `RewardsGemDelivery` |
 
 No user ABI may advance cursors or claim a trigger completed.
 
@@ -146,6 +149,8 @@ normal EVM state rollback.
 Metadosis extends that schedule identity only inside its owner receipt; it does
 not create a second Cycle cursor. Handler storage/events/CE work, the semantic
 receipt, cursor and success event commit or roll back as one execution scope.
+Oracle freshness never controls Cycle cursor progress: Cycle commits an exact
+Rewards liability and the separate mandatory delivery phase retries it.
 
 ## Security and compatibility
 

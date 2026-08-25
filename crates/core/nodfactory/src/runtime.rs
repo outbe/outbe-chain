@@ -5,16 +5,17 @@
 //! state exclusively through [`outbe_nod::api`] and emits its own events at
 //! [`NOD_FACTORY_ADDRESS`].
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_primitives::addresses::{NOD_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
 use outbe_common::pow;
-use outbe_compressed_entities::{EntityId36, ExecutionScope, ParentBodySource};
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_nod::api as nod_api;
 use outbe_nod::api::{LoadedNodBucket, LoadedNodItem};
+use outbe_nod::constants::CALL_NOTICE_PERIOD;
 use outbe_nod::schema::{NodContract, NodIssueParams, NodItemState};
 
 use crate::errors::NodFactoryError;
@@ -27,7 +28,7 @@ pub fn issue_nod(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     params: &NodIssueParams,
-) -> Result<EntityId36> {
+) -> Result<WwdEntityId> {
     if params.owner.is_zero() {
         return Err(NodFactoryError::InvalidOwner.into());
     }
@@ -46,7 +47,7 @@ fn issue_nod_inner(
     storage: &StorageHandle<'_>,
     params: &NodIssueParams,
     add: impl FnOnce(&NodItemState) -> Result<()>,
-) -> Result<EntityId36> {
+) -> Result<WwdEntityId> {
     let nod_id = NodContract::generate_nod_id(params.owner, params.worldwide_day)?;
 
     let bucket_key = NodContract::bucket_key(
@@ -77,7 +78,7 @@ fn issue_nod_inner(
         storage,
         INodFactory::NodIssued {
             owner: params.owner,
-            nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+            nodId: nod_id.to_u256(),
             worldwideDay: U256::from(u32::from(params.worldwide_day)),
             leagueId: U256::from(params.league_id),
             floorPriceMinor: params.floor_price_minor,
@@ -117,7 +118,7 @@ pub fn settle_nod(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     payer: Address,
-    nod_id: EntityId36,
+    nod_id: WwdEntityId,
 ) -> Result<U256> {
     let item =
         nod_api::load_item(storage, scope, parent, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
@@ -133,7 +134,7 @@ fn settle_nod_inner(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     payer: Address,
-    nod_id: EntityId36,
+    nod_id: WwdEntityId,
     item: LoadedNodItem,
 ) -> Result<U256> {
     let owner = item.body().owner;
@@ -179,7 +180,7 @@ fn settle_nod_inner(
         INodFactory::NodSettled {
             owner,
             payer,
-            nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+            nodId: nod_id.to_u256(),
             asset,
             amountPaid: cost,
         },
@@ -201,8 +202,8 @@ pub fn mine_gratis(
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
     caller: Address,
-    nod_id: EntityId36,
-    nonce: U256,
+    nod_id: WwdEntityId,
+    nonce: u64,
     auth: outbe_gratisfactory::api::ModifyAuth,
 ) -> Result<U256> {
     let item =
@@ -213,7 +214,8 @@ pub fn mine_gratis(
     {
         return Err(NodFactoryError::NodGenerationNotMaterialized.into());
     }
-    let bucket_id = EntityId36::new(item.body().worldwide_day, item.body().bucket_key.0);
+    let bucket_id =
+        WwdEntityId::from_day_and_digest(item.body().worldwide_day, item.body().bucket_key.0);
     let bucket = nod_api::load_bucket(storage, scope, parent, bucket_id)?
         .ok_or(NodFactoryError::NodNotQualified)?;
     storage.clone().with_checkpoint(|| {
@@ -234,8 +236,8 @@ pub fn mine_gratis(
 
 struct MineGratisInput {
     caller: Address,
-    nod_id: EntityId36,
-    nonce: U256,
+    nod_id: WwdEntityId,
+    nonce: u64,
     item: LoadedNodItem,
     bucket: LoadedNodBucket,
     auth: outbe_gratisfactory::api::ModifyAuth,
@@ -264,6 +266,17 @@ fn mine_gratis_inner(
         return Err(NodFactoryError::NodNotQualified.into());
     }
 
+    // Mining stays open during the notice period — that is what the notice is
+    // for. Past it the Nod is forfeit, and this check closes the gap before the
+    // daily sweep reaches it.
+    let called_at = NodContract::new(storage.clone())
+        .bucket_called_at
+        .read(&item.body().bucket_key)?;
+    let now = storage.timestamp()?.to::<u64>();
+    if called_at != 0 && now > called_at.saturating_add(CALL_NOTICE_PERIOD) {
+        return Err(NodFactoryError::CallDeadlineExpired.into());
+    }
+
     if !item.body().is_settled {
         return Err(NodFactoryError::NodNotSettled.into());
     }
@@ -276,7 +289,7 @@ fn mine_gratis_inner(
         storage,
         INodFactory::NodBurned {
             owner: caller,
-            nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+            nodId: nod_id.to_u256(),
             gratisLoadMinor: gratis_load_minor,
         },
     )?;
@@ -298,14 +311,13 @@ fn settlement_asset(storage: &StorageHandle<'_>, reference_currency: u16) -> Res
 
 /// PoW gate for `mine_gratis`, delegating to the shared [`outbe_common::pow`]
 /// scheme and mapping failures onto [`NodFactoryError`].
-pub fn validate_pow(nod_id: EntityId36, nonce: U256) -> Result<()> {
-    pow::validate_pow_bytes(nod_id.as_bytes(), nonce).map_err(|e| NodFactoryError::from(e).into())
+pub fn validate_pow(nod_id: WwdEntityId, nonce: u64) -> Result<()> {
+    pow::validate_pow(nod_id.to_u256(), nonce).map_err(|e| NodFactoryError::from(e).into())
 }
 
-/// Shared PoW hash over `ascii(hex(nod_id)) || nonce.to_be_bytes::<8>()`.
-pub fn compute_pow_hash(nod_id: EntityId36, nonce: U256) -> Result<[u8; 32]> {
-    pow::compute_pow_hash_bytes(nod_id.as_bytes(), nonce)
-        .map_err(|e| NodFactoryError::from(e).into())
+/// Shared PoW hash over `nod_id.to_be_bytes::<32>() || nonce.to_be_bytes()`.
+pub fn compute_pow_hash(nod_id: WwdEntityId, nonce: u64) -> [u8; 32] {
+    pow::compute_pow_hash(nod_id.to_u256(), nonce)
 }
 
 fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {

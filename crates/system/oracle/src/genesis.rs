@@ -45,18 +45,16 @@ pub struct GenesisAggregateVote {
     pub entries: Vec<(Address, Address, U256, U256)>,
 }
 
-/// A reference currency for genesis import/export: an ISO 4217 numeric code
-/// plus its annualized currency rate (scale `1e6`). The currency rate is
-/// read by the Credis Factory at issuance and pinned onto the position as its
-/// policy rate. Currencies used purely as pricing references (no credis) may carry
-/// a zero rate.
+/// An independently registered annual policy rate for one ISO 4217 currency.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ReferenceCurrency {
+pub struct PolicyRate {
     /// ISO 4217 numeric code (e.g., 840 = USD).
     pub iso_code: u16,
-    /// Annualized currency rate at scale `1e6` (e.g., 0.043 -> 43_000).
-    pub currency_rate: U256,
+    /// Annualized rate at scale `1e6` (e.g., 0.043 -> 43_000).
+    pub annual_rate_1e6: U256,
 }
+
+const MAX_REFERENCE_CURRENCIES: usize = 6;
 
 /// Configurable genesis parameters for the Oracle contract.
 ///
@@ -83,11 +81,10 @@ pub struct OracleGenesisConfig {
     pub initial_rates: Vec<(Address, Address, U256)>,
     /// Feeder delegations as `(validator, feeder)`.
     pub feeder_delegations: Vec<(Address, Address)>,
-    /// Reference currencies with their annualized currency rate (scale `1e6`).
-    /// These ISO 4217 codes identify currencies valid for off-chain
-    /// pricing references; the currency rate is read by the Credis Factory
-    /// at issuance. Pre-filled at genesis with USD (840) at the current SOFR.
-    pub reference_currencies: Vec<ReferenceCurrency>,
+    /// Sorted unique ISO codes valid as pricing reference currencies.
+    pub reference_currencies: Vec<u16>,
+    /// Sorted unique annual policy rates, independent from references and pairs.
+    pub policy_rates: Vec<PolicyRate>,
     /// Penalty counters as `(validator, success, abstain, miss)`.
     pub penalty_counters: Vec<(Address, u64, u64, u64)>,
     /// Pending aggregate votes that have not yet been tallied.
@@ -113,9 +110,10 @@ impl OracleGenesisConfig {
             pairs: vec![(COEN_ASSET, AssetType::IsoCurrency(DAY_TYPE_ISO).into())],
             initial_rates: vec![],
             feeder_delegations: vec![],
-            reference_currencies: vec![ReferenceCurrency {
+            reference_currencies: vec![156, 344, 392, 826, 840, 978],
+            policy_rates: vec![PolicyRate {
                 iso_code: 840,
-                currency_rate: DEFAULT_USD_CURRENCY_RATE,
+                annual_rate_1e6: DEFAULT_USD_CURRENCY_RATE,
             }],
             penalty_counters: vec![],
             aggregate_votes: vec![],
@@ -147,6 +145,8 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
     if config.lookback_duration > MAX_SNAPSHOT_RETENTION_SECONDS {
         return Err(OracleError::LookbackExceedsRetention.into());
     }
+    validate_reference_currencies(&config.reference_currencies)?;
+    validate_policy_rates(&config.policy_rates)?;
 
     oracle.config_vote_period.write(config.vote_period)?;
     oracle.config_reward_band.write(config.reward_band)?;
@@ -185,20 +185,15 @@ pub fn init_from_genesis(oracle: &mut OracleContract, config: &OracleGenesisConf
         )?;
     }
 
-    // Import reference currencies and their currency rates.
-    let mut seen_reference_iso: BTreeSet<u16> = BTreeSet::new();
-    for reference in &config.reference_currencies {
-        let iso_code = reference.iso_code;
-        if iso_code == 0 {
-            return Err(OracleError::ReferenceIsoCodeZero.into());
-        }
-        if !seen_reference_iso.insert(iso_code) {
-            return Err(OracleError::DuplicateReferenceIsoCode { iso_code }.into());
-        }
-        oracle.reference_currencies.push(iso_code)?;
+    // Import the independent reference-currency and policy-rate registries.
+    for iso_code in &config.reference_currencies {
+        oracle.reference_currencies.push(*iso_code)?;
+    }
+    for policy in &config.policy_rates {
+        oracle.policy_rate_currencies.push(policy.iso_code)?;
         oracle
-            .reference_currency_rate
-            .write(&iso_code, reference.currency_rate)?;
+            .policy_rate
+            .write(&policy.iso_code, policy.annual_rate_1e6)?;
     }
 
     // Import penalty counters.
@@ -351,15 +346,14 @@ pub fn export_genesis(
         }
     }
 
-    // Export reference currencies with their currency rates (bounded list;
-    // read_all OK).
-    let reference_iso_codes = oracle.reference_currencies.read_all()?;
-    let mut reference_currencies = Vec::with_capacity(reference_iso_codes.len());
-    for iso_code in reference_iso_codes {
-        let currency_rate = oracle.reference_currency_rate.read(&iso_code)?;
-        reference_currencies.push(ReferenceCurrency {
+    let reference_currencies = oracle.reference_currencies.read_all()?;
+    let policy_iso_codes = oracle.policy_rate_currencies.read_all()?;
+    let mut policy_rates = Vec::with_capacity(policy_iso_codes.len());
+    for iso_code in policy_iso_codes {
+        let annual_rate_1e6 = oracle.policy_rate.read(&iso_code)?;
+        policy_rates.push(PolicyRate {
             iso_code,
-            currency_rate,
+            annual_rate_1e6,
         });
     }
 
@@ -374,12 +368,69 @@ pub fn export_genesis(
         initial_rates,
         feeder_delegations,
         reference_currencies,
+        policy_rates,
         penalty_counters,
         aggregate_votes,
         snapshots,
         scurve_entries,
         protected_validators,
     })
+}
+
+fn validate_reference_currencies(reference_currencies: &[u16]) -> Result<()> {
+    if reference_currencies.len() > MAX_REFERENCE_CURRENCIES {
+        return Err(OracleError::ReferenceCurrencyCountExceedsMax.into());
+    }
+    let mut previous = None;
+    for iso_code in reference_currencies {
+        if *iso_code == 0 {
+            return Err(OracleError::ReferenceIsoCodeZero.into());
+        }
+        if let Some(previous) = previous {
+            if *iso_code == previous {
+                return Err(OracleError::DuplicateReferenceIsoCode {
+                    iso_code: *iso_code,
+                }
+                .into());
+            }
+            if *iso_code < previous {
+                return Err(OracleError::ReferenceCurrenciesNotSorted.into());
+            }
+        }
+        previous = Some(*iso_code);
+    }
+    if reference_currencies.binary_search(&DAY_TYPE_ISO).is_err() {
+        return Err(OracleError::MissingUsdReferenceCurrency.into());
+    }
+    Ok(())
+}
+
+fn validate_policy_rates(policy_rates: &[PolicyRate]) -> Result<()> {
+    let mut previous = None;
+    for policy in policy_rates {
+        if policy.iso_code == 0 {
+            return Err(OracleError::PolicyIsoCodeZero.into());
+        }
+        if policy.annual_rate_1e6.is_zero() {
+            return Err(OracleError::PolicyRateZero {
+                iso_code: policy.iso_code,
+            }
+            .into());
+        }
+        if let Some(previous) = previous {
+            if policy.iso_code == previous {
+                return Err(OracleError::DuplicatePolicyIsoCode {
+                    iso_code: policy.iso_code,
+                }
+                .into());
+            }
+            if policy.iso_code < previous {
+                return Err(OracleError::PolicyRatesNotSorted.into());
+            }
+        }
+        previous = Some(policy.iso_code);
+    }
+    Ok(())
 }
 
 fn import_aggregate_votes(

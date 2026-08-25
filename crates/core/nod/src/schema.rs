@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::{derive_poseidon_entity_id, EntityId36};
+use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_ocomp_protocol::nod_materialization::NodMaterializationHeadV1;
 use outbe_primitives::addresses::NOD_ADDRESS;
@@ -32,7 +32,7 @@ pub struct NodIssueParams {
 #[storage_record(exists_field = owner)]
 pub struct NodItemState {
     #[key]
-    pub nod_id: EntityId36,
+    pub nod_id: WwdEntityId,
 
     #[attribute(order = 0)]
     pub owner: Address,
@@ -165,8 +165,9 @@ impl NodCertifiedGenerationProjection {
 /// own independent trie. See `state::CurrencyBins`.
 ///
 /// Field offsets are dense in `order` sequence, so this struct occupies slots
-/// 0..=14 in declaration order. `tests::nod_contract_slot_layout_is_pinned`
-/// is the tripwire.
+/// 0..=32 in declaration order. New fields append, which keeps the
+/// genesis-seeded materialization FIFO counters at slots 19 and 20.
+/// `adr006_tests::nod_contract_slot_layout_is_pinned` is the tripwire.
 #[storage_schema]
 #[contract(addr = NOD_ADDRESS)]
 pub struct NodContract {
@@ -284,6 +285,51 @@ pub struct NodContract {
     /// Number of materialization attempts observed at the height above.
     #[attribute(order = 34)]
     pub ocomp_materialization_attempt_count: outbe_primitives::storage::dsl::Value<u16>,
+
+    // --- Bucket member index: lets the forfeit sweep enumerate a bucket's Nods,
+    // which the compressed-entity store cannot do on its own. `WwdEntityId` is a
+    // single storage word, so ids are stored whole and need no rebuilding.
+    /// Mirror of the bucket body's `total_nods`, written from the loaded body so
+    /// the two cannot drift.
+    #[attribute(order = 35)]
+    pub bucket_nod_count: outbe_primitives::storage::dsl::Map<B256, u32>,
+
+    /// `bucket_nod_key(bucket_key, index)` -> Nod id. Insertion-ordered and
+    /// swap-popped, matching the unqualified-bin index.
+    #[attribute(order = 36)]
+    pub bucket_nods: Mapping<B256, WwdEntityId>,
+
+    /// Nod id -> position in its bucket, for O(1) swap-remove. A Nod belongs to
+    /// exactly one bucket, so one global map suffices.
+    #[attribute(order = 37)]
+    pub bucket_nod_index: outbe_primitives::storage::dsl::Map<WwdEntityId, u32>,
+
+    // --- Callable-bucket index: dense list of the buckets the daily call scan
+    // visits. Membership invariant: a bucket is listed iff it has qualified and
+    // still has members.
+    #[attribute(order = 38)]
+    pub callable_buckets: outbe_primitives::storage::dsl::List<B256>,
+
+    #[attribute(order = 39)]
+    pub callable_bucket_index: outbe_primitives::storage::dsl::Map<B256, u32>,
+
+    /// `entry_price_minor × CALL_RATE_PCT / 100`, snapshotted at qualification so
+    /// the daily scan never loads a bucket body just to decide.
+    #[attribute(order = 40)]
+    pub callable_bucket_call_price: outbe_primitives::storage::dsl::Map<B256, U256>,
+
+    /// Snapshotted with the call price; selects the `COEN/<iso>` VWAP series.
+    #[attribute(order = 41)]
+    pub callable_bucket_currency: Mapping<B256, u16>,
+
+    /// Block timestamp the bucket was force-called; `0` until called.
+    #[attribute(order = 42)]
+    pub bucket_called_at: outbe_primitives::storage::dsl::Map<B256, u64>,
+
+    /// Resume position of the daily call scan, stored as `index + 1`. Zero means
+    /// the last pass completed and the next starts from the top.
+    #[attribute(order = 43)]
+    pub call_scan_cursor: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl<'storage> NodContract<'storage> {
@@ -317,7 +363,7 @@ impl<'storage> NodContract<'storage> {
     pub fn generate_nod_id(
         owner: Address,
         worldwide_day: WorldwideDay,
-    ) -> outbe_primitives::error::Result<EntityId36> {
+    ) -> outbe_primitives::error::Result<WwdEntityId> {
         derive_poseidon_entity_id(owner, worldwide_day)
             .map_err(|error| outbe_primitives::error::PrecompileError::Fatal(error.to_string()))
     }

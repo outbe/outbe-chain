@@ -20,6 +20,10 @@ ignore = [
     "RUSTSEC-2026-0119", # hickory-dns name-compression CPU — not on our attack surface
     "RUSTSEC-2026-0173", # proc-macro-error2 unmaintained
     "RUSTSEC-2026-0247", # bitmaps unmaintained; reth-transaction-pool -> imbl -> bitmaps
+    # rsa Marvin timing sidechannel: no patched release exists upstream. Pulled
+    # via ssh-key -> radicle-crypto (Heartwood keystore); Outbe identities are
+    # Ed25519, the rsa code path is never exercised for key material.
+    "RUSTSEC-2023-0071",
 ]
 
 [licenses]

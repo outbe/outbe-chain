@@ -32,7 +32,7 @@ fn execution_db(proposer: Address, parent_root: B256) -> CacheDB<EmptyDBTyped<Pr
     let mut seeded = HashMapStorageProvider::new(MAINNET.chain().id());
     StorageHandle::enter(&mut seeded, |storage| {
         storage
-            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
             .unwrap();
         storage
             .sstore(

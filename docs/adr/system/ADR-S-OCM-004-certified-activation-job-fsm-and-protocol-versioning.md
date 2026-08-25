@@ -28,6 +28,10 @@ event is only a wake hint. The intent record and the finalized request block are
 authority. Voting opens only after the exact request block is finalized and the
 configured opening delay has elapsed.
 
+For the fresh-devnet Metadosis profile, the authenticated Measurement install
+height is exactly block `1`; startup rejects a missing or differently bound
+profile before Cycle may execute that block's Metadosis commands.
+
 The response window covers computation and vote inclusion. Quorum selects and
 applies a canonical result but does not close accountability. Every pinned
 validator may still vote until the exclusive deadline. At deadline, missing

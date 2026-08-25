@@ -4,7 +4,7 @@ use std::{collections::BTreeMap, fmt};
 
 use alloy_primitives::{B256, U256};
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::{derive_poseidon_entity_id, EntityId36};
+use outbe_compressed_entities::{derive_poseidon_entity_id, WwdEntityId};
 use outbe_ocomp_protocol::list::{
     leaf_hash, node_hash, ordered_list_root, pad_hash, root_hash, OrderedListLimits,
 };
@@ -31,7 +31,7 @@ const GRATIS_SUMMARY_MAGIC: [u8; 4] = *b"LYG1";
 const GRATIS_PREFIX_DOWN_MAGIC: [u8; 4] = *b"LYD1";
 const FINALIZED_OUTPUT_MAGIC: [u8; 4] = *b"LYO1";
 const RAW_COVERAGE_CARRIER_MAGIC: [u8; 4] = *b"LYC1";
-const COVERAGE_RECORD_BYTES: usize = 40;
+const COVERAGE_RECORD_BYTES: usize = 36;
 const PRIMARY_SUBTREE_HEIGHT: u16 = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -65,7 +65,7 @@ pub struct GratisSummaryCoverageV1 {
 impl RawCoverageCarrierV1 {
     pub fn from_records(
         total_count: u32,
-        records: &[(u32, [u8; 36])],
+        records: &[(u32, WwdEntityId)],
     ) -> Result<Self, LysisArtifactErrorV1> {
         if total_count == 0 || records.is_empty() {
             return Err(LysisArtifactErrorV1::InvalidEncoding(
@@ -235,7 +235,7 @@ impl EnumeratedRunV1 {
         raw_coverage_root(
             self.ordered_records
                 .iter()
-                .map(|record| (record.raw_ordinal, record.tribute.tribute_id.as_bytes())),
+                .map(|record| (record.raw_ordinal, record.tribute.tribute_id)),
         )
     }
 }
@@ -246,7 +246,7 @@ impl FidelityMapOutputV1 {
         raw_coverage_root(
             self.observations
                 .iter()
-                .map(|record| (record.raw_ordinal, record.tribute_id.as_bytes())),
+                .map(|record| (record.raw_ordinal, record.tribute_id)),
         )
     }
 }
@@ -257,7 +257,7 @@ impl AmountRunV1 {
         raw_coverage_root(
             self.ordered_records
                 .iter()
-                .map(|record| (record.raw_ordinal, record.tribute_id.as_bytes())),
+                .map(|record| (record.raw_ordinal, record.tribute_id)),
         )
     }
 }
@@ -265,12 +265,11 @@ impl AmountRunV1 {
 impl FinalizedOutputRunV1 {
     pub fn coverage_root(&self) -> Result<B256, LysisArtifactErrorV1> {
         validate_finalized_output_run(self)?;
-        raw_coverage_root(self.ordered_records.iter().map(|record| {
-            (
-                record.raw_ordinal,
-                record.nod_action.source_tribute_id.as_bytes(),
-            )
-        }))
+        raw_coverage_root(
+            self.ordered_records
+                .iter()
+                .map(|record| (record.raw_ordinal, record.nod_action.source_tribute_id)),
+        )
     }
 }
 
@@ -488,7 +487,7 @@ pub fn encode_amount_run(
     )?;
     for record in &run.ordered_records {
         encoded.write_u32(record.raw_ordinal)?;
-        encoded.write_entity_id36(record.tribute_id.as_bytes())?;
+        encoded.write_b256(*record.tribute_id)?;
         encoded.write_address20(record.owner)?;
         encoded.write_u32(record.worldwide_day.value())?;
         encoded.write_u16(record.league_id)?;
@@ -527,8 +526,7 @@ pub fn decode_amount_run(
     for _ in 0..count {
         ordered_records.push(AmountRecordV1 {
             raw_ordinal: input.read_u32()?,
-            tribute_id: EntityId36::try_from(input.read_entity_id36()?.as_slice())
-                .map_err(|_| LysisArtifactErrorV1::InvalidEncoding("amount Tribute id"))?,
+            tribute_id: WwdEntityId::from(input.read_b256()?),
             owner: input.read_address20()?,
             worldwide_day: WorldwideDay::new(input.read_u32()?),
             league_id: input.read_u16()?,
@@ -692,8 +690,8 @@ pub fn encode_finalized_output_run(
     for record in &run.ordered_records {
         let nod = &record.nod_action;
         encoded.write_u32(record.raw_ordinal)?;
-        encoded.write_entity_id36(nod.source_tribute_id.as_bytes())?;
-        encoded.write_entity_id36(nod.nod_id.as_bytes())?;
+        encoded.write_b256(*nod.source_tribute_id)?;
+        encoded.write_b256(*nod.nod_id)?;
         encoded.write_address20(nod.owner)?;
         encoded.write_u32(nod.worldwide_day.value())?;
         encoded.write_u16(nod.league_id)?;
@@ -707,7 +705,7 @@ pub fn encode_finalized_output_run(
         encoded.write_u64(nod.issued_at)?;
         encoded.write_option(record.contributor_action.as_ref(), |writer, contributor| {
             writer.write_address20(contributor.owner)?;
-            writer.write_entity_id36(contributor.source_tribute_id.as_bytes())?;
+            writer.write_b256(*contributor.source_tribute_id)?;
             writer.write_u256(contributor.nominal_amount_minor)
         })?;
     }
@@ -737,10 +735,8 @@ pub fn decode_finalized_output_run(
         .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
     for _ in 0..count {
         let raw_ordinal = input.read_u32()?;
-        let source_tribute_id = EntityId36::try_from(input.read_entity_id36()?.as_slice())
-            .map_err(|_| LysisArtifactErrorV1::InvalidEncoding("finalized Tribute id"))?;
-        let nod_id = EntityId36::try_from(input.read_entity_id36()?.as_slice())
-            .map_err(|_| LysisArtifactErrorV1::InvalidEncoding("finalized Nod id"))?;
+        let source_tribute_id = WwdEntityId::from(input.read_b256()?);
+        let nod_id = WwdEntityId::from(input.read_b256()?);
         let owner = input.read_address20()?;
         let worldwide_day = WorldwideDay::new(input.read_u32()?);
         let league_id = input.read_u16()?;
@@ -755,12 +751,7 @@ pub fn decode_finalized_output_run(
         let contributor_action = input.read_option(|reader| {
             Ok(FinalizedContributorV1 {
                 owner: reader.read_address20()?,
-                source_tribute_id: EntityId36::try_from(reader.read_entity_id36()?.as_slice())
-                    .map_err(|_| {
-                        outbe_ocomp_protocol::ProtocolError::InvalidInvariant(
-                            "finalized contributor Tribute id",
-                        )
-                    })?,
+                source_tribute_id: WwdEntityId::from(reader.read_b256()?),
                 nominal_amount_minor: reader.read_u256()?,
             })
         })?;
@@ -854,7 +845,7 @@ pub fn encode_enumerated_run(
     )?;
     for record in &run.ordered_records {
         output.write_u32(record.raw_ordinal)?;
-        output.write_entity_id36(record.tribute.tribute_id.as_bytes())?;
+        output.write_b256(*record.tribute.tribute_id)?;
         output.write_address20(record.tribute.owner)?;
         output.write_u16(record.tribute.issuance_currency)?;
         output.write_u256(record.tribute.nominal_amount_minor)?;
@@ -888,8 +879,7 @@ pub fn decode_enumerated_run(
         .map_err(|_| LysisArtifactErrorV1::LengthOverflow)?;
     for _ in 0..count {
         let raw_ordinal = input.read_u32()?;
-        let tribute_id = EntityId36::try_from(input.read_entity_id36()?.as_slice())
-            .map_err(|_| LysisArtifactErrorV1::InvalidEncoding("Tribute id"))?;
+        let tribute_id = WwdEntityId::from(input.read_b256()?);
         ordered_records.push(EnumeratedTributeRecordV1 {
             raw_ordinal,
             tribute: TributeInputV1 {
@@ -937,7 +927,7 @@ pub fn encode_fidelity_map_output(
     )?;
     for observation in &output.observations {
         encoded.write_u32(observation.raw_ordinal)?;
-        encoded.write_entity_id36(observation.tribute_id.as_bytes())?;
+        encoded.write_b256(*observation.tribute_id)?;
         encoded.write_u16(observation.pre_distribution_league)?;
         encoded.write_u16(observation.issuance_league)?;
         encoded.write_u256(observation.nominal_amount_minor)?;
@@ -979,8 +969,7 @@ pub fn decode_fidelity_map_output(
     for _ in 0..observation_count {
         observations.push(FidelityObservationV1 {
             raw_ordinal: input.read_u32()?,
-            tribute_id: EntityId36::try_from(input.read_entity_id36()?.as_slice())
-                .map_err(|_| LysisArtifactErrorV1::InvalidEncoding("Fidelity Tribute id"))?,
+            tribute_id: WwdEntityId::from(input.read_b256()?),
             pre_distribution_league: input.read_u16()?,
             issuance_league: input.read_u16()?,
             nominal_amount_minor: input.read_u256()?,
@@ -1408,7 +1397,7 @@ fn raw_coverage_subtree_root(
     subtree_start: u32,
     subtree_height: u16,
     total_count: u32,
-    records: &[(u32, [u8; 36])],
+    records: &[(u32, WwdEntityId)],
 ) -> Result<B256, LysisArtifactErrorV1> {
     let width = 1_u32
         .checked_shl(u32::from(subtree_height))
@@ -1448,7 +1437,7 @@ fn raw_coverage_subtree_root(
             }
             let mut encoded = [0_u8; COVERAGE_RECORD_BYTES];
             encoded[..4].copy_from_slice(&raw_ordinal.to_be_bytes());
-            encoded[4..].copy_from_slice(tribute_id);
+            encoded[4..].copy_from_slice(tribute_id.as_slice());
             nodes.push(leaf_hash(
                 ListKind::RawTributeCoverage,
                 raw_ordinal,
@@ -1491,8 +1480,8 @@ fn raw_coverage_subtree_root(
     Ok(nodes[0])
 }
 
-fn raw_coverage_root<'a>(
-    records: impl IntoIterator<Item = (u32, &'a [u8; 36])>,
+fn raw_coverage_root(
+    records: impl IntoIterator<Item = (u32, WwdEntityId)>,
 ) -> Result<B256, LysisArtifactErrorV1> {
     let mut encoded_records = Vec::new();
     for (raw_ordinal, tribute_id) in records {
@@ -1503,7 +1492,7 @@ fn raw_coverage_root<'a>(
         }
         let mut encoded = [0_u8; COVERAGE_RECORD_BYTES];
         encoded[..4].copy_from_slice(&raw_ordinal.to_be_bytes());
-        encoded[4..].copy_from_slice(tribute_id);
+        encoded[4..].copy_from_slice(tribute_id.as_slice());
         encoded_records.push(encoded);
     }
     ordered_list_root(

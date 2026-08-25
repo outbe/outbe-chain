@@ -25,6 +25,7 @@ outbe-gem.workspace = true
 outbe-credisfactory.workspace = true
 # Returns expired pledge-time vault reservations on a 5-minute slot.
 outbe-gratisfactory.workspace = true
+outbe-nod.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 tracing.workspace = true

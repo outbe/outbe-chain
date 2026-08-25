@@ -8,14 +8,12 @@ fn scan_and_qualify_promotes_aged_series() {
         runtime::issue(&s, sample(7)).unwrap();
         // Qualifier pair live rate above the floor.
         let oracle = OracleContract::new(s.clone());
-        let pair = outbe_oracle::api::AddressPair::new_coen_to(REFERENCE_ISO);
-        // The ISO resolves through the pair registry, so the pair must exist
-        // and the rate columns are keyed by its index.
-        oracle.pair_to_index.write(&pair, PAIR_ID).unwrap();
-        oracle
-            .exchange_rate
-            .write(&PAIR_ID, U256::from(EXPECTED_FLOOR) + U256::from(1))
-            .unwrap();
+        write_rate(
+            &oracle,
+            REFERENCE_ISO,
+            PAIR_ID,
+            U256::from(EXPECTED_FLOOR) + U256::from(1),
+        );
         list_reference(&oracle);
 
         let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
@@ -136,10 +134,8 @@ fn scan_does_not_halt_on_overflow_rate() {
     with_factory(|s| {
         runtime::issue(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
-        let pair = outbe_oracle::api::AddressPair::new_coen_to(REFERENCE_ISO);
-        oracle.pair_to_index.write(&pair, PAIR_ID).unwrap();
         // Out-of-range rate: price_to_bin overflows.
-        oracle.exchange_rate.write(&PAIR_ID, U256::MAX).unwrap();
+        write_rate(&oracle, REFERENCE_ISO, PAIR_ID, U256::MAX);
         list_reference(&oracle);
 
         let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
@@ -148,6 +144,36 @@ fn scan_does_not_halt_on_overflow_rate() {
             s.clone(),
         );
         // Must not halt: returns Ok(0) and leaves the series untouched.
+        assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 0);
+        assert_eq!(
+            outbe_intex::api::read_series(&s, sid(7))
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+            outbe_intex::IntexState::Issued
+        );
+    });
+}
+
+#[test]
+fn qualification_scan_skips_a_stale_rate_without_halting_the_block() {
+    with_factory(|s| {
+        runtime::issue(&s, sample(7)).unwrap();
+        let oracle = OracleContract::new(s.clone());
+        write_rate(
+            &oracle,
+            REFERENCE_ISO,
+            PAIR_ID,
+            U256::from(EXPECTED_FLOOR + 1),
+        );
+        list_reference(&oracle);
+        let mature_ts = ISSUED_AT as u64 + QUALIFICATION_PERIOD as u64 + 1;
+        s.set_block_timestamp(U256::from(mature_ts)).unwrap();
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, mature_ts, CHAIN_ID),
+            s.clone(),
+        );
+
         assert_eq!(qualified::scan_and_qualify(&ctx).unwrap(), 0);
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(7))
@@ -170,14 +196,12 @@ fn scan_isolates_bad_series() {
             .unwrap();
 
         let oracle = OracleContract::new(s.clone());
-        let pair = outbe_oracle::api::AddressPair::new_coen_to(REFERENCE_ISO);
-        // The ISO resolves through the pair registry, so the pair must exist
-        // and the rate columns are keyed by its index.
-        oracle.pair_to_index.write(&pair, PAIR_ID).unwrap();
-        oracle
-            .exchange_rate
-            .write(&PAIR_ID, U256::from(EXPECTED_FLOOR) + U256::from(1))
-            .unwrap();
+        write_rate(
+            &oracle,
+            REFERENCE_ISO,
+            PAIR_ID,
+            U256::from(EXPECTED_FLOOR) + U256::from(1),
+        );
         list_reference(&oracle);
 
         let mature_ts = ISSUED_AT as u64 + 21 * DAY + 1;
@@ -228,15 +252,13 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
 fn scan_caps_work_per_block_and_resumes_via_cursor() {
     with_factory(|s| {
         let oracle = OracleContract::new(s.clone());
-        let pair = outbe_oracle::api::AddressPair::new_coen_to(REFERENCE_ISO);
-        // The ISO resolves through the pair registry, so the pair must exist
-        // and the rate columns are keyed by its index.
-        oracle.pair_to_index.write(&pair, PAIR_ID).unwrap();
         // Rate well above both floors so both bins are eligible.
-        oracle
-            .exchange_rate
-            .write(&PAIR_ID, U256::from(EXPECTED_FLOOR) * U256::from(1000))
-            .unwrap();
+        write_rate(
+            &oracle,
+            REFERENCE_ISO,
+            PAIR_ID,
+            U256::from(EXPECTED_FLOOR) * U256::from(1000),
+        );
         list_reference(&oracle);
 
         // Two distinct bins: the first holds exactly MAX_SERIES_PER_BLOCK entries, the second a few.

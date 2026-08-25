@@ -47,8 +47,8 @@
       },
       {
         "name": "nonce",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "uint64",
+        "internalType": "uint64"
       },
       {
         "name": "mac",
@@ -306,7 +306,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "issuanceCurrency",
+        "name": "settlementCurrency",
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"

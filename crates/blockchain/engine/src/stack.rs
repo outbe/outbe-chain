@@ -92,6 +92,70 @@ use outbe_consensus::{
     reporter::{OutbeReporter, ReporterContinuity},
     vrf_safety::VrfSafetyGate,
 };
+use outbe_radicle::integration::{RadicleVotingGate, RadicleVotingGateError};
+
+fn radicle_channel_config() -> (u64, u32, usize) {
+    (
+        config::RADICLE_ENDPOINT_CHANNEL,
+        config::RADICLE_ENDPOINT_CHANNEL_QUOTA,
+        config::CHANNEL_BACKLOG,
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StackShutdownOrNetworkExit {
+    GlobalStop,
+    NetworkExit,
+}
+
+/// Give global shutdown ownership of the current Simplex engine before a
+/// sibling network exit can tear down the stack subtree.
+async fn wait_for_stack_shutdown_or_network_exit<S, N>(
+    shutdown: &mut S,
+    network: &mut N,
+) -> StackShutdownOrNetworkExit
+where
+    S: Future + Unpin,
+    N: Future + Unpin,
+{
+    tokio::select! {
+        biased;
+        _ = shutdown => StackShutdownOrNetworkExit::GlobalStop,
+        _ = network => StackShutdownOrNetworkExit::NetworkExit,
+    }
+}
+
+fn radicle_signer_enabled(gate: RadicleVotingGate, has_share: bool) -> Result<bool> {
+    match gate {
+        RadicleVotingGate::Verifier => Ok(false),
+        RadicleVotingGate::SignerAllowed => Ok(has_share),
+        RadicleVotingGate::Fatal(error) => {
+            let reason = match error {
+                RadicleVotingGateError::SidecarUnavailable => "sidecar unavailable",
+                RadicleVotingGateError::LocalNodeIdUnavailable => "local NodeId unavailable",
+                RadicleVotingGateError::ActiveBindingMissing => "active binding missing",
+                RadicleVotingGateError::BindingMismatch => "binding mismatch",
+            };
+            Err(eyre::eyre!("Radicle voting gate is fatal: {reason}"))
+        }
+    }
+}
+
+async fn wait_for_radicle_role_change(
+    updates: &mut tokio::sync::watch::Receiver<outbe_radicle::integration::RadicleStatusSnapshot>,
+    current_signer: bool,
+    has_share: bool,
+) -> Result<bool> {
+    loop {
+        let desired_signer = radicle_signer_enabled(updates.borrow().voting_gate, has_share)?;
+        if desired_signer != current_signer {
+            return Ok(desired_signer);
+        }
+        if updates.changed().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
+}
 
 use outbe_node::OutbeFullNode;
 use outbe_ocomp_protocol::profile::poc_schema_limits;
@@ -120,6 +184,11 @@ pub struct ConsensusStackServices {
     ocomp_readiness: Option<ProjectionReadinessHandle>,
     finalized_ce_committer: Arc<dyn FinalizedCeCommitter>,
     ce_startup_recovery: Arc<dyn CeStartupRecovery>,
+    radicle_status: outbe_radicle::integration::RadicleStatusHandle,
+    radicle_endpoint: Option<(
+        outbe_radicle::integration::EndpointNetworkService,
+        outbe_radicle::integration::LocalEndpointIdentityHandle,
+    )>,
 }
 
 impl ConsensusStackServices {
@@ -133,6 +202,8 @@ impl ConsensusStackServices {
             ocomp_readiness: None,
             finalized_ce_committer,
             ce_startup_recovery,
+            radicle_status: outbe_radicle::integration::RadicleStatusChannel::disabled(),
+            radicle_endpoint: None,
         }
     }
 
@@ -141,6 +212,18 @@ impl ConsensusStackServices {
     #[must_use]
     pub fn with_ocomp_readiness(mut self, readiness: ProjectionReadinessHandle) -> Self {
         self.ocomp_readiness = Some(readiness);
+        self
+    }
+
+    #[must_use]
+    pub fn with_radicle(
+        mut self,
+        status: outbe_radicle::integration::RadicleStatusHandle,
+        endpoint: outbe_radicle::integration::EndpointNetworkService,
+        local: outbe_radicle::integration::LocalEndpointIdentityHandle,
+    ) -> Self {
+        self.radicle_status = status;
+        self.radicle_endpoint = Some((endpoint, local));
         self
     }
 }
@@ -2503,7 +2586,10 @@ where
         ocomp_readiness,
         finalized_ce_committer,
         ce_startup_recovery,
+        radicle_status,
+        radicle_endpoint,
     } = services;
+    let mut radicle_updates = radicle_status.subscribe();
 
     // Validate network-scoped flags before any mode-specific early return. A
     // follower must fail closed too, even when it does not currently consume
@@ -2641,6 +2727,15 @@ where
         )
     });
 
+    let radicle_channel = radicle_endpoint.as_ref().map(|_| {
+        let (channel, quota, backlog) = radicle_channel_config();
+        network.register(
+            channel,
+            Quota::per_second(NonZeroU32::new(quota).expect("Radicle quota is non-zero")),
+            backlog,
+        )
+    });
+
     // Parse consensus peers: `<hex_pubkey>@<host:port>` → (PublicKey, SocketAddr).
     let bootnode_map = parse_consensus_peers(&args.consensus_peers)?;
 
@@ -2663,6 +2758,16 @@ where
     // ── 4. Start P2P network (needed before DKG can run) ───────────────
     let mut network_handle = network.start();
     info!("P2P network started");
+
+    if let (Some((endpoint, local)), Some((sender, receiver))) = (radicle_endpoint, radicle_channel)
+    {
+        let signer = signing_key.clone();
+        tokio::spawn(async move {
+            if let Err(error) = endpoint.run(sender, receiver, signer, local).await {
+                tracing::warn!(%error, "Radicle endpoint actor stopped");
+            }
+        });
+    }
 
     // ── 5. Create Muxers from physical channels ────────────────────────
     // Consensus channels are muxed by epoch — each engine restart
@@ -2693,6 +2798,11 @@ where
     // the next `'epoch_loop` iteration consumes this stash via
     // `take_or_register_current`.
     let mut next_epoch_subchannels: Option<
+        outbe_consensus::epoch_subchannels::EpochSubchannels<_, _>,
+    > = None;
+    // Same-epoch role replacement has a distinct stash so it cannot overwrite
+    // channels already pre-registered for a future DKG epoch.
+    let mut replacement_epoch_subchannels: Option<
         outbe_consensus::epoch_subchannels::EpochSubchannels<_, _>,
     > = None;
 
@@ -4205,16 +4315,28 @@ where
         // next iteration consumes it. The fallback path covers the
         // genesis-bootstrap iteration where no prior DKG completion has
         // run.
+        let current_subchannels = if replacement_epoch_subchannels.is_some() {
+            outbe_consensus::epoch_subchannels::take_or_register_current(
+                current_epoch,
+                &mut replacement_epoch_subchannels,
+                &mut vote_mux,
+                &mut cert_mux,
+                &mut res_mux,
+            )
+            .await?
+        } else {
+            outbe_consensus::epoch_subchannels::take_or_register_current(
+                current_epoch,
+                &mut next_epoch_subchannels,
+                &mut vote_mux,
+                &mut cert_mux,
+                &mut res_mux,
+            )
+            .await?
+        };
         let outbe_consensus::epoch_subchannels::EpochSubchannels {
             vote, cert, res, ..
-        } = outbe_consensus::epoch_subchannels::take_or_register_current(
-            current_epoch,
-            &mut next_epoch_subchannels,
-            &mut vote_mux,
-            &mut cert_mux,
-            &mut res_mux,
-        )
-        .await?;
+        } = current_subchannels;
 
         if let Some(pending_epoch) = deferred_startup_pending_epoch.take() {
             ensure!(
@@ -4244,7 +4366,11 @@ where
 
         // ── b. Build HybridScheme for this epoch ────────────────────────
         use commonware_consensus::simplex::elector::Config as ElectorConfig;
-        let scheme = if signing_share.is_some() {
+        let radicle_signer = radicle_signer_enabled(
+            radicle_status.snapshot().voting_gate,
+            signing_share.is_some(),
+        )?;
+        let scheme = if radicle_signer {
             HybridScheme::<MinSig>::signer_with_vrf_provider(
                 &config::outbe_app_namespace(),
                 participants.clone(),
@@ -4411,15 +4537,62 @@ where
         // ── g. Engine event loop ────────────────────────────────────────
         // Monitors engine, component exits, and block-height-driven reshare triggers.
 
+        let mut stack_shutdown = ctx.stopped();
+
         loop {
             tokio::select! {
                 biased;
 
-                // Network exit → fatal.
-                _ = &mut network_handle => {
-                    info!("P2P network exited");
-                    break 'epoch_loop;
+                lifecycle = wait_for_stack_shutdown_or_network_exit(
+                    &mut stack_shutdown,
+                    &mut network_handle,
+                ) => {
+                    match lifecycle {
+                        StackShutdownOrNetworkExit::GlobalStop => {
+                            info!(epoch = %current_epoch, "global stop received; draining simplex engine");
+                            let _ = (&mut engine_handle_task).await;
+                            break 'epoch_loop;
+                        }
+                        StackShutdownOrNetworkExit::NetworkExit => {
+                            info!("P2P network exited");
+                            break 'epoch_loop;
+                        }
+                    }
                 }
+
+                desired_signer = wait_for_radicle_role_change(
+                    &mut radicle_updates,
+                    radicle_signer,
+                    signing_share.is_some(),
+                ) => {
+                    let desired_signer = desired_signer?;
+                    info!(
+                        epoch = %current_epoch,
+                        previous_signer = radicle_signer,
+                        desired_signer,
+                        "canonical Radicle voting gate changed; replacing same-epoch Simplex role"
+                    );
+                    engine_handle_task.abort();
+                    let _ = (&mut engine_handle_task).await;
+                    replacement_epoch_subchannels = Some(
+                        outbe_consensus::epoch_subchannels::reacquire_epoch_subchannels(
+                            current_epoch,
+                            ctx,
+                            Duration::from_secs(5),
+                            Duration::from_millis(10),
+                            &mut vote_mux,
+                            &mut cert_mux,
+                            &mut res_mux,
+                        )
+                        .await
+                        .wrap_err_with(|| {
+                            format!(
+                                "reacquire same-epoch channels while replacing Radicle role in epoch {current_epoch}"
+                            )
+                        })?,
+                    );
+                    continue 'epoch_loop;
+                },
 
                 // Engine exit → clean shutdown.
                 _ = &mut engine_handle_task => {
@@ -5456,33 +5629,25 @@ where
                                     );
                                     let (finalized_log_tx, finalized_log_rx) =
                                         tokio::sync::mpsc::unbounded_channel();
-                                    if let Err(error) = dkg_manager.note_ceremony_started_with_finalized_log_tx(
-                                        current_epoch,
-                                        round,
-                                        prev_output.clone(),
-                                        target.participants.clone(),
-                                        Some(finalized_log_tx.clone()),
-                                    ) {
-                                        warn!(%error, epoch = %current_epoch, round, "failed to initialize DKG manager state for frozen-target retry");
-                                        reshare_in_progress = false;
-                                        outbe_consensus::metrics::record_dkg_status(0);
-                                        continue;
-                                    }
-                                    let mut replay_height = target.freeze_height;
-                                    if let Err(error) = replay_finalized_dealer_logs_into_manager(
+                                    if let Err(error) = restart_dkg_manager_from_finalized_history(
                                         &node.provider,
-                                        &mut replay_height,
-                                        current_height,
                                         &dkg_manager,
-                                    ) {
-                                        warn!(
-                                            %error,
-                                            epoch = %current_epoch,
+                                        DkgCeremonyReplaySpec {
+                                            epoch: current_epoch,
                                             round,
-                                            from_height = target.freeze_height,
-                                            to_height = current_height,
-                                            "failed to replay finalized dealer logs for frozen-target retry"
-                                        );
+                                            previous_output: prev_output.clone(),
+                                            participants: target.participants.clone(),
+                                            finalized_dealer_log_tx: Some(finalized_log_tx.clone()),
+                                        },
+                                        target.freeze_height,
+                                        current_height,
+                                        || {
+                                            (*consensus_tip_rx.borrow()).expect(
+                                                "the height arm continues before DKG retry when no consensus tip is available",
+                                            )
+                                        },
+                                    ) {
+                                        warn!(%error, epoch = %current_epoch, round, "failed to recover DKG manager state for frozen-target retry");
                                         reshare_in_progress = false;
                                         retry_frozen_dkg = true;
                                         outbe_consensus::metrics::record_dkg_status(0);
@@ -5613,26 +5778,26 @@ where
                                             p2p_oracle_dkg_peer_set_id(freeze_height);
                                         let _ = oracle.track(chain_peer_set_id, peer_map.clone());
                                         let _ = oracle.track(dkg_peer_set_id, peer_map);
-                                        dkg_manager
-                                            .note_ceremony_started_with_finalized_log_tx(
-                                                current_epoch,
-                                                dkg_cycle,
-                                                last_dkg_output.clone(),
-                                                new_participants.clone(),
-                                                None,
-                                            )
-                                            .wrap_err(
-                                                "failed to initialize verifier-follower DKG reconstruction",
-                                            )?;
-                                        let mut replay_height = freeze_height;
-                                        replay_finalized_dealer_logs_into_manager(
+                                        restart_dkg_manager_from_finalized_history(
                                             &node.provider,
-                                            &mut replay_height,
-                                            current_height,
                                             &dkg_manager,
+                                            DkgCeremonyReplaySpec {
+                                                epoch: current_epoch,
+                                                round: dkg_cycle,
+                                                previous_output: last_dkg_output.clone(),
+                                                participants: new_participants.clone(),
+                                                finalized_dealer_log_tx: None,
+                                            },
+                                            freeze_height,
+                                            current_height,
+                                            || {
+                                                (*consensus_tip_rx.borrow()).expect(
+                                                    "the height arm continues before verifier-follower DKG recovery when no consensus tip is available",
+                                                )
+                                            },
                                         )
                                         .wrap_err(
-                                            "failed to replay finalized dealer logs for verifier-follower",
+                                            "failed to recover verifier-follower DKG reconstruction from finalized history",
                                         )?;
                                         let is_validator_set_change =
                                             new_participants != participants;
@@ -5771,33 +5936,31 @@ where
                                 );
                                 let (finalized_log_tx, finalized_log_rx) =
                                     tokio::sync::mpsc::unbounded_channel();
-                                if let Err(error) = dkg_manager.note_ceremony_started_with_finalized_log_tx(
-                                    current_epoch,
-                                    round,
-                                    prev_output.clone(),
-                                    target_participants.clone(),
-                                    Some(finalized_log_tx.clone()),
-                                ) {
-                                    warn!(%error, epoch = %current_epoch, round, "failed to initialize DKG manager state for live reshare");
-                                    reshare_in_progress = false;
-                                    frozen_dkg_target = None;
-                                    outbe_consensus::metrics::record_dkg_status(0);
-                                    continue;
-                                }
-                                let mut replay_height = freeze_height;
-                                if let Err(error) = replay_finalized_dealer_logs_into_manager(
+                                if let Err(error) = restart_dkg_manager_from_finalized_history(
                                     &node.provider,
-                                    &mut replay_height,
-                                    current_height,
                                     &dkg_manager,
+                                    DkgCeremonyReplaySpec {
+                                        epoch: current_epoch,
+                                        round,
+                                        previous_output: prev_output.clone(),
+                                        participants: target_participants.clone(),
+                                        finalized_dealer_log_tx: Some(finalized_log_tx.clone()),
+                                    },
+                                    freeze_height,
+                                    current_height,
+                                    || {
+                                        (*consensus_tip_rx.borrow()).expect(
+                                            "the height arm continues before live DKG recovery when no consensus tip is available",
+                                        )
+                                    },
                                 ) {
                                     warn!(
                                         %error,
                                         epoch = %current_epoch,
                                         round,
                                         from_height = freeze_height,
-                                        to_height = current_height,
-                                        "failed to replay finalized dealer logs for live reshare"
+                                        scheduling_height = current_height,
+                                        "failed to recover live DKG manager state from finalized history"
                                     );
                                     reshare_in_progress = false;
                                     retry_frozen_dkg = true;
@@ -6681,6 +6844,7 @@ fn startup_live_join_scan_height(
     Ok(execution_height.min(consensus_finalized_height))
 }
 
+#[cfg(test)]
 fn replay_finalized_dealer_logs_into_manager(
     provider: &impl HeaderProvider<Header = OutbeHeader>,
     next_scan_height: &mut u64,
@@ -6713,6 +6877,75 @@ fn replay_finalized_dealer_logs_into_manager(
         *next_scan_height = next_scan_height.saturating_add(1);
     }
     Ok(())
+}
+
+struct DkgCeremonyReplaySpec {
+    epoch: Epoch,
+    round: u64,
+    previous_output: Option<Output<MinSig, bls12381::PublicKey>>,
+    participants: commonware_utils::ordered::Set<bls12381::PublicKey>,
+    finalized_dealer_log_tx: Option<tokio::sync::mpsc::UnboundedSender<Bytes>>,
+}
+
+/// Recreate the manager's ceremony and replay the finalized DealerLog prefix
+/// before a frozen-target DKG retry starts.
+///
+#[allow(clippy::too_many_arguments)]
+fn restart_dkg_manager_from_finalized_history(
+    provider: &(impl HeaderProvider<Header = OutbeHeader> + BlockHashReader),
+    dkg_manager: &DkgManagerMailbox,
+    spec: DkgCeremonyReplaySpec,
+    freeze_height: u64,
+    _scheduling_height: u64,
+    verified_consensus_tip: impl FnOnce() -> crate::marshal_update_reporter::ConsensusTip,
+) -> Result<()> {
+    let replay_guard = dkg_manager.lock_finalized_replay();
+    let verified_consensus_tip = verified_consensus_tip();
+    ensure!(
+        provider_matches_consensus_tip(
+            provider,
+            verified_consensus_tip,
+            verified_consensus_tip.height.get(),
+        )?,
+        "execution provider does not contain the verified consensus tip at height {}",
+        verified_consensus_tip.height.get(),
+    );
+    let finalized_logs = collect_finalized_dealer_logs(
+        provider,
+        freeze_height,
+        verified_consensus_tip.height.get(),
+    )?;
+    replay_guard.restart_ceremony_with_finalized_logs(
+        spec.epoch,
+        spec.round,
+        spec.previous_output,
+        spec.participants,
+        spec.finalized_dealer_log_tx,
+        finalized_logs,
+    )
+}
+
+fn collect_finalized_dealer_logs(
+    provider: &impl HeaderProvider<Header = OutbeHeader>,
+    start_height: u64,
+    end_height: u64,
+) -> Result<Vec<(u64, B256, Bytes)>> {
+    let mut finalized_logs = Vec::new();
+    for height in start_height..=end_height {
+        let header = provider
+            .sealed_header(height)
+            .map_err(|error| eyre::eyre!("failed to read finalized header {height}: {error}"))?
+            .ok_or_else(|| eyre::eyre!("missing finalized header at height {height}"))?;
+        let artifacts = decode_outbe_block_artifacts(header.header().inner.extra_data.as_ref())
+            .map_err(|error| {
+                eyre::eyre!("failed to decode header artifacts at {height}: {error}")
+            })?;
+        if let Some(ConsensusHeaderArtifact::DealerLog(bytes)) = artifacts.consensus_header_artifact
+        {
+            finalized_logs.push((height, header.hash(), bytes));
+        }
+    }
+    Ok(finalized_logs)
 }
 
 /// Obtain threshold material (signing share + public polynomial).

@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use crate::{
     partition_collection_key, AuthenticatedCatalogView, AuthenticatedParentTree, Commitment,
-    EntityId36, EntityRef, MdbxAuthenticatedTree, PartitionRef,
+    EntityRef, MdbxAuthenticatedTree, PartitionRef, WwdEntityId,
 };
 
 #[derive(Debug)]
@@ -91,7 +91,7 @@ pub struct AuthenticatedTributePartition<'a> {
 impl AuthenticatedTributePartition<'_> {
     pub fn tribute_commitment(
         &self,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     ) -> Result<Option<Commitment>, ExportViewError> {
         if tribute_id.worldwide_day() != self.day {
             return Err(ExportViewError::TributeDayMismatch {

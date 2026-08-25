@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {Vm} from "forge-std/Vm.sol";
 
@@ -97,13 +96,10 @@ contract PatternADeferTest is CrossChainTest {
         nftBridge.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
 
         stubAuction = new StubAuctionWithBids();
-        bnbRouter.wire(address(stubAuction), address(intex), admin, address(nftBridge));
+        bnbRouter.wire(address(stubAuction), address(intex), admin);
 
-        // Holders bridge: the router drives the bridge's systemMultiSend, which crosschainBurns on the local
-        // Intex. crosschainBurn is gated by RELAYER_ROLE, and by SYSTEM_RELAYER_ROLE during the Called window.
-        nftBridge.grantRole(nftBridge.SYSTEM_RELAYER_ROLE(), address(bnbRouter));
+        // The bridge burns on the local Intex.
         intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
-        intex.grantRole(intex.SYSTEM_RELAYER_ROLE(), address(nftBridge));
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
 
         // Series so markCalled + holder enumeration work.
@@ -211,99 +207,5 @@ contract PatternADeferTest is CrossChainTest {
                 sizes[j++] = abi.decode(logs[i].data, (uint256));
             }
         }
-    }
-
-    // ---------------------------------------------------------------
-    // TargetRouter — holders relay defer + flush
-    // ---------------------------------------------------------------
-
-    function _markCalledPacket() internal pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeMarkCalled(SERIES_ID_DAY, MarkBatchLib.one(SERIES_ID));
-    }
-
-    // A holder set larger than MAX_BATCH_SIZE is split across multiple systemMultiSend chunks, so a big
-    // series is never stuck on the codec's per-message cap. (65 holders -> 64 + 1.)
-    function test_TM_HoldersRelay_ChunksAboveCap() public {
-        vm.deal(address(bnbRouter), 10 ether);
-
-        uint256 holderCount = 65;
-        for (uint256 i = 0; i < holderCount; i++) {
-            intex.mint(address(uint160(0x1000 + i)), 1, SERIES_ID);
-        }
-        assertEq(intex.seriesHolderCount(TOKEN_ID), holderCount);
-
-        vm.recordLogs();
-        _deliverBridge(_markCalledPacket());
-        uint256[] memory sizes = _systemBridgedSizes(vm.getRecordedLogs());
-
-        assertEq(sizes.length, 2, "ceil(65 / 64) = 2 chunks");
-        assertEq(sizes[0], 64, "chunk 0 at cap");
-        assertEq(sizes[1], 1, "chunk 1 remainder");
-
-        // Every holder burned off BSC; nothing parked (the float covers both chunk fees).
-        assertEq(intex.totalSupply(TOKEN_ID), 0, "all holders migrated off BSC");
-        assertEq(intex.seriesHolderCount(TOKEN_ID), 0, "holder set cleared");
-        (, bool exists,) = bnbRouter.pendingHoldersRelays(0);
-        assertFalse(exists, "no chunk parked");
-    }
-
-    /// @dev Extract the `holdersCount` of every `SystemBridged` log, in emission order.
-    function _systemBridgedSizes(Vm.Log[] memory logs) internal pure returns (uint256[] memory sizes) {
-        bytes32 topic = keccak256("SystemBridged(bytes32,uint32,uint256,uint256)");
-        uint256 n;
-        for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics.length != 0 && logs[i].topics[0] == topic) n++;
-        }
-        sizes = new uint256[](n);
-        uint256 j;
-        for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics.length != 0 && logs[i].topics[0] == topic) {
-                (, uint256 holdersCount) = abi.decode(logs[i].data, (uint32, uint256));
-                sizes[j++] = holdersCount;
-            }
-        }
-    }
-
-    function test_TM_HoldersRelayDeferredOnRouterFloatStarved() public {
-        // Seed a holder so `getSeriesHoldersWithBalances` returns non-empty arrays.
-        // The inbound MARK_CALLED triggers markCalled + the holders bridge.
-        intex.mint(address(0xCAFE), 1, SERIES_ID);
-
-        // TargetRouter's float is unfunded, so forwarding the quoted fee to `systemMultiSend`
-        // fails → holders relay deferred.
-        assertEq(address(bnbRouter).balance, 0);
-
-        _deliverBridge(_markCalledPacket());
-
-        // Auto-getter skips the dynamic-array fields (holders, amounts) — returns (tokenId, exists, done).
-        (uint256 storedTokenId, bool exists, bool done) = bnbRouter.pendingHoldersRelays(0);
-        assertEq(storedTokenId, TOKEN_ID, "deferred tokenId");
-        assertTrue(exists);
-        assertFalse(done);
-    }
-
-    function test_TM_FlushHoldersRelaySucceedsAfterRouterTopUp() public {
-        intex.mint(address(0xCAFE), 1, SERIES_ID);
-        _deliverBridge(_markCalledPacket());
-
-        // TargetRouter pays the bridge fee, so top up the router (not the adapter).
-        vm.deal(address(bnbRouter), 1 ether);
-
-        bnbRouter.flushPendingHoldersRelay(0);
-
-        (,, bool done) = bnbRouter.pendingHoldersRelays(0);
-        assertTrue(done, "flushed holders slot marked done");
-    }
-
-    function test_TM_FlushHoldersRelayUnknownIdxReverts() public {
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoSuchPendingHoldersRelay.selector, 99));
-        bnbRouter.flushPendingHoldersRelay(99);
-    }
-
-    function test_TM_BridgeSeriesHoldersExt_ExternalCallerRevertsNotSelf() public {
-        address[] memory holders = new address[](0);
-        uint256[] memory amounts = new uint256[](0);
-        vm.expectRevert(ITargetRouter.NotSelf.selector);
-        bnbRouter.bridgeSeriesHoldersExt(TOKEN_ID, holders, amounts);
     }
 }

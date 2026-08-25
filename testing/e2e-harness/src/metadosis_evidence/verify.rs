@@ -396,6 +396,8 @@ fn verify_fresh_devnet_process(
         "fresh-devnet launch identity is not Measurement@1 with the pinned Metadosis layout"
     );
     let protocol_parameters = verify_fresh_artifacts(bundle_root, &scenario, &members)?;
+    #[cfg(feature = "ocomp-integration")]
+    verify_price_oracle_evidence(&scenario)?;
     let processes = scenario["ocomp"]["topology"]["processes"]
         .as_array()
         .ok_or_else(|| eyre::eyre!("fresh-devnet scenario has no process topology"))?;
@@ -557,6 +559,103 @@ fn verify_fresh_devnet_process(
 }
 
 #[cfg(feature = "ocomp-integration")]
+fn verify_price_oracle_evidence(scenario: &serde_json::Value) -> Result<()> {
+    let price_oracle = &scenario["price_oracle"];
+    let final_mock_price = price_oracle["mock_price"]
+        .as_str()
+        .ok_or_else(|| eyre::eyre!("fresh-devnet price evidence has no final mock price"))?;
+    let final_mock_rate = scale6_decimal_minor(final_mock_price)?;
+    ensure!(
+        Path::new(
+            price_oracle["feeder_binary"]
+                .as_str()
+                .ok_or_else(|| eyre::eyre!("fresh-devnet price evidence has no feeder binary"))?,
+        )
+        .file_name()
+        .and_then(|name| name.to_str())
+            == Some("outbe-feeder"),
+        "fresh-devnet price evidence does not identify outbe-feeder"
+    );
+    ensure!(
+        price_oracle["feeder_binary_sha256"]
+            .as_str()
+            .is_some_and(|digest| digest.len() == 64 && hex::decode(digest).is_ok()),
+        "fresh-devnet price evidence has no exact feeder digest"
+    );
+    ensure!(
+        price_oracle["mock_generation"].as_u64() == Some(2)
+            && final_mock_rate > 1_000_000
+            && price_oracle["mock_volume"] == "1000.000000"
+            && price_oracle["ticker_requests"]
+                .as_u64()
+                .is_some_and(|count| count > 0)
+            && price_oracle["candle_requests"]
+                .as_u64()
+                .is_some_and(|count| count > 0),
+        "fresh-devnet price evidence is not bound to the controlled mock generation"
+    );
+    let publications = price_oracle["canonical_publications"]
+        .as_array()
+        .ok_or_else(|| eyre::eyre!("fresh-devnet price evidence has no canonical publications"))?;
+    ensure!(
+        publications.len() == 4,
+        "fresh-devnet must prove one initial, two post-restart, and one Nod-qualification Oracle publication"
+    );
+    let mut previous_oracle_block = 0;
+    for (index, publication) in publications.iter().enumerate() {
+        let oracle_block = publication["oracle_block"]
+            .as_u64()
+            .ok_or_else(|| eyre::eyre!("canonical price publication has no Oracle block"))?;
+        let oracle_timestamp = publication["oracle_timestamp"]
+            .as_u64()
+            .ok_or_else(|| eyre::eyre!("canonical price publication has no Oracle timestamp"))?;
+        let finalized_height = publication["finalized_height"]
+            .as_u64()
+            .ok_or_else(|| eyre::eyre!("canonical price publication has no finalized height"))?;
+        let finalized_timestamp = publication["finalized_timestamp"]
+            .as_u64()
+            .ok_or_else(|| eyre::eyre!("canonical price publication has no finalized timestamp"))?;
+        let age = finalized_timestamp.saturating_sub(oracle_timestamp);
+        let expected_rate = if index + 1 == publications.len() {
+            final_mock_rate.to_string()
+        } else {
+            "1000000".to_owned()
+        };
+        ensure!(
+            publication["validator_count"].as_u64() == Some(4)
+                && publication["rate"] == expected_rate
+                && oracle_block > previous_oracle_block
+                && oracle_block <= finalized_height
+                && oracle_timestamp != 0
+                && age <= 21_600
+                && publication["age_seconds"].as_u64() == Some(age),
+            "fresh-devnet contains a stale, divergent, or non-finalized Oracle publication"
+        );
+        previous_oracle_block = oracle_block;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn scale6_decimal_minor(value: &str) -> Result<u128> {
+    let (whole, fraction) = value
+        .split_once('.')
+        .ok_or_else(|| eyre::eyre!("controlled mock price is not a scale-6 decimal"))?;
+    ensure!(
+        fraction.len() == 6
+            && whole.chars().all(|character| character.is_ascii_digit())
+            && fraction.chars().all(|character| character.is_ascii_digit()),
+        "controlled mock price is not a canonical scale-6 decimal"
+    );
+    let whole = whole.parse::<u128>()?;
+    let fraction = fraction.parse::<u128>()?;
+    whole
+        .checked_mul(1_000_000)
+        .and_then(|scaled| scaled.checked_add(fraction))
+        .ok_or_else(|| eyre::eyre!("controlled mock price overflows scale-6 evidence"))
+}
+
+#[cfg(feature = "ocomp-integration")]
 fn verify_fresh_artifacts(
     bundle_root: &Path,
     scenario: &serde_json::Value,
@@ -568,6 +667,7 @@ fn verify_fresh_artifacts(
     let binaries = [
         ("outbe_chain", "outbe-chain"),
         ("outbe_ocomp", "outbe-ocomp"),
+        ("outbe_feeder", "outbe-feeder"),
         ("outbe_cli", "outbe-cli"),
         ("outbe_keygen", "outbe-keygen"),
         ("outbe_e2e", "outbe-e2e"),
@@ -1128,6 +1228,7 @@ mod tests {
         for (identity, file_name) in [
             ("outbe_chain", "outbe-chain"),
             ("outbe_ocomp", "outbe-ocomp"),
+            ("outbe_feeder", "outbe-feeder"),
             ("outbe_cli", "outbe-cli"),
             ("outbe_keygen", "outbe-keygen"),
             ("outbe_e2e", "outbe-e2e"),
@@ -1189,6 +1290,55 @@ mod tests {
                 "validators": 4,
                 "tee": "gramine-direct",
                 "all": true
+            },
+            "price_oracle": {
+                "feeder_binary": artifacts.join("outbe-feeder"),
+                "feeder_binary_sha256": exact_binaries["outbe_feeder"]["sha256"],
+                "feeder_pid": 12345,
+                "feeder_log": "fresh-devnet/evidence/price-oracle/validator-0-feeder.log",
+                "mock_generation": 2,
+                "mock_price": "1.080001",
+                "mock_volume": "1000.000000",
+                "ticker_requests": 3,
+                "candle_requests": 3,
+                "canonical_publications": [
+                    {
+                        "validator_count": 4,
+                        "rate": "1000000",
+                        "oracle_block": 2,
+                        "oracle_timestamp": initial_timestamp,
+                        "finalized_height": 2,
+                        "finalized_timestamp": initial_timestamp,
+                        "age_seconds": 0
+                    },
+                    {
+                        "validator_count": 4,
+                        "rate": "1000000",
+                        "oracle_block": 4,
+                        "oracle_timestamp": first_target,
+                        "finalized_height": 4,
+                        "finalized_timestamp": first_target,
+                        "age_seconds": 0
+                    },
+                    {
+                        "validator_count": 4,
+                        "rate": "1000000",
+                        "oracle_block": 6,
+                        "oracle_timestamp": second_target,
+                        "finalized_height": 6,
+                        "finalized_timestamp": second_target,
+                        "age_seconds": 0
+                    },
+                    {
+                        "validator_count": 4,
+                        "rate": "1080001",
+                        "oracle_block": 8,
+                        "oracle_timestamp": second_target + 2,
+                        "finalized_height": 8,
+                        "finalized_timestamp": second_target + 2,
+                        "age_seconds": 0
+                    }
+                ]
             },
             "ocomp": {
                 "exact_binaries": exact_binaries,
@@ -1341,6 +1491,12 @@ mod tests {
 
         scenario["ocomp"]["public_path"]["metadosis_fresh_lifecycle"]
             ["unknown_status_revert_validator_count"] = serde_json::json!(4);
+        scenario["price_oracle"]["canonical_publications"][1]["age_seconds"] =
+            serde_json::json!(21_601);
+        std::fs::write(&scenario_path, serde_json::to_vec(&scenario).unwrap()).unwrap();
+        assert!(verify_fresh_devnet_process(root.path(), &receipt).is_err());
+
+        scenario["price_oracle"]["canonical_publications"][1]["age_seconds"] = serde_json::json!(0);
         scenario["ocomp"]["public_path"]["metadosis_fresh_lifecycle"]["status_changes"][0]
             ["new_status"] = serde_json::json!(2);
         std::fs::write(&scenario_path, serde_json::to_vec(&scenario).unwrap()).unwrap();

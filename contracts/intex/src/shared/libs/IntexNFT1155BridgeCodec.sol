@@ -26,10 +26,11 @@ library IntexNFT1155BridgeCodec {
     /// @notice `msgType` for a multi-recipient batch (`MultiPayload`).
     uint8 internal constant SEND_MULTI = 2;
 
-    /// @notice System-wide cross-chain array cap (unified with `MAX_PAYLOAD_ARRAY_LEN`).
+    /// @notice Items one bridge message may carry. Narrower than the other payload caps because a rejected
+    ///         item is recorded with its revert bytes, the dearest per-item work anywhere in the protocol.
     /// @dev Enforced on the inbound decoded array length here and on the outbound crosschainBurn loop in the
     ///      adapter, so an over-size batch fails fast on the source chain before paying a bridge fee.
-    uint256 internal constant MAX_BATCH_SIZE = 64;
+    uint256 internal constant MAX_BATCH_SIZE = 16;
 
     /// @notice Length of the `[bodyVersion(1)][msgType(1)]` header that precedes `abi.encode(body)`.
     uint256 internal constant HEADER_LEN = 2;

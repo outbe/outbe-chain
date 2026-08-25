@@ -286,12 +286,14 @@ fn seed_currency(storage: &StorageHandle, iso_code: u16, rate: Option<U256>) -> 
         outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(iso_code))
             .unwrap();
     oracle.exchange_rate.write(&index, rate).unwrap();
+    oracle.exchange_rate_timestamp.write(&index, T_NOW).unwrap();
     index
 }
 
 fn block_ctx<'s>(storage: &StorageHandle<'s>) -> outbe_primitives::block::BlockRuntimeContext<'s> {
+    let timestamp = storage.timestamp().unwrap().to::<u64>();
     outbe_primitives::block::BlockRuntimeContext::new(
-        outbe_primitives::block::BlockContext::empty_for_tests(1, T_NOW, 1),
+        outbe_primitives::block::BlockContext::empty_for_tests(1, timestamp, 1),
         storage.clone(),
     )
 }
@@ -349,6 +351,26 @@ fn scan_skips_a_currency_without_a_priced_pair() {
         );
         assert_eq!(
             api::get_gem(storage, eur_id).unwrap().unwrap().state,
+            GemState::Issued as u8
+        );
+    });
+}
+
+#[test]
+fn scan_skips_a_currency_with_a_stale_rate() {
+    with_storage(|storage| {
+        let gem_id = api::add_gem(storage, sample_params(ALICE)).unwrap();
+        let floor = sample_params(ALICE).floor_price_minor;
+        seed_currency(storage, 840, Some(floor + U256::from(1u64)));
+        storage
+            .set_block_timestamp(U256::from(
+                T_NOW + outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS + 1,
+            ))
+            .unwrap();
+
+        crate::hooks::scan_and_qualify(&block_ctx(storage)).unwrap();
+        assert_eq!(
+            api::get_gem(storage, gem_id).unwrap().unwrap().state,
             GemState::Issued as u8
         );
     });

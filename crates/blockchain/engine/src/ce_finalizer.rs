@@ -606,9 +606,9 @@ mod tests {
 
     use futures::channel::mpsc;
     use outbe_compressed_entities::{
-        CandidateCacheLimits, CeMdbx, Commitment, CompressedTreeService, EntityId36, EntityRef,
-        EnvironmentIdentity, ExactParentIdentity, FinalLeafMutation, ACTIVE_COMMITMENT_SCHEME,
-        LOCAL_STORAGE_SCHEMA_VERSION,
+        CandidateCacheLimits, CeMdbx, Commitment, CompressedTreeService, EntityRef,
+        EnvironmentIdentity, ExactParentIdentity, FinalLeafMutation, WwdEntityId,
+        ACTIVE_COMMITMENT_SCHEME, LOCAL_STORAGE_SCHEMA_VERSION,
     };
 
     use super::*;
@@ -1058,9 +1058,9 @@ mod tests {
     #[tokio::test]
     async fn durable_replay_applies_a_real_event_through_smt_and_mdbx() {
         let (_directory, service) = real_tree_service();
-        let mut id_bytes = [7_u8; 36];
+        let mut id_bytes = [7_u8; 32];
         id_bytes[..4].copy_from_slice(&1_u32.to_be_bytes());
-        let entity = EntityRef::Tribute(EntityId36::try_from(id_bytes.as_slice()).unwrap());
+        let entity = EntityRef::Tribute(WwdEntityId::try_from(id_bytes.as_slice()).unwrap());
         let commitment = Commitment::try_from([3_u8; 32]).unwrap();
         let parent = service
             .open_parent(ExactParentIdentity {
@@ -1121,9 +1121,9 @@ mod tests {
     #[test]
     fn durable_replay_reconstructs_partition_retirement_through_smt_and_mdbx() {
         let (_directory, service) = real_tree_service();
-        let mut id_bytes = [7_u8; 36];
+        let mut id_bytes = [7_u8; 32];
         id_bytes[..4].copy_from_slice(&20_260_717_u32.to_be_bytes());
-        let id = EntityId36::try_from(id_bytes.as_slice()).unwrap();
+        let id = WwdEntityId::try_from(id_bytes.as_slice()).unwrap();
         let day = id.worldwide_day();
         let entity = EntityRef::Tribute(id);
         let commitment = Commitment::try_from([3_u8; 32]).unwrap();

@@ -6,7 +6,7 @@
 //! Also provides the `dkg` subcommand for bootstrapping BLS threshold key material.
 
 use clap::Parser;
-use commonware_runtime::Runner as _;
+use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
 use eyre::WrapErr as _;
 use outbe_compressed_entities::{
     CandidateCacheLimits, CeMdbx, CompressedTreeService, EnvironmentIdentity, FinalizedMarker,
@@ -52,7 +52,7 @@ use reth_ethereum::cli::interface::Cli;
 use reth_node_builder::NodeHandle;
 use reth_provider::{BlockIdReader, HeaderProvider, StateProviderFactory};
 use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection, RpcModuleValidator};
-use std::{path::PathBuf, sync::Arc, thread};
+use std::{path::PathBuf, sync::Arc, thread, time::Duration};
 use tokio::sync::oneshot;
 use tracing::info;
 
@@ -519,6 +519,91 @@ fn handle_consensus_thread_join(joined: thread::Result<eyre::Result<()>>) -> eyr
     }
 }
 
+fn run_with_lifetime_pin<P, F, T>(pin: P, run: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    let output = run();
+    drop(pin);
+    output
+}
+
+async fn abort_and_wait_supervised<T>(handle: &mut commonware_runtime::Handle<T>)
+where
+    T: Send + 'static,
+{
+    handle.abort();
+    let _ = handle.await;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LauncherExitCause {
+    NodeExited,
+    ConsensusExited,
+    ProjectionRequested,
+    OcompRequested,
+    UpgradeRequested,
+    CtrlC,
+}
+
+impl LauncherExitCause {
+    const fn requests_engine_shutdown(self) -> bool {
+        matches!(
+            self,
+            Self::ProjectionRequested | Self::OcompRequested | Self::UpgradeRequested
+        )
+    }
+}
+
+/// Keeps the Commonware runtime alive until its task tree has observed shutdown.
+///
+/// Reth owns the process signal handler and may cancel the complete node launcher
+/// future. This guard therefore performs the same cancellation and synchronous
+/// join from `Drop` as the ordinary completion path, preventing Reth's ExEx and
+/// Engine resources from disappearing while consensus still holds an exact
+/// application acknowledgement.
+struct ConsensusThreadGuard {
+    shutdown: tokio_util::sync::CancellationToken,
+    handle: Option<thread::JoinHandle<eyre::Result<()>>>,
+}
+
+impl ConsensusThreadGuard {
+    fn new(
+        shutdown: tokio_util::sync::CancellationToken,
+        handle: thread::JoinHandle<eyre::Result<()>>,
+    ) -> Self {
+        Self {
+            shutdown,
+            handle: Some(handle),
+        }
+    }
+
+    fn join(mut self) -> thread::Result<eyre::Result<()>> {
+        self.shutdown.cancel();
+        let handle = self
+            .handle
+            .take()
+            .expect("consensus thread handle is consumed exactly once");
+        handle.join()
+    }
+}
+
+impl Drop for ConsensusThreadGuard {
+    fn drop(&mut self) {
+        let Some(handle) = self.handle.take() else {
+            return;
+        };
+        self.shutdown.cancel();
+        match handle.join() {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => {
+                tracing::error!(%error, "consensus task failed during launcher teardown")
+            }
+            Err(_) => tracing::error!("consensus task panicked during launcher teardown"),
+        }
+    }
+}
+
 /// DKG bootstrap subcommand, parsed separately from reth's CLI.
 #[derive(clap::Parser)]
 #[command(name = "outbe-chain-dkg")]
@@ -765,6 +850,10 @@ fn run_node() -> eyre::Result<()> {
     // `reqwest::blocking` internally and would panic from an async context.
     outbe_zkproof::init_crs()?;
 
+    // Pool lifetime hardening. Must run BEFORE CLI parsing: clap reads these as
+    // its own defaults, so explicit `--txpool.*` flags still win.
+    let _ = outbe_default_txpool_values().try_init();
+
     let mut cli = Cli::<OutbeChainSpecParser, ConsensusArgs, OutbeRpcModuleValidator>::parse();
     apply_outbe_gas_price_oracle_defaults(&mut cli.command);
 
@@ -779,6 +868,11 @@ fn run_node() -> eyre::Result<()> {
         Option<ProjectionReadinessHandle>,
         Arc<dyn FinalizedCeCommitter>,
         Arc<dyn CeStartupRecovery>,
+        Option<(
+            outbe_radicle::integration::EndpointNetworkService,
+            outbe_radicle::integration::LocalEndpointIdentityHandle,
+            outbe_radicle::integration::RadicleStatusHandle,
+        )>,
     )>();
     let (consensus_dead_tx, mut consensus_dead_rx) = oneshot::channel::<()>();
     let shutdown_token = tokio_util::sync::CancellationToken::new();
@@ -795,6 +889,7 @@ fn run_node() -> eyre::Result<()> {
             ocomp_readiness,
             finalized_ce_committer,
             ce_startup_recovery,
+            radicle,
         ) = match node_rx.blocking_recv() {
             Ok(v) => v,
             Err(_) => return Ok(()),
@@ -870,37 +965,58 @@ fn run_node() -> eyre::Result<()> {
             .with_catch_panics(true);
 
         let runner = commonware_runtime::tokio::Runner::new(runtime_config);
+        let node_lifetime_pin = node.clone();
 
-        let ret: eyre::Result<()> = runner.start(async move |ctx| {
-            tokio::select! {
-                result = outbe_engine::run_consensus_stack(
-                    &ctx,
-                    args,
-                    node,
-                    bridge_for_consensus,
-                    match ocomp_readiness {
-                        Some(readiness) => outbe_engine::ConsensusStackServices::new(
-                            projection_readiness,
-                            finalized_ce_committer,
-                            ce_startup_recovery,
-                        ).with_ocomp_readiness(readiness),
-                        None => outbe_engine::ConsensusStackServices::new(
-                        projection_readiness,
-                        finalized_ce_committer,
-                        ce_startup_recovery,
-                        ),
-                    },
-                ) => {
-                    if let Err(e) = &result {
-                        tracing::error!(%e, "consensus stack failed");
+        let ret: eyre::Result<()> = run_with_lifetime_pin(node_lifetime_pin, || {
+            runner.start(async move |ctx| {
+                let graceful_shutdown = ctx.child("shutdown");
+                let mut stack_handle = ctx.child("consensus_stack").spawn(move |stack_ctx| async move {
+                    outbe_engine::run_consensus_stack(
+                        &stack_ctx,
+                        args,
+                        node,
+                        bridge_for_consensus,
+                        {
+                            let mut services = outbe_engine::ConsensusStackServices::new(
+                                projection_readiness,
+                                finalized_ce_committer,
+                                ce_startup_recovery,
+                            );
+                            if let Some(readiness) = ocomp_readiness {
+                                services = services.with_ocomp_readiness(readiness);
+                            }
+                            if let Some((endpoint, local, status)) = radicle {
+                                services = services.with_radicle(status, endpoint, local);
+                            }
+                            services
+                        },
+                    )
+                    .await
+                });
+                tokio::select! {
+                    biased;
+                    _ = shutdown_token_clone.cancelled() => {
+                        info!("consensus stack shutting down");
+                        let stop_result = graceful_shutdown
+                            .stop(0, Some(Duration::from_secs(5)))
+                            .await;
+                        abort_and_wait_supervised(&mut stack_handle).await;
+                        stop_result.map_err(|error| eyre::eyre!(
+                                "consensus graceful shutdown did not complete within 5 seconds: {error}"
+                            ))?;
+                        Ok(())
                     }
-                    result
+                    result = &mut stack_handle => {
+                        let result = result.map_err(|error| {
+                            eyre::eyre!("consensus stack task failed: {error:?}")
+                        })?;
+                        if let Err(e) = &result {
+                            tracing::error!(%e, "consensus stack failed");
+                        }
+                        result
+                    }
                 }
-                _ = shutdown_token_clone.cancelled() => {
-                    info!("consensus stack shutting down");
-                    Ok(())
-                }
-            }
+            })
         });
 
         let _ = consensus_dead_tx.send(());
@@ -932,6 +1048,39 @@ fn run_node() -> eyre::Result<()> {
 
     cli.run_with_components::<OutbeNode>(components, async move |builder, args| {
         args.validate()?;
+        let (radicle_preflight, radicle_status) = if args.is_validator {
+            let socket = args
+                .radicle_control_socket
+                .as_ref()
+                .expect("validated Radicle control socket");
+            let sidecar = outbe_radicle::integration::query_sidecar(
+                socket,
+                std::time::Duration::from_secs(5),
+            )
+            .await
+            .wrap_err("Radicle sidecar preflight failed")?;
+            let evm_key = args
+                .effective_validator_evm_key()?
+                .ok_or_else(|| eyre::eyre!("validator EVM key is required for Radicle identity"))?;
+            let validator = outbe_primitives::signer::OutbeEvmSigner::from_file(&evm_key)
+                .wrap_err("load validator EVM key for Radicle identity")?
+                .address();
+            let (publisher, status) =
+                outbe_radicle::integration::RadicleStatusChannel::enabled(
+                    validator,
+                    sidecar.node_id,
+                );
+            (Some((validator, sidecar, publisher)), status)
+        } else {
+            (
+                None,
+                outbe_radicle::integration::RadicleStatusChannel::disabled(),
+            )
+        };
+        if radicle_preflight.is_none() {
+            let mut metrics = outbe_radicle::integration::RadicleMetrics::default();
+            metrics.record(&radicle_status.snapshot());
+        }
         info!(
             target: "outbe::protocol",
             formingPeriodSeconds = outbe_chain_constants::get_metadosis_forming_period_seconds(),
@@ -1156,12 +1305,26 @@ fn run_node() -> eyre::Result<()> {
                 )
                 .wrap_err("NodeHost enclave initialization failed")?;
                 renewal_node_host_authority = Some(signing);
-                outbe_tee::install_authorized_enclave_client(client).map_err(eyre::Report::msg)?;
+                // Session material for reconnect-with-identity-revalidation:
+                // loaded once here (takes the NodeHost file lock), never in the
+                // request hot path.
+                let (manifest, node_host) =
+                    outbe_tee::node_host::committed_node_host_session_material(&node_data_dir)
+                        .wrap_err("committed NodeHost session material load failed")?;
+                outbe_tee::install_authorized_enclave_client(
+                    client,
+                    endpoint.to_owned(),
+                    node_data_dir.clone(),
+                    manifest,
+                    node_host,
+                )
+                .wrap_err("enclave session install failed")?;
             }
             outbe_engine::args::ResolvedTeeSession::Development => {
                 let client = outbe_tee::EnclaveClient::connect_endpoint(endpoint)
                     .wrap_err("development enclave connection failed")?;
-                outbe_tee::install_enclave_client(client).map_err(eyre::Report::msg)?;
+                outbe_tee::install_enclave_client(client, endpoint.to_owned())
+                    .wrap_err("enclave session install failed")?;
             }
         }
         info!(
@@ -1316,6 +1479,11 @@ fn run_node() -> eyre::Result<()> {
         let (projection_exit_tx, mut projection_exit_rx) =
             tokio::sync::mpsc::unbounded_channel();
         let projection_readiness_for_rpc = projection_readiness.clone();
+        let radicle_status_for_rpc = radicle_status.clone();
+        // Canary-fed enclave health: published by the tee-canary worker (spawned
+        // after node launch), read by `outbe_consensusStatus.enclave`.
+        let tee_canary_status = outbe_tee::TeeEnclaveHealthChannel::disabled();
+        let tee_canary_status_for_rpc = tee_canary_status.clone();
 
         let NodeHandle {
             node,
@@ -1360,6 +1528,8 @@ fn run_node() -> eyre::Result<()> {
                 let projection_readiness = projection_readiness_for_rpc.clone();
                 let compressed_tree_service = compressed_tree_service.clone();
                 let proof_body_readers = proof_body_readers.clone();
+                let radicle_status = radicle_status_for_rpc.clone();
+                let tee_enclave_health = tee_canary_status_for_rpc.clone();
                 move |ctx| {
                     use outbe_rpc::OutbeApiServer as _;
                     let provider = Arc::new(ctx.provider().clone());
@@ -1456,7 +1626,9 @@ fn run_node() -> eyre::Result<()> {
                                 .map(alloy_primitives::Bytes::from)
                                 .map_err(|error| format!("encode OCOMP openings: {error}"))
                         }
-                    }));
+                    }))
+                    .with_radicle_status(radicle_status.clone())
+                    .with_tee_enclave_health(tee_enclave_health.clone());
                     ctx.modules.merge_if_module_configured(
                         RethRpcModule::Other("outbe".to_owned()),
                         outbe_api.into_rpc(),
@@ -1469,9 +1641,212 @@ fn run_node() -> eyre::Result<()> {
             .await
             .wrap_err("failed launching execution node")?;
 
+        let (radicle_consensus, radicle_observer) = if let Some((
+            validator,
+            sidecar,
+            publisher,
+        )) = radicle_preflight
+        {
+            use outbe_radicle::manager::SnapshotReader as _;
+
+            let exact = node
+                .provider
+                .finalized_block_num_hash()
+                .wrap_err("read finalized head for Radicle startup")?
+                .map(|block| outbe_radicle::manager::FinalizedBlock {
+                    number: block.number,
+                    hash: block.hash,
+                })
+                .unwrap_or(outbe_radicle::manager::FinalizedBlock {
+                    number: 0,
+                    hash: genesis_hash,
+                });
+            let raw_snapshots: Arc<dyn outbe_radicle::manager::SnapshotReader> = Arc::new(
+                outbe_radicle::manager::RethSnapshotReader::new(
+                    node.provider.clone(),
+                    proof_chain_id,
+                    genesis_hash,
+                ),
+            );
+            let observed_snapshots = Arc::new(
+                outbe_radicle::integration::ObservedSnapshotReader::new(
+                    raw_snapshots,
+                    publisher.clone(),
+                ),
+            );
+            let initial = observed_snapshots
+                .read_exact(exact)
+                .wrap_err("read exact Radicle startup snapshot")?;
+            match initial
+                .validators
+                .iter()
+                .find(|candidate| candidate.address == validator)
+            {
+                None => {}
+                Some(candidate) if candidate.node_id.is_none() => {
+                    eyre::bail!("active validator has no Radicle NodeId binding")
+                }
+                Some(candidate) if candidate.node_id != Some(sidecar.node_id) => {
+                    eyre::bail!("local Radicle NodeId does not match finalized validator binding")
+                }
+                Some(_) => publisher.mark_startup_ready(),
+            }
+
+            let (endpoint, resolver, evidence) =
+                outbe_radicle::integration::EndpointNetwork::build(
+                    outbe_radicle::endpoint::ChainIdentity {
+                        chain_id: proof_chain_id,
+                        genesis_hash,
+                    },
+                    radicle_status.clone(),
+                );
+            let (local_endpoint_publisher, local_endpoint) =
+                outbe_radicle::integration::LocalEndpointIdentityChannel::create(
+                    outbe_radicle::integration::LocalEndpointIdentity {
+                        validator,
+                        node_id: sidecar.node_id,
+                        addresses: sidecar.addresses,
+                    },
+                );
+            let pinned_node_id = sidecar.node_id;
+            let radicle_control_socket = args
+                .radicle_control_socket
+                .clone()
+                .expect("validated Radicle control socket");
+            let repository_status: Arc<dyn outbe_radicle::manager::RepositoryStatus> = Arc::new(
+                outbe_radicle::manager::HttpRepositoryStatus::new(
+                    args.radicle_status_address
+                        .expect("validated Radicle status address"),
+                    std::time::Duration::from_secs(5),
+                )?,
+            );
+            let repository_status = Arc::new(
+                outbe_radicle::integration::ObservedRepositoryStatus::new(
+                    repository_status,
+                    publisher.clone(),
+                ),
+            );
+            let manager = outbe_radicle::manager::RadicleManager::start(
+                outbe_radicle::manager::ManagerConfig {
+                    self_validator: validator,
+                    local_node_id: sidecar.node_id,
+                    repair_interval: outbe_radicle::integration::PRODUCTION_REPAIR_INTERVAL,
+                    retry: outbe_radicle::manager::RetryPolicy::default(),
+                },
+                outbe_radicle::manager::ManagerDependencies {
+                    finality: Arc::new(
+                        outbe_radicle::integration::GenesisFallbackFinalizedFeed::new(
+                            Arc::new(outbe_radicle::manager::RethFinalizedFeed::new(
+                                node.provider.clone(),
+                            )),
+                            exact,
+                        ),
+                    ),
+                    snapshots: observed_snapshots,
+                    endpoints: Arc::new(resolver.clone()),
+                    control: Arc::new(outbe_radicle::manager::NativeHeartwoodControl::new(
+                        radicle_control_socket.clone(),
+                        std::time::Duration::from_secs(5),
+                    )),
+                    repository_status,
+                },
+            );
+            let observer_shutdown = shutdown_token.clone();
+            let observer_publisher = publisher.clone();
+            let observer_resolver = resolver.clone();
+            let observer_status = radicle_status.clone();
+            let observer = tokio::spawn(async move {
+                let manager = manager;
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+                let mut local_endpoint_interval = tokio::time::interval(
+                    outbe_radicle::integration::PRODUCTION_REPAIR_INTERVAL,
+                );
+                local_endpoint_interval.set_missed_tick_behavior(
+                    tokio::time::MissedTickBehavior::Skip,
+                );
+                let mut metrics = outbe_radicle::integration::RadicleMetrics::default();
+                loop {
+                    tokio::select! {
+                        _ = observer_shutdown.cancelled() => {
+                            if let Err(error) = outbe_radicle::integration::shutdown_bounded(
+                                std::time::Duration::from_secs(5),
+                                manager.shutdown(),
+                                observer_resolver.shutdown(),
+                            ).await {
+                                tracing::warn!(%error, "Radicle integration shutdown deadline exceeded");
+                            }
+                            break;
+                        }
+                        _ = interval.tick() => {
+                            observer_publisher.observe_manager(manager.status());
+                            observer_publisher.observe_evidence(evidence.snapshot());
+                            metrics.record(&observer_status.snapshot());
+                        }
+                        _ = local_endpoint_interval.tick() => {
+                            match outbe_radicle::integration::query_sidecar(
+                                &radicle_control_socket,
+                                std::time::Duration::from_secs(5),
+                            ).await {
+                                Ok(sidecar) if sidecar.node_id == pinned_node_id => {
+                                    let _ = local_endpoint_publisher.update(
+                                        sidecar.node_id,
+                                        sidecar.addresses,
+                                    );
+                                }
+                                Ok(sidecar) => {
+                                    local_endpoint_publisher.unavailable();
+                                    tracing::error!(
+                                        expected_node_id = ?pinned_node_id,
+                                        actual_node_id = ?sidecar.node_id,
+                                        "Radicle sidecar NodeId changed; endpoint publication suppressed"
+                                    );
+                                }
+                                Err(error) => {
+                                    local_endpoint_publisher.unavailable();
+                                    tracing::warn!(
+                                        %error,
+                                        "Radicle sidecar identity refresh failed; endpoint publication suppressed"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            (
+                Some((endpoint, local_endpoint, radicle_status.clone())),
+                Some(observer),
+            )
+        } else {
+            (None, None)
+        };
+
         let renewal_handle = renewal_worker.map(|worker| {
             tokio::spawn(run_renewal_worker_v1(worker, shutdown_token.clone()))
         });
+        // Periodic enclave canary (signal only): known-plaintext decrypt +
+        // Health telemetry through the process-global session. `0` disables.
+        let tee_canary_handle = (args.tee_canary_interval_secs > 0).then(|| {
+            tokio::spawn(outbe_node::tee_canary::run_tee_canary_worker(
+                outbe_node::tee_canary::GlobalEnclaveRequester,
+                outbe_node::tee_canary::TeeCanaryConfig {
+                    interval: std::time::Duration::from_secs(args.tee_canary_interval_secs),
+                    failure_threshold: args.tee_canary_failure_threshold,
+                },
+                tee_canary_status.clone(),
+                shutdown_token.clone(),
+            ))
+        });
+        // Pending staleness eviction. Node-local pool policy, so it runs in
+        // every mode — full nodes are the public RPC ingress and shed stuck
+        // transactions that would otherwise be re-gossiped to validators.
+        let txpool_maintenance_handle = tokio::spawn(outbe_txpool::maintain::maintain_outbe_pool(
+            node.provider.clone(),
+            node.pool.clone(),
+            outbe_txpool::maintain::OutbePoolMaintainConfig {
+                staleness_interval_secs: args.txpool_pending_staleness_secs,
+            },
+        ));
         let upgrade_promotion = Arc::new(tokio::sync::Notify::new());
         let upgrade_handle = if initial_tee_policy.attestation_mode
             == outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired
@@ -1520,7 +1895,10 @@ fn run_node() -> eyre::Result<()> {
             // Spawn the consensus thread for validator OR follower mode; the
             // follower branch inside `run_consensus_stack` selects the lightweight
             // follow stack (no consensus engine).
-            let consensus_handle = thread::spawn(consensus_thread_fn);
+            let consensus_lifecycle = ConsensusThreadGuard::new(
+                shutdown_token.clone(),
+                thread::spawn(consensus_thread_fn),
+            );
 
             let shutdown = node.add_ons_handle.engine_shutdown.clone();
             let _ = node_tx.send((
@@ -1530,14 +1908,17 @@ fn run_node() -> eyre::Result<()> {
                 ocomp_readiness_for_consensus,
                 finalized_ce_committer,
                 ce_startup_recovery,
+                radicle_consensus,
             ));
 
-            tokio::select! {
+            let exit_cause = tokio::select! {
                 _ = node_exit_future => {
                     info!("execution node exited");
+                    LauncherExitCause::NodeExited
                 }
                 _ = &mut consensus_dead_rx => {
                     info!("consensus node exited");
+                    LauncherExitCause::ConsensusExited
                 }
                 exit = projection_exit_rx.recv() => {
                     if let Some(exit) = exit {
@@ -1547,9 +1928,7 @@ fn run_node() -> eyre::Result<()> {
                             "mandatory offchain-data projection requested node shutdown"
                         );
                     }
-                    if let Some(done) = shutdown.shutdown() {
-                        let _ = done.await;
-                    }
+                    LauncherExitCause::ProjectionRequested
                 }
                 exit = ocomp_exit_rx.recv() => {
                     if let Some(exit) = exit {
@@ -1559,24 +1938,25 @@ fn run_node() -> eyre::Result<()> {
                             "embedded OCOMP requested node shutdown"
                         );
                     }
-                    if let Some(done) = shutdown.shutdown() {
-                        let _ = done.await;
-                    }
+                    LauncherExitCause::OcompRequested
                 }
                 () = upgrade_promotion.notified() => {
                     info!("finalized enclave upgrade requested execution restart");
-                    if let Some(done) = shutdown.shutdown() {
-                        let _ = done.await;
-                    }
+                    LauncherExitCause::UpgradeRequested
                 }
                 _ = tokio::signal::ctrl_c() => {
                     info!("received shutdown signal");
+                    LauncherExitCause::CtrlC
+                }
+            };
+
+            let consensus_joined = consensus_lifecycle.join();
+            if exit_cause.requests_engine_shutdown() {
+                if let Some(done) = shutdown.shutdown() {
+                    let _ = done.await;
                 }
             }
-
-            shutdown_token.cancel();
-
-            handle_consensus_thread_join(consensus_handle.join())?;
+            handle_consensus_thread_join(consensus_joined)?;
         } else {
             info!("outbe node launched in FULL NODE mode — no consensus thread spawned");
             let shutdown = node.add_ons_handle.engine_shutdown.clone();
@@ -1622,8 +2002,27 @@ fn run_node() -> eyre::Result<()> {
         }
 
         shutdown_token.cancel();
+        if let Some(handle) = radicle_observer {
+            match tokio::time::timeout(std::time::Duration::from_secs(6), handle).await {
+                Ok(result) => result.wrap_err("Radicle observer panicked")?,
+                Err(_) => tracing::warn!("Radicle observer join deadline exceeded"),
+            }
+        }
         if let Some(handle) = renewal_handle {
             handle.await.wrap_err("automatic DCAP renewal worker panicked")?;
+        }
+        if let Some(handle) = tee_canary_handle {
+            handle.await.wrap_err("TEE canary worker panicked")?;
+        }
+        // The maintenance loop ends with its canonical-state stream; abort it
+        // explicitly so shutdown never waits on a live provider subscription.
+        txpool_maintenance_handle.abort();
+        match txpool_maintenance_handle.await {
+            Ok(()) => {}
+            Err(error) if error.is_cancelled() => {}
+            Err(error) => {
+                return Err(eyre::eyre!("txpool maintenance task panicked: {error}"));
+            }
         }
         if let Some(handle) = upgrade_handle {
             handle.abort();
@@ -1666,8 +2065,195 @@ fn configure_outbe_engine_args(engine: &mut reth_node_core::args::EngineArgs) {
     engine.allow_unwind_canonical_header = true;
 }
 
+/// Outbe's transaction-pool defaults, installed before CLI parsing so operator
+/// `--txpool.*` flags still override them.
+///
+/// Rationale (2026-08-22 incident): a transaction that keeps landing in
+/// proposals which fail to finalize is re-injected by the reorg path and stays
+/// pending indefinitely. Two upstream defaults made that worse:
+///
+/// - `--txpool.lifetime` (parked sub-pools) defaults to 3 hours — far longer
+///   than any legitimate parked transaction needs on a two-second chain.
+/// - RPC-submitted transactions are treated as "local" and are exempt from
+///   lifetime eviction. The incident transactions arrived over public RPC, so
+///   the exemption applied to exactly the traffic that must be evictable.
+///
+/// The transactions backup journal is disabled for the same reason: a restart
+/// must not resurrect transactions the node deliberately evicted.
+fn outbe_default_txpool_values() -> reth_node_core::args::DefaultTxPoolValues {
+    reth_node_core::args::DefaultTxPoolValues::default()
+        .with_max_queued_lifetime(OUTBE_TXPOOL_QUEUED_LIFETIME)
+        .with_no_locals(OUTBE_TXPOOL_NO_LOCALS)
+        .with_disable_transactions_backup(OUTBE_TXPOOL_DISABLE_BACKUP)
+}
+
+/// Parked-transaction lifetime. Reth's own default is three hours — orders of
+/// magnitude longer than a two-second chain needs.
+const OUTBE_TXPOOL_QUEUED_LIFETIME: std::time::Duration = std::time::Duration::from_secs(120);
+/// RPC-submitted transactions must NOT be exempt from lifetime eviction.
+const OUTBE_TXPOOL_NO_LOCALS: bool = true;
+/// A restart must not resurrect transactions the node deliberately evicted.
+const OUTBE_TXPOOL_DISABLE_BACKUP: bool = true;
+
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    };
+
+    struct ThreadDropRecorder {
+        runner_returned: Arc<AtomicBool>,
+        dropped_on: Arc<Mutex<Option<std::thread::ThreadId>>>,
+    }
+
+    impl Drop for ThreadDropRecorder {
+        fn drop(&mut self) {
+            assert!(
+                self.runner_returned.load(Ordering::SeqCst),
+                "the lifetime pin must outlive the runner"
+            );
+            *self.dropped_on.lock().expect("drop recorder lock") =
+                Some(std::thread::current().id());
+        }
+    }
+
+    struct ExecutionTeardownSentinel(Arc<AtomicBool>);
+
+    impl Drop for ExecutionTeardownSentinel {
+        fn drop(&mut self) {
+            assert!(
+                self.0.load(Ordering::SeqCst),
+                "consensus must be joined before execution resources are torn down"
+            );
+        }
+    }
+
+    #[test]
+    fn dropped_launcher_joins_consensus_before_execution_teardown() {
+        let consensus_stopped = Arc::new(AtomicBool::new(false));
+        let execution = ExecutionTeardownSentinel(Arc::clone(&consensus_stopped));
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let worker_shutdown = shutdown.clone();
+        let worker_stopped = Arc::clone(&consensus_stopped);
+        let worker = std::thread::spawn(move || {
+            while !worker_shutdown.is_cancelled() {
+                std::thread::yield_now();
+            }
+            worker_stopped.store(true, Ordering::SeqCst);
+            Ok(())
+        });
+
+        let lifecycle = super::ConsensusThreadGuard::new(shutdown, worker);
+        drop(lifecycle);
+
+        assert!(consensus_stopped.load(Ordering::SeqCst));
+        drop(execution);
+    }
+
+    #[test]
+    fn node_pin_drops_after_runner_on_consensus_thread() {
+        let runner_returned = Arc::new(AtomicBool::new(false));
+        let dropped_on = Arc::new(Mutex::new(None));
+        let expected_thread = std::thread::current().id();
+        let pin = Arc::new(ThreadDropRecorder {
+            runner_returned: Arc::clone(&runner_returned),
+            dropped_on: Arc::clone(&dropped_on),
+        });
+        let worker_pin = Arc::clone(&pin);
+
+        let output = super::run_with_lifetime_pin(pin, || {
+            std::thread::spawn(move || drop(worker_pin))
+                .join()
+                .expect("worker exits cleanly");
+            runner_returned.store(true, Ordering::SeqCst);
+            7
+        });
+
+        assert_eq!(output, 7);
+        assert_eq!(
+            *dropped_on.lock().expect("drop recorder lock"),
+            Some(expected_thread)
+        );
+    }
+
+    #[test]
+    fn supervised_shutdown_waits_for_descendants() {
+        use commonware_runtime::{Runner as _, Spawner as _, Supervisor as _};
+
+        let dropped = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&dropped);
+        commonware_runtime::tokio::Runner::default().start(async move |ctx| {
+            let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+            let child_dropped = Arc::clone(&observed);
+            let mut stack = ctx.child("test_stack").spawn(move |_| async move {
+                struct ChildDrop(Arc<AtomicBool>);
+                impl Drop for ChildDrop {
+                    fn drop(&mut self) {
+                        self.0.store(true, Ordering::SeqCst);
+                    }
+                }
+
+                let _drop = ChildDrop(child_dropped);
+                let _ = started_tx.send(());
+                std::future::pending::<()>().await;
+            });
+            started_rx.await.expect("child started");
+
+            super::abort_and_wait_supervised(&mut stack).await;
+            assert!(observed.load(Ordering::SeqCst));
+        });
+        assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn only_controlled_launcher_causes_request_engine_shutdown() {
+        use super::LauncherExitCause;
+
+        for cause in [
+            LauncherExitCause::NodeExited,
+            LauncherExitCause::ConsensusExited,
+            LauncherExitCause::CtrlC,
+        ] {
+            assert!(!cause.requests_engine_shutdown());
+        }
+        for cause in [
+            LauncherExitCause::ProjectionRequested,
+            LauncherExitCause::OcompRequested,
+            LauncherExitCause::UpgradeRequested,
+        ] {
+            assert!(cause.requests_engine_shutdown());
+        }
+    }
+
+    #[test]
+    fn explicit_consensus_finish_preserves_error() {
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let worker = std::thread::spawn(|| Err(eyre::eyre!("consensus failed")));
+        let lifecycle = super::ConsensusThreadGuard::new(shutdown, worker);
+
+        let error = super::handle_consensus_thread_join(lifecycle.join())
+            .expect_err("consensus error must propagate through explicit finish");
+        assert!(format!("{error:#}").contains("consensus failed"));
+    }
+
+    #[test]
+    fn explicit_consensus_finish_preserves_panic() {
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let worker = std::thread::spawn(|| -> eyre::Result<()> {
+            panic!("consensus panicked");
+        });
+        let lifecycle = super::ConsensusThreadGuard::new(shutdown, worker);
+
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            super::handle_consensus_thread_join(lifecycle.join())
+        }));
+        assert!(
+            panic.is_err(),
+            "consensus panic must resume on explicit finish"
+        );
+    }
+
     #[test]
     fn ocomp_openings_remain_available_for_completed_full_node_replay() {
         use outbe_ocomp_protocol::state::OcompJobStatus;
@@ -1701,6 +2287,35 @@ mod tests {
         let tree = engine.tree_config();
         assert!(tree.always_process_payload_attributes_on_canonical_head());
         assert!(tree.unwind_canonical_header());
+    }
+
+    /// Pool lifetime hardening: parked transactions must age out in minutes,
+    /// not hours, RPC submissions must not be exempt from that eviction, and a
+    /// restart must not resurrect what the node evicted.
+    ///
+    /// Asserted through `TxPoolArgs::default()`, which reads the installed
+    /// global defaults — the same values clap hands the node when no
+    /// `--txpool.*` flag is given.
+    #[test]
+    fn txpool_defaults_bound_transaction_lifetime() {
+        // Installing is idempotent-by-OnceLock; another test in this binary may
+        // have installed the same values first, which is equally correct.
+        let _ = super::outbe_default_txpool_values().try_init();
+
+        let args = reth_node_core::args::TxPoolArgs::default();
+        assert_eq!(
+            args.max_queued_lifetime,
+            std::time::Duration::from_secs(120),
+            "parked transactions must age out in minutes, not the upstream 3 hours"
+        );
+        assert!(
+            args.no_locals,
+            "RPC-submitted transactions must not be exempt from lifetime eviction"
+        );
+        assert!(
+            args.disable_transactions_backup,
+            "a restart must not resurrect evicted transactions"
+        );
     }
 
     #[test]

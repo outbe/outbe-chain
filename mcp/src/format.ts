@@ -76,7 +76,7 @@ function oraclePresentationScale(
 ): DecimalScale | undefined {
   if (!context) return undefined;
 
-  if (fn.name === "getCoenExchangeRateFor" || fn.name === "getCurrencyRate") {
+  if (fn.name === "getCoenExchangeRateFor" || fn.name === "getPolicyRate") {
     return 6;
   }
 
@@ -187,7 +187,7 @@ function formatScalar(
   }
   if (
     type === "uint256" &&
-    (SIX_DECIMAL_RATE_RE.test(n) || context.functionName === "getCurrencyRate")
+    (SIX_DECIMAL_RATE_RE.test(n) || context.functionName === "getPolicyRate")
   ) {
     const v = value as bigint;
     return { raw: v.toString(), value: formatUnits(v, 6) };

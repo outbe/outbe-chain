@@ -60,8 +60,8 @@
     "outputs": [
       {
         "name": "tributeIds",
-        "type": "bytes[]",
-        "internalType": "bytes[]"
+        "type": "uint256[]",
+        "internalType": "uint256[]"
       }
     ],
     "stateMutability": "view"
@@ -79,8 +79,8 @@
     "outputs": [
       {
         "name": "tributeIds",
-        "type": "bytes[]",
-        "internalType": "bytes[]"
+        "type": "uint256[]",
+        "internalType": "uint256[]"
       }
     ],
     "stateMutability": "view"
@@ -104,8 +104,8 @@
     "inputs": [
       {
         "name": "tributeId",
-        "type": "bytes",
-        "internalType": "bytes"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -155,8 +155,8 @@
     "inputs": [
       {
         "name": "tributeId",
-        "type": "bytes",
-        "internalType": "bytes"
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -242,9 +242,9 @@
     "inputs": [
       {
         "name": "tributeId",
-        "type": "bytes",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "bytes"
+        "internalType": "uint256"
       },
       {
         "name": "previousCommitment",
@@ -261,9 +261,9 @@
     "inputs": [
       {
         "name": "tributeId",
-        "type": "bytes",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "bytes"
+        "internalType": "uint256"
       },
       {
         "name": "commitmentSchemeVersion",
@@ -304,9 +304,9 @@
     "inputs": [
       {
         "name": "tributeId",
-        "type": "bytes",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "bytes"
+        "internalType": "uint256"
       },
       {
         "name": "owner",
@@ -335,9 +335,9 @@
       },
       {
         "name": "tributeId",
-        "type": "bytes",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "bytes"
+        "internalType": "uint256"
       },
       {
         "name": "worldwideDay",
