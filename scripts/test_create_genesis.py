@@ -7,7 +7,9 @@ import base64
 import importlib.util
 import json
 import pathlib
+import re
 import tempfile
+import time
 import unittest
 
 MODULE_PATH = pathlib.Path(__file__).with_name("create_genesis.py")
@@ -166,6 +168,41 @@ class ConfigValidationTests(unittest.TestCase):
         config = minimal_config("./keys")
         config["tee"]["mode"] = "trust-me"
         with self.assertRaisesRegex(ValueError, "tee.mode"):
+            CG.validate_config(config)
+
+    def test_dev_enclave_is_confined_to_the_devnet_chain(self):
+        config = minimal_config("./keys") | {"chain_id": 54322345}
+        with self.assertRaisesRegex(ValueError, "unattested"):
+            CG.validate_config(config)
+
+    def test_unattested_on_a_non_devnet_chain_needs_an_explicit_opt_in(self):
+        config = minimal_config("./keys") | {"chain_id": 54322345}
+        with self.assertRaisesRegex(ValueError, "allow_unattested_chain_id"):
+            CG.validate_config(config)
+        CG.validate_config(config | {"allow_unattested_chain_id": True})
+
+    def test_dcap_requires_the_testnet_chain_and_a_pinned_digest(self):
+        config = minimal_config("./keys") | {
+            "chain_id": 424242,
+            "tee": {"mode": "dcap-required"},
+        }
+        with self.assertRaisesRegex(ValueError, "testnet chain id"):
+            CG.validate_config(config)
+
+        config["chain_id"] = 54322345
+        config["enclave_image"] = "outbe-tee-enclave:latest"
+        with self.assertRaisesRegex(ValueError, "immutable digest"):
+            CG.validate_config(config)
+
+        config["enclave_image"] = "outbe-tee-enclave@sha256:" + "ab" * 32
+        CG.validate_config(config)
+
+    def test_port_collisions_are_rejected(self):
+        config = minimal_config("./keys") | {"rpc_port": 9101}  # same as metrics
+        with self.assertRaisesRegex(ValueError, "port collision"):
+            CG.validate_config(config)
+        config = minimal_config("./keys") | {"rpc_port": 70000}
+        with self.assertRaisesRegex(ValueError, "outside 1..65535"):
             CG.validate_config(config)
 
     def test_dcap_without_measurements_rejected_at_the_tee_stage(self):
@@ -374,13 +411,27 @@ class SeedStageTests(unittest.TestCase):
         """The OCOMP registrations sign the seeded genesis hash, so the same
         yaml must always seed byte-identical state."""
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
-            config = minimal_config(first) | {"timestamp": 1_756_032_000}
+            config = minimal_config(first) | {"timestamp": 1_756_032_000, "allow_stale_timestamp": True}
             a = self.seed_once(pathlib.Path(first), config)
             b = self.seed_once(pathlib.Path(second), config)
             self.assertEqual(a, b)
 
+    def test_a_stale_timestamp_is_refused(self):
+        """A genesis stamped in the past fails at block 1 with an unrelated-
+        looking revert; catch it while it is still cheap to fix."""
+        stale = int(time.time()) - 48 * 3600
+        with self.assertRaisesRegex(ValueError, "lease is already expired"):
+            CG.build_base_genesis(minimal_config("./keys") | {"timestamp": stale})
+        # Reproducing an existing genesis is legitimate, but must be deliberate.
+        pinned = CG.build_base_genesis(
+            minimal_config("./keys") | {"timestamp": stale, "allow_stale_timestamp": True}
+        )
+        self.assertEqual(int(pinned["timestamp"], 16), stale)
+        # A fresh stamp always passes.
+        CG.build_base_genesis(minimal_config("./keys"))
+
     def test_genesis_time_is_pinned_to_the_header_timestamp(self):
-        config = minimal_config("./keys") | {"timestamp": 1_756_032_000}
+        config = minimal_config("./keys") | {"timestamp": 1_756_032_000, "allow_stale_timestamp": True}
         genesis = CG.build_base_genesis(config)
         self.assertEqual(genesis["timestamp"], hex(1_756_032_000))
         self.assertEqual(genesis["config"]["genesisTime"], "2025-08-24T10:40:00Z")
@@ -498,7 +549,22 @@ class LaunchBundleTests(unittest.TestCase):
             directory.mkdir(parents=True)
             (directory / "evm-key.hex").write_text(f"{index + 1:064x}\n")
         genesis = output_dir / "genesis.json"
-        genesis.write_text("{}")
+        # render() reads the OCOMP identity out of the install document, and
+        # locates the bundle hash by anchoring on the genesis hash, so the
+        # fixture has to carry a well-formed one.
+        genesis_hash = "0x" + "ab" * 32
+        canonical = ("00" * 33) + "ab" * 32 + "01" * 32 + "cd" * 32 + "0c" * 32
+        genesis.write_text(json.dumps({
+            "config": {
+                "chainId": 424242,
+                "ocompForkInstallV1": {
+                    "canonicalBytes": "0x" + canonical,
+                    "installHash": "0x" + "ee" * 32,
+                },
+            },
+        }))
+        marker = keys_dir / "validator-0" / "ocomp-registration-v1.genesis-hash"
+        marker.write_text(genesis_hash + "\n")
         config = minimal_config(str(keys_dir)) | (config_overrides or {})
         LB.render(
             config=config,
@@ -524,6 +590,9 @@ class LaunchBundleTests(unittest.TestCase):
                     "run-radicle.sh",
                     "run-node.sh",
                     "run-feeder.sh",
+                    "run-ocomp-supervisor.sh",
+                    "run-ocomp-exporter.sh",
+                    "run-ocomp-worker.sh",
                     "start-all.sh",
                     "stop-all.sh",
                 ):
@@ -532,6 +601,140 @@ class LaunchBundleTests(unittest.TestCase):
                     self.assertTrue(script.stat().st_mode & 0o111, f"{name} not executable")
                     subprocess.run(["bash", "-n", str(script)], check=True)
                 self.assertTrue((directory / "feeder.toml").is_file())
+
+    def test_ocomp_identity_is_read_from_the_install_document(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            script = (output_dir / "validator-2" / "run-ocomp-worker.sh").read_text()
+            # The bundle hash sits after the genesis hash and the fork id.
+            self.assertIn("--protocol-bundle-hash 0x" + "cd" * 32, script)
+            self.assertIn("--chain-id 424242", script)
+            self.assertIn("--genesis-hash 0x" + "ab" * 32, script)
+            # Each host gets a distinct boot nonce, ordinal in the low bytes.
+            self.assertIn("--boot-nonce 0x03" + "00" * 27 + "00000000", script)
+
+    def test_every_ocomp_role_gets_the_shared_environment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            for role in ("supervisor", "exporter", "worker"):
+                script = (output_dir / "validator-0" / f"run-ocomp-{role}.sh").read_text()
+                for var in ("OUTBE_OCOMP_BASE_PATH", "OCOMP_VALIDATOR_INDEX",
+                            "OCOMP_CHAIN_ID", "OCOMP_GENESIS_HASH", "OCOMP_BOOT_NONCE",
+                            "OCOMP_PROTOCOL_BUNDLE_HASH", "OCOMP_REGISTRY_GENERATION"):
+                    self.assertIn(var, script, f"{role} script is missing {var}")
+
+    def test_start_all_waits_for_the_supervisor_before_the_worker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            start = (output_dir / "validator-0" / "start-all.sh").read_text()
+            self.assertLess(
+                start.index("run-ocomp-supervisor.sh"),
+                start.index("run-ocomp-worker.sh"),
+                "the worker must not start before its supervisor",
+            )
+            stop = (output_dir / "validator-0" / "stop-all.sh").read_text()
+            self.assertIn("ocomp-worker", stop)
+
+    def test_feeder_provider_name_is_one_the_binary_accepts(self):
+        """outbe-feeder validates provider names against a fixed list and
+        refuses to start on anything else."""
+        known = {"mock", "pyth", "chainlink", "binance", "kraken", "okx",
+                 "gate", "huobi", "mexc", "coinbase", "mock_http"}
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            toml = (output_dir / "validator-0" / "feeder.toml").read_text()
+            names = re.findall(r'name = "([^"]+)"', toml)
+            providers = re.findall(r'providers = \["([^"]+)"\]', toml)
+            self.assertTrue(names and providers)
+            for value in names + providers:
+                self.assertIn(value, known, f"{value} is not a provider the feeder knows")
+            # And the two must agree, or the pair references a missing endpoint.
+            self.assertEqual(set(names), set(providers))
+
+    def test_distribution_is_one_self_contained_archive_per_machine(self):
+        """The whole point: after one run there is nothing left to assemble by
+        hand, and no machine receives another validator's key material."""
+        import tarfile as tf
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            dist = output_dir / "dist"
+            self.assertTrue((dist / "SHA256SUMS").is_file())
+            self.assertTrue((dist / "unpack.sh").stat().st_mode & 0o111)
+
+            for index in range(4):
+                archive = dist / f"validator-{index}.tgz"
+                self.assertTrue(archive.is_file(), f"validator-{index}.tgz missing")
+                with tf.open(archive) as tar:
+                    names = tar.getnames()
+                joined = "\n".join(names)
+                for required in ("genesis.json", "reth-bootnodes.txt",
+                                 f"validator-{index}", "systemd", "install-systemd.sh"):
+                    self.assertIn(required, joined, f"{required} missing from archive {index}")
+                # Only this validator's keys travel in this archive.
+                self.assertIn(f"keys/validator-{index}", joined)
+                for other in range(4):
+                    if other != index:
+                        self.assertNotIn(f"keys/validator-{other}", joined)
+
+            # The manifest must actually match the archives.
+            for line in (dist / "SHA256SUMS").read_text().splitlines():
+                digest, name = line.split("  ")
+                import hashlib as hl
+                self.assertEqual(hl.sha256((dist / name).read_bytes()).hexdigest(), digest)
+
+    def test_a_private_signing_key_never_reaches_the_bundle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            signed = pathlib.Path(tmp) / "signed"
+            signed.mkdir()
+            for name in LB.SIGNED_ENCLAVE_FILES:
+                (signed / name).write_bytes(b"x")
+            (signed / "enclave-key.pem").write_bytes(b"PRIVATE")
+            _, _, output_dir = self.render(tmp, {"signed_enclave_dir": str(signed)})
+            staged = list((output_dir / "enclave").iterdir())
+            self.assertEqual(
+                sorted(p.name for p in staged), sorted(LB.SIGNED_ENCLAVE_FILES)
+            )
+            self.assertNotIn("enclave-key.pem", [p.name for p in staged])
+
+    def test_caddy_publishes_rpc_without_exposing_the_node(self):
+        """The node binds RPC to loopback, so caddy is what makes it reachable;
+        the raw Radicle replication port is p2p and must not be proxied."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            caddyfile = (output_dir / "validator-0" / "Caddyfile").read_text()
+            self.assertIn("reverse_proxy 127.0.0.1:8545", caddyfile)
+            self.assertIn("reverse_proxy 127.0.0.1:8876", caddyfile)
+            self.assertNotIn("8776", caddyfile)
+            # No certificate names here: these hosts are addressed by IP.
+            self.assertIn("auto_https off", caddyfile)
+            installer = output_dir / "validator-0" / "install-caddy.sh"
+            self.assertTrue(installer.stat().st_mode & 0o111)
+            node = (output_dir / "validator-0" / "run-node.sh").read_text()
+            self.assertIn("--http.addr 127.0.0.1", node)
+
+    def test_systemd_units_are_generated_and_ordered(self):
+        """A shell-launched background process dies with its session; systemd
+        units are what actually survives, restarts and orders the stack."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            unit_dir = output_dir / "systemd"
+            for role in ("enclave", "radicle", "node", "ocomp-supervisor",
+                         "ocomp-exporter", "ocomp-worker", "feeder"):
+                unit = unit_dir / f"outbe-{role}@.service"
+                self.assertTrue(unit.is_file(), f"{role} unit missing")
+                text = unit.read_text()
+                self.assertIn("Restart=on-failure", text)
+                self.assertIn(f"run-{role}.sh", text)
+            # The node must not start before the enclave and Radicle it needs.
+            node = (unit_dir / "outbe-node@.service").read_text()
+            self.assertIn("outbe-radicle@%i.service", node)
+            radicle = (unit_dir / "outbe-radicle@.service").read_text()
+            self.assertIn("outbe-enclave@%i.service", radicle)
+            # The enclave needs root for /dev/sgx_*.
+            self.assertIn("User=root", (unit_dir / "outbe-enclave@.service").read_text())
+            installer = output_dir / "install-systemd.sh"
+            self.assertTrue(installer.stat().st_mode & 0o111)
 
     def test_bootnodes_are_stable_across_renders(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -591,6 +794,50 @@ class LaunchBundleTests(unittest.TestCase):
             self.assertIn("/dev/sgx_enclave", script)
             self.assertIn("/dev/sgx_provision", script)
             self.assertNotIn("--dkg-seed", script)
+
+    def test_production_enclave_runs_natively_not_in_a_container(self):
+        """The live network runs gramine-sgx on the host: the SGX driver, the
+        AESM socket and the sealed state are all host-side."""
+        with tempfile.TemporaryDirectory() as tmp:
+            config = {
+                "chain_id": 54322345,
+                "tee": {
+                    "mode": "dcap-required",
+                    "mrenclave": "ab" * 32,
+                    "mrsigner": "cd" * 32,
+                    "isv_prod_id": 0,
+                    "minimum_isv_svn": 3,
+                    "minimum_tcb_evaluation_data_number": 17,
+                },
+            }
+            _, _, output_dir = self.render(tmp, config)
+            script = (output_dir / "validator-0" / "run-enclave.sh").read_text()
+            self.assertNotIn("docker run", script)
+            self.assertIn("/dev/sgx_enclave", script)
+            self.assertIn("aesmd.service", script)
+            node = (output_dir / "validator-0" / "run-node.sh").read_text()
+            self.assertIn("--tee-session-mode production-node-host", node)
+
+    def test_node_advertises_its_own_address_and_places_consensus_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            node = (output_dir / "validator-2" / "run-node.sh").read_text()
+            # Without --nat a machine behind one advertises the wrong address
+            # and its peers never dial back.
+            self.assertIn("--nat extip:10.0.0.3", node)
+            self.assertIn("--consensus.storage-dir", node)
+            # A real gramine-sgx enclave speaks the production session even on
+            # the dev genesis profile; only a mock enclave uses the development
+            # transport, and that is what `enclave_sgx: false` selects.
+            self.assertIn("--tee-session-mode production-node-host", node)
+            # All three OCOMP roles read the bundle from the domain directory.
+            self.assertIn("protocol-bundle-v1.ocb1", node)
+
+    def test_a_mock_enclave_keeps_the_development_transport(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp, {"enclave_sgx": False})
+            node = (output_dir / "validator-0" / "run-node.sh").read_text()
+            self.assertNotIn("--tee-session-mode", node)
 
     def test_dev_enclave_script_is_marked_unattested(self):
         with tempfile.TemporaryDirectory() as tmp:

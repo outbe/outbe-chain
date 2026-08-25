@@ -37,6 +37,7 @@ import base64
 import importlib.util
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -60,6 +61,11 @@ import launch_bundle  # noqa: E402  (sibling module, path set just above)
 BASE_PROFILE_PATH = SCRIPT_DIR / "testnet.yaml"
 
 DEFAULT_CHAIN_ID = 424242
+# A `gramine-direct-dev` enclave is unattested, so it is confined to the devnet
+# chain id; `dcap-required` is confined to the testnet one. Mixing them would
+# put an unattested enclave on an attested network, or the reverse.
+DEVNET_CHAIN_ID = 424242
+TESTNET_CHAIN_ID = 54322345
 DEFAULT_GAS_LIMIT = "0x1c9c380"
 DEFAULT_EPOCH_LENGTH_BLOCKS = 300
 DEFAULT_DKG_PREPARE_WINDOW_BLOCKS = 30
@@ -77,6 +83,11 @@ SECP256K1_G = (
 
 # Protocol sections forwarded to the seeder, deep-merged over the baseline.
 SEED_SECTIONS = (
+    # Protocol timings. seed_genesis copies these into config.outbeProtocol,
+    # where the runtime reads the Metadosis day windows and the OCOMP vote
+    # window from; leaving them out means the chain runs on its built-in
+    # defaults, which is rarely what a devnet or a test network wants.
+    "protocol_constants",
     "balance",
     "staking",
     "rewards",
@@ -112,11 +123,22 @@ TOP_LEVEL_KEYS = {
     "contracts_dir",
     "canon_dir",
     "enclave_image",
+    "enclave_dir",
+    "enclave_runner",
+    "enclave_sgx",
+    "signed_enclave_dir",
+    "allow_unattested_chain_id",
+    "allow_stale_timestamp",
     "node_binary",
+    "ocomp_binary",
     "radicle_binary",
+    "radicle_external_inbound_reserve",
     "feeder_binary",
     "remote_base_dir",
     "remote_keys_dir",
+    "price_provider",
+    "public_rpc_port",
+    "public_radicle_status_port",
     "price_feed_rest",
     "price_feed_websocket",
     *launch_bundle.DEFAULT_PORTS,
@@ -351,8 +373,52 @@ def validate_config(config: dict[str, Any]) -> None:
     unknown_tee = sorted(set(tee) - TEE_KEYS)
     if unknown_tee:
         raise ValueError(f"unknown tee key(s): {', '.join(unknown_tee)}")
-    if tee.get("mode") not in ("gramine-direct-dev", "dcap-required"):
+    mode = tee.get("mode")
+    if mode not in ("gramine-direct-dev", "dcap-required"):
         raise ValueError("tee.mode must be gramine-direct-dev or dcap-required")
+    chain_id = int(config.get("chain_id", DEFAULT_CHAIN_ID))
+    if (
+        mode == "gramine-direct-dev"
+        and chain_id != DEVNET_CHAIN_ID
+        and not config.get("allow_unattested_chain_id")
+    ):
+        raise ValueError(
+            f"tee.mode gramine-direct-dev is unattested and is allowed only on the "
+            f"devnet chain id {DEVNET_CHAIN_ID}, not {chain_id}. A deliberate "
+            f"non-devnet network on a real SGX enclave without Intel collateral "
+            f"must say so with `allow_unattested_chain_id: true`"
+        )
+    if mode == "dcap-required":
+        if chain_id != TESTNET_CHAIN_ID:
+            raise ValueError(
+                f"tee.mode dcap-required requires the testnet chain id "
+                f"{TESTNET_CHAIN_ID}, not {chain_id}"
+            )
+        image = str(config.get("enclave_image", ""))
+        if re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image) is None:
+            raise ValueError(
+                "tee.mode dcap-required needs `enclave_image` pinned to an immutable "
+                "digest (name@sha256:<64 lowercase hex>), not a mutable tag"
+            )
+
+    # Every endpoint the launch scripts bind, on one machine.
+    ports = {
+        name: port_value
+        for name in launch_bundle.DEFAULT_PORTS
+        if (port_value := int(config.get(name, launch_bundle.DEFAULT_PORTS[name])))
+    }
+    ports["consensus_p2p_port"] = int(
+        config.get("consensus_p2p_port", DEFAULT_CONSENSUS_P2P_PORT)
+    )
+    seen: dict[int, str] = {}
+    for name, port_value in sorted(ports.items()):
+        if not 1 <= port_value <= 65535:
+            raise ValueError(f"{name} is outside 1..65535: {port_value}")
+        if port_value in seen:
+            raise ValueError(
+                f"port collision: {seen[port_value]} and {name} both use {port_value}"
+            )
+        seen[port_value] = name
 
 
 # ---------------------------------------------------------------------------
@@ -494,8 +560,23 @@ def discover_validators(
 # ---------------------------------------------------------------------------
 
 
+# A genesis carries a TEE lease that starts counting at its own timestamp. Boot
+# a chain from a genesis stamped far in the past and block 1 dies on
+# `requested lease is already expired` — a runtime revert that says nothing
+# about the real cause. Refuse to build one instead.
+MAX_GENESIS_AGE_SECONDS = 6 * 60 * 60
+
+
 def build_base_genesis(config: dict[str, Any]) -> dict[str, Any]:
     timestamp = int(config.get("timestamp", int(time.time())))
+    age = int(time.time()) - timestamp
+    if age > MAX_GENESIS_AGE_SECONDS and not config.get("allow_stale_timestamp"):
+        raise ValueError(
+            f"`timestamp: {timestamp}` is {age // 3600}h in the past. The TEE lease "
+            f"runs from the genesis timestamp, so block 1 would fail with "
+            f"'requested lease is already expired'. Drop the key to stamp now, or "
+            f"set `allow_stale_timestamp: true` to reproduce an existing genesis."
+        )
     # An explicit genesisTime pins the ValidatorSet epoch start; without it the
     # seeder falls back to the wall clock and the genesis hash — which the
     # OCOMP registrations sign — changes on every run.
@@ -957,12 +1038,19 @@ def main() -> None:
             protocol_bundle_output=protocol_bundle_output,
             keys_dir=keys_dir,
         )
-        run_tee_stage(
-            chain_binary=chain_binary,
-            ocomp_genesis=ocomp_genesis,
-            output=output,
-            config=config,
-        )
+        try:
+            run_tee_stage(
+                chain_binary=chain_binary,
+                ocomp_genesis=ocomp_genesis,
+                output=output,
+                config=config,
+            )
+        except BaseException:
+            # A later stage failing must not leave the protocol bundle behind:
+            # the next run refuses to overwrite it and the operator is stuck
+            # with a half-written directory and no way forward.
+            protocol_bundle_output.unlink(missing_ok=True)
+            raise
 
     launch_bundle.render(
         config=config,
