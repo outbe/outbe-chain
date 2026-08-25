@@ -11,6 +11,7 @@ outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-validatorset = { path = "../validatorset" }
 outbe-consensus.workspace = true
 outbe-gemfactory.workspace = true
+outbe-oracle.workspace = true
 # settle_window routes escrow residue to terminal Metadosis via
 # the canonical outbe_emissionlimit::block::dispatch_terminal_remainder_at.
 # Acyclic: emissionlimit -> {primitives, agentreward, metadosis}, none dep rewards.
@@ -27,7 +28,6 @@ ignored = ["alloy-sol-types"]
 outbe-common.workspace = true
 outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-ocomp-protocol.workspace = true
-outbe-oracle.workspace = true
 outbe-promislimit.workspace = true
 outbe-gem.workspace = true
 proptest.workspace = true

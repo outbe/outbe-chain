@@ -44,6 +44,19 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 ///  26:  pending_parent_view_at             — mapping(uint64 => uint64)
 /// 27: block_guard_ring — mapping(uint64 => B256) (prune ring of fb_hash)
 /// 28: block_guard_ring_seq — uint64 (ring write cursor)
+/// 29: reward_gem_queue_head — uint64 (inclusive FIFO sequence)
+/// 30: reward_gem_queue_tail — uint64 (exclusive FIFO sequence)
+/// 31: reward_gem_day_at — mapping(uint64 => uint32)
+/// 32: reward_gem_queue_sequence_plus_one — mapping(uint32 => uint64)
+/// 33: daily_topup_prepared — mapping(uint32 => bool)
+/// 34: reward_gem_batch_digest — mapping(uint32 => B256)
+/// 35: reward_gem_planned_total — mapping(uint32 => uint256)
+/// 36: reward_gem_recipient_count — mapping(uint32 => uint32)
+/// 37: reward_gem_owner_at — mapping(uint32 => mapping(uint32 => address))
+/// 38: reward_gem_load_at — mapping(uint32 => mapping(uint32 => uint256))
+/// 39: reward_gem_type — mapping(uint32 => uint8)
+/// 40: reward_gem_issuance_currency — mapping(uint32 => uint16)
+/// 41: reward_gem_reference_currency — mapping(uint32 => uint16)
 #[contract(addr = REWARDS_ADDRESS)]
 pub struct Rewards {
     /// UTC day of block 0 (yyyymmdd). 0 means uninitialized; written
@@ -222,4 +235,44 @@ pub struct Rewards {
     /// Monotonic write cursor for `block_guard_ring`; the live slot index is
     /// `block_guard_ring_seq % BLOCK_GUARD_RETAIN`.
     pub block_guard_ring_seq: Slot<u64>,
+
+    // ── deferred validator reward Gem delivery ───────────────────
+    /// Inclusive sequence of the oldest pending validator reward Gem batch.
+    pub reward_gem_queue_head: Slot<u64>,
+
+    /// Exclusive sequence for the next validator reward Gem batch append.
+    pub reward_gem_queue_tail: Slot<u64>,
+
+    /// FIFO sequence -> UTC reward day. Zero denotes a cleared queue slot.
+    pub reward_gem_day_at: Mapping<u64, u32>,
+
+    /// UTC reward day -> FIFO sequence plus one. Zero denotes no live queue item.
+    pub reward_gem_queue_sequence_plus_one: Mapping<u32, u64>,
+
+    /// The exact validator Gem obligation for this day has been calculated.
+    pub daily_topup_prepared: Mapping<u32, bool>,
+
+    /// Permanent digest of the exact prepared batch, retained after delivery.
+    pub reward_gem_batch_digest: Mapping<u32, B256>,
+
+    /// Permanent sum of all non-zero Gem loads prepared for the reward day.
+    pub reward_gem_planned_total: Mapping<u32, U256>,
+
+    /// Number of live pending recipients. Cleared after successful delivery.
+    pub reward_gem_recipient_count: Mapping<u32, u32>,
+
+    /// UTC reward day -> pending recipient index -> owner.
+    pub reward_gem_owner_at: Mapping<u32, Mapping<u32, Address>>,
+
+    /// UTC reward day -> pending recipient index -> exact Gem load.
+    pub reward_gem_load_at: Mapping<u32, Mapping<u32, U256>>,
+
+    /// Reward-day Gem type, frozen at preparation time.
+    pub reward_gem_type: Mapping<u32, u8>,
+
+    /// Reward Gem issuance currency, frozen at preparation time.
+    pub reward_gem_issuance_currency: Mapping<u32, u16>,
+
+    /// Reward Gem reference currency, frozen at preparation time.
+    pub reward_gem_reference_currency: Mapping<u32, u16>,
 }

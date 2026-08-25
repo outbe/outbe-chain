@@ -21,7 +21,7 @@
 //!   Validator emission is paid in gems; there is no claimable native
 //!   `pending_rewards` balance.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_gemfactory::GemTypes;
 use outbe_primitives::{
     block::BlockRuntimeContext,
@@ -157,6 +157,374 @@ pub fn add_topup_for_voters(
 
     rewards.daily_topup_settled.write(&day, true)?;
     Ok(TopupSettlementOutcome::Settled { distributed })
+}
+
+/// Immutable summary of one UTC day's prepared validator reward Gem batch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PreparedRewardGemBatch {
+    pub reward_day: u32,
+    pub planned_total: U256,
+    pub recipient_count: u32,
+    pub digest: B256,
+}
+
+/// Result of preparing a validator reward Gem obligation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RewardGemPreparationOutcome {
+    Prepared(PreparedRewardGemBatch),
+    AlreadyPrepared(PreparedRewardGemBatch),
+    NoPayableShares(PreparedRewardGemBatch),
+}
+
+/// Result of attempting to deliver the oldest prepared reward Gem batch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RewardGemDeliveryOutcome {
+    Empty,
+    PendingRate {
+        reward_day: u32,
+    },
+    Delivered {
+        reward_day: u32,
+        recipient_count: u32,
+        delivered_total: U256,
+    },
+}
+
+const REWARD_GEM_BATCH_DIGEST_DOMAIN: &[u8] = b"OUTBE_REWARD_GEM_BATCH_V1";
+
+/// Calculates and stores one exact validator reward Gem obligation without
+/// consulting a live Oracle price or minting a Gem. The first preparation owns
+/// the immutable FIFO append; an exact replay returns the stored summary.
+pub fn prepare_daily_validator_gem_batch(
+    ctx: &BlockRuntimeContext,
+    day: u32,
+    topup_total: U256,
+    voters: &[(Address, u64)],
+) -> Result<RewardGemPreparationOutcome> {
+    ctx.with_checkpoint(|| prepare_daily_validator_gem_batch_inner(ctx, day, topup_total, voters))
+}
+
+fn prepare_daily_validator_gem_batch_inner(
+    ctx: &BlockRuntimeContext,
+    day: u32,
+    topup_total: U256,
+    voters: &[(Address, u64)],
+) -> Result<RewardGemPreparationOutcome> {
+    let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
+    let gem_type = if day_number_since_genesis(ctx, day)? < 21 {
+        GemTypes::Genesis
+    } else {
+        GemTypes::Validator
+    };
+
+    let total_count = voters.iter().try_fold(0u64, |total, (_, count)| {
+        total.checked_add(*count).ok_or_else(|| {
+            PrecompileError::Revert("validator reward participation total overflow".into())
+        })
+    })?;
+    let mut recipients = Vec::new();
+    let mut planned_total = U256::ZERO;
+    if !topup_total.is_zero() && total_count != 0 {
+        let denominator = U256::from(total_count);
+        for (owner, count) in voters {
+            if *count == 0 {
+                continue;
+            }
+            let load = topup_total.checked_mul(U256::from(*count)).ok_or_else(|| {
+                PrecompileError::Revert("validator reward share multiply overflow".into())
+            })? / denominator;
+            if load.is_zero() {
+                continue;
+            }
+            if owner.is_zero() {
+                return Err(PrecompileError::Revert(
+                    "validator reward Gem owner is zero".into(),
+                ));
+            }
+            planned_total = planned_total.checked_add(load).ok_or_else(|| {
+                PrecompileError::Revert("validator reward planned total overflow".into())
+            })?;
+            recipients.push((*owner, load));
+        }
+    }
+    if recipients.len() > outbe_consensus::bls::MAX_VALIDATORS as usize {
+        return Err(PrecompileError::Fatal(format!(
+            "validator reward Gem batch exceeds validator bound: count={} max={}",
+            recipients.len(),
+            outbe_consensus::bls::MAX_VALIDATORS
+        )));
+    }
+    let recipient_count = u32::try_from(recipients.len()).map_err(|_| {
+        PrecompileError::Fatal("validator reward Gem recipient count overflow".into())
+    })?;
+    let digest = reward_gem_batch_digest(
+        day,
+        gem_type as u8,
+        REWARD_GEM_CURRENCY,
+        REWARD_GEM_CURRENCY,
+        planned_total,
+        &recipients,
+    );
+    let summary = PreparedRewardGemBatch {
+        reward_day: day,
+        planned_total,
+        recipient_count,
+        digest,
+    };
+
+    if rewards.daily_topup_prepared.read(&day)? {
+        let stored_digest = rewards.reward_gem_batch_digest.read(&day)?;
+        let stored_total = rewards.reward_gem_planned_total.read(&day)?;
+        if stored_digest != digest || stored_total != planned_total {
+            return Err(PrecompileError::Fatal(format!(
+                "validator reward Gem preparation replay contradicts day {day}"
+            )));
+        }
+        return Ok(RewardGemPreparationOutcome::AlreadyPrepared(summary));
+    }
+    if rewards.daily_topup_settled.read(&day)? {
+        return Err(PrecompileError::Fatal(format!(
+            "validator reward Gem day {day} is settled without a preparation"
+        )));
+    }
+
+    rewards.reward_gem_batch_digest.write(&day, digest)?;
+    rewards
+        .reward_gem_planned_total
+        .write(&day, planned_total)?;
+    rewards.reward_gem_type.write(&day, gem_type as u8)?;
+    rewards
+        .reward_gem_issuance_currency
+        .write(&day, REWARD_GEM_CURRENCY)?;
+    rewards
+        .reward_gem_reference_currency
+        .write(&day, REWARD_GEM_CURRENCY)?;
+
+    if recipients.is_empty() {
+        rewards.daily_topup_prepared.write(&day, true)?;
+        rewards.daily_topup_settled.write(&day, true)?;
+        return Ok(RewardGemPreparationOutcome::NoPayableShares(summary));
+    }
+
+    outbe_oracle::api::require_coen_pair(ctx.storage.clone(), REWARD_GEM_CURRENCY).map_err(
+        |error| {
+            PrecompileError::Fatal(format!(
+                "validator reward Gem currency is not registered: {error}"
+            ))
+        },
+    )?;
+    let head = rewards.reward_gem_queue_head.read()?;
+    let tail = rewards.reward_gem_queue_tail.read()?;
+    if head > tail {
+        return Err(PrecompileError::Fatal(
+            "validator reward Gem FIFO head exceeds tail".into(),
+        ));
+    }
+    let next_tail = tail.checked_add(1).ok_or_else(|| {
+        PrecompileError::Fatal("validator reward Gem FIFO sequence overflow".into())
+    })?;
+    if rewards.reward_gem_queue_sequence_plus_one.read(&day)? != 0 {
+        return Err(PrecompileError::Fatal(format!(
+            "validator reward Gem day {day} is already present in the FIFO"
+        )));
+    }
+
+    let owners = rewards.reward_gem_owner_at.get_nested(&day);
+    let loads = rewards.reward_gem_load_at.get_nested(&day);
+    for (index, (owner, load)) in recipients.iter().copied().enumerate() {
+        let index = u32::try_from(index).map_err(|_| {
+            PrecompileError::Fatal("validator reward Gem recipient index overflow".into())
+        })?;
+        owners.write(&index, owner)?;
+        loads.write(&index, load)?;
+    }
+    rewards
+        .reward_gem_recipient_count
+        .write(&day, recipient_count)?;
+    rewards.reward_gem_day_at.write(&tail, day)?;
+    rewards
+        .reward_gem_queue_sequence_plus_one
+        .write(&day, next_tail)?;
+    rewards.reward_gem_queue_tail.write(next_tail)?;
+    rewards.daily_topup_prepared.write(&day, true)?;
+    Ok(RewardGemPreparationOutcome::Prepared(summary))
+}
+
+/// Attempts to deliver exactly one complete FIFO head batch. Missing or stale
+/// price data is a successful no-op. A mint failure leaves atomic rollback to
+/// this checkpoint and to the enclosing system transaction.
+pub fn deliver_oldest_reward_gem_batch(
+    ctx: &BlockRuntimeContext,
+) -> Result<RewardGemDeliveryOutcome> {
+    ctx.with_checkpoint(|| deliver_oldest_reward_gem_batch_inner(ctx))
+}
+
+fn deliver_oldest_reward_gem_batch_inner(
+    ctx: &BlockRuntimeContext,
+) -> Result<RewardGemDeliveryOutcome> {
+    let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
+    let head = rewards.reward_gem_queue_head.read()?;
+    let tail = rewards.reward_gem_queue_tail.read()?;
+    if head > tail {
+        return Err(PrecompileError::Fatal(
+            "validator reward Gem FIFO head exceeds tail".into(),
+        ));
+    }
+    if head == tail {
+        return Ok(RewardGemDeliveryOutcome::Empty);
+    }
+
+    let reward_day = rewards.reward_gem_day_at.read(&head)?;
+    if reward_day == 0 {
+        return Err(PrecompileError::Fatal(format!(
+            "validator reward Gem FIFO head {head} has no reward day"
+        )));
+    }
+    let expected_sequence = head.checked_add(1).ok_or_else(|| {
+        PrecompileError::Fatal("validator reward Gem FIFO sequence overflow".into())
+    })?;
+    if rewards
+        .reward_gem_queue_sequence_plus_one
+        .read(&reward_day)?
+        != expected_sequence
+    {
+        return Err(PrecompileError::Fatal(format!(
+            "validator reward Gem FIFO reverse index disagrees for day {reward_day}"
+        )));
+    }
+    if !rewards.daily_topup_prepared.read(&reward_day)?
+        || rewards.daily_topup_settled.read(&reward_day)?
+    {
+        return Err(PrecompileError::Fatal(format!(
+            "validator reward Gem FIFO day {reward_day} has an illegal state"
+        )));
+    }
+
+    let recipient_count = rewards.reward_gem_recipient_count.read(&reward_day)?;
+    if recipient_count == 0 || recipient_count > outbe_consensus::bls::MAX_VALIDATORS {
+        return Err(PrecompileError::Fatal(format!(
+            "validator reward Gem day {reward_day} has invalid recipient count {recipient_count}"
+        )));
+    }
+    let gem_type_raw = rewards.reward_gem_type.read(&reward_day)?;
+    let gem_type = match gem_type_raw {
+        value if value == GemTypes::Genesis as u8 => GemTypes::Genesis,
+        value if value == GemTypes::Validator as u8 => GemTypes::Validator,
+        _ => {
+            return Err(PrecompileError::Fatal(format!(
+                "validator reward Gem day {reward_day} has unsupported type {gem_type_raw}"
+            )))
+        }
+    };
+    let issuance_currency = rewards.reward_gem_issuance_currency.read(&reward_day)?;
+    let reference_currency = rewards.reward_gem_reference_currency.read(&reward_day)?;
+    if issuance_currency != REWARD_GEM_CURRENCY || reference_currency != REWARD_GEM_CURRENCY {
+        return Err(PrecompileError::Fatal(format!(
+            "validator reward Gem day {reward_day} has invalid currencies {issuance_currency}/{reference_currency}"
+        )));
+    }
+
+    let owners = rewards.reward_gem_owner_at.get_nested(&reward_day);
+    let loads = rewards.reward_gem_load_at.get_nested(&reward_day);
+    let mut recipients = Vec::with_capacity(recipient_count as usize);
+    let mut delivered_total = U256::ZERO;
+    for index in 0..recipient_count {
+        let owner = owners.read(&index)?;
+        let load = loads.read(&index)?;
+        if owner.is_zero() || load.is_zero() {
+            return Err(PrecompileError::Fatal(format!(
+                "validator reward Gem day {reward_day} has an empty recipient at index {index}"
+            )));
+        }
+        delivered_total = delivered_total.checked_add(load).ok_or_else(|| {
+            PrecompileError::Fatal("validator reward Gem delivery total overflow".into())
+        })?;
+        recipients.push((owner, load));
+    }
+    if delivered_total != rewards.reward_gem_planned_total.read(&reward_day)? {
+        return Err(PrecompileError::Fatal(format!(
+            "validator reward Gem day {reward_day} total disagrees with its preparation"
+        )));
+    }
+    let digest = reward_gem_batch_digest(
+        reward_day,
+        gem_type_raw,
+        issuance_currency,
+        reference_currency,
+        delivered_total,
+        &recipients,
+    );
+    if digest != rewards.reward_gem_batch_digest.read(&reward_day)? {
+        return Err(PrecompileError::Fatal(format!(
+            "validator reward Gem day {reward_day} digest disagrees with its preparation"
+        )));
+    }
+
+    outbe_oracle::api::require_coen_pair(ctx.storage.clone(), reference_currency).map_err(
+        |error| {
+            PrecompileError::Fatal(format!(
+                "validator reward Gem currency is not registered: {error}"
+            ))
+        },
+    )?;
+    if outbe_oracle::api::fresh_coen_rate_for_opt(ctx.storage.clone(), reference_currency)?
+        .is_none()
+    {
+        return Ok(RewardGemDeliveryOutcome::PendingRate { reward_day });
+    }
+
+    for (owner, load) in recipients {
+        outbe_gemfactory::api::mint_gem(
+            &ctx.storage,
+            owner,
+            gem_type,
+            load,
+            issuance_currency,
+            reference_currency,
+        )?;
+    }
+    for index in 0..recipient_count {
+        owners.write(&index, Address::ZERO)?;
+        loads.write(&index, U256::ZERO)?;
+    }
+    rewards.reward_gem_recipient_count.write(&reward_day, 0)?;
+    rewards.reward_gem_day_at.write(&head, 0)?;
+    rewards
+        .reward_gem_queue_sequence_plus_one
+        .write(&reward_day, 0)?;
+    rewards.daily_topup_settled.write(&reward_day, true)?;
+    rewards.reward_gem_queue_head.write(expected_sequence)?;
+
+    Ok(RewardGemDeliveryOutcome::Delivered {
+        reward_day,
+        recipient_count,
+        delivered_total,
+    })
+}
+
+fn reward_gem_batch_digest(
+    reward_day: u32,
+    gem_type: u8,
+    issuance_currency: u16,
+    reference_currency: u16,
+    planned_total: U256,
+    recipients: &[(Address, U256)],
+) -> B256 {
+    let mut bytes = Vec::with_capacity(
+        REWARD_GEM_BATCH_DIGEST_DOMAIN.len() + 4 + 1 + 2 + 2 + 4 + 32 + recipients.len() * 52,
+    );
+    bytes.extend_from_slice(REWARD_GEM_BATCH_DIGEST_DOMAIN);
+    bytes.extend_from_slice(&reward_day.to_be_bytes());
+    bytes.push(gem_type);
+    bytes.extend_from_slice(&issuance_currency.to_be_bytes());
+    bytes.extend_from_slice(&reference_currency.to_be_bytes());
+    bytes.extend_from_slice(&(recipients.len() as u32).to_be_bytes());
+    bytes.extend_from_slice(&planned_total.to_be_bytes::<32>());
+    for (owner, load) in recipients {
+        bytes.extend_from_slice(owner.as_slice());
+        bytes.extend_from_slice(&load.to_be_bytes::<32>());
+    }
+    keccak256(bytes)
 }
 
 /// Marks `day` as fully settled so `on_finalized_metadata` rejects any
