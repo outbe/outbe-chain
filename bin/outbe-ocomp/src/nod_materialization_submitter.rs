@@ -150,11 +150,10 @@ impl<R: VoteSubmissionRpcV1> NodMaterializationSubmitterV1<R> {
             .rpc
             .canonical_nonce(self.config.sender_address)
             .map_err(rpc_error)?;
-        let max_fee_per_gas = self
-            .rpc
-            .gas_price()
-            .map_err(rpc_error)?
-            .max(MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS);
+        let max_fee_per_gas = self.rpc.gas_price().map_err(rpc_error)?.clamp(
+            MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+            MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
+        );
         if max_fee_per_gas > MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS {
             return Err(NodMaterializationSubmissionErrorV1::FeeCapTooHigh);
         }

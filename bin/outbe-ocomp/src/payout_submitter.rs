@@ -684,11 +684,10 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
             .rpc
             .canonical_nonce(self.config.sender_address)
             .map_err(rpc_error)?;
-        let max_fee_per_gas = self
-            .rpc
-            .gas_price()
-            .map_err(rpc_error)?
-            .max(outbe_zerofee::MIN_ZERO_FEE_CONTRIBUTOR_BATCH_MAX_FEE_PER_GAS);
+        let max_fee_per_gas = self.rpc.gas_price().map_err(rpc_error)?.clamp(
+            outbe_zerofee::MIN_ZERO_FEE_CONTRIBUTOR_BATCH_MAX_FEE_PER_GAS,
+            MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
+        );
         let prepared = preparer
             .prepare_payout_transaction(&work.calldata, nonce, max_fee_per_gas)
             .map_err(|error| PayoutSubmissionErrorV1::Preparation(error.to_string()))?;

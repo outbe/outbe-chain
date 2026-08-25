@@ -406,11 +406,10 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
             .rpc
             .canonical_nonce(self.config.sender_address)
             .map_err(rpc_error)?;
-        let max_fee_per_gas = self
-            .rpc
-            .gas_price()
-            .map_err(rpc_error)?
-            .max(MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS);
+        let max_fee_per_gas = self.rpc.gas_price().map_err(rpc_error)?.clamp(
+            MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+            MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
+        );
         let canonical_height = self.rpc.finalized_block().map_err(rpc_error)?.number;
         let prepared = preparer
             .prepare_vote_transaction(
