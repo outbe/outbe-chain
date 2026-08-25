@@ -138,11 +138,6 @@
             "internalType": "uint256"
           },
           {
-            "name": "floorPrice",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
             "name": "callPrice",
             "type": "uint256",
             "internalType": "uint256"
@@ -287,11 +282,6 @@
             "internalType": "uint256"
           },
           {
-            "name": "floorPrice",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
             "name": "callPrice",
             "type": "uint256",
             "internalType": "uint256"
@@ -399,11 +389,6 @@
           },
           {
             "name": "entryPrice",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "floorPrice",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -524,25 +509,6 @@
       },
       {
         "name": "collateral",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PositionSettleable",
-    "inputs": [
-      {
-        "name": "positionId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "floorPrice",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
