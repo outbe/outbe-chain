@@ -75,10 +75,10 @@ pub struct Void {
     pub eoa_ct: Vec<u8>,
 }
 
-/// `price × (100 + rate_pct) / 100`. Used for the call price.
-pub fn marked_up(price: U256, rate_pct: u16) -> Result<U256> {
+/// `price × (100 + rate_pct) / 100`.
+pub fn calc_call_price(price: U256) -> Result<U256> {
     price
-        .checked_mul(U256::from(PRICE_RATE_DEN.saturating_add(rate_pct)))
+        .checked_mul(U256::from(PRICE_RATE_DEN + CALL_RATE_PCT))
         .map(|v| v / U256::from(PRICE_RATE_DEN))
         .ok_or_else(|| CredisError::ArithmeticOverflow.into())
 }
@@ -146,7 +146,7 @@ impl CredisContract<'_> {
             collateral_locked: params.collateral,
             policy_rate: params.policy_rate,
             entry_price: params.entry_price,
-            call_price: marked_up(params.entry_price, CALL_RATE_PCT)?,
+            call_price: calc_call_price(params.entry_price)?,
             originated_at: params.originated_at,
             last_settled_at: params.originated_at,
             called_at: 0,

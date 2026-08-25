@@ -8,7 +8,7 @@ use outbe_primitives::units::SCALE_1E6_U256;
 use crate::constants::CALL_RATE_PCT;
 use crate::errors::CredisError;
 use crate::precompile::{dispatch, ICredis};
-use crate::runtime::{marked_up, settlement_deadline, OpenPositionParams};
+use crate::runtime::{calc_call_price, settlement_deadline, OpenPositionParams};
 use crate::schema::{CredisContract, CredisState};
 
 const CHAIN_ID: u64 = 1;
@@ -116,10 +116,7 @@ fn open_position_seals_the_call_price_from_the_entry_price() {
 
         // $0.50 + 64% = $0.82.
         assert_eq!(p.call_price, U256::from(820_000u64));
-        assert_eq!(
-            p.call_price,
-            marked_up(entry_price(), CALL_RATE_PCT).unwrap()
-        );
+        assert_eq!(p.call_price, calc_call_price(entry_price()).unwrap());
 
         // Collateral starts fully locked; accrual anchors at origination.
         assert_eq!(p.outstanding, p.principal);
