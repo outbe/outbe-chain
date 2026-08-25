@@ -19,6 +19,7 @@ use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 #[cfg(not(feature = "ocomp-integration"))]
 use alloy_primitives::hex;
 use eyre::{bail, eyre, Result, WrapErr};
+use outbe_primitives::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_primitives::chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID};
 use serde_json::json;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -32,6 +33,11 @@ const VALIDATOR_BALANCE_HEX: &str = "0x2540be400";
 /// Dev felony threshold (blocks) so downtime slashing is observable on the short
 /// localnet epoch; must stay `<` the epoch length (`bootstrap-testnet.sh:234`).
 const DEV_FELONY_THRESHOLD: u64 = 30;
+/// `IntexFactory.config_profile` selector slot; `1` selects the DEV parameter profile
+/// (24h qualification, 3-day call window) over PROD's unwalkable 21-day timings.
+const INTEX_CONFIG_PROFILE_SLOT: u64 = 13;
+const INTEX_PROFILE_DEV: u64 = 1;
+
 const PROPOSER_FELONY_SLOT: u64 = 1;
 const VOTER_FELONY_SLOT: u64 = 12;
 const LOCALNET_METADOSIS_LOOKBACK_SECONDS: u64 = 0;
@@ -571,6 +577,9 @@ impl Localnet {
 
         // Step 2c: dev felony thresholds for observable localnet slashing.
         self.patch_felony(profile)?;
+
+        // Step 2d: DEV intex timings, so a run can walk qualification and the call window.
+        self.patch_intex_profile()?;
         Ok(())
     }
 
@@ -839,6 +848,43 @@ impl Localnet {
             .as_object_mut()
             .ok_or_else(|| eyre!("felony storage is not an object"))?;
         patch_felony_storage(storage, felony_threshold);
+
+        fs::write(&path, serde_json::to_string_pretty(&g)? + "\n")?;
+        Ok(())
+    }
+
+    /// Select the DEV IntexFactory parameter profile. Unset reads `0` = PROD, whose
+    /// 21-day qualification and 28-day call window no scenario can walk.
+    fn patch_intex_profile(&self) -> Result<()> {
+        let path = self.cfg.dir.join("genesis.json");
+        let mut g: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path)?)?;
+        let alloc = g
+            .get_mut("alloc")
+            .and_then(|a| a.as_object_mut())
+            .ok_or_else(|| eyre!("genesis has no alloc object"))?;
+
+        let key = alloc
+            .keys()
+            .find(|k| address_has_suffix(k, "1015"))
+            .cloned();
+        let key = key.unwrap_or_else(|| {
+            let k = format!("{INTEX_FACTORY_ADDRESS:?}");
+            alloc.insert(k.clone(), json!({ "balance": "0x0", "code": "0xef0000" }));
+            k
+        });
+        let entry = alloc
+            .get_mut(&key)
+            .and_then(|e| e.as_object_mut())
+            .ok_or_else(|| eyre!("intex alloc entry is not an object"))?;
+        let storage = entry
+            .entry("storage")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .ok_or_else(|| eyre!("intex storage is not an object"))?;
+        storage.insert(
+            format!("0x{INTEX_CONFIG_PROFILE_SLOT:064x}"),
+            json!(format!("0x{INTEX_PROFILE_DEV:064x}")),
+        );
 
         fs::write(&path, serde_json::to_string_pretty(&g)? + "\n")?;
         Ok(())

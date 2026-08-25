@@ -20,7 +20,6 @@ use crate::world::forge::{self, address_from, DEPLOYER_ADDRESS, DEPLOYER_KEY, SA
 /// Which role id to read off a venue contract.
 enum Role {
     Relayer,
-    SystemRelayer,
 }
 
 /// Chain id of the local target chain, distinct from the committee's so the two
@@ -46,7 +45,7 @@ pub struct TargetContracts {
 sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface ITargetRouterWire {
-        function wire(address auction, address intex, address escrowAdapter, address nftBridge) external;
+        function wire(address auction, address intex, address escrowAdapter) external;
     }
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IAuctionWire {
@@ -57,7 +56,6 @@ sol! {
         function grantRole(bytes32 role, address account) external;
         function hasRole(bytes32 role, address account) external view returns (bool);
         function RELAYER_ROLE() external view returns (bytes32);
-        function SYSTEM_RELAYER_ROLE() external view returns (bytes32);
     }
 }
 
@@ -96,6 +94,11 @@ impl TargetChain {
             port.to_string(),
             "--chain-id".to_owned(),
             TARGET_CHAIN_ID.to_string(),
+            // The harness prices its sends for the committee chain, whose base fee is
+            // a handful of units. This chain carries messages, not a fee market, so it
+            // charges nothing rather than forcing a second price everywhere.
+            "--base-fee".to_owned(),
+            "0".to_owned(),
         ]);
         attach_log(&mut cmd, &dir)?;
 
@@ -150,15 +153,13 @@ impl TargetChain {
             "CreateX deployed at:",
         )?;
 
-        // A mailbox the adapter can hold; delivery across two chains is a relay
-        // concern, not a deploy one.
+        // A mailbox the adapter can hold. Delivery across two chains stays a relay
+        // concern, and this mock is the half that makes one possible: it records a
+        // dispatch and emits it rather than delivering inline.
         let mailbox = address_from(
             &forge::run_with_ctor(
                 &crosschain,
-                &[
-                    "create",
-                    "test/mocks/MockHyperlaneMailbox.sol:MockHyperlaneMailbox",
-                ],
+                &["create", "test/mocks/MockRelayMailbox.sol:MockRelayMailbox"],
                 &[&chain_id],
                 &[],
                 &url,
@@ -171,6 +172,9 @@ impl TargetChain {
                 &crosschain,
                 &["script", "script/DeployAll.s.sol:DeployAll"],
                 &[
+                    // The bridge has to know the way home before anything is
+                    // addressed back to the committee.
+                    ("REMOTE_CHAIN_IDS", origin_chain_id.to_string()),
                     ("CONTRACT_SALT", SALT_VERSION.to_owned()),
                     ("BRIDGE_OWNER", DEPLOYER_ADDRESS.to_owned()),
                     ("CREATEX_ADDRESS", format!("{create_x:?}")),
@@ -223,7 +227,6 @@ impl TargetChain {
                 auction: contracts.auction,
                 intex: contracts.intex_nft,
                 escrowAdapter: contracts.escrow,
-                nftBridge: contracts.nft_bridge,
             },
         )?;
         self.send(
@@ -235,22 +238,15 @@ impl TargetChain {
         )?;
 
         // The router is what an inbound message becomes, so it is the account
-        // that has to be allowed to create series, mint and move bridged tokens.
+        // allowed to create series and mint. The bridge needs the same right on the
+        // collection to burn a holder's units here and mint them at home.
         let relayer = self.role(&url, contracts.intex_nft, Role::Relayer)?;
-        let system_relayer = self.role(&url, contracts.nft_bridge, Role::SystemRelayer)?;
-        for (holder, role) in [
-            (contracts.intex_nft, relayer),
-            (contracts.auction, relayer),
-            (contracts.nft_bridge, system_relayer),
+        for (holder, role, account) in [
+            (contracts.intex_nft, relayer, contracts.target_router),
+            (contracts.auction, relayer, contracts.target_router),
+            (contracts.intex_nft, relayer, contracts.nft_bridge),
         ] {
-            self.send(
-                &url,
-                holder,
-                &IVenueRoles::grantRoleCall {
-                    role,
-                    account: contracts.target_router,
-                },
-            )?;
+            self.send(&url, holder, &IVenueRoles::grantRoleCall { role, account })?;
         }
         Ok(())
     }
@@ -291,9 +287,6 @@ impl TargetChain {
     fn role(&self, url: &str, holder: Address, role: Role) -> Result<B256> {
         let read = match role {
             Role::Relayer => eth::read_call(url, holder, &IVenueRoles::RELAYER_ROLECall {}),
-            Role::SystemRelayer => {
-                eth::read_call(url, holder, &IVenueRoles::SYSTEM_RELAYER_ROLECall {})
-            }
         };
         read.ok_or_else(|| eyre!("read the role id from {holder}"))
     }

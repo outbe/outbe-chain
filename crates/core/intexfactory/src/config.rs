@@ -44,7 +44,12 @@ impl IntexParams {
     /// so window/threshold stay whole multiples of a day. The bond drops to
     /// 100 wCOEN so test bidders are not forced to mint 100M per commit.
     pub const DEV: Self = Self {
+        #[cfg(not(feature = "e2e-test"))]
         qualification_period: 24 * 3600,
+        // An e2e run cannot spend a day waiting, and jumping one crashes the
+        // metadosis day machine. The sweep's decision is the subject, not the wait.
+        #[cfg(feature = "e2e-test")]
+        qualification_period: 120,
         call_window: 3 * 24 * 3600,
         call_threshold: 2 * 24 * 3600,
         call_notice_period: 3 * 24 * 3600,

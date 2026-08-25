@@ -64,8 +64,20 @@ fn deploy_origin_venue(world: &mut World) {
         )
         .expect("fund the deploy account on the committee chain");
     }
-    let contracts = origin_venue::deploy(&environment().repo, &url, chain_id)
-        .expect("deploy the intex engine on the committee chain");
+    let contracts = origin_venue::deploy(
+        &environment().repo,
+        &url,
+        chain_id,
+        // Peer with the target chain only when a scenario actually started one;
+        // without it the deploy is byte-for-byte what it was.
+        &world
+            .target_chain
+            .port()
+            .map(|_| world.target_chain.chain_id())
+            .into_iter()
+            .collect::<Vec<_>>(),
+    )
+    .expect("deploy the intex engine on the committee chain");
     world.state.origin_contracts = Some(contracts);
 }
 
