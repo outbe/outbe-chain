@@ -5,9 +5,9 @@ import {Test} from "forge-std/Test.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
-import {USDT} from "../../src/native/USDT.sol";
+import {USDT} from "../../src/canonical/USDT.sol";
 import {BridgeableERC20Stable} from "../../src/synthetic/BridgeableERC20Stable.sol";
-import {WCOEN as NativeWCOEN} from "../../src/native/WCOEN.sol";
+import {WCOEN as NativeWCOEN} from "../../src/canonical/WCOEN.sol";
 import {BridgeableERC20 as SyntheticWCOEN} from "../../src/synthetic/BridgeableERC20.sol";
 import {MockERC7786Bridge} from "../mocks/MockERC7786Bridge.sol";
 

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.30;
 
 import {RouteSpec, BaseRoute} from "./BaseRoute.sol";
-import {USDT} from "../../src/native/USDT.sol";
+import {USDT} from "../../src/canonical/USDT.sol";
 import {BridgeableERC20Stable} from "../../src/synthetic/BridgeableERC20Stable.sol";
 
 /// @dev The USDT route: canonical USDT on the external chain, ERC-7802 synthetic on Outbe.
@@ -40,7 +40,7 @@ abstract contract UsdtRoute is BaseRoute {
         return canonical
             ? type(USDT).creationCode
             : abi.encodePacked(
-                type(BridgeableERC20Stable).creationCode, abi.encode("USDT0", "USDT0", uint8(6), uint16(840), _owner())
+                type(BridgeableERC20Stable).creationCode, abi.encode("USDT", "USDT", uint8(6), uint16(840), _owner())
             );
     }
 }

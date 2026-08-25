@@ -2,7 +2,7 @@
 pragma solidity ^0.8.30;
 
 import {RouteSpec, BaseRoute} from "./BaseRoute.sol";
-import {WCOEN} from "../../src/native/WCOEN.sol";
+import {WCOEN} from "../../src/canonical/WCOEN.sol";
 import {BridgeableERC20} from "../../src/synthetic/BridgeableERC20.sol";
 
 /// @dev The WCOEN route: canonical WCOEN on Outbe, ERC-7802 synthetic on the external chain — the mirror image of

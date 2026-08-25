@@ -23,3 +23,69 @@ jobs:
     with:
       project: tokens
       abi-check: true
+
+  deploy-smoke:
+    name: Deploy Smoke (same address on every chain)
+    if: github.event_name == 'push' || !github.event.pull_request.draft
+    runs-on: depot-ubuntu-24.04
+    defaults:
+      run:
+        working-directory: contracts/tokens
+    env:
+      # anvil default account #0 — throwaway, but it is part of every CREATE3 salt, so it must be fixed for the
+      # two chains to agree on the addresses.
+      DEPLOYER_PK: "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+      CONTRACT_SALT: "CI_SMOKE"
+      EXTERNAL_CHAIN_ID: "11155111"
+      OUTBE_CHAIN_ID: "54322345"
+      REMOTE_CHAIN_IDS: "11155111,54322345"
+      ALLOW_EOA_OWNER: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup-foundry-soldeer
+        with:
+          working-directory: contracts/tokens
+
+      - name: Start two chains
+        run: |
+          anvil --chain-id "$EXTERNAL_CHAIN_ID" --port 8546 --silent &
+          anvil --chain-id "$OUTBE_CHAIN_ID" --port 8547 --silent &
+          for port in 8546 8547; do
+            until cast block-number --rpc-url "http://127.0.0.1:$port" >/dev/null 2>&1; do sleep 1; done
+          done
+
+      - name: Deploy an ERC-7786 hub stand-in on both chains
+        run: |
+          for port in 8546 8547; do
+            forge create test/mocks/MockERC7786Bridge.sol:MockERC7786Bridge \
+              --rpc-url "http://127.0.0.1:$port" --private-key "$DEPLOYER_PK" \
+              --broadcast --constructor-args 1 >/dev/null
+          done
+
+      - name: Deploy both routes on both chains
+        run: |
+          # The hub lands at the same address on both chains: same deployer, same nonce.
+          BRIDGE_ADDRESS=$(cast compute-address "$(cast wallet address --private-key "$DEPLOYER_PK")" --nonce 0 \
+            | awk '{print $NF}')
+          echo "BRIDGE_ADDRESS=$BRIDGE_ADDRESS" >> "$GITHUB_ENV"
+          export BRIDGE_ADDRESS
+          for port in 8546 8547; do
+            forge script script/DeployAll.s.sol:DeployAll --rpc-url "http://127.0.0.1:$port" --broadcast \
+              | grep -E '^  (USDT|WCOEN)_(TOKEN|BRIDGE)=' | tr -d ' ' > "addresses-$port.txt"
+            cat "addresses-$port.txt"
+          done
+
+      - name: Addresses must be identical on both chains
+        run: diff addresses-8546.txt addresses-8547.txt
+
+      - name: Re-running must be a no-op
+        run: |
+          before=$(cast block-number --rpc-url http://127.0.0.1:8547)
+          forge script script/DeployAll.s.sol:DeployAll --rpc-url http://127.0.0.1:8547 --broadcast
+          after=$(cast block-number --rpc-url http://127.0.0.1:8547)
+          [ "$before" = "$after" ] || { echo "::error::re-run sent transactions ($before -> $after)"; exit 1; }

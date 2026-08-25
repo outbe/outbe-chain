@@ -7,7 +7,7 @@ import {console2} from "forge-std/console2.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 import {CreateX} from "../0_DeployCreateX.s.sol";
-import {ConfigurableERC7802} from "../../src/ConfigurableERC7802.sol";
+import {BridgeableERC20} from "../../src/synthetic/BridgeableERC20.sol";
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 
 /// @dev Everything a route needs to be deployed, except the token's creation code — that one cannot be data, since
@@ -232,7 +232,7 @@ abstract contract BaseRoute is Script {
         _requireCode(token);
         _requireCode(tokenBridge);
 
-        ConfigurableERC7802 synthetic = ConfigurableERC7802(token);
+        BridgeableERC20 synthetic = BridgeableERC20(token);
         if (synthetic.tokenBridge() == tokenBridge) return;
 
         address owner = synthetic.owner();

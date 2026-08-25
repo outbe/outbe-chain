@@ -6,9 +6,9 @@ import {Test} from "forge-std/Test.sol";
 import {CreateX} from "../../script/0_DeployCreateX.s.sol";
 import {RouteSpec, BaseRoute} from "../../script/routes/BaseRoute.sol";
 import {DeployAll} from "../../script/DeployAll.s.sol";
-import {ConfigurableERC7802} from "../../src/ConfigurableERC7802.sol";
+import {BridgeableERC20} from "../../src/synthetic/BridgeableERC20.sol";
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
-import {USDT} from "../../src/native/USDT.sol";
+import {USDT} from "../../src/canonical/USDT.sol";
 import {MockERC7786Bridge} from "../mocks/MockERC7786Bridge.sol";
 
 contract ContractOwnerMock {}
@@ -240,7 +240,7 @@ contract DeployGuardsTest is Test {
         vm.chainId(OUTBE_CHAIN);
         (address usdt, address usdtBridge) = deploy.deployUsdt(address(createX), SALT);
 
-        assertEq(ConfigurableERC7802(usdt).tokenBridge(), usdtBridge, "synthetic not wired to its bridge");
+        assertEq(BridgeableERC20(usdt).tokenBridge(), usdtBridge, "synthetic not wired to its bridge");
     }
 
     /// @dev CreateX reverts on a re-used salt, so a re-run is only safe because of the code-existence guards.
