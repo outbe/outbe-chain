@@ -13,13 +13,12 @@ use std::sync::{Arc, Mutex};
 
 use commonware_cryptography::bls12381::primitives::{
     group::Share,
-    ops::{batch, threshold},
+    ops::{self, threshold},
     sharing::Sharing,
     variant::{PartialSignature, Variant},
 };
 use commonware_parallel::Strategy;
 use commonware_utils::{Faults, Participant};
-use rand_core::CryptoRngCore;
 
 use crate::proof::hybrid_wire::VrfProof;
 
@@ -69,28 +68,32 @@ impl<V: Variant> VrfMaterialProvider<V> {
     }
 
     pub fn active_polynomial_total(&self) -> Option<u32> {
+        self.polynomial_total(self.active_version())
+    }
+
+    pub(crate) fn polynomial_total(&self, version: u64) -> Option<u32> {
         self.with_state(|state| {
             state
                 .materials
-                .get(&state.active_version)
+                .get(&version)
                 .map(|material| material.polynomial.total().get())
         })
     }
 
-    pub fn active_share(&self) -> Option<Share> {
+    pub(crate) fn share(&self, version: u64) -> Option<Share> {
         self.with_state(|state| {
             state
                 .materials
-                .get(&state.active_version)
+                .get(&version)
                 .and_then(|material| material.share.clone())
         })
     }
 
-    pub fn active_public(&self) -> Option<V::Public> {
+    pub(crate) fn public(&self, version: u64) -> Option<V::Public> {
         self.with_state(|state| {
             state
                 .materials
-                .get(&state.active_version)
+                .get(&version)
                 .map(|material| *material.polynomial.public())
         })
     }
@@ -98,11 +101,11 @@ impl<V: Variant> VrfMaterialProvider<V> {
     /// Partial public key for `index` in the active version's polynomial, or
     /// `None` if there is no active material or the index is out of range.
     /// Lets callers validate a local share without exposing the state map.
-    pub(crate) fn active_partial_public(&self, index: Participant) -> Option<V::Public> {
+    pub(crate) fn partial_public(&self, version: u64, index: Participant) -> Option<V::Public> {
         self.with_state(|state| {
             state
                 .materials
-                .get(&state.active_version)
+                .get(&version)
                 .and_then(|material| material.polynomial.partial_public(index).ok())
         })
     }
@@ -119,14 +122,15 @@ impl<V: Variant> VrfMaterialProvider<V> {
 
     pub(crate) fn sign_seed(
         &self,
+        version: u64,
         namespace: &[u8],
         seed_message: &[u8],
-    ) -> Option<(u64, V::Signature)> {
+    ) -> Option<V::Signature> {
         self.with_state(|state| {
-            let material = state.materials.get(&state.active_version)?;
+            let material = state.materials.get(&version)?;
             let share = material.share.as_ref()?;
             let partial = threshold::sign_message::<V>(share, namespace, seed_message).value;
-            Some((state.active_version, partial))
+            Some(partial)
         })
     }
 
@@ -148,12 +152,7 @@ impl<V: Variant> VrfMaterialProvider<V> {
         })
     }
 
-    pub(crate) fn verify_partial<R: CryptoRngCore>(
-        &self,
-        rng: &mut R,
-        input: VrfPartialVerification<'_, V>,
-        strategy: &impl Strategy,
-    ) -> bool {
+    pub(crate) fn verify_partial(&self, input: VrfPartialVerification<'_, V>) -> bool {
         let VrfPartialVerification {
             version,
             signer,
@@ -166,32 +165,34 @@ impl<V: Variant> VrfMaterialProvider<V> {
             let Some(material) = state.materials.get(&version) else {
                 return false;
             };
-            let Ok(evaluated) = material.polynomial.partial_public(signer) else {
-                return false;
-            };
-            let entries = &[(namespace, seed_message, signature)];
-            batch::verify_same_signer::<_, V, _>(rng, &evaluated, entries, strategy).is_ok()
+            threshold::verify_message::<V>(
+                &material.polynomial,
+                namespace,
+                seed_message,
+                &PartialSignature {
+                    index: signer,
+                    value: signature,
+                },
+            )
+            .is_ok()
         })
     }
 
-    pub(crate) fn verify_proof<R: CryptoRngCore>(
+    pub(crate) fn verify_proof(
         &self,
-        rng: &mut R,
         proof: &VrfProof<V>,
         namespace: &[u8],
         seed_message: &[u8],
-        strategy: &impl Strategy,
     ) -> bool {
         self.with_state(|state| {
             let Some(material) = state.materials.get(&proof.material_version) else {
                 return false;
             };
-            let entries = &[(namespace, seed_message, proof.threshold_signature)];
-            batch::verify_same_signer::<_, V, _>(
-                rng,
+            ops::verify_message::<V>(
                 material.polynomial.public(),
-                entries,
-                strategy,
+                namespace,
+                seed_message,
+                &proof.threshold_signature,
             )
             .is_ok()
         })

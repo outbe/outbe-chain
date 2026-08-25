@@ -165,6 +165,8 @@ struct RoleFields<V: Variant> {
     participants: Set<bls12381::PublicKey>,
     /// Shared versioned VRF threshold material.
     vrf_materials: VrfMaterialProvider<V>,
+    /// Immutable material version owned by this epoch-scoped scheme.
+    expected_vrf_material_version: u64,
     /// Pre-computed namespaces.
     namespace: Namespace,
 }
@@ -244,9 +246,12 @@ impl<V: Variant> HybridScheme<V> {
         individual_key: bls12381::PrivateKey,
         vrf_materials: VrfMaterialProvider<V>,
     ) -> Option<Self> {
-        if vrf_materials.active_polynomial_total()? as usize != participants.len() {
+        let expected_vrf_material_version = vrf_materials.active_version();
+        if vrf_materials.polynomial_total(expected_vrf_material_version)? as usize
+            != participants.len()
+        {
             tracing::error!(
-                polynomial_total = vrf_materials.active_polynomial_total()?,
+                polynomial_total = vrf_materials.polynomial_total(expected_vrf_material_version)?,
                 participants = participants.len(),
                 "polynomial total must equal participant count"
             );
@@ -260,7 +265,7 @@ impl<V: Variant> HybridScheme<V> {
         // Verify share.index matches participant index.
         // If they diverge, threshold partial signatures will use the wrong
         // evaluation point and threshold::recover will fail.
-        let share = vrf_materials.active_share()?;
+        let share = vrf_materials.share(expected_vrf_material_version)?;
         if index != share.index {
             tracing::error!(
                 participant_index = index.get(),
@@ -271,7 +276,8 @@ impl<V: Variant> HybridScheme<V> {
         }
 
         // Verify BLS threshold share matches polynomial
-        let expected_public = vrf_materials.active_partial_public(share.index)?;
+        let expected_public =
+            vrf_materials.partial_public(expected_vrf_material_version, share.index)?;
         if expected_public != share.public::<V>() {
             return None;
         }
@@ -282,6 +288,7 @@ impl<V: Variant> HybridScheme<V> {
                 fields: RoleFields {
                     participants,
                     vrf_materials,
+                    expected_vrf_material_version,
                     namespace: scheme_namespace,
                 },
                 individual_key,
@@ -307,9 +314,12 @@ impl<V: Variant> HybridScheme<V> {
         participants: Set<bls12381::PublicKey>,
         vrf_materials: VrfMaterialProvider<V>,
     ) -> Option<Self> {
-        if vrf_materials.active_polynomial_total()? as usize != participants.len() {
+        let expected_vrf_material_version = vrf_materials.active_version();
+        if vrf_materials.polynomial_total(expected_vrf_material_version)? as usize
+            != participants.len()
+        {
             tracing::error!(
-                polynomial_total = vrf_materials.active_polynomial_total()?,
+                polynomial_total = vrf_materials.polynomial_total(expected_vrf_material_version)?,
                 participants = participants.len(),
                 "polynomial total must equal participant count"
             );
@@ -322,6 +332,7 @@ impl<V: Variant> HybridScheme<V> {
                 fields: RoleFields {
                     participants,
                     vrf_materials,
+                    expected_vrf_material_version,
                     namespace: scheme_namespace,
                 },
             },
@@ -350,24 +361,28 @@ impl<V: Variant> HybridScheme<V> {
 
     /// Returns the public identity of the committee (BLS MinSig group public key).
     pub fn identity(&self) -> Option<V::Public> {
-        self.vrf_materials().active_public()
+        self.vrf_materials()
+            .public(self.active_vrf_material_version())
     }
 
     pub fn active_vrf_material_version(&self) -> u64 {
-        self.vrf_materials().active_version()
+        self.fields().expected_vrf_material_version
     }
 
     pub fn verified_vrf_seed_for_round<R>(
         &self,
-        rng: &mut R,
+        _rng: &mut R,
         seed_round: Round,
         certificate: &HybridCertificate<V>,
-        strategy: &impl Strategy,
+        _strategy: &impl Strategy,
     ) -> Option<Vec<u8>>
     where
         R: CryptoRngCore,
     {
         let proof = certificate.vrf_proof.as_ref()?;
+        if proof.material_version != self.active_vrf_material_version() {
+            return None;
+        }
         // The consensus seed namespace is scheme-relative: it MUST match the
         // namespace this scheme's signer used (`namespace_ref().seed`), which
         // equals the global `hybrid_seed_namespace()` only when the scheme is
@@ -375,13 +390,10 @@ impl<V: Variant> HybridScheme<V> {
         // verifiers (`seed_partial`, `verifier`) use the constant instead.
         let namespace = self.namespace_ref();
         let seed_message = seed_round.encode();
-        if self.vrf_materials().verify_proof(
-            rng,
-            proof,
-            &namespace.seed,
-            seed_message.as_ref(),
-            strategy,
-        ) {
+        if self
+            .vrf_materials()
+            .verify_proof(proof, &namespace.seed, seed_message.as_ref())
+        {
             Some(proof.threshold_signature.encode().to_vec())
         } else {
             None
@@ -390,10 +402,10 @@ impl<V: Variant> HybridScheme<V> {
 
     pub fn verify_vrf_partial<R, D>(
         &self,
-        rng: &mut R,
+        _rng: &mut R,
         subject: Subject<'_, D>,
         attestation: &Attestation<Self>,
-        strategy: &impl Strategy,
+        _strategy: &impl Strategy,
     ) -> bool
     where
         R: CryptoRngCore,
@@ -406,17 +418,13 @@ impl<V: Variant> HybridScheme<V> {
         // this scheme's signer, not the global proof constant.
         let namespace = self.namespace_ref();
         let seed_message = seed_message_from_subject(&subject);
-        self.vrf_materials().verify_partial(
-            rng,
-            VrfPartialVerification {
-                version: signature.vrf_material_version,
-                signer: attestation.signer,
-                namespace: &namespace.seed,
-                seed_message: seed_message.as_ref(),
-                signature: signature.bls_seed_partial,
-            },
-            strategy,
-        )
+        self.vrf_materials().verify_partial(VrfPartialVerification {
+            version: signature.vrf_material_version,
+            signer: attestation.signer,
+            namespace: &namespace.seed,
+            seed_message: seed_message.as_ref(),
+            signature: signature.bls_seed_partial,
+        })
     }
 
     /// Verify the seed-partial identity attestation rides correctly with the
@@ -626,19 +634,21 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
     }
 
     fn sign<D: Digest>(&self, subject: Subject<'_, D>) -> Option<Attestation<Self>> {
-        let (individual_key, index, vrf_materials, namespace) = match &self.role {
-            Role::Signer {
-                fields,
-                individual_key,
-                index,
-            } => (
-                individual_key,
-                *index,
-                &fields.vrf_materials,
-                &fields.namespace,
-            ),
-            Role::Verifier { .. } => return None,
-        };
+        let (individual_key, index, vrf_materials, vrf_material_version, namespace) =
+            match &self.role {
+                Role::Signer {
+                    fields,
+                    individual_key,
+                    index,
+                } => (
+                    individual_key,
+                    *index,
+                    &fields.vrf_materials,
+                    fields.expected_vrf_material_version,
+                    &fields.namespace,
+                ),
+                Role::Verifier { .. } => return None,
+            };
 
         // BLS individual vote signature (MinPk)
         let vote_namespace = subject.namespace(namespace);
@@ -647,8 +657,8 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
 
         // BLS threshold seed partial (MinSig)
         let seed_message = seed_message_from_subject(&subject);
-        let (vrf_material_version, bls_seed_partial) =
-            vrf_materials.sign_seed(&namespace.seed, &seed_message)?;
+        let bls_seed_partial =
+            vrf_materials.sign_seed(vrf_material_version, &namespace.seed, &seed_message)?;
 
         // MinPk identity attestation binding the partial to this validator's
         // identity key over (round, version, partial). Makes the partial
@@ -961,6 +971,7 @@ mod tests {
     };
     use commonware_parallel::Sequential;
     use commonware_utils::N3f1;
+    use rand_core::{CryptoRng, Error as RngError, RngCore};
 
     use super::test_support::{test_participants, TestScheme, NAMESPACE};
 
@@ -971,6 +982,29 @@ mod tests {
             Sha256::hash(&[tag]),
         )
     }
+
+    struct ZeroRng;
+
+    impl RngCore for ZeroRng {
+        fn next_u32(&mut self) -> u32 {
+            0
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            0
+        }
+
+        fn fill_bytes(&mut self, dest: &mut [u8]) {
+            dest.fill(0);
+        }
+
+        fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), RngError> {
+            self.fill_bytes(dest);
+            Ok(())
+        }
+    }
+
+    impl CryptoRng for ZeroRng {}
 
     #[test]
     fn test_hybrid_sign_and_verify_attestation() {
@@ -1306,6 +1340,122 @@ mod tests {
     fn signers_and_verifier(n: u8) -> (Vec<TestScheme>, TestScheme) {
         let (_keys, signers, verifier) = signers_keys_and_verifier(n);
         (signers, verifier)
+    }
+
+    #[test]
+    fn epoch_scheme_keeps_material_version_after_provider_activation() {
+        let (keys, participants) = test_participants(4);
+        let dkg = bootstrap_dkg(4).unwrap();
+        let public_key = bls12381::PublicKey::from(keys[0].clone());
+        let index = participants.index(&public_key).unwrap();
+        let share = dkg.shares[index.get() as usize].clone();
+        let provider = VrfMaterialProvider::new(0, dkg.polynomial.clone(), Some(share.clone()));
+        let scheme = HybridScheme::signer_with_vrf_provider(
+            NAMESPACE,
+            participants,
+            keys[0].clone(),
+            provider.clone(),
+        )
+        .unwrap();
+
+        provider.activate(1, dkg.polynomial, Some(share));
+
+        assert_eq!(
+            scheme.active_vrf_material_version(),
+            0,
+            "an epoch-scoped scheme must not follow later provider activation"
+        );
+    }
+
+    #[test]
+    fn epoch_scheme_keeps_identity_and_signing_material_after_provider_activation() {
+        let (keys, participants) = test_participants(4);
+        let initial = bootstrap_dkg(4).unwrap();
+        let replacement = bootstrap_dkg(4).unwrap();
+        let public_key = bls12381::PublicKey::from(keys[0].clone());
+        let index = participants.index(&public_key).unwrap();
+        let initial_share = initial.shares[index.get() as usize].clone();
+        let replacement_share = replacement.shares[index.get() as usize].clone();
+        let expected_identity = *initial.polynomial.public();
+        let provider = VrfMaterialProvider::new(0, initial.polynomial, Some(initial_share));
+        let scheme = HybridScheme::signer_with_vrf_provider(
+            NAMESPACE,
+            participants,
+            keys[0].clone(),
+            provider.clone(),
+        )
+        .unwrap();
+
+        provider.activate(1, replacement.polynomial, Some(replacement_share));
+
+        assert_eq!(scheme.identity(), Some(expected_identity));
+        let proposal = sample_proposal(Epoch::new(1), View::new(2), 42);
+        let attestation = scheme
+            .sign::<Sha256Digest>(Subject::Finalize {
+                proposal: &proposal,
+            })
+            .unwrap();
+        assert_eq!(
+            attestation.signature.get().unwrap().vrf_material_version,
+            0,
+            "the old epoch signer must keep signing with its pinned material"
+        );
+    }
+
+    #[test]
+    fn epoch_scheme_rejects_later_material_proof_retained_by_provider() {
+        let (keys, participants) = test_participants(4);
+        let initial = bootstrap_dkg(4).unwrap();
+        let replacement = bootstrap_dkg(4).unwrap();
+        let verifier_provider = VrfMaterialProvider::new(0, initial.polynomial, None);
+        let old_verifier = HybridScheme::verifier_with_vrf_provider(
+            NAMESPACE,
+            participants.clone(),
+            verifier_provider.clone(),
+        )
+        .unwrap();
+        verifier_provider.activate(1, replacement.polynomial.clone(), None);
+
+        let replacement_signers: Vec<TestScheme> = keys
+            .iter()
+            .map(|key| {
+                let public_key = bls12381::PublicKey::from(key.clone());
+                let index = participants.index(&public_key).unwrap();
+                HybridScheme::signer_with_vrf_provider(
+                    NAMESPACE,
+                    participants.clone(),
+                    key.clone(),
+                    VrfMaterialProvider::new(
+                        1,
+                        replacement.polynomial.clone(),
+                        Some(replacement.shares[index.get() as usize].clone()),
+                    ),
+                )
+                .unwrap()
+            })
+            .collect();
+        let round = Round::new(Epoch::new(1), View::new(2));
+        let proposal = sample_proposal(round.epoch(), round.view(), 42);
+        let subject = Subject::Finalize {
+            proposal: &proposal,
+        };
+        let certificate = replacement_signers[0]
+            .assemble::<_, N3f1>(
+                replacement_signers
+                    .iter()
+                    .map(|scheme| scheme.sign::<Sha256Digest>(subject).unwrap()),
+                &Sequential,
+            )
+            .unwrap();
+        assert_eq!(certificate.vrf_proof.as_ref().unwrap().material_version, 1);
+
+        let mut rng = bls_batch_verification_rng();
+        assert!(
+            old_verifier
+                .verified_vrf_seed_for_round(&mut rng, round, &certificate, &Sequential)
+                .is_none(),
+            "an epoch verifier must reject a proof from a later retained material version"
+        );
     }
 
     /// Like [`signers_and_verifier`] but also returns the signer private keys
@@ -1701,6 +1851,48 @@ mod tests {
         assert_eq!(
             verifier.classify_seed_partial(&mut rng, subject, &unattributable, &Sequential),
             SeedPartialVerdict::Unattributable
+        );
+    }
+
+    #[test]
+    fn invalid_seed_partial_verdict_does_not_depend_on_batch_rng_weights() {
+        let (keys, schemes, verifier) = signers_keys_and_verifier(4);
+        let proposal = sample_proposal(Epoch::new(1), View::new(2), 14);
+        let subject = Subject::Finalize {
+            proposal: &proposal,
+        };
+        let honest = schemes[0].sign::<Sha256Digest>(subject).unwrap();
+        let honest_signature = honest.signature.get().cloned().unwrap();
+        let bad_partial = foreign_round_attestation(&schemes[0])
+            .signature
+            .get()
+            .unwrap()
+            .bls_seed_partial;
+        let attest_message =
+            crate::proof::seed_partial_attest_message(1, 2, 0, bad_partial.encode().as_ref());
+        let attributable = Attestation {
+            signer: honest.signer,
+            signature: commonware_codec::types::lazy::Lazy::from(HybridSignature::<MinSig> {
+                bls_individual_vote: honest_signature.bls_individual_vote,
+                vrf_material_version: 0,
+                bls_seed_partial: bad_partial,
+                seed_partial_identity_sig: keys[0]
+                    .sign(&crate::proof::seed_attest_namespace(), &attest_message),
+            }),
+        };
+
+        assert_eq!(
+            verifier.classify_seed_partial(&mut ZeroRng, subject, &attributable, &Sequential,),
+            SeedPartialVerdict::AttributableInvalid
+        );
+        assert_eq!(
+            verifier.classify_seed_partial(
+                &mut bls_batch_verification_rng(),
+                subject,
+                &attributable,
+                &Sequential,
+            ),
+            SeedPartialVerdict::AttributableInvalid
         );
     }
 
