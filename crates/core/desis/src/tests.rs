@@ -2284,3 +2284,35 @@ fn a_repeated_marker_is_a_no_op_and_a_differing_one_is_reported() {
     });
     assert_eq!(ignored_reasons(&storage), vec![IGNORED_CONFLICT]);
 }
+
+#[test]
+fn dispatch_auction_brief_oversized_supply_rejects_under_the_reject_policy() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |s| {
+        let error = crate::api::dispatch_auction_brief(
+            s.clone(),
+            WORLDWIDE_DAY,
+            U256::MAX,
+            entry_price_rows(),
+            true,
+            NOW,
+            crate::api::BriefOverflowPolicy::Reject,
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:?}").contains("exceeds Desis u128 domain"),
+            "unexpected error: {error:?}"
+        );
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract.read_stage(WORLDWIDE_DAY).unwrap(),
+            AuctionStage::None
+        );
+        assert_eq!(contract.sched_active_count.read().unwrap(), 0);
+    });
+
+    // A rejection must not announce a carry-over the caller never receives.
+    assert!(storage
+        .get_events(outbe_primitives::addresses::DESIS_ADDRESS)
+        .is_empty());
+}

@@ -3323,3 +3323,59 @@ fn test_terminal_day_leaves_active_set() {
             .contains(&wwd));
     });
 }
+
+#[test]
+fn the_local_brief_prices_a_day_by_the_canonical_projection() {
+    with_storage(|storage| {
+        let wwd = outbe_common::WorldwideDay::new(2026_0805);
+        let scheduled = create_waiting_day(&storage, wwd, day_type::GREEN, U256::from(1_000_u64));
+        arm_genesis_ocomp(&storage, CHAIN_ID);
+
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(2, scheduled + SECONDS_PER_HOUR, CHAIN_ID),
+            storage.clone(),
+        );
+        let mut metadosis = MetadosisContract::new(storage.clone());
+        let current_vwap = metadosis
+            .worldwide_days
+            .entry(wwd)
+            .current_vwap()
+            .read()
+            .unwrap();
+
+        let table = crate::settlement::day_entry_prices(&mut metadosis, &ctx, wwd, current_vwap)
+            .unwrap();
+        let projection = outbe_oracle::api::ocomp_pre_admission_projection(
+            storage.clone(),
+            wwd,
+            current_vwap,
+            ctx.block.timestamp,
+        )
+        .unwrap();
+
+        // The settlement paths and the OCOMP request must price a day from one
+        // rule; before this they each carried their own.
+        assert_eq!(
+            table
+                .iter()
+                .map(|row| (row.iso_code, row.entry_price_minor))
+                .collect::<Vec<_>>(),
+            projection
+                .auction_entry_prices
+                .iter()
+                .map(|row| (row.reference_currency, row.entry_price_minor))
+                .collect::<Vec<_>>()
+        );
+        // The COEN/USD pair is not even registered in this fixture, so the rule
+        // the settlement path used to carry of its own — which resolved every row
+        // through `require_coen_pair` — would have priced nothing at all here.
+        // The shared projection still yields the day-type row from the day's own
+        // VWAP, so a priced day can never reach the auction with an empty table.
+        assert!(outbe_oracle::api::require_coen_pair(storage.clone(), 840).is_err());
+        let day_type_row = table
+            .iter()
+            .find(|row| row.iso_code == 840)
+            .expect("the day-type currency is always priced");
+        assert_eq!(day_type_row.entry_price_minor, current_vwap);
+    });
+}
