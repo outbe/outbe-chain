@@ -43,10 +43,16 @@ tee:
 # remote_base_dir: /opt/outbe
 # remote_keys_dir: /opt/outbe/keys
 
-# enclave_image: outbe-tee-enclave:latest     # TEE enclave container image
+# Dev lane only: the container image the mock/gramine-direct enclave runs from.
+# enclave_image: outbe-tee-enclave:latest
+# Production (dcap-required) runs gramine-sgx on the host instead — point
+# these at the release enclave checkout on each machine.
+# enclave_dir: /opt/outbe-chain/enclave
+# enclave_runner: ./run-enclave.sh     # TEE enclave container image
 
 # Binaries on the validator machines; default to PATH lookups.
 # node_binary: outbe-chain
+# ocomp_binary: outbe-ocomp
 # radicle_binary: outbe-radicle
 # feeder_binary: outbe-feeder
 
@@ -81,6 +87,23 @@ tee:
 # fresh_metadosis: true               # do not seed an already-OFFERING day
 # contracts_dir: scripts/contracts    # code files for the `contracts` section
 # canon_dir: scripts/canon            # metacanon.md / canon.md source
+
+# Protocol timings, copied verbatim into config.outbeProtocol.
+# ONLY a `test-protocol-overrides` build accepts this field; a production
+# binary rejects the genesis outright. Use it for localnet and E2E networks,
+# never for a production one, which runs the built-in schedule. Omit to run on
+# the built-in defaults; a short-window network must state them here.
+# protocol_constants:
+#   schemaVersion: 1
+#   metadosis:
+#     formingPeriodSeconds: 180000
+#     lookbackDelaySeconds: 1807200
+#     offeringPeriodSeconds: 180000
+#     waitingPeriodSeconds: 43200
+#     bootstrapDurationSeconds: 300
+#     advanceIntervalSeconds: 10
+#   ocomp:
+#     computeVoteWindowBlocks: 120
 
 # --- Protocol parameters --------------------------------------------------
 # Sections deep-merge over the baseline: scalars replace, lists replace as a
