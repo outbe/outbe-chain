@@ -1263,8 +1263,8 @@ fn conflict_at_the_retry_cap_prepares_terminal_evidence_instead_of_halting() {
 
 #[test]
 fn a_conflicted_retained_terminal_is_a_legal_retry_source() {
-    use crate::ocomp::state::RetryTerminalOutcome;
     use crate::ocomp::classify_retained_terminal;
+    use crate::ocomp::state::RetryTerminalOutcome;
 
     assert_eq!(
         classify_retained_terminal(
@@ -1276,8 +1276,12 @@ fn a_conflicted_retained_terminal_is_a_legal_retry_source() {
         RetryTerminalOutcome::Conflicted
     );
     assert_eq!(
-        classify_retained_terminal(OcompJobStatus::Expired, OcompTerminalOutcome::Expired, false)
-            .unwrap(),
+        classify_retained_terminal(
+            OcompJobStatus::Expired,
+            OcompTerminalOutcome::Expired,
+            false
+        )
+        .unwrap(),
         RetryTerminalOutcome::Expired
     );
 

@@ -47,12 +47,16 @@ pub(crate) fn classify_retained_terminal(
         (OcompJobStatus::Completed, OcompTerminalOutcome::Completed) => Err(
             storage_corruption_message("completed OCOMP WorldwideDay retains a live FSM"),
         ),
-        (OcompJobStatus::Expired, _) | (_, OcompTerminalOutcome::Expired) => Err(
-            storage_corruption_message("OCOMP expired terminal entry has an inconsistent status/binding"),
-        ),
-        (OcompJobStatus::Conflicted, _) | (_, OcompTerminalOutcome::Conflicted) => Err(
-            storage_corruption_message("OCOMP conflicted terminal entry has an inconsistent status/binding"),
-        ),
+        (OcompJobStatus::Expired, _) | (_, OcompTerminalOutcome::Expired) => {
+            Err(storage_corruption_message(
+                "OCOMP expired terminal entry has an inconsistent status/binding",
+            ))
+        }
+        (OcompJobStatus::Conflicted, _) | (_, OcompTerminalOutcome::Conflicted) => {
+            Err(storage_corruption_message(
+                "OCOMP conflicted terminal entry has an inconsistent status/binding",
+            ))
+        }
         _ => Err(storage_corruption_message(
             "OCOMP terminal index points to a non-retry job",
         )),

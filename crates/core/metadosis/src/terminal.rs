@@ -1,7 +1,6 @@
 use alloy_primitives::{B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{ExecutionScope, RetirementOutcome};
-use outbe_ocomp_protocol::state::{OcompJobStatus, OcompTerminalOutcome};
 use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
@@ -263,11 +262,16 @@ pub(crate) fn fail_exhausted_ocomp_day(
             .get_bytes(&worldwide_day)
             .is_empty()?
         || metadosis.get_wwd_status(worldwide_day)? != WwdStatus::OffchainPending
-        || record.status != OcompJobStatus::Expired
-        || record
-            .terminal
-            .as_ref()
-            .is_none_or(|terminal| terminal.outcome != OcompTerminalOutcome::Expired)
+        // Either retained shape may be the one that filled the cap; the day fails
+        // because attempts ran out, not because of which terminal ended the last.
+        || record.terminal.as_ref().is_none_or(|terminal| {
+            crate::ocomp::classify_retained_terminal(
+                record.status,
+                terminal.outcome,
+                terminal.completed_binding.is_some(),
+            )
+            .is_err()
+        })
     {
         return Err(crate::errors::storage_corruption(
             "exhausted OCOMP failure pre-state is inconsistent".into(),

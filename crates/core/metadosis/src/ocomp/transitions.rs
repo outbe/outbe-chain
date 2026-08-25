@@ -688,7 +688,9 @@ impl MetadosisContract<'_> {
                     ));
                 }
                 let retained_lysis_budget = projection.retained_lysis_budget.ok_or_else(|| {
-                    storage_corruption_message("terminal OCOMP conflict has no retained Lysis budget")
+                    storage_corruption_message(
+                        "terminal OCOMP conflict has no retained Lysis budget",
+                    )
                 })?;
                 if retained_lysis_budget != record.intent.frozen_metadosis_values.lysis_budget {
                     return Err(storage_corruption_message(
