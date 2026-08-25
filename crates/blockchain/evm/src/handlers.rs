@@ -6,6 +6,7 @@
 pub mod vote {
     use alloy_primitives::{Address, U256};
     use outbe_governance::vote_target::GovernanceVoteTarget;
+    use outbe_l2registry::L2RegistryVoteTarget;
     use outbe_primitives::addresses::STABLECOIN_FACTORY_ADDRESS;
     use outbe_primitives::block::BlockRuntimeContext;
     use outbe_primitives::error::{PrecompileError, Result};
@@ -23,11 +24,13 @@ pub mod vote {
 
     static UPDATE_VOTE_TARGET: UpdateVoteTarget = UpdateVoteTarget;
     static GOVERNANCE_VOTE_TARGET: GovernanceVoteTarget = GovernanceVoteTarget;
+    static L2_REGISTRY_VOTE_TARGET: L2RegistryVoteTarget = L2RegistryVoteTarget;
     static STABLECOIN_FACTORY_VOTE_TARGET: StablecoinFactoryVoteTarget =
         StablecoinFactoryVoteTarget;
     static ACTIVE_VOTE_TARGETS: &[&dyn VoteTarget] = &[
         &UPDATE_VOTE_TARGET,
         &GOVERNANCE_VOTE_TARGET,
+        &L2_REGISTRY_VOTE_TARGET,
         &STABLECOIN_FACTORY_VOTE_TARGET,
     ];
     static REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(ACTIVE_VOTE_TARGETS);
@@ -153,6 +156,10 @@ pub mod vote {
     mod tests {
         use super::*;
         use alloy_sol_types::SolEvent;
+        use commonware_codec::Encode;
+        use commonware_cryptography::bls12381::primitives::{ops, variant::MinSig};
+        use outbe_l2registry::L2RegistryContract;
+        use outbe_primitives::addresses::L2_REGISTRY_ADDRESS;
         use outbe_primitives::addresses::VOTE_ADDRESS;
         use outbe_primitives::block::BlockContext;
         use outbe_primitives::stablecoin::{
@@ -170,6 +177,14 @@ pub mod vote {
         const VALIDATOR_B: Address = Address::repeat_byte(0xa2);
         const VALIDATOR_C: Address = Address::repeat_byte(0xa3);
         const VALIDATOR_D: Address = Address::repeat_byte(0xa4);
+
+        #[test]
+        fn l2_registry_is_an_active_validator_vote_target() {
+            let target = registry()
+                .lookup(outbe_primitives::addresses::L2_REGISTRY_ADDRESS)
+                .expect("L2Registry vote target must be active");
+            assert_eq!(target.admission(), TargetAdmission::ActiveValidatorOnly);
+        }
 
         fn payload(issuer: Address) -> Vec<u8> {
             encode_canonical_stablecoin_create(&StablecoinCreatePayload {
@@ -195,6 +210,18 @@ pub mod vote {
                 policy_id: U256::from(1u64),
             })
             .unwrap()
+        }
+
+        fn l2_register_payload(chain_id: u64, l1_address: Address) -> String {
+            let (_, public_key) = ops::keypair::<_, MinSig>(&mut rand_core::OsRng);
+            serde_json::json!({
+                "operation": "register",
+                "chainId": chain_id,
+                "l1Address": format!("{l1_address:#x}"),
+                "publicKey": format!("0x{}", hex::encode(public_key.encode())),
+                "zkEnabled": true,
+            })
+            .to_string()
         }
 
         fn context(issuer: Address) -> VoteTargetContext {
@@ -235,6 +262,183 @@ pub mod vote {
                 BlockContext::new(block_number, 1_700_000_000, 1, issuer, vec![issuer]),
                 storage,
             )
+        }
+
+        #[test]
+        fn l2_registration_waits_for_deadline_then_applies_exactly_once() {
+            const L2_CHAIN_ID: u64 = 4242;
+            let l1_address = Address::repeat_byte(0x44);
+            let payload = l2_register_payload(L2_CHAIN_ID, l1_address);
+            let mut provider = HashMapStorageProvider::new(1);
+            {
+                let storage = StorageHandle::new(&mut provider);
+                setup_active_validators(storage.clone());
+                let mut vote = Vote::new(storage.clone());
+                let proposal_id = vote
+                    .create_proposal(VALIDATOR_A, L2_REGISTRY_ADDRESS, &payload, 7, registry())
+                    .unwrap();
+                vote.cast_vote_approve(proposal_id, VALIDATOR_A, true, 8)
+                    .unwrap();
+                vote.cast_vote_approve(proposal_id, VALIDATOR_B, true, 8)
+                    .unwrap();
+
+                let deadline = 7 + VOTING_WINDOW_BLOCKS;
+                vote.process_begin_block(
+                    &finalize_context(storage.clone(), deadline, VALIDATOR_A),
+                    registry(),
+                )
+                .unwrap();
+                assert_eq!(
+                    vote.proposals
+                        .get(proposal_id)
+                        .unwrap()
+                        .unwrap()
+                        .proposal_status()
+                        .unwrap(),
+                    ProposalStatus::Pending
+                );
+                assert!(!L2RegistryContract::new(storage.clone())
+                    .networks
+                    .exists(L2_CHAIN_ID)
+                    .unwrap());
+
+                vote.process_begin_block(
+                    &finalize_context(storage.clone(), deadline + 1, VALIDATOR_A),
+                    registry(),
+                )
+                .unwrap();
+                assert_eq!(
+                    vote.proposals
+                        .get(proposal_id)
+                        .unwrap()
+                        .unwrap()
+                        .proposal_status()
+                        .unwrap(),
+                    ProposalStatus::Approved
+                );
+                let record = L2RegistryContract::new(storage.clone())
+                    .load_network(L2_CHAIN_ID)
+                    .unwrap();
+                assert_eq!(record.l1_address, l1_address);
+                assert!(record.zk_enabled);
+
+                vote.process_begin_block(
+                    &finalize_context(storage.clone(), deadline + 2, VALIDATOR_A),
+                    registry(),
+                )
+                .unwrap();
+                assert_eq!(
+                    L2RegistryContract::new(storage)
+                        .l1_to_chain
+                        .read(&l1_address)
+                        .unwrap(),
+                    L2_CHAIN_ID
+                );
+            }
+            assert_eq!(
+                provider
+                    .get_events(L2_REGISTRY_ADDRESS)
+                    .iter()
+                    .filter(|event| {
+                        event.topics().first()
+                            == Some(
+                                &outbe_l2registry::precompile::IL2Registry::L2NetworkRegistered::SIGNATURE_HASH,
+                            )
+                    })
+                    .count(),
+                1
+            );
+        }
+
+        #[test]
+        fn conflicting_approved_l2_registration_becomes_error_without_blocking_tally() {
+            const L2_CHAIN_ID: u64 = 4242;
+            let l1_address = Address::repeat_byte(0x44);
+            let payload = l2_register_payload(L2_CHAIN_ID, l1_address);
+            let mut provider = HashMapStorageProvider::new(1);
+            let storage = StorageHandle::new(&mut provider);
+            setup_active_validators(storage.clone());
+            let mut vote = Vote::new(storage.clone());
+            let first = vote
+                .create_proposal(VALIDATOR_A, L2_REGISTRY_ADDRESS, &payload, 7, registry())
+                .unwrap();
+            let second = vote
+                .create_proposal(VALIDATOR_B, L2_REGISTRY_ADDRESS, &payload, 7, registry())
+                .unwrap();
+            for proposal_id in [first, second] {
+                vote.cast_vote_approve(proposal_id, VALIDATOR_A, true, 8)
+                    .unwrap();
+                vote.cast_vote_approve(proposal_id, VALIDATOR_B, true, 8)
+                    .unwrap();
+            }
+
+            let deadline = 7 + VOTING_WINDOW_BLOCKS;
+            vote.process_begin_block(
+                &finalize_context(storage.clone(), deadline + 1, VALIDATOR_A),
+                registry(),
+            )
+            .unwrap();
+            assert_eq!(
+                vote.proposals
+                    .get(first)
+                    .unwrap()
+                    .unwrap()
+                    .proposal_status()
+                    .unwrap(),
+                ProposalStatus::Approved
+            );
+            assert_eq!(
+                vote.proposals
+                    .get(second)
+                    .unwrap()
+                    .unwrap()
+                    .proposal_status()
+                    .unwrap(),
+                ProposalStatus::Error
+            );
+            assert_eq!(
+                L2RegistryContract::new(storage)
+                    .l1_to_chain
+                    .read(&l1_address)
+                    .unwrap(),
+                L2_CHAIN_ID
+            );
+        }
+
+        #[test]
+        fn below_quorum_l2_registration_expires_without_registry_effects() {
+            const L2_CHAIN_ID: u64 = 4242;
+            let l1_address = Address::repeat_byte(0x44);
+            let payload = l2_register_payload(L2_CHAIN_ID, l1_address);
+            let mut provider = HashMapStorageProvider::new(1);
+            let storage = StorageHandle::new(&mut provider);
+            setup_active_validators(storage.clone());
+            let mut vote = Vote::new(storage.clone());
+            let proposal_id = vote
+                .create_proposal(VALIDATOR_A, L2_REGISTRY_ADDRESS, &payload, 7, registry())
+                .unwrap();
+            vote.cast_vote_approve(proposal_id, VALIDATOR_A, true, 8)
+                .unwrap();
+
+            let deadline = 7 + VOTING_WINDOW_BLOCKS;
+            vote.process_begin_block(
+                &finalize_context(storage.clone(), deadline + 1, VALIDATOR_A),
+                registry(),
+            )
+            .unwrap();
+            assert_eq!(
+                vote.proposals
+                    .get(proposal_id)
+                    .unwrap()
+                    .unwrap()
+                    .proposal_status()
+                    .unwrap(),
+                ProposalStatus::Expired
+            );
+            assert!(!L2RegistryContract::new(storage)
+                .networks
+                .exists(L2_CHAIN_ID)
+                .unwrap());
         }
 
         #[test]
