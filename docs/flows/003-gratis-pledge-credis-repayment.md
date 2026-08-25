@@ -60,18 +60,21 @@ the principal it covers, without losing conservation or permitting replay.
   enclave state key.
 - Bundle holds no unresolved called position; asset reports a registered ISO currency.
 - Oracle has a COEN price for the position's currency and a non-zero policy rate for it.
-- VaultRouter holds matching reserve shares and CredisFactory is the registered
-  target/source as applicable.
+- VaultRouter holds matching reserve shares, and **both** GratisFactory (`0x2003`,
+  which claims the credit) and CredisFactory (`0x1009`, which delivers it) are
+  registered liquidity targets. Genesis seeds both; on a chain where they are not,
+  every `pledgeGratis` reverts.
 
 ## Success sequence
 
 | Step | Owner | Command/effect | Durable evidence |
 |---:|---|---|---|
 | 1 | Gratisfactory | seal a pledge ticket and move the denomination to the pledged ledger | pledged/liquid balance deltas, sealed ticket |
+| 1a | Gratisfactory/VaultRouter | claim the quoted stablecoins out of the vault into router custody under the pledge handle, in the same checkpoint as step 1 | `ReservationCreated`, vault share delta |
 | 2 | CredisFactory/Gratis | consume the ticket with the bundle-bound `spendAuth` | ticket consumed, sealed pledger EOA returned |
 | 3 | CredisFactory/Oracle | read the asset's ISO code and pin the currency's policy rate | position `policyRate` |
 | 4 | Credis | open the position, deriving the call price from the sealed entry price | position/index records, `PositionCreated` |
-| 5 | VaultRouter | withdraw the exact asset into the borrower bundle | token/vault deltas and event |
+| 5 | VaultRouter | release the reservation held under the pledge handle into the borrower bundle | `ReservationReleased`, token deltas |
 | 6 | payer, repeatable | settle any amount: interest first, principal second | `SettlementApplied`, `PositionSettled` on close |
 | 7 | Gratis | release `G × p / P` of collateral to the original pledger | pledged/liquid balance deltas |
 | 8 | daily scan / Credis | reference price at/above the call price on `CALL_BREACH_DAYS` of the trailing `CALL_LOOKBACK_DAYS` closed days, call it | `PositionCalled`, 14-day deadline |
@@ -86,6 +89,13 @@ Pledge, request, and each settlement are separate user transactions. Within each
 transaction every listed module/external call rolls back together. Replay protection
 crosses transactions through pledge-ticket uniqueness, position id, and the position's
 terminal states.
+
+The gap between pledge and request is bridged by holding, not by checking: a liquidity
+check at pledge time could not survive that gap, because another withdrawal may take the
+same shares in between. The pledge therefore redeems the quoted stablecoins into
+VaultRouter custody keyed by the pledge handle, so a valid ticket is always drawable.
+Custody is released to the bundle at request, and returned to the vault by `unpledge` or
+by the expiry sweep — vault liquidity is never parked longer than the quote's TTL.
 
 Intended closure is:
 
@@ -113,9 +123,15 @@ confidential balance. After closure no further settlement is accepted.
 ## Replay, retry, restart and failure
 
 A consumed pledge ticket cannot open a second position, and `spendAuth` binds the ticket
-to one bundle. Failed vault withdrawal rolls back the position and the ticket. Failed
-settlement deposit rolls back the position bookkeeping and the collateral release. A
-payment below the accrued interest is rejected outright rather than partially applied.
+to one bundle. A failed reservation rolls back the whole pledge, collateral debit
+included. Failed settlement deposit rolls back the position bookkeeping and the
+collateral release. A payment below the accrued interest is rejected outright rather than
+partially applied.
+
+The expiry sweep is level-triggered and isolates each handle in its own checkpoint: a
+reservation that cannot be returned is popped from the queue anyway rather than blocking
+the head, and its assets stay recoverable through the permissionless
+`returnReservation`.
 
 ## E2E scenario matrix
 
@@ -131,7 +147,8 @@ payment below the accrued interest is rejected outright rather than partially ap
 | PFS-003-08 | settled inside the window | called position settled before the window lapses | daily price-path scan | never voided; collateral fully reclaimed | in-process `a_position_settled_inside_the_window_is_never_voided` |
 | PFS-003-09 | zero smart account | valid ticket/asset but zero bundle | request Credis | revert; no ticket or position mutation | in-process `request_credis_rejects_zero_smart_account` |
 | PFS-003-10 | unresolved called position | bundle owns a called position | request another Credis | revert; existing position/ticket/vault state unchanged | in-process `request_credis_rejects_an_owner_with_an_unresolved_call`; armed in production by the daily scan (`called::a_full_window_at_the_call_price_calls_the_position`) |
-| PFS-003-11 | insufficient vault shares | valid ticket but vault cannot withdraw required liquidity | request Credis | revert; ticket consumption and position creation roll back | documentation-only: stateful failing VaultRouter absent |
+| PFS-003-11 | insufficient vault shares | vault cannot fund the quoted credit | pledge Gratis | revert at pledge time; no ticket, no collateral debit, no reservation | in-process `a_pledge_whose_reservation_fails_locks_nothing`, `a_reservation_cannot_exceed_the_vaults_shares` |
+| PFS-003-11a | the quote lapses unspent | live reservation older than `PLEDGE_QUOTE_TTL_SECS` | `pledge_reservation_sweep` Cycle trigger (300s) | credit returned to the vault, quote cleared, `PledgeQuoteExpired`; the pledger's GRATIS stays in the ticket until they `unpledgeGratis` | in-process `expiry_returns_the_credit_but_leaves_the_collateral_pledged`, `the_sweep_leaves_a_live_quote_alone`, `a_swept_pledge_can_still_be_unpledged` |
 | PFS-003-12 | settlement deposit failure | live position but token/vault deposit fails | payer settles | revert; position, collateral and token state unchanged | documentation-only: failing ERC-20/vault adapter absent |
 | PFS-003-13 | restart at transaction boundaries | committed pledge/request/settlement checkpoints | restart after each boundary | reads, tickets, balances and position state reconstruct identically | documentation-only: persistent fixture absent |
 | PFS-003-14 | the call arms on a sustained breach | daily reference price at/above the call price on `CALL_BREACH_DAYS` of the trailing `CALL_LOOKBACK_DAYS` closed UTC days | daily scan | position CALLED; 14-day window opens; owner blocked from new positions | in-process `called::a_full_window_at_the_call_price_calls_the_position`, `called::the_window_absorbs_below_call_days_up_to_the_slack`, `called::one_breach_day_short_of_the_threshold_does_not_call` |
@@ -153,8 +170,15 @@ payment below the accrued interest is rejected outright rather than partially ap
   call, never trigger one.
 - No downside resolution: a position whose price never reaches its call price simply waits.
   See `credis-v2-product-paper.md` §11.1 — adopt or defer is still an open product call.
-- Current code does not visibly reserve per-position pledged escrow; the intended
-  collateral equation is not proven end to end.
+- Current code does not visibly reserve per-position pledged **Gratis** escrow; the
+  intended collateral equation is not proven end to end. (The **stablecoin** side is now
+  reserved at pledge time — see step 1a.)
+- Quote expiry returns the stablecoin claim but not the pledger's GRATIS, which stays in
+  the enclave-sealed ticket until they call `unpledgeGratis` themselves. Automating it
+  needs a new unauthenticated `GratisOp::ExpirePledge`, i.e. a TEE wire change and a new
+  MRENCLAVE. `PledgeQuoteExpired` is emitted so a client can prompt the pledger.
+- `PLEDGE_QUOTE_TTL_SECS` is 15 minutes as a placeholder; `credis-v2-product-paper.md`
+  §10 still lists the pledge quote TTL as TBD.
 - The originating agent is recorded on the position as `cca` but is not authorized or
   penalized; the CCA program is not in this chunk.
 - The in-process lifecycle tests cover the Rust module seam, but no scenario yet

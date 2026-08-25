@@ -134,7 +134,10 @@ methods.
 10. Define asset/vault health, pause, loss/socialization and emergency withdrawal
     FSM; current registry has no operational safety states.
 11. Multi-vault shares lack an internal obligation ledger. Define how reserves are
-    attributed/reconciled to outstanding Credis/Intex/Gem obligations.
+    attributed/reconciled to outstanding Credis/Intex/Gem obligations. Partially
+    addressed: `reserve`/`releaseReservation`/`returnReservation` attribute assets in
+    the router's own custody to a caller-supplied id (the Credis flow uses the pledge
+    handle). Still open for obligations that are not reservation-backed.
 12. Add pagination/capacity bounds for enumerable assets, vaults and role accounts.
 13. Ensure add/remove state changes roll back when allowance calls return false or
     malformed data; current helpers need strict safe-call semantics.

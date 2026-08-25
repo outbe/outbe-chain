@@ -313,6 +313,23 @@ pub fn env() -> HashMapStorageProvider {
     storage
 }
 
+/// [`env`] but with the vault router stubbed per SELECTOR rather than blanket, so a
+/// test can pin exactly which router calls the flow makes: any other selector falls
+/// through to the empty-returndata stub and fails to decode its `uint256` return.
+pub fn env_router_selectors(selectors: &[[u8; 4]]) -> HashMapStorageProvider {
+    test_enclave::install();
+    fidelity_enclave::install();
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(CREATED_AT));
+    storage.set_block_number(BLOCK_NUMBER);
+    storage.enable_sub_call_stub();
+    for selector in selectors {
+        storage.stub_sub_call_at_selector(VAULT_ROUTER_ADDRESS, *selector, zero_word());
+    }
+    storage.stub_sub_call_at(asset(), iso_word(ISSUANCE_ISO));
+    storage
+}
+
 /// Mints `amount` gratis to alice and seeds the fidelity + oracle state a pledge needs.
 pub fn bootstrap(storage: &StorageHandle<'_>, amount: U256) {
     bootstrap_for(storage, alice(), amount);

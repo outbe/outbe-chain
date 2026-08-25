@@ -5,7 +5,7 @@
 //! `Unauthorized`). Following the repo convention, precompile reverts carry a
 //! string reason rather than an ABI-encoded custom-error selector.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
@@ -68,6 +68,10 @@ pub enum VaultRouterError {
     InsufficientSharesForWithdraw { available: U256, required: U256 },
     #[error("token bundle receiver is not a deployed contract")]
     ReceiverNotDeployed,
+    #[error("reservation already exists: {0}")]
+    ReservationExists(B256),
+    #[error("reservation not found: {0}")]
+    ReservationNotFound(B256),
     #[error("undecodable sub-call return: {0}")]
     UndecodableReturn(&'static str),
 }

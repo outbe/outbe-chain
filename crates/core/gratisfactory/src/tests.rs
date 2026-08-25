@@ -7,6 +7,7 @@ use alloy_primitives::{address, Address, Bytes, FixedBytes, B256, U256};
 use alloy_sol_types::{SolCall, SolInterface};
 
 use outbe_gratis::enclave_client::test_enclave;
+use outbe_primitives::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_primitives::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
@@ -128,6 +129,16 @@ fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
 /// confidential gratis), the block time set (so Fidelity reads a non-zero `now`), and
 /// the COEN/840 pair seeded (pledges are priced from it).
 fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
+    with_env_inner(true, f)
+}
+
+/// Same environment but with no VaultRouter stub, so every reservation sub-call
+/// fails — the dry-vault case.
+fn with_dry_vault<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
+    with_env_inner(false, f)
+}
+
+fn with_env_inner<R>(fundable_vault: bool, f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
     test_enclave::install();
     outbe_promis::enclave_client::test_enclave::install();
     fidelity_enclave::install();
@@ -136,6 +147,11 @@ fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
     // `pledge_gratis` staticcalls the asset for its ISO 4217 code before pricing.
     storage.enable_sub_call_stub();
     storage.stub_sub_call_at(asset(), iso_word(ASSET_ISO));
+    if fundable_vault {
+        // `reserve`/`returnReservation` return a `uint256`; the blanket stub's empty
+        // returndata would not decode, so the router needs a word of its own.
+        storage.stub_sub_call_at(VAULT_ROUTER_ADDRESS, zero_word());
+    }
     let out = StorageHandle::enter(&mut storage, |s| {
         seed_oracle(s.clone(), oracle_rate());
         f(s.clone())
@@ -144,6 +160,11 @@ fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
     outbe_promis::enclave_client::test_enclave::uninstall();
     test_enclave::uninstall();
     out
+}
+
+/// 32-byte zero word — the stubbed `uint256` return for the vault sub-calls.
+fn zero_word() -> Bytes {
+    Bytes::from(vec![0u8; 32])
 }
 
 /// The Promis modify authorization for `owner` at `op_nonce` (the confidential
@@ -725,5 +746,228 @@ fn rejects_msg_value() {
         );
         let err = dispatch(storage, &call, alice(), U256::from(1u64)).unwrap_err();
         assert!(err.to_string().contains("non-payable"), "got: {err}");
+    });
+}
+
+// ---------------------------------------------------------------------------
+// pledge-time vault reservation
+// ---------------------------------------------------------------------------
+
+/// Mint `alice` exactly one pledge's worth of gratis and clear the fidelity gate.
+fn fund_one_pledge(storage: &StorageHandle<'_>) {
+    outbe_gratis::api::mint(
+        storage.clone(),
+        alice(),
+        pledge_cost(),
+        auth(GratisOp::Mint, alice(), pledge_cost(), 0),
+    )
+    .unwrap();
+    seed_fidelity(storage.clone(), alice());
+}
+
+fn pledge_at_nonce(storage: &StorageHandle<'_>, nonce: u64) -> B256 {
+    let (handle, _) = runtime::pledge_gratis(
+        storage.clone(),
+        alice(),
+        pledge_stables(),
+        asset(),
+        U256::MAX,
+        auth(GratisOp::Pledge, alice(), pledge_stables(), nonce),
+    )
+    .unwrap();
+    handle
+}
+
+fn factory<'a>(storage: &StorageHandle<'a>) -> crate::schema::GratisFactoryContract<'a> {
+    crate::schema::GratisFactoryContract::new(storage.clone())
+}
+
+/// The whole point of the feature: the collateral debit and the vault claim are one
+/// atomic act. A vault that cannot fund the credit must leave the pledger exactly as
+/// they were — no ticket, no debit, no queue entry.
+#[test]
+fn a_pledge_whose_reservation_fails_locks_nothing() {
+    with_dry_vault(|storage| {
+        fund_one_pledge(&storage);
+
+        let err = runtime::pledge_gratis(
+            storage.clone(),
+            alice(),
+            pledge_stables(),
+            asset(),
+            U256::MAX,
+            auth(GratisOp::Pledge, alice(), pledge_stables(), 1),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("reserve"), "got: {err}");
+
+        assert_eq!(view_balance(&storage, alice()), pledge_cost());
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+            U256::ZERO
+        );
+        assert!(factory(&storage).pledge_queue.front().unwrap().is_none());
+    });
+}
+
+/// A pledge stamps its quote and queues the handle; unpledging returns the credit and
+/// clears the stamp, leaving the queue entry behind as a tombstone.
+#[test]
+fn a_pledge_is_queued_and_an_unpledge_tombstones_it() {
+    with_env(|storage| {
+        fund_one_pledge(&storage);
+        let handle = pledge_at_nonce(&storage, 1);
+
+        let f = factory(&storage);
+        assert_eq!(f.pledge_quoted_at.read(&handle).unwrap(), CREATED_AT);
+        assert_eq!(f.pledge_queue.front().unwrap(), Some(handle));
+
+        runtime::unpledge_gratis(
+            storage.clone(),
+            alice(),
+            pledge_stables(),
+            handle,
+            auth(GratisOp::Unpledge, alice(), pledge_stables(), 2),
+        )
+        .unwrap();
+
+        // Stamp cleared, queue entry still there — the sweep pops it on sight.
+        assert_eq!(f.pledge_quoted_at.read(&handle).unwrap(), 0);
+        assert_eq!(f.pledge_queue.front().unwrap(), Some(handle));
+
+        assert_eq!(runtime::sweep_expired(&storage, 8).unwrap(), 0);
+        assert!(f.pledge_queue.front().unwrap().is_none());
+    });
+}
+
+/// Insertion order is expiry order, so a head that is not yet due ends the run — a
+/// live quote is never unwound early and nothing behind it is inspected.
+#[test]
+fn the_sweep_leaves_a_live_quote_alone() {
+    with_env(|storage| {
+        fund_one_pledge(&storage);
+        let handle = pledge_at_nonce(&storage, 1);
+
+        // One second short of the deadline: still live.
+        storage
+            .set_block_timestamp(U256::from(
+                CREATED_AT + crate::constants::PLEDGE_QUOTE_TTL_SECS,
+            ))
+            .unwrap();
+        assert_eq!(runtime::sweep_expired(&storage, 8).unwrap(), 0);
+
+        let f = factory(&storage);
+        assert_eq!(f.pledge_quoted_at.read(&handle).unwrap(), CREATED_AT);
+        assert_eq!(f.pledge_queue.front().unwrap(), Some(handle));
+    });
+}
+
+/// The documented boundary: expiry gives the stablecoin claim back to the vault and
+/// clears the quote, but the pledger's GRATIS stays sealed in the ticket until they
+/// call `unpledgeGratis` themselves.
+#[test]
+fn expiry_returns_the_credit_but_leaves_the_collateral_pledged() {
+    with_env(|storage| {
+        fund_one_pledge(&storage);
+        let handle = pledge_at_nonce(&storage, 1);
+        // Two-phase pledge: the gratis leaves `balance` for the sealed ticket and only
+        // reaches the pledger's own `pledged` ledger at `requestCredis`.
+        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+            pledge_cost()
+        );
+
+        storage
+            .set_block_timestamp(U256::from(
+                CREATED_AT + crate::constants::PLEDGE_QUOTE_TTL_SECS + 1,
+            ))
+            .unwrap();
+        assert_eq!(runtime::sweep_expired(&storage, 8).unwrap(), 1);
+
+        let f = factory(&storage);
+        assert_eq!(f.pledge_quoted_at.read(&handle).unwrap(), 0);
+        assert!(f.pledge_queue.front().unwrap().is_none());
+
+        // The collateral did not move: still sealed in the ticket, still out of the
+        // liquid balance. Only `unpledgeGratis` gets it back.
+        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+            pledge_cost()
+        );
+    });
+}
+
+/// The per-run budget bounds block weight without losing the tail: the queue drains
+/// oldest-first and the next run picks up exactly where this one stopped.
+#[test]
+fn the_sweep_drains_in_order_within_its_budget() {
+    with_env(|storage| {
+        let seed = pledge_cost() * U256::from(3u64);
+        outbe_gratis::api::mint(
+            storage.clone(),
+            alice(),
+            seed,
+            auth(GratisOp::Mint, alice(), seed, 0),
+        )
+        .unwrap();
+        seed_fidelity(storage.clone(), alice());
+
+        let first = pledge_at_nonce(&storage, 1);
+        let second = pledge_at_nonce(&storage, 2);
+        let third = pledge_at_nonce(&storage, 3);
+
+        storage
+            .set_block_timestamp(U256::from(
+                CREATED_AT + crate::constants::PLEDGE_QUOTE_TTL_SECS + 1,
+            ))
+            .unwrap();
+
+        assert_eq!(runtime::sweep_expired(&storage, 2).unwrap(), 2);
+        let f = factory(&storage);
+        assert_eq!(f.pledge_quoted_at.read(&first).unwrap(), 0);
+        assert_eq!(f.pledge_quoted_at.read(&second).unwrap(), 0);
+        assert_eq!(f.pledge_quoted_at.read(&third).unwrap(), CREATED_AT);
+        assert_eq!(f.pledge_queue.front().unwrap(), Some(third));
+
+        assert_eq!(runtime::sweep_expired(&storage, 2).unwrap(), 1);
+        assert!(f.pledge_queue.front().unwrap().is_none());
+    });
+}
+
+/// Regression: the sweep and `unpledgeGratis` unwind the same reservation, and
+/// `unpledgeGratis` is precisely what a lapsed pledger calls *after* the sweep has
+/// run. If the second unwind hard-errored, their collateral would be stranded in the
+/// ticket with no way out.
+#[test]
+fn a_swept_pledge_can_still_be_unpledged() {
+    with_env(|storage| {
+        fund_one_pledge(&storage);
+        let handle = pledge_at_nonce(&storage, 1);
+
+        storage
+            .set_block_timestamp(U256::from(
+                CREATED_AT + crate::constants::PLEDGE_QUOTE_TTL_SECS + 1,
+            ))
+            .unwrap();
+        assert_eq!(runtime::sweep_expired(&storage, 8).unwrap(), 1);
+
+        // The reservation is gone; the collateral is not. Reclaiming it must work.
+        runtime::unpledge_gratis(
+            storage.clone(),
+            alice(),
+            pledge_stables(),
+            handle,
+            auth(GratisOp::Unpledge, alice(), pledge_stables(), 2),
+        )
+        .unwrap();
+
+        assert_eq!(view_balance(&storage, alice()), pledge_cost());
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+            U256::ZERO
+        );
     });
 }

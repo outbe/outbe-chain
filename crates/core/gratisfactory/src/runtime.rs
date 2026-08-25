@@ -17,8 +17,10 @@
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 
+use crate::constants::PLEDGE_QUOTE_TTL_SECS;
 use crate::errors::GratisFactoryError;
 use crate::precompile::IGratisFactory;
+use crate::schema::GratisFactoryContract;
 use crate::sol_ext::IReferenceCurrency;
 use outbe_fidelity::api::FidelityCohortOp;
 use outbe_gratis::api::{self as gratis, ModifyAuth, PledgeTerms};
@@ -77,7 +79,6 @@ pub fn pledge_gratis(
     max_gratis: U256,
     auth: ModifyAuth,
 ) -> Result<(B256, U256)> {
-    // todo add asset validation and check if it is enought liquidity in the vaults
     if asset.is_zero() {
         return Err(GratisFactoryError::InvalidAsset.into());
     }
@@ -97,18 +98,51 @@ pub fn pledge_gratis(
         entry_rate,
     };
 
-    // Fold a read-only league probe into the pledge round-trip (no separate
-    // fidelity call): the pledge op returns the caller's current league.
     let now = storage.timestamp()?.to::<u64>();
-    let section =
-        outbe_fidelity::api::cohort_section(storage.clone(), caller, FidelityCohortOp::Probe, now)?;
-    let (handle, outcome) =
-        gratis::pledge_with_fidelity(storage, caller, amount_stables, terms, auth, section)?;
-    // todo implement correct fidelity eligibility check on `outcome.league`
-    if outcome.league == u16::MAX {
-        return Err(GratisFactoryError::FidelityNotEligible.into());
-    }
-    Ok((handle, gratis_amount))
+
+    // The collateral debit and the vault claim must stand or fall together: the
+    // reservation is keyed by the pledge handle, so it cannot be taken before the
+    // ticket exists, and a debited pledger holding no claim is the exact failure
+    // this guarantees against. The precompile frame would revert anyway; owning the
+    // atomicity here means any cross-module caller gets it too.
+    storage.with_checkpoint(|| {
+        // Fold a read-only league probe into the pledge round-trip (no separate
+        // fidelity call): the pledge op returns the caller's current league.
+        let section = outbe_fidelity::api::cohort_section(
+            storage.clone(),
+            caller,
+            FidelityCohortOp::Probe,
+            now,
+        )?;
+        let (handle, outcome) = gratis::pledge_with_fidelity(
+            storage.clone(),
+            caller,
+            amount_stables,
+            terms,
+            auth,
+            section,
+        )?;
+        // todo implement correct fidelity eligibility check on `outcome.league`
+        if outcome.league == u16::MAX {
+            return Err(GratisFactoryError::FidelityNotEligible.into());
+        }
+
+        // Claim the credit out of the reserve vault into router custody, wired to
+        // this handle. A liquidity *check* here would not survive the gap to
+        // `requestCredis` — another withdrawal can take the same shares in between
+        // — so the pledge holds the assets rather than merely testing for them.
+        // This also subsumes the dry-vault rejection: `reserve` fails on the same
+        // shortfall a check would.
+        outbe_vaultrouter::api::reserve(&storage, handle, asset, amount_stables)?;
+
+        // Stamp the quote and queue the handle for expiry. The same timestamp is
+        // the reservation's deadline, which is why the queue stores no time of its
+        // own.
+        let contract = GratisFactoryContract::new(storage.clone());
+        contract.pledge_quoted_at.write(&handle, now)?;
+        contract.pledge_queue.push_back(handle)?;
+        Ok((handle, gratis_amount))
+    })
 }
 
 /// Directly unpledge an unspent pledge back to `caller` (e.g. credis rejected).
@@ -121,7 +155,19 @@ pub fn unpledge_gratis(
     pledge_handle: B256,
     auth: ModifyAuth,
 ) -> Result<U256> {
-    gratis::unpledge(storage, caller, amount_stables, pledge_handle, auth)
+    let refunded = gratis::unpledge(storage.clone(), caller, amount_stables, pledge_handle, auth)?;
+    // The credit this pledge claimed is no longer owed to anyone, so it goes back
+    // to the vault to earn rather than sitting idle until the sweep notices.
+    // `returnReservation` is idempotent, so a quote the sweep already unwound still
+    // unpledges cleanly — otherwise a lapsed pledger could never reclaim their
+    // collateral, which is the one call left to them.
+    outbe_vaultrouter::api::return_reservation(&storage, pledge_handle)?;
+    // The ticket is gone; its quote can never be exercised again. The queue entry
+    // is left behind as a tombstone — the sweep pops it on sight.
+    GratisFactoryContract::new(storage)
+        .pledge_quoted_at
+        .clear(&pledge_handle)?;
+    Ok(refunded)
 }
 
 /// Mint `amount` gratis to `account` (authorized by the account owner's modify
@@ -191,3 +237,87 @@ pub fn mine_coen(
 
     Ok(amount)
 }
+
+// ---------------------------------------------------------------------------
+// pledge-quote expiry
+// ---------------------------------------------------------------------------
+//
+// `pledge_gratis` claims the credit out of the reserve vault the moment the quote
+// is struck, so an unspent quote is parked vault liquidity. The sweep walks the
+// pledge queue and gives it back.
+//
+// The queue needs no sorting and no per-entry deadline: `PLEDGE_QUOTE_TTL_SECS` is
+// a constant, so handles expire in exactly the order they were pledged. The head is
+// therefore always the next thing to expire, and a head that is not yet due ends the
+// run — the common case costs two storage reads.
+
+/// Reservations unwound per run. A pledge costs its author real collateral, so the
+/// queue cannot be cheaply flooded; this is a block-weight bound, not a defence.
+pub const MAX_PLEDGE_EXPIRY_SWEEPS: u32 = 256;
+
+/// Returns expired reservations to their vaults, up to `max` of them. Returns how
+/// many were actually unwound (tombstones are not counted).
+pub fn sweep_expired(storage: &StorageHandle<'_>, max: u32) -> Result<u32> {
+    let now = storage.timestamp()?.to::<u64>();
+    let mut contract = GratisFactoryContract::new(storage.clone());
+    let mut swept = 0u32;
+
+    for _ in 0..max {
+        let Some(handle) = contract.pledge_queue.front()? else {
+            break;
+        };
+
+        let quoted_at = contract.pledge_quoted_at.read(&handle)?;
+        if quoted_at == 0 {
+            // Spent at `requestCredis` or unpledged: the reservation is already
+            // gone and only the queue slot is left. Drop it and keep walking —
+            // this is not expiry work, so it does not consume the budget's intent.
+            contract.pledge_queue.pop_front()?;
+            continue;
+        }
+        if now <= quoted_at.saturating_add(PLEDGE_QUOTE_TTL_SECS) {
+            // Insertion order is expiry order, so nothing behind the head is due.
+            break;
+        }
+
+        // Isolate each handle: one wedged reservation (a vault that reverts on
+        // deposit, say) must not strand every later pledge behind it.
+        let unwound = storage.with_checkpoint(|| {
+            outbe_vaultrouter::api::return_reservation(storage, handle)?;
+            contract.pledge_quoted_at.clear(&handle)?;
+            contract.emit(IGratisFactory::PledgeQuoteExpired {
+                pledgeHandle: handle,
+                quotedAt: quoted_at,
+            })
+        });
+
+        // Pop regardless: a handle that cannot be unwound would otherwise block the
+        // head forever. Its assets stay in router custody and stay recoverable
+        // through the permissionless `returnReservation`.
+        contract.pledge_queue.pop_front()?;
+        match unwound {
+            Ok(()) => swept = swept.saturating_add(1),
+            Err(error) => tracing::warn!(
+                target: "outbe::gratisfactory",
+                %handle,
+                %error,
+                "expired pledge reservation could not be returned to its vault"
+            ),
+        }
+    }
+
+    Ok(swept)
+}
+
+// todo Recovering the pledger's GRATIS is still a manual step. This sweep returns
+// the stablecoin claim to the vault and clears the quote, but the collateral stays
+// parked in the enclave-sealed pledge ticket. The pledger must call
+// `unpledgeGratis(amountStables, pledgeHandle, mac, opNonce)` themselves to get it
+// back; `PledgeQuoteExpired` is emitted here so a client can detect the deadline and
+// prompt them.
+//
+// Automating it needs a new unauthenticated `GratisOp::ExpirePledge`: `Unpledge` is
+// an owner op gated on a MAC derived from a modify key that never leaves the enclave
+// (`bin/outbe-tee-enclave/src/gratis.rs`), so the host cannot synthesize one. That is
+// a postcard wire change, an `inputs_canonical_hash` extension, host and enclave
+// rolled in lockstep, and a new MRENCLAVE.
