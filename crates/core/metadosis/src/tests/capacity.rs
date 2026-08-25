@@ -214,7 +214,7 @@ fn begin_empty_scope(provider: &mut HashMapStorageProvider) -> ExecutionScope {
     let parent_root = outbe_compressed_entities::sealed_root(B256::ZERO).unwrap();
     StorageHandle::enter(provider, |storage| {
         storage
-            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
             .unwrap();
         storage
             .sstore(
@@ -240,7 +240,7 @@ fn begin_fixed_partition_scope(
     let scope = ExecutionScope::with_parent_tree(tree.clone(), CeWorkConfig::new(0, 0, u64::MAX));
     StorageHandle::enter(provider, |storage| {
         storage
-            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
             .unwrap();
         storage
             .sstore(

@@ -6,8 +6,8 @@ import { type Address, type Hex, concat, sha256, toBytes, toHex } from "viem";
  * tiny (1 byte ⇒ ~256 tries), so a single-threaded grind is instant.
  *
  * Scheme verbatim from crates/core/intexfactory/src/runtime.rs (compute_pow_hash):
- *   preimage = hex(holder[20]) ++ hex(promisAmount[32]) ++ hex(seriesId[14]) ++ hex(seq[4])
- *   hash     = SHA256(utf8(preimage) ++ nonce_be8)
+ *   preimage = holder[20] ++ promisAmount_be32 ++ seriesId[14] ++ seq_be4
+ *   hash     = SHA256(preimage ++ nonce_be8)
  *   valid    = first POW_DIFFICULTY bytes of hash are zero
  * `seq` is the per-(series, holder) mine counter — read it as the count of past
  * PromisMined(series, holder) events. promisAmount = series.promisLoadMinor * amount.
@@ -15,14 +15,14 @@ import { type Address, type Hex, concat, sha256, toBytes, toHex } from "viem";
 
 export const POW_DIFFICULTY = 1; // crates/core/intexfactory/src/constants.rs
 
-/** The lowercase hex preimage string (no 0x), matching the Rust concatenation. */
+/** The raw preimage bytes, matching the Rust concatenation. */
 function preimage(holder: Address, promisAmount: bigint, seriesId: Hex, seq: number): Uint8Array {
-  const parts =
-    holder.toLowerCase().slice(2) +
-    toHex(promisAmount, { size: 32 }).slice(2) +
-    seriesId.slice(2) +
-    toHex(seq, { size: 4 }).slice(2);
-  return new TextEncoder().encode(parts);
+  return concat([
+    toBytes(holder),
+    toBytes(toHex(promisAmount, { size: 32 })),
+    toBytes(seriesId),
+    toBytes(toHex(seq, { size: 4 })),
+  ]);
 }
 
 export interface PowSolution {

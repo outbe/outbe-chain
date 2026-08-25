@@ -13,7 +13,7 @@ use outbe_ocomp_protocol::{
         validator_identity_hash_v1, verify_low_s_prehash, OcompKeyRegistrationCoreV1,
         OcompKeyRegistrationV1, RESULT_SIGNATURE_PURPOSE_BITMAP,
     },
-    common::{BoundedBytes, EntityId36, ProofBytes},
+    common::{BoundedBytes, ProofBytes},
     control::{
         BuildFinalizedIntentProofV1, BuildLysisOpeningsV1, CheckProjectionContainmentV1,
         CommitSnapshotExportV1, FinalizedIntentProofResponseV1, FinalizedJobSpecV1,
@@ -1025,8 +1025,8 @@ fn every_registered_object_round_trips_and_rejects_trailing_bytes() {
         attempt: 1,
         phase: UnitPhase::Enumerate,
         interval: UnitInterval::EntityIdRange(EntityIdHalfOpenRange {
-            start: EntityId36([0; 36]),
-            end: Some(EntityId36([1; 36])),
+            start: B256::from([0; 32]),
+            end: Some(B256::from([1; 32])),
         }),
         canonical_ordered_inputs: Vec::new(),
         lysis_program_semantics_hash: hash(8),
@@ -2336,8 +2336,8 @@ fn unit_artifact_constructor_binds_spec_output_and_coverage() {
         attempt: 1,
         phase: UnitPhase::Enumerate,
         interval: UnitInterval::EntityIdRange(EntityIdHalfOpenRange {
-            start: EntityId36([0; 36]),
-            end: Some(EntityId36([1; 36])),
+            start: B256::from([0; 32]),
+            end: Some(B256::from([1; 32])),
         }),
         canonical_ordered_inputs: Vec::new(),
         lysis_program_semantics_hash: hash(8),

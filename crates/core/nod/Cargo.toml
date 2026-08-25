@@ -17,6 +17,7 @@ outbe-offchain-storage.workspace = true
 outbe-ocomp-protocol.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 hex.workspace = true
 base64 = "0.22"
 

@@ -4,7 +4,7 @@ use std::{
     future::Future,
     num::NonZeroU32,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
     time::Duration,
 };
 
@@ -108,7 +108,16 @@ fn block_boundary_artifact(block: &ConsensusBlock) -> Result<Option<DkgBoundaryA
 #[derive(Clone, Debug)]
 pub struct Mailbox {
     inner: Arc<Mutex<State>>,
+    finalized_replay_gate: Arc<Mutex<()>>,
     duplicate_dealer_log_limiter: Arc<LogRateLimiter>,
+}
+
+/// Exclusive fence for rebuilding one ceremony from canonical finalized
+/// headers. Live finalization delivery takes the same fence, so a later
+/// DealerLog cannot overtake the replay prefix while the manager is reset.
+pub struct FinalizedReplayGuard<'a> {
+    mailbox: &'a Mailbox,
+    _guard: MutexGuard<'a, ()>,
 }
 
 pub const BOUNDARY_STATUS_CACHE_SIZE: usize = 1024;
@@ -161,6 +170,17 @@ struct State {
 impl Mailbox {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn lock_finalized_replay(&self) -> FinalizedReplayGuard<'_> {
+        let guard = match self.finalized_replay_gate.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        FinalizedReplayGuard {
+            mailbox: self,
+            _guard: guard,
+        }
     }
 
     pub fn boundary_artifact_hash(artifact: &DkgBoundaryArtifact) -> Result<B256> {
@@ -658,6 +678,19 @@ impl Mailbox {
         block_hash: B256,
         artifact: Option<&ConsensusHeaderArtifact>,
     ) {
+        let _guard = match self.finalized_replay_gate.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        self.note_finalized_header_artifact_at_inner(block_number, block_hash, artifact);
+    }
+
+    fn note_finalized_header_artifact_at_inner(
+        &self,
+        block_number: u64,
+        block_hash: B256,
+        artifact: Option<&ConsensusHeaderArtifact>,
+    ) {
         self.with_state(|state| match artifact {
             Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) => {
                 match Self::boundary_artifact_hash(boundary) {
@@ -782,8 +815,39 @@ impl Default for Mailbox {
     fn default() -> Self {
         Self {
             inner: Arc::new(Mutex::new(State::default())),
+            finalized_replay_gate: Arc::new(Mutex::new(())),
             duplicate_dealer_log_limiter: Arc::new(LogRateLimiter::new(Duration::from_secs(5))),
         }
+    }
+}
+
+impl FinalizedReplayGuard<'_> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn restart_ceremony_with_finalized_logs(
+        &self,
+        epoch: Epoch,
+        round: u64,
+        previous_output: Option<Output<MinSig, bls12381::PublicKey>>,
+        participants: Set<bls12381::PublicKey>,
+        finalized_dealer_log_tx: Option<mpsc::UnboundedSender<Bytes>>,
+        finalized_logs: impl IntoIterator<Item = (u64, B256, Bytes)>,
+    ) -> Result<()> {
+        self.mailbox.note_ceremony_started_with_finalized_log_tx(
+            epoch,
+            round,
+            previous_output,
+            participants,
+            finalized_dealer_log_tx,
+        )?;
+        for (block_number, block_hash, bytes) in finalized_logs {
+            let artifact = ConsensusHeaderArtifact::DealerLog(bytes);
+            self.mailbox.note_finalized_header_artifact_at_inner(
+                block_number,
+                block_hash,
+                Some(&artifact),
+            );
+        }
+        Ok(())
     }
 }
 

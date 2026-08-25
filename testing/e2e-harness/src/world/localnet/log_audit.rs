@@ -371,9 +371,12 @@ fn is_runtime_log(path: &Path) -> bool {
             name == "node.log"
                 || name.starts_with("node.log.")
                 || name == "enclave.log"
-                || name == "reth.log"
-                || name.starts_with("reth.log.")
+                || is_reth_runtime_log_name(name)
         })
+}
+
+fn is_reth_runtime_log_name(name: &str) -> bool {
+    name == "reth.log" || name.starts_with("reth.log.")
 }
 
 fn is_machine_audit_log(path: &Path) -> bool {
@@ -497,14 +500,19 @@ fn legacy_request_deadline_cancellations(
     logs: &[(PathBuf, String)],
     validators: usize,
 ) -> LegacyRequestDeadlineCancellations {
+    let runtime_nodes = validators.saturating_add(1);
     let mut typed = BTreeSet::new();
     let mut terminal = BTreeSet::new();
 
     for (path, content) in logs {
-        if path.file_name().and_then(|name| name.to_str()) != Some("reth.log") {
+        if !path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(is_reth_runtime_log_name)
+        {
             continue;
         }
-        let Some(validator) = validator_log_index(path, validators) else {
+        let Some(validator) = validator_log_index(path, runtime_nodes) else {
             continue;
         };
         for line in content.lines() {
@@ -527,7 +535,7 @@ fn legacy_request_deadline_cancellations(
         .collect::<BTreeSet<_>>();
     let mut accepted = BTreeSet::new();
     for (path, content) in logs {
-        let Some(validator) = validator_log_index(path, validators) else {
+        let Some(validator) = validator_log_index(path, runtime_nodes) else {
             continue;
         };
         let lines = content.lines().collect::<Vec<_>>();
@@ -1101,6 +1109,48 @@ mod tests {
             None,
         )
         .is_clean());
+    }
+
+    #[test]
+    fn legacy_new_payload_adapter_accepts_rotated_reth_log() {
+        let hash = "0x36aded35254849d7f72af50566e7ef7b799b8d970741319889c63b3ae292ce3a";
+        let mut logs = legacy_deadline_bundle(hash, hash);
+        logs[0].0 = PathBuf::from("scenario-1/validator-1/logs/54322345/reth.log.1");
+
+        let accepted = audit_loaded_logs_with_expectations(&logs, 4, None, None, None);
+        assert!(accepted.is_clean(), "{:?}", accepted.findings);
+        assert_eq!(accepted.counts.expected_request_deadline_cancellation, 1);
+    }
+
+    #[test]
+    fn legacy_new_payload_adapter_accepts_only_the_canonical_joiner() {
+        let hash = "0x36aded35254849d7f72af50566e7ef7b799b8d970741319889c63b3ae292ce3a";
+        let joiner_logs = legacy_deadline_bundle(hash, hash)
+            .into_iter()
+            .map(|(path, content)| {
+                (
+                    PathBuf::from(path.to_string_lossy().replace("validator-1", "validator-4")),
+                    content,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let accepted = audit_loaded_logs_with_expectations(&joiner_logs, 4, None, None, None);
+        assert!(accepted.is_clean(), "{:?}", accepted.findings);
+        assert_eq!(accepted.counts.expected_request_deadline_cancellation, 1);
+
+        let outside_topology = joiner_logs
+            .into_iter()
+            .map(|(path, content)| {
+                (
+                    PathBuf::from(path.to_string_lossy().replace("validator-4", "validator-5")),
+                    content,
+                )
+            })
+            .collect::<Vec<_>>();
+        let rejected = audit_loaded_logs_with_expectations(&outside_topology, 4, None, None, None);
+        assert!(!rejected.is_clean());
+        assert_eq!(rejected.counts.expected_request_deadline_cancellation, 0);
     }
 
     #[test]

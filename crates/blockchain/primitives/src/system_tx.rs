@@ -14,11 +14,12 @@
 //!    matured `N+K` fee escrow).
 //! 3. [`SystemTxKind::OcompLifecycleBegin`] once the OCOMP lifecycle is active.
 //! 4. [`SystemTxKind::CycleTick`] for block `>= 1`.
-//! 5. [`SystemTxKind::BoundaryOutcome`] iff the header carries a BoundaryOutcome
+//! 5. [`SystemTxKind::RewardsGemDelivery`] for block `>= 1`.
+//! 6. [`SystemTxKind::BoundaryOutcome`] iff the header carries a BoundaryOutcome
 //!    (mandatory at block `1` under V2 for the genesis bootstrap).
-//! 6. [`SystemTxKind::TeeBootstrap`] in the one-time bootstrap block.
-//! 7. [`SystemTxKind::OracleSlashWindow`] for block `>= 1`.
-//! 8. [`SystemTxKind::HookEvents`] for block `>= 1` (receipt container for
+//! 7. [`SystemTxKind::TeeBootstrap`] in the one-time bootstrap block.
+//! 8. [`SystemTxKind::OracleSlashWindow`] for block `>= 1`.
+//! 9. [`SystemTxKind::HookEvents`] for block `>= 1` (receipt container for
 //!    whitelisted pre-exec hook logs; no lifecycle re-execution).
 //!
 //! Once active, [`SystemTxKind::OcompTerminalRequest`] is the sole end-zone
@@ -29,8 +30,8 @@
 //!
 //! This module ships the V2 wire codec exclusively. V1 system-tx input bytes
 //! (selectors `OSF1`/`OSC1`/`OSB1`/`OSO1` with version byte `1`) are rejected
-//! at every height. OCOMP adds the `OSE2` and `OSR2` selectors without changing
-//! the V2 version byte. Greenfield rollout.
+//! at every height. Rewards adds `OSG2`; OCOMP adds `OSE2` and `OSR2`, all
+//! without changing the V2 version byte. Greenfield rollout.
 //!
 //! The split helper below is structural-only: it rejects reserved-address
 //! transactions outside the contiguous system zones and rejects wrong-zone or
@@ -69,6 +70,8 @@ pub const SYSTEM_TX_INPUT_VERSION: u8 = 2;
 pub const CERTIFIED_PARENT_ACCOUNTING_SELECTOR: [u8; 4] = [b'O', b'S', b'A', b'3'];
 /// Selector for [`SystemTxKind::CycleTick`] (V2 OSC2).
 pub const CYCLE_TICK_SELECTOR: [u8; 4] = [b'O', b'S', b'C', b'2'];
+/// Selector for [`SystemTxKind::RewardsGemDelivery`] (V2 OSG2).
+pub const REWARDS_GEM_DELIVERY_SELECTOR: [u8; 4] = [b'O', b'S', b'G', b'2'];
 /// Selector for [`SystemTxKind::BoundaryOutcome`] (V2 OSB2).
 pub const BOUNDARY_OUTCOME_SELECTOR: [u8; 4] = [b'O', b'S', b'B', b'2'];
 /// Selector for [`SystemTxKind::OracleSlashWindow`] (V2 OSO2).
@@ -167,6 +170,8 @@ pub enum SystemTxKind {
     /// the reserved no-op barrier and before ordinary user transactions.
     OcompLifecycleBegin,
     CycleTick,
+    /// Mandatory Rewards-owned retryable delivery of one prepared UTC-day Gem batch.
+    RewardsGemDelivery,
     BoundaryOutcome,
     /// Phase 3b: one-time TEE registry bootstrap (present only in the bootstrap
     /// block; reads the same-block `CommitteeSnapshotStore` written by Phase 3a).
@@ -186,6 +191,7 @@ impl SystemTxKind {
             Self::LateFinalizeCredits => LATE_FINALIZE_CREDITS_SELECTOR,
             Self::OcompLifecycleBegin => OCOMP_LIFECYCLE_BEGIN_SELECTOR,
             Self::CycleTick => CYCLE_TICK_SELECTOR,
+            Self::RewardsGemDelivery => REWARDS_GEM_DELIVERY_SELECTOR,
             Self::BoundaryOutcome => BOUNDARY_OUTCOME_SELECTOR,
             Self::TeeBootstrap => TEE_BOOTSTRAP_SELECTOR,
             Self::OracleSlashWindow => ORACLE_SLASH_WINDOW_SELECTOR,
@@ -201,6 +207,7 @@ impl SystemTxKind {
             | Self::LateFinalizeCredits
             | Self::OcompLifecycleBegin
             | Self::CycleTick
+            | Self::RewardsGemDelivery
             | Self::BoundaryOutcome
             | Self::TeeBootstrap
             | Self::OracleSlashWindow
@@ -229,7 +236,9 @@ impl SystemTxKind {
     ///
     /// `TeeBootstrap` is mandatory at block 1: a revert would commit a genesis
     /// committee that cannot execute confidential transactions, so it fails the
-    /// block. `OracleSlashWindow` and `HookEvents` remain soft.
+    /// block. `RewardsGemDelivery` is deliberately soft so its durable FIFO
+    /// head retries in a later block; `OracleSlashWindow` and `HookEvents` also
+    /// remain soft.
     pub const fn revert_fails_block(self) -> bool {
         match self {
             Self::CertifiedParentAccounting
@@ -239,7 +248,7 @@ impl SystemTxKind {
             | Self::BoundaryOutcome
             | Self::TeeBootstrap
             | Self::OcompTerminalRequest => true,
-            Self::OracleSlashWindow | Self::HookEvents => false,
+            Self::RewardsGemDelivery | Self::OracleSlashWindow | Self::HookEvents => false,
         }
     }
 
@@ -249,10 +258,11 @@ impl SystemTxKind {
             Self::LateFinalizeCredits => Some(1),
             Self::OcompLifecycleBegin => Some(2),
             Self::CycleTick => Some(3),
-            Self::BoundaryOutcome => Some(4),
-            Self::TeeBootstrap => Some(5),
-            Self::OracleSlashWindow => Some(6),
-            Self::HookEvents => Some(7),
+            Self::RewardsGemDelivery => Some(4),
+            Self::BoundaryOutcome => Some(5),
+            Self::TeeBootstrap => Some(6),
+            Self::OracleSlashWindow => Some(7),
+            Self::HookEvents => Some(8),
             Self::OcompTerminalRequest => None,
         }
     }
@@ -264,6 +274,7 @@ impl SystemTxKind {
             | Self::LateFinalizeCredits
             | Self::OcompLifecycleBegin
             | Self::CycleTick
+            | Self::RewardsGemDelivery
             | Self::BoundaryOutcome
             | Self::TeeBootstrap
             | Self::OracleSlashWindow
@@ -298,6 +309,7 @@ pub enum SystemTxInputV2 {
     },
     OcompLifecycleBegin,
     CycleTick,
+    RewardsGemDelivery,
     BoundaryOutcome {
         artifact: DkgBoundaryArtifact,
     },
@@ -316,6 +328,7 @@ impl SystemTxInputV2 {
             Self::LateFinalizeCredits { .. } => SystemTxKind::LateFinalizeCredits,
             Self::OcompLifecycleBegin => SystemTxKind::OcompLifecycleBegin,
             Self::CycleTick => SystemTxKind::CycleTick,
+            Self::RewardsGemDelivery => SystemTxKind::RewardsGemDelivery,
             Self::BoundaryOutcome { .. } => SystemTxKind::BoundaryOutcome,
             Self::TeeBootstrap { .. } => SystemTxKind::TeeBootstrap,
             Self::OracleSlashWindow => SystemTxKind::OracleSlashWindow,
@@ -341,6 +354,7 @@ impl SystemTxInputV2 {
             }
             Self::OcompLifecycleBegin
             | Self::CycleTick
+            | Self::RewardsGemDelivery
             | Self::OracleSlashWindow
             | Self::HookEvents
             | Self::OcompTerminalRequest => {}
@@ -410,6 +424,15 @@ impl SystemTxInputV2 {
                     });
                 }
                 Ok(Self::CycleTick)
+            }
+            SystemTxKind::RewardsGemDelivery => {
+                if !body.is_empty() {
+                    return Err(SystemTxError::UnexpectedBody {
+                        kind,
+                        len: body.len(),
+                    });
+                }
+                Ok(Self::RewardsGemDelivery)
             }
             SystemTxKind::OracleSlashWindow => {
                 if !body.is_empty() {
@@ -488,6 +511,8 @@ pub enum SystemTxPhase {
     OcompLifecycleBegin { body_index: u8 },
     /// Next expected begin-zone tx is Phase 2 (`CycleTick`).
     CycleTick { body_index: u8 },
+    /// Mandatory Rewards-owned delivery phase immediately after `CycleTick`.
+    RewardsGemDelivery { body_index: u8 },
     /// Next expected begin-zone tx is the optional Phase 3
     /// (`BoundaryOutcome`); only emitted when the header carries a boundary
     /// outcome artifact.
@@ -544,6 +569,7 @@ impl SystemTxPhase {
             Self::LateFinalizeCredits { .. } => Some(SystemTxKind::LateFinalizeCredits),
             Self::OcompLifecycleBegin { .. } => Some(SystemTxKind::OcompLifecycleBegin),
             Self::CycleTick { .. } => Some(SystemTxKind::CycleTick),
+            Self::RewardsGemDelivery { .. } => Some(SystemTxKind::RewardsGemDelivery),
             Self::BoundaryOutcomeOptional { .. } => Some(SystemTxKind::BoundaryOutcome),
             Self::TeeBootstrapOptional { .. } => Some(SystemTxKind::TeeBootstrap),
             Self::OracleSlashWindow { .. } => Some(SystemTxKind::OracleSlashWindow),
@@ -560,6 +586,7 @@ impl SystemTxPhase {
             | Self::LateFinalizeCredits { body_index }
             | Self::OcompLifecycleBegin { body_index }
             | Self::CycleTick { body_index }
+            | Self::RewardsGemDelivery { body_index }
             | Self::BoundaryOutcomeOptional { body_index }
             | Self::TeeBootstrapOptional { body_index }
             | Self::OracleSlashWindow { body_index }
@@ -571,20 +598,20 @@ impl SystemTxPhase {
     /// Advance the cursor after a successful begin-zone system-tx commit.
     /// Given the cursor's current variant and whether the current block
     /// carries a boundary-outcome artifact, returns the next cursor
-    /// position. Once Oracle slash-window is consumed (or directly after
-    /// CycleTick / BoundaryOutcome on block 1's degenerate path), the
-    /// cursor transitions to `UserTxs`.
+    /// position. Once HookEvents is consumed, the cursor transitions to
+    /// `UserTxs`.
     ///
     /// `has_boundary_outcome` controls whether Phase 3
-    /// (`BoundaryOutcomeOptional`) is interleaved between `CycleTick` and
-    /// `OracleSlashWindow`. The flag mirrors the block-1 invariant:
+    /// (`BoundaryOutcomeOptional`) is interleaved between
+    /// `RewardsGemDelivery` and `OracleSlashWindow`. The flag mirrors the
+    /// block-1 invariant:
     /// at block 1, V2 always carries a boundary outcome (genesis bootstrap),
     /// so `has_boundary_outcome = true` is the canonical path there.
     ///
     /// `has_tee_bootstrap` interleaves the optional Phase 3b
     /// (`TeeBootstrapOptional`) after `BoundaryOutcome` (or after
-    /// `CycleTick` if no boundary outcome) and before `OracleSlashWindow`. It is
-    /// true only in the one-time bootstrap block.
+    /// `RewardsGemDelivery` if no boundary outcome) and before
+    /// `OracleSlashWindow`. It is true only in the one-time bootstrap block.
     pub const fn advance_after_commit(
         self,
         has_boundary_outcome: bool,
@@ -617,7 +644,10 @@ impl SystemTxPhase {
             Self::OcompLifecycleBegin { body_index } => Self::CycleTick {
                 body_index: body_index + 1,
             },
-            Self::CycleTick { body_index } => {
+            Self::CycleTick { body_index } => Self::RewardsGemDelivery {
+                body_index: body_index + 1,
+            },
+            Self::RewardsGemDelivery { body_index } => {
                 if has_boundary_outcome {
                     Self::BoundaryOutcomeOptional {
                         body_index: body_index + 1,
@@ -810,6 +840,7 @@ pub fn system_tx_kind_from_selector(selector: [u8; 4]) -> Result<SystemTxKind, S
         LATE_FINALIZE_CREDITS_SELECTOR => Ok(SystemTxKind::LateFinalizeCredits),
         OCOMP_LIFECYCLE_BEGIN_SELECTOR => Ok(SystemTxKind::OcompLifecycleBegin),
         CYCLE_TICK_SELECTOR => Ok(SystemTxKind::CycleTick),
+        REWARDS_GEM_DELIVERY_SELECTOR => Ok(SystemTxKind::RewardsGemDelivery),
         BOUNDARY_OUTCOME_SELECTOR => Ok(SystemTxKind::BoundaryOutcome),
         TEE_BOOTSTRAP_SELECTOR => Ok(SystemTxKind::TeeBootstrap),
         ORACLE_SLASH_WINDOW_SELECTOR => Ok(SystemTxKind::OracleSlashWindow),
@@ -1256,6 +1287,7 @@ pub fn expected_begin_block_kinds_for_activation(
     }
     if block_number > 0 {
         expected.push(SystemTxKind::CycleTick);
+        expected.push(SystemTxKind::RewardsGemDelivery);
     }
     if block_number > 0 && has_boundary_outcome {
         expected.push(SystemTxKind::BoundaryOutcome);
@@ -1479,7 +1511,7 @@ mod tests {
             .expect("SEC1-33 NodeHost public key");
         let policy = TeePolicyV1 {
             policy_version: 1,
-            chain_id: [0; 32],
+            chain_id: [0x10; 32],
             genesis_hash: B256::repeat_byte(0x11),
             activation_height: 1,
             predecessor_policy_hash: B256::ZERO,
@@ -1516,7 +1548,7 @@ mod tests {
         };
         let policy_hash = policy.policy_hash().expect("policy hashes");
         let intent = RegistrationIntentV1 {
-            chain_id: [0; 32],
+            chain_id: policy.chain_id,
             genesis_hash: B256::repeat_byte(0x11),
             operation: AttestationOperationV1::RegisterEnclave,
             attestation_mode: AttestationMode::DcapRequired,
@@ -1596,6 +1628,7 @@ mod tests {
             },
             SystemTxKind::OcompLifecycleBegin => SystemTxInputV2::OcompLifecycleBegin,
             SystemTxKind::CycleTick => SystemTxInputV2::CycleTick,
+            SystemTxKind::RewardsGemDelivery => SystemTxInputV2::RewardsGemDelivery,
             SystemTxKind::BoundaryOutcome => SystemTxInputV2::BoundaryOutcome {
                 artifact: sample_boundary(),
             },
@@ -1663,6 +1696,7 @@ mod tests {
             SystemTxKind::CertifiedParentAccounting,
             SystemTxKind::LateFinalizeCredits,
             SystemTxKind::CycleTick,
+            SystemTxKind::RewardsGemDelivery,
             SystemTxKind::BoundaryOutcome,
             SystemTxKind::TeeBootstrap,
             SystemTxKind::OracleSlashWindow,
@@ -2037,11 +2071,15 @@ mod tests {
 
     #[test]
     fn split_accepts_block1_cycle_tick_prefix() {
-        let txs = vec![system_tx(SystemTxKind::CycleTick, 0, 1), user_tx()];
+        let txs = vec![
+            system_tx(SystemTxKind::CycleTick, 0, 1),
+            system_tx(SystemTxKind::RewardsGemDelivery, 1, 1),
+            user_tx(),
+        ];
         let layout = split_system_layout(&txs).expect("layout splits");
         assert_eq!(
             layout.begin_block_kinds().expect("kinds"),
-            vec![SystemTxKind::CycleTick]
+            vec![SystemTxKind::CycleTick, SystemTxKind::RewardsGemDelivery,]
         );
         assert_eq!(layout.user.len(), 1);
         assert!(layout.end.is_empty());
@@ -2052,7 +2090,8 @@ mod tests {
         let txs = vec![
             system_tx(SystemTxKind::CertifiedParentAccounting, 0, 42),
             system_tx(SystemTxKind::CycleTick, 1, 42),
-            system_tx(SystemTxKind::BoundaryOutcome, 2, 42),
+            system_tx(SystemTxKind::RewardsGemDelivery, 2, 42),
+            system_tx(SystemTxKind::BoundaryOutcome, 3, 42),
             user_tx(),
         ];
         let layout = split_system_layout(&txs).expect("layout splits");
@@ -2061,6 +2100,7 @@ mod tests {
             vec![
                 SystemTxKind::CertifiedParentAccounting,
                 SystemTxKind::CycleTick,
+                SystemTxKind::RewardsGemDelivery,
                 SystemTxKind::BoundaryOutcome,
             ]
         );
@@ -2095,13 +2135,14 @@ mod tests {
     fn split_rejects_reserved_tx_in_middle_zone() {
         let txs = vec![
             system_tx(SystemTxKind::CycleTick, 0, 1),
+            system_tx(SystemTxKind::RewardsGemDelivery, 1, 1),
             user_tx(),
-            system_tx(SystemTxKind::BoundaryOutcome, 1, 1),
+            system_tx(SystemTxKind::BoundaryOutcome, 2, 1),
             user_tx(),
         ];
         assert!(matches!(
             split_system_layout(&txs),
-            Err(SystemTxError::MidBlockSystemTx { index: 2 })
+            Err(SystemTxError::MidBlockSystemTx { index: 3 })
         ));
     }
 
@@ -2114,10 +2155,11 @@ mod tests {
         // the genesis bootstrap.
         let block1_txs = vec![
             system_tx(SystemTxKind::CycleTick, 0, 1),
-            system_tx(SystemTxKind::BoundaryOutcome, 1, 1),
-            system_tx(SystemTxKind::TeeBootstrap, 2, 1),
-            system_tx(SystemTxKind::OracleSlashWindow, 3, 1),
-            system_tx(SystemTxKind::HookEvents, 4, 1),
+            system_tx(SystemTxKind::RewardsGemDelivery, 1, 1),
+            system_tx(SystemTxKind::BoundaryOutcome, 2, 1),
+            system_tx(SystemTxKind::TeeBootstrap, 3, 1),
+            system_tx(SystemTxKind::OracleSlashWindow, 4, 1),
+            system_tx(SystemTxKind::HookEvents, 5, 1),
         ];
         let block1 = split_system_layout(&block1_txs).expect("layout");
         validate_active_system_tx_set(&block1, 1, true, true).expect("block 1 V2 ok");
@@ -2126,8 +2168,9 @@ mod tests {
             system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
             system_tx(SystemTxKind::LateFinalizeCredits, 1, 2),
             system_tx(SystemTxKind::CycleTick, 2, 2),
-            system_tx(SystemTxKind::OracleSlashWindow, 3, 2),
-            system_tx(SystemTxKind::HookEvents, 4, 2),
+            system_tx(SystemTxKind::RewardsGemDelivery, 3, 2),
+            system_tx(SystemTxKind::OracleSlashWindow, 4, 2),
+            system_tx(SystemTxKind::HookEvents, 5, 2),
         ];
         let block2 = split_system_layout(&block2_txs).expect("layout");
         validate_active_system_tx_set(&block2, 2, false, false).expect("block 2 ok");
@@ -2136,9 +2179,10 @@ mod tests {
             system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
             system_tx(SystemTxKind::LateFinalizeCredits, 1, 2),
             system_tx(SystemTxKind::CycleTick, 2, 2),
-            system_tx(SystemTxKind::BoundaryOutcome, 3, 2),
-            system_tx(SystemTxKind::OracleSlashWindow, 4, 2),
-            system_tx(SystemTxKind::HookEvents, 5, 2),
+            system_tx(SystemTxKind::RewardsGemDelivery, 3, 2),
+            system_tx(SystemTxKind::BoundaryOutcome, 4, 2),
+            system_tx(SystemTxKind::OracleSlashWindow, 5, 2),
+            system_tx(SystemTxKind::HookEvents, 6, 2),
         ];
         let block2_with_boundary = split_system_layout(&block2_with_boundary_txs).expect("layout");
         validate_active_system_tx_set(&block2_with_boundary, 2, true, false)
@@ -2149,7 +2193,8 @@ mod tests {
     fn validate_active_system_tx_set_requires_mandatory_and_conditional_kinds() {
         let missing_finalization_txs = vec![
             system_tx(SystemTxKind::CycleTick, 0, 2),
-            system_tx(SystemTxKind::OracleSlashWindow, 1, 2),
+            system_tx(SystemTxKind::RewardsGemDelivery, 1, 2),
+            system_tx(SystemTxKind::OracleSlashWindow, 2, 2),
         ];
         let missing_finalization = split_system_layout(&missing_finalization_txs).expect("layout");
         assert!(matches!(
@@ -2159,7 +2204,8 @@ mod tests {
 
         let missing_cycle_tick_txs = vec![
             system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
-            system_tx(SystemTxKind::OracleSlashWindow, 1, 2),
+            system_tx(SystemTxKind::RewardsGemDelivery, 1, 2),
+            system_tx(SystemTxKind::OracleSlashWindow, 2, 2),
         ];
         let missing_cycle_tick = split_system_layout(&missing_cycle_tick_txs).expect("layout");
         assert!(matches!(
@@ -2171,10 +2217,11 @@ mod tests {
         // Missing CycleTick (with the other mandatory phases present)
         // still yields ActiveSystemTxSetMismatch.
         let block1_missing_cycle_tick_txs = vec![
-            system_tx(SystemTxKind::BoundaryOutcome, 0, 1),
-            system_tx(SystemTxKind::TeeBootstrap, 1, 1),
-            system_tx(SystemTxKind::OracleSlashWindow, 2, 1),
-            system_tx(SystemTxKind::HookEvents, 3, 1),
+            system_tx(SystemTxKind::RewardsGemDelivery, 0, 1),
+            system_tx(SystemTxKind::BoundaryOutcome, 1, 1),
+            system_tx(SystemTxKind::TeeBootstrap, 2, 1),
+            system_tx(SystemTxKind::OracleSlashWindow, 3, 1),
+            system_tx(SystemTxKind::HookEvents, 4, 1),
         ];
         let block1_missing_cycle_tick =
             split_system_layout(&block1_missing_cycle_tick_txs).expect("layout");
@@ -2185,9 +2232,10 @@ mod tests {
 
         let block1_missing_tee_txs = vec![
             system_tx(SystemTxKind::CycleTick, 0, 1),
-            system_tx(SystemTxKind::BoundaryOutcome, 1, 1),
-            system_tx(SystemTxKind::OracleSlashWindow, 2, 1),
-            system_tx(SystemTxKind::HookEvents, 3, 1),
+            system_tx(SystemTxKind::RewardsGemDelivery, 1, 1),
+            system_tx(SystemTxKind::BoundaryOutcome, 2, 1),
+            system_tx(SystemTxKind::OracleSlashWindow, 3, 1),
+            system_tx(SystemTxKind::HookEvents, 4, 1),
         ];
         let block1_missing_tee = split_system_layout(&block1_missing_tee_txs).expect("layout");
         assert!(
@@ -2197,24 +2245,26 @@ mod tests {
 
         let block1_with_user_txs = vec![
             system_tx(SystemTxKind::CycleTick, 0, 1),
-            system_tx(SystemTxKind::BoundaryOutcome, 1, 1),
-            system_tx(SystemTxKind::TeeBootstrap, 2, 1),
-            system_tx(SystemTxKind::OracleSlashWindow, 3, 1),
-            system_tx(SystemTxKind::HookEvents, 4, 1),
+            system_tx(SystemTxKind::RewardsGemDelivery, 1, 1),
+            system_tx(SystemTxKind::BoundaryOutcome, 2, 1),
+            system_tx(SystemTxKind::TeeBootstrap, 3, 1),
+            system_tx(SystemTxKind::OracleSlashWindow, 4, 1),
+            system_tx(SystemTxKind::HookEvents, 5, 1),
             user_tx(),
         ];
         let block1_with_user = split_system_layout(&block1_with_user_txs).expect("layout");
         assert!(
             validate_active_system_tx_set(&block1_with_user, 1, true, true).is_err(),
-            "block 1 must contain exactly the five mandatory system transactions"
+            "block 1 must contain exactly the six mandatory system transactions"
         );
 
         // / V2: block 1 without BoundaryOutcome is rejected with
         // the V2-specific genesis bootstrap error before structural checks.
         let block1_no_boundary_txs = vec![
             system_tx(SystemTxKind::CycleTick, 0, 1),
-            system_tx(SystemTxKind::OracleSlashWindow, 1, 1),
-            system_tx(SystemTxKind::HookEvents, 2, 1),
+            system_tx(SystemTxKind::RewardsGemDelivery, 1, 1),
+            system_tx(SystemTxKind::OracleSlashWindow, 2, 1),
+            system_tx(SystemTxKind::HookEvents, 3, 1),
         ];
         let block1_no_boundary = split_system_layout(&block1_no_boundary_txs).expect("layout");
         assert!(matches!(
@@ -2225,7 +2275,8 @@ mod tests {
         let missing_oracle_slash_window_txs = vec![
             system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
             system_tx(SystemTxKind::CycleTick, 1, 2),
-            system_tx(SystemTxKind::HookEvents, 2, 2),
+            system_tx(SystemTxKind::RewardsGemDelivery, 2, 2),
+            system_tx(SystemTxKind::HookEvents, 3, 2),
         ];
         let missing_oracle_slash_window =
             split_system_layout(&missing_oracle_slash_window_txs).expect("layout");
@@ -2237,8 +2288,9 @@ mod tests {
         let missing_boundary_txs = vec![
             system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
             system_tx(SystemTxKind::CycleTick, 1, 2),
-            system_tx(SystemTxKind::OracleSlashWindow, 2, 2),
-            system_tx(SystemTxKind::HookEvents, 3, 2),
+            system_tx(SystemTxKind::RewardsGemDelivery, 2, 2),
+            system_tx(SystemTxKind::OracleSlashWindow, 3, 2),
+            system_tx(SystemTxKind::HookEvents, 4, 2),
         ];
         let missing_boundary = split_system_layout(&missing_boundary_txs).expect("layout");
         assert!(matches!(
@@ -2249,9 +2301,10 @@ mod tests {
         let unexpected_boundary_txs = vec![
             system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
             system_tx(SystemTxKind::CycleTick, 1, 2),
-            system_tx(SystemTxKind::BoundaryOutcome, 2, 2),
-            system_tx(SystemTxKind::OracleSlashWindow, 3, 2),
-            system_tx(SystemTxKind::HookEvents, 4, 2),
+            system_tx(SystemTxKind::RewardsGemDelivery, 2, 2),
+            system_tx(SystemTxKind::BoundaryOutcome, 3, 2),
+            system_tx(SystemTxKind::OracleSlashWindow, 4, 2),
+            system_tx(SystemTxKind::HookEvents, 5, 2),
         ];
         let unexpected_boundary = split_system_layout(&unexpected_boundary_txs).expect("layout");
         assert!(matches!(
@@ -2277,7 +2330,11 @@ mod tests {
                 "{kind:?} must fail the block on revert"
             );
         }
-        for kind in [SystemTxKind::OracleSlashWindow, SystemTxKind::HookEvents] {
+        for kind in [
+            SystemTxKind::RewardsGemDelivery,
+            SystemTxKind::OracleSlashWindow,
+            SystemTxKind::HookEvents,
+        ] {
             assert!(
                 !kind.revert_fails_block(),
                 "{kind:?} must keep the soft-receipt skip"
@@ -2293,10 +2350,11 @@ mod tests {
             system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
             system_tx(SystemTxKind::LateFinalizeCredits, 1, 2),
             system_tx(SystemTxKind::CycleTick, 2, 2),
-            system_tx(SystemTxKind::BoundaryOutcome, 3, 2),
-            system_tx(SystemTxKind::TeeBootstrap, 4, 2),
-            system_tx(SystemTxKind::OracleSlashWindow, 5, 2),
-            system_tx(SystemTxKind::HookEvents, 6, 2),
+            system_tx(SystemTxKind::RewardsGemDelivery, 3, 2),
+            system_tx(SystemTxKind::BoundaryOutcome, 4, 2),
+            system_tx(SystemTxKind::TeeBootstrap, 5, 2),
+            system_tx(SystemTxKind::OracleSlashWindow, 6, 2),
+            system_tx(SystemTxKind::HookEvents, 7, 2),
         ];
         let layout = split_system_layout(&txs).expect("layout");
         assert!(validate_active_system_tx_set(&layout, 2, true, true).is_err());
@@ -2312,9 +2370,10 @@ mod tests {
             system_tx(SystemTxKind::CertifiedParentAccounting, 0, 2),
             system_tx(SystemTxKind::LateFinalizeCredits, 1, 2),
             system_tx(SystemTxKind::CycleTick, 2, 2),
-            system_tx(SystemTxKind::TeeBootstrap, 3, 2),
-            system_tx(SystemTxKind::OracleSlashWindow, 4, 2),
-            system_tx(SystemTxKind::HookEvents, 5, 2),
+            system_tx(SystemTxKind::RewardsGemDelivery, 3, 2),
+            system_tx(SystemTxKind::TeeBootstrap, 4, 2),
+            system_tx(SystemTxKind::OracleSlashWindow, 5, 2),
+            system_tx(SystemTxKind::HookEvents, 6, 2),
         ];
         let layout_no_bo = split_system_layout(&txs_no_bo).expect("layout");
         assert!(validate_active_system_tx_set(&layout_no_bo, 2, false, true).is_err());
@@ -2322,35 +2381,45 @@ mod tests {
 
     #[test]
     fn advance_after_commit_interleaves_optional_phase3b() {
-        // CycleTick -> BoundaryOutcome -> TeeBootstrap -> OracleSlashWindow.
+        // CycleTick -> RewardsGemDelivery -> BoundaryOutcome -> TeeBootstrap -> OracleSlashWindow.
         let cycle = SystemTxPhase::CycleTick { body_index: 1 };
-        let bo = cycle.advance_after_commit(true, true);
-        assert_eq!(bo, SystemTxPhase::BoundaryOutcomeOptional { body_index: 2 });
+        let rewards = cycle.advance_after_commit(true, true);
+        assert_eq!(rewards, SystemTxPhase::RewardsGemDelivery { body_index: 2 });
+        let bo = rewards.advance_after_commit(true, true);
+        assert_eq!(bo, SystemTxPhase::BoundaryOutcomeOptional { body_index: 3 });
         let tee = bo.advance_after_commit(true, true);
-        assert_eq!(tee, SystemTxPhase::TeeBootstrapOptional { body_index: 3 });
+        assert_eq!(tee, SystemTxPhase::TeeBootstrapOptional { body_index: 4 });
         let oracle = tee.advance_after_commit(true, true);
-        assert_eq!(oracle, SystemTxPhase::OracleSlashWindow { body_index: 4 });
+        assert_eq!(oracle, SystemTxPhase::OracleSlashWindow { body_index: 5 });
         let hook_events = oracle.advance_after_commit(true, true);
-        assert_eq!(hook_events, SystemTxPhase::HookEvents { body_index: 5 });
+        assert_eq!(hook_events, SystemTxPhase::HookEvents { body_index: 6 });
         assert_eq!(
             hook_events.advance_after_commit(true, true),
             SystemTxPhase::UserTxs
         );
 
-        // No boundary, bootstrap present: CycleTick -> TeeBootstrap.
+        // No boundary, bootstrap present: CycleTick -> RewardsGemDelivery -> TeeBootstrap.
         assert_eq!(
             SystemTxPhase::CycleTick { body_index: 1 }.advance_after_commit(false, true),
-            SystemTxPhase::TeeBootstrapOptional { body_index: 2 }
+            SystemTxPhase::RewardsGemDelivery { body_index: 2 }
+        );
+        assert_eq!(
+            SystemTxPhase::RewardsGemDelivery { body_index: 2 }.advance_after_commit(false, true),
+            SystemTxPhase::TeeBootstrapOptional { body_index: 3 }
         );
 
-        // Neither: CycleTick -> OracleSlashWindow (unchanged common path).
+        // Neither: CycleTick -> RewardsGemDelivery -> OracleSlashWindow.
         assert_eq!(
             SystemTxPhase::CycleTick { body_index: 1 }.advance_after_commit(false, false),
-            SystemTxPhase::OracleSlashWindow { body_index: 2 }
+            SystemTxPhase::RewardsGemDelivery { body_index: 2 }
         );
         assert_eq!(
-            SystemTxPhase::OracleSlashWindow { body_index: 2 }.advance_after_commit(false, false),
-            SystemTxPhase::HookEvents { body_index: 3 }
+            SystemTxPhase::RewardsGemDelivery { body_index: 2 }.advance_after_commit(false, false),
+            SystemTxPhase::OracleSlashWindow { body_index: 3 }
+        );
+        assert_eq!(
+            SystemTxPhase::OracleSlashWindow { body_index: 3 }.advance_after_commit(false, false),
+            SystemTxPhase::HookEvents { body_index: 4 }
         );
     }
 
@@ -2419,19 +2488,23 @@ mod tests {
                 Some(SystemTxKind::CycleTick),
             ),
             (
-                SystemTxPhase::BoundaryOutcomeOptional { body_index: 2 },
+                SystemTxPhase::RewardsGemDelivery { body_index: 2 },
+                Some(SystemTxKind::RewardsGemDelivery),
+            ),
+            (
+                SystemTxPhase::BoundaryOutcomeOptional { body_index: 3 },
                 Some(SystemTxKind::BoundaryOutcome),
             ),
             (
-                SystemTxPhase::TeeBootstrapOptional { body_index: 3 },
+                SystemTxPhase::TeeBootstrapOptional { body_index: 4 },
                 Some(SystemTxKind::TeeBootstrap),
             ),
             (
-                SystemTxPhase::OracleSlashWindow { body_index: 4 },
+                SystemTxPhase::OracleSlashWindow { body_index: 5 },
                 Some(SystemTxKind::OracleSlashWindow),
             ),
             (
-                SystemTxPhase::HookEvents { body_index: 5 },
+                SystemTxPhase::HookEvents { body_index: 6 },
                 Some(SystemTxKind::HookEvents),
             ),
             (SystemTxPhase::UserTxs, None),
@@ -2453,16 +2526,17 @@ mod tests {
                 Some(0),
             ),
             (SystemTxPhase::CycleTick { body_index: 1 }, Some(1)),
+            (SystemTxPhase::RewardsGemDelivery { body_index: 2 }, Some(2)),
             (
-                SystemTxPhase::BoundaryOutcomeOptional { body_index: 2 },
-                Some(2),
-            ),
-            (
-                SystemTxPhase::TeeBootstrapOptional { body_index: 3 },
+                SystemTxPhase::BoundaryOutcomeOptional { body_index: 3 },
                 Some(3),
             ),
-            (SystemTxPhase::OracleSlashWindow { body_index: 4 }, Some(4)),
-            (SystemTxPhase::HookEvents { body_index: 5 }, Some(5)),
+            (
+                SystemTxPhase::TeeBootstrapOptional { body_index: 4 },
+                Some(4),
+            ),
+            (SystemTxPhase::OracleSlashWindow { body_index: 5 }, Some(5)),
+            (SystemTxPhase::HookEvents { body_index: 6 }, Some(6)),
             (SystemTxPhase::UserTxs, None),
         ] {
             assert_eq!(phase.body_index(), expected, "phase={phase:?}");

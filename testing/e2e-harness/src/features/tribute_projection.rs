@@ -6,25 +6,27 @@ use std::time::Duration;
 use alloy_primitives::{Address, U256};
 use cucumber::{given, then, when};
 use outbe_compressed_entities::{
-    decode_stored_tribute_v1, verify_point_read_v1, AbsentEvidenceV1, EntityId36,
-    PointReadRequestV1, PointReadResultV1, VerifiedPointReadV1,
+    decode_stored_tribute_v1, verify_point_read_v1, AbsentEvidenceV1, PointReadRequestV1,
+    PointReadResultV1, VerifiedPointReadV1, WwdEntityId,
 };
 
-use crate::features::common::{bootstrap_localnet, start_bootstrapped_localnet};
-use crate::world::localnet::StartOpts;
+use crate::features::common::boot_bounded_tribute_localnet;
 use crate::world::World;
 
 #[given(
     expr = "a fresh localnet with cross-currency Tribute pricing and a {int}-block voting window"
 )]
 fn fresh_cross_currency_tribute_localnet(world: &mut World, window: u64) {
-    bootstrap_localnet(world, window, &[]);
-    let worldwide_day = world
-        .ocomp
-        .prepare_cross_currency_tribute_fixture()
-        .expect("prepare bounded TRY/EUR Oracle fixture before node start");
-    world.state.wwd = Some(worldwide_day.to_string());
-    start_bootstrapped_localnet(world, &StartOpts::with_voting_window(window));
+    fresh_bounded_tribute_localnet(world, window);
+}
+
+#[given(expr = "a fresh localnet with a bounded Tribute offering and a {int}-block voting window")]
+fn fresh_bounded_tribute_offering_localnet(world: &mut World, window: u64) {
+    fresh_bounded_tribute_localnet(world, window);
+}
+
+fn fresh_bounded_tribute_localnet(world: &mut World, window: u64) {
+    boot_bounded_tribute_localnet(world, window, &[]);
 }
 
 #[when("an operator submits one encrypted tribute offer")]
@@ -263,7 +265,7 @@ fn duplicate_rejected_without_effects(world: &mut World) {
         .get_str("_id")
         .expect("projected primary _id");
     let expected_id = hex::decode(expected_id).expect("hex projected primary _id");
-    let expected_ids = vec![alloy_primitives::Bytes::from(expected_id)];
+    let expected_ids = vec![alloy_primitives::U256::from_be_slice(&expected_id)];
     for port in world.validators.committee_ports() {
         let mut owner_ids = None;
         let mut day_ids = None;
@@ -340,23 +342,23 @@ fn entity_absent_in_existing_collection(world: &mut World) {
         .mongodb
         .projected_tribute(0, tx_hash)
         .expect("validator-0 projected Tribute body");
-    let mut unknown = projected.raw_id.into_bytes();
-    unknown[EntityId36::LEN - 1] ^= 1;
+    let mut unknown: [u8; 32] = projected.raw_id.into();
+    unknown[WwdEntityId::len_bytes() - 1] ^= 1;
     let request = PointReadRequestV1 {
         domain_id: 1,
-        raw_id: EntityId36::try_from(unknown.as_slice()).expect("36-byte synthetic identity"),
+        raw_id: WwdEntityId::from(unknown),
     };
     verify_absence_on_committee(world, request, false);
 }
 
 #[then("every validator proves an unknown tribute collection absent")]
 fn collection_absent(world: &mut World) {
-    let mut unknown = [0_u8; EntityId36::LEN];
+    let mut unknown = [0_u8; WwdEntityId::len_bytes()];
     unknown[..4].copy_from_slice(&20_000_101_u32.to_be_bytes());
-    unknown[EntityId36::LEN - 1] = 1;
+    unknown[WwdEntityId::len_bytes() - 1] = 1;
     let request = PointReadRequestV1 {
         domain_id: 1,
-        raw_id: EntityId36::try_from(unknown.as_slice()).expect("36-byte synthetic identity"),
+        raw_id: WwdEntityId::from(unknown),
     };
     verify_absence_on_committee(world, request, true);
 }

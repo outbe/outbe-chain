@@ -2323,6 +2323,22 @@ where
             }
             system_txs.push((SystemTxKind::CycleTick, input, None));
             ordinal += 1;
+
+            let input = if verifier_mode {
+                self.expected_begin_input(ordinal)?
+            } else {
+                SystemTxInputV2::RewardsGemDelivery
+            };
+            if !matches!(input, SystemTxInputV2::RewardsGemDelivery) {
+                return Err(BlockExecutionError::Internal(
+                    InternalBlockExecutionError::Other(
+                        format!("expected RewardsGemDelivery system tx at ordinal {ordinal}")
+                            .into(),
+                    ),
+                ));
+            }
+            system_txs.push((SystemTxKind::RewardsGemDelivery, input, None));
+            ordinal += 1;
         }
 
         if let Some(ConsensusHeaderArtifact::BoundaryOutcome(artifact)) =
@@ -2363,7 +2379,7 @@ where
         }
 
         // Optional Phase 3b: one-time `TeeBootstrap`, between `BoundaryOutcome`
-        // (begin_order 3) and `OracleSlashWindow` (begin_order 4).
+        // (begin_order 5) and `OracleSlashWindow` (begin_order 7).
         // Verifier mode: include it iff the body carries it at this ordinal.
         // Proposer mode: inject the `pending_tee_bootstrap` payload supplied by
         // the bootstrap producer — identically to `build_begin_system_txs` so the
@@ -4457,7 +4473,7 @@ mod tests {
             .sstore(
                 outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
                 U256::ZERO,
-                U256::from(3),
+                U256::from(4),
             )
             .unwrap();
         storage
@@ -5252,9 +5268,9 @@ mod tests {
         let proposer = signer.address();
         let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
 
-        // Block 1, empty extra_data: begin-zone is CycleTick + OracleSlashWindow + HookEvents.
-        // A pending bootstrap is injected between them (begin_order 3, before the
-        // OracleSlashWindow at begin_order 5).
+        // Block 1, empty extra_data: begin-zone is CycleTick + RewardsGemDelivery
+        // + OracleSlashWindow + HookEvents. A pending bootstrap is injected
+        // between delivery and OracleSlashWindow.
         let with_bootstrap = begin_system_txs_for_test_with_bootstrap(
             &config,
             1,
@@ -5268,6 +5284,7 @@ mod tests {
             begin_system_tx_kinds(&with_bootstrap),
             vec![
                 SystemTxKind::CycleTick,
+                SystemTxKind::RewardsGemDelivery,
                 SystemTxKind::TeeBootstrap,
                 SystemTxKind::OracleSlashWindow,
                 SystemTxKind::HookEvents,
@@ -5777,7 +5794,7 @@ mod tests {
             );
         }
 
-        assert_eq!(executor.receipts().len(), 4);
+        assert_eq!(executor.receipts().len(), 5);
         assert!(executor.receipts().iter().all(|receipt| receipt.success));
         assert!(
             executor.system_tx_execution_gas > 0,
@@ -5796,11 +5813,11 @@ mod tests {
             .iter()
             .all(|receipt| receipt.tx_type == reth_ethereum::TxType::Legacy));
         assert_eq!(
-            executor.receipts()[3].cumulative_gas_used,
+            executor.receipts()[4].cumulative_gas_used,
             visible_system_gas_used
         );
 
-        assert_eq!(system_txs.len(), 4);
+        assert_eq!(system_txs.len(), 5);
         assert_eq!(Address::from(*system_txs[0].signer()), proposer);
         assert_eq!(system_txs[0].tx().chain_id(), Some(CHAIN_ID));
         assert_eq!(system_txs[0].tx().tx_type(), reth_ethereum::TxType::Legacy);
@@ -5816,14 +5833,18 @@ mod tests {
         ));
         assert!(matches!(
             SystemTxInputV2::decode(system_txs[1].tx().input().as_ref()).unwrap(),
-            SystemTxInputV2::TeeBootstrap { .. }
+            SystemTxInputV2::RewardsGemDelivery
         ));
         assert!(matches!(
             SystemTxInputV2::decode(system_txs[2].tx().input().as_ref()).unwrap(),
-            SystemTxInputV2::OracleSlashWindow
+            SystemTxInputV2::TeeBootstrap { .. }
         ));
         assert!(matches!(
             SystemTxInputV2::decode(system_txs[3].tx().input().as_ref()).unwrap(),
+            SystemTxInputV2::OracleSlashWindow
+        ));
+        assert!(matches!(
+            SystemTxInputV2::decode(system_txs[4].tx().input().as_ref()).unwrap(),
             SystemTxInputV2::HookEvents
         ));
         drop(executor);
@@ -6332,6 +6353,7 @@ mod tests {
             vec![
                 SystemTxKind::OcompLifecycleBegin,
                 SystemTxKind::CycleTick,
+                SystemTxKind::RewardsGemDelivery,
                 SystemTxKind::TeeBootstrap,
                 SystemTxKind::OracleSlashWindow,
                 SystemTxKind::HookEvents,
@@ -6392,7 +6414,7 @@ mod tests {
             .expect("sealed CE root enters final header");
         let writes_before_finish = observed_writes.lock().unwrap().clone();
         let (_evm, result) = executor.finish().expect("active executor finishes");
-        assert_eq!(result.receipts.len(), 6);
+        assert_eq!(result.receipts.len(), 7);
         assert_eq!(
             *observed_writes.lock().unwrap(),
             writes_before_finish,
@@ -6507,7 +6529,7 @@ mod tests {
         let proposer = run(false);
         let replay = run(true);
         assert_eq!(proposer, replay);
-        assert_eq!(proposer.0.len(), 7);
+        assert_eq!(proposer.0.len(), 8);
     }
 
     #[test]
@@ -6564,7 +6586,7 @@ mod tests {
                 .expect("begin-zone system tx should execute in tx loop");
         }
 
-        assert_eq!(executor.receipts().len(), 4);
+        assert_eq!(executor.receipts().len(), 5);
         let cycle_event = keccak256("CycleTriggerExecuted(uint32,uint64,uint64,uint64)");
         assert!(
             executor.receipts()[0].logs.iter().any(|log| {
@@ -6963,6 +6985,7 @@ mod tests {
         const GENESIS_TS: u64 = 1_704_067_200;
         const SECONDS_PER_DAY: u64 = 86_400;
         const DENSE_ADDRESS_COUNT: u64 = 512;
+        const DENSE_VALIDATOR_COUNT: u32 = outbe_consensus::bls::MAX_VALIDATORS;
 
         let signer = test_evm_signer();
         let proposer = signer.address();
@@ -6987,6 +7010,38 @@ mod tests {
                     .last_executed_at
                     .write(&emission_trigger, GENESIS_TS + 60)
                     .unwrap();
+
+                outbe_oracle::api::set_exchange_rate(
+                    storage.clone(),
+                    Address::ZERO,
+                    outbe_oracle::api::DAY_TYPE_PAIR,
+                    U256::from(1_000_000u64),
+                    1,
+                    block_ts,
+                )
+                .unwrap();
+                let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
+                rewards
+                    .daily_voter_count
+                    .write(&prev_day, DENSE_VALIDATOR_COUNT)
+                    .unwrap();
+                rewards
+                    .daily_total_participation
+                    .write(&prev_day, u64::from(DENSE_VALIDATOR_COUNT))
+                    .unwrap();
+                for index in 0..DENSE_VALIDATOR_COUNT {
+                    let voter = numbered_test_address(0x12, u64::from(index));
+                    rewards
+                        .daily_voter_at
+                        .get_nested(&prev_day)
+                        .write(&index, voter)
+                        .unwrap();
+                    rewards
+                        .daily_participation
+                        .get_nested(&prev_day)
+                        .write(&voter, 1)
+                        .unwrap();
+                }
 
                 let mut agent = outbe_agentreward::AgentRewardContract::new(storage);
                 for n in 0..DENSE_ADDRESS_COUNT {
@@ -7016,12 +7071,10 @@ mod tests {
         executor
             .apply_pre_execution_changes()
             .expect("pre-execution changes should apply");
-        let system_txs =
+        let mut system_txs =
             begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
-        let cycle_tx = system_txs
-            .into_iter()
-            .next()
-            .expect("CycleTick system tx should be first");
+        let cycle_tx = system_txs.remove(0);
+        let delivery_tx = system_txs.remove(0);
         let cycle_signed_gas_limit = cycle_tx.tx().gas_limit();
         let cycle_gas = executor
             .execute_transaction(cycle_tx)
@@ -7044,6 +7097,12 @@ mod tests {
             cycle_gas <= cycle_signed_gas_limit,
             "GAS-05: CycleTick receipt gas exceeded signed gas limit"
         );
+        let delivery_signed_gas_limit = delivery_tx.tx().gas_limit();
+        let delivery_gas = executor
+            .execute_transaction(delivery_tx)
+            .expect("dense RewardsGemDelivery should execute")
+            .tx_gas_used();
+        assert!(delivery_gas <= delivery_signed_gas_limit);
 
         drop(executor);
         let read_ctx = BlockContext::new(1, block_ts, CHAIN_ID, proposer, vec![proposer]);
@@ -7085,9 +7144,145 @@ mod tests {
                 claimable_total,
                 "GAS-05: AgentReward backing balance must match dense claimable total"
             );
+            let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
+            assert!(rewards.daily_topup_prepared.read(&prev_day)?);
+            assert!(rewards.daily_topup_settled.read(&prev_day)?);
+            assert_eq!(rewards.reward_gem_queue_head.read()?, 1);
+            assert_eq!(rewards.reward_gem_queue_tail.read()?, 1);
+            let gem = outbe_gem::GemContract::new(storage);
+            for index in 0..DENSE_VALIDATOR_COUNT {
+                let voter = numbered_test_address(0x12, u64::from(index));
+                assert_eq!(gem.balance_of(voter)?, 1);
+            }
             Ok::<_, outbe_primitives::error::PrecompileError>(())
         })
         .expect("GAS-05 dense AgentReward state should be readable after CycleTick");
+    }
+
+    #[test]
+    fn reward_gem_delivery_drains_one_max_batch_while_cycle_appends_the_next() {
+        const GENESIS_TS: u64 = 1_704_067_200;
+        const SECONDS_PER_DAY: u64 = 86_400;
+        const VALIDATOR_COUNT: u32 = outbe_consensus::bls::MAX_VALIDATORS;
+
+        let signer = test_evm_signer();
+        let proposer = signer.address();
+        let block_ts = GENESIS_TS + 2 * SECONDS_PER_DAY + 60;
+        let current_utc_day = outbe_primitives::time::timestamp_to_date_key(block_ts);
+        let reward_utc_day = outbe_primitives::time::previous_date_key(current_utc_day);
+        let backlog_utc_day = outbe_primitives::time::previous_date_key(reward_utc_day);
+        let emission_trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
+        let mut state =
+            state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
+                let genesis_ctx = BlockRuntimeContext::new(
+                    BlockContext::new(0, GENESIS_TS, CHAIN_ID, proposer, vec![proposer]),
+                    storage.clone(),
+                );
+                outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
+                let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
+                cycle.active_utc_day.write(reward_utc_day).unwrap();
+                cycle
+                    .last_executed_at
+                    .write(&emission_trigger, block_ts - 3_600)
+                    .unwrap();
+
+                let backlog_voters = (0..VALIDATOR_COUNT)
+                    .map(|index| (numbered_test_address(0x13, u64::from(index)), 1))
+                    .collect::<Vec<_>>();
+                outbe_rewards::api::prepare_daily_validator_gem_batch(
+                    &genesis_ctx,
+                    backlog_utc_day,
+                    U256::from(1_000_000u64),
+                    &backlog_voters,
+                )
+                .unwrap();
+
+                let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
+                rewards
+                    .daily_voter_count
+                    .write(&reward_utc_day, VALIDATOR_COUNT)
+                    .unwrap();
+                rewards
+                    .daily_total_participation
+                    .write(&reward_utc_day, u64::from(VALIDATOR_COUNT))
+                    .unwrap();
+                for index in 0..VALIDATOR_COUNT {
+                    let voter = numbered_test_address(0x14, u64::from(index));
+                    rewards
+                        .daily_voter_at
+                        .get_nested(&reward_utc_day)
+                        .write(&index, voter)
+                        .unwrap();
+                    rewards
+                        .daily_participation
+                        .get_nested(&reward_utc_day)
+                        .write(&voter, 1)
+                        .unwrap();
+                }
+                outbe_oracle::api::set_exchange_rate(
+                    storage,
+                    Address::ZERO,
+                    outbe_oracle::api::DAY_TYPE_PAIR,
+                    U256::from(1_000_000u64),
+                    1,
+                    block_ts,
+                )
+                .unwrap();
+            });
+
+        let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
+        evm_env.block_env.timestamp = U256::from(block_ts);
+        let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer);
+        let evm = config.evm_with_env(&mut state, evm_env);
+        let mut executor =
+            config.create_executor(evm, block_one_execution_ctx(Some(0), Bytes::new()));
+        executor.apply_pre_execution_changes().unwrap();
+        let mut system_txs =
+            begin_system_txs_for_test(&config, 1, B256::ZERO, &Bytes::new(), None, proposer);
+        let cycle_tx = system_txs.remove(0);
+        let delivery_tx = system_txs.remove(0);
+        let cycle_limit = cycle_tx.tx().gas_limit();
+        let delivery_limit = delivery_tx.tx().gas_limit();
+        assert!(
+            executor
+                .execute_transaction(cycle_tx)
+                .unwrap()
+                .tx_gas_used()
+                <= cycle_limit
+        );
+        assert!(
+            executor
+                .execute_transaction(delivery_tx)
+                .unwrap()
+                .tx_gas_used()
+                <= delivery_limit
+        );
+        drop(executor);
+
+        let read_ctx = BlockContext::new(1, block_ts, CHAIN_ID, proposer, vec![proposer]);
+        let mut provider =
+            outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
+        StorageHandle::enter(&mut provider, |storage| {
+            let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
+            assert_eq!(rewards.reward_gem_queue_head.read()?, 1);
+            assert_eq!(rewards.reward_gem_queue_tail.read()?, 2);
+            assert!(rewards.daily_topup_settled.read(&backlog_utc_day)?);
+            assert!(rewards.daily_topup_prepared.read(&reward_utc_day)?);
+            assert!(!rewards.daily_topup_settled.read(&reward_utc_day)?);
+            let gem = outbe_gem::GemContract::new(storage);
+            for index in 0..VALIDATOR_COUNT {
+                assert_eq!(
+                    gem.balance_of(numbered_test_address(0x13, u64::from(index)))?,
+                    1
+                );
+                assert_eq!(
+                    gem.balance_of(numbered_test_address(0x14, u64::from(index)))?,
+                    0
+                );
+            }
+            Ok::<_, outbe_primitives::error::PrecompileError>(())
+        })
+        .unwrap();
     }
 
     #[test]
@@ -7278,6 +7473,9 @@ mod tests {
         let cycle_tx = system_txs
             .next()
             .expect("CycleTick system tx should be present");
+        let rewards_tx = system_txs
+            .next()
+            .expect("RewardsGemDelivery system tx should be present");
         let tee_bootstrap_tx = system_txs
             .next()
             .expect("TeeBootstrap system tx should be present");
@@ -7296,6 +7494,9 @@ mod tests {
             .expect("CycleTick should execute successfully")
             .tx_gas_used();
         assert!(cycle_gas <= cycle_signed_gas_limit);
+        executor
+            .execute_transaction(rewards_tx)
+            .expect("RewardsGemDelivery should execute before TeeBootstrap");
         let _tee_bootstrap_gas = executor
             .execute_transaction(tee_bootstrap_tx)
             .expect("mandatory TeeBootstrap should execute before the non-critical phase")
@@ -7369,10 +7570,65 @@ mod tests {
     fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_lane_clean() {
         let signer = test_evm_signer();
         let proposer = signer.address();
+        let reward_owner_a = Address::repeat_byte(0x71);
+        let reward_owner_b = Address::repeat_byte(0x72);
         let user_tx = test_regular_tx()
             .try_into_recovered()
             .expect("regular tx signer should recover");
-        let mut state = state_with_active_proposer_and_funded_account(proposer, user_tx.signer());
+        let mut state =
+            state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
+                let seed_context = BlockContext::new(0, 1, CHAIN_ID, proposer, vec![proposer]);
+                let ctx = BlockRuntimeContext::new(seed_context, storage.clone());
+                outbe_rewards::runtime::ensure_genesis_anchor(&ctx).unwrap();
+                outbe_oracle::api::set_exchange_rate(
+                    storage.clone(),
+                    Address::ZERO,
+                    outbe_oracle::api::DAY_TYPE_PAIR,
+                    U256::from(1_000_000u64),
+                    1,
+                    TEST_BLOCK_TIMESTAMP_BASE + 1,
+                )
+                .unwrap();
+                outbe_rewards::api::prepare_daily_validator_gem_batch(
+                    &ctx,
+                    20_240_101,
+                    U256::from(200u64),
+                    &[(reward_owner_a, 1), (reward_owner_b, 1)],
+                )
+                .unwrap();
+                outbe_gemfactory::schema::GemFactoryContract::new(storage)
+                    .total_gems_issued
+                    .write(U256::MAX - U256::ONE)
+                    .unwrap();
+            });
+        state.database.insert_account_info(
+            Address::from(*user_tx.signer()),
+            AccountInfo {
+                balance: U256::from(1_000_000u64),
+                ..Default::default()
+            },
+        );
+        {
+            let read_context = BlockContext::new(0, 1, CHAIN_ID, proposer, vec![proposer]);
+            let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
+                &mut state,
+                read_context,
+            );
+            StorageHandle::enter(&mut provider, |storage| {
+                let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
+                assert_eq!(rewards.reward_gem_queue_head.read()?, 0);
+                assert_eq!(rewards.reward_gem_queue_tail.read()?, 1);
+                assert_eq!(rewards.reward_gem_pending_batch_count.read()?, 1);
+                assert_eq!(
+                    outbe_gemfactory::schema::GemFactoryContract::new(storage)
+                        .total_gems_issued
+                        .read()?,
+                    U256::MAX - U256::ONE
+                );
+                Ok::<_, outbe_primitives::error::PrecompileError>(())
+            })
+            .expect("seed one retryable Rewards Gem batch");
+        }
         let chain_spec = test_chain_spec();
         let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
         let config = OutbeEvmConfig::new(chain_spec.clone()).with_evm_signer(signer.clone());
@@ -7407,43 +7663,47 @@ mod tests {
         let cycle_tx = system_txs
             .next()
             .expect("CycleTick system tx should be present");
+        let rewards_tx = system_txs
+            .next()
+            .expect("RewardsGemDelivery system tx should be present");
         let tee_bootstrap_tx = system_txs
             .next()
             .expect("TeeBootstrap system tx should be present");
         let oracle_tx = system_txs
             .next()
             .expect("OracleSlashWindow system tx should be present");
-        let oracle_visible_gas = oracle_tx.tx().gas_limit();
+        let hook_events_tx = system_txs
+            .next()
+            .expect("HookEvents system tx should be present");
+        let rewards_visible_gas = rewards_tx.tx().gas_limit();
 
-        // CycleTick is consensus-critical (a revert there fails the block),
-        // so the soft-receipt path is exercised against OracleSlashWindow, a
-        // non-critical begin-zone phase. CycleTick executes successfully first.
+        // CycleTick is consensus-critical. RewardsGemDelivery is deliberately
+        // retryable, so an ordinary revert records a soft failure and later
+        // begin-zone/user transactions still execute.
         let cycle_gas = executor
             .execute_transaction(cycle_tx)
             .expect("CycleTick should execute successfully")
             .tx_gas_used();
-        let tee_bootstrap_gas = executor
-            .execute_transaction(tee_bootstrap_tx)
-            .expect("mandatory TeeBootstrap should execute before the non-critical phase")
+        let revert_gas = executor
+            .execute_transaction(rewards_tx)
+            .expect("RewardsGemDelivery revert should soft-fail")
             .tx_gas_used();
-
-        let revert_gas = crate::factory::with_forced_outbe_system_call_revert(|| {
-            executor.execute_transaction(oracle_tx)
-        })
-        .expect("EVM-level non-critical system tx revert should soft-fail")
-        .tx_gas_used();
         assert_eq!(
-            revert_gas, oracle_visible_gas,
-            "GAS-11: reverted system tx should charge visible envelope gas"
+            revert_gas, rewards_visible_gas,
+            "GAS-11: reverted delivery should charge visible envelope gas"
         );
         let failure_receipt = executor
             .receipts()
-            .get(2)
-            .expect("reverted system tx must emit a failure receipt");
-        assert!(!failure_receipt.success);
+            .get(1)
+            .expect("reverted delivery must emit a failure receipt");
+        assert!(
+            !failure_receipt.success,
+            "seeded delivery unexpectedly succeeded: logs={:?}",
+            failure_receipt.logs
+        );
         assert_eq!(
             failure_receipt.cumulative_gas_used,
-            cycle_gas + tee_bootstrap_gas + oracle_visible_gas
+            cycle_gas + rewards_visible_gas
         );
         assert_eq!(failure_receipt.logs.len(), 1);
         assert_eq!(failure_receipt.logs[0].address, OUTBE_SYSTEM_TX_ADDRESS);
@@ -7460,15 +7720,69 @@ mod tests {
             "GAS-11: system revert soft-failure receipt must use OutbeFailure code 201"
         );
 
+        let tee_bootstrap_gas = executor
+            .execute_transaction(tee_bootstrap_tx)
+            .expect("mandatory TeeBootstrap should execute before the non-critical phase")
+            .tx_gas_used();
+        let oracle_gas = executor
+            .execute_transaction(oracle_tx)
+            .expect("OracleSlashWindow should execute after delivery")
+            .tx_gas_used();
+        let hook_events_gas = executor
+            .execute_transaction(hook_events_tx)
+            .expect("HookEvents should execute after delivery")
+            .tx_gas_used();
+
         let user_gas = executor
             .execute_transaction(user_tx)
             .expect("user txs must execute after a soft-failed non-critical begin-zone system tx")
             .tx_gas_used();
         assert_eq!(
             executor.inner.cumulative_tx_gas_used,
-            cycle_gas + tee_bootstrap_gas + oracle_visible_gas + user_gas,
+            cycle_gas
+                + rewards_visible_gas
+                + tee_bootstrap_gas
+                + oracle_gas
+                + hook_events_gas
+                + user_gas,
             "GAS-11: soft-failed system tx must charge only visible envelope gas"
         );
+        drop(executor);
+
+        let retry_context = BlockContext::new(2, 2, CHAIN_ID, proposer, vec![proposer]);
+        let mut retry_provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
+            &mut state,
+            retry_context.clone(),
+        );
+        StorageHandle::enter(&mut retry_provider, |storage| {
+            let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
+            let gem = outbe_gem::GemContract::new(storage.clone());
+            assert_eq!(rewards.reward_gem_queue_head.read()?, 0);
+            assert_eq!(rewards.reward_gem_queue_tail.read()?, 1);
+            assert_eq!(rewards.reward_gem_pending_batch_count.read()?, 1);
+            assert_eq!(gem.balance_of(reward_owner_a)?, 0);
+            assert_eq!(gem.balance_of(reward_owner_b)?, 0);
+
+            outbe_gemfactory::schema::GemFactoryContract::new(storage.clone())
+                .total_gems_issued
+                .write(U256::ZERO)?;
+            let retry_ctx = BlockRuntimeContext::new(retry_context, storage.clone());
+            assert!(matches!(
+                outbe_rewards::api::deliver_oldest_reward_gem_batch(&retry_ctx)?,
+                outbe_rewards::api::RewardGemDeliveryOutcome::Delivered {
+                    reward_utc_day: 20_240_101,
+                    recipient_count: 2,
+                    delivered_gem_load_amount,
+                } if delivered_gem_load_amount == U256::from(200u64)
+            ));
+            assert_eq!(rewards.reward_gem_queue_head.read()?, 1);
+            assert_eq!(rewards.reward_gem_queue_tail.read()?, 1);
+            assert_eq!(rewards.reward_gem_pending_batch_count.read()?, 0);
+            assert_eq!(gem.balance_of(reward_owner_a)?, 1);
+            assert_eq!(gem.balance_of(reward_owner_b)?, 1);
+            Ok::<_, outbe_primitives::error::PrecompileError>(())
+        })
+        .expect("the unchanged FIFO head must deliver on a later retry");
     }
 
     /// A revert in a consensus-critical begin-zone phase (here
@@ -7505,6 +7819,175 @@ mod tests {
         assert!(
             executor.receipts().is_empty(),
             "a critical-phase revert must not push a soft receipt"
+        );
+    }
+
+    /// A stale reward price at the UTC-day boundary defers only Gem delivery:
+    /// CycleTick seals the allocation, RewardsGemDelivery leaves the FIFO head
+    /// pending, and the user-lane feeder vote still executes.
+    #[test]
+    fn stale_oracle_cycle_stages_reward_batch_and_allows_later_feeder_vote() {
+        const GENESIS_TS: u64 = 1_704_067_200;
+        const SECONDS_PER_DAY: u64 = 86_400;
+        const PREVIOUS_DAY: u32 = 20_240_101;
+
+        #[derive(Debug, Eq, PartialEq)]
+        struct Observation {
+            active_day: u32,
+            last_executed_at: u64,
+            day_settled: bool,
+            topup_prepared: bool,
+            topup_settled: bool,
+            queue_head: u64,
+            queue_tail: u64,
+            voter_gems: u64,
+            feeder_vote_exists: bool,
+            formation_exists: bool,
+        }
+
+        fn run_once() -> Observation {
+            let signer = test_evm_signer();
+            let proposer = signer.address();
+            let proposer_key = dummy_pubkey(0xA2);
+            let feeder_vote = test_oracle_submit_vote_tx()
+                .try_into_recovered()
+                .expect("test feeder vote signer should recover");
+            let feeder = Address::from(*feeder_vote.signer());
+            let voter = Address::repeat_byte(0x71);
+            let emission_trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
+
+            let mut state = state_with_active_validators_seeded_at_block_with_cycle_frames(
+                &[(proposer, proposer_key)],
+                1,
+                4,
+                |storage| {
+                    let genesis_ctx = BlockRuntimeContext::new(
+                        BlockContext::new(0, GENESIS_TS, CHAIN_ID, proposer, vec![proposer]),
+                        storage.clone(),
+                    );
+                    outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
+
+                    let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
+                    cycle.active_utc_day.write(PREVIOUS_DAY).unwrap();
+                    cycle
+                        .last_executed_at
+                        .write(&emission_trigger, GENESIS_TS + 60)
+                        .unwrap();
+
+                    let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
+                    rewards.daily_voter_count.write(&PREVIOUS_DAY, 1).unwrap();
+                    rewards
+                        .daily_voter_at
+                        .get_nested(&PREVIOUS_DAY)
+                        .write(&0, voter)
+                        .unwrap();
+                    rewards
+                        .daily_participation
+                        .get_nested(&PREVIOUS_DAY)
+                        .write(&voter, 1)
+                        .unwrap();
+                    rewards
+                        .daily_total_participation
+                        .write(&PREVIOUS_DAY, 1)
+                        .unwrap();
+
+                    let mut validator_set =
+                        outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+                    validator_set
+                        .set_delegate(
+                            proposer,
+                            outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
+                            feeder,
+                        )
+                        .unwrap();
+
+                    // The shared state fixture seeds COEN/840 at timestamp zero.
+                    // That is intentionally stale under the live six-hour policy.
+                    let (.., pair_index) =
+                        outbe_oracle::api::require_coen_pair(storage.clone(), 840).unwrap();
+                    let oracle = outbe_oracle::schema::OracleContract::new(storage);
+                    assert_eq!(oracle.exchange_rate_timestamp.read(&pair_index).unwrap(), 0);
+                },
+            );
+
+            let block_timestamp = GENESIS_TS + SECONDS_PER_DAY + 60;
+            let tee_bootstrap = sample_tee_bootstrap_payload_at(1, block_timestamp);
+            let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
+            evm_env.block_env.timestamp = U256::from(block_timestamp);
+            let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
+            let begin = begin_system_txs_for_test_with_bootstrap(
+                &config,
+                1,
+                B256::ZERO,
+                &Bytes::new(),
+                None,
+                proposer,
+                Some(tee_bootstrap.clone()),
+            );
+            let mut body = begin.clone();
+            body.push(feeder_vote);
+
+            let evm = config.evm_with_env(&mut state, evm_env);
+            let mut execution =
+                execution_ctx_with_tee_bootstrap(Some(body.len()), Bytes::new(), tee_bootstrap);
+            execution.expected_begin_system_txs = begin;
+            execution.proposer_evm_address = Some(proposer);
+            let mut executor = config.create_executor(evm, execution);
+            executor
+                .apply_pre_execution_changes()
+                .expect("pre-execution hooks must succeed");
+            for tx in body {
+                executor
+                    .execute_transaction(tx)
+                    .expect("stale reward price must defer only Gem delivery");
+            }
+            drop(executor);
+
+            let read_ctx =
+                BlockContext::new(1, block_timestamp, CHAIN_ID, proposer, vec![proposer]);
+            let mut provider =
+                outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
+            StorageHandle::enter(&mut provider, |storage| {
+                let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
+                let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
+                let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+                let gem = outbe_gem::GemContract::new(storage.clone());
+                Observation {
+                    active_day: cycle.active_utc_day.read().unwrap(),
+                    last_executed_at: cycle.last_executed_at.read(&emission_trigger).unwrap(),
+                    day_settled: rewards.daily_settled.read(&PREVIOUS_DAY).unwrap(),
+                    topup_prepared: rewards.daily_topup_prepared.read(&PREVIOUS_DAY).unwrap(),
+                    topup_settled: rewards.daily_topup_settled.read(&PREVIOUS_DAY).unwrap(),
+                    queue_head: rewards.reward_gem_queue_head.read().unwrap(),
+                    queue_tail: rewards.reward_gem_queue_tail.read().unwrap(),
+                    voter_gems: u64::from(gem.balance_of(voter).unwrap()),
+                    feeder_vote_exists: oracle.vote_exists.read(&proposer).unwrap(),
+                    formation_exists: outbe_metadosis::api::day_limit_formation_receipt(
+                        storage,
+                        outbe_common::WorldwideDay::new(PREVIOUS_DAY),
+                    )
+                    .unwrap()
+                    .is_some(),
+                }
+            })
+        }
+
+        let first = run_once();
+        assert_eq!(first.active_day, 20_240_102);
+        assert_eq!(first.last_executed_at, GENESIS_TS + SECONDS_PER_DAY);
+        assert!(first.day_settled);
+        assert!(first.topup_prepared);
+        assert!(!first.topup_settled);
+        assert_eq!(first.queue_head, 0);
+        assert_eq!(first.queue_tail, 1);
+        assert_eq!(first.voter_gems, 0);
+        assert!(first.feeder_vote_exists);
+        assert!(first.formation_exists);
+
+        let replay = run_once();
+        assert_eq!(
+            replay, first,
+            "an exact execution from the same semantic pre-state must settle identically"
         );
     }
 
@@ -7882,12 +8365,12 @@ mod tests {
             .expect("final extra_data should encode");
         let (_evm, result) = executor.finish().expect("finish should succeed");
         assert_eq!(result.gas_used, visible_system_gas + user_gas);
-        assert_eq!(result.receipts.len(), 5);
+        assert_eq!(result.receipts.len(), 6);
         let first_visible_gas = result.receipts[0].cumulative_gas_used;
         assert!(first_visible_gas >= outbe_primitives::system_tx::SYSTEM_TX_VISIBLE_GAS_FLOOR);
-        assert_eq!(result.receipts[3].cumulative_gas_used, visible_system_gas);
+        assert_eq!(result.receipts[4].cumulative_gas_used, visible_system_gas);
         assert_eq!(
-            result.receipts[4].cumulative_gas_used,
+            result.receipts[5].cumulative_gas_used,
             visible_system_gas + user_gas
         );
     }
@@ -7958,8 +8441,9 @@ mod tests {
                 .expect("Phase 1 slashing system tx should execute");
         }
 
-        // CPA(0) + LateFinalizeCredits(1) + CycleTick(2) + OracleSlashWindow(3) + HookEvents(4).
-        assert_eq!(executor.receipts().len(), 5);
+        // CPA(0) + LateFinalizeCredits(1) + CycleTick(2) + RewardsGemDelivery(3)
+        // + OracleSlashWindow(4) + HookEvents(5).
+        assert_eq!(executor.receipts().len(), 6);
         let phase1_logs = &executor.receipts()[0].logs;
         let voter_misdemeanor = keccak256("VoterMisdemeanor(address,uint64)");
         let voter_felony = keccak256("VoterFelony(address,uint64,uint64)");
@@ -8466,7 +8950,7 @@ mod tests {
                 .expect("activation block begin-zone system tx should execute");
         }
 
-        assert_eq!(executor.receipts().len(), 5);
+        assert_eq!(executor.receipts().len(), 6);
         assert!(executor.receipts().iter().all(|receipt| receipt.success));
         drop(executor);
 
@@ -8568,8 +9052,9 @@ mod tests {
                 visible_system_gas_used
             );
         }
-        // CPA + LateFinalizeCredits + CycleTick + BoundaryOutcome + OracleSlashWindow + HookEvents.
-        assert_eq!(executor.receipts().len(), 6);
+        // CPA + LateFinalizeCredits + CycleTick + RewardsGemDelivery +
+        // BoundaryOutcome + OracleSlashWindow + HookEvents.
+        assert_eq!(executor.receipts().len(), 7);
         assert!(executor.receipts().iter().all(|receipt| receipt.success));
         assert!(
             visible_system_gas_used < 30_000_000,
@@ -8601,9 +9086,9 @@ mod tests {
             .execute_transaction(recovered_deactivate)
             .expect("same-block user tx should see joining validator as active");
 
-        // 6 begin-zone receipts + 1 user (deactivate) tx.
-        assert_eq!(executor.receipts().len(), 7);
-        assert!(executor.receipts()[5].success);
+        // 7 begin-zone receipts + 1 user (deactivate) tx.
+        assert_eq!(executor.receipts().len(), 8);
+        assert!(executor.receipts()[7].success);
         drop(executor);
 
         let read_ctx = BlockContext::new(2, 2, CHAIN_ID, proposer, vec![proposer, joining]);
@@ -9401,8 +9886,8 @@ mod tests {
                 proposer, validator,
                 "{boundary:?} must be byte/state equal across execution roles"
             );
-            assert_eq!(proposer.receipt_success, vec![true; 5]);
-            assert_eq!(proposer.cumulative_gas.len(), 5);
+            assert_eq!(proposer.receipt_success, vec![true; 6]);
+            assert_eq!(proposer.cumulative_gas.len(), 6);
             match boundary {
                 Boundary::Approved => {
                     assert_eq!(proposer.created_logs, 1);
@@ -9581,7 +10066,7 @@ mod tests {
             let readers = RuntimeBodyReaders::new(reader);
             assert!(readers
                 .nod()
-                .get_bucket(outbe_compressed_entities::EntityId36::new(
+                .get_bucket(outbe_compressed_entities::WwdEntityId::from_day_and_digest(
                     worldwide_day,
                     bucket_key.0,
                 ))
@@ -10097,11 +10582,11 @@ mod tests {
             );
         }
 
-        assert_eq!(executor.receipts().len(), 5);
+        assert_eq!(executor.receipts().len(), 6);
         assert!(executor.receipts().iter().all(|receipt| receipt.success));
         let oracle_forced_exit = keccak256("ValidatorForcedExit(address)");
         assert!(
-            executor.receipts()[3].logs.iter().any(|log| {
+            executor.receipts()[4].logs.iter().any(|log| {
                 log.address == ORACLE_ADDRESS
                     && log.data.topics().first() == Some(&oracle_forced_exit)
             }),
@@ -10109,12 +10594,12 @@ mod tests {
         );
         let oracle_slashed = keccak256("ValidatorSlashed(address,uint64)");
         assert!(
-            executor.receipts()[3].logs.iter().any(|log| {
+            executor.receipts()[4].logs.iter().any(|log| {
                 log.address == ORACLE_ADDRESS && log.data.topics().first() == Some(&oracle_slashed)
             }),
             "Oracle slash-window stake slash must be receipt-visible"
         );
-        let hook_events_receipt = &executor.receipts()[4];
+        let hook_events_receipt = &executor.receipts()[5];
         assert!(
             hook_events_receipt.success,
             "mandatory HookEvents receipt must succeed even when empty"
@@ -10284,9 +10769,17 @@ mod tests {
             SystemTxInputV2::CycleTick.encode().unwrap(),
         )
         .unwrap();
+        let rewards_unsigned = build_unsigned_system_tx(
+            SystemTxKind::RewardsGemDelivery,
+            1,
+            1,
+            CHAIN_ID,
+            SystemTxInputV2::RewardsGemDelivery.encode().unwrap(),
+        )
+        .unwrap();
         let boundary_unsigned = build_unsigned_system_tx(
             SystemTxKind::BoundaryOutcome,
-            1,
+            2,
             1,
             CHAIN_ID,
             SystemTxInputV2::BoundaryOutcome {
@@ -10297,13 +10790,20 @@ mod tests {
         )
         .unwrap();
         let cycle_signed = signer.sign_unsigned(cycle_unsigned).unwrap();
+        let rewards_signed = signer.sign_unsigned(rewards_unsigned).unwrap();
         let boundary_signed = signer.sign_unsigned(boundary_unsigned).unwrap();
         let cycle_recovered =
             reth_primitives_traits::Recovered::new_unchecked(cycle_signed, proposer);
+        let rewards_recovered =
+            reth_primitives_traits::Recovered::new_unchecked(rewards_signed, proposer);
         let boundary_recovered =
             reth_primitives_traits::Recovered::new_unchecked(boundary_signed, proposer);
-        let mut ctx = execution_ctx(Some(2), extra_data);
-        ctx.expected_begin_system_txs = vec![cycle_recovered.clone(), boundary_recovered.clone()];
+        let mut ctx = execution_ctx(Some(3), extra_data);
+        ctx.expected_begin_system_txs = vec![
+            cycle_recovered.clone(),
+            rewards_recovered,
+            boundary_recovered.clone(),
+        ];
         ctx.proposer_evm_address = Some(proposer);
 
         let mut executor = config.create_executor(evm, ctx);

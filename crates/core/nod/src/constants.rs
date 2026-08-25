@@ -14,3 +14,32 @@ pub const BIN_STEP_BP: u16 = 25;
 /// begin-block qualifier. Remaining work stays in the compact EVM worklist
 /// and is resumed deterministically in the next block.
 pub const MAX_BUCKET_QUALIFICATIONS_PER_BLOCK: u32 = 256;
+
+/// Call price as a percent OF the entry price: `call = entry × CALL_RATE_PCT / 100`
+/// (256 => 2.56× entry). This is a multiple, not a markup — gem's `CALL_RATE` is
+/// added to 100 before dividing, so the two constants are not interchangeable.
+pub const CALL_RATE_PCT: u64 = 256;
+
+/// Trailing window the daily call scan inspects, in whole UTC days.
+pub const CALL_LOOKBACK_DAYS: u32 = 28;
+
+/// Breach days within the lookback window that arm a call. A day at or below the
+/// call price, and a day with no published price, both simply fail to count, so
+/// the window absorbs up to `CALL_LOOKBACK_DAYS - CALL_BREACH_DAYS` of either.
+pub const CALL_BREACH_DAYS: u32 = 21;
+
+/// Seconds after `called_at` within which the owner must settle and mine. Once
+/// elapsed the bucket's remaining Nods are forfeit-burned.
+pub const CALL_NOTICE_PERIOD: u64 = 7 * 24 * 3600;
+
+/// Callable buckets visited per daily run; the cursor resumes the rest. A bucket
+/// displaced past the cursor is picked up a day later, which cannot change an
+/// outcome: the call needs a multi-week breach count and the forfeit follows a
+/// seven-day window.
+pub const MAX_NOD_CALL_VISITS: u32 = 4096;
+
+/// Nod bodies forfeit-burned per daily run, far below the visit budget because a
+/// forfeit is a compressed-entity load plus delete rather than an EVM slot write.
+/// A correlated mass-forfeit is the expected shape of a call event, not a tail
+/// case, so the burst needs its own cap.
+pub const MAX_NOD_FORFEITS_PER_RUN: u32 = 256;

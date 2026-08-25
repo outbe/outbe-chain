@@ -53,9 +53,6 @@ pub enum GemFactoryError {
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
 
-    #[error("nonce exceeds uint64 range")]
-    NonceExceedsUint64Range,
-
     #[error("issuance currency {iso_code} is not registered")]
     IssuanceCurrencyNotRegistered { iso_code: u16 },
 
@@ -88,7 +85,6 @@ impl From<GemFactoryError> for PrecompileError {
 impl From<PowError> for GemFactoryError {
     fn from(value: PowError) -> Self {
         match value {
-            PowError::NonceExceedsUint64Range => Self::NonceExceedsUint64Range,
             PowError::InsufficientProofOfWork => Self::InsufficientProofOfWork,
         }
     }

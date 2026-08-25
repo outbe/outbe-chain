@@ -7,7 +7,7 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 
 import {ERC7786TokenBridge} from "../../src/ERC7786TokenBridge.sol";
 import {IERC7786TokenReceiver} from "../../src/interfaces/IERC7786TokenReceiver.sol";
-import {USDT} from "../../src/native/USDT.sol";
+import {USDT} from "../../src/canonical/USDT.sol";
 import {BridgeableERC20Stable} from "../../src/synthetic/BridgeableERC20Stable.sol";
 import {MockERC7786Bridge} from "../mocks/MockERC7786Bridge.sol";
 

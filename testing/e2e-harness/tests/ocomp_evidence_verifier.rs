@@ -23,7 +23,7 @@ fn planning_ledger_path() -> PathBuf {
 #[test]
 fn checked_in_ledger_has_exact_owned_references() {
     let ledger = PlanningLedger::parse(&planning_ledger_path()).expect("checked-in ledger");
-    assert_eq!(ledger.tests.len(), 34);
+    assert_eq!(ledger.tests.len(), 33);
     assert_eq!(
         ledger
             .retired_tests

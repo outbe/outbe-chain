@@ -2,7 +2,6 @@ use super::*;
 
 use outbe_chain_constants::NodMaterializationProfileV1;
 use outbe_ocomp_protocol::{
-    common::EntityId36 as ProtocolEntityId36,
     list::{ordered_list_root, streaming_ordered_list_membership_proof, OrderedListLimits},
     nod_materialization::{NodMaterializationBatchV1, NodMaterializationHeadV1},
     profile::poc_schema_limits,
@@ -24,12 +23,13 @@ fn action_for(materialization_wwd: u32, ordinal: u32) -> NodActionV1 {
     let owner = Address::from_word(B256::from(U256::from(ordinal + 1)));
     let worldwide_day = WorldwideDay::new(materialization_wwd);
     let floor_price_minor = U256::from(500);
-    let tribute_id = EntityId36::new(worldwide_day, *B256::from(U256::from(ordinal + 1_000)));
+    let tribute_id =
+        WwdEntityId::from_day_and_digest(worldwide_day, B256::from(U256::from(ordinal + 1_000)));
     let nod_id = NodContract::generate_nod_id(owner, worldwide_day).unwrap();
     NodActionV1 {
         raw_ordinal: ordinal,
-        tribute_id: ProtocolEntityId36(tribute_id.into_bytes()),
-        nod_id: ProtocolEntityId36(nod_id.into_bytes()),
+        tribute_id: *tribute_id,
+        nod_id: *nod_id,
         owner,
         wwd: materialization_wwd,
         league_id: 1,
@@ -44,8 +44,8 @@ fn action_for(materialization_wwd: u32, ordinal: u32) -> NodActionV1 {
     }
 }
 
-fn ledger_entity(id: ProtocolEntityId36) -> EntityId36 {
-    EntityId36::try_from(id.0.as_slice()).expect("protocol entity ID is exactly 36 bytes")
+fn ledger_entity(id: B256) -> WwdEntityId {
+    WwdEntityId::from(id)
 }
 
 struct Population {
@@ -604,7 +604,7 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
                 parent,
                 population.actions[0].owner,
                 nod_id,
-                U256::ZERO,
+                0,
                 dummy_auth(),
             )
         })

@@ -309,7 +309,7 @@ fn begin_persistent_active_scope(
             .sstore(
                 outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
                 U256::ZERO,
-                U256::from(3),
+                U256::from(4),
             )
             .unwrap();
         storage
@@ -988,7 +988,7 @@ fn zero_gratis_completes_with_a_present_parent_partition_without_retiring_input(
             .sstore(
                 outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
                 U256::ZERO,
-                U256::from(3),
+                U256::from(4),
             )
             .unwrap();
         storage
@@ -1043,7 +1043,7 @@ fn empty_tribute_day_restores_outer_ce_checkpoint_after_late_parent_failure_then
             .sstore(
                 outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
                 U256::ZERO,
-                U256::from(3),
+                U256::from(4),
             )
             .unwrap();
         storage
@@ -1810,7 +1810,7 @@ fn missed_offering_rolls_back_a_ce_lookup_failure_after_promis_then_retries_once
             .sstore(
                 outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
                 U256::ZERO,
-                U256::from(3),
+                U256::from(4),
             )
             .unwrap();
         storage
@@ -1908,7 +1908,7 @@ fn cycle_command_restores_all_prior_ce_work_when_a_later_wwd_fails() {
             .sstore(
                 outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
                 U256::ZERO,
-                U256::from(3),
+                U256::from(4),
             )
             .unwrap();
         storage

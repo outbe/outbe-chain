@@ -283,7 +283,7 @@ run = "bash ./scripts/tribute-demo-actions.sh show-mongo"
 [tasks.e2e]
 description = "Run all Rust/Cucumber e2e features with a gramine-mock TEE"
 run = """
-cargo build --release -p outbe-chain --features test-protocol-overrides --bin outbe-chain
+cargo build --release -p outbe-chain --features e2e-test,test-protocol-overrides --bin outbe-chain
 cargo build --locked --release -p outbe-radicle-sidecar --bin outbe-radicle
 cargo build --release --bin outbe-cli --bin outbe-keygen
 cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock
@@ -338,7 +338,7 @@ run = 'cargo xtask ocomp closure "$@"'
 [tasks.e2e-sgx]
 description = "Run all Rust/Cucumber e2e features on real SGX hardware"
 run = """
-cargo build --release -p outbe-chain --features test-protocol-overrides --bin outbe-chain
+cargo build --release -p outbe-chain --features e2e-test,test-protocol-overrides --bin outbe-chain
 cargo build --release --bin outbe-cli --bin outbe-keygen
 cargo build --release --bin outbe-tee-enclave --features native-dcap
 OUTBE_TEE_IO_TIMEOUT_SECS=120 cargo run --release -p outbe-e2e-harness --bin outbe-e2e -- --tee real --validators 4 --all "$@"

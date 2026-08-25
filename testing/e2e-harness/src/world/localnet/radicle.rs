@@ -773,14 +773,21 @@ mod tests {
         command
     }
 
+    /// Waits until the launcher has taken ownership of the home.
+    ///
+    /// The managed directories are created just before the script execs the
+    /// sidecar, so their presence is the last observable step of setup. It
+    /// used to wait on `config.json`, but the launcher no longer writes one —
+    /// the sidecar builds its runtime config from its command line and never
+    /// reads that file.
     fn wait_for_launcher(child: &mut Child, home: &Path) {
         for _ in 0..100 {
             assert_eq!(child.try_wait().expect("poll launcher"), None);
-            if home.join("config.json").is_file() {
+            if home.join("node").is_dir() && home.join("storage").is_dir() {
                 return;
             }
             sleep(Duration::from_millis(10));
         }
-        panic!("first launcher did not initialize its profile");
+        panic!("first launcher did not take ownership of its home");
     }
 }

@@ -7,8 +7,8 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    begin_block, EntityId36, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
-    ParentBodySourceError, QueryRef, StoredBody,
+    begin_block, EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource,
+    ParentBodySourceError, QueryRef, StoredBody, WwdEntityId,
 };
 use outbe_nod::{
     api, constants::MAX_BUCKET_QUALIFICATIONS_PER_BLOCK, hooks, precompile::INod, NodContract,
@@ -46,7 +46,7 @@ fn active_world() -> (HashMapStorageProvider, ExecutionScope, NodRepositoryReade
     let scope = ExecutionScope::new();
     StorageHandle::enter(&mut provider, |storage| {
         storage
-            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+            .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
             .unwrap();
         storage
             .sstore(
@@ -123,7 +123,7 @@ fn qualification_updates_the_overlay_and_keeps_the_product_event() {
         )
         .unwrap();
         assert_eq!(inspected, 1);
-        let bucket_id = EntityId36::new(body.worldwide_day, body.bucket_key.0);
+        let bucket_id = WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key.0);
         assert!(
             api::get_bucket(&storage, &scope, &parent, bucket_id)
                 .unwrap()
@@ -171,7 +171,7 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
     let expected = [true, false, true, false, false, false];
 
     StorageHandle::enter(&mut provider, |storage| {
-        let bucket_ids: Vec<EntityId36> = specs
+        let bucket_ids: Vec<WwdEntityId> = specs
             .iter()
             .map(|&(owner_byte, currency, floor)| {
                 let floor = U256::from(floor);
@@ -180,7 +180,7 @@ fn qualification_takes_only_own_currency_buckets_strictly_below_the_rate() {
                 body.reference_currency = currency;
                 body.bucket_key = NodContract::bucket_key(day, floor, currency);
                 api::add_nod(&storage, &scope, &parent, &body, U256::from(5)).unwrap();
-                EntityId36::new(day, body.bucket_key.0)
+                WwdEntityId::from_day_and_digest(day, body.bucket_key.0)
             })
             .collect();
 
@@ -244,7 +244,7 @@ fn removal_consumes_loaded_capabilities_without_a_second_parent_read() {
         let loaded_item = api::load_item(&storage, &scope, &parent, body.nod_id)
             .unwrap()
             .unwrap();
-        let bucket_id = EntityId36::new(body.worldwide_day, body.bucket_key.0);
+        let bucket_id = WwdEntityId::from_day_and_digest(body.worldwide_day, body.bucket_key.0);
         let loaded_bucket = api::load_bucket(&storage, &scope, &parent, bucket_id)
             .unwrap()
             .unwrap();

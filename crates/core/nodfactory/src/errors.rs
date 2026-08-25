@@ -29,9 +29,6 @@ pub enum NodFactoryError {
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
 
-    #[error("nonce exceeds uint64 range")]
-    NonceExceedsUint64Range,
-
     #[error("caller is not an active OCOMP materializer")]
     UnauthorizedMaterializer,
 
@@ -58,6 +55,9 @@ pub enum NodFactoryError {
 
     #[error("no settlement asset registered for reference currency {reference_currency}")]
     NoSettlementAsset { reference_currency: u16 },
+
+    #[error("nod call settlement deadline has expired")]
+    CallDeadlineExpired,
 }
 
 impl From<NodFactoryError> for PrecompileError {
@@ -69,7 +69,6 @@ impl From<NodFactoryError> for PrecompileError {
 impl From<PowError> for NodFactoryError {
     fn from(value: PowError) -> Self {
         match value {
-            PowError::NonceExceedsUint64Range => Self::NonceExceedsUint64Range,
             PowError::InsufficientProofOfWork => Self::InsufficientProofOfWork,
         }
     }

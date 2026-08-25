@@ -293,13 +293,13 @@ export function modifyMac(
 
 /**
  * Find a proof-of-work nonce for an entity id (Gem / Nod), matching
- * `outbe_common::pow`: SHA256(ascii(hex(id_be32)) || nonce_be8) must have
+ * `outbe_common::pow`: SHA256(id_be32 || nonce_be8) must have
  * `POW_DIFFICULTY` (= 1) leading zero bytes. Difficulty 1 needs ~256 tries.
  */
 export function findPowNonce(id: bigint): bigint {
-  const idHex = utf8(id.toString(16).padStart(64, "0")); // ascii(hex(id_be32))
+  const idBytes = be(id, 32);
   for (let n = 0n; n < 1_000_000n; n++) {
-    const hash = createHash("sha256").update(Buffer.from(concat(idHex, be(n, 8)))).digest();
+    const hash = createHash("sha256").update(Buffer.from(concat(idBytes, be(n, 8)))).digest();
     if (hash[0] === 0) return n;
   }
   throw new Error("findPowNonce: no valid nonce found in 1e6 attempts");

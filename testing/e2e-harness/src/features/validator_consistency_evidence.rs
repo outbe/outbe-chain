@@ -21,7 +21,6 @@ const STATUS_EXITING: u8 = 3;
 const STATUS_JAILED: u8 = 6;
 const SNAPSHOT_RETAIN_EPOCHS: u64 = 8;
 const EVIDENCE_VIEW: u64 = 7;
-const COEN: u128 = 1_000_000_000_000_000_000;
 
 #[derive(Clone, Copy, Debug)]
 struct EvidenceEvent {
@@ -426,6 +425,12 @@ fn active_validator_is_jailed_by_evidence(world: &mut World) {
     submit_initial_felony(world);
 }
 
+fn jailed_partial_unstake_remainder(stake: U256, minimum_stake: U256) -> Option<U256> {
+    let bounded = stake.min(minimum_stake);
+    let remainder = bounded / U256::from(2_u8);
+    (!remainder.is_zero()).then_some(remainder)
+}
+
 #[when("it unstakes below minimum while leaving a nonzero bonded amount")]
 fn jailed_validator_partially_unstakes(world: &mut World) {
     let port = primary(world);
@@ -435,7 +440,8 @@ fn jailed_validator_partially_unstakes(world: &mut World) {
         .rpc
         .stake_on(port, &victim)
         .expect("jailed stake before partial unstake");
-    let remaining = U256::from(999u64) * U256::from(COEN);
+    let remaining = jailed_partial_unstake_remainder(stake, crate::internal::eth::coen(1_000))
+        .expect("jailed validator must retain a positive partial stake");
     assert!(
         stake > remaining,
         "jailed validator must have enough stake to leave a nonzero below-minimum remainder"
@@ -758,4 +764,23 @@ fn wait_until(mut condition: impl FnMut() -> bool, attempts: usize, label: &str)
         sleep(Duration::from_secs(2));
     }
     assert!(condition(), "timed out waiting for {label}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jailed_partial_unstake_remainder_is_positive_and_below_the_minimum() {
+        let minimum = U256::from(1_000_000_000_u64);
+        assert_eq!(
+            jailed_partial_unstake_remainder(U256::from(900_000_000_u64), minimum),
+            Some(U256::from(450_000_000_u64))
+        );
+        assert_eq!(
+            jailed_partial_unstake_remainder(U256::from(2_000_000_000_u64), minimum),
+            Some(U256::from(500_000_000_u64))
+        );
+        assert_eq!(jailed_partial_unstake_remainder(U256::ZERO, minimum), None);
+    }
 }

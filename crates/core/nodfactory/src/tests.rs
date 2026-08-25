@@ -3,11 +3,12 @@ use std::sync::Arc;
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::{begin_block, EntityId36, ExecutionScope};
+use outbe_compressed_entities::{begin_block, ExecutionScope, WwdEntityId};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratisfactory::api::ModifyAuth;
 use outbe_nod::{
-    api as nod_api, precompile::INod, NodContract, NodIssueParams, NodRepositoryReader,
+    api as nod_api, constants::CALL_NOTICE_PERIOD, precompile::INod, NodContract, NodIssueParams,
+    NodRepositoryReader,
 };
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
@@ -45,7 +46,7 @@ fn mine_auth(owner: Address, amount: U256) -> ModifyAuth {
 
 fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
     storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
         .unwrap();
     storage
         .sstore(
@@ -86,9 +87,8 @@ fn word(value: U256) -> Bytes {
     Bytes::from(value.to_be_bytes::<32>().to_vec())
 }
 
-fn find_valid_nonce(nod_id: EntityId36) -> U256 {
+fn find_valid_nonce(nod_id: WwdEntityId) -> u64 {
     (0_u64..100_000)
-        .map(U256::from)
         .find(|nonce| runtime::validate_pow(nod_id, *nonce).is_ok())
         .expect("test identity has a nonce in the bounded search")
 }
@@ -125,16 +125,16 @@ impl World {
         StorageHandle::enter(&mut self.provider, |storage| call(storage, scope, &parent))
     }
 
-    fn issue(&mut self, input: &NodIssueParams) -> EntityId36 {
+    fn issue(&mut self, input: &NodIssueParams) -> WwdEntityId {
         self.enter(|storage, scope, parent| api::issue_nod(&storage, scope, parent, input))
             .unwrap()
     }
 
-    fn settle(&mut self, nod_id: EntityId36, payer: Address) -> U256 {
+    fn settle(&mut self, nod_id: WwdEntityId, payer: Address) -> U256 {
         self.try_settle(nod_id, payer).unwrap()
     }
 
-    fn try_settle(&mut self, nod_id: EntityId36, payer: Address) -> Result<U256, PrecompileError> {
+    fn try_settle(&mut self, nod_id: WwdEntityId, payer: Address) -> Result<U256, PrecompileError> {
         self.enter(|storage, scope, parent| api::settle_nod(&storage, scope, parent, payer, nod_id))
     }
 
@@ -167,14 +167,33 @@ impl World {
         );
     }
 
-    fn is_settled(&mut self, nod_id: EntityId36) -> bool {
+    fn is_settled(&mut self, nod_id: WwdEntityId) -> bool {
         self.enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
             .unwrap()
             .unwrap()
             .is_settled
     }
 
-    fn qualify(&mut self, nod_id: EntityId36) {
+    /// Stamps the bucket's call directly. The scan that decides *when* to stamp
+    /// is covered in `outbe_nod::called_tests`; what matters here is the gate
+    /// `mine_gratis` applies once it is stamped.
+    fn mark_called(&mut self, nod_id: WwdEntityId, at: u64) {
+        self.enter(|storage, scope, parent| {
+            let item = nod_api::get_item(&storage, scope, parent, nod_id)
+                .unwrap()
+                .unwrap();
+            NodContract::new(storage)
+                .bucket_called_at
+                .write(&item.bucket_key, at)
+                .unwrap();
+        });
+    }
+
+    fn set_timestamp(&mut self, timestamp: u64) {
+        self.provider.set_timestamp(U256::from(timestamp));
+    }
+
+    fn qualify(&mut self, nod_id: WwdEntityId) {
         self.enter(|storage, scope, parent| {
             let item = nod_api::get_item(&storage, scope, parent, nod_id)
                 .unwrap()
@@ -237,7 +256,7 @@ fn second_same_block_issue_updates_the_pending_bucket_without_parent_projection(
         first.floor_price_minor,
         first.reference_currency,
     );
-    let bucket_id = EntityId36::new(first.worldwide_day, bucket_key.0);
+    let bucket_id = WwdEntityId::from_day_and_digest(first.worldwide_day, bucket_key.0);
     let bucket = world
         .enter(|storage, scope, parent| nod_api::get_bucket(&storage, scope, parent, bucket_id))
         .unwrap()
@@ -367,7 +386,7 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
         input.floor_price_minor,
         input.reference_currency,
     );
-    let bucket_id = EntityId36::new(input.worldwide_day, bucket_key.0);
+    let bucket_id = WwdEntityId::from_day_and_digest(input.worldwide_day, bucket_key.0);
     assert!(world
         .enter(|storage, scope, parent| { nod_api::get_bucket(&storage, scope, parent, bucket_id) })
         .unwrap()
@@ -572,3 +591,74 @@ fn certified_generation_has_no_public_installation_selector() {
 }
 
 mod materialization;
+
+/// Being called opens a notice period, it does not close mining: the owner is
+/// meant to settle and mine inside it. The deadline itself is still inside.
+#[test]
+fn a_called_nod_still_mines_at_the_settlement_deadline() {
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0x55));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.settle(nod_id, input.owner);
+
+    let called_at = 1_700_000_000;
+    world.mark_called(nod_id, called_at);
+    world.set_timestamp(called_at + CALL_NOTICE_PERIOD);
+
+    let nonce = find_valid_nonce(nod_id);
+    let minted = world
+        .enter(|storage, scope, parent| {
+            api::mine_gratis(
+                &storage,
+                scope,
+                parent,
+                input.owner,
+                nod_id,
+                nonce,
+                mine_auth(input.owner, input.gratis_load_minor),
+            )
+        })
+        .unwrap();
+    assert_eq!(minted, input.gratis_load_minor);
+}
+
+/// Past the deadline the Nod is forfeit. The daily sweep burns it, but this gate
+/// closes the window between the deadline and the sweep reaching it.
+#[test]
+fn mining_is_rejected_once_the_settlement_deadline_has_passed() {
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0x55));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.settle(nod_id, input.owner);
+
+    let called_at = 1_700_000_000;
+    world.mark_called(nod_id, called_at);
+    world.set_timestamp(called_at + CALL_NOTICE_PERIOD + 1);
+
+    let nonce = find_valid_nonce(nod_id);
+    let error = world
+        .enter(|storage, scope, parent| {
+            api::mine_gratis(
+                &storage,
+                scope,
+                parent,
+                input.owner,
+                nod_id,
+                nonce,
+                mine_auth(input.owner, input.gratis_load_minor),
+            )
+        })
+        .unwrap_err();
+    assert!(
+        matches!(error, PrecompileError::Revert(ref reason)
+            if reason == &NodFactoryError::CallDeadlineExpired.to_string()),
+        "unexpected error: {error:?}"
+    );
+    // The Nod survives for the sweep to burn; the gate only refuses to mine it.
+    assert!(world
+        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .unwrap()
+        .is_some());
+}

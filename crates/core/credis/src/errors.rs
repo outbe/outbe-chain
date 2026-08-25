@@ -19,8 +19,6 @@ pub enum CredisError {
     InvalidAmount,
     #[error("invalid position state value: {0}")]
     InvalidStateValue(u8),
-    #[error("position is not settleable yet: the floor price has never been exceeded")]
-    NotSettleable,
     #[error("payment is below the interest accrued since the last settlement")]
     PaymentBelowAccruedInterest,
     #[error("position is not called")]

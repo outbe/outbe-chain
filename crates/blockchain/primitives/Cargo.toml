@@ -35,6 +35,8 @@ serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
+# `WorldwideDay::is_valid` calendar checks.
+time.workspace = true
 # Async request/response channel for the bridge's finalization fetcher (the
 # follower-upstream `outbe_getFinalization` serving path crosses the
 # outbe-rpc → consensus crate boundary through the bridge). `sync` only.

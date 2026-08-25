@@ -3,15 +3,15 @@ use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     body_commitment, decode_nod_bucket_v1, decode_nod_item_v1, encode_nod_bucket_v1,
-    encode_nod_item_v1, EntityId36, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    encode_nod_item_v1, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_nod::{
     canonical_bucket, canonical_bucket_id, canonical_item, from_canonical_bucket,
     from_canonical_item, precompile::INod, NodBucketState, NodItemState,
 };
 
-fn identity(day: WorldwideDay, seed: U256) -> EntityId36 {
-    EntityId36::new(day, seed.to_be_bytes::<32>())
+fn identity(day: WorldwideDay, seed: U256) -> WwdEntityId {
+    WwdEntityId::from_day_and_digest(day, seed.to_be_bytes::<32>())
 }
 
 fn assert_item_roundtrip(record: NodItemState) {
@@ -24,7 +24,7 @@ fn assert_item_roundtrip(record: NodItemState) {
     )
     .unwrap();
     let event = INod::NodBodyStored {
-        nodId: Bytes::copy_from_slice(record.nod_id.as_bytes()),
+        nodId: record.nod_id.to_u256(),
         commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
         schemaVersion: BODY_SCHEMA_V1,
         previousCommitment: B256::ZERO,
@@ -34,7 +34,7 @@ fn assert_item_roundtrip(record: NodItemState) {
 
     let log = event.encode_log_data();
     let decoded = INod::NodBodyStored::decode_log_data(&log).unwrap();
-    let decoded_id = EntityId36::try_from(decoded.nodId.as_ref()).unwrap();
+    let decoded_id = WwdEntityId::from(decoded.nodId);
     let reconstructed = from_canonical_item(decode_nod_item_v1(&decoded.canonicalPayload).unwrap());
 
     assert_eq!(log.topics(), &[INod::NodBodyStored::SIGNATURE_HASH]);
@@ -68,7 +68,7 @@ fn assert_bucket_roundtrip(record: NodBucketState) {
     )
     .unwrap();
     let event = INod::NodBucketBodyStored {
-        bucketId: Bytes::copy_from_slice(bucket_id.as_bytes()),
+        bucketId: bucket_id.to_u256(),
         commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
         schemaVersion: BODY_SCHEMA_V1,
         previousCommitment: B256::ZERO,
@@ -78,7 +78,7 @@ fn assert_bucket_roundtrip(record: NodBucketState) {
 
     let log = event.encode_log_data();
     let decoded = INod::NodBucketBodyStored::decode_log_data(&log).unwrap();
-    let decoded_id = EntityId36::try_from(decoded.bucketId.as_ref()).unwrap();
+    let decoded_id = WwdEntityId::from(decoded.bucketId);
     let reconstructed =
         from_canonical_bucket(decode_nod_bucket_v1(&decoded.canonicalPayload).unwrap());
 
@@ -154,19 +154,19 @@ fn stored_events_carry_exact_canonical_nod_bodies_and_commitments() {
 fn transition_event_signatures_topics_and_delete_payloads_are_pinned() {
     assert_eq!(
         INod::NodBodyStored::SIGNATURE_HASH,
-        keccak256("NodBodyStored(bytes,uint32,uint32,bytes32,bytes32,bytes)")
+        keccak256("NodBodyStored(uint256,uint32,uint32,bytes32,bytes32,bytes)")
     );
     assert_eq!(
         INod::NodBucketBodyStored::SIGNATURE_HASH,
-        keccak256("NodBucketBodyStored(bytes,uint32,uint32,bytes32,bytes32,bytes)")
+        keccak256("NodBucketBodyStored(uint256,uint32,uint32,bytes32,bytes32,bytes)")
     );
     assert_eq!(
         INod::NodBodyDeleted::SIGNATURE_HASH,
-        keccak256("NodBodyDeleted(bytes,bytes32)")
+        keccak256("NodBodyDeleted(uint256,bytes32)")
     );
     assert_eq!(
         INod::NodBucketBodyDeleted::SIGNATURE_HASH,
-        keccak256("NodBucketBodyDeleted(bytes,bytes32)")
+        keccak256("NodBucketBodyDeleted(uint256,bytes32)")
     );
 
     let day = WorldwideDay::new(20_260_715);
@@ -179,23 +179,20 @@ fn transition_event_signatures_topics_and_delete_payloads_are_pinned() {
     )
     .unwrap();
     let item_log = INod::NodBodyDeleted {
-        nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+        nodId: nod_id.to_u256(),
         previousCommitment: B256::from(*previous_item.as_bytes()),
     }
     .encode_log_data();
     let decoded_item = INod::NodBodyDeleted::decode_log_data(&item_log).unwrap();
     assert_eq!(item_log.topics(), &[INod::NodBodyDeleted::SIGNATURE_HASH]);
-    assert_eq!(
-        EntityId36::try_from(decoded_item.nodId.as_ref()).unwrap(),
-        nod_id
-    );
+    assert_eq!(WwdEntityId::from(decoded_item.nodId), nod_id);
     assert_eq!(
         decoded_item.previousCommitment,
         B256::from(*previous_item.as_bytes())
     );
 
     let bucket_key = B256::repeat_byte(0xab);
-    let bucket_id = EntityId36::new(day, bucket_key.0);
+    let bucket_id = WwdEntityId::from_day_and_digest(day, bucket_key.0);
     let previous_bucket = body_commitment(
         ACTIVE_COMMITMENT_SCHEME,
         BODY_SCHEMA_V1,
@@ -204,7 +201,7 @@ fn transition_event_signatures_topics_and_delete_payloads_are_pinned() {
     )
     .unwrap();
     let bucket_log = INod::NodBucketBodyDeleted {
-        bucketId: Bytes::copy_from_slice(bucket_id.as_bytes()),
+        bucketId: bucket_id.to_u256(),
         previousCommitment: B256::from(*previous_bucket.as_bytes()),
     }
     .encode_log_data();
@@ -213,10 +210,7 @@ fn transition_event_signatures_topics_and_delete_payloads_are_pinned() {
         bucket_log.topics(),
         &[INod::NodBucketBodyDeleted::SIGNATURE_HASH]
     );
-    assert_eq!(
-        EntityId36::try_from(decoded_bucket.bucketId.as_ref()).unwrap(),
-        bucket_id
-    );
+    assert_eq!(WwdEntityId::from(decoded_bucket.bucketId), bucket_id);
     assert_eq!(
         decoded_bucket.previousCommitment,
         B256::from(*previous_bucket.as_bytes())
