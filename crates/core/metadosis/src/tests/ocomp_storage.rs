@@ -638,7 +638,9 @@ fn certified_conflict_is_terminal_for_the_old_job_and_requeues_the_same_budget()
                     fsm_limits,
                 )
                 .unwrap(),
-            1
+            OcompExpiryDisposition::RetryScheduled {
+                next_pending_nonce: 1
+            }
         );
 
         assert_eq!(contract.get_wwd_status(WWD).unwrap(), status::READY);
@@ -1128,4 +1130,182 @@ fn aggregate_rejects_closed_wwd_population_above_max_records_kept() {
             "unexpected error: {error}"
         );
     });
+}
+
+#[test]
+fn conflict_at_the_retry_cap_prepares_terminal_evidence_instead_of_halting() {
+    with_storage(|storage| {
+        let limits = poc_schema_limits();
+        let fsm_limits = JobFsmLimits {
+            max_terminal_records: 1,
+        };
+        let snapshot = crate::fixture_kernel::seed_validator_snapshot(storage.clone(), &limits, 4);
+        let mut contract = MetadosisContract::new(storage);
+        create_ready_day(&mut contract, WWD);
+        contract
+            .enqueue_ocomp_ready(WWD, REQUEST_HEIGHT, fsm_limits)
+            .unwrap();
+
+        let request_receipt = receipt();
+        let request_receipt_hash = request_receipt.receipt_hash(&limits).unwrap();
+        let requested = intent(
+            0,
+            REQUEST_HEIGHT,
+            DEADLINE_HEIGHT,
+            request_receipt_hash,
+            &snapshot,
+        );
+        let intent_id = requested.intent_id(&limits).unwrap();
+        let request_transition = outer_transition(&contract, OuterWwdEvent::OcompRequestCommitted);
+        contract
+            .commit_ocomp_request(
+                &request_transition,
+                &requested,
+                &request_receipt,
+                &limits,
+                fsm_limits,
+            )
+            .unwrap();
+
+        let finalized = open_job(&mut contract, intent_id, &limits, fsm_limits);
+        let job_id = finalized.job_id;
+        let result_digest = B256::repeat_byte(0x52);
+        let quorum = OcompQuorumV1 {
+            result_digest,
+            quorum_height: finalized.open_height,
+            member_count: 4,
+            quorum_threshold: 3,
+            signer_bitmap: vec![0b0111],
+            evidence_hash: B256::repeat_byte(0x55),
+        };
+        let activation_call_id = B256::repeat_byte(0x53);
+        let binding = EffectBindingV1 {
+            intent_id,
+            job_id,
+            attempt: requested.attempt,
+            protocol_bundle_hash: requested.protocol_bundle_hash,
+            result_digest,
+            activation_preconditions_hash: requested
+                .activation_preconditions
+                .activation_preconditions_hash(&limits)
+                .unwrap(),
+            activation_call_id,
+        };
+        let activation_height = REQUEST_HEIGHT + 5;
+        let activation_time = REQUEST_TIME + 5;
+        let terminal_receipt = AggregateActivationReceiptV1 {
+            binding,
+            outcome: ActivationOutcome::ConflictResolved,
+            nod_receipt_hash: None,
+            contributor_receipt_hash: None,
+            tribute_receipt_hash: None,
+            carry_over_receipt_hash: None,
+            request_budget_split_receipt_hash: request_receipt_hash,
+            active_generation_hash: None,
+            effect_commitment: hash_framed(HashDomain::Effects, &[]).unwrap(),
+            event_summary_hash: empty_apply_event_summary_hash().unwrap(),
+            activated_at_height: activation_height,
+            activated_at_time: activation_time,
+        };
+        let completed_binding = OcompCompletedBindingV1 {
+            job_id,
+            activation_call_id,
+            result_digest,
+            quorum_height: quorum.quorum_height,
+            quorum_signer_bitmap: quorum.signer_bitmap.clone(),
+            quorum_evidence_hash: quorum.evidence_hash,
+            result_evidence_hash: B256::repeat_byte(0x54),
+            terminal_receipt_hash: terminal_receipt.terminal_receipt_hash(&limits).unwrap(),
+            terminal_receipt,
+        };
+
+        let exhausted_transition =
+            outer_transition(&contract, OuterWwdEvent::OcompAttemptsExhausted);
+        let disposition = contract
+            .commit_ocomp_conflict(
+                &exhausted_transition,
+                intent_id,
+                completed_binding.clone(),
+                &quorum,
+                activation_height,
+                activation_time,
+                &limits,
+                fsm_limits,
+            )
+            .unwrap();
+
+        assert_eq!(
+            disposition,
+            OcompExpiryDisposition::TerminalNoRetry {
+                next_pending_nonce: 1,
+                retained_lysis_budget: LYSIS_BUDGET,
+            }
+        );
+        assert_eq!(
+            contract.get_wwd_status(WWD).unwrap(),
+            status::OFFCHAIN_PENDING
+        );
+        assert!(contract
+            .next_ocomp_ready(&limits, fsm_limits)
+            .unwrap()
+            .is_none());
+        let terminal = contract
+            .ocomp_job_record(intent_id, &limits)
+            .unwrap()
+            .unwrap();
+        assert_eq!(terminal.status, OcompJobStatus::Conflicted);
+        assert_eq!(
+            terminal.terminal.unwrap().completed_binding,
+            Some(completed_binding)
+        );
+    });
+}
+
+#[test]
+fn a_conflicted_retained_terminal_is_a_legal_retry_source() {
+    use crate::ocomp::classify_retained_terminal;
+    use crate::ocomp::state::RetryTerminalOutcome;
+
+    assert_eq!(
+        classify_retained_terminal(
+            OcompJobStatus::Conflicted,
+            OcompTerminalOutcome::Conflicted,
+            true
+        )
+        .unwrap(),
+        RetryTerminalOutcome::Conflicted
+    );
+    assert_eq!(
+        classify_retained_terminal(
+            OcompJobStatus::Expired,
+            OcompTerminalOutcome::Expired,
+            false
+        )
+        .unwrap(),
+        RetryTerminalOutcome::Expired
+    );
+
+    for (status, outcome, binding) in [
+        (
+            OcompJobStatus::Conflicted,
+            OcompTerminalOutcome::Conflicted,
+            false,
+        ),
+        (OcompJobStatus::Expired, OcompTerminalOutcome::Expired, true),
+        (
+            OcompJobStatus::Completed,
+            OcompTerminalOutcome::Completed,
+            true,
+        ),
+        (
+            OcompJobStatus::Conflicted,
+            OcompTerminalOutcome::Expired,
+            true,
+        ),
+    ] {
+        assert!(
+            classify_retained_terminal(status, outcome, binding).is_err(),
+            "{status:?}/{outcome:?}/{binding} must not open a retry"
+        );
+    }
 }
