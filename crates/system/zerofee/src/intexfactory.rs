@@ -11,9 +11,10 @@ use crate::hooks::{
 };
 
 /// Exact ABI envelope cap for a full batch: selector, four head words, then a
-/// 256-leaf array of four-word structs and a 24-hash proof.
+/// 256-leaf array (`outbe_intex::payout::CONTRIBUTOR_CHUNK_CAPACITY`) of
+/// three-word `ContributorLeaf` structs and a 24-hash proof.
 pub const MAX_ZERO_FEE_CONTRIBUTOR_BATCH_CALLDATA_BYTES: usize =
-    4 + 4 * 32 + (32 + 256 * 4 * 32) + (32 + 24 * 32);
+    4 + 4 * 32 + (32 + 256 * 3 * 32) + (32 + 24 * 32);
 
 /// Only explicit storage ops are metered inside precompiles (reads 100,
 /// writes 5000); transfers and events are journal ops outside metering, so a
@@ -233,16 +234,20 @@ mod tests {
             );
 
             let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            validators.validator_count.write(1).unwrap();
-            validators.address_to_index.write(&VALIDATOR, 1).unwrap();
-            validators.index_to_address.write(&1, VALIDATOR).unwrap();
             validators
-                .val_status
-                .write(&VALIDATOR, outbe_validatorset::logic::status::ACTIVE)
+                .config_owner
+                .write(Address::repeat_byte(0x11))
+                .unwrap();
+            validators.set_config_max_validators(128).unwrap();
+            validators.config_epoch_length_blocks.write(60).unwrap();
+            validators.config_is_initialized.write(true).unwrap();
+            let mut consensus_pubkey = [0_u8; 48];
+            consensus_pubkey[0] = 0xa2;
+            validators
+                .test_register_validator_without_pop(VALIDATOR, &consensus_pubkey)
                 .unwrap();
             validators
-                .val_has_bls_share
-                .write(&VALIDATOR, true)
+                .activate_validator_via_boundary_for_test(VALIDATOR)
                 .unwrap();
             validators
                 .set_delegate(
