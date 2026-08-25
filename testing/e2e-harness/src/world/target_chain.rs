@@ -20,7 +20,6 @@ use crate::world::forge::{self, address_from, DEPLOYER_ADDRESS, DEPLOYER_KEY, SA
 /// Which role id to read off a venue contract.
 enum Role {
     Relayer,
-    SystemRelayer,
 }
 
 /// Chain id of the local target chain, distinct from the committee's so the two
@@ -46,7 +45,7 @@ pub struct TargetContracts {
 sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface ITargetRouterWire {
-        function wire(address auction, address intex, address escrowAdapter, address nftBridge) external;
+        function wire(address auction, address intex, address escrowAdapter) external;
     }
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface IAuctionWire {
@@ -57,7 +56,6 @@ sol! {
         function grantRole(bytes32 role, address account) external;
         function hasRole(bytes32 role, address account) external view returns (bool);
         function RELAYER_ROLE() external view returns (bytes32);
-        function SYSTEM_RELAYER_ROLE() external view returns (bytes32);
     }
 }
 
@@ -224,7 +222,6 @@ impl TargetChain {
                 auction: contracts.auction,
                 intex: contracts.intex_nft,
                 escrowAdapter: contracts.escrow,
-                nftBridge: contracts.nft_bridge,
             },
         )?;
         self.send(
@@ -236,22 +233,15 @@ impl TargetChain {
         )?;
 
         // The router is what an inbound message becomes, so it is the account
-        // that has to be allowed to create series, mint and move bridged tokens.
+        // allowed to create series and mint. The bridge needs the same right on the
+        // collection to burn a holder's units here and mint them at home.
         let relayer = self.role(&url, contracts.intex_nft, Role::Relayer)?;
-        let system_relayer = self.role(&url, contracts.nft_bridge, Role::SystemRelayer)?;
-        for (holder, role) in [
-            (contracts.intex_nft, relayer),
-            (contracts.auction, relayer),
-            (contracts.nft_bridge, system_relayer),
+        for (holder, role, account) in [
+            (contracts.intex_nft, relayer, contracts.target_router),
+            (contracts.auction, relayer, contracts.target_router),
+            (contracts.intex_nft, relayer, contracts.nft_bridge),
         ] {
-            self.send(
-                &url,
-                holder,
-                &IVenueRoles::grantRoleCall {
-                    role,
-                    account: contracts.target_router,
-                },
-            )?;
+            self.send(&url, holder, &IVenueRoles::grantRoleCall { role, account })?;
         }
         Ok(())
     }
@@ -292,9 +282,6 @@ impl TargetChain {
     fn role(&self, url: &str, holder: Address, role: Role) -> Result<B256> {
         let read = match role {
             Role::Relayer => eth::read_call(url, holder, &IVenueRoles::RELAYER_ROLECall {}),
-            Role::SystemRelayer => {
-                eth::read_call(url, holder, &IVenueRoles::SYSTEM_RELAYER_ROLECall {})
-            }
         };
         read.ok_or_else(|| eyre!("read the role id from {holder}"))
     }
