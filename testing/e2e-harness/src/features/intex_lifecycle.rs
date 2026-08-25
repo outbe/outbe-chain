@@ -116,16 +116,6 @@ fn issue_two_series(world: &mut World) {
         .expect("intex engine was deployed")
         .origin_router;
 
-    // The day freezes its target set at stage start, so the second chain has to be
-    // a registered target before the day is opened, not after.
-    test_issuance::add_target(
-        &url,
-        DEPLOYER_KEY,
-        origin_router,
-        u32::try_from(world.target_chain.chain_id()).expect("target chain id fits a uint32"),
-    )
-    .expect("register the target chain as an issuance target");
-
     // The router addresses an issuance leg only to a chain the day was started on,
     // so the day has to be opened before anything can be issued into it.
     // Issued into a day already behind us: the call sweep counts breach days only

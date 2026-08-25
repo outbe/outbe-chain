@@ -140,7 +140,16 @@ pub fn deploy(
         &["script", "deploy/DeployOrigin.s.sol:DeployOrigin"],
         &[
             ("BRIDGE_ADDRESS", format!("{bridge:?}")),
-            ("TARGET_CHAIN_IDS", chain.clone()),
+            (
+                "TARGET_CHAIN_IDS",
+                // The script sets each target's peer before registering it, and the
+                // peer sits at the same CREATE3 address everywhere — so naming the
+                // chains here is all a second target needs.
+                std::iter::once(chain.clone())
+                    .chain(remote_chain_ids.iter().map(u64::to_string))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
             ("SALT_VERSION", SALT_VERSION.to_owned()),
             ("OUTBE_WCOEN_BRIDGE", DEPLOYER_ADDRESS.to_owned()),
             ("OUTBE_WCOEN_TOKEN", format!("{wcoen:?}")),
