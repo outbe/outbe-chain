@@ -191,16 +191,31 @@ fn fold_profile(
     contract: &DesisContract<'_>,
     config: &mut AuctionConfig,
 ) -> Result<outbe_intexfactory::IntexParams> {
-    // minBidQty = 4% of the prior clearing's issued count.
+    // minBidQty = 4% of the prior clearing's issued count, restated at today's
+    // load. The same PROMIS splits into ten times more Intexes one decade down
+    // the ladder, so a floor left at yesterday's scale could sit above the whole
+    // of today's tirage and clear the day to nothing.
     let min_bid_qty: u16 = {
         let last_worldwide_day = contract.read_last_cleared_worldwide_day()?;
-        if last_worldwide_day.value() != 0 {
-            let prev_issued = contract.read_last_clearing_issued_count()?;
-            let derived =
-                (prev_issued as u64).saturating_mul(BID_QUANTITY_FLOOR_BPS as u64) / 10_000;
-            derived.min(u16::MAX as u64) as u16
-        } else {
+        let today_load = config.promis_load_minor;
+        if last_worldwide_day.value() == 0 || today_load == 0 {
             0
+        } else {
+            let prev_issued = u128::from(contract.read_last_clearing_issued_count()?);
+            let prev_load = u128::try_from(
+                contract
+                    .config_promis_load_minor
+                    .read(&last_worldwide_day)?,
+            )
+            .map_err(|_| DesisError::InvalidWorldwideDay(last_worldwide_day))?;
+            let scaled = prev_issued
+                .checked_mul(prev_load)
+                .and_then(|v| v.checked_mul(u128::from(BID_QUANTITY_FLOOR_BPS)))
+                .ok_or_else(|| {
+                    PrecompileError::Revert("min bid quantity scaling overflow".into())
+                })?;
+            let derived = scaled / (10_000 * today_load);
+            derived.min(u128::from(u16::MAX)) as u16
         }
     };
     let iparams = outbe_intexfactory::read_params(storage)?;

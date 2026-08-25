@@ -64,12 +64,26 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
 }
 
 fn brief_at(s: &StorageHandle, worldwide_day: WorldwideDay, supply_promis: u128, green: bool) {
+    brief_at_rate(s, worldwide_day, supply_promis, ENTRY_PRICE, green)
+}
+
+/// Brief a day quoted at `rate`, which is what the PROMIS load is picked from.
+fn brief_at_rate(
+    s: &StorageHandle,
+    worldwide_day: WorldwideDay,
+    supply_promis: u128,
+    rate: u128,
+    green: bool,
+) {
     assert_eq!(
         crate::api::dispatch_auction_brief(
             s.clone(),
             worldwide_day,
             U256::from(supply_promis),
-            entry_price_rows(),
+            vec![crate::schema::ReferenceCurrencyPrice {
+                iso_code: REFERENCE_ISO,
+                entry_price_minor: U256::from(rate),
+            }],
             green,
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver,
@@ -930,6 +944,60 @@ fn schedule_retires_an_overdue_day() {
         .iter()
         .any(|log| log.topics().first() == Some(&overdue_sig));
     assert!(found, "expected AuctionOverdue event");
+}
+
+/// One decade up the rate ladder the same PROMIS buys ten times the Intexes, and
+/// the bid floor has to be restated with it or it sits above the whole tirage.
+#[test]
+fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
+    with_storage(|s| {
+        open_clearing(&s, 100);
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            SRC_CHAIN,
+            1,
+            0,
+            1,
+            bids(100, 200),
+        )
+        .unwrap();
+        mark_done(&s, SRC_CHAIN, 1, 1, 100);
+        assert_eq!(clear(&s).issued_intex_count, 100);
+
+        // Ten times the rate of the fixture, which is past the deadband.
+        brief_at_rate(&s, NEXT_WORLDWIDE_DAY, 100 * LOAD_MINOR, 10 * ENTRY_PRICE, true);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 86_400).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 2 * 86_400).unwrap();
+
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract
+                .config_promis_load_minor
+                .read(&NEXT_WORLDWIDE_DAY)
+                .unwrap(),
+            U256::from(LOAD_MINOR / 10),
+            "the load stepped one decade down"
+        );
+        assert_eq!(
+            contract
+                .pending_supply_intex
+                .read(&NEXT_WORLDWIDE_DAY)
+                .unwrap(),
+            1_000,
+            "the same PROMIS splits into ten times the tirage"
+        );
+        assert_eq!(
+            contract
+                .config_min_bid_quantity
+                .read(&NEXT_WORLDWIDE_DAY)
+                .unwrap(),
+            40,
+            "the floor follows the tirage instead of staying at yesterday's scale"
+        );
+    });
 }
 
 #[test]
