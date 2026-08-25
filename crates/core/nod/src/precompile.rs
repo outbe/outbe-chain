@@ -86,7 +86,8 @@ pub fn dispatch(
                     WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
                 let bucket = api::get_bucket(&storage, scope, parent, bucket_id)?
                     .ok_or(NodError::BucketNotFound)?;
-                Ok(to_abi_data(&item, &bucket))
+                let called_at = nod.bucket_called_at.read(&item.bucket_key)?;
+                Ok(to_abi_data(&item, &bucket, called_at))
             }),
             certifiedGeneration(c) => view(c, |c| {
                 let worldwide_day = WorldwideDay::new(c.worldwideDay);
@@ -124,7 +125,7 @@ fn token_uri(item: &NodItemState, bucket: &NodBucketState) -> Result<String> {
     Ok(format!("data:application/json;base64,{encoded}"))
 }
 
-fn to_abi_data(item: &NodItemState, bucket: &NodBucketState) -> INod::NodData {
+fn to_abi_data(item: &NodItemState, bucket: &NodBucketState, called_at: u64) -> INod::NodData {
     INod::NodData {
         nodId: item.nod_id.to_u256(),
         owner: item.owner,
@@ -139,6 +140,7 @@ fn to_abi_data(item: &NodItemState, bucket: &NodBucketState) -> INod::NodData {
         issuanceCurrency: item.issuance_currency,
         referenceCurrency: item.reference_currency,
         issuedAt: item.issued_at,
+        calledAt: called_at,
     }
 }
 

@@ -8351,6 +8351,7 @@ dependencies = [
  "outbe-intexfactory",
  "outbe-macros",
  "outbe-metadosis",
+ "outbe-nod",
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
@@ -8926,6 +8927,7 @@ dependencies = [
  "outbe-primitives",
  "serde",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]

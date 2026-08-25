@@ -15,6 +15,7 @@ use outbe_common::pow;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
 use outbe_nod::api as nod_api;
 use outbe_nod::api::{LoadedNodBucket, LoadedNodItem};
+use outbe_nod::constants::CALL_NOTICE_PERIOD;
 use outbe_nod::schema::{NodContract, NodIssueParams, NodItemState};
 
 use crate::errors::NodFactoryError;
@@ -263,6 +264,17 @@ fn mine_gratis_inner(
 
     if !bucket.body().is_qualified {
         return Err(NodFactoryError::NodNotQualified.into());
+    }
+
+    // Mining stays open during the notice period — that is what the notice is
+    // for. Past it the Nod is forfeit, and this check closes the gap before the
+    // daily sweep reaches it.
+    let called_at = NodContract::new(storage.clone())
+        .bucket_called_at
+        .read(&item.body().bucket_key)?;
+    let now = storage.timestamp()?.to::<u64>();
+    if called_at != 0 && now > called_at.saturating_add(CALL_NOTICE_PERIOD) {
+        return Err(NodFactoryError::CallDeadlineExpired.into());
     }
 
     if !item.body().is_settled {
