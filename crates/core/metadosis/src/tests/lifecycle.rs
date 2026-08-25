@@ -2935,6 +2935,7 @@ fn technical_desis_refusal_rolls_back_the_metadosis_cycle_command() {
                 }],
                 true,
                 scheduled,
+                outbe_desis::api::BriefOverflowPolicy::CarryOver,
             )
             .unwrap(),
             outbe_desis::api::AuctionBriefReceipt::Accepted
@@ -3353,6 +3354,66 @@ fn test_terminal_day_leaves_active_set() {
             .get_active_wwd_by_status(WwdStatus::Completed)
             .unwrap()
             .contains(&wwd));
+    });
+}
+
+#[test]
+fn the_local_brief_prices_a_day_by_the_canonical_projection() {
+    with_storage(|storage| {
+        let wwd = outbe_common::WorldwideDay::new(2026_0805);
+        let scheduled = create_waiting_day(&storage, wwd, day_type::GREEN, U256::from(1_000_u64));
+        arm_genesis_ocomp(&storage, CHAIN_ID);
+
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(2, scheduled + SECONDS_PER_HOUR, CHAIN_ID),
+            storage.clone(),
+        );
+        let mut metadosis = MetadosisContract::new(storage.clone());
+
+        // A cold oracle prices nothing, and the empty table is load-bearing: it
+        // is how Desis is told the day is unpriced, so it cancels the auction and
+        // refunds the supply instead of opening one at a zero entry price.
+        assert!(
+            crate::settlement::day_entry_prices(&mut metadosis, &ctx, wwd, U256::ZERO)
+                .unwrap()
+                .is_empty()
+        );
+
+        // The COEN/USD pair is not registered here, so the rule the settlement
+        // path used to carry of its own — which resolved every row through
+        // `require_coen_pair` — could never price this day at all.
+        assert!(outbe_oracle::api::require_coen_pair(storage.clone(), 840).is_err());
+
+        let current_vwap = U256::from(110_u64);
+        let table =
+            crate::settlement::day_entry_prices(&mut metadosis, &ctx, wwd, current_vwap).unwrap();
+        let projection = outbe_oracle::api::ocomp_pre_admission_projection(
+            storage.clone(),
+            wwd,
+            current_vwap,
+            ctx.block.timestamp,
+        )
+        .unwrap();
+
+        // One rule prices every day: the settlement table is the projection's,
+        // less rows the oracle could not put a price on.
+        assert_eq!(
+            table
+                .iter()
+                .map(|row| (row.iso_code, row.entry_price_minor))
+                .collect::<Vec<_>>(),
+            projection
+                .auction_entry_prices
+                .iter()
+                .filter(|row| !row.entry_price_minor.is_zero())
+                .map(|row| (row.reference_currency, row.entry_price_minor))
+                .collect::<Vec<_>>()
+        );
+        let day_type_row = table
+            .iter()
+            .find(|row| row.iso_code == 840)
+            .expect("the day-type currency is priced from the day's own VWAP");
+        assert_eq!(day_type_row.entry_price_minor, current_vwap);
     });
 }
 
