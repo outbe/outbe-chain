@@ -105,94 +105,12 @@ for directory in storage node cobs; do
     fi
 done
 
-RADICLE_CONFIG=$RADICLE_HOME/config.json
-if [ -L "$RADICLE_CONFIG" ]; then
-    echo "Error: Radicle config must not be a symlink: $RADICLE_CONFIG" >&2
-    exit 1
-fi
-if [ -e "$RADICLE_CONFIG" ]; then
-    require_owned_file "$RADICLE_CONFIG" 600
-fi
-
-# Native `rad` and `git-remote-rad` load config.json even though the sidecar
-# receives its authoritative runtime config on the command line. Keep both
-# views aligned without ever introducing public Radicle seeds.
-python3 - "$RADICLE_CONFIG" "$RADICLE_LISTEN" "$RADICLE_MAX_VALIDATORS" \
-    "$RADICLE_EXTERNAL_INBOUND_RESERVE" "$@" <<'PY'
-import json
-import os
-import pathlib
-import sys
-import tempfile
-
-path = pathlib.Path(sys.argv[1])
-listen = sys.argv[2]
-max_validators = int(sys.argv[3])
-external_inbound_reserve = int(sys.argv[4])
-advertise = sys.argv[5:]
-
-if path.exists():
-    with path.open("r", encoding="utf-8") as source:
-        config = json.load(source)
-    if not isinstance(config, dict):
-        raise SystemExit(f"Radicle config root must be an object: {path}")
-else:
-    config = {}
-
-node = config.setdefault("node", {})
-if not isinstance(node, dict):
-    raise SystemExit(f"Radicle node config must be an object: {path}")
-
-managed_peers = max_validators - 1
-node.update({
-    "alias": "outbe",
-    "listen": [listen],
-    "peers": {"type": "static"},
-    "connect": [],
-    "externalAddresses": advertise,
-    "network": "outbe",
-    "relay": "always",
-    "seedingPolicy": {"default": "block"},
-})
-node.pop("policy", None)
-node.pop("scope", None)
-limits = node.setdefault("limits", {})
-if not isinstance(limits, dict):
-    raise SystemExit(f"Radicle limits config must be an object: {path}")
-connection = limits.setdefault("connection", {})
-if not isinstance(connection, dict):
-    raise SystemExit(f"Radicle connection limits must be an object: {path}")
-connection.update({
-    "outbound": managed_peers,
-    "inbound": managed_peers + external_inbound_reserve,
-})
-config["preferredSeeds"] = []
-
-temporary = None
-try:
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        dir=path.parent,
-        prefix=".config.json.",
-        delete=False,
-    ) as output:
-        temporary = pathlib.Path(output.name)
-        os.chmod(temporary, 0o600)
-        json.dump(config, output, indent=2, sort_keys=True)
-        output.write("\n")
-        output.flush()
-        os.fsync(output.fileno())
-    os.replace(temporary, path)
-    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
-    try:
-        os.fsync(directory)
-    finally:
-        os.close(directory)
-finally:
-    if temporary is not None and temporary.exists():
-        temporary.unlink()
-PY
+# No config.json is written here. The sidecar builds its own runtime config
+# from these command-line options (`Options::node_config` in the fork) and
+# never reads config.json, so a second copy of those settings could only drift
+# out of sync — and the `network: outbe` it used to write makes a stock `rad`
+# refuse to start, since upstream accepts only `main` or `test`.
+# A client that needs config.json gets it from `outbe-cli rad init`.
 
 if [ -e "$RADICLE_CONTROL_SOCKET" ]; then
     if [ ! -S "$RADICLE_CONTROL_SOCKET" ]; then

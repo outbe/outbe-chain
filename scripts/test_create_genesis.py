@@ -575,6 +575,45 @@ class LaunchBundleTests(unittest.TestCase):
         )
         return root, keys_dir, output_dir
 
+    def test_radicle_sidecar_ceiling_does_not_track_the_founder_count(self):
+        # The sidecar tracks the validator set from chain state, but its
+        # connection limits are fixed at start-up (outbound = ceiling - 1).
+        # Sizing them by the founding four would cap every node at three
+        # peers, so a fifth validator joining would need the whole network
+        # restarted. Size by the protocol ceiling instead.
+        def rendered(overrides):
+            return LB.radicle_script(
+                config=minimal_config("/keys") | overrides,
+                index=0,
+                host="10.0.0.1",
+                keys_dir="/keys",
+                repo_root=str(REPO_ROOT),
+            )
+
+        self.assertIn(
+            f"--max-validators {LB.DEFAULT_MAX_VALIDATORS}", rendered({})
+        )
+        self.assertIn(
+            "--max-validators 64",
+            rendered({"validator_set": {"max_validators": 64}}),
+        )
+        # Never the size of the founding committee.
+        self.assertNotIn("--max-validators 4 ", rendered({}))
+
+    def test_radicle_sidecar_does_not_write_a_config_file(self):
+        # The sidecar builds its runtime config from the command line and
+        # never reads config.json; a second copy could only drift, and the
+        # `network: outbe` it used to contain stops a stock `rad` from
+        # starting at all.
+        script = LB.radicle_script(
+            config=minimal_config("/keys"),
+            index=0,
+            host="10.0.0.1",
+            keys_dir="/keys",
+            repo_root=str(REPO_ROOT),
+        )
+        self.assertNotIn("config.json", script)
+
     def test_render_writes_every_script_and_they_are_valid_bash(self):
         import subprocess
 
