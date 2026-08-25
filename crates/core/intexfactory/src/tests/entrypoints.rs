@@ -39,7 +39,7 @@ fn dispatch_mine_promis_routes_to_runtime() {
         let data = IIntexFactory::minePromisCall {
             seriesId: sid(7).into(),
             amount: U256::from(1),
-            nonce: U256::ZERO,
+            nonce: 0,
             mac: alloy_primitives::FixedBytes([0u8; 32]),
             opNonce: 0,
         }

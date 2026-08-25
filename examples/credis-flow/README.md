@@ -104,9 +104,9 @@ src/
 Collateral unlock is automatic on each `settle` payment (released to the pledger's
 encrypted balance), so the old `6-user-unpledge-gratis.ts` reclaim step is gone.
 
-A position has no installments, no due dates and no maturity: it becomes settleable
-the first time the COEN price exceeds its floor (entry + 8%), and from then on the
-owner — or anyone paying on their behalf — may settle any amount at any time.
+A position has no installments, no due dates and no maturity: it is settleable from
+the moment it opens, and the owner — or anyone paying on their behalf — may settle
+any amount at any time.
 Interest is not accrued per block; it is computed at settlement over the whole UTC
 days elapsed, simple and ACT/365 on the outstanding principal, and is always
 collected before any principal.
@@ -230,17 +230,11 @@ npx tsx src/4.1-user-sa-withdraw.ts 5.5
 # User settles a credis position. Defaults to the full payoff (accrued interest +
 # outstanding principal); pass an amount to settle partially. Each payment releases
 # the proportional collateral share back to the pledger's encrypted balance.
-# Requires the position to be settleable — see the prerequisite below.
 npx tsx src/5-user-settles.ts <positionId> [amount]
 ```
 
 ### Prerequisites this demo does not set up itself
 
-- **A moving COEN price, for step 5.** A position is settleable only once the live
-  COEN price exceeds its floor (entry + 8%). Entry is the oracle rate at pledge time
-  and the seeded feed is flat, so nothing in these scripts ever crosses the floor.
-  Run the price feeder (`scripts/price-oracle/run.sh`) alongside the chain, or step 5
-  reverts as not settleable.
 - **A reserve vault registered for the ERC20.** `0-setup-erc20.ts` reads
   `assetVaultAt(erc20, 0)`; the vault itself is registered out-of-band via `addVault`,
   which nothing in this repo calls. Without it the setup step reverts.

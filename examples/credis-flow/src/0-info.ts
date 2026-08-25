@@ -250,7 +250,7 @@ async function printSmartAccountInfo(
 }
 
 /// Mirrors `enum State` in contracts/precompiles/src/ICredis.sol.
-const STATE_NAMES = ["Open", "Settleable", "Called", "Settled", "Void"];
+const STATE_NAMES = ["Open", "Called", "Settled", "Void"];
 
 async function printCredisInfo(
   credis: ReturnType<typeof ICredis__factory.connect>,
@@ -280,7 +280,7 @@ async function printCredisInfo(
     console.log(`      principal: ${formatTokenMeta(p.principal, erc20Meta)}, outstanding: ${formatTokenMeta(p.outstanding, erc20Meta)}`);
     console.log(`      accrued interest: ${formatTokenMeta(interest, erc20Meta)} (policy rate ${formatToken(p.policyRate, 6, "")}/yr, ACT/365)`);
     console.log(`      collateral: ${formatToken(p.collateral, 6, "GRATIS")}, locked: ${formatToken(p.collateralLocked, 6, "GRATIS")}`);
-    console.log(`      entry: ${formatToken(p.entryPrice, 6, "")}, floor: ${formatToken(p.floorPrice, 6, "")}, call: ${formatToken(p.callPrice, 6, "")}`);
+    console.log(`      entry: ${formatToken(p.entryPrice, 6, "")}, call: ${formatToken(p.callPrice, 6, "")}`);
     console.log(`      originated: ${formatDate(p.originatedAt)}, accrual anchor: ${formatDate(p.lastSettledAt)}`);
     if (p.calledAt > 0n) {
       console.log(`      called: ${formatDate(p.calledAt)}`);

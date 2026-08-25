@@ -190,7 +190,6 @@ async function main() {
   console.log(`  collateral:        ${position.collateral}`);
   console.log(`  policyRate:        ${position.policyRate}`);
   console.log(`  entryPrice:        ${position.entryPrice}`);
-  console.log(`  floorPrice:        ${position.floorPrice} (settlement unlocks above this)`);
   console.log(`  callPrice:         ${position.callPrice}`);
   console.log(`  issuanceCurrency:  ${position.issuanceCurrency}`);
   console.log(`\nBundle ERC20 change: ${formatTokenDiff(bundleErc20After - bundleErc20Before, erc20Meta.decimals, erc20Meta.symbol)}`);
@@ -200,7 +199,7 @@ async function main() {
   ticket.smartAccount = smartAccount;
   writeTicket(ticket);
   console.log(`\nTicket updated: ${usedTicketPath}`);
-  console.log("Run `npm run user-settles` to settle once the COEN price is above the floor (collateral releases in proportion).");
+  console.log("Run `npm run user-settles` to settle any amount (collateral releases in proportion).");
 }
 
 main().catch((error) => {

@@ -118,7 +118,7 @@ fn validator_redeems_reward_gem(world: &mut World) {
         promis_nonce,
         chain_id,
     );
-    let pow = find_u256_pow(gem_id);
+    let pow = find_pow_nonce(gem_id);
     let mine_promis = eth::send_call_outcome(
         &url,
         addresses::GEM_FACTORY_ADDR,
@@ -279,7 +279,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         mint_nonce,
         chain_id,
     );
-    let pow = find_u256_pow(U256::from_be_slice(&nod_id));
+    let pow = find_pow_nonce(U256::from_be_slice(&nod_id));
     let mine_gratis = eth::send_call_outcome(
         &url,
         addresses::NOD_FACTORY_ADDR,
@@ -573,11 +573,10 @@ fn chain_id_b256(world: &World) -> B256 {
     ))
 }
 
-fn find_u256_pow(id: U256) -> U256 {
+fn find_pow_nonce(id: U256) -> u64 {
     (0_u64..100_000)
-        .map(U256::from)
         .find(|nonce| outbe_common::pow::validate_pow(id, *nonce).is_ok())
-        .expect("bounded Gem PoW nonce")
+        .expect("bounded PoW nonce")
 }
 
 fn promis_balance(url: &str, owner: Address, view_key: &[u8; 32]) -> U256 {

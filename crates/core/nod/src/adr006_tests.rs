@@ -85,7 +85,7 @@ fn reverted_issuance_rolls_back_overlay_compact_state_and_events() {
 #[test]
 fn nod_identity_and_abi_boundary_preserve_exact_32_bytes() {
     let body = item(Address::repeat_byte(0x33));
-    let encoded = NodContract::format_nod_id(body.nod_id);
+    let encoded = body.nod_id.to_string();
     assert_eq!(NodContract::parse_nod_id(&encoded).unwrap(), body.nod_id);
     assert!(NodContract::parse_nod_id(&encoded[..62]).is_err());
 

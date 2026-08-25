@@ -4,15 +4,11 @@
 //! carry a placeholder here plus a `ponytail:` note naming what has to be
 //! decided before launch.
 
-/// Denominator for the `*_RATE_PCT` markups below.
+/// Denominator for [`CALL_RATE_PCT`].
 pub const PRICE_RATE_DEN: u16 = 100;
 
-/// Settlement floor: `entry + 8%`. The first time the live COEN price exceeds
-/// it the position latches settleable, permanently.
-pub const FLOOR_RATE_PCT: u16 = 8;
-
-/// Call price: `entry + 32%`. A sustained breach of it arms the call.
-pub const CALL_RATE_PCT: u16 = 32;
+/// Call price: `entry + 64%`. A sustained breach of it arms the call.
+pub const CALL_RATE_PCT: u16 = 64;
 
 /// Evaluation window for the call, in closed UTC days: the daily scan looks
 /// back this far over the official daily reference series. Distinct from
