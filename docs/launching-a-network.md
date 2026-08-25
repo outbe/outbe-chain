@@ -152,7 +152,8 @@ is `n-1` on each, and all seven services are `active`.
 ## Ports
 
 Between the validators: consensus p2p `30400`, reth p2p `30303` (TCP+UDP),
-discv5 `31303` (UDP), Radicle replication `8776`.
+discv5 `31303` (UDP), Radicle replication `8776`. Admitting an external `rad`
+client means opening `8776` more widely — see `docs/using-radicle.md`.
 
 Published by caddy: RPC on `80`, Radicle status on `8080`.
 
@@ -166,7 +167,7 @@ Radicle status `8876`, the enclave socket `17000`, MongoDB `27017`, OCOMP
 |---|---|---|
 | Execution + consensus | `outbe-chain node` | one binary, no Engine API split |
 | TEE enclave | `gramine-sgx`, host process | node will not start without it |
-| Radicle sidecar | `outbe-radicle` | validator startup requires its control socket |
+| Radicle sidecar | `outbe-radicle` | validator startup requires its control socket; seeds only repository ids registered on-chain (`docs/using-radicle.md`) |
 | OCOMP Supervisor | `outbe-ocomp supervisor` | own process |
 | OCOMP SnapshotExporter | `outbe-ocomp snapshot-exporter` | own process |
 | OCOMP Worker | `outbe-ocomp worker` | own process |

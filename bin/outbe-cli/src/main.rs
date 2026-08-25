@@ -98,6 +98,11 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::radicle::RadicleCmd,
     },
+    /// Local Radicle client: configure and run a node against this chain.
+    Rad {
+        #[command(subcommand)]
+        cmd: commands::rad::RadCmd,
+    },
 }
 
 #[tokio::main]
@@ -120,6 +125,7 @@ async fn main() -> Result<()> {
         Commands::Vote { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
         Commands::Stablecoin { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
         Commands::Radicle { cmd } => cmd.run(&client, cli.private_key.as_deref()).await,
+        Commands::Rad { cmd } => cmd.run(&client).await,
     }
 }
 
