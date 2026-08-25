@@ -7508,6 +7508,175 @@ mod tests {
         );
     }
 
+    /// A stale reward price at the UTC-day boundary is not recoverable by a
+    /// feeder vote later in the same block: the mandatory CycleTick executes
+    /// first and aborts the block before the user lane. This characterizes the
+    /// current fail-closed ordering without choosing a recovery policy.
+    #[test]
+    fn stale_oracle_cycle_tick_blocks_later_feeder_vote_atomically() {
+        const GENESIS_TS: u64 = 1_704_067_200;
+        const SECONDS_PER_DAY: u64 = 86_400;
+        const PREVIOUS_DAY: u32 = 20_240_101;
+
+        #[derive(Debug, Eq, PartialEq)]
+        struct Observation {
+            error: String,
+            active_day: u32,
+            last_executed_at: u64,
+            day_settled: bool,
+            topup_settled: bool,
+            voter_gems: u64,
+            feeder_vote_exists: bool,
+            formation_exists: bool,
+        }
+
+        fn run_once() -> Observation {
+            let signer = test_evm_signer();
+            let proposer = signer.address();
+            let proposer_key = dummy_pubkey(0xA2);
+            let feeder_vote = test_oracle_submit_vote_tx()
+                .try_into_recovered()
+                .expect("test feeder vote signer should recover");
+            let feeder = Address::from(*feeder_vote.signer());
+            let voter = Address::repeat_byte(0x71);
+            let emission_trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
+
+            let mut state = state_with_active_validators_seeded_at_block_with_cycle_frames(
+                &[(proposer, proposer_key)],
+                1,
+                4,
+                |storage| {
+                    let genesis_ctx = BlockRuntimeContext::new(
+                        BlockContext::new(0, GENESIS_TS, CHAIN_ID, proposer, vec![proposer]),
+                        storage.clone(),
+                    );
+                    outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
+
+                    let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
+                    cycle.active_utc_day.write(PREVIOUS_DAY).unwrap();
+                    cycle
+                        .last_executed_at
+                        .write(&emission_trigger, GENESIS_TS + 60)
+                        .unwrap();
+
+                    let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
+                    rewards.daily_voter_count.write(&PREVIOUS_DAY, 1).unwrap();
+                    rewards
+                        .daily_voter_at
+                        .get_nested(&PREVIOUS_DAY)
+                        .write(&0, voter)
+                        .unwrap();
+                    rewards
+                        .daily_participation
+                        .get_nested(&PREVIOUS_DAY)
+                        .write(&voter, 1)
+                        .unwrap();
+                    rewards
+                        .daily_total_participation
+                        .write(&PREVIOUS_DAY, 1)
+                        .unwrap();
+
+                    let mut validator_set =
+                        outbe_validatorset::contract::ValidatorSet::new(storage.clone());
+                    validator_set
+                        .set_delegate(
+                            proposer,
+                            outbe_validatorset::delegation::ValidatorDelegateRole::Oracle,
+                            feeder,
+                        )
+                        .unwrap();
+
+                    // The shared state fixture seeds COEN/840 at timestamp zero.
+                    // That is intentionally stale under the live six-hour policy.
+                    let (.., pair_index) =
+                        outbe_oracle::api::require_coen_pair(storage.clone(), 840).unwrap();
+                    let oracle = outbe_oracle::schema::OracleContract::new(storage);
+                    assert_eq!(oracle.exchange_rate_timestamp.read(&pair_index).unwrap(), 0);
+                },
+            );
+
+            let block_timestamp = GENESIS_TS + SECONDS_PER_DAY + 60;
+            let tee_bootstrap = sample_tee_bootstrap_payload_at(1, block_timestamp);
+            let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
+            evm_env.block_env.timestamp = U256::from(block_timestamp);
+            let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
+            let begin = begin_system_txs_for_test_with_bootstrap(
+                &config,
+                1,
+                B256::ZERO,
+                &Bytes::new(),
+                None,
+                proposer,
+                Some(tee_bootstrap.clone()),
+            );
+            let mut body = begin.clone();
+            body.push(feeder_vote);
+
+            let evm = config.evm_with_env(&mut state, evm_env);
+            let mut execution =
+                execution_ctx_with_tee_bootstrap(Some(body.len()), Bytes::new(), tee_bootstrap);
+            execution.expected_begin_system_txs = begin;
+            execution.proposer_evm_address = Some(proposer);
+            let error = config
+                .create_executor(evm, execution)
+                .execute_block(body)
+                .expect_err("stale reward price must abort at the mandatory CycleTick")
+                .to_string();
+
+            let read_ctx =
+                BlockContext::new(1, block_timestamp, CHAIN_ID, proposer, vec![proposer]);
+            let mut provider =
+                outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
+            StorageHandle::enter(&mut provider, |storage| {
+                let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
+                let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
+                let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+                let gem = outbe_gem::GemContract::new(storage.clone());
+                Observation {
+                    error,
+                    active_day: cycle.active_utc_day.read().unwrap(),
+                    last_executed_at: cycle.last_executed_at.read(&emission_trigger).unwrap(),
+                    day_settled: rewards.daily_settled.read(&PREVIOUS_DAY).unwrap(),
+                    topup_settled: rewards.daily_topup_settled.read(&PREVIOUS_DAY).unwrap(),
+                    voter_gems: u64::from(gem.balance_of(voter).unwrap()),
+                    feeder_vote_exists: oracle.vote_exists.read(&proposer).unwrap(),
+                    formation_exists: outbe_metadosis::api::day_limit_formation_receipt(
+                        storage,
+                        outbe_common::WorldwideDay::new(PREVIOUS_DAY),
+                    )
+                    .unwrap()
+                    .is_some(),
+                }
+            })
+        }
+
+        let first = run_once();
+        let stale_reason_hex =
+            alloy_primitives::hex::encode("COEN rate for currency 840 is stale".as_bytes());
+        assert!(
+            first
+                .error
+                .contains("critical system tx CycleTick did not succeed")
+                && first.error.contains("failure_code=201")
+                && first.error.contains(&stale_reason_hex),
+            "unexpected CycleTick failure: {}",
+            first.error
+        );
+        assert_eq!(first.active_day, PREVIOUS_DAY);
+        assert_eq!(first.last_executed_at, GENESIS_TS + 60);
+        assert!(!first.day_settled);
+        assert!(!first.topup_settled);
+        assert_eq!(first.voter_gems, 0);
+        assert!(!first.feeder_vote_exists);
+        assert!(!first.formation_exists);
+
+        let replay = run_once();
+        assert_eq!(
+            replay, first,
+            "an exact replay from the same semantic pre-state must fail identically"
+        );
+    }
+
     /// An OOG halt in a consensus-critical begin-zone phase also
     /// fails the block (not a soft skip), via the same `revert_fails_block` gate.
     #[test]

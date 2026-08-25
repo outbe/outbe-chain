@@ -76,7 +76,11 @@ members = [
     "testing/e2e-harness",
     "testing/lysis-v1-reference",
 ]
-exclude = ["vendor/commonware-runtime"]
+exclude = [
+    "vendor/commonware-consensus",
+    "vendor/commonware-runtime",
+    "vendor/reth-transaction-pool",
+]
 resolver = "2"
 
 [workspace.package]
@@ -351,4 +355,8 @@ debug = 0
 alloy-evm = { git = "https://github.com/outbedev/alloy-evm", rev = "88e239e601eea130ef6644ffa672970e39332f70" }
 
 [patch."https://github.com/commonwarexyz/monorepo"]
+commonware-consensus = { path = "vendor/commonware-consensus" }
 commonware-runtime = { path = "vendor/commonware-runtime" }
+
+[patch."https://github.com/paradigmxyz/reth.git"]
+reth-transaction-pool = { path = "vendor/reth-transaction-pool" }

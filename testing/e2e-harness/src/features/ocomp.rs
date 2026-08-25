@@ -41,6 +41,10 @@ use crate::world::World;
 const OCOMP_CAPACITY_TRIBUTE_COUNT: usize = 257;
 const OCOMP_CAPACITY_COMPLETION_TIMEOUT_SECS: u64 = 300;
 const OCOMP_CAPACITY_NOD_MATERIALIZATION_TIMEOUT_SECS: u64 = 600;
+// The SGX capacity lane intentionally submits 257 encrypted transactions on a
+// loaded four-validator host. Keep its per-receipt bound at ten minutes while
+// leaving ordinary scenario receipt waits unchanged (500 ms per attempt).
+const OCOMP_CAPACITY_RECEIPT_ATTEMPTS: u32 = 1_200;
 // The capacity scenario proves the protocol path and the 256+1 shard boundary,
 // not Tribute burst throughput. Keep at most two offers in flight until
 // outbe-chain-08n.6 gives blocking TEE work a production-safe block budget.
@@ -609,6 +613,16 @@ fn certified_boundary_adds_fifth_ocomp_domain(world: &mut World) {
 
 #[then("job B opens with five members and quorum four while job A remains four of three")]
 fn job_b_uses_the_new_snapshot_while_job_a_keeps_the_old_one(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let certified_five_member_height = world
+        .rpc
+        .finalized(primary)
+        .expect("finalized five-member activation boundary");
+    assert_eq!(
+        world.rpc.active_count(primary),
+        Some(5),
+        "Job B may only be released after the five-member set is ACTIVE"
+    );
     advance_dynamic_membership_to_next_daily_cycle(world);
 
     let job_a_request = world
@@ -624,7 +638,6 @@ fn job_b_uses_the_new_snapshot_while_job_a_keeps_the_old_one(world: &mut World) 
         .expect("job B WorldwideDay");
     let mut ports = world.validators.committee_ports();
     ports.push(world.validators.http_port(world.validators.joiner_index()));
-    let primary = world.validators.primary_port();
     let deadline = Instant::now() + Duration::from_secs(OCOMP_JOB_REQUEST_TIMEOUT_SECS);
     let mut last_observation = "no finalized job B request observed".to_owned();
 
@@ -656,6 +669,12 @@ fn job_b_uses_the_new_snapshot_while_job_a_keeps_the_old_one(world: &mut World) 
                 "validators expose different finalized job B requests"
             );
             if request.worldwide_day == job_b_wwd {
+                assert!(
+                    request.request_height > certified_five_member_height,
+                    "Job B request at height {} predates the certified five-member barrier at height {}; the harness released it too early",
+                    request.request_height,
+                    certified_five_member_height
+                );
                 let job_a_records = ports
                     .iter()
                     .copied()
@@ -796,14 +815,20 @@ fn job_b_uses_the_new_snapshot_while_job_a_keeps_the_old_one(world: &mut World) 
                             if let Some(joiner_participant_index) =
                                 accountability_slot_for_vote(&job_b_votes, &joiner_vote)
                             {
-                                break (
-                                    request,
-                                    job_a_record,
-                                    job_b_record,
-                                    job_a_votes,
-                                    job_b_votes,
-                                    joiner_participant_index,
-                                );
+                                if dynamic_pre_restart_vote_baseline_ready(
+                                    job_a_votes.slot_validator_indexes.len(),
+                                    job_b_votes.slot_validator_indexes.len(),
+                                    true,
+                                ) {
+                                    break (
+                                        request,
+                                        job_a_record,
+                                        job_b_record,
+                                        job_a_votes,
+                                        job_b_votes,
+                                        joiner_participant_index,
+                                    );
+                                }
                             }
                         }
                     }
@@ -877,27 +902,65 @@ fn advance_dynamic_membership_to_next_daily_cycle(world: &mut World) {
         .and_then(|day| day.checked_mul(SECONDS_PER_DAY))
         .and_then(|midnight| midnight.checked_add(1))
         .expect("next UTC daily Cycle timestamp");
-    let offset = logical_time_offset(next_daily_cycle, unix_time_secs());
-    let joiner_index = world.validators.joiner_index();
+    let refresh_timestamp = dynamic_oracle_refresh_timestamp(next_daily_cycle);
+    assert!(
+        refresh_timestamp > current_timestamp,
+        "dynamic Oracle refresh must remain ahead of canonical time: current={current_timestamp} refresh={refresh_timestamp}"
+    );
 
     // Job B belongs to the following WorldwideDay. Metadosis deliberately
-    // settles READY days only from its daily Cycle handler, so cross that real
-    // production boundary with the existing test-only clock control. Stop the
-    // fifth validator before the committee-wide stop barrier, then relaunch all
-    // five against the same offset and their unchanged durable datadirs.
+    // settles READY days only from its daily Cycle handler. First stage a real
+    // feeder publication inside the final half of the six-hour FX TTL, then
+    // cross the production daily boundary. The custom restart preserves the
+    // intentionally stopped validator-2/3 OCOMP Workers.
+    restart_dynamic_membership_nodes_at(
+        world,
+        refresh_timestamp,
+        before_restart,
+        "pre-boundary Oracle refresh",
+    );
+    let before_daily_cycle = world
+        .rpc
+        .finalized(primary)
+        .expect("canonical finality after the staged Oracle refresh");
+    restart_dynamic_membership_nodes_at(
+        world,
+        next_daily_cycle,
+        before_daily_cycle,
+        "next daily Cycle",
+    );
+}
+
+fn restart_dynamic_membership_nodes_at(
+    world: &mut World,
+    requested_timestamp: u64,
+    before_restart: u64,
+    phase: &str,
+) {
+    let price_publication = crate::features::price_oracle::stop_before_clock_restart(world);
+    assert!(
+        price_publication.is_some(),
+        "dynamic OCOMP {phase} requires the production price feeder"
+    );
+    let ocomp_roles = world
+        .ocomp
+        .suspend_node_facing_roles()
+        .unwrap_or_else(|error| panic!("suspend exact OCOMP live roles before {phase}: {error:#}"));
+    let offset = logical_time_offset(requested_timestamp, unix_time_secs());
+    let joiner_index = world.validators.joiner_index();
     world
         .localnet
         .stop_joiner(joiner_index)
-        .expect("stop the fifth validator before the daily Cycle time change");
+        .unwrap_or_else(|error| panic!("stop the fifth validator before {phase}: {error:#}"));
     world
         .localnet
         .restart_committee_at_unix_time_offset(offset)
-        .expect("restart the original committee at the next daily Cycle");
+        .unwrap_or_else(|error| panic!("restart the original committee for {phase}: {error:#}"));
     let offset_arg = format!("--testnet.unix-time-offset-secs={offset}");
     world
         .localnet
         .launch_joiner(joiner_index, &[offset_arg.as_str()])
-        .expect("restart the fifth validator at the same daily Cycle offset");
+        .unwrap_or_else(|error| panic!("restart the fifth validator for {phase}: {error:#}"));
 
     let mut ports = world.validators.committee_ports();
     ports.push(world.validators.http_port(joiner_index));
@@ -906,8 +969,18 @@ fn advance_dynamic_membership_to_next_daily_cycle(world: &mut World) {
             world
                 .rpc
                 .wait_finalized_at_least(port, before_restart.saturating_add(1), 240),
-            "validator on port {port} did not resume finality across the daily Cycle time change"
+            "validator on port {port} did not resume finality across {phase}"
         );
+    }
+    let pending =
+        crate::features::price_oracle::resume_after_clock_restart(world, price_publication)
+            .expect("dynamic OCOMP feeder was running before the clock restart");
+    world
+        .ocomp
+        .resume_node_facing_roles(ocomp_roles)
+        .unwrap_or_else(|error| panic!("resume exact OCOMP live roles after {phase}: {error:#}"));
+    while !crate::features::price_oracle::observe_pending_publication(world, &pending) {
+        sleep(Duration::from_millis(250));
     }
 }
 
@@ -960,6 +1033,21 @@ fn accountability_slot_for_vote(
         .map(|(validator_index, _)| *validator_index);
     let participant_index = matches.next()?;
     matches.next().is_none().then_some(participant_index)
+}
+
+fn dynamic_pre_restart_vote_baseline_ready(
+    job_a_vote_count: usize,
+    job_b_vote_count: usize,
+    joiner_vote_present: bool,
+) -> bool {
+    job_a_vote_count == 2 && job_b_vote_count == 3 && joiner_vote_present
+}
+
+fn dynamic_oracle_refresh_timestamp(next_daily_cycle: u64) -> u64 {
+    const REFRESH_HEADROOM_SECS: u64 = 3 * 60 * 60;
+    next_daily_cycle
+        .checked_sub(REFRESH_HEADROOM_SECS)
+        .expect("daily Cycle leaves three hours for an Oracle refresh")
 }
 
 fn singleton_participant_bitmap(member_count: u16, participant_index: u16) -> Vec<u8> {
@@ -2326,7 +2414,9 @@ fn capacity_owners_submit_public_tributes(world: &mut World, count: usize) {
         .unwrap_or_else(|error| panic!("{error}"));
         for transaction_hash in &batch {
             assert!(
-                world.rpc.wait_successful_receipt(transaction_hash, 240),
+                world
+                    .rpc
+                    .wait_successful_receipt(transaction_hash, OCOMP_CAPACITY_RECEIPT_ATTEMPTS),
                 "capacity Tribute transaction did not succeed: {transaction_hash}"
             );
         }
@@ -5130,11 +5220,32 @@ fn runtime_traces_cover_ocomp_execution_paths(world: &mut World) {
 mod tests {
     use super::{
         bounded_completion_decision, dynamic_live_ports_after_jail,
+        dynamic_oracle_refresh_timestamp, dynamic_pre_restart_vote_baseline_ready,
         first_protocol_cycle_at_or_after_interval, joiner_restart_is_in_safe_early_epoch_window,
         monotonic_progress_decision, post_restart_convergence_target, BoundedCompletionDecision,
         ProgressWaitDecision, RestartBarrierDecision, RestartBarrierState,
         OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
     };
+
+    #[test]
+    fn dynamic_pre_restart_baseline_waits_for_all_three_job_b_votes() {
+        assert!(!dynamic_pre_restart_vote_baseline_ready(2, 2, true));
+        assert!(dynamic_pre_restart_vote_baseline_ready(2, 3, true));
+        assert!(!dynamic_pre_restart_vote_baseline_ready(2, 3, false));
+    }
+
+    #[test]
+    fn dynamic_oracle_refresh_is_staged_three_hours_before_daily_cycle() {
+        const SECONDS_PER_DAY: u64 = 86_400;
+        const REFRESH_HEADROOM: u64 = 3 * 60 * 60;
+        let next_daily_cycle = 2 * SECONDS_PER_DAY + 1;
+
+        let refresh_timestamp = dynamic_oracle_refresh_timestamp(next_daily_cycle);
+
+        assert_eq!(refresh_timestamp, next_daily_cycle - REFRESH_HEADROOM);
+        assert_eq!(refresh_timestamp / SECONDS_PER_DAY, 1);
+        assert!(next_daily_cycle - refresh_timestamp < 6 * 60 * 60);
+    }
 
     #[test]
     fn protocol_cycle_keeps_an_exact_hourly_processing_boundary() {

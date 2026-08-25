@@ -16,6 +16,26 @@ use crate::world::venue_probes::{IAuctionStage, IProceedsRoute};
 use crate::world::venue_probes::{IIssuedSeries, IParkedWork, IPaymentToken};
 use crate::world::{origin_venue, venue_probes, World};
 
+const ORIGIN_DEPLOY_FUNDING_COEN: u64 = 5_400;
+
+fn origin_deploy_funding_plan(
+    capacity_owner_keys: &[String],
+    fallback_operator_key: String,
+) -> Vec<(String, u64)> {
+    let funders = capacity_owner_keys
+        .iter()
+        .rev()
+        .take(6)
+        .cloned()
+        .collect::<Vec<_>>();
+    if funders.is_empty() {
+        return vec![(fallback_operator_key, ORIGIN_DEPLOY_FUNDING_COEN)];
+    }
+    let share = ORIGIN_DEPLOY_FUNDING_COEN
+        / u64::try_from(funders.len()).expect("at most six origin deploy funders");
+    funders.into_iter().map(|key| (key, share)).collect()
+}
+
 #[when("the intex engine is deployed on the committee chain")]
 fn deploy_origin_venue(world: &mut World) {
     let port = world.validators.primary_port();
@@ -26,24 +46,21 @@ fn deploy_origin_venue(world: &mut World) {
     // One owner's balance does not cover the whole deploy, so several chip in.
     // Taken from the tail: the scenario's Tribute submitters are the head of the
     // same list, and they still need their own gas.
-    let funders: Vec<String> = world
-        .state
-        .ocomp_capacity_tribute_private_keys
-        .iter()
-        .rev()
-        .take(6)
-        .cloned()
-        .collect();
-    assert!(
-        !funders.is_empty(),
-        "capacity fixture funded no Tribute owners"
+    let fallback_operator_key = world
+        .validators
+        .get(0)
+        .evm_key()
+        .expect("read validator-0 deploy funding key");
+    let funding_plan = origin_deploy_funding_plan(
+        &world.state.ocomp_capacity_tribute_private_keys,
+        fallback_operator_key,
     );
-    for funder in &funders {
+    for (funder, amount_coen) in funding_plan {
         crate::internal::eth::send_value(
             &url,
             origin_venue::deployer_address(),
-            funder,
-            crate::internal::eth::coen(900),
+            &funder,
+            crate::internal::eth::coen(amount_coen),
         )
         .expect("fund the deploy account on the committee chain");
     }
@@ -96,6 +113,33 @@ fn origin_router_knows_proceeds_route(world: &mut World) {
         !bridge.is_zero() && token == contracts.wcoen,
         "proceeds route is unset: bridge {bridge}, token {token}"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn origin_deploy_funding_uses_the_operator_without_a_capacity_fixture() {
+        assert_eq!(
+            origin_deploy_funding_plan(&[], "validator-0".to_owned()),
+            vec![("validator-0".to_owned(), 5_400)]
+        );
+    }
+
+    #[test]
+    fn origin_deploy_funding_preserves_the_capacity_owner_pool() {
+        let keys = (0..8)
+            .map(|index| format!("owner-{index}"))
+            .collect::<Vec<_>>();
+        let plan = origin_deploy_funding_plan(&keys, "validator-0".to_owned());
+        assert_eq!(plan.len(), 6);
+        assert_eq!(plan.iter().map(|(_, amount)| amount).sum::<u64>(), 5_400);
+        assert_eq!(
+            plan.iter().map(|(key, _)| key.as_str()).collect::<Vec<_>>(),
+            vec!["owner-7", "owner-6", "owner-5", "owner-4", "owner-3", "owner-2"]
+        );
+    }
 }
 
 /// An e2e build runs the auction on minute-long windows, so the run waits the

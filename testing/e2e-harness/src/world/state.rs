@@ -229,6 +229,11 @@ pub struct FixtureState {
     /// Hash of a transaction that cannot be mined, submitted to observe pool
     /// eviction (`features/txpool_eviction.feature`).
     pub stuck_tx_hash: Option<String>,
+    /// Sender and exact nonce bound to [`Self::stuck_tx_hash`]. The eviction
+    /// assertion uses all three fields so an unrelated stale transaction cannot
+    /// satisfy the observability contract.
+    pub stuck_tx_sender: Option<String>,
+    pub stuck_tx_nonce: Option<u64>,
     /// Exact offer public key observed from a registered joiner's enclave and
     /// matched against canonical chain state before an enclave restart.
     pub joiner_offer_public_before_restart: Option<[u8; 32]>,
@@ -421,6 +426,8 @@ impl Default for FixtureState {
             marker_height: None,
             marker_count: None,
             stuck_tx_hash: None,
+            stuck_tx_sender: None,
+            stuck_tx_nonce: None,
             joiner_offer_public_before_restart: None,
             vrf_expiry_height: None,
             lifecycle_stake_before_exit: None,

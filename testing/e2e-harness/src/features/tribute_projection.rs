@@ -10,21 +10,23 @@ use outbe_compressed_entities::{
     PointReadRequestV1, PointReadResultV1, VerifiedPointReadV1,
 };
 
-use crate::features::common::{bootstrap_localnet, start_bootstrapped_localnet};
-use crate::world::localnet::StartOpts;
+use crate::features::common::boot_bounded_tribute_localnet;
 use crate::world::World;
 
 #[given(
     expr = "a fresh localnet with cross-currency Tribute pricing and a {int}-block voting window"
 )]
 fn fresh_cross_currency_tribute_localnet(world: &mut World, window: u64) {
-    bootstrap_localnet(world, window, &[]);
-    let worldwide_day = world
-        .ocomp
-        .prepare_cross_currency_tribute_fixture()
-        .expect("prepare bounded TRY/EUR Oracle fixture before node start");
-    world.state.wwd = Some(worldwide_day.to_string());
-    start_bootstrapped_localnet(world, &StartOpts::with_voting_window(window));
+    fresh_bounded_tribute_localnet(world, window);
+}
+
+#[given(expr = "a fresh localnet with a bounded Tribute offering and a {int}-block voting window")]
+fn fresh_bounded_tribute_offering_localnet(world: &mut World, window: u64) {
+    fresh_bounded_tribute_localnet(world, window);
+}
+
+fn fresh_bounded_tribute_localnet(world: &mut World, window: u64) {
+    boot_bounded_tribute_localnet(world, window, &[]);
 }
 
 #[when("an operator submits one encrypted tribute offer")]

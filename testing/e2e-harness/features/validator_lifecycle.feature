@@ -18,14 +18,14 @@ Feature: Validator admission, membership, recovery, and removal
 
   @pfs-006-09
   Scenario: Restarted ACTIVE validator resumes signing from its persisted share
-    Given a fresh localnet with a 6-block voting window
+    Given a fresh localnet with a bounded Tribute offering and a 6-block voting window
     When a joiner reaches active with a persisted share
     And the node is killed and restarted with the same keys
     Then it resumes signing from the persisted share without a new ceremony
 
   @pfs-006-09
   Scenario: Entire committee recovers after every enclave restarts
-    Given a fresh localnet with a 6-block voting window
+    Given a fresh localnet with a bounded Tribute offering and a 6-block voting window
     When the entire committee and its enclaves are stopped and restarted
     Then all validators recover sealed TEE state and resume finalization
 
@@ -91,6 +91,7 @@ Feature: Validator admission, membership, recovery, and removal
     And the FullNode independently materializes job A without voting
     When the synced node completes OCOMP-ready validator admission
     Then the certified boundary adds exactly one fifth OCOMP validator domain
+    And the controlled COEN USD quote is finalized through the real price feeder
     And job B opens with five members and quorum four while job A remains four of three
     When validator 2 OCOMP worker restarts and completes both pinned quorums
     Then the FullNode result for job A matches the canonical quorum result
