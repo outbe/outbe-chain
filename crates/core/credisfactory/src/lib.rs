@@ -8,10 +8,10 @@
 //!   loan via the vault sub-call.
 //! - `settle` applies a payment interest-first and releases the principal-proportional
 //!   share of collateral from the pledger's pledged ledger back to its balance.
-//! - [`called`] is the daily Cycle-triggered price-path scan: it latches positions
-//!   past their floor, calls those whose breach window filled, and voids the
-//!   remainder of called positions whose settlement window has lapsed, burning the
-//!   unpaid share of the collateral into the Promis Reserve.
+//! - [`called`] is the daily Cycle-triggered price-path scan: it calls positions
+//!   whose breach window filled and voids the remainder of called positions whose
+//!   settlement window has lapsed, burning the unpaid share of the collateral into
+//!   the Promis Reserve.
 
 pub mod called;
 pub mod errors;

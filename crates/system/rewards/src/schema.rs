@@ -7,12 +7,13 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 ///
 /// Tracks the chain's genesis UTC-day anchor and the per-finalized-block +
 /// per-day accumulators used by the idempotent fee-distribution path and
-/// day-boundary settle formula.
+/// day-boundary settle formula and the FIFO of exact validator Gem obligations.
 ///
 /// Per-block fees are escrowed (`pending_fees`) and settled at `N+K` over the
-/// inclusion-window voter set; daily emission top-ups are delivered to voters as
-/// gems by [`crate::api::add_topup_for_voters`] (validator emission is paid in
-/// gems, not a claimable native balance).
+/// inclusion-window voter set; daily emission top-ups are prepared by
+/// [`crate::api::prepare_daily_validator_gem_batch`] and delivered by
+/// [`crate::api::deliver_oldest_reward_gem_batch`] (validator emission is paid
+/// in gems, not a claimable native balance).
 ///
 /// Storage slots:
 ///   0:  genesis_utc_day                    — uint32 (yyyymmdd of block 0; 0 = uninit)
@@ -44,6 +45,20 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 ///  26:  pending_parent_view_at             — mapping(uint64 => uint64)
 /// 27: block_guard_ring — mapping(uint64 => B256) (prune ring of fb_hash)
 /// 28: block_guard_ring_seq — uint64 (ring write cursor)
+/// 29: reward_gem_queue_head — uint64 (inclusive FIFO sequence)
+/// 30: reward_gem_queue_tail — uint64 (exclusive FIFO sequence)
+/// 31: reward_gem_utc_day_by_sequence — mapping(uint64 => uint32)
+/// 32: reward_gem_queue_sequence_plus_one — mapping(uint32 => uint64)
+/// 33: daily_topup_prepared — mapping(uint32 => bool)
+/// 34: reward_gem_batch_digest — mapping(uint32 => B256)
+/// 35: reward_gem_planned_load_amount — mapping(uint32 => uint256)
+/// 36: reward_gem_recipient_count — mapping(uint32 => uint32)
+/// 37: reward_gem_owner_at — mapping(uint32 => mapping(uint32 => address))
+/// 38: reward_gem_load_at — mapping(uint32 => mapping(uint32 => uint256))
+/// 39: reward_gem_type — mapping(uint32 => uint8)
+/// 40: reward_gem_issuance_currency — mapping(uint32 => uint16)
+/// 41: reward_gem_reference_currency — mapping(uint32 => uint16)
+/// 42: reward_gem_pending_batch_count — uint64
 #[contract(addr = REWARDS_ADDRESS)]
 pub struct Rewards {
     /// UTC day of block 0 (yyyymmdd). 0 means uninitialized; written
@@ -141,14 +156,9 @@ pub struct Rewards {
     /// have independent short-circuits.
     pub fee_dust_counted_for_block: Mapping<B256, bool>,
 
-    /// Idempotency guard for [`crate::api::add_topup_for_voters`]. Once
-    /// the daily topup has been credited for a UTC day, subsequent calls
-    /// for the same day are no-ops (return zero distributed dust). This
-    /// is independent from `daily_settled`, which is owned by the future
-    /// EmissionLimit `run_daily_dispatch` orchestrator and
-    /// marks the entire daily dispatch as complete. Splitting the two
-    /// keeps the api-level idempotency contract decoupled from the
-    /// late-after-settle guard in `on_finalized_metadata`.
+    /// Completion guard for actual Gem delivery. A prepared pending batch keeps
+    /// this false even after the day's allocation is sealed; delivery flips it
+    /// only when the entire FIFO batch has minted atomically.
     pub daily_topup_settled: Mapping<u32, bool>,
 
     // ── per-block fee escrow + inclusion-window credits ──────────
@@ -222,4 +232,47 @@ pub struct Rewards {
     /// Monotonic write cursor for `block_guard_ring`; the live slot index is
     /// `block_guard_ring_seq % BLOCK_GUARD_RETAIN`.
     pub block_guard_ring_seq: Slot<u64>,
+
+    // ── deferred validator reward Gem delivery ───────────────────
+    /// Inclusive sequence of the oldest pending validator reward Gem batch.
+    pub reward_gem_queue_head: Slot<u64>,
+
+    /// Exclusive sequence for the next validator reward Gem batch append.
+    pub reward_gem_queue_tail: Slot<u64>,
+
+    /// FIFO sequence -> UTC reward day. Zero denotes a cleared queue slot.
+    pub reward_gem_utc_day_by_sequence: Mapping<u64, u32>,
+
+    /// UTC reward day -> FIFO sequence plus one. Zero denotes no live queue item.
+    pub reward_gem_queue_sequence_plus_one: Mapping<u32, u64>,
+
+    /// The exact validator Gem obligation for this day has been calculated.
+    pub daily_topup_prepared: Mapping<u32, bool>,
+
+    /// Permanent digest of the exact prepared batch, retained after delivery.
+    pub reward_gem_batch_digest: Mapping<u32, B256>,
+
+    /// Permanent sum of all non-zero Gem loads prepared for the reward day.
+    pub reward_gem_planned_load_amount: Mapping<u32, U256>,
+
+    /// Number of live pending recipients. Cleared after successful delivery.
+    pub reward_gem_recipient_count: Mapping<u32, u32>,
+
+    /// UTC reward day -> pending recipient index -> owner.
+    pub reward_gem_owner_at: Mapping<u32, Mapping<u32, Address>>,
+
+    /// UTC reward day -> pending recipient index -> exact Gem load.
+    pub reward_gem_load_at: Mapping<u32, Mapping<u32, U256>>,
+
+    /// Reward-day Gem type, frozen at preparation time.
+    pub reward_gem_type: Mapping<u32, u8>,
+
+    /// Reward Gem issuance currency, frozen at preparation time.
+    pub reward_gem_issuance_currency: Mapping<u32, u16>,
+
+    /// Reward Gem reference currency, frozen at preparation time.
+    pub reward_gem_reference_currency: Mapping<u32, u16>,
+
+    /// Live FIFO batch count; must equal `queue_tail - queue_head`.
+    pub reward_gem_pending_batch_count: Slot<u64>,
 }

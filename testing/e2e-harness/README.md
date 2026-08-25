@@ -168,7 +168,7 @@ Actually executing a scenario needs a Linux box with `sudo` + `docker` + `gramin
 (same prerequisites as `mise run e2e`). First build the binaries the steps call:
 
 ```sh
-cargo build --release -p outbe-chain --features test-protocol-overrides --bin outbe-chain
+cargo build --release -p outbe-chain --features e2e-test,test-protocol-overrides --bin outbe-chain
 cargo build --release --bin outbe-cli
 cargo build --release -p outbe-tee-enclave --bin outbe-tee-enclave
 cargo build --release -p outbe-tee-enclave --features mock --bin outbe-tee-enclave-mock

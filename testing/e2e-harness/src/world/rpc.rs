@@ -64,6 +64,17 @@ pub struct TributeZkOffer<'a> {
     pub signature_hex: &'a str,
 }
 
+fn zerofee_rollover_wait_budget_secs(latest_timestamp: u64) -> u64 {
+    const SECONDS_PER_DAY: u64 = 86_400;
+    const MINIMUM_WAIT_SECONDS: u64 = 150;
+    const FINALITY_SLACK_SECONDS: u64 = 60;
+
+    let remaining = SECONDS_PER_DAY - latest_timestamp % SECONDS_PER_DAY;
+    remaining
+        .saturating_add(FINALITY_SLACK_SECONDS)
+        .max(MINIMUM_WAIT_SECONDS)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompressedEntityAtHeader {
     pub result: PointReadResultV1,
@@ -174,6 +185,36 @@ struct NodMaterializationProgressV1 {
     next_nod_ordinal: u32,
     completed: bool,
     block_number: u64,
+}
+
+#[cfg(feature = "ocomp-integration")]
+struct MaterializationStallDeadline {
+    last_progress: u32,
+    deadline: Instant,
+    stall: Duration,
+}
+
+#[cfg(feature = "ocomp-integration")]
+impl MaterializationStallDeadline {
+    fn new(now: Instant, stall: Duration) -> Self {
+        Self {
+            last_progress: 0,
+            deadline: now + stall,
+            stall,
+        }
+    }
+
+    fn last_progress(&self) -> u32 {
+        self.last_progress
+    }
+
+    fn observe(&mut self, now: Instant, progress: u32) -> bool {
+        if progress > self.last_progress {
+            self.last_progress = progress;
+            self.deadline = now + self.stall;
+        }
+        now >= self.deadline
+    }
 }
 
 /// One public `submitLysisResult(bytes)` transaction observed in a canonical
@@ -392,12 +433,39 @@ impl Rpc {
         generation: &OcompCertifiedGenerationV1,
         timeout_seconds: u64,
     ) -> Option<NodMaterializationObservationV1> {
-        let deadline = Instant::now() + Duration::from_secs(timeout_seconds);
+        let stall = Duration::from_secs(timeout_seconds);
+        let mut deadline = MaterializationStallDeadline::new(Instant::now(), stall);
         loop {
             if let Some(completed) = self.completed_nod_materialization(port, generation) {
                 return Some(completed);
             }
-            if Instant::now() >= deadline {
+            let head_progress = self
+                .nod_materialization_head_on(port)
+                .filter(|head| {
+                    head.worldwide_day == generation.worldwide_day
+                        && head.generation == generation.generation
+                })
+                .map_or(deadline.last_progress(), |head| head.next_nod_ordinal);
+            let finalized_progress = if head_progress > deadline.last_progress() {
+                self.materialization_progress_on(
+                    port,
+                    generation.worldwide_day,
+                    generation.generation,
+                )
+                .and_then(|events| events.into_iter().map(|event| event.next_nod_ordinal).max())
+                .unwrap_or(deadline.last_progress())
+            } else {
+                deadline.last_progress()
+            };
+            if deadline.observe(Instant::now(), finalized_progress) {
+                eprintln!(
+                    "NOD materialization made no finalized progress for {timeout_seconds}s: \
+                     worldwide_day={} generation={} cursor={}/{}",
+                    generation.worldwide_day,
+                    generation.generation,
+                    deadline.last_progress(),
+                    generation.nod_count,
+                );
                 return None;
             }
             sleep(Duration::from_millis(250));
@@ -3200,7 +3268,11 @@ impl Rpc {
         let address =
             eth::address_of(key).ok_or_else(|| eyre!("derive ZeroFee fixture address"))?;
         let funder_key = funder.evm_key()?;
-        eth::send_value(&self.cfg.rpc0, address, &funder_key, eth::coen(1))?;
+        // This signer must pay for the EIP-7702 delegation and, in the quota
+        // lifecycle scenario, one deliberately non-sponsored fallback call.
+        // Sponsored calls themselves must leave this post-delegation balance
+        // unchanged; the assertions below verify that separately.
+        eth::send_value(&self.cfg.rpc0, address, &funder_key, eth::coen(10))?;
 
         let auth = eth::read_call(
             &self.cfg.rpc0,
@@ -3470,7 +3542,10 @@ impl Rpc {
     ) -> Result<()> {
         let key = "0x2222222222222222222222222222222222222222222222222222222222222222";
         let address = eth::address_of(key).ok_or_else(|| eyre!("derive negative signer"))?;
-        let funding = self.fund_key(funder, key, 1)?;
+        // The negative lane deliberately submits several ordinary paid
+        // authorization/call envelopes; funding one COEN only covered a single
+        // envelope's gas reservation on the fresh-chain base fee.
+        let funding = self.fund_key(funder, key, 10)?;
         if !self.wait_successful_receipt(&funding, 20) {
             return Err(eyre!("negative signer COEN funding failed: {funding}"));
         }
@@ -3592,10 +3667,16 @@ impl Rpc {
         }
         state.zerofee_day_before_rollover = Some(before.0);
 
+        let start_timestamp = self
+            .latest_block_timestamp(self.cfg.primary_port())
+            .ok_or_else(|| eyre!("read canonical timestamp before ZeroFee rollover"))?;
+        let wait_budget_secs = zerofee_rollover_wait_budget_secs(start_timestamp);
         let mut reset = None;
-        for _ in 0..150 {
+        let mut latest_observation = None;
+        for _ in 0..wait_budget_secs {
             let latest_timestamp = self.latest_block_timestamp(self.cfg.primary_port());
             let current = self.zerofee_counter(address);
+            latest_observation = Some((latest_timestamp, current));
             if latest_timestamp.is_some_and(|timestamp| timestamp % 86_400 < 200)
                 && current.is_some_and(|value| value.0 != before.0 && value.1 == 0)
             {
@@ -3604,7 +3685,12 @@ impl Rpc {
             }
             sleep(Duration::from_secs(1));
         }
-        let _reset = reset.ok_or_else(|| eyre!("ZeroFee counter did not lazily reset"))?;
+        let _reset = reset.ok_or_else(|| {
+            eyre!(
+                "ZeroFee counter did not lazily reset within {wait_budget_secs}s: \
+                 start_timestamp={start_timestamp}, last={latest_observation:?}"
+            )
+        })?;
         state.zerofee_new_day_balance_before = eth::balance(&self.cfg.rpc0, address);
         state.zerofee_new_day_receipt = Some(eth::send_reward_call(
             &self.cfg.rpc0,
@@ -3981,6 +4067,31 @@ mod ocomp_tests {
 
     #[cfg(feature = "ocomp-integration")]
     #[test]
+    fn materialization_stall_deadline_resets_only_for_strict_progress() {
+        let started = Instant::now();
+        let stall = Duration::from_secs(10);
+        let mut deadline = MaterializationStallDeadline::new(started, stall);
+
+        assert!(!deadline.observe(started + Duration::from_secs(9), 0));
+        assert!(!deadline.observe(started + Duration::from_secs(9), 8));
+        assert!(!deadline.observe(started + Duration::from_secs(18), 8));
+        assert!(deadline.observe(started + Duration::from_secs(19), 8));
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn materialization_stall_deadline_ignores_regressing_observations() {
+        let started = Instant::now();
+        let stall = Duration::from_secs(10);
+        let mut deadline = MaterializationStallDeadline::new(started, stall);
+
+        assert!(!deadline.observe(started + Duration::from_secs(5), 16));
+        assert!(!deadline.observe(started + Duration::from_secs(9), 8));
+        assert!(deadline.observe(started + Duration::from_secs(15), 16));
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
     fn first_owner_index_revert_is_not_reported_as_an_absent_nod() {
         let error = classify_owner_index_result(
             0,
@@ -4014,5 +4125,11 @@ mod ocomp_tests {
             .expect("the canonical bounds error is an expected absence"),
             None,
         );
+    }
+
+    #[test]
+    fn zerofee_rollover_wait_budget_covers_the_canonical_distance_to_boundary() {
+        assert_eq!(zerofee_rollover_wait_budget_secs(1_787_615_641), 419);
+        assert_eq!(zerofee_rollover_wait_budget_secs(1_787_615_950), 150);
     }
 }

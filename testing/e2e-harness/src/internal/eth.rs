@@ -30,19 +30,45 @@ use alloy_sol_types::{sol, SolCall};
 use eyre::{eyre, Result};
 use tokio::runtime::Runtime;
 
-/// Fee cap, in COEN units per gas. EIP-1559 charges the block's base fee and
-/// treats this only as the ceiling the sender accepts, so headroom above the
-/// protocol floor costs nothing — it just has to be held up front. Without it a
-/// burst of deploy-sized blocks lifts the base fee and every later send is
-/// rejected as underpriced.
-const GAS_PRICE_UNITS: u128 = MIN_PROTOCOL_BASE_FEE as u128 * 8;
-
 /// Explicit limit used by negative-path calls.
 ///
 /// Supplying a limit prevents the provider from estimating gas first: an
 /// intentional contract revert is then submitted and observed through its
 /// mined receipt instead of being returned as a preflight RPC error.
 const REVERT_FRIENDLY_GAS_LIMIT: u64 = 10_000_000;
+
+/// Maximum fee accepted for a transaction intended for the next block.
+///
+/// EIP-1559 permits the base fee to grow by at most one eighth per block. The
+/// harness reads the latest canonical fee and covers that complete increase,
+/// rather than using a static multiplier that can be simultaneously too low on
+/// a busy chain and needlessly expensive for an account's upfront-balance
+/// check on a fresh chain.
+fn next_block_fee_cap(base_fee: u128, priority_fee: u128) -> Result<u128> {
+    let growth = base_fee / 8 + u128::from(!base_fee.is_multiple_of(8));
+    let next_base_fee = base_fee
+        .checked_add(growth)
+        .ok_or_else(|| eyre!("next-block base fee overflow"))?
+        .max(u128::from(MIN_PROTOCOL_BASE_FEE));
+    next_base_fee
+        .checked_add(priority_fee)
+        .ok_or_else(|| eyre!("next-block max fee overflow"))
+}
+
+fn canonical_next_block_fee_cap(url: &str, priority_fee: u128) -> Result<u128> {
+    let block = raw_json_result(
+        url,
+        "eth_getBlockByNumber",
+        serde_json::json!(["latest", false]),
+    )?;
+    let encoded = block
+        .get("baseFeePerGas")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| eyre!("latest canonical block omitted baseFeePerGas"))?;
+    let base_fee = u128::from_str_radix(encoded.trim_start_matches("0x"), 16)
+        .map_err(|error| eyre!("invalid latest baseFeePerGas {encoded}: {error}"))?;
+    next_block_fee_cap(base_fee, priority_fee)
+}
 
 // Precompile ABI surface the harness reads/writes, generated from the canonical
 // Solidity sources so the harness exercises the same selectors the node
@@ -591,6 +617,7 @@ pub(crate) fn send_call<C: SolCall>(
     call: &C,
     value: Option<U256>,
 ) -> Result<String> {
+    let max_fee = canonical_next_block_fee_cap(url, 0)?;
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
     let wallet = EthereumWallet::from(signer);
     let url = url.to_string();
@@ -602,7 +629,7 @@ pub(crate) fn send_call<C: SolCall>(
         let mut tx = TransactionRequest::default()
             .to(to)
             .input(Bytes::from(data).into())
-            .max_fee_per_gas(GAS_PRICE_UNITS)
+            .max_fee_per_gas(max_fee)
             .max_priority_fee_per_gas(0);
         if let Some(v) = value {
             tx = tx.value(v);
@@ -632,6 +659,7 @@ pub(crate) fn send_calldata(
     calldata: Vec<u8>,
     gas_limit: u64,
 ) -> Result<String> {
+    let max_fee = canonical_next_block_fee_cap(url, 0)?;
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
     let wallet = EthereumWallet::from(signer);
     let url = url.to_string();
@@ -643,7 +671,7 @@ pub(crate) fn send_calldata(
             .to(to)
             .input(Bytes::from(calldata).into())
             .gas_limit(gas_limit)
-            .max_fee_per_gas(GAS_PRICE_UNITS)
+            .max_fee_per_gas(max_fee)
             .max_priority_fee_per_gas(0);
         let pending = tokio::time::timeout(
             std::time::Duration::from_secs(10),
@@ -672,6 +700,7 @@ pub(crate) fn send_call_outcome<C: SolCall>(
     call: &C,
     value: Option<U256>,
 ) -> Result<MinedCallOutcome> {
+    let max_fee = canonical_next_block_fee_cap(url, 0)?;
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
     let wallet = EthereumWallet::from(signer);
     let url = url.to_string();
@@ -684,7 +713,7 @@ pub(crate) fn send_call_outcome<C: SolCall>(
             .to(to)
             .input(Bytes::from(data).into())
             .gas_limit(REVERT_FRIENDLY_GAS_LIMIT)
-            .max_fee_per_gas(GAS_PRICE_UNITS)
+            .max_fee_per_gas(max_fee)
             .max_priority_fee_per_gas(0);
         if let Some(v) = value {
             tx = tx.value(v);
@@ -710,6 +739,7 @@ pub(crate) fn send_prepared_calls_outcomes(
     key: &str,
     calls: Vec<PreparedCall>,
 ) -> Result<Vec<MinedCallOutcome>> {
+    let max_fee = canonical_next_block_fee_cap(url, 0)?;
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
     let sender = signer.address();
     let wallet = EthereumWallet::from(signer);
@@ -731,7 +761,7 @@ pub(crate) fn send_prepared_calls_outcomes(
                 .input(call.data.into())
                 .nonce(nonce)
                 .gas_limit(REVERT_FRIENDLY_GAS_LIMIT)
-                .max_fee_per_gas(GAS_PRICE_UNITS)
+                .max_fee_per_gas(max_fee)
                 .max_priority_fee_per_gas(0);
             if let Some(value) = call.value {
                 tx = tx.value(value);
@@ -764,6 +794,7 @@ pub(crate) fn send_prepared_calls_outcomes(
 
 /// Plain COEN transfer from `key` to `to` (funds a new account).
 pub(crate) fn send_value(url: &str, to: Address, key: &str, value: U256) -> Result<String> {
+    let max_fee = canonical_next_block_fee_cap(url, 0)?;
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
     let wallet = EthereumWallet::from(signer);
     let url = url.to_string();
@@ -774,7 +805,7 @@ pub(crate) fn send_value(url: &str, to: Address, key: &str, value: U256) -> Resu
         let tx = TransactionRequest::default()
             .to(to)
             .value(value)
-            .max_fee_per_gas(GAS_PRICE_UNITS)
+            .max_fee_per_gas(max_fee)
             .max_priority_fee_per_gas(0);
         let pending = provider.send_transaction(tx).await?;
         let receipt = pending.get_receipt().await?;
@@ -794,6 +825,7 @@ pub(crate) fn send_value_at_nonce(
     value: U256,
     nonce: u64,
 ) -> Result<String> {
+    let max_fee = canonical_next_block_fee_cap(url, 0)?;
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
     let wallet = EthereumWallet::from(signer);
     let url = url.to_string();
@@ -806,7 +838,7 @@ pub(crate) fn send_value_at_nonce(
             .value(value)
             .nonce(nonce)
             .gas_limit(21_000)
-            .max_fee_per_gas(GAS_PRICE_UNITS)
+            .max_fee_per_gas(max_fee)
             .max_priority_fee_per_gas(0);
         // Deliberately no `get_receipt()`: this transaction is not expected to
         // be mined.
@@ -883,6 +915,7 @@ pub(crate) fn install_delegation_with_overrides(
     authorization_chain_id: Option<U256>,
     authorization_nonce: Option<u64>,
 ) -> Result<serde_json::Value> {
+    let max_fee = canonical_next_block_fee_cap(url, 0)?;
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
     let authority = signer.address();
     let chain_id = raw_json(url, "eth_chainId")
@@ -909,7 +942,7 @@ pub(crate) fn install_delegation_with_overrides(
             .to(authority)
             .nonce(tx_nonce)
             .gas_limit(100_000)
-            .max_fee_per_gas(GAS_PRICE_UNITS)
+            .max_fee_per_gas(max_fee)
             .max_priority_fee_per_gas(0)
             .with_authorization_list(vec![signed]);
         let pending = provider.send_transaction(tx).await?;
@@ -932,6 +965,7 @@ pub(crate) fn send_reward_call(
     to: Address,
     priority_fee: u128,
 ) -> Result<serde_json::Value> {
+    let max_fee = canonical_next_block_fee_cap(url, priority_fee)?;
     let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
     let wallet = EthereumWallet::from(signer);
     let url = url.to_string();
@@ -940,7 +974,6 @@ pub(crate) fn send_reward_call(
         let provider = ProviderBuilder::new()
             .wallet(wallet)
             .connect_http(url.parse()?);
-        let max_fee = GAS_PRICE_UNITS;
         let tx = TransactionRequest::default()
             .to(to)
             .input(Bytes::from(data).into())
@@ -996,6 +1029,23 @@ mod tests {
     fn coen_scales_to_base_units() {
         assert_eq!(coen(1), U256::from(1_000_000u64));
         assert_eq!(coen(0), U256::ZERO);
+    }
+
+    #[test]
+    fn next_block_fee_cap_covers_the_protocol_floor_and_maximum_base_fee_growth() {
+        assert_eq!(
+            next_block_fee_cap(0, 0).expect("protocol-floor fee cap"),
+            u128::from(MIN_PROTOCOL_BASE_FEE)
+        );
+        assert_eq!(next_block_fee_cap(7, 0).expect("one-block fee cap"), 8);
+        assert_eq!(next_block_fee_cap(8, 0).expect("exact eighth fee cap"), 9);
+    }
+
+    #[test]
+    fn next_block_fee_cap_adds_priority_without_hiding_overflow() {
+        assert_eq!(next_block_fee_cap(7, 3).expect("priority fee cap"), 11);
+        assert!(next_block_fee_cap(u128::MAX, 0).is_err());
+        assert!(next_block_fee_cap(u128::MAX - 1, 2).is_err());
     }
 
     #[test]

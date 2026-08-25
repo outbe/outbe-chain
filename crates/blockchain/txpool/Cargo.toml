@@ -38,8 +38,10 @@ alloy-sol-types.workspace = true
 futures.workspace = true
 outbe-oracle.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
+reth-tasks.workspace = true
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
 
 [lints]
 workspace = true

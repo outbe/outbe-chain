@@ -1,5 +1,5 @@
-//! Daily price-path scan: the floor latch, the multi-week breach-count call, and the void
-//! of a lapsed settlement window.
+//! Daily price-path scan: the multi-week breach-count call and the void of a
+//! lapsed settlement window.
 //!
 //! Every test drives [`crate::called::scan_and_call`] through the `scan` harness
 //! helper against a seeded finalized daily series, which is the only price source
@@ -45,79 +45,6 @@ fn open_with_series(storage: &StorageHandle<'_>, at: u64, days: u32, price: U256
 }
 
 #[test]
-fn a_day_above_the_floor_latches_an_open_position() {
-    let mut storage = env();
-    StorageHandle::enter(&mut storage, |storage| {
-        bootstrap(&storage, pledge_cost());
-        let position_id = open(&storage, 1);
-        assert_eq!(state_of(&storage, position_id), CredisState::Open);
-
-        // A closed day below the floor (2.16) leaves it Open.
-        let at = CREATED_AT + 2 * DAY;
-        advance_to(&storage, at);
-        set_vwap(&storage, last_closed_day(at), oracle_rate());
-        assert_eq!(scan(&storage, at), 0);
-        assert_eq!(state_of(&storage, position_id), CredisState::Open);
-
-        // A closed day above it latches, with no settle call involved.
-        let at = at + DAY;
-        advance_to(&storage, at);
-        set_vwap(&storage, last_closed_day(at), above_floor());
-        assert_eq!(scan(&storage, at), 1);
-        assert_eq!(state_of(&storage, position_id), CredisState::Settleable);
-    });
-    teardown();
-}
-
-#[test]
-fn a_day_exactly_at_the_floor_does_not_latch() {
-    let mut storage = env();
-    StorageHandle::enter(&mut storage, |storage| {
-        bootstrap(&storage, pledge_cost());
-        let position_id = open(&storage, 1);
-
-        // §4 unlocks settlement when the price *exceeds* the floor, so the floor
-        // itself is not a crossing.
-        let at = CREATED_AT + 2 * DAY;
-        advance_to(&storage, at);
-        set_vwap(&storage, last_closed_day(at), at_floor());
-        assert_eq!(scan(&storage, at), 0);
-        assert_eq!(state_of(&storage, position_id), CredisState::Open);
-
-        // One minor unit above it does latch.
-        let at = at + DAY;
-        advance_to(&storage, at);
-        set_vwap(&storage, last_closed_day(at), at_floor() + U256::from(1u64));
-        assert_eq!(scan(&storage, at), 1);
-        assert_eq!(state_of(&storage, position_id), CredisState::Settleable);
-    });
-    teardown();
-}
-
-#[test]
-fn the_latch_is_one_way_across_runs() {
-    let mut storage = env();
-    StorageHandle::enter(&mut storage, |storage| {
-        bootstrap(&storage, pledge_cost());
-        let position_id = open(&storage, 1);
-
-        let at = CREATED_AT + 2 * DAY;
-        advance_to(&storage, at);
-        set_vwap(&storage, last_closed_day(at), above_floor());
-        assert_eq!(scan(&storage, at), 1);
-
-        // The price falls back below the floor; the position stays settleable and
-        // the next run has nothing to do.
-        let at = at + DAY;
-        advance_to(&storage, at);
-        set_vwap(&storage, last_closed_day(at), oracle_rate());
-        assert_eq!(scan(&storage, at), 0);
-        assert_eq!(state_of(&storage, position_id), CredisState::Settleable);
-    });
-    teardown();
-}
-
-#[test]
 fn a_full_window_at_the_call_price_calls_the_position() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
@@ -125,8 +52,6 @@ fn a_full_window_at_the_call_price_calls_the_position() {
         let at = CREATED_AT + AFTER_WINDOW;
         let position_id = open_with_series(&storage, at, CALL_LOOKBACK_DAYS, at_call());
 
-        // Latch and call land in the same run: a day at the call price is by
-        // construction above the floor.
         assert_eq!(scan(&storage, at), 1);
         assert_eq!(state_of(&storage, position_id), CredisState::Called);
 
@@ -180,7 +105,7 @@ fn the_window_absorbs_below_call_days_up_to_the_slack() {
                 offset < CALL_LOOKBACK_DAYS,
                 "below-call day {offset} falls outside the lookback window"
             );
-            set_vwap(&storage, day_back(at, offset), above_floor());
+            set_vwap(&storage, day_back(at, offset), below_call());
         }
 
         assert_eq!(scan(&storage, at), 1);
@@ -200,11 +125,11 @@ fn one_breach_day_short_of_the_threshold_does_not_call() {
         // One more below-call day than the window can absorb.
         let below = CALL_LOOKBACK_DAYS - CALL_BREACH_DAYS + 1;
         for i in 0..below {
-            set_vwap(&storage, day_back(at, i + 1), above_floor());
+            set_vwap(&storage, day_back(at, i + 1), below_call());
         }
 
-        assert_eq!(scan(&storage, at), 1, "latches only");
-        assert_eq!(state_of(&storage, position_id), CredisState::Settleable);
+        assert_eq!(scan(&storage, at), 0);
+        assert_eq!(state_of(&storage, position_id), CredisState::Open);
 
         // Raising one of them back over the call price completes the threshold.
         set_vwap(&storage, day_back(at, 1), at_call());
@@ -232,8 +157,8 @@ fn missing_days_do_not_count_as_breaches() {
         // The watermark must still cover the window, or the run would skip.
         finalize_through(&storage, at);
 
-        assert_eq!(scan(&storage, at), 1, "latches only");
-        assert_eq!(state_of(&storage, position_id), CredisState::Settleable);
+        assert_eq!(scan(&storage, at), 0);
+        assert_eq!(state_of(&storage, position_id), CredisState::Open);
 
         // Filling one more published day reaches the threshold, even though the
         // rest of the window still has no price at all.
@@ -261,8 +186,8 @@ fn a_breach_run_that_predates_the_position_does_not_call_it() {
             at_call(),
         );
 
-        assert_eq!(scan(&storage, at), 1, "latches only");
-        assert_eq!(state_of(&storage, position_id), CredisState::Settleable);
+        assert_eq!(scan(&storage, at), 0);
+        assert_eq!(state_of(&storage, position_id), CredisState::Open);
 
         // Once the position is old enough for the window to sit entirely after
         // its origination day, the call fires.
@@ -352,10 +277,11 @@ fn the_call_and_the_void_compose_across_runs() {
 }
 
 #[test]
-fn each_currency_latches_off_its_own_daily_series() {
+fn each_currency_prices_off_its_own_daily_series() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
+        let at = CREATED_AT + AFTER_WINDOW;
         let position_id = open(&storage, 1);
 
         // Re-point the stored position at an unregistered currency, so it prices
@@ -367,11 +293,14 @@ fn each_currency_latches_off_its_own_daily_series() {
             credis.positions.update(&position).unwrap();
         }
 
-        // USD's series is far above the floor, but this position is not in USD.
-        let at = CREATED_AT + 2 * DAY;
+        // USD's series is a full breach window, but this position is not in USD.
         advance_to(&storage, at);
-        set_vwap(&storage, last_closed_day(at), at_call());
-        assert_eq!(scan(&storage, at), 0, "an unpriced currency never latches");
+        fill_days(&storage, last_closed_day(at), CALL_LOOKBACK_DAYS, at_call());
+        assert_eq!(
+            scan(&storage, at),
+            0,
+            "an unpriced currency is never called"
+        );
         assert_eq!(state_of(&storage, position_id), CredisState::Open);
     });
     teardown();
@@ -407,13 +336,13 @@ fn a_completed_pass_resets_the_cursor() {
             3
         );
 
-        let at = CREATED_AT + 2 * DAY;
+        let at = CREATED_AT + AFTER_WINDOW;
         advance_to(&storage, at);
-        set_vwap(&storage, last_closed_day(at), above_floor());
+        fill_days(&storage, last_closed_day(at), CALL_LOOKBACK_DAYS, at_call());
 
         assert_eq!(scan(&storage, at), 3);
         for id in &ids {
-            assert_eq!(state_of(&storage, *id), CredisState::Settleable);
+            assert_eq!(state_of(&storage, *id), CredisState::Called);
         }
         assert_eq!(cursor_of(&storage), 0, "a completed pass resets the cursor");
     });
@@ -433,14 +362,14 @@ fn a_resumed_pass_starts_at_the_cursor_and_walks_down() {
             .write(2)
             .unwrap();
 
-        let at = CREATED_AT + 2 * DAY;
+        let at = CREATED_AT + AFTER_WINDOW;
         advance_to(&storage, at);
-        set_vwap(&storage, last_closed_day(at), above_floor());
+        fill_days(&storage, last_closed_day(at), CALL_LOOKBACK_DAYS, at_call());
 
         // Only indices 1 and 0 are visited; the position at index 2 is untouched.
         assert_eq!(scan(&storage, at), 2);
-        assert_eq!(state_of(&storage, ids[0]), CredisState::Settleable);
-        assert_eq!(state_of(&storage, ids[1]), CredisState::Settleable);
+        assert_eq!(state_of(&storage, ids[0]), CredisState::Called);
+        assert_eq!(state_of(&storage, ids[1]), CredisState::Called);
         assert_eq!(
             state_of(&storage, ids[2]),
             CredisState::Open,
@@ -450,7 +379,7 @@ fn a_resumed_pass_starts_at_the_cursor_and_walks_down() {
 
         // The next pass starts fresh from the top and picks it up.
         assert_eq!(scan(&storage, at), 1);
-        assert_eq!(state_of(&storage, ids[2]), CredisState::Settleable);
+        assert_eq!(state_of(&storage, ids[2]), CredisState::Called);
     });
     teardown();
 }
@@ -461,14 +390,13 @@ fn voiding_several_positions_in_one_pass_skips_none() {
     StorageHandle::enter(&mut storage, |storage| {
         let ids = open_three(&storage);
 
-        // Latch and call all three by hand, then let the window lapse. The point
+        // Call all three by hand, then let the window lapse. The point
         // of the test is the traversal: each void swap-pops the active list, and
         // the descending walk must still visit every entry exactly once.
         let called_at = CREATED_AT;
         {
             let mut credis = CredisContract::new(storage.clone());
             for id in &ids {
-                assert!(credis.mark_settleable(*id).unwrap());
                 assert!(credis.mark_called(*id, called_at).unwrap());
             }
         }
@@ -490,7 +418,7 @@ fn voiding_several_positions_in_one_pass_skips_none() {
 }
 
 #[test]
-fn the_void_budget_bounds_one_run_without_starving_the_price_arms() {
+fn the_void_budget_bounds_one_run_without_starving_the_call_arm() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         let budget = crate::called::MAX_CREDIS_VOIDS_PER_RUN;
@@ -512,32 +440,34 @@ fn the_void_budget_bounds_one_run_without_starving_the_price_arms() {
         {
             let mut credis = CredisContract::new(storage.clone());
             for id in &ids[1..] {
-                assert!(credis.mark_settleable(*id).unwrap());
                 assert!(credis.mark_called(*id, called_at).unwrap());
             }
         }
 
-        let lapsed = called_at + 14 * DAY;
+        // Far enough past the call that the window has lapsed AND a full breach
+        // window sits entirely after the positions' origination day.
+        let lapsed = called_at + AFTER_WINDOW;
         advance_to(&storage, lapsed);
-        set_vwap(&storage, last_closed_day(lapsed), above_floor());
+        fill_days(
+            &storage,
+            last_closed_day(lapsed),
+            CALL_LOOKBACK_DAYS,
+            at_call(),
+        );
 
         // A void costs two enclave round-trips, so the run stops voiding at the
         // budget — but it must keep walking. The Open position behind the
-        // exhausted budget still latches in this same run.
-        assert_eq!(
-            scan(&storage, lapsed),
-            budget + 1,
-            "64 voids plus the latch"
-        );
+        // exhausted budget is still called in this same run.
+        assert_eq!(scan(&storage, lapsed), budget + 1, "64 voids plus the call");
         assert_eq!(
             state_of(&storage, ids[0]),
-            CredisState::Settleable,
-            "a void backlog must not throttle the latch and call arms"
+            CredisState::Called,
+            "a void backlog must not throttle the call arm"
         );
         assert_eq!(
             CredisContract::new(storage.clone()).active_len().unwrap(),
             2,
-            "the latched position plus the one void the budget declined"
+            "the newly called position plus the one void the budget declined"
         );
         assert_eq!(cursor_of(&storage), 0, "the pass completed despite the cap");
 

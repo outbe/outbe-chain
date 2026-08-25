@@ -31,10 +31,12 @@
 
 use commonware_consensus::types::Epoch;
 use commonware_p2p::{
-    utils::mux::{MuxHandle, SubReceiver, SubSender},
+    utils::mux::{Error as MuxError, MuxHandle, SubReceiver, SubSender},
     Receiver as P2pReceiver, Sender as P2pSender,
 };
+use commonware_runtime::Clock;
 use eyre::{Result, WrapErr as _};
+use std::time::Duration;
 
 /// Pre-registered (or freshly-registered) vote / cert / resolver
 /// Mux sub-channels for one consensus epoch. Held in a stash from
@@ -74,18 +76,94 @@ where
     S: P2pSender,
     R: P2pReceiver<PublicKey = S::PublicKey>,
 {
+    try_register_epoch_subchannels(epoch, vote_mux, cert_mux, res_mux)
+        .await
+        .map_err(|(channel, error)| {
+            eyre::eyre!("register {channel} subchannel for epoch {epoch}: {error}")
+        })
+}
+
+/// Reacquire the three routes for an engine replacement in the same epoch.
+///
+/// Aborting the old Simplex root recursively aborts its actor descendants, but
+/// awaiting that root does not join every descendant. Their `SubReceiver`s can
+/// therefore deregister a few scheduler turns later. Retrying only
+/// `AlreadyRegistered` closes that teardown race without permitting two live
+/// receivers: a successful registration can happen only after the Mux has
+/// processed the old receiver's `Deregister` control message. Any closed Mux or
+/// bounded local timeout is fatal to the caller.
+pub async fn reacquire_epoch_subchannels<S, R, C>(
+    epoch: Epoch,
+    clock: &C,
+    timeout: Duration,
+    retry_interval: Duration,
+    vote_mux: &mut MuxHandle<S, R>,
+    cert_mux: &mut MuxHandle<S, R>,
+    res_mux: &mut MuxHandle<S, R>,
+) -> Result<EpochSubchannels<S, R>>
+where
+    S: P2pSender,
+    R: P2pReceiver<PublicKey = S::PublicKey>,
+    C: Clock,
+{
+    let deadline = clock
+        .current()
+        .checked_add(timeout)
+        .ok_or_else(|| eyre::eyre!("same-epoch subchannel timeout overflows SystemTime"))?;
+    loop {
+        match try_register_epoch_subchannels(epoch, vote_mux, cert_mux, res_mux).await {
+            Ok(channels) => return Ok(channels),
+            Err((channel, MuxError::AlreadyRegistered(_))) if clock.current() < deadline => {
+                tracing::debug!(
+                    %epoch,
+                    channel,
+                    "waiting for prior same-epoch Mux receiver to deregister"
+                );
+                clock.sleep(retry_interval).await;
+            }
+            Err((channel, MuxError::AlreadyRegistered(_))) => {
+                return Err(eyre::eyre!(
+                    "timed out after {timeout:?} reacquiring {channel} subchannel for epoch {epoch}"
+                ));
+            }
+            Err((channel, error)) => {
+                return Err(eyre::eyre!(
+                    "reacquire {channel} subchannel for epoch {epoch}: {error}"
+                ));
+            }
+        }
+    }
+}
+
+async fn try_register_epoch_subchannels<S, R>(
+    epoch: Epoch,
+    vote_mux: &mut MuxHandle<S, R>,
+    cert_mux: &mut MuxHandle<S, R>,
+    res_mux: &mut MuxHandle<S, R>,
+) -> std::result::Result<EpochSubchannels<S, R>, (&'static str, MuxError)>
+where
+    S: P2pSender,
+    R: P2pReceiver<PublicKey = S::PublicKey>,
+{
     let vote = vote_mux
         .register(epoch.get())
         .await
-        .map_err(|e| eyre::eyre!("register vote subchannel for epoch {epoch}: {e}"))?;
-    let cert = cert_mux
-        .register(epoch.get())
-        .await
-        .map_err(|e| eyre::eyre!("register cert subchannel for epoch {epoch}: {e}"))?;
-    let res = res_mux
-        .register(epoch.get())
-        .await
-        .map_err(|e| eyre::eyre!("register res subchannel for epoch {epoch}: {e}"))?;
+        .map_err(|error| ("vote", error))?;
+    let cert = match cert_mux.register(epoch.get()).await {
+        Ok(cert) => cert,
+        Err(error) => {
+            drop(vote);
+            return Err(("cert", error));
+        }
+    };
+    let res = match res_mux.register(epoch.get()).await {
+        Ok(res) => res,
+        Err(error) => {
+            drop(cert);
+            drop(vote);
+            return Err(("res", error));
+        }
+    };
     Ok(EpochSubchannels {
         epoch,
         vote,

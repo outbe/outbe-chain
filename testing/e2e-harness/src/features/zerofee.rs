@@ -9,12 +9,17 @@ use crate::world::localnet::StartOpts;
 use crate::world::World;
 
 const ZEROFEE_BOUNDARY_FORMING_PERIOD_SECONDS: u64 = 50 * 60 * 60;
+const ZEROFEE_BOUNDARY_LEAD_SECONDS: u64 = 10 * 60;
 
 fn boundary_protocol_tuning() -> [(&'static str, String); 1] {
     [(
         "TESTNET_METADOSIS_FORMING_SECONDS",
         ZEROFEE_BOUNDARY_FORMING_PERIOD_SECONDS.to_string(),
     )]
+}
+
+fn boundary_start_opts(now_secs: u64) -> StartOpts {
+    StartOpts::near_next_utc_day_with_lead(20, now_secs, ZEROFEE_BOUNDARY_LEAD_SECONDS)
 }
 
 #[given("a fresh localnet near the next UTC worldwide-day boundary")]
@@ -24,13 +29,13 @@ fn near_day_boundary(world: &mut World) {
         .expect("system time after epoch")
         .as_secs();
     let tuning = boundary_protocol_tuning();
-    boot_localnet_with_opts(world, 20, &tuning, StartOpts::near_next_utc_day(20, now));
+    boot_localnet_with_opts(world, 20, &tuning, boundary_start_opts(now));
     let timestamp = world
         .rpc
         .latest_block_timestamp(world.validators.primary_port())
         .expect("latest block timestamp in boundary setup");
     assert!(
-        timestamp % 86_400 >= 86_200,
+        timestamp % 86_400 >= 86_400 - ZEROFEE_BOUNDARY_LEAD_SECONDS,
         "debug-node clock did not enter the worldwide-day boundary window: {timestamp}"
     );
 }
@@ -53,6 +58,22 @@ mod tests {
             boundary_protocol_tuning(),
             [("TESTNET_METADOSIS_FORMING_SECONDS", "180000".to_owned())]
         );
+    }
+
+    #[test]
+    fn boundary_profile_leaves_sgx_bootstrap_and_feeder_publication_headroom() {
+        const NOW: u64 = 1_700_000_000;
+        const SECONDS_PER_DAY: u64 = 86_400;
+
+        let opts = boundary_start_opts(NOW);
+        let shifted_now = (NOW as i64
+            + opts
+                .unix_time_offset_secs
+                .expect("boundary profile must shift the node clock"))
+            as u64;
+        let next_day = NOW - (NOW % SECONDS_PER_DAY) + SECONDS_PER_DAY;
+
+        assert_eq!(next_day - shifted_now, 600);
     }
 }
 

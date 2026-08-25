@@ -13,7 +13,7 @@ use outbe_evm::system_tx::{
     OcompLifecycleActivation, SystemTxError, SystemTxInputV2, SystemTxKind, SystemTxLayout,
     SystemTxPhase, BOUNDARY_OUTCOME_SELECTOR, CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
     CYCLE_TICK_SELECTOR, OCOMP_LIFECYCLE_BEGIN_SELECTOR, OCOMP_TERMINAL_REQUEST_SELECTOR,
-    ORACLE_SLASH_WINDOW_SELECTOR, SYSTEM_TX_INPUT_VERSION,
+    ORACLE_SLASH_WINDOW_SELECTOR, REWARDS_GEM_DELIVERY_SELECTOR, SYSTEM_TX_INPUT_VERSION,
 };
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use reth_ethereum::TransactionSigned;
@@ -41,6 +41,7 @@ fn ocomp_system_input(kind: SystemTxKind) -> SystemTxInputV2 {
         },
         SystemTxKind::OcompLifecycleBegin => SystemTxInputV2::OcompLifecycleBegin,
         SystemTxKind::CycleTick => SystemTxInputV2::CycleTick,
+        SystemTxKind::RewardsGemDelivery => SystemTxInputV2::RewardsGemDelivery,
         SystemTxKind::OracleSlashWindow => SystemTxInputV2::OracleSlashWindow,
         SystemTxKind::HookEvents => SystemTxInputV2::HookEvents,
         SystemTxKind::OcompTerminalRequest => SystemTxInputV2::OcompTerminalRequest,
@@ -86,6 +87,7 @@ fn active_selectors_have_expected_byte_sequence() {
         [0x4f, 0x53, 0x41, 0x33]
     ); // "OSA3"
     assert_eq!(CYCLE_TICK_SELECTOR, [0x4f, 0x53, 0x43, 0x32]); // "OSC2"
+    assert_eq!(REWARDS_GEM_DELIVERY_SELECTOR, [0x4f, 0x53, 0x47, 0x32]); // "OSG2"
     assert_eq!(BOUNDARY_OUTCOME_SELECTOR, [0x4f, 0x53, 0x42, 0x32]); // "OSB2"
     assert_eq!(ORACLE_SLASH_WINDOW_SELECTOR, [0x4f, 0x53, 0x4f, 0x32]); // "OSO2"
     assert_eq!(SYSTEM_TX_INPUT_VERSION, 2);
@@ -100,9 +102,10 @@ fn v2_selectors_differ_from_legacy_v1_selectors() {
         *b"OSB1", // legacy BoundaryOutcome
         *b"OSO1", // legacy OracleSlashWindow
     ];
-    let v2_selectors: [[u8; 4]; 4] = [
+    let v2_selectors: [[u8; 4]; 5] = [
         CERTIFIED_PARENT_ACCOUNTING_SELECTOR,
         CYCLE_TICK_SELECTOR,
+        REWARDS_GEM_DELIVERY_SELECTOR,
         BOUNDARY_OUTCOME_SELECTOR,
         ORACLE_SLASH_WINDOW_SELECTOR,
     ];
@@ -173,6 +176,7 @@ fn block_1_layout_requires_boundary_outcome_for_v2() {
         expected,
         vec![
             SystemTxKind::CycleTick,
+            SystemTxKind::RewardsGemDelivery,
             SystemTxKind::BoundaryOutcome,
             SystemTxKind::OracleSlashWindow,
             SystemTxKind::HookEvents,
@@ -215,6 +219,7 @@ fn ocomp_lifecycle_appears_at_activation_height_in_canonical_zones() {
             SystemTxKind::CertifiedParentAccounting,
             SystemTxKind::LateFinalizeCredits,
             SystemTxKind::CycleTick,
+            SystemTxKind::RewardsGemDelivery,
             SystemTxKind::OracleSlashWindow,
             SystemTxKind::HookEvents,
         ]
@@ -230,6 +235,7 @@ fn ocomp_lifecycle_appears_at_activation_height_in_canonical_zones() {
                 SystemTxKind::LateFinalizeCredits,
                 SystemTxKind::OcompLifecycleBegin,
                 SystemTxKind::CycleTick,
+                SystemTxKind::RewardsGemDelivery,
                 SystemTxKind::OracleSlashWindow,
                 SystemTxKind::HookEvents,
             ]
@@ -278,10 +284,11 @@ fn active_ocomp_layout_splits_begin_users_and_terminal_request() {
         signed_ocomp_system_tx(SystemTxKind::LateFinalizeCredits, 1),
         signed_ocomp_system_tx(SystemTxKind::OcompLifecycleBegin, 2),
         signed_ocomp_system_tx(SystemTxKind::CycleTick, 3),
-        signed_ocomp_system_tx(SystemTxKind::OracleSlashWindow, 4),
-        signed_ocomp_system_tx(SystemTxKind::HookEvents, 5),
+        signed_ocomp_system_tx(SystemTxKind::RewardsGemDelivery, 4),
+        signed_ocomp_system_tx(SystemTxKind::OracleSlashWindow, 5),
+        signed_ocomp_system_tx(SystemTxKind::HookEvents, 6),
         user_tx(),
-        signed_ocomp_system_tx(SystemTxKind::OcompTerminalRequest, 6),
+        signed_ocomp_system_tx(SystemTxKind::OcompTerminalRequest, 7),
     ];
 
     let layout = split_system_layout(&txs).expect("canonical begin/user/end layout splits");
@@ -303,7 +310,7 @@ fn active_ocomp_layout_splits_begin_users_and_terminal_request() {
 fn active_ocomp_layout_supports_an_empty_user_zone() {
     let activation = OcompLifecycleActivation::at_block(OCOMP_TEST_BLOCK);
     let mut txs = canonical_active_ocomp_transactions();
-    txs.remove(6);
+    txs.remove(7);
 
     let layout =
         split_system_layout(&txs).expect("terminal suffix remains distinct without user txs");
@@ -332,9 +339,11 @@ fn active_ocomp_cursor_places_lifecycle_begin_before_cycle_tick() {
     let phase = phase.advance_after_commit_with_ocomp(false, false, true);
     assert_eq!(phase, SystemTxPhase::CycleTick { body_index: 3 });
     let phase = phase.advance_after_commit_with_ocomp(false, false, true);
-    assert_eq!(phase, SystemTxPhase::OracleSlashWindow { body_index: 4 });
+    assert_eq!(phase, SystemTxPhase::RewardsGemDelivery { body_index: 4 });
     let phase = phase.advance_after_commit_with_ocomp(false, false, true);
-    assert_eq!(phase, SystemTxPhase::HookEvents { body_index: 5 });
+    assert_eq!(phase, SystemTxPhase::OracleSlashWindow { body_index: 5 });
+    let phase = phase.advance_after_commit_with_ocomp(false, false, true);
+    assert_eq!(phase, SystemTxPhase::HookEvents { body_index: 6 });
     assert_eq!(
         phase.advance_after_commit_with_ocomp(false, false, true),
         SystemTxPhase::UserTxs
@@ -347,10 +356,11 @@ fn canonical_active_ocomp_transactions() -> Vec<TransactionSigned> {
         signed_ocomp_system_tx(SystemTxKind::LateFinalizeCredits, 1),
         signed_ocomp_system_tx(SystemTxKind::OcompLifecycleBegin, 2),
         signed_ocomp_system_tx(SystemTxKind::CycleTick, 3),
-        signed_ocomp_system_tx(SystemTxKind::OracleSlashWindow, 4),
-        signed_ocomp_system_tx(SystemTxKind::HookEvents, 5),
+        signed_ocomp_system_tx(SystemTxKind::RewardsGemDelivery, 4),
+        signed_ocomp_system_tx(SystemTxKind::OracleSlashWindow, 5),
+        signed_ocomp_system_tx(SystemTxKind::HookEvents, 6),
         user_tx(),
-        signed_ocomp_system_tx(SystemTxKind::OcompTerminalRequest, 6),
+        signed_ocomp_system_tx(SystemTxKind::OcompTerminalRequest, 7),
     ]
 }
 
@@ -410,8 +420,45 @@ fn malformed_ocomp_suffixes_and_cross_fork_envelopes_are_rejected() {
     ));
 }
 
+#[test]
+fn rewards_gem_delivery_is_mandatory_unique_and_immediately_after_cycle() {
+    let activation = OcompLifecycleActivation::at_block(OCOMP_TEST_BLOCK);
+
+    let mut missing = canonical_active_ocomp_transactions();
+    missing.remove(4);
+    let layout = split_system_layout(&missing).unwrap();
+    assert!(matches!(
+        validate_system_tx_set_for_activation(&layout, OCOMP_TEST_BLOCK, false, false, activation,),
+        Err(SystemTxError::ActiveSystemTxSetMismatch { .. })
+    ));
+
+    let mut duplicate = canonical_active_ocomp_transactions();
+    duplicate.insert(
+        5,
+        signed_ocomp_system_tx(SystemTxKind::RewardsGemDelivery, 8),
+    );
+    assert!(matches!(
+        split_system_layout(&duplicate),
+        Err(SystemTxError::OutOfOrder {
+            zone: BodyZone::BeginBlock,
+            ..
+        })
+    ));
+
+    let mut reordered = canonical_active_ocomp_transactions();
+    reordered.swap(3, 4);
+    assert!(matches!(
+        split_system_layout(&reordered),
+        Err(SystemTxError::OutOfOrder {
+            zone: BodyZone::BeginBlock,
+            ..
+        })
+    ));
+}
+
 /// V2 begin-zone ordering: CertifiedParentAccounting (≥2), CycleTick (≥1),
-/// BoundaryOutcome (when present), OracleSlashWindow (≥1).
+/// RewardsGemDelivery (≥1), BoundaryOutcome (when present),
+/// OracleSlashWindow (≥1).
 #[test]
 fn v2_begin_zone_ordering_is_canonical() {
     // Block 2+ canonical layout (no BoundaryOutcome on the parent).
@@ -422,6 +469,7 @@ fn v2_begin_zone_ordering_is_canonical() {
             SystemTxKind::CertifiedParentAccounting,
             SystemTxKind::LateFinalizeCredits,
             SystemTxKind::CycleTick,
+            SystemTxKind::RewardsGemDelivery,
             SystemTxKind::OracleSlashWindow,
             SystemTxKind::HookEvents,
         ],
@@ -435,6 +483,7 @@ fn v2_begin_zone_ordering_is_canonical() {
             SystemTxKind::CertifiedParentAccounting,
             SystemTxKind::LateFinalizeCredits,
             SystemTxKind::CycleTick,
+            SystemTxKind::RewardsGemDelivery,
             SystemTxKind::BoundaryOutcome,
             SystemTxKind::OracleSlashWindow,
             SystemTxKind::HookEvents,
@@ -446,6 +495,7 @@ fn v2_begin_zone_ordering_is_canonical() {
         SystemTxKind::CertifiedParentAccounting,
         SystemTxKind::LateFinalizeCredits,
         SystemTxKind::CycleTick,
+        SystemTxKind::RewardsGemDelivery,
         SystemTxKind::BoundaryOutcome,
         SystemTxKind::OracleSlashWindow,
         SystemTxKind::HookEvents,

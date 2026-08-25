@@ -550,7 +550,7 @@ mod tests {
         // accumulators, per-voter participation, and the monotonic
         // `max_observed_finalized_day` watermark. Day-boundary settle
         // is owned by the new Cycle orchestrator and
-        // fires via `crate::api::add_topup_for_voters`, not from this
+        // fires via `crate::api::prepare_daily_validator_gem_batch`, not from this
         // hook.
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);
         storage.enter(|handle| {
