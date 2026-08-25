@@ -393,9 +393,37 @@ pub(crate) fn parked_origin_sends(world: &World) -> u32 {
 }
 sol! {
     #[sol(alloy_sol_types = alloy_sol_types)]
+    struct IntexCallTrigger {
+        uint32 callWindow;
+        uint32 callThreshold;
+        uint32 callNoticePeriod;
+    }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    struct SeriesData {
+        uint16 issuanceCurrency;
+        uint16 referenceCurrency;
+        uint32 issuedIntexCount;
+        uint128 promisLoadMinor;
+        uint64 entryPriceMinor;
+        uint64 floorPriceMinor;
+        uint64 callPriceMinor;
+        IntexCallTrigger callTrigger;
+        uint32 issuedAt;
+        uint32 calledAt;
+        uint32 totalSupply;
+        uint8 status;
+        uint8 state;
+        uint32 worldwideDay;
+    }
+
+    #[sol(alloy_sol_types = alloy_sol_types)]
     interface IIssuedSeries {
         function seriesExists(bytes14 seriesId) external view returns (bool);
         function issuedTokenId(bytes14 seriesId) external pure returns (uint256);
+        function settledTokenId(bytes14 seriesId) external pure returns (uint256);
+        function statusOf(uint256 tokenId) external view returns (uint8);
+        function readData(bytes14 seriesId) external view returns (SeriesData);
         function balanceOf(address account, uint256 id) external view returns (uint256);
     }
 }
@@ -463,4 +491,102 @@ pub(crate) fn cleared_empty(url: &str, worldwide_day: u32) -> Option<bool> {
         return Some(false);
     }
     None
+}
+
+/// What `holder` owns of `series`: units still issued, and units already settled.
+pub(crate) fn series_balances(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+    holder: Address,
+) -> Option<(u64, u64)> {
+    let issued_id = eth::read_call(
+        url,
+        nft,
+        &IIssuedSeries::issuedTokenIdCall { seriesId: series },
+    )?;
+    let settled_id = eth::read_call(
+        url,
+        nft,
+        &IIssuedSeries::settledTokenIdCall { seriesId: series },
+    )?;
+    let issued = eth::read_call(
+        url,
+        nft,
+        &IIssuedSeries::balanceOfCall {
+            account: holder,
+            id: issued_id,
+        },
+    )?;
+    let settled = eth::read_call(
+        url,
+        nft,
+        &IIssuedSeries::balanceOfCall {
+            account: holder,
+            id: settled_id,
+        },
+    )?;
+    Some((issued.to::<u64>(), settled.to::<u64>()))
+}
+
+/// Whether the collection knows the series at all.
+pub(crate) fn series_exists(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+) -> bool {
+    eth::read_call(
+        url,
+        nft,
+        &IIssuedSeries::seriesExistsCall { seriesId: series },
+    )
+    .unwrap_or_default()
+}
+
+/// A series' lifecycle state as the collection has it: 0 Issued, 1 Qualified, 2 Called.
+pub(crate) fn series_state(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+) -> Option<u8> {
+    eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series })
+        .map(|data| data.state)
+}
+
+/// The prices the engine derived at issuance: entry, floor, and call.
+pub(crate) fn series_prices(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+) -> Option<(u64, u64, u64)> {
+    eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series }).map(|data| {
+        (
+            data.entryPriceMinor,
+            data.floorPriceMinor,
+            data.callPriceMinor,
+        )
+    })
+}
+
+/// PROMIS-units the series carries per Intex unit.
+pub(crate) fn series_promis_load(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+) -> Option<u128> {
+    eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series })
+        .map(|data| data.promisLoadMinor)
+}
+
+/// The Issued token id of `series`, which the bridge moves.
+pub(crate) fn issued_token_id(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+) -> Option<alloy_primitives::U256> {
+    eth::read_call(
+        url,
+        nft,
+        &IIssuedSeries::issuedTokenIdCall { seriesId: series },
+    )
 }

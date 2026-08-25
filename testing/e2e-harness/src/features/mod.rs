@@ -11,6 +11,7 @@
 
 pub mod common;
 pub mod governance;
+pub mod intex_lifecycle;
 pub mod update;
 
 #[cfg(feature = "ocomp-integration")]
