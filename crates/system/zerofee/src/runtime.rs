@@ -10,15 +10,14 @@
 //!    callers cannot drift.
 //!
 //! 2. [`authorize_sponsorship`] — stateful check executed by the
-//!    executor against the block storage handle. Enforces anti-sybil
-//!    (`balance > 0`) and the daily quota
+//!    executor against the block storage handle. Enforces the daily quota
 //!    (`effective_count < FREE_TX_DAILY_LIMIT`). Returns the
 //!    `current_day` and effective count on success so the caller can
 //!    record the use atomically.
 //!
 //! 3. [`precheck_sponsorship`] — the stateless subset of (2) the
-//!    txpool runs at admission time. Covers self-sponsorship and the
-//!    anti-sybil gate but deliberately omits the quota check so a
+//!    txpool runs at admission time. Covers self-sponsorship but
+//!    deliberately omits the quota check so a
 //!    9th-of-day sponsored tx still lands in the block with a
 //!    soft-failure receipt (code 110).
 //!
@@ -127,10 +126,10 @@ pub struct SponsorshipAuthorization {
 /// Stateless prechecks for the sponsored free-tx path, sufficient for
 /// pool admission decisions.
 ///
-/// Covers self-sponsorship rejection and anti-sybil — both checks that
-/// only depend on the signer's account view (`balance`) and are
-/// deterministic across nodes for a given EVM state. Quota enforcement
-/// is intentionally **not** part of this function: the README contract
+/// Covers self-sponsorship rejection. Native balance is deliberately not
+/// an eligibility signal: ZeroFee exists so an otherwise valid address can
+/// transact when its spendable COEN balance is exactly zero. Quota enforcement
+/// is intentionally **not** part of this function: the protocol contract
 /// requires quota-exhausted txs to land in the block with a soft-failure
 /// receipt code 110, so the pool must admit them and let the executor
 /// (authoritative) produce the receipt.
@@ -138,16 +137,9 @@ pub struct SponsorshipAuthorization {
 /// The pool calls this; the executor calls the full
 /// [`authorize_sponsorship`] which additionally consults block storage
 /// for the quota.
-pub fn precheck_sponsorship(
-    signer: Address,
-    signer_balance: U256,
-) -> Result<(), ZeroFeePolicyError> {
+pub fn precheck_sponsorship(signer: Address) -> Result<(), ZeroFeePolicyError> {
     if signer == ZEROFEE_ADDRESS {
         return Err(ZeroFeePolicyError::UnauthorizedSigner);
-    }
-
-    if signer_balance.is_zero() {
-        return Err(ZeroFeePolicyError::FreeTxDailyNoExistingAccount);
     }
 
     Ok(())
@@ -155,29 +147,13 @@ pub fn precheck_sponsorship(
 
 /// Stateful authorization for the sponsored free-tx path.
 ///
-/// `signer_balance` is supplied by the caller from the EVM account view
-/// it already has — the executor reads it from its journaled DB.
-/// Routing the value in explicitly avoids extending the storage-reader
-/// trait surface and keeps the gate uniform.
-///
-/// Anti-sybil intentionally checks `balance > 0` only. Nonce is a poor
-/// proxy because EIP-7702 set-code transactions bump the authority's
-/// nonce as part of authorization processing (25k gas per auth, paid by
-/// the sponsor, not the EOA) — a fresh EOA can therefore reach nonce=1
-/// without spending a single wei of its own. Requiring balance forces
-/// real economic input (someone transferred wei to the address).
 pub fn authorize_sponsorship(
     storage: StorageHandle<'_>,
     signer: Address,
-    signer_balance: U256,
     block_timestamp_secs: u64,
 ) -> Result<SponsorshipAuthorization, ZeroFeePolicyError> {
     if signer == ZEROFEE_ADDRESS {
         return Err(ZeroFeePolicyError::UnauthorizedSigner);
-    }
-
-    if signer_balance.is_zero() {
-        return Err(ZeroFeePolicyError::FreeTxDailyNoExistingAccount);
     }
 
     let current_day = timestamp_to_date_key(block_timestamp_secs);
@@ -360,45 +336,35 @@ mod tests {
     #[test]
     fn authorize_rejects_self_sponsorship() {
         with_storage(|storage| {
-            let err = authorize_sponsorship(storage, ZEROFEE_ADDRESS, U256::from(1), BLOCK_TS)
-                .unwrap_err();
+            let err = authorize_sponsorship(storage, ZEROFEE_ADDRESS, BLOCK_TS).unwrap_err();
             assert!(matches!(err, ZeroFeePolicyError::UnauthorizedSigner));
         });
     }
 
     #[test]
-    fn authorize_rejects_unfunded_zero_nonce_signer() {
+    fn authorize_accepts_zero_balance_signer() {
         with_storage(|storage| {
-            let err = authorize_sponsorship(storage, SIGNER, U256::ZERO, BLOCK_TS).unwrap_err();
-            assert!(matches!(
-                err,
-                ZeroFeePolicyError::FreeTxDailyNoExistingAccount
-            ));
-        });
-    }
-
-    #[test]
-    fn authorize_accepts_existing_account_with_balance_only() {
-        with_storage(|storage| {
-            let auth = authorize_sponsorship(storage, SIGNER, U256::from(1), BLOCK_TS).unwrap();
+            let auth = authorize_sponsorship(storage, SIGNER, BLOCK_TS).unwrap();
             assert_eq!(auth.current_day, BLOCK_DAY);
             assert_eq!(auth.next_count, 1);
         });
     }
 
     #[test]
-    fn authorize_rejects_zero_balance_even_when_nonce_is_positive() {
-        // Anti-sybil V2: nonce alone is not enough. EIP-7702 set-code
-        // transactions bump the authority's nonce as part of auth
-        // processing — a fresh EOA can therefore reach nonce > 0
-        // without ever spending a wei of its own. Only `balance > 0`
-        // is a real economic gate.
+    fn authorize_accepts_existing_account_with_balance_only() {
         with_storage(|storage| {
-            let err = authorize_sponsorship(storage, SIGNER, U256::ZERO, BLOCK_TS).unwrap_err();
-            assert!(matches!(
-                err,
-                ZeroFeePolicyError::FreeTxDailyNoExistingAccount
-            ));
+            let auth = authorize_sponsorship(storage, SIGNER, BLOCK_TS).unwrap();
+            assert_eq!(auth.current_day, BLOCK_DAY);
+            assert_eq!(auth.next_count, 1);
+        });
+    }
+
+    #[test]
+    fn authorize_is_independent_of_native_balance() {
+        with_storage(|storage| {
+            let zero = authorize_sponsorship(storage.clone(), SIGNER, BLOCK_TS).unwrap();
+            let funded = authorize_sponsorship(storage, SIGNER, BLOCK_TS).unwrap();
+            assert_eq!(zero, funded);
         });
     }
 
@@ -413,7 +379,7 @@ mod tests {
                     .write(&SIGNER, pack_counter(BLOCK_DAY, 8))
                     .unwrap();
             }
-            let err = authorize_sponsorship(storage, SIGNER, U256::from(1), BLOCK_TS).unwrap_err();
+            let err = authorize_sponsorship(storage, SIGNER, BLOCK_TS).unwrap_err();
             assert!(matches!(
                 err,
                 ZeroFeePolicyError::FreeTxDailyExhausted { used: 8, limit: 8 }
@@ -435,7 +401,7 @@ mod tests {
                     )
                     .unwrap();
             }
-            let auth = authorize_sponsorship(storage, SIGNER, U256::from(1), BLOCK_TS).unwrap();
+            let auth = authorize_sponsorship(storage, SIGNER, BLOCK_TS).unwrap();
             assert_eq!(auth.current_day, BLOCK_DAY);
             assert_eq!(auth.next_count, 1);
         });
@@ -446,8 +412,7 @@ mod tests {
         with_storage(|storage| {
             // Two consecutive authorize+record cycles for the same day.
             for expected in 1..=3 {
-                let auth = authorize_sponsorship(storage.clone(), SIGNER, U256::from(1), BLOCK_TS)
-                    .unwrap();
+                let auth = authorize_sponsorship(storage.clone(), SIGNER, BLOCK_TS).unwrap();
                 assert_eq!(auth.next_count, expected);
                 let written =
                     record_sponsorship_use(storage.clone(), SIGNER, auth.current_day).unwrap();
@@ -479,7 +444,7 @@ mod tests {
                     )
                     .unwrap();
             }
-            let auth = authorize_sponsorship(storage, SIGNER, U256::from(1), BLOCK_TS).unwrap();
+            let auth = authorize_sponsorship(storage, SIGNER, BLOCK_TS).unwrap();
             assert_eq!(auth.current_day, BLOCK_DAY);
         });
     }
@@ -488,7 +453,7 @@ mod tests {
     fn one_second_before_midnight_belongs_to_previous_day() {
         with_storage(|storage| {
             let just_before = BLOCK_TS - 1;
-            let auth = authorize_sponsorship(storage, SIGNER, U256::from(1), just_before).unwrap();
+            let auth = authorize_sponsorship(storage, SIGNER, just_before).unwrap();
             assert_eq!(
                 auth.current_day,
                 outbe_primitives::time::previous_date_key(BLOCK_DAY)
@@ -541,13 +506,9 @@ mod tests {
     }
 
     #[test]
-    fn authorize_precedence_self_sponsorship_beats_anti_sybil() {
-        // signer == ZEROFEE_ADDRESS AND balance == 0 AND nonce == 0.
-        // UnauthorizedSigner (107) fires first; the anti-sybil gate
-        // (111) never gets to run.
+    fn authorize_rejects_paymaster_address_regardless_of_account_state() {
         with_storage(|storage| {
-            let err =
-                authorize_sponsorship(storage, ZEROFEE_ADDRESS, U256::ZERO, BLOCK_TS).unwrap_err();
+            let err = authorize_sponsorship(storage, ZEROFEE_ADDRESS, BLOCK_TS).unwrap_err();
             assert_eq!(err.code(), 107);
         });
     }
@@ -557,22 +518,19 @@ mod tests {
     #[test]
     fn precheck_rejects_self_sponsorship() {
         assert!(matches!(
-            precheck_sponsorship(ZEROFEE_ADDRESS, U256::from(1)),
+            precheck_sponsorship(ZEROFEE_ADDRESS),
             Err(ZeroFeePolicyError::UnauthorizedSigner)
         ));
     }
 
     #[test]
-    fn precheck_rejects_zero_balance() {
-        assert!(matches!(
-            precheck_sponsorship(SIGNER, U256::ZERO),
-            Err(ZeroFeePolicyError::FreeTxDailyNoExistingAccount)
-        ));
+    fn precheck_accepts_zero_balance_non_paymaster_signer() {
+        assert!(precheck_sponsorship(SIGNER).is_ok());
     }
 
     #[test]
     fn precheck_accepts_funded_non_paymaster_signer() {
-        assert!(precheck_sponsorship(SIGNER, U256::from(1)).is_ok());
+        assert!(precheck_sponsorship(SIGNER).is_ok());
     }
 
     #[test]
@@ -581,7 +539,7 @@ mod tests {
         // already burned all 8 slots for today — the executor produces
         // the soft-failure receipt code 110. `precheck` deliberately
         // does no quota check; this test pins that contract.
-        assert!(precheck_sponsorship(SIGNER, U256::from(1)).is_ok());
+        assert!(precheck_sponsorship(SIGNER).is_ok());
     }
 
     #[test]
@@ -603,8 +561,7 @@ mod tests {
         // checkpoint are rolled back.
         with_storage(|storage| {
             // Step 1: burn one slot for today, mimic flush() commit.
-            let auth =
-                authorize_sponsorship(storage.clone(), SIGNER, U256::from(1), BLOCK_TS).unwrap();
+            let auth = authorize_sponsorship(storage.clone(), SIGNER, BLOCK_TS).unwrap();
             record_sponsorship_use(storage.clone(), SIGNER, auth.current_day).unwrap();
             let after_first = ZeroFeeContract::new(storage.clone())
                 .effective_count(SIGNER, BLOCK_DAY)
@@ -675,8 +632,7 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
         for expected in 1..=3 {
             StorageHandle::enter(&mut provider, |storage| {
-                let auth = authorize_sponsorship(storage.clone(), SIGNER, U256::from(1), BLOCK_TS)
-                    .unwrap();
+                let auth = authorize_sponsorship(storage.clone(), SIGNER, BLOCK_TS).unwrap();
                 assert_eq!(auth.current_day, BLOCK_DAY);
                 assert_eq!(auth.next_count, expected);
                 let new_count = record_sponsorship_use(storage, SIGNER, auth.current_day).unwrap();

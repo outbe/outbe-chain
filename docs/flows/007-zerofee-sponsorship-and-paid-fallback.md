@@ -2,7 +2,7 @@
 
 - **Status:** Draft
 - **Actors:** EOA owner, sponsor policy, txpool, executor, ZeroFee, AgentReward and operator CLI
-- **Trigger:** A funded EOA installs an EIP-7702 delegation and submits eligible or paid transactions
+- **Trigger:** An EOA installs an EIP-7702 delegation (self-paid or sponsor-paid) and submits eligible or paid transactions
 - **Topology/services:** Four-validator Pectra localnet with canonical ZeroFee genesis allocation
 - **Referenced ADRs:** ADR-B-GEN-001, ADR-B-EVM-001, ADR-B-TXP-001, ADR-B-CLI-001, ADR-S-FEE-001, ADR-C-AGR-001
 - **Supersedes:** None
@@ -15,7 +15,7 @@ the normal paid path without consuming another quota slot.
 
 ## Acceptance contract
 
-- **Source:** Funded non-validator EOA and operator CLI.
+- **Source:** Zero- or positive-balance EOA and operator CLI.
 - **Trigger:** Install the canonical delegation, then submit eligible zero-tip and ordinary tipped calls.
 - **Environment:** Pectra active from genesis; four validators finalizing; ZeroFee schema/version and AgentReward predeploy available.
 - **Canonical inputs:** Chain id, EOA nonce/key, canonical ZeroFee address, UTC day, fee envelope, `claimReward(0)` calldata and daily limit 8.
@@ -27,8 +27,11 @@ the normal paid path without consuming another quota slot.
 ## Preconditions and canonical inputs
 
 - Genesis has `pragueTime = 0`, marker bytecode `0xef` at ZeroFee and schema version 1 in slot 0.
-- The signer is a freshly generated, funded, non-validator EOA.
-- Authorization binds the RPC chain id, canonical delegate address and self-auth nonce rule.
+- The signer may have exactly zero native balance; a distinct payer may fund the
+  outer EIP-7702 transaction without funding the authority.
+- Authorization binds the RPC chain id, canonical delegate address and the correct
+  authority nonce rule (current nonce for a distinct payer, self-auth nonce rule
+  when authority and sender are the same account).
 - Block timestamp is the authority for the UTC quota day.
 
 ## Success sequence
@@ -36,7 +39,7 @@ the normal paid path without consuming another quota slot.
 | Step | Owner | Command/effect | Durable evidence |
 |---:|---|---|---|
 | 1 | genesis/node | expose Pectra and ZeroFee allocation | genesis/code/storage reads |
-| 2 | EOA | submit EIP-7702 self-delegation | delegation designator on EOA |
+| 2 | EOA/payer | submit EIP-7702 self- or sponsor-paid delegation | delegation designator on EOA |
 | 3 | EOA/txpool/executor | execute eight eligible calls | receipts, events, counter, balances |
 | 4 | EOA/txpool/executor | submit ninth eligible call | failed mined receipt and code 110 |
 | 5 | EOA | submit a tipped call | successful paid receipt and fee debit |
@@ -65,7 +68,7 @@ counter. A paid retry follows ordinary nonce and fee rules.
 | Id | Scenario | Given / canonical inputs | When / trigger | Then / outputs and postconditions | Verification |
 |---|---|---|---|---|---|
 | PFS-007-01 | Pectra and ZeroFee readiness | clean Pectra genesis | network finalizes first block | marker/schema/views are canonical | live Rust `zerofee.feature` |
-| PFS-007-02 | install delegation | funded fresh EOA, chain id and nonce | submit native Alloy set-code authorization | exact `0xef0100 ++ ZeroFee` designator | live Rust |
+| PFS-007-02 | install delegation | EOA, chain id and nonce; optional distinct payer | submit native Alloy set-code authorization | exact `0xef0100 ++ ZeroFee` designator without requiring authority balance | live Rust |
 | PFS-007-03 | consume sponsored quota | delegated EOA, count 0 | submit eight eligible calls | 8 successful receipts, zero fees, events and count 8 | live Rust |
 | PFS-007-04 | quota exhaustion soft failure | delegated EOA, count 8 | submit ninth eligible call | mined status 0, code 110, no debit/increment | live Rust |
 | PFS-007-05 | paid fallback remains available | delegated EOA, exhausted quota | submit tipped call | status 1, positive fee, count 8, no sponsorship event | live Rust |
@@ -76,6 +79,7 @@ counter. A paid retry follows ordinary nonce and fee rules.
 | PFS-007-10 | wrong delegation target | funded delegated account | install a non-ZeroFee target and send a sponsored-shaped call | no sponsorship; quota remains unchanged | `@pfs-007-10` live-node |
 | PFS-007-11 | stale conflicting authorization | an existing wrong-target delegation | submit a stale conflicting authorization | prior delegation remains; quota remains unchanged | `@pfs-007-11` live-node |
 | PFS-007-12 | worldwide-day lazy reset | exhausted quota immediately before the UTC day boundary | advance through the boundary and submit the first eligible call | quota resets lazily once and converges on every validator | `@pfs-007-12` live-node |
+| PFS-007-13 | zero-balance validator Gem cashout | validator owns a reward Gem and settlement allowance but has exactly zero spendable COEN | distinct validator installs ZeroFee delegation; owner sends `settleGem`, `mineGemPromis`, `mineCoen` | three sponsored receipts, quota 3/8, reserve and confidential ledger exact, final native balance equals Gem load | `@gem-settlement` release SGX |
 
 ## Open questions and technical debt
 

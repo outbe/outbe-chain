@@ -7,7 +7,7 @@
 //! `recordUse` calls would let a sponsored signer burn their own quota
 //! through a regular sub-call, racing the executor's pre-fee write.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::Address;
 use alloy_sol_types::sol;
 #[allow(unused_imports)]
 use outbe_macros::{contract_dispatch, contract_public, contract_view};
@@ -43,8 +43,8 @@ sol!(
 impl ZeroFeeContract<'_> {
     /// Returns `true` if `signer` would be admitted to the sponsored
     /// path for this block. Mirrors the executor's pre-fee gate exactly:
-    /// rejects self-sponsorship, requires `balance > 0`, and requires
-    /// `effective_count < FREE_TX_DAILY_LIMIT` for today's UTC day key
+    /// rejects self-sponsorship and requires `effective_count <
+    /// FREE_TX_DAILY_LIMIT` for today's UTC day key
     /// (`timestamp_to_date_key(block.timestamp)`).
     ///
     /// This is the canonical "may this signer use a free tx now?" RPC
@@ -55,12 +55,6 @@ impl ZeroFeeContract<'_> {
     #[contract_view]
     fn _abi_authorize_sponsorship(&mut self, signer: Address) -> Result<bool> {
         if signer == ZEROFEE_ADDRESS {
-            return Ok(false);
-        }
-        let signer_balance: U256 = self
-            .storage
-            .with_account_info(signer, |info| Ok(info.balance))?;
-        if signer_balance.is_zero() {
             return Ok(false);
         }
         let used = self.effective_count(signer, self.current_day()?)?;
@@ -195,18 +189,15 @@ mod tests {
     }
 
     #[test]
-    fn authorize_sponsorship_dispatch_false_for_zero_balance() {
+    fn authorize_sponsorship_dispatch_true_for_zero_balance() {
         let mut provider = HashMapStorageProvider::new(1);
-        // No balance set → anti-sybil gate must return false.
+        // No balance set: native balance is not an eligibility signal.
         provider.set_timestamp(U256::from(BLOCK_TS));
         StorageHandle::enter(&mut provider, |storage| {
             let call = abi::authorizeSponsorshipCall { signer: SIGNER }.abi_encode();
             let out = dispatch(storage, &call);
             let ok = abi::authorizeSponsorshipCall::abi_decode_returns(&out).unwrap();
-            assert!(
-                !ok,
-                "zero-balance signer must NOT be authorized (anti-sybil)"
-            );
+            assert!(ok, "zero-balance signer must be authorized under quota");
         });
     }
 

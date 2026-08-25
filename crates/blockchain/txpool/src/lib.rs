@@ -686,7 +686,7 @@ where
             .as_ref()
             .and_then(|bc| bc.eip7702_address());
 
-        sponsorship_decision(signer, account.balance, delegated_to, zero_fee_tx)
+        sponsorship_decision(signer, delegated_to, zero_fee_tx)
     }
 
     fn validate_zero_fee_state(
@@ -757,7 +757,7 @@ enum SponsorshipOutcome {
 ///     EIP-7702 delegation additive and lets a signer pay once their
 ///     daily free quota is exhausted.
 ///   - delegated AND envelope matches → run `precheck_sponsorship`
-///     (self-sponsorship + anti-sybil balance>0); its policy error is
+///     (self-sponsorship); its policy error is
 ///     returned so the pool rejects with the matching code.
 ///
 /// Quota is deliberately NOT checked here: the executor is authoritative
@@ -765,7 +765,6 @@ enum SponsorshipOutcome {
 /// (code 110), so the pool admits them.
 fn sponsorship_decision(
     signer: Address,
-    signer_balance: U256,
     delegated_to: Option<Address>,
     zero_fee_tx: &ZeroFeeTransaction<'_>,
 ) -> Result<SponsorshipOutcome, OutbeZeroFeePoolError> {
@@ -780,7 +779,7 @@ fn sponsorship_decision(
         return Ok(SponsorshipOutcome::NotSponsored);
     }
 
-    outbe_zerofee::precheck_sponsorship(signer, signer_balance)
+    outbe_zerofee::precheck_sponsorship(signer)
         .map_err(|e| OutbeZeroFeePoolError(e.to_string()))?;
 
     Ok(SponsorshipOutcome::Accepted)
@@ -1159,19 +1158,18 @@ mod tests {
 
     #[test]
     fn pool_precheck_rejects_self_sponsorship_with_code_107() {
-        let err = precheck_sponsorship(ZEROFEE_ADDRESS, U256::from(1)).unwrap_err();
+        let err = precheck_sponsorship(ZEROFEE_ADDRESS).unwrap_err();
         assert_eq!(err.code(), 107);
     }
 
     #[test]
-    fn pool_precheck_rejects_zero_balance_signer_with_code_111() {
-        let err = precheck_sponsorship(NON_VALIDATOR_SIGNER, U256::ZERO).unwrap_err();
-        assert_eq!(err.code(), 111);
+    fn pool_precheck_admits_zero_balance_non_paymaster_signer() {
+        assert!(precheck_sponsorship(NON_VALIDATOR_SIGNER).is_ok());
     }
 
     #[test]
     fn pool_precheck_admits_funded_non_paymaster_signer() {
-        assert!(precheck_sponsorship(NON_VALIDATOR_SIGNER, U256::from(1)).is_ok());
+        assert!(precheck_sponsorship(NON_VALIDATOR_SIGNER).is_ok());
     }
 
     #[test]
@@ -1181,7 +1179,7 @@ mod tests {
         // receipt code 110 at block time. precheck has no StorageHandle
         // parameter to enforce this contract at compile time; this
         // smoke test pins the runtime behaviour.
-        assert!(precheck_sponsorship(NON_VALIDATOR_SIGNER, U256::from(1)).is_ok());
+        assert!(precheck_sponsorship(NON_VALIDATOR_SIGNER).is_ok());
     }
 
     // -----------------------------------------------------------------
@@ -1200,13 +1198,8 @@ mod tests {
 
     #[test]
     fn decision_not_sponsored_when_no_delegation() {
-        let out = sponsorship_decision(
-            NON_VALIDATOR_SIGNER,
-            U256::from(1),
-            None,
-            &ok_sponsored_envelope(),
-        )
-        .expect("no delegation must not error");
+        let out = sponsorship_decision(NON_VALIDATOR_SIGNER, None, &ok_sponsored_envelope())
+            .expect("no delegation must not error");
         assert_eq!(out, SponsorshipOutcome::NotSponsored);
     }
 
@@ -1215,7 +1208,6 @@ mod tests {
         // Delegated to a non-paymaster address → normal fee path.
         let out = sponsorship_decision(
             NON_VALIDATOR_SIGNER,
-            U256::from(1),
             Some(ORACLE_ADDRESS),
             &ok_sponsored_envelope(),
         )
@@ -1227,7 +1219,6 @@ mod tests {
     fn decision_accepts_delegated_funded_well_formed() {
         let out = sponsorship_decision(
             NON_VALIDATOR_SIGNER,
-            U256::from(1),
             Some(ZEROFEE_ADDRESS),
             &ok_sponsored_envelope(),
         )
@@ -1236,17 +1227,14 @@ mod tests {
     }
 
     #[test]
-    fn decision_rejects_zero_balance_signer() {
-        // Delegated + well-formed envelope, but balance 0 → anti-sybil
-        // rejection surfaces as the policy error (code 111).
-        let err = sponsorship_decision(
+    fn decision_accepts_zero_balance_delegated_well_formed() {
+        let out = sponsorship_decision(
             NON_VALIDATOR_SIGNER,
-            U256::ZERO,
             Some(ZEROFEE_ADDRESS),
             &ok_sponsored_envelope(),
         )
-        .unwrap_err();
-        assert!(err.0.contains("anti-sybil") || err.0.contains("non-zero native balance"));
+        .expect("zero native balance must not reject sponsorship");
+        assert_eq!(out, SponsorshipOutcome::Accepted);
     }
 
     #[test]
@@ -1257,13 +1245,8 @@ mod tests {
         // delegation is additive and must never block a normal tx.
         let mut tx = ok_sponsored_envelope();
         tx.value = U256::from(1);
-        let out = sponsorship_decision(
-            NON_VALIDATOR_SIGNER,
-            U256::from(1),
-            Some(ZEROFEE_ADDRESS),
-            &tx,
-        )
-        .expect("value-bearing delegated tx must not error");
+        let out = sponsorship_decision(NON_VALIDATOR_SIGNER, Some(ZEROFEE_ADDRESS), &tx)
+            .expect("value-bearing delegated tx must not error");
         assert_eq!(out, SponsorshipOutcome::NotSponsored);
     }
 
@@ -1276,13 +1259,8 @@ mod tests {
         // is exhausted.
         let mut tx = ok_sponsored_envelope();
         tx.max_priority_fee_per_gas = Some(1);
-        let out = sponsorship_decision(
-            NON_VALIDATOR_SIGNER,
-            U256::from(1),
-            Some(ZEROFEE_ADDRESS),
-            &tx,
-        )
-        .expect("paying delegated tx must not error");
+        let out = sponsorship_decision(NON_VALIDATOR_SIGNER, Some(ZEROFEE_ADDRESS), &tx)
+            .expect("paying delegated tx must not error");
         assert_eq!(
             out,
             SponsorshipOutcome::NotSponsored,
@@ -1297,13 +1275,8 @@ mod tests {
         // call whatever contract they like; delegation does not gate it).
         let mut tx = ok_sponsored_envelope();
         tx.to = Some(ZEROFEE_ADDRESS); // not in SPONSORED_TARGET_WHITELIST
-        let out = sponsorship_decision(
-            NON_VALIDATOR_SIGNER,
-            U256::from(1),
-            Some(ZEROFEE_ADDRESS),
-            &tx,
-        )
-        .expect("non-whitelisted delegated tx must not error");
+        let out = sponsorship_decision(NON_VALIDATOR_SIGNER, Some(ZEROFEE_ADDRESS), &tx)
+            .expect("non-whitelisted delegated tx must not error");
         assert_eq!(out, SponsorshipOutcome::NotSponsored);
     }
 
@@ -1317,7 +1290,6 @@ mod tests {
         for _ in 0..20 {
             let out = sponsorship_decision(
                 NON_VALIDATOR_SIGNER,
-                U256::from(1),
                 Some(ZEROFEE_ADDRESS),
                 &ok_sponsored_envelope(),
             )

@@ -295,10 +295,16 @@ fn every_validator_observes_one_reward_delivery(world: &mut World) {
     );
 }
 
-#[then("validator 0 settles that Gem and redeems its exact Promis into COEN")]
+#[then("validator 0 with zero COEN uses ZeroFee to redeem that Gem into exact COEN")]
 fn validator_redeems_reward_gem(world: &mut World) {
     let validator = world.validators.get(0);
     let key = validator.evm_key().expect("validator 0 EVM key");
+    let payer_key = world
+        .validators
+        .get(1)
+        .evm_key()
+        .expect("validator 1 sponsorship payer key");
+    let payer = eth::address_of(&payer_key).expect("validator 1 payer address");
     let (owner, gem_id, gem) = wait_for_validator_reward_gem(world);
     let fixture = deploy_settlement_fixture(world);
     fund_and_approve(
@@ -311,18 +317,60 @@ fn validator_redeems_reward_gem(world: &mut World) {
     );
 
     let url = world.rpc.url(world.validators.primary_port());
-    let settle = eth::send_call_outcome(
+    let keys =
+        eth::derive_account_keys(&url, &key, Ledger::Promis).expect("derive validator Promis keys");
+
+    let drain = eth::drain_native_balance(&url, &key, payer)
+        .expect("drain validator spendable COEN before ZeroFee proof");
+    assert_mined_success(&drain, "drain validator spendable COEN");
+    assert_eq!(
+        eth::balance(&url, owner),
+        Some(U256::ZERO),
+        "validator must enter the sponsored redemption path with exactly zero COEN"
+    );
+
+    let delegation =
+        eth::install_delegation_for_authority(&url, &payer_key, &key, addresses::ZEROFEE_ADDR)
+            .expect("install sponsor-paid ZeroFee delegation for zero-balance validator");
+    assert_eq!(
+        delegation.get("status").and_then(serde_json::Value::as_str),
+        Some("0x1"),
+        "sponsor-paid delegation reverted: {delegation}"
+    );
+    assert_eq!(
+        eth::balance(&url, owner),
+        Some(U256::ZERO),
+        "delegation payer, not validator, must pay installation gas"
+    );
+    assert_eq!(
+        eth::read_call(
+            &url,
+            addresses::ZEROFEE_ADDR,
+            &eth::IZeroFee::authorizeSponsorshipCall { signer: owner },
+        ),
+        Some(true),
+        "ZeroFee must authorize an under-quota address at zero native balance"
+    );
+    let counter_before = eth::read_call(
         &url,
-        addresses::GEM_FACTORY_ADDR,
+        addresses::ZEROFEE_ADDR,
+        &eth::IZeroFee::getCounterCall { signer: owner },
+    )
+    .expect("ZeroFee counter before Gem redemption");
+    assert_eq!(counter_before.count, 0);
+
+    let settle = eth::send_sponsored_call(
+        &url,
         &key,
+        addresses::GEM_FACTORY_ADDR,
         &eth::IGemFactory::settleGemCall {
             gemId: gem_id,
             asset: fixture.asset,
         },
-        None,
     )
-    .expect("settle reward Gem");
-    assert_mined_success(&settle, "settle reward Gem");
+    .expect("sponsored settle reward Gem");
+    assert_mined_success(&settle, "sponsored settle reward Gem");
+    assert_eq!(eth::balance(&url, owner), Some(U256::ZERO));
     assert_eq!(
         eth::read_call(
             &url,
@@ -335,8 +383,6 @@ fn validator_redeems_reward_gem(world: &mut World) {
         "reserve vault did not receive exact Gem cost"
     );
 
-    let keys =
-        eth::derive_account_keys(&url, &key, Ledger::Promis).expect("derive validator Promis keys");
     let promis_before = promis_balance(&url, owner, &keys.view);
     let promis_nonce = eth::read_call(
         &url,
@@ -354,20 +400,20 @@ fn validator_redeems_reward_gem(world: &mut World) {
         chain_id,
     );
     let pow = find_pow_nonce(gem_id);
-    let mine_promis = eth::send_call_outcome(
+    let mine_promis = eth::send_sponsored_call(
         &url,
-        addresses::GEM_FACTORY_ADDR,
         &key,
+        addresses::GEM_FACTORY_ADDR,
         &eth::IGemFactory::mineGemPromisCall {
             gemId: gem_id,
             nonce: pow,
             mac: B256::from(mint_mac),
             opNonce: promis_nonce,
         },
-        None,
     )
-    .expect("mine Promis from settled Gem");
-    assert_mined_success(&mine_promis, "mine Promis from settled Gem");
+    .expect("sponsored mine Promis from settled Gem");
+    assert_mined_success(&mine_promis, "sponsored mine Promis from settled Gem");
+    assert_eq!(eth::balance(&url, owner), Some(U256::ZERO));
     assert_eq!(
         promis_balance(&url, owner, &keys.view),
         promis_before + gem.gemLoad,
@@ -388,32 +434,41 @@ fn validator_redeems_reward_gem(world: &mut World) {
         burn_nonce,
         chain_id,
     );
-    let native_before = eth::balance(&url, owner).expect("native balance before Promis burn");
-    let mine_coen = eth::send_call_outcome(
+    let mine_coen = eth::send_sponsored_call(
         &url,
-        addresses::PROMIS_FACTORY_ADDR,
         &key,
+        addresses::PROMIS_FACTORY_ADDR,
         &eth::IPromisFactory::mineCoenCall {
             amount: gem.gemLoad,
             mac: B256::from(burn_mac),
             opNonce: burn_nonce,
         },
-        None,
     )
-    .expect("mine COEN from validator Promis");
+    .expect("sponsored mine COEN from validator Promis");
     assert!(
         mine_coen.success,
         "mine COEN from validator Promis reverted: {}",
         mine_coen.receipt
     );
-    let fee =
-        crate::world::rpc::Rpc::receipt_gas_cost(&mine_coen.receipt).expect("Promis burn gas cost");
     let native_after = eth::balance(&url, owner).expect("native balance after Promis burn");
     assert_eq!(promis_balance(&url, owner, &keys.view), promis_before);
-    assert_eq!(native_after + fee, native_before + gem.gemLoad);
+    assert_eq!(
+        native_after, gem.gemLoad,
+        "three sponsored calls must charge no native fee to the validator"
+    );
+    let counter_after = eth::read_call(
+        &url,
+        addresses::ZEROFEE_ADDR,
+        &eth::IZeroFee::getCounterCall { signer: owner },
+    )
+    .expect("ZeroFee counter after Gem redemption");
+    assert_eq!(
+        counter_after.count, 3,
+        "settleGem, mineGemPromis, and mineCoen must consume three of eight sponsored slots"
+    );
     eprintln!(
-        "settlement_evidence kind=gem_to_coen owner={owner:#x} gem_id={gem_id} asset={:#x} vault={:#x} amount={} tx={} native_before={} native_after={} gas={fee}",
-        fixture.asset, fixture.vault, gem.gemLoad, mine_coen.transaction_hash, native_before, native_after
+        "settlement_evidence kind=zerofee_gem_to_coen owner={owner:#x} payer={payer:#x} gem_id={gem_id} asset={:#x} vault={:#x} amount={} settle_tx={} promis_tx={} coen_tx={} quota_used={} native_before=0 native_after={}",
+        fixture.asset, fixture.vault, gem.gemLoad, settle.transaction_hash, mine_promis.transaction_hash, mine_coen.transaction_hash, counter_after.count, native_after
     );
 }
 

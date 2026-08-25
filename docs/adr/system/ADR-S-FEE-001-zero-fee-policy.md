@@ -51,13 +51,15 @@ sponsorship remain unchanged by that system path.
 ### Daily sponsorship
 
 The sponsored path accepts no contract creation/value, requires zero priority fee,
-minimum fee cap, gas at most 200,000, calldata at most 16 KiB and a target in the
-fork-governed precompile whitelist. Signer must not be the paymaster and must have a
-nonzero native balance as the current anti-Sybil gate.
+minimum fee cap, gas at most 500,000 (with the separately bounded TributeFactory
+exception), calldata at most 16 KiB and a target in the fork-governed precompile
+whitelist. Signer must not be the paymaster. Native balance is deliberately not an
+eligibility signal: a correctly delegated address with exactly zero spendable COEN
+receives the same bounded quota as a funded address.
 
 Each signer has a packed `(UTC yyyymmdd, count)` counter and may consume at most
 eight sponsored transactions per UTC day. Day reset is lazy: a prior-day slot reads
-as zero for current day. Executor authorization verifies quota/balance and records
+as zero for current day. Executor authorization verifies quota and records
 use plus receipt-visible authorization event in the pre-fee transaction path.
 Public ABI exposes only effective read predicates/counter; it cannot mutate quota.
 
@@ -104,10 +106,12 @@ packed counter encoding and failure codes are
 consensus/admission formats. Updates require activation across txpool and executor
 simultaneously.
 
-Nonzero balance is only a weak cost signal, not Sybil resistance. Whitelisted
-precompiles must have bounded work under sponsored gas and cannot expose indirect
-arbitrary calls/value extraction. EIP-7702 and account-abstraction semantics require
-explicit signer/authority analysis.
+The fixed eight-call quota plus the audited target whitelist bound each authority's
+daily sponsored work; native funding is not treated as identity or Sybil resistance.
+Whitelisted precompiles must have bounded work under sponsored gas and cannot expose
+indirect arbitrary calls/value extraction. EIP-7702 and account-abstraction semantics
+require explicit signer/authority analysis. Failure code 111, formerly used for the
+zero-balance rejection, is retired and must never be reused.
 
 ## Production-interface verification evidence
 
@@ -127,7 +131,8 @@ stable failure codes, while canonical execution remains final authority.
 
 - **Trust txpool-only checks:** private/block-builder or reorg execution can bypass
   stale admission state.
-- **Use nonce alone as anti-Sybil:** EIP-7702/sponsored processing weakens that cost.
+- **Use balance or nonce as an identity gate:** either can be manufactured by a
+  sponsor and neither strengthens the fixed quota/target boundary.
 - **Expose `recordUse` ABI:** users could burn/race quota out of band.
 - **Set max fee to zero:** public txpool protocol minima would reject the envelope.
 - **Whitelist arbitrary contracts:** sponsored indirect execution becomes unbounded.
@@ -146,8 +151,8 @@ stable failure codes, while canonical execution remains final authority.
    one envelope cannot match two waiver paths.
 5. Prove txpool and executor construct identical `ZeroFeeTransaction`, especially
    EIP-1559 optional priority fee, EIP-7702 signer and calldata bytes.
-6. Nonzero native balance is weak anti-Sybil protection. Quantify attack cost and
-   define minimum balance, funding provenance or a stronger identity rule.
+6. Quantify address-fanout cost under the fixed quota and audited whitelist; do not
+   reintroduce balance or nonce as an implicit identity rule.
 7. Whitelist changes require per-target worst-case gas, reentrancy/indirect-call and
    value-extraction review; add a structural whitelist audit.
 8. Daily counters grow one slot per signer forever. Define state-growth bounds,

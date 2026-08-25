@@ -44,7 +44,7 @@ impl ZeroFeeContract<'_> {
     /// with the [`crate::precompile::IZeroFee::SponsorshipAuthorized`] log emission
     /// and is itself gated by [`crate::runtime::authorize_sponsorship`].
     /// Broadening this surface would let a future caller burn quota
-    /// without observability or anti-sybil checks.
+    /// without observability or authorization checks.
     pub(crate) fn record_use(&mut self, signer: Address, current_day: u32) -> Result<u32> {
         let effective = self.effective_count(signer, current_day)?;
         let next = effective.saturating_add(1);
