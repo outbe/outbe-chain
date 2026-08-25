@@ -109,6 +109,7 @@ sol! {
     }
 
     interface IIntexNFT1155Bridge {
+        function setRemoteMessenger(uint32 chainId, bytes interop) external;
         function quoteSend(SendParam sendParam) external view returns (uint256 fee);
         function send(SendParam sendParam) external payable returns (bytes32 sendId);
     }
@@ -426,4 +427,41 @@ pub fn bridge_home(
     .map_err(|error| eyre!("bridge send was not accepted: {error}"))?;
     let _ = tx;
     Ok(())
+}
+
+/// ERC-7930 interoperable address: a version tag, the chain reference at its own
+/// minimal width, then the address. Mirrors `InteroperableAddress.formatEvmV1`.
+fn interop_address(chain_id: u64, address: Address) -> Vec<u8> {
+    let reference: Vec<u8> = chain_id
+        .to_be_bytes()
+        .into_iter()
+        .skip_while(|byte| *byte == 0)
+        .collect();
+    let mut out = vec![0x00, 0x01, 0x00, 0x00];
+    out.push(u8::try_from(reference.len()).expect("a chain reference is at most 8 bytes"));
+    out.extend_from_slice(&reference);
+    out.push(20);
+    out.extend_from_slice(address.as_slice());
+    out
+}
+
+/// Tell `bridge` where its peer lives on `peer_chain_id`. Without it the bridge
+/// cannot even quote a hop, let alone send one.
+pub fn set_remote_messenger(
+    url: &str,
+    sender_key: &str,
+    bridge: Address,
+    peer_chain_id: u64,
+    peer: Address,
+) -> Result<()> {
+    send_checked(
+        url,
+        bridge,
+        sender_key,
+        &IIntexNFT1155Bridge::setRemoteMessengerCall {
+            chainId: u32::try_from(peer_chain_id).map_err(|_| eyre!("chain id exceeds uint32"))?,
+            interop: interop_address(peer_chain_id, peer).into(),
+        },
+        "setRemoteMessenger",
+    )
 }

@@ -587,6 +587,37 @@ fn start_relay(world: &mut World) {
             .expect("target chain id fits a uint32"),
     };
 
+    // The NFT bridges have to know each other before either can quote a hop; nothing
+    // in the deploy scripts pairs them, so the scenario that uses both does it.
+    let committee_bridge = world
+        .state
+        .origin_contracts
+        .as_ref()
+        .expect("intex engine was deployed")
+        .nft_bridge;
+    let target_bridge = world
+        .state
+        .target_contracts
+        .as_ref()
+        .expect("intex venue was deployed on the target chain")
+        .nft_bridge;
+    test_issuance::set_remote_messenger(
+        &committee.url,
+        DEPLOYER_KEY,
+        committee_bridge,
+        world.target_chain.chain_id(),
+        target_bridge,
+    )
+    .expect("point the committee bridge at the target chain");
+    test_issuance::set_remote_messenger(
+        &target.url,
+        DEPLOYER_KEY,
+        target_bridge,
+        u64::from(committee.domain),
+        committee_bridge,
+    )
+    .expect("point the target bridge home");
+
     world.relay = Some(Relay::start(committee, target, DEPLOYER_KEY.to_owned()));
 }
 
