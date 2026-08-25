@@ -172,10 +172,10 @@ fn build_cert(
         &hybrid_seed_namespace(),
         &seed_message,
     );
-    let vrf_proof = Some(VrfProof::<MinSig> {
+    let vrf_proof = VrfProof::<MinSig> {
         material_version: VRF_MATERIAL_VERSION,
         threshold_signature,
-    });
+    };
 
     HybridCertificate {
         signers,
@@ -274,10 +274,10 @@ fn wrong_bls_domain_rejects() {
     let cert: HybridCertificate<MinSig> = HybridCertificate {
         signers: Signers::from(4, (0..4).map(Participant::new)),
         bls_aggregated_vote,
-        vrf_proof: Some(VrfProof::<MinSig> {
+        vrf_proof: VrfProof::<MinSig> {
             material_version: VRF_MATERIAL_VERSION,
             threshold_signature,
-        }),
+        },
     };
     let cert_bytes =
         proof_envelope_bytes(&cert, parent_hash, ParentParticipationProof::Finalization);
@@ -510,19 +510,19 @@ fn signer_bitmap_round_trips_with_hybrid_signers_via_commonware_pk_order() {
 // ── missing_vrf_proof_rejects ────────────────────────────────────
 
 #[test]
-fn missing_vrf_proof_rejects() {
+fn truncated_mandatory_vrf_proof_rejects() {
     let dkg = build_dkg(4);
     let snapshot = build_snapshot(&dkg);
     let parent_hash = B256::with_last_byte(0xAA);
-    let mut cert = build_cert(
+    let cert = build_cert(
         &dkg,
         &[0, 1, 2, 3],
         parent_hash,
         ParentParticipationProof::Finalization,
     );
-    cert.vrf_proof = None;
-    let cert_bytes =
+    let mut cert_bytes =
         proof_envelope_bytes(&cert, parent_hash, ParentParticipationProof::Finalization);
+    cert_bytes.truncate(cert_bytes.len() - 56);
     let metadata = build_metadata(
         &dkg,
         &snapshot,
@@ -531,39 +531,32 @@ fn missing_vrf_proof_rejects() {
         ParentParticipationProof::Finalization,
     );
     let err = verify_v2_proof(&metadata, &snapshot, &cert_bytes, parent_hash)
-        .expect_err("missing VRF must reject under V2");
-    assert!(matches!(err, V2VerifyError::MissingVrfProof), "{err:?}");
+        .expect_err("truncated mandatory VRF must reject under V2");
+    assert!(matches!(err, V2VerifyError::Decode(_)), "{err:?}");
 }
 
 // ── wire_level_none_vrf_proof_decodes_but_v2_verifier_rejects ───
 
 #[test]
-fn wire_level_none_vrf_proof_decodes_but_v2_verifier_rejects() {
-    // Same as from the wire angle: encoding a None vrf_proof
-    // produces valid bytes (the codec carries an Option tag), but the V2
-    // verifier rejects because V2 requires the proof to be Some.
+fn wire_level_certificate_without_mandatory_vrf_does_not_decode() {
     let dkg = build_dkg(4);
     let snapshot = build_snapshot(&dkg);
     let parent_hash = B256::with_last_byte(0xAA);
-    let mut cert = build_cert(
+    let cert = build_cert(
         &dkg,
         &[0, 1, 2, 3],
         parent_hash,
         ParentParticipationProof::Finalization,
     );
-    cert.vrf_proof = None;
-    let cert_bytes =
+    let mut cert_bytes =
         proof_envelope_bytes(&cert, parent_hash, ParentParticipationProof::Finalization);
-    // The full proof envelope decodes; the V2 verifier then rejects because
-    // the embedded certificate has no VRF proof.
+    cert_bytes.truncate(cert_bytes.len() - 56);
     let mut reader = cert_bytes.as_slice();
-    let decoded = Finalization::<HybridScheme<MinSig>, Sha256Digest>::read_cfg(
+    Finalization::<HybridScheme<MinSig>, Sha256Digest>::read_cfg(
         &mut reader,
         &snapshot.committee.len(),
     )
-    .expect("wire-level None vrf_proof envelope must decode");
-    assert!(reader.is_empty());
-    assert!(decoded.certificate.vrf_proof.is_none());
+    .expect_err("wire-level certificate without its mandatory VRF must not decode");
     let metadata = build_metadata(
         &dkg,
         &snapshot,
@@ -572,8 +565,8 @@ fn wire_level_none_vrf_proof_decodes_but_v2_verifier_rejects() {
         ParentParticipationProof::Finalization,
     );
     let err = verify_v2_proof(&metadata, &snapshot, &cert_bytes, parent_hash)
-        .expect_err("V2 verifier must reject None vrf_proof");
-    assert!(matches!(err, V2VerifyError::MissingVrfProof), "{err:?}");
+        .expect_err("V2 verifier must reject a certificate without its mandatory VRF");
+    assert!(matches!(err, V2VerifyError::Decode(_)), "{err:?}");
 }
 
 // ── malformed_vrf_proof_encoding_rejects ─────────────────────────
@@ -648,10 +641,10 @@ fn wrong_vrf_seed_round_rejects() {
         &wrong_seed,
     );
     let mut cert_with_wrong_vrf = cert.clone();
-    cert_with_wrong_vrf.vrf_proof = Some(VrfProof {
+    cert_with_wrong_vrf.vrf_proof = VrfProof {
         material_version: VRF_MATERIAL_VERSION,
         threshold_signature: wrong_threshold,
-    });
+    };
     let bad_bytes = proof_envelope_bytes(
         &cert_with_wrong_vrf,
         parent_hash,
@@ -697,10 +690,10 @@ fn invalid_vrf_signature_rejects_before_state_change() {
         ParentParticipationProof::Finalization,
     );
     let mut bad_cert = cert.clone();
-    bad_cert.vrf_proof = Some(VrfProof {
+    bad_cert.vrf_proof = VrfProof {
         material_version: VRF_MATERIAL_VERSION,
         threshold_signature: wrong_threshold,
-    });
+    };
     let bad_bytes = proof_envelope_bytes(
         &bad_cert,
         parent_hash,

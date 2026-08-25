@@ -2,10 +2,10 @@
 //! verify them against the chain's committee, WITHOUT running consensus.
 //!
 //! **Trust model — committee-chaining.** outbe's finalize certificate is an
-//! aggregate of individual MinPk votes over a *committee-bound* namespace
-//! (the MinSig VRF group key is an optional seed sidecar, NOT required for
-//! finality), so finality is authenticated by the committee's MinPk key set,
-//! which changes on every reshare. A follower therefore:
+//! atomic aggregate of individual MinPk votes and a mandatory MinSig threshold
+//! VRF proof over a *committee-bound* namespace. Both are verified with the
+//! epoch-scoped committee material, which changes on every reshare. A follower
+//! therefore:
 //!
 //! 1. anchors the START epoch's committee on the **genesis validator MinPk
 //!    set**, read from the follower's OWN genesis state — the trust root;
@@ -378,10 +378,10 @@ mod tests {
             digest: Digest,
         ) -> Finalization<HybridScheme<MinSig>, Digest> {
             let ns = crate::config::outbe_app_namespace();
-            let verifier = HybridScheme::<MinSig>::verifier(
+            let verifier = HybridScheme::<MinSig>::verifier_with_vrf_provider(
                 &ns,
                 self.participants.clone(),
-                self.dkg.polynomial.clone(),
+                VrfMaterialProvider::new(epoch.get(), self.dkg.polynomial.clone(), None),
             )
             .unwrap();
             let signers: Vec<HybridScheme<MinSig>> = self
@@ -389,12 +389,15 @@ mod tests {
                 .iter()
                 .map(|key| {
                     let idx = self.participants.index(&key.public_key()).unwrap();
-                    HybridScheme::signer(
+                    HybridScheme::signer_with_vrf_provider(
                         &ns,
                         self.participants.clone(),
                         key.clone(),
-                        self.dkg.polynomial.clone(),
-                        self.dkg.shares[idx.get() as usize].clone(),
+                        VrfMaterialProvider::new(
+                            epoch.get(),
+                            self.dkg.polynomial.clone(),
+                            Some(self.dkg.shares[idx.get() as usize].clone()),
+                        ),
                     )
                     .unwrap()
                 })

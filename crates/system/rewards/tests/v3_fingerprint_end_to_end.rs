@@ -152,7 +152,7 @@ fn build_cert_with_vrf_proof(
     let cert = HybridCertificate {
         signers,
         bls_aggregated_vote,
-        vrf_proof: Some(vrf_proof.clone()),
+        vrf_proof: vrf_proof.clone(),
     };
     (cert, vrf_proof)
 }

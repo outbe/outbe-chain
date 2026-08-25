@@ -173,6 +173,11 @@ compute a replacement target automatically.
 - Incoming committee activation and both outgoing/incoming snapshot writes share
   one execution checkpoint.
 - Historical evidence is verified with its epoch snapshot, never the current set.
+- Every epoch-scoped Hybrid scheme pins the material version active at its
+  construction. Activation retains historical material but cannot mutate an old
+  scheme's identity, signing, assembly, election or verification version; the
+  next epoch loop constructs and registers a new scheme pinned to the newly
+  activated version.
 - Old epoch cannot execute above the armed boundary; new epoch cannot execute
   before activation and continuity-parent resolution.
 - Revealed-share records are canonical evidence and require operator key rotation;

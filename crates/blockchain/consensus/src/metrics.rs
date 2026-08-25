@@ -339,6 +339,16 @@ pub fn record_forged_seed_partial() {
     counter!("outbe_forged_seed_partial_total").increment(1);
 }
 
+/// Record a complete vote+partial pair dropped before quorum admission.
+pub fn record_vrf_partial_drop(verdict: &'static str, signer: u32) {
+    counter!(
+        "outbe_vrf_partial_dropped_total",
+        "verdict" => verdict,
+        "signer" => signer.to_string(),
+    )
+    .increment(1);
+}
+
 /// Record a finalized certificate whose embedded threshold-VRF proof did not
 /// verify against the committee group key for its own round. Under the
 /// seed-partial sanitization in attestation verification this must be zero; a

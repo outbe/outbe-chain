@@ -3391,7 +3391,7 @@ fn test_epoch_elector_config_allows_recovered_epoch_without_continuity() {
 fn test_epoch_elector_config_uses_previous_certificate_for_view_one() {
     let certificate = sample_certificate();
     let continuity = ReporterContinuity::default();
-    let seed = certificate.raw_vrf_seed_bytes().unwrap();
+    let seed = certificate.raw_vrf_seed_bytes();
     continuity.update(9, Some(certificate.clone()), Some(seed.clone()));
 
     let (_, participants, _, _) = run_test_dkg();

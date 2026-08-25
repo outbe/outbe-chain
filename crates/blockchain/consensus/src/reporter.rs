@@ -436,15 +436,12 @@ impl OutbeReporter {
         // in correct operation. If it ever fires, an unverifiable proof has
         // reached the finalized certificate and will fail the next height's
         // mandatory V2 verify — surface it loudly rather than silently halting.
-        if certificate.vrf_proof.is_some() && vrf_seed.is_none() {
+        if vrf_seed.is_none() {
             crate::metrics::record_finalized_cert_invalid_vrf_proof();
             error!(
                 view,
                 %digest,
-                vrf_material_version = certificate
-                    .vrf_proof
-                    .as_ref()
-                    .map(|proof| proof.material_version),
+                vrf_material_version = certificate.vrf_proof.material_version,
                 "INVARIANT: finalized certificate carries an unverifiable VRF proof; \
                  next-height CertifiedParentAccounting will reject this parent"
             );
@@ -455,11 +452,8 @@ impl OutbeReporter {
             %digest,
             signers = signers_count,
             total = signers_total,
-            vrf_proof_present = certificate.vrf_proof.is_some(),
-            vrf_material_version = certificate
-                .vrf_proof
-                .as_ref()
-                .map(|proof| proof.material_version),
+            vrf_proof_present = true,
+            vrf_material_version = certificate.vrf_proof.material_version,
             vrf_verified = vrf_seed.is_some(),
             vrf_seed = ?vrf_seed,
             "block finalized"
@@ -980,7 +974,7 @@ mod tests {
         continuity.update(
             17,
             Some(certificate.clone()),
-            certificate.raw_vrf_seed_bytes(),
+            Some(certificate.raw_vrf_seed_bytes()),
         );
 
         let (tx, _rx) = mpsc::unbounded::<FinalizationMessage>();
@@ -1040,7 +1034,7 @@ mod tests {
         continuity.update(
             5,
             Some(certificate.clone()),
-            certificate.raw_vrf_seed_bytes(),
+            Some(certificate.raw_vrf_seed_bytes()),
         );
 
         let participants = test_participants(3).1;
@@ -1083,7 +1077,7 @@ mod tests {
         continuity.update(
             5,
             Some(certificate.clone()),
-            certificate.raw_vrf_seed_bytes(),
+            Some(certificate.raw_vrf_seed_bytes()),
         );
 
         let participants = test_participants(3).1;

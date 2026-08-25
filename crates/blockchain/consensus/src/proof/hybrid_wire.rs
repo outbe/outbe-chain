@@ -1,20 +1,17 @@
 //! Wire-codec types for the Outbe Hybrid certificate.
 //!
-//! These types are byte-identical to the legacy declarations that previously
-//! lived in `outbe-consensus::hybrid`. The codec format is part of the V2
-//! consensus protocol surface: every byte is observed by gossip, block header
-//! `extra_data` (via `OutbeBlockArtifacts`), and the marshal archive. Any
-//! drift here breaks block-hash determinism and replay.
+//! The codec format is part of the V2 consensus protocol surface: every byte
+//! is observed by gossip, block header `extra_data` (via
+//! `OutbeBlockArtifacts`), and the marshal archive. This clean-genesis format
+//! makes the threshold VRF proof structurally mandatory.
 //!
 //! Layout (encoded with `commonware-codec`):
 //!
 //! * [`VrfProof<V>`] — `material_version: u64` (big-endian) || `V::Signature`.
 //! * [`HybridCertificate<V>`] — `Signers` bitmap || aggregated BLS MinPk
-//!   signature (96 bytes) || `u8` VRF presence flag (`0` or `1`) ||
-//!   optional `VrfProof<V>`.
+//!   signature (96 bytes) || `VrfProof<V>`.
 //!
-//! The decoder rejects an empty signer set and any presence flag outside
-//! `{0, 1}`.
+//! The decoder rejects an empty signer set and a missing or truncated proof.
 
 use bytes::{Buf, BufMut};
 use commonware_codec::{Encode, EncodeSize, Error, FixedSize, Read, ReadExt, Write};
@@ -69,28 +66,23 @@ impl<V: Variant> EncodeSize for VrfProof<V> {
 /// Contains:
 /// - Signer bitmap (who voted)
 /// - Single aggregated BLS MinPk vote signature (96 bytes)
-/// - Optional recovered BLS MinSig threshold VRF proof
+/// - Mandatory recovered BLS MinSig threshold VRF proof
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct HybridCertificate<V: Variant> {
     /// Bitmap of participants that signed.
     pub signers: Signers,
     /// Aggregated BLS vote signature from individual MinPk signatures.
     pub bls_aggregated_vote: aggregate::Signature<MinPk>,
-    /// Optional recovered and self-verified threshold VRF proof.
-    pub vrf_proof: Option<VrfProof<V>>,
+    /// Recovered threshold VRF proof. Foreign certificates are accepted only
+    /// after the epoch-scoped scheme verifies this proof for the exact subject.
+    pub vrf_proof: VrfProof<V>,
 }
 
 impl<V: Variant> Write for HybridCertificate<V> {
     fn write(&self, writer: &mut impl BufMut) {
         self.signers.write(writer);
         self.bls_aggregated_vote.write(writer);
-        match &self.vrf_proof {
-            Some(proof) => {
-                writer.put_u8(1);
-                proof.write(writer);
-            }
-            None => writer.put_u8(0),
-        }
+        self.vrf_proof.write(writer);
     }
 }
 
@@ -98,12 +90,7 @@ impl<V: Variant> EncodeSize for HybridCertificate<V> {
     fn encode_size(&self) -> usize {
         self.signers.encode_size()
             + aggregate::Signature::<MinPk>::SIZE
-            + 1
-            + self
-                .vrf_proof
-                .as_ref()
-                .map(EncodeSize::encode_size)
-                .unwrap_or(0)
+            + self.vrf_proof.encode_size()
     }
 }
 
@@ -119,22 +106,7 @@ impl<V: Variant> Read for HybridCertificate<V> {
             ));
         }
         let bls_aggregated_vote = aggregate::Signature::<MinPk>::read(reader)?;
-        if !reader.has_remaining() {
-            return Err(Error::Invalid(
-                "HybridCertificate",
-                "missing VRF proof presence flag",
-            ));
-        }
-        let vrf_proof = match reader.get_u8() {
-            0 => None,
-            1 => Some(VrfProof::<V>::read(reader)?),
-            _ => {
-                return Err(Error::Invalid(
-                    "HybridCertificate",
-                    "invalid VRF proof presence flag",
-                ));
-            }
-        };
+        let vrf_proof = VrfProof::<V>::read(reader)?;
 
         Ok(Self {
             signers,
@@ -146,18 +118,14 @@ impl<V: Variant> Read for HybridCertificate<V> {
 
 impl<V: Variant> HybridCertificate<V> {
     /// Extract the VRF seed from this certificate for a given round.
-    pub fn seed(&self, round: Round) -> Option<Seed<V>> {
-        self.vrf_proof
-            .as_ref()
-            .map(|proof| Seed::new(round, proof.threshold_signature))
+    pub fn seed(&self, round: Round) -> Seed<V> {
+        Seed::new(round, self.vrf_proof.threshold_signature)
     }
 
     /// Encoded raw bytes of the threshold VRF signature for downstream
     /// fingerprinting and degraded leader-selection fallbacks.
-    pub fn raw_vrf_seed_bytes(&self) -> Option<Vec<u8>> {
-        self.vrf_proof
-            .as_ref()
-            .map(|proof| proof.threshold_signature.encode().to_vec())
+    pub fn raw_vrf_seed_bytes(&self) -> Vec<u8> {
+        self.vrf_proof.threshold_signature.encode().to_vec()
     }
 }
 

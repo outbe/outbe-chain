@@ -213,10 +213,7 @@ fn verify_v2_certificate_low_level(
     )
     .map_err(|_| V2VerifyError::BlsAggregateInvalid)?;
 
-    let proof = cert
-        .vrf_proof
-        .as_ref()
-        .ok_or(V2VerifyError::MissingVrfProof)?;
+    let proof = &cert.vrf_proof;
     verify_threshold_vrf_proof(&snapshot.vrf_group_public_key, binding.seed_message, proof)?;
 
     let mut signer_bitmap = vec![0u8; participants_len];

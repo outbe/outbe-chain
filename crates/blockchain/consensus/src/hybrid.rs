@@ -90,8 +90,8 @@ pub struct HybridSignature<V: Variant> {
     /// non-repudiably attributable so a byzantine/equivocating partial is
     /// slashable (see [`crate::proof::seed_partial`]). NOT aggregated into the
     /// certificate and never reaches on-chain certificate bytes; it rides the
-    /// per-vote P2P gossip only and is consulted for attribution, never to
-    /// reject a vote (see `verify_attestation` / `sanitize_seed_partial`).
+    /// per-vote P2P gossip only and is consulted for attribution when the
+    /// complete vote+partial pair is excluded from quorum admission.
     pub seed_partial_identity_sig: bls12381::Signature,
 }
 
@@ -139,18 +139,6 @@ impl<V: Variant> FixedSize for HybridSignature<V> {
 // byte-identically. There must be exactly one definition of each in the workspace
 // (enforced by `audit_targets` / `codec_reuse` tests).
 pub use crate::proof::hybrid_wire::{HybridCertificate, VrfProof};
-
-/// Sentinel VRF material version used to neutralize a byzantine seed partial.
-///
-/// When attestation verification finds a `bls_seed_partial` that claims the
-/// active material version but does not verify against the committee
-/// polynomial, the carrying attestation's `vrf_material_version` is retagged to
-/// this value. `assemble`'s recovery filter keeps only partials whose version
-/// equals the active version, so a retagged partial is excluded from
-/// `recover_proof` while its (valid) individual vote still counts. Real DKG
-/// material versions are small monotonic `dkg_cycle` counters, so this maximum
-/// value is never a live version and the exclusion is unambiguous.
-const VRF_PARTIAL_REJECTED_VERSION: u64 = u64::MAX;
 
 /// The committee binding shared by both roles: the ordered participant set, the
 /// versioned VRF threshold material, and the pre-computed committee-bound
@@ -379,7 +367,7 @@ impl<V: Variant> HybridScheme<V> {
     where
         R: CryptoRngCore,
     {
-        let proof = certificate.vrf_proof.as_ref()?;
+        let proof = &certificate.vrf_proof;
         if proof.material_version != self.active_vrf_material_version() {
             return None;
         }
@@ -460,43 +448,35 @@ impl<V: Variant> HybridScheme<V> {
         )
     }
 
-    /// Neutralize a byzantine threshold-VRF seed partial without discarding the
-    /// individual vote it rides with.
-    ///
-    /// VRF material is not finality-critical, so a validator with stale or
-    /// invalid VRF material must still have its vote counted. But an unverified
-    /// `bls_seed_partial` folded into [`VrfMaterialProvider::recover_proof`]
-    /// produces a wrong threshold signature: the resulting finalization
-    /// certificate carries a VRF proof that fails the mandatory V2
-    /// `verify_threshold_vrf_proof` at the next height, which is a fatal
-    /// pre-execution gate — a single byzantine partial would permanently halt
-    /// the chain at `N+1`.
-    ///
-    /// This returns the attestation unchanged when the partial either is tagged
-    /// with a non-active version (already excluded from recovery by the version
-    /// filter, and legitimately stale after a reshare) or verifies correctly.
-    /// When the partial claims the active version but does not verify, the
-    /// attestation is retagged to [`VRF_PARTIAL_REJECTED_VERSION`] so
-    /// `assemble` excludes it from recovery; recovery then proceeds over the
-    /// honest partials only and yields the correct, verifiable group signature.
-    fn sanitize_seed_partial<R, D>(
+    /// Record a non-valid seed-partial verdict after the complete attestation is
+    /// excluded from quorum admission. The signer is never returned through the
+    /// p2p-invalid channel solely because of a partial problem.
+    fn record_seed_partial_drop<D>(
         &self,
-        rng: &mut R,
         subject: Subject<'_, D>,
-        attestation: Attestation<Self>,
-        strategy: &impl Strategy,
-    ) -> Attestation<Self>
-    where
-        R: CryptoRngCore,
+        attestation: &Attestation<Self>,
+        verdict: SeedPartialVerdict,
+    ) where
         D: Digest,
     {
-        let Some(signature) = attestation.signature.get().cloned() else {
-            return attestation;
+        let Some(signature) = attestation.signature.get() else {
+            return;
         };
-        match self.classify_seed_partial(rng, subject, &attestation, strategy) {
-            // Keep as-is: either valid, or legitimately stale material excluded
-            // from recovery by the version filter.
-            SeedPartialVerdict::Valid | SeedPartialVerdict::StaleVersion => attestation,
+        let round = round_from_subject(&subject);
+        crate::metrics::record_vrf_partial_drop(verdict.label(), attestation.signer.get());
+        tracing::warn!(
+            target: "outbe::hybrid::vrf_partial",
+            verdict = verdict.label(),
+            signer_index = attestation.signer.get(),
+            epoch = round.epoch().get(),
+            view = round.view().get(),
+            expected_material_version = self.active_vrf_material_version(),
+            received_material_version = signature.vrf_material_version,
+            "dropping vote and VRF partial from quorum admission"
+        );
+
+        match verdict {
+            SeedPartialVerdict::Valid => {}
             SeedPartialVerdict::AttributableInvalid => {
                 crate::metrics::record_invalid_vrf_partial();
                 // Emit the attributable facts for an external slashing watcher to
@@ -507,7 +487,6 @@ impl<V: Variant> HybridScheme<V> {
                 // non-repudiable and re-verifiable on chain from the committee
                 // snapshot, so the watcher's submission cannot frame an honest
                 // node.
-                let round = round_from_subject(&subject);
                 let signer_pubkey = self
                     .participants_ref()
                     .key(attestation.signer)
@@ -525,12 +504,11 @@ impl<V: Variant> HybridScheme<V> {
                     identity_sig = hex::encode(signature.seed_partial_identity_sig.encode()),
                     "attributable invalid VRF seed partial — slashable; external watcher should submit evidence"
                 );
-                neutralize_seed_partial(attestation.signer, signature)
             }
             SeedPartialVerdict::Unattributable => {
                 crate::metrics::record_forged_seed_partial();
-                neutralize_seed_partial(attestation.signer, signature)
             }
+            SeedPartialVerdict::StaleVersion => {}
         }
     }
 
@@ -583,16 +561,14 @@ pub enum SeedPartialVerdict {
     Unattributable,
 }
 
-/// Retag a partial to [`VRF_PARTIAL_REJECTED_VERSION`] so `assemble` excludes it
-/// from recovery, preserving the (non-finality-critical) individual vote.
-fn neutralize_seed_partial<V: Variant>(
-    signer: Participant,
-    mut signature: HybridSignature<V>,
-) -> Attestation<HybridScheme<V>> {
-    signature.vrf_material_version = VRF_PARTIAL_REJECTED_VERSION;
-    Attestation {
-        signer,
-        signature: commonware_codec::types::lazy::Lazy::from(signature),
+impl SeedPartialVerdict {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Valid => "valid",
+            Self::StaleVersion => "stale_version",
+            Self::AttributableInvalid => "attributable_invalid",
+            Self::Unattributable => "unattributable",
+        }
     }
 }
 
@@ -736,11 +712,12 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
                 invalid.push(attestation.signer);
                 continue;
             }
-            // The vote is valid. Sanitize the seed partial so a byzantine
-            // `bls_seed_partial` cannot poison threshold recovery (which would
-            // fail the next height's mandatory V2 VRF verify and halt the
-            // chain) while keeping the non-finality-critical vote.
-            verified.push(self.sanitize_seed_partial(rng, subject, attestation, strategy));
+            let verdict = self.classify_seed_partial(rng, subject, &attestation, strategy);
+            if verdict == SeedPartialVerdict::Valid {
+                verified.push(attestation);
+            } else {
+                self.record_seed_partial_drop(subject, &attestation, verdict);
+            }
         }
 
         Verification::new(verified, invalid)
@@ -783,8 +760,10 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
             .collect();
         let bls_aggregated_vote = aggregate::combine_signatures::<MinPk, _>(vote_sigs);
 
-        // Recover VRF proof only from partials signed with the active material
-        // version. Failure to recover VRF must not invalidate finality.
+        // Every attestation reaching assembly is either locally produced by
+        // this pinned scheme or was admitted by `verify_attestations` for the
+        // exact subject. Keep the version check fail-closed so a future caller
+        // cannot assemble a certificate from a heterogeneous set.
         let active_vrf_version = self.active_vrf_material_version();
         let seed_partials: Vec<PartialSignature<V>> = entries
             .iter()
@@ -795,38 +774,31 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
                 })
             })
             .collect();
-        // under quorum the VRF proof MUST be
-        // recoverable; if `recover_proof` returns `None` despite quorum, that
-        // is a local material/share inconsistency. Emit the metric so the
-        // proposer-side path (see `record_vrf_recover_failed_under_quorum`)
-        // can deterministically forfeit the slot with
-        // `ProposerForfeitReason::VrfRecoverFailedUnderQuorum`. We do NOT
-        // stall Simplex and do NOT emit a proof-less V2 parent-accounting
-        // record — the certificate is still produced (`vrf_proof = None`),
-        // and the proposer inspects this and chooses forfeit at a higher
-        // layer (see `OutbeReporter::handle_finalization`'s
-        // `vrf_proof_present` log and the build_block path).
-        let vrf_proof = if seed_partials.len() >= participants.quorum::<M>() as usize {
-            let proof = self.vrf_materials().recover_proof::<M>(
+        let quorum = participants.quorum::<M>() as usize;
+        if seed_partials.len() < quorum {
+            crate::metrics::record_vrf_recover_failed_under_quorum();
+            tracing::warn!(
+                target: "outbe::hybrid",
                 active_vrf_version,
-                &seed_partials,
-                strategy,
+                quorum,
+                seed_partials = seed_partials.len(),
+                "refusing to assemble a certificate without a VRF quorum"
             );
-            if proof.is_none() {
-                crate::metrics::record_vrf_recover_failed_under_quorum();
-                tracing::warn!(
-                    target: "outbe::hybrid",
-                    active_vrf_version,
-                    quorum = participants.quorum::<M>(),
-                    seed_partials = seed_partials.len(),
-                    "VRF recover_proof returned None despite quorum being met; \
-                     proposer must forfeit slot with reason \
-                     VrfRecoverFailedUnderQuorum"
-                );
-            }
-            proof
-        } else {
-            None
+            return None;
+        }
+        let Some(vrf_proof) =
+            self.vrf_materials()
+                .recover_proof::<M>(active_vrf_version, &seed_partials, strategy)
+        else {
+            crate::metrics::record_vrf_recover_failed_under_quorum();
+            tracing::warn!(
+                target: "outbe::hybrid",
+                active_vrf_version,
+                quorum,
+                seed_partials = seed_partials.len(),
+                "refusing to assemble a certificate after VRF recovery failed"
+            );
+            return None;
         };
 
         let signers = Signers::from(participants.len(), signers_vec);
@@ -888,7 +860,13 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
             return false;
         }
 
-        true
+        let proof = &certificate.vrf_proof;
+        if proof.material_version != self.active_vrf_material_version() {
+            return false;
+        }
+        let seed_message = seed_message_from_subject(&subject);
+        self.vrf_materials()
+            .verify_proof(proof, &namespace.seed, seed_message.as_ref())
     }
 
     fn is_attributable() -> bool {
@@ -1213,7 +1191,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bad_vrf_partial_does_not_invalidate_finality() {
+    fn assemble_rejects_quorum_without_active_version_partials() {
         let (keys, participants) = test_participants(3);
         let dkg = bootstrap_dkg(3).unwrap();
 
@@ -1266,20 +1244,13 @@ mod tests {
                 &Sequential
             )));
 
-        let certificate = verifier
+        assert!(verifier
             .assemble::<_, N3f1>(attestations, &Sequential)
-            .unwrap();
-        assert!(certificate.vrf_proof.is_none());
-        assert!(verifier.verify_certificate::<_, Sha256Digest, N3f1>(
-            &mut rng,
-            subject,
-            &certificate,
-            &Sequential
-        ));
+            .is_none());
     }
 
     #[test]
-    fn test_invalid_vrf_proof_does_not_invalidate_finality_certificate() {
+    fn verify_certificate_rejects_wrong_vrf_material_version() {
         let (keys, participants) = test_participants(3);
         let dkg = bootstrap_dkg(3).unwrap();
 
@@ -1317,10 +1288,10 @@ mod tests {
         let mut certificate = verifier
             .assemble::<_, N3f1>(attestations, &Sequential)
             .unwrap();
-        certificate.vrf_proof.as_mut().unwrap().material_version = 999;
+        certificate.vrf_proof.material_version = 999;
 
         let mut rng = rand_core::OsRng;
-        assert!(verifier.verify_certificate::<_, Sha256Digest, N3f1>(
+        assert!(!verifier.verify_certificate::<_, Sha256Digest, N3f1>(
             &mut rng,
             subject,
             &certificate,
@@ -1334,6 +1305,44 @@ mod tests {
                 &Sequential
             )
             .is_none());
+    }
+
+    #[test]
+    fn verify_certificate_rejects_vrf_proof_for_a_different_subject() {
+        let (schemes, verifier) = signers_and_verifier(4);
+        let proposal = sample_proposal(Epoch::new(1), View::new(2), 42);
+        let subject = Subject::Finalize {
+            proposal: &proposal,
+        };
+        let mut certificate = verifier
+            .assemble::<_, N3f1>(
+                schemes
+                    .iter()
+                    .map(|scheme| scheme.sign::<Sha256Digest>(subject).unwrap()),
+                &Sequential,
+            )
+            .unwrap();
+
+        let other_proposal = sample_proposal(Epoch::new(1), View::new(3), 43);
+        let other_subject = Subject::Finalize {
+            proposal: &other_proposal,
+        };
+        certificate.vrf_proof = verifier
+            .assemble::<_, N3f1>(
+                schemes
+                    .iter()
+                    .map(|scheme| scheme.sign::<Sha256Digest>(other_subject).unwrap()),
+                &Sequential,
+            )
+            .unwrap()
+            .vrf_proof;
+
+        assert!(!verifier.verify_certificate::<_, Sha256Digest, N3f1>(
+            &mut bls_batch_verification_rng(),
+            subject,
+            &certificate,
+            &Sequential,
+        ));
     }
 
     /// Build `n` signer schemes and a matching verifier from one DKG.
@@ -1447,7 +1456,7 @@ mod tests {
                 &Sequential,
             )
             .unwrap();
-        assert_eq!(certificate.vrf_proof.as_ref().unwrap().material_version, 1);
+        assert_eq!(certificate.vrf_proof.material_version, 1);
 
         let mut rng = bls_batch_verification_rng();
         assert!(
@@ -1513,13 +1522,9 @@ mod tests {
             .unwrap()
     }
 
-    /// C-02 regression: a single byzantine seed partial (active version, garbage
-    /// value) on an otherwise-valid vote must NOT poison threshold recovery.
-    /// Attestation verification neutralizes it, recovery runs over the honest
-    /// partials, and the resulting finalization certificate carries a VRF proof
-    /// that VERIFIES — so the next height's mandatory V2 verify passes and the
-    /// chain does not halt. Before the fix the garbage partial was interpolated
-    /// into a bad threshold signature and the proof failed to verify.
+    /// A vote and its seed partial are one atomic quorum contribution. A single
+    /// byzantine partial removes that complete attestation while the remaining
+    /// clean n=4 quorum still assembles a valid certificate.
     #[test]
     fn test_byzantine_seed_partial_excluded_keeps_valid_vrf_proof() {
         let (schemes, verifier) = signers_and_verifier(4);
@@ -1551,10 +1556,7 @@ mod tests {
         let poisoned = verifier
             .assemble::<_, N3f1>(corrupted.clone(), &Sequential)
             .unwrap();
-        assert!(
-            poisoned.vrf_proof.is_some(),
-            "control: recovery still produces a (garbage) proof"
-        );
+        assert_eq!(poisoned.vrf_proof.material_version, 0);
         assert!(
             verifier
                 .verified_vrf_seed_for_round(&mut rng, round, &poisoned, &Sequential)
@@ -1562,9 +1564,7 @@ mod tests {
             "control: the unsanitized garbage partial poisons the recovered proof"
         );
 
-        // Production path: the batcher runs votes through `verify_attestations`,
-        // which sanitizes the byzantine partial. The vote is kept, the partial
-        // excluded from recovery.
+        // Production path: the batcher drops the whole vote+partial pair.
         let verification = verifier.verify_attestations::<_, Sha256Digest, _>(
             &mut rng,
             subject,
@@ -1573,18 +1573,19 @@ mod tests {
         );
         assert!(
             verification.invalid.is_empty(),
-            "the byzantine partial must NOT drop the valid vote"
+            "a partial problem must not p2p-block the authenticated signer"
         );
-        assert_eq!(verification.verified.len(), 4, "all four votes are kept");
+        assert_eq!(
+            verification.verified.len(),
+            3,
+            "only the three complete valid attestations count"
+        );
 
         let certificate = verifier
             .assemble::<_, N3f1>(verification.verified, &Sequential)
             .unwrap();
-        assert_eq!(certificate.signers.count(), 4, "all four votes counted");
-        assert!(
-            certificate.vrf_proof.is_some(),
-            "recovery over the honest partials still produces a proof"
-        );
+        assert_eq!(certificate.signers.count(), 3, "the bad pair is excluded");
+        assert_eq!(certificate.vrf_proof.material_version, 0);
         assert!(
             verifier
                 .verified_vrf_seed_for_round(&mut rng, round, &certificate, &Sequential)
@@ -1599,11 +1600,8 @@ mod tests {
         ));
     }
 
-    /// C-02 safety floor: when MORE than `f` partials are byzantine (so fewer
-    /// than `required` honest partials remain), recovery must fall to
-    /// `vrf_proof = None` — the existing deterministic forfeit path — rather
-    /// than embed an unverifiable proof. Finality (the aggregate vote) is
-    /// unaffected. Worst case is forfeit, never a permanent halt.
+    /// When more than `f` partials are unusable, fewer than quorum complete
+    /// attestations remain and no certificate is assembled.
     #[test]
     fn test_excess_byzantine_seed_partials_forfeit_not_poison() {
         let (schemes, verifier) = signers_and_verifier(4);
@@ -1630,22 +1628,17 @@ mod tests {
             corrupted,
             &Sequential,
         );
-        assert!(verification.invalid.is_empty(), "votes are still valid");
-
-        let certificate = verifier
-            .assemble::<_, N3f1>(verification.verified, &Sequential)
-            .unwrap();
         assert!(
-            certificate.vrf_proof.is_none(),
-            "too few honest partials must forfeit the proof, not embed a garbage one"
+            verification.invalid.is_empty(),
+            "partial drops do not p2p-block"
         );
-        // Finality is preserved regardless of VRF.
-        assert!(verifier.verify_certificate::<_, Sha256Digest, N3f1>(
-            &mut rng,
-            subject,
-            &certificate,
-            &Sequential
-        ));
+        assert_eq!(verification.verified.len(), 2);
+        assert!(
+            verifier
+                .assemble::<_, N3f1>(verification.verified, &Sequential)
+                .is_none(),
+            "too few complete attestations must never produce a certificate"
+        );
     }
 
     /// Honest path through `verify_attestations` is unchanged: every valid
@@ -1675,7 +1668,7 @@ mod tests {
         let certificate = verifier
             .assemble::<_, N3f1>(verification.verified, &Sequential)
             .unwrap();
-        assert!(certificate.vrf_proof.is_some());
+        assert_eq!(certificate.vrf_proof.material_version, 0);
         assert!(
             verifier
                 .verified_vrf_seed_for_round(&mut rng, round, &certificate, &Sequential)
@@ -1785,7 +1778,7 @@ mod tests {
     }
 
     #[test]
-    fn test_classify_seed_partial_three_way_verdict() {
+    fn seed_partial_verdict_routes_only_valid_pairs_into_quorum() {
         use crate::proof::{seed_attest_namespace, seed_partial_attest_message};
 
         let (keys, schemes, verifier) = signers_keys_and_verifier(4);
@@ -1851,6 +1844,18 @@ mod tests {
         assert_eq!(
             verifier.classify_seed_partial(&mut rng, subject, &unattributable, &Sequential),
             SeedPartialVerdict::Unattributable
+        );
+
+        let routed = verifier.verify_attestations::<_, Sha256Digest, _>(
+            &mut rng,
+            subject,
+            [honest, stale, attributable, unattributable],
+            &Sequential,
+        );
+        assert_eq!(routed.verified.len(), 1, "only the Valid pair counts");
+        assert!(
+            routed.invalid.is_empty(),
+            "partial verdicts are dropped without p2p-blocking the signer"
         );
     }
 
@@ -2016,7 +2021,7 @@ mod tests {
 
         let encoded = certificate.encode();
         // Certificate should be much smaller than ed25519 variant.
-        // Signers bitmap + aggregated vote + optional VRF proof stays compact.
+        // Signers bitmap + aggregated vote + mandatory VRF proof stays compact.
         assert!(
             encoded.len() < 200,
             "certificate should be compact, got {} bytes",
