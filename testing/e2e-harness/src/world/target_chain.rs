@@ -94,6 +94,11 @@ impl TargetChain {
             port.to_string(),
             "--chain-id".to_owned(),
             TARGET_CHAIN_ID.to_string(),
+            // The harness prices its sends for the committee chain, whose base fee is
+            // a handful of units. This chain carries messages, not a fee market, so it
+            // charges nothing rather than forcing a second price everywhere.
+            "--base-fee".to_owned(),
+            "0".to_owned(),
         ]);
         attach_log(&mut cmd, &dir)?;
 
