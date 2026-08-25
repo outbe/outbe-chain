@@ -2,26 +2,27 @@
 pragma solidity ^0.8.30;
 
 /// @title IEmit
-/// @notice Emit private-note pool precompile at
+/// @notice Emit private-note tree precompile at
 ///         0x000000000000000000000000000000000000EE12
 interface IEmit {
-    /// Burn native COEN into a private note. The note's serial is derived
-    /// from `noteSn` and the caller-supplied value; the note itself (owner,
-    /// spend key) is chosen off-chain and proven later at mint. `msg.value`
-    /// must be a positive amount fitting `uint64` (native base units, 1:1
-    /// with circuit units). Initializes the pool on the first call.
+    /// Burn native COEN into a private note. The commitment is derived from
+    /// the runtime chain ID, `noteSn`, and the caller-supplied value; the note
+    /// itself (owner, spend key) is chosen off-chain and proven later at mint.
+    /// `msg.value` must be a positive amount fitting `uint64` (native base
+    /// units, 1:1 with circuit units). Initializes the tree on the first call.
     function burn(bytes32 noteSn) external payable;
 
     /// Redeem a private note: prove membership under an accepted root,
     /// nullify the note, credit `mintUnits` to `payoutRecipient`, and — when
     /// the note holds more than `mintUnits` — append the circuit-derived
     /// deterministic change commitment. The caller must be `noteOwner`; the
-    /// embedded proof statement must equal the explicit calldata fields.
-    /// `proof` is the combined UltraHonkKeccak wire for the frozen Emit mint
-    /// circuit, version 1.0.0, capped at 16,384 bytes.
+    /// embedded proof statement must equal the explicit calldata fields, and
+    /// `chainId` must equal the runtime chain ID. `proof` is the combined
+    /// UltraHonkKeccak wire for the frozen Emit mint circuit, version 1.0.0,
+    /// capped at 16,384 bytes.
     function mint(
         address payoutRecipient,
-        bytes32 poolId,
+        uint64 chainId,
         bytes32 root,
         bytes32 nullifier,
         address noteOwner,
@@ -30,7 +31,7 @@ interface IEmit {
         bytes calldata proof
     ) external;
 
-    /// @notice A commitment was appended to the pool's tree.
+    /// @notice A commitment was appended to the chain's Emit tree.
     /// @param commitment The appended commitment (indexed).
     /// @param leafIndex Zero-based leaf position of the append.
     /// @param rootAfter Tree root after the append.

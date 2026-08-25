@@ -17,8 +17,7 @@ use outbe_zkproof::{decode_emit_mint_public_inputs, verify_emit_mint, ZkProofErr
 
 use crate::errors::EmitError;
 use crate::hash::{
-    empty_subtrees, field_from_be_bytes, field_to_be_bytes, merkle_node, note_commitment, pool_id,
-    Field,
+    empty_subtrees, field_from_be_bytes, field_to_be_bytes, merkle_node, note_commitment, Field,
 };
 use crate::precompile::IEmit;
 use crate::schema::{
@@ -27,7 +26,7 @@ use crate::schema::{
 
 /// The explicit mint statement, exactly as it arrives on the ABI.
 pub(crate) struct MintStatement {
-    pub pool_id: B256,
+    pub chain_id: u64,
     pub root: B256,
     pub nullifier: B256,
     pub note_owner: Address,
@@ -35,15 +34,11 @@ pub(crate) struct MintStatement {
     pub change_commitment: B256,
 }
 
-/// One pool per chain: the circuit's `instance_id` input is fixed at field
-/// zero and the pool is derived from the live chain ID on every request.
-
-/// Derives the chain pool and the full in-memory empty ladder for it.
-fn chain_pool(storage: &StorageHandle<'_>) -> Result<(Field, Vec<Field>)> {
+/// Reads the live chain ID and derives its full in-memory empty ladder.
+fn chain_state(storage: &StorageHandle<'_>) -> Result<(u64, Vec<Field>)> {
     let chain_id = storage.chain_id()?;
-    let pool = pool_id(chain_id, Field::from(0u64));
-    let zeros = empty_subtrees(pool, EMIT_TREE_DEPTH);
-    Ok((pool, zeros))
+    let zeros = empty_subtrees(chain_id, EMIT_TREE_DEPTH);
+    Ok((chain_id, zeros))
 }
 
 /// Reads the schema gate: `0` = pristine, `EMIT_SCHEMA_VERSION` = active.
@@ -71,13 +66,13 @@ fn append(emit: &EmitContract<'_>, zeros: &[Field], leaf: Field) -> Result<(u32,
         if (index >> level) & 1 == 0 {
             emit.filled_subtrees
                 .write(&level_byte, B256::new(field_to_be_bytes(current)))?;
-            current = merkle_node(level, current, zeros[level]);
+            current = merkle_node(current, zeros[level]);
         } else {
             let left = emit.filled_subtrees.read(&level_byte)?;
             let left = field_from_be_bytes(&left.0).ok_or(PrecompileError::Fatal(
                 "Emit filled-subtree slot is not a canonical field".into(),
             ))?;
-            current = merkle_node(level, left, current);
+            current = merkle_node(left, current);
         }
     }
     emit.current_root
@@ -110,7 +105,7 @@ pub(crate) fn burn(
         return Err(EmitError::MustBeNonZero("noteSn").into());
     }
 
-    let (pool, zeros) = chain_pool(&storage)?;
+    let (chain_id, zeros) = chain_state(&storage)?;
     let emit: EmitContract<'_> = storage.contract();
     let schema = schema_state(&emit)?;
     let leaf_count = emit.leaf_count.read()?;
@@ -119,8 +114,8 @@ pub(crate) fn burn(
     }
 
     // The commitment is always derived — never caller-supplied — so the
-    // hidden note value is bound to the burned supply.
-    let commitment = note_commitment(pool, serial, amount);
+    // hidden note value is bound to the burned supply and runtime chain ID.
+    let commitment = note_commitment(chain_id, serial, amount);
     if commitment.is_zero() {
         return Err(EmitError::MustBeNonZero("commitment").into());
     }
@@ -175,10 +170,8 @@ pub(crate) fn mint(
     statement: MintStatement,
     proof: &[u8],
 ) -> Result<()> {
-    // Statement fields must be canonical BN254 words before anything else
-    // touches them.
-    let pool = field_from_be_bytes(&statement.pool_id.0)
-        .ok_or_else(|| PrecompileError::from(EmitError::NonCanonicalField("poolId")))?;
+    // Statement field elements must be canonical before anything else touches
+    // them. `chain_id` and `mint_units` are already exact ABI-decoded u64s.
     let root = field_from_be_bytes(&statement.root.0)
         .ok_or_else(|| PrecompileError::from(EmitError::NonCanonicalField("root")))?;
     let nullifier = field_from_be_bytes(&statement.nullifier.0)
@@ -192,7 +185,7 @@ pub(crate) fn mint(
 
     // The embedded statement must equal the explicit calldata exactly — a
     // security check, not optional redundancy.
-    let statement_matches = embedded.pool_id == statement.pool_id.0
+    let statement_matches = embedded.chain_id == statement.chain_id
         && embedded.root == statement.root.0
         && embedded.nullifier == statement.nullifier.0
         && embedded.note_owner == statement.note_owner
@@ -202,17 +195,16 @@ pub(crate) fn mint(
         return Err(EmitError::StatementMismatch.into());
     }
 
-    let (chain_pool_field, zeros) = chain_pool(&storage)?;
+    let (runtime_chain_id, zeros) = chain_state(&storage)?;
     let emit: EmitContract<'_> = storage.contract();
     let schema = schema_state(&emit)?;
     if schema == 0 {
         return Err(EmitError::NotInitialized.into());
     }
 
-    // The proof pool must be the chain-derived pool; a proof-supplied pool is
-    // never trusted.
-    if pool != chain_pool_field {
-        return Err(EmitError::PoolMismatch.into());
+    // A proof-supplied chain ID is never trusted.
+    if statement.chain_id != runtime_chain_id {
+        return Err(EmitError::ChainIdMismatch.into());
     }
 
     if statement.note_owner.is_zero() {

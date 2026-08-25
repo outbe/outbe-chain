@@ -346,10 +346,10 @@ fn u64_word(value: u64) -> [u8; 32] {
 
 fn valid_emit_words() -> [[u8; 32]; EMIT_MINT_FIELD_WORDS] {
     let mut words = [[0u8; 32]; EMIT_MINT_FIELD_WORDS];
-    words[0] = fr_be(&Fr::from(101u64));
+    words[0] = u64_word(31_337);
     words[1] = fr_be(&Fr::from(102u64));
     words[2] = fr_be(&Fr::from(103u64));
-    for (_slot, word) in words.iter_mut().enumerate().take(23).skip(3) {
+    for word in words.iter_mut().take(23).skip(3) {
         *word = owner_word(0x22);
     }
     words[23] = u64_word(40);
@@ -374,7 +374,7 @@ fn emit_mint_public_inputs_are_decoded_in_circuit_order() {
 
     let decoded = decode_emit_mint_public_inputs(&proof).unwrap();
 
-    assert_eq!(decoded.pool_id, words[0]);
+    assert_eq!(decoded.chain_id, 31_337);
     assert_eq!(decoded.root, words[1]);
     assert_eq!(decoded.nullifier, words[2]);
     assert_eq!(decoded.note_owner.0.as_slice(), &[0x22; 20]);
@@ -436,7 +436,7 @@ fn emit_mint_rejects_non_canonical_field_word() {
     // big-endian encoding violates the canonical-representation rule.
     let modulus_bytes: [u8; 32] =
         alloy_primitives::hex!("30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001");
-    for slot in [0usize, 1, 2, 24] {
+    for slot in [1usize, 2, 24] {
         let mut words = valid_emit_words();
         words[slot] = modulus_bytes;
         let proof = combined_emit_proof(&words, 1);
@@ -445,6 +445,17 @@ fn emit_mint_rejects_non_canonical_field_word() {
             Err(ZkProofError::NonCanonicalPublicInput(index)) if index == slot
         ));
     }
+}
+
+#[test]
+fn emit_mint_rejects_invalid_chain_id_word() {
+    let mut words = valid_emit_words();
+    words[0][0] = 1;
+    let proof = combined_emit_proof(&words, 1);
+    assert!(matches!(
+        decode_emit_mint_public_inputs(&proof),
+        Err(ZkProofError::InvalidEmitChainId)
+    ));
 }
 
 #[test]
@@ -521,6 +532,17 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
     use outbe_protocol::{OutbeV1, Suite};
     use outbe_zk_backend::barretenberg::Barretenberg;
     use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
+    use outbe_zk_canonical::CircuitId as _;
+
+    assert_eq!(EmitMint::VERSION, "1.0.0");
+    assert_eq!(
+        EmitMint::CIRCUIT_HASH,
+        alloy_primitives::hex!("f41d5933969dacd80409a6501cd0de2b5efa877961f20b90af0814e786eadc45")
+    );
+    assert_eq!(
+        EmitMint::VK_HASH,
+        alloy_primitives::hex!("d09623ad712f85bf032a7171bda20205620657eeb37df0c5b19a641a7295acb1")
+    );
 
     crate::verify::init_crs().expect("CRS init");
     type Field = <OutbeV1 as Suite>::Field;
@@ -538,35 +560,35 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
         state
     };
     let owner = [0x22u8; 20];
+    let chain_id = 31_337u64;
     let spend_key = Field::from(17u64);
-    let pool = emit_hash("EMIT_POOL", &[Field::from(31_337u64), Field::from(0u64)]);
     let serial = emit_hash(
         "EMIT_NOTE_SN",
         &[Field::from_be_bytes_mod_order(&owner), spend_key],
     );
-    let commitment = emit_hash("EMIT_COMMITMENT", &[pool, serial, Field::from(100u64)]);
+    let commitment = emit_hash(
+        "EMIT_COMMITMENT",
+        &[Field::from(chain_id), serial, Field::from(100u64)],
+    );
     let mut path = [Field::from(0u64); 20];
-    path[0] = emit_hash("EMIT_EMPTY", &[pool]);
+    path[0] = emit_hash("EMIT_EMPTY", &[Field::from(chain_id)]);
     for level in 1..20 {
-        path[level] = emit_hash(
-            "EMIT_NODE",
-            &[
-                Field::from((level - 1) as u64),
-                path[level - 1],
-                path[level - 1],
-            ],
-        );
+        path[level] = h2(path[level - 1], path[level - 1]);
     }
+    let path_bits = [false; 20];
     let mut root = commitment;
-    for (level, sibling) in path.iter().copied().enumerate() {
-        root = emit_hash("EMIT_NODE", &[Field::from(level as u64), root, sibling]);
+    for sibling in path {
+        root = h2(root, sibling);
     }
-    let nullifier = emit_hash("EMIT_NULLIFIER", &[pool, serial, spend_key]);
+    let nullifier = emit_hash(
+        "EMIT_NULLIFIER",
+        &[Field::from(chain_id), serial, spend_key],
+    );
     let next_key = emit_hash("EMIT_CHANGE_KEY", &[spend_key, nullifier]);
     let change = emit_hash(
         "EMIT_COMMITMENT",
         &[
-            pool,
+            Field::from(chain_id),
             emit_hash(
                 "EMIT_NOTE_SN",
                 &[Field::from_be_bytes_mod_order(&owner), next_key],
@@ -576,7 +598,7 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
     );
 
     let public = PublicInputs {
-        pool_id: pool,
+        chain_id,
         root,
         nullifier,
         note_owner: owner,
@@ -586,7 +608,7 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
     let witness = Witness {
         note_amount: 100,
         note_spend_key: spend_key,
-        leaf_index: 0,
+        path_bits,
         auth_path: path,
     };
     let backend = Barretenberg::default();
@@ -620,8 +642,7 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
         let mut tampered = combined.clone();
         let start = 4 + slot * 32;
         match slot {
-            3..=22 => tampered[start + 31] ^= 1,
-            23 => tampered[start + 31] ^= 1,
+            0 | 3..=23 => tampered[start + 31] ^= 1,
             _ => tampered[start] ^= 1,
         }
         assert!(

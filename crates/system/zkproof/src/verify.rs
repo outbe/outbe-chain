@@ -34,7 +34,7 @@ const FULL_PROOF_PROOF_FIELD_COUNT: usize = 274;
 pub const FULL_PROOF_COMBINED_LEN: usize =
     4 + (FULL_PROOF_PUBLIC_INPUT_COUNT + FULL_PROOF_PROOF_FIELD_COUNT) * 32;
 
-/// Public-input count fixed by the `outbe.emit.mint@1.0.0` ABI: `pool_id`,
+/// Public-input count fixed by the `outbe.emit.mint@1.0.0` ABI: `chain_id`,
 /// `root`, `nullifier`, twenty flattened owner bytes, `mint_units`,
 /// `change_commitment`.
 const EMIT_MINT_PUBLIC_INPUT_COUNT: usize = 25;
@@ -88,11 +88,11 @@ pub struct PayNotePublicInputs {
 }
 
 /// Public claim carried by the canonical `outbe.emit.mint@1.0.0`
-/// combined-proof format, in circuit order: `pool_id`, `root`, `nullifier`,
+/// combined-proof format, in circuit order: `chain_id`, `root`, `nullifier`,
 /// twenty flattened owner bytes, `mint_units`, `change_commitment`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EmitMintPublicInputs {
-    pub pool_id: [u8; 32],
+    pub chain_id: u64,
     pub root: [u8; 32],
     pub nullifier: [u8; 32],
     pub note_owner: Address,
@@ -299,9 +299,10 @@ pub fn verify_paynote(combined_proof: &[u8]) -> Result<bool, ZkProofError> {
 /// `outbe.emit.mint@1.0.0` combined proof.
 ///
 /// Accepts only the exact wire the frozen circuit fixes: a 25-count header,
-/// canonical BN254 field words at indices `0..=2` and `24`, twenty one-byte
-/// owner words at `3..=22` (upper 31 bytes zero), one right-aligned `u64`
-/// word at `23`, and a nonempty, 32-byte-aligned proof tail within the
+/// one right-aligned `u64` chain-ID word at index `0`, canonical BN254 field
+/// words at indices `1`, `2`, and `24`, twenty one-byte owner words at
+/// `3..=22` (upper 31 bytes zero), one right-aligned `u64` mint-units word at
+/// `23`, and a nonempty, 32-byte-aligned proof tail within the
 /// [`EMIT_MINT_MAX_COMBINED_LEN`] cap. The proof bytes remain self-contained
 /// and are passed unchanged to Barretenberg after callers compare this claim
 /// with their expected values.
@@ -331,15 +332,15 @@ pub fn decode_emit_mint_public_inputs(
         });
     }
 
-    let words: Vec<[u8; 32]> = combined_proof[4..EMIT_MINT_PUBLIC_PREFIX_LEN]
+    let mut words = [[0u8; 32]; EMIT_MINT_PUBLIC_INPUT_COUNT];
+    for (index, word) in combined_proof[4..EMIT_MINT_PUBLIC_PREFIX_LEN]
         .chunks_exact(32)
-        .map(|word| {
-            let mut buf = [0u8; 32];
-            buf.copy_from_slice(word);
-            buf
-        })
-        .collect();
-    for index in [0, 1, 2, 24] {
+        .enumerate()
+    {
+        words[index].copy_from_slice(word);
+    }
+    let chain_id = read_u64_be_padded(&words[0]).ok_or(ZkProofError::InvalidEmitChainId)?;
+    for index in [1, 2, 24] {
         if !is_canonical_field_word(&words[index]) {
             return Err(ZkProofError::NonCanonicalPublicInput(index));
         }
@@ -364,7 +365,7 @@ pub fn decode_emit_mint_public_inputs(
     }
 
     Ok(EmitMintPublicInputs {
-        pool_id: words[0],
+        chain_id,
         root: words[1],
         nullifier: words[2],
         note_owner: Address::new(note_owner),

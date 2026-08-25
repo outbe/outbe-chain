@@ -34,6 +34,8 @@ pub enum ZkProofError {
     EmptyProofSection,
     #[error("zk_verify: combined proof section is {0} bytes, not a multiple of 32")]
     UnalignedProofSection(usize),
+    #[error("zk_verify: emit chain ID word is not a right-aligned uint64")]
+    InvalidEmitChainId,
     #[error("zk_verify: emit owner word at index {0} is not a single padded byte")]
     InvalidEmitOwnerByte(usize),
     #[error("zk_verify: emit mint units word is not a right-aligned uint64")]

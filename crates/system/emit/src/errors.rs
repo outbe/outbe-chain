@@ -25,8 +25,8 @@ pub enum EmitError {
     MalformedProof(String),
     #[error("Emit mint proof statement does not match calldata")]
     StatementMismatch,
-    #[error("Emit pool does not match chain ID")]
-    PoolMismatch,
+    #[error("Emit chain ID does not match runtime")]
+    ChainIdMismatch,
     #[error("Emit note owner must be non-zero")]
     OwnerZero,
     #[error("Emit payout recipient must be non-zero")]

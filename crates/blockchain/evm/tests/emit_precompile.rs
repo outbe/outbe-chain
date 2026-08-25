@@ -8,7 +8,7 @@ use alloy_primitives::{Address, Bytes, LogData, B256, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
 use outbe_emit::hash::{
     change_key, empty_subtrees, field_to_be_bytes, merkle_node, note_commitment,
-    note_sn as derive_note_sn, nullifier as derive_nullifier, pool_id, Field,
+    note_sn as derive_note_sn, nullifier as derive_nullifier, Field,
 };
 use outbe_emit::precompile::IEmit;
 use outbe_emit::schema::{EMIT_TREE_CAPACITY, EMIT_TREE_DEPTH};
@@ -145,10 +145,6 @@ fn b256(field: Field) -> B256 {
     B256::new(field_to_be_bytes(field))
 }
 
-fn chain_pool() -> Field {
-    pool_id(CHAIN_ID, Field::from(0u64))
-}
-
 // ---- reference tree and proof fixture --------------------------------------
 
 struct ReferenceTree {
@@ -160,7 +156,7 @@ impl ReferenceTree {
     fn new() -> Self {
         Self {
             leaves: Vec::new(),
-            zeros: empty_subtrees(chain_pool(), EMIT_TREE_DEPTH),
+            zeros: empty_subtrees(CHAIN_ID, EMIT_TREE_DEPTH),
         }
     }
 
@@ -178,7 +174,7 @@ impl ReferenceTree {
             }
             nodes = nodes
                 .chunks_exact(2)
-                .map(|pair| merkle_node(level, pair[0], pair[1]))
+                .map(|pair| merkle_node(pair[0], pair[1]))
                 .collect();
         }
         nodes[0]
@@ -195,7 +191,7 @@ impl ReferenceTree {
             }
             nodes = nodes
                 .chunks_exact(2)
-                .map(|pair| merkle_node(level, pair[0], pair[1]))
+                .map(|pair| merkle_node(pair[0], pair[1]))
                 .collect();
             index >>= 1;
         }
@@ -212,18 +208,17 @@ fn prove_mint(
     root_leaf_count: usize,
     mint_units: u64,
 ) -> Vec<u8> {
-    let pool = chain_pool();
     let serial = derive_note_sn(owner.into(), key);
-    let nullifier = derive_nullifier(pool, serial, key);
+    let nullifier = derive_nullifier(CHAIN_ID, serial, key);
     let remaining = note_amount - mint_units;
     let change = if remaining > 0 {
         let next_key = change_key(key, nullifier);
-        note_commitment(pool, derive_note_sn(owner.into(), next_key), remaining)
+        note_commitment(CHAIN_ID, derive_note_sn(owner.into(), next_key), remaining)
     } else {
         Field::from(0u64)
     };
     let public = PublicInputs {
-        pool_id: pool,
+        chain_id: CHAIN_ID,
         root: tree.root_at(root_leaf_count),
         nullifier,
         note_owner: owner.into(),
@@ -233,7 +228,7 @@ fn prove_mint(
     let witness = Witness {
         note_amount,
         note_spend_key: key,
-        leaf_index,
+        path_bits: core::array::from_fn(|level| (leaf_index >> level) & 1 == 1),
         auth_path: tree.path_at(leaf_index),
     };
     let backend = Barretenberg::default();
@@ -267,7 +262,7 @@ fn mint_tx(
 ) -> Bytes {
     IEmit::mintCall {
         payoutRecipient: payout,
-        poolId: b256(chain_pool()),
+        chainId: CHAIN_ID,
         root: b256(root),
         nullifier: b256(nullifier),
         noteOwner: owner,
@@ -333,7 +328,7 @@ fn db_with_borrower(opcode: u8) -> CacheDB<EmptyDB> {
 #[test]
 fn emit_burn_partial_mint_full_mint_and_replay() {
     outbe_zkproof::init_crs().expect("CRS init");
-    let pool = chain_pool();
+    let pool = CHAIN_ID;
     let serial = derive_note_sn(BOB.into(), Field::from(17u64));
     let key = Field::from(17u64);
     let mut tree = ReferenceTree::new();
@@ -546,7 +541,7 @@ fn chained_db(mut db: CacheDB<EmptyDB>, outcome: ResultAndState) -> CacheDB<Empt
 #[test]
 fn root_evicted_by_32_later_appends_is_stale() {
     outbe_zkproof::init_crs().expect("CRS init");
-    let pool = chain_pool();
+    let pool = CHAIN_ID;
     let serial = derive_note_sn(BOB.into(), Field::from(17u64));
     let key = Field::from(17u64);
     let mut tree = ReferenceTree::new();
@@ -602,7 +597,7 @@ fn root_evicted_by_32_later_appends_is_stale() {
 #[test]
 fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
     outbe_zkproof::init_crs().expect("CRS init");
-    let pool = chain_pool();
+    let pool = CHAIN_ID;
     let serial = derive_note_sn(BOB.into(), Field::from(17u64));
     let mut tree = ReferenceTree::new();
     tree.append(note_commitment(pool, serial, 100));
