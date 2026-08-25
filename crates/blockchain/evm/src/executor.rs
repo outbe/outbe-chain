@@ -7513,18 +7513,20 @@ mod tests {
     /// first and aborts the block before the user lane. This characterizes the
     /// current fail-closed ordering without choosing a recovery policy.
     #[test]
-    fn stale_oracle_cycle_tick_blocks_later_feeder_vote_atomically() {
+    fn stale_oracle_cycle_stages_reward_batch_and_allows_later_feeder_vote() {
         const GENESIS_TS: u64 = 1_704_067_200;
         const SECONDS_PER_DAY: u64 = 86_400;
         const PREVIOUS_DAY: u32 = 20_240_101;
 
         #[derive(Debug, Eq, PartialEq)]
         struct Observation {
-            error: String,
             active_day: u32,
             last_executed_at: u64,
             day_settled: bool,
+            topup_prepared: bool,
             topup_settled: bool,
+            queue_head: u64,
+            queue_tail: u64,
             voter_gems: u64,
             feeder_vote_exists: bool,
             formation_exists: bool,
@@ -7617,11 +7619,10 @@ mod tests {
                 execution_ctx_with_tee_bootstrap(Some(body.len()), Bytes::new(), tee_bootstrap);
             execution.expected_begin_system_txs = begin;
             execution.proposer_evm_address = Some(proposer);
-            let error = config
+            config
                 .create_executor(evm, execution)
                 .execute_block(body)
-                .expect_err("stale reward price must abort at the mandatory CycleTick")
-                .to_string();
+                .expect("stale reward price must defer only Gem delivery");
 
             let read_ctx =
                 BlockContext::new(1, block_timestamp, CHAIN_ID, proposer, vec![proposer]);
@@ -7633,11 +7634,13 @@ mod tests {
                 let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
                 let gem = outbe_gem::GemContract::new(storage.clone());
                 Observation {
-                    error,
                     active_day: cycle.active_utc_day.read().unwrap(),
                     last_executed_at: cycle.last_executed_at.read(&emission_trigger).unwrap(),
                     day_settled: rewards.daily_settled.read(&PREVIOUS_DAY).unwrap(),
+                    topup_prepared: rewards.daily_topup_prepared.read(&PREVIOUS_DAY).unwrap(),
                     topup_settled: rewards.daily_topup_settled.read(&PREVIOUS_DAY).unwrap(),
+                    queue_head: rewards.reward_gem_queue_head.read().unwrap(),
+                    queue_tail: rewards.reward_gem_queue_tail.read().unwrap(),
                     voter_gems: u64::from(gem.balance_of(voter).unwrap()),
                     feeder_vote_exists: oracle.vote_exists.read(&proposer).unwrap(),
                     formation_exists: outbe_metadosis::api::day_limit_formation_receipt(
@@ -7651,29 +7654,21 @@ mod tests {
         }
 
         let first = run_once();
-        let stale_reason_hex =
-            alloy_primitives::hex::encode("COEN rate for currency 840 is stale".as_bytes());
-        assert!(
-            first
-                .error
-                .contains("critical system tx CycleTick did not succeed")
-                && first.error.contains("failure_code=201")
-                && first.error.contains(&stale_reason_hex),
-            "unexpected CycleTick failure: {}",
-            first.error
-        );
-        assert_eq!(first.active_day, PREVIOUS_DAY);
-        assert_eq!(first.last_executed_at, GENESIS_TS + 60);
-        assert!(!first.day_settled);
+        assert_eq!(first.active_day, 20_240_102);
+        assert_eq!(first.last_executed_at, GENESIS_TS + SECONDS_PER_DAY);
+        assert!(first.day_settled);
+        assert!(first.topup_prepared);
         assert!(!first.topup_settled);
+        assert_eq!(first.queue_head, 0);
+        assert_eq!(first.queue_tail, 1);
         assert_eq!(first.voter_gems, 0);
-        assert!(!first.feeder_vote_exists);
-        assert!(!first.formation_exists);
+        assert!(first.feeder_vote_exists);
+        assert!(first.formation_exists);
 
         let replay = run_once();
         assert_eq!(
             replay, first,
-            "an exact replay from the same semantic pre-state must fail identically"
+            "an exact execution from the same semantic pre-state must settle identically"
         );
     }
 

@@ -374,7 +374,7 @@ mod tests {
     }
 
     #[test]
-    fn add_topup_for_voters_mints_gems_proportionally() {
+    fn prepare_daily_validator_gem_batch_stores_exact_shares_without_minting() {
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
@@ -384,37 +384,92 @@ mod tests {
             // counts 1 + 3 = 4; topup 400 → VAL_X 100, VAL_Y 300.
             let voters = vec![(VAL_X, 1u64), (VAL_Y, 3u64)];
             let outcome =
-                add_topup_for_voters(&ctx, 20240101, U256::from(400u64), &voters).unwrap();
-            assert_eq!(
-                outcome,
-                TopupSettlementOutcome::Settled {
-                    distributed: U256::from(400u64)
-                }
-            );
+                prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(400u64), &voters)
+                    .unwrap();
+            let RewardGemPreparationOutcome::Prepared(batch) = outcome else {
+                panic!("fresh day must prepare one batch: {outcome:?}");
+            };
+            assert_eq!(batch.reward_day, 20240101);
+            assert_eq!(batch.planned_total, U256::from(400u64));
+            assert_eq!(batch.recipient_count, 2);
 
-            assert_eq!(voter_gem_loads(&ctx, VAL_X), vec![U256::from(100u64)]);
-            assert_eq!(voter_gem_loads(&ctx, VAL_Y), vec![U256::from(300u64)]);
+            assert!(voter_gem_loads(&ctx, VAL_X).is_empty());
+            assert!(voter_gem_loads(&ctx, VAL_Y).is_empty());
 
             let rewards = ctx.storage.contract::<Rewards>();
-            assert!(rewards.daily_topup_settled.read(&20240101).unwrap());
+            assert!(rewards.daily_topup_prepared.read(&20240101).unwrap());
+            assert!(!rewards.daily_topup_settled.read(&20240101).unwrap());
+            assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 0);
+            assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 1);
+            assert_eq!(rewards.reward_gem_day_at.read(&0).unwrap(), 20240101);
+            assert_eq!(
+                rewards.reward_gem_recipient_count.read(&20240101).unwrap(),
+                2
+            );
+            assert_eq!(
+                rewards
+                    .reward_gem_owner_at
+                    .get_nested(&20240101)
+                    .read(&0)
+                    .unwrap(),
+                VAL_X
+            );
+            assert_eq!(
+                rewards
+                    .reward_gem_load_at
+                    .get_nested(&20240101)
+                    .read(&0)
+                    .unwrap(),
+                U256::from(100u64)
+            );
+            assert_eq!(
+                rewards
+                    .reward_gem_owner_at
+                    .get_nested(&20240101)
+                    .read(&1)
+                    .unwrap(),
+                VAL_Y
+            );
+            assert_eq!(
+                rewards
+                    .reward_gem_load_at
+                    .get_nested(&20240101)
+                    .read(&1)
+                    .unwrap(),
+                U256::from(300u64)
+            );
         });
     }
 
     #[test]
-    fn add_topup_for_voters_picks_genesis_vs_validator_by_window() {
+    fn prepared_reward_gem_batch_freezes_reward_day_type_for_delivery() {
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
             bootstrap_genesis(&ctx);
             seed_oracle(&ctx, U256::from(2u64) * one_coen840());
 
-            // Day 0: within the 21-day genesis window → Genesis gem (Qualified).
-            let voters = vec![(VAL_X, 1u64)];
-            add_topup_for_voters(&ctx, 20240101, U256::from(50u64), &voters).unwrap();
+            prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(50u64), &[(VAL_X, 1)])
+                .unwrap();
+            prepare_daily_validator_gem_batch(&ctx, 20240201, U256::from(70u64), &[(VAL_Y, 1)])
+                .unwrap();
 
-            // Day 31 (since 2024-01-01): past the window → Validator gem (Issued).
-            let voters_b = vec![(VAL_Y, 1u64)];
-            add_topup_for_voters(&ctx, 20240201, U256::from(70u64), &voters_b).unwrap();
+            let first = deliver_oldest_reward_gem_batch(&ctx).unwrap();
+            assert!(matches!(
+                first,
+                RewardGemDeliveryOutcome::Delivered {
+                    reward_day: 20240101,
+                    ..
+                }
+            ));
+            let second = deliver_oldest_reward_gem_batch(&ctx).unwrap();
+            assert!(matches!(
+                second,
+                RewardGemDeliveryOutcome::Delivered {
+                    reward_day: 20240201,
+                    ..
+                }
+            ));
 
             let gem = outbe_gem::GemContract::new(ctx.storage.clone());
 
@@ -441,6 +496,241 @@ mod tests {
                 outbe_gem::GemState::Issued as u8,
                 "Post-genesis Validator gem is born Issued"
             );
+        });
+    }
+
+    #[test]
+    fn identical_preparation_replay_does_not_append_a_second_batch() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.enter(|handle| {
+            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
+            bootstrap_genesis(&ctx);
+            seed_oracle(&ctx, one_coen840());
+            let voters = [(VAL_X, 1), (VAL_Y, 2)];
+
+            let first =
+                prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(300u64), &voters)
+                    .unwrap();
+            let replay =
+                prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(300u64), &voters)
+                    .unwrap();
+            let rewards = ctx.storage.contract::<Rewards>();
+
+            assert!(matches!(first, RewardGemPreparationOutcome::Prepared(_)));
+            assert!(matches!(
+                replay,
+                RewardGemPreparationOutcome::AlreadyPrepared(_)
+            ));
+            assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 0);
+            assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 1);
+        });
+    }
+
+    #[test]
+    fn contradictory_preparation_replay_is_fatal_without_writes() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.enter(|handle| {
+            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
+            bootstrap_genesis(&ctx);
+            seed_oracle(&ctx, one_coen840());
+            prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(100u64), &[(VAL_X, 1)])
+                .unwrap();
+            let rewards = ctx.storage.contract::<Rewards>();
+            let before_tail = rewards.reward_gem_queue_tail.read().unwrap();
+            let before_digest = rewards.reward_gem_batch_digest.read(&20240101).unwrap();
+
+            let err = ctx
+                .with_checkpoint(|| {
+                    prepare_daily_validator_gem_batch(
+                        &ctx,
+                        20240101,
+                        U256::from(101u64),
+                        &[(VAL_X, 1)],
+                    )
+                })
+                .unwrap_err();
+            assert!(matches!(err, PrecompileError::Fatal(_)), "{err:?}");
+            assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), before_tail);
+            assert_eq!(
+                rewards.reward_gem_batch_digest.read(&20240101).unwrap(),
+                before_digest
+            );
+        });
+    }
+
+    #[test]
+    fn stale_delivery_preserves_fifo_head_without_minting() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.enter(|handle| {
+            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
+            bootstrap_genesis(&ctx);
+            seed_oracle(&ctx, one_coen840());
+            prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(100u64), &[(VAL_X, 1)])
+                .unwrap();
+            let (_, pair_index) =
+                outbe_oracle::api::require_coen_pair(ctx.storage.clone(), 840).unwrap();
+            outbe_oracle::schema::OracleContract::new(ctx.storage.clone())
+                .exchange_rate_timestamp
+                .write(&pair_index, 0)
+                .unwrap();
+
+            assert_eq!(
+                deliver_oldest_reward_gem_batch(&ctx).unwrap(),
+                RewardGemDeliveryOutcome::PendingRate {
+                    reward_day: 20240101
+                }
+            );
+            assert_eq!(
+                deliver_oldest_reward_gem_batch(&ctx).unwrap(),
+                RewardGemDeliveryOutcome::PendingRate {
+                    reward_day: 20240101
+                }
+            );
+            let rewards = ctx.storage.contract::<Rewards>();
+            assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 0);
+            assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 1);
+            assert!(voter_gem_loads(&ctx, VAL_X).is_empty());
+        });
+    }
+
+    #[test]
+    fn fresh_delivery_mints_the_head_exactly_once() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.enter(|handle| {
+            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
+            bootstrap_genesis(&ctx);
+            seed_oracle(&ctx, one_coen840());
+            prepare_daily_validator_gem_batch(
+                &ctx,
+                20240101,
+                U256::from(400u64),
+                &[(VAL_X, 1), (VAL_Y, 3)],
+            )
+            .unwrap();
+
+            assert_eq!(
+                deliver_oldest_reward_gem_batch(&ctx).unwrap(),
+                RewardGemDeliveryOutcome::Delivered {
+                    reward_day: 20240101,
+                    recipient_count: 2,
+                    delivered_total: U256::from(400u64),
+                }
+            );
+            assert_eq!(voter_gem_loads(&ctx, VAL_X), vec![U256::from(100u64)]);
+            assert_eq!(voter_gem_loads(&ctx, VAL_Y), vec![U256::from(300u64)]);
+            assert_eq!(
+                deliver_oldest_reward_gem_batch(&ctx).unwrap(),
+                RewardGemDeliveryOutcome::Empty
+            );
+            assert_eq!(voter_gem_loads(&ctx, VAL_X), vec![U256::from(100u64)]);
+            assert_eq!(voter_gem_loads(&ctx, VAL_Y), vec![U256::from(300u64)]);
+        });
+    }
+
+    #[test]
+    fn failed_delivery_rolls_back_every_gem_and_retries_the_same_batch() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.enter(|handle| {
+            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
+            bootstrap_genesis(&ctx);
+            seed_oracle(&ctx, one_coen840());
+            prepare_daily_validator_gem_batch(
+                &ctx,
+                20240101,
+                U256::from(200u64),
+                &[(VAL_X, 1), (VAL_Y, 1)],
+            )
+            .unwrap();
+            let factory = outbe_gemfactory::schema::GemFactoryContract::new(ctx.storage.clone());
+            factory
+                .total_gems_issued
+                .write(U256::MAX - U256::ONE)
+                .unwrap();
+
+            let err = ctx
+                .with_checkpoint(|| deliver_oldest_reward_gem_batch(&ctx))
+                .unwrap_err();
+            assert!(matches!(err, PrecompileError::Revert(_)), "{err:?}");
+            assert!(voter_gem_loads(&ctx, VAL_X).is_empty());
+            assert!(voter_gem_loads(&ctx, VAL_Y).is_empty());
+            let rewards = ctx.storage.contract::<Rewards>();
+            assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 0);
+
+            factory.total_gems_issued.write(U256::ZERO).unwrap();
+            assert!(matches!(
+                deliver_oldest_reward_gem_batch(&ctx).unwrap(),
+                RewardGemDeliveryOutcome::Delivered {
+                    reward_day: 20240101,
+                    ..
+                }
+            ));
+            assert_eq!(voter_gem_loads(&ctx, VAL_X), vec![U256::from(100u64)]);
+            assert_eq!(voter_gem_loads(&ctx, VAL_Y), vec![U256::from(100u64)]);
+        });
+    }
+
+    #[test]
+    fn two_reward_days_deliver_fifo_one_batch_per_call() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.enter(|handle| {
+            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
+            bootstrap_genesis(&ctx);
+            seed_oracle(&ctx, one_coen840());
+            prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(10u64), &[(VAL_X, 1)])
+                .unwrap();
+            prepare_daily_validator_gem_batch(&ctx, 20240102, U256::from(20u64), &[(VAL_Y, 1)])
+                .unwrap();
+
+            let first = deliver_oldest_reward_gem_batch(&ctx).unwrap();
+            assert!(matches!(
+                first,
+                RewardGemDeliveryOutcome::Delivered {
+                    reward_day: 20240101,
+                    ..
+                }
+            ));
+            assert_eq!(voter_gem_loads(&ctx, VAL_X), vec![U256::from(10u64)]);
+            assert!(voter_gem_loads(&ctx, VAL_Y).is_empty());
+
+            let second = deliver_oldest_reward_gem_batch(&ctx).unwrap();
+            assert!(matches!(
+                second,
+                RewardGemDeliveryOutcome::Delivered {
+                    reward_day: 20240102,
+                    ..
+                }
+            ));
+            assert_eq!(voter_gem_loads(&ctx, VAL_Y), vec![U256::from(20u64)]);
+        });
+    }
+
+    #[test]
+    fn pending_reward_gem_batch_survives_storage_reopen() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.enter(|handle| {
+            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
+            bootstrap_genesis(&ctx);
+            seed_oracle(&ctx, one_coen840());
+            prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(90u64), &[(VAL_Z, 1)])
+                .unwrap();
+        });
+
+        storage.enter(|handle| {
+            let reopened = BlockRuntimeContext::new(block_ctx(2, GENESIS_TS + 120), handle);
+            let rewards = reopened.storage.contract::<Rewards>();
+            assert!(rewards.daily_topup_prepared.read(&20240101).unwrap());
+            assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 0);
+            assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 1);
+            assert!(matches!(
+                deliver_oldest_reward_gem_batch(&reopened).unwrap(),
+                RewardGemDeliveryOutcome::Delivered {
+                    reward_day: 20240101,
+                    delivered_total,
+                    ..
+                } if delivered_total == U256::from(90u64)
+            ));
+            assert_eq!(voter_gem_loads(&reopened, VAL_Z), vec![U256::from(90u64)]);
+            assert!(rewards.daily_topup_settled.read(&20240101).unwrap());
         });
     }
 }
