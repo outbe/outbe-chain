@@ -1,4 +1,5 @@
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Bytes, U256};
+use alloy_sol_types::{sol, SolCall};
 use commonware_codec::Encode;
 use commonware_cryptography::bls12381::primitives::{
     group::Private,
@@ -10,10 +11,18 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
 use crate::api::{check_zk_merkle_root_signature, ZkOfferCheck, ZK_MERKLE_ROOT_NAMESPACE};
+use crate::precompile;
 use crate::schema::L2RegistryContract;
 
 const CHAIN_ID: u64 = 1;
 const L2_CHAIN_ID: u64 = 4242;
+
+sol! {
+    interface RemovedL2RegistryMutators {
+        function registerNetwork(uint64 chainId, address l1Address, bytes publicKey) external;
+        function setZkEnabled(uint64 chainId, bool enabled) external;
+    }
+}
 
 fn l1_addr() -> Address {
     Address::repeat_byte(0x11)
@@ -33,7 +42,7 @@ fn revert_message(err: PrecompileError) -> String {
 }
 
 #[test]
-fn register_toggle_remove_roundtrip() {
+fn register_toggle_owner_remove_roundtrip() {
     let (_, public) = keypair();
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
@@ -53,7 +62,7 @@ fn register_toggle_remove_roundtrip() {
         registry.set_zk_enabled(L2_CHAIN_ID, false).unwrap();
         assert!(!registry.load_network(L2_CHAIN_ID).unwrap().zk_enabled);
 
-        registry.remove_network(L2_CHAIN_ID).unwrap();
+        registry.remove_network(l1_addr(), L2_CHAIN_ID).unwrap();
         assert!(!registry.networks.exists(L2_CHAIN_ID).unwrap());
         assert_eq!(registry.l1_to_chain.read(&l1_addr()).unwrap(), 0);
 
@@ -134,13 +143,97 @@ fn register_rejects_duplicates() {
 }
 
 #[test]
-fn toggle_and_remove_require_registration() {
+fn toggle_and_owner_remove_require_registration() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let mut registry = L2RegistryContract::new(storage.clone());
         let err = registry.set_zk_enabled(L2_CHAIN_ID, true).unwrap_err();
         assert!(revert_message(err).contains("not registered"));
-        let err = registry.remove_network(L2_CHAIN_ID).unwrap_err();
+        let err = registry.remove_network(l1_addr(), L2_CHAIN_ID).unwrap_err();
+        assert!(revert_message(err).contains("not registered"));
+    });
+}
+
+#[test]
+fn removed_mutation_selectors_are_not_public_abi() {
+    let (_, public) = keypair();
+    let calls = [
+        RemovedL2RegistryMutators::registerNetworkCall {
+            chainId: L2_CHAIN_ID,
+            l1Address: l1_addr(),
+            publicKey: Bytes::from(public),
+        }
+        .abi_encode(),
+        RemovedL2RegistryMutators::setZkEnabledCall {
+            chainId: L2_CHAIN_ID,
+            enabled: true,
+        }
+        .abi_encode(),
+    ];
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        for call in calls {
+            precompile::dispatch(
+                storage.clone(),
+                &call,
+                Address::repeat_byte(0xaa),
+                U256::ZERO,
+            )
+            .unwrap_err();
+        }
+        assert!(!L2RegistryContract::new(storage)
+            .networks
+            .exists(L2_CHAIN_ID)
+            .unwrap());
+    });
+}
+
+#[test]
+fn public_remove_rejects_non_owner_without_effects() {
+    let (_, public) = keypair();
+    let stranger = Address::repeat_byte(0x22);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        L2RegistryContract::new(storage.clone())
+            .register_network(L2_CHAIN_ID, l1_addr(), &public)
+            .unwrap();
+
+        let call = precompile::IL2Registry::removeNetworkCall {
+            chainId: L2_CHAIN_ID,
+        };
+        let err = precompile::dispatch(storage.clone(), &call.abi_encode(), stranger, U256::ZERO)
+            .unwrap_err();
+
+        assert!(revert_message(err).contains("owner"));
+        let registry = L2RegistryContract::new(storage);
+        assert_eq!(
+            registry.load_network(L2_CHAIN_ID).unwrap().l1_address,
+            l1_addr()
+        );
+        assert_eq!(registry.l1_to_chain.read(&l1_addr()).unwrap(), L2_CHAIN_ID);
+    });
+}
+
+#[test]
+fn public_remove_allows_owner_and_replay_is_not_registered() {
+    let (_, public) = keypair();
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut provider, |storage| {
+        L2RegistryContract::new(storage.clone())
+            .register_network(L2_CHAIN_ID, l1_addr(), &public)
+            .unwrap();
+
+        let call = precompile::IL2Registry::removeNetworkCall {
+            chainId: L2_CHAIN_ID,
+        };
+        precompile::dispatch(storage.clone(), &call.abi_encode(), l1_addr(), U256::ZERO).unwrap();
+
+        let registry = L2RegistryContract::new(storage.clone());
+        assert!(!registry.networks.exists(L2_CHAIN_ID).unwrap());
+        assert_eq!(registry.l1_to_chain.read(&l1_addr()).unwrap(), 0);
+
+        let err =
+            precompile::dispatch(storage, &call.abi_encode(), l1_addr(), U256::ZERO).unwrap_err();
         assert!(revert_message(err).contains("not registered"));
     });
 }

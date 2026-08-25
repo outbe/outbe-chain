@@ -94,13 +94,20 @@ impl L2RegistryContract<'_> {
         Ok(())
     }
 
-    /// Removes a registered network and its reverse index entry.
-    pub fn remove_network(&mut self, chain_id: u64) -> Result<()> {
+    /// Removes a registered network when `caller` is its stored L1 owner.
+    pub fn remove_network(&mut self, caller: Address, chain_id: u64) -> Result<()> {
         let record = self.load_network(chain_id)?;
-        self.networks.delete(chain_id)?;
-        self.l1_to_chain.clear(&record.l1_address)?;
-        self.emit(IL2Registry::L2NetworkRemoved { chainId: chain_id })?;
-        Ok(())
+        if caller != record.l1_address {
+            return Err(L2RegistryError::NotNetworkOwner { caller, chain_id }.into());
+        }
+
+        let storage = self.storage.clone();
+        storage.with_checkpoint(|| {
+            self.networks.delete(chain_id)?;
+            self.l1_to_chain.clear(&record.l1_address)?;
+            self.emit(IL2Registry::L2NetworkRemoved { chainId: chain_id })?;
+            Ok(())
+        })
     }
 
     /// Loads a registration or reverts with `NetworkNotRegistered`.

@@ -31,9 +31,6 @@ enum L2RegistryVotePayloadJsonV1 {
         chain_id: u64,
         enabled: bool,
     },
-    Remove {
-        chain_id: u64,
-    },
 }
 
 /// Typed form of the strict JSON stored by an L2Registry vote proposal.
@@ -48,9 +45,6 @@ pub enum L2RegistryVotePayloadV1 {
     SetZkEnabled {
         chain_id: u64,
         enabled: bool,
-    },
-    Remove {
-        chain_id: u64,
     },
 }
 
@@ -96,12 +90,6 @@ impl L2RegistryVotePayloadV1 {
                 }
                 Ok(Self::SetZkEnabled { chain_id, enabled })
             }
-            L2RegistryVotePayloadJsonV1::Remove { chain_id } => {
-                if chain_id == 0 {
-                    return Err(L2RegistryError::InvalidChainId);
-                }
-                Ok(Self::Remove { chain_id })
-            }
         }
     }
 
@@ -116,7 +104,6 @@ impl L2RegistryVotePayloadV1 {
             Self::SetZkEnabled { chain_id, enabled } => {
                 registry.set_zk_enabled(*chain_id, *enabled)
             }
-            Self::Remove { chain_id } => registry.remove_network(*chain_id),
         }
     }
 }
@@ -218,6 +205,10 @@ mod tests {
             br#"{"operation":"remove","chainId":4242,"enabled":true}"#
         )
         .is_err());
+        assert!(
+            L2RegistryVotePayloadV1::decode_json(br#"{"operation":"remove","chainId":4242}"#)
+                .is_err()
+        );
     }
 
     #[test]
@@ -273,10 +264,9 @@ mod tests {
     }
 
     #[test]
-    fn approved_toggle_and_remove_use_the_same_target_path() {
+    fn approved_toggle_uses_the_same_target_path() {
         let register = register_json("");
         let disable = br#"{"operation":"setZkEnabled","chainId":4242,"enabled":false}"#;
-        let remove = br#"{"operation":"remove","chainId":4242}"#;
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {
             let target = L2RegistryVoteTarget;
@@ -284,10 +274,7 @@ mod tests {
                 BlockContext::empty_for_tests(30, 1_700_000_000, 1),
                 storage.clone(),
             );
-            for (id, payload) in [register.as_bytes(), disable, remove]
-                .into_iter()
-                .enumerate()
-            {
+            for (id, payload) in [register.as_bytes(), disable].into_iter().enumerate() {
                 assert_eq!(
                     target
                         .handle_approved(
@@ -300,10 +287,8 @@ mod tests {
                     TargetExecutionOutcome::Applied
                 );
             }
-            assert!(!L2RegistryContract::new(storage)
-                .networks
-                .exists(4242)
-                .unwrap());
+            let record = L2RegistryContract::new(storage).load_network(4242).unwrap();
+            assert!(!record.zk_enabled);
         });
     }
 }
