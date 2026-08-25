@@ -69,12 +69,14 @@ Feature: Intex from auction to Promis
     Then the controlled COEN USD quote is finalized through the real price feeder
     When the reference rate stands above the series floor
     Then both series qualify in one group decision
-    When the holder settles part of their units
+    When the holder brings part of the target-chain units home
+    And the holder settles part of their units
     Then those units move from issued to settled
     And the settlement payment lands in the reserve vault
     When the call trigger holds above the call price across the call window
     Then both series become Called
-    When the holder settles the remaining units inside the notice period
+    When the holder brings the remaining units home to their own address
+    And the holder settles the remaining units inside the notice period
     Then no issued units remain and every unit is settled
     When the holder mines Promis against their settled units
     Then the settled units are burned and Promis is minted

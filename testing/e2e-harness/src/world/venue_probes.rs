@@ -577,3 +577,16 @@ pub(crate) fn series_promis_load(
     eth::read_call(url, nft, &IIssuedSeries::readDataCall { seriesId: series })
         .map(|data| data.promisLoadMinor)
 }
+
+/// The Issued token id of `series`, which the bridge moves.
+pub(crate) fn issued_token_id(
+    url: &str,
+    nft: Address,
+    series: alloy_primitives::FixedBytes<14>,
+) -> Option<alloy_primitives::U256> {
+    eth::read_call(
+        url,
+        nft,
+        &IIssuedSeries::issuedTokenIdCall { seriesId: series },
+    )
+}

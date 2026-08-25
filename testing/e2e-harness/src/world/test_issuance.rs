@@ -101,6 +101,18 @@ sol! {
             returns (uint256 promisAmount);
     }
 
+    struct SendParam {
+        uint32 dstChainId;
+        bytes32 to;
+        uint256 tokenId;
+        uint256 amount;
+    }
+
+    interface IIntexNFT1155Bridge {
+        function quoteSend(SendParam sendParam) external view returns (uint256 fee);
+        function send(SendParam sendParam) external payable returns (bytes32 sendId);
+    }
+
     interface ITestToken {
         function mint(address to, uint256 amount) external;
         function approve(address spender, uint256 amount) external returns (bool);
@@ -374,4 +386,44 @@ pub fn seed_day_vwaps(
         },
         "seedDayVwapsForTest",
     )
+}
+
+/// Bring `amount` units of `series` home from the chain `bridge` lives on.
+///
+/// While a series is tradable the hop may change hands; once it is Called only a
+/// move to the holder's own address is allowed, so `to` is always the holder here.
+pub fn bridge_home(
+    url: &str,
+    holder_key: &str,
+    bridge: Address,
+    home_chain_id: u32,
+    token_id: U256,
+    holder: Address,
+    amount: u32,
+) -> Result<()> {
+    let params = SendParam {
+        dstChainId: home_chain_id,
+        to: FixedBytes::<32>::left_padding_from(holder.as_slice()),
+        tokenId: token_id,
+        amount: U256::from(amount),
+    };
+    let fee = eth::read_call(
+        url,
+        bridge,
+        &IIntexNFT1155Bridge::quoteSendCall {
+            sendParam: params.clone(),
+        },
+    )
+    .ok_or_else(|| eyre!("the bridge would not quote the hop"))?;
+
+    let tx = eth::send_call(
+        url,
+        bridge,
+        holder_key,
+        &IIntexNFT1155Bridge::sendCall { sendParam: params },
+        Some(fee),
+    )
+    .map_err(|error| eyre!("bridge send was not accepted: {error}"))?;
+    let _ = tx;
+    Ok(())
 }

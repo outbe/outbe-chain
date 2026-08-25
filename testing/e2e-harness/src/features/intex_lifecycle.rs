@@ -27,6 +27,9 @@ const PROMIS_LOAD_MINOR: u128 = 100_000;
 /// is a real step rather than a formality.
 const COMMITTEE_UNITS: u32 = 4;
 const TARGET_UNITS: u32 = 6;
+/// Brought home while the series are still tradable; the rest travels under Called,
+/// where the bridge admits a move only to the holder's own address.
+const TRADABLE_HOP_UNITS: u32 = 2;
 const UNITS: u32 = COMMITTEE_UNITS + TARGET_UNITS;
 /// USD (840) as the reference for both series, spelled `U` in the series id.
 const REFERENCE_BYTE: u8 = b'U';
@@ -317,14 +320,26 @@ fn intex_nft(world: &World) -> alloy_primitives::Address {
 #[when("the holder settles part of their units")]
 fn settle_part(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
+    let nft = intex_nft(world);
     let currency = world
         .state
         .settlement_currency
         .expect("settlement currency was registered");
     let holder = crate::world::origin_venue::deployer_address();
 
-    world.state.settled_units = UNITS / 2;
+    // Settle what is already home. The rest is on the target chain and cannot be
+    // settled until the holder brings it back, which is a later step.
+    world.state.settled_units = COMMITTEE_UNITS + TRADABLE_HOP_UNITS;
     for series in world.state.lifecycle_series.clone() {
+        let issued = venue_probes::series_balances(&url, nft, series, holder)
+            .expect("series balances")
+            .0;
+        assert_eq!(
+            issued,
+            u64::from(COMMITTEE_UNITS + TRADABLE_HOP_UNITS),
+            "series {series} does not hold what was minted here plus what came home"
+        );
+
         // A price the series refuses would fail here rather than inside `settle`,
         // where the revert reads as a balance problem instead of a currency one.
         let cost = test_issuance::quote_cost(&url, series, currency.asset)
@@ -339,10 +354,10 @@ fn settle_part(world: &mut World) {
             DEPLOYER_KEY,
             series,
             holder,
-            world.state.settled_units,
+            COMMITTEE_UNITS + TRADABLE_HOP_UNITS,
             currency.asset,
         )
-        .expect("settle part of the holding");
+        .expect("settle the units at home");
     }
 }
 
@@ -351,13 +366,12 @@ fn units_moved_to_settled(world: &mut World) {
     let url = world.rpc.url(world.validators.primary_port());
     let nft = intex_nft(world);
     let holder = crate::world::origin_venue::deployer_address();
-    let settled = u64::from(world.state.settled_units);
 
     for series in &world.state.lifecycle_series {
         assert_eq!(
             venue_probes::series_balances(&url, nft, *series, holder),
-            Some((u64::from(UNITS) - settled, settled)),
-            "series {series} did not move exactly the settled units"
+            Some((0, u64::from(COMMITTEE_UNITS + TRADABLE_HOP_UNITS))),
+            "series {series} left issued units at home after settling"
         );
     }
 }
@@ -585,4 +599,67 @@ fn chain_worldwide_day_offset(world: &World, port: u16, offset_secs: i64) -> u32
     outbe_primitives::time::worldwide_day_from_timestamp(
         timestamp.saturating_add_signed(offset_secs),
     )
+}
+
+#[when("the holder brings part of the target-chain units home")]
+fn bridge_part_home(world: &mut World) {
+    bring_home(world, TRADABLE_HOP_UNITS);
+}
+
+#[when("the holder brings the remaining units home to their own address")]
+fn bridge_rest_home(world: &mut World) {
+    bring_home(world, TARGET_UNITS - TRADABLE_HOP_UNITS);
+}
+
+/// Drive the holder's own bridge hop for every series and wait for the units to land.
+fn bring_home(world: &mut World, amount: u32) {
+    let port = world.validators.primary_port();
+    let url = world.rpc.url(port);
+    let target_url = world
+        .target_chain
+        .rpc_url()
+        .expect("target chain is running");
+    let nft = intex_nft(world);
+    let bridge = world
+        .state
+        .target_contracts
+        .as_ref()
+        .expect("intex venue was deployed on the target chain")
+        .nft_bridge;
+    let holder = crate::world::origin_venue::deployer_address();
+    let home_chain = u32::try_from(world.rpc.chain_id(port).expect("committee chain id"))
+        .expect("fits a uint32");
+
+    for series in world.state.lifecycle_series.clone() {
+        let before = venue_probes::series_balances(&url, nft, series, holder)
+            .expect("series balances at home")
+            .0;
+        let token_id = venue_probes::issued_token_id(&url, nft, series).expect("issued token id");
+
+        test_issuance::bridge_home(
+            &target_url,
+            DEPLOYER_KEY,
+            bridge,
+            home_chain,
+            token_id,
+            holder,
+            amount,
+        )
+        .expect("send the units home");
+
+        let want = before + u64::from(amount);
+        let deadline = Instant::now() + Duration::from_secs(DELIVERY_TIMEOUT_SECS);
+        loop {
+            if venue_probes::series_balances(&url, nft, series, holder)
+                .is_some_and(|(issued, _)| issued >= want)
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "series {series} units never arrived home; the relay carried nothing back"
+            );
+            sleep(Duration::from_secs(2));
+        }
+    }
 }
