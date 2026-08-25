@@ -105,6 +105,24 @@ pub fn mark_called(storage: &StorageHandle<'_>, series_id: SeriesId, called_at: 
     registry.update_series_record(&record)
 }
 
+/// Backdate a series' issuance stamp. Test-only: the Called sweep counts breach
+/// days from `issued_at`, so a scenario that cannot spend days living through them
+/// has to be able to place issuance behind the days it seeded.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn set_issued_at(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    issued_at: u32,
+) -> Result<()> {
+    if issued_at == 0 {
+        return Err(IntexError::ZeroIssuedAt.into());
+    }
+    let mut registry = IntexContract::new(storage.clone());
+    let mut record = registry.load_series(series_id)?;
+    record.issued_at = issued_at;
+    registry.update_series_record(&record)
+}
+
 /// Read a series record; errors if the series does not exist.
 pub fn read_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<SeriesRecord> {
     IntexContract::new(storage.clone()).load_series(series_id)
