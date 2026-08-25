@@ -52,6 +52,10 @@ Feature: Intex from auction to Promis
   #
   # The rate, by contrast, is published through the real feeder: qualification
   # reads it with a freshness check that a seeded value would fail.
+  #
+  # The two hops home also take the bridge's two routes: one series at a time
+  # first, then both together, which is how a holder of several actually moves
+  # them and which carries its own message encoding.
   @intex-lifecycle
   Scenario: Two Intex series qualify as one group, settle from both states, and burn into Promis
     Given a fresh four-validator OCOMP public capacity localnet
@@ -75,7 +79,7 @@ Feature: Intex from auction to Promis
     And the settlement payment lands in the reserve vault
     When the call trigger holds above the call price across the call window
     Then both series become Called
-    When the holder brings the remaining units home to their own address
+    When the holder brings the remaining units home to their own address in one batch
     And the holder settles the remaining units inside the notice period
     Then no issued units remain and every unit is settled
     When the holder mines Promis against their settled units

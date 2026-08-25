@@ -108,8 +108,17 @@ sol! {
         uint256 amount;
     }
 
+    struct BatchSendParam {
+        uint32 dstChainId;
+        bytes32 to;
+        uint256[] tokenIds;
+        uint256[] amounts;
+    }
+
     interface IIntexNFT1155Bridge {
         function setRemoteMessenger(uint32 chainId, bytes interop) external;
+        function quoteBatchSend(BatchSendParam sendParam) external view returns (uint256 fee);
+        function batchSend(BatchSendParam sendParam) external payable returns (bytes32 sendId);
         function quoteSend(SendParam sendParam) external view returns (uint256 fee);
         function send(SendParam sendParam) external payable returns (bytes32 sendId);
     }
@@ -464,4 +473,43 @@ pub fn set_remote_messenger(
         },
         "setRemoteMessenger",
     )
+}
+
+/// Bring several series home in one message, the way a holder with more than one
+/// would: a single burn set on this side and a single mint set at home.
+pub fn batch_bridge_home(
+    url: &str,
+    holder_key: &str,
+    bridge: Address,
+    home_chain_id: u32,
+    holder: Address,
+    tokens: &[(U256, u32)],
+) -> Result<()> {
+    let params = BatchSendParam {
+        dstChainId: home_chain_id,
+        to: FixedBytes::<32>::left_padding_from(holder.as_slice()),
+        tokenIds: tokens.iter().map(|(id, _)| *id).collect(),
+        amounts: tokens
+            .iter()
+            .map(|(_, amount)| U256::from(*amount))
+            .collect(),
+    };
+    let fee = eth::read_call(
+        url,
+        bridge,
+        &IIntexNFT1155Bridge::quoteBatchSendCall {
+            sendParam: params.clone(),
+        },
+    )
+    .ok_or_else(|| eyre!("the bridge would not quote the batch hop"))?;
+
+    eth::send_call(
+        url,
+        bridge,
+        holder_key,
+        &IIntexNFT1155Bridge::batchSendCall { sendParam: params },
+        Some(fee),
+    )
+    .map_err(|error| eyre!("batch bridge send was not accepted: {error}"))?;
+    Ok(())
 }

@@ -637,9 +637,76 @@ fn bridge_part_home(world: &mut World) {
     bring_home(world, TRADABLE_HOP_UNITS);
 }
 
-#[when("the holder brings the remaining units home to their own address")]
+#[when("the holder brings the remaining units home to their own address in one batch")]
 fn bridge_rest_home(world: &mut World) {
-    bring_home(world, TARGET_UNITS - TRADABLE_HOP_UNITS);
+    let port = world.validators.primary_port();
+    let url = world.rpc.url(port);
+    let target_url = world
+        .target_chain
+        .rpc_url()
+        .expect("target chain is running");
+    let nft = intex_nft(world);
+    let bridge = world
+        .state
+        .target_contracts
+        .as_ref()
+        .expect("intex venue was deployed on the target chain")
+        .nft_bridge;
+    let holder = crate::world::origin_venue::deployer_address();
+    let home_chain = u32::try_from(world.rpc.chain_id(port).expect("committee chain id"))
+        .expect("fits a uint32");
+    let amount = TARGET_UNITS - TRADABLE_HOP_UNITS;
+
+    // A holder with more than one series moves them together, so this hop takes the
+    // batch route the first one did not: one burn set here, one mint set at home.
+    let tokens: Vec<(alloy_primitives::U256, u32)> = world
+        .state
+        .lifecycle_series
+        .iter()
+        .map(|series| {
+            (
+                venue_probes::issued_token_id(&url, nft, *series).expect("issued token id"),
+                amount,
+            )
+        })
+        .collect();
+    let before: Vec<u64> = world
+        .state
+        .lifecycle_series
+        .iter()
+        .map(|series| {
+            venue_probes::series_balances(&url, nft, *series, holder)
+                .expect("series balances at home")
+                .0
+        })
+        .collect();
+
+    test_issuance::batch_bridge_home(
+        &target_url,
+        DEPLOYER_KEY,
+        bridge,
+        home_chain,
+        holder,
+        &tokens,
+    )
+    .expect("send the remaining units home in one batch");
+
+    let deadline = Instant::now() + Duration::from_secs(DELIVERY_TIMEOUT_SECS);
+    for (series, before) in world.state.lifecycle_series.clone().into_iter().zip(before) {
+        let want = before + u64::from(amount);
+        loop {
+            if venue_probes::series_balances(&url, nft, series, holder)
+                .is_some_and(|(issued, _)| issued >= want)
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "series {series} never arrived home in the batch hop"
+            );
+            sleep(Duration::from_secs(2));
+        }
+    }
 }
 
 /// Drive the holder's own bridge hop for every series and wait for the units to land.
