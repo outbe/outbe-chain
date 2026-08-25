@@ -12,7 +12,7 @@ use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
     body_commitment, derive_poseidon_entity_id, encode_nod_bucket_v1, encode_nod_item_v1,
-    encode_tribute_v1, EntityId36, StoredBody, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
+    encode_tribute_v1, StoredBody, WwdEntityId, ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1,
 };
 use outbe_nod::{
     canonical_bucket, canonical_item, precompile::INod, NodBucketState, NodItemState,
@@ -172,15 +172,15 @@ fn log(index: u64, emitter: Address, data: LogData) -> FinalizedLog {
     }
 }
 
-fn entity(seed: u64, day: u32) -> EntityId36 {
-    EntityId36::new(WorldwideDay::new(day), U256::from(seed).to_be_bytes::<32>())
+fn entity(seed: u64, day: u32) -> WwdEntityId {
+    WwdEntityId::from_day_and_digest(WorldwideDay::new(day), U256::from(seed).to_be_bytes::<32>())
 }
 
-fn poseidon_entity(owner: Address, day: u32) -> EntityId36 {
+fn poseidon_entity(owner: Address, day: u32) -> WwdEntityId {
     derive_poseidon_entity_id(owner, WorldwideDay::new(day)).unwrap()
 }
 
-fn tribute_body(tribute_id: EntityId36, owner: Address, day: u32) -> TributeData {
+fn tribute_body(tribute_id: WwdEntityId, owner: Address, day: u32) -> TributeData {
     TributeData {
         tribute_id,
         owner,
@@ -208,12 +208,12 @@ fn tribute_commitment(body: &TributeData) -> B256 {
     )
 }
 
-fn tribute_stored(tribute_id: EntityId36, owner: Address, day: u32) -> LogData {
+fn tribute_stored(tribute_id: WwdEntityId, owner: Address, day: u32) -> LogData {
     tribute_stored_after(tribute_id, owner, day, B256::ZERO)
 }
 
 fn tribute_stored_after(
-    tribute_id: EntityId36,
+    tribute_id: WwdEntityId,
     owner: Address,
     day: u32,
     previous: B256,
@@ -226,7 +226,7 @@ fn tribute_stored_body_after(body: &TributeData, previous: B256) -> LogData {
     let payload = encode_tribute_v1(&canonical_body(body)).unwrap();
     let new_commitment = tribute_commitment(body);
     ITribute::TributeBodyStored {
-        tributeId: Bytes::copy_from_slice(body.tribute_id.as_bytes()),
+        tributeId: body.tribute_id.to_u256(),
         commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
         schemaVersion: BODY_SCHEMA_V1,
         previousCommitment: previous,
@@ -240,7 +240,7 @@ fn tribute_partition_retired(day: u32) -> LogData {
     ITribute::TributePartitionRetired { worldwideDay: day }.encode_log_data()
 }
 
-fn nod_body(nod_id: EntityId36, owner: Address, bucket_key: B256) -> NodItemState {
+fn nod_body(nod_id: WwdEntityId, owner: Address, bucket_key: B256) -> NodItemState {
     NodItemState {
         nod_id,
         owner,
@@ -257,13 +257,13 @@ fn nod_body(nod_id: EntityId36, owner: Address, bucket_key: B256) -> NodItemStat
     }
 }
 
-fn nod_stored(nod_id: EntityId36, owner: Address, bucket_key: B256) -> LogData {
+fn nod_stored(nod_id: WwdEntityId, owner: Address, bucket_key: B256) -> LogData {
     let body = nod_body(nod_id, owner, bucket_key);
     let payload = encode_nod_item_v1(&canonical_item(&body)).unwrap();
     let commitment =
         body_commitment(ACTIVE_COMMITMENT_SCHEME, BODY_SCHEMA_V1, nod_id, &payload).unwrap();
     INod::NodBodyStored {
-        nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+        nodId: nod_id.to_u256(),
         commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
         schemaVersion: BODY_SCHEMA_V1,
         previousCommitment: B256::ZERO,
@@ -287,7 +287,7 @@ fn bucket_body(bucket_key: B256) -> NodBucketState {
 
 fn bucket_stored(bucket_key: B256) -> LogData {
     let body = bucket_body(bucket_key);
-    let bucket_id = EntityId36::new(body.worldwide_day, bucket_key.0);
+    let bucket_id = WwdEntityId::from_day_and_digest(body.worldwide_day, bucket_key.0);
     let payload = encode_nod_bucket_v1(&canonical_bucket(&body)).unwrap();
     let commitment = body_commitment(
         ACTIVE_COMMITMENT_SCHEME,
@@ -297,7 +297,7 @@ fn bucket_stored(bucket_key: B256) -> LogData {
     )
     .unwrap();
     INod::NodBucketBodyStored {
-        bucketId: Bytes::copy_from_slice(bucket_id.as_bytes()),
+        bucketId: bucket_id.to_u256(),
         commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
         schemaVersion: BODY_SCHEMA_V1,
         previousCommitment: B256::ZERO,
@@ -354,7 +354,7 @@ fn projects_primary_indexes_provenance_and_writes_checkpoint_last() {
     let raw_primary = storage
         .get_record(
             Namespace::new("tributes").unwrap(),
-            &Key::new(token_id.as_bytes().to_vec()).unwrap(),
+            &Key::new(token_id.as_slice().to_vec()).unwrap(),
         )
         .unwrap()
         .unwrap();
@@ -819,7 +819,7 @@ fn rejects_tampered_commitment_identity_version_and_transition_before_any_domain
 
     let malformed_events = [
         ITribute::TributeBodyStored {
-            tributeId: Bytes::copy_from_slice(tribute_id.as_bytes()),
+            tributeId: tribute_id.to_u256(),
             commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
             schemaVersion: BODY_SCHEMA_V1,
             previousCommitment: B256::ZERO,
@@ -828,7 +828,7 @@ fn rejects_tampered_commitment_identity_version_and_transition_before_any_domain
         }
         .encode_log_data(),
         ITribute::TributeBodyStored {
-            tributeId: Bytes::copy_from_slice(entity(82, 20260715).as_bytes()),
+            tributeId: entity(82, 20260715).to_u256(),
             commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
             schemaVersion: BODY_SCHEMA_V1,
             previousCommitment: B256::ZERO,
@@ -837,7 +837,7 @@ fn rejects_tampered_commitment_identity_version_and_transition_before_any_domain
         }
         .encode_log_data(),
         ITribute::TributeBodyStored {
-            tributeId: Bytes::copy_from_slice(tribute_id.as_bytes()),
+            tributeId: tribute_id.to_u256(),
             commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME + 1,
             schemaVersion: BODY_SCHEMA_V1,
             previousCommitment: B256::ZERO,
@@ -846,7 +846,7 @@ fn rejects_tampered_commitment_identity_version_and_transition_before_any_domain
         }
         .encode_log_data(),
         ITribute::TributeBodyStored {
-            tributeId: Bytes::copy_from_slice(tribute_id.as_bytes()),
+            tributeId: tribute_id.to_u256(),
             commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
             schemaVersion: BODY_SCHEMA_V1 + 1,
             previousCommitment: B256::ZERO,
@@ -855,7 +855,7 @@ fn rejects_tampered_commitment_identity_version_and_transition_before_any_domain
         }
         .encode_log_data(),
         ITribute::TributeBodyStored {
-            tributeId: Bytes::copy_from_slice(tribute_id.as_bytes()),
+            tributeId: tribute_id.to_u256(),
             commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
             schemaVersion: BODY_SCHEMA_V1,
             previousCommitment: B256::ZERO,
@@ -955,7 +955,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
     );
 
     let bucket_key = B256::repeat_byte(0xa2);
-    let bucket_id = EntityId36::new(WorldwideDay::new(day), bucket_key.0);
+    let bucket_id = WwdEntityId::from_day_and_digest(WorldwideDay::new(day), bucket_key.0);
     let bucket = bucket_body(bucket_key);
     let bucket_payload = encode_nod_bucket_v1(&canonical_bucket(&bucket)).unwrap();
     let bucket_commitment = B256::from(
@@ -970,8 +970,6 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
     );
 
     let tribute_id = poseidon_entity(Address::repeat_byte(0x92), day);
-    let tribute = tribute_body(tribute_id, Address::repeat_byte(0x92), day);
-    let tribute_commitment = tribute_commitment(&tribute);
 
     let mut noncanonical_nod = nod_payload.clone();
     noncanonical_nod.extend_from_slice(&[0x60, 0x01]);
@@ -982,7 +980,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
         (
             NOD_ADDRESS,
             INod::NodBodyStored {
-                nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+                nodId: nod_id.to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME + 1,
                 schemaVersion: BODY_SCHEMA_V1,
                 previousCommitment: B256::ZERO,
@@ -994,7 +992,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
         (
             NOD_ADDRESS,
             INod::NodBodyStored {
-                nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+                nodId: nod_id.to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
                 schemaVersion: BODY_SCHEMA_V1 + 1,
                 previousCommitment: B256::ZERO,
@@ -1006,7 +1004,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
         (
             NOD_ADDRESS,
             INod::NodBodyStored {
-                nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+                nodId: nod_id.to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
                 schemaVersion: BODY_SCHEMA_V1,
                 previousCommitment: B256::ZERO,
@@ -1018,7 +1016,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
         (
             NOD_ADDRESS,
             INod::NodBodyStored {
-                nodId: Bytes::copy_from_slice(entity(0x93, day).as_bytes()),
+                nodId: entity(0x93, day).to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
                 schemaVersion: BODY_SCHEMA_V1,
                 previousCommitment: B256::ZERO,
@@ -1030,7 +1028,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
         (
             NOD_ADDRESS,
             INod::NodBodyStored {
-                nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+                nodId: nod_id.to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
                 schemaVersion: BODY_SCHEMA_V1,
                 previousCommitment: B256::ZERO,
@@ -1042,7 +1040,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
         (
             NOD_ADDRESS,
             INod::NodBucketBodyStored {
-                bucketId: Bytes::copy_from_slice(bucket_id.as_bytes()),
+                bucketId: bucket_id.to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME + 1,
                 schemaVersion: BODY_SCHEMA_V1,
                 previousCommitment: B256::ZERO,
@@ -1054,7 +1052,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
         (
             NOD_ADDRESS,
             INod::NodBucketBodyStored {
-                bucketId: Bytes::copy_from_slice(bucket_id.as_bytes()),
+                bucketId: bucket_id.to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
                 schemaVersion: BODY_SCHEMA_V1 + 1,
                 previousCommitment: B256::ZERO,
@@ -1066,7 +1064,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
         (
             NOD_ADDRESS,
             INod::NodBucketBodyStored {
-                bucketId: Bytes::copy_from_slice(bucket_id.as_bytes()),
+                bucketId: bucket_id.to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
                 schemaVersion: BODY_SCHEMA_V1,
                 previousCommitment: B256::ZERO,
@@ -1078,7 +1076,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
         (
             NOD_ADDRESS,
             INod::NodBucketBodyStored {
-                bucketId: Bytes::copy_from_slice(entity(0x94, day).as_bytes()),
+                bucketId: entity(0x94, day).to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
                 schemaVersion: BODY_SCHEMA_V1,
                 previousCommitment: B256::ZERO,
@@ -1090,7 +1088,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
         (
             NOD_ADDRESS,
             INod::NodBucketBodyStored {
-                bucketId: Bytes::copy_from_slice(bucket_id.as_bytes()),
+                bucketId: bucket_id.to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
                 schemaVersion: BODY_SCHEMA_V1,
                 previousCommitment: B256::ZERO,
@@ -1102,23 +1100,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
         (
             TRIBUTE_ADDRESS,
             ITribute::TributeBodyDeleted {
-                tributeId: Bytes::copy_from_slice(tribute_id.as_bytes()),
-                previousCommitment: B256::ZERO,
-            }
-            .encode_log_data(),
-        ),
-        (
-            TRIBUTE_ADDRESS,
-            ITribute::TributeBodyDeleted {
-                tributeId: Bytes::from(vec![0x95; 35]),
-                previousCommitment: tribute_commitment,
-            }
-            .encode_log_data(),
-        ),
-        (
-            NOD_ADDRESS,
-            INod::NodBodyDeleted {
-                nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+                tributeId: tribute_id.to_u256(),
                 previousCommitment: B256::ZERO,
             }
             .encode_log_data(),
@@ -1126,15 +1108,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
         (
             NOD_ADDRESS,
             INod::NodBodyDeleted {
-                nodId: Bytes::from(vec![0x96; 35]),
-                previousCommitment: nod_commitment,
-            }
-            .encode_log_data(),
-        ),
-        (
-            NOD_ADDRESS,
-            INod::NodBucketBodyDeleted {
-                bucketId: Bytes::copy_from_slice(bucket_id.as_bytes()),
+                nodId: nod_id.to_u256(),
                 previousCommitment: B256::ZERO,
             }
             .encode_log_data(),
@@ -1142,13 +1116,16 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
         (
             NOD_ADDRESS,
             INod::NodBucketBodyDeleted {
-                bucketId: Bytes::from(vec![0x97; 35]),
-                previousCommitment: bucket_commitment,
+                bucketId: bucket_id.to_u256(),
+                previousCommitment: B256::ZERO,
             }
             .encode_log_data(),
         ),
     ];
 
+    // Three cases that fed a wrong-width `bytes` identity are gone: a uint256
+    // identity has no malformed encoding, so the rejection they proved is now
+    // enforced by the ABI type rather than by this projector.
     for (case, (emitter, event)) in malformed_events.into_iter().enumerate() {
         let storage = Arc::new(RecordingStorage::default());
         let mut projection = open(&storage, 80);
@@ -1168,7 +1145,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
         (
             NOD_ADDRESS,
             INod::NodBodyStored {
-                nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+                nodId: nod_id.to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
                 schemaVersion: BODY_SCHEMA_V1,
                 previousCommitment: B256::ZERO,
@@ -1177,7 +1154,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
             }
             .encode_log_data(),
             INod::NodBodyStored {
-                nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+                nodId: nod_id.to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
                 schemaVersion: BODY_SCHEMA_V1,
                 previousCommitment: bucket_commitment,
@@ -1189,7 +1166,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
         (
             NOD_ADDRESS,
             INod::NodBucketBodyStored {
-                bucketId: Bytes::copy_from_slice(bucket_id.as_bytes()),
+                bucketId: bucket_id.to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
                 schemaVersion: BODY_SCHEMA_V1,
                 previousCommitment: B256::ZERO,
@@ -1198,7 +1175,7 @@ fn every_typed_store_and_delete_event_rejects_its_malformed_protocol_inputs_atom
             }
             .encode_log_data(),
             INod::NodBucketBodyStored {
-                bucketId: Bytes::copy_from_slice(bucket_id.as_bytes()),
+                bucketId: bucket_id.to_u256(),
                 commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
                 schemaVersion: BODY_SCHEMA_V1,
                 previousCommitment: nod_commitment,
@@ -1243,7 +1220,7 @@ fn nod_item_and_bucket_share_one_receipt_batch_and_all_six_events_decode() {
     let bucket_key = B256::repeat_byte(0xbc);
     let owner = Address::repeat_byte(0x77);
     let nod_id = poseidon_entity(owner, 20260715);
-    let bucket_id = EntityId36::new(WorldwideDay::new(20260715), bucket_key.0);
+    let bucket_id = WwdEntityId::from_day_and_digest(WorldwideDay::new(20260715), bucket_key.0);
     let store_block = FinalizedBlock {
         number: 30,
         hash: B256::repeat_byte(30),
@@ -1289,7 +1266,7 @@ fn nod_item_and_bucket_share_one_receipt_batch_and_all_six_events_decode() {
                     0,
                     NOD_ADDRESS,
                     INod::NodBodyDeleted {
-                        nodId: Bytes::copy_from_slice(nod_id.as_bytes()),
+                        nodId: nod_id.to_u256(),
                         previousCommitment: {
                             let body = nod_body(nod_id, owner, bucket_key);
                             let payload = encode_nod_item_v1(&canonical_item(&body)).unwrap();
@@ -1311,7 +1288,7 @@ fn nod_item_and_bucket_share_one_receipt_batch_and_all_six_events_decode() {
                     1,
                     NOD_ADDRESS,
                     INod::NodBucketBodyDeleted {
-                        bucketId: Bytes::copy_from_slice(bucket_id.as_bytes()),
+                        bucketId: bucket_id.to_u256(),
                         previousCommitment: {
                             let body = bucket_body(bucket_key);
                             let payload = encode_nod_bucket_v1(&canonical_bucket(&body)).unwrap();
@@ -1333,7 +1310,7 @@ fn nod_item_and_bucket_share_one_receipt_batch_and_all_six_events_decode() {
                     2,
                     TRIBUTE_ADDRESS,
                     ITribute::TributeBodyDeleted {
-                        tributeId: Bytes::copy_from_slice(entity(1234, 20260715).as_bytes()),
+                        tributeId: entity(1234, 20260715).to_u256(),
                         previousCommitment: tribute_commitment(&tribute_body(
                             entity(1234, 20260715),
                             Address::repeat_byte(1),

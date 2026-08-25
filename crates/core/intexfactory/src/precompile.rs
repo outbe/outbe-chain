@@ -160,7 +160,7 @@ pub fn dispatch(
                     runtime::quote_cost_amount(&storage, SeriesId::from(c.seriesId), c.paymentToken)
                 }),
                 // Off-chain the holder brute-forces `nonce` so the work hash
-                // SHA256(hex(holder ++ promisAmount ++ seriesId ++ seq) ++ nonce_be8)
+                // SHA256(holder ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)
                 // has POW_DIFFICULTY leading zero bytes; `seq` is the on-chain
                 // per-(series, holder) counter.
                 minePromis(c) => mutate(c, caller, |sender, c| {

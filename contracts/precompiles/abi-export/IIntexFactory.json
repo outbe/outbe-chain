@@ -98,8 +98,8 @@
       },
       {
         "name": "nonce",
-        "type": "uint256",
-        "internalType": "uint256"
+        "type": "uint64",
+        "internalType": "uint64"
       },
       {
         "name": "mac",
@@ -146,14 +146,9 @@
             "internalType": "address"
           },
           {
-            "name": "sourceTributeDigest",
-            "type": "bytes32",
-            "internalType": "bytes32"
-          },
-          {
-            "name": "sourceTributeIndex",
-            "type": "bytes4",
-            "internalType": "bytes4"
+            "name": "sourceTributeId",
+            "type": "uint256",
+            "internalType": "uint256"
           },
           {
             "name": "nominal",

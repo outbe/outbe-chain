@@ -769,7 +769,7 @@ mod tests {
 
     use crate::{
         persistence::{EnvironmentIdentity, LOCAL_STORAGE_SCHEMA_VERSION},
-        sealed_root, CeTopologyV1, Commitment, EntityId36, EntityRef, FinalLeafMutation,
+        sealed_root, CeTopologyV1, Commitment, EntityRef, FinalLeafMutation, WwdEntityId,
         ACTIVE_COMMITMENT_SCHEME, K_PROVISIONAL,
     };
 
@@ -988,7 +988,10 @@ mod tests {
         ));
 
         let parent = factory.open_parent(genesis_identity()).unwrap();
-        let entity = EntityRef::Tribute(EntityId36::new(WorldwideDay::new(7), [3_u8; 32]));
+        let entity = EntityRef::Tribute(WwdEntityId::from_day_and_digest(
+            WorldwideDay::new(7),
+            [3_u8; 32],
+        ));
         assert!(matches!(
             parent.read_leaf_verified(entity, b256(88)),
             Err(PrecompileError::Fatal(_))
@@ -1000,7 +1003,10 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let service = service(directory.path());
         let parent = service.open_parent(genesis_identity()).unwrap();
-        let entity = EntityRef::Tribute(EntityId36::new(WorldwideDay::new(7), [3_u8; 32]));
+        let entity = EntityRef::Tribute(WwdEntityId::from_day_and_digest(
+            WorldwideDay::new(7),
+            [3_u8; 32],
+        ));
         let commitment = Commitment::try_from(b256(17).0).unwrap();
 
         assert_eq!(
@@ -1059,8 +1065,8 @@ mod tests {
     fn one_candidate_atomically_seals_and_reopens_changes_from_multiple_shards() {
         let directory = tempfile::tempdir().unwrap();
         let service = service(directory.path());
-        let identity = EntityId36::try_from(
-            hex::decode("00000001000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
+        let identity = WwdEntityId::try_from(
+            hex::decode("000000010405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f")
                 .unwrap()
                 .as_slice(),
         )
@@ -1213,7 +1219,10 @@ mod tests {
         let opened = exporter.wait_for_ack();
         service.acknowledge_export_open(opened).unwrap();
 
-        let entity = EntityRef::Tribute(EntityId36::new(WorldwideDay::new(7), [0x44_u8; 32]));
+        let entity = EntityRef::Tribute(WwdEntityId::from_day_and_digest(
+            WorldwideDay::new(7),
+            [0x44_u8; 32],
+        ));
         let commitment = Commitment::try_from(b256(17).0).unwrap();
         let provisional = service
             .open_parent(genesis_identity())

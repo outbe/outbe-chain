@@ -1,8 +1,8 @@
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    delete, mint, read, retire_partition, BodyInput, EntityId36, EntityRef, ExecutionScope,
-    ParentBodySource, PartitionRef, RetirementOutcome, VerifiedBody,
+    delete, mint, read, retire_partition, BodyInput, EntityRef, ExecutionScope, ParentBodySource,
+    PartitionRef, RetirementOutcome, VerifiedBody, WwdEntityId,
 };
 use outbe_primitives::error::Result;
 
@@ -345,7 +345,7 @@ impl TributeContract<'_> {
         mint(self.storage_handle(), scope, BodyInput::Tribute(&canonical))?;
         self.emit(ITribute::TributeIssued {
             owner: tribute.owner,
-            tributeId: Bytes::copy_from_slice(tribute.tribute_id.as_bytes()),
+            tributeId: tribute.tribute_id.to_u256(),
             worldwideDay: tribute.worldwide_day.into(),
             issuanceAmountMinor: tribute.issuance_amount_minor,
             settlementCurrency: tribute.issuance_currency,
@@ -359,7 +359,7 @@ impl TributeContract<'_> {
         &mut self,
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     ) -> Result<()> {
         let loaded = self
             .load_tribute(scope, parent, tribute_id)?
@@ -372,7 +372,7 @@ impl TributeContract<'_> {
         &self,
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     ) -> Result<Option<LoadedTribute>> {
         read(
             self.storage_handle(),
@@ -406,7 +406,7 @@ impl TributeContract<'_> {
 
         delete(self.storage_handle(), scope, current)?;
         self.emit(ITribute::TributeBurned {
-            tributeId: Bytes::copy_from_slice(tribute.tribute_id.as_bytes()),
+            tributeId: tribute.tribute_id.to_u256(),
             owner: tribute.owner,
             worldwideDay: tribute.worldwide_day.into(),
         })?;

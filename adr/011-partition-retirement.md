@@ -376,7 +376,7 @@ Exercise commit-before-ACK redelivery, restart after uncertain commit, multiple 
 
 ## Reset and activation policy
 
-ADR-011 is an additive testnet hard fork after the ADR-010 CES1 reset. It changes no body commitment, EntityId36, collection key, tree key, shard count, collection root, Catalog key, or `R_sealed` formula. Existing CE MDBX V3 data remains structurally compatible.
+ADR-011 is an additive testnet hard fork after the ADR-010 CES1 reset. It changes no body commitment, WwdEntityId, collection key, tree key, shard count, collection root, Catalog key, or `R_sealed` formula. Existing CE MDBX V3 data remains structurally compatible.
 
 The activation advances the EVM storage schema for the new empty retirement journal and activates the new canonical event and collection-operation variant at one fork height. There is no dual behavior, fallback, operator flag, or migration of body/tree data. A complete pre-production reset remains permitted if implementation sequencing makes it cheaper, but is not required by the architecture.
 

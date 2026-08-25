@@ -5,7 +5,7 @@
 //! CAS object. The yielded items and `Complete` are evidence inputs for a future
 //! finalizer; neither is a result, signature, or finalization capability.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use outbe_lysis::program_v1::{
     artifacts::LysisArtifactErrorV1,
     planner::{
@@ -18,7 +18,6 @@ use outbe_lysis::program_v1::{
     },
 };
 use outbe_ocomp_protocol::{
-    common::EntityId36,
     result::{OutputManifestEntryV1, ResultChunkV1},
     unit::UnitPhase,
     ListKind, ObjectKind, ProtocolError, StreamingOrderedListRoot,
@@ -185,8 +184,8 @@ pub struct ExactLysisResultCatalogCursorV1<'a> {
     admission_catalog: Option<AdmissionDirectoryCursorV1<'a>>,
     summary_eligible_nominal_total: U256,
     chunk_eligible_nominal_total: U256,
-    previous_nod_tribute_id: Option<EntityId36>,
-    previous_contributor_key: Option<(Address, EntityId36)>,
+    previous_nod_tribute_id: Option<B256>,
+    previous_contributor_key: Option<(Address, B256)>,
     observed_result_entries: Option<StreamingOrderedListRoot>,
     reloaded_result_entries: Option<StreamingOrderedListRoot>,
     stage: LysisResultCatalogStageV1,

@@ -2,13 +2,13 @@ use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::SolEvent;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    body_commitment, decode_tribute_v1, encode_tribute_v1, EntityId36, ACTIVE_COMMITMENT_SCHEME,
+    body_commitment, decode_tribute_v1, encode_tribute_v1, WwdEntityId, ACTIVE_COMMITMENT_SCHEME,
     BODY_SCHEMA_V1,
 };
 use outbe_tribute::{canonical_body, from_canonical_body, precompile::ITribute, TributeData};
 
-fn identity(day: WorldwideDay, seed: U256) -> EntityId36 {
-    EntityId36::new(day, seed.to_be_bytes::<32>())
+fn identity(day: WorldwideDay, seed: U256) -> WwdEntityId {
+    WwdEntityId::from_day_and_digest(day, seed.to_be_bytes::<32>())
 }
 
 fn assert_roundtrip(record: TributeData) {
@@ -21,7 +21,7 @@ fn assert_roundtrip(record: TributeData) {
     )
     .unwrap();
     let event = ITribute::TributeBodyStored {
-        tributeId: Bytes::copy_from_slice(record.tribute_id.as_bytes()),
+        tributeId: record.tribute_id.to_u256(),
         commitmentSchemeVersion: ACTIVE_COMMITMENT_SCHEME,
         schemaVersion: BODY_SCHEMA_V1,
         previousCommitment: B256::ZERO,
@@ -30,7 +30,7 @@ fn assert_roundtrip(record: TributeData) {
     };
 
     let decoded = ITribute::TributeBodyStored::decode_log_data(&event.encode_log_data()).unwrap();
-    let decoded_id = EntityId36::try_from(decoded.tributeId.as_ref()).unwrap();
+    let decoded_id = WwdEntityId::from(decoded.tributeId);
     let reconstructed = from_canonical_body(decode_tribute_v1(&decoded.canonicalPayload).unwrap());
 
     assert_eq!(decoded_id, record.tribute_id);
@@ -91,11 +91,11 @@ fn stored_event_carries_the_exact_canonical_body_and_commitment() {
 fn transition_event_signatures_and_delete_receipt_are_pinned() {
     assert_eq!(
         ITribute::TributeBodyStored::SIGNATURE_HASH,
-        keccak256("TributeBodyStored(bytes,uint32,uint32,bytes32,bytes32,bytes)")
+        keccak256("TributeBodyStored(uint256,uint32,uint32,bytes32,bytes32,bytes)")
     );
     assert_eq!(
         ITribute::TributeBodyDeleted::SIGNATURE_HASH,
-        keccak256("TributeBodyDeleted(bytes,bytes32)")
+        keccak256("TributeBodyDeleted(uint256,bytes32)")
     );
     let tribute_id = identity(WorldwideDay::new(20_241_220), U256::MAX);
     let previous = body_commitment(
@@ -106,15 +106,12 @@ fn transition_event_signatures_and_delete_receipt_are_pinned() {
     )
     .unwrap();
     let log = ITribute::TributeBodyDeleted {
-        tributeId: Bytes::copy_from_slice(tribute_id.as_bytes()),
+        tributeId: tribute_id.to_u256(),
         previousCommitment: B256::from(*previous.as_bytes()),
     }
     .encode_log_data();
     let decoded = ITribute::TributeBodyDeleted::decode_log_data(&log).unwrap();
     assert_eq!(log.topics().len(), 1);
-    assert_eq!(
-        EntityId36::try_from(decoded.tributeId.as_ref()).unwrap(),
-        tribute_id
-    );
+    assert_eq!(WwdEntityId::from(decoded.tributeId), tribute_id);
     assert_eq!(decoded.previousCommitment, B256::from(*previous.as_bytes()));
 }

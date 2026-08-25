@@ -2,7 +2,7 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
 use thiserror::Error;
 
-use crate::EntityId36;
+use crate::WwdEntityId;
 
 /// Fork-supported schema for the first three canonical body messages.
 pub const BODY_SCHEMA_V1: u32 = 1;
@@ -10,7 +10,7 @@ pub const BODY_SCHEMA_V1: u32 = 1;
 /// Canonical v1 Tribute payload.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TributeBodyV1 {
-    pub tribute_id: EntityId36,
+    pub tribute_id: WwdEntityId,
     pub owner: Address,
     pub worldwide_day: WorldwideDay,
     pub issuance_amount_minor: U256,
@@ -24,7 +24,7 @@ pub struct TributeBodyV1 {
 /// Canonical v1 Nod item payload.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodItemBodyV1 {
-    pub nod_id: EntityId36,
+    pub nod_id: WwdEntityId,
     pub owner: Address,
     pub gratis_load_minor: U256,
     pub worldwide_day: WorldwideDay,
@@ -58,8 +58,8 @@ pub struct NodBucketBodyV1 {
 impl NodBucketBodyV1 {
     /// Returns the canonical bucket identity `WWD_BE4 || bucket_key`.
     #[must_use]
-    pub fn entity_id(&self) -> EntityId36 {
-        EntityId36::new(self.worldwide_day, self.bucket_key.0)
+    pub fn entity_id(&self) -> WwdEntityId {
+        WwdEntityId::from_day_and_digest(self.worldwide_day, self.bucket_key)
     }
 }
 
@@ -130,7 +130,7 @@ impl StoredBody {
 pub fn encode_tribute_v1(body: &TributeBodyV1) -> Result<Vec<u8>, CanonicalBodyError> {
     validate_identity_day(body.tribute_id, body.worldwide_day)?;
     let mut output = Vec::with_capacity(192);
-    encode_bytes_field(1, body.tribute_id.as_bytes(), &mut output);
+    encode_bytes_field(1, body.tribute_id.as_slice(), &mut output);
     encode_bytes_field(2, body.owner.as_slice(), &mut output);
     encode_optional_varint_field(3, u64::from(body.worldwide_day.value()), &mut output);
     encode_bytes_field(
@@ -157,7 +157,7 @@ pub fn encode_tribute_v1(body: &TributeBodyV1) -> Result<Vec<u8>, CanonicalBodyE
 /// Strictly decodes one canonical v1 Tribute payload.
 pub fn decode_tribute_v1(bytes: &[u8]) -> Result<TributeBodyV1, CanonicalBodyError> {
     let mut fields = Fields::new(bytes);
-    let tribute_id = EntityId36::try_from(required_bytes(&mut fields, 1)?)?;
+    let tribute_id = WwdEntityId::try_from(required_bytes(&mut fields, 1)?)?;
     let owner_bytes = fixed_bytes::<20>(required_bytes(&mut fields, 2)?, 2)?;
     let worldwide_day = WorldwideDay::new(optional_u32(&mut fields, 3)?);
     let issuance_amount_minor = decode_u256(required_bytes(&mut fields, 4)?, 4)?;
@@ -196,7 +196,7 @@ pub fn decode_stored_tribute_v1(bytes: &[u8]) -> Result<TributeBodyV1, Canonical
 pub fn encode_nod_item_v1(body: &NodItemBodyV1) -> Result<Vec<u8>, CanonicalBodyError> {
     validate_identity_day(body.nod_id, body.worldwide_day)?;
     let mut output = Vec::with_capacity(224);
-    encode_bytes_field(1, body.nod_id.as_bytes(), &mut output);
+    encode_bytes_field(1, body.nod_id.as_slice(), &mut output);
     encode_bytes_field(2, body.owner.as_slice(), &mut output);
     encode_bytes_field(3, &body.gratis_load_minor.to_be_bytes::<32>(), &mut output);
     encode_optional_varint_field(4, u64::from(body.worldwide_day.value()), &mut output);
@@ -214,7 +214,7 @@ pub fn encode_nod_item_v1(body: &NodItemBodyV1) -> Result<Vec<u8>, CanonicalBody
 /// Strictly decodes one canonical v1 Nod item payload.
 pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyError> {
     let mut fields = Fields::new(bytes);
-    let nod_id = EntityId36::try_from(required_bytes(&mut fields, 1)?)?;
+    let nod_id = WwdEntityId::try_from(required_bytes(&mut fields, 1)?)?;
     let owner = Address::from(fixed_bytes::<20>(required_bytes(&mut fields, 2)?, 2)?);
     let gratis_load_minor = decode_u256(required_bytes(&mut fields, 3)?, 3)?;
     let worldwide_day = WorldwideDay::new(optional_u32(&mut fields, 4)?);
@@ -312,7 +312,7 @@ fn decode_active_stored_body(bytes: &[u8]) -> Result<StoredBody, CanonicalBodyEr
 }
 
 fn validate_identity_day(
-    identity: EntityId36,
+    identity: WwdEntityId,
     worldwide_day: WorldwideDay,
 ) -> Result<(), CanonicalBodyError> {
     if identity.worldwide_day() != worldwide_day {
@@ -530,7 +530,7 @@ fn optional_bool(fields: &mut Fields<'_>, field: u32) -> Result<bool, CanonicalB
 #[non_exhaustive]
 pub enum CanonicalBodyError {
     #[error(transparent)]
-    InvalidEntityId(#[from] crate::EntityIdError),
+    InvalidEntityId(#[from] core::array::TryFromSliceError),
     #[error("schema version zero is invalid")]
     ZeroSchemaVersion,
     #[error("stored body payload must not be empty")]
@@ -559,7 +559,7 @@ pub enum CanonicalBodyError {
         expected: usize,
         actual: usize,
     },
-    #[error("body worldwide day does not match its EntityId36 prefix")]
+    #[error("body worldwide day does not match its WwdEntityId prefix")]
     IdentityDayMismatch,
     #[error("input is not the canonical Protobuf representation")]
     NonCanonicalEncoding,

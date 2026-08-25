@@ -20,8 +20,6 @@ use crate::schema::OracleContract;
 /// carrying the orientation it was registered in.
 type PairSeries = (Vec<AddressPair>, Vec<U256>, Vec<u64>);
 
-const WWD_FORMING_SECONDS: u64 = 50 * 60 * 60;
-
 #[derive(Clone, Copy, Default)]
 struct VwapAccumulator {
     price_volume: U256,
@@ -555,9 +553,12 @@ impl OracleContract<'_> {
         start_time: u64,
         end_time: u64,
     ) -> Result<bool> {
+        // The forming window is a protocol parameter, not an oracle constant:
+        // a chain that shortens it (localnet, E2E) still hands Metadosis'
+        // real window here, and a second hardcoded copy would reject it.
         let expected_start = worldwide_day.start_timestamp();
         let expected_end = expected_start
-            .checked_add(WWD_FORMING_SECONDS)
+            .checked_add(outbe_chain_constants::get_metadosis_forming_period_seconds())
             .ok_or(OracleError::InvalidVwapRange)?;
         if !worldwide_day.is_valid() || start_time != expected_start || end_time != expected_end {
             return Err(OracleError::InvalidVwapRange.into());

@@ -894,7 +894,6 @@ use crate::payout::{
     contributor_list_root, decode_contributor_leaf, encode_contributor_leaf,
     verify_contributor_leaf_range, CONTRIBUTOR_LEAF_BYTES,
 };
-use outbe_ocomp_protocol::common::EntityId36;
 use outbe_ocomp_protocol::profile::poc_schema_limits;
 use outbe_ocomp_protocol::result::ContributorActionV1;
 
@@ -929,7 +928,7 @@ fn canonical_leaf_encoding_matches_protocol_codec() {
     let leaf = contributor_leaf(7, 12_345);
     let action = ContributorActionV1 {
         owner: leaf.owner,
-        source_tribute_id: EntityId36(leaf.source_tribute_id),
+        source_tribute_id: alloy_primitives::B256::from(leaf.source_tribute_id.to_be_bytes::<32>()),
         nominal_amount_minor: leaf.nominal,
     };
     let expected = action
@@ -1041,7 +1040,8 @@ fn tampered_leaf_is_rejected() {
     let leaves = population(600);
     let root = contributor_root(&leaves);
     let mut tampered = batch(&leaves, 0, 256);
-    tampered[3][87] ^= 1;
+    let last = CONTRIBUTOR_LEAF_BYTES - 1;
+    tampered[3][last] ^= 1;
     let err = verify_contributor_leaf_range(
         600,
         0,

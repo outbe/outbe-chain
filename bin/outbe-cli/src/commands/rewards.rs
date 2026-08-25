@@ -1,7 +1,7 @@
 //! Rewards commands.
 //!
 //! Validator daily emission is delivered as gems (see the Rewards module's
-//! `add_topup_for_voters`), not as a claimable native balance, so there is no
+//! prepare/delivery batch API), not as a claimable native balance, so there is no
 //! `claim` / `pending` command here.
 
 use clap::Subcommand;

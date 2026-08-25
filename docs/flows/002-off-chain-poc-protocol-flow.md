@@ -1,6 +1,6 @@
 # Flow 002: Tribute to usable NOD through OCOMP
 
-- **Status:** Normative
+- **Status:** Draft
 - **Actors:** Cycle, Metadosis, ACTIVE validators, FullNodes, OCOMP ExEx,
   Supervisors, Workers, txpool/EVM, Lysis, Tribute, NOD, and NodFactory
 - **Referenced decisions:** ADR-C-LYS-001, ADR-C-NOD-002, ADR-S-OCM-004
@@ -11,6 +11,10 @@ One eligible sealed WorldwideDay is computed by OCOMP, certified by the pinned
 validator quorum, and materialized into ordinary NOD ledger entries. Owners can
 enumerate, read, approve, transfer where supported, and mine those NODs through
 the existing public ABI.
+
+The Metadosis profile uses a `Measurement` install at height `1` for fresh
+devnets. Checked-in replay evidence instead starts from the canonical `Final` fixture at its
+activation height `32`; neither profile may be reinterpreted as the other.
 
 ## End-to-end sequence
 

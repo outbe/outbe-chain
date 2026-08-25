@@ -5,6 +5,12 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum L2RegistryError {
+    #[error("invalid L2 registry proposal payload")]
+    InvalidProposalPayload,
+
+    #[error("L2 registry public key must be 0x-prefixed hex")]
+    InvalidPublicKeyEncoding,
+
     #[error("chain id must be non-zero")]
     InvalidChainId,
 
@@ -25,6 +31,9 @@ pub enum L2RegistryError {
 
     #[error("L2 network {chain_id} is not registered")]
     NetworkNotRegistered { chain_id: u64 },
+
+    #[error("caller {caller} is not the owner of L2 network {chain_id}")]
+    NotNetworkOwner { caller: Address, chain_id: u64 },
 
     #[error("zkMerkleRoot must be exactly 32 bytes when ZK verification is enabled")]
     ZkMerkleRootRequired,

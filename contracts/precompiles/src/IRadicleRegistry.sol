@@ -5,12 +5,7 @@ pragma solidity ^0.8.30;
 /// @notice Permissionless, append-only registry of public Heartwood repositories.
 /// @dev maxRepositories() == type(uint32).max denotes an unlimited configured capacity.
 interface IRadicleRegistry {
-    event RepositoryRegistered(
-        bytes20 indexed repoId,
-        address indexed registrant,
-        uint32 index,
-        uint64 generation
-    );
+    event RepositoryRegistered(bytes20 indexed repoId, address indexed registrant, uint32 index, uint64 generation);
 
     function registerRepository(bytes20 repoId) external;
     function repositoryCount() external view returns (uint32);

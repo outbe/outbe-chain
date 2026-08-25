@@ -10,8 +10,6 @@ interface ICredis {
         uint256 collateral
     );
 
-    event PositionSettleable(uint256 indexed positionId, uint256 floorPrice);
-
     event PositionCalled(uint256 indexed positionId, uint64 calledAt, uint64 settlementDeadline);
 
     event SettlementApplied(
@@ -33,10 +31,10 @@ interface ICredis {
     );
 
     /// @notice Lifecycle state of a position, mirroring the Rust `CredisState`.
-    ///         `Open -> Settleable -> (Called) -> Settled | Void`.
+    ///         `Open -> (Called) -> Settled | Void`. A position is settleable
+    ///         from the moment it opens.
     enum State {
         Open,
-        Settleable,
         Called,
         Settled,
         Void
@@ -64,9 +62,7 @@ interface ICredis {
         uint256 policyRate;
         /// P_0 — the COEN price in the position's currency, quoted at pledge time.
         uint256 entryPrice;
-        /// P_0 + 8%. Crossing it latches the position settleable, permanently.
-        uint256 floorPrice;
-        /// P_0 + 32%. A sustained breach triggers the call.
+        /// P_0 + 64%. A sustained breach triggers the call.
         uint256 callPrice;
         uint64 originatedAt;
         /// Anchor of the interest day count: origination until the first settlement.

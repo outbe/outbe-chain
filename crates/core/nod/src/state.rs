@@ -1,7 +1,8 @@
 use alloy_primitives::{Address, B256, U256};
 use outbe_compressed_entities::{
-    delete, derive_poseidon_entity_id, list, mint, read, update, BodyInput, EntityId36, EntityRef,
-    ExecutionScope, IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, MAX_ID_PAGE_LIMIT,
+    delete, derive_poseidon_entity_id, list, mint, read, update, BodyInput, EntityRef,
+    ExecutionScope, IdPageRequest, ParentBodySource, QueryRef, VerifiedBody, WwdEntityId,
+    MAX_ID_PAGE_LIMIT,
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::math::{
@@ -19,19 +20,14 @@ use crate::{
 impl NodContract<'_> {
     // --- ID helpers ---
 
-    pub fn format_nod_id(nod_id: EntityId36) -> String {
-        nod_id.to_string()
-    }
-
-    pub fn parse_nod_id(nod_id: &str) -> Result<EntityId36> {
+    pub fn parse_nod_id(nod_id: &str) -> Result<WwdEntityId> {
         let trimmed = nod_id.strip_prefix("0x").unwrap_or(nod_id);
-        if trimmed.len() != EntityId36::LEN * 2 {
+        if trimmed.len() != WwdEntityId::len_bytes() * 2 {
             return Err(NodError::InvalidNodIdLength.into());
         }
-        let mut buf = [0u8; EntityId36::LEN];
-        hex::decode_to_slice(trimmed, &mut buf).map_err(|_| NodError::InvalidNodIdHex)?;
-        EntityId36::try_from(buf.as_slice())
-            .map_err(|error| outbe_primitives::error::PrecompileError::Revert(error.to_string()))
+        trimmed
+            .parse::<WwdEntityId>()
+            .map_err(|_| NodError::InvalidNodIdHex.into())
     }
 
     // --- View functions ---
@@ -44,7 +40,7 @@ impl NodContract<'_> {
         &self,
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
-        nod_id: EntityId36,
+        nod_id: WwdEntityId,
     ) -> Result<Option<VerifiedBody>> {
         read(
             self.storage_handle(),
@@ -58,7 +54,7 @@ impl NodContract<'_> {
         &self,
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
-        bucket_id: EntityId36,
+        bucket_id: WwdEntityId,
     ) -> Result<Option<VerifiedBody>> {
         read(
             self.storage_handle(),
@@ -140,7 +136,7 @@ impl NodContract<'_> {
             ));
         }
 
-        let bucket_id = EntityId36::new(item.worldwide_day, item.bucket_key.0);
+        let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
         let current_bucket = self.get_bucket_verified(scope, parent, bucket_id)?;
         let final_bucket = match current_bucket.as_ref() {
             Some(current) => {
@@ -179,6 +175,7 @@ impl NodContract<'_> {
             )
         })?;
         self.total_supply.write(supply)?;
+        self.insert_bucket_member(item.bucket_key, item.nod_id, final_bucket.total_nods)?;
         let canonical_item = crate::repository::canonical_item(item);
         mint(
             self.storage_handle(),
@@ -228,7 +225,7 @@ impl NodContract<'_> {
     ) -> Result<()> {
         let (item, current_item) = item.into_parts();
         let (mut bucket, current_bucket) = bucket.into_parts();
-        let bucket_id = EntityId36::new(item.worldwide_day, item.bucket_key.0);
+        let bucket_id = WwdEntityId::from_day_and_digest(item.worldwide_day, item.bucket_key.0);
         if current_bucket.entity_id() != bucket_id {
             return Err(
                 outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
@@ -249,9 +246,12 @@ impl NodContract<'_> {
             )
         })?;
         self.total_supply.write(supply)?;
+        self.remove_bucket_member(item.bucket_key, item.nod_id, bucket.total_nods)?;
         delete(self.storage_handle(), scope, current_item)?;
         if bucket.total_nods == 0 {
             self.bucket_worldwide_day.get(&item.bucket_key).delete()?;
+            self.bucket_nod_count.clear(&item.bucket_key)?;
+            self.remove_callable_bucket(item.bucket_key)?;
             delete(self.storage_handle(), scope, current_bucket)
         } else {
             let canonical = crate::repository::canonical_bucket(&bucket);
@@ -330,6 +330,153 @@ impl NodContract<'_> {
         })?;
         self.unqualified_bin_count.write(&scoped, next_count)?;
         tree_math::add(&CurrencyBins(self, reference_currency), bin_id)?;
+        Ok(())
+    }
+
+    // --- Bucket member index ------------------------------------------------
+    //
+    // The compressed-entity store answers "give me this Nod" but never "give me
+    // this bucket's Nods", so the forfeit sweep needs its own enumeration. The
+    // shape mirrors the unqualified-bin index: a count plus a keccak-of-concat
+    // positional map, with a reverse map for O(1) swap-remove.
+
+    /// Storage key for the `index`-th Nod parked in `bucket_key`.
+    pub(crate) fn bucket_nod_key(bucket_key: B256, index: u32) -> B256 {
+        let mut buf = [0u8; 36];
+        buf[0..32].copy_from_slice(bucket_key.as_slice());
+        buf[32..36].copy_from_slice(&index.to_be_bytes());
+        alloy_primitives::keccak256(buf)
+    }
+
+    /// Appends `nod_id` to its bucket's member list. `total_nods` is the loaded
+    /// body's post-increment count, so the EVM mirror is written from the same
+    /// value the body carries and the two cannot drift.
+    pub(crate) fn insert_bucket_member(
+        &mut self,
+        bucket_key: B256,
+        nod_id: WwdEntityId,
+        total_nods: u64,
+    ) -> Result<()> {
+        let index = self.bucket_nod_count.read(&bucket_key)?;
+        self.bucket_nods
+            .write(&Self::bucket_nod_key(bucket_key, index), nod_id)?;
+        self.bucket_nod_index.write(&nod_id, index)?;
+        let next = index.checked_add(1).ok_or_else(|| {
+            outbe_primitives::error::PrecompileError::Fatal(format!(
+                "Nod bucket {bucket_key} member index overflow"
+            ))
+        })?;
+        self.expect_member_parity(bucket_key, next, total_nods)?;
+        self.bucket_nod_count.write(&bucket_key, next)?;
+        Ok(())
+    }
+
+    /// Swap-removes `nod_id` from its bucket's member list. `total_nods` is the
+    /// loaded body's post-decrement count.
+    pub(crate) fn remove_bucket_member(
+        &mut self,
+        bucket_key: B256,
+        nod_id: WwdEntityId,
+        total_nods: u64,
+    ) -> Result<()> {
+        let index = self.bucket_nod_index.read(&nod_id)?;
+        let last = self
+            .bucket_nod_count
+            .read(&bucket_key)?
+            .checked_sub(1)
+            .ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                    "Nod bucket {bucket_key} member count underflow during removal"
+                ))
+            })?;
+        let last_key = Self::bucket_nod_key(bucket_key, last);
+        if index != last {
+            let moved = self.bucket_nods.read(&last_key)?;
+            if moved.is_zero() {
+                return Err(
+                    outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                        "Nod bucket {bucket_key} member slot {last} is empty during removal"
+                    )),
+                );
+            }
+            self.bucket_nods
+                .write(&Self::bucket_nod_key(bucket_key, index), moved)?;
+            self.bucket_nod_index.write(&moved, index)?;
+        }
+        self.bucket_nods.write(&last_key, WwdEntityId::ZERO)?;
+        self.bucket_nod_index.clear(&nod_id)?;
+        self.expect_member_parity(bucket_key, last, total_nods)?;
+        self.bucket_nod_count.write(&bucket_key, last)?;
+        Ok(())
+    }
+
+    /// The forfeit sweep enumerates members through the EVM mirror but burns
+    /// through the bucket body, so a divergence between the two would silently
+    /// under- or over-burn. Fail loudly instead.
+    fn expect_member_parity(&self, bucket_key: B256, members: u32, total_nods: u64) -> Result<()> {
+        if u64::from(members) == total_nods {
+            return Ok(());
+        }
+        Err(
+            outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                "Nod bucket {bucket_key} member index holds {members} entries but the body \
+                 counts {total_nods}"
+            )),
+        )
+    }
+
+    // --- Callable-bucket index ----------------------------------------------
+
+    /// Arms a freshly qualified bucket for the daily call scan, snapshotting the
+    /// terms the scan needs so it never has to load a bucket body to decide.
+    pub(crate) fn insert_callable_bucket(
+        &mut self,
+        bucket_key: B256,
+        call_price: U256,
+        reference_currency: u16,
+    ) -> Result<()> {
+        let index = self.callable_buckets.len()?;
+        self.callable_buckets.push(bucket_key)?;
+        self.callable_bucket_index.write(&bucket_key, index)?;
+        self.callable_bucket_call_price
+            .write(&bucket_key, call_price)?;
+        self.callable_bucket_currency
+            .write(&bucket_key, reference_currency)?;
+        Ok(())
+    }
+
+    /// Swap-removes a bucket from the callable list and clears its call state.
+    /// No-op for a bucket that never qualified, so the removal funnel can call
+    /// it unconditionally.
+    pub(crate) fn remove_callable_bucket(&mut self, bucket_key: B256) -> Result<()> {
+        let len = self.callable_buckets.len()?;
+        let index = self.callable_bucket_index.read(&bucket_key)?;
+        let listed = index < len
+            && self
+                .callable_buckets
+                .get(index)?
+                .is_some_and(|listed| listed == bucket_key);
+        if listed {
+            let last = len.checked_sub(1).ok_or_else(|| {
+                outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                    "Nod callable list underflow removing bucket {bucket_key}"
+                ))
+            })?;
+            if index != last {
+                let moved = self.callable_buckets.get(last)?.ok_or_else(|| {
+                    outbe_primitives::error::PrecompileError::BodyReadCorruption(format!(
+                        "Nod callable list slot {last} is empty during removal"
+                    ))
+                })?;
+                self.callable_buckets.set(index, moved)?;
+                self.callable_bucket_index.write(&moved, index)?;
+            }
+            self.callable_buckets.pop()?;
+        }
+        self.callable_bucket_index.clear(&bucket_key)?;
+        self.callable_bucket_call_price.clear(&bucket_key)?;
+        self.callable_bucket_currency.get(&bucket_key).delete()?;
+        self.bucket_called_at.clear(&bucket_key)?;
         Ok(())
     }
 }

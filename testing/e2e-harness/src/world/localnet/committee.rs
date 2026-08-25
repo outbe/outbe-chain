@@ -282,15 +282,7 @@ impl Localnet {
             self.run_setup(
                 Command::new("cargo")
                     .current_dir(&worktree)
-                    .args([
-                        "build",
-                        "--offline",
-                        "--release",
-                        "-p",
-                        "outbe-chain",
-                        "--bin",
-                        "outbe-chain",
-                    ])
+                    .args(replacement_chain_build_args())
                     .arg("--target-dir")
                     .arg(&target),
                 &format!("build replacement outbe-chain v{version}"),
@@ -696,6 +688,20 @@ fn cargo_package_version(protocol_version: &str) -> Result<String> {
     Ok(format!("{major}.{minor}.0"))
 }
 
+fn replacement_chain_build_args() -> [&'static str; 9] {
+    [
+        "build",
+        "--offline",
+        "--release",
+        "-p",
+        "outbe-chain",
+        "--bin",
+        "outbe-chain",
+        "--features",
+        "e2e-test,test-protocol-overrides",
+    ]
+}
+
 #[cfg(any(test, feature = "ocomp-integration"))]
 fn compressed_entities_reconstruction_path(
     scenario_dir: &Path,
@@ -769,7 +775,7 @@ fn verified_compressed_entities_reconstruction_path(
 mod tests {
     use super::{
         cargo_package_version, committee_signal_args, compressed_entities_reconstruction_path,
-        rewrite_workspace_version, unix_time_offset_arg,
+        replacement_chain_build_args, rewrite_workspace_version, unix_time_offset_arg,
         verified_compressed_entities_reconstruction_path,
     };
     use clap::Parser;
@@ -802,6 +808,24 @@ mod tests {
         assert_eq!(cargo_package_version("3.0").unwrap(), "3.0.0");
         assert!(cargo_package_version("3").is_err());
         assert!(cargo_package_version("3.0.1").is_err());
+    }
+
+    #[test]
+    fn replacement_binary_preserves_the_complete_e2e_chain_feature_surface() {
+        assert_eq!(
+            replacement_chain_build_args(),
+            [
+                "build",
+                "--offline",
+                "--release",
+                "-p",
+                "outbe-chain",
+                "--bin",
+                "outbe-chain",
+                "--features",
+                "e2e-test,test-protocol-overrides",
+            ]
+        );
     }
 
     #[test]

@@ -2,7 +2,7 @@ use crate::program_v1::{self, ProgramErrorV1, TributeInputV1};
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    list, EntityId36, ExecutionScope, IdPageRequest, ParentBodySource, QueryRef, MAX_ID_PAGE_LIMIT,
+    list, ExecutionScope, IdPageRequest, ParentBodySource, QueryRef, WwdEntityId, MAX_ID_PAGE_LIMIT,
 };
 use outbe_primitives::{
     error::{PrecompileError, Result},
@@ -11,8 +11,8 @@ use outbe_primitives::{
 
 /// Result of a lysis execution.
 pub struct LysisResult {
-    pub nod_ids: Vec<EntityId36>,
-    pub tribute_ids: Vec<EntityId36>,
+    pub nod_ids: Vec<WwdEntityId>,
+    pub tribute_ids: Vec<WwdEntityId>,
     pub remaining_gratis: U256,
 }
 

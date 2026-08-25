@@ -59,10 +59,9 @@ fn request_credis_seals_the_position_geometry_from_the_pledge_quote() {
         assert_eq!(position.collateral, pledge_cost());
         assert_eq!(position.collateral_locked, pledge_cost());
         // The entry price is the rate the PLEDGE was quoted at, not a later read;
-        // floor and call derive from it, so the whole geometry follows the quote.
+        // the call price derives from it, so the whole geometry follows the quote.
         assert_eq!(position.entry_price, oracle_rate());
-        assert_eq!(position.floor_price, U256::from(2_160_000u64));
-        assert_eq!(position.call_price, U256::from(2_640_000u64));
+        assert_eq!(position.call_price, U256::from(3_280_000u64));
         assert_eq!(position.policy_rate, policy_rate());
         assert_eq!(position.issuance_currency, ISSUANCE_ISO);
         assert_eq!(position.lifecycle_state().unwrap(), CredisState::Open);
@@ -72,78 +71,22 @@ fn request_credis_seals_the_position_geometry_from_the_pledge_quote() {
 }
 
 #[test]
-fn settle_is_rejected_until_the_price_crosses_the_floor() {
+fn settle_runs_immediately_after_opening() {
     let mut storage = env();
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let position_id = open(&storage, 1);
 
-        // The seeded price (2.0) sits below the floor (2.16).
-        let err = runtime::settle(
-            storage.clone(),
-            alice(),
-            position_id,
-            U256::from(1_000_000u64),
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("not settleable"), "got: {err}");
-
-        // Cross the floor: the settlement latches the position on the way through.
-        set_coen_rate(&storage, above_floor());
+        // No price condition gates settlement: a position is settleable the
+        // moment it exists, and stays Open until a sustained breach calls it.
         settle_principal(&storage, alice(), position_id, U256::from(500_000u64));
-        assert_eq!(
-            CredisContract::new(storage.clone())
-                .get_position(position_id)
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            CredisState::Settleable
-        );
-
-        // The latch is one-way: the price falling back below the floor does not
-        // re-lock the position.
-        set_coen_rate(&storage, oracle_rate());
         settle_principal(&storage, alice(), position_id, U256::from(500_000u64));
-        assert_eq!(
-            CredisContract::new(storage.clone())
-                .get_position(position_id)
-                .unwrap()
-                .outstanding,
-            U256::from(1_000_000u64)
-        );
-    });
-    teardown();
-}
 
-#[test]
-fn a_stale_live_price_does_not_latch_an_open_position() {
-    let mut storage = env();
-    StorageHandle::enter(&mut storage, |storage| {
-        bootstrap(&storage, pledge_cost());
-        let position_id = open(&storage, 1);
-        set_coen_rate(&storage, above_floor());
-        advance_to(
-            &storage,
-            CREATED_AT + outbe_oracle::constants::FX_RATE_MAX_AGE_SECONDS + 1,
-        );
-
-        let error = runtime::settle(
-            storage.clone(),
-            alice(),
-            position_id,
-            U256::from(1_000_000u64),
-        )
-        .unwrap_err();
-
-        assert!(error.to_string().contains("not settleable"), "{error}");
-        assert_eq!(
-            CredisContract::new(storage.clone())
-                .get_position(position_id)
-                .unwrap()
-                .lifecycle_state()
-                .unwrap(),
-            CredisState::Open
-        );
+        let position = CredisContract::new(storage.clone())
+            .get_position(position_id)
+            .unwrap();
+        assert_eq!(position.outstanding, U256::from(1_000_000u64));
+        assert_eq!(position.lifecycle_state().unwrap(), CredisState::Open);
     });
     teardown();
 }
@@ -154,7 +97,6 @@ fn settlement_releases_collateral_proportionally_and_closes_without_dust() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let position_id = open(&storage, 1);
-        set_coen_rate(&storage, above_floor());
 
         // Half the principal, 30 days in → half the collateral back.
         advance_to(&storage, CREATED_AT + 30 * DAY);
@@ -206,9 +148,7 @@ fn the_settle_abi_returns_the_principal_and_interest_split() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let position_id = open(&storage, 1);
-        set_coen_rate(&storage, above_floor());
         advance_to(&storage, CREATED_AT + 30 * DAY);
-        set_coen_rate(&storage, above_floor());
 
         let position = CredisContract::new(storage.clone())
             .get_position(position_id)
@@ -249,9 +189,7 @@ fn settle_takes_only_what_the_position_needs() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let position_id = open(&storage, 1);
-        set_coen_rate(&storage, above_floor());
         advance_to(&storage, CREATED_AT + 30 * DAY);
-        set_coen_rate(&storage, above_floor());
 
         let position = CredisContract::new(storage.clone())
             .get_position(position_id)
@@ -285,7 +223,6 @@ fn settle_accepts_a_third_party_payer() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let position_id = open(&storage, 1);
-        set_coen_rate(&storage, above_floor());
 
         // bob is neither the pledger nor the smart account, but anyone may settle.
         let half = pledge_stables() / U256::from(2u64);
@@ -328,11 +265,9 @@ fn request_credis_rejects_an_owner_with_an_unresolved_call() {
         )
         .unwrap();
 
-        // Latch and call the first position.
-        set_coen_rate(&storage, above_floor());
+        // Call the first position.
         {
             let mut credis = CredisContract::new(storage.clone());
-            assert!(credis.mark_settleable(first).unwrap());
             assert!(credis.mark_called(first, now_of(&storage)).unwrap());
         }
 
@@ -388,7 +323,6 @@ fn the_void_burns_only_the_unpaid_share() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let position_id = open(&storage, 1);
-        set_coen_rate(&storage, above_floor());
 
         // Settle half the principal, reclaiming half the collateral.
         advance_to(&storage, CREATED_AT + 30 * DAY);
@@ -484,12 +418,10 @@ fn a_position_settled_inside_the_window_is_never_voided() {
         // settled, so the scan really walks the book instead of returning at its
         // `len == 0` early exit and passing this test vacuously.
         let bystander = open(&storage, 2);
-        set_coen_rate(&storage, above_floor());
 
         let called_at = now_of(&storage);
         {
             let mut credis = CredisContract::new(storage.clone());
-            assert!(credis.mark_settleable(position_id).unwrap());
             assert!(credis.mark_called(position_id, called_at).unwrap());
         }
 
@@ -610,7 +542,6 @@ fn the_closing_settlement_returns_the_stake_to_the_cca() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let position_id = open(&storage, 1);
-        set_coen_rate(&storage, above_floor());
 
         // A partial settlement must not release anything: the position is still open.
         settle_principal(
@@ -642,12 +573,10 @@ fn the_void_burns_the_cca_stake() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let position_id = open(&storage, 1);
-        set_coen_rate(&storage, above_floor());
 
         let called_at = now_of(&storage);
         {
             let mut credis = CredisContract::new(storage.clone());
-            assert!(credis.mark_settleable(position_id).unwrap());
             assert!(credis.mark_called(position_id, called_at).unwrap());
         }
 

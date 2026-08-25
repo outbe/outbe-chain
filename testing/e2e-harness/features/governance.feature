@@ -4,6 +4,15 @@ Feature: Governance proposals and protocol updates
   duplicate happy path is removed. Other scenarios cover mutually exclusive
   rejection, expiry, RPC-safety, and unsupported-binary transitions.
 
+  @pfs-005-l2-registry @tee @sgx-no-attest @sudo
+  Scenario: Validator quorum registers an L2 network through JSON governance
+    Given a fresh localnet with a 20-block voting window
+    And the committee has reached a usable height
+    When an L2 network is registered for the operator with zk enabled
+    Then proposal 1 is approved
+    And the governed L2 network is registered with zk enabled
+    And the committee nodes agree on the state root
+
   Scenario: OIP and GIP are approved and materialized
     Given a fresh localnet with a 20-block voting window
     And the committee has reached a usable height

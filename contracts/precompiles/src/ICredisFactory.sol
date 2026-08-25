@@ -24,16 +24,16 @@ interface ICredisFactory {
     ///         price the pledger accepted. `msg.sender` is recorded on the position
     ///         as the originating CCA.
     ///
-    ///         `msg.sender` must be a CCA in `Active` standing at the registry, and
-    ///         `smartAccount` must already be deployed — the loan is delivered by a
-    ///         call into it, which would silently succeed against a codeless account.
+    /// `msg.sender` must be a CCA in `Active` standing at the registry, and
+    /// `smartAccount` must already be deployed — the loan is delivered by a
+    /// call into it, which would silently succeed against a codeless account.
     ///
-    ///         The call is payable and `msg.value` must equal the pledged collateral
-    ///         exactly, in COEN: the CCA matches the borrower's stake one for one. That
-    ///         stake is escrowed against the position, returned to the CCA when the
-    ///         position settles in full, and burned if it voids. The required amount is
-    ///         not in calldata — it was sealed into the ticket at pledge time — so read
-    ///         it from the pledge quote before calling.
+    /// The call is payable and `msg.value` must equal the pledged collateral
+    /// exactly, in COEN: the CCA matches the borrower's stake one for one. That
+    /// stake is escrowed against the position, returned to the CCA when the
+    /// position settles in full, and burned if it voids. The required amount is
+    /// not in calldata — it was sealed into the ticket at pledge time — so read
+    /// it from the pledge quote before calling.
     /// @return positionId Derived from `pledgeHandle` and `smartAccount`.
     /// @return amountStables Stablecoin amount disbursed, as quoted at pledge time.
     function requestCredis(address smartAccount, bytes32 pledgeHandle, bytes32 spendAuth)
@@ -43,9 +43,8 @@ interface ICredisFactory {
 
     /// @notice Settle `amount` against a position and release the matching share of
     ///         collateral from the pledged lock ledger back to its balance.
-    ///         The position must be settleable: the live COEN price must have
-    ///         exceeded its floor price at least once. Payment is applied interest
-    ///         first, principal second, so an `amount` below the interest accrued
+    ///         A position is settleable from the moment it opens. Payment is applied
+    ///         interest first, principal second, so an `amount` below the interest accrued
     ///         since the last settlement is rejected — query
     ///         `ICredis.accruedInterest` for that floor. Collateral is released in
     ///         proportion to the principal covered, and the settlement that clears

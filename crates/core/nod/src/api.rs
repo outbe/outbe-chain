@@ -1,7 +1,7 @@
 //! Cross-module API for the Nod entity store.
 
 use alloy_primitives::{Address, U256};
-use outbe_compressed_entities::{EntityId36, ExecutionScope, ParentBodySource, VerifiedBody};
+use outbe_compressed_entities::{ExecutionScope, ParentBodySource, VerifiedBody, WwdEntityId};
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::schema::{NodBucketState, NodContract, NodItemState};
@@ -86,7 +86,7 @@ pub fn load_item(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    nod_id: EntityId36,
+    nod_id: WwdEntityId,
 ) -> Result<Option<LoadedNodItem>> {
     let nod = NodContract::new(storage.clone());
     nod.get_item_verified(scope, parent, nod_id)?
@@ -102,7 +102,7 @@ pub fn load_bucket(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    bucket_id: EntityId36,
+    bucket_id: WwdEntityId,
 ) -> Result<Option<LoadedNodBucket>> {
     let nod = NodContract::new(storage.clone());
     nod.get_bucket_verified(scope, parent, bucket_id)?
@@ -118,7 +118,7 @@ pub fn get_item(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    nod_id: EntityId36,
+    nod_id: WwdEntityId,
 ) -> Result<Option<NodItemState>> {
     load_item(storage, scope, parent, nod_id)
         .map(|loaded| loaded.map(|loaded| loaded.into_parts().0))
@@ -129,7 +129,7 @@ pub fn get_bucket(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
     parent: &impl ParentBodySource,
-    bucket_id: EntityId36,
+    bucket_id: WwdEntityId,
 ) -> Result<Option<NodBucketState>> {
     load_bucket(storage, scope, parent, bucket_id)
         .map(|loaded| loaded.map(|loaded| loaded.into_parts().0))

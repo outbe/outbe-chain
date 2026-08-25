@@ -40,7 +40,6 @@ const INTEX_PROFILE_DEV: u64 = 1;
 
 const PROPOSER_FELONY_SLOT: u64 = 1;
 const VOTER_FELONY_SLOT: u64 = 12;
-const LOCALNET_METADOSIS_FORMING_LEAD_SECONDS: u64 = 60;
 const LOCALNET_METADOSIS_LOOKBACK_SECONDS: u64 = 0;
 const LOCALNET_METADOSIS_OFFERING_SECONDS: u64 = 120;
 const LOCALNET_METADOSIS_WAITING_SECONDS: u64 = 30;
@@ -1172,14 +1171,14 @@ fn address_has_suffix(key: &str, suffix: &str) -> bool {
     format!("{k:0>40}").ends_with(suffix)
 }
 
-fn localnet_forming_period_seconds(now: u64) -> Result<u64> {
-    let current_wwd = outbe_primitives::time::worldwide_day_from_timestamp(now);
-    let current_wwd_start = outbe_primitives::time::date_key_to_utc_timestamp(current_wwd)
-        .checked_sub(outbe_primitives::time::UTC_PLUS_14_OFFSET)
-        .ok_or_else(|| eyre!("cannot derive LocalNet WorldwideDay start"))?;
-    now.checked_sub(current_wwd_start)
-        .and_then(|elapsed| elapsed.checked_add(LOCALNET_METADOSIS_FORMING_LEAD_SECONDS))
-        .ok_or_else(|| eyre!("cannot derive LocalNet Metadosis forming period"))
+fn localnet_forming_period_seconds(_now: u64) -> Result<u64> {
+    // A generic localnet is not an economic-calendar acceleration fixture.
+    // In particular, real SGX setup can consume several minutes before block 1;
+    // shortening Forming relative to genesis-generation wall time can therefore
+    // skip directly to MissedOffering before Cycle has formed the immutable day
+    // limit. Scenarios that need a near-term edge use the checked profile tuning
+    // or a typed pre-start WorldwideDay fixture instead.
+    Ok(outbe_chain_constants::DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS)
 }
 
 #[cfg(test)]
@@ -1356,20 +1355,17 @@ mod tests {
     }
 
     #[test]
-    fn localnet_forming_edge_tracks_the_canonical_utc_plus_14_day() {
+    fn generic_localnet_keeps_the_production_forming_period_across_sgx_bootstrap() {
         let utc_midnight = outbe_primitives::time::date_key_to_utc_timestamp(20260302);
 
         for now in [
             utc_midnight + 9 * 3_600 + 59 * 60,
             utc_midnight + 10 * 3_600,
         ] {
-            let wwd = outbe_primitives::time::worldwide_day_from_timestamp(now);
-            let wwd_start = outbe_primitives::time::date_key_to_utc_timestamp(wwd)
-                - outbe_primitives::time::UTC_PLUS_14_OFFSET;
             let period = localnet_forming_period_seconds(now).unwrap();
             assert_eq!(
-                wwd_start + period,
-                now + LOCALNET_METADOSIS_FORMING_LEAD_SECONDS
+                period,
+                outbe_chain_constants::DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS
             );
         }
     }

@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use outbe_compressed_entities::EntityId36;
+use outbe_compressed_entities::WwdEntityId;
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, StorageMetadata, StoredValue, Value,
 };
@@ -34,7 +34,7 @@ pub const TRIBUTE_PROJECTION_NAMESPACES: [&str; 5] = [
 /// [`crate::TributeRepositoryReader::projection_session`]. They cannot supply or omit an
 /// arbitrary semantic prior body.
 pub struct TributeProjectionSession {
-    records: BTreeMap<EntityId36, Option<ProjectionTributeRecord>>,
+    records: BTreeMap<WwdEntityId, Option<ProjectionTributeRecord>>,
 }
 
 struct ProjectionTributeRecord {
@@ -45,7 +45,7 @@ struct ProjectionTributeRecord {
 
 impl TributeProjectionSession {
     pub(crate) fn from_records(
-        tribute_ids: &[EntityId36],
+        tribute_ids: &[WwdEntityId],
         records: Vec<Option<StoredValue>>,
     ) -> Result<Self, TributeRepositoryError> {
         let records = tribute_ids
@@ -74,7 +74,7 @@ impl TributeProjectionSession {
     /// Returns the current semantic body from the repository snapshot or in-block overlay.
     pub fn current(
         &self,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     ) -> Result<Option<&TributeData>, TributeRepositoryError> {
         Ok(self
             .current_with_metadata(tribute_id)?
@@ -84,7 +84,7 @@ impl TributeProjectionSession {
     /// Returns the current body and provenance without exposing a constructible prior snapshot.
     pub fn current_with_metadata(
         &self,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     ) -> Result<Option<(&TributeData, Option<&StorageMetadata>)>, TributeRepositoryError> {
         match self
             .records
@@ -99,7 +99,7 @@ impl TributeProjectionSession {
     /// Plans one canonical store and advances the overlay only after full validation.
     pub fn store(
         &mut self,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
         stored_body: Value,
         metadata: Option<StorageMetadata>,
     ) -> Result<AtomicWriteBatch, TributeRepositoryError> {
@@ -128,7 +128,7 @@ impl TributeProjectionSession {
     /// Plans one delete from the owned prior snapshot and advances the overlay to absence.
     pub fn delete(
         &mut self,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     ) -> Result<AtomicWriteBatch, TributeRepositoryError> {
         let old = self.current(tribute_id)?;
         let batch = plan_tribute_mutation(old, TributeMutation::Delete { tribute_id })?;
@@ -144,7 +144,7 @@ impl TributeProjectionSession {
         &mut self,
         retained: &RetainedTributeReader,
         pin: RetainedTributePin,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     ) -> Result<AtomicWriteBatch, TributeRepositoryError> {
         let stored_body = self
             .records
@@ -168,7 +168,7 @@ enum TributeMutation {
     /// Store a complete body and its optional primary metadata.
     Store {
         /// Indexed event identity.
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
         /// Exact canonical StoredBody bytes. The planner decodes this value and
         /// derives every semantic index from it.
         stored_body: Value,
@@ -178,7 +178,7 @@ enum TributeMutation {
     /// Delete one body identity and all indexes derivable from the old body.
     Delete {
         /// Indexed event identity.
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     },
 }
 
@@ -260,7 +260,7 @@ fn plan_tribute_mutation(
 }
 
 fn validate_identity(
-    expected: EntityId36,
+    expected: WwdEntityId,
     body: &TributeData,
 ) -> Result<(), TributeRepositoryError> {
     if body.tribute_id != expected {

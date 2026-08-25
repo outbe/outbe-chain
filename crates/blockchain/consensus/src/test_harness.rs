@@ -105,7 +105,7 @@ pub struct MockAutomaton {
 }
 
 impl MockAutomaton {
-    fn new(me: bls12381::PublicKey) -> Self {
+    pub fn new(me: bls12381::PublicKey) -> Self {
         Self { me }
     }
 }
@@ -113,7 +113,7 @@ impl MockAutomaton {
 /// Genesis digest for `epoch`. Preserves the exact pre-image the removed
 /// `Automaton::genesis` produced so `Floor::Genesis(mock_genesis(epoch))`
 /// stays byte-identical to the pre-2026.5.0 genesis digest.
-fn mock_genesis(epoch: Epoch) -> Sha256Digest {
+pub fn mock_genesis(epoch: Epoch) -> Sha256Digest {
     let mut hasher = Sha256::default();
     hasher.update(b"outbe-test-harness/genesis");
     hasher.update(&epoch.get().to_be_bytes());
@@ -163,7 +163,7 @@ pub struct MockRelay {
 }
 
 impl MockRelay {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 }
@@ -196,7 +196,7 @@ pub struct MockReporter {
 }
 
 impl MockReporter {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 

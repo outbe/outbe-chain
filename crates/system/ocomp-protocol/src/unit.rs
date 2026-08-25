@@ -2,7 +2,7 @@ use alloy_primitives::{B256, U256};
 
 use crate::{
     codec::require_canonical_reencoding,
-    common::{BoundedBytes, EntityId36},
+    common::BoundedBytes,
     error::ProtocolError,
     hash::hash_framed,
     registry::HashDomain,
@@ -69,8 +69,8 @@ wire_struct! {
 
 wire_struct! {
     pub struct EntityIdHalfOpenRange {
-        pub start: EntityId36,
-        pub end: Option<EntityId36>,
+        pub start: B256,
+        pub end: Option<B256>,
     }
 }
 
@@ -233,7 +233,7 @@ impl_top_level_codec!(UnitArtifactV1, UnitArtifactV1);
 wire_struct! {
     pub struct RawTributeCoverageItemV1 {
         pub raw_ordinal: u32,
-        pub tribute_id: EntityId36,
+        pub tribute_id: B256,
     }
 }
 

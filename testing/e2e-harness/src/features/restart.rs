@@ -8,6 +8,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use cucumber::{given, then, when};
+use outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K;
 
 use crate::features::common::boot_localnet;
 use crate::world::rpc::Rpc;
@@ -487,6 +488,20 @@ fn interrupted_dkg_retries_without_partial_activation(world: &mut World) {
         "joiner enclave did not recover its sealed state during DKG restart"
     );
 
+    // ACTIVE is committed while executing the epoch-boundary block, after that
+    // block was already finalized by the old committee. Its absentee window
+    // therefore closes K blocks later and may record that one pre-eligibility
+    // finalization. Close the window before taking the signer-liveness baseline;
+    // otherwise this assertion races delayed accounting for a block the joiner
+    // was canonically forbidden to sign.
+    let eligibility_height = world.rpc.head(primary).unwrap_or_default();
+    assert!(
+        world
+            .rpc
+            .wait_block(primary, eligibility_height + LATE_FINALIZE_WINDOW_K, 60)
+            .is_some(),
+        "committee did not close the pre-eligibility voter-accounting window"
+    );
     let voter_misses_before = world
         .rpc
         .voter_miss_count(primary, &addr)

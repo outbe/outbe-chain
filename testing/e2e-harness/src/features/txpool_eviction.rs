@@ -25,15 +25,18 @@ fn submit_unreachable_nonce_tx(world: &mut World) {
     let key = world.validators.get(0).evm_key().expect("validator-0 key");
     let sender = eth::address_of(&key).expect("sender address");
     let next_nonce = eth::nonce(&url, sender).expect("sender nonce");
+    let unreachable_nonce = next_nonce + UNREACHABLE_NONCE_GAP;
     let hash = eth::send_value_at_nonce(
         &url,
         Address::repeat_byte(0x77),
         &key,
         U256::from(1u64),
-        next_nonce + UNREACHABLE_NONCE_GAP,
+        unreachable_nonce,
     )
     .expect("submit an unreachable-nonce transaction");
     world.state.stuck_tx_hash = Some(hash);
+    world.state.stuck_tx_sender = Some(format!("{sender}"));
+    world.state.stuck_tx_nonce = Some(unreachable_nonce);
 }
 
 #[then("the unreachable transaction sits in the pool")]
@@ -89,16 +92,37 @@ fn unreachable_tx_evicted_everywhere(world: &mut World) {
     }
 }
 
-#[then("every validator logged the eviction with a reason")]
+#[then("the submitting validator logged the exact eviction identity and reason")]
 fn eviction_was_logged(world: &mut World) {
-    // Evictions must never be silent. The submitting node is the one that
-    // certainly held the transaction; peers may never have accepted it.
+    // Evictions must never be silent. Only the submitting node is known to have
+    // held this local RPC transaction, so bind its runtime record to the exact
+    // hash, sender, nonce, and removal reason.
+    let hash = world
+        .state
+        .stuck_tx_hash
+        .as_deref()
+        .expect("an unreachable transaction was submitted");
+    let sender = world
+        .state
+        .stuck_tx_sender
+        .as_deref()
+        .expect("the unreachable transaction sender was captured");
+    let nonce = world
+        .state
+        .stuck_tx_nonce
+        .expect("the unreachable transaction nonce was captured");
+    let line = world
+        .localnet
+        .first_runtime_log_line_containing(&format!("tx_hash={hash}"))
+        .expect("scan validator runtime logs")
+        .unwrap_or_else(|| panic!("validator-0 emitted no eviction record for {hash}"));
     assert!(
-        world.localnet.log_has(0, "transaction lifetime")
-            || world
-                .localnet
-                .log_has(0, "evicting stale pending transaction")
-            || world.localnet.log_has(0, "removing stale transactions"),
-        "validator-0 evicted the transaction without logging a reason"
+        line.contains("/validator-0/")
+            && line.contains("outbe::txpool")
+            && line.contains("evicting queued transaction after lifetime deadline")
+            && line.contains(&format!("sender={sender}"))
+            && line.contains(&format!("nonce={nonce}"))
+            && line.contains("reason=\"queued_lifetime\""),
+        "validator-0 eviction record did not bind the exact identity and reason: {line}"
     );
 }

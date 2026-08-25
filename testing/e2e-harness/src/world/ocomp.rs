@@ -108,13 +108,11 @@ pub(crate) const OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS: u64 = 600;
 #[cfg(feature = "ocomp-integration")]
 pub(crate) const OCOMP_CAPACITY_OFFERING_AFTER_GENESIS_SECS: u64 = 3_600;
 #[cfg(feature = "ocomp-integration")]
-pub(crate) const OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE: &str = "0";
+pub(crate) const OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE: &str = "2";
 #[cfg(feature = "ocomp-integration")]
-pub(crate) const OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO: &str = "6";
+pub(crate) const OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO: &str = "0";
 #[cfg(feature = "ocomp-integration")]
 const OCOMP_DYNAMIC_FIRST_OFFERING_AFTER_GENESIS_SECS: u64 = 180;
-#[cfg(feature = "ocomp-integration")]
-const OCOMP_DYNAMIC_SECOND_OFFERING_AFTER_GENESIS_SECS: u64 = 700;
 #[cfg(feature = "ocomp-integration")]
 pub(crate) const OCOMP_TEST_EPOCH_LENGTH_BLOCKS: u64 = 300;
 #[cfg(feature = "ocomp-integration")]
@@ -446,6 +444,15 @@ pub struct OcompTopology {
     correlated_tribute: Option<CorrelatedTributeFixtureV1>,
 }
 
+/// Exact external OCOMP process inventory quiesced around a node clock restart.
+/// Embedded Supervisors remain node-owned; this plan records only the roles the
+/// harness must recreate after every node has crossed the common finality gate.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct OcompNodeFacingResumePlan {
+    snapshot_exporters: Vec<u8>,
+    workers: Vec<(u8, u32)>,
+}
+
 impl OcompTopology {
     pub(crate) fn new(cfg: Config) -> Self {
         let domains = (0..cfg.validators)
@@ -467,6 +474,55 @@ impl OcompTopology {
             tribute_correlation,
             correlated_tribute: None,
         }
+    }
+
+    /// Stop every currently attached node-facing OCOMP process without
+    /// recording a protocol fault, returning the exact inventory to restore.
+    /// Deliberately absent workers therefore remain absent after the restart.
+    pub(crate) fn suspend_node_facing_roles(&mut self) -> Result<OcompNodeFacingResumePlan> {
+        let mut snapshot_exporters = Vec::new();
+        let mut workers = Vec::new();
+
+        for index in 0..self.domains.len() {
+            let validator_index = u8::try_from(index)
+                .map_err(|_| eyre::eyre!("validator index exceeds the harness wire format"))?;
+            let (exporter, attached_workers) = {
+                let domain = &mut self.domains[index];
+                (
+                    domain.snapshot_exporter.take(),
+                    std::mem::take(&mut domain.workers),
+                )
+            };
+            if let Some(exporter) = exporter {
+                snapshot_exporters.push(validator_index);
+                self.stop_owned(exporter);
+            }
+            for (worker_ordinal, worker) in attached_workers {
+                workers.push((validator_index, worker_ordinal));
+                self.stop_owned(worker);
+            }
+        }
+
+        Ok(OcompNodeFacingResumePlan {
+            snapshot_exporters,
+            workers,
+        })
+    }
+
+    /// Restore exactly one inventory returned by
+    /// [`Self::suspend_node_facing_roles`] after node recovery.
+    #[cfg(feature = "ocomp-integration")]
+    pub(crate) fn resume_node_facing_roles(
+        &mut self,
+        plan: OcompNodeFacingResumePlan,
+    ) -> Result<()> {
+        for validator_index in plan.snapshot_exporters {
+            self.restart_snapshot_exporter(validator_index)?;
+        }
+        for (validator_index, worker_ordinal) in plan.workers {
+            self.restart_worker(validator_index, worker_ordinal)?;
+        }
+        self.ensure_validator_roles_alive()
     }
 
     /// Extend the process topology after the canonical ValidatorSet has
@@ -803,10 +859,13 @@ impl OcompTopology {
             let genesis_path = self.cfg.dir.join("genesis.json");
             let mut genesis: serde_json::Value = serde_json::from_slice(&fs::read(&genesis_path)?)?;
             let chain_id = genesis_chain_id(&genesis)?;
+            let configured_offering_secs =
+                outbe_chain_constants::GenesisProtocolParametersV1::from_genesis(&genesis)?
+                    .metadosis_offering_period_seconds;
             let (_, worldwide_day) = schedule_public_measurement_day(
                 &mut genesis,
                 chain_id,
-                OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS,
+                OCOMP_PUBLIC_OFFERING_AFTER_GENESIS_SECS.max(configured_offering_secs),
             )?;
             let oracle_key = {
                 let alloc = genesis
@@ -2834,8 +2893,15 @@ fn schedule_dynamic_membership_days(
     let first_processing_time = genesis_timestamp
         .checked_add(OCOMP_DYNAMIC_FIRST_OFFERING_AFTER_GENESIS_SECS)
         .ok_or_else(|| eyre::eyre!("first dynamic OCOMP processing time overflow"))?;
+    // Job B is deliberately released by the scenario's controlled-time jump,
+    // after the certified five-validator activation. A relative `+700s`
+    // deadline raced the height-300 activation when SGX/admission work delayed
+    // blocks, allowing the job to pin the historical four-member snapshot.
     let second_processing_time = genesis_timestamp
-        .checked_add(OCOMP_DYNAMIC_SECOND_OFFERING_AFTER_GENESIS_SECS)
+        .checked_div(SECONDS_PER_DAY)
+        .and_then(|day| day.checked_add(2))
+        .and_then(|day| day.checked_mul(SECONDS_PER_DAY))
+        .and_then(|midnight| midnight.checked_add(1))
         .ok_or_else(|| eyre::eyre!("second dynamic OCOMP processing time overflow"))?;
     let first_worldwide_day = WorldwideDay::from_timestamp(genesis_timestamp);
     let second_worldwide_day = WorldwideDay::from_timestamp(
@@ -2928,6 +2994,10 @@ fn schedule_dynamic_membership_days(
         let snapshot_time = second_worldwide_day.start_timestamp();
         let volume = U256::from(1_000_000_u64);
         let mut oracle = outbe_oracle::schema::OracleContract::new(storage);
+        // This scenario advances canonical time by one hour per finalized block.
+        // Keep the real feeder's tally cadence below the production six-hour TTL;
+        // the ordinary genesis cadence would publish only every eight hours here.
+        oracle.config_vote_period.write(2)?;
         oracle.write_snapshot(snapshot_time, &[(pair, price, volume)])?;
         let pair_index = oracle.pair_index_of(pair)?;
         if pair_index == 0 {
@@ -4388,6 +4458,45 @@ mod tests {
 
     #[cfg(feature = "ocomp-integration")]
     #[test]
+    fn cross_currency_tribute_fixture_preserves_a_longer_configured_offering() {
+        let topology = topology();
+        prepare_public_measurement_genesis_fixture(&topology);
+        let genesis_path = topology.cfg.dir.join("genesis.json");
+        let mut genesis: serde_json::Value =
+            serde_json::from_slice(&fs::read(&genesis_path).unwrap()).unwrap();
+        genesis["config"][GENESIS_CONFIG_KEY]["metadosis"]["offeringPeriodSeconds"] =
+            serde_json::json!(1_800);
+        replace_json_atomically(&genesis_path, &genesis).unwrap();
+
+        topology.prepare_cross_currency_tribute_fixture().unwrap();
+
+        let genesis: serde_json::Value =
+            serde_json::from_slice(&fs::read(&genesis_path).unwrap()).unwrap();
+        let genesis_timestamp =
+            u64::try_from(parse_hex_word(genesis["timestamp"].as_str().unwrap()).unwrap()).unwrap();
+        let alloc = genesis["alloc"].as_object().unwrap();
+        let metadosis_key = find_alloc_address_key(alloc, METADOSIS_ADDRESS)
+            .unwrap()
+            .unwrap();
+        let mut provider = HashMapStorageProvider::new(genesis_chain_id(&genesis).unwrap());
+        for (slot, value) in alloc[&metadosis_key]["storage"].as_object().unwrap() {
+            provider.storage.insert(
+                (METADOSIS_ADDRESS, parse_hex_word(slot).unwrap()),
+                parse_storage_word(value).unwrap(),
+            );
+        }
+        StorageHandle::enter(&mut provider, |storage| {
+            let days = outbe_metadosis::api::offering_worldwide_days(storage.clone()).unwrap();
+            assert_eq!(days.len(), 1);
+            let day = outbe_metadosis::api::worldwide_day(storage, days[0])
+                .unwrap()
+                .unwrap();
+            assert_eq!(day.offering_end - genesis_timestamp, 1_800);
+        });
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
     fn bootstrapped_runtime_preserves_the_exact_genesis_result_signing_keys() {
         let topology = topology();
         prepare_measurement_genesis_fixture(&topology);
@@ -4637,8 +4746,8 @@ mod tests {
             assert_eq!(current_rate, entry_price * U256::from(2));
             let scale = outbe_primitives::units::SCALE_1E6_U256;
             assert_eq!(day.metadosis_limit_amount, U256::from(500) * scale);
-            assert_eq!(OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE, "0");
-            assert_eq!(OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO, "6");
+            assert_eq!(OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE, "2");
+            assert_eq!(OCOMP_PUBLIC_TRIBUTE_AMOUNT_ATTO, "0");
             let amount_base = U256::from(
                 OCOMP_PUBLIC_TRIBUTE_AMOUNT_BASE
                     .parse::<u64>()
@@ -4654,22 +4763,31 @@ mod tests {
                 .checked_mul(scale)
                 .and_then(|value| value.checked_add(amount_atto))
                 .expect("canonical Tribute amount");
-            assert_eq!(issuance, U256::from(6));
+            assert_eq!(issuance, U256::from(2_000_000));
             let nominal = issuance * scale / day.current_vwap;
-            for population in [10_u64, 257] {
+            for (population, expected_fraction, expected_load, expected_cost) in [
+                (10_u64, 50_u64, 50_000_000_u64, 100_u64),
+                (257_u64, 1_u64, 1_000_000_u64, 2_u64),
+            ] {
                 let total_nominal = nominal * U256::from(population);
-                let allocation = total_nominal * U256::from(32) / U256::from(100);
-                assert!(allocation < day.metadosis_limit_amount);
+                let allocation = (total_nominal * U256::from(32) / U256::from(100))
+                    .min(day.metadosis_limit_amount);
                 let fraction = allocation * scale / total_nominal;
                 let gratis_load_minor = nominal * fraction / scale;
-                assert!(
-                    gratis_load_minor > U256::ZERO,
-                    "the {population}-Tribute fixture must not round its per-Tribute Gratis load to zero"
+                assert_eq!(
+                    fraction,
+                    U256::from(expected_fraction),
+                    "the {population}-Tribute fixture must preserve the canonical capped allocation fraction"
                 );
                 assert_eq!(
-                    day.previous_vwap * gratis_load_minor / scale,
-                    U256::ZERO,
-                    "the {population}-Tribute fixture must exercise the zero-cost mineGratis branch"
+                    gratis_load_minor,
+                    U256::from(expected_load),
+                    "the {population}-Tribute fixture must preserve its exact per-Tribute Gratis load"
+                );
+                assert_eq!(
+                    day.current_vwap * gratis_load_minor / scale,
+                    U256::from(expected_cost),
+                    "the {population}-Tribute fixture must produce a paid Nod under the canonical WWD-VWAP Lysis price"
                 );
             }
         });
@@ -4735,6 +4853,12 @@ mod tests {
             }
         }
         StorageHandle::enter(&mut provider, |storage| {
+            let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
+            assert_eq!(
+                oracle.config_vote_period.read().unwrap(),
+                2,
+                "dynamic OCOMP fixture must keep real feeder publications inside the six-hour freshness bound"
+            );
             let days = outbe_metadosis::api::worldwide_days(storage.clone()).unwrap();
             assert_eq!(days.len(), 2);
             assert_eq!(
@@ -4769,6 +4893,23 @@ mod tests {
             }
         });
         assert!(prepared.first_processing_time < prepared.second_processing_time);
+        let genesis_timestamp = genesis["timestamp"]
+            .as_str()
+            .map(parse_hex_word)
+            .transpose()
+            .unwrap()
+            .and_then(|timestamp| u64::try_from(timestamp).ok())
+            .expect("dynamic fixture genesis timestamp");
+        let expected_controlled_daily_cycle = genesis_timestamp
+            .checked_div(86_400)
+            .and_then(|day| day.checked_add(2))
+            .and_then(|day| day.checked_mul(86_400))
+            .and_then(|midnight| midnight.checked_add(1))
+            .expect("controlled dynamic Job B daily-cycle boundary");
+        assert_eq!(
+            prepared.second_processing_time, expected_controlled_daily_cycle,
+            "dynamic Job B must stay Scheduled until the controlled daily Cycle after membership activation"
+        );
         assert_eq!(prepared.fork.install.founder_registrations.len(), 4);
         assert_eq!(
             prepared
@@ -5134,5 +5275,48 @@ mod tests {
             serde_json::from_slice::<OcompScenarioTopologyV1>(&canonical).unwrap(),
             snapshot
         );
+    }
+
+    #[test]
+    fn clock_restart_suspends_and_preserves_the_exact_live_role_inventory() {
+        if std::env::var_os(CHILD_MODE).is_some() {
+            loop {
+                std::thread::park_timeout(std::time::Duration::from_secs(60));
+            }
+        }
+
+        let mut topology = topology();
+        topology.add_active_validator_domain(4).unwrap();
+        for validator_index in 0..5_u8 {
+            topology
+                .attach_owned(
+                    Some(validator_index),
+                    OcompProcessRole::SnapshotExporter,
+                    None,
+                    child_guard(),
+                )
+                .unwrap();
+        }
+        for validator_index in [0_u8, 1, 4] {
+            topology
+                .attach_owned(
+                    Some(validator_index),
+                    OcompProcessRole::Worker,
+                    Some(0),
+                    child_guard(),
+                )
+                .unwrap();
+        }
+
+        let faults_before = topology.faults.clone();
+        let resume = topology.suspend_node_facing_roles().unwrap();
+
+        assert_eq!(resume.snapshot_exporters, vec![0, 1, 2, 3, 4]);
+        assert_eq!(resume.workers, vec![(0, 0), (1, 0), (4, 0)]);
+        assert_eq!(topology.faults, faults_before);
+        assert!(topology
+            .domains
+            .iter()
+            .all(|domain| { domain.snapshot_exporter.is_none() && domain.workers.is_empty() }));
     }
 }

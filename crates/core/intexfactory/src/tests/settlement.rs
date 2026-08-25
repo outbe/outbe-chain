@@ -8,46 +8,50 @@ fn load_minor() -> U256 {
     U256::from(100_000u64) * U256::from(1_000_000u64)
 }
 
+fn product() -> U256 {
+    entry_price() * load_minor()
+}
+
 #[test]
 fn cost_amount_six_decimals() {
-    let cost = runtime::derived_cost_amount(entry_price(), load_minor(), 6).unwrap();
+    let cost = runtime::product_to_payment_units(product(), 6).unwrap();
     assert_eq!(cost, U256::from(50_000_000_000u64));
 }
 
 #[test]
 fn cost_amount_eighteen_decimals_is_1e12_larger() {
-    let six = runtime::derived_cost_amount(entry_price(), load_minor(), 6).unwrap();
-    let eighteen = runtime::derived_cost_amount(entry_price(), load_minor(), 18).unwrap();
+    let six = runtime::product_to_payment_units(product(), 6).unwrap();
+    let eighteen = runtime::product_to_payment_units(product(), 18).unwrap();
     assert_eq!(eighteen, six * U256::from(10u64).pow(U256::from(12u64)));
 }
 
 #[test]
 fn cost_amount_zero_decimals() {
-    let cost = runtime::derived_cost_amount(entry_price(), load_minor(), 0).unwrap();
+    let cost = runtime::product_to_payment_units(product(), 0).unwrap();
     assert_eq!(cost, U256::from(50_000u64));
 }
 
 #[test]
 fn cost_amount_twelve_decimals() {
-    let cost = runtime::derived_cost_amount(entry_price(), load_minor(), 12).unwrap();
+    let cost = runtime::product_to_payment_units(product(), 12).unwrap();
     assert_eq!(cost, U256::from(50_000_000_000_000_000u64));
 }
 
 #[test]
 fn cost_amount_rounds_positive_subunit_payment_up_to_one() {
-    let cost = runtime::derived_cost_amount(U256::ONE, U256::ONE, 0).unwrap();
+    let cost = runtime::product_to_payment_units(U256::ONE, 0).unwrap();
     assert_eq!(cost, U256::ONE);
 }
 
 #[test]
 fn cost_amount_rejects_unsupported_payment_decimals() {
-    let err = runtime::derived_cost_amount(entry_price(), load_minor(), 19).unwrap_err();
+    let err = runtime::product_to_payment_units(product(), 19).unwrap_err();
     assert!(err.to_string().contains("unsupported decimals"), "{err}");
 }
 
 #[test]
-fn cost_amount_rejects_product_overflow() {
-    let err = runtime::derived_cost_amount(U256::MAX, U256::from(2u64), 6).unwrap_err();
+fn cost_amount_rejects_scaling_overflow() {
+    let err = runtime::product_to_payment_units(U256::MAX, 18).unwrap_err();
     assert!(err.to_string().to_lowercase().contains("overflow"), "{err}");
 }
 
@@ -253,18 +257,15 @@ fn settled_token_id_derivation() {
 
 #[test]
 fn compute_pow_hash_matches_manual_sha256() {
-    // SHA256(hex(holder)++hex(promisAmount)++hex(seriesId)++hex(seq) ++ nonce_be8)
+    // SHA256(holder ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)
     let promis_amount = U256::from(1_000u64);
     let (series_id, seq, nonce) = (sid(7), 3u32, 42u64);
-    let got = runtime::compute_pow_hash(holder(), promis_amount, series_id, seq, U256::from(nonce))
-        .unwrap();
+    let got = runtime::compute_pow_hash(holder(), promis_amount, series_id, seq, nonce);
 
-    let mut preimage = String::new();
-    preimage.push_str(&hex::encode(holder().as_slice()));
-    preimage.push_str(&hex::encode(promis_amount.to_be_bytes::<32>()));
-    preimage.push_str(&hex::encode(series_id.as_bytes()));
-    preimage.push_str(&hex::encode(seq.to_be_bytes()));
-    let mut data = preimage.into_bytes();
+    let mut data = holder().as_slice().to_vec();
+    data.extend_from_slice(&promis_amount.to_be_bytes::<32>());
+    data.extend_from_slice(series_id.as_bytes());
+    data.extend_from_slice(&seq.to_be_bytes());
     data.extend_from_slice(&nonce.to_be_bytes());
     let expected = ring::digest::digest(&ring::digest::SHA256, &data);
     assert_eq!(got.as_slice(), expected.as_ref());
@@ -278,7 +279,7 @@ fn validate_pow_accepts_valid_and_rejects_invalid_nonce() {
     let mut good = None;
     let mut bad = None;
     for n in 0u64..100_000 {
-        let ok = runtime::validate_pow(holder(), pa, series_id, seq, U256::from(n)).is_ok();
+        let ok = runtime::validate_pow(holder(), pa, series_id, seq, n).is_ok();
         if ok && good.is_none() {
             good = Some(n);
         }
@@ -289,34 +290,13 @@ fn validate_pow_accepts_valid_and_rejects_invalid_nonce() {
             break;
         }
     }
-    assert!(runtime::validate_pow(
-        holder(),
-        pa,
-        series_id,
-        seq,
-        U256::from(good.expect("a valid nonce"))
-    )
-    .is_ok());
-    assert!(runtime::validate_pow(
-        holder(),
-        pa,
-        series_id,
-        seq,
-        U256::from(bad.expect("an invalid nonce"))
-    )
-    .is_err());
-}
-
-#[test]
-fn validate_pow_rejects_nonce_over_u64() {
-    assert!(runtime::validate_pow(
-        holder(),
-        U256::from(1u64),
-        sid(1),
-        0,
-        U256::from(u64::MAX) + U256::from(1)
-    )
-    .is_err());
+    assert!(
+        runtime::validate_pow(holder(), pa, series_id, seq, good.expect("a valid nonce")).is_ok()
+    );
+    assert!(
+        runtime::validate_pow(holder(), pa, series_id, seq, bad.expect("an invalid nonce"))
+            .is_err()
+    );
 }
 
 /// A dummy authorization for mine_promis paths that reject before the (enclave)
@@ -331,18 +311,13 @@ fn no_auth() -> outbe_promisfactory::api::ModifyAuth {
 #[test]
 fn mine_promis_rejects_zero_amount() {
     with_factory(|s| {
-        assert!(
-            runtime::mine_promis(&s, sid(7), holder(), U256::ZERO, U256::ZERO, no_auth()).is_err()
-        );
+        assert!(runtime::mine_promis(&s, sid(7), holder(), U256::ZERO, 0, no_auth()).is_err());
     });
 }
 
 #[test]
 fn mine_promis_rejects_missing_series() {
     with_factory(|s| {
-        assert!(
-            runtime::mine_promis(&s, sid(7), holder(), U256::from(1), U256::ZERO, no_auth())
-                .is_err()
-        );
+        assert!(runtime::mine_promis(&s, sid(7), holder(), U256::from(1), 0, no_auth()).is_err());
     });
 }

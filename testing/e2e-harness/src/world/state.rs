@@ -229,6 +229,11 @@ pub struct FixtureState {
     /// Hash of a transaction that cannot be mined, submitted to observe pool
     /// eviction (`features/txpool_eviction.feature`).
     pub stuck_tx_hash: Option<String>,
+    /// Sender and exact nonce bound to [`Self::stuck_tx_hash`]. The eviction
+    /// assertion uses all three fields so an unrelated stale transaction cannot
+    /// satisfy the observability contract.
+    pub stuck_tx_sender: Option<String>,
+    pub stuck_tx_nonce: Option<u64>,
     /// Exact offer public key observed from a registered joiner's enclave and
     /// matched against canonical chain state before an enclave restart.
     pub joiner_offer_public_before_restart: Option<[u8; 32]>,
@@ -373,6 +378,16 @@ pub struct FixtureState {
     pub zerofee_new_day_receipt: Option<serde_json::Value>,
     pub zerofee_new_day_balance_before: Option<alloy_primitives::U256>,
     pub zerofee_new_day_balance_after: Option<alloy_primitives::U256>,
+    /// Validator-0 Gem balance captured before the stale daily boundary.
+    pub reward_gem_balance_before_delivery: Option<alloy_primitives::U256>,
+    /// Exact UTC reward day durably stored at the pending Rewards FIFO head.
+    pub pending_reward_gem_utc_day: Option<u32>,
+    /// Finalized EVM block captured before restarting with a pending Gem batch.
+    pub pending_reward_gem_restart_block_number: Option<u64>,
+    /// Canonical block that delivered the saved batch through OSG2.
+    pub reward_gem_delivery_block_number: Option<u64>,
+    /// Exact validator-0 Gem id created by the recovered delivery.
+    pub delivered_reward_gem_id: Option<alloy_primitives::U256>,
 
     // ---- Stablecoin Factory V1 live scenario ----
     pub stablecoin: Option<StablecoinFixture>,
@@ -430,6 +445,8 @@ impl Default for FixtureState {
             marker_height: None,
             marker_count: None,
             stuck_tx_hash: None,
+            stuck_tx_sender: None,
+            stuck_tx_nonce: None,
             joiner_offer_public_before_restart: None,
             vrf_expiry_height: None,
             lifecycle_stake_before_exit: None,
@@ -518,6 +535,11 @@ impl Default for FixtureState {
             zerofee_new_day_receipt: None,
             zerofee_new_day_balance_before: None,
             zerofee_new_day_balance_after: None,
+            reward_gem_balance_before_delivery: None,
+            pending_reward_gem_utc_day: None,
+            pending_reward_gem_restart_block_number: None,
+            reward_gem_delivery_block_number: None,
+            delivered_reward_gem_id: None,
             stablecoin: None,
             target_contracts: None,
             origin_contracts: None,

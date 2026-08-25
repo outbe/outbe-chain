@@ -4,12 +4,12 @@ use std::fmt;
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_common::WorldwideDay;
-use outbe_compressed_entities::{EntityId36, TributeBodyV1};
+use outbe_compressed_entities::{TributeBodyV1, WwdEntityId};
 
 /// One canonical Tribute body required by Lysis V1.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TributeInputV1 {
-    pub tribute_id: EntityId36,
+    pub tribute_id: WwdEntityId,
     pub owner: Address,
     pub worldwide_day: WorldwideDay,
     pub issuance_currency: u16,
@@ -99,8 +99,8 @@ pub enum SemanticObservationV1 {
 /// One storage-free Nod creation action.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodActionV1 {
-    pub source_tribute_id: EntityId36,
-    pub nod_id: EntityId36,
+    pub source_tribute_id: WwdEntityId,
+    pub nod_id: WwdEntityId,
     pub owner: Address,
     pub worldwide_day: WorldwideDay,
     pub league_id: u16,
@@ -131,7 +131,7 @@ pub struct LeagueFractionV1 {
 /// Successful storage-independent Lysis result.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProgramResultV1 {
-    pub tribute_ids: Vec<EntityId36>,
+    pub tribute_ids: Vec<WwdEntityId>,
     pub total_nominal: U256,
     pub gratis_allocation: U256,
     pub remaining_gratis: U256,

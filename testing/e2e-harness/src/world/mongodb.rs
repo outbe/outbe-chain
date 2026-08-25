@@ -30,7 +30,7 @@ pub struct MongoDb {
 /// Exact primary projection value needed to verify one compressed Tribute.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectedTribute {
-    pub raw_id: outbe_compressed_entities::EntityId36,
+    pub raw_id: outbe_compressed_entities::WwdEntityId,
     pub stored_body: Vec<u8>,
 }
 
@@ -268,8 +268,8 @@ fn projected_tribute(uri: &str, name: &str, tx_hash: &str) -> Result<ProjectedTr
         .get_str("_id")
         .map_err(|error| eyre!("{name}.tributes has invalid _id: {error}"))?;
     let id = hex::decode(encoded_id).wrap_err("decode projected Tribute _id")?;
-    let raw_id = outbe_compressed_entities::EntityId36::try_from(id.as_slice())
-        .wrap_err("projected Tribute _id is not EntityId36")?;
+    let raw_id = outbe_compressed_entities::WwdEntityId::try_from(id.as_slice())
+        .wrap_err("projected Tribute _id is not WwdEntityId")?;
     let stored_body = match document.get("value") {
         Some(Bson::Binary(value)) => value.bytes.clone(),
         other => return Err(eyre!("{name}.tributes has invalid value field: {other:?}")),
@@ -371,8 +371,8 @@ fn exact_tribute_projection_with_client(
         .get_str("_id")
         .map_err(|error| eyre!("{name}.tributes has invalid _id: {error}"))?;
     let id = hex::decode(encoded_id).wrap_err("decode projected Tribute _id")?;
-    let raw_id = outbe_compressed_entities::EntityId36::try_from(id.as_slice())
-        .wrap_err("projected Tribute _id is not EntityId36")?;
+    let raw_id = outbe_compressed_entities::WwdEntityId::try_from(id.as_slice())
+        .wrap_err("projected Tribute _id is not WwdEntityId")?;
     let stored_body = match primary.get("value") {
         Some(Bson::Binary(value)) => value.bytes.as_slice(),
         other => return Err(eyre!("{name}.tributes has invalid value field: {other:?}")),
@@ -383,12 +383,12 @@ fn exact_tribute_projection_with_client(
         bail!("{name}.tributes primary key does not match its canonical body");
     }
 
-    let mut owner_key = Vec::with_capacity(20 + raw_id.as_bytes().len());
+    let mut owner_key = Vec::with_capacity(20 + raw_id.as_slice().len());
     owner_key.extend_from_slice(body.owner.as_slice());
-    owner_key.extend_from_slice(raw_id.as_bytes());
-    let mut day_key = Vec::with_capacity(4 + raw_id.as_bytes().len());
+    owner_key.extend_from_slice(raw_id.as_slice());
+    let mut day_key = Vec::with_capacity(4 + raw_id.as_slice().len());
     day_key.extend_from_slice(&body.worldwide_day.value().to_be_bytes());
-    day_key.extend_from_slice(raw_id.as_bytes());
+    day_key.extend_from_slice(raw_id.as_slice());
 
     let owner_index = exact_index_document(&db, name, "tributes_by_owner", &owner_key)?;
     let day_index = exact_index_document(&db, name, "tributes_by_day", &day_key)?;

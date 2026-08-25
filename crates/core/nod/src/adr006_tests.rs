@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_common::WorldwideDay;
+use outbe_compressed_entities::WwdEntityId;
 use outbe_compressed_entities::{begin_block, ExecutionScope};
 use outbe_offchain_storage::MemoryStorage;
 use outbe_primitives::{
@@ -14,7 +15,7 @@ use outbe_primitives::{
 
 fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
     storage
-        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(3))
+        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
         .unwrap();
     storage
         .sstore(
@@ -82,30 +83,18 @@ fn reverted_issuance_rolls_back_overlay_compact_state_and_events() {
 }
 
 #[test]
-fn nod_identity_and_abi_boundary_preserve_exact_36_bytes() {
+fn nod_identity_and_abi_boundary_preserve_exact_32_bytes() {
     let body = item(Address::repeat_byte(0x33));
-    let encoded = NodContract::format_nod_id(body.nod_id);
+    let encoded = body.nod_id.to_string();
     assert_eq!(NodContract::parse_nod_id(&encoded).unwrap(), body.nod_id);
-    assert!(NodContract::parse_nod_id(&encoded[..70]).is_err());
+    assert!(NodContract::parse_nod_id(&encoded[..62]).is_err());
 
-    let parent = NodRepositoryReader::new(Arc::new(MemoryStorage::new()));
-    let mut provider = HashMapStorageProvider::new(1);
-    let scope = ExecutionScope::new();
-    let call = crate::precompile::INod::ownerOfCall {
-        nodId: Bytes::from(vec![0x11; 35]),
-    }
-    .abi_encode();
-    StorageHandle::enter(&mut provider, |storage| {
-        seed_compressed_entities_genesis(&storage);
-        begin_block(storage.clone(), &scope).unwrap();
-        let error =
-            crate::precompile::dispatch(storage, &scope, &parent, &call, Address::ZERO, U256::ZERO)
-                .unwrap_err();
-        assert!(matches!(
-            error,
-            PrecompileError::Revert(ref reason) if reason == "invalid bytes length: expected 36"
-        ));
-    });
+    // The ABI carries the identity as one word, so a wrong-width id is no
+    // longer representable: the round trip through `uint256` is total, and the
+    // old "invalid bytes length" revert has no input that can reach it.
+    let word = body.nod_id.to_u256();
+    assert_eq!(WwdEntityId::from(word), body.nod_id);
+    assert_eq!(word.to_be_bytes::<32>(), body.nod_id.0 .0);
 }
 
 #[test]
@@ -121,6 +110,37 @@ fn materialization_fifo_slots_match_the_genesis_seeder() {
             nod.ocomp_materialization_tail_sequence.slot(),
             U256::from(20)
         );
+    });
+}
+
+/// Slot assignment is dense in `order` sequence, so inserting a field rather
+/// than appending one silently reassigns the meaning of every slot after it —
+/// including the two the genesis alloc seeds. New fields must append.
+#[test]
+fn nod_contract_slot_layout_is_pinned() {
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |storage| {
+        let nod = NodContract::new(storage);
+        assert_eq!(nod.total_supply.slot(), U256::ZERO);
+        assert_eq!(nod.bin_tree_root.base_slot(), U256::from(1));
+        assert_eq!(nod.unqualified_bin_scan_cursor.base_slot(), U256::from(6));
+        assert_eq!(nod.bucket_worldwide_day.base_slot(), U256::from(7));
+        assert_eq!(nod.ocomp_target_generation.base_slot(), U256::from(8));
+        assert_eq!(
+            nod.ocomp_materialization_attempt_count.slot(),
+            U256::from(23)
+        );
+        // Call-event columns, appended after the OCOMP block.
+        assert_eq!(nod.bucket_nod_count.base_slot(), U256::from(24));
+        assert_eq!(nod.bucket_nods.base_slot(), U256::from(25));
+        assert_eq!(nod.bucket_nod_index.base_slot(), U256::from(26));
+        // `callable_buckets` sits at 27. `StorageVec` exposes no slot accessor,
+        // but slots are dense, so pinning 26 and 28 pins it too.
+        assert_eq!(nod.callable_bucket_index.base_slot(), U256::from(28));
+        assert_eq!(nod.callable_bucket_call_price.base_slot(), U256::from(29));
+        assert_eq!(nod.callable_bucket_currency.base_slot(), U256::from(30));
+        assert_eq!(nod.bucket_called_at.base_slot(), U256::from(31));
+        assert_eq!(nod.call_scan_cursor.slot(), U256::from(32));
     });
 }
 

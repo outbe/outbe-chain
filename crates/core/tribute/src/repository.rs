@@ -3,9 +3,9 @@
 use alloy_primitives::{Address, B256};
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{
-    decode_stored_tribute_v1, encode_tribute_v1, CanonicalBodyError, EntityId36, EntityIdError,
-    EntityRef, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef,
-    StoredBody, TributeBodyV1,
+    decode_stored_tribute_v1, encode_tribute_v1, CanonicalBodyError, EntityRef, IdPage,
+    IdPageRequest, ParentBodySource, ParentBodySourceError, QueryRef, StoredBody, TributeBodyV1,
+    WwdEntityId,
 };
 use outbe_offchain_storage::{
     Key, Namespace, ScanEntry, ScanRequest, StorageError, StorageMetadata, StorageReaderHandle,
@@ -18,7 +18,7 @@ use crate::TributeData;
 pub(crate) const TRIBUTES_NAMESPACE: &str = "tributes";
 pub(crate) const TRIBUTES_BY_OWNER_NAMESPACE: &str = "tributes_by_owner";
 pub(crate) const TRIBUTES_BY_DAY_NAMESPACE: &str = "tributes_by_day";
-const PRIMARY_KEY_LEN: usize = EntityId36::LEN;
+const PRIMARY_KEY_LEN: usize = WwdEntityId::len_bytes();
 const OWNER_INDEX_KEY_LEN: usize = 20 + PRIMARY_KEY_LEN;
 const DAY_INDEX_KEY_LEN: usize = 4 + PRIMARY_KEY_LEN;
 
@@ -26,7 +26,7 @@ const DAY_INDEX_KEY_LEN: usize = 4 + PRIMARY_KEY_LEN;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TributePageRequest {
     /// Exclusive Tribute ID cursor.
-    pub after: Option<EntityId36>,
+    pub after: Option<WwdEntityId>,
     /// Requested number of records, in `1..=MAX_SCAN_ENTRIES`.
     pub limit: usize,
 }
@@ -36,7 +36,7 @@ pub struct TributePage {
     /// Decoded Tribute bodies.
     pub records: Vec<TributeData>,
     /// Exclusive cursor for the next page, when more records exist.
-    pub next_after: Option<EntityId36>,
+    pub next_after: Option<WwdEntityId>,
 }
 
 /// One decoded Tribute body and optional primary storage metadata.
@@ -71,24 +71,24 @@ pub enum TributeRepositoryError {
     #[error("Tribute {index} index points to missing body {tribute_id}")]
     DanglingIndex {
         index: &'static str,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     },
     /// The selecting primary key and embedded body ID disagree.
     #[error("Tribute primary key/body mismatch: expected {expected}, found {actual}")]
     PrimaryKeyBodyMismatch {
-        expected: EntityId36,
-        actual: EntityId36,
+        expected: WwdEntityId,
+        actual: WwdEntityId,
     },
     /// An owner index selected a body owned by someone else.
     #[error("Tribute owner index/body mismatch for {tribute_id}")]
-    IndexedOwnerMismatch { tribute_id: EntityId36 },
+    IndexedOwnerMismatch { tribute_id: WwdEntityId },
     /// A day index selected a body assigned to another day.
     #[error("Tribute day index/body mismatch for {tribute_id}")]
-    IndexedDayMismatch { tribute_id: EntityId36 },
+    IndexedDayMismatch { tribute_id: WwdEntityId },
     /// A day-index cursor belongs to another immutable WWD partition.
     #[error("Tribute day cursor {cursor} does not belong to {worldwide_day}")]
     InvalidDayCursor {
-        cursor: EntityId36,
+        cursor: WwdEntityId,
         worldwide_day: WorldwideDay,
     },
     /// An ID-only repository page is not strictly ascending after its cursor.
@@ -99,20 +99,20 @@ pub enum TributeRepositoryError {
     InvalidPageContinuation { index: &'static str },
     /// A projection session may mutate only identities loaded into its repository snapshot.
     #[error("Tribute projection identity {tribute_id} was not loaded")]
-    UntrackedProjectionIdentity { tribute_id: EntityId36 },
+    UntrackedProjectionIdentity { tribute_id: WwdEntityId },
     /// A retained copy can only be made while the current canonical body exists.
     #[error("current Tribute body {tribute_id} is missing during OCOMP retention")]
-    MissingCurrentBodyForRetention { tribute_id: EntityId36 },
+    MissingCurrentBodyForRetention { tribute_id: WwdEntityId },
     /// The node-selected retained day and body identity disagree.
     #[error("OCOMP retained job {job_id} day {worldwide_day} does not match Tribute {tribute_id}")]
     RetainedDayMismatch {
         job_id: B256,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
         worldwide_day: WorldwideDay,
     },
-    /// Retained keys must carry one exact 36-byte entity identity.
+    /// Retained keys must carry one exact 32-byte entity identity.
     #[error("invalid retained Tribute entity identity")]
-    RetainedIdentity(#[from] EntityIdError),
+    RetainedIdentity(#[from] core::array::TryFromSliceError),
     /// CES1 commitment construction failed for a retained body.
     #[error("failed to derive retained Tribute commitment: {0}")]
     RetainedCommitment(String),
@@ -120,31 +120,31 @@ pub enum TributeRepositoryError {
     #[error("OCOMP retained job {job_id} has conflicting bytes for Tribute {tribute_id}")]
     ConflictingRetainedBody {
         job_id: B256,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     },
     /// A retained body did not reproduce its key commitment.
     #[error("OCOMP retained job {job_id} commitment mismatch for Tribute {tribute_id}")]
     RetainedCommitmentMismatch {
         job_id: B256,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     },
     /// Retained bodies never carry mutable projection provenance.
     #[error("OCOMP retained job {job_id} body {tribute_id} unexpectedly carries metadata")]
     RetainedMetadata {
         job_id: B256,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     },
     /// The retained day index exists without its exact body.
     #[error("OCOMP retained job {job_id} has a dangling index for Tribute {tribute_id}")]
     DanglingRetainedIndex {
         job_id: B256,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     },
     /// The retained body exists without its exact day-index entry.
     #[error("OCOMP retained job {job_id} has no index for Tribute {tribute_id}")]
     MissingRetainedIndex {
         job_id: B256,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     },
     /// Retained paging must remain strictly ordered and contain one commitment per identity.
     #[error("OCOMP retained job {job_id} day {worldwide_day} page is not strictly ascending")]
@@ -185,7 +185,7 @@ impl TributeRepositoryReader {
     /// Loads one Tribute body and verifies its embedded identity.
     pub fn get(
         &self,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     ) -> Result<Option<TributeData>, TributeRepositoryError> {
         Ok(self
             .get_with_metadata(tribute_id)?
@@ -195,7 +195,7 @@ impl TributeRepositoryReader {
     /// Loads the exact canonical StoredBody used by the execution parent seam.
     pub fn get_stored_body(
         &self,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     ) -> Result<Option<StoredBody>, TributeRepositoryError> {
         let key = primary_key(tribute_id)?;
         let Some(record) = self
@@ -210,7 +210,7 @@ impl TributeRepositoryReader {
     /// Loads one Tribute body together with optional primary provenance.
     pub fn get_with_metadata(
         &self,
-        tribute_id: EntityId36,
+        tribute_id: WwdEntityId,
     ) -> Result<Option<(TributeData, Option<StorageMetadata>)>, TributeRepositoryError> {
         let key = primary_key(tribute_id)?;
         let Some(record) = self
@@ -225,7 +225,7 @@ impl TributeRepositoryReader {
     /// Batch-loads bodies and metadata in the same order as the supplied identities.
     pub fn get_many_with_metadata(
         &self,
-        tribute_ids: &[EntityId36],
+        tribute_ids: &[WwdEntityId],
     ) -> Result<Vec<Option<TributeRecordWithMetadata>>, TributeRepositoryError> {
         let keys = tribute_ids
             .iter()
@@ -250,7 +250,7 @@ impl TributeRepositoryReader {
     /// Loads an opaque repository-owned snapshot for projection planning and in-block overlay.
     pub fn projection_session(
         &self,
-        tribute_ids: &[EntityId36],
+        tribute_ids: &[WwdEntityId],
     ) -> Result<crate::projection::TributeProjectionSession, TributeRepositoryError> {
         let keys = tribute_ids
             .iter()
@@ -446,7 +446,7 @@ impl TributeRepositoryWriter {
     }
 
     /// Deletes a body and its derived indexes. Missing bodies are a success.
-    pub fn delete(&self, tribute_id: EntityId36) -> Result<(), TributeRepositoryError> {
+    pub fn delete(&self, tribute_id: WwdEntityId) -> Result<(), TributeRepositoryError> {
         let mut session = self.reader.projection_session(&[tribute_id])?;
         let batch = session.delete(tribute_id)?;
         self.writer.apply_atomic(&batch)?;
@@ -464,7 +464,7 @@ pub(crate) fn encode_body(tribute: &TributeData) -> Result<Value, TributeReposit
 }
 
 pub(crate) fn decode_body(
-    tribute_id: EntityId36,
+    tribute_id: WwdEntityId,
     bytes: &[u8],
 ) -> Result<TributeData, TributeRepositoryError> {
     let body = from_canonical_body(decode_stored_tribute_v1(bytes)?);
@@ -478,7 +478,7 @@ pub(crate) fn decode_body(
 }
 
 fn decode_stored_body(
-    tribute_id: EntityId36,
+    tribute_id: WwdEntityId,
     bytes: &[u8],
 ) -> Result<StoredBody, TributeRepositoryError> {
     let stored = StoredBody::decode(bytes)?;
@@ -492,34 +492,34 @@ fn decode_stored_body(
     Ok(stored)
 }
 
-pub(crate) fn primary_key(tribute_id: EntityId36) -> Result<Key, TributeRepositoryError> {
-    Ok(Key::new(tribute_id.as_bytes().to_vec())?)
+pub(crate) fn primary_key(tribute_id: WwdEntityId) -> Result<Key, TributeRepositoryError> {
+    Ok(Key::new(tribute_id.to_vec())?)
 }
 
 pub(crate) fn owner_index_key(
     owner: Address,
-    tribute_id: EntityId36,
+    tribute_id: WwdEntityId,
 ) -> Result<Key, TributeRepositoryError> {
     let mut bytes = Vec::with_capacity(OWNER_INDEX_KEY_LEN);
     bytes.extend_from_slice(owner.as_slice());
-    bytes.extend_from_slice(tribute_id.as_bytes());
+    bytes.extend_from_slice(tribute_id.as_slice());
     Ok(Key::new(bytes)?)
 }
 
 pub(crate) fn day_index_key(
     worldwide_day: WorldwideDay,
-    tribute_id: EntityId36,
+    tribute_id: WwdEntityId,
 ) -> Result<Key, TributeRepositoryError> {
     let mut bytes = Vec::with_capacity(DAY_INDEX_KEY_LEN);
     bytes.extend_from_slice(&worldwide_day.value().to_be_bytes());
-    bytes.extend_from_slice(tribute_id.as_bytes());
+    bytes.extend_from_slice(tribute_id.as_slice());
     Ok(Key::new(bytes)?)
 }
 
 fn parse_owner_index(
     entry: &ScanEntry,
     owner: Address,
-) -> Result<EntityId36, TributeRepositoryError> {
+) -> Result<WwdEntityId, TributeRepositoryError> {
     validate_empty_index(entry, "owner")?;
     let bytes = entry.key.as_bytes();
     if bytes.len() != OWNER_INDEX_KEY_LEN || &bytes[..20] != owner.as_slice() {
@@ -531,7 +531,7 @@ fn parse_owner_index(
 fn parse_day_index(
     entry: &ScanEntry,
     day: WorldwideDay,
-) -> Result<EntityId36, TributeRepositoryError> {
+) -> Result<WwdEntityId, TributeRepositoryError> {
     validate_empty_index(entry, "day")?;
     let bytes = entry.key.as_bytes();
     if bytes.len() != DAY_INDEX_KEY_LEN || bytes[..4] != day.value().to_be_bytes() {
@@ -556,8 +556,8 @@ fn validate_empty_index(
 fn parse_id_suffix(
     bytes: &[u8],
     index: &'static str,
-) -> Result<EntityId36, TributeRepositoryError> {
-    EntityId36::try_from(bytes).map_err(|_| TributeRepositoryError::MalformedIndexKey { index })
+) -> Result<WwdEntityId, TributeRepositoryError> {
+    WwdEntityId::try_from(bytes).map_err(|_| TributeRepositoryError::MalformedIndexKey { index })
 }
 
 fn validate_page_limit(limit: usize) -> Result<(), TributeRepositoryError> {
@@ -595,9 +595,9 @@ fn validate_id_page_request(request: IdPageRequest) -> Result<usize, TributeRepo
 
 fn id_page_from_entries(
     page: outbe_offchain_storage::ScanPage,
-    after: Option<EntityId36>,
+    after: Option<WwdEntityId>,
     index: &'static str,
-    mut parse: impl FnMut(&ScanEntry) -> Result<EntityId36, TributeRepositoryError>,
+    mut parse: impl FnMut(&ScanEntry) -> Result<WwdEntityId, TributeRepositoryError>,
 ) -> Result<IdPage, TributeRepositoryError> {
     if let Some(continuation) = &page.next_after {
         if page.entries.last().map(|entry| &entry.key) != Some(continuation) {
@@ -626,7 +626,7 @@ fn id_page_from_entries(
     Ok(IdPage { ids, next_after })
 }
 
-fn next_cursor(has_more: bool, records: &[TributeData]) -> Option<EntityId36> {
+fn next_cursor(has_more: bool, records: &[TributeData]) -> Option<WwdEntityId> {
     has_more
         .then(|| records.last().map(|record| record.tribute_id))
         .flatten()

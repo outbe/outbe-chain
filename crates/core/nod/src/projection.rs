@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use outbe_compressed_entities::EntityId36;
+use outbe_compressed_entities::WwdEntityId;
 use outbe_offchain_storage::{
     AtomicWriteBatch, AtomicWriteOperation, StorageMetadata, StoredValue, Value,
 };
@@ -29,15 +29,15 @@ pub const NOD_PROJECTION_NAMESPACES: [&str; 3] = [
 /// [`crate::NodRepositoryReader::projection_session`]. They cannot supply or omit arbitrary
 /// semantic prior item or bucket bodies.
 pub struct NodProjectionSession {
-    items: BTreeMap<EntityId36, Option<NodItemRecordWithMetadata>>,
-    buckets: BTreeMap<EntityId36, Option<NodBucketRecordWithMetadata>>,
+    items: BTreeMap<WwdEntityId, Option<NodItemRecordWithMetadata>>,
+    buckets: BTreeMap<WwdEntityId, Option<NodBucketRecordWithMetadata>>,
 }
 
 impl NodProjectionSession {
     pub(crate) fn from_records(
-        nod_ids: &[EntityId36],
+        nod_ids: &[WwdEntityId],
         items: Vec<Option<NodItemRecordWithMetadata>>,
-        bucket_ids: &[EntityId36],
+        bucket_ids: &[WwdEntityId],
         buckets: Vec<Option<NodBucketRecordWithMetadata>>,
     ) -> Self {
         Self {
@@ -49,7 +49,7 @@ impl NodProjectionSession {
     /// Returns the current item body from the repository snapshot or in-block overlay.
     pub fn current_item(
         &self,
-        nod_id: EntityId36,
+        nod_id: WwdEntityId,
     ) -> Result<Option<&NodItemState>, NodRepositoryError> {
         Ok(self
             .current_item_with_metadata(nod_id)?
@@ -59,7 +59,7 @@ impl NodProjectionSession {
     /// Returns the current item and provenance without exposing a constructible prior snapshot.
     pub fn current_item_with_metadata(
         &self,
-        nod_id: EntityId36,
+        nod_id: WwdEntityId,
     ) -> Result<Option<(&NodItemState, Option<&StorageMetadata>)>, NodRepositoryError> {
         match self
             .items
@@ -76,7 +76,7 @@ impl NodProjectionSession {
     /// Returns the current bucket body from the repository snapshot or in-block overlay.
     pub fn current_bucket(
         &self,
-        bucket_id: EntityId36,
+        bucket_id: WwdEntityId,
     ) -> Result<Option<&NodBucketState>, NodRepositoryError> {
         Ok(self
             .current_bucket_with_metadata(bucket_id)?
@@ -86,7 +86,7 @@ impl NodProjectionSession {
     /// Returns the current bucket and provenance without exposing a constructible prior snapshot.
     pub fn current_bucket_with_metadata(
         &self,
-        bucket_id: EntityId36,
+        bucket_id: WwdEntityId,
     ) -> Result<Option<(&NodBucketState, Option<&StorageMetadata>)>, NodRepositoryError> {
         match self.buckets.get(&bucket_id).ok_or(
             NodRepositoryError::UntrackedProjectionIdentity {
@@ -102,7 +102,7 @@ impl NodProjectionSession {
     /// Plans one canonical item store and advances the overlay after full validation.
     pub fn store_item(
         &mut self,
-        nod_id: EntityId36,
+        nod_id: WwdEntityId,
         stored_body: Value,
         metadata: Option<StorageMetadata>,
     ) -> Result<AtomicWriteBatch, NodRepositoryError> {
@@ -123,7 +123,7 @@ impl NodProjectionSession {
     /// Plans one item delete from the owned prior snapshot and advances overlay to absence.
     pub fn delete_item(
         &mut self,
-        nod_id: EntityId36,
+        nod_id: WwdEntityId,
     ) -> Result<AtomicWriteBatch, NodRepositoryError> {
         let old = self.current_item(nod_id)?;
         let batch = plan_nod_item_mutation(old, NodItemMutation::Delete { nod_id })?;
@@ -134,7 +134,7 @@ impl NodProjectionSession {
     /// Plans one canonical bucket store and advances the overlay after full validation.
     pub fn store_bucket(
         &mut self,
-        bucket_id: EntityId36,
+        bucket_id: WwdEntityId,
         stored_body: Value,
         metadata: Option<StorageMetadata>,
     ) -> Result<AtomicWriteBatch, NodRepositoryError> {
@@ -155,7 +155,7 @@ impl NodProjectionSession {
     /// Plans one bucket delete from the owned prior snapshot and advances overlay to absence.
     pub fn delete_bucket(
         &mut self,
-        bucket_id: EntityId36,
+        bucket_id: WwdEntityId,
     ) -> Result<AtomicWriteBatch, NodRepositoryError> {
         let old = self.current_bucket(bucket_id)?;
         let batch = plan_nod_bucket_mutation(old, NodBucketMutation::Delete { bucket_id })?;
@@ -169,7 +169,7 @@ enum NodItemMutation {
     /// Store a complete item and its optional primary metadata.
     Store {
         /// Indexed event identity.
-        nod_id: EntityId36,
+        nod_id: WwdEntityId,
         /// Exact canonical StoredBody bytes. The planner decodes this value and
         /// derives every semantic index from it.
         stored_body: Value,
@@ -179,7 +179,7 @@ enum NodItemMutation {
     /// Delete one item identity and its index derivable from the old body.
     Delete {
         /// Indexed event identity.
-        nod_id: EntityId36,
+        nod_id: WwdEntityId,
     },
 }
 
@@ -188,7 +188,7 @@ enum NodBucketMutation {
     /// Store a complete bucket and its optional primary metadata.
     Store {
         /// Indexed event identity.
-        bucket_id: EntityId36,
+        bucket_id: WwdEntityId,
         /// Exact canonical StoredBody bytes. The planner decodes this value and
         /// validates its canonical bucket identity.
         stored_body: Value,
@@ -198,7 +198,7 @@ enum NodBucketMutation {
     /// Delete one bucket identity.
     Delete {
         /// Indexed event identity.
-        bucket_id: EntityId36,
+        bucket_id: WwdEntityId,
     },
 }
 
@@ -304,7 +304,7 @@ fn plan_nod_bucket_mutation(
 }
 
 fn validate_item_identity(
-    expected: EntityId36,
+    expected: WwdEntityId,
     body: &NodItemState,
 ) -> Result<(), NodRepositoryError> {
     if body.nod_id != expected {
@@ -317,7 +317,7 @@ fn validate_item_identity(
 }
 
 fn validate_bucket_identity(
-    expected: EntityId36,
+    expected: WwdEntityId,
     body: &NodBucketState,
 ) -> Result<(), NodRepositoryError> {
     let actual = crate::repository::canonical_bucket_id(body);
