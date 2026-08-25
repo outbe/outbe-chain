@@ -18,6 +18,6 @@ Feature: Protocol positions redeem through the reserve into COEN
     When the chain crosses into the next worldwide day without a price feeder
     Then the stale boundary finalizes with one pending reward Gem batch and no new Gem
     When the committee restarts while the reward Gem batch is pending
-    And the controlled COEN USD quote is finalized through the real price feeder
+    Then the controlled COEN USD quote is finalized through the real price feeder
     Then the first canonical fresh tally delivers the saved reward Gem batch exactly once
     And every validator observes the same delivered reward Gem and continued finality
