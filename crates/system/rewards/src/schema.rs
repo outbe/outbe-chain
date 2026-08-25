@@ -47,17 +47,18 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 /// 28: block_guard_ring_seq — uint64 (ring write cursor)
 /// 29: reward_gem_queue_head — uint64 (inclusive FIFO sequence)
 /// 30: reward_gem_queue_tail — uint64 (exclusive FIFO sequence)
-/// 31: reward_gem_day_at — mapping(uint64 => uint32)
+/// 31: reward_gem_utc_day_by_sequence — mapping(uint64 => uint32)
 /// 32: reward_gem_queue_sequence_plus_one — mapping(uint32 => uint64)
 /// 33: daily_topup_prepared — mapping(uint32 => bool)
 /// 34: reward_gem_batch_digest — mapping(uint32 => B256)
-/// 35: reward_gem_planned_total — mapping(uint32 => uint256)
+/// 35: reward_gem_planned_load_amount — mapping(uint32 => uint256)
 /// 36: reward_gem_recipient_count — mapping(uint32 => uint32)
 /// 37: reward_gem_owner_at — mapping(uint32 => mapping(uint32 => address))
 /// 38: reward_gem_load_at — mapping(uint32 => mapping(uint32 => uint256))
 /// 39: reward_gem_type — mapping(uint32 => uint8)
 /// 40: reward_gem_issuance_currency — mapping(uint32 => uint16)
 /// 41: reward_gem_reference_currency — mapping(uint32 => uint16)
+/// 42: reward_gem_pending_batch_count — uint64
 #[contract(addr = REWARDS_ADDRESS)]
 pub struct Rewards {
     /// UTC day of block 0 (yyyymmdd). 0 means uninitialized; written
@@ -240,7 +241,7 @@ pub struct Rewards {
     pub reward_gem_queue_tail: Slot<u64>,
 
     /// FIFO sequence -> UTC reward day. Zero denotes a cleared queue slot.
-    pub reward_gem_day_at: Mapping<u64, u32>,
+    pub reward_gem_utc_day_by_sequence: Mapping<u64, u32>,
 
     /// UTC reward day -> FIFO sequence plus one. Zero denotes no live queue item.
     pub reward_gem_queue_sequence_plus_one: Mapping<u32, u64>,
@@ -252,7 +253,7 @@ pub struct Rewards {
     pub reward_gem_batch_digest: Mapping<u32, B256>,
 
     /// Permanent sum of all non-zero Gem loads prepared for the reward day.
-    pub reward_gem_planned_total: Mapping<u32, U256>,
+    pub reward_gem_planned_load_amount: Mapping<u32, U256>,
 
     /// Number of live pending recipients. Cleared after successful delivery.
     pub reward_gem_recipient_count: Mapping<u32, u32>,
@@ -271,4 +272,7 @@ pub struct Rewards {
 
     /// Reward Gem reference currency, frozen at preparation time.
     pub reward_gem_reference_currency: Mapping<u32, u16>,
+
+    /// Live FIFO batch count; must equal `queue_tail - queue_head`.
+    pub reward_gem_pending_batch_count: Slot<u64>,
 }

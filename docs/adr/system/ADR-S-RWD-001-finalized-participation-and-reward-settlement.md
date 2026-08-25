@@ -114,11 +114,12 @@ sum(native payouts) + burned residue = escrowed pending fee
 
 Daily raw fees contribute to the emission-cap calculation but are not paid again.
 The computed top-up is divided in proportion to finalized participation counts.
-Rewards always freezes the exact nonzero `(reward_day, owner, gem_type, gem_load,
+Rewards always freezes the exact nonzero `(reward_utc_day, owner, gem_type, gem_load,
 issuance_currency, reference_currency)` obligations before any mint. Genesis Gems
 apply to day numbers 0–20 and Validator Gems thereafter. Integer-division remainder
-is `topup_total - planned_total` and is assigned immediately to Cycle's terminal
-excess; the planned total is a durable liability and is never terminally credited.
+is `validator_topup_amount - planned_gem_load_amount` and is assigned immediately
+to Cycle's terminal excess; the planned Gem load amount is a durable liability and
+is never terminally credited.
 
 Cycle owns exact reconciliation at preparation time:
 
@@ -127,23 +128,34 @@ planned Gem load + validator terminal excess = validator allocation
 validator terminal excess = validator allocation - planned Gem load
 ```
 
-Preparation is idempotent only for the same digest/total; a contradictory replay is
-fatal. Empty or zero-payable participation creates no FIFO entry, marks the top-up
-complete and sends the complete validator allocation to the terminal sink.
+Preparation is idempotent only for the same digest/amount; a contradictory replay
+is logged and returns a retryable revert without writes. Empty or zero-payable
+participation creates no FIFO entry, marks the top-up complete and sends the
+complete validator allocation to the terminal sink.
 
 `RewardsGemDelivery` consumes at most one complete UTC-day batch per block in FIFO
 order. Empty FIFO and registered-but-zero/unpublished/stale COEN/840 are successful
 no-ops. A fresh canonical rate mints the complete head atomically at that block's
 rate and timestamp, clears live rows and advances the head exactly once. The batch
 stores no price: delayed Gems intentionally use the first fresh canonical price at
-actual delivery. Ordinary GemFactory reverts produce a soft system receipt and
-retry next block; fatal corruption and aggregate OOG still fail the block. There is
-no expiry or forfeiture.
+actual delivery. Ordinary GemFactory and active-batch consistency reverts produce a
+soft system receipt, preserve the FIFO and retry next block; aggregate OOG and raw
+executor failures retain their existing hard behavior. There is no expiry or
+forfeiture.
 
 `daily_topup_prepared` guards the immutable liability, `daily_topup_settled` guards
 actual mint completion, and `daily_settled` guards the complete cross-module day
 dispatch. `daily_settled=true && daily_topup_settled=false` is legal only while the
 matching exact batch is live in the FIFO.
+
+The append-only `reward_gem_pending_batch_count` at Rewards slot 42 must equal
+`reward_gem_queue_tail - reward_gem_queue_head`. Preparation replay validates the
+complete live sequence, metadata and recipient rows. Delivery validates the count
+and requires the current sequence slot to be clear when the FIFO is empty. Any
+disagreement is logged at `ERROR` and returned as a retryable revert. The mandatory
+delivery records status 0, preserves the obligation and lets the rest of the block
+continue; corrupted pointers therefore cannot silently discard an obligation or
+halt the chain through a typed fatal outcome.
 
 ## Atomicity, ordering and failure
 
@@ -156,10 +168,11 @@ error restores the full economic pre-state.
 Batch preparation shares the Cycle dispatch checkpoint. Batch mint, row cleanup,
 completion marker and FIFO head advancement share the delivery transaction
 checkpoint. A later failure must not retain a partial batch or advance its head.
-Contradictory metadata and conservation failures detected by their owning module
-remain fatal protocol outcomes, not retryable user reverts. This top-up
-reconciliation change does not introduce a new fatal index validator. A missing
-dependency or temporary execution failure may retry only from semantic pre-state.
+Existing non-Rewards protocol corruption classifications are unchanged. Rewards
+Gem preparation/delivery consistency failures are retryable reverts with no partial
+writes; delivery is a non-critical phase and therefore preserves block liveness.
+A missing dependency or temporary execution failure may retry only from semantic
+pre-state.
 
 ## Determinism and bounds
 

@@ -381,11 +381,11 @@ pub struct FixtureState {
     /// Validator-0 Gem balance captured before the stale daily boundary.
     pub reward_gem_balance_before_delivery: Option<alloy_primitives::U256>,
     /// Exact UTC reward day durably stored at the pending Rewards FIFO head.
-    pub pending_reward_gem_day: Option<u32>,
-    /// Finalized height captured before restarting with a pending Gem batch.
-    pub pending_reward_gem_restart_height: Option<u64>,
+    pub pending_reward_gem_utc_day: Option<u32>,
+    /// Finalized EVM block captured before restarting with a pending Gem batch.
+    pub pending_reward_gem_restart_block_number: Option<u64>,
     /// Canonical block that delivered the saved batch through OSG2.
-    pub reward_gem_delivery_height: Option<u64>,
+    pub reward_gem_delivery_block_number: Option<u64>,
     /// Exact validator-0 Gem id created by the recovered delivery.
     pub delivered_reward_gem_id: Option<alloy_primitives::U256>,
 
@@ -527,9 +527,9 @@ impl Default for FixtureState {
             zerofee_new_day_balance_before: None,
             zerofee_new_day_balance_after: None,
             reward_gem_balance_before_delivery: None,
-            pending_reward_gem_day: None,
-            pending_reward_gem_restart_height: None,
-            reward_gem_delivery_height: None,
+            pending_reward_gem_utc_day: None,
+            pending_reward_gem_restart_block_number: None,
+            reward_gem_delivery_block_number: None,
             delivered_reward_gem_id: None,
             stablecoin: None,
             target_contracts: None,

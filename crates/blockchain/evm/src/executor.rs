@@ -7168,9 +7168,9 @@ mod tests {
         let signer = test_evm_signer();
         let proposer = signer.address();
         let block_ts = GENESIS_TS + 2 * SECONDS_PER_DAY + 60;
-        let current_day = outbe_primitives::time::timestamp_to_date_key(block_ts);
-        let reward_day = outbe_primitives::time::previous_date_key(current_day);
-        let backlog_day = outbe_primitives::time::previous_date_key(reward_day);
+        let current_utc_day = outbe_primitives::time::timestamp_to_date_key(block_ts);
+        let reward_utc_day = outbe_primitives::time::previous_date_key(current_utc_day);
+        let backlog_utc_day = outbe_primitives::time::previous_date_key(reward_utc_day);
         let emission_trigger = outbe_cycle::triggers::TriggerId::ProtocolCycle.as_u32();
         let mut state =
             state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
@@ -7180,7 +7180,7 @@ mod tests {
                 );
                 outbe_rewards::runtime::ensure_genesis_anchor(&genesis_ctx).unwrap();
                 let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
-                cycle.active_utc_day.write(reward_day).unwrap();
+                cycle.active_utc_day.write(reward_utc_day).unwrap();
                 cycle
                     .last_executed_at
                     .write(&emission_trigger, block_ts - 3_600)
@@ -7191,7 +7191,7 @@ mod tests {
                     .collect::<Vec<_>>();
                 outbe_rewards::api::prepare_daily_validator_gem_batch(
                     &genesis_ctx,
-                    backlog_day,
+                    backlog_utc_day,
                     U256::from(1_000_000u64),
                     &backlog_voters,
                 )
@@ -7200,22 +7200,22 @@ mod tests {
                 let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
                 rewards
                     .daily_voter_count
-                    .write(&reward_day, VALIDATOR_COUNT)
+                    .write(&reward_utc_day, VALIDATOR_COUNT)
                     .unwrap();
                 rewards
                     .daily_total_participation
-                    .write(&reward_day, u64::from(VALIDATOR_COUNT))
+                    .write(&reward_utc_day, u64::from(VALIDATOR_COUNT))
                     .unwrap();
                 for index in 0..VALIDATOR_COUNT {
                     let voter = numbered_test_address(0x14, u64::from(index));
                     rewards
                         .daily_voter_at
-                        .get_nested(&reward_day)
+                        .get_nested(&reward_utc_day)
                         .write(&index, voter)
                         .unwrap();
                     rewards
                         .daily_participation
-                        .get_nested(&reward_day)
+                        .get_nested(&reward_utc_day)
                         .write(&voter, 1)
                         .unwrap();
                 }
@@ -7266,9 +7266,9 @@ mod tests {
             let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
             assert_eq!(rewards.reward_gem_queue_head.read()?, 1);
             assert_eq!(rewards.reward_gem_queue_tail.read()?, 2);
-            assert!(rewards.daily_topup_settled.read(&backlog_day)?);
-            assert!(rewards.daily_topup_prepared.read(&reward_day)?);
-            assert!(!rewards.daily_topup_settled.read(&reward_day)?);
+            assert!(rewards.daily_topup_settled.read(&backlog_utc_day)?);
+            assert!(rewards.daily_topup_prepared.read(&reward_utc_day)?);
+            assert!(!rewards.daily_topup_settled.read(&reward_utc_day)?);
             let gem = outbe_gem::GemContract::new(storage);
             for index in 0..VALIDATOR_COUNT {
                 assert_eq!(
@@ -7570,10 +7570,65 @@ mod tests {
     fn gas_11_reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_lane_clean() {
         let signer = test_evm_signer();
         let proposer = signer.address();
+        let reward_owner_a = Address::repeat_byte(0x71);
+        let reward_owner_b = Address::repeat_byte(0x72);
         let user_tx = test_regular_tx()
             .try_into_recovered()
             .expect("regular tx signer should recover");
-        let mut state = state_with_active_proposer_and_funded_account(proposer, user_tx.signer());
+        let mut state =
+            state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
+                let seed_context = BlockContext::new(0, 1, CHAIN_ID, proposer, vec![proposer]);
+                let ctx = BlockRuntimeContext::new(seed_context, storage.clone());
+                outbe_rewards::runtime::ensure_genesis_anchor(&ctx).unwrap();
+                outbe_oracle::api::set_exchange_rate(
+                    storage.clone(),
+                    Address::ZERO,
+                    outbe_oracle::api::DAY_TYPE_PAIR,
+                    U256::from(1_000_000u64),
+                    1,
+                    TEST_BLOCK_TIMESTAMP_BASE + 1,
+                )
+                .unwrap();
+                outbe_rewards::api::prepare_daily_validator_gem_batch(
+                    &ctx,
+                    20_240_101,
+                    U256::from(200u64),
+                    &[(reward_owner_a, 1), (reward_owner_b, 1)],
+                )
+                .unwrap();
+                outbe_gemfactory::schema::GemFactoryContract::new(storage)
+                    .total_gems_issued
+                    .write(U256::MAX - U256::ONE)
+                    .unwrap();
+            });
+        state.database.insert_account_info(
+            Address::from(*user_tx.signer()),
+            AccountInfo {
+                balance: U256::from(1_000_000u64),
+                ..Default::default()
+            },
+        );
+        {
+            let read_context = BlockContext::new(0, 1, CHAIN_ID, proposer, vec![proposer]);
+            let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
+                &mut state,
+                read_context,
+            );
+            StorageHandle::enter(&mut provider, |storage| {
+                let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
+                assert_eq!(rewards.reward_gem_queue_head.read()?, 0);
+                assert_eq!(rewards.reward_gem_queue_tail.read()?, 1);
+                assert_eq!(rewards.reward_gem_pending_batch_count.read()?, 1);
+                assert_eq!(
+                    outbe_gemfactory::schema::GemFactoryContract::new(storage)
+                        .total_gems_issued
+                        .read()?,
+                    U256::MAX - U256::ONE
+                );
+                Ok::<_, outbe_primitives::error::PrecompileError>(())
+            })
+            .expect("seed one retryable Rewards Gem batch");
+        }
         let chain_spec = test_chain_spec();
         let receipt_builder = reth_ethereum::evm::RethReceiptBuilder::default();
         let config = OutbeEvmConfig::new(chain_spec.clone()).with_evm_signer(signer.clone());
@@ -7629,11 +7684,10 @@ mod tests {
             .execute_transaction(cycle_tx)
             .expect("CycleTick should execute successfully")
             .tx_gas_used();
-        let revert_gas = crate::factory::with_forced_outbe_system_call_revert(|| {
-            executor.execute_transaction(rewards_tx)
-        })
-        .expect("RewardsGemDelivery revert should soft-fail")
-        .tx_gas_used();
+        let revert_gas = executor
+            .execute_transaction(rewards_tx)
+            .expect("RewardsGemDelivery revert should soft-fail")
+            .tx_gas_used();
         assert_eq!(
             revert_gas, rewards_visible_gas,
             "GAS-11: reverted delivery should charge visible envelope gas"
@@ -7642,7 +7696,11 @@ mod tests {
             .receipts()
             .get(1)
             .expect("reverted delivery must emit a failure receipt");
-        assert!(!failure_receipt.success);
+        assert!(
+            !failure_receipt.success,
+            "seeded delivery unexpectedly succeeded: logs={:?}",
+            failure_receipt.logs
+        );
         assert_eq!(
             failure_receipt.cumulative_gas_used,
             cycle_gas + rewards_visible_gas
@@ -7689,6 +7747,42 @@ mod tests {
                 + user_gas,
             "GAS-11: soft-failed system tx must charge only visible envelope gas"
         );
+        drop(executor);
+
+        let retry_context = BlockContext::new(2, 2, CHAIN_ID, proposer, vec![proposer]);
+        let mut retry_provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
+            &mut state,
+            retry_context.clone(),
+        );
+        StorageHandle::enter(&mut retry_provider, |storage| {
+            let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
+            let gem = outbe_gem::GemContract::new(storage.clone());
+            assert_eq!(rewards.reward_gem_queue_head.read()?, 0);
+            assert_eq!(rewards.reward_gem_queue_tail.read()?, 1);
+            assert_eq!(rewards.reward_gem_pending_batch_count.read()?, 1);
+            assert_eq!(gem.balance_of(reward_owner_a)?, 0);
+            assert_eq!(gem.balance_of(reward_owner_b)?, 0);
+
+            outbe_gemfactory::schema::GemFactoryContract::new(storage.clone())
+                .total_gems_issued
+                .write(U256::ZERO)?;
+            let retry_ctx = BlockRuntimeContext::new(retry_context, storage.clone());
+            assert!(matches!(
+                outbe_rewards::api::deliver_oldest_reward_gem_batch(&retry_ctx)?,
+                outbe_rewards::api::RewardGemDeliveryOutcome::Delivered {
+                    reward_utc_day: 20_240_101,
+                    recipient_count: 2,
+                    delivered_gem_load_amount,
+                } if delivered_gem_load_amount == U256::from(200u64)
+            ));
+            assert_eq!(rewards.reward_gem_queue_head.read()?, 1);
+            assert_eq!(rewards.reward_gem_queue_tail.read()?, 1);
+            assert_eq!(rewards.reward_gem_pending_batch_count.read()?, 0);
+            assert_eq!(gem.balance_of(reward_owner_a)?, 1);
+            assert_eq!(gem.balance_of(reward_owner_b)?, 1);
+            Ok::<_, outbe_primitives::error::PrecompileError>(())
+        })
+        .expect("the unchanged FIFO head must deliver on a later retry");
     }
 
     /// A revert in a consensus-critical begin-zone phase (here

@@ -815,7 +815,10 @@ fn prepared_validator_topup_and_terminal_residue_conserve_the_allocation() {
             ))
             .unwrap();
         let rewards = ctx.storage.contract::<outbe_rewards::schema::Rewards<'_>>();
-        let planned = rewards.reward_gem_planned_total.read(&20_240_101).unwrap();
+        let planned = rewards
+            .reward_gem_planned_load_amount
+            .read(&20_240_101)
+            .unwrap();
         let gem = outbe_gem::GemContract::new(ctx.storage.clone());
         for voter in voters {
             assert_eq!(
@@ -1039,7 +1042,10 @@ fn failed_terminal_dispatch_rolls_back_validator_topup_and_retry_settles_once() 
             );
         }
         assert_eq!(
-            rewards.reward_gem_planned_total.read(&20_240_101).unwrap(),
+            rewards
+                .reward_gem_planned_load_amount
+                .read(&20_240_101)
+                .unwrap(),
             expected_gem_load * U256::from(voters.len())
         );
         let cycle: Cycle<'_> = retry.storage.contract::<Cycle<'_>>();

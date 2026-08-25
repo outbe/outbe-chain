@@ -17,12 +17,13 @@ use crate::world::World;
 const USD_ISO: u16 = 840;
 const REWARD_GEM_TIMEOUT_SECS: u64 = 900;
 const MATERIALIZED_NOD_TIMEOUT_SECS: u64 = 60;
-const REWARDS_QUEUE_HEAD_SLOT: u64 = 29;
-const REWARDS_QUEUE_TAIL_SLOT: u64 = 30;
-const REWARDS_QUEUE_DAY_AT_SLOT: u64 = 31;
+const REWARD_GEM_QUEUE_HEAD_SLOT: u64 = 29;
+const REWARD_GEM_QUEUE_TAIL_SLOT: u64 = 30;
+const REWARD_GEM_UTC_DAY_BY_SEQUENCE_SLOT: u64 = 31;
 const DAILY_TOPUP_PREPARED_SLOT: u64 = 33;
 const REWARD_GEM_RECIPIENT_COUNT_SLOT: u64 = 36;
 const DAILY_TOPUP_SETTLED_SLOT: u64 = 15;
+const REWARD_GEM_PENDING_BATCH_COUNT_SLOT: u64 = 42;
 const MAX_REWARD_DELIVERY_SCAN_BLOCKS: u64 = 1_024;
 
 sol! {
@@ -78,10 +79,10 @@ fn validator_receives_reward_gem(world: &mut World) {
         !gem.costAmount.is_zero(),
         "reward Gem cost must be non-zero"
     );
-    let delivery_height = find_canonical_reward_gem_delivery(world, gem_id)
+    let delivery_block_number = find_canonical_reward_gem_delivery_block_number(world, gem_id)
         .expect("reward Gem must be emitted by canonical CycleTick -> RewardsGemDelivery");
     eprintln!(
-        "settlement_evidence kind=reward_gem owner={owner:#x} gem_id={gem_id} load={} cost={} delivery_height={delivery_height}",
+        "settlement_evidence kind=reward_gem owner={owner:#x} gem_id={gem_id} load={} cost={} delivery_block_number={delivery_block_number}",
         gem.gemLoad, gem.costAmount,
     );
 }
@@ -136,9 +137,9 @@ fn stale_boundary_persists_one_reward_batch(world: &mut World) {
         .expect("Gem balance captured before stale boundary");
     let deadline = Instant::now() + Duration::from_secs(REWARD_GEM_TIMEOUT_SECS);
     let snapshot = loop {
-        let snapshot = reward_queue_snapshot(world, port)
+        let snapshot = reward_gem_queue_snapshot(world, port)
             .expect("read Rewards Gem FIFO after stale daily boundary");
-        if snapshot.tail == snapshot.head.saturating_add(1) && snapshot.day.is_some() {
+        if snapshot.tail == snapshot.head.saturating_add(1) && snapshot.reward_utc_day.is_some() {
             break snapshot;
         }
         assert!(
@@ -149,15 +150,18 @@ fn stale_boundary_persists_one_reward_batch(world: &mut World) {
         );
         sleep(Duration::from_millis(500));
     };
-    let day = snapshot.day.expect("pending FIFO head day");
-    assert!(snapshot.prepared, "pending reward day must be prepared");
-    assert!(!snapshot.settled, "stale reward day must not be delivered");
+    let reward_utc_day = snapshot.reward_utc_day.expect("pending FIFO head UTC day");
+    assert!(snapshot.is_prepared, "pending reward day must be prepared");
+    assert!(
+        !snapshot.is_settled,
+        "stale reward day must not be delivered"
+    );
     assert_eq!(snapshot.recipient_count, 4, "one obligation per validator");
     assert_eq!(validator_reward_gem_balance(world, port), before);
-    assert_reward_queue_parity(world, snapshot);
-    world.state.pending_reward_gem_day = Some(day);
+    assert_reward_gem_queue_parity(world, snapshot);
+    world.state.pending_reward_gem_utc_day = Some(reward_utc_day);
     eprintln!(
-        "settlement_evidence kind=reward_gem_pending day={day} head={} tail={} recipients={} finalized={:?}",
+        "settlement_evidence kind=reward_gem_pending reward_utc_day={reward_utc_day} head={} tail={} recipients={} finalized={:?}",
         snapshot.head,
         snapshot.tail,
         snapshot.recipient_count,
@@ -172,8 +176,11 @@ fn restart_committee_with_pending_reward_batch(world: &mut World) {
         .rpc
         .finalized(port)
         .expect("finalized height before pending Rewards restart");
-    let pending = reward_queue_snapshot(world, port).expect("pending batch before restart");
-    assert_eq!(pending.day, world.state.pending_reward_gem_day);
+    let pending = reward_gem_queue_snapshot(world, port).expect("pending batch before restart");
+    assert_eq!(
+        pending.reward_utc_day,
+        world.state.pending_reward_gem_utc_day
+    );
     world
         .localnet
         .restart_committee_and_enclaves()
@@ -184,10 +191,10 @@ fn restart_committee_with_pending_reward_batch(world: &mut World) {
             .wait_finalized_at_least(port, before.saturating_add(1), 90),
         "committee did not resume finality after pending Rewards restart"
     );
-    let after = reward_queue_snapshot(world, port).expect("pending batch after restart");
+    let after = reward_gem_queue_snapshot(world, port).expect("pending batch after restart");
     assert_eq!(after, pending, "restart changed the pending Rewards batch");
-    assert_reward_queue_parity(world, after);
-    world.state.pending_reward_gem_restart_height = Some(before);
+    assert_reward_gem_queue_parity(world, after);
+    world.state.pending_reward_gem_restart_block_number = Some(before);
 }
 
 #[then("the first canonical fresh tally delivers the saved reward Gem batch exactly once")]
@@ -214,19 +221,31 @@ fn fresh_tally_delivers_saved_reward_batch(world: &mut World) {
         );
         sleep(Duration::from_millis(500));
     }
-    let snapshot = reward_queue_snapshot(world, port).expect("Rewards FIFO after delivery");
+    let snapshot = reward_gem_queue_snapshot(world, port).expect("Rewards FIFO after delivery");
     assert_eq!(
         snapshot.head, snapshot.tail,
         "delivery did not pop FIFO head"
     );
     let gem_id = reward_gem_id_at(world, port, expected - U256::ONE);
-    let delivery_height = find_canonical_reward_gem_delivery(world, gem_id)
-        .expect("saved reward batch must be delivered by canonical OSG2");
-    world.state.reward_gem_delivery_height = Some(delivery_height);
+    let fresh_tally_block_number = world
+        .price_oracle
+        .last_oracle_block()
+        .expect("controlled feeder recorded one canonical fresh tally");
+    let delivery_block_numbers = canonical_reward_gem_delivery_block_numbers(world, gem_id);
+    assert_eq!(
+        delivery_block_numbers,
+        vec![fresh_tally_block_number],
+        "the saved batch must be delivered exactly once by the OSG2 in the first canonical fresh tally block"
+    );
+    let delivery_block_number = fresh_tally_block_number;
+    world.state.reward_gem_delivery_block_number = Some(delivery_block_number);
     world.state.delivered_reward_gem_id = Some(gem_id);
     eprintln!(
-        "settlement_evidence kind=reward_gem_recovered day={} gem_id={gem_id} delivery_height={delivery_height}",
-        world.state.pending_reward_gem_day.expect("pending reward day"),
+        "settlement_evidence kind=reward_gem_recovered reward_utc_day={} gem_id={gem_id} delivery_block_number={delivery_block_number}",
+        world
+            .state
+            .pending_reward_gem_utc_day
+            .expect("pending reward UTC day"),
     );
 }
 
@@ -242,10 +261,10 @@ fn every_validator_observes_one_reward_delivery(world: &mut World) {
         .state
         .delivered_reward_gem_id
         .expect("delivered reward Gem id");
-    let delivery_height = world
+    let delivery_block_number = world
         .state
-        .reward_gem_delivery_height
-        .expect("delivery block height");
+        .reward_gem_delivery_block_number
+        .expect("delivery block number");
     for port in world.validators.committee_ports() {
         assert_eq!(validator_reward_gem_balance(world, port), expected_balance);
         assert_eq!(
@@ -253,7 +272,7 @@ fn every_validator_observes_one_reward_delivery(world: &mut World) {
             delivered,
             "validator {port} observes a different delivered Gem"
         );
-        let queue = reward_queue_snapshot(world, port).expect("Rewards FIFO parity read");
+        let queue = reward_gem_queue_snapshot(world, port).expect("Rewards FIFO parity read");
         assert_eq!(
             queue.head, queue.tail,
             "validator {port} retains pending batch"
@@ -262,12 +281,17 @@ fn every_validator_observes_one_reward_delivery(world: &mut World) {
     assert!(
         world
             .rpc
-            .wait_finalized_at_least(primary, delivery_height.saturating_add(3), 60),
+            .wait_finalized_at_least(primary, delivery_block_number.saturating_add(3), 60),
         "finality did not continue after reward Gem delivery"
     );
     assert_eq!(
         validator_reward_gem_balance(world, primary),
         expected_balance
+    );
+    assert_eq!(
+        canonical_reward_gem_delivery_block_numbers(world, delivered),
+        vec![delivery_block_number],
+        "continued finality must not create a second delivery for the saved batch"
     );
 }
 
@@ -776,13 +800,14 @@ fn wait_for_validator_reward_gem(world: &World) -> (Address, U256, eth::IGem::Ge
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct RewardQueueSnapshot {
+struct RewardGemQueueSnapshot {
     head: u64,
     tail: u64,
-    day: Option<u32>,
+    pending_batch_count: u64,
+    reward_utc_day: Option<u32>,
     recipient_count: u32,
-    prepared: bool,
-    settled: bool,
+    is_prepared: bool,
+    is_settled: bool,
 }
 
 fn validator_reward_owner(world: &World) -> Address {
@@ -818,78 +843,105 @@ fn reward_gem_id_at(world: &World, port: u16, index: U256) -> U256 {
     .expect("validator reward Gem enumeration")
 }
 
-fn reward_queue_snapshot(world: &World, port: u16) -> Option<RewardQueueSnapshot> {
+fn reward_gem_queue_snapshot(world: &World, port: u16) -> Option<RewardGemQueueSnapshot> {
     let url = world.rpc.url(port);
     let rewards = outbe_primitives::addresses::REWARDS_ADDRESS;
     let read = |slot: U256| eth::storage(&url, rewards, slot);
-    let head = u64::try_from(read(U256::from(REWARDS_QUEUE_HEAD_SLOT))?).ok()?;
-    let tail = u64::try_from(read(U256::from(REWARDS_QUEUE_TAIL_SLOT))?).ok()?;
-    if head > tail {
+    let head = u64::try_from(read(U256::from(REWARD_GEM_QUEUE_HEAD_SLOT))?).ok()?;
+    let tail = u64::try_from(read(U256::from(REWARD_GEM_QUEUE_TAIL_SLOT))?).ok()?;
+    let pending_batch_count =
+        u64::try_from(read(U256::from(REWARD_GEM_PENDING_BATCH_COUNT_SLOT))?).ok()?;
+    if head > tail || pending_batch_count != tail - head {
         return None;
     }
     if head == tail {
-        return Some(RewardQueueSnapshot {
+        return Some(RewardGemQueueSnapshot {
             head,
             tail,
-            day: None,
+            pending_batch_count,
+            reward_utc_day: None,
             recipient_count: 0,
-            prepared: false,
-            settled: false,
+            is_prepared: false,
+            is_settled: false,
         });
     }
-    let day = u32::try_from(read(
-        U256::from(head).mapping_slot(U256::from(REWARDS_QUEUE_DAY_AT_SLOT)),
+    let reward_utc_day = u32::try_from(read(
+        U256::from(head).mapping_slot(U256::from(REWARD_GEM_UTC_DAY_BY_SEQUENCE_SLOT)),
     )?)
     .ok()?;
-    let day_key = U256::from(day);
+    let day_key = U256::from(reward_utc_day);
     let recipient_count = u32::try_from(read(
         day_key.mapping_slot(U256::from(REWARD_GEM_RECIPIENT_COUNT_SLOT)),
     )?)
     .ok()?;
-    let prepared = !read(day_key.mapping_slot(U256::from(DAILY_TOPUP_PREPARED_SLOT)))?.is_zero();
-    let settled = !read(day_key.mapping_slot(U256::from(DAILY_TOPUP_SETTLED_SLOT)))?.is_zero();
-    Some(RewardQueueSnapshot {
+    let is_prepared = !read(day_key.mapping_slot(U256::from(DAILY_TOPUP_PREPARED_SLOT)))?.is_zero();
+    let is_settled = !read(day_key.mapping_slot(U256::from(DAILY_TOPUP_SETTLED_SLOT)))?.is_zero();
+    Some(RewardGemQueueSnapshot {
         head,
         tail,
-        day: Some(day),
+        pending_batch_count,
+        reward_utc_day: Some(reward_utc_day),
         recipient_count,
-        prepared,
-        settled,
+        is_prepared,
+        is_settled,
     })
 }
 
-fn assert_reward_queue_parity(world: &World, expected: RewardQueueSnapshot) {
+fn assert_reward_gem_queue_parity(world: &World, expected: RewardGemQueueSnapshot) {
     for port in world.validators.committee_ports() {
         assert_eq!(
-            reward_queue_snapshot(world, port),
+            reward_gem_queue_snapshot(world, port),
             Some(expected),
             "validator {port} observes a different Rewards FIFO"
         );
     }
 }
 
-fn find_canonical_reward_gem_delivery(world: &World, gem_id: U256) -> Option<u64> {
+fn find_canonical_reward_gem_delivery_block_number(world: &World, gem_id: U256) -> Option<u64> {
+    canonical_reward_gem_delivery_block_numbers(world, gem_id)
+        .into_iter()
+        .next()
+}
+
+fn canonical_reward_gem_delivery_block_numbers(world: &World, gem_id: U256) -> Vec<u64> {
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
-    let finalized = world.rpc.finalized(port)?;
+    let Some(finalized) = world.rpc.finalized(port) else {
+        return Vec::new();
+    };
     let from = finalized.saturating_sub(MAX_REWARD_DELIVERY_SCAN_BLOCKS.saturating_sub(1));
-    let blocks = eth::blocks_with_transactions(
+    let Some(blocks) = eth::blocks_with_transactions(
         &url,
         from,
         finalized,
-        usize::try_from(MAX_REWARD_DELIVERY_SCAN_BLOCKS).ok()?,
-    )?;
+        usize::try_from(MAX_REWARD_DELIVERY_SCAN_BLOCKS).unwrap_or(usize::MAX),
+    ) else {
+        return Vec::new();
+    };
     let gem_id_topic = format!("{:#066x}", gem_id);
     let gem_issued_topic = format!("{:#x}", eth::IGemFactory::GemIssued::SIGNATURE_HASH);
     let delivery_prefix = "0x4f53473202";
     let cycle_prefix = "0x4f53433202";
-    for (height, block) in (from..=finalized).zip(blocks) {
-        let transactions = block.get("transactions")?.as_array()?;
+    let mut matching_block_numbers = Vec::new();
+    for (block_number, block) in (from..=finalized).zip(blocks) {
+        let Some(transactions) = block
+            .get("transactions")
+            .and_then(serde_json::Value::as_array)
+        else {
+            continue;
+        };
         for (index, transaction) in transactions.iter().enumerate() {
             if index == 0 {
                 continue;
             }
-            let receipt = eth::receipt_json(&url, transaction.get("hash")?.as_str()?)?;
+            let Some(transaction_hash) =
+                transaction.get("hash").and_then(serde_json::Value::as_str)
+            else {
+                continue;
+            };
+            let Some(receipt) = eth::receipt_json(&url, transaction_hash) else {
+                continue;
+            };
             if transaction_is_reward_delivery_for_gem(
                 &transactions[index - 1],
                 transaction,
@@ -899,11 +951,11 @@ fn find_canonical_reward_gem_delivery(world: &World, gem_id: U256) -> Option<u64
                 &gem_issued_topic,
                 &gem_id_topic,
             ) {
-                return Some(height);
+                matching_block_numbers.push(block_number);
             }
         }
     }
-    None
+    matching_block_numbers
 }
 
 fn transaction_is_reward_delivery_for_gem(

@@ -66,8 +66,9 @@ pub fn read_voters_for_day(ctx: &BlockRuntimeContext, day: u32) -> Result<Vec<(A
 /// Immutable summary of one UTC day's prepared validator reward Gem batch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PreparedRewardGemBatch {
-    pub reward_day: u32,
-    pub planned_total: U256,
+    pub reward_utc_day: u32,
+    /// Exact COEN-denominated Gem load amount reserved by the daily allocation.
+    pub planned_gem_load_amount: U256,
     pub recipient_count: u32,
     pub digest: B256,
 }
@@ -85,37 +86,50 @@ pub enum RewardGemPreparationOutcome {
 pub enum RewardGemDeliveryOutcome {
     Empty,
     PendingRate {
-        reward_day: u32,
+        reward_utc_day: u32,
     },
     Delivered {
-        reward_day: u32,
+        reward_utc_day: u32,
         recipient_count: u32,
-        delivered_total: U256,
+        /// Exact COEN-denominated Gem load amount minted by this delivery.
+        delivered_gem_load_amount: U256,
     },
 }
 
 const REWARD_GEM_BATCH_DIGEST_DOMAIN: &[u8] = b"OUTBE_REWARD_GEM_BATCH_V1";
+
+fn reward_gem_retryable_error(message: impl Into<String>) -> PrecompileError {
+    let message = message.into();
+    tracing::error!(
+        target: "outbe::rewards",
+        error = %message,
+        "validator reward Gem batch remains pending"
+    );
+    PrecompileError::Revert(message)
+}
 
 /// Calculates and stores one exact validator reward Gem obligation without
 /// consulting a live Oracle price or minting a Gem. The first preparation owns
 /// the immutable FIFO append; an exact replay returns the stored summary.
 pub fn prepare_daily_validator_gem_batch(
     ctx: &BlockRuntimeContext,
-    day: u32,
-    topup_total: U256,
+    utc_day: u32,
+    validator_topup_amount: U256,
     voters: &[(Address, u64)],
 ) -> Result<RewardGemPreparationOutcome> {
-    ctx.with_checkpoint(|| prepare_daily_validator_gem_batch_inner(ctx, day, topup_total, voters))
+    ctx.with_checkpoint(|| {
+        prepare_daily_validator_gem_batch_inner(ctx, utc_day, validator_topup_amount, voters)
+    })
 }
 
 fn prepare_daily_validator_gem_batch_inner(
     ctx: &BlockRuntimeContext,
-    day: u32,
-    topup_total: U256,
+    utc_day: u32,
+    validator_topup_amount: U256,
     voters: &[(Address, u64)],
 ) -> Result<RewardGemPreparationOutcome> {
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
-    let gem_type = if day_number_since_genesis(ctx, day)? < 21 {
+    let gem_type = if day_number_since_genesis(ctx, utc_day)? < 21 {
         GemTypes::Genesis
     } else {
         GemTypes::Validator
@@ -123,135 +137,242 @@ fn prepare_daily_validator_gem_batch_inner(
 
     let total_count = voters.iter().try_fold(0u64, |total, (_, count)| {
         total.checked_add(*count).ok_or_else(|| {
-            PrecompileError::Revert("validator reward participation total overflow".into())
+            reward_gem_retryable_error("validator reward participation total overflow")
         })
     })?;
     let mut recipients = Vec::new();
-    let mut planned_total = U256::ZERO;
-    if !topup_total.is_zero() && total_count != 0 {
+    let mut planned_gem_load_amount = U256::ZERO;
+    if !validator_topup_amount.is_zero() && total_count != 0 {
         let denominator = U256::from(total_count);
         for (owner, count) in voters {
             if *count == 0 {
                 continue;
             }
-            let load = topup_total.checked_mul(U256::from(*count)).ok_or_else(|| {
-                PrecompileError::Revert("validator reward share multiply overflow".into())
-            })? / denominator;
+            let load = validator_topup_amount
+                .checked_mul(U256::from(*count))
+                .ok_or_else(|| {
+                    reward_gem_retryable_error("validator reward share multiply overflow")
+                })?
+                / denominator;
             if load.is_zero() {
                 continue;
             }
             if owner.is_zero() {
-                return Err(PrecompileError::Revert(
-                    "validator reward Gem owner is zero".into(),
+                return Err(reward_gem_retryable_error(
+                    "validator reward Gem owner is zero",
                 ));
             }
-            planned_total = planned_total.checked_add(load).ok_or_else(|| {
-                PrecompileError::Revert("validator reward planned total overflow".into())
-            })?;
+            planned_gem_load_amount =
+                planned_gem_load_amount.checked_add(load).ok_or_else(|| {
+                    reward_gem_retryable_error("validator reward planned total overflow")
+                })?;
             recipients.push((*owner, load));
         }
     }
     if recipients.len() > outbe_consensus::bls::MAX_VALIDATORS as usize {
-        return Err(PrecompileError::Fatal(format!(
+        return Err(reward_gem_retryable_error(format!(
             "validator reward Gem batch exceeds validator bound: count={} max={}",
             recipients.len(),
             outbe_consensus::bls::MAX_VALIDATORS
         )));
     }
-    let recipient_count = u32::try_from(recipients.len()).map_err(|_| {
-        PrecompileError::Fatal("validator reward Gem recipient count overflow".into())
-    })?;
+    let recipient_count = u32::try_from(recipients.len())
+        .map_err(|_| reward_gem_retryable_error("validator reward Gem recipient count overflow"))?;
     let digest = reward_gem_batch_digest(
-        day,
+        utc_day,
         gem_type as u8,
         REWARD_GEM_CURRENCY,
         REWARD_GEM_CURRENCY,
-        planned_total,
+        planned_gem_load_amount,
         &recipients,
     );
     let summary = PreparedRewardGemBatch {
-        reward_day: day,
-        planned_total,
+        reward_utc_day: utc_day,
+        planned_gem_load_amount,
         recipient_count,
         digest,
     };
 
-    if rewards.daily_topup_prepared.read(&day)? {
-        let stored_digest = rewards.reward_gem_batch_digest.read(&day)?;
-        let stored_total = rewards.reward_gem_planned_total.read(&day)?;
-        if stored_digest != digest || stored_total != planned_total {
-            return Err(PrecompileError::Fatal(format!(
-                "validator reward Gem preparation replay contradicts day {day}"
+    if rewards.daily_topup_prepared.read(&utc_day)? {
+        let stored_digest = rewards.reward_gem_batch_digest.read(&utc_day)?;
+        let stored_amount = rewards.reward_gem_planned_load_amount.read(&utc_day)?;
+        if stored_digest != digest || stored_amount != planned_gem_load_amount {
+            return Err(reward_gem_retryable_error(format!(
+                "validator reward Gem preparation replay contradicts UTC day {utc_day}"
             )));
         }
+        require_prepared_reward_gem_batch_replay_consistency(
+            &rewards,
+            utc_day,
+            gem_type as u8,
+            &recipients,
+        )?;
         return Ok(RewardGemPreparationOutcome::AlreadyPrepared(summary));
     }
-    if rewards.daily_topup_settled.read(&day)? {
-        return Err(PrecompileError::Fatal(format!(
-            "validator reward Gem day {day} is settled without a preparation"
+    if rewards.daily_topup_settled.read(&utc_day)? {
+        return Err(reward_gem_retryable_error(format!(
+            "validator reward Gem UTC day {utc_day} is settled without a preparation"
         )));
     }
 
-    rewards.reward_gem_batch_digest.write(&day, digest)?;
+    rewards.reward_gem_batch_digest.write(&utc_day, digest)?;
     rewards
-        .reward_gem_planned_total
-        .write(&day, planned_total)?;
-    rewards.reward_gem_type.write(&day, gem_type as u8)?;
+        .reward_gem_planned_load_amount
+        .write(&utc_day, planned_gem_load_amount)?;
+    rewards.reward_gem_type.write(&utc_day, gem_type as u8)?;
     rewards
         .reward_gem_issuance_currency
-        .write(&day, REWARD_GEM_CURRENCY)?;
+        .write(&utc_day, REWARD_GEM_CURRENCY)?;
     rewards
         .reward_gem_reference_currency
-        .write(&day, REWARD_GEM_CURRENCY)?;
+        .write(&utc_day, REWARD_GEM_CURRENCY)?;
 
     if recipients.is_empty() {
-        rewards.daily_topup_prepared.write(&day, true)?;
-        rewards.daily_topup_settled.write(&day, true)?;
+        rewards.daily_topup_prepared.write(&utc_day, true)?;
+        rewards.daily_topup_settled.write(&utc_day, true)?;
         return Ok(RewardGemPreparationOutcome::NoPayableShares(summary));
     }
 
     outbe_oracle::api::require_coen_pair(ctx.storage.clone(), REWARD_GEM_CURRENCY).map_err(
         |error| {
-            PrecompileError::Fatal(format!(
+            reward_gem_retryable_error(format!(
                 "validator reward Gem currency is not registered: {error}"
             ))
         },
     )?;
     let head = rewards.reward_gem_queue_head.read()?;
     let tail = rewards.reward_gem_queue_tail.read()?;
-    if head > tail {
-        return Err(PrecompileError::Fatal(
-            "validator reward Gem FIFO head exceeds tail".into(),
-        ));
-    }
-    let next_tail = tail.checked_add(1).ok_or_else(|| {
-        PrecompileError::Fatal("validator reward Gem FIFO sequence overflow".into())
+    let pending_batch_count = require_reward_gem_queue_consistency(&rewards, head, tail)?;
+    let next_tail = tail
+        .checked_add(1)
+        .ok_or_else(|| reward_gem_retryable_error("validator reward Gem FIFO sequence overflow"))?;
+    let next_pending_batch_count = pending_batch_count.checked_add(1).ok_or_else(|| {
+        reward_gem_retryable_error("validator reward Gem pending batch count overflow")
     })?;
-    if rewards.reward_gem_queue_sequence_plus_one.read(&day)? != 0 {
-        return Err(PrecompileError::Fatal(format!(
-            "validator reward Gem day {day} is already present in the FIFO"
+    if rewards.reward_gem_queue_sequence_plus_one.read(&utc_day)? != 0 {
+        return Err(reward_gem_retryable_error(format!(
+            "validator reward Gem UTC day {utc_day} is already present in the FIFO"
         )));
     }
 
-    let owners = rewards.reward_gem_owner_at.get_nested(&day);
-    let loads = rewards.reward_gem_load_at.get_nested(&day);
+    let owners = rewards.reward_gem_owner_at.get_nested(&utc_day);
+    let loads = rewards.reward_gem_load_at.get_nested(&utc_day);
     for (index, (owner, load)) in recipients.iter().copied().enumerate() {
         let index = u32::try_from(index).map_err(|_| {
-            PrecompileError::Fatal("validator reward Gem recipient index overflow".into())
+            reward_gem_retryable_error("validator reward Gem recipient index overflow")
         })?;
         owners.write(&index, owner)?;
         loads.write(&index, load)?;
     }
     rewards
         .reward_gem_recipient_count
-        .write(&day, recipient_count)?;
-    rewards.reward_gem_day_at.write(&tail, day)?;
+        .write(&utc_day, recipient_count)?;
+    rewards
+        .reward_gem_utc_day_by_sequence
+        .write(&tail, utc_day)?;
     rewards
         .reward_gem_queue_sequence_plus_one
-        .write(&day, next_tail)?;
+        .write(&utc_day, next_tail)?;
     rewards.reward_gem_queue_tail.write(next_tail)?;
-    rewards.daily_topup_prepared.write(&day, true)?;
+    rewards
+        .reward_gem_pending_batch_count
+        .write(next_pending_batch_count)?;
+    rewards.daily_topup_prepared.write(&utc_day, true)?;
     Ok(RewardGemPreparationOutcome::Prepared(summary))
+}
+
+fn require_prepared_reward_gem_batch_replay_consistency(
+    rewards: &Rewards<'_>,
+    utc_day: u32,
+    expected_gem_type: u8,
+    expected_recipients: &[(Address, U256)],
+) -> Result<()> {
+    let recipient_count = rewards.reward_gem_recipient_count.read(&utc_day)?;
+    let is_settled = rewards.daily_topup_settled.read(&utc_day)?;
+    let sequence_plus_one = rewards.reward_gem_queue_sequence_plus_one.read(&utc_day)?;
+
+    if expected_recipients.is_empty() {
+        if !is_settled || recipient_count != 0 || sequence_plus_one != 0 {
+            return Err(reward_gem_retryable_error(format!(
+                "validator reward Gem no-payable replay has corrupt state for UTC day {utc_day}"
+            )));
+        }
+        return Ok(());
+    }
+
+    let expected_count = u32::try_from(expected_recipients.len())
+        .map_err(|_| reward_gem_retryable_error("validator reward Gem recipient count overflow"))?;
+    if rewards.reward_gem_type.read(&utc_day)? != expected_gem_type
+        || rewards.reward_gem_issuance_currency.read(&utc_day)? != REWARD_GEM_CURRENCY
+        || rewards.reward_gem_reference_currency.read(&utc_day)? != REWARD_GEM_CURRENCY
+    {
+        return Err(reward_gem_retryable_error(format!(
+            "validator reward Gem preparation replay has corrupt metadata for UTC day {utc_day}"
+        )));
+    }
+
+    if is_settled {
+        if recipient_count != 0 || sequence_plus_one != 0 {
+            return Err(reward_gem_retryable_error(format!(
+                "validator reward Gem delivered replay retains live state for UTC day {utc_day}"
+            )));
+        }
+        return Ok(());
+    }
+    if recipient_count != expected_count {
+        return Err(reward_gem_retryable_error(format!(
+            "validator reward Gem preparation replay has corrupt recipient count for UTC day {utc_day}"
+        )));
+    }
+
+    let head = rewards.reward_gem_queue_head.read()?;
+    let tail = rewards.reward_gem_queue_tail.read()?;
+    require_reward_gem_queue_consistency(rewards, head, tail)?;
+    let sequence = sequence_plus_one.checked_sub(1).ok_or_else(|| {
+        reward_gem_retryable_error(format!(
+            "validator reward Gem preparation replay lost FIFO linkage for UTC day {utc_day}"
+        ))
+    })?;
+    if head > tail
+        || sequence < head
+        || sequence >= tail
+        || rewards.reward_gem_utc_day_by_sequence.read(&sequence)? != utc_day
+    {
+        return Err(reward_gem_retryable_error(format!(
+            "validator reward Gem preparation replay has corrupt FIFO linkage for UTC day {utc_day}"
+        )));
+    }
+
+    let owners = rewards.reward_gem_owner_at.get_nested(&utc_day);
+    let loads = rewards.reward_gem_load_at.get_nested(&utc_day);
+    for (index, (expected_owner, expected_load)) in expected_recipients.iter().enumerate() {
+        let index = u32::try_from(index).map_err(|_| {
+            reward_gem_retryable_error("validator reward Gem recipient index overflow")
+        })?;
+        if owners.read(&index)? != *expected_owner || loads.read(&index)? != *expected_load {
+            return Err(reward_gem_retryable_error(format!(
+                "validator reward Gem preparation replay has corrupt recipient {index} for UTC day {utc_day}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn require_reward_gem_queue_consistency(
+    rewards: &Rewards<'_>,
+    head: u64,
+    tail: u64,
+) -> Result<u64> {
+    let span = tail
+        .checked_sub(head)
+        .ok_or_else(|| reward_gem_retryable_error("validator reward Gem FIFO head exceeds tail"))?;
+    let pending_batch_count = rewards.reward_gem_pending_batch_count.read()?;
+    if pending_batch_count != span {
+        return Err(reward_gem_retryable_error(format!(
+            "validator reward Gem pending batch count {pending_batch_count} disagrees with FIFO span {span}"
+        )));
+    }
+    Ok(pending_batch_count)
 }
 
 /// Attempts to deliver exactly one complete FIFO head batch. Missing or stale
@@ -269,104 +390,112 @@ fn deliver_oldest_reward_gem_batch_inner(
     let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     let head = rewards.reward_gem_queue_head.read()?;
     let tail = rewards.reward_gem_queue_tail.read()?;
-    if head > tail {
-        return Err(PrecompileError::Fatal(
-            "validator reward Gem FIFO head exceeds tail".into(),
-        ));
-    }
+    let pending_batch_count = require_reward_gem_queue_consistency(&rewards, head, tail)?;
     if head == tail {
+        if rewards.reward_gem_utc_day_by_sequence.read(&head)? != 0 {
+            return Err(reward_gem_retryable_error(format!(
+                "validator reward Gem empty FIFO has a live UTC day at sequence {head}"
+            )));
+        }
         return Ok(RewardGemDeliveryOutcome::Empty);
     }
 
-    let reward_day = rewards.reward_gem_day_at.read(&head)?;
-    if reward_day == 0 {
-        return Err(PrecompileError::Fatal(format!(
-            "validator reward Gem FIFO head {head} has no reward day"
+    let reward_utc_day = rewards.reward_gem_utc_day_by_sequence.read(&head)?;
+    if reward_utc_day == 0 {
+        return Err(reward_gem_retryable_error(format!(
+            "validator reward Gem FIFO head {head} has no reward UTC day"
         )));
     }
-    let expected_sequence = head.checked_add(1).ok_or_else(|| {
-        PrecompileError::Fatal("validator reward Gem FIFO sequence overflow".into())
-    })?;
+    let expected_sequence = head
+        .checked_add(1)
+        .ok_or_else(|| reward_gem_retryable_error("validator reward Gem FIFO sequence overflow"))?;
     if rewards
         .reward_gem_queue_sequence_plus_one
-        .read(&reward_day)?
+        .read(&reward_utc_day)?
         != expected_sequence
     {
-        return Err(PrecompileError::Fatal(format!(
-            "validator reward Gem FIFO reverse index disagrees for day {reward_day}"
+        return Err(reward_gem_retryable_error(format!(
+            "validator reward Gem FIFO reverse index disagrees for UTC day {reward_utc_day}"
         )));
     }
-    if !rewards.daily_topup_prepared.read(&reward_day)?
-        || rewards.daily_topup_settled.read(&reward_day)?
+    if !rewards.daily_topup_prepared.read(&reward_utc_day)?
+        || rewards.daily_topup_settled.read(&reward_utc_day)?
     {
-        return Err(PrecompileError::Fatal(format!(
-            "validator reward Gem FIFO day {reward_day} has an illegal state"
+        return Err(reward_gem_retryable_error(format!(
+            "validator reward Gem FIFO UTC day {reward_utc_day} has an illegal state"
         )));
     }
 
-    let recipient_count = rewards.reward_gem_recipient_count.read(&reward_day)?;
+    let recipient_count = rewards.reward_gem_recipient_count.read(&reward_utc_day)?;
     if recipient_count == 0 || recipient_count > outbe_consensus::bls::MAX_VALIDATORS {
-        return Err(PrecompileError::Fatal(format!(
-            "validator reward Gem day {reward_day} has invalid recipient count {recipient_count}"
+        return Err(reward_gem_retryable_error(format!(
+            "validator reward Gem UTC day {reward_utc_day} has invalid recipient count {recipient_count}"
         )));
     }
-    let gem_type_raw = rewards.reward_gem_type.read(&reward_day)?;
+    let gem_type_raw = rewards.reward_gem_type.read(&reward_utc_day)?;
     let gem_type = match gem_type_raw {
         value if value == GemTypes::Genesis as u8 => GemTypes::Genesis,
         value if value == GemTypes::Validator as u8 => GemTypes::Validator,
         _ => {
-            return Err(PrecompileError::Fatal(format!(
-                "validator reward Gem day {reward_day} has unsupported type {gem_type_raw}"
+            return Err(reward_gem_retryable_error(format!(
+                "validator reward Gem UTC day {reward_utc_day} has unsupported type {gem_type_raw}"
             )))
         }
     };
-    let issuance_currency = rewards.reward_gem_issuance_currency.read(&reward_day)?;
-    let reference_currency = rewards.reward_gem_reference_currency.read(&reward_day)?;
+    let issuance_currency = rewards.reward_gem_issuance_currency.read(&reward_utc_day)?;
+    let reference_currency = rewards
+        .reward_gem_reference_currency
+        .read(&reward_utc_day)?;
     if issuance_currency != REWARD_GEM_CURRENCY || reference_currency != REWARD_GEM_CURRENCY {
-        return Err(PrecompileError::Fatal(format!(
-            "validator reward Gem day {reward_day} has invalid currencies {issuance_currency}/{reference_currency}"
+        return Err(reward_gem_retryable_error(format!(
+            "validator reward Gem UTC day {reward_utc_day} has invalid currencies {issuance_currency}/{reference_currency}"
         )));
     }
 
-    let owners = rewards.reward_gem_owner_at.get_nested(&reward_day);
-    let loads = rewards.reward_gem_load_at.get_nested(&reward_day);
+    let owners = rewards.reward_gem_owner_at.get_nested(&reward_utc_day);
+    let loads = rewards.reward_gem_load_at.get_nested(&reward_utc_day);
     let mut recipients = Vec::with_capacity(recipient_count as usize);
-    let mut delivered_total = U256::ZERO;
+    let mut delivered_gem_load_amount = U256::ZERO;
     for index in 0..recipient_count {
         let owner = owners.read(&index)?;
         let load = loads.read(&index)?;
         if owner.is_zero() || load.is_zero() {
-            return Err(PrecompileError::Fatal(format!(
-                "validator reward Gem day {reward_day} has an empty recipient at index {index}"
+            return Err(reward_gem_retryable_error(format!(
+                "validator reward Gem UTC day {reward_utc_day} has an empty recipient at index {index}"
             )));
         }
-        delivered_total = delivered_total.checked_add(load).ok_or_else(|| {
-            PrecompileError::Fatal("validator reward Gem delivery total overflow".into())
-        })?;
+        delivered_gem_load_amount =
+            delivered_gem_load_amount.checked_add(load).ok_or_else(|| {
+                reward_gem_retryable_error("validator reward Gem delivery total overflow")
+            })?;
         recipients.push((owner, load));
     }
-    if delivered_total != rewards.reward_gem_planned_total.read(&reward_day)? {
-        return Err(PrecompileError::Fatal(format!(
-            "validator reward Gem day {reward_day} total disagrees with its preparation"
+    if delivered_gem_load_amount
+        != rewards
+            .reward_gem_planned_load_amount
+            .read(&reward_utc_day)?
+    {
+        return Err(reward_gem_retryable_error(format!(
+            "validator reward Gem UTC day {reward_utc_day} total disagrees with its preparation"
         )));
     }
     let digest = reward_gem_batch_digest(
-        reward_day,
+        reward_utc_day,
         gem_type_raw,
         issuance_currency,
         reference_currency,
-        delivered_total,
+        delivered_gem_load_amount,
         &recipients,
     );
-    if digest != rewards.reward_gem_batch_digest.read(&reward_day)? {
-        return Err(PrecompileError::Fatal(format!(
-            "validator reward Gem day {reward_day} digest disagrees with its preparation"
+    if digest != rewards.reward_gem_batch_digest.read(&reward_utc_day)? {
+        return Err(reward_gem_retryable_error(format!(
+            "validator reward Gem UTC day {reward_utc_day} digest disagrees with its preparation"
         )));
     }
 
     outbe_oracle::api::require_coen_pair(ctx.storage.clone(), reference_currency).map_err(
         |error| {
-            PrecompileError::Fatal(format!(
+            reward_gem_retryable_error(format!(
                 "validator reward Gem currency is not registered: {error}"
             ))
         },
@@ -374,7 +503,7 @@ fn deliver_oldest_reward_gem_batch_inner(
     if outbe_oracle::api::fresh_coen_rate_for_opt(ctx.storage.clone(), reference_currency)?
         .is_none()
     {
-        return Ok(RewardGemDeliveryOutcome::PendingRate { reward_day });
+        return Ok(RewardGemDeliveryOutcome::PendingRate { reward_utc_day });
     }
 
     for (owner, load) in recipients {
@@ -391,39 +520,46 @@ fn deliver_oldest_reward_gem_batch_inner(
         owners.write(&index, Address::ZERO)?;
         loads.write(&index, U256::ZERO)?;
     }
-    rewards.reward_gem_recipient_count.write(&reward_day, 0)?;
-    rewards.reward_gem_day_at.write(&head, 0)?;
+    rewards
+        .reward_gem_recipient_count
+        .write(&reward_utc_day, 0)?;
+    rewards.reward_gem_utc_day_by_sequence.write(&head, 0)?;
     rewards
         .reward_gem_queue_sequence_plus_one
-        .write(&reward_day, 0)?;
-    rewards.daily_topup_settled.write(&reward_day, true)?;
+        .write(&reward_utc_day, 0)?;
+    rewards.daily_topup_settled.write(&reward_utc_day, true)?;
     rewards.reward_gem_queue_head.write(expected_sequence)?;
+    rewards.reward_gem_pending_batch_count.write(
+        pending_batch_count.checked_sub(1).ok_or_else(|| {
+            reward_gem_retryable_error("validator reward Gem pending batch count underflow")
+        })?,
+    )?;
 
     Ok(RewardGemDeliveryOutcome::Delivered {
-        reward_day,
+        reward_utc_day,
         recipient_count,
-        delivered_total,
+        delivered_gem_load_amount,
     })
 }
 
 fn reward_gem_batch_digest(
-    reward_day: u32,
+    reward_utc_day: u32,
     gem_type: u8,
     issuance_currency: u16,
     reference_currency: u16,
-    planned_total: U256,
+    planned_gem_load_amount: U256,
     recipients: &[(Address, U256)],
 ) -> B256 {
     let mut bytes = Vec::with_capacity(
         REWARD_GEM_BATCH_DIGEST_DOMAIN.len() + 4 + 1 + 2 + 2 + 4 + 32 + recipients.len() * 52,
     );
     bytes.extend_from_slice(REWARD_GEM_BATCH_DIGEST_DOMAIN);
-    bytes.extend_from_slice(&reward_day.to_be_bytes());
+    bytes.extend_from_slice(&reward_utc_day.to_be_bytes());
     bytes.push(gem_type);
     bytes.extend_from_slice(&issuance_currency.to_be_bytes());
     bytes.extend_from_slice(&reference_currency.to_be_bytes());
     bytes.extend_from_slice(&(recipients.len() as u32).to_be_bytes());
-    bytes.extend_from_slice(&planned_total.to_be_bytes::<32>());
+    bytes.extend_from_slice(&planned_gem_load_amount.to_be_bytes::<32>());
     for (owner, load) in recipients {
         bytes.extend_from_slice(owner.as_slice());
         bytes.extend_from_slice(&load.to_be_bytes::<32>());
@@ -661,8 +797,8 @@ mod tests {
             let RewardGemPreparationOutcome::Prepared(batch) = outcome else {
                 panic!("fresh day must prepare one batch: {outcome:?}");
             };
-            assert_eq!(batch.reward_day, 20240101);
-            assert_eq!(batch.planned_total, U256::from(400u64));
+            assert_eq!(batch.reward_utc_day, 20240101);
+            assert_eq!(batch.planned_gem_load_amount, U256::from(400u64));
             assert_eq!(batch.recipient_count, 2);
 
             assert!(voter_gem_loads(&ctx, VAL_X).is_empty());
@@ -673,7 +809,10 @@ mod tests {
             assert!(!rewards.daily_topup_settled.read(&20240101).unwrap());
             assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 0);
             assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 1);
-            assert_eq!(rewards.reward_gem_day_at.read(&0).unwrap(), 20240101);
+            assert_eq!(
+                rewards.reward_gem_utc_day_by_sequence.read(&0).unwrap(),
+                20240101
+            );
             assert_eq!(
                 rewards.reward_gem_recipient_count.read(&20240101).unwrap(),
                 2
@@ -714,7 +853,7 @@ mod tests {
     }
 
     #[test]
-    fn prepared_reward_gem_batch_freezes_reward_day_type_for_delivery() {
+    fn prepared_reward_gem_batch_freezes_reward_utc_day_type_for_delivery() {
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
@@ -730,7 +869,7 @@ mod tests {
             assert!(matches!(
                 first,
                 RewardGemDeliveryOutcome::Delivered {
-                    reward_day: 20240101,
+                    reward_utc_day: 20240101,
                     ..
                 }
             ));
@@ -738,7 +877,7 @@ mod tests {
             assert!(matches!(
                 second,
                 RewardGemDeliveryOutcome::Delivered {
-                    reward_day: 20240201,
+                    reward_utc_day: 20240201,
                     ..
                 }
             ));
@@ -799,7 +938,84 @@ mod tests {
     }
 
     #[test]
-    fn contradictory_preparation_replay_is_fatal_without_writes() {
+    fn delivered_preparation_replay_ignores_dead_recipient_rows() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.enter(|handle| {
+            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
+            bootstrap_genesis(&ctx);
+            seed_oracle(&ctx, one_coen840());
+            let voters = [(VAL_X, 1)];
+
+            prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(100u64), &voters).unwrap();
+            assert!(matches!(
+                deliver_oldest_reward_gem_batch(&ctx).unwrap(),
+                RewardGemDeliveryOutcome::Delivered {
+                    reward_utc_day: 20240101,
+                    ..
+                }
+            ));
+
+            // A delivered batch is authoritative from its settled marker and
+            // lack of live FIFO linkage. Dead recipient rows are not replay
+            // inputs and therefore cannot halt Cycle or mint a second Gem.
+            let rewards = ctx.storage.contract::<Rewards>();
+            rewards
+                .reward_gem_owner_at
+                .get_nested(&20240101)
+                .write(&0, VAL_Y)
+                .unwrap();
+            rewards
+                .reward_gem_load_at
+                .get_nested(&20240101)
+                .write(&0, U256::from(999u64))
+                .unwrap();
+
+            let replay =
+                prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(100u64), &voters)
+                    .unwrap();
+            assert!(matches!(
+                replay,
+                RewardGemPreparationOutcome::AlreadyPrepared(_)
+            ));
+            assert_eq!(rewards.reward_gem_queue_head.read().unwrap(), 1);
+            assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), 1);
+            assert_eq!(rewards.reward_gem_pending_batch_count.read().unwrap(), 0);
+            assert_eq!(voter_gem_loads(&ctx, VAL_X).len(), 1);
+        });
+    }
+
+    #[test]
+    fn prepared_batch_with_lost_fifo_linkage_is_retryable_without_writes() {
+        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+        storage.enter(|handle| {
+            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
+            bootstrap_genesis(&ctx);
+            seed_oracle(&ctx, one_coen840());
+            let voters = [(VAL_X, 1)];
+            prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(100u64), &voters).unwrap();
+
+            let rewards = ctx.storage.contract::<Rewards>();
+            rewards.reward_gem_queue_tail.write(0).unwrap();
+
+            let replay_error =
+                prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(100u64), &voters)
+                    .unwrap_err();
+            assert!(
+                matches!(replay_error, PrecompileError::Revert(_)),
+                "prepared obligation without a live FIFO link must fail closed: {replay_error:?}"
+            );
+
+            let delivery_error = deliver_oldest_reward_gem_batch(&ctx).unwrap_err();
+            assert!(
+                matches!(delivery_error, PrecompileError::Revert(_)),
+                "an empty queue cannot hide a prepared unsettled obligation: {delivery_error:?}"
+            );
+            assert!(voter_gem_loads(&ctx, VAL_X).is_empty());
+        });
+    }
+
+    #[test]
+    fn contradictory_preparation_replay_is_retryable_without_writes() {
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
@@ -821,7 +1037,7 @@ mod tests {
                     )
                 })
                 .unwrap_err();
-            assert!(matches!(err, PrecompileError::Fatal(_)), "{err:?}");
+            assert!(matches!(err, PrecompileError::Revert(_)), "{err:?}");
             assert_eq!(rewards.reward_gem_queue_tail.read().unwrap(), before_tail);
             assert_eq!(
                 rewards.reward_gem_batch_digest.read(&20240101).unwrap(),
@@ -849,13 +1065,13 @@ mod tests {
             assert_eq!(
                 deliver_oldest_reward_gem_batch(&ctx).unwrap(),
                 RewardGemDeliveryOutcome::PendingRate {
-                    reward_day: 20240101
+                    reward_utc_day: 20240101
                 }
             );
             assert_eq!(
                 deliver_oldest_reward_gem_batch(&ctx).unwrap(),
                 RewardGemDeliveryOutcome::PendingRate {
-                    reward_day: 20240101
+                    reward_utc_day: 20240101
                 }
             );
             let rewards = ctx.storage.contract::<Rewards>();
@@ -883,9 +1099,9 @@ mod tests {
             assert_eq!(
                 deliver_oldest_reward_gem_batch(&ctx).unwrap(),
                 RewardGemDeliveryOutcome::Delivered {
-                    reward_day: 20240101,
+                    reward_utc_day: 20240101,
                     recipient_count: 2,
-                    delivered_total: U256::from(400u64),
+                    delivered_gem_load_amount: U256::from(400u64),
                 }
             );
             assert_eq!(voter_gem_loads(&ctx, VAL_X), vec![U256::from(100u64)]);
@@ -932,7 +1148,7 @@ mod tests {
             assert!(matches!(
                 deliver_oldest_reward_gem_batch(&ctx).unwrap(),
                 RewardGemDeliveryOutcome::Delivered {
-                    reward_day: 20240101,
+                    reward_utc_day: 20240101,
                     ..
                 }
             ));
@@ -942,7 +1158,7 @@ mod tests {
     }
 
     #[test]
-    fn two_reward_days_deliver_fifo_one_batch_per_call() {
+    fn two_reward_utc_days_deliver_fifo_one_batch_per_call() {
         let mut storage = HashMapStorageProvider::new(CHAIN_ID);
         storage.enter(|handle| {
             let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
@@ -957,7 +1173,7 @@ mod tests {
             assert!(matches!(
                 first,
                 RewardGemDeliveryOutcome::Delivered {
-                    reward_day: 20240101,
+                    reward_utc_day: 20240101,
                     ..
                 }
             ));
@@ -968,7 +1184,7 @@ mod tests {
             assert!(matches!(
                 second,
                 RewardGemDeliveryOutcome::Delivered {
-                    reward_day: 20240102,
+                    reward_utc_day: 20240102,
                     ..
                 }
             ));
@@ -996,10 +1212,10 @@ mod tests {
             assert!(matches!(
                 deliver_oldest_reward_gem_batch(&reopened).unwrap(),
                 RewardGemDeliveryOutcome::Delivered {
-                    reward_day: 20240101,
-                    delivered_total,
+                    reward_utc_day: 20240101,
+                    delivered_gem_load_amount,
                     ..
-                } if delivered_total == U256::from(90u64)
+                } if delivered_gem_load_amount == U256::from(90u64)
             ));
             assert_eq!(voter_gem_loads(&reopened, VAL_Z), vec![U256::from(90u64)]);
             assert!(rewards.daily_topup_settled.read(&20240101).unwrap());
