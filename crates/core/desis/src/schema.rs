@@ -4,11 +4,6 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_common::WorldwideDay;
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::DESIS_ADDRESS;
-#[cfg(not(feature = "e2e-test"))]
-use outbe_primitives::units::SCALE_1E6_U256;
-
-#[cfg(not(feature = "e2e-test"))]
-use crate::constants::PROMIS_LOAD;
 
 /// Auction lifecycle stage, in order: a day is `Briefed`, `Started` for the
 /// commit window, `Revealing` for the reveal window, `Clearing` while the
@@ -79,20 +74,18 @@ pub struct AuctionConfig {
 }
 
 impl AuctionConfig {
-    /// Build the demand-side config from the day's per-reference entry prices.
-    /// `promis_load_minor` scales `PROMIS_LOAD` to six-decimal PROMIS-units;
-    /// `min_intex_bid_rate = 0` means no bid floor. `call_trigger`,
-    /// `min_intex_bid_quantity` and `commit_bond_minor` are left at their defaults
-    /// here and populated at auction start (`start_auction`), where the genesis
-    /// `IntexParams` and the prior-clearing count are in reach.
-    pub fn from_reference_prices(reference_prices: Vec<ReferenceCurrencyPrice>) -> Self {
+    /// Build the demand-side config from the day's per-reference entry prices and
+    /// the load the day was briefed at. `min_intex_bid_rate = 0` means no bid
+    /// floor. `call_trigger`, `min_intex_bid_quantity` and `commit_bond_minor` are
+    /// left at their defaults here and populated at auction start
+    /// (`start_auction`), where the genesis `IntexParams` and the prior-clearing
+    /// count are in reach.
+    pub fn from_reference_prices(
+        reference_prices: Vec<ReferenceCurrencyPrice>,
+        promis_load_minor: u128,
+    ) -> Self {
         Self {
-            // An e2e day's whole budget is a few units, so a production-priced
-            // Intex could never be issued out of it.
-            #[cfg(not(feature = "e2e-test"))]
-            promis_load_minor: (U256::from(PROMIS_LOAD) * SCALE_1E6_U256).to::<u128>(),
-            #[cfg(feature = "e2e-test")]
-            promis_load_minor: 1,
+            promis_load_minor,
             call_trigger: IntexCallTrigger::default(),
             min_intex_bid_rate: 0,
             min_intex_bid_quantity: 0,
@@ -292,6 +285,12 @@ pub struct DesisContract {
     /// Floor and call derive from it, so only the anchor is stored.
     #[attribute(order = 37)]
     pub reference_price_entry: outbe_primitives::storage::dsl::Map<B256, U256>,
+
+    // --- PROMIS load ladder ---
+    /// Exponent `k` of the current load, `promis_load_minor = 10^k`. Unset on a
+    /// chain that has never briefed a priced day; the deadband holds against it.
+    #[attribute(order = 38)]
+    pub promis_load_exponent: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl DesisContract<'_> {

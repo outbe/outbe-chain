@@ -16,11 +16,13 @@ use outbe_intexfactory::SeriesId;
 use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
     DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_REFERENCE_PRICES,
-    MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, REFUND_CHUNK_LEN,
+    MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS,
+    PROMIS_LOAD_ANCHOR_ISO, PROMIS_LOAD_LAUNCH_EXPONENT, REFUND_CHUNK_LEN,
     REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
+use crate::promis_load;
 use crate::schema::{
     AuctionConfig, AuctionStage, BidData, ClearingResult, DesisContract, ReferenceCurrencyPrice,
 };
@@ -72,10 +74,11 @@ pub(crate) fn record_preflighted_brief(
     anchor: u32,
 ) -> Result<()> {
     let mut contract = storage.contract::<DesisContract>();
+    let promis_load_minor = step_promis_load(&mut contract, worldwide_day, &reference_prices)?;
     let reference_prices = choose_reference_prices(&mut contract, worldwide_day, reference_prices)?;
     contract.write_auction_config(
         worldwide_day,
-        &AuctionConfig::from_reference_prices(reference_prices),
+        &AuctionConfig::from_reference_prices(reference_prices, promis_load_minor),
     )?;
     contract.write_stage(worldwide_day, AuctionStage::Briefed)?;
     contract
@@ -87,6 +90,61 @@ pub(crate) fn record_preflighted_brief(
     contract.auction_at.write(&worldwide_day, anchor)?;
     contract.push_sched_active(worldwide_day)?;
     Ok(())
+}
+
+/// The load this day is briefed at: one Intex strikes at `promis_load` COEN, so
+/// the ladder follows COEN/USD down the decades to hold that strike near its
+/// anchor. Reads the anchor row before `choose_reference_prices` trims the
+/// table — that filter caps the day at `MAX_REFERENCE_PRICES` sorted by ISO
+/// ascending and keeps one currency per series-id letter, and either would drop
+/// USD and take the anchor with it.
+#[cfg(not(feature = "e2e-test"))]
+fn step_promis_load(
+    contract: &mut DesisContract<'_>,
+    worldwide_day: WorldwideDay,
+    reference_prices: &[ReferenceCurrencyPrice],
+) -> Result<u128> {
+    let current = contract.read_promis_load_exponent()?;
+    let anchor = reference_prices
+        .iter()
+        .find(|row| row.iso_code == PROMIS_LOAD_ANCHOR_ISO)
+        .map(|row| row.entry_price_minor);
+    // An unpriced anchor leaves the ladder where it is; Metadosis has already
+    // announced the currency it could not price.
+    let Some(rate) = anchor else {
+        return Ok(promis_load::load_minor(
+            current.unwrap_or(PROMIS_LOAD_LAUNCH_EXPONENT),
+        ));
+    };
+    let exponent = promis_load::resolve(current, rate);
+    let load_minor = promis_load::load_minor(exponent);
+    match current {
+        Some(previous) if previous == exponent => {}
+        Some(previous) => {
+            contract.emit(IDesis::PromisLoadStepped {
+                worldwideDay: worldwide_day.into(),
+                previousLoadMinor: promis_load::load_minor(previous),
+                newLoadMinor: load_minor,
+                coenUsdRateMinor: rate,
+            })?;
+            contract.write_promis_load_exponent(exponent)?;
+        }
+        // The ladder taking its first position is not a step, and the load it
+        // settles on is already carried by the day's config and START message.
+        None => contract.write_promis_load_exponent(exponent)?,
+    }
+    Ok(load_minor)
+}
+
+/// An e2e day's whole budget is a few PROMIS-units, so a day priced off the
+/// ladder could never issue a single Intex out of it.
+#[cfg(feature = "e2e-test")]
+fn step_promis_load(
+    _contract: &mut DesisContract<'_>,
+    _worldwide_day: WorldwideDay,
+    _reference_prices: &[ReferenceCurrencyPrice],
+) -> Result<u128> {
+    Ok(1)
 }
 
 /// The currencies a day will actually price: one per series-id letter, at most

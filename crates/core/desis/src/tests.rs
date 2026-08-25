@@ -25,8 +25,15 @@ const SRC_CHAIN: u32 = 1;
 /// anchors to that same midnight (the normal on-time case).
 const NOW: u64 = 1_699_920_000 + 5;
 const ANCHOR: u64 = NOW - NOW % 86_400;
-const LOAD_MINOR: u128 = crate::constants::PROMIS_LOAD * PROMIS_LOAD_MINOR;
 const ENTRY_PRICE: u128 = 2_000_000; // 2.0 on the COEN/840 scale; escrow basis = promis_load
+/// The load the ladder picks for `ENTRY_PRICE`, pinned by `the_fixture_load_is_the_one_the_ladder_picks`.
+const LOAD_MINOR: u128 = 100 * PROMIS_LOAD_MINOR;
+
+#[test]
+fn the_fixture_load_is_the_one_the_ladder_picks() {
+    let picked = crate::promis_load::resolve(None, U256::from(ENTRY_PRICE));
+    assert_eq!(crate::promis_load::load_minor(picked), LOAD_MINOR);
+}
 
 fn bidder(n: u8) -> Address {
     let mut bytes = [0u8; 20];
@@ -2038,7 +2045,7 @@ fn escrow_basis_is_promis_load() {
     let cfg = AuctionConfig::from_reference_prices(vec![crate::schema::ReferenceCurrencyPrice {
         iso_code: REFERENCE_ISO,
         entry_price_minor: U256::from(1_000_150u64),
-    }]);
+    }], LOAD_MINOR);
     assert_eq!(cfg.escrow_basis_minor(), cfg.promis_load_minor);
 }
 

@@ -13,8 +13,22 @@ pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x6Dda31E7211c31dB8E5AF24c7
 /// Minimum-bid-quantity floor: 4% of the prior series' issued count (basis points).
 pub const BID_QUANTITY_FLOOR_BPS: u32 = 400;
 
-/// PROMIS load: 100k PROMIS per 1 Intex (scale 1e6 PROMIS-units on the wire).
-pub const PROMIS_LOAD: u128 = 100_000;
+/// Currency the PROMIS load is anchored to. Mirrors the oracle's `DAY_TYPE_ISO`:
+/// the day-type pair, which its pre-admission projection always prices.
+pub const PROMIS_LOAD_ANCHOR_ISO: u16 = 840;
+
+/// Decade the ladder starts on before any day has been priced: 100k PROMIS per
+/// Intex, which strikes at 100 USD while COEN/USD is 0.001.
+pub const PROMIS_LOAD_LAUNCH_EXPONENT: u32 = 11;
+
+/// PROMIS load anchor: the load is chosen so that `load_minor × coen_usd_rate_minor`
+/// carries this many decimal digits, which pins one Intex's strike at 100 USD.
+pub const PROMIS_LOAD_ANCHOR_DIGITS: u32 = 15;
+
+/// Deadband around each decade boundary, in basis points. A rate loitering at a
+/// boundary would otherwise flip the load day after day, and the load a day is
+/// briefed on is snapshotted into its series for good.
+pub const PROMIS_LOAD_BAND_BPS: u32 = 200;
 
 /// Bid fan-in deadline: clearing proceeds without chains that have not reported
 /// BIDS_DONE within this window after the clearing stage starts. A repair window
