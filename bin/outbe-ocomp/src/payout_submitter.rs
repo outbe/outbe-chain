@@ -218,8 +218,15 @@ pub enum LocalPayoutPreparationErrorV1 {
     InvalidChainId,
     #[error("payout transaction calldata is empty")]
     EmptyCalldata,
-    #[error("payout transaction fee envelope is invalid")]
-    InvalidFeeEnvelope,
+    #[error(
+        "payout transaction fee envelope is invalid: max fee {max_fee_per_gas} outside \
+         {min_fee}..={max_fee}"
+    )]
+    InvalidFeeEnvelope {
+        max_fee_per_gas: u128,
+        min_fee: u128,
+        max_fee: u128,
+    },
     #[error("payout transaction calldata exceeds the zero-fee cap")]
     CalldataTooLarge,
     #[error("payout transaction allocation failed")]
@@ -263,7 +270,11 @@ impl PayoutTransactionPreparerV1 for LocalPayoutTransactionPreparerV1 {
             ..=MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS)
             .contains(&max_fee_per_gas)
         {
-            return Err(LocalPayoutPreparationErrorV1::InvalidFeeEnvelope);
+            return Err(LocalPayoutPreparationErrorV1::InvalidFeeEnvelope {
+                max_fee_per_gas,
+                min_fee: outbe_zerofee::MIN_ZERO_FEE_CONTRIBUTOR_BATCH_MAX_FEE_PER_GAS,
+                max_fee: MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
+            });
         }
         let signed = self.signer.sign_eip1559(TxEip1559 {
             chain_id: self.chain_id,

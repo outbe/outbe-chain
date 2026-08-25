@@ -204,7 +204,13 @@ impl VoteTransactionPreparerV1 for LocalVoteTransactionPreparerV1 {
             || !(MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS..=MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS)
                 .contains(&max_fee_per_gas)
         {
-            return Err(LocalVotePreparationErrorV1::InvalidFeeEnvelope);
+            return Err(LocalVotePreparationErrorV1::InvalidFeeEnvelope {
+                max_fee_per_gas,
+                min_fee: MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+                max_fee: MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
+                gas_limit,
+                expected_gas_limit: OCOMP_SYSTEM_CARRIER_GAS_LIMIT,
+            });
         }
 
         let vote = self
@@ -247,8 +253,17 @@ pub enum LocalVotePreparationErrorV1 {
     InvalidChainId,
     #[error("OCOMP vote transaction result is empty")]
     EmptyCanonicalResult,
-    #[error("OCOMP vote transaction fee envelope is invalid")]
-    InvalidFeeEnvelope,
+    #[error(
+        "OCOMP vote transaction fee envelope is invalid: max fee {max_fee_per_gas} outside \
+         {min_fee}..={max_fee}, gas limit {gas_limit} (expected {expected_gas_limit})"
+    )]
+    InvalidFeeEnvelope {
+        max_fee_per_gas: u128,
+        min_fee: u128,
+        max_fee: u128,
+        gas_limit: u64,
+        expected_gas_limit: u64,
+    },
     #[error("OCOMP vote transaction calldata exceeds the protocol cap")]
     CalldataTooLarge,
     #[error("OCOMP vote transaction allocation failed")]
