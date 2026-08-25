@@ -97,10 +97,8 @@ pub fn dispatch(
         }
         let mut legs = Vec::new();
         let ids = call.seriesIds.clone();
-        for (series_id, issuance_currency) in call
-            .seriesIds
-            .into_iter()
-            .zip(call.issuanceCurrencies)
+        for (series_id, issuance_currency) in
+            call.seriesIds.into_iter().zip(call.issuanceCurrencies)
         {
             legs.extend(crate::api::issue(
                 &storage,
@@ -124,7 +122,11 @@ pub fn dispatch(
         // the engine wrote.
         if call.issuedAt != 0 {
             for series_id in ids {
-                outbe_intex::api::set_issued_at(&storage, SeriesId::from(series_id), call.issuedAt)?;
+                outbe_intex::api::set_issued_at(
+                    &storage,
+                    SeriesId::from(series_id),
+                    call.issuedAt,
+                )?;
             }
         }
         crate::api::send_issuance(&storage, legs)?;
