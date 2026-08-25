@@ -4014,7 +4014,7 @@ where
             let chain_id = self.inner.evm.chain_id();
             let proposer = self.inner.evm.block().beneficiary();
 
-            // Pull `(balance, nonce, code_hash, maybe_code)` from the
+            // Pull `(code_hash, maybe_code)` from the
             // provider. `State<DB>::basic()` (the underlying source) only
             // populates `info.code` for accounts that have had recent
             // changes; otherwise the bytecode lives behind `code_by_hash`
@@ -4033,13 +4033,11 @@ where
                 );
                 let mut provider = DirectStorageProvider::new(db, ctx);
                 let storage = StorageHandle::new(&mut provider);
-                storage.with_account_info(signer, |info| {
-                    Ok((info.balance, info.nonce, info.code_hash, info.code.clone()))
-                })
+                storage.with_account_info(signer, |info| Ok((info.code_hash, info.code.clone())))
             };
 
-            let (signer_balance, _signer_nonce, code_hash, maybe_code) = match signer_state {
-                Ok(quad) => quad,
+            let (code_hash, maybe_code) = match signer_state {
+                Ok(code) => code,
                 Err(err) => {
                     return Err(BlockExecutionError::Internal(
                         InternalBlockExecutionError::Other(
@@ -4082,7 +4080,7 @@ where
             //
             // The stateful `authorize_sponsorship` inside the branch still
             // soft-fails a correctly-shaped attempt with code 110 (quota
-            // exhausted), 111 (anti-sybil: balance 0), or 107 (self) — those
+            // exhausted) or 107 (self) — those
             // are zero-tip requests that explicitly asked for free and must
             // not be silently charged.
             let wants_sponsorship = delegated_to == Some(outbe_zerofee::ZEROFEE_ADDRESS)
@@ -4107,16 +4105,15 @@ where
                     let mut provider = DirectStorageProvider::new(db, ctx);
                     let outcome = {
                         let storage = StorageHandle::new(&mut provider);
-                        outbe_zerofee::authorize_sponsorship(
-                            storage.clone(),
-                            signer,
-                            signer_balance,
-                            timestamp,
-                        )
-                        .and_then(|auth| {
-                            outbe_zerofee::record_sponsorship_use(storage, signer, auth.current_day)
+                        outbe_zerofee::authorize_sponsorship(storage.clone(), signer, timestamp)
+                            .and_then(|auth| {
+                                outbe_zerofee::record_sponsorship_use(
+                                    storage,
+                                    signer,
+                                    auth.current_day,
+                                )
                                 .map(|_| auth)
-                        })
+                            })
                     };
                     let result = match outcome {
                         Ok(auth) => provider
@@ -12981,8 +12978,8 @@ mod tests {
         );
 
         // signer: EIP-7702 delegated to ZEROFEE_ADDRESS, with the
-        // requested balance so the anti-sybil gate (`balance > 0`,
-        // balance-only — nonce is not a gate) can be exercised.
+        // requested balance so sponsored fee-debit invariants can be
+        // exercised for both funded and exactly-zero accounts.
         let delegation = Bytecode::new_eip7702(ZEROFEE_ADDRESS);
         db.insert_account_info(
             signer,
@@ -13029,7 +13026,7 @@ mod tests {
     }
 
     /// Happy path: a sponsored tx with `value=0`, `priority_fee=0`,
-    /// `to ∈ whitelist`, signer with `balance > 0` is admitted by the
+    /// `to ∈ whitelist` is admitted by the
     /// executor pre-fee hook, executed under zero-fee cfg overrides,
     /// and produces a receipt with a `SponsorshipAuthorized` log. The
     /// signer's balance is untouched and ZEROFEE_ADDRESS' counter slot
@@ -13183,16 +13180,11 @@ mod tests {
         assert_eq!(counter, 0, "non-sponsored path must not burn quota");
     }
 
-    /// Anti-sybil V2: `balance == 0` blocks the sponsored path
-    /// regardless of nonce. EIP-7702 set-code transactions bump the
-    /// authority's nonce as part of auth processing (25 k gas per
-    /// auth, paid by the sponsor), so a fresh EOA can reach nonce > 0
-    /// without spending any of its own native balance. Only positive balance is
-    /// a real economic gate — the pre-fee hook returns
-    /// `FreeTxDailyNoExistingAccount` (code 111) and pushes a
-    /// soft-failure receipt.
+    /// Native balance is not an eligibility signal: a correctly delegated
+    /// zero-balance signer executes through the sponsored path, burns one
+    /// quota slot, and pays no native gas.
     #[test]
-    fn eip7702_sponsored_tx_rejects_fresh_zero_balance_signer() {
+    fn eip7702_sponsored_tx_accepts_fresh_zero_balance_signer() {
         let config = OutbeEvmConfig::new(test_chain_spec());
         let mut input = vec![0xae, 0x16, 0x9a, 0x50];
         input.extend_from_slice(&[0u8; 32]);
@@ -13201,7 +13193,6 @@ mod tests {
             .expect("test-signature must recover");
         let signer = Address::from(*recovered.signer());
 
-        // balance = 0 → anti-sybil trigger, regardless of nonce.
         let mut state = State::builder()
             .with_database(cache_db_with_paymaster_account(signer, U256::ZERO))
             .with_bundle_update()
@@ -13214,34 +13205,31 @@ mod tests {
 
             executor
                 .execute_transaction(recovered)
-                .expect("soft-failure path must not surface as a hard error");
+                .expect("zero-balance sponsored tx should execute");
 
             let receipts = executor.receipts();
             assert_eq!(receipts.len(), 1);
-            assert!(
-                !receipts[0].success,
-                "anti-sybil rejection produces a status=0 receipt"
-            );
-            // The single log on a soft-failure receipt is the
-            // `OutbeFailure(code, reason)` emitted at
-            // `ZERO_FEE_POLICY_LOG_ADDRESS`. We only check the address +
-            // that code 111 appears in the indexed topic.
-            let outbe_failure_addr = outbe_primitives::addresses::ZERO_FEE_POLICY_LOG_ADDRESS;
-            let failure_log = receipts[0]
+            assert!(receipts[0].success, "zero-balance sponsorship must succeed");
+            let sponsorship_log = receipts[0]
                 .logs
                 .iter()
-                .find(|l| l.address == outbe_failure_addr)
-                .expect("soft-failure receipt must carry OutbeFailure log");
-            // topic[1] is the indexed `code: uint16` — 32-byte BE.
-            let code_topic = failure_log.topics().get(1).expect("code topic present");
-            let code = u16::from_be_bytes([code_topic.as_slice()[30], code_topic.as_slice()[31]]);
-            assert_eq!(code, 111, "anti-sybil rejection must surface as code 111");
+                .find(|log| {
+                    log.address == ZEROFEE_ADDRESS
+                        && log.topics().first() == Some(&SponsorshipAuthorized::SIGNATURE_HASH)
+                })
+                .expect("successful zero-balance sponsorship must emit authorization");
+            assert_eq!(
+                &sponsorship_log.topics()[1].as_slice()[12..],
+                signer.as_slice()
+            );
         }
         state.merge_transitions(BundleRetention::Reverts);
 
-        // No quota burn on a rejected admission.
+        assert_eq!(signer_balance(&mut state, signer), U256::ZERO);
         let counter = zerofee_counter_for(&mut state, signer);
-        assert_eq!(counter, 0);
+        let (day, count) = outbe_zerofee::unpack_counter(counter);
+        assert_eq!(day, 20_260_401);
+        assert_eq!(count, 1);
     }
 
     /// Computes the ZEROFEE counter storage slot for `signer` (the same

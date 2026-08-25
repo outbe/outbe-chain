@@ -70,6 +70,51 @@ fn canonical_next_block_fee_cap(url: &str, priority_fee: u128) -> Result<u128> {
     next_block_fee_cap(base_fee, priority_fee)
 }
 
+fn canonical_exact_next_block_base_fee(url: &str) -> Result<u128> {
+    let block = raw_json_result(
+        url,
+        "eth_getBlockByNumber",
+        serde_json::json!(["latest", false]),
+    )?;
+    let parse_hex = |field: &str| -> Result<u128> {
+        let encoded = block
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| eyre!("latest canonical block omitted {field}"))?;
+        u128::from_str_radix(encoded.trim_start_matches("0x"), 16)
+            .map_err(|error| eyre!("invalid latest {field} {encoded}: {error}"))
+    };
+    let base_fee = parse_hex("baseFeePerGas")?;
+    let gas_used = parse_hex("gasUsed")?;
+    let gas_limit = parse_hex("gasLimit")?;
+    Ok(next_block_base_fee(base_fee, gas_used, gas_limit))
+}
+
+fn next_block_base_fee(base_fee: u128, gas_used: u128, gas_limit: u128) -> u128 {
+    let target = gas_limit / 2;
+    let next = if target == 0 || gas_used == target {
+        base_fee
+    } else if gas_used > target {
+        let increase = base_fee
+            .saturating_mul(gas_used - target)
+            .checked_div(target)
+            .unwrap_or_default()
+            .checked_div(8)
+            .unwrap_or_default()
+            .max(1);
+        base_fee.saturating_add(increase)
+    } else {
+        let decrease = base_fee
+            .saturating_mul(target - gas_used)
+            .checked_div(target)
+            .unwrap_or_default()
+            .checked_div(8)
+            .unwrap_or_default();
+        base_fee.saturating_sub(decrease)
+    };
+    next.max(u128::from(MIN_PROTOCOL_BASE_FEE))
+}
+
 // Precompile ABI surface the harness reads/writes, generated from the canonical
 // Solidity sources so the harness exercises the same selectors the node
 // dispatches.
@@ -957,6 +1002,162 @@ pub(crate) fn install_delegation_with_overrides(
     })
 }
 
+/// Install an EIP-7702 delegation for `authority_key` while a distinct
+/// funded `payer_key` signs the outer transaction and pays its gas.
+///
+/// A distinct authority signs its current account nonce. The `+1` rule in
+/// [`install_delegation_with_overrides`] only applies when the authority is
+/// also the transaction sender and its transaction nonce is incremented
+/// before the authorization tuple is processed.
+pub(crate) fn install_delegation_for_authority(
+    url: &str,
+    payer_key: &str,
+    authority_key: &str,
+    target: Address,
+) -> Result<serde_json::Value> {
+    let max_fee = canonical_next_block_fee_cap(url, 0)?;
+    let payer: PrivateKeySigner = payer_key
+        .parse()
+        .map_err(|e| eyre!("invalid payer private key: {e}"))?;
+    let authority: PrivateKeySigner = authority_key
+        .parse()
+        .map_err(|e| eyre!("invalid authority private key: {e}"))?;
+    let payer_address = payer.address();
+    let authority_address = authority.address();
+    if payer_address == authority_address {
+        return Err(eyre!(
+            "sponsor-paid delegation requires distinct payer and authority"
+        ));
+    }
+    let chain_id = raw_json(url, "eth_chainId")
+        .and_then(|v| {
+            v.as_str()
+                .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+        })
+        .ok_or_else(|| eyre!("read chain id"))?;
+    let payer_nonce = nonce(url, payer_address).ok_or_else(|| eyre!("read payer nonce"))?;
+    let authority_nonce =
+        nonce(url, authority_address).ok_or_else(|| eyre!("read authority nonce"))?;
+    let authorization = Authorization {
+        chain_id: U256::from(chain_id),
+        address: target,
+        nonce: authority_nonce,
+    };
+    let signature = authority.sign_hash_sync(&authorization.signature_hash())?;
+    let signed = authorization.into_signed(signature);
+    let wallet = EthereumWallet::from(payer);
+    let url = url.to_string();
+    block_on(async move {
+        let provider = ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_http(url.parse()?);
+        let tx = TransactionRequest::default()
+            .to(payer_address)
+            .nonce(payer_nonce)
+            .gas_limit(100_000)
+            .max_fee_per_gas(max_fee)
+            .max_priority_fee_per_gas(0)
+            .with_authorization_list(vec![signed]);
+        let pending = provider.send_transaction(tx).await?;
+        let hash = *pending.tx_hash();
+        for _ in 0..60 {
+            if let Some(receipt) = provider.get_transaction_receipt(hash).await? {
+                return Ok(serde_json::to_value(receipt)?);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        Err(eyre!(
+            "sponsor-paid EIP-7702 transaction was not mined: {hash:#x}"
+        ))
+    })
+}
+
+/// Submit a canonical sponsored protocol call from an already delegated
+/// signer. The explicit 500k limit is the standard ZeroFee envelope cap;
+/// using the generic revert-friendly 10m helper would intentionally fall
+/// outside sponsorship classification.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn send_sponsored_call<C: SolCall>(
+    url: &str,
+    key: &str,
+    to: Address,
+    call: &C,
+) -> Result<MinedCallOutcome> {
+    let max_fee = canonical_next_block_fee_cap(url, 0)?;
+    let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
+    let wallet = EthereumWallet::from(signer);
+    let data = call.abi_encode();
+    let url = url.to_string();
+    block_on(async move {
+        let provider = ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_http(url.parse()?);
+        let tx = TransactionRequest::default()
+            .to(to)
+            .input(Bytes::from(data).into())
+            .gas_limit(500_000)
+            .max_fee_per_gas(max_fee)
+            .max_priority_fee_per_gas(0);
+        let pending = provider.send_transaction(tx).await?;
+        let hash = *pending.tx_hash();
+        for _ in 0..120 {
+            if let Some(receipt) = provider.get_transaction_receipt(hash).await? {
+                return Ok(MinedCallOutcome {
+                    transaction_hash: format!("{:#x}", receipt.transaction_hash),
+                    success: receipt.status(),
+                    receipt: serde_json::to_value(receipt)?,
+                });
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        Err(eyre!("sponsored transaction was not mined: {hash:#x}"))
+    })
+}
+
+/// Move the complete spendable native balance to `recipient` with a plain
+/// 21k transfer. This is scenario plumbing for proving ZeroFee from an exact
+/// zero balance; it computes the deterministic next-block base fee and makes
+/// `value + fee == current_balance`.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn drain_native_balance(
+    url: &str,
+    key: &str,
+    recipient: Address,
+) -> Result<MinedCallOutcome> {
+    const TRANSFER_GAS: u64 = 21_000;
+    let signer: PrivateKeySigner = key.parse().map_err(|e| eyre!("invalid private key: {e}"))?;
+    let address = signer.address();
+    let current = balance(url, address).ok_or_else(|| eyre!("read balance to drain"))?;
+    let base_fee = canonical_exact_next_block_base_fee(url)?;
+    let fee = U256::from(base_fee)
+        .checked_mul(U256::from(TRANSFER_GAS))
+        .ok_or_else(|| eyre!("drain fee overflow"))?;
+    let value = current
+        .checked_sub(fee)
+        .ok_or_else(|| eyre!("balance {current} does not cover drain fee {fee}"))?;
+    let wallet = EthereumWallet::from(signer);
+    let url = url.to_string();
+    block_on(async move {
+        let provider = ProviderBuilder::new()
+            .wallet(wallet)
+            .connect_http(url.parse()?);
+        let tx = TransactionRequest::default()
+            .to(recipient)
+            .value(value)
+            .gas_limit(TRANSFER_GAS)
+            .max_fee_per_gas(base_fee)
+            .max_priority_fee_per_gas(0);
+        let pending = provider.send_transaction(tx).await?;
+        let hash = *pending.tx_hash();
+        let receipt = pending.get_receipt().await?;
+        Ok(MinedCallOutcome {
+            transaction_hash: format!("{hash:#x}"),
+            success: receipt.status(),
+            receipt: serde_json::to_value(receipt)?,
+        })
+    })
+}
+
 /// Send the canonical reward call with either the sponsored envelope or a paid
 /// priority fee, returning the mined receipt's public JSON representation.
 pub(crate) fn send_reward_call(
@@ -1023,6 +1224,18 @@ mod tests {
             "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
         );
         assert!(address_of("not-a-key").is_none());
+    }
+
+    #[test]
+    fn exact_next_base_fee_matches_eip1559_boundaries() {
+        assert_eq!(next_block_base_fee(1_000, 50, 100), 1_000);
+        assert_eq!(next_block_base_fee(1_000, 100, 100), 1_125);
+        assert_eq!(next_block_base_fee(1_000, 0, 100), 875);
+        assert_eq!(
+            next_block_base_fee(1, 0, 100),
+            u128::from(MIN_PROTOCOL_BASE_FEE),
+            "protocol fee floor remains authoritative"
+        );
     }
 
     #[test]

@@ -5,11 +5,11 @@ Feature: Protocol positions redeem through the reserve into COEN
   the production precompiles and enclave-backed confidential ledgers.
 
   @gem-settlement
-  Scenario: A validator redeems its protocol reward Gem into COEN
+  Scenario: A zero-balance validator redeems its reward Gem through ZeroFee
     Given a fresh four-validator OCOMP public measurement localnet
     Then the controlled COEN USD quote is finalized through the real price feeder
     Then validator 0 receives a protocol reward Gem from same-block RewardsGemDelivery
-    And validator 0 settles that Gem and redeems its exact Promis into COEN
+    And validator 0 with zero COEN uses ZeroFee to redeem that Gem into exact COEN
 
   @reward-gem-delivery-recovery
   Scenario: A stale Oracle rate defers validator Gem delivery and later recovers

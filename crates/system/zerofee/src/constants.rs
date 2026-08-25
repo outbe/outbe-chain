@@ -7,7 +7,7 @@
 //! reasons occupy dedicated codes 110..=116:
 //!
 //! - 110 `FreeTxDailyExhausted` — daily quota burned
-//! - 111 `FreeTxDailyNoExistingAccount` — anti-sybil (`balance == 0`)
+//! - 111 retired — formerly rejected zero-balance signers; MUST NOT be reused
 //! - 112 `FreeTxDailyContractCreationForbidden` — `to == None`
 //! - 113 `FreeTxDailyValueNotZero` — `msg.value != 0`
 //! - 114 `FreeTxDailyGasLimitExceeded` — `gas_limit > FREE_TX_DAILY_GAS_LIMIT`

@@ -113,14 +113,6 @@ pub enum ZeroFeePolicyError {
         /// Daily limit.
         limit: u32,
     },
-    /// Anti-sybil: the signer has zero native balance. Free-tx
-    /// admission is refused regardless of nonce — EIP-7702 set-code
-    /// transactions bump the authority's nonce as part of auth
-    /// processing (25 k gas per auth, paid by the sponsor), so nonce
-    /// alone is not a meaningful economic gate. Only positive balance
-    /// proves someone routed real value to the address.
-    #[error("free-tx requires signer with non-zero native balance (anti-sybil)")]
-    FreeTxDailyNoExistingAccount,
     /// Contract creation is not allowed through the free-tx path.
     #[error("free-tx must not be a contract creation")]
     FreeTxDailyContractCreationForbidden,
@@ -181,7 +173,6 @@ impl ZeroFeePolicyError {
             Self::AlreadyVoted => 108,
             Self::Storage(_) => 109,
             Self::FreeTxDailyExhausted { .. } => 110,
-            Self::FreeTxDailyNoExistingAccount => 111,
             Self::FreeTxDailyContractCreationForbidden => 112,
             Self::FreeTxDailyValueNotZero => 113,
             Self::FreeTxDailyGasLimitExceeded { .. } => 114,
@@ -213,7 +204,6 @@ mod failure_code_tests {
             ZeroFeePolicyError::AlreadyVoted,
             ZeroFeePolicyError::Storage(String::new()),
             ZeroFeePolicyError::FreeTxDailyExhausted { used: 0, limit: 0 },
-            ZeroFeePolicyError::FreeTxDailyNoExistingAccount,
             ZeroFeePolicyError::FreeTxDailyContractCreationForbidden,
             ZeroFeePolicyError::FreeTxDailyValueNotZero,
             ZeroFeePolicyError::FreeTxDailyGasLimitExceeded {
