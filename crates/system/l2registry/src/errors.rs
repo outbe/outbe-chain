@@ -5,6 +5,12 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum L2RegistryError {
+    #[error("invalid L2 registry proposal payload")]
+    InvalidProposalPayload,
+
+    #[error("L2 registry public key must be 0x-prefixed hex")]
+    InvalidPublicKeyEncoding,
+
     #[error("chain id must be non-zero")]
     InvalidChainId,
 

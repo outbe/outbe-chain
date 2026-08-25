@@ -14,10 +14,12 @@ pub mod api;
 pub mod errors;
 pub mod precompile;
 pub mod schema;
+pub mod vote_target;
 
 mod runtime;
 
 pub use schema::{L2NetworkRecord, L2RegistryContract, BLS_PUBLIC_KEY_LEN};
+pub use vote_target::{L2RegistryVotePayloadV1, L2RegistryVoteTarget};
 
 #[cfg(test)]
 mod tests;

@@ -65,6 +65,24 @@ fn register_toggle_remove_roundtrip() {
 }
 
 #[test]
+fn governed_register_applies_requested_zk_state_atomically() {
+    let (_, public) = keypair();
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    StorageHandle::enter(&mut storage, |storage| {
+        let mut registry = L2RegistryContract::new(storage.clone());
+        registry
+            .register_network_with_zk(L2_CHAIN_ID, l1_addr(), &public, true)
+            .unwrap();
+
+        let record = registry.load_network(L2_CHAIN_ID).unwrap();
+        assert_eq!(record.l1_address, l1_addr());
+        assert_eq!(record.public_key_bytes().as_slice(), public.as_slice());
+        assert!(record.zk_enabled);
+        assert_eq!(registry.l1_to_chain.read(&l1_addr()).unwrap(), L2_CHAIN_ID);
+    });
+}
+
+#[test]
 fn register_rejects_invalid_inputs() {
     let (_, public) = keypair();
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
