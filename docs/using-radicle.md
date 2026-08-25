@@ -16,52 +16,59 @@ on-chain, then confirm the validators picked it up.
 
 ## 1. Point a local `rad` at the network
 
-`rad auth` writes a config whose peer discovery is dynamic, which sends your
-node to the public Radicle seeds instead of ours. Overwrite the peer settings
-before starting the node:
+`rad auth` creates the identity keys, and that is all it does for you here —
+the config it writes points at the public Radicle seeds and accepts every
+repository it is offered. Neither is right for an Outbe network. The identity
+itself is network-agnostic: the same key works anywhere, so `rad auth` does
+not put you "on our network", the config does.
 
 ```bash
 export RAD_HOME=/tmp/radt          # keep this path SHORT — see Troubleshooting
-rad auth --alias my-laptop
+rad auth --alias my-laptop         # creates the keys; leaves you on public seeds
+
+outbe-cli --rpc-url http://125.253.90.171/ rad init --home /tmp/radt
+outbe-cli --rpc-url http://125.253.90.171/ rad start --home /tmp/radt
 ```
 
-Collect each validator's Heartwood NodeId from its RPC endpoint. The chain
-stores it as 32 raw bytes; Heartwood addresses it as a multibase `z…` string,
-so it needs converting:
+`rad init` reads the validator set, each validator's Radicle NodeId binding
+and its P2P host from chain state — nothing is hard-coded — and rewrites only
+the network-facing settings, leaving your keys and unrelated preferences
+alone. It prints what it wired up:
+
+```
+Peers (4):
+  0x97Cf63ACd02BE0d6Da11FE5C9b834167776a5a50  z6Mkkmc…LnSNDKE@125.253.90.171:8776
+  0xb49F08B2819726005d6E3b84074F627E7011401B  z6MkvhQ…2D51G7a@131.153.159.3:8776
+  0xBf663D6C0f5dA824Fe7857a78E58b4E53Ec53af5  z6Mkgqj…4T922qo@125.253.92.5:8776
+  0x306f3c20c1c78E9C977A21072a7BEDe063F7d387  z6MksyT…tZFdM5x@192.240.203.51:8776
+```
+
+Four settings do the work, and each closes its own hole:
+
+| Setting | Why |
+|---|---|
+| `preferredSeeds: []` | The one reason a freshly authed node reaches the public network. Top-level, not under `node`, so it is easy to miss. |
+| `peers: {type: static}` + `connect` | Talk to exactly this list; no dynamic discovery. |
+| `seedingPolicy: {default: block}` | Otherwise the node accepts every announcement — 51 foreign repositories and 197 MB in a couple of hours. |
+| `relay: auto` | Validators run `relay: always` because they are reachable seeds. On a loopback client that value stops sessions establishing at all. |
+
+The rest of the lifecycle:
 
 ```bash
-python3 - <<'PY'
-import json, urllib.request
-IPS = ["125.253.90.171", "131.153.159.3", "125.253.92.5", "192.240.203.51"]
-A = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-
-def nid(ip):
-    req = urllib.request.Request("http://%s/" % ip,
-        data=json.dumps({"jsonrpc":"2.0","id":1,
-                         "method":"outbe_radicleStatus","params":[]}).encode(),
-        headers={"content-type":"application/json"})
-    h = json.load(urllib.request.urlopen(req, timeout=10))["result"]["localNodeId"]
-    n = int.from_bytes(b'\xed\x01' + bytes.fromhex(h.removeprefix("0x")), "big")
-    s = ""
-    while n:
-        n, r = divmod(n, 58); s = A[r] + s
-    return "z" + s
-
-cfg = json.load(open("/tmp/radt/config.json"))
-cfg["node"]["connect"] = ["%s@%s:8776" % (nid(ip), ip) for ip in IPS]
-cfg["node"]["peers"] = {"type": "static"}
-cfg["node"]["seedingPolicy"] = {"default": "allow", "scope": "all"}
-json.dump(cfg, open("/tmp/radt/config.json", "w"), indent=2)
-for c in cfg["node"]["connect"]:
-    print(" ", c)
-PY
-
-radicle-node --listen 127.0.0.1:8790 &
-rad node status
+outbe-cli rad status --home /tmp/radt     # local state, and drift from chain state
+outbe-cli rad restart --home /tmp/radt
+outbe-cli rad stop --home /tmp/radt
 ```
 
-`rad node status` should list all four validators. A `✓` in the connection
-column means a live session:
+`rad status` treats the chain as the source of truth and reports drift rather
+than the config's own account of itself — a peer that the chain knows but the
+config lacks shows as `MISSING`, one the config has but the chain does not as
+`EXTRA`. Re-run `rad init` after a validator set change.
+
+`--home` may be omitted; it falls back to `$RAD_HOME`, then `~/.radicle`.
+
+`rad node status` should then list all four validators. A `✓` in the
+connection column means a live session:
 
 ```
 z6Mkkmc…LnSNDKE   125.253.90.171:8776   ✓   ↗   9s
@@ -241,7 +248,9 @@ node competes with `outbe-radicle@0.service` for the socket.
 | Symptom | Cause |
 |---|---|
 | `path must be shorter than SUN_LEN` | `RAD_HOME` too long. Unix sockets cap the path near 104 bytes — use `/tmp/radt`, not a deep nested directory. |
-| `rad node status` shows only public seeds | `connect` is empty and `peers` is `dynamic`; the node used its built-in bootstrap list. Rewrite the config as in step 1 and restart. |
+| `rad node status` shows only public seeds | `preferredSeeds` still holds them, or `peers` is `dynamic`. Run `outbe-cli rad init`. |
+| Peers listed but never connect (`✗`) | `relay: always` on a client. `rad init` sets it to `auto`. |
+| The node dies when the shell closes | Started by hand instead of `outbe-cli rad start`, which puts it in its own process group. |
 | Validators connect but never hold the repo | The repository id is not in `RadicleRegistry`. `rad node connect` creates a session but does not make a sidecar seed anything. |
 | `reference 'refs/heads/master' not found` | `--default-branch` names a branch the repository does not have. |
 | `The input device is not a TTY` | `rad init` without `--public` or `--private`; `--no-confirm` does not answer the visibility prompt. |
