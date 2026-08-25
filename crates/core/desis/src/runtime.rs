@@ -30,11 +30,10 @@ use crate::sol_ext::IOriginRouter;
 // Auction lifecycle
 // ---------------------------------------------------------------------------
 
-/// Record the day's auction brief: supply (raw PROMIS), the per-reference entry
-/// prices and the day type. The schedule anchors to the midnight of `now`, or the next one when
-/// too little of the commit window would remain.
 /// Validate every technical prerequisite before the API may classify an
-/// oversized supply as the sole committed business rejection.
+/// oversized supply as the sole committed business rejection. Returns the
+/// schedule anchor: the midnight of `now`, or the next one when too little of
+/// the commit window would remain.
 pub(crate) fn preflight_brief(
     storage: &StorageHandle<'_>,
     worldwide_day: WorldwideDay,

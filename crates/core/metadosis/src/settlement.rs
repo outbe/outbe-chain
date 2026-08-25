@@ -4,10 +4,7 @@ use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource};
 use outbe_desis::ReferenceCurrencyPrice;
-use outbe_primitives::{
-    block::BlockRuntimeContext,
-    error::Result,
-};
+use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 use outbe_promislimit::PromisLimitContract;
 use outbe_tribute::TributeContract;
 
@@ -210,7 +207,14 @@ fn process_local_terminal_outcome(
             day_type,
             day_limit,
         } => {
-            let to_promis = dispatch_brief(ctx, metadosis, day_type, wwd, day_limit, current.current_vwap)?;
+            let to_promis = dispatch_brief(
+                ctx,
+                metadosis,
+                day_type,
+                wwd,
+                day_limit,
+                current.current_vwap,
+            )?;
             commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)?;
             TributeContract::new(metadosis.storage.clone())
                 .retire_completed_partition(scope, wwd)?;
@@ -230,7 +234,14 @@ fn process_local_terminal_outcome(
             calculation,
         } => {
             let remainder = calculation.metadosis_limit_remainder;
-            let to_promis = dispatch_brief(ctx, metadosis, day_type, wwd, remainder, current.current_vwap)?;
+            let to_promis = dispatch_brief(
+                ctx,
+                metadosis,
+                day_type,
+                wwd,
+                remainder,
+                current.current_vwap,
+            )?;
             promis_limit.add_to_total_unallocated(to_promis)?;
             commit_outer_transition(metadosis, wwd, &transition, ctx.block.block_number)?;
             metadosis.emit(IMetadosis::MetadosisExecuted {
@@ -308,7 +319,16 @@ pub(crate) fn day_entry_prices(
         current_vwap,
         ctx.block.timestamp,
     )?;
-    let priced = projection.auction_entry_prices;
+    // A zero price is not a price. The projection carries the day-type row even
+    // when the oracle has nothing for it, so that the OCOMP envelope always has
+    // one currency; here an empty table is load-bearing in the other direction —
+    // it is how Desis is told the day is unpriced, and it cancels and refunds on
+    // it rather than opening an auction nobody can bid in.
+    let priced: Vec<_> = projection
+        .auction_entry_prices
+        .into_iter()
+        .filter(|row| !row.entry_price_minor.is_zero())
+        .collect();
     for iso_code in outbe_oracle::api::get_all_reference_currencies(ctx)? {
         if !priced.iter().any(|row| row.reference_currency == iso_code) {
             metadosis.emit(IMetadosis::ReferenceCurrencyUnpriced {
