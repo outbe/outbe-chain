@@ -1,6 +1,6 @@
 # ADR-C-LYS-001: Lysis deterministically commits the Tribute-to-NOD transformation
 
-- **Status:** Accepted
+- **Status:** Proposed; exact-revision Linux evidence pending
 - **Date:** 2026-08-12
 - **Owners:** `crates/core/lysis`, OCOMP result construction and verification
 - **Depends on:** ADR-C-TRB-001, ADR-C-NOD-001, ADR-C-FID-001,
@@ -19,6 +19,10 @@ verifiable and canonically applicable.
 Lysis V1 is a typed OCOMP program. Given one finalized `JobIntentV1` and its
 authenticated inputs, every validator and FullNode computes the same result
 without writing chain state.
+
+Metadosis is not a synchronous Lysis caller. Every populated positive-gratis
+day reaches Lysis only through the authenticated OCOMP request, execution,
+quorum-certification, and materialization path.
 
 The program:
 

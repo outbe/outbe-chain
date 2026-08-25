@@ -17,7 +17,8 @@ use crate::world::rpc::ValidatorRecord;
 use crate::world::validators::RegistrationIdentity;
 use crate::world::World;
 
-const COEN: u128 = 1_000_000_000_000_000_000;
+const COEN: u128 = 1_000_000;
+const REGISTRATION_FUNDING_COEN: u64 = 100;
 const PERIODIC_EXCLUSION_TRIES: u32 = 240;
 const S08_UNBONDING_SECS: u64 = 240;
 const S08_STAGGER_SECS: u64 = 20;
@@ -28,6 +29,7 @@ struct ReregistrationScratch {
     old_identity: RegistrationIdentity,
     new_identity: RegistrationIdentity,
     dense_index: u64,
+    deactivation_epoch: u64,
     post_registration: Option<ValidatorRecord>,
 }
 
@@ -271,6 +273,11 @@ fn exiting_validator_with_residue(world: &mut World) {
         .localnet
         .provision_joiner_with_identity(index, &identity)
         .expect("provision retained joiner identity");
+    #[cfg(feature = "ocomp-integration")]
+    world
+        .ocomp
+        .stage_joiner_domain_material(u8::try_from(index).expect("joiner index fits u8"))
+        .expect("stage retained joiner OCOMP validator key");
     world
         .localnet
         .launch_joiner(index, &[])
@@ -312,6 +319,7 @@ fn exiting_validator_with_residue(world: &mut World) {
         .expect("deactivate joiner");
     let exiting = wait_status(world, &address, 3, 20);
     assert!(exiting.deactivated_at_height > 0);
+    let deactivation_epoch = current_epoch(world);
 
     let new_identity = world
         .localnet
@@ -322,6 +330,7 @@ fn exiting_validator_with_residue(world: &mut World) {
         old_identity: identity,
         new_identity,
         dense_index,
+        deactivation_epoch,
         post_registration: None,
     });
 }
@@ -335,7 +344,8 @@ fn claim_and_reregister_in_one_block(world: &mut World) {
         .expect("reregistration scratch")
         .take()
         .expect("D-06 setup");
-    let unbonding = wait_status(world, &scratch.address, 4, 80);
+    let unbonding =
+        wait_for_periodic_exclusion(world, &scratch.address, scratch.deactivation_epoch);
     assert!(!unbonding.has_bls_share);
     let drained = wait_zero_bonded_stake(world, &scratch.address, 20);
     wait_timestamp(world, drained.unbonding_end, 30);
@@ -418,7 +428,7 @@ fn old_bls_key_released_once(world: &mut World) {
         .expect("bind released old BLS key");
     let funding = world
         .rpc
-        .fund_key(&funder, rebound.evm_key(), 2)
+        .fund_key(&funder, rebound.evm_key(), REGISTRATION_FUNDING_COEN)
         .expect("fund old-key candidate");
     assert!(world.rpc.wait_successful_receipt(&funding, 20));
     let accepted = world
@@ -447,7 +457,7 @@ fn old_bls_key_released_once(world: &mut World) {
         .expect("bind duplicate old BLS key");
     let funding = world
         .rpc
-        .fund_key(&funder, second_rebound.evm_key(), 2)
+        .fund_key(&funder, second_rebound.evm_key(), REGISTRATION_FUNDING_COEN)
         .expect("fund duplicate old-key candidate");
     assert!(world.rpc.wait_successful_receipt(&funding, 20));
     let duplicate = world
@@ -489,7 +499,11 @@ fn duplicate_new_bls_is_atomic(world: &mut World) {
         .expect("bind duplicate new BLS key");
     let funding = world
         .rpc
-        .fund_key(&world.validators.get(0), duplicate_identity.evm_key(), 2)
+        .fund_key(
+            &world.validators.get(0),
+            duplicate_identity.evm_key(),
+            REGISTRATION_FUNDING_COEN,
+        )
         .expect("fund duplicate new-key candidate");
     assert!(world.rpc.wait_successful_receipt(&funding, 20));
     let outcome = world
@@ -803,4 +817,15 @@ fn final_claim_moves_inactive(world: &mut World) {
     assert_eq!(record.stake, U256::ZERO);
     assert_eq!(record.unbonding_end, 0);
     assert!(!record.has_bls_share);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn whole_coen_uses_the_chain_native_six_decimal_scale() {
+        assert_eq!(whole_coen(1), U256::from(1_000_000_u64));
+        assert_eq!(whole_coen(100), U256::from(100_000_000_u64));
+    }
 }

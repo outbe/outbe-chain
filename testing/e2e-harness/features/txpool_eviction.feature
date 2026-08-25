@@ -18,5 +18,5 @@ Feature: Transaction-pool eviction
     And an ordinary transfer submitted alongside is mined
     When the pool lifetime elapses
     Then the unreachable transaction is gone from every validator's pool
-    And every validator logged the eviction with a reason
+    And the submitting validator logged the exact eviction identity and reason
     And the committee is still producing blocks

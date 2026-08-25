@@ -42,7 +42,9 @@ their proof matches that escrowed binding.
 At block `N + K`, window close first exposes the full credited set for slashing,
 then settles block `N` exactly once. At day close, Cycle obtains the canonical daily
 fee/participation data, computes the allocation through EmissionLimit/AgentReward,
-asks Rewards to mint the validator top-up, and finally marks the whole day settled.
+asks Rewards to prepare one exact immutable validator Gem batch, and finally marks
+the whole day settled. The mandatory `RewardsGemDelivery` system transaction then
+attempts to deliver the FIFO head after Cycle in every block.
 
 These system commands need unforgeable phase capabilities. A raw schema/context or
 public Rust function is not authority to escrow fees, add credit, choose top-up
@@ -57,7 +59,9 @@ The live model contains:
 - per-day raw fees, voter/count indexes and total participation;
 - per-block pending fee and canonical number/epoch/view/committee binding;
 - per-block enumerable credited voters with smallest `k + 1`; and
-- distinct `daily_topup_settled` and whole-dispatch `daily_settled` guards.
+- distinct `daily_topup_prepared`, `daily_topup_settled` and whole-dispatch
+  `daily_settled` guards; and
+- a day-keyed immutable recipient/load table plus a sequence-keyed FIFO.
 
 Required equivalences include:
 
@@ -68,7 +72,9 @@ late_voter_k_plus1[hash][v] != 0 <=> v appears exactly once in late_voter_at
 daily_participation[day][v] > 0 <=> v appears exactly once in daily_voter_at
 daily_total_participation = sum(per-voter daily participation)
 fee_settled[hash] => pending fee and enumerable window state are cleared
-daily_settled[day] => the complete imported Cycle dispatch committed
+daily_settled[day] => the complete imported Cycle dispatch and exact Gem liability committed
+daily_topup_prepared[day] && !daily_topup_settled[day] <=> exactly one live FIFO entry
+daily_topup_settled[day] => no live FIFO entry and the complete batch minted atomically
 ```
 
 Guard pruning is safe only while its retention exceeds every accepted replay,
@@ -107,30 +113,49 @@ sum(native payouts) + burned residue = escrowed pending fee
 ## Daily validator top-up
 
 Daily raw fees contribute to the emission-cap calculation but are not paid again.
-The computed top-up is divided in proportion to finalized participation counts and
-minted through GemFactory: Genesis Gems for day numbers 0–20, Validator Gems
-thereafter. Integer-division remainder is returned implicitly as
-`topup_total - distributed`; its downstream owner must be explicit in the imported
-Cycle/EmissionLimit contract.
+The computed top-up is divided in proportion to finalized participation counts.
+Rewards always freezes the exact nonzero `(reward_utc_day, owner, gem_type, gem_load,
+issuance_currency, reference_currency)` obligations before any mint. Genesis Gems
+apply to day numbers 0–20 and Validator Gems thereafter. Integer-division remainder
+is `validator_topup_amount - planned_gem_load_amount` and is assigned immediately
+to Cycle's terminal excess; the planned Gem load amount is a durable liability and
+is never terminally credited.
 
-For a fresh top-up settlement, Cycle owns exact reconciliation:
+Cycle owns exact reconciliation at preparation time:
 
 ```text
-distributed Gems + validator terminal excess = validator allocation
-validator terminal excess = validator allocation - distributed
+planned Gem load + validator terminal excess = validator allocation
+validator terminal excess = validator allocation - planned Gem load
 ```
 
-An already-settled top-up is an idempotent no-remint outcome, not evidence that
-the whole top-up is newly undelivered; Cycle preserves only the existing fee
-excess in that case. Empty or zero-total participation creates no Gem and sends
-the complete validator allocation to the terminal sink without introducing a
-new chain-halting transition. Canonical participation writers still maintain
-positive indexed counts; this settlement adapter does not add a new corrupted-
-state recovery or validation policy.
+Preparation is idempotent only for the same digest/amount; a contradictory replay
+is logged and returns a retryable revert without writes. Empty or zero-payable
+participation creates no FIFO entry, marks the top-up complete and sends the
+complete validator allocation to the terminal sink.
 
-`daily_topup_settled` guards this one sub-effect; `daily_settled` guards the complete
-cross-module day dispatch. Neither marker may be written before all effects it
-claims are committed.
+`RewardsGemDelivery` consumes at most one complete UTC-day batch per block in FIFO
+order. Empty FIFO and registered-but-zero/unpublished/stale COEN/840 are successful
+no-ops. A fresh canonical rate mints the complete head atomically at that block's
+rate and timestamp, clears live rows and advances the head exactly once. The batch
+stores no price: delayed Gems intentionally use the first fresh canonical price at
+actual delivery. Ordinary GemFactory and active-batch consistency reverts produce a
+soft system receipt, preserve the FIFO and retry next block; aggregate OOG and raw
+executor failures retain their existing hard behavior. There is no expiry or
+forfeiture.
+
+`daily_topup_prepared` guards the immutable liability, `daily_topup_settled` guards
+actual mint completion, and `daily_settled` guards the complete cross-module day
+dispatch. `daily_settled=true && daily_topup_settled=false` is legal only while the
+matching exact batch is live in the FIFO.
+
+The append-only `reward_gem_pending_batch_count` at Rewards slot 42 must equal
+`reward_gem_queue_tail - reward_gem_queue_head`. Preparation replay validates the
+complete live sequence, metadata and recipient rows. Delivery validates the count
+and requires the current sequence slot to be clear when the FIFO is empty. Any
+disagreement is logged at `ERROR` and returned as a retryable revert. The mandatory
+delivery records status 0, preserves the obligation and lets the rest of the block
+continue; corrupted pointers therefore cannot silently discard an obligation or
+halt the chain through a typed fatal outcome.
 
 ## Atomicity, ordering and failure
 
@@ -140,12 +165,14 @@ must happen before settlement clears the voter set. All voter transfers, residue
 burn, terminal dispatch, tombstone and cleanup must share one EVM checkpoint; an
 error restores the full economic pre-state.
 
-Daily top-up Gem mints and its guard must share the Cycle dispatch checkpoint. A
-later failure must not retain Gems while rolling back the day marker, or vice versa.
-Contradictory metadata and conservation failures detected by their owning module
-remain fatal protocol outcomes, not retryable user reverts. This top-up
-reconciliation change does not introduce a new fatal index validator. A missing
-dependency or temporary execution failure may retry only from semantic pre-state.
+Batch preparation shares the Cycle dispatch checkpoint. Batch mint, row cleanup,
+completion marker and FIFO head advancement share the delivery transaction
+checkpoint. A later failure must not retain a partial batch or advance its head.
+Existing non-Rewards protocol corruption classifications are unchanged. Rewards
+Gem preparation/delivery consistency failures are retryable reverts with no partial
+writes; delivery is a non-critical phase and therefore preserves block liveness.
+A missing dependency or temporary execution failure may retry only from semantic
+pre-state.
 
 ## Determinism and bounds
 
@@ -210,9 +237,9 @@ close and emission compensation is represented as Gems.
 - Close public mutation bypasses: raw schema construction and public functions can
   escrow/overwrite bindings, add arbitrary late credit, settle early, choose top-up
   recipients or mark a day settled without an authenticated lifecycle phase.
-- `add_topup_for_voters` trusts a caller-supplied `(Address, count)` list and does
-  not bind it to stored day participation. Move canonical selection and allocation
-  inside Rewards or require an unforgeable intent receipt from the owner.
+- Close the remaining public Rust mutation bypass: preparation still accepts the
+  Cycle-selected canonical `(Address, count)` list and needs phase-authenticated
+  authority or an internally selected stored-day input.
 - `escrow_block_fee` is described as idempotent but, before settlement, overwrites
   fee and number/epoch/view/committee bindings. Enforce same-key/same-intent and
   reject same number/different hash or same hash/different metadata locally.
@@ -236,8 +263,8 @@ close and emission compensation is represented as Gems.
 - Replace saturating denominator multiplication and unchecked `k + 1`/participation
   sums with explicit overflow/corruption handling. `total_count` in top-up currently
   uses ordinary iterator `sum`.
-- Specify and account for daily top-up rounding dust; the returned distributed
-  amount alone does not assign the remainder to a durable owner.
+- Prove a maximum 256-recipient prepare+delivery block remains below the activated
+  system-work budget as storage costs evolve.
 - Prove REWARDS native balance equals all unsettled escrow liabilities and cannot
   be underfunded by fee-routing/order drift.
 - Prove the 64-block tombstone/fingerprint retention against every accepted replay,

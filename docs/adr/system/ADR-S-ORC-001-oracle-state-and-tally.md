@@ -167,8 +167,10 @@ not Oracle authorization.
 
 System caller paths, protected-validator configuration, pair/currency registries and
 penalty parameters are governance/activation authority. Downstream consumers must
-read canonical execution state, define freshness/finality requirements and snapshot
-rates when future obligations depend on them.
+read canonical execution state and define freshness/finality requirements. Rewards
+validator Gem obligations are the explicit exception to price-at-obligation-time:
+they snapshot owner/type/load/currencies only, store no stale price, and GemFactory
+uses the first fresh canonical rate at actual FIFO delivery.
 
 ## Compatibility and activation
 

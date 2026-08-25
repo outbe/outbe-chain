@@ -191,6 +191,56 @@ pub async fn maintain_outbe_pool<Provider, Pool>(
 mod tests {
     use super::*;
 
+    use std::{
+        io,
+        sync::{Arc, Mutex},
+        time::Duration,
+    };
+
+    #[derive(Clone, Default)]
+    struct CapturedLogWriter {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl CapturedLogWriter {
+        fn contents(&self) -> String {
+            String::from_utf8(
+                self.bytes
+                    .lock()
+                    .expect("txpool trace capture mutex")
+                    .clone(),
+            )
+            .expect("txpool trace output must be UTF-8")
+        }
+    }
+
+    struct CapturedLogGuard {
+        bytes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl io::Write for CapturedLogGuard {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            io::Write::write(
+                &mut *self.bytes.lock().expect("txpool trace capture mutex"),
+                buf,
+            )
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLogWriter {
+        type Writer = CapturedLogGuard;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedLogGuard {
+                bytes: self.bytes.clone(),
+            }
+        }
+    }
+
     fn hash(byte: u8) -> B256 {
         B256::repeat_byte(byte)
     }
@@ -303,5 +353,122 @@ mod tests {
         assert!(!remaining.contains(&head_hash));
         assert!(!remaining.contains(&descendant_hash));
         assert!(remaining.contains(&newcomer_hash));
+    }
+
+    /// Regression for ADR-B-TXP-001's no-silent-drop contract. This deliberately
+    /// drives Reth's queued-lifetime maintenance task rather than Outbe's
+    /// separate two-snapshot pending-staleness task above.
+    #[tokio::test]
+    async fn queued_lifetime_eviction_emits_structured_identity_and_reason() {
+        use alloy_consensus::{SignableTransaction as _, TxEip1559};
+        use alloy_primitives::{Signature, TxKind, U256};
+        use futures::stream;
+        use outbe_primitives::system_tx::OcompLifecycleActivation;
+        use reth_ethereum::{evm::EthEvmConfig, EthPrimitives, TransactionSigned};
+        use reth_primitives_traits::SignedTransaction as _;
+        use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+        use reth_tasks::Runtime;
+        use reth_transaction_pool::{
+            blobstore::InMemoryBlobStore, maintain::MaintainPoolConfig,
+            validate::EthTransactionValidatorBuilder, EthPooledTransaction, Pool, PoolTransaction,
+            TransactionOrigin,
+        };
+        use tracing::instrument::WithSubscriber as _;
+
+        const NONCE_GAP: u64 = 64;
+        let signed: TransactionSigned = TxEip1559 {
+            chain_id: 1,
+            nonce: NONCE_GAP,
+            gas_limit: 21_000,
+            max_fee_per_gas: 1_000_000_000,
+            max_priority_fee_per_gas: 1,
+            to: TxKind::Call(alloy_primitives::Address::repeat_byte(0x44)),
+            value: U256::ZERO,
+            input: Default::default(),
+            access_list: Default::default(),
+        }
+        .into_signed(Signature::test_signature())
+        .into();
+        let encoded_length = alloy_eips::eip2718::Encodable2718::encode_2718_len(&signed);
+        let recovered = signed
+            .try_into_recovered()
+            .expect("test transaction signer must recover");
+        let transaction = EthPooledTransaction::new(recovered, encoded_length);
+        let tx_hash = *transaction.hash();
+        let sender = transaction.sender();
+
+        let provider = MockEthProvider::<EthPrimitives>::new().with_genesis_block();
+        provider.add_account(sender, ExtendedAccount::new(0, U256::MAX));
+        let blob_store = InMemoryBlobStore::default();
+        let inner = EthTransactionValidatorBuilder::new(provider.clone(), EthEvmConfig::mainnet())
+            .build(blob_store.clone());
+        let validator =
+            crate::OutbeTransactionValidator::new(inner, OcompLifecycleActivation::at_block(1));
+        let pool = Pool::new(
+            validator,
+            crate::OutbeTransactionOrdering::default(),
+            blob_store,
+            Default::default(),
+        );
+
+        pool.add_transaction(TransactionOrigin::External, transaction)
+            .await
+            .expect("nonce-gap transaction must enter the real pool");
+        let queued = pool.queued_transactions();
+        assert_eq!(queued.len(), 1, "the nonce-gap transaction must be queued");
+        assert_eq!(*queued[0].hash(), tx_hash);
+        assert_eq!(queued[0].sender(), sender);
+        assert_eq!(queued[0].nonce(), NONCE_GAP);
+
+        let lifetime = Duration::from_millis(20);
+        tokio::time::sleep(lifetime + Duration::from_millis(10)).await;
+
+        let writer = CapturedLogWriter::default();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(writer.clone())
+            .finish();
+        let runtime = Runtime::test();
+        let maintenance = reth_transaction_pool::maintain::maintain_transaction_pool_future::<
+            EthPrimitives,
+            _,
+            _,
+            _,
+        >(
+            provider,
+            pool.clone(),
+            stream::pending(),
+            runtime,
+            MaintainPoolConfig {
+                max_tx_lifetime: lifetime,
+                no_local_exemptions: true,
+                ..Default::default()
+            },
+        )
+        .with_subscriber(subscriber);
+        let maintenance = tokio::spawn(maintenance);
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while pool.get(&tx_hash).is_some() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("queued-lifetime maintenance must remove the exact transaction");
+        maintenance.abort();
+
+        let logs = writer.contents();
+        let expected_hash = format!("tx_hash={tx_hash}");
+        let expected_sender = format!("sender={sender}");
+        assert!(
+            logs.contains("outbe::txpool")
+                && logs.contains(&expected_hash)
+                && logs.contains(&expected_sender)
+                && logs.contains("nonce=64")
+                && logs.contains("reason=\"queued_lifetime\""),
+            "queued-lifetime eviction must emit exact structured identity and reason; logs:\n{logs}"
+        );
     }
 }
