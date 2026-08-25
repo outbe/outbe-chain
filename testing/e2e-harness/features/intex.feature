@@ -18,9 +18,14 @@ Feature: Intex from auction to Promis
   # The venue is deployed before the day settles because the dispatch is a plain
   # contract call — with no code at the address the node was built against, the
   # start is lost rather than retried into existence.
+  #
+  # The feeder publishes a live quote first: the auction's entry price is the last
+  # closed day's VWAP, and the fixture's seeded pair is small enough that Lysis
+  # would floor the monetary cost to zero without one.
   @intex-auction
   Scenario: A settled green day runs its auction through to a minted Intex
     Given a fresh four-validator OCOMP public capacity localnet
+    Then the controlled COEN USD quote is finalized through the real price feeder
     When the intex engine is deployed on the committee chain
     Then the committee chain hosts the intex engine
     When 33 capacity owners submit one encrypted Tribute each at no more than two per block
