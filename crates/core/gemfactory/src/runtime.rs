@@ -378,7 +378,7 @@ pub fn mine_gem_promis(
     storage: &StorageHandle<'_>,
     caller: Address,
     gem_id: U256,
-    nonce: U256,
+    nonce: u64,
     auth: outbe_promisfactory::api::ModifyAuth,
 ) -> Result<U256> {
     let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
@@ -501,6 +501,6 @@ fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> 
 
 /// PoW gate for `mine_gem_promis`, delegating to the shared
 /// [`outbe_common::pow`] scheme and mapping failures onto [`GemFactoryError`].
-pub fn validate_pow(gem_id: U256, nonce: U256) -> Result<()> {
+pub fn validate_pow(gem_id: U256, nonce: u64) -> Result<()> {
     pow::validate_pow(gem_id, nonce).map_err(|e| GemFactoryError::from(e).into())
 }

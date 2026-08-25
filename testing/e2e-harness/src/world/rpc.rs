@@ -363,7 +363,7 @@ impl Rpc {
         )?;
         let call = INodFactory::mineGratisCall {
             nodId: nod_id.to_u256(),
-            nonce: U256::ZERO,
+            nonce: 0,
             mac: B256::ZERO,
             opNonce: 0,
         };
@@ -481,7 +481,6 @@ impl Rpc {
             .map_err(|error| eyre!("capacity owner NOD body read failed: {error}"))?;
         let entity = outbe_compressed_entities::WwdEntityId::try_from(nod_id.as_slice())?;
         let nonce = (0_u64..100_000)
-            .map(U256::from)
             .find(|nonce| outbe_nodfactory::runtime::validate_pow(entity, *nonce).is_ok())
             .ok_or_else(|| eyre!("find bounded mineGratis nonce"))?;
         let op_nonce = eth::read_call(

@@ -36,7 +36,7 @@ pub fn mine_gratis(
     parent: &impl ParentBodySource,
     caller: Address,
     nod_id: WwdEntityId,
-    nonce: U256,
+    nonce: u64,
     auth: outbe_gratisfactory::api::ModifyAuth,
 ) -> Result<U256> {
     runtime::mine_gratis(storage, scope, parent, caller, nod_id, nonce, auth)

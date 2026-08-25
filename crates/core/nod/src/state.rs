@@ -20,10 +20,6 @@ use crate::{
 impl NodContract<'_> {
     // --- ID helpers ---
 
-    pub fn format_nod_id(nod_id: WwdEntityId) -> String {
-        nod_id.to_string()
-    }
-
     pub fn parse_nod_id(nod_id: &str) -> Result<WwdEntityId> {
         let trimmed = nod_id.strip_prefix("0x").unwrap_or(nod_id);
         if trimmed.len() != WwdEntityId::len_bytes() * 2 {

@@ -100,14 +100,14 @@ pub fn dispatch(
 }
 
 fn token_uri(item: &NodItemState, bucket: &NodBucketState) -> Result<String> {
-    let nod_id_str = NodContract::format_nod_id(item.nod_id);
+    let nod_id_str = item.nod_id.to_u256().to_string();
     let json = format!(
         "{{\"name\":\"Nod #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"token_id\",\"value\":\"{}\"}},{{\"trait_type\":\"worldwide_day\",\"value\":{}}},{{\"trait_type\":\"league_id\",\"value\":{}}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"gratis_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_of_gratis_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"is_qualified\",\"value\":{}}},{{\"trait_type\":\"is_settled\",\"value\":{}}},{{\"trait_type\":\"issued_at\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}}]}}",
-        &nod_id_str[..8],
+        nod_id_str,
         crate::constants::TOKEN_DESCRIPTION,
         crate::constants::TOKEN_IMAGE_BASE,
         nod_id_str,
-        item.nod_id,
+        nod_id_str,
         item.worldwide_day,
         item.league_id,
         item.floor_price_minor,
