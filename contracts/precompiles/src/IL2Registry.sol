@@ -6,18 +6,8 @@ interface IL2Registry {
     event L2NetworkZkSet(uint64 indexed chainId, bool enabled);
     event L2NetworkRemoved(uint64 indexed chainId);
 
-    /// Registers an L2 network. `publicKey` is the committee's compressed BLS
-    /// MinSig group public key in G2 (96 bytes).
-    /// `l1Address` is the L1 account that submits on behalf of the network
-    /// (e.g. calls `TributeFactory.offerTribute`); it must be unique across
-    /// registered networks. Permissionless: any caller may register.
-    function registerNetwork(uint64 chainId, address l1Address, bytes calldata publicKey) external;
-
-    /// Enables or disables ZK verification for a registered network.
-    /// Permissionless: any caller may toggle.
-    function setZkEnabled(uint64 chainId, bool enabled) external;
-
-    /// Removes a registered L2 network. Permissionless: any caller may remove.
+    /// Removes the caller's registered L2 network. The caller must equal the
+    /// `l1Address` stored for `chainId`.
     function removeNetwork(uint64 chainId) external;
 
     /// Returns the registration for `chainId`. Reverts when not registered.

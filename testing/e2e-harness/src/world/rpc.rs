@@ -2754,47 +2754,18 @@ impl Rpc {
         .map(|generation| generation.exists)
     }
 
-    /// Register an L2 network in the L2Registry (permissionless precompile).
-    pub fn l2_register_network(
-        &self,
-        key: &str,
-        chain_id: u64,
-        l1_address: Address,
-        public_key: &[u8],
-    ) -> Result<String> {
-        let tx = eth::send_call(
+    /// Read one governed L2 registry entry.
+    pub fn l2_network(&self, chain_id: u64) -> Option<(Address, Vec<u8>, bool)> {
+        let network = eth::read_call(
             &self.cfg.rpc0,
             addresses::L2_REGISTRY_ADDR,
-            key,
-            &IL2Registry::registerNetworkCall {
-                chainId: chain_id,
-                l1Address: l1_address,
-                publicKey: Bytes::copy_from_slice(public_key),
-            },
-            None,
+            &IL2Registry::getNetworkCall { chainId: chain_id },
         )?;
-        if !self.wait_successful_receipt(&tx, 20) {
-            return Err(eyre!("registerNetwork receipt was not successful: {tx}"));
-        }
-        Ok(tx)
-    }
-
-    /// Toggle ZK verification for a registered L2 network.
-    pub fn l2_set_zk_enabled(&self, key: &str, chain_id: u64, enabled: bool) -> Result<String> {
-        let tx = eth::send_call(
-            &self.cfg.rpc0,
-            addresses::L2_REGISTRY_ADDR,
-            key,
-            &IL2Registry::setZkEnabledCall {
-                chainId: chain_id,
-                enabled,
-            },
-            None,
-        )?;
-        if !self.wait_successful_receipt(&tx, 20) {
-            return Err(eyre!("setZkEnabled receipt was not successful: {tx}"));
-        }
-        Ok(tx)
+        Some((
+            network.l1Address,
+            network.publicKey.to_vec(),
+            network.zkEnabled,
+        ))
     }
 
     /// Submit a Tribute offer carrying explicit L2 zk fields (`0x`-hex).

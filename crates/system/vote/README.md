@@ -32,7 +32,10 @@ Target modules implement `VoteTarget`:
 
 Validation is done before the proposal is created. `handle_*` methods are called after tally results are known.
 
-The current update target handler is `outbe_update::vote_target::UpdateVoteTarget`.
+The compile-time registry includes the protocol update target and the L2Registry
+target. L2Registry accepts a strict JSON union for `register` and `setZkEnabled`.
+Its public precompile exposes no register/set selectors; the registered L1 owner
+retains `removeNetwork` solely to remove its own network.
 
 ## Voting Rules
 
@@ -61,6 +64,28 @@ outbe-cli --private-key "$VALIDATOR_KEY" vote propose \
 
 outbe-cli --private-key "$VALIDATOR_KEY" vote cast --proposal-id 1 --yes
 outbe-cli vote status --proposal-id 1
+```
+
+For a larger JSON payload, use a file instead of shell quoting:
+
+```bash
+L2_REGISTRY_ADDR=0x000000000000000000000000000000000000EE0E
+
+outbe-cli --private-key "$VALIDATOR_KEY" vote propose \
+  --target-module "$L2_REGISTRY_ADDR" \
+  --payload-file ./l2-register.json
+```
+
+Example `l2-register.json`:
+
+```json
+{
+  "operation": "register",
+  "chainId": 4242,
+  "l1Address": "0x1111111111111111111111111111111111111111",
+  "publicKey": "0x<96-byte-compressed-BLS-MinSig-G2-key>",
+  "zkEnabled": true
+}
 ```
 
 Precompile methods:

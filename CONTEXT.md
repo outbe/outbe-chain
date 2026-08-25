@@ -17,6 +17,23 @@ Network-wide system mechanisms and policies used to operate and evolve the chain
 validator lifecycle and economics, scheduling, accounting/emission, Oracle, TEE,
 governance/update, fee policy and shared cryptographic verification services.
 
+## Executable Governance
+
+### L2 Registry Proposal
+
+An active-validator Vote proposal targeting `L2Registry` with one strict JSON
+mutation (`register` or `setZkEnabled`). The proposal stays pending
+through the standard voting window; a two-thirds yes quorum applies the mutation
+atomically during post-deadline begin-block tally.
+_Avoid_: direct L2 registration, Governance OIP/GIP
+
+### Registry Mutation
+
+An L2Registry-owned state transition. Admission and ZK policy changes are applied
+by its compile-time Vote target. A registered `l1Address` owner may remove only
+its own network through `removeNetwork`; no public register or set selector exists.
+_Avoid_: permissionless registry update, validator-owned ABI write
+
 ### Core Space (`C`)
 
 The Consume-to-Gain protocol and its business state: Tribute, Nod, Gratis,

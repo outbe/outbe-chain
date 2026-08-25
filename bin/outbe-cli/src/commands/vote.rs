@@ -1,5 +1,7 @@
 //! Generic on-chain vote proposal commands.
 
+use std::path::PathBuf;
+
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
 use clap::Subcommand;
@@ -16,8 +18,15 @@ pub enum VoteCmd {
         #[arg(long)]
         target_module: Address,
         /// JSON payload decoded by the target module.
-        #[arg(long)]
-        payload: String,
+        #[arg(
+            long,
+            conflicts_with = "payload_file",
+            required_unless_present = "payload_file"
+        )]
+        payload: Option<String>,
+        /// Read the JSON payload from a file instead of the command line.
+        #[arg(long, value_name = "PATH", conflicts_with = "payload")]
+        payload_file: Option<PathBuf>,
     },
     /// Cast a vote on a pending proposal (active validator only).
     Cast {
@@ -45,7 +54,11 @@ impl VoteCmd {
             Self::Propose {
                 target_module,
                 payload,
-            } => propose(client, private_key, target_module, payload).await,
+                payload_file,
+            } => {
+                let payload = resolve_proposal_payload(payload, payload_file)?;
+                propose(client, private_key, target_module, payload).await
+            }
             Self::Cast {
                 proposal_id,
                 yes,
@@ -63,6 +76,20 @@ impl VoteCmd {
             }
             Self::Status { proposal_id } => status(client, proposal_id).await,
         }
+    }
+}
+
+fn resolve_proposal_payload(
+    payload: Option<String>,
+    payload_file: Option<PathBuf>,
+) -> Result<String> {
+    match (payload, payload_file) {
+        (Some(payload), None) => Ok(payload),
+        (None, Some(path)) => std::fs::read_to_string(&path)
+            .wrap_err_with(|| format!("read proposal payload from {}", path.display())),
+        _ => Err(eyre::eyre!(
+            "specify exactly one of --payload or --payload-file"
+        )),
     }
 }
 
@@ -190,6 +217,36 @@ mod tests {
     }
 
     #[test]
+    fn test_cli_parse_vote_propose_payload_file() {
+        let cli = Cli::try_parse_from([
+            "outbe-cli",
+            "vote",
+            "propose",
+            "--target-module",
+            "0x000000000000000000000000000000000000EE0D",
+            "--payload-file",
+            "proposal.json",
+        ]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_rejects_inline_and_file_payload_together() {
+        let cli = Cli::try_parse_from([
+            "outbe-cli",
+            "vote",
+            "propose",
+            "--target-module",
+            "0x000000000000000000000000000000000000EE0D",
+            "--payload",
+            SAMPLE_PAYLOAD,
+            "--payload-file",
+            "proposal.json",
+        ]);
+        assert!(cli.is_err());
+    }
+
+    #[test]
     fn test_cli_parse_vote_cast_yes() {
         let cli = Cli::try_parse_from(["outbe-cli", "vote", "cast", "--proposal-id", "1", "--yes"]);
         assert!(cli.is_ok());
@@ -226,7 +283,29 @@ mod tests {
             .unwrap();
         VoteCmd::Propose {
             target_module: UPDATE_ADDRESS,
+            payload: Some(SAMPLE_PAYLOAD.to_string()),
+            payload_file: None,
+        }
+        .run(&rpc, Some(private_key))
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn propose_reads_json_payload_from_file() {
+        let private_key = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), SAMPLE_PAYLOAD).unwrap();
+        let call = IVote::createProposalCall {
+            targetModule: UPDATE_ADDRESS,
             payload: SAMPLE_PAYLOAD.to_string(),
+        };
+        let rpc = recording_send_tx_rpc(private_key, VOTE_ADDRESS, call.abi_encode(), U256::ZERO)
+            .unwrap();
+        VoteCmd::Propose {
+            target_module: UPDATE_ADDRESS,
+            payload: None,
+            payload_file: Some(file.path().to_path_buf()),
         }
         .run(&rpc, Some(private_key))
         .await
@@ -258,7 +337,8 @@ mod tests {
         let mock = MockRpc::default();
         let err = VoteCmd::Propose {
             target_module: UPDATE_ADDRESS,
-            payload: "not-json".to_string(),
+            payload: Some("not-json".to_string()),
+            payload_file: None,
         }
         .run(
             &mock,

@@ -5,7 +5,7 @@
 - **Owners/scope:** `crates/system/vote`; executable proposals, ballots, tally and
   target-handler dispatch
 - **Depends on:** ADR-B-CNS-003, ADR-B-EVM-004, ADR-S-VAL-001
-- **Used by:** ADR-C-TOK-004
+- **Used by:** ADR-C-TOK-004, L2Registry mutation authority
 - **Supersedes:** The Vote-local portions of the deleted pre-space governance aggregate
 
 ## Context
@@ -98,6 +98,18 @@ constant. Target validation receives original payload bytes, proposer and attach
 value; a lossy generic JSON value is not sufficient for a canonical-byte contract.
 JSON payload interpretation, value admission and raw status/vote/bond bytes are
 consensus formats and require activation discipline when changed.
+
+L2Registry is an `ActiveValidatorOnly` target with a strict tagged JSON union for
+`register` and `setZkEnabled`. `IL2Registry` exposes no public register/set
+selectors: only the compile-time L2Registry target can call those mutation seams.
+The registered `l1Address` owner may call `removeNetwork(chainId)` to remove only
+its own record; a non-owner or replay after removal reverts without effects. Raw
+legacy register/set selectors are rejected by dispatch. A target-domain conflict at tally (for example, a
+second approved proposal for an already registered chain id) is a proposal
+`Error`, rolls back target effects and does not stop block execution. Existing L2
+records and view/event ABI remain compatible; changing permissionless mutation to this
+authority requires fresh genesis or an explicit protocol activation on a live
+network.
 
 ## Production-interface evidence
 
