@@ -17,12 +17,12 @@ use crate::runtime::{self, MintStatement};
 /// compile time; `mint` refuses any credited value.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[IEmit::burnCall::SELECTOR];
 
-/// Base gas for `burn`: chain-pool derivation, the in-memory zero ladder,
+/// Base gas for `burn`: chain-ID absorption, the in-memory zero ladder,
 /// commitment derivation, and one depth-20 append.
 pub const EMIT_BURN_BASE_GAS: u64 = 530_000;
 
-/// Base gas for `mint`: one UltraHonkKeccak verification plus chain-pool
-/// derivation, the zero ladder, and a worst-case change append.
+/// Base gas for `mint`: one UltraHonkKeccak verification plus chain-ID
+/// absorption, the zero ladder, and a worst-case change append.
 pub const EMIT_MINT_BASE_GAS: u64 = outbe_zkproof::constants::ZK_VERIFY_GAS + 517_500;
 
 sol! {
@@ -61,7 +61,7 @@ pub fn dispatch(
                     caller,
                     c.payoutRecipient,
                     MintStatement {
-                        pool_id: c.poolId,
+                        chain_id: c.chainId,
                         root: c.root,
                         nullifier: c.nullifier,
                         note_owner: c.noteOwner,

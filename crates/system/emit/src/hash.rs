@@ -1,8 +1,7 @@
 //! Rust mirror of the Emit hash and tree formulas.
 //!
-//! Copied from the PoC's normative formulas
-//! (`zkp-tests/emit/src/hash.rs`) and matching the vendored noir core
-//! (`outbe-emit-circuit-core/src/{hash,merkle}.nr`):
+//! Copied from the frozen circuit formulas in
+//! `outbe-emit-mint-circuit/src/emit.nr`:
 //!
 //! - BN254 fields use canonical 32-byte big-endian encodings; a word that
 //!   would require reduction is invalid input.
@@ -45,10 +44,6 @@ pub fn emit_domain() -> Field {
     ascii_field("OUTBE_EMIT")
 }
 
-pub fn tag_pool() -> Field {
-    ascii_field("EMIT_POOL")
-}
-
 pub fn tag_note_sn() -> Field {
     ascii_field("EMIT_NOTE_SN")
 }
@@ -69,17 +64,6 @@ pub fn tag_empty() -> Field {
     ascii_field("EMIT_EMPTY")
 }
 
-pub fn tag_node() -> Field {
-    ascii_field("EMIT_NODE")
-}
-
-/// `pool_id = P(EMIT_POOL, [chain_id, instance_id])`. The runtime fixes
-/// `instance_id = 0`; the PoC's generic profile used `19` and its golden
-/// vectors pin that value.
-pub fn pool_id(chain_id: u64, instance_id: Field) -> Field {
-    p(tag_pool(), &[Field::from(chain_id), instance_id])
-}
-
 /// An owner address absorbed as one big-endian integer, matching the circuit.
 pub fn address_field(owner: [u8; 20]) -> Field {
     Field::from_be_bytes_mod_order(&owner)
@@ -90,18 +74,24 @@ pub fn note_sn(note_owner: [u8; 20], note_spend_key: Field) -> Field {
     p(tag_note_sn(), &[address_field(note_owner), note_spend_key])
 }
 
-/// `C = P(EMIT_COMMITMENT, [pool_id, note_sn, note_amount])` — the only
+/// `C = P(EMIT_COMMITMENT, [chain_id, note_sn, note_amount])` — the only
 /// commitment form the runtime ever appends; opaque caller-supplied
 /// commitments are prohibited.
-pub fn note_commitment(pool: Field, note_sn: Field, note_amount: u64) -> Field {
-    p(tag_commitment(), &[pool, note_sn, Field::from(note_amount)])
+pub fn note_commitment(chain_id: u64, note_sn: Field, note_amount: u64) -> Field {
+    p(
+        tag_commitment(),
+        &[Field::from(chain_id), note_sn, Field::from(note_amount)],
+    )
 }
 
-/// `nullifier = P(EMIT_NULLIFIER, [pool_id, note_sn, spend_key])` —
+/// `nullifier = P(EMIT_NULLIFIER, [chain_id, note_sn, spend_key])` —
 /// amount-independent, so serial-sharing notes strand each other exactly as
-/// in the PoC.
-pub fn nullifier(pool: Field, note_sn: Field, note_spend_key: Field) -> Field {
-    p(tag_nullifier(), &[pool, note_sn, note_spend_key])
+/// in the circuit.
+pub fn nullifier(chain_id: u64, note_sn: Field, note_spend_key: Field) -> Field {
+    p(
+        tag_nullifier(),
+        &[Field::from(chain_id), note_sn, note_spend_key],
+    )
 }
 
 /// `next_key = P(EMIT_CHANGE_KEY, [spend_key, nullifier])` — the
@@ -110,24 +100,25 @@ pub fn change_key(note_spend_key: Field, note_nullifier: Field) -> Field {
     p(tag_change_key(), &[note_spend_key, note_nullifier])
 }
 
-/// Pool-specific empty leaf: `P(EMIT_EMPTY, [pool_id])`.
-pub fn empty_leaf(pool: Field) -> Field {
-    p(tag_empty(), &[pool])
+/// Chain-specific empty leaf: `P(EMIT_EMPTY, [chain_id])`.
+pub fn empty_leaf(chain_id: u64) -> Field {
+    p(tag_empty(), &[Field::from(chain_id)])
 }
 
-/// Zero-based level-tagged node: `P(EMIT_NODE, [level, left, right])`.
-pub fn merkle_node(level: usize, left: Field, right: Field) -> Field {
-    p(tag_node(), &[Field::from(level as u64), left, right])
+/// Shared untagged Merkle inner node: `H2(left, right)`.
+pub fn merkle_node(left: Field, right: Field) -> Field {
+    h2(left, right)
 }
 
-/// The complete pool-specific empty ladder `zeros[0..=depth]`:
-/// `zeros[0] = empty_leaf(pool)`, `zeros[i+1] = node(i, zeros[i], zeros[i])`.
+/// The complete chain-specific empty ladder `zeros[0..=depth]`:
+/// `zeros[0] = empty_leaf(chain_id)`,
+/// `zeros[i+1] = H2(zeros[i], zeros[i])`.
 /// Derived in memory on every request; never persisted.
-pub fn empty_subtrees(pool: Field, depth: usize) -> Vec<Field> {
+pub fn empty_subtrees(chain_id: u64, depth: usize) -> Vec<Field> {
     let mut zeros = vec![Field::from(0u64); depth + 1];
-    zeros[0] = empty_leaf(pool);
+    zeros[0] = empty_leaf(chain_id);
     for level in 0..depth {
-        zeros[level + 1] = merkle_node(level, zeros[level], zeros[level]);
+        zeros[level + 1] = merkle_node(zeros[level], zeros[level]);
     }
     zeros
 }

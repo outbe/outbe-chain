@@ -220,10 +220,10 @@ VOTE_ADDRESS = "0x000000000000000000000000000000000000ee0c"
 STABLECOIN_FACTORY_ADDRESS = "000000000000000000000000000000000000ee0f"
 STABLECOIN_POLICY_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee10"
 RADICLE_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee11"
-# Emit private-note pool precompile. Mirrors the Rust constant
+# Emit private-note tree precompile. Mirrors the Rust constant
 # `outbe_primitives::addresses::EMIT_ADDRESS`. Genesis reserves and marks the
-# account only; the pool, empty ladder, and tree are derived at runtime by the
-# first burn, so no Emit field state is ever precomputed here.
+# account only; its chain-specific empty ladder and tree are derived at runtime
+# by the first burn, so no Emit field state is ever precomputed here.
 EMIT_ADDRESS = "000000000000000000000000000000000000ee12"
 STABLECOIN_ADDRESS_PREFIX = "53c0"
 OUTBE_SYSTEM_TX_ADDRESS = "ff00000000000000000000000000000000000001"

@@ -19,7 +19,7 @@ use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
 
 use crate::hash::{
     change_key, empty_subtrees, field_to_be_bytes, merkle_node, note_commitment,
-    note_sn as derive_note_sn, nullifier as derive_nullifier, pool_id, Field,
+    note_sn as derive_note_sn, nullifier as derive_nullifier, Field,
 };
 use crate::precompile::{base_gas, dispatch, IEmit, PAYABLE_SELECTORS};
 use crate::schema::{EmitContract, EMIT_TREE_CAPACITY, EMIT_TREE_DEPTH};
@@ -43,14 +43,16 @@ fn b256(field: Field) -> B256 {
     B256::new(field_to_be_bytes(field))
 }
 
-fn chain_pool() -> Field {
-    pool_id(CHAIN_ID, Field::from(0u64))
-}
-
 fn small_word(low_byte: u8) -> B256 {
     let mut word = [0u8; 32];
     word[31] = low_byte;
     B256::new(word)
+}
+
+fn u64_word(value: u64) -> [u8; 32] {
+    let mut word = [0u8; 32];
+    word[24..32].copy_from_slice(&value.to_be_bytes());
+    word
 }
 
 // ---- selectors, payable policy, gas ---------------------------------------
@@ -63,7 +65,7 @@ fn selectors_and_gas_are_pinned() {
     );
     assert_eq!(
         alloy_primitives::hex::encode(IEmit::mintCall::SELECTOR),
-        "ea7c5b96"
+        "68921bce"
     );
     assert_eq!(PAYABLE_SELECTORS, &[IEmit::burnCall::SELECTOR]);
     assert_eq!(
@@ -73,7 +75,7 @@ fn selectors_and_gas_are_pinned() {
     assert_eq!(base_gas(&[0xee; 4]), 530_000);
     let mint_calldata = IEmit::mintCall {
         payoutRecipient: CAROL,
-        poolId: B256::ZERO,
+        chainId: CHAIN_ID,
         root: B256::ZERO,
         nullifier: B256::ZERO,
         noteOwner: BOB,
@@ -85,63 +87,59 @@ fn selectors_and_gas_are_pinned() {
     assert_eq!(base_gas(&mint_calldata), 3_517_500);
 }
 
-// ---- PoC golden formula vector (generic profile, instance_id = 19) --------
+// ---- Current circuit golden formula vector -------------------------------
 
 #[test]
-fn formulas_match_pinned_poc_cross_language_vector() {
-    let pool = pool_id(31_337, Field::from(19u64));
+fn formulas_match_pinned_circuit_vector() {
+    let chain_id = 31_337u64;
     let owner = [0x22u8; 20];
     let key = Field::from(17u64);
     let serial = derive_note_sn(owner, key);
-    let commitment = note_commitment(pool, serial, 100);
-    let n = derive_nullifier(pool, serial, key);
+    let commitment = note_commitment(chain_id, serial, 100);
+    let n = derive_nullifier(chain_id, serial, key);
     let next_key = change_key(key, n);
     let next_serial = derive_note_sn(owner, next_key);
-    let change = note_commitment(pool, next_serial, 60);
-    let next_n = derive_nullifier(pool, next_serial, next_key);
+    let change = note_commitment(chain_id, next_serial, 60);
+    let next_n = derive_nullifier(chain_id, next_serial, next_key);
 
-    let zeros = empty_subtrees(pool, EMIT_TREE_DEPTH);
-    let mut root = merkle_node(0, commitment, zeros[0]);
-    for level in 1..EMIT_TREE_DEPTH {
-        root = merkle_node(level, root, zeros[level]);
+    let zeros = empty_subtrees(chain_id, EMIT_TREE_DEPTH);
+    let mut root = merkle_node(commitment, zeros[0]);
+    for sibling in zeros.iter().take(EMIT_TREE_DEPTH).skip(1) {
+        root = merkle_node(root, *sibling);
     }
 
-    let cases: [(Field, &str); 9] = [
-        (
-            pool,
-            "0x02248e222402cb4278d02bcbefb3395baa251ebeb8d0c88a0aae74fd06af8b22",
-        ),
+    let cases: [(Field, &str); 8] = [
         (
             serial,
             "0x2f2f2ee38f7a4b57224b8fb5f0fcb28681ed43a1c032e6573b76cfae568b5d57",
         ),
         (
             commitment,
-            "0x13b8e7117dcb246fe33b2083359297062a0d83725ce06484b3a7b5e749dfb2dd",
+            "0x2200e7aade29b65eddff0e16dd97a1c31721fb127b328acf031252993b710460",
         ),
         (
             n,
-            "0x2c1074d62504237ebfdf0fa85be8c3d62d1c1d9d63f8c5d9c4816ad5362debe5",
+            "0x1296f918fdd8ebff3fd2937b862af861aaedf9b8dc9d7500fa8f987a1a0939ce",
         ),
         (
             next_key,
-            "0x2f72ffd2af510e22c1dfc4de2d75d8d2b4ccdcab59e96ca5ea909defe65fd252",
+            "0x274a4f418b7add167b8710743e24a6952cb843c82c04483eb8d42568572470e6",
         ),
         (
             next_serial,
-            "0x0a9f21589d6b6b83048bc60df6732327b1ab125a3272970ae175d09a84445c4e",
+            "0x06f487bf2a6721969a7db942808c9d694aa278603e52bc57581a4f5475adbf12",
         ),
         (
             change,
-            "0x0c173a5bc75f7efc602ab21f26677a20844f42f09981d80ac0a33dbf944bc845",
+            "0x0649c1589df49b5e59d9e5b1d54e4903292764fcd01038aaf7f9925f95f1253a",
         ),
         (
             next_n,
-            "0x20d512cb7ad6184ddb751aa3199786437ca28301237513a0f576e5917ca7d612",
+            "0x2ee004bcc4397e6b329171d533e88b7c60465861bd2b7f5d081a755903820478",
         ),
         (
             root,
-            "0x23127e4117a45403bded87c28b70e1862ece945f3d893666991f7f172960ca79",
+            "0x125ae2525e63b97cbb77baffccf7abb6a88a620aab7866cb33b131487e6f3c49",
         ),
     ];
     for (actual, expected) in cases {
@@ -160,10 +158,10 @@ struct ReferenceTree {
 }
 
 impl ReferenceTree {
-    fn new(pool: Field) -> Self {
+    fn new(chain_id: u64) -> Self {
         Self {
             leaves: Vec::new(),
-            zeros: empty_subtrees(pool, EMIT_TREE_DEPTH),
+            zeros: empty_subtrees(chain_id, EMIT_TREE_DEPTH),
         }
     }
 
@@ -186,7 +184,7 @@ impl ReferenceTree {
             }
             nodes = nodes
                 .chunks_exact(2)
-                .map(|pair| merkle_node(level, pair[0], pair[1]))
+                .map(|pair| merkle_node(pair[0], pair[1]))
                 .collect();
         }
         nodes[0]
@@ -203,7 +201,7 @@ impl ReferenceTree {
             }
             nodes = nodes
                 .chunks_exact(2)
-                .map(|pair| merkle_node(level, pair[0], pair[1]))
+                .map(|pair| merkle_node(pair[0], pair[1]))
                 .collect();
             index >>= 1;
         }
@@ -229,7 +227,7 @@ fn combined_from(public: &PublicInputs, proof_words: &[Vec<u8>]) -> Vec<u8> {
     combined
 }
 
-/// Proves `(note_amount, key, leaf_index)` against the tree's root when only
+/// Proves `(note_amount, key, path_bits)` against the tree's root when only
 /// `root_leaf_count` leaves existed, for `mint_units`, with the deterministic
 /// change commitment (zero for a full mint).
 fn prove_mint(
@@ -241,18 +239,17 @@ fn prove_mint(
     root_leaf_count: usize,
     mint_units: u64,
 ) -> Vec<u8> {
-    let pool = chain_pool();
     let serial = derive_note_sn(owner.into(), key);
-    let nullifier = derive_nullifier(pool, serial, key);
+    let nullifier = derive_nullifier(CHAIN_ID, serial, key);
     let remaining = note_amount - mint_units;
     let change = if remaining > 0 {
         let next_key = change_key(key, nullifier);
-        note_commitment(pool, derive_note_sn(owner.into(), next_key), remaining)
+        note_commitment(CHAIN_ID, derive_note_sn(owner.into(), next_key), remaining)
     } else {
         Field::from(0u64)
     };
     let public = PublicInputs {
-        pool_id: pool,
+        chain_id: CHAIN_ID,
         root: tree.root_at(root_leaf_count),
         nullifier,
         note_owner: owner.into(),
@@ -262,7 +259,7 @@ fn prove_mint(
     let witness = Witness {
         note_amount,
         note_spend_key: key,
-        leaf_index,
+        path_bits: core::array::from_fn(|level| (leaf_index >> level) & 1 == 1),
         auth_path: tree.path_at(leaf_index),
     };
     let backend = Barretenberg::default();
@@ -275,7 +272,7 @@ fn prove_mint(
 /// plus a nonzero proof tail; passes the decoder but is not a valid proof.
 /// Used only for guards that fire before verification.
 fn fabricated_statement(
-    pool: B256,
+    chain_id: u64,
     root: B256,
     nullifier: B256,
     owner: Address,
@@ -284,7 +281,8 @@ fn fabricated_statement(
 ) -> Vec<u8> {
     let mut combined = Vec::with_capacity(4 + 32 * 26);
     combined.extend_from_slice(&25u32.to_be_bytes());
-    for word in [pool, root, nullifier] {
+    combined.extend_from_slice(&u64_word(chain_id));
+    for word in [root, nullifier] {
         combined.extend_from_slice(word.as_slice());
     }
     for byte in owner.0 {
@@ -292,9 +290,7 @@ fn fabricated_statement(
         word[31] = byte;
         combined.extend_from_slice(&word);
     }
-    let mut units_word = [0u8; 32];
-    units_word[24..32].copy_from_slice(&units.to_be_bytes());
-    combined.extend_from_slice(&units_word);
+    combined.extend_from_slice(&u64_word(units));
     combined.extend_from_slice(change.as_slice());
     combined.extend_from_slice(&[7u8; 32]);
     combined
@@ -307,7 +303,7 @@ fn burn_calldata(note_sn: B256) -> Vec<u8> {
 #[allow(clippy::too_many_arguments)]
 fn mint_calldata(
     payout: Address,
-    pool: B256,
+    chain_id: u64,
     root: B256,
     nullifier: B256,
     owner: Address,
@@ -317,7 +313,7 @@ fn mint_calldata(
 ) -> Vec<u8> {
     IEmit::mintCall {
         payoutRecipient: payout,
-        poolId: pool,
+        chainId: chain_id,
         root,
         nullifier,
         noteOwner: owner,
@@ -376,8 +372,8 @@ fn dispatch_mint(
 fn burn_initializes_lazily_and_emits_amount_bound_new_note() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let serial = scenario_serial();
-    let commitment = note_commitment(chain_pool(), serial, 100);
-    let mut reference = ReferenceTree::new(chain_pool());
+    let commitment = note_commitment(CHAIN_ID, serial, 100);
+    let mut reference = ReferenceTree::new(CHAIN_ID);
     reference.append(commitment);
 
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
@@ -467,7 +463,7 @@ fn duplicate_burn_keys_the_full_commitment_not_the_serial() {
 fn mint_before_any_burn_is_not_initialized() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     let proof = fabricated_statement(
-        b256(chain_pool()),
+        CHAIN_ID,
         small_word(2),
         small_word(3),
         BOB,
@@ -476,7 +472,7 @@ fn mint_before_any_burn_is_not_initialized() {
     );
     let data = mint_calldata(
         CAROL,
-        b256(chain_pool()),
+        CHAIN_ID,
         small_word(2),
         small_word(3),
         BOB,
@@ -497,13 +493,12 @@ fn mint_noncanonical_statement_fields_revert_by_name() {
     ));
     // Head word offsets after the 4-byte selector.
     for (field_name, offset) in [
-        ("poolId", 4 + 32),
         ("root", 4 + 64),
         ("nullifier", 4 + 96),
         ("changeCommitment", 4 + 6 * 32),
     ] {
         let proof = fabricated_statement(
-            b256(chain_pool()),
+            CHAIN_ID,
             small_word(2),
             small_word(3),
             BOB,
@@ -512,7 +507,7 @@ fn mint_noncanonical_statement_fields_revert_by_name() {
         );
         let mut data = mint_calldata(
             CAROL,
-            b256(chain_pool()),
+            CHAIN_ID,
             small_word(2),
             small_word(3),
             BOB,
@@ -534,7 +529,7 @@ fn mint_statement_mismatch_and_malformed_framing_revert() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     run_burn(&mut provider, ALICE, 100, b256(scenario_serial())).unwrap();
     let proof = fabricated_statement(
-        b256(chain_pool()),
+        CHAIN_ID,
         small_word(2),
         small_word(3),
         BOB,
@@ -545,7 +540,7 @@ fn mint_statement_mismatch_and_malformed_framing_revert() {
     // Well-framed proof, but the explicit calldata disagrees on mintUnits.
     let data = mint_calldata(
         CAROL,
-        b256(chain_pool()),
+        CHAIN_ID,
         small_word(2),
         small_word(3),
         BOB,
@@ -561,7 +556,7 @@ fn mint_statement_mismatch_and_malformed_framing_revert() {
     truncated[..4].copy_from_slice(&24u32.to_be_bytes());
     let data = mint_calldata(
         CAROL,
-        b256(chain_pool()),
+        CHAIN_ID,
         small_word(2),
         small_word(3),
         BOB,
@@ -580,27 +575,27 @@ fn mint_statement_mismatch_and_malformed_framing_revert() {
 }
 
 #[test]
-fn mint_wrong_caller_recipient_owner_units_and_pool_revert() {
+fn mint_wrong_caller_recipient_owner_units_and_chain_id_revert() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     run_burn(&mut provider, ALICE, 100, b256(scenario_serial())).unwrap();
 
-    let matching = |pool: B256, owner: Address, units: u64| {
+    let matching = |chain_id: u64, owner: Address, units: u64| {
         let proof = fabricated_statement(
-            pool,
+            chain_id,
             small_word(2),
             small_word(3),
             owner,
             units,
             small_word(25),
         );
-        (proof, pool)
+        (proof, chain_id)
     };
 
     // Caller mismatch: statement owner is BOB, caller is ALICE.
-    let (proof, pool) = matching(b256(chain_pool()), BOB, 40);
+    let (proof, chain_id) = matching(CHAIN_ID, BOB, 40);
     let data = mint_calldata(
         CAROL,
-        pool,
+        chain_id,
         small_word(2),
         small_word(3),
         BOB,
@@ -614,7 +609,7 @@ fn mint_wrong_caller_recipient_owner_units_and_pool_revert() {
     // Zero recipient.
     let data = mint_calldata(
         Address::ZERO,
-        pool,
+        chain_id,
         small_word(2),
         small_word(3),
         BOB,
@@ -627,10 +622,10 @@ fn mint_wrong_caller_recipient_owner_units_and_pool_revert() {
 
     // Zero owner: the fabricated proof embeds the zero owner too, so the
     // statement matches and the owner guard fires.
-    let (proof, pool) = matching(b256(chain_pool()), Address::ZERO, 40);
+    let (proof, chain_id) = matching(CHAIN_ID, Address::ZERO, 40);
     let data = mint_calldata(
         CAROL,
-        pool,
+        chain_id,
         small_word(2),
         small_word(3),
         Address::ZERO,
@@ -642,10 +637,10 @@ fn mint_wrong_caller_recipient_owner_units_and_pool_revert() {
     assert_revert(result, "Emit note owner must be non-zero");
 
     // Zero units.
-    let (proof, pool) = matching(b256(chain_pool()), BOB, 0);
+    let (proof, chain_id) = matching(CHAIN_ID, BOB, 0);
     let data = mint_calldata(
         CAROL,
-        pool,
+        chain_id,
         small_word(2),
         small_word(3),
         BOB,
@@ -656,12 +651,11 @@ fn mint_wrong_caller_recipient_owner_units_and_pool_revert() {
     let result = dispatch_mint(&mut provider, BOB, &data);
     assert_revert(result, "Emit mint units must be non-zero");
 
-    // Pool mismatch: statement and proof carry the other chain's pool.
-    let other_pool = b256(pool_id(OTHER_CHAIN_ID, Field::from(0u64)));
-    let (proof, other_pool_word) = matching(other_pool, BOB, 40);
+    // Chain-ID mismatch: statement and proof carry a different chain.
+    let (proof, other_chain_id) = matching(OTHER_CHAIN_ID, BOB, 40);
     let data = mint_calldata(
         CAROL,
-        other_pool_word,
+        other_chain_id,
         small_word(2),
         small_word(3),
         BOB,
@@ -670,7 +664,7 @@ fn mint_wrong_caller_recipient_owner_units_and_pool_revert() {
         &proof,
     );
     let result = dispatch_mint(&mut provider, BOB, &data);
-    assert_revert(result, "Emit pool does not match chain ID");
+    assert_revert(result, "Emit chain ID does not match runtime");
 }
 
 #[test]
@@ -678,7 +672,7 @@ fn mint_refuses_value_and_preflight_bounds_the_proof_argument() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     run_burn(&mut provider, ALICE, 100, b256(scenario_serial())).unwrap();
     let proof = fabricated_statement(
-        b256(chain_pool()),
+        CHAIN_ID,
         small_word(2),
         small_word(3),
         BOB,
@@ -687,7 +681,7 @@ fn mint_refuses_value_and_preflight_bounds_the_proof_argument() {
     );
     let data = mint_calldata(
         CAROL,
-        b256(chain_pool()),
+        CHAIN_ID,
         small_word(2),
         small_word(3),
         BOB,
@@ -744,7 +738,7 @@ fn mint_refuses_value_and_preflight_bounds_the_proof_argument() {
 fn plan_scenario_partial_then_full_mint_with_real_proofs() {
     outbe_zkproof::init_crs().expect("CRS init");
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let pool = chain_pool();
+    let pool = CHAIN_ID;
     let key = Field::from(17u64);
 
     // Burn.
@@ -764,7 +758,7 @@ fn plan_scenario_partial_then_full_mint_with_real_proofs() {
 
     let partial_data = mint_calldata(
         CAROL,
-        b256(pool),
+        pool,
         b256(root_after_burn),
         b256(nullifier),
         BOB,
@@ -781,7 +775,7 @@ fn plan_scenario_partial_then_full_mint_with_real_proofs() {
     let next_nullifier = derive_nullifier(pool, derive_note_sn(BOB.into(), next_key), next_key);
     let full_data = mint_calldata(
         DAVE,
-        b256(pool),
+        pool,
         b256(root_after_change),
         b256(next_nullifier),
         BOB,
@@ -856,7 +850,7 @@ fn plan_scenario_partial_then_full_mint_with_real_proofs() {
 fn stale_root_past_the_32_window_is_rejected() {
     outbe_zkproof::init_crs().expect("CRS init");
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let pool = chain_pool();
+    let pool = CHAIN_ID;
     let mut tree = ReferenceTree::new(pool);
 
     let serial = scenario_serial();
@@ -885,7 +879,7 @@ fn stale_root_past_the_32_window_is_rejected() {
 
     let data = mint_calldata(
         CAROL,
-        b256(pool),
+        pool,
         b256(old_root),
         b256(nullifier),
         BOB,
@@ -901,7 +895,7 @@ fn stale_root_past_the_32_window_is_rejected() {
 fn payout_overflow_is_a_user_revert_before_mutation() {
     outbe_zkproof::init_crs().expect("CRS init");
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let pool = chain_pool();
+    let pool = CHAIN_ID;
     let serial = scenario_serial();
     let key = Field::from(17u64);
     let mut tree = ReferenceTree::new(pool);
@@ -918,7 +912,7 @@ fn payout_overflow_is_a_user_revert_before_mutation() {
     provider.set_balance(CAROL, U256::MAX);
     let data = mint_calldata(
         CAROL,
-        b256(pool),
+        pool,
         b256(tree.root_at(1)),
         b256(nullifier),
         BOB,
@@ -940,7 +934,7 @@ fn payout_overflow_is_a_user_revert_before_mutation() {
 fn full_tree_rejects_burns_and_partial_mints() {
     outbe_zkproof::init_crs().expect("CRS init");
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let pool = chain_pool();
+    let pool = CHAIN_ID;
     let serial = scenario_serial();
 
     // Test-only leaf-count setup: the tree is artificially at capacity.
@@ -967,7 +961,7 @@ fn full_tree_rejects_burns_and_partial_mints() {
     );
     let data = mint_calldata(
         CAROL,
-        b256(pool),
+        pool,
         b256(tree.root_at(1)),
         b256(nullifier),
         BOB,
@@ -988,7 +982,7 @@ fn full_tree_rejects_burns_and_partial_mints() {
 fn deterministic_change_precreation_reverts_partial_mint_atomically() {
     outbe_zkproof::init_crs().expect("CRS init");
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let pool = chain_pool();
+    let pool = CHAIN_ID;
     let serial = scenario_serial();
     let key = Field::from(17u64);
     let mut tree = ReferenceTree::new(pool);
@@ -1008,7 +1002,7 @@ fn deterministic_change_precreation_reverts_partial_mint_atomically() {
 
     let data = mint_calldata(
         CAROL,
-        b256(pool),
+        pool,
         b256(tree.root_at(1)),
         b256(nullifier),
         BOB,
@@ -1029,14 +1023,13 @@ fn deterministic_change_precreation_reverts_partial_mint_atomically() {
 // ---- two-chain separation ---------------------------------------------------
 
 #[test]
-fn pools_are_chain_derived_and_separate_without_stored_configuration() {
-    let pool_a = pool_id(CHAIN_ID, Field::from(0u64));
-    let pool_b = pool_id(OTHER_CHAIN_ID, Field::from(0u64));
-    assert_ne!(pool_a, pool_b);
+fn chains_derive_separate_commitments_and_roots_without_stored_configuration() {
+    let chain_id_a = CHAIN_ID;
+    let chain_id_b = OTHER_CHAIN_ID;
 
     let serial = scenario_serial();
-    let commitment_a = note_commitment(pool_a, serial, 100);
-    let commitment_b = note_commitment(pool_b, serial, 100);
+    let commitment_a = note_commitment(chain_id_a, serial, 100);
+    let commitment_b = note_commitment(chain_id_b, serial, 100);
     assert_ne!(commitment_a, commitment_b);
 
     let mut provider_a = HashMapStorageProvider::new(CHAIN_ID);
@@ -1045,9 +1038,9 @@ fn pools_are_chain_derived_and_separate_without_stored_configuration() {
     run_burn(&mut provider_b, ALICE, 100, b256(serial)).unwrap();
 
     // The same serial+amount coexists on both chains with different roots.
-    let mut reference_a = ReferenceTree::new(pool_a);
+    let mut reference_a = ReferenceTree::new(chain_id_a);
     reference_a.append(commitment_a);
-    let mut reference_b = ReferenceTree::new(pool_b);
+    let mut reference_b = ReferenceTree::new(chain_id_b);
     reference_b.append(commitment_b);
     provider_a.enter(|storage| {
         let emit: EmitContract<'_> = storage.contract();
@@ -1058,10 +1051,9 @@ fn pools_are_chain_derived_and_separate_without_stored_configuration() {
         assert_eq!(emit.current_root.read().unwrap(), b256(reference_b.root()));
     });
 
-    // No pool or empty-ladder word is persisted anywhere at EMIT_ADDRESS on
-    // either chain.
-    let zeros_a = empty_subtrees(pool_a, EMIT_TREE_DEPTH);
-    let zeros_b = empty_subtrees(pool_b, EMIT_TREE_DEPTH);
+    // No chain-specific empty-ladder word is persisted as configuration.
+    let zeros_a = empty_subtrees(chain_id_a, EMIT_TREE_DEPTH);
+    let zeros_b = empty_subtrees(chain_id_b, EMIT_TREE_DEPTH);
     for (name, provider) in [("a", &provider_a), ("b", &provider_b)] {
         for ((address, _slot), value) in provider.storage.iter() {
             if *address != EMIT_ADDRESS {
@@ -1069,16 +1061,6 @@ fn pools_are_chain_derived_and_separate_without_stored_configuration() {
             }
             let word = B256::new(value.to_be_bytes::<32>());
             let as_field = Field::from_be_bytes_mod_order(word.as_slice());
-            assert_ne!(
-                word,
-                b256(pool_a),
-                "chain {name}: pool id must not be persisted"
-            );
-            assert_ne!(
-                word,
-                b256(pool_b),
-                "chain {name}: pool id must not be persisted"
-            );
             // Levels 0..20 are configuration the runtime must re-derive.
             // zeros[20] — the empty root — is legitimate protocol data: the
             // root window is seeded with it at initialization.
@@ -1102,7 +1084,7 @@ fn pools_are_chain_derived_and_separate_without_stored_configuration() {
 fn stored_layout_holds_no_leaves_right_nodes_or_ladder() {
     outbe_zkproof::init_crs().expect("CRS init");
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    let pool = chain_pool();
+    let pool = CHAIN_ID;
     let serial = scenario_serial();
     let key = Field::from(17u64);
     let mut tree = ReferenceTree::new(pool);
@@ -1118,7 +1100,7 @@ fn stored_layout_holds_no_leaves_right_nodes_or_ladder() {
     );
     let data = mint_calldata(
         CAROL,
-        b256(pool),
+        pool,
         b256(tree.root_at(1)),
         b256(nullifier),
         BOB,
@@ -1250,7 +1232,7 @@ fn burn_rolls_back_fully_under_fault_injection_on_pristine_and_active_trees() {
 #[test]
 fn mint_rolls_back_fully_under_fault_injection() {
     outbe_zkproof::init_crs().expect("CRS init");
-    let pool = chain_pool();
+    let pool = CHAIN_ID;
     let serial = scenario_serial();
     let key = Field::from(17u64);
     let mut tree = ReferenceTree::new(pool);
@@ -1265,7 +1247,7 @@ fn mint_rolls_back_fully_under_fault_injection() {
     let proof = prove_mint(&tree, BOB, key, 100, leaf, 1, 40);
     let data = mint_calldata(
         CAROL,
-        b256(pool),
+        pool,
         b256(tree.root_at(1)),
         b256(nullifier),
         BOB,

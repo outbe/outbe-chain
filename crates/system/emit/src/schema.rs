@@ -20,7 +20,7 @@ pub const EMIT_TREE_CAPACITY: u32 = 1 << EMIT_TREE_DEPTH;
 /// Number of accepted roots retained for mint proofs (the root window).
 pub const EMIT_ROOT_WINDOW: u32 = 32;
 
-/// EVM storage layout for the Emit pool (V1).
+/// EVM storage layout for the chain's Emit tree (V1).
 #[storage_schema]
 #[contract(addr = EMIT_ADDRESS)]
 pub struct EmitContract {
