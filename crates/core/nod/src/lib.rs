@@ -1,4 +1,5 @@
 pub mod api;
+pub mod called;
 pub mod constants;
 pub mod errors;
 pub mod hooks;
@@ -21,3 +22,6 @@ pub use schema::{
 
 #[cfg(test)]
 mod adr006_tests;
+
+#[cfg(test)]
+mod called_tests;
