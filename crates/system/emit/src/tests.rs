@@ -482,6 +482,42 @@ fn mint_before_any_burn_is_not_initialized() {
     );
     let result = dispatch_mint(&mut provider, BOB, &data);
     assert_revert(result, "Emit is not initialized");
+
+    // A pristine chain reports `not initialized` even when the embedded
+    // statement mismatches calldata or a field is noncanonical: framing is
+    // the only check allowed before the initialization gate (frozen matrix).
+    let mismatched = mint_calldata(
+        CAROL,
+        CHAIN_ID,
+        small_word(9), // differs from every embedded word below
+        small_word(3),
+        BOB,
+        40,
+        small_word(25),
+        &proof,
+    );
+    let result = dispatch_mint(&mut provider, BOB, &mismatched);
+    assert_revert(result, "Emit is not initialized");
+    let mut noncanonical = mint_calldata(
+        CAROL,
+        CHAIN_ID,
+        B256::new(alloy_primitives::hex!(
+            "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001"
+        )),
+        small_word(3),
+        BOB,
+        40,
+        small_word(25),
+        &proof,
+    );
+    noncanonical[4 + 64..4 + 96].copy_from_slice(
+        B256::new(alloy_primitives::hex!(
+            "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001"
+        ))
+        .as_slice(),
+    );
+    let result = dispatch_mint(&mut provider, BOB, &noncanonical);
+    assert_revert(result, "Emit is not initialized");
 }
 
 #[test]
@@ -522,6 +558,60 @@ fn mint_noncanonical_statement_fields_revert_by_name() {
             &format!("Emit {field_name} is not a canonical BN254 field"),
         );
     }
+}
+
+#[test]
+fn malformed_proof_tail_reverts_never_fatal() {
+    outbe_zkproof::init_crs().expect("CRS init");
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let serial = scenario_serial();
+    let key = Field::from(17u64);
+    let mut tree = ReferenceTree::new(CHAIN_ID);
+    let leaf = tree.append(note_commitment(CHAIN_ID, serial, 100));
+    run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
+
+    // Every pre-verification guard passes on this real proof — the statement
+    // matches calldata, the root is the current root, the nullifier is
+    // fresh — until one proof-section word is corrupted past the BN254
+    // modulus. The backend rejects it with an Err, which must surface as a
+    // user revert, never a fatal verifier error (an attacker controls every
+    // byte of this tail).
+    let nullifier = derive_nullifier(CHAIN_ID, serial, key);
+    let change = note_commitment(
+        CHAIN_ID,
+        derive_note_sn(BOB.into(), change_key(key, nullifier)),
+        60,
+    );
+    let mut proof = prove_mint(&tree, BOB, key, 100, leaf, 1, 40);
+    let tail = &mut proof[4 + 25 * 32..];
+    tail[..32].copy_from_slice(&alloy_primitives::hex!(
+        "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001"
+    ));
+    let data = mint_calldata(
+        CAROL,
+        CHAIN_ID,
+        b256(tree.root_at(1)),
+        b256(nullifier),
+        BOB,
+        40,
+        b256(change),
+        &proof,
+    );
+    let result = dispatch_mint(&mut provider, BOB, &data);
+    match result {
+        Err(PrecompileError::Revert(message)) => assert!(
+            message.starts_with("Emit mint proof is malformed: zk verification backend failed"),
+            "unexpected revert text: {message}"
+        ),
+        other => panic!("malformed tail must revert, got {other:?}"),
+    }
+
+    provider.enter(|storage| {
+        let emit: EmitContract<'_> = storage.contract();
+        assert!(!emit.spent_nullifiers.read(&b256(nullifier)).unwrap());
+        assert_eq!(emit.leaf_count.read().unwrap(), 1);
+    });
+    assert_eq!(provider.get_balance(CAROL), U256::ZERO);
 }
 
 #[test]

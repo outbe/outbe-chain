@@ -170,18 +170,28 @@ pub(crate) fn mint(
     statement: MintStatement,
     proof: &[u8],
 ) -> Result<()> {
-    // Statement field elements must be canonical before anything else touches
-    // them. `chain_id` and `mint_units` are already exact ABI-decoded u64s.
+    // Combined-proof framing must decode before any state is touched; on a
+    // pristine chain it is the only check allowed before the initialization
+    // gate (frozen matrix: "ABI/proof framing may decode, then
+    // `Emit is not initialized`").
+    let embedded = decode_emit_mint_public_inputs(proof)
+        .map_err(|error| PrecompileError::from(EmitError::MalformedProof(error.to_string())))?;
+
+    let (runtime_chain_id, zeros) = chain_state(&storage)?;
+    let emit: EmitContract<'_> = storage.contract();
+    let schema = schema_state(&emit)?;
+    if schema == 0 {
+        return Err(EmitError::NotInitialized.into());
+    }
+
+    // Statement field elements must be canonical before they are compared or
+    // hashed. `chain_id` and `mint_units` are already exact ABI-decoded u64s.
     let root = field_from_be_bytes(&statement.root.0)
         .ok_or_else(|| PrecompileError::from(EmitError::NonCanonicalField("root")))?;
     let nullifier = field_from_be_bytes(&statement.nullifier.0)
         .ok_or_else(|| PrecompileError::from(EmitError::NonCanonicalField("nullifier")))?;
     let change = field_from_be_bytes(&statement.change_commitment.0)
         .ok_or_else(|| PrecompileError::from(EmitError::NonCanonicalField("changeCommitment")))?;
-
-    // Combined-proof framing must decode before any state is touched.
-    let embedded = decode_emit_mint_public_inputs(proof)
-        .map_err(|error| PrecompileError::from(EmitError::MalformedProof(error.to_string())))?;
 
     // The embedded statement must equal the explicit calldata exactly — a
     // security check, not optional redundancy.
@@ -193,13 +203,6 @@ pub(crate) fn mint(
         && embedded.change_commitment == statement.change_commitment.0;
     if !statement_matches {
         return Err(EmitError::StatementMismatch.into());
-    }
-
-    let (runtime_chain_id, zeros) = chain_state(&storage)?;
-    let emit: EmitContract<'_> = storage.contract();
-    let schema = schema_state(&emit)?;
-    if schema == 0 {
-        return Err(EmitError::NotInitialized.into());
     }
 
     // A proof-supplied chain ID is never trusted.
@@ -232,17 +235,23 @@ pub(crate) fn mint(
     if emit.spent_nullifiers.read(&nullifier_word)? {
         return Err(EmitError::NullifierSpent.into());
     }
-
     match verify_emit_mint(proof) {
         Ok(true) => {}
         Ok(false) => return Err(EmitError::ProofInvalid.into()),
-        Err(ZkProofError::CrsInitialization(message))
-        | Err(ZkProofError::VerificationBackend(message)) => {
+        // CRS initialization is the distinguishable infrastructure signal;
+        // it stays fatal per the frozen proof-consumer split.
+        Err(ZkProofError::CrsInitialization(message)) => {
             return Err(EmitError::VerifierUnavailable(message).into())
         }
-        Err(error) => {
-            return Err(EmitError::MalformedProof(error.to_string()).into());
-        }
+        // Every other verifier error — including a `VerificationBackend`
+        // rejection of caller-supplied proof bytes — is raised while
+        // verifying attacker-controllable material and fails closed as a
+        // user revert. The backend cannot distinguish rejected input from a
+        // genuine FFI failure at this seam; misreporting the rare genuine
+        // failure as an invalid proof is safe and retryable, while promoting
+        // attacker input to a fatal error would be an unprivileged
+        // consensus-visible DoS.
+        Err(error) => return Err(EmitError::MalformedProof(error.to_string()).into()),
     }
 
     // Recipient credit overflow is a user guard, not corruption.

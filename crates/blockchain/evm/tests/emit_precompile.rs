@@ -141,6 +141,30 @@ fn emit_logs(result: &ExecutionResult) -> Vec<&LogData> {
     }
 }
 
+fn gas_used(result: &ExecutionResult) -> u64 {
+    match result {
+        ExecutionResult::Success { gas, .. }
+        | ExecutionResult::Revert { gas, .. }
+        | ExecutionResult::Halt { gas, .. } => gas.tx_gas_used(),
+    }
+}
+/// Balance as committed in the chained database — unlike [`balance_of`],
+/// not defaulted to zero for accounts a single transaction did not touch.
+fn committed_balance(db: &CacheDB<EmptyDB>, address: Address) -> U256 {
+    use revm::DatabaseRef;
+    db.basic_ref(address)
+        .expect("account loads")
+        .map(|info| info.balance)
+        .unwrap_or_default()
+}
+
+/// Committed storage slot of `EMIT_ADDRESS` by schema slot index.
+fn committed_storage(db: &CacheDB<EmptyDB>, slot: u64) -> U256 {
+    use revm::DatabaseRef;
+    db.storage_ref(EMIT_ADDRESS, U256::from(slot))
+        .expect("storage loads")
+}
+
 fn b256(field: Field) -> B256 {
     B256::new(field_to_be_bytes(field))
 }
@@ -309,7 +333,12 @@ fn borrow_code(opcode: u8, target: Address) -> Bytes {
 }
 
 fn db_with_borrower(opcode: u8) -> CacheDB<EmptyDB> {
-    let mut db = base_db();
+    db_with_borrower_on(opcode, base_db())
+}
+
+/// Installs the forwarding borrower on top of an already-chained state, so
+/// borrowed-frame cases run against initialized Emit storage.
+fn db_with_borrower_on(opcode: u8, mut db: CacheDB<EmptyDB>) -> CacheDB<EmptyDB> {
     let code = Bytecode::new_raw(borrow_code(opcode, EMIT_ADDRESS));
     db.insert_account_info(
         BORROWER,
@@ -364,6 +393,14 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     assert_eq!(new_note.leafIndex, note_leaf);
     assert_eq!(new_note.noteAmount, 100);
     assert_eq!(new_note.rootAfter, b256(tree.root_at(1)));
+    // Routed base gas is selector-sensitive: the burn charge sits between
+    // the two pinned constants (a regression to a flat default would leave
+    // this window).
+    let burn_gas = gas_used(&outcome.result);
+    assert!(
+        burn_gas > 530_000 && burn_gas < 3_517_500,
+        "routed burn gas {burn_gas} must reflect the 530k base"
+    );
 
     // The EVM persists state between transactions only through the shared db:
     // re-run each step against the post-state of the previous one.
@@ -412,6 +449,8 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     assert_eq!(change_note.leafIndex, change_leaf);
     assert_eq!(change_note.noteAmount, 0);
     assert_eq!(change_note.rootAfter, b256(tree.root_at(2)));
+    // The mint selector's fixed base gas dominates the routed charge.
+    assert!(gas_used(&outcome.result) >= 3_517_500);
     let db = chained_db(db, outcome);
 
     // Bob's successor proof mints the remaining 60 to Dave — NoteUsed only.
@@ -444,12 +483,37 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     let used = IEmit::NoteUsed::decode_log_data(logs[0]).unwrap();
     assert_eq!(used.payoutRecipient, DAVE);
     assert_eq!(used.mintAmount, 60);
+    assert_eq!(used.noteOwner, BOB);
+    assert_eq!(used.nullifier, b256(next_nullifier));
 
-    // Total known public supply is restored: 40 + 60 = 100 public again,
-    // Emit holds nothing, and the replay below must not move any of it.
+    // Total known public supply is restored and committed: Carol 40 + Dave
+    // 60 = 100 public again, Emit holds nothing, and a full mint neither
+    // appends a leaf nor advances the root.
+    let db = chained_db(db, outcome);
+    assert_eq!(committed_balance(&db, CAROL), U256::from(40u64));
+    assert_eq!(committed_balance(&db, DAVE), U256::from(60u64));
+    assert_eq!(committed_balance(&db, BOB), U256::from(1_000u64));
+    assert_eq!(committed_balance(&db, ALICE), U256::from(9_900u64));
+    assert_eq!(
+        committed_balance(&db, EMIT_ADDRESS),
+        U256::ZERO,
+        "Emit holds nothing after the full cycle"
+    );
+    assert_eq!(
+        committed_storage(&db, 2),
+        U256::from(2u64),
+        "leaf count stays at burn + change; a full mint appends nothing"
+    );
+    assert_eq!(
+        B256::from(committed_storage(&db, 1)),
+        b256(tree.root_at(2)),
+        "a full mint does not advance the root"
+    );
 
     // Replay the first partial mint on a fresh chain state: failed receipt,
-    // nothing moves.
+    // and — asserted against the chained database, not the replay
+    // transaction's own state set — the committed payout, tree, and root of
+    // the first mint are untouched.
     let mut db = base_db();
     let burned = run(
         db.clone(),
@@ -483,7 +547,12 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
         revert_reason(&first.result)
     );
     db = chained_db(db, first);
-    let outcome = run(
+    assert_eq!(
+        committed_balance(&db, CAROL),
+        U256::from(40u64),
+        "the first mint's payout is committed before the replay"
+    );
+    let replayed = run(
         db.clone(),
         BOB,
         EMIT_ADDRESS,
@@ -499,30 +568,29 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
             &partial_proof,
         ),
     );
-    assert!(matches!(outcome.result, ExecutionResult::Revert { .. }));
+    assert!(matches!(replayed.result, ExecutionResult::Revert { .. }));
     assert_eq!(
-        revert_reason(&outcome.result).as_deref(),
+        revert_reason(&replayed.result).as_deref(),
         Some("Emit nullifier has already been spent")
     );
-    let replayed = run(
-        db,
-        BOB,
-        EMIT_ADDRESS,
-        0,
-        20_000_000,
-        mint_tx(
-            CAROL,
-            root_after_burn,
-            nullifier,
-            BOB,
-            40,
-            change,
-            &partial_proof,
-        ),
-    );
-    assert!(matches!(replayed.result, ExecutionResult::Revert { .. }));
-    assert_eq!(balance_of(&replayed, CAROL), U256::from(0u64));
     assert!(emit_logs(&replayed.result).is_empty());
+    assert_eq!(
+        committed_balance(&db, CAROL),
+        U256::from(40u64),
+        "the replay must not reset the committed payout"
+    );
+    assert_eq!(committed_balance(&db, BOB), U256::from(1_000u64));
+    assert_eq!(committed_balance(&db, EMIT_ADDRESS), U256::ZERO);
+    assert_eq!(
+        committed_storage(&db, 2),
+        U256::from(2u64),
+        "the replay appends no leaf"
+    );
+    assert_eq!(
+        B256::from(committed_storage(&db, 1)),
+        b256(tree.root_at(2)),
+        "the replay does not advance the root"
+    );
 }
 
 /// Overlays a `ResultAndState` onto the running `CacheDB` so the scenario
@@ -671,6 +739,66 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
     assert_eq!(storage_writes(&outcome, EMIT_ADDRESS), 0);
     assert_eq!(balance_of(&outcome, EMIT_ADDRESS), U256::ZERO);
 
+    // A *mutating* mint under STATICCALL: the note is owned by the borrower
+    // so every guard passes and execution reaches the checkpoint's first
+    // write, which must halt the static frame. No balances, tree state, or
+    // logs may move — this is the write-protection path the zero-value burn
+    // case above never reaches.
+    {
+        let key = Field::from(17u64);
+        let owner_serial = derive_note_sn(BORROWER.into(), key);
+        let mut owner_tree = ReferenceTree::new();
+        let leaf = owner_tree.append(note_commitment(pool, owner_serial, 100));
+        let mut db = base_db();
+        let burned = run(
+            db.clone(),
+            ALICE,
+            EMIT_ADDRESS,
+            100,
+            5_000_000,
+            burn_tx(owner_serial),
+        );
+        assert!(matches!(burned.result, ExecutionResult::Success { .. }));
+        db = chained_db(db, burned);
+        let owner_nullifier = derive_nullifier(pool, owner_serial, key);
+        let owner_change = note_commitment(
+            pool,
+            derive_note_sn(BORROWER.into(), change_key(key, owner_nullifier)),
+            60,
+        );
+        let proof = prove_mint(&owner_tree, BORROWER, key, 100, leaf, 1, 40);
+        let calldata = mint_tx(
+            CAROL,
+            owner_tree.root_at(1),
+            owner_nullifier,
+            BORROWER,
+            40,
+            owner_change,
+            &proof,
+        );
+        let db = db_with_borrower_on(0xfa, db);
+        let outcome = run(db.clone(), ALICE, BORROWER, 0, 20_000_000, calldata);
+        assert!(
+            matches!(outcome.result, ExecutionResult::Success { .. }),
+            "the borrower swallows the inner halt: {:?}",
+            outcome.result
+        );
+        assert_eq!(revert_reason(&outcome.result), None);
+        assert_eq!(storage_writes(&outcome, EMIT_ADDRESS), 0);
+        assert!(emit_logs(&outcome.result).is_empty());
+        assert_eq!(
+            committed_balance(&db, CAROL),
+            U256::ZERO,
+            "a static frame cannot mint"
+        );
+        assert_eq!(committed_balance(&db, EMIT_ADDRESS), U256::ZERO);
+        assert_eq!(
+            committed_storage(&db, 2),
+            U256::from(1u64),
+            "only the burn's leaf exists; the static mint wrote nothing"
+        );
+    }
+
     // Sanity: an ordinary funded CALL on the payable burn selector succeeds
     // through the same borrower path (opcode CALL via a direct transaction).
     let outcome = run(
@@ -686,6 +814,130 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
         "ordinary funded burn must succeed"
     );
     assert_eq!(balance_of(&outcome, EMIT_ADDRESS), U256::ZERO);
+}
+
+#[test]
+fn funded_malformed_calldata_reverts_without_stranding_value() {
+    use alloy_primitives::hex;
+
+    // Funded unknown selector: value is refused for every selector the
+    // module has not published, before dispatch touches state.
+    let outcome = run(
+        base_db(),
+        ALICE,
+        EMIT_ADDRESS,
+        5,
+        1_000_000,
+        Bytes::from(vec![0xde, 0xad, 0xbe, 0xef]),
+    );
+    assert!(matches!(outcome.result, ExecutionResult::Revert { .. }));
+    assert_eq!(
+        revert_reason(&outcome.result).as_deref(),
+        Some("non-payable function called with value")
+    );
+    assert_eq!(balance_of(&outcome, ALICE), U256::from(10_000u64));
+    assert_eq!(balance_of(&outcome, EMIT_ADDRESS), U256::ZERO);
+    assert_eq!(storage_writes(&outcome, EMIT_ADDRESS), 0);
+
+    // Funded empty calldata: same refusal — no selector is payable default.
+    let outcome = run(base_db(), ALICE, EMIT_ADDRESS, 5, 1_000_000, Bytes::new());
+    assert!(matches!(outcome.result, ExecutionResult::Revert { .. }));
+    assert_eq!(
+        revert_reason(&outcome.result).as_deref(),
+        Some("non-payable function called with value")
+    );
+    assert_eq!(balance_of(&outcome, ALICE), U256::from(10_000u64));
+    assert_eq!(storage_writes(&outcome, EMIT_ADDRESS), 0);
+
+    // Funded selector-only burn: the selector is payable so the value gate
+    // passes and the credited amount rides on the ABI decode failure — the
+    // reverting transaction must refund it in full.
+    let outcome = run(
+        base_db(),
+        ALICE,
+        EMIT_ADDRESS,
+        5,
+        1_000_000,
+        Bytes::from(IEmit::burnCall::SELECTOR.to_vec()),
+    );
+    assert!(
+        matches!(outcome.result, ExecutionResult::Revert { .. }),
+        "selector-only burn must fail ABI decoding: {:?}",
+        outcome.result
+    );
+    assert_eq!(balance_of(&outcome, ALICE), U256::from(10_000u64));
+    assert_eq!(balance_of(&outcome, EMIT_ADDRESS), U256::ZERO);
+    assert_eq!(storage_writes(&outcome, EMIT_ADDRESS), 0);
+
+    // Zero-value selector-only mint: the route charges the mint base gas
+    // before dispatch reverts in the proof preflight — pinning that the
+    // 3,517,500 selector-sensitive charge is actually routed.
+    let outcome = run(
+        base_db(),
+        BOB,
+        EMIT_ADDRESS,
+        0,
+        20_000_000,
+        Bytes::from(IEmit::mintCall::SELECTOR.to_vec()),
+    );
+    assert!(matches!(outcome.result, ExecutionResult::Revert { .. }));
+    assert_eq!(
+        revert_reason(&outcome.result).as_deref(),
+        Some("Emit mint proof is malformed: missing proof offset word")
+    );
+    assert!(
+        gas_used(&outcome.result) >= 3_517_500,
+        "mint selector must route the 3,517,500 base gas, got {}",
+        gas_used(&outcome.result)
+    );
+    assert_eq!(storage_writes(&outcome, EMIT_ADDRESS), 0);
+
+    // Below-base gas limits halt out-of-gas before dispatch with no state
+    // change: mint at base + 30k cannot cover the fixed charge plus the
+    // calldata, and burn at base + 5k cannot cover its charge either.
+    let mint_head = mint_tx(
+        CAROL,
+        Field::from(0u64),
+        Field::from(0u64),
+        BOB,
+        1,
+        Field::from(0u64),
+        &hex!("00000000").to_vec(),
+    );
+    let oog_db = base_db();
+    let outcome = run(
+        oog_db.clone(),
+        BOB,
+        EMIT_ADDRESS,
+        0,
+        3_517_500 + 30_000,
+        mint_head,
+    );
+    assert!(
+        !matches!(outcome.result, ExecutionResult::Success { .. }),
+        "mint below base+intrinsic gas must not succeed: {:?}",
+        outcome.result
+    );
+    assert_eq!(storage_writes(&outcome, EMIT_ADDRESS), 0);
+    assert_eq!(committed_balance(&oog_db, CAROL), U256::ZERO);
+
+    let outcome = run(
+        base_db(),
+        ALICE,
+        EMIT_ADDRESS,
+        1,
+        530_000 + 5_000,
+        burn_tx(Field::from(1u64)),
+    );
+    assert!(
+        !matches!(outcome.result, ExecutionResult::Success { .. }),
+        "burn below base+intrinsic gas must not succeed"
+    );
+    assert!(
+        matches!(outcome.result, ExecutionResult::Halt { .. }),
+        "expected an out-of-gas halt, got {:?}",
+        outcome.result
+    );
 }
 
 #[test]
