@@ -310,7 +310,7 @@ fn active_ocomp_layout_splits_begin_users_and_terminal_request() {
 fn active_ocomp_layout_supports_an_empty_user_zone() {
     let activation = OcompLifecycleActivation::at_block(OCOMP_TEST_BLOCK);
     let mut txs = canonical_active_ocomp_transactions();
-    txs.remove(6);
+    txs.remove(7);
 
     let layout =
         split_system_layout(&txs).expect("terminal suffix remains distinct without user txs");
@@ -457,7 +457,8 @@ fn rewards_gem_delivery_is_mandatory_unique_and_immediately_after_cycle() {
 }
 
 /// V2 begin-zone ordering: CertifiedParentAccounting (≥2), CycleTick (≥1),
-/// BoundaryOutcome (when present), OracleSlashWindow (≥1).
+/// RewardsGemDelivery (≥1), BoundaryOutcome (when present),
+/// OracleSlashWindow (≥1).
 #[test]
 fn v2_begin_zone_ordering_is_canonical() {
     // Block 2+ canonical layout (no BoundaryOutcome on the parent).

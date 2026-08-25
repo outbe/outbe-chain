@@ -14,12 +14,10 @@
 //!   pool to Metadosis or emitting a topup.
 //! * [`read_voters_for_day`] — ordered (Address, participation count)
 //!   pairs for a UTC day; first-seen-on-day order is deterministic.
-//! * [`add_topup_for_voters`] — delivers the day's emission topup to voters
-//!   as gems (`outbe_gemfactory::mint_gem`: Genesis gems for the first 21
-//!   days, Validator gems thereafter), proportionally to participation.
-//!   Idempotent per UTC day via the dedicated `daily_topup_settled` guard.
-//!   Validator emission is paid in gems; there is no claimable native
-//!   `pending_rewards` balance.
+//! * [`prepare_daily_validator_gem_batch`] — freezes the exact validator Gem
+//!   obligations for a UTC day without consulting Oracle state.
+//! * [`deliver_oldest_reward_gem_batch`] — delivers one complete FIFO batch
+//!   when a fresh canonical price exists.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_gemfactory::GemTypes;
@@ -63,100 +61,6 @@ pub fn read_voters_for_day(ctx: &BlockRuntimeContext, day: u32) -> Result<Vec<(A
         out.push((voter, p));
     }
     Ok(out)
-}
-
-/// Distributes `topup_total` proportionally to `voters` as gems (validator
-/// emission is paid in gems, not a claimable native balance). Steps:
-///
-/// 1. Idempotency guard: if `daily_topup_settled[day]` is already set,
-///    return [`TopupSettlementOutcome::AlreadySettled`] without minting.
-/// 2. Trivial cases: if `topup_total` is zero, `voters` is empty, or
-///    the sum of participation counts is zero, mark the day settled and
-///    return [`TopupSettlementOutcome::Settled`] with zero distributed
-///    without minting any gems.
-/// 3. For each voter with non-zero count, mint `floor(topup_total * count /
-///    sum_count)` gems to the voter via `outbe_gemfactory::api::mint_gem`
-///    (Genesis gems for the first 21 days from genesis, Validator gems
-///    thereafter). Tracks the running `distributed`.
-/// 4. Set `daily_topup_settled[day] = true`.
-///
-/// Distinguishes a fresh settlement and its total minted amount from an
-/// already-settled replay so the orchestrator cannot misclassify a prior mint
-/// as undelivered residue.
-///
-/// Caller contract: `voters` should be the canonical ordered list from
-/// [`read_voters_for_day`] for the same `day`; the api itself does not
-/// re-read storage for participation counts to keep the math exactly as
-/// computed by the orchestrator that selected the voter set.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TopupSettlementOutcome {
-    Settled { distributed: U256 },
-    AlreadySettled,
-}
-
-pub fn add_topup_for_voters(
-    ctx: &BlockRuntimeContext,
-    day: u32,
-    topup_total: U256,
-    voters: &[(Address, u64)],
-) -> Result<TopupSettlementOutcome> {
-    let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
-
-    if rewards.daily_topup_settled.read(&day)? {
-        return Ok(TopupSettlementOutcome::AlreadySettled);
-    }
-
-    if topup_total.is_zero() || voters.is_empty() {
-        rewards.daily_topup_settled.write(&day, true)?;
-        return Ok(TopupSettlementOutcome::Settled {
-            distributed: U256::ZERO,
-        });
-    }
-
-    let total_count: u64 = voters.iter().map(|(_, count)| *count).sum();
-    if total_count == 0 {
-        rewards.daily_topup_settled.write(&day, true)?;
-        return Ok(TopupSettlementOutcome::Settled {
-            distributed: U256::ZERO,
-        });
-    }
-
-    // First 21 days from genesis: validators receive Genesis gems (Qualified).
-    // After that: standard Validator gems.
-    let gem_type = if day_number_since_genesis(ctx, day)? < 21 {
-        GemTypes::Genesis
-    } else {
-        GemTypes::Validator
-    };
-
-    let total_count_u256 = U256::from(total_count);
-    let mut distributed = U256::ZERO;
-    for (voter, count) in voters {
-        if *count == 0 {
-            continue;
-        }
-        let share_num = topup_total
-            .checked_mul(U256::from(*count))
-            .ok_or_else(|| PrecompileError::Revert("topup share multiply overflow".into()))?;
-        let share = share_num / total_count_u256;
-        if share.is_zero() {
-            continue;
-        }
-        outbe_gemfactory::api::mint_gem(
-            &ctx.storage,
-            *voter,
-            gem_type,
-            share,
-            REWARD_GEM_CURRENCY,
-            REWARD_GEM_CURRENCY,
-        )?;
-        distributed = distributed
-            .checked_add(share)
-            .ok_or_else(|| PrecompileError::Revert("topup distributed overflow".into()))?;
-    }
-
-    rewards.daily_topup_settled.write(&day, true)?;
-    Ok(TopupSettlementOutcome::Settled { distributed })
 }
 
 /// Immutable summary of one UTC day's prepared validator reward Gem batch.
@@ -605,7 +509,7 @@ mod tests {
     }
 
     /// Seeds COEN/840 oracle pair at `rate_6`. Required because
-    /// `add_topup_for_voters` → `mint_gem` resolves `coen_rate` for floor
+    /// `deliver_oldest_reward_gem_batch` → `mint_gem` resolves `coen_rate` for floor
     /// price + entry_price at mint time.
     fn seed_oracle(ctx: &BlockRuntimeContext, rate_6: U256) {
         outbe_oracle::api::register_pair(ctx.storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)

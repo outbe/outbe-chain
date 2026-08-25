@@ -7,12 +7,13 @@ use outbe_primitives::storage::types::{Mapping, Slot};
 ///
 /// Tracks the chain's genesis UTC-day anchor and the per-finalized-block +
 /// per-day accumulators used by the idempotent fee-distribution path and
-/// day-boundary settle formula.
+/// day-boundary settle formula and the FIFO of exact validator Gem obligations.
 ///
 /// Per-block fees are escrowed (`pending_fees`) and settled at `N+K` over the
-/// inclusion-window voter set; daily emission top-ups are delivered to voters as
-/// gems by [`crate::api::add_topup_for_voters`] (validator emission is paid in
-/// gems, not a claimable native balance).
+/// inclusion-window voter set; daily emission top-ups are prepared by
+/// [`crate::api::prepare_daily_validator_gem_batch`] and delivered by
+/// [`crate::api::deliver_oldest_reward_gem_batch`] (validator emission is paid
+/// in gems, not a claimable native balance).
 ///
 /// Storage slots:
 ///   0:  genesis_utc_day                    — uint32 (yyyymmdd of block 0; 0 = uninit)
@@ -154,14 +155,9 @@ pub struct Rewards {
     /// have independent short-circuits.
     pub fee_dust_counted_for_block: Mapping<B256, bool>,
 
-    /// Idempotency guard for [`crate::api::add_topup_for_voters`]. Once
-    /// the daily topup has been credited for a UTC day, subsequent calls
-    /// for the same day are no-ops (return zero distributed dust). This
-    /// is independent from `daily_settled`, which is owned by the future
-    /// EmissionLimit `run_daily_dispatch` orchestrator and
-    /// marks the entire daily dispatch as complete. Splitting the two
-    /// keeps the api-level idempotency contract decoupled from the
-    /// late-after-settle guard in `on_finalized_metadata`.
+    /// Completion guard for actual Gem delivery. A prepared pending batch keeps
+    /// this false even after the day's allocation is sealed; delivery flips it
+    /// only when the entire FIFO batch has minted atomically.
     pub daily_topup_settled: Mapping<u32, bool>,
 
     // ── per-block fee escrow + inclusion-window credits ──────────

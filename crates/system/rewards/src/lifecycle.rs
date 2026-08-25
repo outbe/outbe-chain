@@ -8,8 +8,8 @@
 //! Day-boundary settle has moved out of Rewards as part of the Cycle
 //! refactor: the daily orchestration runs on
 //! `CycleLifecycle::begin_block` and dispatches into EmissionLimit ->
-//! AgentReward -> Rewards (via [`crate::api::add_topup_for_voters`])
-//! exactly once per UTC day.
+//! AgentReward -> Rewards (via
+//! [`crate::api::prepare_daily_validator_gem_batch`]) exactly once per UTC day.
 
 use outbe_primitives::{block::BlockLifecycle, block::BlockRuntimeContext, error::Result};
 

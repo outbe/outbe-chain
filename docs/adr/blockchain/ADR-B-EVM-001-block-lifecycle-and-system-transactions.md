@@ -40,8 +40,9 @@ validate header/system layout
 Block 0 has no begin-zone system transactions. Block 1 follows the genesis
 bootstrap layout. Blocks `>= 2` begin with CertifiedParentAccounting followed by
 LateFinalizeCredits; their calldata and ordinal are re-derived and compared on
-validator execution (`evm/src/executor.rs:1725+`). BoundaryOutcome, TeeBootstrap,
-CycleTick, OracleSlashWindow and HookEvents occupy their versioned conditional
+validator execution (`evm/src/executor.rs:1725+`). `RewardsGemDelivery` is mandatory
+immediately after `CycleTick` for every block `>= 1`; BoundaryOutcome, TeeBootstrap,
+OracleSlashWindow and HookEvents occupy their versioned conditional
 positions as defined by `SystemTxPhase` and the system-tx codec.
 
 ### Lifecycle interface
@@ -71,6 +72,9 @@ Cycle owns hourly UTC-boundary economic orchestration and compressed-body mutati
 through receipt-visible system transactions. Oracle slash-window exits execute
 after BoundaryOutcome so an incoming target is activated before penalties can mark
 members EXITING (`executor.rs:516-606`).
+Rewards owns validator Gem delivery through the mandatory `OSG2` phase after Cycle.
+An empty or stale-price delivery is a successful no-op; an ordinary delivery revert
+is receipt-visible and retryable, while fatal corruption/OOG retains hard failure.
 
 All non-receipt hooks in one invocation run inside `StorageHandle::with_checkpoint`;
 only after success does the provider flush and expose committed changes/events to

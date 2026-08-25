@@ -22,11 +22,10 @@
 //! 2. Allocate over the 5-sink table from `outbe-emissionlimit`.
 //! 3. Validator pool: read `outbe_rewards::api::read_daily_fee_sum_raw`
 //!    and `read_voters_for_day`; if fees ≥ cap or no voters, return
-//!    the validator amount as excess; otherwise call
-//!    `add_topup_for_voters`. A fresh settlement returns the amount actually
-//!    distributed as Gems, and the undistributed part of the validator
-//!    allocation becomes terminal excess. An already-settled top-up is not
-//!    minted or terminally credited again.
+//!    the validator amount as excess; otherwise prepare one exact immutable
+//!    Rewards Gem batch. The planned total becomes a durable liability and
+//!    the undistributed rounding residue becomes terminal excess. Delivery is
+//!    owned by the later `RewardsGemDelivery` system transaction.
 //! 4. WAA / SRA / CCA: call
 //!    `outbe_agentreward::distribute_daily`.
 //! 5. Metadosis terminal credit = metadosis_amount + validator_excess +
