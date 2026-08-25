@@ -108,6 +108,13 @@ const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 43_200;
 #[cfg(feature = "e2e-test")]
 const AUCTION_ADVANCE_PERIOD_SECONDS: u64 = 60;
 
+/// The Called sweep is daily in production. An e2e run seeds the days it reads
+/// rather than living through them, so it needs the sweep to come round sooner.
+#[cfg(not(feature = "e2e-test"))]
+const INTEX_CALL_PERIOD_SECONDS: u64 = 86_400;
+#[cfg(feature = "e2e-test")]
+const INTEX_CALL_PERIOD_SECONDS: u64 = 60;
+
 /// Cadence of the two outbound polls, shortened for the same reason.
 #[cfg(not(feature = "e2e-test"))]
 const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 600;
@@ -138,7 +145,7 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
         TriggerSpec {
             id: TriggerId::IntexCallDaily.as_u32(),
             label: "intex_call_daily",
-            period_seconds: 86_400,
+            period_seconds: INTEX_CALL_PERIOD_SECONDS,
             start_offset_seconds: 0,
             // Reads finalized oracle VWAP history and marks series Called; no
             // dependency on the parent block's settlement accounting.

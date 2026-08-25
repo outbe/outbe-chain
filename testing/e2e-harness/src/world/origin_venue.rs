@@ -56,7 +56,14 @@ pub fn deployer_address() -> alloy_primitives::Address {
         .expect("deployer address is canonical")
 }
 
-pub fn deploy(repo: &Path, url: &str, chain_id: u64) -> Result<OriginContracts> {
+/// `remote_chain_ids` peers this chain's bridge with the chains named there. Empty
+/// leaves the deploy exactly as it was: the configure step is a no-op without it.
+pub fn deploy(
+    repo: &Path,
+    url: &str,
+    chain_id: u64,
+    remote_chain_ids: &[u64],
+) -> Result<OriginContracts> {
     let crosschain: PathBuf = repo.join("contracts/crosschain");
     let intex: PathBuf = repo.join("contracts/intex");
     let chain = chain_id.to_string();
@@ -75,14 +82,12 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64) -> Result<OriginContracts> 
     )?;
 
     // The hyperlane adapter needs a mailbox to hold even when nothing remote is
-    // wired yet; the loopback route never touches it.
+    // wired yet; the loopback route never touches it. It is the relay-carried mock
+    // so a scenario that does reach a second chain has something to carry from.
     let mailbox = address_from(
         &forge::run_with_ctor(
             &crosschain,
-            &[
-                "create",
-                "test/mocks/MockHyperlaneMailbox.sol:MockHyperlaneMailbox",
-            ],
+            &["create", "test/mocks/MockRelayMailbox.sol:MockRelayMailbox"],
             &[&chain],
             &[],
             url,
@@ -94,6 +99,14 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64) -> Result<OriginContracts> 
         &crosschain,
         &["script", "script/DeployAll.s.sol:DeployAll"],
         &[
+            (
+                "REMOTE_CHAIN_IDS",
+                remote_chain_ids
+                    .iter()
+                    .map(u64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
             ("CONTRACT_SALT", SALT_VERSION.to_owned()),
             ("BRIDGE_OWNER", DEPLOYER_ADDRESS.to_owned()),
             ("CREATEX_ADDRESS", format!("{create_x:?}")),
@@ -127,7 +140,16 @@ pub fn deploy(repo: &Path, url: &str, chain_id: u64) -> Result<OriginContracts> 
         &["script", "deploy/DeployOrigin.s.sol:DeployOrigin"],
         &[
             ("BRIDGE_ADDRESS", format!("{bridge:?}")),
-            ("TARGET_CHAIN_IDS", chain.clone()),
+            (
+                "TARGET_CHAIN_IDS",
+                // The script sets each target's peer before registering it, and the
+                // peer sits at the same CREATE3 address everywhere — so naming the
+                // chains here is all a second target needs.
+                std::iter::once(chain.clone())
+                    .chain(remote_chain_ids.iter().map(u64::to_string))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
             ("SALT_VERSION", SALT_VERSION.to_owned()),
             ("OUTBE_WCOEN_BRIDGE", DEPLOYER_ADDRESS.to_owned()),
             ("OUTBE_WCOEN_TOKEN", format!("{wcoen:?}")),
@@ -248,6 +270,49 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
         chain_id,
     )?;
 
+    // Settlement burns Issued and mints Settled; the Promis burn path needs its own
+    // role. Production grants both through these tasks.
+    // The lifecycle scenario opens a day itself instead of running an auction, and
+    // freezing the day's target set is DESIS_ROLE work. Granting the deploy account
+    // the same roles the begin-block caller holds lets it stand in for that one call.
+    hardhat::task(
+        intex,
+        "outbe-system-grant-roles",
+        &[
+            (
+                "--bridge-contract",
+                format!("{:?}", contracts.origin_router),
+            ),
+            ("--intex-contract", nft.clone()),
+            ("--system-address", DEPLOYER_ADDRESS.to_owned()),
+            ("--desis-contract", DESIS.to_owned()),
+        ],
+        url,
+        chain_id,
+    )?;
+
+    hardhat::task(
+        intex,
+        "settlement-grant-roles",
+        &[
+            ("--settlement-contract", INTEX_FACTORY.to_owned()),
+            ("--intex-contract", nft.clone()),
+        ],
+        url,
+        chain_id,
+    )?;
+
+    hardhat::task(
+        intex,
+        "promis-wire",
+        &[
+            ("--settlement-contract", INTEX_FACTORY.to_owned()),
+            ("--intex-contract", nft.clone()),
+        ],
+        url,
+        chain_id,
+    )?;
+
     let auction = format!("{:?}", contracts.intex_auction);
     let escrow = format!("{:?}", contracts.escrow);
 
@@ -264,10 +329,6 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
             ("--intex-auction-contract", auction.clone()),
             ("--intex-contract", nft.clone()),
             ("--escrow-contract", escrow.clone()),
-            (
-                "--nft-bridge-contract",
-                format!("{:?}", contracts.nft_bridge),
-            ),
         ],
         url,
         chain_id,
@@ -305,7 +366,7 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
         (auction, target_router.clone(), "IntexAuction"),
         (escrow, target_router.clone(), "EscrowAdapter"),
         (nft.clone(), target_router, "IntexNFT1155"),
-        (nft.clone(), nft_bridge.clone(), "IntexNFT1155"),
+        (nft, nft_bridge, "IntexNFT1155"),
     ] {
         hardhat::task(
             intex,
@@ -320,17 +381,5 @@ fn wire(intex: &Path, contracts: &OriginContracts, url: &str, chain_id: u64) -> 
         )?;
     }
 
-    // A loopback target keeps its winners on the shared collection and never
-    // drives migration, so it skips the bridge-side wiring a remote target needs.
-    hardhat::task(
-        intex,
-        "grant-system-relayer-role",
-        &[
-            ("--token", nft),
-            ("--adapter", nft_bridge),
-            ("--contract", "IntexNFT1155".to_owned()),
-        ],
-        url,
-        chain_id,
-    )
+    Ok(())
 }

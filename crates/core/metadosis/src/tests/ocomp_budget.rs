@@ -252,6 +252,7 @@ fn strict_desis_refusal_leaves_the_existing_brief_and_carry_over_unchanged() {
             }],
             true,
             1_699_920_005,
+            outbe_desis::api::BriefOverflowPolicy::CarryOver,
         )
         .unwrap();
         PromisLimitContract::new(storage.clone())

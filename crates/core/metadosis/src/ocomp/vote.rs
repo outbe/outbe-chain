@@ -444,11 +444,14 @@ impl MetadosisContract<'_> {
                         Some(outer),
                         OuterWwdEvent::OcompRetryScheduled(OcompRetryCause::Conflicted),
                     )?;
+                    let conflict_exhausted_transition =
+                        reduce_outer_wwd(Some(outer), OuterWwdEvent::OcompAttemptsExhausted)?;
                     let apply_context = super::activation::QuorumApplyContext::new(
                         &storage,
                         scope,
                         &completed_transition,
                         &conflict_transition,
+                        &conflict_exhausted_transition,
                         inclusion_height,
                         current_time,
                         limits,

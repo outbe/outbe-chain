@@ -29,6 +29,15 @@ impl AuctionBriefRejectionReason {
     }
 }
 
+/// What an oversized supply means for the caller: the settlement paths carry it
+/// to the unallocated pool, the OCOMP request path cannot because its receipt
+/// commits a brief hash that a rejection would have nothing to fill.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BriefOverflowPolicy {
+    CarryOver,
+    Reject,
+}
+
 /// Semantic result of one auction-brief formation attempt.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AuctionBriefReceipt {
@@ -51,12 +60,18 @@ pub fn dispatch_auction_brief(
     reference_prices: Vec<ReferenceCurrencyPrice>,
     is_green: bool,
     now: u64,
+    overflow: BriefOverflowPolicy,
 ) -> Result<AuctionBriefReceipt> {
     storage.clone().with_checkpoint(|| {
         let anchor = runtime::preflight_brief(&storage, worldwide_day, now)?;
         let Ok(supply_u128) = u128::try_from(supply_promis) else {
             let max_accepted = U256::from(u128::MAX);
             let reason = AuctionBriefRejectionReason::SupplyExceedsAuctionDomain;
+            if matches!(overflow, BriefOverflowPolicy::Reject) {
+                return Err(outbe_primitives::error::PrecompileError::Revert(
+                    "auction brief supply exceeds Desis u128 domain".into(),
+                ));
+            }
             let mut contract = storage.contract::<DesisContract>();
             contract.emit(IDesis::AuctionBriefRejectedToCarryOver {
                 worldwideDay: worldwide_day.into(),
