@@ -303,7 +303,7 @@ pub fn validate_pow(nod_id: WwdEntityId, nonce: u64) -> Result<()> {
     pow::validate_pow(nod_id.to_u256(), nonce).map_err(|e| NodFactoryError::from(e).into())
 }
 
-/// Shared PoW hash over `ascii(hex(nod_id)) || nonce.to_be_bytes()`.
+/// Shared PoW hash over `nod_id.to_be_bytes::<32>() || nonce.to_be_bytes()`.
 pub fn compute_pow_hash(nod_id: WwdEntityId, nonce: u64) -> [u8; 32] {
     pow::compute_pow_hash(nod_id.to_u256(), nonce)
 }

@@ -1036,7 +1036,7 @@ pub(crate) fn settled_token_id(series_id: SeriesId) -> U256 {
     U256::from_be_bytes(keccak256(&buf).0)
 }
 
-/// PoW hash: `SHA256(hex(holder ++ promisAmount ++ seriesId ++ seq) ++ nonce_be8)`.
+/// PoW hash: `SHA256(holder ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)`.
 pub(crate) fn compute_pow_hash(
     holder: Address,
     promis_amount: U256,
@@ -1044,13 +1044,11 @@ pub(crate) fn compute_pow_hash(
     seq: u32,
     nonce: u64,
 ) -> [u8; 32] {
-    let mut preimage = String::new();
-    preimage.push_str(&hex::encode(holder.as_slice()));
-    preimage.push_str(&hex::encode(promis_amount.to_be_bytes::<32>()));
-    preimage.push_str(&hex::encode(series_id.as_bytes()));
-    preimage.push_str(&hex::encode(seq.to_be_bytes()));
-
-    let mut data = preimage.into_bytes();
+    let mut data = Vec::with_capacity(20 + 32 + SERIES_ID_LEN + 4 + 8);
+    data.extend_from_slice(holder.as_slice());
+    data.extend_from_slice(&promis_amount.to_be_bytes::<32>());
+    data.extend_from_slice(series_id.as_bytes());
+    data.extend_from_slice(&seq.to_be_bytes());
     data.extend_from_slice(&nonce.to_be_bytes());
 
     let digest = ring::digest::digest(&ring::digest::SHA256, &data);

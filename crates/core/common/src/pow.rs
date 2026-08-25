@@ -2,7 +2,7 @@
 //!
 //! All factories use the same SHA256 PoW scheme so off-chain miners can reuse
 //! a single tooling implementation: the digest is taken over
-//! `ascii(hex(id_be32)) || nonce.to_be_bytes()` and the hash must have
+//! `id.to_be_bytes::<32>() || nonce.to_be_bytes()` and the hash must have
 //! [`POW_DIFFICULTY`] leading zero bytes.
 
 use alloy_primitives::U256;
@@ -20,20 +20,11 @@ pub enum PowError {
     InsufficientProofOfWork,
 }
 
-/// SHA256 over `ascii(hex(id_be32)) || nonce.to_be_bytes()`.
-///
-/// The id is formatted as a 64-char lowercase hex string of its 32-byte
-/// big-endian representation, matching `format_gem_id` / `format_nod_id`.
+/// SHA256 over the raw `id.to_be_bytes::<32>() || nonce.to_be_bytes()`.
 pub fn compute_pow_hash(id: U256, nonce: u64) -> [u8; 32] {
-    compute_pow_hash_bytes(&id.to_be_bytes::<32>(), nonce)
-}
-
-fn compute_pow_hash_bytes(id: &[u8], nonce: u64) -> [u8; 32] {
-    let nonce_bytes = nonce.to_be_bytes();
-    let id_str = hex::encode(id);
-    let mut data = Vec::with_capacity(id_str.len() + nonce_bytes.len());
-    data.extend_from_slice(id_str.as_bytes());
-    data.extend_from_slice(&nonce_bytes);
+    let mut data = [0u8; 40];
+    data[..32].copy_from_slice(&id.to_be_bytes::<32>());
+    data[32..].copy_from_slice(&nonce.to_be_bytes());
     let digest = digest(&SHA256, &data);
     let mut out = [0u8; 32];
     out.copy_from_slice(digest.as_ref());
@@ -69,11 +60,11 @@ mod tests {
     }
 
     #[test]
-    fn compute_pow_hash_matches_sha256_string_id_plus_u64_nonce() {
+    fn compute_pow_hash_matches_sha256_of_raw_id_bytes_plus_u64_nonce() {
         let id = U256::from(0x1234_5678u64);
         let got = compute_pow_hash(id, 42);
 
-        let mut data = hex::encode(id.to_be_bytes::<32>()).into_bytes();
+        let mut data = id.to_be_bytes::<32>().to_vec();
         data.extend_from_slice(&42u64.to_be_bytes());
         let expected = digest(&SHA256, &data);
 
