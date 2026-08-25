@@ -48,6 +48,11 @@ SECP256K1_G = (
 
 MONGO_IMAGE = "mongo:7"
 
+# Protocol ceiling on the validator set, mirroring the ValidatorSet precompile
+# default. Used to size the Radicle sidecar's connection limits so validators
+# joining later do not require a restart of everyone already running.
+DEFAULT_MAX_VALIDATORS = 128
+
 
 def quote(value: Any) -> str:
     return shlex.quote(str(value))
@@ -259,12 +264,21 @@ exec docker run --rm --name {quote(name)} \\
 
 
 def radicle_script(
-    *, config: dict[str, Any], index: int, host: str, keys_dir: str, repo_root: str
+    *,
+    config: dict[str, Any],
+    index: int,
+    host: str,
+    keys_dir: str,
+    repo_root: str,
 ) -> str:
     port = port_of(config, "radicle_port")
     status_port = port_of(config, "radicle_status_port")
     home = f"{keys_dir}/validator-{index}/radicle"
     binary = str(config.get("radicle_binary", "outbe-radicle"))
+    validator_set = config.get("validator_set")
+    max_validators = int(
+        (validator_set or {}).get("max_validators", DEFAULT_MAX_VALIDATORS)
+    )
     return f"""
 # Validator-owned Radicle sidecar. The node refuses to start as a validator
 # without its control socket, and the status endpoint must stay loopback-only.
@@ -289,7 +303,10 @@ exec {quote(binary)} \\
   --control-socket {quote(home + "/node/outbe-control.sock")} \\
   --listen 0.0.0.0:{port} \\
   --status-listen 127.0.0.1:{status_port} \\
-  --max-validators 4 \\
+  `# connection ceiling, not the current set size: the sidecar tracks the` \\
+  `# validator set from chain state, so a set that grows must not need a` \\
+  `# restart. Sized by the protocol maximum the ValidatorSet enforces.` \\
+  --max-validators {max_validators} \\
   --external-inbound-reserve {int(config.get("radicle_external_inbound_reserve", 16))} \\
   --advertise {quote(f"{host}:{port}")}
 """
