@@ -4666,6 +4666,37 @@ mod tests {
 
     #[cfg(feature = "ocomp-integration")]
     #[test]
+    fn public_measurement_schedule_materializes_omitted_empty_metadosis_storage() {
+        let topology = topology();
+        prepare_public_measurement_genesis_fixture(&topology);
+        let genesis_path = topology.cfg.dir.join("genesis.json");
+        let mut genesis: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&genesis_path).unwrap()).unwrap();
+        let alloc = genesis["alloc"].as_object_mut().unwrap();
+        let metadosis_key = find_alloc_address_key(alloc, METADOSIS_ADDRESS)
+            .unwrap()
+            .unwrap();
+        alloc[&metadosis_key]
+            .as_object_mut()
+            .unwrap()
+            .remove("storage");
+        std::fs::write(&genesis_path, serde_json::to_vec_pretty(&genesis).unwrap()).unwrap();
+
+        topology.prepare_public_measurement_fork_install().unwrap();
+
+        let materialized: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&genesis_path).unwrap()).unwrap();
+        let storage = materialized["alloc"][&metadosis_key]["storage"]
+            .as_object()
+            .expect("the public measurement fixture must materialize Metadosis storage");
+        assert!(
+            !storage.is_empty(),
+            "the scheduled public measurement day must persist Metadosis state"
+        );
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
     fn public_measurement_schedule_seeds_consistent_green_day_and_oracle_vwaps() {
         let topology = topology();
         prepare_public_measurement_genesis_fixture(&topology);

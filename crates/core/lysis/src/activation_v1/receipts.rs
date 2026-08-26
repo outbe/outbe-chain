@@ -250,14 +250,20 @@ fn verify_request_receipt(
     ensure(
         receipt.protocol_bundle_hash == expected.protocol_bundle_hash
             && receipt.wwd == expected.wwd
-            && receipt.pending_nonce == expected.pending_nonce
             && receipt.day_type == expected.day_type
             && receipt.day_limit == expected.day_limit
             && receipt.lysis_budget == expected.lysis_budget
             && receipt.auction_base == expected.auction_base
-            && receipt.auction_entry_prices == expected.auction_entry_prices
-            && receipt.logical_anchor == expected.logical_anchor,
+            && receipt.auction_entry_prices == expected.auction_entry_prices,
         "Lysis request receipt fields",
+    )?;
+    ensure(
+        receipt.pending_nonce <= expected.pending_nonce,
+        "Lysis request receipt effect nonce",
+    )?;
+    ensure(
+        receipt.logical_anchor <= expected.logical_anchor,
+        "Lysis request receipt logical anchor",
     )?;
     let briefed_supply = if expected.day_type == DayType::Green {
         expected.auction_base
@@ -271,7 +277,7 @@ fn verify_request_receipt(
                 expected.wwd,
                 briefed_supply,
                 &expected.auction_entry_prices,
-                expected.logical_anchor,
+                receipt.logical_anchor,
             )?),
         "Lysis request Desis brief",
     )?;

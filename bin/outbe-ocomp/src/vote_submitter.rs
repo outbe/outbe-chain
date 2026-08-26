@@ -16,7 +16,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::atomic::{AtomicU64, Ordering},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use alloy_consensus::{
@@ -79,6 +79,15 @@ impl VoteSubmissionStageV1 {
             3 => Ok(Self::Included),
             4 => Ok(Self::Finalized),
             _ => Err(VoteSubmissionErrorV1::InvalidJournal),
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Prepared => "prepared",
+            Self::Submitted => "submitted",
+            Self::Included => "included",
+            Self::Finalized => "finalized",
         }
     }
 }
@@ -310,17 +319,23 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
         if matches!(
             record.stage,
             VoteSubmissionStageV1::Prepared | VoteSubmissionStageV1::Submitted
-        ) && self.nonce_was_bypassed(&record)?
-        {
-            // Same vote, fresh envelope: the pinned nonce was consumed elsewhere.
-            return self.prepare(
-                preparer,
-                job_id,
-                result_digest,
-                canonical_result,
-                finalized,
-                next_generation(record.generation)?,
-            );
+        ) {
+            if let Some(canonical_nonce) = self.bypassed_canonical_nonce(&record)? {
+                record_nonce_bypass(
+                    &record,
+                    canonical_nonce,
+                    self.journal.stage_age(record.job_id),
+                );
+                // Same vote, fresh envelope: the pinned nonce was consumed elsewhere.
+                return self.prepare(
+                    preparer,
+                    job_id,
+                    result_digest,
+                    canonical_result,
+                    finalized,
+                    next_generation(record.generation)?,
+                );
+            }
         }
         match record.stage {
             VoteSubmissionStageV1::Prepared => self.submit(record),
@@ -393,7 +408,7 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
             )
             .map_err(preparer_error)?;
         self.validate_prepared(&prepared, job_id, result_digest, nonce, max_fee_per_gas)?;
-        self.journal.persist(VoteSubmissionRecordV1 {
+        let record = VoteSubmissionRecordV1 {
             generation,
             stage: VoteSubmissionStageV1::Prepared,
             job_id,
@@ -404,7 +419,9 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
             transaction_hash: prepared.transaction_hash,
             raw_transaction: prepared.raw_transaction.0,
             inclusion: None,
-        })?;
+        };
+        self.journal.persist(record.clone())?;
+        record_stage_transition(&record, None, None);
         Ok(VoteSubmissionOutcomeV1::Prepared)
     }
 
@@ -412,10 +429,13 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
         &mut self,
         mut record: VoteSubmissionRecordV1,
     ) -> Result<VoteSubmissionOutcomeV1, VoteSubmissionErrorV1> {
+        let prior_stage = record.stage;
+        let prior_age = self.journal.stage_age(record.job_id);
         self.broadcast(&record)?;
         record.stage = VoteSubmissionStageV1::Submitted;
         record.generation = next_generation(record.generation)?;
-        self.journal.persist(record)?;
+        self.journal.persist(record.clone())?;
+        record_stage_transition(&record, Some(prior_stage), prior_age);
         Ok(VoteSubmissionOutcomeV1::Submitted)
     }
 
@@ -437,10 +457,13 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
             return Ok(VoteSubmissionOutcomeV1::Submitted);
         }
         let inclusion = inclusion_from(receipt);
+        let prior_stage = record.stage;
+        let prior_age = self.journal.stage_age(record.job_id);
         record.stage = VoteSubmissionStageV1::Included;
         record.inclusion = Some(inclusion);
         record.generation = next_generation(record.generation)?;
-        self.journal.persist(record)?;
+        self.journal.persist(record.clone())?;
+        record_stage_transition(&record, Some(prior_stage), prior_age);
         Ok(VoteSubmissionOutcomeV1::Included(inclusion))
     }
 
@@ -469,9 +492,11 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
         }
         let inclusion = inclusion_from(receipt);
         if inclusion != prior {
+            let prior_age = self.journal.stage_age(record.job_id);
             record.inclusion = Some(inclusion);
             record.generation = next_generation(record.generation)?;
             self.journal.persist(record.clone())?;
+            record_stage_transition(&record, Some(VoteSubmissionStageV1::Included), prior_age);
         }
         let finalized = self.rpc.finalized_block().map_err(rpc_error)?;
         if finalized.number < inclusion.block_number {
@@ -487,10 +512,13 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
                 next_generation(record.generation)?,
             );
         }
+        let prior_stage = record.stage;
+        let prior_age = self.journal.stage_age(record.job_id);
         record.stage = VoteSubmissionStageV1::Finalized;
         record.inclusion = Some(inclusion);
         record.generation = next_generation(record.generation)?;
-        self.journal.persist(record)?;
+        self.journal.persist(record.clone())?;
+        record_stage_transition(&record, Some(prior_stage), prior_age);
         Ok(VoteSubmissionOutcomeV1::Finalized(inclusion))
     }
 
@@ -498,10 +526,13 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
         &mut self,
         mut record: VoteSubmissionRecordV1,
     ) -> Result<VoteSubmissionOutcomeV1, VoteSubmissionErrorV1> {
+        let prior_stage = record.stage;
+        let prior_age = self.journal.stage_age(record.job_id);
         record.stage = VoteSubmissionStageV1::Submitted;
         record.inclusion = None;
         record.generation = next_generation(record.generation)?;
         self.journal.persist(record.clone())?;
+        record_stage_transition(&record, Some(prior_stage), prior_age);
         self.broadcast(&record)?;
         Ok(VoteSubmissionOutcomeV1::Submitted)
     }
@@ -522,23 +553,22 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
 
     /// Receipt is checked after the nonce read, so a racing inclusion keeps
     /// the record.
-    fn nonce_was_bypassed(
+    fn bypassed_canonical_nonce(
         &self,
         record: &VoteSubmissionRecordV1,
-    ) -> Result<bool, VoteSubmissionErrorV1> {
-        if self
+    ) -> Result<Option<u64>, VoteSubmissionErrorV1> {
+        let canonical_nonce = self
             .rpc
             .canonical_nonce(record.sender_address)
-            .map_err(rpc_error)?
-            <= record.nonce
-        {
-            return Ok(false);
+            .map_err(rpc_error)?;
+        if canonical_nonce <= record.nonce {
+            return Ok(None);
         }
-        Ok(self
+        let receipt = self
             .rpc
             .transaction_receipt(record.transaction_hash)
-            .map_err(rpc_error)?
-            .is_none())
+            .map_err(rpc_error)?;
+        Ok(receipt.is_none().then_some(canonical_nonce))
     }
 
     fn receipt_is_canonical(&self, receipt: VoteReceiptV1) -> Result<bool, VoteSubmissionErrorV1> {
@@ -1034,6 +1064,18 @@ impl VoteSubmissionJournalV1 {
         sync_directory(&self.root)
     }
 
+    /// Best-effort operational age of the current durable stage. Filesystem
+    /// clocks are never part of submission control flow or journal validity.
+    fn stage_age(&self, job_id: B256) -> Option<Duration> {
+        let metadata = fs::symlink_metadata(self.record_path(job_id)).ok()?;
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            return None;
+        }
+        SystemTime::now()
+            .duration_since(metadata.modified().ok()?)
+            .ok()
+    }
+
     fn record_path(&self, job_id: B256) -> PathBuf {
         self.root
             .join(format!("{}.vote.v1", hex::encode(job_id.as_slice())))
@@ -1043,6 +1085,66 @@ impl VoteSubmissionJournalV1 {
         self.root
             .join(format!("{}.vote.v1.tmp", hex::encode(job_id.as_slice())))
     }
+}
+
+fn record_stage_transition(
+    record: &VoteSubmissionRecordV1,
+    prior_stage: Option<VoteSubmissionStageV1>,
+    prior_age: Option<Duration>,
+) {
+    metrics::counter!(
+        "outbe_ocomp_vote_submission_transitions_total",
+        "stage" => record.stage.label()
+    )
+    .increment(1);
+    if let (Some(stage), Some(age)) = (prior_stage, prior_age) {
+        metrics::histogram!(
+            "outbe_ocomp_vote_submission_stage_age_seconds",
+            "stage" => stage.label()
+        )
+        .record(age.as_secs_f64());
+    }
+    tracing::info!(
+        target: "outbe::ocomp::vote_submission",
+        job_id = %record.job_id,
+        stage = record.stage.label(),
+        prior_stage = prior_stage.map(VoteSubmissionStageV1::label).unwrap_or("absent"),
+        prior_stage_age_seconds = prior_age.map(|age| age.as_secs_f64()),
+        generation = record.generation,
+        nonce = record.nonce,
+        transaction_hash = %record.transaction_hash,
+        "OCOMP vote submission stage advanced"
+    );
+}
+
+fn record_nonce_bypass(
+    record: &VoteSubmissionRecordV1,
+    canonical_nonce: u64,
+    stage_age: Option<Duration>,
+) {
+    metrics::counter!(
+        "outbe_ocomp_vote_nonce_bypassed_total",
+        "stage" => record.stage.label()
+    )
+    .increment(1);
+    if let Some(age) = stage_age {
+        metrics::histogram!(
+            "outbe_ocomp_vote_submission_stage_age_seconds",
+            "stage" => record.stage.label()
+        )
+        .record(age.as_secs_f64());
+    }
+    tracing::warn!(
+        target: "outbe::ocomp::vote_submission",
+        job_id = %record.job_id,
+        stage = record.stage.label(),
+        stage_age_seconds = stage_age.map(|age| age.as_secs_f64()),
+        generation = record.generation,
+        pinned_nonce = record.nonce,
+        canonical_nonce,
+        transaction_hash = %record.transaction_hash,
+        "OCOMP vote nonce was bypassed; rebuilding the same vote in a fresh envelope"
+    );
 }
 
 fn validate_record(record: &VoteSubmissionRecordV1) -> Result<(), VoteSubmissionErrorV1> {
@@ -2211,6 +2313,14 @@ mod tests {
             .expect("reconcile")
     }
 
+    fn journaled_calldata(record: &VoteSubmissionRecordV1) -> Bytes {
+        let mut encoded = record.raw_transaction.as_slice();
+        let transaction = EthereumTxEnvelope::<TxEip4844>::decode_2718(&mut encoded)
+            .expect("journaled transaction decodes");
+        assert!(encoded.is_empty());
+        transaction.input().clone()
+    }
+
     #[test]
     fn a_bypassed_nonce_rebuilds_the_vote_from_the_prepared_stage() {
         let directory = tempfile::tempdir().unwrap();
@@ -2221,6 +2331,7 @@ mod tests {
             VoteSubmissionOutcomeV1::Prepared
         );
         assert_eq!(last_nonce.load(Ordering::SeqCst), 7);
+        let first = submitter.journal.load(JOB_ID).unwrap().unwrap();
 
         rpc.bypass_nonce(8);
         assert_eq!(
@@ -2229,12 +2340,42 @@ mod tests {
         );
         assert_eq!(calls.load(Ordering::SeqCst), 2);
         assert_eq!(last_nonce.load(Ordering::SeqCst), 8);
+        let replacement = submitter.journal.load(JOB_ID).unwrap().unwrap();
+        assert_eq!(journaled_calldata(&replacement), journaled_calldata(&first));
+        assert_ne!(replacement.transaction_hash, first.transaction_hash);
+        assert!(replacement.generation > first.generation);
 
         assert_eq!(
             heal_reconcile(&mut submitter, &preparer),
             VoteSubmissionOutcomeV1::Submitted
         );
         assert_eq!(rpc.broadcasts(), 1);
+    }
+
+    #[test]
+    fn durable_journal_exposes_stage_age_after_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut submitter, rpc, preparer, _, _) = nonce_fixture(directory.path());
+
+        assert_eq!(
+            heal_reconcile(&mut submitter, &preparer),
+            VoteSubmissionOutcomeV1::Prepared
+        );
+        assert!(submitter.journal.stage_age(JOB_ID).is_some());
+
+        drop(submitter);
+        let signer = OutbeEvmSigner::from_secret_bytes([9; 32]).expect("test signer");
+        let restarted = SupervisorVoteSubmitterV1::open(
+            VoteSubmissionConfigV1 {
+                journal_root: directory.path().to_path_buf(),
+                expected_chain_id: 42,
+                sender_address: signer.address(),
+                limits: poc_schema_limits(),
+            },
+            rpc,
+        )
+        .expect("restarted vote submitter");
+        assert!(restarted.journal.stage_age(JOB_ID).is_some());
     }
 
     #[test]
@@ -2250,6 +2391,7 @@ mod tests {
             heal_reconcile(&mut submitter, &preparer),
             VoteSubmissionOutcomeV1::Submitted
         );
+        let first = submitter.journal.load(JOB_ID).unwrap().unwrap();
 
         rpc.bypass_nonce(9);
         assert_eq!(
@@ -2258,6 +2400,10 @@ mod tests {
         );
         assert_eq!(calls.load(Ordering::SeqCst), 2);
         assert_eq!(last_nonce.load(Ordering::SeqCst), 9);
+        let replacement = submitter.journal.load(JOB_ID).unwrap().unwrap();
+        assert_eq!(journaled_calldata(&replacement), journaled_calldata(&first));
+        assert_ne!(replacement.transaction_hash, first.transaction_hash);
+        assert!(replacement.generation > first.generation);
     }
 
     #[test]
