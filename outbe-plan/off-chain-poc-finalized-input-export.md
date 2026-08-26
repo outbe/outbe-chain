@@ -380,8 +380,8 @@ are durable, workers need only CAS.
 
 PoC does **not** claim recovery from the exporter process dying before
 `EXPORTED` after CE has advanced. That domain abstains. Crash-safe named
-checkpoint recovery is explicitly BoundedMVP work. Supervisor/worker restart
-and export-attempt retry remain supported because they do not destroy the CE
+checkpoint recovery is explicitly BoundedMVP work. Worker restart and
+export-attempt retry remain supported because they do not destroy the CE
 lease owner.
 
 Implementation must add a true read-only CE open mode. Calling the current
@@ -645,7 +645,7 @@ or release it.
 | CE marker already ahead before lease opens | local OCOMP unavailable; never read live CE as if it were `H` |
 | exporter misses bounded CE-open gate | next CE apply continues after timeout; local OCOMP abstains |
 | exporter process dies before export closes | local OCOMP abstains; no claimed PoC crash recovery |
-| supervisor/worker restarts | resume from durable manifest/CAS; node finality is unaffected |
+| Worker restarts | resume from durable manifest/CAS; node finality is unaffected |
 | Mongo checkpoint behind | bounded wait, then local abstention |
 | Mongo checkpoint ahead | allowed after canonical containment check |
 | Mongo body missing/mutated/extra | leaf/root/count/nominal closure fails; no manifest/signature |
@@ -703,7 +703,7 @@ implemented:
   projection remains usable only through commitment/root verification;
 - real retirement atomically moves pinned bodies to retained storage while the
   live projection continues;
-- stop supervisor and workers during an active CE lease: blocks still finalize
+- stop Workers during an active CE lease: blocks still finalize
   and export can be rescheduled;
 - terminate exporter before `EXPORTED`: blocks still finalize, local signature
   remains absent and the test does not claim recovery;

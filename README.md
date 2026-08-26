@@ -451,7 +451,7 @@ and current scope limits are documented in [Reproducible builds](docs/reproducib
 # 4-validator dev LocalNet with mock enclaves
 mise run build                  # debug workspace + mock enclave + OCOMP-enabled harness
 mise run localnet-bootstrap     # DKG keys + seed_genesis.py + OCOMP + TEE genesis
-mise run localnet-start         # MongoDB, 4 enclaves/validators, 4 Supervisors and 4 Workers
+mise run localnet-start         # MongoDB, 4 enclaves/validators and 4 external OCOMP Workers
 mise run localnet-status        # advancing RPCs plus registered/connected OCOMP Workers
 mise run localnet-stop
 
@@ -483,9 +483,10 @@ The scan starts at `18545` and hands each validator one contiguous 13-port
 block with RPC first, so on a free machine the four RPCs are `18545`, `18558`,
 `18571`, and `18584` — read `rpc_ports` from that file instead of assuming
 consecutive ports.
-For each genesis validator the persistent owner also starts one OCOMP Supervisor,
-one SnapshotExporter and Worker ordinal 0. `start` and `status` succeed only when
-every Worker is registered and connected to its own Supervisor.
+For each genesis validator the node owns one embedded OCOMP Supervisor. The
+persistent owner also starts one external SnapshotExporter and Worker ordinal 0.
+`start` and `status` succeed only when every Worker is registered and connected
+to its node-owned Supervisor.
 
 ### Managed localnet stack
 

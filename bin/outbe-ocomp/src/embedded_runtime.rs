@@ -498,9 +498,8 @@ impl EmbeddedOcompDomainV1 {
         Ok(())
     }
 
-    /// Drives one payout tick over `days`, the same work the standalone
-    /// Supervisor process does; without it a node-embedded domain certifies
-    /// contributors that nobody ever pays.
+    /// Drives one payout tick over `days`; without it a node-embedded domain
+    /// certifies contributors that nobody ever pays.
     pub fn spawn_validator_payout(
         &self,
         days: Vec<u32>,

@@ -963,14 +963,16 @@ production construction path.
 
 **Depends on:** `OCM-04`.
 
-**Outcome:** one `outbe-ocomp` package runs only the three fixed roles over
-public-RPC, bounded ZeroMQ/TCP and CAS contracts. PoC orchestration belongs to the Rust E2E harness;
-production service-manager integration is deferred to MVP hardening.
+**Outcome:** one `outbe-ocomp` package exposes only SnapshotExporter and Worker
+process roles plus the signer-address utility. The Supervisor is embedded in
+`outbe-chain` and communicates with Workers over bounded ZeroMQ/TCP and CAS
+contracts. PoC orchestration belongs to the Rust E2E harness; production
+service-manager integration is deferred to MVP hardening.
 
 **Files/symbols:**
 
 - new `bin/outbe-ocomp/{Cargo.toml,src/}`;
-- role entrypoints `supervisor`, `snapshot-exporter`, `worker`;
+- process entrypoints `snapshot-exporter` and `worker`;
 - bounded frame/session/counter clients using `outbe-ocomp-protocol`;
 - filesystem CAS and worker inbox.
 
@@ -1746,7 +1748,7 @@ controls, including Supervisor vote-submit/reorg and validator balance checks;
 - structured calculation-boundary markers/traces in exact production call
   owners.
 
-**Changes:** add four domain handles, supervisor-only stop/restart, worker
+**Changes:** add four domain handles, Worker/exporter stop/restart, Worker
 socket launcher, exporter/CAS/Mongo faults, vote-submitter controls, exact-block OCOMP
 vote/quorum/accountability views/proofs, process/topology inventory and
 correlation across delay variants.
@@ -1805,9 +1807,9 @@ feature is registered once and has no direct job/result/state injection hook.
 `OCM-PUB/E2E/ISO/TRC` IDs.
 
 **Observable acceptance:** an unprivileged development run starts four nodes
-and four OCOMP domains with real public RPC/ZeroMQ/Mongo/CE, records a healthy `4/4` vote
-window, then stops only a supervisor while finality advances and a fresh job
-reaches `3/4`.
+and four OCOMP domains with real public RPC/ZeroMQ/Mongo/CE, records a healthy
+`4/4` vote window, then stops only one Worker while finality advances and a fresh
+job reaches `3/4`.
 
 **Risks:** harness shortcut becoming an alternate product path. Mitigation:
 steps call typed production handles only and closure rejects direct injection.
@@ -1981,8 +1983,8 @@ verification.
 - CI closure workflows/artifact retention.
 
 **Changes:** keep three full E2E scenarios only: the public Tribute tracer
-story (which also retains the exact forbidden-call replay trace), incompatible
-Supervisor isolation from consensus, and completed generation restart/replay.
+story (which also retains the exact forbidden-call replay trace), external
+Worker isolation from consensus, and completed generation restart/replay.
 The public lane keeps three terminal-state scenarios; its positive apply
 scenario also proves completed vote replay. Empty-day compatibility, duplicate
 admission/export containment and q-forming owner rollback run in `OCM-INT`

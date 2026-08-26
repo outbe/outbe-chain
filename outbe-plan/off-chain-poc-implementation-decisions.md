@@ -212,11 +212,11 @@ Resolved. See the
 [`process and artifact topology`](off-chain-poc-process-and-artifact-topology.md).
 
 The minimal shape is one narrow shared protocol crate plus one `outbe-ocomp`
-package/executable with fixed supervisor, snapshot-exporter and worker modes.
-Each validator uses independent node/exporter/supervisor processes and a
-separate bounded filesystem CAS. The Rust E2E harness starts the production
-worker entrypoint as a one-unit child process and enforces the PoC concurrency
-cap of four without introducing a production launch broker.
+package/executable with snapshot-exporter and Worker modes. The Supervisor is a
+library component embedded in each validator node. Each validator uses
+independent node/exporter/Worker processes and a separate bounded filesystem
+CAS. The Rust E2E harness starts the production Worker entrypoint and enforces
+the PoC concurrency cap of four without introducing a production launch broker.
 
 Domain-bound Axum registration, bounded ZeroMQ/TCP messages, digest-only CAS
 paths and atomic publish/same-descriptor verification fix the protocol and
@@ -251,7 +251,7 @@ Every domain now derives one constant-size producer-bound plan commitment before
 execution. Work units and reducer nodes are derived lazily by ordinal from
 fixed profile-bounded work-shard ranges; external sort, prefix, shuffle and
 reduction use bounded runs/cursors for arbitrary unit count. One, two or four
-Supervisor-launched workers schedule immutable `UnitId`s; they never alter plan
+Supervisor-dispatched Workers schedule immutable `UnitId`s; they never alter plan
 bytes or evidence weight. Phase verifiers recompute outputs and exact
 no-gap/no-overlap coverage before CAS adoption, and an independent corpus
 remains mandatory. The `S+1` fixture must place its last Tribute in shard 2; a

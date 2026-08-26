@@ -286,10 +286,10 @@ their authenticated peer identities, the pinned protocol-bundle hash, a nonzero
 boot nonce, and the node-owned OCOMP key. The exact local transport is a runtime
 interface detail and does not define membership. The participant index and
 committee are never configured. A certified FullNode requires the same complete
-local-control profile but omits `--ocomp.key`; giving it a result-signing key is
-a startup error. Its `outbe-ocomp follower` process uses those control endpoints
-for snapshot discovery, independent execution and durable result publication,
-but cannot open the attestation or vote-submission path.
+local OCOMP profile but omits validator vote authority; giving it a
+result-signing key is a startup error. Its node-owned embedded Supervisor uses
+the same finalized discovery, independent execution and durable result
+publication path, but cannot open attestation or vote submission.
 
 ### Validator-authenticated system result votes
 
@@ -454,25 +454,25 @@ otherwise reverting OCOMP carriers remain hard block failures.
 
 An OCOMP-enabled FullNode has no voting key, delegate or vote capability, but it
 does run the complete keyless OCOMP control plane. Certified finality is rooted
-in the genesis ValidatorSet. On restart the follower rebuilds every later epoch
+in the genesis ValidatorSet. On restart the FullNode rebuilds every later epoch
 verifier only from the previous epoch's finalized `CommitteePreAnnounce` before
 it processes current-epoch finality; a current boundary cannot certify itself.
 
 For every finalized height the node binds the exact finalized block and
-historical ValidatorSet snapshot to a durable parent-proof record, runs the
-normal retention and snapshot-arming path, and exposes the job to
-`outbe-ocomp follower`. That process reuses `SupervisorJobRunnerV1`: it consumes
-the authenticated source bodies/proofs, executes the same canonical Lysis
-program as validators and materializes the canonical chunks. Instead of asking
-for attestation or submitting a vote, it commits the exact canonical result to
-the node-owned immutable local-result store.
+historical ValidatorSet snapshot to a durable parent-proof record and runs the
+normal retention and snapshot-arming path. The embedded Supervisor reuses
+`SupervisorJobRunnerV1`: it consumes the authenticated source bodies/proofs,
+executes the same canonical Lysis program as validators and materializes the
+canonical chunks. Instead of asking for attestation or submitting a vote, it
+commits the exact canonical result to the node-owned immutable local-result
+store.
 
 Ordinary votes, including minority and conflicting votes, replay normally. Only
 the first vote that would form quorum reaches the local activation gate. If the
 FullNode calculation is not ready, execution waits for its durable publication;
 an exact result continues, while mismatch, corrupt storage or unavailable
 authenticated input is fail-closed and observable before terminal/result state
-is applied. Restart reopens the durable store and follower checkpoints; ordinary
+is applied. Restart reopens the durable store and embedded checkpoints; ordinary
 EVM replay is never substituted for the independent calculation.
 
 ### Quorum-applied result evidence
