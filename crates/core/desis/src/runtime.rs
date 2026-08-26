@@ -129,7 +129,7 @@ fn decimal_digits(rate: U256) -> u32 {
     digits
 }
 
-/// The decade the anchor alone picks, which puts `load × rate` at the 100 USD strike.
+/// The decade the ladder alone picks, which strikes at `PROMIS_LOAD_STRIKE_USD`.
 fn anchor_exponent(rate: U256) -> u32 {
     PROMIS_LOAD_STRIKE_DIGITS
         .saturating_sub(decimal_digits(rate))
@@ -155,9 +155,9 @@ pub(crate) fn promis_load_exponent(current: Option<u32>, rate: U256) -> u32 {
     }
 }
 
-/// Read before `choose_reference_prices` trims the table: it caps the day at six
-/// currencies by ISO ascending and keeps one per series-id letter, either of which
-/// would drop USD and take the anchor with it.
+/// Read before `choose_reference_prices` trims the table: it caps the day at
+/// `MAX_REFERENCE_PRICES` by ISO ascending and keeps one currency per series-id
+/// letter, either of which would drop the strike currency and the ladder with it.
 fn step_promis_load(
     contract: &mut DesisContract<'_>,
     worldwide_day: WorldwideDay,

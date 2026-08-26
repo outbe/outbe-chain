@@ -287,8 +287,8 @@ pub struct DesisContract {
     pub reference_price_entry: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     // --- PROMIS load ladder ---
-    /// Exponent `k` of the current load, `promis_load_minor = 10^k`. Unset on a
-    /// chain that has never briefed a priced day; the deadband holds against it.
+    /// Exponent `k` of the current load, `promis_load_minor = 10^k`. Zero until the
+    /// chain has briefed a day it could price, which the deadband has nothing to hold.
     #[attribute(order = 38)]
     pub promis_load_exponent: outbe_primitives::storage::dsl::Value<u32>,
 }
