@@ -2,8 +2,7 @@
 
 Status: **UPDATED ON 2026-08-26**
 
-This document is the current process/transport decision for OCOMP. It supersedes
-the former node-control, per-unit Unix-socket and standalone-Supervisor designs.
+This document is the current process/transport decision for OCOMP.
 
 ## 1. Decision
 
@@ -95,7 +94,7 @@ One embedded Supervisor accepts between one and four external Worker processes. 
 `0..3` derive distinct process nonces and therefore distinct worker IDs. The
 generated launch bundle starts the configured population and verifies the
 connected count through Supervisor status. It has systemd units for the external
-SnapshotExporter and Worker, but never for a second Supervisor process.
+SnapshotExporter and Worker; the Supervisor stays inside the node process.
 
 Registration is idempotent for one live process nonce. Re-registration or lease
 expiry invalidates the prior connection, requeues unfinished work with a new

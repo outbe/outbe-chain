@@ -232,9 +232,6 @@ completeness and mutation authority.
   `ProtocolBundleV1` without proving heterogeneous dispatch.
 - **Expose generic task/result bytes:** type erasure hides domain authority and
   creates an arbitrary execution surface.
-- **Run a second standalone Supervisor beside the embedded ExEx:** it creates
-  duplicate scheduling and payout authority, competing journal locks and two
-  owners for one Worker endpoint.
 - **Let the node spawn arbitrary workers:** it turns a bounded protocol into a
   privileged command-execution API.
 

@@ -205,12 +205,6 @@ class ConfigValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "outside 1..65535"):
             CG.validate_config(config)
 
-    def test_legacy_supervisor_port_can_only_confirm_the_embedded_endpoint(self):
-        config = minimal_config("./keys") | {"ocomp_supervisor_port": 30401}
-        CG.validate_config(config)
-        with self.assertRaisesRegex(ValueError, r"consensus_port \+ 1"):
-            CG.validate_config(config | {"ocomp_supervisor_port": 9765})
-
     def test_dcap_without_measurements_rejected_at_the_tee_stage(self):
         config = minimal_config("./keys")
         config["tee"] = {"mode": "dcap-required"}
@@ -653,7 +647,10 @@ class LaunchBundleTests(unittest.TestCase):
                     self.assertTrue(script.is_file(), f"{name} missing")
                     self.assertTrue(script.stat().st_mode & 0o111, f"{name} not executable")
                     subprocess.run(["bash", "-n", str(script)], check=True)
-                self.assertFalse((directory / "run-ocomp-supervisor.sh").exists())
+                self.assertEqual(
+                    {path.name for path in directory.glob("run-ocomp-*.sh")},
+                    {"run-ocomp-exporter.sh", "run-ocomp-worker.sh"},
+                )
                 self.assertTrue((directory / "feeder.toml").is_file())
 
     def test_ocomp_identity_is_read_from_the_install_document(self):
@@ -676,15 +673,11 @@ class LaunchBundleTests(unittest.TestCase):
                             "OCOMP_CHAIN_ID", "OCOMP_GENESIS_HASH", "OCOMP_BOOT_NONCE",
                             "OCOMP_PROTOCOL_BUNDLE_HASH", "OCOMP_REGISTRY_GENERATION"):
                     self.assertIn(var, script, f"{role} script is missing {var}")
-            self.assertFalse(
-                (output_dir / "validator-0" / "run-ocomp-supervisor.sh").exists()
-            )
 
-    def test_start_all_waits_for_the_embedded_supervisor_before_the_worker(self):
+    def test_start_all_waits_for_the_node_owned_endpoint_before_the_worker(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, _, output_dir = self.render(tmp)
             start = (output_dir / "validator-0" / "start-all.sh").read_text()
-            self.assertNotIn("run-ocomp-supervisor.sh", start)
             self.assertLess(
                 start.index("/dev/tcp/127.0.0.1/30401"),
                 start.index("run-ocomp-worker.sh"),
@@ -693,7 +686,6 @@ class LaunchBundleTests(unittest.TestCase):
             self.assertIn("did not become ready", start)
             stop = (output_dir / "validator-0" / "stop-all.sh").read_text()
             self.assertIn("ocomp-worker", stop)
-            self.assertNotIn("ocomp-supervisor", stop)
 
     def test_feeder_provider_name_is_one_the_binary_accepts(self):
         """outbe-feeder validates provider names against a fixed list and
@@ -792,7 +784,17 @@ class LaunchBundleTests(unittest.TestCase):
                 text = unit.read_text()
                 self.assertIn("Restart=on-failure", text)
                 self.assertIn(f"run-{role}.sh", text)
-            self.assertFalse((unit_dir / "outbe-ocomp-supervisor@.service").exists())
+            self.assertEqual(
+                {path.name for path in unit_dir.glob("*.service")},
+                {
+                    "outbe-enclave@.service",
+                    "outbe-radicle@.service",
+                    "outbe-node@.service",
+                    "outbe-ocomp-exporter@.service",
+                    "outbe-ocomp-worker@.service",
+                    "outbe-feeder@.service",
+                },
+            )
             # The node must not start before the enclave and Radicle it needs.
             node = (unit_dir / "outbe-node@.service").read_text()
             self.assertIn("outbe-radicle@%i.service", node)
@@ -801,44 +803,10 @@ class LaunchBundleTests(unittest.TestCase):
             for role in ("ocomp-exporter", "ocomp-worker"):
                 unit = (unit_dir / f"outbe-{role}@.service").read_text()
                 self.assertIn("Requires=outbe-node@%i.service", unit)
-                self.assertNotIn("outbe-ocomp-supervisor@%i.service", unit)
             # The enclave needs root for /dev/sgx_*.
             self.assertIn("User=root", (unit_dir / "outbe-enclave@.service").read_text())
             installer = output_dir / "install-systemd.sh"
             self.assertTrue(installer.stat().st_mode & 0o111)
-            installer_text = installer.read_text()
-            self.assertIn("outbe-ocomp-supervisor@", installer_text)
-            self.assertIn('systemctl stop "$LEGACY_OCOMP_UNIT"', installer_text)
-            self.assertEqual(
-                installer_text.count(
-                    'systemctl is-active --quiet "$LEGACY_OCOMP_UNIT"'
-                ),
-                2,
-            )
-            self.assertIn(
-                "refusing to start the embedded OCOMP topology", installer_text
-            )
-            self.assertIn('systemctl disable "$LEGACY_OCOMP_UNIT"', installer_text)
-            self.assertNotIn("2>/dev/null || true", installer_text)
-
-    def test_rerender_removes_obsolete_standalone_supervisor_artifacts(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            _, keys_dir, output_dir = self.render(tmp)
-            obsolete_script = output_dir / "validator-0" / "run-ocomp-supervisor.sh"
-            obsolete_unit = output_dir / "systemd" / "outbe-ocomp-supervisor@.service"
-            obsolete_script.write_text("stale")
-            obsolete_unit.write_text("stale")
-
-            LB.render(
-                config=minimal_config(str(keys_dir)),
-                validators=self.fake_validators(),
-                genesis_path=output_dir / "genesis.json",
-                keys_dir=keys_dir,
-                repo_root=REPO_ROOT,
-            )
-
-            self.assertFalse(obsolete_script.exists())
-            self.assertFalse(obsolete_unit.exists())
 
     def test_bootnodes_are_stable_across_renders(self):
         with tempfile.TemporaryDirectory() as tmp:

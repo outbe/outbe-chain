@@ -491,7 +491,7 @@ mod tests {
     }
 
     #[test]
-    fn standalone_supervisor_subcommand_is_removed() {
+    fn operational_subcommands_are_limited_to_external_roles() {
         assert!(Cli::try_parse_from(["outbe-ocomp", "supervisor"]).is_err());
     }
 

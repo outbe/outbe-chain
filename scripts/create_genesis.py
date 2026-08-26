@@ -131,7 +131,6 @@ TOP_LEVEL_KEYS = {
     "allow_stale_timestamp",
     "node_binary",
     "ocomp_binary",
-    "ocomp_supervisor_port",
     "radicle_binary",
     "radicle_external_inbound_reserve",
     "feeder_binary",

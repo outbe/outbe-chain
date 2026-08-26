@@ -1243,7 +1243,7 @@ impl OcompTopology {
         let mut connected_workers = 0usize;
         for validator_index in self.validator_indices()? {
             let index = usize::from(validator_index);
-            let address = SocketAddr::from(([127, 0, 0, 1], self.cfg.ocomp_supervisor_port(index)));
+            let address = SocketAddr::from(([127, 0, 0, 1], self.cfg.ocomp_endpoint_port(index)));
             let status = fetch_supervisor_status(address)?;
             ensure_supervisor_status_ready(
                 validator_index,
@@ -1845,7 +1845,7 @@ impl OcompTopology {
         let stderr = log.try_clone()?;
         let supervisor_address = std::net::SocketAddr::from((
             [127, 0, 0, 1],
-            self.cfg.ocomp_supervisor_port(usize::from(validator_index)),
+            self.cfg.ocomp_endpoint_port(usize::from(validator_index)),
         ));
         let worker_boot_nonce = worker_boot_nonce(validator_index, worker_ordinal);
         let expected_observability_port = self

@@ -64,22 +64,13 @@ def port_of(config: dict[str, Any], name: str) -> int:
 def embedded_ocomp_endpoint_port(config: dict[str, Any], consensus_port: int) -> int:
     """Return the node-owned Worker registration endpoint.
 
-    The node derives this endpoint from its consensus listener. Keep accepting
-    the old configuration key only as a compatibility assertion; it must not
-    select a second, standalone Supervisor endpoint.
+    The node derives this endpoint directly from its consensus listener.
     """
     if not 1 <= consensus_port < 65535:
         raise ValueError(
             f"consensus port leaves no embedded OCOMP endpoint: {consensus_port}"
         )
     endpoint_port = consensus_port + 1
-    if "ocomp_supervisor_port" in config:
-        configured = int(config["ocomp_supervisor_port"])
-        if configured != endpoint_port:
-            raise ValueError(
-                "ocomp_supervisor_port is legacy and must equal the node-owned "
-                f"endpoint consensus_port + 1 ({endpoint_port}), not {configured}"
-            )
     return endpoint_port
 
 
@@ -863,7 +854,6 @@ WantedBy=multi-user.target
 def write_systemd_units(output_dir: Path, base_dir: str) -> None:
     unit_dir = output_dir / "systemd"
     unit_dir.mkdir(parents=True, exist_ok=True)
-    (unit_dir / "outbe-ocomp-supervisor@.service").unlink(missing_ok=True)
     for role, description, after in UNIT_ROLES:
         unit = systemd_unit(
             role=role, description=description, after=after, base_dir=base_dir
@@ -875,24 +865,6 @@ def write_systemd_units(output_dir: Path, base_dir: str) -> None:
 INDEX="${{1:?usage: install-systemd.sh <validator-index>}}"
 
 sudo install -m 644 {quote(base_dir)}/systemd/outbe-*@.service /etc/systemd/system/
-
-# A previous bundle may have installed a standalone Supervisor. Stop it before
-# removing its template: proceeding while it still owns the payout journal
-# would violate the node's single-owner invariant. Only absence is a no-op;
-# every real stop/disable failure remains fatal under `set -e`.
-LEGACY_OCOMP_UNIT="outbe-ocomp-supervisor@$INDEX.service"
-LEGACY_OCOMP_TEMPLATE=/etc/systemd/system/outbe-ocomp-supervisor@.service
-if sudo systemctl is-active --quiet "$LEGACY_OCOMP_UNIT"; then
-  sudo systemctl stop "$LEGACY_OCOMP_UNIT"
-fi
-if sudo systemctl is-active --quiet "$LEGACY_OCOMP_UNIT"; then
-  echo "$LEGACY_OCOMP_UNIT is still active; refusing to start the embedded OCOMP topology" >&2
-  exit 1
-fi
-if [ -e "$LEGACY_OCOMP_TEMPLATE" ] || [ -L "$LEGACY_OCOMP_TEMPLATE" ]; then
-  sudo systemctl disable "$LEGACY_OCOMP_UNIT"
-  sudo rm -f -- "$LEGACY_OCOMP_TEMPLATE"
-fi
 sudo systemctl daemon-reload
 
 # MongoDB stays a container; bring it up before anything that projects into it.
@@ -1248,7 +1220,6 @@ def render(
         directory = output_dir / f"validator-{index}"
         host, _, consensus_port = validator["p2p_address"].rpartition(":")
         ocomp_endpoint_port = embedded_ocomp_endpoint_port(config, int(consensus_port))
-        (directory / "run-ocomp-supervisor.sh").unlink(missing_ok=True)
 
         write_script(directory / "run-mongodb.sh", mongodb_script(config=config, index=index))
         write_script(
