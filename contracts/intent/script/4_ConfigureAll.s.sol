@@ -25,7 +25,10 @@ import {Router} from "../src/router/Router.sol";
 ///   ESCROW_ADDRESS    — deployed SolverEscrow address
 ///   ALLOCATOR_ADDRESS — deployed RouterAllocator address
 /// Optional:
-///   REMOTE_CHAIN_IDS  — csv of remote EVM chain ids to register (skipped if unset)
+///   REMOTE_CHAIN_IDS      — csv of remote EVM chain ids to register (skipped if unset)
+///   AUCTION_COMMIT_PERIOD — commit window in seconds (skipped if unset; set per target chain)
+///   AUCTION_REVEAL_PERIOD — reveal window in seconds (skipped if unset; set per target chain)
+///   AUCTION_MAX_QUOTES    — max revealed quotes per order (skipped if unset)
 contract ConfigureAll is Script {
     function run() public virtual {
         uint256 deployerPrivateKey = vm.envUint("DEPLOYER_PK");
@@ -54,6 +57,24 @@ contract ConfigureAll is Script {
         // 2. Auction → Router
         Auction(auctionAddress).setRouter(routerAddress);
         console2.log("  auction.setRouter done");
+
+        uint256 commitPeriod = vm.envOr("AUCTION_COMMIT_PERIOD", uint256(0));
+        if (commitPeriod != 0) {
+            Auction(auctionAddress).setCommitPeriod(commitPeriod);
+            console2.log("  auction.setCommitPeriod:", commitPeriod);
+        }
+
+        uint256 revealPeriod = vm.envOr("AUCTION_REVEAL_PERIOD", uint256(0));
+        if (revealPeriod != 0) {
+            Auction(auctionAddress).setRevealPeriod(revealPeriod);
+            console2.log("  auction.setRevealPeriod:", revealPeriod);
+        }
+
+        uint256 maxQuotes = vm.envOr("AUCTION_MAX_QUOTES", uint256(0));
+        if (maxQuotes != 0) {
+            Auction(auctionAddress).setMaxQuotesPerOrder(maxQuotes);
+            console2.log("  auction.setMaxQuotesPerOrder:", maxQuotes);
+        }
 
         // 3. Allocator → Router (skipped when the router was reused: its allocator is already wired)
         if (allocatorAddress != address(0)) {
