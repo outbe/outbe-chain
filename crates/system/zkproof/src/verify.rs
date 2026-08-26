@@ -41,9 +41,13 @@ const EMIT_MINT_PUBLIC_INPUT_COUNT: usize = 25;
 /// Byte length of the combined-proof public section: 4-byte count header plus
 /// 25 canonical 32-byte words.
 const EMIT_MINT_PUBLIC_PREFIX_LEN: usize = 4 + EMIT_MINT_PUBLIC_INPUT_COUNT * 32;
-/// Hard cap on the whole combined Emit proof (public section plus proof
-/// words), bounded before any consumer copies the dynamic ABI argument.
-pub const EMIT_MINT_MAX_COMBINED_LEN: usize = 16_384;
+/// Proof words in a canonical `outbe.emit.mint@1.0.0` combined proof. The
+/// UltraHonkKeccak transcript of the frozen circuit is fixed-length, so this
+/// is part of the pinned circuit identity (same VK, same transcript shape).
+pub const EMIT_MINT_PROOF_WORDS: usize = 238;
+/// Exact total length of a canonical `outbe.emit.mint@1.0.0` combined proof:
+/// 4-byte count header, 25 public words, 238 proof words.
+pub const EMIT_MINT_COMBINED_LEN: usize = EMIT_MINT_PUBLIC_PREFIX_LEN + 32 * EMIT_MINT_PROOF_WORDS;
 
 /// Public claim carried by the canonical `outbe.full_proof@1.0.0`
 /// combined-proof format.
@@ -302,8 +306,8 @@ pub fn verify_paynote(combined_proof: &[u8]) -> Result<bool, ZkProofError> {
 /// one right-aligned `u64` chain-ID word at index `0`, canonical BN254 field
 /// words at indices `1`, `2`, and `24`, twenty one-byte owner words at
 /// `3..=22` (upper 31 bytes zero), one right-aligned `u64` mint-units word at
-/// `23`, and a nonempty, 32-byte-aligned proof tail within the
-/// [`EMIT_MINT_MAX_COMBINED_LEN`] cap. The proof bytes remain self-contained
+/// `23`, and the fixed-length proof tail — the whole blob is exactly
+/// [`EMIT_MINT_COMBINED_LEN`] bytes. The proof bytes remain self-contained
 /// and are passed unchanged to Barretenberg after callers compare this claim
 /// with their expected values.
 pub fn decode_emit_mint_public_inputs(
@@ -319,15 +323,11 @@ pub fn decode_emit_mint_public_inputs(
             actual: count,
         });
     }
-    if combined_proof.len() > EMIT_MINT_MAX_COMBINED_LEN {
-        return Err(ZkProofError::CombinedProofTooLarge {
-            maximum: EMIT_MINT_MAX_COMBINED_LEN,
-            actual: combined_proof.len(),
-        });
-    }
-    if combined_proof.len() < EMIT_MINT_PUBLIC_PREFIX_LEN {
-        return Err(ZkProofError::TruncatedPublicInputs {
-            expected: EMIT_MINT_PUBLIC_PREFIX_LEN,
+    // The frozen circuit's transcript is fixed-length: any other total
+    // length is not this circuit's wire format, whether short or long.
+    if combined_proof.len() != EMIT_MINT_COMBINED_LEN {
+        return Err(ZkProofError::WrongCombinedProofLength {
+            expected: EMIT_MINT_COMBINED_LEN,
             actual: combined_proof.len(),
         });
     }
@@ -354,14 +354,6 @@ pub fn decode_emit_mint_public_inputs(
     let mut note_owner = [0u8; 20];
     for (slot, byte) in note_owner.iter_mut().enumerate() {
         *byte = words[3 + slot][31];
-    }
-
-    let tail_len = combined_proof.len() - EMIT_MINT_PUBLIC_PREFIX_LEN;
-    if tail_len == 0 {
-        return Err(ZkProofError::EmptyProofSection);
-    }
-    if tail_len % 32 != 0 {
-        return Err(ZkProofError::UnalignedProofSection(tail_len));
     }
 
     Ok(EmitMintPublicInputs {

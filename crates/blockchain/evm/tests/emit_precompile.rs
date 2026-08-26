@@ -869,8 +869,8 @@ fn funded_malformed_calldata_reverts_without_stranding_value() {
     assert_eq!(storage_writes(&outcome, EMIT_ADDRESS), 0);
 
     // Zero-value selector-only mint: the route charges the mint base gas
-    // before dispatch reverts in the proof preflight — pinning that the
-    // 3,517,500 selector-sensitive charge is actually routed.
+    // before dispatch fails ABI decoding — pinning that the 3,517,500
+    // selector-sensitive charge is actually routed.
     let outcome = run(
         base_db(),
         BOB,
@@ -879,10 +879,10 @@ fn funded_malformed_calldata_reverts_without_stranding_value() {
         20_000_000,
         Bytes::from(IEmit::mintCall::SELECTOR.to_vec()),
     );
-    assert!(matches!(outcome.result, ExecutionResult::Revert { .. }));
-    assert_eq!(
-        revert_reason(&outcome.result).as_deref(),
-        Some("Emit mint proof is malformed: missing proof offset word")
+    assert!(
+        matches!(outcome.result, ExecutionResult::Revert { .. }),
+        "selector-only mint must fail ABI decoding: {:?}",
+        outcome.result
     );
     assert!(
         gas_used(&outcome.result) >= 3_517_500,

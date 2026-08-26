@@ -26,14 +26,8 @@ pub enum ZkProofError {
     TruncatedPublicInputs { expected: usize, actual: usize },
     #[error("zk_verify: public input at index {0} is not a canonical BN254 field element")]
     NonCanonicalPublicInput(usize),
-    #[error("zk_verify: full combined proof length is {actual} bytes, expected {expected}")]
+    #[error("zk_verify: combined proof length is {actual} bytes, expected {expected}")]
     WrongCombinedProofLength { expected: usize, actual: usize },
-    #[error("zk_verify: combined proof is too large ({actual} bytes, maximum {maximum})")]
-    CombinedProofTooLarge { maximum: usize, actual: usize },
-    #[error("zk_verify: combined proof has an empty proof section")]
-    EmptyProofSection,
-    #[error("zk_verify: combined proof section is {0} bytes, not a multiple of 32")]
-    UnalignedProofSection(usize),
     #[error("zk_verify: emit chain ID word is not a right-aligned uint64")]
     InvalidEmitChainId,
     #[error("zk_verify: emit owner word at index {0} is not a single padded byte")]
