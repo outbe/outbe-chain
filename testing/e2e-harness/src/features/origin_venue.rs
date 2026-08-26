@@ -159,7 +159,15 @@ const AUCTION_STAGE_TIMEOUT: Duration = Duration::from_secs(2400);
 
 #[cfg(feature = "ocomp-integration")]
 fn advance_past_window_to_stage(world: &mut World, target_stage: u8) {
-    let venue = venue_side(world);
+    for side in venue_sides(world) {
+        advance_one_venue_to_stage(world, &side, target_stage);
+    }
+}
+
+/// Each chain runs the day on its own clock, so every venue has to reach the
+/// stage before the bidders may act on any of them.
+#[cfg(feature = "ocomp-integration")]
+fn advance_one_venue_to_stage(world: &World, venue: &VenueSide, target_stage: u8) {
     let worldwide_day = settled_day(world);
     let url = venue.url.clone();
     let deadline = Instant::now() + AUCTION_STAGE_TIMEOUT;
@@ -196,6 +204,42 @@ struct VenueSide {
     payment_token: Address,
     intex_nft: Address,
     target_router: Address,
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn venue_sides(world: &World) -> Vec<VenueSide> {
+    let origin = world
+        .state
+        .origin_contracts
+        .clone()
+        .expect("a deploy recorded its addresses");
+    let mut sides = vec![VenueSide {
+        url: world.rpc.url(world.validators.primary_port()),
+        chain_id: world
+            .rpc
+            .chain_id(world.validators.primary_port())
+            .expect("committee chain id"),
+        auction: origin.intex_auction,
+        escrow: origin.escrow,
+        payment_token: origin.payment_token,
+        intex_nft: origin.intex_nft,
+        target_router: origin.target_router,
+    }];
+    if let (Some(_), Some(target)) = (
+        world.target_chain.port(),
+        world.state.target_contracts.clone(),
+    ) {
+        sides.push(VenueSide {
+            url: world.target_chain.rpc_url().expect("target chain started"),
+            chain_id: world.target_chain.chain_id(),
+            auction: target.auction,
+            escrow: target.escrow,
+            payment_token: target.payment_token,
+            intex_nft: target.intex_nft,
+            target_router: target.target_router,
+        });
+    }
+    sides
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -373,21 +417,28 @@ const BIDS: [(u16, u32); 2] = [(30, 800_000), (40, 700_000)];
 #[cfg(feature = "ocomp-integration")]
 #[when("two bidders commit their bids")]
 fn bidders_commit(world: &mut World) {
-    let venue = venue_side(world);
-    let (url, chain_id) = (venue.url.clone(), venue.chain_id);
     let worldwide_day = settled_day(world);
-
+    // The same two bidders trade on every chain the day opened on: one keypair
+    // funded on each, so clearing has to fan their bids in from both.
     let bidders = bidders::derive(&BIDS).expect("derive the bidders");
-    bidders::fund(
-        &url,
-        venue.payment_token,
-        venue.escrow,
-        &bidders,
-        U256::from(BIDDER_ALLOWANCE),
-    )
-    .expect("fund the bidders");
-    bidders::commit(&url, venue.auction, chain_id, worldwide_day, &bidders)
+    for side in venue_sides(world) {
+        bidders::fund(
+            &side.url,
+            side.payment_token,
+            side.escrow,
+            &bidders,
+            U256::from(BIDDER_ALLOWANCE),
+        )
+        .expect("fund the bidders");
+        bidders::commit(
+            &side.url,
+            side.auction,
+            side.chain_id,
+            worldwide_day,
+            &bidders,
+        )
         .expect("commit the bids");
+    }
     world.state.auction_bidders = bidders;
 }
 
@@ -396,13 +447,18 @@ fn bidders_commit(world: &mut World) {
 fn bidders_reveal(world: &mut World) {
     advance_past_window_to_stage(world, 1);
 
-    let venue = venue_side(world);
-    let (url, chain_id) = (venue.url.clone(), venue.chain_id);
     let worldwide_day = settled_day(world);
     let bidders = world.state.auction_bidders.clone();
-
-    bidders::reveal(&url, venue.auction, chain_id, worldwide_day, &bidders)
+    for side in venue_sides(world) {
+        bidders::reveal(
+            &side.url,
+            side.auction,
+            side.chain_id,
+            worldwide_day,
+            &bidders,
+        )
         .expect("reveal the bids");
+    }
 }
 
 #[cfg(feature = "ocomp-integration")]
