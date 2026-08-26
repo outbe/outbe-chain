@@ -23,7 +23,8 @@ pub const PROMIS_LOAD_STRIKE_USD: u32 = 100;
 /// Deadband at each decade boundary, so a rate loitering there stops flipping the load daily.
 pub const PROMIS_LOAD_DEADBAND_BPS: u32 = 200;
 
-/// Fixed load bypassing the ladder: an e2e day cannot afford one laddered Intex.
+/// Fixed load bypassing the ladder. The harness seeds the day's mint cap at 500
+/// PROMIS, far under one laddered Intex, so a laddered e2e day would issue none.
 #[cfg(not(feature = "e2e-test"))]
 pub const PROMIS_LOAD_OVERRIDE: Option<u128> = None;
 #[cfg(feature = "e2e-test")]

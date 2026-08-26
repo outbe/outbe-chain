@@ -42,6 +42,13 @@ fn ladder_load(current: Option<u32>, rate_minor: u64) -> u128 {
     runtime::promis_load_minor(ladder(current, rate_minor))
 }
 
+/// The override is an e2e affordance; a production build must run the ladder.
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn a_production_build_has_no_load_override() {
+    assert!(crate::constants::PROMIS_LOAD_OVERRIDE.is_none());
+}
+
 #[test]
 fn the_fixture_load_is_the_one_the_ladder_picks() {
     assert_eq!(ladder_load(None, ENTRY_PRICE as u64), LOAD_MINOR);
