@@ -232,6 +232,45 @@ pub(crate) fn parked_work(url: &str, router: Address, venue_router: Address) -> 
 /// The venue emits this at the end of every inbound stage handler, so its
 /// absence separates a message that never arrived from one that did nothing.
 #[cfg(feature = "ocomp-integration")]
+/// Desis drops inbound work of its own, with its own reason codes, and those
+/// never appear in either router's ignore log.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn ignored_by_desis(url: &str, worldwide_day: u32) -> String {
+    let desis: Address = origin_venue::DESIS
+        .parse()
+        .expect("desis precompile address");
+    let topic0 = alloy_primitives::keccak256(b"InboundIgnored(uint32,uint32,uint8)".as_slice());
+    let day_topic = format!("0x{:064x}", worldwide_day);
+    let logs = logs_of(
+        url,
+        desis,
+        vec![
+            serde_json::json!(format!("{topic0:?}")),
+            serde_json::json!(day_topic),
+        ],
+    );
+    let entries = match logs.as_ref() {
+        Some(entries) if entries.is_empty() => return "Desis ignored no inbound work".to_owned(),
+        Some(entries) => entries,
+        None => return "Desis ignore log is unreadable".to_owned(),
+    };
+    let described: Vec<String> = entries
+        .iter()
+        .map(|entry| {
+            let reason = entry["data"]
+                .as_str()
+                .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok());
+            match reason {
+                Some(2) => "obsolete".to_owned(),
+                Some(3) => "conflict".to_owned(),
+                Some(4) => "not found".to_owned(),
+                Some(other) => format!("reason {other}"),
+                None => "unnamed reason".to_owned(),
+            }
+        })
+        .collect();
+    format!("Desis ignored inbound work as {}", described.join(", "))
+}
 /// A router may accept a message and drop it on purpose, naming a reason. That
 /// reason is the only record of work that arrived and did nothing.
 #[cfg(feature = "ocomp-integration")]
