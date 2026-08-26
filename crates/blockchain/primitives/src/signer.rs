@@ -66,7 +66,8 @@ impl OutbeEvmSigner {
     ///
     /// Unlike [`Self::from_file`], this rejects symlinks, non-regular files,
     /// unexpected owners, modes other than `0600`, hard links, non-canonical
-    /// encoding, and path replacement during open.
+    /// lowercase 32-byte hex payloads, and path replacement during open.
+    /// Surrounding ASCII whitespace is ignored and is not part of the key.
     #[cfg(unix)]
     pub fn from_strict_file(
         path: impl AsRef<Path>,
@@ -74,14 +75,21 @@ impl OutbeEvmSigner {
     ) -> Result<Self, SignerError> {
         use std::{fs::File, io::Read as _, os::unix::fs::MetadataExt as _};
 
-        const ENCODED_KEY_BYTES: u64 = 65;
+        const MIN_ENCODED_KEY_BYTES: u64 = 64;
+        const MAX_ENCODED_KEY_BYTES: u64 = 128;
         let path = path.as_ref();
         let path_metadata =
             std::fs::symlink_metadata(path).map_err(|source| SignerError::InspectPermissions {
                 path: path.to_path_buf(),
                 source,
             })?;
-        validate_strict_key_metadata(path, &path_metadata, expected_owner_uid, ENCODED_KEY_BYTES)?;
+        validate_strict_key_metadata(
+            path,
+            &path_metadata,
+            expected_owner_uid,
+            MIN_ENCODED_KEY_BYTES,
+            MAX_ENCODED_KEY_BYTES,
+        )?;
 
         let mut file = File::open(path).map_err(|source| SignerError::ReadKey {
             path: path.to_path_buf(),
@@ -97,7 +105,8 @@ impl OutbeEvmSigner {
             path,
             &opened_metadata,
             expected_owner_uid,
-            ENCODED_KEY_BYTES,
+            MIN_ENCODED_KEY_BYTES,
+            MAX_ENCODED_KEY_BYTES,
         )?;
         if path_metadata.dev() != opened_metadata.dev()
             || path_metadata.ino() != opened_metadata.ino()
@@ -108,22 +117,22 @@ impl OutbeEvmSigner {
             });
         }
 
-        let mut encoded = Zeroizing::new([0u8; ENCODED_KEY_BYTES as usize]);
-        file.read_exact(encoded.as_mut())
+        let mut encoded = Zeroizing::new(String::new());
+        file.read_to_string(&mut encoded)
             .map_err(|source| SignerError::ReadKey {
                 path: path.to_path_buf(),
                 source,
             })?;
-        if encoded[64] != b'\n'
-            || !encoded[..64]
-                .iter()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+        let hex = encoded.trim_ascii();
+        if hex.len() != 64
+            || !hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         {
             return Err(SignerError::NonCanonicalKeyFile {
                 path: path.to_path_buf(),
             });
         }
-        let hex = std::str::from_utf8(&encoded[..64]).expect("validated ASCII hex");
         Self::from_hex(hex)
     }
 
@@ -234,7 +243,7 @@ pub enum SignerError {
     },
     #[error("unsafe EVM private key file at {path}: {reason}", path = path.display())]
     UnsafeKeyFile { path: PathBuf, reason: &'static str },
-    #[error("EVM private key file is not exact 64-byte lowercase hex plus LF: {path}", path = path.display())]
+    #[error("EVM private key file does not contain a lowercase 32-byte hex key after trimming surrounding ASCII whitespace: {path}", path = path.display())]
     NonCanonicalKeyFile { path: PathBuf },
     #[error("failed to sign system transaction: {0}")]
     SigningFailed(String),
@@ -276,7 +285,8 @@ fn validate_strict_key_metadata(
     path: &Path,
     metadata: &std::fs::Metadata,
     expected_owner_uid: u32,
-    expected_len: u64,
+    min_len: u64,
+    max_len: u64,
 ) -> Result<(), SignerError> {
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
@@ -297,7 +307,7 @@ fn validate_strict_key_metadata(
             reason,
         });
     }
-    if metadata.len() != expected_len {
+    if !(min_len..=max_len).contains(&metadata.len()) {
         return Err(SignerError::NonCanonicalKeyFile {
             path: path.to_path_buf(),
         });
@@ -382,7 +392,7 @@ mod tests {
         let path = root.path().join("ocomp-evm-key.hex");
         std::fs::write(
             &path,
-            b"0000000000000000000000000000000000000000000000000000000000000001\n",
+            b"0000000000000000000000000000000000000000000000000000000000000001",
         )
         .unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
@@ -436,6 +446,28 @@ mod tests {
             OutbeEvmSigner::from_strict_file(&path, owner_uid),
             Err(SignerError::NonCanonicalKeyFile { .. })
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn strict_role_key_loader_ignores_surrounding_ascii_whitespace() {
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("ocomp-evm-key.hex");
+        std::fs::write(
+            &path,
+            b" \t0000000000000000000000000000000000000000000000000000000000000001\r\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let owner_uid = std::fs::metadata(&path).unwrap().uid();
+
+        let signer = OutbeEvmSigner::from_strict_file(&path, owner_uid).unwrap();
+        assert_eq!(
+            signer.address(),
+            address!("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf")
+        );
     }
 
     #[test]
