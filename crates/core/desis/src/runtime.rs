@@ -15,9 +15,9 @@ use outbe_intexfactory::SeriesId;
 
 use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
-    DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_REFERENCE_PRICES,
-    MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, REFUND_CHUNK_LEN,
-    REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
+    DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_BIDS_PER_BATCH,
+    MAX_BID_BATCHES, MAX_REFERENCE_PRICES, MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS,
+    ORIGIN_ROUTER_ADDRESS, REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -495,10 +495,15 @@ pub fn process_bids_batch(
     require_origin_router(caller)?;
     require_nonzero_worldwide_day(worldwide_day)?;
     // The arrival bitmap is a U256, so at most 256 batches (batch_index 0..=255) are trackable.
-    if total_batches == 0 || total_batches > 256 || batch_index >= total_batches {
+    if total_batches == 0 || total_batches > MAX_BID_BATCHES || batch_index >= total_batches {
         return Err(PrecompileError::Revert(
             "processBidsBatch: invalid batch index/total".into(),
         ));
+    }
+    // Same reason as the currency check below: an over-wide batch is admissible
+    // here but not at clearing, where the refund fan-out would reject the day.
+    if bids.len() > MAX_BIDS_PER_BATCH {
+        return Err(DesisError::BidBatchTooLarge(bids.len(), MAX_BIDS_PER_BATCH).into());
     }
     // Checked here because clearing cannot recover from it: an unspellable code would
     // otherwise surface as a day whose clearing reverts every block.

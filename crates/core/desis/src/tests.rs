@@ -1007,6 +1007,33 @@ fn process_bids_rejects_non_origin_caller() {
     });
 }
 
+#[test]
+fn process_bids_rejects_an_oversized_batch() {
+    use crate::constants::MAX_BIDS_PER_BATCH;
+    with_storage(|s| {
+        open_revealing(&s);
+        let over = u8::try_from(MAX_BIDS_PER_BATCH + 1).unwrap();
+        let error = runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            SRC_CHAIN,
+            1,
+            0,
+            1,
+            bids(over, 200),
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:?}").contains("over the"),
+            "unexpected error: {error:?}"
+        );
+        // Refused at the intake, so clearing never sees a day it cannot refund.
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(contract.day_bid_count.read(&WORLDWIDE_DAY).unwrap(), 0);
+    });
+}
+
 // --- Bid ingestion ---
 
 #[test]
