@@ -12,7 +12,7 @@ use alloy_primitives::B256;
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::EMIT_ADDRESS;
 
-/// Commitment-tree depth (fixed by the `outbe.emit.mint@1.0.0` circuit).
+/// Commitment-tree depth (fixed by the `outbe.emit.mint@1.2.1` circuit).
 pub const EMIT_TREE_DEPTH: usize = 20;
 
 /// Tree capacity: `2^20` leaves.

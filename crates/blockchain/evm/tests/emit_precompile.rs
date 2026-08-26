@@ -1,13 +1,13 @@
 //! Execution-level coverage for the Emit precompile route: the full
 //! burn → partial mint → full mint → replay scenario with real generated
-//! `outbe.emit.mint@1.0.0` proofs, plus frame/value boundary cases extending
+//! `outbe.emit.mint@1.2.1` proofs, plus frame/value boundary cases extending
 //! the `precompile_value_boundary` patterns.
 
 use alloy_evm::{Evm as _, EvmFactory as _};
 use alloy_primitives::{Address, Bytes, LogData, B256, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
 use outbe_emit::hash::{
-    change_key, empty_subtrees, field_to_be_bytes, merkle_node, note_commitment,
+    address_field, change_key, empty_subtrees, field_to_be_bytes, merkle_node, note_commitment,
     note_sn as derive_note_sn, nullifier as derive_nullifier, Field,
 };
 use outbe_emit::precompile::IEmit;
@@ -244,14 +244,14 @@ fn prove_mint(
         chain_id: CHAIN_ID,
         root: tree.root_at(root_leaf_count),
         nullifier,
-        note_owner: owner.into(),
+        note_owner: address_field(owner.into()),
         mint_units,
         change_commitment: change,
     };
     let witness = Witness {
         note_amount,
         note_spend_key: key,
-        path_bits: core::array::from_fn(|level| (leaf_index >> level) & 1 == 1),
+        leaf_index,
         auth_path: tree.path_at(leaf_index),
     };
     let backend = Barretenberg::default();

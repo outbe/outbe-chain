@@ -18,7 +18,7 @@ use outbe_zk_backend::barretenberg::Barretenberg;
 use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
 
 use crate::hash::{
-    change_key, empty_subtrees, field_to_be_bytes, merkle_node, note_commitment,
+    address_field, change_key, empty_subtrees, field_to_be_bytes, merkle_node, note_commitment,
     note_sn as derive_note_sn, nullifier as derive_nullifier, Field,
 };
 use crate::precompile::{base_gas, dispatch, IEmit, PAYABLE_SELECTORS};
@@ -111,44 +111,41 @@ fn formulas_match_pinned_circuit_vector() {
     let cases: [(Field, &str); 8] = [
         (
             serial,
-            "0x2f2f2ee38f7a4b57224b8fb5f0fcb28681ed43a1c032e6573b76cfae568b5d57",
+            "0x10c7f3172df9914075efe18b47d80ba46591bebf9b33883d9a079f59c2c5df7a",
         ),
         (
             commitment,
-            "0x2200e7aade29b65eddff0e16dd97a1c31721fb127b328acf031252993b710460",
+            "0x0a9ad4bd6cb921dd155cb648b65b5c88b22224cc41b7053942be6720f189c097",
         ),
         (
             n,
-            "0x1296f918fdd8ebff3fd2937b862af861aaedf9b8dc9d7500fa8f987a1a0939ce",
+            "0x1579db7bf1bbd836fb797c0f674b035469b01ad5c52ed9867b495920581c2da6",
         ),
         (
             next_key,
-            "0x274a4f418b7add167b8710743e24a6952cb843c82c04483eb8d42568572470e6",
+            "0x1b4c5ad29cb5e17a88df6cabdf4a74fde95de3abd1661f1313e123e9d277ca67",
         ),
         (
             next_serial,
-            "0x06f487bf2a6721969a7db942808c9d694aa278603e52bc57581a4f5475adbf12",
+            "0x2632f2eef5fca8cc18cda0f953f480e0be1402cfe21fe6f82ac68647cd681fd6",
         ),
         (
             change,
-            "0x0649c1589df49b5e59d9e5b1d54e4903292764fcd01038aaf7f9925f95f1253a",
+            "0x03fbc8c0247b538c220acfd601c6b8f832d451d9d29da0962720de813dae57de",
         ),
         (
             next_n,
-            "0x2ee004bcc4397e6b329171d533e88b7c60465861bd2b7f5d081a755903820478",
+            "0x2262ad5a43bec5eaf97c202f26ee45d1cbc4018d88980d5a1310bf9b5bad90d2",
         ),
         (
             root,
-            "0x125ae2525e63b97cbb77baffccf7abb6a88a620aab7866cb33b131487e6f3c49",
+            "0x0fcf9017b1240fd6bf1a87b3da7728ea62f94f220518d7378e421e1e85ccbe02",
         ),
     ];
     for (actual, expected) in cases {
         assert_eq!(format!("{:#x}", b256(actual)), expected);
     }
 }
-
-// ---- in-memory reference tree (PoC semantics) ------------------------------
-
 /// Minimal reference tree mirroring the PoC's naive recompute semantics; used
 /// to derive witnesses and to cross-check the runtime's stored incremental
 /// tree.
@@ -227,7 +224,7 @@ fn combined_from(public: &PublicInputs, proof_words: &[Vec<u8>]) -> Vec<u8> {
     combined
 }
 
-/// Proves `(note_amount, key, path_bits)` against the tree's root when only
+/// Proves `(note_amount, key, leaf_index)` against the tree's root when only
 /// `root_leaf_count` leaves existed, for `mint_units`, with the deterministic
 /// change commitment (zero for a full mint).
 fn prove_mint(
@@ -252,14 +249,14 @@ fn prove_mint(
         chain_id: CHAIN_ID,
         root: tree.root_at(root_leaf_count),
         nullifier,
-        note_owner: owner.into(),
+        note_owner: address_field(owner.into()),
         mint_units,
         change_commitment: change,
     };
     let witness = Witness {
         note_amount,
         note_spend_key: key,
-        path_bits: core::array::from_fn(|level| (leaf_index >> level) & 1 == 1),
+        leaf_index,
         auth_path: tree.path_at(leaf_index),
     };
     let backend = Barretenberg::default();
@@ -280,16 +277,16 @@ fn fabricated_statement(
     change: B256,
 ) -> Vec<u8> {
     let mut combined = Vec::with_capacity(outbe_zkproof::EMIT_MINT_COMBINED_LEN);
-    combined.extend_from_slice(&25u32.to_be_bytes());
+    combined.extend_from_slice(&6u32.to_be_bytes());
     combined.extend_from_slice(&u64_word(chain_id));
     for word in [root, nullifier] {
         combined.extend_from_slice(word.as_slice());
     }
-    for byte in owner.0 {
-        let mut word = [0u8; 32];
-        word[31] = byte;
-        combined.extend_from_slice(&word);
-    }
+    // The owner word is one field: the 20 address bytes, big-endian, in the
+    // low 160 bits.
+    let mut owner_word = [0u8; 32];
+    owner_word[12..].copy_from_slice(owner.0.as_slice());
+    combined.extend_from_slice(&owner_word);
     combined.extend_from_slice(&u64_word(units));
     combined.extend_from_slice(change.as_slice());
     // Pad the proof tail to the frozen circuit's exact combined length so
@@ -587,7 +584,7 @@ fn malformed_proof_tail_reverts_never_fatal() {
         60,
     );
     let mut proof = prove_mint(&tree, BOB, key, 100, leaf, 1, 40);
-    let tail = &mut proof[4 + 25 * 32..];
+    let tail = &mut proof[4 + 6 * 32..];
     tail[..32].copy_from_slice(&alloy_primitives::hex!(
         "30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001"
     ));
@@ -647,7 +644,7 @@ fn mint_statement_mismatch_and_malformed_framing_revert() {
 
     // Malformed framing: wrong public-input count.
     let mut truncated = proof.clone();
-    truncated[..4].copy_from_slice(&24u32.to_be_bytes());
+    truncated[..4].copy_from_slice(&5u32.to_be_bytes());
     let data = mint_calldata(
         CAROL,
         CHAIN_ID,

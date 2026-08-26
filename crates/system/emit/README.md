@@ -63,7 +63,7 @@ Rules:
   equal the runtime chain ID.
 - `root` must be inside the 32-root window; each nullifier is single-use.
 - `proof` is the combined UltraHonkKeccak wire for the frozen
-  `outbe.emit.mint@1.0.0` circuit, capped at 16,384 bytes.
+  `outbe.emit.mint@1.2.1` circuit, capped at 16,384 bytes.
 - `NewNote.noteAmount == 0` is the sentinel for a partial mint's private
   change note.
 

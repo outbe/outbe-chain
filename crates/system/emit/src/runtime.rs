@@ -47,12 +47,12 @@ fn append(emit: &EmitContract<'_>, zeros: &[Field], leaf: Field) -> Result<(u32,
     let index = emit.leaf_count.read()?;
     debug_assert_eq!(zeros.len(), EMIT_TREE_DEPTH + 1);
     let mut current = leaf;
-    for level in 0..EMIT_TREE_DEPTH {
+    for (level, zero) in zeros.iter().enumerate().take(EMIT_TREE_DEPTH) {
         let level_byte = level as u8;
         if (index >> level) & 1 == 0 {
             emit.filled_subtrees
                 .write(&level_byte, B256::new(field_to_be_bytes(current)))?;
-            current = merkle_node(current, zeros[level]);
+            current = merkle_node(current, *zero);
         } else {
             let left = emit.filled_subtrees.read(&level_byte)?;
             let left = field_from_be_bytes(&left.0).ok_or(PrecompileError::Fatal(
@@ -149,7 +149,7 @@ pub(crate) fn burn(
     })
 }
 
-/// `mint(...)` — consume a frozen `outbe.emit.mint@1.0.0` proof.
+/// `mint(...)` — consume a frozen `outbe.emit.mint@1.2.1` proof.
 pub(crate) fn mint(
     storage: StorageHandle<'_>,
     caller: Address,
