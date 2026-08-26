@@ -72,9 +72,9 @@ pub fn dispatch(
 /// Base gas charged by the registry before invoking [`dispatch`]:
 /// selector-sensitive, mirroring the two methods' fixed costs.
 pub fn base_gas(input: &[u8]) -> u64 {
-    if input.get(..4) == Some(&IEmit::mintCall::SELECTOR[..]) {
-        EMIT_MINT_BASE_GAS
-    } else {
-        EMIT_BURN_BASE_GAS
+    match input.first_chunk::<4>() {
+        Some(&IEmit::mintCall::SELECTOR) => EMIT_MINT_BASE_GAS,
+        Some(&IEmit::burnCall::SELECTOR) => EMIT_BURN_BASE_GAS,
+        _ => u64::MAX, // unknown selector: fail the call with out-of-gas
     }
 }

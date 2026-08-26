@@ -72,7 +72,7 @@ fn selectors_and_gas_are_pinned() {
         base_gas(&IEmit::burnCall { noteSn: B256::ZERO }.abi_encode()),
         530_000
     );
-    assert_eq!(base_gas(&[0xee; 4]), 530_000);
+    assert_eq!(base_gas(&[0xee; 4]), u64::MAX);
     let mint_calldata = IEmit::mintCall {
         payoutRecipient: CAROL,
         chainId: CHAIN_ID,
