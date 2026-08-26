@@ -232,6 +232,51 @@ pub(crate) fn parked_work(url: &str, router: Address, venue_router: Address) -> 
 /// The venue emits this at the end of every inbound stage handler, so its
 /// absence separates a message that never arrived from one that did nothing.
 #[cfg(feature = "ocomp-integration")]
+/// Split the relay in two: what left the venue, and what the origin took in.
+/// A gap between them is the transport losing the message, not either side
+/// refusing it.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn bid_relay_traffic(
+    url: &str,
+    router: Address,
+    venue_router: Address,
+    worldwide_day: u32,
+) -> String {
+    let day_topic = format!("0x{:064x}", worldwide_day);
+    let count = |address: Address, signature: &[u8], day_topic_index: usize| -> String {
+        let topic0 = alloy_primitives::keccak256(signature);
+        let mut topics = vec![
+            serde_json::json!(format!("{topic0:?}")),
+            serde_json::Value::Null,
+        ];
+        if day_topic_index == 2 {
+            topics.push(serde_json::json!(day_topic.clone()));
+        }
+        match logs_of(url, address, topics) {
+            Some(entries) => entries.len().to_string(),
+            None => "unreadable".to_owned(),
+        }
+    };
+    let sent_batches = count(
+        venue_router,
+        b"BidsBatchSent(bytes32,uint32,uint256)".as_slice(),
+        2,
+    );
+    let sent_done = count(
+        venue_router,
+        b"BidsDoneSent(bytes32,uint32,uint16,uint32)".as_slice(),
+        2,
+    );
+    let got_batches = count(
+        router,
+        b"BidsBatchReceived(uint32,uint32,uint256)".as_slice(),
+        2,
+    );
+    format!(
+        "the venue sent {sent_batches} bid batches and {sent_done} done markers, \
+         the origin took in {got_batches} batches"
+    )
+}
 /// Desis drops inbound work of its own, with its own reason codes, and those
 /// never appear in either router's ignore log.
 #[cfg(feature = "ocomp-integration")]
