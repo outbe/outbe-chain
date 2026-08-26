@@ -69,10 +69,10 @@ fn build_certificate(committee: &Committee, signer_indices: &[u32]) -> HybridCer
         &outbe_consensus::proof::hybrid_seed_namespace(),
         SEED_MESSAGE,
     );
-    let vrf_proof = Some(VrfProof::<MinSig> {
+    let vrf_proof = VrfProof::<MinSig> {
         material_version: 5,
         threshold_signature,
-    });
+    };
 
     HybridCertificate {
         signers,
@@ -127,14 +127,14 @@ fn verify_v2_proof_rejects_below_quorum() {
 }
 
 #[test]
-fn verify_v2_proof_rejects_missing_vrf() {
+fn verify_v2_proof_rejects_truncated_mandatory_vrf() {
     let committee = build_committee(4);
-    let mut cert = build_certificate(&committee, &[0, 1, 2, 3]);
-    cert.vrf_proof = None;
-    let bytes = cert.encode();
+    let cert = build_certificate(&committee, &[0, 1, 2, 3]);
+    let mut bytes = cert.encode().to_vec();
+    bytes.truncate(bytes.len() - 56);
     let err = verify_v2_proof_low_level(&snapshot(&committee), &binding(), bytes.as_ref())
-        .expect_err("missing VRF must reject under V2");
-    assert!(matches!(err, V2VerifyError::MissingVrfProof), "{err:?}");
+        .expect_err("truncated mandatory VRF must fail certificate decoding");
+    assert!(matches!(err, V2VerifyError::Decode(_)), "{err:?}");
 }
 
 #[test]

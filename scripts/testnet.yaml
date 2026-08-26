@@ -163,21 +163,18 @@ oracle:
       peak_day: 20241220
       peak_price: "1000000"
 
-# The genesis worldwide day. `worldwide_day:` above retargets
-# its calendar key to the genesis date; the window here keeps it OFFERING.
-metadosis:
-  worldwide_days:
-    - wwd: 20241220
-      status: 2
-      day_type: 2
-      forming_start: 1734652800
-      forming_end: 1734674400
-      lookback_end: 1734674400
-      offering_end: 4000000000
-      scheduled_process_time: 4100000000
-      previous_vwap: "0"
-      current_vwap: "1000000"
-      day_limit: "500000000"
+# No genesis worldwide day. The runtime creates the first one itself at block 1
+# (`init_genesis_day` in crates/core/metadosis/src/runtime.rs), and the live
+# testnet genesis carries no metadosis storage at all.
+#
+# A seeded day is worse than useless here. The seeder writes only the day's
+# `metadosis_limit_amount`, never the formation record that
+# `apply_missed_offering` requires, so the moment such a day reaches
+# MissedOffering the whole ProtocolCycle dies with
+# `MissedOffering requires an immutable formed day limit` and the chain stops
+# producing blocks. The one that used to live here avoided that only by
+# declaring `offering_end: 4000000000` — a window open until 2096 — which hid
+# the gap instead of closing it.
 
 # Intex profile selector. `prod` seeds nothing.
 intex_factory:

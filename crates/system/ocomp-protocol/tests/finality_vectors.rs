@@ -253,10 +253,10 @@ fn finalization_bytes(dkg: &Dkg, signer_indices: &[u32], header_hash: B256) -> V
             signer_indices.iter().copied().map(Participant::new),
         ),
         bls_aggregated_vote,
-        vrf_proof: Some(VrfProof {
+        vrf_proof: VrfProof {
             material_version: VRF_MATERIAL_VERSION,
             threshold_signature,
-        }),
+        },
     };
     Finalization::<HybridScheme<MinSig>, Sha256Digest> {
         proposal,

@@ -59,9 +59,16 @@ class ProtocolConstantsSeedTests(unittest.TestCase):
 
                 self.assertEqual(set(seed["balance"].values()), {"1000000000"})
                 self.assertEqual(seed["gems"][0]["gem_load"], "1000000000")
-                day = seed["metadosis"]["worldwide_days"][0]
-                self.assertEqual(day["current_vwap"], "1000000")
-                self.assertEqual(day["day_limit"], "500000000")
+                if filename.startswith("seed-testnet"):
+                    # A network profile seeds no worldwide day: the runtime
+                    # creates the first one at block 1, and a seeded day gets
+                    # no formation record, so reaching MissedOffering would
+                    # kill the ProtocolCycle and stop block production.
+                    self.assertNotIn("metadosis", seed)
+                else:
+                    day = seed["metadosis"]["worldwide_days"][0]
+                    self.assertEqual(day["current_vwap"], "1000000")
+                    self.assertEqual(day["day_limit"], "500000000")
                 self.assertEqual(seed["staking"]["min_stake"], staking_expected["min_stake"])
                 self.assertEqual(
                     seed["staking"]["genesis_validator_stake"],

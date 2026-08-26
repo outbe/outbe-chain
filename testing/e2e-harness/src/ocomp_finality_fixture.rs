@@ -930,10 +930,10 @@ fn finalization_bytes(dkg: &Dkg, header_hash: B256) -> Vec<u8> {
                 SIGNER_INDICES.iter().copied().map(Participant::new),
             ),
             bls_aggregated_vote,
-            vrf_proof: Some(VrfProof {
+            vrf_proof: VrfProof {
                 material_version: VRF_MATERIAL_VERSION,
                 threshold_signature,
-            }),
+            },
         },
     }
     .encode()

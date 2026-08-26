@@ -358,8 +358,18 @@ class SeedMergeTests(unittest.TestCase):
     def test_untouched_sections_equal_the_baseline(self):
         seed = CG.build_seed({})
         base = CG.load_yaml(CG.BASE_PROFILE_PATH)
-        for section in ("rewards", "validator_set", "metadosis"):
+        for section in ("rewards", "validator_set"):
             self.assertEqual(seed[section], base[section])
+
+    def test_the_baseline_seeds_no_worldwide_day(self):
+        # The runtime creates the first day at block 1, and the live testnet
+        # genesis carries no metadosis storage. A seeded day would also be
+        # unusable: the seeder writes its limit amount but not the formation
+        # record `apply_missed_offering` requires, so reaching MissedOffering
+        # would kill the ProtocolCycle and stop block production.
+        base = CG.load_yaml(CG.BASE_PROFILE_PATH)
+        self.assertNotIn("metadosis", base)
+        self.assertNotIn("metadosis", CG.build_seed({}))
 
 
 class SeedStageTests(unittest.TestCase):
@@ -479,7 +489,6 @@ class ExampleFileTests(unittest.TestCase):
             "intex_factory",
             "vault_router",
             "oracle",
-            "metadosis",
         ):
             self.assertEqual(
                 config[section],

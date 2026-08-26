@@ -70,7 +70,10 @@ fn notarization_for(
     round: Round,
     parent_view: View,
     payload_bytes: &[u8],
-) -> Notarization<HybridScheme<MinSig>, OutbeDigest> {
+) -> (
+    Notarization<HybridScheme<MinSig>, OutbeDigest>,
+    HybridScheme<MinSig>,
+) {
     let (keys, participants) = test_participants(3);
     let dkg = bootstrap_dkg(3).unwrap();
     let schemes: Vec<HybridScheme<MinSig>> = keys
@@ -102,10 +105,13 @@ fn notarization_for(
     let certificate = verifier
         .assemble::<_, N3f1>(attestations, &Sequential)
         .unwrap();
-    Notarization {
-        proposal,
-        certificate,
-    }
+    (
+        Notarization {
+            proposal,
+            certificate,
+        },
+        verifier,
+    )
 }
 
 fn verifier_scheme() -> HybridScheme<MinSig> {
@@ -127,14 +133,9 @@ fn build_resolver<T: ParentProofTransport>(
     transport: T,
     schedule: OutbeProtocolSchedule,
     store: FinalizedParentCertStore,
+    verifier: HybridScheme<MinSig>,
 ) -> ParentProofResolver<T> {
-    ParentProofResolver::new(
-        transport,
-        schedule,
-        store,
-        verifier_scheme(),
-        ordered_addresses(),
-    )
+    ParentProofResolver::new(transport, schedule, store, verifier, ordered_addresses())
 }
 
 // ── Mock transport ────────────────────────────────────────────────────────
@@ -217,7 +218,7 @@ fn remote_notarized_fetch_hash_mismatch_returns_no_exact_parent_proof() {
         // Transport returns a Notarization for payload "X" but the resolver was
         // asked for the parent hash of payload "Y". NoProofForExactParent.
         let round = Round::new(Epoch::new(0), View::new(2));
-        let returned = notarization_for(round, View::new(1), b"branch-x");
+        let (returned, verifier) = notarization_for(round, View::new(1), b"branch-x");
         let transport = MockTransport::new(MockBehaviour::Returns(Box::new(returned)));
 
         let store = FinalizedParentCertStore::new();
@@ -235,6 +236,7 @@ fn remote_notarized_fetch_hash_mismatch_returns_no_exact_parent_proof() {
             transport,
             fast_schedule(3, 500, 1_024 * 1_024),
             store.clone(),
+            verifier,
         );
 
         let outcome = resolver
@@ -262,7 +264,7 @@ fn remote_notarized_fetch_without_local_certification_witness_returns_no_proof()
         // Mock returns a valid Notarization matching the requested parent_hash,
         // but the store has no witness: NoLocalCertificationWitness.
         let round = Round::new(Epoch::new(0), View::new(2));
-        let notar = notarization_for(round, View::new(1), b"branch-a");
+        let (notar, verifier) = notarization_for(round, View::new(1), b"branch-a");
         let parent_hash = notar.proposal.payload.0;
         let transport = MockTransport::new(MockBehaviour::Returns(Box::new(notar)));
 
@@ -271,6 +273,7 @@ fn remote_notarized_fetch_without_local_certification_witness_returns_no_proof()
             transport,
             fast_schedule(3, 500, 1_024 * 1_024),
             store.clone(),
+            verifier,
         );
 
         let outcome = resolver
@@ -300,7 +303,7 @@ fn remote_notarized_returns_competing_branch_same_round_does_not_overwrite_other
         // must remain byte-identical (no overwrite of unrelated keys).
         let round = Round::new(Epoch::new(0), View::new(2));
         let parent_view = View::new(1);
-        let competing = notarization_for(round, parent_view, b"competing-branch-x");
+        let (competing, verifier) = notarization_for(round, parent_view, b"competing-branch-x");
         let competing_hash = competing.proposal.payload.0;
         let requested_hash = B256::from_slice(Sha256::hash(b"requested-branch-y").as_ref());
         assert_ne!(competing_hash, requested_hash);
@@ -314,6 +317,7 @@ fn remote_notarized_returns_competing_branch_same_round_does_not_overwrite_other
             transport,
             fast_schedule(3, 500, 1_024 * 1_024),
             store.clone(),
+            verifier,
         );
 
         let outcome = resolver
@@ -362,7 +366,7 @@ fn parent_proof_fetch_respects_timeout_attempts_and_max_bytes() {
         let schedule = fast_schedule(ATTEMPTS, TIMEOUT_MS, MAX_BYTES);
 
         let store = FinalizedParentCertStore::new();
-        let resolver = build_resolver(transport.clone(), schedule, store);
+        let resolver = build_resolver(transport.clone(), schedule, store, verifier_scheme());
 
         let outcome = resolver
             .fetch_parent_proof(

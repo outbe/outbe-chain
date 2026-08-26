@@ -147,11 +147,10 @@ prepare_ocomp_evm_key() {
     die "$OCOMP_EVM_KEY has mode $mode, expected 600"
   [[ "$link_count" == 1 ]] ||
     die "$OCOMP_EVM_KEY has $link_count hard links, expected exactly one"
-  [[ $(wc -c <"$OCOMP_EVM_KEY") -eq 65 &&
-    $(tr -d '\n' <"$OCOMP_EVM_KEY") =~ ^[0-9a-f]{64}$ ]] ||
-    die "$OCOMP_EVM_KEY is not canonical lowercase 32-byte hex plus LF"
-
   local signer_address
+  # `signer-address` uses the runtime's strict loader. It validates the
+  # lowercase 32-byte hex payload after trimming surrounding whitespace, so a
+  # trailing line feed is accepted but is not part of the key contract.
   if ! signer_address=$(
     env \
       OUTBE_OCOMP_BASE_PATH="${RUNTIME_ENV[OUTBE_OCOMP_BASE_PATH]}" \

@@ -43,6 +43,8 @@ use zeroize::Zeroizing;
 
 const OCOMP_KEY_FILENAME: &str = "ocomp-key-v1.hex";
 const OCOMP_REGISTRATION_FILENAME: &str = "ocomp-registration-v1.ocb1";
+const OCOMP_EVM_KEY_FILENAME: &str = "ocomp-evm-key.hex";
+const RETH_P2P_SECRET_FILENAME: &str = "reth-p2p-secret.hex";
 
 /// Key storage backend for BLS key files.
 #[derive(Debug, Clone, ValueEnum)]
@@ -130,9 +132,9 @@ enum Commands {
     },
 
     /// Generate the complete key bundle for one validator: BLS consensus key,
-    /// EVM artifact signer, Radicle identity, the ValidatorSet registration
-    /// signature, and (when --genesis-hash is known) OCOMP result-signing
-    /// artifacts.
+    /// validator EVM signer, Reth P2P identity, OCOMP operational signer,
+    /// Radicle identity, the ValidatorSet registration signature, and (when
+    /// --genesis-hash is known) OCOMP result-signing artifacts.
     Validator {
         /// Directory that receives every generated key artifact.
         #[arg(long, default_value = ".")]
@@ -376,19 +378,44 @@ fn cmd_radicle(output_dir: PathBuf) -> Result<()> {
     Ok(())
 }
 
-/// Everything `validator` generates besides the optional OCOMP artifacts.
+/// Everything `validator` generates besides the optional OCOMP result-signing artifacts.
 struct ValidatorBundle {
     bls_key_path: PathBuf,
     bls_public_key: [u8; 48],
     bls_pubkey_hash: B256,
     evm_key_path: PathBuf,
     validator_address: Address,
+    reth_p2p_key_path: PathBuf,
+    ocomp_evm_key_path: PathBuf,
+    ocomp_evm_address: Address,
     radicle: RadicleIdentity,
     registration_signature: [u8; 96],
 }
 
-/// Generate the BLS consensus key, EVM signer, Radicle identity, and the
-/// ValidatorSet registration signature binding all three to `chain_id`.
+fn evm_address(signing_key: &SigningKey) -> Result<Address> {
+    let public_key = signing_key.verifying_key().to_encoded_point(false);
+    let public_key_raw = public_key
+        .as_bytes()
+        .get(1..)
+        .filter(|raw| raw.len() == 64)
+        .ok_or_else(|| eyre::eyre!("EVM public key is not an uncompressed SEC1-65 point"))?;
+    Ok(Address::from_raw_public_key(public_key_raw))
+}
+
+fn generate_distinct_evm_key(existing: &[&SigningKey]) -> SigningKey {
+    loop {
+        let candidate = SigningKey::random(&mut rand_core::OsRng);
+        if existing
+            .iter()
+            .all(|key| candidate.to_bytes() != key.to_bytes())
+        {
+            return candidate;
+        }
+    }
+}
+
+/// Generate all validator-owned runtime keys and the ValidatorSet registration
+/// signature binding the consensus, validator EVM, and Radicle identities.
 fn generate_validator_bundle(
     output_dir: &Path,
     chain_id: u64,
@@ -399,13 +426,21 @@ fn generate_validator_bundle(
 
     let bls_key_path = output_dir.join("signing-key.hex");
     let evm_key_path = output_dir.join("evm-key.hex");
+    let reth_p2p_key_path = output_dir.join(RETH_P2P_SECRET_FILENAME);
+    let ocomp_evm_key_path = output_dir.join(OCOMP_EVM_KEY_FILENAME);
     let radicle_home = output_dir.join("radicle");
     let radicle_key_path = radicle_home.join("keys").join("radicle");
-    let preexisting: Vec<String> = [&bls_key_path, &evm_key_path, &radicle_key_path]
-        .into_iter()
-        .filter(|path| path.exists())
-        .map(|path| path.display().to_string())
-        .collect();
+    let preexisting: Vec<String> = [
+        &bls_key_path,
+        &evm_key_path,
+        &reth_p2p_key_path,
+        &ocomp_evm_key_path,
+        &radicle_key_path,
+    ]
+    .into_iter()
+    .filter(|path| path.exists())
+    .map(|path| path.display().to_string())
+    .collect();
     if !preexisting.is_empty() {
         eyre::bail!(
             "validator key artifacts already exist, refusing to overwrite: {}",
@@ -429,18 +464,35 @@ fn generate_validator_bundle(
     let evm_key_hex = Zeroizing::new(hex::encode(evm_signing_key.to_bytes()));
     write_secret_hex_file(&evm_key_path, &evm_key_hex)
         .wrap_err_with(|| format!("failed to write EVM key: {}", evm_key_path.display()))?;
-    let evm_public_key = evm_signing_key.verifying_key().to_encoded_point(false);
-    let evm_public_key_raw = evm_public_key
-        .as_bytes()
-        .get(1..)
-        .filter(|raw| raw.len() == 64)
-        .ok_or_else(|| eyre::eyre!("EVM public key is not an uncompressed SEC1-65 point"))?;
-    let validator_address = Address::from_raw_public_key(evm_public_key_raw);
+    let validator_address = evm_address(&evm_signing_key)?;
 
-    // 3. Radicle Ed25519 identity, bound atomically by the registration.
+    // 3. Stable Reth transport identity. Reth parses the file verbatim, so the
+    // canonical source artifact has no prefix or trailing line feed.
+    let reth_p2p_key = generate_distinct_evm_key(&[&evm_signing_key]);
+    let reth_p2p_key_hex = Zeroizing::new(hex::encode(reth_p2p_key.to_bytes()));
+    write_secret_hex_file(&reth_p2p_key_path, &reth_p2p_key_hex).wrap_err_with(|| {
+        format!(
+            "failed to write Reth P2P key: {}",
+            reth_p2p_key_path.display()
+        )
+    })?;
+
+    // 4. Dedicated OCOMP operational signer. It is deliberately distinct from
+    // the validator EVM key and must be delegated before OCOMP submissions.
+    let ocomp_evm_key = generate_distinct_evm_key(&[&evm_signing_key, &reth_p2p_key]);
+    let ocomp_evm_key_hex = Zeroizing::new(hex::encode(ocomp_evm_key.to_bytes()));
+    write_secret_hex_file(&ocomp_evm_key_path, &ocomp_evm_key_hex).wrap_err_with(|| {
+        format!(
+            "failed to write OCOMP EVM key: {}",
+            ocomp_evm_key_path.display()
+        )
+    })?;
+    let ocomp_evm_address = evm_address(&ocomp_evm_key)?;
+
+    // 5. Radicle Ed25519 identity, bound atomically by the registration.
     let radicle = generate_radicle_identity(&radicle_home)?;
 
-    // 4. Registration signature for the ValidatorSet precompile.
+    // 6. Registration signature for the ValidatorSet precompile.
     let sk_bytes = bls_key.encode();
     let blst_sk = blst::min_pk::SecretKey::from_bytes(&sk_bytes)
         .map_err(|e| eyre::eyre!("failed to create blst SecretKey: {e:?}"))?;
@@ -456,6 +508,9 @@ fn generate_validator_bundle(
         bls_pubkey_hash,
         evm_key_path,
         validator_address,
+        reth_p2p_key_path,
+        ocomp_evm_key_path,
+        ocomp_evm_address,
         radicle,
         registration_signature,
     })
@@ -480,6 +535,18 @@ fn cmd_validator(
     println!("EVM artifact signer (secp256k1):");
     println!("  private key:  {}", bundle.evm_key_path.display());
     println!("  address:      {}", bundle.validator_address);
+    println!();
+    println!("Reth P2P identity (secp256k1):");
+    println!("  private key:  {}", bundle.reth_p2p_key_path.display());
+    println!();
+    println!("OCOMP operational EVM signer (secp256k1):");
+    println!("  private key:  {}", bundle.ocomp_evm_key_path.display());
+    println!("  address:      {}", bundle.ocomp_evm_address);
+    println!("  delegate after validator registration, using the validator EVM key:");
+    println!(
+        "  outbe-cli --private-key <validator-evm-key> validator delegate ocomp {}",
+        bundle.ocomp_evm_address
+    );
     println!();
     println!("Radicle identity:");
     println!("  private key:  {}", bundle.radicle.key_path.display());

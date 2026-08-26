@@ -57,9 +57,6 @@ pub enum V2VerifyError {
     BlsAggregateInvalid,
 
     // ── VRF threshold proof ───────────────────────────────────────────────
-    /// V2 requires every certificate to carry a recovered threshold VRF proof.
-    #[error("V2 certificate is missing the mandatory threshold VRF proof")]
-    MissingVrfProof,
     /// `VrfProof` decoded but is structurally malformed (e.g., zero
     /// signature length, version-byte rejection in the payload).
     #[error("VRF proof structurally malformed")]
@@ -153,7 +150,6 @@ mod tests {
             },
             V2VerifyError::DuplicateSigner { index: 1 },
             V2VerifyError::BlsAggregateInvalid,
-            V2VerifyError::MissingVrfProof,
             V2VerifyError::MalformedVrfProof,
             V2VerifyError::WrongVrfMaterialVersion {
                 expected: 1,
@@ -190,8 +186,8 @@ mod tests {
         ];
         assert_eq!(
             samples.len(),
-            21,
-            "must cover all 21 V2VerifyError variants"
+            20,
+            "must cover all 20 V2VerifyError variants"
         );
 
         let mut seen = BTreeSet::new();
@@ -203,7 +199,7 @@ mod tests {
                 "duplicate Display string across variants: {display}"
             );
         }
-        assert_eq!(seen.len(), 21);
+        assert_eq!(seen.len(), 20);
     }
 
     #[test]

@@ -21,23 +21,6 @@
    "floor_price": "540000"
   }
  ],
- "metadosis": {
-  "worldwide_days": [
-   {
-    "wwd": 20241220,
-    "status": 2,
-    "day_type": 2,
-    "forming_start": 1734652800,
-    "forming_end": 1734674400,
-    "lookback_end": 1734674400,
-    "offering_end": 4000000000,
-    "scheduled_process_time": 4100000000,
-    "previous_vwap": "0",
-    "current_vwap": "1000000",
-    "day_limit": "500000000"
-   }
-  ]
- },
  "validator_set": {
   "max_validators": 128,
   "reregistration_cooldown_blocks": 151200

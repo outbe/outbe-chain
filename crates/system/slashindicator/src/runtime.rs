@@ -1429,7 +1429,6 @@ fn canonical_evidence_hash(ev1: &[u8], ev2: &[u8]) -> B256 {
 /// or renumbering them is a hard-fork change.
 pub fn classify_vrf_failure(err: &V2VerifyError) -> Option<u16> {
     match err {
-        V2VerifyError::MissingVrfProof => Some(1),
         V2VerifyError::MalformedVrfProof => Some(2),
         V2VerifyError::WrongVrfMaterialVersion { .. } => Some(3),
         V2VerifyError::WrongVrfGroupKeyHash { .. } => Some(4),

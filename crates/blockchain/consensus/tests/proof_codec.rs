@@ -4,12 +4,12 @@
 //! produces the same bytes. This is the determinism invariant that block hash
 //! computation and marshal-archive replay both depend on.
 
-use commonware_codec::{Decode, Encode, EncodeSize};
+use commonware_codec::{Decode, Encode, EncodeSize, FixedSize};
 use commonware_cryptography::{
     bls12381::{
         primitives::{
             ops::{aggregate, keypair, sign_message},
-            variant::{MinPk, MinSig},
+            variant::{MinPk, MinSig, Variant},
         },
         PrivateKey,
     },
@@ -23,11 +23,7 @@ use rand_chacha::ChaCha20Rng;
 
 /// Build a non-trivial `HybridCertificate<MinSig>` from real BLS keys so the
 /// codec exercises actual group elements (not the point at infinity).
-fn sample_certificate(
-    participants: usize,
-    signer_indices: &[u32],
-    with_vrf: bool,
-) -> HybridCertificate<MinSig> {
+fn sample_certificate(participants: usize, signer_indices: &[u32]) -> HybridCertificate<MinSig> {
     assert!(participants >= signer_indices.len());
     let signers_bitmap = Signers::from(
         participants,
@@ -49,16 +45,14 @@ fn sample_certificate(
         aggregate::combine_signatures::<MinPk, _>(signatures.iter().map(|s| s.as_ref()));
 
     // Real threshold VRF signature via a one-shot MinSig key.
-    let vrf_proof = with_vrf.then(|| {
-        let mut rng = ChaCha20Rng::seed_from_u64(7);
-        let (private, _public) = keypair::<_, MinSig>(&mut rng);
-        let threshold_signature =
-            sign_message::<MinSig>(&private, b"OUTBE_VRF_SEED_V2", b"seed-round-1");
-        VrfProof::<MinSig> {
-            material_version: 42,
-            threshold_signature,
-        }
-    });
+    let mut rng = ChaCha20Rng::seed_from_u64(7);
+    let (private, _public) = keypair::<_, MinSig>(&mut rng);
+    let threshold_signature =
+        sign_message::<MinSig>(&private, b"OUTBE_VRF_SEED_V2", b"seed-round-1");
+    let vrf_proof = VrfProof::<MinSig> {
+        material_version: 42,
+        threshold_signature,
+    };
 
     HybridCertificate {
         signers: signers_bitmap,
@@ -69,33 +63,29 @@ fn sample_certificate(
 
 #[test]
 fn phase1_metadata_roundtrip_encode_decode_encode_bit_equal() {
-    for (n, signers, with_vrf) in [
-        (3usize, &[0u32, 1, 2][..], true),
-        (3, &[0, 1, 2], false),
-        (16, &[0, 5, 9, 15], true),
-        (128, &[0, 31, 63, 127], false),
+    for (n, signers) in [
+        (3usize, &[0u32, 1, 2][..]),
+        (16, &[0, 5, 9, 15]),
+        (128, &[0, 31, 63, 127]),
     ] {
-        let cert = sample_certificate(n, signers, with_vrf);
+        let cert = sample_certificate(n, signers);
         let first = cert.encode();
         assert_eq!(
             first.len(),
             cert.encode_size(),
-            "encode_size disagrees with actual encoded length (n={n}, with_vrf={with_vrf})",
+            "encode_size disagrees with actual encoded length (n={n})",
         );
 
         let decoded = HybridCertificate::<MinSig>::decode_cfg(first.clone(), &n)
-            .unwrap_or_else(|err| panic!("decode failed (n={n}, with_vrf={with_vrf}): {err}"));
+            .unwrap_or_else(|err| panic!("decode failed (n={n}): {err}"));
         let second = decoded.encode();
 
         assert_eq!(
             first.as_ref(),
             second.as_ref(),
-            "re-encoded bytes differ (n={n}, with_vrf={with_vrf})",
+            "re-encoded bytes differ (n={n})",
         );
-        assert_eq!(
-            cert, decoded,
-            "decoded value differs from original (n={n}, with_vrf={with_vrf})",
-        );
+        assert_eq!(cert, decoded, "decoded value differs from original (n={n})",);
     }
 }
 
@@ -120,11 +110,22 @@ fn vrf_proof_roundtrip_encode_decode_encode_bit_equal() {
 }
 
 #[test]
+fn certificate_wire_has_no_optional_vrf_discriminator() {
+    let cert = sample_certificate(4, &[0, 1, 2]);
+    let proof = &cert.vrf_proof;
+    assert_eq!(
+        cert.encode().len(),
+        cert.signers.encode_size() + <MinPk as Variant>::Signature::SIZE + proof.encode_size(),
+        "clean-genesis certificate wire must encode the mandatory VRF proof directly",
+    );
+}
+
+#[test]
 fn empty_signers_decode_rejected() {
     // Build an empty-signers certificate by manually encoding a zero-count
     // signers bitmap of size 8 followed by zero bytes; the decoder rejects this.
     let zero_signers = Signers::from(8, std::iter::empty::<Participant>());
-    let mut cert = sample_certificate(8, &[0, 1], false);
+    let mut cert = sample_certificate(8, &[0, 1]);
     cert.signers = zero_signers;
     let bytes = cert.encode();
 

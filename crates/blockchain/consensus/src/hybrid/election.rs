@@ -16,7 +16,7 @@ use commonware_cryptography::bls12381::{
 use commonware_utils::{modulo, ordered::Set, Participant};
 use std::sync::Arc;
 
-use super::{bls_batch_verification_rng, HybridCertificate, HybridScheme, VrfMaterialProvider};
+use super::{HybridCertificate, HybridScheme, VrfMaterialProvider};
 
 /// Configuration for hybrid VRF-based leader election.
 ///
@@ -29,6 +29,7 @@ use super::{bls_batch_verification_rng, HybridCertificate, HybridScheme, VrfMate
 pub struct HybridRandom<V: Variant = MinSig> {
     bootstrap_seed: Option<Vec<u8>>,
     vrf_materials: Option<VrfMaterialProvider<V>>,
+    expected_vrf_material_version: Option<u64>,
 }
 
 impl<V: Variant> Default for HybridRandom<V> {
@@ -36,15 +37,18 @@ impl<V: Variant> Default for HybridRandom<V> {
         Self {
             bootstrap_seed: None,
             vrf_materials: None,
+            expected_vrf_material_version: None,
         }
     }
 }
 
 impl<V: Variant> HybridRandom<V> {
     pub fn with_vrf_materials(vrf_materials: VrfMaterialProvider<V>) -> Self {
+        let expected_vrf_material_version = vrf_materials.active_version();
         Self {
             bootstrap_seed: None,
             vrf_materials: Some(vrf_materials),
+            expected_vrf_material_version: Some(expected_vrf_material_version),
         }
     }
 
@@ -54,6 +58,7 @@ impl<V: Variant> HybridRandom<V> {
         Self {
             bootstrap_seed: Some(seed),
             vrf_materials: None,
+            expected_vrf_material_version: None,
         }
     }
 
@@ -61,9 +66,11 @@ impl<V: Variant> HybridRandom<V> {
         seed: Vec<u8>,
         vrf_materials: VrfMaterialProvider<V>,
     ) -> Self {
+        let expected_vrf_material_version = vrf_materials.active_version();
         Self {
             bootstrap_seed: Some(seed),
             vrf_materials: Some(vrf_materials),
+            expected_vrf_material_version: Some(expected_vrf_material_version),
         }
     }
 }
@@ -77,6 +84,7 @@ impl<V: Variant> elector::Config<HybridScheme<V>> for HybridRandom<V> {
             n: participants.len() as u32,
             bootstrap_seed: self.bootstrap_seed,
             vrf_materials: self.vrf_materials,
+            expected_vrf_material_version: self.expected_vrf_material_version,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -88,6 +96,7 @@ pub struct HybridRandomElector<V: Variant> {
     n: u32,
     bootstrap_seed: Option<Vec<u8>>,
     vrf_materials: Option<VrfMaterialProvider<V>>,
+    expected_vrf_material_version: Option<u64>,
     _phantom: std::marker::PhantomData<V>,
 }
 
@@ -100,62 +109,66 @@ const SEED_ROUND_WINDOW: u64 = u8::MAX as u64;
 
 impl<V: Variant> elector::Elector<HybridScheme<V>> for HybridRandomElector<V> {
     fn elect(&self, round: Round, certificate: Option<&HybridCertificate<V>>) -> Participant {
-        let verified_seed = match (certificate, &self.vrf_materials) {
-            (Some(certificate), Some(provider)) => {
-                certificate.vrf_proof.as_ref().and_then(|proof| {
-                    // The certificate's VRF proof is a threshold BLS signature
-                    // over the round its seed-partials signed; it verifies for
-                    // EXACTLY that one round (single-message property), so no
-                    // attacker can make it pass for a different round. `elect`
-                    // is not handed the certificate's own round, so recover it
-                    // by probing a bounded descending window of candidate
-                    // seed-rounds and taking the first (hence only) match.
-                    //
-                    // LIVE consensus path: commonware always supplies the cert
-                    // of the immediately preceding view, so dv == 1 matches and
-                    // this is a single verify — byte-identical leader to the
-                    // previous single-guess code. Larger dv occurs ONLY in the
-                    // missed-proposer attribution recompute
-                    // (`missed_proposers::elected_leaders_for_gap`), which feeds
-                    // one finalized anchor certificate (from an earlier view) to
-                    // `elect` for every interior view of a multi-view gap. The
-                    // old code mis-verified that anchor against `view - 1` and
-                    // spuriously degraded; the probe recovers the anchor's true
-                    // round instead, so the recompute no longer trips the
-                    // `outbe_vrf_degraded_leader_selection_total` alarm (which is
-                    // now reserved for a genuinely unverifiable live cert).
-                    let namespace = crate::config::simplex_namespace();
-                    let cur_view = round.view().get();
-                    (1..=SEED_ROUND_WINDOW)
-                        .find_map(|dv| {
-                            let v = cur_view.checked_sub(dv).filter(|&v| v != 0)?;
-                            let seed_round = Round::new(round.epoch(), View::new(v));
-                            let mut rng = bls_batch_verification_rng();
-                            provider
-                                .verify_proof(
-                                    &mut rng,
-                                    proof,
-                                    &namespace.seed,
-                                    seed_round.encode().as_ref(),
-                                    &commonware_parallel::Sequential,
-                                )
-                                .then_some(dv)
-                        })
-                        .map(|dv| {
-                            let mut seed = proof.threshold_signature.encode().to_vec();
-                            // When the anchor certificate is older than view - 1
-                            // (dv > 1 — the recompute case), one certificate
-                            // serves multiple gap views; bind the seed to the
-                            // ELECTED round so each view gets a distinct leader
-                            // instead of collapsing to one. The live path
-                            // (dv == 1) keeps the raw threshold-signature seed,
-                            // so its leader selection is unchanged.
-                            if dv > 1 {
-                                seed.extend_from_slice(round.encode().as_ref());
-                            }
-                            seed
-                        })
-                })
+        let verified_seed = match (
+            certificate,
+            &self.vrf_materials,
+            self.expected_vrf_material_version,
+        ) {
+            (Some(certificate), Some(provider), Some(expected_version)) => {
+                let proof = &certificate.vrf_proof;
+                (proof.material_version == expected_version)
+                    .then_some(proof)
+                    .and_then(|proof| {
+                        // The certificate's VRF proof is a threshold BLS signature
+                        // over the round its seed-partials signed; it verifies for
+                        // EXACTLY that one round (single-message property), so no
+                        // attacker can make it pass for a different round. `elect`
+                        // is not handed the certificate's own round, so recover it
+                        // by probing a bounded descending window of candidate
+                        // seed-rounds and taking the first (hence only) match.
+                        //
+                        // LIVE consensus path: commonware always supplies the cert
+                        // of the immediately preceding view, so dv == 1 matches and
+                        // this is a single verify — byte-identical leader to the
+                        // previous single-guess code. Larger dv occurs ONLY in the
+                        // missed-proposer attribution recompute
+                        // (`missed_proposers::elected_leaders_for_gap`), which feeds
+                        // one finalized anchor certificate (from an earlier view) to
+                        // `elect` for every interior view of a multi-view gap. The
+                        // old code mis-verified that anchor against `view - 1` and
+                        // spuriously degraded; the probe recovers the anchor's true
+                        // round instead, so the recompute no longer trips the
+                        // `outbe_vrf_degraded_leader_selection_total` alarm (which is
+                        // now reserved for a genuinely unverifiable live cert).
+                        let namespace = crate::config::simplex_namespace();
+                        let cur_view = round.view().get();
+                        (1..=SEED_ROUND_WINDOW)
+                            .find_map(|dv| {
+                                let v = cur_view.checked_sub(dv).filter(|&v| v != 0)?;
+                                let seed_round = Round::new(round.epoch(), View::new(v));
+                                provider
+                                    .verify_proof(
+                                        proof,
+                                        &namespace.seed,
+                                        seed_round.encode().as_ref(),
+                                    )
+                                    .then_some(dv)
+                            })
+                            .map(|dv| {
+                                let mut seed = proof.threshold_signature.encode().to_vec();
+                                // When the anchor certificate is older than view - 1
+                                // (dv > 1 — the recompute case), one certificate
+                                // serves multiple gap views; bind the seed to the
+                                // ELECTED round so each view gets a distinct leader
+                                // instead of collapsing to one. The live path
+                                // (dv == 1) keeps the raw threshold-signature seed,
+                                // so its leader selection is unchanged.
+                                if dv > 1 {
+                                    seed.extend_from_slice(round.encode().as_ref());
+                                }
+                                seed
+                            })
+                    })
             }
             _ => None,
         };
@@ -314,7 +327,7 @@ mod tests {
         let certificate = schemes[0]
             .assemble::<_, N3f1>(attestations, &Sequential)
             .unwrap();
-        let seed = certificate.raw_vrf_seed_bytes().unwrap();
+        let seed = certificate.raw_vrf_seed_bytes();
 
         let elector: HybridRandomElector<MinSig> =
             HybridRandom::with_bootstrap_seed(seed.clone()).build(&participants);
@@ -440,6 +453,70 @@ mod tests {
     }
 
     #[test]
+    fn epoch_elector_rejects_later_material_after_shared_provider_activation() {
+        let epoch = Epoch::new(1);
+        let cert_round = Round::new(epoch, View::new(10));
+        let (keys, participants) = test_participants(4);
+        let dkg = bootstrap_dkg(4).unwrap();
+        let base_ns = crate::proof::constants::outbe_app_namespace();
+        let schemes: Vec<TestScheme> = keys
+            .iter()
+            .map(|key| {
+                let public_key = bls12381::PublicKey::from(key.clone());
+                let index = participants.index(&public_key).unwrap();
+                HybridScheme::signer(
+                    &base_ns,
+                    participants.clone(),
+                    key.clone(),
+                    dkg.polynomial.clone(),
+                    dkg.shares[index.get() as usize].clone(),
+                )
+                .unwrap()
+            })
+            .collect();
+        let subject = Subject::Nullify { round: cert_round };
+        let mut certificate = schemes[0]
+            .assemble::<_, N3f1>(
+                schemes
+                    .iter()
+                    .map(|scheme| scheme.sign::<Sha256Digest>(subject).unwrap()),
+                &Sequential,
+            )
+            .unwrap();
+        let provider = VrfMaterialProvider::new(0, dkg.polynomial.clone(), None);
+        let raw_proof = certificate.raw_vrf_seed_bytes();
+        let proof_leader = expected_leader(&raw_proof, None, participants.len());
+        let bootstrap_seed = vec![0xA5; 32];
+        let elected_round = (11_u64..=255)
+            .map(|view| Round::new(epoch, View::new(view)))
+            .find(|round| {
+                expected_leader(
+                    &[bootstrap_seed.as_slice(), round.encode().as_ref()].concat(),
+                    None,
+                    participants.len(),
+                ) != proof_leader
+            })
+            .unwrap();
+        let expected_degraded = expected_leader(
+            &[bootstrap_seed.as_slice(), elected_round.encode().as_ref()].concat(),
+            None,
+            participants.len(),
+        );
+        let config =
+            HybridRandom::with_bootstrap_seed_and_vrf_materials(bootstrap_seed, provider.clone());
+
+        provider.activate(1, dkg.polynomial, None);
+        certificate.vrf_proof.material_version = 1;
+        let elector = config.build(&participants);
+
+        assert_eq!(
+            elector.elect(elected_round, Some(&certificate)),
+            expected_degraded,
+            "an old epoch elector must not accept a proof retagged to a later material version"
+        );
+    }
+
+    #[test]
     fn elect_live_path_dv1_is_unchanged_raw_seed() {
         // dv == 1: certificate of view V-1, electing V — the live consensus path.
         // Must use the RAW threshold-signature seed (no round mix): byte-identical
@@ -448,7 +525,7 @@ mod tests {
         let (participants, provider, cert) = cert_over_round(4, Round::new(epoch, View::new(10)));
         let n = participants.len();
         let elector = HybridRandom::with_vrf_materials(provider).build(&participants);
-        let raw = cert.raw_vrf_seed_bytes().unwrap();
+        let raw = cert.raw_vrf_seed_bytes();
 
         let elected = Round::new(epoch, View::new(11)); // dv == 1
         assert_eq!(
@@ -467,7 +544,7 @@ mod tests {
         let (participants, provider, cert) = cert_over_round(4, Round::new(epoch, View::new(10)));
         let n = participants.len();
         let elector = HybridRandom::with_vrf_materials(provider).build(&participants);
-        let raw = cert.raw_vrf_seed_bytes().unwrap();
+        let raw = cert.raw_vrf_seed_bytes();
 
         let elected = Round::new(epoch, View::new(13)); // dv == 3
         let verified = expected_leader(raw.as_ref(), Some(elected), n);
@@ -488,7 +565,7 @@ mod tests {
         let (participants, provider, cert) = cert_over_round(7, Round::new(epoch, View::new(20)));
         let n = participants.len();
         let elector = HybridRandom::with_vrf_materials(provider).build(&participants);
-        let raw = cert.raw_vrf_seed_bytes().unwrap();
+        let raw = cert.raw_vrf_seed_bytes();
 
         let v21 = Round::new(epoch, View::new(21)); // dv 1 -> raw
         let v22 = Round::new(epoch, View::new(22)); // dv 2 -> raw ++ encode(v22)

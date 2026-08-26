@@ -153,6 +153,16 @@ fn sponsored_whitelist_is_subset_of_exact_routes() {
 }
 
 #[test]
+fn sponsored_whitelist_includes_gemfactory_cashout_entrypoint() {
+    use outbe_primitives::zero_fee::SPONSORED_TARGET_WHITELIST;
+
+    assert!(
+        SPONSORED_TARGET_WHITELIST.contains(&GEM_FACTORY_ADDRESS),
+        "zero-balance Gem owners need sponsored settleGem and mineGemPromis"
+    );
+}
+
+#[test]
 fn sponsored_whitelist_excludes_validator_entrypoints() {
     use outbe_primitives::zero_fee::SPONSORED_TARGET_WHITELIST;
 

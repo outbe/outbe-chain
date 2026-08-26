@@ -45,8 +45,13 @@ The certificate scheme combines:
 - the committee snapshot/material version needed to verify the evidence at the
   correct epoch.
 
-The individual aggregate remains authoritative for safety. Threshold VRF material
-drives leader election/fairness and does not replace signer attribution.
+The vote aggregate and threshold VRF proof are an atomic certificate-validity
+unit. A vote counts toward certificate quorum only when its active-version seed
+partial verifies for the exact subject. Every encoded certificate carries a
+mandatory recovered proof; missing, truncated, wrong-version or
+cryptographically invalid proof material is rejected. The individual aggregate
+remains the signer-attribution authority, while the mandatory threshold proof
+drives leader election and the next block's Phase-1 accounting.
 
 ### Namespace and replay isolation
 
@@ -68,8 +73,10 @@ For round `R`, election uses this ordered policy
 
 1. verify the certificate VRF threshold proof against its actual seed round;
 2. for epoch view 1, use a verified/bootstrap seed when available;
-3. when a certificate exists but its VRF proof is absent/unusable, derive
-   `bootstrap_seed || encoded(R)` and emit the degraded-selection metric;
+3. if an internal caller supplies an unusable certificate despite the mandatory
+   ingress checks, derive `bootstrap_seed || encoded(R)` and emit the
+   degraded-selection invariant metric; such a certificate is never accepted as
+   finalized evidence;
 4. if no usable seed exists, choose round-robin
    `(epoch + view) mod committee_size`.
 
@@ -147,6 +154,14 @@ local anchor/Marshal data is infrastructure error and must not become a false vo
   elector material for that epoch before messages are admitted.
 - A certificate is interpreted only with the committee and namespace committed to
   its epoch; current-committee verification of historical evidence is forbidden.
+- Each epoch-scoped hybrid scheme pins one VRF material version at construction.
+  Later activation in the shared provider cannot change its identity, signing,
+  partial classification, assembly, election or certificate verification.
+- Remote vote/partial pairs are admitted atomically: every non-`Valid` partial
+  verdict drops the whole pair from quorum without p2p-blocking the signer.
+- Assembly refuses to emit a certificate unless quorum usable partials recover a
+  proof. Foreign certificates require exact-subject, pinned-version cryptographic
+  proof verification in addition to the MinPk aggregate.
 - Participant ordering is canonical and shared by signing, aggregation,
   attribution and committee commitments.
 - Finalized height/hash cannot regress or fork within one durable Marshal history.
@@ -211,8 +226,10 @@ captured by one independent stateful reference model.
 ## Consequences
 
 - Votes and certificates are not portable across chains or committee snapshots.
-- Leader election remains deterministic when VRF material is temporarily unusable,
-  preserving liveness while surfacing degraded fairness.
+- Invalid VRF material cannot produce or enter a finalized certificate. With at
+  most `f` faulty members, the `n-f` honest complete attestations still form the
+  clean quorum; insufficient complete attestations cause a recoverable view
+  transition, never a finalized proof-less parent.
 - Consensus participation depends on exact local execution/projection/CE readiness;
   local unavailability causes abstention rather than a dishonest negative vote.
 - Historical certificate verification requires retaining/reconstructing the

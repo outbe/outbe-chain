@@ -542,8 +542,8 @@ four validator projection databases.
 outbe-chain node [flags]                      # run validator or full node
 outbe-keygen generate --output-dir <dir>      # BLS12-381 MinPk keypair (offline)
 outbe-keygen validator --chain-id <id>        # full validator key bundle: BLS + EVM +
-                                              #   Radicle + registration signature
-                                              #   (+ OCOMP with --genesis-hash)
+                                              #   Reth P2P + OCOMP EVM + Radicle + registration
+                                              #   (+ OCOMP result key with --genesis-hash)
 outbe-cli validator register|info|list        # validator lifecycle
 outbe-cli staking stake|unstake|claim         # staking flow
 outbe-cli rewards emission|history            # emission params (validator emission is paid in gems)

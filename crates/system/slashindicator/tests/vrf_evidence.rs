@@ -10,11 +10,9 @@
 //!
 //! The happy-path test builds a real 4-validator DKG fixture, a
 //! real aggregated BLS signature over the canonical proposal, and a
-//! real ECDSA-signed Phase 1 TxLegacy. The cert is constructed with
-//! `vrf_proof: None`, which is the minimal-effort malicious cert: BLS
-//! aggregate is valid (the verifier reaches the VRF check), but the
-//! VRF proof is missing → `V2VerifyError::MissingVrfProof` (canonical
-//! failure class 1). This proves end-to-end that:
+//! real ECDSA-signed Phase 1 TxLegacy. The cert carries a mandatory but
+//! cryptographically invalid VRF proof while its BLS vote aggregate remains
+//! valid, producing canonical failure class 7. This proves end-to-end that:
 //!   * the codec → admissibility → proposer recovery → snapshot lookup
 //!     → verifier → felony chain is wired correctly;
 //!   * the recovered proposer is byte-equal to the EVM address derived
@@ -176,13 +174,13 @@ fn proposal_bytes(parent_hash: B256) -> (Round, Vec<u8>, Vec<u8>) {
     (round, vote_message, seed_message)
 }
 
-/// Builds a cert whose BLS aggregate is real, and lets the caller decide
-/// whether to include a valid `VrfProof` or set it to `None`.
+/// Builds a cert whose BLS aggregate is real, and lets the caller choose a
+/// valid or cryptographically invalid mandatory `VrfProof`.
 fn build_cert(
     dkg: &Dkg,
     signer_indices: &[u32],
     parent_hash: B256,
-    include_valid_vrf: bool,
+    valid_vrf: bool,
 ) -> HybridCertificate<MinSig> {
     let participants = dkg.keys.len();
     let signers = Signers::from(
@@ -202,18 +200,17 @@ fn build_cert(
     let bls_aggregated_vote =
         aggregate::combine_signatures::<MinPk, _>(sigs.iter().map(|s| s.as_ref()));
 
-    let vrf_proof = if include_valid_vrf {
-        let threshold_signature = sign_message::<MinSig>(
-            &dkg.vrf_threshold_private,
-            &hybrid_seed_namespace(),
-            &seed_message,
-        );
-        Some(VrfProof::<MinSig> {
-            material_version: VRF_MATERIAL_VERSION,
-            threshold_signature,
-        })
+    let vrf_signer = if valid_vrf {
+        dkg.vrf_threshold_private.clone()
     } else {
-        None
+        let mut rng = ChaCha20Rng::seed_from_u64(0x0BAD_5EED);
+        keypair::<_, MinSig>(&mut rng).0
+    };
+    let threshold_signature =
+        sign_message::<MinSig>(&vrf_signer, &hybrid_seed_namespace(), &seed_message);
+    let vrf_proof = VrfProof::<MinSig> {
+        material_version: VRF_MATERIAL_VERSION,
+        threshold_signature,
     };
 
     HybridCertificate {
@@ -374,7 +371,7 @@ fn evidence_skeleton(phase1_tx_bytes: Vec<u8>) -> InvalidVrfProofEvidence {
         child_epoch: CHILD_EPOCH,
         parent_block_number: PARENT_BLOCK_NUMBER,
         parent_block_hash: PARENT_BLOCK_HASH,
-        failure_code: 1,
+        failure_code: 7,
         phase1_tx_bytes,
     }
 }
@@ -771,7 +768,7 @@ fn invalid_vrf_evidence_for_non_vrf_failure_class_rejects() {
 }
 
 // ===========================================================================
-// HAPPY PATH — missing VRF proof, BLS aggregate valid → felony.
+// HAPPY PATH — invalid mandatory VRF proof, BLS aggregate valid → felony.
 // Pins:
 //   * proposer recovered from phase1_tx_bytes matches the registered
 //     validator (ecrecover ↔ ValidatorSet identity wiring is correct)
@@ -788,7 +785,7 @@ fn invalid_vrf_proof_evidence_slashes_child_proposer() {
         let (signer, proposer) = signer_with_address();
         let dkg = build_dkg(4);
         let snapshot = build_snapshot(&dkg, proposer);
-        // include_valid_vrf = false → cert reaches verifier with vrf_proof: None
+        // false => the mandatory proof is present but signed by the wrong key.
         let cert = build_cert(&dkg, &[0, 1, 2, 3], PARENT_BLOCK_HASH, false);
         let cert_bytes = proof_envelope_bytes(&cert, PARENT_BLOCK_HASH);
         let metadata = build_metadata(&snapshot, &cert_bytes);
@@ -898,10 +895,9 @@ fn invalid_vrf_evidence_deduplicates_by_canonical_hash() {
 // emitted `failureCode` wire constants.
 // ===========================================================================
 #[test]
-fn classify_vrf_failure_covers_all_seven_vrf_variants_only() {
+fn classify_vrf_failure_covers_all_reachable_vrf_variants_only() {
     use V2VerifyError::*;
 
-    assert_eq!(classify_vrf_failure(&MissingVrfProof), Some(1));
     assert_eq!(classify_vrf_failure(&MalformedVrfProof), Some(2));
     assert_eq!(
         classify_vrf_failure(&WrongVrfMaterialVersion {
@@ -1062,9 +1058,9 @@ fn multiple_evidence_with_different_failure_codes_for_same_child_apply_at_most_o
 
         let phase1 = sign_phase1_metadata_tx(&signer, &metadata);
 
-        // First submission: failure_code = 1 (MissingVrfProof, the truth).
+        // First submission: failure_code = 7 (InvalidVrfSignature, the truth).
         let mut ev1 = evidence_skeleton(phase1.clone());
-        ev1.failure_code = 1;
+        ev1.failure_code = 7;
         let evidence1 = ev1.encode();
 
         let mut si = SlashIndicator::new(storage.clone());
@@ -1076,7 +1072,7 @@ fn multiple_evidence_with_different_failure_codes_for_same_child_apply_at_most_o
         // Second submission: SAME child + SAME phase1_tx, but a different
         // submitter-asserted failure code. Must dedup.
         let mut ev2 = evidence_skeleton(phase1);
-        ev2.failure_code = 7; // InvalidVrfSignature claim — not the truth
+        ev2.failure_code = 3; // WrongVrfMaterialVersion claim — not the truth
         let evidence2 = ev2.encode();
 
         let err = SlashIndicator::new(storage.clone())

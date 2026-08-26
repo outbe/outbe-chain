@@ -148,33 +148,6 @@ fn make_notarization(
         .expect("notarization certificate should assemble")
 }
 
-/// Assemble a *forged* threshold `Notarization` whose certificate is a genuine
-/// quorum signature over `signed_proposal`, but whose carried `proposal` field
-/// is swapped to `carried_proposal`.
-///
-/// This produces a structurally well-formed notarization (real quorum, real
-/// aggregate signature) that is bound to the *wrong* payload: the threshold
-/// vote signatures were produced over `signed_proposal.payload`, while the
-/// notarization advertises `carried_proposal.payload`. When a verifier
-/// recomputes the signed message from the carried proposal, the aggregated BLS
-/// vote signature fails to verify — a genuine certificate rejection, not a
-/// decode/structural error.
-///
-/// `carried_proposal` keeps the requested round and the served block's digest
-/// so the serve-side (`handle_produce`) finds and serves the block, and the
-/// receiver's structural checks (`notarization.round() == round`,
-/// `commitment(block) == proposal.payload`) pass — isolating the failure to the
-/// forged certificate signature.
-fn make_notarization_with_mismatched_proposal(
-    fixture: &SchemeFixture,
-    signed_proposal: Proposal<Digest>,
-    carried_proposal: Proposal<Digest>,
-) -> Notarization<HybridScheme<MinSig>, Digest> {
-    let mut notarization = make_notarization(fixture, signed_proposal);
-    notarization.proposal = carried_proposal;
-    notarization
-}
-
 /// Start one marshal node with the production resolver + broadcast wiring on the
 /// simulated network. Mirrors `crates/blockchain/engine/src/stack.rs`.
 async fn start_marshal_node(
@@ -497,12 +470,11 @@ fn node_b_fetches_block_from_node_a_via_recipients_one_resolver() {
 /// Note on the chosen mismatch: a wrong-DKG / wrong-verifier forgery would NOT
 /// be rejected by this scheme, because `HybridScheme::verify_certificate`
 /// authenticates the certificate via the aggregated individual BLS vote
-/// signatures over the per-validator keys (which are seeded identically across
-/// DKG fixtures) and does not check the VRF/threshold polynomial. The
-/// payload-bound vote-signature mismatch used here is therefore the cleanest
-/// mismatch that the actual verification path rejects.
+/// The negative phase keeps the advertised proposal and MinPk quorum aggregate
+/// valid, but swaps in a threshold VRF proof for a different subject. This
+/// isolates the foreign-certificate consumer gate exercised by Marshal.
 #[test]
-fn node_b_rejects_forged_notarization_from_peer() {
+fn node_b_rejects_foreign_notarization_with_wrong_subject_vrf() {
     let runner = deterministic::Runner::timed(Duration::from_secs(90));
     runner.start(|context| async move {
         let mut keys: Vec<bls12381::PrivateKey> = (0..NUM_VALIDATORS as u64)
@@ -600,8 +572,8 @@ fn node_b_rejects_forged_notarization_from_peer() {
         let bad_block = consensus_block_with_number(0x71, 7);
         let bad_digest = bad_block.digest();
 
-        // A different payload the quorum actually signs over; the forged
-        // notarization advertises `bad_digest` but its votes are over this.
+        // A different subject supplies a cryptographically valid threshold
+        // proof which must not verify for `bad_round` + `bad_digest`.
         let other_digest = consensus_block_with_number(0x72, 7).digest();
         assert_ne!(
             bad_digest, other_digest,
@@ -618,12 +590,13 @@ fn node_b_rejects_forged_notarization_from_peer() {
         let _ = node_a.mailbox.proposed(bad_round, bad_block.clone()).await;
         let _ = node_a.mailbox.verified(bad_round, bad_block.clone()).await;
 
-        // Certificate is a genuine quorum signature over `other_digest`, but the
-        // carried proposal advertises `bad_round` + `bad_digest`.
-        let signed_proposal = Proposal::new(bad_round, View::zero(), other_digest);
         let carried_proposal = Proposal::new(bad_round, View::zero(), bad_digest);
-        let forged_notarization =
-            make_notarization_with_mismatched_proposal(&fixture, signed_proposal, carried_proposal);
+        let mut forged_notarization = make_notarization(&fixture, carried_proposal);
+        let other_round = Round::new(epoch, View::new(8));
+        let other_proposal = Proposal::new(other_round, View::new(7), other_digest);
+        forged_notarization.certificate.vrf_proof = make_notarization(&fixture, other_proposal)
+            .certificate
+            .vrf_proof;
         let _ = reporter_a.report(Activity::Notarization(forged_notarization));
 
         tokio::select! {

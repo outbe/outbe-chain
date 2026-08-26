@@ -3,11 +3,11 @@
 //! Targets behaviours that are easy to spec but hard to spot-test
 //! exhaustively — UTC day boundary arithmetic, lazy reset around
 //! midnight, and the determinism contract that a fixed `(signer,
-//! balance, nonce, timestamp)` quintuple always produces the same
+//! timestamp)` tuple always produces the same
 //! authorization outcome regardless of pre-existing storage history
 //! from a different day.
 
-use alloy_primitives::{address, Address, U256};
+use alloy_primitives::{address, Address};
 use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     time::{previous_date_key, timestamp_to_date_key, SECONDS_PER_DAY},
@@ -33,11 +33,9 @@ proptest! {
     #[test]
     fn current_day_is_deterministic_in_timestamp(
         ts in 0u64..=4_102_444_800u64,
-        balance in 1u64..u64::MAX,
     ) {
         with_storage(|storage| {
-            let auth =
-                authorize_sponsorship(storage, SIGNER, U256::from(balance), ts).unwrap();
+            let auth = authorize_sponsorship(storage, SIGNER, ts).unwrap();
             prop_assert_eq!(auth.current_day, timestamp_to_date_key(ts));
             Ok(())
         })?;
@@ -84,12 +82,7 @@ proptest! {
         let day = timestamp_to_date_key(ts);
         with_storage(|storage| {
             for expected in 1..=FREE_TX_DAILY_LIMIT {
-                let auth = authorize_sponsorship(
-                    storage.clone(),
-                    SIGNER,
-                    U256::from(1),
-                    ts,
-                )
+                let auth = authorize_sponsorship(storage.clone(), SIGNER, ts)
                 .unwrap();
                 prop_assert_eq!(auth.next_count, expected);
                 prop_assert_eq!(auth.current_day, day);
@@ -99,7 +92,7 @@ proptest! {
             }
 
             // The next attempt must surface `FreeTxDailyExhausted`.
-            let err = authorize_sponsorship(storage, SIGNER, U256::from(1), ts).unwrap_err();
+            let err = authorize_sponsorship(storage, SIGNER, ts).unwrap_err();
             let is_exhausted = matches!(
                 err,
                 ZeroFeePolicyError::FreeTxDailyExhausted {
@@ -135,12 +128,7 @@ proptest! {
 
             // Today's first authorize must produce next_count == 1
             // regardless of how saturated yesterday was.
-            let auth = authorize_sponsorship(
-                storage,
-                SIGNER,
-                U256::from(1),
-                today_ts,
-            )
+            let auth = authorize_sponsorship(storage, SIGNER, today_ts)
             .unwrap();
             prop_assert_eq!(auth.current_day, today);
             prop_assert_eq!(auth.next_count, 1);

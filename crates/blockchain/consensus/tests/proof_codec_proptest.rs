@@ -1,6 +1,6 @@
 //! Property-based round-trip for the V2 Hybrid certificate wire codec.
 //!
-//! Generates random signer bitmaps and VRF-presence combinations, builds a real
+//! Generates random signer bitmaps and mandatory VRF proofs, builds a real
 //! BLS aggregate from deterministic seeds, then asserts encode→decode→encode is
 //! byte-stable. Catches any non-deterministic encoding (e.g. unordered set
 //! iteration) before it can ship.
@@ -24,26 +24,23 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
 /// Strategy: 1..=128 participants, between 1 and N signer indices (unique,
-/// sorted), and a Boolean VRF-presence flag.
-fn cert_strategy() -> impl Strategy<Value = (usize, Vec<u32>, bool, u64)> {
-    (1usize..=128usize, any::<bool>(), any::<u64>()).prop_flat_map(
-        |(participants, with_vrf, vrf_seed)| {
-            (
-                Just(participants),
-                proptest::collection::btree_set(0u32..participants as u32, 1..=participants)
-                    .prop_map(|set| set.into_iter().collect::<Vec<_>>()),
-                Just(with_vrf),
-                Just(vrf_seed),
-            )
-        },
-    )
+/// sorted), plus a deterministic VRF seed.
+fn cert_strategy() -> impl Strategy<Value = (usize, Vec<u32>, u64)> {
+    (1usize..=128usize, any::<u64>()).prop_flat_map(|(participants, vrf_seed)| {
+        (
+            Just(participants),
+            proptest::collection::btree_set(0u32..participants as u32, 1..=participants)
+                .prop_map(|set| set.into_iter().collect::<Vec<_>>()),
+            Just(vrf_seed),
+        )
+    })
 }
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(48))]
 
     #[test]
-    fn phase1_metadata_roundtrip_proptest((participants, signer_indices, with_vrf, vrf_seed) in cert_strategy()) {
+    fn phase1_metadata_roundtrip_proptest((participants, signer_indices, vrf_seed) in cert_strategy()) {
         let signers = Signers::from(
             participants,
             signer_indices.iter().copied().map(Participant::new),
@@ -57,16 +54,14 @@ proptest! {
         let bls_aggregated_vote =
             aggregate::combine_signatures::<MinPk, _>(sigs.iter().map(|s| s.as_ref()));
 
-        let vrf_proof = with_vrf.then(|| {
-            let mut rng = ChaCha20Rng::seed_from_u64(vrf_seed);
-            let (private, _public) = keypair::<_, MinSig>(&mut rng);
-            let threshold_signature =
-                sign_message::<MinSig>(&private, b"OUTBE_VRF_SEED_V2", b"proptest");
-            VrfProof::<MinSig> {
-                material_version: vrf_seed,
-                threshold_signature,
-            }
-        });
+        let mut rng = ChaCha20Rng::seed_from_u64(vrf_seed);
+        let (private, _public) = keypair::<_, MinSig>(&mut rng);
+        let threshold_signature =
+            sign_message::<MinSig>(&private, b"OUTBE_VRF_SEED_V2", b"proptest");
+        let vrf_proof = VrfProof::<MinSig> {
+            material_version: vrf_seed,
+            threshold_signature,
+        };
 
         let cert = HybridCertificate::<MinSig> {
             signers,

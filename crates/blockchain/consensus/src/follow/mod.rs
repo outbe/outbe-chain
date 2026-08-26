@@ -2,10 +2,10 @@
 //! verify them against the chain's committee, WITHOUT running consensus.
 //!
 //! **Trust model — committee-chaining.** outbe's finalize certificate is an
-//! aggregate of individual MinPk votes over a *committee-bound* namespace
-//! (the MinSig VRF group key is an optional seed sidecar, NOT required for
-//! finality), so finality is authenticated by the committee's MinPk key set,
-//! which changes on every reshare. A follower therefore:
+//! atomic aggregate of individual MinPk votes and a mandatory MinSig threshold
+//! VRF proof over a *committee-bound* namespace. Both are verified with the
+//! epoch-scoped committee material, which changes on every reshare. A follower
+//! therefore:
 //!
 //! 1. anchors the START epoch's committee on the **genesis validator MinPk
 //!    set**, read from the follower's OWN genesis state — the trust root;
@@ -54,8 +54,8 @@ pub use upstream::{
 /// stack uses — so cert verification is byte-identical to the validator path.
 ///
 /// **Trust root.** Consensus finality is a multisig over the committee's
-/// individual MinPk keys (the MinSig VRF group key is an optional seed sidecar,
-/// NOT the consensus authenticator). So the anchor is the **genesis validator
+/// individual MinPk keys. The mandatory MinSig VRF proof supplies the finalized
+/// round seed but is not the committee identity authenticator. So the anchor is the **genesis validator
 /// MinPk set**, read from the follower's OWN genesis state — not a VRF group
 /// key, and nothing the operator has to provide. The start epoch's committee
 /// (`output.players()`) must equal this set; each later epoch's committee is
@@ -378,10 +378,10 @@ mod tests {
             digest: Digest,
         ) -> Finalization<HybridScheme<MinSig>, Digest> {
             let ns = crate::config::outbe_app_namespace();
-            let verifier = HybridScheme::<MinSig>::verifier(
+            let verifier = HybridScheme::<MinSig>::verifier_with_vrf_provider(
                 &ns,
                 self.participants.clone(),
-                self.dkg.polynomial.clone(),
+                VrfMaterialProvider::new(epoch.get(), self.dkg.polynomial.clone(), None),
             )
             .unwrap();
             let signers: Vec<HybridScheme<MinSig>> = self
@@ -389,12 +389,15 @@ mod tests {
                 .iter()
                 .map(|key| {
                     let idx = self.participants.index(&key.public_key()).unwrap();
-                    HybridScheme::signer(
+                    HybridScheme::signer_with_vrf_provider(
                         &ns,
                         self.participants.clone(),
                         key.clone(),
-                        self.dkg.polynomial.clone(),
-                        self.dkg.shares[idx.get() as usize].clone(),
+                        VrfMaterialProvider::new(
+                            epoch.get(),
+                            self.dkg.polynomial.clone(),
+                            Some(self.dkg.shares[idx.get() as usize].clone()),
+                        ),
                     )
                     .unwrap()
                 })
@@ -674,7 +677,7 @@ mod tests {
             commonware_cryptography::certificate::Provider::scoped(chain.scheme_provider(), e6)
                 .expect("epoch-6 verifier is registered");
         assert_eq!(
-            verifier.active_vrf_material_version(),
+            verifier.expected_vrf_material_version(),
             e6.get(),
             "the authenticated epoch must restore the canonical VRF material version"
         );

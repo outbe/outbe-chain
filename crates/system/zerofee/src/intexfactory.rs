@@ -205,7 +205,8 @@ mod tests {
             ZeroFeePolicyError::FeeCapTooLow { .. }
         ));
 
-        let oversized = calldata(257, 24);
+        let mut oversized = calldata(256, 24);
+        oversized.resize(MAX_ZERO_FEE_CONTRIBUTOR_BATCH_CALLDATA_BYTES + 1, 0);
         assert!(matches!(
             crate::registry().classify(&tx(&oversized)).unwrap_err(),
             ZeroFeePolicyError::CalldataTooLarge { .. }
@@ -233,16 +234,20 @@ mod tests {
             );
 
             let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            validators.validator_count.write(1).unwrap();
-            validators.address_to_index.write(&VALIDATOR, 1).unwrap();
-            validators.index_to_address.write(&1, VALIDATOR).unwrap();
             validators
-                .val_status
-                .write(&VALIDATOR, outbe_validatorset::logic::status::ACTIVE)
+                .config_owner
+                .write(address!("0xffffffffffffffffffffffffffffffffffffffff"))
+                .unwrap();
+            validators.config_max_validators.write(1).unwrap();
+            validators
+                .test_register_validator_without_pop(VALIDATOR, &[1; 48])
                 .unwrap();
             validators
-                .val_has_bls_share
-                .write(&VALIDATOR, true)
+                .test_activate_validator_canonically(
+                    VALIDATOR,
+                    outbe_validatorset::StakeProjection::new(U256::from(1), None),
+                    U256::from(1),
+                )
                 .unwrap();
             validators
                 .set_delegate(

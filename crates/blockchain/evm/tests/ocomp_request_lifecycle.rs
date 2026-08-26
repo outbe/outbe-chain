@@ -1849,14 +1849,14 @@ fn finalized_parent_metadata(
         bls_aggregated_vote: aggregate::combine_signatures::<MinPk, _>(
             signatures.iter().map(|signature| signature.as_ref()),
         ),
-        vrf_proof: Some(VrfProof::<MinSig> {
+        vrf_proof: VrfProof::<MinSig> {
             material_version: VRF_MATERIAL_VERSION,
             threshold_signature: sign_message::<MinSig>(
                 &dkg.vrf_threshold_private,
                 &hybrid_seed_namespace(),
                 &seed_message,
             ),
-        }),
+        },
     };
     let proof = Finalization::<HybridScheme<MinSig>, Sha256Digest> {
         proposal,

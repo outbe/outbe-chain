@@ -8,17 +8,14 @@ pragma solidity ^0.8.30;
 /// that delegate to this address may submit up to 8 free transactions
 /// per UTC day, each capped by hard envelope limits enforced in the
 /// txpool admission policy and re-enforced by the executor pre-fee
-/// hook (`max_value == 0`, `gas_limit <= 200_000`, `calldata <= 16 KiB`,
+/// hook (`max_value == 0`, `gas_limit <= 500_000`, `calldata <= 16 KiB`,
 /// `max_priority_fee_per_gas == 0`, target in
 /// `SPONSORED_TARGET_WHITELIST`).
 ///
 /// Authorization rules:
-/// - signer must NOT be the paymaster itself (no self-sponsorship);
-/// - signer must have `balance > 0` (anti-sybil). Nonce alone is
-///   intentionally not sufficient: EIP-7702 set-code transactions
-///   bump the authority's nonce as part of authorization processing,
-///   so a fresh EOA can reach `nonce > 0` without spending any of
-///   its own wei. Only positive balance proves real economic input.
+/// - signer must NOT be the paymaster itself (no self-sponsorship).
+/// Native balance is not an eligibility signal: a correctly delegated
+/// address with zero COEN may consume the same eight daily sponsored slots.
 ///
 /// Counter encoding: a single `uint64` per signer packs
 /// `(date_key uint32, count uint32)` where `date_key = yyyymmdd` (UTC).
@@ -34,8 +31,8 @@ interface IZeroFee {
 
     /// @notice Returns `true` if `signer` would be admitted to the
     /// sponsored path for this block. Equivalent to the executor
-    /// pre-fee gate: rejects self-sponsorship, requires `balance > 0`,
-    /// and requires `count < FREE_TX_DAILY_LIMIT` for today's UTC day
+    /// pre-fee gate: rejects self-sponsorship and requires
+    /// `count < FREE_TX_DAILY_LIMIT` for today's UTC day
     /// key. Wallets can call this before sending a sponsored
     /// transaction to surface a clean UX warning instead of waiting
     /// for a soft-failure receipt.

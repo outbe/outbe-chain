@@ -407,7 +407,7 @@ pub(crate) fn block_with_system_tx(signer: &OutbeEvmSigner) -> ConsensusBlock {
     // so the minimum-shape "block with system txs" test fixture moved to
     // block 2 where the canonical layout is
     // `[CertifiedParentAccounting, LateFinalizeCredits, CycleTick,
-    // OracleSlashWindow, HookEvents]`.
+    // RewardsGemDelivery, OracleSlashWindow, HookEvents]`.
     let parent_hash = B256::ZERO;
     block_with_system_inputs(
         signer,
@@ -422,6 +422,7 @@ pub(crate) fn block_with_system_tx(signer: &OutbeEvmSigner) -> ConsensusBlock {
                 artifact: Default::default(),
             },
             SystemTxInputV2::CycleTick,
+            SystemTxInputV2::RewardsGemDelivery,
             SystemTxInputV2::OracleSlashWindow,
             SystemTxInputV2::HookEvents,
         ],
