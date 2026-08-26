@@ -9,7 +9,6 @@ pub mod constants;
 pub mod errors;
 pub mod ocomp_budget;
 pub mod precompile;
-pub(crate) mod promis_load;
 pub(crate) mod runtime;
 pub mod schema;
 pub(crate) mod sol_ext;

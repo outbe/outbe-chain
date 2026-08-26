@@ -17,12 +17,12 @@ use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
     DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_REFERENCE_PRICES,
     MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS,
-    PROMIS_LOAD_ANCHOR_ISO, PROMIS_LOAD_LAUNCH_EXPONENT, PROMIS_LOAD_OVERRIDE, REFUND_CHUNK_LEN,
+    PROMIS_LOAD_ANCHOR_DIGITS, PROMIS_LOAD_ANCHOR_ISO, PROMIS_LOAD_BAND_BPS,
+    PROMIS_LOAD_LAUNCH_EXPONENT, PROMIS_LOAD_OVERRIDE, REFUND_CHUNK_LEN,
     REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
-use crate::promis_load;
 use crate::schema::{
     AuctionConfig, AuctionStage, BidData, ClearingResult, DesisContract, ReferenceCurrencyPrice,
 };
@@ -92,12 +92,62 @@ pub(crate) fn record_preflighted_brief(
     Ok(())
 }
 
-/// The load this day is briefed at: one Intex strikes at `promis_load` COEN, so
-/// the ladder follows COEN/USD down the decades to hold that strike near its
-/// anchor. Reads the anchor row before `choose_reference_prices` trims the
-/// table — that filter caps the day at `MAX_REFERENCE_PRICES` sorted by ISO
-/// ascending and keeps one currency per series-id letter, and either would drop
-/// USD and take the anchor with it.
+const PROMIS_LOAD_MAX_EXPONENT: u32 = PROMIS_LOAD_ANCHOR_DIGITS - 1;
+
+const POW10: [u128; PROMIS_LOAD_ANCHOR_DIGITS as usize + 1] = {
+    let mut table = [1u128; PROMIS_LOAD_ANCHOR_DIGITS as usize + 1];
+    let mut i = 1;
+    while i < table.len() {
+        table[i] = table[i - 1] * 10;
+        i += 1;
+    }
+    table
+};
+
+pub(crate) fn promis_load_minor(exponent: u32) -> u128 {
+    POW10[exponent.min(PROMIS_LOAD_MAX_EXPONENT) as usize]
+}
+
+fn decimal_digits(rate: U256) -> u32 {
+    if rate.is_zero() {
+        return 0;
+    }
+    let mut digits = 1u32;
+    while (digits as usize) < POW10.len() && rate >= U256::from(POW10[digits as usize]) {
+        digits += 1;
+    }
+    digits
+}
+
+/// The decade the anchor alone picks, which puts `load × rate` at the 100 USD strike.
+fn anchor_exponent(rate: U256) -> u32 {
+    PROMIS_LOAD_ANCHOR_DIGITS
+        .saturating_sub(decimal_digits(rate))
+        .min(PROMIS_LOAD_MAX_EXPONENT)
+}
+
+/// The decade a day quoted at `rate` runs on, holding `current` while the rate stays
+/// inside it widened by the deadband. Edges are compared scaled up rather than divided
+/// down, so the band survives integer division in the narrow decades.
+pub(crate) fn promis_load_exponent(current: Option<u32>, rate: U256) -> u32 {
+    let Some(exponent) = current else {
+        return anchor_exponent(rate);
+    };
+    let exponent = exponent.min(PROMIS_LOAD_MAX_EXPONENT);
+    let decade = (PROMIS_LOAD_ANCHOR_DIGITS - exponent) as usize;
+    let scaled = rate * U256::from(10_000u32);
+    let lo = U256::from(POW10[decade - 1]) * U256::from(10_000 - PROMIS_LOAD_BAND_BPS);
+    let hi = U256::from(POW10[decade]) * U256::from(10_000 + PROMIS_LOAD_BAND_BPS);
+    if scaled >= lo && scaled < hi {
+        exponent
+    } else {
+        anchor_exponent(rate)
+    }
+}
+
+/// Read before `choose_reference_prices` trims the table: it caps the day at six
+/// currencies by ISO ascending and keeps one per series-id letter, either of which
+/// would drop USD and take the anchor with it.
 fn step_promis_load(
     contract: &mut DesisContract<'_>,
     worldwide_day: WorldwideDay,
@@ -107,35 +157,34 @@ fn step_promis_load(
         return Ok(fixed);
     }
     let current = contract.read_promis_load_exponent()?;
-    let anchor = reference_prices
-        .iter()
-        .find(|row| row.iso_code == PROMIS_LOAD_ANCHOR_ISO)
-        .map(|row| row.entry_price_minor);
     // An unpriced anchor leaves the ladder where it is; Metadosis has already
     // announced the currency it could not price.
-    let Some(rate) = anchor else {
-        return Ok(promis_load::load_minor(
+    let Some(rate) = reference_prices
+        .iter()
+        .find(|row| row.iso_code == PROMIS_LOAD_ANCHOR_ISO)
+        .map(|row| row.entry_price_minor)
+    else {
+        return Ok(promis_load_minor(
             current.unwrap_or(PROMIS_LOAD_LAUNCH_EXPONENT),
         ));
     };
-    let exponent = promis_load::resolve(current, rate);
-    let load_minor = promis_load::load_minor(exponent);
+    let exponent = promis_load_exponent(current, rate);
+    let load = promis_load_minor(exponent);
     match current {
         Some(previous) if previous == exponent => {}
         Some(previous) => {
             contract.emit(IDesis::PromisLoadStepped {
                 worldwideDay: worldwide_day.into(),
-                previousLoadMinor: promis_load::load_minor(previous),
-                newLoadMinor: load_minor,
+                previousLoadMinor: promis_load_minor(previous),
+                newLoadMinor: load,
                 coenUsdRateMinor: rate,
             })?;
             contract.write_promis_load_exponent(exponent)?;
         }
-        // The ladder taking its first position is not a step, and the load it
-        // settles on is already carried by the day's config and START message.
+        // Taking the first position is not a step; the config and START message carry it.
         None => contract.write_promis_load_exponent(exponent)?,
     }
-    Ok(load_minor)
+    Ok(load)
 }
 
 /// The currencies a day will actually price: one per series-id letter, at most
