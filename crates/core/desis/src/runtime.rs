@@ -166,7 +166,10 @@ fn step_promis_load(
     if let Some(fixed) = PROMIS_LOAD_OVERRIDE {
         return Ok(fixed);
     }
-    let current = contract.read_promis_load_exponent()?;
+    // A stored zero is "never set": the exponent it would stand for needs a rate
+    // no chain will ever see.
+    let stored = contract.promis_load_exponent.read()?;
+    let current = (stored != 0).then_some(stored);
     // An unpriced anchor leaves the ladder where it is; Metadosis has already
     // announced the currency it could not price. With nothing stored either, the
     // widest load is the honest answer: this day cannot be priced at all.
@@ -190,10 +193,10 @@ fn step_promis_load(
                 newLoadMinor: load,
                 coenUsdRateMinor: rate,
             })?;
-            contract.write_promis_load_exponent(exponent)?;
+            contract.promis_load_exponent.write(exponent)?;
         }
         // Taking the first position is not a step; the config and START message carry it.
-        None => contract.write_promis_load_exponent(exponent)?,
+        None => contract.promis_load_exponent.write(exponent)?,
     }
     Ok(load)
 }

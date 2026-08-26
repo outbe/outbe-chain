@@ -265,16 +265,6 @@ impl DesisContract<'_> {
         self.last_cleared_worldwide_day.write(worldwide_day)
     }
 
-    /// `None` until the chain has briefed a day it could price.
-    pub(crate) fn read_promis_load_exponent(&self) -> Result<Option<u32>> {
-        let exponent = self.promis_load_exponent.read()?;
-        Ok((exponent != 0).then_some(exponent))
-    }
-
-    pub(crate) fn write_promis_load_exponent(&self, exponent: u32) -> Result<()> {
-        self.promis_load_exponent.write(exponent)
-    }
-
     pub(crate) fn read_last_clearing_issued_count(&self) -> Result<u32> {
         self.last_clearing_issued_count.read()
     }
