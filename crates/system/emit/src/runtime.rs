@@ -20,10 +20,7 @@ use crate::hash::{
     empty_subtrees, field_from_be_bytes, field_to_be_bytes, merkle_node, note_commitment, Field,
 };
 use crate::precompile::IEmit;
-use crate::schema::{
-    EmitContract, EMIT_ROOT_WINDOW, EMIT_SCHEMA_VERSION, EMIT_TREE_CAPACITY, EMIT_TREE_DEPTH,
-};
-
+use crate::schema::{EmitContract, EMIT_ROOT_WINDOW, EMIT_TREE_CAPACITY, EMIT_TREE_DEPTH};
 /// The explicit mint statement, exactly as it arrives on the ABI.
 pub(crate) struct MintStatement {
     pub chain_id: u64,
@@ -40,17 +37,6 @@ fn chain_state(storage: &StorageHandle<'_>) -> Result<(u64, Vec<Field>)> {
     let zeros = empty_subtrees(chain_id, EMIT_TREE_DEPTH);
     Ok((chain_id, zeros))
 }
-
-/// Reads the schema gate: `0` = pristine, `EMIT_SCHEMA_VERSION` = active.
-/// Anything else is fatal corruption.
-fn schema_state(emit: &EmitContract<'_>) -> Result<u32> {
-    let version = emit.schema_version.read()?;
-    if version != 0 && version != EMIT_SCHEMA_VERSION {
-        return Err(EmitError::UnsupportedSchema(version).into());
-    }
-    Ok(version)
-}
-
 /// Appends `leaf` in O(depth) stored state using the Tornado Cash pattern:
 /// for each level, the corresponding `leaf_count` bit decides whether the
 /// current node completes a left subtree (store it in `filled_subtrees` and
@@ -107,7 +93,6 @@ pub(crate) fn burn(
 
     let (chain_id, zeros) = chain_state(&storage)?;
     let emit: EmitContract<'_> = storage.contract();
-    let schema = schema_state(&emit)?;
     let leaf_count = emit.leaf_count.read()?;
     if leaf_count >= EMIT_TREE_CAPACITY {
         return Err(EmitError::TreeFull.into());
@@ -125,10 +110,11 @@ pub(crate) fn burn(
     }
 
     // One rollback unit: lazy initialization, append, commitment insert,
-    // native burn, NewNote.
+    // native burn, NewNote. `leaf_count == 0` is the pristine state —
+    // initialization and the first append are one atomic unit, so an active
+    // tree never observes `leaf_count == 0`.
     storage.with_checkpoint(|| {
-        if schema == 0 {
-            emit.schema_version.write(EMIT_SCHEMA_VERSION)?;
+        if leaf_count == 0 {
             let empty_root = B256::new(field_to_be_bytes(zeros[EMIT_TREE_DEPTH]));
             emit.current_root.write(empty_root)?;
             emit.recent_roots.setup(EMIT_ROOT_WINDOW)?;
@@ -179,8 +165,7 @@ pub(crate) fn mint(
 
     let (runtime_chain_id, zeros) = chain_state(&storage)?;
     let emit: EmitContract<'_> = storage.contract();
-    let schema = schema_state(&emit)?;
-    if schema == 0 {
+    if emit.leaf_count.read()? == 0 {
         return Err(EmitError::NotInitialized.into());
     }
 

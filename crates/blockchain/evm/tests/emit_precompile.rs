@@ -157,8 +157,7 @@ fn committed_balance(db: &CacheDB<EmptyDB>, address: Address) -> U256 {
         .map(|info| info.balance)
         .unwrap_or_default()
 }
-
-/// Committed storage slot of `EMIT_ADDRESS` by schema slot index.
+/// Committed storage slot of `EMIT_ADDRESS` by slot index.
 fn committed_storage(db: &CacheDB<EmptyDB>, slot: u64) -> U256 {
     use revm::DatabaseRef;
     db.storage_ref(EMIT_ADDRESS, U256::from(slot))
@@ -500,12 +499,12 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
         "Emit holds nothing after the full cycle"
     );
     assert_eq!(
-        committed_storage(&db, 2),
+        committed_storage(&db, 1),
         U256::from(2u64),
         "leaf count stays at burn + change; a full mint appends nothing"
     );
     assert_eq!(
-        B256::from(committed_storage(&db, 1)),
+        B256::from(committed_storage(&db, 0)),
         b256(tree.root_at(2)),
         "a full mint does not advance the root"
     );
@@ -582,12 +581,12 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     assert_eq!(committed_balance(&db, BOB), U256::from(1_000u64));
     assert_eq!(committed_balance(&db, EMIT_ADDRESS), U256::ZERO);
     assert_eq!(
-        committed_storage(&db, 2),
+        committed_storage(&db, 1),
         U256::from(2u64),
         "the replay appends no leaf"
     );
     assert_eq!(
-        B256::from(committed_storage(&db, 1)),
+        B256::from(committed_storage(&db, 0)),
         b256(tree.root_at(2)),
         "the replay does not advance the root"
     );
@@ -793,7 +792,7 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
         );
         assert_eq!(committed_balance(&db, EMIT_ADDRESS), U256::ZERO);
         assert_eq!(
-            committed_storage(&db, 2),
+            committed_storage(&db, 1),
             U256::from(1u64),
             "only the burn's leaf exists; the static mint wrote nothing"
         );
