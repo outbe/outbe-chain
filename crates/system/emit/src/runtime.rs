@@ -80,6 +80,7 @@ pub(crate) fn burn(
     if value.is_zero() {
         return Err(EmitError::BurnValueZero.into());
     }
+    // TODO: Consider using `u128` in zkp circuit to support larger burns.
     if value > U256::from(u64::MAX) {
         return Err(EmitError::BurnValueExceedsUint64.into());
     }

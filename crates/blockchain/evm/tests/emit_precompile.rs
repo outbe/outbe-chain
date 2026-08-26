@@ -816,11 +816,12 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
 }
 
 #[test]
-fn funded_malformed_calldata_reverts_without_stranding_value() {
+fn funded_malformed_calldata_fails_without_stranding_value() {
     use alloy_primitives::hex;
 
-    // Funded unknown selector: value is refused for every selector the
-    // module has not published, before dispatch touches state.
+    // Funded unknown selector: the route's `u64::MAX` base gas halts the
+    // call out-of-gas before dispatch — the frame never runs, so the value
+    // never leaves the caller.
     let outcome = run(
         base_db(),
         ALICE,
@@ -829,23 +830,23 @@ fn funded_malformed_calldata_reverts_without_stranding_value() {
         1_000_000,
         Bytes::from(vec![0xde, 0xad, 0xbe, 0xef]),
     );
-    assert!(matches!(outcome.result, ExecutionResult::Revert { .. }));
-    assert_eq!(
-        revert_reason(&outcome.result).as_deref(),
-        Some("non-payable function called with value")
+    assert!(
+        matches!(outcome.result, ExecutionResult::Halt { .. }),
+        "unknown selector must halt out-of-gas, got {:?}",
+        outcome.result
     );
-    assert_eq!(balance_of(&outcome, ALICE), U256::from(10_000u64));
     assert_eq!(balance_of(&outcome, EMIT_ADDRESS), U256::ZERO);
     assert_eq!(storage_writes(&outcome, EMIT_ADDRESS), 0);
 
-    // Funded empty calldata: same refusal — no selector is payable default.
+    // Funded empty calldata: same halt — no selector is published, so the
+    // base gas is `u64::MAX` and the call dies before the value gate.
     let outcome = run(base_db(), ALICE, EMIT_ADDRESS, 5, 1_000_000, Bytes::new());
-    assert!(matches!(outcome.result, ExecutionResult::Revert { .. }));
-    assert_eq!(
-        revert_reason(&outcome.result).as_deref(),
-        Some("non-payable function called with value")
+    assert!(
+        matches!(outcome.result, ExecutionResult::Halt { .. }),
+        "empty calldata must halt out-of-gas, got {:?}",
+        outcome.result
     );
-    assert_eq!(balance_of(&outcome, ALICE), U256::from(10_000u64));
+    assert_eq!(balance_of(&outcome, EMIT_ADDRESS), U256::ZERO);
     assert_eq!(storage_writes(&outcome, EMIT_ADDRESS), 0);
 
     // Funded selector-only burn: the selector is payable so the value gate
