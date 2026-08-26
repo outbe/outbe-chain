@@ -555,18 +555,26 @@ impl Localnet {
         first_hex(&output, 96).ok_or_else(|| eyre::eyre!("no BLS public key from keygen"))
     }
 
-    /// Whether a durable DKG share file exists in validator `index`'s keys dir
-    /// (`e2e_assert "DKG share persisted to keys-dir"`, s4:28-29).
+    /// Whether a valid durable DKG signing share exists in validator `index`'s
+    /// keys dir.
+    ///
+    /// Joiner restart scenarios pass an explicit `<node>/keys` override, while
+    /// the ordinary FullNode-to-validator flow uses the product default under
+    /// `<datadir>/data/keys`. Both are canonical `--consensus.keys-dir` layouts.
     pub fn has_share_file(&self, index: usize) -> bool {
-        let dir = self.cfg.validator_dir(index).join("keys");
-        fs::read_dir(&dir)
-            .map(|rd| {
-                rd.filter_map(Result::ok).any(|e| {
-                    let n = e.file_name().to_string_lossy().to_lowercase();
-                    (n.contains("dkg") && n.contains("share")) || n == "dkg_share.hex"
-                })
-            })
-            .unwrap_or(false)
+        let node_dir = self.cfg.validator_dir(index);
+        [
+            node_dir.join("keys/dkg_share.hex"),
+            node_dir.join("data/keys/dkg_share.hex"),
+        ]
+        .into_iter()
+        .any(|path| {
+            outbe_consensus::bls::load_signing_share(
+                &path,
+                &outbe_consensus::bls::KeyBackend::Plaintext,
+            )
+            .is_ok()
+        })
     }
 }
 

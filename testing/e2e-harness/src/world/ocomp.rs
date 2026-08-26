@@ -3121,15 +3121,19 @@ fn schedule_public_measurement_day(
         ] {
             let account_key = find_alloc_address_key(alloc, address)?
                 .ok_or_else(|| eyre::eyre!("generated genesis has no {label} account"))?;
-            let words = alloc
+            let account = alloc
                 .get(&account_key)
-                .and_then(|account| account.get("storage"))
                 .and_then(serde_json::Value::as_object)
-                .ok_or_else(|| eyre::eyre!("{label} genesis account has no storage object"))?;
-            for (slot, value) in words {
-                provider
-                    .storage
-                    .insert((address, parse_hex_word(slot)?), parse_storage_word(value)?);
+                .ok_or_else(|| eyre::eyre!("{label} genesis account is not an object"))?;
+            if let Some(storage) = account.get("storage") {
+                let words = storage.as_object().ok_or_else(|| {
+                    eyre::eyre!("{label} genesis account storage is not an object")
+                })?;
+                for (slot, value) in words {
+                    provider
+                        .storage
+                        .insert((address, parse_hex_word(slot)?), parse_storage_word(value)?);
+                }
             }
             keys.push((address, account_key));
         }
@@ -3257,12 +3261,15 @@ fn schedule_public_measurement_day(
         .and_then(serde_json::Value::as_object_mut)
         .ok_or_else(|| eyre::eyre!("generated genesis has no alloc object"))?;
     for (address, account_key) in account_keys {
-        let words = alloc
+        let account = alloc
             .get_mut(&account_key)
             .and_then(serde_json::Value::as_object_mut)
-            .and_then(|account| account.get_mut("storage"))
-            .and_then(serde_json::Value::as_object_mut)
-            .ok_or_else(|| eyre::eyre!("genesis account {address:#x} has no storage object"))?;
+            .ok_or_else(|| eyre::eyre!("genesis account {address:#x} is not an object"))?;
+        let words = account
+            .entry("storage".to_owned())
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object_mut()
+            .ok_or_else(|| eyre::eyre!("genesis account {address:#x} storage is not an object"))?;
         words.clear();
         for ((stored_address, slot), value) in &provider.storage {
             if *stored_address == address && !value.is_zero() {

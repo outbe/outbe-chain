@@ -10,8 +10,10 @@ Feature: Validator admission, membership, recovery, and removal
     Then the committee processes and projects the offer
     When a full node joins and syncs to the committee tip
     Then the full node matches committee supply and state root and is not a participant
-    When the full node stakes and confirms readiness
-    Then it is promoted to an active participant and the in-flight offer lands once
+    When the synced full node restarts as a registered shareless validator
+    Then it keeps finalizing without stake, a share, or consensus participation
+    When the shareless validator stakes and confirms readiness
+    Then it activates through DKG in the same process and the in-flight offer lands once
     When the promoted validator deactivates
     Then it exits, the committee reshares down, and the node demotes to a follower
     And its unbonded stake can be claimed with exact accounting

@@ -220,6 +220,9 @@ pub struct FixtureState {
     // ---- validator-lifecycle scenarios (s1..s7 / follower) ----
     /// Provisioned joiner's EOA address (derived after `provision`).
     pub joiner_addr: Option<String>,
+    /// OS process id captured when a synced FullNode first enters validator mode.
+    /// A later activation step uses it to prove DKG did not require a node restart.
+    pub promoted_validator_pid: Option<u32>,
     /// The chain's worldwide-day key used for tribute offers.
     pub wwd: Option<String>,
     /// A height captured by one step for a later assertion (kill/restart/exit).
@@ -441,6 +444,7 @@ impl Default for FixtureState {
             allow_unsupported_update_fatal: false,
             expected_dkg_reveal: None,
             joiner_addr: None,
+            promoted_validator_pid: None,
             wwd: None,
             marker_height: None,
             marker_count: None,
