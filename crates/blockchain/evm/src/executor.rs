@@ -4566,25 +4566,26 @@ mod tests {
         (directory, Arc::new(service))
     }
 
-    /// reth22-1 regression: the per-block EIP-161 marker list MUST cover every
-    /// *stateful* dispatch-registered precompile, or that account is pruned at
-    /// state-root time and its storage is silently lost (GEM/GEM_FACTORY were
-    /// missing). The marker list, the dispatch list, and genesis seeding are
-    /// three separate sources of truth; this pins marker ⊇ stateful-dispatch.
+    /// reth22-1 regression: every *stateful* dispatch-registered precompile must
+    /// be preserved by either the per-block EIP-161 marker list or canonical
+    /// genesis marker bytecode, or its storage is silently lost at state-root
+    /// time (GEM/GEM_FACTORY were missing). This unit pins runtime-marker
+    /// coverage for routes that are neither stateless nor genesis-preserved;
+    /// `tests/genesis.rs` binds the complementary genesis-marker evidence.
     #[test]
     fn marker_list_covers_stateful_precompiles() {
         use crate::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
         use crate::precompiles::outbe_precompile_addresses;
         use outbe_primitives::addresses::{
-            DEBUG_SUBCALL_PRECOMPILE_ADDRESS, GOVERNANCE_ADDRESS, STABLECOIN_FACTORY_ADDRESS,
-            STABLECOIN_POLICY_REGISTRY_ADDRESS, VAULT_ROUTER_ADDRESS, ZEROFEE_ADDRESS,
-            ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
+            DEBUG_SUBCALL_PRECOMPILE_ADDRESS, GOVERNANCE_ADDRESS, RADICLE_REGISTRY_ADDRESS,
+            STABLECOIN_FACTORY_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS, VAULT_ROUTER_ADDRESS,
+            ZEROFEE_ADDRESS, ZKPROOF_GROTH16_ADDRESS, ZKPROOF_POSEIDON_ADDRESS,
         };
 
         // Dispatch-registered precompiles that legitimately need NO runtime 0xEF
-        // marker. Each exemption is justified; adding a state-owning precompile here
-        // instead of to the marker list would re-open reth22-1.
-        const MARKER_EXEMPT: [Address; 8] = [
+        // marker. Each state-owning exemption must have canonical genesis-marker
+        // evidence in `tests/genesis.rs`; an unproven exemption would re-open reth22-1.
+        const MARKER_EXEMPT: [Address; 9] = [
             // Stateless verifiers — no EVM storage to preserve.
             ZKPROOF_POSEIDON_ADDRESS,
             ZKPROOF_GROTH16_ADDRESS,
@@ -4600,6 +4601,9 @@ mod tests {
             // even before Stablecoin V1 runtime activation.
             STABLECOIN_FACTORY_ADDRESS,
             STABLECOIN_POLICY_REGISTRY_ADDRESS,
+            // RadicleRegistry is present from genesis even when no repositories
+            // are configured because ALL_PRECOMPILE_ADDRESSES seeds its marker.
+            RADICLE_REGISTRY_ADDRESS,
         ];
 
         for addr in outbe_precompile_addresses() {
