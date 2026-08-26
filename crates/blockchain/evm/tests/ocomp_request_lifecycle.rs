@@ -41,6 +41,7 @@ use outbe_consensus::{
         HybridCertificate, VrfProof,
     },
 };
+use outbe_cycle::schema::Cycle;
 use outbe_desis::{AuctionStage, DesisContract};
 use outbe_evm::{
     system_tx::{split_system_layout, OcompLifecycleActivation, SystemTxInputV2, SystemTxKind},
@@ -63,7 +64,7 @@ use outbe_node::OutbePayloadBuilder;
 use outbe_ocomp_protocol::{
     abi::encode_submit_lysis_result_calldata,
     receipts::AggregateActivationReceiptV1,
-    state::{ActiveGenerationV1, OcompJobRecordV1, OcompJobStatus},
+    state::{ActiveGenerationV1, OcompJobRecordV1, OcompJobStatus, OcompTerminalOutcome},
     vote::OcompVoteAccountabilityV1,
 };
 use outbe_offchain_data::RuntimeBodyReaders;
@@ -462,7 +463,7 @@ struct PreparedParent {
 }
 
 #[test]
-fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal() {
+fn real_payload_builder_commits_atomic_request_expiry_retry_and_quorum() {
     let chain_spec: Arc<ChainSpec<OutbeHeader>> = ChainSpecBuilder::mainnet()
         .reset()
         .paris_activated()
@@ -481,11 +482,19 @@ fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal
         .iter()
         .map(|entry| (entry.address, entry.consensus_pubkey))
         .collect::<Vec<_>>();
-    let fork_install = ForkInstallScenario::measurement_at(PARENT_HEIGHT, CHAIN_ID, genesis_hash)
-        .unwrap()
-        .with_founder_validators(&founder_validators)
-        .unwrap()
-        .into_install();
+    let mut fork_install =
+        ForkInstallScenario::measurement_at(PARENT_HEIGHT, CHAIN_ID, genesis_hash)
+            .unwrap()
+            .with_founder_validators(&founder_validators)
+            .unwrap()
+            .into_install();
+    fork_install
+        .request_profile
+        .capacity_profile
+        .result_deadline_blocks = 8;
+    fork_install
+        .validate_for_chain(CHAIN_ID, genesis_hash, &poc_schema_limits())
+        .expect("short measurement response window remains production-valid");
     let prepared = prepare_parent(&snapshot, genesis_hash, &fork_install);
     let fork_install = Arc::new(fork_install);
     let metadata =
@@ -573,6 +582,7 @@ fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal
             SystemTxKind::LateFinalizeCredits,
             SystemTxKind::OcompLifecycleBegin,
             SystemTxKind::CycleTick,
+            SystemTxKind::RewardsGemDelivery,
             SystemTxKind::OracleSlashWindow,
             SystemTxKind::HookEvents,
         ]
@@ -837,9 +847,6 @@ fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal
     });
     let finalized = finalized_record.finalized.as_ref().unwrap();
     let open_height = finalized.open_height;
-    let voting = ResultVotingScenario::for_intent(&finalized_record.intent, finalized.job_id);
-    let voting_result = voting.result().clone();
-
     let successor_artifacts =
         decode_outbe_block_artifacts(successor.block().header().extra_data().as_ref()).unwrap();
     let successor_ce = successor_artifacts
@@ -904,11 +911,191 @@ fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal
     );
     assert_eq!(voting_open.record.status, OcompJobStatus::VotingOpen);
 
+    let initial_deadline = voting_open
+        .record
+        .finalized
+        .as_ref()
+        .expect("initial voting-open record remains finalized")
+        .deadline_height;
+    let initial_voting =
+        ResultVotingScenario::for_intent(&finalized_record.intent, finalized.job_id);
+    let initial_votes = (0_u8..2)
+        .map(|validator_index| {
+            let vote = initial_voting.signed_vote(validator_index);
+            let calldata = encode_submit_lysis_result_calldata(&vote, &poc_schema_limits())
+                .expect("canonical non-quorum vote calldata");
+            pooled_vote_transaction(Bytes::from(calldata), validator_index)
+        })
+        .collect::<Vec<_>>();
+    let no_quorum = build_canonical_ocomp_successor(
+        &chain_spec,
+        &prepared.tree_service,
+        &signer,
+        &runtime_body_readers,
+        &fork_install,
+        &dkg,
+        &snapshot,
+        proposer,
+        voting_open.header,
+        &voting_open.storage,
+        open_height + 1,
+        prepared.request_time + (open_height + 1 - REQUEST_HEIGHT),
+        requested.data.intentId,
+        initial_votes,
+    );
+    assert_eq!(no_quorum.record.status, OcompJobStatus::VotingOpen);
+    assert!(no_quorum
+        .record
+        .finalized
+        .as_ref()
+        .is_some_and(|record| record.quorum.is_none()));
+
+    let mut retry_parent = no_quorum.header;
+    let mut retry_storage = no_quorum.storage;
+    let mut initial_terminal = no_quorum.record;
+    for height in (open_height + 2)..=initial_deadline {
+        let built = build_canonical_ocomp_successor(
+            &chain_spec,
+            &prepared.tree_service,
+            &signer,
+            &runtime_body_readers,
+            &fork_install,
+            &dkg,
+            &snapshot,
+            proposer,
+            retry_parent,
+            &retry_storage,
+            height,
+            prepared.request_time + (height - REQUEST_HEIGHT),
+            requested.data.intentId,
+            Vec::new(),
+        );
+        retry_parent = built.header;
+        retry_storage = built.storage;
+        initial_terminal = built.record;
+    }
+    assert_eq!(initial_terminal.status, OcompJobStatus::Expired);
+    let initial_terminal_evidence = initial_terminal
+        .terminal
+        .as_ref()
+        .expect("deadline retains the initial terminal evidence");
+    assert_eq!(
+        initial_terminal_evidence.outcome,
+        OcompTerminalOutcome::Expired
+    );
+    assert_eq!(initial_terminal_evidence.terminal_height, initial_deadline);
+    assert!(initial_terminal_evidence.completed_binding.is_none());
+
+    let retry_request_height = initial_deadline + 1;
+    let retry_request = build_canonical_ocomp_successor(
+        &chain_spec,
+        &prepared.tree_service,
+        &signer,
+        &runtime_body_readers,
+        &fork_install,
+        &dkg,
+        &snapshot,
+        proposer,
+        retry_parent,
+        &retry_storage,
+        retry_request_height,
+        prepared.request_time + (retry_request_height - REQUEST_HEIGHT),
+        requested.data.intentId,
+        Vec::new(),
+    );
+    assert_eq!(retry_request.record.status, OcompJobStatus::Expired);
+    assert_eq!(retry_request.requested_intents.len(), 1);
+    let retry_intent_id = retry_request.requested_intents[0];
+    let retry_record = read_ocomp_job_record(&retry_request.storage, retry_intent_id);
+    assert_eq!(retry_record.status, OcompJobStatus::AwaitingFinality);
+    assert_eq!(retry_record.intent.pending_nonce, 1);
+    assert_eq!(retry_record.intent.attempt, 1);
+    assert_eq!(
+        retry_record
+            .intent
+            .frozen_metadosis_values
+            .request_budget_split_receipt_hash,
+        finalized_record
+            .intent
+            .frozen_metadosis_values
+            .request_budget_split_receipt_hash,
+        "retry must preserve the original request budget receipt"
+    );
+
+    let retry_finality_height = retry_request_height + 1;
+    let retry_finality = build_canonical_ocomp_successor(
+        &chain_spec,
+        &prepared.tree_service,
+        &signer,
+        &runtime_body_readers,
+        &fork_install,
+        &dkg,
+        &snapshot,
+        proposer,
+        retry_request.header,
+        &retry_request.storage,
+        retry_finality_height,
+        prepared.request_time + (retry_finality_height - REQUEST_HEIGHT),
+        retry_intent_id,
+        Vec::new(),
+    );
+    let retry_finalized = retry_finality
+        .record
+        .finalized
+        .as_ref()
+        .expect("retry request receives canonical finality")
+        .clone();
+    let retry_open_height = retry_finalized.open_height;
+    let mut retry_voting_parent = retry_finality.header;
+    let mut retry_voting_storage = retry_finality.storage;
+    for height in (retry_finality_height + 1)..retry_open_height {
+        let built = build_canonical_ocomp_successor(
+            &chain_spec,
+            &prepared.tree_service,
+            &signer,
+            &runtime_body_readers,
+            &fork_install,
+            &dkg,
+            &snapshot,
+            proposer,
+            retry_voting_parent,
+            &retry_voting_storage,
+            height,
+            prepared.request_time + (height - REQUEST_HEIGHT),
+            retry_intent_id,
+            Vec::new(),
+        );
+        assert_eq!(built.record.status, OcompJobStatus::AwaitingFinality);
+        retry_voting_parent = built.header;
+        retry_voting_storage = built.storage;
+    }
+    let retry_voting_open = build_canonical_ocomp_successor(
+        &chain_spec,
+        &prepared.tree_service,
+        &signer,
+        &runtime_body_readers,
+        &fork_install,
+        &dkg,
+        &snapshot,
+        proposer,
+        retry_voting_parent,
+        &retry_voting_storage,
+        retry_open_height,
+        prepared.request_time + (retry_open_height - REQUEST_HEIGHT),
+        retry_intent_id,
+        Vec::new(),
+    );
+    assert_eq!(retry_voting_open.record.status, OcompJobStatus::VotingOpen);
+
+    let voting =
+        ResultVotingScenario::for_intent(&retry_voting_open.record.intent, retry_finalized.job_id);
+    let voting_result = voting.result().clone();
+
     let signed_votes = (0_u8..3)
         .map(|validator_index| (validator_index, voting.signed_vote(validator_index)))
         .collect::<Vec<_>>();
     let mut voting_open_state = HashMapStorageProvider::new(CHAIN_ID);
-    voting_open_state.storage = voting_open.storage.clone();
+    voting_open_state.storage = retry_voting_open.storage.clone();
     StorageHandle::enter(&mut voting_open_state, |storage| {
         for (validator_index, vote) in &signed_votes {
             let prefix = vote.prefix();
@@ -951,11 +1138,11 @@ fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal
         &dkg,
         &snapshot,
         proposer,
-        voting_open.header,
-        &voting_open.storage,
-        open_height + 1,
-        prepared.request_time + (open_height + 1 - REQUEST_HEIGHT),
-        requested.data.intentId,
+        retry_voting_open.header,
+        &retry_voting_open.storage,
+        retry_open_height + 1,
+        prepared.request_time + (retry_open_height + 1 - REQUEST_HEIGHT),
+        retry_intent_id,
         saturated_transactions,
     );
     assert!(
@@ -987,7 +1174,12 @@ fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal
             > &q_forming.user_receipt_cumulative_gas[vote_hashes.len() - 1],
         "ordinary saturated transactions, unlike OCOMP carriers, consume user-lane gas"
     );
-    assert_eq!(q_forming.record.status, OcompJobStatus::Completed);
+    assert_eq!(
+        q_forming.record.status,
+        OcompJobStatus::Completed,
+        "retry quorum must complete: initial_deadline={initial_deadline}, retry_request_height={retry_request_height}, retry_open_height={retry_open_height}, record={:?}",
+        q_forming.record
+    );
     let completed = q_forming
         .record
         .terminal
@@ -1028,11 +1220,8 @@ fn real_payload_builder_commits_atomic_request_between_ce_preview_and_final_seal
         assert_eq!(accountability.quorum.as_ref(), Some(&quorum));
 
         let terminal_receipt = AggregateActivationReceiptV1::decode_canonical(
-            &outbe_metadosis::api::get_lysis_terminal_receipt(
-                storage.clone(),
-                requested.data.intentId,
-            )
-            .expect("public q-forming terminal receipt"),
+            &outbe_metadosis::api::get_lysis_terminal_receipt(storage.clone(), retry_intent_id)
+                .expect("public q-forming terminal receipt"),
             &poc_schema_limits(),
         )
         .unwrap();
@@ -1083,6 +1272,20 @@ struct CanonicalOcompSuccessor {
     user_transaction_hashes: Vec<B256>,
     user_receipt_successes: Vec<bool>,
     user_receipt_cumulative_gas: Vec<u64>,
+}
+
+fn read_ocomp_job_record(
+    storage: &HashMap<(Address, U256), U256>,
+    intent_id: B256,
+) -> OcompJobRecordV1 {
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.storage = storage.clone();
+    StorageHandle::enter(&mut provider, |storage| {
+        let encoded = outbe_metadosis::api::get_offchain_job(storage, intent_id)
+            .expect("canonical public OCOMP job query");
+        OcompJobRecordV1::decode_canonical(&encoded, &poc_schema_limits())
+            .expect("canonical public OCOMP job decodes")
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1352,6 +1555,9 @@ fn prepare_parent(
     let seal = StorageHandle::enter(&mut seed, |storage| {
         seed_ce_genesis(&storage);
         begin_block(storage.clone(), &scope).unwrap();
+        let nod = NodContract::new(storage.clone());
+        nod.ocomp_materialization_head_sequence.write(1).unwrap();
+        nod.ocomp_materialization_tail_sequence.write(1).unwrap();
 
         let mut validators = ValidatorSet::new(storage.clone());
         validators.config_owner.write(VALIDATOR_OWNER).unwrap();
@@ -1440,7 +1646,20 @@ fn prepare_parent(
             storage.clone(),
         );
         outbe_rewards::runtime::ensure_genesis_anchor(&parent_ctx).unwrap();
+        Cycle::new(storage.clone())
+            .active_utc_day
+            .write(outbe_primitives::time::timestamp_to_date_key(parent_time))
+            .unwrap();
         outbe_cycle::runtime::dispatch_triggers(&parent_ctx, &scope, &EmptyParent).unwrap();
+        // This focused fixture jumps directly from the seeded WWD start to its
+        // processing time. Model the intervening canonical daily advances so
+        // the request block exercises a contiguous settlement, not SkipMissed.
+        Cycle::new(storage.clone())
+            .active_utc_day
+            .write(outbe_primitives::time::previous_date_key(
+                outbe_primitives::time::timestamp_to_date_key(request_time),
+            ))
+            .unwrap();
         end_block(storage, &scope).unwrap()
     });
 

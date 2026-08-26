@@ -162,6 +162,8 @@ pub struct OcompExecutionTraceObservationV1 {
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct OcompPublicScenarioEvidenceV1 {
     pub job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
+    pub retry_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
+    pub retry_completed_finality: Option<u64>,
     pub activation: Option<crate::world::rpc::OcompPublicActivationV1>,
     pub certified_generation: Option<crate::world::rpc::OcompCertifiedGenerationV1>,
     pub result_vote_transactions: Vec<crate::world::rpc::OcompPublicResultVoteTransactionV1>,
@@ -279,6 +281,10 @@ pub struct FixtureState {
     /// Public, finalized Metadosis request observed identically on every
     /// validator. This is evidence only; the harness cannot create the job.
     pub ocomp_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
+    /// Finalized automatic successor to an expired public OCOMP request.
+    pub ocomp_retry_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
+    /// Finalized height observed after the retry completed and finality advanced.
+    pub ocomp_retry_completed_finality: Option<u64>,
     /// The two independently scheduled WWDs and processing timestamps used by
     /// the dynamic-membership overlap scenario.
     pub ocomp_dynamic_worldwide_days: Vec<u32>,
@@ -471,6 +477,8 @@ impl Default for FixtureState {
             projection_outage_finalized_before: None,
             ocomp_activation_height: None,
             ocomp_job_request: None,
+            ocomp_retry_job_request: None,
+            ocomp_retry_completed_finality: None,
             ocomp_dynamic_worldwide_days: Vec::new(),
             ocomp_dynamic_processing_times: Vec::new(),
             ocomp_dynamic_tribute_tx_hashes: Vec::new(),
@@ -557,6 +565,8 @@ impl FixtureState {
     pub fn ocomp_public_scenario_evidence(&self) -> OcompPublicScenarioEvidenceV1 {
         OcompPublicScenarioEvidenceV1 {
             job_request: self.ocomp_job_request.clone(),
+            retry_job_request: self.ocomp_retry_job_request.clone(),
+            retry_completed_finality: self.ocomp_retry_completed_finality,
             activation: self.ocomp_activation.clone(),
             certified_generation: self.ocomp_certified_generation.clone(),
             result_vote_transactions: self.ocomp_result_vote_transactions.clone(),

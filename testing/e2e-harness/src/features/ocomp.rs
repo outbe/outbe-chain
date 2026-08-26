@@ -3011,15 +3011,23 @@ fn quorum_applies_lysis_and_creates_nod_with_vote_count(
     world: &mut World,
     expected_vote_count: usize,
 ) {
-    assert!(
-        matches!(expected_vote_count, 3 | 4),
-        "PoC quorum scenario expects either three or four public votes"
-    );
     let request = world
         .state
         .ocomp_job_request
         .clone()
         .expect("finalized public JobIntent");
+    quorum_applies_lysis_and_creates_nod_for_request(world, request, expected_vote_count);
+}
+
+fn quorum_applies_lysis_and_creates_nod_for_request(
+    world: &mut World,
+    request: crate::world::rpc::OcompPublicJobRequestV1,
+    expected_vote_count: usize,
+) {
+    assert!(
+        matches!(expected_vote_count, 3 | 4),
+        "PoC quorum scenario expects either three or four public votes"
+    );
     let deadline = Instant::now() + Duration::from_secs(600);
     loop {
         let ports = world.validators.committee_ports();
@@ -4729,6 +4737,257 @@ fn no_quorum_job_expires_without_nod(world: &mut World) {
     );
     world.state.ocomp_vote_accountability = Some(accountability);
     world.state.ocomp_expired_without_nod = Some(true);
+}
+
+#[when("the stopped OCOMP workers restart for the automatic retry")]
+fn stopped_workers_restart_for_automatic_retry(world: &mut World) {
+    let original = world
+        .state
+        .ocomp_job_request
+        .clone()
+        .expect("expired public JobIntent");
+    for validator_index in [2, 3] {
+        world
+            .ocomp
+            .restart_worker(validator_index, 0)
+            .unwrap_or_else(|error| {
+                panic!("restart validator-{validator_index} Worker for automatic retry: {error}")
+            });
+    }
+    world
+        .ocomp
+        .ensure_validator_roles_alive()
+        .expect("all OCOMP roles are live before the automatic retry");
+
+    let from_height = original.request_height.saturating_add(1);
+    let timeout = Instant::now() + Duration::from_secs(240);
+    let retry = loop {
+        let observed = world
+            .validators
+            .committee_ports()
+            .into_iter()
+            .map(|port| {
+                world.rpc.finalized_ocomp_job_request_for_worldwide_day_on(
+                    port,
+                    from_height,
+                    original.worldwide_day,
+                )
+            })
+            .collect::<Vec<_>>();
+        if observed.iter().all(Option::is_some) {
+            let first = observed[0]
+                .clone()
+                .expect("all automatic retry requests are present");
+            assert!(
+                observed
+                    .iter()
+                    .all(|candidate| candidate.as_ref() == Some(&first)),
+                "validators expose different finalized automatic retry requests: {observed:?}"
+            );
+            if first.intent_id != original.intent_id {
+                break first;
+            }
+        }
+        world
+            .ocomp
+            .ensure_validator_roles_alive()
+            .expect("OCOMP roles remain live while waiting for the automatic retry");
+        assert!(
+            Instant::now() < timeout,
+            "expired OCOMP request did not produce a finalized automatic retry: original={original:?}, observed={observed:?}"
+        );
+        sleep(Duration::from_millis(250));
+    };
+
+    assert_eq!(retry.worldwide_day, original.worldwide_day);
+    assert_eq!(retry.attempt, original.attempt.saturating_add(1));
+    assert_eq!(
+        retry.pending_nonce,
+        original.pending_nonce.saturating_add(1)
+    );
+    assert!(retry.request_height > original.deadline_height);
+    assert!(retry.open_height > retry.request_height);
+    assert!(retry.deadline_height > retry.open_height);
+
+    let ports = world.validators.committee_ports();
+    let original_records = ports
+        .iter()
+        .copied()
+        .map(|port| {
+            world
+                .rpc
+                .finalized_ocomp_job_record_on(port, original.intent_id)
+        })
+        .collect::<Vec<_>>();
+    let retry_records = ports
+        .iter()
+        .copied()
+        .map(|port| {
+            world
+                .rpc
+                .finalized_ocomp_job_record_on(port, retry.intent_id)
+        })
+        .collect::<Vec<_>>();
+    assert!(original_records.iter().all(Option::is_some));
+    assert!(retry_records.iter().all(Option::is_some));
+    let original_record = original_records[0]
+        .as_ref()
+        .expect("all expired records are present");
+    let retry_record = retry_records[0]
+        .as_ref()
+        .expect("all retry records are present");
+    assert!(
+        original_records
+            .iter()
+            .all(|candidate| candidate.as_ref() == Some(original_record)),
+        "validators expose different retained expired records"
+    );
+    assert!(
+        retry_records
+            .iter()
+            .all(|candidate| candidate.as_ref() == Some(retry_record)),
+        "validators expose different automatic retry records"
+    );
+    assert_eq!(original_record.status, OcompJobStatus::Expired);
+    assert!(
+        matches!(
+            retry_record.status,
+            OcompJobStatus::AwaitingFinality | OcompJobStatus::VotingOpen
+        ),
+        "automatic retry must remain preterminal before the completion step: {:?}",
+        retry_record.status
+    );
+    assert!(retry_record.terminal.is_none());
+    assert!(
+        retry_record
+            .finalized
+            .as_ref()
+            .is_none_or(|finalized| finalized.quorum.is_none()),
+        "automatic retry formed quorum before the four-vote completion assertion"
+    );
+    assert_eq!(
+        retry_record.intent.frozen_metadosis_values, original_record.intent.frozen_metadosis_values,
+        "automatic retry changed the frozen Metadosis values or request receipt"
+    );
+    assert_eq!(
+        retry_record.intent.protocol_bundle_hash,
+        original_record.intent.protocol_bundle_hash
+    );
+    assert_eq!(
+        retry_record.intent.pre_admission_envelope_hash,
+        original_record.intent.pre_admission_envelope_hash
+    );
+    assert_eq!(
+        retry_record.intent.activation_preconditions.tribute,
+        original_record.intent.activation_preconditions.tribute
+    );
+    assert_eq!(
+        retry_record.intent.activation_preconditions.nod,
+        original_record.intent.activation_preconditions.nod
+    );
+    assert_eq!(
+        retry_record.intent.activation_preconditions.contributors,
+        original_record.intent.activation_preconditions.contributors
+    );
+    assert!(
+        retry_record.intent.logical_evaluation_height
+            > original_record.intent.logical_evaluation_height
+    );
+    assert!(
+        retry_record.intent.logical_evaluation_time
+            > original_record.intent.logical_evaluation_time
+    );
+    world.state.ocomp_retry_job_request = Some(retry);
+}
+
+#[then("the retry preserves the frozen receipt and completes on every validator")]
+fn retry_preserves_receipt_and_completes(world: &mut World) {
+    let original = world
+        .state
+        .ocomp_job_request
+        .clone()
+        .expect("expired public JobIntent");
+    let retry = world
+        .state
+        .ocomp_retry_job_request
+        .clone()
+        .expect("finalized automatic retry JobIntent");
+    quorum_applies_lysis_and_creates_nod_for_request(world, retry.clone(), 4);
+
+    let activation = world
+        .state
+        .ocomp_activation
+        .clone()
+        .expect("retry Lysis activation");
+    let target = activation.block_number.saturating_add(2);
+    for port in world.validators.committee_ports() {
+        assert!(
+            world.rpc.wait_finalized_at_least(port, target, 60),
+            "validator on port {port} did not continue finalizing beyond retry completion"
+        );
+    }
+
+    let ports = world.validators.committee_ports();
+    let completed = ports
+        .iter()
+        .copied()
+        .map(|port| {
+            world
+                .rpc
+                .finalized_ocomp_job_record_on(port, retry.intent_id)
+        })
+        .collect::<Vec<_>>();
+    assert!(completed.iter().all(Option::is_some));
+    let completed_record = completed[0]
+        .as_ref()
+        .expect("all completed retry records are present");
+    assert!(
+        completed
+            .iter()
+            .all(|candidate| candidate.as_ref() == Some(completed_record)),
+        "validators expose different completed retry records"
+    );
+    assert_eq!(completed_record.status, OcompJobStatus::Completed);
+    let completed_binding = completed_record
+        .terminal
+        .as_ref()
+        .and_then(|terminal| terminal.completed_binding.as_ref())
+        .expect("retry completed binding");
+    assert_eq!(completed_binding.job_id, activation.job_id);
+    assert_eq!(completed_binding.result_digest, activation.result_digest);
+    assert_eq!(
+        completed_binding.terminal_receipt_hash,
+        activation.terminal_receipt_hash
+    );
+
+    for port in ports {
+        let retained = world
+            .rpc
+            .finalized_ocomp_job_record_on(port, original.intent_id)
+            .expect("retained expired predecessor");
+        assert_eq!(retained.status, OcompJobStatus::Expired);
+        assert_eq!(
+            retained
+                .terminal
+                .as_ref()
+                .expect("expired predecessor terminal")
+                .outcome,
+            OcompTerminalOutcome::Expired
+        );
+    }
+    let finalized = world
+        .validators
+        .committee_ports()
+        .into_iter()
+        .map(|port| world.rpc.finalized(port).expect("validator finality"))
+        .min()
+        .expect("four validator finality observations");
+    assert!(finalized >= target);
+    world.state.ocomp_retry_completed_finality = Some(finalized);
+    world
+        .localnet
+        .ensure_committee_alive()
+        .expect("all validators remain live after retry completion");
 }
 
 #[then("all four OCOMP domains run their node-facing production roles")]

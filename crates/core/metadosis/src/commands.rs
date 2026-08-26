@@ -263,6 +263,13 @@ pub fn submit_verified_result_vote(
                     if exact_worldwide_day.is_some()
                         && crate::errors::is_business_failure(&error) =>
                 {
+                    tracing::warn!(
+                        target: "outbe::ocomp",
+                        worldwide_day = exact_worldwide_day.expect("guarded exact WWD").value(),
+                        block_number = storage.block_number()?,
+                        error = %error,
+                        "OCOMP result vote caused the WorldwideDay to fail"
+                    );
                     scope.restore_ce_work_checkpoint(attempted_work)?;
                     let block_number = storage.block_number()?;
                     let timestamp = u64::try_from(storage.timestamp()?).map_err(|_| {

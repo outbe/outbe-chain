@@ -674,7 +674,22 @@ fn q_forming_faults_restore_all_state_and_exact_retry_matches_clean_execution() 
 
 #[test]
 fn conflict_q_forming_rolls_back_every_mutation_and_retries_exactly() {
-    let mut control = ActivationFixture::new(20, 1_010, false);
+    let prepare_conflicted = || {
+        let mut fixture = ActivationFixture::new(20, 1_010, true);
+        StorageHandle::enter(&mut fixture.provider, |storage| {
+            let tribute = TributeContract::new(storage);
+            let mut admission = tribute
+                .day_pre_admission
+                .get(TEST_WWD)
+                .unwrap()
+                .expect("seeded Tribute pre-admission must exist");
+            admission.source_generation += 1;
+            tribute.day_pre_admission.update(&admission).unwrap();
+        });
+        fixture
+    };
+
+    let mut control = prepare_conflicted();
     control.provider.fail_after_mutation_at(usize::MAX);
     assert_eq!(control.apply().unwrap(), Bytes::new());
     let mutation_count = control.provider.clear_mutation_failure();
@@ -689,7 +704,7 @@ fn conflict_q_forming_rolls_back_every_mutation_and_retries_exactly() {
     let clean_after = control.rollback_snapshot();
 
     for operation in 0..mutation_count {
-        let mut fixture = ActivationFixture::new(20, 1_010, false);
+        let mut fixture = prepare_conflicted();
         let before = fixture.rollback_snapshot();
         fixture.provider.fail_after_mutation_at(operation);
 
