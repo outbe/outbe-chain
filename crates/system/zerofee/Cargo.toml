@@ -13,7 +13,7 @@ outbe-validatorset.workspace = true
 outbe-macros.workspace = true
 
 alloy-primitives.workspace = true
-alloy-eips.workspace = true
+alloy-eips = { workspace = true, features = ["k256"] }
 alloy-sol-types.workspace = true
 
 thiserror.workspace = true
