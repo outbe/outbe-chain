@@ -416,7 +416,15 @@ fn flush_parked_deliveries(world: &mut World) {
 
 #[cfg(feature = "ocomp-integration")]
 fn flush_parked_bid_relays(world: &mut World) {
-    let venue = venue_side(world);
+    for venue in venue_sides(world) {
+        flush_one_venue_bid_relays(&venue);
+    }
+}
+
+/// Each venue keeps its own deferred-relay queue, and the routers share an
+/// address across chains — so a flush has to be asked of the chain that parked it.
+#[cfg(feature = "ocomp-integration")]
+fn flush_one_venue_bid_relays(venue: &VenueSide) {
     let url = venue.url.clone();
     let venue_router = venue.target_router;
     let parked = eth::read_call(
