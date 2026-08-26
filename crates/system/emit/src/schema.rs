@@ -2,14 +2,15 @@
 //!
 //! Tornado-style incremental merkle tree state: no leaves, right nodes,
 //! paths, or empty hashes are ever stored. Slot assignment is by declaration
-//! order; the circular buffer occupies two slots (4–5).
+//! order; the circular buffer occupies two slots (3–4).
+//!
+//! There is deliberately no schema-version field (decision 2026-08-25): a
+//! pristine tree is exactly `leaf_count == 0`, so a version gate adds checks
+//! without adding state. A future schema change lands as a new slot or an
+//! explicit update-handler migration, not an in-place version bump.
 use alloy_primitives::B256;
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::EMIT_ADDRESS;
-
-/// The only schema version this binary understands; installed lazily by the
-/// first accepted burn.
-pub const EMIT_SCHEMA_VERSION: u32 = 1;
 
 /// Commitment-tree depth (fixed by the `outbe.emit.mint@1.0.0` circuit).
 pub const EMIT_TREE_DEPTH: usize = 20;
@@ -24,18 +25,16 @@ pub const EMIT_ROOT_WINDOW: u32 = 32;
 #[storage_schema]
 #[contract(addr = EMIT_ADDRESS)]
 pub struct EmitContract {
-    // slot 0: initialization/compatibility gate (0 = pristine, 1 = V1)
-    pub schema_version: Value<u32>,
-    // slot 1: latest commitment root
+    // slot 0: latest commitment root
     pub current_root: Value<B256>,
-    // slot 2: next append index
+    // slot 1: next append index (0 = pristine)
     pub leaf_count: Value<u32>,
-    // slot 3: one completed left subtree per level
+    // slot 2: one completed left subtree per level
     pub filled_subtrees: Map<u8, B256>,
-    // slots 4–5: last 32 root-producing appends, seeded with the empty root
+    // slots 3–4: last 32 root-producing appends, seeded with the empty root
     pub recent_roots: CircularBuffer<B256>,
-    // slot 6: permanent duplicate prevention
+    // slot 5: permanent duplicate prevention
     pub commitments: Map<B256, bool>,
-    // slot 7: permanent replay prevention
+    // slot 6: permanent replay prevention
     pub spent_nullifiers: Map<B256, bool>,
 }

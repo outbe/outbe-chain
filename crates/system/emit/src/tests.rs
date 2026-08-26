@@ -380,7 +380,6 @@ fn burn_initializes_lazily_and_emits_amount_bound_new_note() {
 
     provider.enter(|storage| {
         let emit: EmitContract<'_> = storage.contract();
-        assert_eq!(emit.schema_version.read().unwrap(), 1);
         assert_eq!(emit.leaf_count.read().unwrap(), 1);
         assert_eq!(emit.current_root.read().unwrap(), b256(reference.root()));
         assert!(emit.commitments.read(&b256(commitment)).unwrap());
@@ -431,7 +430,7 @@ fn burn_guards_revert_with_frozen_texts() {
     });
     provider.enter(|storage| {
         let emit: EmitContract<'_> = storage.contract();
-        assert_eq!(emit.schema_version.read().unwrap(), 0);
+        assert_eq!(emit.current_root.read().unwrap(), B256::ZERO);
         assert_eq!(emit.leaf_count.read().unwrap(), 0);
     });
     assert!(provider.get_events(EMIT_ADDRESS).is_empty());
@@ -1201,7 +1200,7 @@ fn stored_layout_holds_no_leaves_right_nodes_or_ladder() {
     dispatch_mint(&mut provider, BOB, &data).unwrap();
 
     // Audit the raw slots at EMIT_ADDRESS: direct writes only to the fixed
-    // slots 0, 1, 2, 4, 5 (the maps' base slots 3, 6, 7 are never written —
+    // slots 0, 1, 3, 4 (the maps' base slots 2, 5, 6 are never written —
     // their entries live under keccak-derived keys), plus keccak-derived
     // mapping/buffer data slots, and nothing else — no leaves, right nodes,
     // or ladder entries outside those namespaces.
@@ -1210,17 +1209,17 @@ fn stored_layout_holds_no_leaves_right_nodes_or_ladder() {
         if *address != EMIT_ADDRESS {
             continue;
         }
-        let fixed = slot <= &U256::from(7u64);
+        let fixed = slot <= &U256::from(6u64);
         namespaces.insert(if fixed { 1000 + slot.to::<u64>() } else { 100 });
     }
     assert_eq!(
         namespaces,
-        [1000u64, 1001, 1002, 1004, 1005, 100].into_iter().collect(),
+        [1000u64, 1001, 1003, 1004, 100].into_iter().collect(),
         "unexpected storage namespace at EMIT_ADDRESS"
     );
 
     // The leaf commitment itself is stored only inside the commitments map
-    // (slot 6), never as a tree node slot.
+    // (slot 5), never as a tree node slot.
     let leaf_word = b256(note_commitment(pool, serial, 100));
     for ((address, slot), value) in provider.storage.iter() {
         if *address != EMIT_ADDRESS {
@@ -1228,9 +1227,9 @@ fn stored_layout_holds_no_leaves_right_nodes_or_ladder() {
         }
         let word = B256::new(value.to_be_bytes::<32>());
         if word == leaf_word {
-            // keccak(6 ++ key) is far above slot 7; the fixed slots are 0..7.
+            // keccak(5 ++ key) is far above slot 6; the fixed slots are 0..6.
             assert!(
-                slot > &U256::from(7u64),
+                slot > &U256::from(6u64),
                 "the leaf commitment may live only in a mapping namespace"
             );
         }
@@ -1266,7 +1265,11 @@ fn burn_rolls_back_fully_under_fault_injection_on_pristine_and_active_trees() {
         assert!(result.is_err(), "fault {fault} must fail the burn");
         provider.enter(|storage| {
             let emit: EmitContract<'_> = storage.contract();
-            assert_eq!(emit.schema_version.read().unwrap(), 0, "fault {fault}");
+            assert_eq!(
+                emit.current_root.read().unwrap(),
+                B256::ZERO,
+                "fault {fault}"
+            );
             assert_eq!(emit.leaf_count.read().unwrap(), 0, "fault {fault}");
             assert!(
                 emit.recent_roots.read_all().unwrap().is_empty(),

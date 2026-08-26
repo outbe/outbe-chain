@@ -2,10 +2,10 @@
 //!
 //! User-facing failures are `Error(string)`-style reverts with frozen texts
 //! (the `Emit …` list in the precompile plan). Infrastructure and
-//! invariant failures — unsupported schema, a credited balance smaller than
-//! the burn, CRS initialization — map to [`PrecompileError::Fatal`] and are
-//! never converted into "invalid proof". Verification-phase backend errors
-//! are raised on caller-supplied proof bytes, cannot be distinguished from
+//! invariant failures — a credited balance smaller than the burn, CRS
+//! initialization — map to [`PrecompileError::Fatal`] and are never
+//! converted into "invalid proof". Verification-phase backend errors are
+//! raised on caller-supplied proof bytes, cannot be distinguished from
 //! rejected input at the backend seam, and therefore revert (see
 //! `runtime::mint`); promoting them to fatal would let any caller trigger a
 //! consensus-visible fatal error with a malformed proof tail.
@@ -51,9 +51,6 @@ pub enum EmitError {
     CommitmentExists,
     #[error("Emit payout balance overflow")]
     PayoutOverflow,
-    /// Fatal: the stored schema is not a version this binary understands.
-    #[error("Emit storage schema {0} is unsupported")]
-    UnsupportedSchema(u32),
     /// Fatal: revm credits `msg.value` before dispatch, so the Emit balance
     /// can never be smaller than the burn unless accounting is corrupted.
     #[error("Emit balance is smaller than the credited burn ({balance} < {credited})")]
@@ -68,9 +65,9 @@ pub enum EmitError {
 impl From<EmitError> for PrecompileError {
     fn from(error: EmitError) -> Self {
         match error {
-            EmitError::UnsupportedSchema(_)
-            | EmitError::UnderfundedBurn { .. }
-            | EmitError::VerifierUnavailable(_) => PrecompileError::Fatal(error.to_string()),
+            EmitError::UnderfundedBurn { .. } | EmitError::VerifierUnavailable(_) => {
+                PrecompileError::Fatal(error.to_string())
+            }
             _ => PrecompileError::Revert(error.to_string()),
         }
     }
