@@ -126,6 +126,47 @@ contract SolverEscrowTest is Test {
         escrow.deposit{value: 0}(address(0), 0);
     }
 
+    // ============ depositFor ============
+
+    function test_depositFor_creditsSolverAndChargesPayer() public {
+        address payer = makeAddr("payer");
+        deal(address(token), payer, 1000);
+        uint256 amount = 500;
+
+        vm.startPrank(payer);
+        token.approve(address(escrow), amount);
+
+        vm.expectEmit(true, true, false, true);
+        emit Deposited(solver, address(token), amount);
+
+        escrow.depositFor(solver, address(token), amount);
+        vm.stopPrank();
+
+        uint256 id = escrow.lockId(address(token));
+        assertEq(compact.balanceOf(solver, id), amount, "collateral must be credited to the solver");
+        assertEq(compact.balanceOf(payer, id), 0, "payer must not receive collateral");
+        assertEq(token.balanceOf(payer), 500, "payer funds the deposit");
+    }
+
+    /// @dev Operator approval must come from the recipient, not the payer: the escrow moves the
+    ///      solver's ERC6909 on lock/withdraw, so crediting a solver without it would strand it.
+    function test_depositFor_recipientWithoutOperator_reverts() public {
+        address payer = solver; // payer has operator set, recipient does not
+        address newSolver = makeAddr("newSolver");
+
+        vm.startPrank(payer);
+        token.approve(address(escrow), 100);
+        vm.expectRevert(SolverEscrow.OperatorNotApproved.selector);
+        escrow.depositFor(newSolver, address(token), 100);
+        vm.stopPrank();
+    }
+
+    function test_depositFor_zeroSolver_reverts() public {
+        vm.prank(solver);
+        vm.expectRevert(SolverEscrow.ZeroAddress.selector);
+        escrow.depositFor(address(0), address(token), 100);
+    }
+
     // ============ withdraw ERC20 ============
 
     function test_withdraw_ERC20_works() public {
