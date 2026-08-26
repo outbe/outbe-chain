@@ -148,6 +148,11 @@ pub struct IntexFactoryContract {
     /// Queue index -> which mark the notice carries; see `NOTICE_QUALIFIED`.
     #[attribute(order = 30)]
     pub notify_kind: outbe_primitives::storage::dsl::Map<u32, u8>,
+
+    // Where the next proceeds sweep resumes in the awaiting set. Settling removes
+    // entries, so a cursor past the end simply restarts the pass from zero.
+    #[attribute(order = 31)]
+    pub proceeds_sweep_cursor: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl IntexFactoryContract<'_> {

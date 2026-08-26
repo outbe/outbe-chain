@@ -57,6 +57,11 @@ pub const BIN_STEP_BP: u16 = 25;
 pub(crate) const MAX_GROUP_DECISIONS_PER_SWEEP: u32 = 256;
 pub(crate) const MAX_SERIES_ACTIONS_PER_SWEEP: u32 = 256;
 
+/// Series the proceeds sweep settles per block. Smaller than the lifecycle caps
+/// above because one settlement is heavier than one series action: it can open a
+/// payout round, burn, or start a distribution.
+pub(crate) const MAX_PROCEEDS_SETTLED_PER_BLOCK: u32 = 32;
+
 /// Queue entries drained per `intex_notify` firing. Bounds entries taken from the queue, not the sends
 /// they produce. It also sets how fast a called day reaches its targets, and the call deadline runs from
 /// the origin's stamp, so a backlog spends the holder's notice window rather than deferring it.

@@ -16,8 +16,9 @@ use outbe_vaultrouter::api::IVaultRouter;
 
 use crate::config;
 use crate::constants::{
-    DIST_CHUNK_LIMIT, INTEX_NFT1155_ADDRESS, MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE,
-    ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS,
+    DIST_CHUNK_LIMIT, INTEX_NFT1155_ADDRESS, MAX_PROCEEDS_SETTLED_PER_BLOCK,
+    MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE, ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY,
+    PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -612,15 +613,30 @@ fn decode_contributor_leaf(
     }
 }
 
-/// Begin-block sweep: settle every series whose proceeds fan-in deadline has
-/// passed. Each series runs in its own checkpoint so one failure is retried next
-/// block instead of halting the block.
+/// Begin-block sweep: settle series whose proceeds fan-in deadline has passed,
+/// a bounded slice per block resuming from a persisted cursor. Each series runs
+/// in its own checkpoint so one failure is retried next block instead of halting
+/// the block.
 pub(crate) fn sweep_proceeds_deadlines(storage: &StorageHandle<'_>, now: u64) -> Result<()> {
     let count = outbe_intex::api::awaiting_proceeds_count(storage)?;
-    let mut worldwide_days = Vec::with_capacity(count as usize);
-    for i in 0..count {
+    if count == 0 {
+        return Ok(());
+    }
+    let factory = IntexFactoryContract::new(storage.clone());
+    let cursor = factory.proceeds_sweep_cursor.read()?;
+    // The set shrinks as days settle, so a cursor left past the end restarts.
+    let start = if cursor >= count { 0 } else { cursor };
+    let end = start
+        .saturating_add(MAX_PROCEEDS_SETTLED_PER_BLOCK)
+        .min(count);
+    // Read the slice before settling: settling swap-removes from the same set.
+    let mut worldwide_days = Vec::with_capacity((end - start) as usize);
+    for i in start..end {
         worldwide_days.push(outbe_intex::api::awaiting_proceeds_at(storage, i)?);
     }
+    factory
+        .proceeds_sweep_cursor
+        .write(if end >= count { 0 } else { end })?;
     for worldwide_day in worldwide_days {
         let res = storage.with_checkpoint(|| try_settle_proceeds(storage, worldwide_day, now));
         if let Err(e) = res {

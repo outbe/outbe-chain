@@ -973,3 +973,42 @@ fn late_proceeds_after_an_ownerless_certified_day_burn() {
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
     });
 }
+
+#[test]
+fn the_proceeds_sweep_takes_a_bounded_slice_and_resumes() {
+    use crate::constants::MAX_PROCEEDS_SETTLED_PER_BLOCK as CAP;
+    with_factory(|s| {
+        let total = CAP + 5;
+        for i in 0..total {
+            outbe_intex::api::arm_proceeds(
+                &s,
+                WorldwideDay::new(2026_0101 + i),
+                &[10],
+                DEADLINE_FUTURE,
+            )
+            .unwrap();
+        }
+        let factory = crate::schema::IntexFactoryContract::new(s.clone());
+        assert_eq!(
+            outbe_intex::api::awaiting_proceeds_count(&s).unwrap(),
+            total
+        );
+
+        // Before the deadline nothing settles, so the set is unchanged and only
+        // the cursor moves — which is exactly what bounds the block's work.
+        runtime::sweep_proceeds_deadlines(&s, DEADLINE_FUTURE - 1).unwrap();
+        assert_eq!(factory.proceeds_sweep_cursor.read().unwrap(), CAP);
+        assert_eq!(
+            outbe_intex::api::awaiting_proceeds_count(&s).unwrap(),
+            total
+        );
+
+        // The second pass reaches the end and wraps, so the tail is not starved.
+        runtime::sweep_proceeds_deadlines(&s, DEADLINE_FUTURE - 1).unwrap();
+        assert_eq!(factory.proceeds_sweep_cursor.read().unwrap(), 0);
+        assert_eq!(
+            outbe_intex::api::awaiting_proceeds_count(&s).unwrap(),
+            total
+        );
+    });
+}
