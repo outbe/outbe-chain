@@ -18,7 +18,7 @@ use crate::constants::{
     DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_REFERENCE_PRICES,
     MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS,
     PROMIS_LOAD_ANCHOR_DIGITS, PROMIS_LOAD_ANCHOR_ISO, PROMIS_LOAD_BAND_BPS,
-    PROMIS_LOAD_LAUNCH_EXPONENT, PROMIS_LOAD_OVERRIDE, REFUND_CHUNK_LEN,
+    PROMIS_LOAD_OVERRIDE, REFUND_CHUNK_LEN,
     REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
@@ -158,14 +158,15 @@ fn step_promis_load(
     }
     let current = contract.read_promis_load_exponent()?;
     // An unpriced anchor leaves the ladder where it is; Metadosis has already
-    // announced the currency it could not price.
+    // announced the currency it could not price. With nothing stored either, the
+    // widest load is the honest answer: this day cannot be priced at all.
     let Some(rate) = reference_prices
         .iter()
         .find(|row| row.iso_code == PROMIS_LOAD_ANCHOR_ISO)
         .map(|row| row.entry_price_minor)
     else {
         return Ok(promis_load_minor(
-            current.unwrap_or(PROMIS_LOAD_LAUNCH_EXPONENT),
+            current.unwrap_or(PROMIS_LOAD_MAX_EXPONENT),
         ));
     };
     let exponent = promis_load_exponent(current, rate);

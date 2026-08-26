@@ -22,9 +22,6 @@ pub const PROMIS_LOAD_ANCHOR_DIGITS: u32 = 15;
 /// Deadband at each decade boundary, so a rate loitering there stops flipping the load.
 pub const PROMIS_LOAD_BAND_BPS: u32 = 200;
 
-/// Decade the ladder starts on before any day has been priced: 100k PROMIS per Intex.
-pub const PROMIS_LOAD_LAUNCH_EXPONENT: u32 = 11;
-
 /// Fixed load bypassing the ladder: an e2e day cannot afford one laddered Intex.
 #[cfg(not(feature = "e2e-test"))]
 pub const PROMIS_LOAD_OVERRIDE: Option<u128> = None;
