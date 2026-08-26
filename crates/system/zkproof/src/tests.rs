@@ -328,7 +328,9 @@ fn dispatch_groth16_unknown_circuit_returns_zero_bytes() {
 
 // ---- emit mint -----------------------------------------------------------
 
-use crate::verify::{decode_emit_mint_public_inputs, verify_emit_mint, EMIT_MINT_MAX_COMBINED_LEN};
+use crate::verify::{
+    decode_emit_mint_public_inputs, verify_emit_mint, EMIT_MINT_COMBINED_LEN, EMIT_MINT_PROOF_WORDS,
+};
 
 const EMIT_MINT_FIELD_WORDS: usize = 25;
 
@@ -370,7 +372,7 @@ fn combined_emit_proof(words: &[[u8; 32]; EMIT_MINT_FIELD_WORDS], proof_words: u
 #[test]
 fn emit_mint_public_inputs_are_decoded_in_circuit_order() {
     let words = valid_emit_words();
-    let proof = combined_emit_proof(&words, 64);
+    let proof = combined_emit_proof(&words, EMIT_MINT_PROOF_WORDS);
 
     let decoded = decode_emit_mint_public_inputs(&proof).unwrap();
 
@@ -385,7 +387,7 @@ fn emit_mint_public_inputs_are_decoded_in_circuit_order() {
 #[test]
 fn emit_mint_rejects_wrong_public_input_count() {
     for count in [24u32, 26u32] {
-        let mut proof = combined_emit_proof(&valid_emit_words(), 1);
+        let mut proof = combined_emit_proof(&valid_emit_words(), EMIT_MINT_PROOF_WORDS);
         proof[..4].copy_from_slice(&count.to_be_bytes());
         assert!(matches!(
             decode_emit_mint_public_inputs(&proof),
@@ -396,38 +398,50 @@ fn emit_mint_rejects_wrong_public_input_count() {
 
 #[test]
 fn emit_mint_rejects_truncated_public_inputs() {
-    let proof = combined_emit_proof(&valid_emit_words(), 1);
-    // Longer than the 4-byte header, shorter than the 804-byte public prefix.
+    let proof = combined_emit_proof(&valid_emit_words(), EMIT_MINT_PROOF_WORDS);
+    // The exact-length gate fires first for anything that is not the frozen
+    // wire format — including blobs shorter than the public prefix.
     assert!(matches!(
         decode_emit_mint_public_inputs(&proof[..500]),
-        Err(ZkProofError::TruncatedPublicInputs { .. })
+        Err(ZkProofError::WrongCombinedProofLength { actual: 500, .. })
     ));
 }
 
 #[test]
-fn emit_mint_rejects_oversized_combined_proof() {
-    // The cap sits on the whole blob, not the proof tail: pad a valid framing
-    // past `EMIT_MINT_MAX_COMBINED_LEN` with aligned words.
+fn emit_mint_accepts_exactly_the_frozen_length() {
     let words = valid_emit_words();
-    let tail_words = (EMIT_MINT_MAX_COMBINED_LEN - 4 - 32 * EMIT_MINT_FIELD_WORDS) / 32 + 1;
-    let proof = combined_emit_proof(&words, tail_words);
-    assert!(proof.len() > EMIT_MINT_MAX_COMBINED_LEN);
-    assert!(matches!(
-        decode_emit_mint_public_inputs(&proof),
-        Err(ZkProofError::CombinedProofTooLarge { actual, .. }) if actual == proof.len()
-    ));
-}
-
-#[test]
-fn emit_mint_accepts_the_largest_aligned_length_within_the_cap() {
-    let words = valid_emit_words();
-    // 16,384 is not of the form 4 + 32·k, so the largest aligned blob within
-    // the cap is 4 + 32·511 = 16,356 bytes.
-    let tail_words = 511 - EMIT_MINT_FIELD_WORDS;
-    let proof = combined_emit_proof(&words, tail_words);
-    assert_eq!(proof.len(), 16_356);
-    assert!(proof.len() <= EMIT_MINT_MAX_COMBINED_LEN);
+    let proof = combined_emit_proof(&words, EMIT_MINT_PROOF_WORDS);
+    assert_eq!(proof.len(), EMIT_MINT_COMBINED_LEN);
     assert!(decode_emit_mint_public_inputs(&proof).is_ok());
+}
+
+#[test]
+fn emit_mint_rejects_any_non_frozen_length() {
+    let words = valid_emit_words();
+    // Empty, short, unaligned, one-word-over — every deviation from the
+    // frozen transcript length is the same error.
+    for tail_words in [
+        0usize,
+        1,
+        EMIT_MINT_PROOF_WORDS - 1,
+        EMIT_MINT_PROOF_WORDS + 1,
+    ] {
+        let proof = combined_emit_proof(&words, tail_words);
+        assert!(
+            matches!(
+                decode_emit_mint_public_inputs(&proof),
+                Err(ZkProofError::WrongCombinedProofLength { expected, actual })
+                    if expected == EMIT_MINT_COMBINED_LEN && actual == proof.len()
+            ),
+            "tail {tail_words} words must fail the exact-length gate"
+        );
+    }
+    let mut unaligned = combined_emit_proof(&words, EMIT_MINT_PROOF_WORDS);
+    unaligned.push(0);
+    assert!(matches!(
+        decode_emit_mint_public_inputs(&unaligned),
+        Err(ZkProofError::WrongCombinedProofLength { .. })
+    ));
 }
 
 #[test]
@@ -439,7 +453,7 @@ fn emit_mint_rejects_non_canonical_field_word() {
     for slot in [1usize, 2, 24] {
         let mut words = valid_emit_words();
         words[slot] = modulus_bytes;
-        let proof = combined_emit_proof(&words, 1);
+        let proof = combined_emit_proof(&words, EMIT_MINT_PROOF_WORDS);
         assert!(matches!(
             decode_emit_mint_public_inputs(&proof),
             Err(ZkProofError::NonCanonicalPublicInput(index)) if index == slot
@@ -451,7 +465,7 @@ fn emit_mint_rejects_non_canonical_field_word() {
 fn emit_mint_rejects_invalid_chain_id_word() {
     let mut words = valid_emit_words();
     words[0][0] = 1;
-    let proof = combined_emit_proof(&words, 1);
+    let proof = combined_emit_proof(&words, EMIT_MINT_PROOF_WORDS);
     assert!(matches!(
         decode_emit_mint_public_inputs(&proof),
         Err(ZkProofError::InvalidEmitChainId)
@@ -462,7 +476,7 @@ fn emit_mint_rejects_invalid_chain_id_word() {
 fn emit_mint_rejects_invalid_owner_byte_word() {
     let mut words = valid_emit_words();
     words[7][0] = 1;
-    let proof = combined_emit_proof(&words, 1);
+    let proof = combined_emit_proof(&words, EMIT_MINT_PROOF_WORDS);
     assert!(matches!(
         decode_emit_mint_public_inputs(&proof),
         Err(ZkProofError::InvalidEmitOwnerByte(7))
@@ -473,30 +487,10 @@ fn emit_mint_rejects_invalid_owner_byte_word() {
 fn emit_mint_rejects_invalid_mint_units_word() {
     let mut words = valid_emit_words();
     words[23][0] = 1;
-    let proof = combined_emit_proof(&words, 1);
+    let proof = combined_emit_proof(&words, EMIT_MINT_PROOF_WORDS);
     assert!(matches!(
         decode_emit_mint_public_inputs(&proof),
         Err(ZkProofError::InvalidEmitMintUnits)
-    ));
-}
-
-#[test]
-fn emit_mint_rejects_empty_proof_section() {
-    let words = valid_emit_words();
-    let proof = combined_emit_proof(&words, 0);
-    assert!(matches!(
-        decode_emit_mint_public_inputs(&proof),
-        Err(ZkProofError::EmptyProofSection)
-    ));
-}
-
-#[test]
-fn emit_mint_rejects_unaligned_proof_section() {
-    let mut proof = combined_emit_proof(&valid_emit_words(), 1);
-    proof.push(0);
-    assert!(matches!(
-        decode_emit_mint_public_inputs(&proof),
-        Err(ZkProofError::UnalignedProofSection(33))
     ));
 }
 

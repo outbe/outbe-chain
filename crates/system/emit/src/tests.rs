@@ -268,9 +268,9 @@ fn prove_mint(
     combined_from(&public, &proof.proof)
 }
 
-/// A well-framed combined blob embedding exactly the given statement words
-/// plus a nonzero proof tail; passes the decoder but is not a valid proof.
-/// Used only for guards that fire before verification.
+/// A combined blob of the frozen exact length embedding exactly the given
+/// statement words plus a padded proof tail; passes the decoder but is not a
+/// valid proof. Used only for guards that fire before verification.
 fn fabricated_statement(
     chain_id: u64,
     root: B256,
@@ -279,7 +279,7 @@ fn fabricated_statement(
     units: u64,
     change: B256,
 ) -> Vec<u8> {
-    let mut combined = Vec::with_capacity(4 + 32 * 26);
+    let mut combined = Vec::with_capacity(outbe_zkproof::EMIT_MINT_COMBINED_LEN);
     combined.extend_from_slice(&25u32.to_be_bytes());
     combined.extend_from_slice(&u64_word(chain_id));
     for word in [root, nullifier] {
@@ -292,7 +292,12 @@ fn fabricated_statement(
     }
     combined.extend_from_slice(&u64_word(units));
     combined.extend_from_slice(change.as_slice());
-    combined.extend_from_slice(&[7u8; 32]);
+    // Pad the proof tail to the frozen circuit's exact combined length so
+    // the blob passes decoder framing and the guard under test is what fires.
+    let tail_words = (outbe_zkproof::EMIT_MINT_COMBINED_LEN - combined.len()) / 32;
+    for _ in 0..tail_words {
+        combined.extend_from_slice(&[7u8; 32]);
+    }
     combined
 }
 
@@ -757,7 +762,7 @@ fn mint_wrong_caller_recipient_owner_units_and_chain_id_revert() {
 }
 
 #[test]
-fn mint_refuses_value_and_preflight_bounds_the_proof_argument() {
+fn mint_refuses_value_and_rejects_non_frozen_proof_lengths() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     run_burn(&mut provider, ALICE, 100, b256(scenario_serial())).unwrap();
     let proof = fabricated_statement(
@@ -785,36 +790,44 @@ fn mint_refuses_value_and_preflight_bounds_the_proof_argument() {
         assert_revert(result, "non-payable function called with value");
     });
 
-    // Non-canonical dynamic offset.
+    // ABI framing is Alloy's job now: a non-canonical dynamic offset is a
+    // plain decode revert (alloy's own error text) and must not touch state.
     let mut bad_offset = data.clone();
     bad_offset[4 + 7 * 32 + 31] = 8; // offset 8 ≠ 256
     let result = dispatch_mint(&mut provider, BOB, &bad_offset);
+    match result {
+        Err(PrecompileError::Revert(_)) => {}
+        other => panic!("non-canonical offset must decode-revert, got {other:?}"),
+    }
+
+    // The frozen circuit's exact proof length is enforced by the decoder and
+    // surfaces through the frozen malformed-proof text.
+    let mut short = proof.clone();
+    short.truncate(short.len() - 32);
+    let data = mint_calldata(
+        CAROL,
+        CHAIN_ID,
+        small_word(2),
+        small_word(3),
+        BOB,
+        40,
+        small_word(25),
+        &short,
+    );
+    let result = dispatch_mint(&mut provider, BOB, &data);
     assert_revert(
         result,
-        "Emit mint proof is malformed: non-canonical proof offset",
+        &format!(
+            "Emit mint proof is malformed: zk_verify: combined proof length is {} bytes, expected {}",
+            outbe_zkproof::EMIT_MINT_COMBINED_LEN - 32,
+            outbe_zkproof::EMIT_MINT_COMBINED_LEN
+        ),
     );
 
-    // Oversized proof length word.
-    let mut oversized = data.clone();
-    let mut len = [0u8; 32];
-    len[24..32].copy_from_slice(&16_385u64.to_be_bytes());
-    oversized[4 + 8 * 32..4 + 9 * 32].copy_from_slice(&len);
-    let result = dispatch_mint(&mut provider, BOB, &oversized);
-    assert_revert(
-        result,
-        "Emit mint proof is malformed: proof length outside the accepted range",
-    );
-
-    // Length word pointing past the calldata end.
-    let mut truncated = data;
-    let mut far = [0u8; 32];
-    far[24..32].copy_from_slice(&1_000u64.to_be_bytes());
-    truncated[4 + 8 * 32..4 + 9 * 32].copy_from_slice(&far);
-    let result = dispatch_mint(&mut provider, BOB, &truncated);
-    assert_revert(
-        result,
-        "Emit mint proof is malformed: proof section is truncated",
-    );
+    provider.enter(|storage| {
+        let emit: EmitContract<'_> = storage.contract();
+        assert_eq!(emit.leaf_count.read().unwrap(), 1);
+    });
 }
 
 // ---- real-proof transitions ------------------------------------------------
