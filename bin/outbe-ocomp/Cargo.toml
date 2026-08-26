@@ -24,6 +24,7 @@ clap.workspace = true
 hex.workspace = true
 k256.workspace = true
 libc.workspace = true
+metrics.workspace = true
 outbe-common.workspace = true
 outbe-compressed-entities.workspace = true
 outbe-consensus.workspace = true
@@ -46,6 +47,7 @@ serde_json.workspace = true
 sha3.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 zeroize.workspace = true
 zeromq.workspace = true
 

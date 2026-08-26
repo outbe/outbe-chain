@@ -652,9 +652,19 @@ impl EmbeddedOcompDomainV1 {
                         }
                         Ok(_) => thread::sleep(RETRY_INTERVAL),
                         Err(error) if error.class() == VoteSubmissionFailureClassV1::Retryable => {
+                            metrics::counter!(
+                                "outbe_ocomp_vote_submission_failures_total",
+                                "class" => "retryable"
+                            )
+                            .increment(1);
                             thread::sleep(RETRY_INTERVAL);
                         }
                         Err(error) => {
+                            metrics::counter!(
+                                "outbe_ocomp_vote_submission_failures_total",
+                                "class" => "unrecoverable"
+                            )
+                            .increment(1);
                             let _ = sender.send(EmbeddedVoteOutcomeV1::Unrecoverable {
                                 job_id,
                                 generation,
