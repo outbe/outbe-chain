@@ -55,6 +55,8 @@ sol! {
         function flushPendingBidsRelay(uint256 idx) external;
         function parkedSend(uint256 idx) external view returns (ParkedSend memory);
         function flushPendingSend(uint256 idx) external;
+        function nextParkedIdx() external view returns (uint256);
+        function retryDelivery(uint256 idx) external;
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]

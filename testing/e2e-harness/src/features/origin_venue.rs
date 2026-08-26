@@ -372,6 +372,36 @@ fn committee_clock_settles(world: &mut World) {
 /// that would be a nested send in the same transaction — so it parks the relay
 /// for a permissionless retry. Production has a keeper for this; the run does it
 /// itself.
+/// The loopback adapter isolates a failed delivery by parking it, and a real
+/// transport is what retries. Nothing plays that part in a localnet, so the
+/// scenario does: retrying is permissionless and a still-broken delivery simply
+/// parks again.
+#[cfg(feature = "ocomp-integration")]
+fn flush_parked_deliveries(world: &mut World) {
+    let url = world.rpc.url(world.validators.primary_port());
+    let Some(loopback) = world
+        .state
+        .origin_contracts
+        .clone()
+        .map(|contracts| contracts.loopback)
+    else {
+        return;
+    };
+    let parked =
+        eth::read_call(&url, loopback, &IParkedWork::nextParkedIdxCall {}).unwrap_or_default();
+    let mut idx = U256::ZERO;
+    while idx < parked {
+        let _ = eth::send_call(
+            &url,
+            loopback,
+            crate::world::forge::DEPLOYER_KEY,
+            &IParkedWork::retryDeliveryCall { idx },
+            None,
+        );
+        idx += U256::from(1);
+    }
+}
+
 #[cfg(feature = "ocomp-integration")]
 fn flush_parked_bid_relays(world: &mut World) {
     let venue = venue_side(world);
@@ -494,6 +524,7 @@ fn auction_clears(world: &mut World) {
             return;
         }
         flush_parked_bid_relays(world);
+        flush_parked_deliveries(world);
         assert_ne!(stage, Some(6), "Desis cancelled day {worldwide_day}");
         assert!(
             Instant::now() < deadline,
