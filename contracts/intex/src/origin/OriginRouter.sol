@@ -4,7 +4,6 @@ pragma solidity 0.8.30;
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
@@ -230,15 +229,10 @@ contract OriginRouter is
         if (!_isSeriesTarget(worldwideDay, dstChainId)) revert NotSeriesTarget(worldwideDay, dstChainId);
     }
 
-    /// @dev Reverts `InvalidDesisInterface(_desis)` if the target is an EOA or does not advertise `IDesis` via
-    ///      ERC-165. Catches the common operator mistake of wiring a typo'd address that would brick inbound.
+    /// @dev Reverts `InvalidDesisInterface(_desis)` if the target is an EOA. The ERC-165 probe is off: a node
+    ///      older than the current `IDesis` advertises a stale interface id and would fail the wire.
     function _assertDesisInterface(address _desis) private view {
         if (_desis.code.length == 0) revert InvalidDesisInterface(_desis);
-        try IERC165(_desis).supportsInterface(type(IDesis).interfaceId) returns (bool supported) {
-            if (!supported) revert InvalidDesisInterface(_desis);
-        } catch {
-            revert InvalidDesisInterface(_desis);
-        }
     }
 
     // --- Quote ---

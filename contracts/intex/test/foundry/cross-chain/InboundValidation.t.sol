@@ -248,20 +248,13 @@ contract InboundValidationTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // OriginRouter.wire() — Desis interface probe
+    // OriginRouter.wire() — Desis code probe
     // ---------------------------------------------------------------
 
     function test_OM_Wire_EOA_RevertsInvalidDesisInterface() public {
         OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.InvalidDesisInterface.selector, address(0xBEEF)));
         fresh.wire(address(0xBEEF), intexFactory);
-    }
-
-    function test_OM_Wire_NonIDesisContract_RevertsInvalidDesisInterface() public {
-        // IntexAuction is a contract but does not advertise IDesis via ERC-165.
-        OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin);
-        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.InvalidDesisInterface.selector, address(auction)));
-        fresh.wire(address(auction), intexFactory);
     }
 
     function test_OM_Wire_MockContracts_Succeeds() public {
