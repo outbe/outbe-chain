@@ -492,7 +492,7 @@ mod tests {
             .unwrap_or_default();
         let expected_snapshot = CommitteeSnapshot {
             committee,
-            vrf_material_version: verifier.active_vrf_material_version(),
+            vrf_material_version: verifier.expected_vrf_material_version(),
             vrf_group_public_key_bytes: vrf_bytes,
             vrf_public_polynomial_hash: B256::ZERO,
         };
@@ -504,7 +504,7 @@ mod tests {
         assert_ne!(record.committee_set_hash, B256::ZERO);
         assert_eq!(
             record.vrf_material_version,
-            verifier.active_vrf_material_version()
+            verifier.expected_vrf_material_version()
         );
 
         // The record projects to canonical V2 metadata Phase 1 consumes.

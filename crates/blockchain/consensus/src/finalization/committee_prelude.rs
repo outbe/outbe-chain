@@ -57,7 +57,7 @@ pub fn build_committee_prelude(
     addresses: &[Address],
     epoch: u64,
 ) -> Result<CommitteePrelude, SnapshotBuildError> {
-    let vrf_material_version = scheme.active_vrf_material_version();
+    let vrf_material_version = scheme.expected_vrf_material_version();
     let vrf_group_public_key_bytes: Vec<u8> = scheme
         .identity()
         .map(|pk| pk.encode().as_ref().to_vec())
@@ -149,7 +149,7 @@ mod tests {
         );
         assert_eq!(
             prelude.vrf_material_version,
-            scheme.active_vrf_material_version()
+            scheme.expected_vrf_material_version()
         );
     }
 

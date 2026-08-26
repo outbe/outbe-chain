@@ -67,8 +67,14 @@ fn ordered_addresses() -> Vec<Address> {
     ]
 }
 
-/// Build a valid Notarization over a proposal with payload = sha256("test-payload").
-fn valid_notarization() -> Notarization<HybridScheme<MinSig>, OutbeDigest> {
+type NotarizationFixture = (
+    Notarization<HybridScheme<MinSig>, OutbeDigest>,
+    HybridScheme<MinSig>,
+    Set<bls12381::PublicKey>,
+);
+
+/// Build a valid Notarization and the exact verifier/material that produced it.
+fn valid_notarization() -> NotarizationFixture {
     let (keys, participants) = test_participants(3);
     let dkg = bootstrap_dkg(3).unwrap();
     let schemes: Vec<HybridScheme<MinSig>> = keys
@@ -87,7 +93,8 @@ fn valid_notarization() -> Notarization<HybridScheme<MinSig>, OutbeDigest> {
         })
         .collect();
     let verifier =
-        HybridScheme::<MinSig>::verifier(b"reporter-test", participants, dkg.polynomial).unwrap();
+        HybridScheme::<MinSig>::verifier(b"reporter-test", participants.clone(), dkg.polynomial)
+            .unwrap();
     let payload = OutbeDigest::from(alloy_primitives::B256::from_slice(
         Sha256::hash(b"test-payload").as_ref(),
     ));
@@ -106,22 +113,21 @@ fn valid_notarization() -> Notarization<HybridScheme<MinSig>, OutbeDigest> {
     let certificate = verifier
         .assemble::<_, N3f1>(attestations, &Sequential)
         .unwrap();
-    Notarization {
-        proposal,
-        certificate,
-    }
-}
-
-fn verifier_scheme() -> HybridScheme<MinSig> {
-    let (_, participants) = test_participants(3);
-    let dkg = bootstrap_dkg(3).unwrap();
-    HybridScheme::<MinSig>::verifier(b"reporter-test", participants, dkg.polynomial).unwrap()
+    (
+        Notarization {
+            proposal,
+            certificate,
+        },
+        verifier,
+        participants,
+    )
 }
 
 fn build_reporter(
     witness_sink: Arc<dyn CertificationWitnessSink>,
+    verifier: HybridScheme<MinSig>,
+    participants: &Set<bls12381::PublicKey>,
 ) -> (OutbeReporter, mpsc::UnboundedReceiver<FinalizationMessage>) {
-    let (_, participants) = test_participants(3);
     // certified-notarization persistence is enqueued to the
     // FinalizationActor mailbox; the test keeps the receiver to drain it.
     let (tx, rx) = mpsc::unbounded::<FinalizationMessage>();
@@ -140,8 +146,8 @@ fn build_reporter(
         ordered_addresses(),
         FinalizationMailbox::from_sender(tx),
         None,
-        verifier_scheme(),
-        HybridRandom::default().build(&participants),
+        verifier,
+        HybridRandom::default().build(participants),
         Epoch::new(0),
         witness_sink,
         verify_mailbox,
@@ -166,8 +172,8 @@ fn drain_certification_writes(
 #[tokio::test(flavor = "current_thread")]
 async fn reporter_fanout_persists_certification_activity_before_marshal_filter() {
     let store = FinalizedParentCertStore::new();
-    let (mut reporter, mut rx) = build_reporter(Arc::new(store.clone()));
-    let notarization = valid_notarization();
+    let (notarization, verifier, participants) = valid_notarization();
+    let (mut reporter, mut rx) = build_reporter(Arc::new(store.clone()), verifier, &participants);
     let parent_hash = notarization.proposal.payload.0;
     let proof_key = CertifiedParentProofKey::new(0, 2, parent_hash);
 
@@ -203,7 +209,7 @@ async fn proof_store_ingestion_verifies_certification_activity_before_write() {
     // Build a structurally valid notarization, then tamper the proposal so the
     // certificate signature no longer matches the proposal subject. The
     // reporter must drop the activity without writing.
-    let mut notarization = valid_notarization();
+    let (mut notarization, verifier, participants) = valid_notarization();
     // Swap the proposal payload — the cert was signed for the original
     // payload; the verifier will reject the post-mutation Notarization.
     let original_hash = notarization.proposal.payload.0;
@@ -214,7 +220,7 @@ async fn proof_store_ingestion_verifies_certification_activity_before_write() {
     assert_ne!(original_hash, tampered_hash);
 
     let store = FinalizedParentCertStore::new();
-    let (mut reporter, mut rx) = build_reporter(Arc::new(store.clone()));
+    let (mut reporter, mut rx) = build_reporter(Arc::new(store.clone()), verifier, &participants);
 
     let _ = reporter.report(Activity::Certification(notarization));
     // A verify failure drops on-thread before enqueue, so draining finds
@@ -241,8 +247,8 @@ async fn proof_store_ingestion_verifies_certification_activity_before_write() {
 #[tokio::test(flavor = "current_thread")]
 async fn reporter_handle_certification_records_witness_flag_true() {
     let store = FinalizedParentCertStore::new();
-    let (mut reporter, mut rx) = build_reporter(Arc::new(store.clone()));
-    let notarization = valid_notarization();
+    let (notarization, verifier, participants) = valid_notarization();
+    let (mut reporter, mut rx) = build_reporter(Arc::new(store.clone()), verifier, &participants);
     let parent_hash = notarization.proposal.payload.0;
     let _ = reporter.report(Activity::Certification(notarization));
     drain_certification_writes(&mut rx, &store);
@@ -279,8 +285,8 @@ async fn reporter_marks_witness_through_narrow_sink() {
     // proving the narrow seam is the path, and that the reporter is mockable
     // without standing up a real store.
     let sink = Arc::new(CountingWitnessSink::default());
-    let (mut reporter, mut rx) = build_reporter(sink.clone());
-    let notarization = valid_notarization();
+    let (notarization, verifier, participants) = valid_notarization();
+    let (mut reporter, mut rx) = build_reporter(sink.clone(), verifier, &participants);
     let parent_hash = notarization.proposal.payload.0;
 
     let _ = reporter.report(Activity::Certification(notarization));

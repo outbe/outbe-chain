@@ -108,6 +108,131 @@ enum StackShutdownOrNetworkExit {
     NetworkExit,
 }
 
+#[derive(Debug)]
+enum EpochLoopOutcome {
+    RestartEpoch,
+    GlobalStop,
+    EngineExit(Result<(), commonware_runtime::Error>),
+    StackExit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EpochLoopAction {
+    RestartEpoch,
+    ExitStack,
+}
+
+const STACK_ENGINE_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
+async fn drain_engine_with_deadline<E>(
+    ctx: &E,
+    engine: &mut commonware_runtime::Handle<()>,
+) -> Result<()>
+where
+    E: Clock,
+{
+    let deadline = ctx.sleep(STACK_ENGINE_DRAIN_TIMEOUT);
+    tokio::pin!(deadline);
+
+    tokio::select! {
+        biased;
+        engine_result = &mut *engine => {
+            engine_result.map_err(|error| {
+                eyre::eyre!("simplex engine failed while draining: {error:?}")
+            })
+        }
+        _ = &mut deadline => {
+            engine.abort();
+            let _ = (&mut *engine).await;
+            Err(eyre::eyre!(
+                "timed out after {:?} while draining simplex engine",
+                STACK_ENGINE_DRAIN_TIMEOUT
+            ))
+        }
+    }
+}
+
+async fn signal_global_stop_and_drain_engine<E>(
+    ctx: &E,
+    engine: &mut commonware_runtime::Handle<()>,
+) -> Result<()>
+where
+    E: Clock + Spawner,
+{
+    let stop_handle = ctx
+        .child("terminal_stack_stop")
+        .spawn(|shutdown| async move { shutdown.stop(0, Some(STACK_ENGINE_DRAIN_TIMEOUT)).await });
+    let engine_result = drain_engine_with_deadline(ctx, engine).await;
+
+    let stop_result = stop_handle
+        .await
+        .map_err(|error| eyre::eyre!("terminal stack stop task failed: {error:?}"))?
+        .map_err(|error| eyre::eyre!("terminal stack stop failed: {error:?}"));
+
+    match (engine_result, stop_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(engine_error), Err(stop_error)) => Err(eyre::eyre!(
+            "simplex engine drain failed: {engine_error:#}; terminal stack stop also failed: {stop_error:#}"
+        )),
+    }
+}
+
+async fn signal_global_stop_after_engine_exit<E>(ctx: &E) -> Result<()>
+where
+    E: Clock + Spawner,
+{
+    ctx.child("terminal_stack_stop")
+        .stop(0, Some(STACK_ENGINE_DRAIN_TIMEOUT))
+        .await
+        .map_err(|error| eyre::eyre!("terminal stack stop failed: {error:?}"))
+}
+
+fn preserve_stack_result_after_drain<T>(result: Result<T>, drain_result: Result<()>) -> Result<T> {
+    match (result, drain_result) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Ok(_), Err(drain_error)) => Err(drain_error),
+        (Err(error), Ok(())) => Err(error),
+        (Err(error), Err(drain_error)) => Err(error.wrap_err(format!(
+            "additional failure while draining the consensus stack: {drain_error:#}"
+        ))),
+    }
+}
+
+async fn supervise_epoch_loop_result<E>(
+    ctx: &E,
+    outcome: Result<EpochLoopOutcome>,
+    engine: &mut commonware_runtime::Handle<()>,
+) -> Result<EpochLoopAction>
+where
+    E: Clock + Spawner,
+{
+    match outcome {
+        Ok(EpochLoopOutcome::RestartEpoch) => Ok(EpochLoopAction::RestartEpoch),
+        Ok(EpochLoopOutcome::GlobalStop) => {
+            drain_engine_with_deadline(ctx, engine).await?;
+            Ok(EpochLoopAction::ExitStack)
+        }
+        Ok(EpochLoopOutcome::EngineExit(engine_result)) => {
+            let engine_result = engine_result
+                .map(|()| EpochLoopAction::ExitStack)
+                .map_err(|error| eyre::eyre!("simplex engine exited: {error:?}"));
+            preserve_stack_result_after_drain(
+                engine_result,
+                signal_global_stop_after_engine_exit(ctx).await,
+            )
+        }
+        Ok(EpochLoopOutcome::StackExit) => preserve_stack_result_after_drain(
+            Ok(EpochLoopAction::ExitStack),
+            signal_global_stop_and_drain_engine(ctx, engine).await,
+        ),
+        Err(error) => preserve_stack_result_after_drain(
+            Err(error),
+            signal_global_stop_and_drain_engine(ctx, engine).await,
+        ),
+    }
+}
+
 /// Give global shutdown ownership of the current Simplex engine before a
 /// sibling network exit can tear down the stack subtree.
 async fn wait_for_stack_shutdown_or_network_exit<S, N>(
@@ -4537,9 +4662,10 @@ where
         // ── g. Engine event loop ────────────────────────────────────────
         // Monitors engine, component exits, and block-height-driven reshare triggers.
 
-        let mut stack_shutdown = ctx.stopped();
+        let epoch_loop_result: Result<EpochLoopOutcome> = async {
+            let mut stack_shutdown = ctx.stopped();
 
-        loop {
+            loop {
             tokio::select! {
                 biased;
 
@@ -4550,12 +4676,11 @@ where
                     match lifecycle {
                         StackShutdownOrNetworkExit::GlobalStop => {
                             info!(epoch = %current_epoch, "global stop received; draining simplex engine");
-                            let _ = (&mut engine_handle_task).await;
-                            break 'epoch_loop;
+                            return Ok(EpochLoopOutcome::GlobalStop);
                         }
                         StackShutdownOrNetworkExit::NetworkExit => {
                             info!("P2P network exited");
-                            break 'epoch_loop;
+                            return Ok(EpochLoopOutcome::StackExit);
                         }
                     }
                 }
@@ -4591,13 +4716,13 @@ where
                             )
                         })?,
                     );
-                    continue 'epoch_loop;
+                    return Ok(EpochLoopOutcome::RestartEpoch);
                 },
 
                 // Engine exit → clean shutdown.
-                _ = &mut engine_handle_task => {
+                result = &mut engine_handle_task => {
                     info!(epoch = %current_epoch, "simplex engine exited");
-                    break 'epoch_loop;
+                    return Ok(EpochLoopOutcome::EngineExit(result));
                 }
 
                 // DKG reshare completed (from background task).
@@ -5070,7 +5195,7 @@ where
                                             dkg_output_hash = %dkg_manager::dkg_output_hash(&boundary_output),
                                             "finalized DKG boundary excludes local validator; exiting validator mode"
                                         );
-                                        return Ok(());
+                                        return Ok(EpochLoopOutcome::StackExit);
                                     }
                                     return Err(eyre::eyre!(
                                         "finalized DKG boundary output does not match active local DKG output"
@@ -5323,7 +5448,7 @@ where
                                 }
                                 ctx.sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
                             }
-                            continue 'epoch_loop;
+                            return Ok(EpochLoopOutcome::RestartEpoch);
                             }
                         }
                     }
@@ -5566,7 +5691,7 @@ where
                                     }
                                     ctx.sleep(EPOCH_RESTART_ANCHOR_POLL_INTERVAL).await;
                                 }
-                                continue 'epoch_loop;
+                                return Ok(EpochLoopOutcome::RestartEpoch);
                             }
                         }
                     }
@@ -6054,26 +6179,26 @@ where
                     let executor_result = result
                         .map_err(|e| eyre::eyre!("executor actor task failed: {e:?}"))?;
                     executor_result.wrap_err("executor actor returned fatal error")?;
-                    break 'epoch_loop;
+                    return Ok(EpochLoopOutcome::StackExit);
                 }
                 result = &mut handler_handle => {
                     info!("application handler exited");
                     let application_result = result
                         .map_err(|e| eyre::eyre!("application handler task failed: {e:?}"))?;
                     application_result.wrap_err("application handler returned fatal error")?;
-                    break 'epoch_loop;
+                    return Ok(EpochLoopOutcome::StackExit);
                 }
                 result = &mut finalization_handle => {
                     info!("finalization actor exited");
                     let finalization_result = result
                         .map_err(|e| eyre::eyre!("finalization actor task failed: {e:?}"))?;
                     finalization_result.wrap_err("finalization actor returned fatal error")?;
-                    break 'epoch_loop;
+                    return Ok(EpochLoopOutcome::StackExit);
                 }
                 result = &mut peer_manager_handle_task => {
                     info!("peer manager actor exited");
                     result.map_err(|e| eyre::eyre!("peer manager actor exited: {e:?}"))?;
-                    break 'epoch_loop;
+                    return Ok(EpochLoopOutcome::StackExit);
                 }
                 // SSA-8: the marshal actor is consensus-liveness-critical (block
                 // availability, finalized-block delivery to the executor). With
@@ -6086,12 +6211,19 @@ where
                 result = &mut marshal_handle => {
                     info!("marshal actor exited");
                     result.map_err(|e| eyre::eyre!("marshal actor exited: {e:?}"))?;
-                    break 'epoch_loop;
+                    return Ok(EpochLoopOutcome::StackExit);
                 }
                 // The broadcast (buffered dissemination) handle remains managed by
                 // the Commonware runtime; its failure degrades to the marshal
                 // pull/serve path rather than a consensus stall.
             }
+            }
+        }
+        .await;
+
+        match supervise_epoch_loop_result(ctx, epoch_loop_result, &mut engine_handle_task).await? {
+            EpochLoopAction::RestartEpoch => continue 'epoch_loop,
+            EpochLoopAction::ExitStack => break 'epoch_loop,
         }
     }
 
