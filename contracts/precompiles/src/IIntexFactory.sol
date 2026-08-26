@@ -100,6 +100,11 @@ interface IIntexFactory {
     /// @notice The series was force-called (Qualified → Called).
     event SeriesCalled(bytes14 indexed seriesId, uint32 calledAt);
 
+    /// @notice One chain routed `amount` native COEN of `worldwideDay`'s auction
+    ///         proceeds into the day's pot. Emitted once per delivery, so a chain
+    ///         routing its proceeds in parts emits once per part.
+    event ProceedsCredited(uint32 indexed worldwideDay, uint32 indexed srcChainId, uint256 amount);
+
     /// @notice The day's auction proceeds were fully paid out to `contributors`
     ///         tribute owners, totalling `amount` native COEN.
     event ProceedsDistributed(uint32 indexed worldwideDay, uint256 amount, uint32 contributors);

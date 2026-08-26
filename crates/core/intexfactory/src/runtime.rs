@@ -342,6 +342,14 @@ pub fn distribute(
         return Err(IntexFactoryError::ZeroAmount.into());
     }
     outbe_intex::api::credit_proceeds(storage, worldwide_day, src_chain_id, amount)?;
+    emit_event(
+        storage,
+        crate::precompile::IIntexFactory::ProceedsCredited {
+            worldwideDay: worldwide_day.value(),
+            srcChainId: src_chain_id,
+            amount,
+        },
+    )?;
     let now = storage.timestamp()?.to::<u64>();
     try_settle_proceeds(storage, worldwide_day, now)
 }
