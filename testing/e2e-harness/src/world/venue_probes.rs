@@ -232,6 +232,60 @@ pub(crate) fn parked_work(url: &str, router: Address, venue_router: Address) -> 
 /// The venue emits this at the end of every inbound stage handler, so its
 /// absence separates a message that never arrived from one that did nothing.
 #[cfg(feature = "ocomp-integration")]
+/// A router may accept a message and drop it on purpose, naming a reason. That
+/// reason is the only record of work that arrived and did nothing.
+#[cfg(feature = "ocomp-integration")]
+pub(crate) fn ignored_inbound(url: &str, router: Address, side: &str) -> String {
+    let topic0 = alloy_primitives::keccak256(
+        b"InboundMessageIgnored(uint32,uint8,bytes32,uint8)".as_slice(),
+    );
+    let logs = logs_of(url, router, vec![serde_json::json!(format!("{topic0:?}"))]);
+    let entries = match logs.as_ref() {
+        Some(entries) if entries.is_empty() => {
+            return format!("{side} ignored no inbound message");
+        }
+        Some(entries) => entries,
+        None => return format!("{side} ignore log is unreadable"),
+    };
+    let described: Vec<String> = entries
+        .iter()
+        .map(|entry| {
+            let topic = |i: usize| {
+                entry["topics"][i]
+                    .as_str()
+                    .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+            };
+            let msg_type = match topic(2) {
+                Some(1) => "bids batch".to_owned(),
+                Some(2) => "bids done".to_owned(),
+                Some(3) => "auction stage start".to_owned(),
+                Some(4) => "auction stage clearing".to_owned(),
+                Some(5) => "auction result".to_owned(),
+                Some(6) => "issuance instructions".to_owned(),
+                Some(7) => "refund instructions".to_owned(),
+                Some(8) => "mark called".to_owned(),
+                Some(9) => "mark qualified".to_owned(),
+                Some(other) => format!("message type {other}"),
+                None => "unreadable message type".to_owned(),
+            };
+            let reason = entry["data"]
+                .as_str()
+                .and_then(|s| u64::from_str_radix(s.trim_start_matches("0x"), 16).ok());
+            let reason = match reason {
+                Some(1) => "duplicate",
+                Some(2) => "obsolete",
+                Some(3) => "conflict",
+                Some(4) => "not found",
+                Some(5) => "late",
+                Some(6) => "invalid",
+                Some(7) => "deferred",
+                _ => "unnamed reason",
+            };
+            format!("{msg_type} as {reason}")
+        })
+        .collect();
+    format!("{side} ignored {}", described.join(", "))
+}
 pub(crate) fn stages_received(url: &str, venue_router: Address, worldwide_day: u32) -> String {
     let topic0 =
         alloy_primitives::keccak256(b"AuctionStageReceived(uint32,uint32,uint8)".as_slice());

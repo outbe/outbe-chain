@@ -423,7 +423,7 @@ fn auction_clears(world: &mut World) {
         assert_ne!(stage, Some(6), "Desis cancelled day {worldwide_day}");
         assert!(
             Instant::now() < deadline,
-            "day {worldwide_day} never cleared on Desis: {}; {}; venue stage {:?}, {}; {}; {}",
+            "day {worldwide_day} never cleared on Desis: {}; {}; venue stage {:?}, {}; {}; {}; {}; {}",
             venue_probes::desis_stage(&url, worldwide_day),
             venue_probes::relayed_bids(&url, worldwide_day, chain_id as u32),
             eth::read_call(
@@ -435,7 +435,9 @@ fn auction_clears(world: &mut World) {
             ),
             venue_probes::venue_bid_counts(&url, venue, worldwide_day),
             venue_probes::parked_work(&url, router, venue_router),
-            venue_probes::stages_received(&url, venue_router, worldwide_day)
+            venue_probes::stages_received(&url, venue_router, worldwide_day),
+            venue_probes::ignored_inbound(&url, router, "origin"),
+            venue_probes::ignored_inbound(&url, venue_router, "venue")
         );
         sleep(Duration::from_secs(2));
     }
