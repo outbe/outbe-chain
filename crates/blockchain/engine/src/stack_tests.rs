@@ -63,10 +63,12 @@ static STACK_MARSHAL_TEST_ID: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone)]
 struct ShutdownNullSender<P> {
     participants: Vec<P>,
+    send_count: Arc<AtomicU64>,
 }
 
 struct ShutdownNullCheckedSender<P> {
     recipients: Vec<P>,
+    send_count: Arc<AtomicU64>,
 }
 
 impl<P> CheckedSender for ShutdownNullCheckedSender<P>
@@ -80,6 +82,7 @@ where
     }
 
     fn send(self, _message: impl Into<IoBufs> + Send, _priority: bool) -> Unreliable<Feedback> {
+        self.send_count.fetch_add(1, Ordering::Relaxed);
         Unreliable::Outcome(Feedback::Ok)
     }
 }
@@ -103,7 +106,10 @@ where
             Recipients::Some(recipients) => recipients,
             Recipients::One(recipient) => vec![recipient],
         };
-        Ok(ShutdownNullCheckedSender { recipients })
+        Ok(ShutdownNullCheckedSender {
+            recipients,
+            send_count: Arc::clone(&self.send_count),
+        })
     }
 }
 
@@ -164,6 +170,7 @@ fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
 
         let sender = ShutdownNullSender {
             participants: vec![public_key.clone()],
+            send_count: Arc::new(AtomicU64::new(0)),
         };
         let vote_network = (
             sender.clone(),
@@ -231,13 +238,18 @@ fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
         let mut stack_owner = context.child("stack_owner").spawn(move |owner| async move {
             let mut shutdown = owner.stopped();
             let mut network_handle = network_handle;
-            let engine_handle = engine_handle;
+            let mut engine_handle = engine_handle;
             match wait_for_stack_shutdown_or_network_exit(&mut shutdown, &mut network_handle).await
             {
                 StackShutdownOrNetworkExit::GlobalStop => {
-                    engine_handle
-                        .await
-                        .expect("simplex engine must drain on global stop");
+                    let action = supervise_epoch_loop_result(
+                        &owner,
+                        Ok(EpochLoopOutcome::GlobalStop),
+                        &mut engine_handle,
+                    )
+                    .await
+                    .expect("simplex engine must drain on global stop");
+                    assert_eq!(action, EpochLoopAction::ExitStack);
                 }
                 StackShutdownOrNetworkExit::NetworkExit => {}
             }
@@ -263,6 +275,271 @@ fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
             .expect("shutdown driver must finish")
             .expect("global shutdown must complete");
     });
+}
+
+#[test]
+fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
+    let storage = tempfile::tempdir().expect("fatal stack exit test storage");
+    let epoch = Epoch::new(1);
+    let signing_key = PrivateKey::from_seed(13);
+    let public_key = signing_key.public_key();
+    let participants = Set::from_iter_dedup([public_key.clone()]);
+    let dkg = bootstrap_dkg(1).expect("single-validator DKG fixture");
+    let scheme = HybridScheme::<MinSig>::signer(
+        &outbe_consensus::config::outbe_app_namespace(),
+        participants,
+        signing_key,
+        dkg.polynomial,
+        dkg.shares[0].clone(),
+    )
+    .expect("single-validator hybrid signer");
+    let first_scheme = scheme.clone();
+    let first_public_key = public_key.clone();
+    let config = commonware_tokio::Config::default()
+        .with_worker_threads(1)
+        .with_max_blocking_threads(1)
+        .with_catch_panics(true)
+        .with_storage_directory(storage.path());
+    let runner = commonware_tokio::Runner::new(config);
+
+    runner.start(|context| async move {
+        let vote_send_count = Arc::new(AtomicU64::new(0));
+        let vote_sender = ShutdownNullSender {
+            participants: vec![first_public_key.clone()],
+            send_count: Arc::clone(&vote_send_count),
+        };
+        let certificate_sender = ShutdownNullSender {
+            participants: vec![first_public_key.clone()],
+            send_count: Arc::new(AtomicU64::new(0)),
+        };
+        let resolver_sender = ShutdownNullSender {
+            participants: vec![first_public_key.clone()],
+            send_count: Arc::new(AtomicU64::new(0)),
+        };
+        let vote_network = (
+            vote_sender,
+            ShutdownNullReceiver::<commonware_cryptography::bls12381::PublicKey>(PhantomData),
+        );
+        let certificate_network = (
+            certificate_sender,
+            ShutdownNullReceiver::<commonware_cryptography::bls12381::PublicKey>(PhantomData),
+        );
+        let resolver_network = (
+            resolver_sender,
+            ShutdownNullReceiver::<commonware_cryptography::bls12381::PublicKey>(PhantomData),
+        );
+
+        let engine_config = SimplexConfig {
+            scheme: first_scheme,
+            elector: RoundRobin::<Sha256>::default(),
+            blocker: ShutdownNullBlocker(PhantomData),
+            automaton: MockAutomaton::new(first_public_key),
+            relay: MockRelay::new(),
+            reporter: MockReporter::new(),
+            strategy: Sequential,
+            forwarding: ForwardingPolicy::Disabled,
+            partition: "fatal_stack_exit_voter_journal".to_owned(),
+            epoch,
+            floor: Floor::Genesis(mock_genesis(epoch)),
+            mailbox_size: NZUsize!(64),
+            leader_timeout: Duration::from_millis(200),
+            certification_timeout: Duration::from_millis(400),
+            timeout_retry: Duration::from_millis(800),
+            activity_timeout: ViewDelta::new(16),
+            skip_timeout: ViewDelta::new(4),
+            fetch_timeout: Duration::from_millis(20),
+            fetch_concurrent: NZUsize!(2),
+            replay_buffer: NZUsize!(64 * 1024),
+            write_buffer: NZUsize!(4 * 1024),
+            page_cache: CacheRef::from_pooler(
+                &context,
+                NonZeroU16::new(1024).unwrap(),
+                NZUsize!(10),
+            ),
+        };
+
+        let (engine_ready_tx, engine_ready_rx) = mpsc::sync_channel(1);
+        let (fatal_tx, fatal_rx) = tokio::sync::oneshot::channel::<()>();
+        let mut stack_owner = context
+            .child("fatal_stack_owner")
+            .spawn(move |owner| async move {
+                let engine = SimplexEngine::new(owner.child("engine"), engine_config);
+                let mut engine_handle =
+                    engine.start(vote_network, certificate_network, resolver_network);
+                owner.sleep(Duration::from_millis(75)).await;
+                engine_ready_tx
+                    .send(())
+                    .expect("report initialized voter journal");
+                fatal_rx.await.expect("drive fatal stack exit");
+                supervise_epoch_loop_result(
+                    &owner,
+                    Err(eyre::eyre!("synthetic fatal stack cause")),
+                    &mut engine_handle,
+                )
+                .await
+            });
+        engine_ready_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("real voter journal must initialize");
+
+        let (started_tx, started_rx) = mpsc::sync_channel(1);
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let _blocking_handle = context
+            .child("fatal_stack_blocking_gate")
+            .shared(true)
+            .spawn(move |_| async move {
+                started_tx.send(()).expect("report blocking worker start");
+                let _ = release_rx.recv();
+            });
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("sole blocking worker must be occupied");
+
+        // The next first-attempt timeout queues the real voter's ordinary
+        // sync_journal behind the occupied Tokio blocking worker.
+        let send_count_before_pending_sync = vote_send_count.load(Ordering::Relaxed);
+        context.sleep(Duration::from_millis(250)).await;
+        assert_eq!(
+            vote_send_count.load(Ordering::Relaxed),
+            send_count_before_pending_sync,
+            "the first-attempt vote must remain behind its required journal sync"
+        );
+        fatal_tx.send(()).expect("trigger fatal stack exit");
+
+        commonware_macros::select! {
+            result = &mut stack_owner => {
+                release_tx.send(()).expect("release blocking worker after RED");
+                panic!("consensus stack owner resolved before voter journal drain: {result:?}");
+            },
+            _ = context.sleep(Duration::from_millis(50)) => {},
+        }
+
+        release_tx.send(()).expect("release blocking worker");
+        let result = stack_owner
+            .await
+            .expect("stack owner task must finish after journal drain")
+            .expect_err("the original fatal stack result must be preserved");
+        assert!(
+            result.to_string().contains("synthetic fatal stack cause"),
+            "fatal result: {result:#}"
+        );
+        assert!(
+            vote_send_count.load(Ordering::Relaxed) > send_count_before_pending_sync,
+            "releasing the storage worker must complete the pending ordinary sync_journal before broadcast"
+        );
+    });
+
+    let reopen_config = commonware_tokio::Config::default()
+        .with_worker_threads(1)
+        .with_max_blocking_threads(1)
+        .with_catch_panics(true)
+        .with_storage_directory(storage.path());
+    commonware_tokio::Runner::new(reopen_config).start(|context| async move {
+        let sender = ShutdownNullSender {
+            participants: vec![public_key.clone()],
+            send_count: Arc::new(AtomicU64::new(0)),
+        };
+        let vote_network = (
+            sender.clone(),
+            ShutdownNullReceiver::<commonware_cryptography::bls12381::PublicKey>(PhantomData),
+        );
+        let certificate_network = (
+            sender.clone(),
+            ShutdownNullReceiver::<commonware_cryptography::bls12381::PublicKey>(PhantomData),
+        );
+        let resolver_network = (
+            sender,
+            ShutdownNullReceiver::<commonware_cryptography::bls12381::PublicKey>(PhantomData),
+        );
+        let engine_config = SimplexConfig {
+            scheme,
+            elector: RoundRobin::<Sha256>::default(),
+            blocker: ShutdownNullBlocker(PhantomData),
+            automaton: MockAutomaton::new(public_key),
+            relay: MockRelay::new(),
+            reporter: MockReporter::new(),
+            strategy: Sequential,
+            forwarding: ForwardingPolicy::Disabled,
+            partition: "fatal_stack_exit_voter_journal".to_owned(),
+            epoch,
+            floor: Floor::Genesis(mock_genesis(epoch)),
+            mailbox_size: NZUsize!(64),
+            leader_timeout: Duration::from_millis(200),
+            certification_timeout: Duration::from_millis(400),
+            timeout_retry: Duration::from_millis(800),
+            activity_timeout: ViewDelta::new(16),
+            skip_timeout: ViewDelta::new(4),
+            fetch_timeout: Duration::from_millis(20),
+            fetch_concurrent: NZUsize!(2),
+            replay_buffer: NZUsize!(64 * 1024),
+            write_buffer: NZUsize!(4 * 1024),
+            page_cache: CacheRef::from_pooler(
+                &context,
+                NonZeroU16::new(1024).unwrap(),
+                NZUsize!(10),
+            ),
+        };
+        let engine = SimplexEngine::new(context.child("reopened_engine"), engine_config);
+        let mut engine_handle = engine.start(vote_network, certificate_network, resolver_network);
+
+        commonware_macros::select! {
+            result = &mut engine_handle => {
+                panic!("reopened voter journal could not resume: {result:?}");
+            },
+            _ = context.sleep(Duration::from_millis(100)) => {},
+        }
+
+        let stop_handle = context
+            .child("reopened_shutdown")
+            .spawn(|shutdown| async move { shutdown.stop(0, Some(Duration::from_secs(1))).await });
+        engine_handle
+            .await
+            .expect("reopened engine must drain normally");
+        stop_handle
+            .await
+            .expect("reopened shutdown driver must finish")
+            .expect("reopened runtime shutdown must complete");
+    });
+}
+
+#[test]
+fn completed_engine_outcome_is_not_polled_twice() {
+    commonware_tokio::Runner::default().start(|context| async move {
+        let mut engine_handle = context.child("completed_engine").spawn(|_| async {});
+        (&mut engine_handle)
+            .await
+            .expect("test engine task must complete once");
+
+        let action = supervise_epoch_loop_result(
+            &context,
+            Ok(EpochLoopOutcome::EngineExit(Ok(()))),
+            &mut engine_handle,
+        )
+        .await
+        .expect("an already observed engine exit must stop the stack without repolling the handle");
+
+        assert_eq!(action, EpochLoopAction::ExitStack);
+    });
+}
+
+#[test]
+fn terminal_drain_diagnostic_preserves_the_original_stack_error_chain() {
+    let error = preserve_stack_result_after_drain::<()>(
+        Err(eyre::eyre!("original engine exit")),
+        Err(eyre::eyre!("secondary global stop timeout")),
+    )
+    .expect_err("both failures must remain observable");
+
+    assert!(
+        error.to_string().contains("secondary global stop timeout"),
+        "outer diagnostic: {error:#}"
+    );
+    assert!(
+        error
+            .chain()
+            .any(|cause| cause.to_string().contains("original engine exit")),
+        "original source chain: {error:#}"
+    );
 }
 
 #[test]
