@@ -9,6 +9,7 @@ use outbe_primitives::storage::StorageHandle;
 use crate::api::{AuctionBriefReceipt, AuctionBriefRejectionReason};
 use crate::constants::{
     IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, ORIGIN_ROUTER_ADDRESS,
+    PROMIS_LOAD_STRIKE_USD,
 };
 use crate::runtime;
 use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract};
@@ -34,11 +35,11 @@ const LOAD_MINOR: u128 = 100 * PROMIS_LOAD_MINOR;
 /// The launch decade: 100 000 PROMIS at COEN/USD = 0.001.
 const LAUNCH_EXPONENT: u32 = 11;
 
-fn ladder(current: Option<u32>, rate_minor: u64) -> u32 {
+fn ladder(current: Option<u32>, rate_minor: u128) -> u32 {
     runtime::promis_load_exponent(current, U256::from(rate_minor))
 }
 
-fn ladder_load(current: Option<u32>, rate_minor: u64) -> u128 {
+fn ladder_load(current: Option<u32>, rate_minor: u128) -> u128 {
     runtime::promis_load_minor(ladder(current, rate_minor))
 }
 
@@ -51,13 +52,14 @@ fn a_production_build_has_no_load_override() {
 
 #[test]
 fn the_fixture_load_is_the_one_the_ladder_picks() {
-    assert_eq!(ladder_load(None, ENTRY_PRICE as u64), LOAD_MINOR);
+    assert_eq!(ladder_load(None, ENTRY_PRICE), LOAD_MINOR);
 }
 
 #[test]
 fn the_anchor_holds_the_strike_across_the_decades() {
+    let strike_minor = u128::from(PROMIS_LOAD_STRIKE_USD) * 1_000_000;
     for (rate_minor, expected) in [
-        (100u64, 1_000_000_000_000u128),
+        (100u128, 1_000_000_000_000u128),
         (1_000, 100_000_000_000),
         (10_000, 10_000_000_000),
         (100_000, 1_000_000_000),
@@ -66,8 +68,8 @@ fn the_anchor_holds_the_strike_across_the_decades() {
         let load = ladder_load(None, rate_minor);
         assert_eq!(load, expected, "load at rate {rate_minor}");
         assert_eq!(
-            load * u128::from(rate_minor) / 1_000_000,
-            100_000_000,
+            load * rate_minor / 1_000_000,
+            strike_minor,
             "strike at rate {rate_minor}"
         );
     }
@@ -97,7 +99,7 @@ fn the_load_steps_up_only_below_the_widened_lower_edge() {
 
 #[test]
 fn the_deadband_is_held_from_whichever_side_the_chain_arrived() {
-    for rate_minor in [9_800u64, 10_000, 10_199] {
+    for rate_minor in [9_800u128, 10_000, 10_199] {
         assert_eq!(ladder(Some(LAUNCH_EXPONENT), rate_minor), LAUNCH_EXPONENT);
         assert_eq!(
             ladder(Some(LAUNCH_EXPONENT - 1), rate_minor),
@@ -122,13 +124,7 @@ fn the_band_survives_integer_division_in_the_narrowest_decade() {
 #[test]
 fn an_unpriced_or_absurd_rate_saturates_instead_of_underflowing() {
     assert_eq!(ladder_load(None, 0), 100_000_000_000_000);
-    assert_eq!(
-        runtime::promis_load_minor(runtime::promis_load_exponent(
-            None,
-            U256::from(u128::MAX)
-        )),
-        1
-    );
+    assert_eq!(ladder_load(None, u128::MAX), 1);
 }
 
 #[test]
