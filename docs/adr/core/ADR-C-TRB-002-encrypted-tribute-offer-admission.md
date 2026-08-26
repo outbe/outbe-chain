@@ -59,7 +59,8 @@ The command sequence is:
 6. require the Tribute identity absent, parse and consume all returned SU hashes,
    and validate paired WAA/SRA address lists;
 7. issue the immutable Tribute from the returned economics plus the request's own
-   public fields, and increment the AgentReward counters.
+   public fields, and increment AgentReward counters for the executing block's UTC
+   calendar day, independently of the Tribute target WorldwideDay.
 
 ## State and invariants
 
@@ -76,6 +77,8 @@ satisfy:
 - Tribute body fields are the accepted enclave result for the exact signed request;
 - WAA and SRA lists are either both empty or both nonempty and every entry parses
   as an address;
+- every WAA/SRA contribution is recorded under the offer execution UTC day, while
+  the requested WorldwideDay remains the Tribute identity and lifecycle key;
 - SU markers, Tribute issuance, day/supply aggregates, events and all reward
   increments commit or roll back together.
 

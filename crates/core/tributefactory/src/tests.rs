@@ -1,50 +1,65 @@
-use alloy_primitives::B256;
+use alloy_primitives::{Address, Bytes, B256, U256};
+use outbe_agentreward::AgentRewardContract;
+use outbe_common::WorldwideDay;
+use outbe_compressed_entities::{
+    begin_block, derive_poseidon_digest, EntityRef, ExecutionScope, IdPage, IdPageRequest,
+    ParentBodySource, ParentBodySourceError, QueryRef, StoredBody,
+};
+use outbe_metadosis::{
+    genesis::{FreshDevnetGenesisBuilder, GenesisWorldwideDay},
+    WwdDayType, WwdStatus,
+};
+use outbe_oracle::{
+    genesis::{init_from_genesis, OracleGenesisConfig},
+    schema::OracleContract,
+};
+use outbe_primitives::address_pair::AddressPair;
+use outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::time::date_key_to_utc_timestamp;
+use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus};
+use outbe_tribute::TributeContract;
 
-use crate::runtime::validate_agent_reward_addresses;
+use crate::runtime::{validate_agent_reward_addresses, OfferTributeInput};
 use crate::schema::TributeFactoryContract;
 
 const CHAIN_ID: u64 = 1;
 
+struct NoParentBodies;
+
+impl ParentBodySource for NoParentBodies {
+    fn get(
+        &self,
+        _entity: EntityRef,
+    ) -> core::result::Result<Option<StoredBody>, ParentBodySourceError> {
+        Ok(None)
+    }
+
+    fn list(
+        &self,
+        _query: QueryRef,
+        _request: IdPageRequest,
+    ) -> core::result::Result<IdPage, ParentBodySourceError> {
+        Ok(IdPage {
+            ids: Vec::new(),
+            next_after: None,
+        })
+    }
+}
+
 mod l2_zk_gate {
     use alloy_primitives::{Address, Bytes, U256};
-    use outbe_compressed_entities::{
-        EntityRef, ExecutionScope, IdPage, IdPageRequest, ParentBodySource, ParentBodySourceError,
-        QueryRef, StoredBody,
-    };
+    use outbe_compressed_entities::ExecutionScope;
     use outbe_l2registry::L2RegistryContract;
     use outbe_primitives::error::PrecompileError;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
 
+    use super::NoParentBodies;
     use crate::runtime::OfferTributeInput;
     use crate::schema::TributeFactoryContract;
-
-    /// The zk gate runs before any finalized-parent read, so an inert source
-    /// is enough for these tests.
-    struct NoParentBodies;
-
-    impl ParentBodySource for NoParentBodies {
-        fn get(
-            &self,
-            _entity: EntityRef,
-        ) -> core::result::Result<Option<StoredBody>, ParentBodySourceError> {
-            Ok(None)
-        }
-
-        fn list(
-            &self,
-            _query: QueryRef,
-            _request: IdPageRequest,
-        ) -> core::result::Result<IdPage, ParentBodySourceError> {
-            Ok(IdPage {
-                ids: Vec::new(),
-                next_after: None,
-            })
-        }
-    }
 
     const L2_CHAIN_ID: u64 = 4242;
 
@@ -298,6 +313,293 @@ fn test_validate_agent_reward_invalid_address() {
     let wallets = vec!["not_a_valid_address".to_string()];
     let sfas = vec!["0x2222222222222222222222222222222222222222".to_string()];
     assert!(validate_agent_reward_addresses(&wallets, &sfas).is_err());
+}
+
+const TARGET_WWD_A: WorldwideDay = WorldwideDay::new(20_260_802);
+const TARGET_WWD_B: WorldwideDay = WorldwideDay::new(20_260_803);
+const REWARD_WALLET: Address = Address::repeat_byte(0x71);
+const REWARD_SRA: Address = Address::repeat_byte(0x72);
+
+fn seed_offer_world(storage: StorageHandle<'_>, target_days: &[WorldwideDay]) {
+    storage
+        .sstore(COMPRESSED_ENTITIES_ADDRESS, U256::ZERO, U256::from(4))
+        .unwrap();
+    storage
+        .sstore(
+            COMPRESSED_ENTITIES_ADDRESS,
+            U256::from(1),
+            U256::from_be_slice(
+                outbe_compressed_entities::sealed_root(B256::ZERO)
+                    .unwrap()
+                    .as_slice(),
+            ),
+        )
+        .unwrap();
+
+    let mut metadosis = FreshDevnetGenesisBuilder::new();
+    for (index, worldwide_day) in target_days.iter().copied().enumerate() {
+        let offset = u64::try_from(index).unwrap() * 10;
+        metadosis = metadosis.seed_active_worldwide_day(GenesisWorldwideDay {
+            worldwide_day,
+            status: WwdStatus::Offering,
+            day_type: WwdDayType::Green,
+            forming_start: offset + 1,
+            forming_end: offset + 2,
+            lookback_end: offset + 3,
+            offering_end: offset + 4,
+            scheduled_process_time: offset + 5,
+            metadosis_limit_amount: U256::from(100),
+            previous_vwap: U256::from(90),
+            current_vwap: U256::from(100),
+        });
+    }
+    metadosis.apply(storage.clone()).unwrap();
+
+    let mut oracle = OracleContract::new(storage.clone());
+    init_from_genesis(&mut oracle, &OracleGenesisConfig::default_config()).unwrap();
+    let pair = AddressPair::new_coen_to(840);
+    for worldwide_day in target_days {
+        let start = worldwide_day.start_timestamp();
+        oracle
+            .write_snapshot(start + 1, &[(pair, U256::from(100), U256::ONE)])
+            .unwrap();
+        oracle
+            .store_worldwide_day_vwap_snapshot(*worldwide_day, start, start + 50 * 60 * 60)
+            .unwrap();
+    }
+
+    let mut tribute = TributeContract::new(storage);
+    for worldwide_day in target_days {
+        tribute.unseal_day(*worldwide_day).unwrap();
+    }
+}
+
+fn offer_input(caller: Address, worldwide_day: WorldwideDay) -> OfferTributeInput {
+    OfferTributeInput {
+        caller,
+        cipher_text: Bytes::new(),
+        nonce: Bytes::new(),
+        ephemeral_pubkey: U256::ZERO,
+        worldwide_day,
+        tribute_currency: 840,
+        reference_currency: 840,
+        exclude_from_intex_issuance: false,
+        zk_proof: Bytes::new(),
+        zk_merkle_root: Bytes::new(),
+        signature: Bytes::new(),
+    }
+}
+
+fn successful_offer_processor(
+    offers: &[EncryptedTributeOffer],
+) -> core::result::Result<Vec<TributeOfferResult>, PrecompileError> {
+    Ok(offers
+        .iter()
+        .map(|offer| TributeOfferResult {
+            token_id: derive_poseidon_digest(offer.owner, offer.worldwide_day).unwrap(),
+            owner: offer.owner,
+            issuance_amount_minor: U256::ONE,
+            nominal_amount_minor: U256::ONE,
+            effective_reference_price_minor: offer
+                .reference_wwd_vwap_minor
+                .max(offer.reference_scurve_minor),
+            su_hashes: Vec::new(),
+            wallet_addresses: vec![REWARD_WALLET.to_string()],
+            sra_addresses: vec![REWARD_SRA.to_string()],
+            zk_expected_hashes: None,
+            status: TributeOfferStatus::Created,
+        })
+        .collect())
+}
+
+fn execute_successful_offer(
+    storage: StorageHandle<'_>,
+    scope: &ExecutionScope,
+    caller: Address,
+    worldwide_day: WorldwideDay,
+) -> outbe_primitives::error::Result<()> {
+    TributeFactoryContract::new(storage)
+        .offer_tribute_with_processor(
+            scope,
+            &NoParentBodies,
+            offer_input(caller, worldwide_day),
+            successful_offer_processor,
+        )
+        .map(|_| ())
+}
+
+fn active_scope(storage: StorageHandle<'_>) -> ExecutionScope {
+    let scope = ExecutionScope::new();
+    begin_block(storage, &scope).unwrap();
+    scope
+}
+
+#[test]
+fn one_hundred_real_offer_writes_for_distinct_target_wwds_share_the_execution_utc_day() {
+    const REWARD_UTC_DAY: u32 = 20_260_825;
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_offer_world(storage.clone(), &[TARGET_WWD_A, TARGET_WWD_B]);
+        storage
+            .set_block_timestamp(U256::from(
+                date_key_to_utc_timestamp(REWARD_UTC_DAY) + 43_200,
+            ))
+            .unwrap();
+        let scope = active_scope(storage.clone());
+
+        for index in 0..100u8 {
+            let target = if index % 2 == 0 {
+                TARGET_WWD_A
+            } else {
+                TARGET_WWD_B
+            };
+            execute_successful_offer(
+                storage.clone(),
+                &scope,
+                Address::repeat_byte(index + 1),
+                target,
+            )
+            .unwrap();
+        }
+
+        let rewards = AgentRewardContract::new(storage);
+        assert_eq!(
+            rewards.get_all_waa_counts(REWARD_UTC_DAY.into()).unwrap(),
+            vec![(REWARD_WALLET, 100)]
+        );
+        assert_eq!(
+            rewards.get_all_sra_counts(REWARD_UTC_DAY.into()).unwrap(),
+            vec![(REWARD_SRA, 100)]
+        );
+        for target in [TARGET_WWD_A, TARGET_WWD_B] {
+            assert!(rewards.get_all_waa_counts(target).unwrap().is_empty());
+            assert!(rewards.get_all_sra_counts(target).unwrap().is_empty());
+        }
+    });
+}
+
+#[test]
+fn real_offer_writer_uses_utc_calendar_boundaries() {
+    const OLD_DAY: u32 = 20_261_231;
+    const NEW_DAY: u32 = 20_270_101;
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
+        let scope = active_scope(storage.clone());
+        storage
+            .set_block_timestamp(U256::from(
+                date_key_to_utc_timestamp(NEW_DAY).saturating_sub(1),
+            ))
+            .unwrap();
+        execute_successful_offer(
+            storage.clone(),
+            &scope,
+            Address::repeat_byte(0x31),
+            TARGET_WWD_A,
+        )
+        .unwrap();
+
+        storage
+            .set_block_timestamp(U256::from(date_key_to_utc_timestamp(NEW_DAY)))
+            .unwrap();
+        execute_successful_offer(
+            storage.clone(),
+            &scope,
+            Address::repeat_byte(0x32),
+            TARGET_WWD_A,
+        )
+        .unwrap();
+
+        let rewards = AgentRewardContract::new(storage);
+        for day in [OLD_DAY, NEW_DAY] {
+            assert_eq!(
+                rewards.get_all_waa_counts(day.into()).unwrap(),
+                vec![(REWARD_WALLET, 1)]
+            );
+            assert_eq!(
+                rewards.get_all_sra_counts(day.into()).unwrap(),
+                vec![(REWARD_SRA, 1)]
+            );
+        }
+    });
+}
+
+#[test]
+fn reverted_real_offer_writer_leaves_no_reward_day_activity() {
+    const REWARD_UTC_DAY: u32 = 20_260_825;
+
+    let mutation_count = {
+        let mut probe = HashMapStorageProvider::new(CHAIN_ID);
+        StorageHandle::enter(&mut probe, |storage| {
+            seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
+            storage
+                .set_block_timestamp(U256::from(date_key_to_utc_timestamp(REWARD_UTC_DAY)))
+                .unwrap();
+        });
+        probe.clear_mutation_failure();
+        probe.fail_after_mutation_at(usize::MAX);
+        StorageHandle::enter(&mut probe, |storage| {
+            let scope = active_scope(storage.clone());
+            storage
+                .with_checkpoint(|| {
+                    execute_successful_offer(
+                        storage.clone(),
+                        &scope,
+                        Address::repeat_byte(0x41),
+                        TARGET_WWD_A,
+                    )
+                })
+                .unwrap();
+        });
+        probe.clear_mutation_failure()
+    };
+    assert!(mutation_count > 2);
+
+    for operation in 0..mutation_count {
+        let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+        StorageHandle::enter(&mut provider, |storage| {
+            seed_offer_world(storage.clone(), &[TARGET_WWD_A]);
+            storage
+                .set_block_timestamp(U256::from(date_key_to_utc_timestamp(REWARD_UTC_DAY)))
+                .unwrap();
+        });
+        provider.clear_mutation_failure();
+        let before = provider.storage.clone();
+        provider.fail_after_mutation_at(operation);
+
+        StorageHandle::enter(&mut provider, |storage| {
+            let scope = active_scope(storage.clone());
+            assert!(storage
+                .with_checkpoint(|| {
+                    execute_successful_offer(
+                        storage.clone(),
+                        &scope,
+                        Address::repeat_byte(0x41),
+                        TARGET_WWD_A,
+                    )
+                })
+                .is_err());
+        });
+        assert_eq!(provider.clear_mutation_failure(), operation + 1);
+        assert_eq!(
+            provider.storage, before,
+            "operation {operation} leaked state"
+        );
+
+        StorageHandle::enter(&mut provider, |storage| {
+            let rewards = AgentRewardContract::new(storage);
+            assert!(rewards
+                .get_all_waa_counts(REWARD_UTC_DAY.into())
+                .unwrap()
+                .is_empty());
+            assert!(rewards
+                .get_all_sra_counts(REWARD_UTC_DAY.into())
+                .unwrap()
+                .is_empty());
+        });
+    }
 }
 
 #[test]

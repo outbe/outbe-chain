@@ -26,6 +26,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 outbe-lysis.workspace = true
+outbe-metadosis = { workspace = true, features = ["test-utils"] }
 commonware-codec.workspace = true
 commonware-cryptography.workspace = true
 commonware-math.workspace = true
