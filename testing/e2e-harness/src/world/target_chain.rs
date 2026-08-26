@@ -241,6 +241,23 @@ impl TargetChain {
 
     /// Point the freshly deployed contracts at each other and let the router act.
     ///
+    /// The auction's windows are stamped in committee time, but this chain keeps
+    /// its own wall clock and would sit in the commit stage forever. Carrying the
+    /// committee's clock over is what a chain with a real block cadence gets for
+    /// free.
+    pub fn sync_clock_to(&self, timestamp: u64) -> Result<()> {
+        let url = self
+            .rpc_url()
+            .ok_or_else(|| eyre!("syncing the clock needs a running target chain"))?;
+        crate::internal::eth::raw_json_with_params(
+            &url,
+            "anvil_setTime",
+            serde_json::json!([format!("0x{timestamp:x}")]),
+        );
+        crate::internal::eth::raw_json_with_params(&url, "evm_mine", serde_json::json!([]));
+        Ok(())
+    }
+
     /// The deploy scripts stop at standing contracts on purpose — wiring is a
     /// separate step in production too. Without it the router holds no references
     /// and may not mint, so an inbound message would arrive and do nothing.

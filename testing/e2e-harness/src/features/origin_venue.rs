@@ -170,6 +170,7 @@ fn advance_past_window_to_stage(world: &mut World, target_stage: u8) {
 fn advance_one_venue_to_stage(world: &World, venue: &VenueSide, target_stage: u8) {
     let worldwide_day = settled_day(world);
     let url = venue.url.clone();
+    let home = world.rpc.url(world.validators.primary_port());
     let deadline = Instant::now() + AUCTION_STAGE_TIMEOUT;
     loop {
         let stage = eth::read_call(
@@ -186,8 +187,14 @@ fn advance_one_venue_to_stage(world: &World, venue: &VenueSide, target_stage: u8
         }
         assert!(
             Instant::now() < deadline,
-            "day {worldwide_day} stalled at venue stage {stage} short of {target_stage}"
+            "day {worldwide_day} stalled at venue stage {stage} short of {target_stage} on {}",
+            venue.url
         );
+        if venue.is_target_chain {
+            if let Some(now) = eth::latest_block_timestamp(&home) {
+                let _ = world.target_chain.sync_clock_to(now);
+            }
+        }
         sleep(Duration::from_secs(2));
     }
 }
@@ -204,6 +211,7 @@ struct VenueSide {
     payment_token: Address,
     intex_nft: Address,
     target_router: Address,
+    is_target_chain: bool,
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -224,6 +232,7 @@ fn venue_sides(world: &World) -> Vec<VenueSide> {
         payment_token: origin.payment_token,
         intex_nft: origin.intex_nft,
         target_router: origin.target_router,
+        is_target_chain: false,
     }];
     if let (Some(_), Some(target)) = (
         world.target_chain.port(),
@@ -237,6 +246,7 @@ fn venue_sides(world: &World) -> Vec<VenueSide> {
             payment_token: target.payment_token,
             intex_nft: target.intex_nft,
             target_router: target.target_router,
+            is_target_chain: true,
         });
     }
     sides
@@ -261,6 +271,7 @@ fn venue_side(world: &World) -> VenueSide {
             payment_token: target.payment_token,
             intex_nft: target.intex_nft,
             target_router: target.target_router,
+            is_target_chain: true,
         },
         _ => VenueSide {
             url: world.rpc.url(world.validators.primary_port()),
@@ -273,6 +284,7 @@ fn venue_side(world: &World) -> VenueSide {
             payment_token: origin.payment_token,
             intex_nft: origin.intex_nft,
             target_router: origin.target_router,
+            is_target_chain: false,
         },
     }
 }
