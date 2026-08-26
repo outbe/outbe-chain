@@ -11,16 +11,19 @@
 ## Context
 
 AgentReward converts a daily pool into per-address native COEN claims using Tribute
-activity. It has its own input indexes, capped redistribution algorithm, escrowed
-balance, claim lifecycle and residue. These are not Cycle scheduler concerns and
-must be auditable without pulling Metadosis or Lysis into the same state boundary.
+activity. Activity is bucketed by the UTC calendar day when the successful offer
+executes, regardless of the Tribute's target WorldwideDay. It has its own input
+indexes, capped redistribution algorithm, escrowed balance, claim lifecycle and
+residue. These are not Cycle scheduler concerns and must be auditable without
+pulling Metadosis or Lysis into the same state boundary.
 
 ## Decision
 
-AgentReward owns two role-specific daily count collections (WAA and SRA), per-role
+AgentReward owns two role-specific UTC-day count collections (WAA and SRA), per-role
 claimable balances, allocation completion/clearing, and native claim payout.
-Upstream emission code supplies an exact pool and day; AgentReward returns the exact
-undistributed residue to the caller's named sink.
+Upstream emission code supplies an exact pool and reward UTC day; AgentReward
+returns the exact undistributed residue to the caller's named sink. Cycle settles
+day D on the contiguous transition to D+1.
 
 For each role/day, allocation is deterministic:
 
@@ -45,6 +48,10 @@ balance transfer.
 Mutation authority consists of the enumerated Tribute/factory activity recorder,
 the daily distributor, and user claims. Arbitrary callers may not write counts or
 claim for another address.
+
+TributeFactory derives the reward UTC day from the executing block timestamp. The
+target WorldwideDay remains the Tribute identity, pricing and lifecycle key and
+must never select the AgentReward bucket.
 
 Required closure:
 
@@ -71,13 +78,17 @@ returns the exact unresolved residue.
 ## Security, compatibility and evidence
 
 Role identity, cap percentage, count semantics, deduplication, rounding and residue
-destination are consensus economics. Changes require activation and before/after
-reference vectors.
+destination are consensus economics. This UTC-day correction is deployed only with
+a fresh network from genesis: there are no legacy counters to migrate or backfill,
+and no activation boundary. Any later change after network launch requires an
+explicit activation and before/after reference vectors.
 
-Inspected tests exercise basic percentages, caps, redistribution, empty recipient
-sets, burns/residue and clearing. They do not yet prove arbitrary-population fixed
-point behavior, full balance closure, activity-source deduplication or all claim
-rollback failures.
+Tests exercise basic percentages, caps, redistribution, empty recipient sets,
+burns/residue and clearing. TributeFactory additionally proves that successful
+offers for distinct target WWDs aggregate under their execution UTC day, split at
+the UTC midnight boundary, and leave no reward activity after injected mutation
+failures. The suite does not yet prove arbitrary-population fixed-point behavior,
+full balance closure, activity-source deduplication or all claim rollback failures.
 
 ## Consequences
 

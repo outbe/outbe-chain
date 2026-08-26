@@ -6,7 +6,10 @@ use outbe_compressed_entities::{
 };
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::stablecoin::iso_4217_alpha;
-use outbe_tee::protocol::{EncryptedTributeOffer, TributeOfferStatus, TributeZkContext};
+use outbe_primitives::time::timestamp_to_date_key;
+use outbe_tee::protocol::{
+    EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus, TributeZkContext,
+};
 use outbe_tribute::{TributeContract, TributeData};
 use outbe_zkproof::FullProofPublicInputs;
 
@@ -41,6 +44,38 @@ impl TributeFactoryContract<'_> {
         scope: &ExecutionScope,
         parent: &impl ParentBodySource,
         input: OfferTributeInput,
+    ) -> Result<WwdEntityId> {
+        self.offer_tribute_inner(
+            scope,
+            parent,
+            input,
+            crate::enclave_offer::process_tribute_offer_batch_via_enclave,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn offer_tribute_with_processor(
+        &mut self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        input: OfferTributeInput,
+        processor: impl FnOnce(
+            &[EncryptedTributeOffer],
+        )
+            -> core::result::Result<Vec<TributeOfferResult>, PrecompileError>,
+    ) -> Result<WwdEntityId> {
+        self.offer_tribute_inner(scope, parent, input, processor)
+    }
+
+    fn offer_tribute_inner(
+        &mut self,
+        scope: &ExecutionScope,
+        parent: &impl ParentBodySource,
+        input: OfferTributeInput,
+        processor: impl FnOnce(
+            &[EncryptedTributeOffer],
+        )
+            -> core::result::Result<Vec<TributeOfferResult>, PrecompileError>,
     ) -> Result<WwdEntityId> {
         let OfferTributeInput {
             caller,
@@ -164,7 +199,7 @@ impl TributeFactoryContract<'_> {
         // Node-local enclave faults (dead sidecar after the session's bounded
         // reconnect+retry, non-determinism, bad attestation) are Fatal — see
         // `enclave_offer` — never a deterministic revert.
-        let results = crate::enclave_offer::process_tribute_offer_batch_via_enclave(&[offer])?;
+        let results = processor(&[offer])?;
         let result = results.into_iter().next().ok_or_else(|| {
             PrecompileError::Fatal("enclave returned an empty tribute offer result".into())
         })?;
@@ -195,7 +230,8 @@ impl TributeFactoryContract<'_> {
         let su_hashes = parse_su_hashes(&result.su_hashes)?;
         self.mark_su_hashes_used(&su_hashes)?;
 
-        validate_agent_reward_addresses(&result.wallet_addresses, &result.sra_addresses)?;
+        let (wallet_addresses, sra_addresses) =
+            validate_agent_reward_addresses(&result.wallet_addresses, &result.sra_addresses)?;
 
         let mut tribute = TributeContract::new(self.storage.clone());
         tribute.issue(
@@ -214,29 +250,38 @@ impl TributeFactoryContract<'_> {
             },
         )?;
 
-        if !result.wallet_addresses.is_empty() && !result.sra_addresses.is_empty() {
-            let mut agent_reward = AgentRewardContract::new(self.storage.clone());
-            for addr_str in &result.wallet_addresses {
-                let addr: Address =
-                    addr_str
-                        .parse()
-                        .map_err(|_| TributeFactoryError::InvalidWalletAddress {
-                            address: addr_str.clone(),
-                        })?;
-                agent_reward.increment_waa_tribute(worldwide_day, addr)?;
-            }
-            for addr_str in &result.sra_addresses {
-                let addr: Address =
-                    addr_str
-                        .parse()
-                        .map_err(|_| TributeFactoryError::InvalidSraAddress {
-                            address: addr_str.clone(),
-                        })?;
-                agent_reward.increment_sra_tribute(worldwide_day, addr)?;
-            }
-        }
+        self.record_agent_reward_activity(&wallet_addresses, &sra_addresses)?;
 
         Ok(tribute_id)
+    }
+
+    /// Records one successful offer in the UTC reward-day bucket consumed by
+    /// Cycle on the following calendar day. The Tribute target WWD deliberately
+    /// does not cross this boundary: all offers executed on the same UTC day
+    /// share that day's WAA and SRA pools.
+    fn record_agent_reward_activity(
+        &self,
+        wallet_addresses: &[Address],
+        sra_addresses: &[Address],
+    ) -> Result<()> {
+        if wallet_addresses.is_empty() {
+            return Ok(());
+        }
+
+        let timestamp = u64::try_from(self.storage.timestamp()?).map_err(|_| {
+            PrecompileError::Fatal("TributeFactory block timestamp exceeds u64".into())
+        })?;
+        let reward_utc_day = WorldwideDay::new(timestamp_to_date_key(timestamp));
+        let mut agent_reward = AgentRewardContract::new(self.storage.clone());
+
+        for address in wallet_addresses {
+            agent_reward.increment_waa_tribute(reward_utc_day, *address)?;
+        }
+        for address in sra_addresses {
+            agent_reward.increment_sra_tribute(reward_utc_day, *address)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -291,12 +336,12 @@ fn parse_su_hashes(su_hashes: &[String]) -> Result<Vec<B256>> {
 pub(crate) fn validate_agent_reward_addresses(
     wallet_addresses: &[String],
     sra_addresses: &[String],
-) -> Result<()> {
+) -> Result<(Vec<Address>, Vec<Address>)> {
     let has_wallets = !wallet_addresses.is_empty();
     let has_sras = !sra_addresses.is_empty();
 
     if !has_wallets && !has_sras {
-        return Ok(());
+        return Ok((Vec::new(), Vec::new()));
     }
     if !has_wallets {
         return Err(TributeFactoryError::WalletAddressesRequiredWhenSraProvided.into());
@@ -305,26 +350,34 @@ pub(crate) fn validate_agent_reward_addresses(
         return Err(TributeFactoryError::SraAddressesRequiredWhenWalletProvided.into());
     }
 
-    for (i, addr) in wallet_addresses.iter().enumerate() {
-        if addr.parse::<Address>().is_err() {
-            return Err(TributeFactoryError::InvalidWalletAddressAtIndex {
-                index: i,
-                address: addr.clone(),
-            }
-            .into());
-        }
-    }
-    for (i, addr) in sra_addresses.iter().enumerate() {
-        if addr.parse::<Address>().is_err() {
-            return Err(TributeFactoryError::InvalidSraAddressAtIndex {
-                index: i,
-                address: addr.clone(),
-            }
-            .into());
-        }
-    }
+    let wallets = wallet_addresses
+        .iter()
+        .enumerate()
+        .map(|(index, address)| {
+            address.parse::<Address>().map_err(|_| {
+                TributeFactoryError::InvalidWalletAddressAtIndex {
+                    index,
+                    address: address.clone(),
+                }
+                .into()
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let sras = sra_addresses
+        .iter()
+        .enumerate()
+        .map(|(index, address)| {
+            address.parse::<Address>().map_err(|_| {
+                TributeFactoryError::InvalidSraAddressAtIndex {
+                    index,
+                    address: address.clone(),
+                }
+                .into()
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
 
-    Ok(())
+    Ok((wallets, sras))
 }
 
 // Amount normalization now lives in the enclave (`compute::normalize_amount`),
