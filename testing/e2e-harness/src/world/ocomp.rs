@@ -1066,7 +1066,7 @@ impl OcompTopology {
                 0o600,
             )?;
             let evm_key = ocomp_evm_private_key(u8::try_from(validator_index)?);
-            // The signer reads bare 64-hex plus LF.
+            // The signer trims surrounding whitespace around lowercase 64-hex.
             publish_exact_file(
                 &domain.root.join("ocomp-evm-key.hex"),
                 format!("{}\n", evm_key.trim_start_matches("0x")).as_bytes(),

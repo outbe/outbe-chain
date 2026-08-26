@@ -21,10 +21,14 @@ package set.
 outbe-keygen validator --output-dir keys/validator-0 --chain-id <id>
 ```
 
-That gives `signing-key.hex` (BLS consensus), `evm-key.hex`,
-`radicle/keys/radicle.pub` and a Radicle identity. The OCOMP registration and
-key are *not* generated here — they sign the genesis hash, which does not
-exist yet, so `create_genesis.py` mints them during the run.
+That gives `signing-key.hex` (BLS consensus), `evm-key.hex`, the stable
+`reth-p2p-secret.hex` transport identity, the dedicated
+`ocomp-evm-key.hex` operational signer, and the Radicle identity. The command
+prints the OCOMP signer address and the `validator delegate ocomp` command that
+the validator must submit after registration. The OCOMP result-signing
+registration and `ocomp-key-v1.hex` are *not* generated here — they bind the
+genesis hash, which does not exist yet, so `create_genesis.py` mints them during
+the run.
 
 ## Sign the enclave once
 
