@@ -17,7 +17,7 @@ use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
     DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_REFERENCE_PRICES,
     MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS,
-    PROMIS_LOAD_ANCHOR_ISO, PROMIS_LOAD_LAUNCH_EXPONENT, REFUND_CHUNK_LEN,
+    PROMIS_LOAD_ANCHOR_ISO, PROMIS_LOAD_LAUNCH_EXPONENT, PROMIS_LOAD_OVERRIDE, REFUND_CHUNK_LEN,
     REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
@@ -98,12 +98,14 @@ pub(crate) fn record_preflighted_brief(
 /// table — that filter caps the day at `MAX_REFERENCE_PRICES` sorted by ISO
 /// ascending and keeps one currency per series-id letter, and either would drop
 /// USD and take the anchor with it.
-#[cfg(not(feature = "e2e-test"))]
 fn step_promis_load(
     contract: &mut DesisContract<'_>,
     worldwide_day: WorldwideDay,
     reference_prices: &[ReferenceCurrencyPrice],
 ) -> Result<u128> {
+    if let Some(fixed) = PROMIS_LOAD_OVERRIDE {
+        return Ok(fixed);
+    }
     let current = contract.read_promis_load_exponent()?;
     let anchor = reference_prices
         .iter()
@@ -134,17 +136,6 @@ fn step_promis_load(
         None => contract.write_promis_load_exponent(exponent)?,
     }
     Ok(load_minor)
-}
-
-/// An e2e day's whole budget is a few PROMIS-units, so a day priced off the
-/// ladder could never issue a single Intex out of it.
-#[cfg(feature = "e2e-test")]
-fn step_promis_load(
-    _contract: &mut DesisContract<'_>,
-    _worldwide_day: WorldwideDay,
-    _reference_prices: &[ReferenceCurrencyPrice],
-) -> Result<u128> {
-    Ok(1)
 }
 
 /// The currencies a day will actually price: one per series-id letter, at most

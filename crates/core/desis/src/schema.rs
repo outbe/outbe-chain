@@ -102,7 +102,7 @@ impl AuctionConfig {
             .map(|row| row.entry_price_minor)
     }
 
-    /// Per-Intex escrow basis = `promis_load` COEN (constant; the COEN VWAP cancels). The escrow
+    /// Per-Intex escrow basis = `promis_load` COEN, which the day is briefed at. The escrow
     /// pays wCOEN, so the bid rate applies against this. entry_price feeds only floor/call.
     pub fn escrow_basis_minor(&self) -> u128 {
         self.promis_load_minor

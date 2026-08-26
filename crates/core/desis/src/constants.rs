@@ -21,6 +21,14 @@ pub const PROMIS_LOAD_ANCHOR_ISO: u16 = 840;
 /// Intex, which strikes at 100 USD while COEN/USD is 0.001.
 pub const PROMIS_LOAD_LAUNCH_EXPONENT: u32 = 11;
 
+/// Fixed load that bypasses the ladder entirely. An e2e day's whole budget is a
+/// few PROMIS-units, so a day priced off the ladder could never issue a single
+/// Intex out of it.
+#[cfg(not(feature = "e2e-test"))]
+pub const PROMIS_LOAD_OVERRIDE: Option<u128> = None;
+#[cfg(feature = "e2e-test")]
+pub const PROMIS_LOAD_OVERRIDE: Option<u128> = Some(1);
+
 /// PROMIS load anchor: the load is chosen so that `load_minor × coen_usd_rate_minor`
 /// carries this many decimal digits, which pins one Intex's strike at 100 USD.
 pub const PROMIS_LOAD_ANCHOR_DIGITS: u32 = 15;
