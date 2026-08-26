@@ -7,7 +7,7 @@ use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::time::SECONDS_PER_DAY;
-use outbe_primitives::units::SCALE_1E6_U64;
+use outbe_primitives::units::{NATIVE_TOKEN_DECIMALS, SCALE_1E6_U64};
 use outbe_promislimit::PromisLimitContract;
 
 use outbe_intexfactory::schema::IssuanceParams;
@@ -17,7 +17,7 @@ use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
     DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_REFERENCE_PRICES,
     MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS,
-    PROMIS_LOAD_STRIKE_DIGITS, PROMIS_LOAD_STRIKE_ISO, PROMIS_LOAD_DEADBAND_BPS,
+    PROMIS_LOAD_DEADBAND_BPS, PROMIS_LOAD_STRIKE_ISO, PROMIS_LOAD_STRIKE_USD,
     PROMIS_LOAD_OVERRIDE, REFUND_CHUNK_LEN,
     REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
@@ -91,6 +91,16 @@ pub(crate) fn record_preflighted_brief(
     contract.push_sched_active(worldwide_day)?;
     Ok(())
 }
+
+const _: () = assert!(
+    10u32.pow(PROMIS_LOAD_STRIKE_USD.ilog10()) == PROMIS_LOAD_STRIKE_USD,
+    "the strike must be a power of ten; the ladder only steps by decades"
+);
+
+/// Digits `load_minor × rate_minor` must carry to strike at `PROMIS_LOAD_STRIKE_USD`:
+/// the strike's own, plus the six each of the load and the rate.
+const PROMIS_LOAD_STRIKE_DIGITS: u32 =
+    PROMIS_LOAD_STRIKE_USD.ilog10() + 1 + 2 * NATIVE_TOKEN_DECIMALS as u32;
 
 const PROMIS_LOAD_MAX_EXPONENT: u32 = PROMIS_LOAD_STRIKE_DIGITS - 1;
 

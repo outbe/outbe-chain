@@ -16,8 +16,9 @@ pub const BID_QUANTITY_FLOOR_BPS: u32 = 400;
 /// Currency one Intex strikes in; mirrors the oracle's `DAY_TYPE_ISO`.
 pub const PROMIS_LOAD_STRIKE_ISO: u16 = 840;
 
-/// Digits of `load_minor × rate_minor`, which holds one Intex's strike in [100, 1000) USD.
-pub const PROMIS_LOAD_STRIKE_DIGITS: u32 = 15;
+/// What one Intex strikes at. The ladder steps by decades, so the strike drifts
+/// from here up to ten times it before resetting; only powers of ten are valid.
+pub const PROMIS_LOAD_STRIKE_USD: u32 = 100;
 
 /// Deadband at each decade boundary, so a rate loitering there stops flipping the load daily.
 pub const PROMIS_LOAD_DEADBAND_BPS: u32 = 200;
