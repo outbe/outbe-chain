@@ -40,9 +40,15 @@ pub struct TargetContracts {
     pub auction: Address,
     pub nft_bridge: Address,
     pub target_router: Address,
+    pub payment_token: Address,
+    pub compact: Address,
 }
 
 sol! {
+    #[sol(alloy_sol_types = alloy_sol_types)]
+    interface IEscrowWire {
+        function wire(address intexAuction, address compact, address paymentToken) external;
+    }
     #[sol(alloy_sol_types = alloy_sol_types)]
     interface ITargetRouterWire {
         function wire(address auction, address intex, address escrowAdapter) external;
@@ -198,6 +204,27 @@ impl TargetChain {
             &url,
         )?;
 
+        // Bids are bonded and paid here, so the venue needs a real ERC-20 and the
+        // compact lock behind it, exactly as the committee-side venue does.
+        let payment_token = address_from(
+            &forge::run(
+                &intex,
+                &["create", "test/mocks/MockWCOEN.sol:MockWCOEN"],
+                &[],
+                &url,
+            )?,
+            "Deployed to:",
+        )?;
+        let compact = address_from(
+            &forge::run(
+                &intex,
+                &["create", "test/mocks/MockTheCompact.sol:MockTheCompact"],
+                &[],
+                &url,
+            )?,
+            "Deployed to:",
+        )?;
+
         Ok(TargetContracts {
             create_x,
             mailbox,
@@ -207,6 +234,8 @@ impl TargetChain {
             auction: address_from(&venue, "IntexAuction:")?,
             nft_bridge: address_from(&venue, "IntexNFT1155Bridge:")?,
             target_router: address_from(&venue, "TargetRouter:")?,
+            payment_token,
+            compact,
         })
     }
 
@@ -240,10 +269,20 @@ impl TargetChain {
         // The router is what an inbound message becomes, so it is the account
         // allowed to create series and mint. The bridge needs the same right on the
         // collection to burn a holder's units here and mint them at home.
+        self.send(
+            &url,
+            contracts.escrow,
+            &IEscrowWire::wireCall {
+                intexAuction: contracts.auction,
+                compact: contracts.compact,
+                paymentToken: contracts.payment_token,
+            },
+        )?;
         let relayer = self.role(&url, contracts.intex_nft, Role::Relayer)?;
         for (holder, role, account) in [
             (contracts.intex_nft, relayer, contracts.target_router),
             (contracts.auction, relayer, contracts.target_router),
+            (contracts.escrow, relayer, contracts.target_router),
             (contracts.intex_nft, relayer, contracts.nft_bridge),
         ] {
             self.send(&url, holder, &IVenueRoles::grantRoleCall { role, account })?;

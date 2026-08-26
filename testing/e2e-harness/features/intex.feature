@@ -25,9 +25,13 @@ Feature: Intex from auction to Promis
   @intex-auction
   Scenario: A settled green day runs its auction through to a minted Intex
     Given a fresh four-validator OCOMP public capacity localnet
+    When a local target chain is started
+    And the intex venue is deployed on the target chain
+    And the intex venue is wired
     Then the controlled COEN USD quote is finalized through the real price feeder
     When the intex engine is deployed on the committee chain
     Then the committee chain hosts the intex engine
+    When a relay carries messages between the two chains
     When 33 capacity owners submit one encrypted Tribute each at no more than two per block
     Then all validators observe exactly 33 public Tributes for the capacity day
     When the committee logical clock reaches the public capacity processing time

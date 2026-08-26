@@ -176,9 +176,14 @@ pub(crate) fn venue_schedule(url: &str, venue: Address, worldwide_day: u32) -> S
 /// Both sides swallow a failed send by parking it, so the parked entry is the
 /// only trace of work that never left.
 #[cfg(feature = "ocomp-integration")]
-pub(crate) fn parked_work(url: &str, router: Address, venue_router: Address) -> String {
+pub(crate) fn parked_work(
+    url: &str,
+    venue_url: &str,
+    router: Address,
+    venue_router: Address,
+) -> String {
     let relays = eth::read_call(
-        url,
+        venue_url,
         venue_router,
         &IParkedWork::nextPendingBidsRelayIdxCall {},
     );
@@ -238,12 +243,13 @@ pub(crate) fn parked_work(url: &str, router: Address, venue_router: Address) -> 
 #[cfg(feature = "ocomp-integration")]
 pub(crate) fn bid_relay_traffic(
     url: &str,
+    venue_url: &str,
     router: Address,
     venue_router: Address,
     worldwide_day: u32,
 ) -> String {
     let day_topic = format!("0x{:064x}", worldwide_day);
-    let count = |address: Address, signature: &[u8], day_topic_index: usize| -> String {
+    let count = |at: &str, address: Address, signature: &[u8], day_topic_index: usize| -> String {
         let topic0 = alloy_primitives::keccak256(signature);
         let mut topics = vec![
             serde_json::json!(format!("{topic0:?}")),
@@ -252,22 +258,25 @@ pub(crate) fn bid_relay_traffic(
         if day_topic_index == 2 {
             topics.push(serde_json::json!(day_topic.clone()));
         }
-        match logs_of(url, address, topics) {
+        match logs_of(at, address, topics) {
             Some(entries) => entries.len().to_string(),
             None => "unreadable".to_owned(),
         }
     };
     let sent_batches = count(
+        venue_url,
         venue_router,
         b"BidsBatchSent(bytes32,uint32,uint256)".as_slice(),
         2,
     );
     let sent_done = count(
+        venue_url,
         venue_router,
         b"BidsDoneSent(bytes32,uint32,uint16,uint32)".as_slice(),
         2,
     );
     let got_batches = count(
+        url,
         router,
         b"BidsBatchReceived(uint32,uint32,uint256)".as_slice(),
         2,

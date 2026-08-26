@@ -4,7 +4,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "ocomp-integration")]
-use alloy_primitives::U256;
+use alloy_primitives::{Address, U256};
 use cucumber::{then, when};
 
 use crate::env::environment;
@@ -161,18 +161,14 @@ const AUCTION_STAGE_TIMEOUT: Duration = Duration::from_secs(2400);
 
 #[cfg(feature = "ocomp-integration")]
 fn advance_past_window_to_stage(world: &mut World, target_stage: u8) {
-    let contracts = world
-        .state
-        .origin_contracts
-        .clone()
-        .expect("a deploy recorded its addresses");
+    let venue = venue_side(world);
     let worldwide_day = settled_day(world);
-    let url = world.rpc.url(world.validators.primary_port());
+    let url = venue.url.clone();
     let deadline = Instant::now() + AUCTION_STAGE_TIMEOUT;
     loop {
         let stage = eth::read_call(
             &url,
-            contracts.intex_auction,
+            venue.auction,
             &IAuctionStage::getAuctionStageCall {
                 worldwideDay: worldwide_day,
             },
@@ -190,16 +186,70 @@ fn advance_past_window_to_stage(world: &mut World, target_stage: u8) {
     }
 }
 
-const AUCTION_START_TIMEOUT: Duration = Duration::from_secs(1200);
+/// Where the venue actually lives. With a second chain started the auction runs
+/// there and its messages ride the relay home; without one the committee is its
+/// own target and everything stays on one chain.
+#[cfg(feature = "ocomp-integration")]
+struct VenueSide {
+    url: String,
+    chain_id: u64,
+    auction: Address,
+    escrow: Address,
+    payment_token: Address,
+    intex_nft: Address,
+    target_router: Address,
+}
 
-#[then("the auction for that day opens on the target chain")]
-fn auction_opens_on_target(world: &mut World) {
-    let url = world.rpc.url(world.validators.primary_port());
-    let contracts = world
+#[cfg(feature = "ocomp-integration")]
+fn venue_side(world: &World) -> VenueSide {
+    let origin = world
         .state
         .origin_contracts
         .clone()
         .expect("a deploy recorded its addresses");
+    match (
+        world.target_chain.port(),
+        world.state.target_contracts.clone(),
+    ) {
+        (Some(_), Some(target)) => VenueSide {
+            url: world.target_chain.rpc_url().expect("target chain started"),
+            chain_id: world.target_chain.chain_id(),
+            auction: target.auction,
+            escrow: target.escrow,
+            payment_token: target.payment_token,
+            intex_nft: target.intex_nft,
+            target_router: target.target_router,
+        },
+        _ => VenueSide {
+            url: world.rpc.url(world.validators.primary_port()),
+            chain_id: world
+                .rpc
+                .chain_id(world.validators.primary_port())
+                .expect("committee chain id"),
+            auction: origin.intex_auction,
+            escrow: origin.escrow,
+            payment_token: origin.payment_token,
+            intex_nft: origin.intex_nft,
+            target_router: origin.target_router,
+        },
+    }
+}
+
+const AUCTION_START_TIMEOUT: Duration = Duration::from_secs(1200);
+
+#[then("the auction for that day opens on the target chain")]
+fn auction_opens_on_target(world: &mut World) {
+    let venue = venue_side(world);
+    let url = venue.url.clone();
+    // Desis and the origin router answer on the committee, whichever chain the
+    // venue itself sits on.
+    let home = world.rpc.url(world.validators.primary_port());
+    let origin_router = world
+        .state
+        .origin_contracts
+        .clone()
+        .expect("a deploy recorded its addresses")
+        .origin_router;
     let worldwide_day = world
         .state
         .wwd
@@ -214,7 +264,7 @@ fn auction_opens_on_target(world: &mut World) {
     loop {
         if let Some(stage) = eth::read_call(
             &url,
-            contracts.intex_auction,
+            venue.auction,
             &IAuctionStage::getAuctionStageCall {
                 worldwideDay: worldwide_day,
             },
@@ -222,16 +272,16 @@ fn auction_opens_on_target(world: &mut World) {
             assert!(
                 stage < 2,
                 "day {worldwide_day} reached the venue at stage {stage}: {}",
-                venue_probes::venue_schedule(&url, contracts.intex_auction, worldwide_day)
+                venue_probes::venue_schedule(&url, venue.auction, worldwide_day)
             );
             return;
         }
         assert!(
             Instant::now() < deadline,
             "day {worldwide_day} settled but no auction ever opened on the venue at {}: {}; {}; {}; {}",
-            contracts.intex_auction,
-            venue_probes::desis_stage(&url, worldwide_day),
-            venue_probes::frozen_targets(&url, contracts.origin_router, worldwide_day),
+            venue.auction,
+            venue_probes::desis_stage(&home, worldwide_day),
+            venue_probes::frozen_targets(&home, origin_router, worldwide_day),
             venue_probes::day_closure(world, worldwide_day),
             venue_probes::day_colour(world, worldwide_day)
         );
@@ -282,13 +332,9 @@ fn committee_clock_settles(world: &mut World) {
 /// itself.
 #[cfg(feature = "ocomp-integration")]
 fn flush_parked_bid_relays(world: &mut World) {
-    let url = world.rpc.url(world.validators.primary_port());
-    let venue_router = world
-        .state
-        .origin_contracts
-        .clone()
-        .expect("a deploy recorded its addresses")
-        .target_router;
+    let venue = venue_side(world);
+    let url = venue.url.clone();
+    let venue_router = venue.target_router;
     let parked = eth::read_call(
         &url,
         venue_router,
@@ -329,33 +375,21 @@ const BIDS: [(u16, u32); 2] = [(30, 800_000), (40, 700_000)];
 #[cfg(feature = "ocomp-integration")]
 #[when("two bidders commit their bids")]
 fn bidders_commit(world: &mut World) {
-    let port = world.validators.primary_port();
-    let url = world.rpc.url(port);
-    let chain_id = world.rpc.chain_id(port).expect("committee chain id");
-    let contracts = world
-        .state
-        .origin_contracts
-        .clone()
-        .expect("a deploy recorded its addresses");
+    let venue = venue_side(world);
+    let (url, chain_id) = (venue.url.clone(), venue.chain_id);
     let worldwide_day = settled_day(world);
 
     let bidders = bidders::derive(&BIDS).expect("derive the bidders");
     bidders::fund(
         &url,
-        contracts.payment_token,
-        contracts.escrow,
+        venue.payment_token,
+        venue.escrow,
         &bidders,
         U256::from(BIDDER_ALLOWANCE),
     )
     .expect("fund the bidders");
-    bidders::commit(
-        &url,
-        contracts.intex_auction,
-        chain_id,
-        worldwide_day,
-        &bidders,
-    )
-    .expect("commit the bids");
+    bidders::commit(&url, venue.auction, chain_id, worldwide_day, &bidders)
+        .expect("commit the bids");
     world.state.auction_bidders = bidders;
 }
 
@@ -364,25 +398,13 @@ fn bidders_commit(world: &mut World) {
 fn bidders_reveal(world: &mut World) {
     advance_past_window_to_stage(world, 1);
 
-    let port = world.validators.primary_port();
-    let url = world.rpc.url(port);
-    let chain_id = world.rpc.chain_id(port).expect("committee chain id");
-    let contracts = world
-        .state
-        .origin_contracts
-        .clone()
-        .expect("a deploy recorded its addresses");
+    let venue = venue_side(world);
+    let (url, chain_id) = (venue.url.clone(), venue.chain_id);
     let worldwide_day = settled_day(world);
     let bidders = world.state.auction_bidders.clone();
 
-    bidders::reveal(
-        &url,
-        contracts.intex_auction,
-        chain_id,
-        worldwide_day,
-        &bidders,
-    )
-    .expect("reveal the bids");
+    bidders::reveal(&url, venue.auction, chain_id, worldwide_day, &bidders)
+        .expect("reveal the bids");
 }
 
 #[cfg(feature = "ocomp-integration")]
@@ -390,18 +412,16 @@ fn bidders_reveal(world: &mut World) {
 fn auction_clears(world: &mut World) {
     advance_past_window_to_stage(world, 2);
 
-    let chain_id = world
-        .rpc
-        .chain_id(world.validators.primary_port())
-        .expect("committee chain id");
     let deployed = world
         .state
         .origin_contracts
         .clone()
         .expect("a deploy recorded its addresses");
-    let venue = deployed.intex_auction;
+    let side = venue_side(world);
+    let venue_url = side.url.clone();
+    let venue = side.auction;
     let router = deployed.origin_router;
-    let venue_router = deployed.target_router;
+    let venue_router = side.target_router;
     let worldwide_day = settled_day(world);
     let deadline = Instant::now() + AUCTION_START_TIMEOUT;
     loop {
@@ -425,7 +445,7 @@ fn auction_clears(world: &mut World) {
             Instant::now() < deadline,
             "day {worldwide_day} never cleared on Desis: {}; {}; venue stage {:?}, {}; {}; {}; {}; {}; {}; {}; {}",
             venue_probes::desis_stage(&url, worldwide_day),
-            venue_probes::relayed_bids(&url, worldwide_day, chain_id as u32),
+            venue_probes::relayed_bids(&url, worldwide_day, side.chain_id as u32),
             eth::read_call(
                 &url,
                 venue,
@@ -433,13 +453,13 @@ fn auction_clears(world: &mut World) {
                     worldwideDay: worldwide_day
                 },
             ),
-            venue_probes::venue_bid_counts(&url, venue, worldwide_day),
-            venue_probes::parked_work(&url, router, venue_router),
-            venue_probes::stages_received(&url, venue_router, worldwide_day),
+            venue_probes::venue_bid_counts(&venue_url, venue, worldwide_day),
+            venue_probes::parked_work(&url, &venue_url, router, venue_router),
+            venue_probes::stages_received(&venue_url, venue_router, worldwide_day),
             venue_probes::ignored_inbound(&url, router, "origin"),
-            venue_probes::ignored_inbound(&url, venue_router, "venue"),
+            venue_probes::ignored_inbound(&venue_url, venue_router, "venue"),
             venue_probes::ignored_by_desis(&url, worldwide_day),
-            venue_probes::bid_relay_traffic(&url, router, venue_router, worldwide_day),
+            venue_probes::bid_relay_traffic(&url, &venue_url, router, venue_router, worldwide_day),
             venue_probes::parked_deliveries(world)
         );
         sleep(Duration::from_secs(2));
@@ -455,11 +475,13 @@ fn issuance_mints_intex(world: &mut World) {
         .clone()
         .expect("a deploy recorded its addresses");
     let bidders = world.state.auction_bidders.clone();
-    let url = world.rpc.url(world.validators.primary_port());
+    let home = world.rpc.url(world.validators.primary_port());
+    let side = venue_side(world);
+    let url = side.url.clone();
     let worldwide_day = settled_day(world);
 
     assert_ne!(
-        venue_probes::cleared_empty(&url, worldwide_day),
+        venue_probes::cleared_empty(&home, worldwide_day),
         Some(true),
         "day {worldwide_day} cleared empty: the day's supply bought no whole Intex, so there is \
          nothing to issue and this scenario cannot cover minting"
@@ -467,7 +489,7 @@ fn issuance_mints_intex(world: &mut World) {
 
     let deadline = Instant::now() + AUCTION_STAGE_TIMEOUT;
     let series = loop {
-        if let Some(series) = venue_probes::issued_series(&url, contracts.target_router) {
+        if let Some(series) = venue_probes::issued_series(&url, side.target_router) {
             break series;
         }
         assert!(
@@ -479,7 +501,7 @@ fn issuance_mints_intex(world: &mut World) {
 
     let exists = eth::read_call(
         &url,
-        contracts.intex_nft,
+        side.intex_nft,
         &IIssuedSeries::seriesExistsCall { seriesId: series },
     )
     .expect("ask the collection whether the series exists");
@@ -487,7 +509,7 @@ fn issuance_mints_intex(world: &mut World) {
 
     let token_id = eth::read_call(
         &url,
-        contracts.intex_nft,
+        side.intex_nft,
         &IIssuedSeries::issuedTokenIdCall { seriesId: series },
     )
     .expect("derive the token id of the issued series");
@@ -497,7 +519,7 @@ fn issuance_mints_intex(world: &mut World) {
         .map(|bidder| {
             eth::read_call(
                 &url,
-                contracts.intex_nft,
+                side.intex_nft,
                 &IIssuedSeries::balanceOfCall {
                     account: bidder.address,
                     id: token_id,
@@ -516,12 +538,8 @@ fn issuance_mints_intex(world: &mut World) {
 #[cfg(feature = "ocomp-integration")]
 #[then("the escrow settles the day and returns what the bids did not buy")]
 fn escrow_refunds_the_rest(world: &mut World) {
-    let contracts = world
-        .state
-        .origin_contracts
-        .clone()
-        .expect("a deploy recorded its addresses");
-    let url = world.rpc.url(world.validators.primary_port());
+    let side = venue_side(world);
+    let url = side.url.clone();
     let worldwide_day = settled_day(world);
     let topic0 = alloy_primitives::keccak256(
         b"RefundInstructionsReceived(uint32,uint32,uint256)".as_slice(),
@@ -536,7 +554,7 @@ fn escrow_refunds_the_rest(world: &mut World) {
             serde_json::json!([{
                 "fromBlock": "0x0",
                 "toBlock": "latest",
-                "address": format!("{:?}", contracts.target_router),
+                "address": format!("{:?}", side.target_router),
                 "topics": [format!("{topic0:?}"), serde_json::Value::Null, day_topic],
             }]),
         )
@@ -560,9 +578,9 @@ fn escrow_refunds_the_rest(world: &mut World) {
     // Settlement either pays a bid or gives it back, so the day leaves nothing behind.
     let held = eth::read_call(
         &url,
-        contracts.payment_token,
+        side.payment_token,
         &IPaymentToken::balanceOfCall {
-            account: contracts.escrow,
+            account: side.escrow,
         },
     )
     .expect("read what the escrow still holds");
