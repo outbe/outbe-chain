@@ -1014,6 +1014,39 @@ fn the_proceeds_sweep_takes_a_bounded_slice_and_resumes() {
 }
 
 #[test]
+fn every_awaiting_day_is_settled_across_the_slices() {
+    use crate::constants::MAX_PROCEEDS_SETTLED_PER_BLOCK as CAP;
+    with_factory(|s| {
+        let total = CAP + 5;
+        let each = U256::from(100u64);
+        for i in 0..total {
+            let wwd = WorldwideDay::new(2026_0101 + i);
+            // Two winning chains, one delivery: the fan-in stays open, so the pot
+            // waits for the deadline instead of settling on arrival.
+            outbe_intex::api::arm_proceeds(&s, wwd, &[10, 20], DEADLINE_FUTURE).unwrap();
+            s.increase_balance(INTEX_FACTORY_ADDRESS, each).unwrap();
+            runtime::distribute(&s, crate::constants::ORIGIN_ROUTER_ADDRESS, wwd, 10, each)
+                .unwrap();
+        }
+        let held = each * U256::from(total);
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), held);
+
+        // Past the deadline the pots are ownerless, so settling burns them. One
+        // block reaches the cap and no further: the slice is what bounds the work.
+        runtime::sweep_proceeds_deadlines(&s, DEADLINE_FUTURE + 1).unwrap();
+        assert_eq!(
+            s.balance(INTEX_FACTORY_ADDRESS).unwrap(),
+            each * U256::from(total - CAP)
+        );
+
+        // The next block reaches the days the first one left, which is the property
+        // a bounded sweep has to keep: fewer per block, none dropped.
+        runtime::sweep_proceeds_deadlines(&s, DEADLINE_FUTURE + 1).unwrap();
+        assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
+    });
+}
+
+#[test]
 fn the_payout_drain_takes_a_bounded_slice_and_reaches_every_round() {
     use crate::constants::MAX_DISTRIBUTIONS_DRAINED_PER_BLOCK as CAP;
     with_factory(|s| {
