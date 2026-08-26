@@ -3,7 +3,7 @@
 //! The harness plays the L2 network: it generates a BLS MinSig keypair,
 //! registers the operator's EOA through validator governance, and governs the
 //! `zk_enabled` toggle. With the gate enabled an unsigned offer must revert;
-//! a real `outbe.full_proof@1.0.0` whose root is signed with the registered key
+//! a real `outbe.full_proof@1.1.0` whose root is signed with the registered key
 //! must pass the full gate and issue the canonical Tribute through the normal
 //! enclave path.
 

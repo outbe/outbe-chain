@@ -30,8 +30,8 @@ pub enum ZkProofError {
     WrongCombinedProofLength { expected: usize, actual: usize },
     #[error("zk_verify: emit chain ID word is not a right-aligned uint64")]
     InvalidEmitChainId,
-    #[error("zk_verify: emit owner word at index {0} is not a single padded byte")]
-    InvalidEmitOwnerByte(usize),
+    #[error("zk_verify: emit owner word exceeds the 160-bit address bound")]
+    InvalidEmitOwnerField,
     #[error("zk_verify: emit mint units word is not a right-aligned uint64")]
     InvalidEmitMintUnits,
     #[error("zk verifier CRS initialization failed: {0}")]

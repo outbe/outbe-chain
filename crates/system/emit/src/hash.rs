@@ -1,15 +1,18 @@
 //! Rust mirror of the Emit hash and tree formulas.
 //!
 //! Copied from the frozen circuit formulas in
-//! `outbe-emit-mint-circuit/src/emit.nr`:
+//! `outbe-emit-mint-circuit/src/emit.nr` and
+//! `outbe-circuit-core/src/hash.nr`:
 //!
 //! - BN254 fields use canonical 32-byte big-endian encodings; a word that
 //!   would require reduction is invalid input.
-//! - `h2(left, right) = Poseidon2([left, right, 0, 2^65])[0]` — exactly noir's
-//!   two-input `std::hash::poseidon2` (the `outbe-poseidon` sponge with
-//!   `len = 2`).
-//! - `p(tag, values)` absorbs the big-endian ASCII domain `OUTBE_EMIT`, the
-//!   exact purpose tag, the tuple arity, then the ordered values.
+//! - `h2(a, b) = Poseidon2([a, b])[0]` and `h3(a, b, c) = Poseidon2([a, b,
+//!   c])[0]` — exactly noir's `hash_2` / `hash_3` (the `outbe-poseidon`
+//!   sponge with `len = 2` / `len = 3`).
+//! - `p(tag, values)` mirrors noir `hash_multi(tag, values)`: it absorbs
+//!   the exact purpose tag, the tuple arity, then the ordered values.
+//! - Merkle inner nodes are `h3(EMIT_DOMAIN, left, right)` where
+//!   `EMIT_DOMAIN` is the big-endian ASCII `OUTBE_EMIT`.
 
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
@@ -22,18 +25,24 @@ fn ascii_field(value: &str) -> Field {
     Field::from_be_bytes_mod_order(value.as_bytes())
 }
 
-/// `h2(left, right) = Poseidon2([left, right, 0, 2^65])[0]`.
+/// `h2(left, right) = Poseidon2([left, right])[0]`.
 fn h2(left: Field, right: Field) -> Field {
     Poseidon2::<Field>::new()
         .hash(&[left, right])
         .expect("Poseidon2 sponge is infallible")
 }
 
-/// Purpose-tagged chaining: `p(tag, values)` absorbs domain, tag, arity, then
-/// the ordered values.
+/// `h3(a, b, c) = Poseidon2([a, b, c])[0]` — noir's three-input `hash_3`.
+fn h3(a: Field, b: Field, c: Field) -> Field {
+    Poseidon2::<Field>::new()
+        .hash(&[a, b, c])
+        .expect("Poseidon2 sponge is infallible")
+}
+
+/// Purpose-tagged chaining: `p(tag, values)` = noir `hash_multi(tag,
+/// values)` — absorbs the tag, the tuple arity, then the ordered values.
 pub fn p(tag: Field, values: &[Field]) -> Field {
-    let mut state = h2(emit_domain(), tag);
-    state = h2(state, Field::from(values.len() as u64));
+    let mut state = h2(tag, Field::from(values.len() as u64));
     for value in values {
         state = h2(state, *value);
     }
@@ -105,14 +114,14 @@ pub fn empty_leaf(chain_id: u64) -> Field {
     p(tag_empty(), &[Field::from(chain_id)])
 }
 
-/// Shared untagged Merkle inner node: `H2(left, right)`.
+/// Tagged Merkle inner node: `H3(EMIT_DOMAIN, left, right)`.
 pub fn merkle_node(left: Field, right: Field) -> Field {
-    h2(left, right)
+    h3(emit_domain(), left, right)
 }
 
 /// The complete chain-specific empty ladder `zeros[0..=depth]`:
 /// `zeros[0] = empty_leaf(chain_id)`,
-/// `zeros[i+1] = H2(zeros[i], zeros[i])`.
+/// `zeros[i+1] = H3(EMIT_DOMAIN, zeros[i], zeros[i])`.
 /// Derived in memory on every request; never persisted.
 pub fn empty_subtrees(chain_id: u64, depth: usize) -> Vec<Field> {
     let mut zeros = vec![Field::from(0u64); depth + 1];

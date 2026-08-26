@@ -34,22 +34,22 @@ const FULL_PROOF_PROOF_FIELD_COUNT: usize = 274;
 pub const FULL_PROOF_COMBINED_LEN: usize =
     4 + (FULL_PROOF_PUBLIC_INPUT_COUNT + FULL_PROOF_PROOF_FIELD_COUNT) * 32;
 
-/// Public-input count fixed by the `outbe.emit.mint@1.0.0` ABI: `chain_id`,
-/// `root`, `nullifier`, twenty flattened owner bytes, `mint_units`,
-/// `change_commitment`.
-const EMIT_MINT_PUBLIC_INPUT_COUNT: usize = 25;
+/// Public-input count fixed by the `outbe.emit.mint@1.2.1` ABI: `chain_id`,
+/// `root`, `nullifier`, the owner as one 160-bit-bounded field word,
+/// `mint_units`, `change_commitment`.
+const EMIT_MINT_PUBLIC_INPUT_COUNT: usize = 6;
 /// Byte length of the combined-proof public section: 4-byte count header plus
-/// 25 canonical 32-byte words.
+/// 6 canonical 32-byte words.
 const EMIT_MINT_PUBLIC_PREFIX_LEN: usize = 4 + EMIT_MINT_PUBLIC_INPUT_COUNT * 32;
-/// Proof words in a canonical `outbe.emit.mint@1.0.0` combined proof. The
+/// Proof words in a canonical `outbe.emit.mint@1.2.1` combined proof. The
 /// UltraHonkKeccak transcript of the frozen circuit is fixed-length, so this
 /// is part of the pinned circuit identity (same VK, same transcript shape).
 pub const EMIT_MINT_PROOF_WORDS: usize = 238;
-/// Exact total length of a canonical `outbe.emit.mint@1.0.0` combined proof:
-/// 4-byte count header, 25 public words, 238 proof words.
+/// Exact total length of a canonical `outbe.emit.mint@1.2.1` combined proof:
+/// 4-byte count header, 6 public words, 238 proof words.
 pub const EMIT_MINT_COMBINED_LEN: usize = EMIT_MINT_PUBLIC_PREFIX_LEN + 32 * EMIT_MINT_PROOF_WORDS;
 
-/// Public claim carried by the canonical `outbe.full_proof@1.0.0`
+/// Public claim carried by the canonical `outbe.full_proof@1.1.0`
 /// combined-proof format.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FullProofPublicInputs {
@@ -91,9 +91,9 @@ pub struct PayNotePublicInputs {
     pub change_commitment: [u8; 32],
 }
 
-/// Public claim carried by the canonical `outbe.emit.mint@1.0.0`
+/// Public claim carried by the canonical `outbe.emit.mint@1.2.1`
 /// combined-proof format, in circuit order: `chain_id`, `root`, `nullifier`,
-/// twenty flattened owner bytes, `mint_units`, `change_commitment`.
+/// owner as one 160-bit-bounded field, `mint_units`, `change_commitment`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EmitMintPublicInputs {
     pub chain_id: u64,
@@ -213,7 +213,7 @@ pub fn decode_full_proof_public_inputs(
     })
 }
 
-/// Verify the pinned canonical `outbe.full_proof@1.0.0` circuit.
+/// Verify the pinned canonical `outbe.full_proof@1.1.0` circuit.
 ///
 /// Malformed combined proofs are errors. Well-formed proofs that do not verify
 /// return `Ok(false)`.
@@ -299,17 +299,17 @@ pub fn verify_paynote(combined_proof: &[u8]) -> Result<bool, ZkProofError> {
     verify_inner(PayNote::VK_BYTES, combined_proof)
 }
 
-/// Decode and validate the 25 public inputs embedded in a canonical
-/// `outbe.emit.mint@1.0.0` combined proof.
+/// Decode and validate the 6 public inputs embedded in a canonical
+/// `outbe.emit.mint@1.2.1` combined proof.
 ///
-/// Accepts only the exact wire the frozen circuit fixes: a 25-count header,
+/// Accepts only the exact wire the frozen circuit fixes: a 6-count header,
 /// one right-aligned `u64` chain-ID word at index `0`, canonical BN254 field
-/// words at indices `1`, `2`, and `24`, twenty one-byte owner words at
-/// `3..=22` (upper 31 bytes zero), one right-aligned `u64` mint-units word at
-/// `23`, and the fixed-length proof tail — the whole blob is exactly
-/// [`EMIT_MINT_COMBINED_LEN`] bytes. The proof bytes remain self-contained
-/// and are passed unchanged to Barretenberg after callers compare this claim
-/// with their expected values.
+/// words at indices `1`, `2`, `3`, and `5`, the owner as one field word at
+/// `3` bounded to the 160-bit address range (top twelve bytes zero), one
+/// right-aligned `u64` mint-units word at `4`, and the fixed-length proof
+/// tail — the whole blob is exactly [`EMIT_MINT_COMBINED_LEN`] bytes. The
+/// proof bytes remain self-contained and are passed unchanged to
+/// Barretenberg after callers compare this claim with their expected values.
 pub fn decode_emit_mint_public_inputs(
     combined_proof: &[u8],
 ) -> Result<EmitMintPublicInputs, ZkProofError> {
@@ -340,33 +340,30 @@ pub fn decode_emit_mint_public_inputs(
         words[index].copy_from_slice(word);
     }
     let chain_id = read_u64_be_padded(&words[0]).ok_or(ZkProofError::InvalidEmitChainId)?;
-    for index in [1, 2, 24] {
+    for index in [1, 2, 3, 5] {
         if !is_canonical_field_word(&words[index]) {
             return Err(ZkProofError::NonCanonicalPublicInput(index));
         }
     }
-    for (slot, word) in words.iter().enumerate().take(23).skip(3) {
-        if word[..31].iter().any(|&byte| byte != 0) {
-            return Err(ZkProofError::InvalidEmitOwnerByte(slot));
-        }
+    // The circuit's `EthAddress` type bounds the owner field to the 160-bit
+    // address range, so the top twelve big-endian bytes must be zero.
+    if words[3][..12].iter().any(|&byte| byte != 0) {
+        return Err(ZkProofError::InvalidEmitOwnerField);
     }
-    let mint_units = read_u64_be_padded(&words[23]).ok_or(ZkProofError::InvalidEmitMintUnits)?;
-    let mut note_owner = [0u8; 20];
-    for (slot, byte) in note_owner.iter_mut().enumerate() {
-        *byte = words[3 + slot][31];
-    }
+    let mint_units = read_u64_be_padded(&words[4]).ok_or(ZkProofError::InvalidEmitMintUnits)?;
+    let note_owner = Address::from_slice(&words[3][12..]);
 
     Ok(EmitMintPublicInputs {
         chain_id,
         root: words[1],
         nullifier: words[2],
-        note_owner: Address::new(note_owner),
+        note_owner,
         mint_units,
-        change_commitment: words[24],
+        change_commitment: words[5],
     })
 }
 
-/// Verify the pinned canonical `outbe.emit.mint@1.0.0` circuit.
+/// Verify the pinned canonical `outbe.emit.mint@1.2.1` circuit.
 ///
 /// Malformed combined proofs are errors. Well-formed proofs that do not
 /// verify return `Ok(false)`.
