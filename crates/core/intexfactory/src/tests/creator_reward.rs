@@ -1012,3 +1012,33 @@ fn the_proceeds_sweep_takes_a_bounded_slice_and_resumes() {
         );
     });
 }
+
+#[test]
+fn the_payout_drain_takes_a_bounded_slice_and_reaches_every_round() {
+    use crate::constants::MAX_DISTRIBUTIONS_DRAINED_PER_BLOCK as CAP;
+    with_factory(|s| {
+        let total = CAP + 3;
+        let each = U256::from(100u64);
+        for i in 0..total {
+            let wwd = WorldwideDay::new(2026_0201 + i);
+            outbe_intex::api::record_contributors(&s, wwd, &[(contrib(1), U256::from(1u64))])
+                .unwrap();
+            // One winning chain, so the delivery completes the fan-in and opens a round.
+            outbe_intex::api::arm_proceeds(&s, wwd, &[10], DEADLINE_FUTURE).unwrap();
+            s.increase_balance(INTEX_FACTORY_ADDRESS, each).unwrap();
+            runtime::distribute(&s, crate::constants::ORIGIN_ROUTER_ADDRESS, wwd, 10, each)
+                .unwrap();
+        }
+        assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), total);
+
+        // One contributor per round, so a visited round finishes and leaves the set.
+        runtime::drain_distributions(&s).unwrap();
+        assert_eq!(
+            outbe_intex::api::active_dist_count(&s).unwrap(),
+            total - CAP
+        );
+
+        runtime::drain_distributions(&s).unwrap();
+        assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 0);
+    });
+}

@@ -62,6 +62,11 @@ pub(crate) const MAX_SERIES_ACTIONS_PER_SWEEP: u32 = 256;
 /// payout round, burn, or start a distribution.
 pub(crate) const MAX_PROCEEDS_SETTLED_PER_BLOCK: u32 = 32;
 
+/// Series the payout drain advances per block. One entry pays up to
+/// `DIST_CHUNK_LIMIT` contributors, so the slice is narrower than the settlement
+/// one for the same per-block ceiling.
+pub(crate) const MAX_DISTRIBUTIONS_DRAINED_PER_BLOCK: u32 = 8;
+
 /// Queue entries drained per `intex_notify` firing. Bounds entries taken from the queue, not the sends
 /// they produce. It also sets how fast a called day reaches its targets, and the call deadline runs from
 /// the origin's stamp, so a backlog spends the holder's notice window rather than deferring it.

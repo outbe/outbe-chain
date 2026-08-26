@@ -16,9 +16,9 @@ use outbe_vaultrouter::api::IVaultRouter;
 
 use crate::config;
 use crate::constants::{
-    DIST_CHUNK_LIMIT, INTEX_NFT1155_ADDRESS, MAX_PROCEEDS_SETTLED_PER_BLOCK,
-    MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE, ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY,
-    PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS,
+    DIST_CHUNK_LIMIT, INTEX_NFT1155_ADDRESS, MAX_DISTRIBUTIONS_DRAINED_PER_BLOCK,
+    MAX_PROCEEDS_SETTLED_PER_BLOCK, MAX_RECIPIENTS_PER_ISSUANCE, MAX_SERIES_PER_MESSAGE,
+    ORIGIN_ROUTER_ADDRESS, POW_DIFFICULTY, PRICE_RATE_DEN, PROCEEDS_FANIN_TIMEOUT_SECS,
 };
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -741,10 +741,24 @@ pub(crate) fn pay_chunk(
 /// that mutates underneath us.
 pub(crate) fn drain_distributions(storage: &StorageHandle<'_>) -> Result<()> {
     let count = outbe_intex::api::active_dist_count(storage)?;
-    let mut worldwide_days = Vec::with_capacity(count as usize);
-    for i in 0..count {
+    if count == 0 {
+        return Ok(());
+    }
+    let factory = IntexFactoryContract::new(storage.clone());
+    let cursor = factory.dist_drain_cursor.read()?;
+    // The set shrinks as rounds finish, so a cursor left past the end restarts.
+    let start = if cursor >= count { 0 } else { cursor };
+    let end = start
+        .saturating_add(MAX_DISTRIBUTIONS_DRAINED_PER_BLOCK)
+        .min(count);
+    // Read the slice before paying: finishing a round swap-removes from the set.
+    let mut worldwide_days = Vec::with_capacity((end - start) as usize);
+    for i in start..end {
         worldwide_days.push(outbe_intex::api::active_dist_at(storage, i)?);
     }
+    factory
+        .dist_drain_cursor
+        .write(if end >= count { 0 } else { end })?;
     for worldwide_day in worldwide_days {
         // Per-series isolation: Err reverts the series' checkpoint, retried next block.
         let res = storage.with_checkpoint(|| pay_chunk(storage, worldwide_day, DIST_CHUNK_LIMIT));

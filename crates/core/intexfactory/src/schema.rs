@@ -153,6 +153,10 @@ pub struct IntexFactoryContract {
     // entries, so a cursor past the end simply restarts the pass from zero.
     #[attribute(order = 31)]
     pub proceeds_sweep_cursor: outbe_primitives::storage::dsl::Value<u32>,
+
+    // Same for the payout drain over the active-distribution set.
+    #[attribute(order = 32)]
+    pub dist_drain_cursor: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl IntexFactoryContract<'_> {
