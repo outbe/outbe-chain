@@ -324,8 +324,8 @@ impl DkgBoundaryUnavailableReason {
 /// recovery during attestation verification AND is identity-attributable to its
 /// author (the rider identity signature verified). A non-zero value means a
 /// committee member deliberately emitted a garbage `bls_seed_partial` on the
-/// active material version (byzantine); the verifier neutralized it so it cannot
-/// poison `recover_proof`, and buffered slashable evidence for an external
+/// expected material version (byzantine); the verifier dropped the complete
+/// attestation so it cannot poison `recover_proof`, and buffered slashable evidence for an external
 /// watcher to submit.
 pub fn record_invalid_vrf_partial() {
     counter!("outbe_invalid_vrf_partial_total").increment(1);
@@ -333,8 +333,8 @@ pub fn record_invalid_vrf_partial() {
 
 /// Record an invalid threshold-VRF seed partial whose rider identity signature
 /// did NOT verify, so it cannot be attributed to the claimed signer — a
-/// probable in-transit relay forgery. It is neutralized (excluded from
-/// recovery) but never slashed.
+/// probable in-transit relay forgery. Its complete attestation is dropped before
+/// quorum admission but never slashed.
 pub fn record_forged_seed_partial() {
     counter!("outbe_forged_seed_partial_total").increment(1);
 }
@@ -351,7 +351,7 @@ pub fn record_vrf_partial_drop(verdict: &'static str, signer: u32) {
 
 /// Record a finalized certificate whose embedded threshold-VRF proof did not
 /// verify against the committee group key for its own round. Under the
-/// seed-partial sanitization in attestation verification this must be zero; a
+/// atomic vote-plus-partial admission in attestation verification this must be zero; a
 /// non-zero value is a hard alarm that an unverifiable proof reached the
 /// finalized certificate and will fail the next height's mandatory V2 verify.
 pub fn record_finalized_cert_invalid_vrf_proof() {

@@ -430,9 +430,8 @@ impl OutbeReporter {
 
         // Defense-in-depth alarm: a finalized certificate must never carry a
         // VRF proof that fails to verify against the committee group key for
-        // its own round. Seed-partial sanitization during attestation
-        // verification (see `HybridScheme::sanitize_seed_partial`) guarantees
-        // recovery only ever runs over honest partials, so this is unreachable
+        // its own round. Atomic vote-plus-partial admission during attestation
+        // verification guarantees recovery only runs over verified partials, so this is unreachable
         // in correct operation. If it ever fires, an unverifiable proof has
         // reached the finalized certificate and will fail the next height's
         // mandatory V2 verify — surface it loudly rather than silently halting.

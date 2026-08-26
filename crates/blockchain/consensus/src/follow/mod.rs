@@ -54,8 +54,8 @@ pub use upstream::{
 /// stack uses — so cert verification is byte-identical to the validator path.
 ///
 /// **Trust root.** Consensus finality is a multisig over the committee's
-/// individual MinPk keys (the MinSig VRF group key is an optional seed sidecar,
-/// NOT the consensus authenticator). So the anchor is the **genesis validator
+/// individual MinPk keys. The mandatory MinSig VRF proof supplies the finalized
+/// round seed but is not the committee identity authenticator. So the anchor is the **genesis validator
 /// MinPk set**, read from the follower's OWN genesis state — not a VRF group
 /// key, and nothing the operator has to provide. The start epoch's committee
 /// (`output.players()`) must equal this set; each later epoch's committee is
@@ -677,7 +677,7 @@ mod tests {
             commonware_cryptography::certificate::Provider::scoped(chain.scheme_provider(), e6)
                 .expect("epoch-6 verifier is registered");
         assert_eq!(
-            verifier.active_vrf_material_version(),
+            verifier.expected_vrf_material_version(),
             e6.get(),
             "the authenticated epoch must restore the canonical VRF material version"
         );

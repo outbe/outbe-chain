@@ -16,7 +16,7 @@
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 use commonware_codec::{Encode, Read};
 use commonware_consensus::{
-    simplex::types::{Finalization, Notarization, Proposal},
+    simplex::types::{Finalization, Notarization, Proposal, Subject},
     types::{Epoch, Round, View},
 };
 use commonware_cryptography::{
@@ -27,13 +27,20 @@ use commonware_cryptography::{
         },
         PrivateKey, PublicKey,
     },
-    certificate::Signers,
+    certificate::{Scheme as _, Signers},
     sha256::Digest as Sha256Digest,
     Signer,
 };
-use commonware_utils::Participant;
-use outbe_consensus::hybrid::HybridScheme;
-use outbe_consensus::proof::constants::{finalize_namespace, notarize_namespace};
+use commonware_parallel::Sequential;
+use commonware_utils::{
+    ordered::{Quorum, Set},
+    N3f1, Participant,
+};
+use outbe_consensus::bls::bootstrap_dkg_for_participants;
+use outbe_consensus::hybrid::{HybridScheme, VrfMaterialProvider};
+use outbe_consensus::proof::constants::{
+    finalize_namespace, notarize_namespace, outbe_app_namespace,
+};
 use outbe_consensus::proof::{committee_set_hash_v2, CommitteeEntry, CommitteeSnapshot};
 use outbe_consensus::proof::{
     hybrid_seed_namespace, verify_v2_proof, HybridCertificate, V2VerifyError, VrfProof,
@@ -43,6 +50,7 @@ use outbe_primitives::consensus_metadata::{
 };
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
+use rand_core::OsRng;
 
 // ── Shared fixture ────────────────────────────────────────────────────────
 
@@ -185,13 +193,11 @@ fn build_cert(
 }
 
 fn build_metadata(
-    dkg: &Dkg,
     snapshot: &CommitteeSnapshot,
     cert_bytes: &[u8],
     parent_hash: B256,
     proof_kind: ParentParticipationProof,
 ) -> CertifiedParentAccountingMetadata {
-    let _ = dkg;
     let ordered_committee: Vec<Address> = snapshot
         .committee
         .iter()
@@ -236,7 +242,6 @@ fn cluster_happy_path_quorum_certificate_verifies() {
     let cert_bytes =
         proof_envelope_bytes(&cert, parent_hash, ParentParticipationProof::Finalization);
     let metadata = build_metadata(
-        &dkg,
         &snapshot,
         &cert_bytes,
         parent_hash,
@@ -244,6 +249,98 @@ fn cluster_happy_path_quorum_certificate_verifies() {
     );
     let verified = verify_v2_proof(&metadata, &snapshot, &cert_bytes, parent_hash)
         .expect("happy-path cert must verify");
+    assert_eq!(verified.signer_bitmap, vec![1, 1, 1, 1]);
+    assert_eq!(verified.vrf_material_version, VRF_MATERIAL_VERSION);
+}
+
+#[test]
+fn assembled_finalization_passes_hybrid_and_phase1_verification() {
+    let keys: Vec<PrivateKey> = (0..4)
+        .map(|index| PrivateKey::from_seed(index + 1))
+        .collect();
+    let participants = Set::from_iter_dedup(keys.iter().map(PrivateKey::public_key));
+    let dkg = bootstrap_dkg_for_participants(participants.clone()).unwrap();
+    let namespace = outbe_app_namespace();
+
+    let signers = keys
+        .iter()
+        .map(|key| {
+            let index = participants.index(&key.public_key()).unwrap();
+            HybridScheme::signer_with_vrf_provider(
+                &namespace,
+                participants.clone(),
+                key.clone(),
+                VrfMaterialProvider::new(
+                    VRF_MATERIAL_VERSION,
+                    dkg.polynomial.clone(),
+                    Some(dkg.shares[index.get() as usize].clone()),
+                ),
+            )
+            .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let verifier = HybridScheme::verifier_with_vrf_provider(
+        &namespace,
+        participants.clone(),
+        VrfMaterialProvider::new(VRF_MATERIAL_VERSION, dkg.polynomial.clone(), None),
+    )
+    .unwrap();
+
+    let parent_hash = B256::with_last_byte(0xAB);
+    let proposal = Proposal::new(
+        Round::new(Epoch::new(FINALIZED_EPOCH), View::new(FINALIZED_VIEW)),
+        View::new(PARENT_VIEW),
+        Sha256Digest(parent_hash.0),
+    );
+    let subject = Subject::Finalize {
+        proposal: &proposal,
+    };
+    let certificate = verifier
+        .assemble::<_, N3f1>(
+            signers
+                .iter()
+                .map(|scheme| scheme.sign::<Sha256Digest>(subject).unwrap()),
+            &Sequential,
+        )
+        .expect("verified local attestations assemble");
+
+    assert!(verifier.verify_certificate::<_, Sha256Digest, N3f1>(
+        &mut OsRng,
+        subject,
+        &certificate,
+        &Sequential,
+    ));
+
+    let snapshot = CommitteeSnapshot {
+        committee: participants
+            .iter()
+            .enumerate()
+            .map(|(index, public_key)| {
+                let mut consensus_pubkey = [0u8; 48];
+                consensus_pubkey.copy_from_slice(public_key.encode().as_ref());
+                CommitteeEntry {
+                    address: Address::with_last_byte((index + 1) as u8),
+                    consensus_pubkey,
+                }
+            })
+            .collect(),
+        vrf_material_version: VRF_MATERIAL_VERSION,
+        vrf_group_public_key_bytes: dkg.polynomial.public().encode().to_vec(),
+        vrf_public_polynomial_hash: B256::ZERO,
+    };
+    let proof = proof_envelope_bytes(
+        &certificate,
+        parent_hash,
+        ParentParticipationProof::Finalization,
+    );
+    let metadata = build_metadata(
+        &snapshot,
+        &proof,
+        parent_hash,
+        ParentParticipationProof::Finalization,
+    );
+    let verified = verify_v2_proof(&metadata, &snapshot, &proof, parent_hash)
+        .expect("the exact locally assembled certificate passes Phase-1");
     assert_eq!(verified.signer_bitmap, vec![1, 1, 1, 1]);
     assert_eq!(verified.vrf_material_version, VRF_MATERIAL_VERSION);
 }
@@ -282,7 +379,6 @@ fn wrong_bls_domain_rejects() {
     let cert_bytes =
         proof_envelope_bytes(&cert, parent_hash, ParentParticipationProof::Finalization);
     let metadata = build_metadata(
-        &dkg,
         &snapshot,
         &cert_bytes,
         parent_hash,
@@ -314,7 +410,6 @@ fn proof_trailing_bytes_rejects() {
         proof_envelope_bytes(&cert, parent_hash, ParentParticipationProof::Finalization);
     cert_bytes.push(0x00); // trailing byte
     let metadata = build_metadata(
-        &dkg,
         &snapshot,
         &cert_bytes,
         parent_hash,
@@ -344,7 +439,6 @@ fn proof_codec_wrong_committee_size_rejects() {
     let cert_bytes =
         proof_envelope_bytes(&cert, parent_hash, ParentParticipationProof::Finalization);
     let metadata = build_metadata(
-        &dkg_4,
         &build_snapshot(&dkg_4),
         &cert_bytes,
         parent_hash,
@@ -377,7 +471,6 @@ fn non_hybrid_certificate_encoding_rejects() {
     let envelope_bytes = cert.encode().to_vec();
 
     let metadata = build_metadata(
-        &dkg,
         &snapshot,
         &envelope_bytes,
         parent_hash,
@@ -419,7 +512,6 @@ fn hybrid_signer_length_mismatch_rejects() {
     // Mutate first byte (likely the bitmap length / Signers length prefix).
     cert_bytes[0] ^= 0xFF;
     let metadata = build_metadata(
-        &dkg,
         &snapshot,
         &cert_bytes,
         parent_hash,
@@ -459,7 +551,6 @@ fn hybrid_signer_duplicate_or_out_of_range_rejects() {
     let cert_bytes =
         proof_envelope_bytes(&cert, parent_hash, ParentParticipationProof::Finalization);
     let mut metadata = build_metadata(
-        &dkg,
         &snapshot,
         &cert_bytes,
         parent_hash,
@@ -493,7 +584,6 @@ fn signer_bitmap_round_trips_with_hybrid_signers_via_commonware_pk_order() {
     let cert_bytes =
         proof_envelope_bytes(&cert, parent_hash, ParentParticipationProof::Finalization);
     let metadata = build_metadata(
-        &dkg,
         &snapshot,
         &cert_bytes,
         parent_hash,
@@ -524,7 +614,6 @@ fn truncated_mandatory_vrf_proof_rejects() {
         proof_envelope_bytes(&cert, parent_hash, ParentParticipationProof::Finalization);
     cert_bytes.truncate(cert_bytes.len() - 56);
     let metadata = build_metadata(
-        &dkg,
         &snapshot,
         &cert_bytes,
         parent_hash,
@@ -558,7 +647,6 @@ fn wire_level_certificate_without_mandatory_vrf_does_not_decode() {
     )
     .expect_err("wire-level certificate without its mandatory VRF must not decode");
     let metadata = build_metadata(
-        &dkg,
         &snapshot,
         &cert_bytes,
         parent_hash,
@@ -591,7 +679,6 @@ fn malformed_vrf_proof_encoding_rejects() {
     let last = cert_bytes.len() - 1;
     cert_bytes[last] ^= 0x01;
     let metadata = build_metadata(
-        &dkg,
         &snapshot,
         &cert_bytes,
         parent_hash,
@@ -653,7 +740,6 @@ fn wrong_vrf_seed_round_rejects() {
     let _ = cert_bytes; // baseline kept for symmetry
 
     let metadata = build_metadata(
-        &dkg,
         &snapshot,
         &bad_bytes,
         parent_hash,
@@ -700,7 +786,6 @@ fn invalid_vrf_signature_rejects_before_state_change() {
         ParentParticipationProof::Finalization,
     );
     let metadata = build_metadata(
-        &dkg,
         &snapshot,
         &bad_bytes,
         parent_hash,
@@ -729,7 +814,6 @@ fn activity_envelope_notarization_rejected_as_system_tx_proof() {
     let envelope_bytes = cert.encode().to_vec();
 
     let metadata = build_metadata(
-        &dkg,
         &snapshot,
         &envelope_bytes,
         parent_hash,
@@ -778,7 +862,6 @@ fn certified_notarization_proof_rejected_for_non_parent_ancestor() {
     );
     // Metadata claims actual_parent_hash.
     let metadata = build_metadata(
-        &dkg,
         &snapshot,
         &cert_bytes,
         actual_parent_hash,

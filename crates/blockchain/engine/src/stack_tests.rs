@@ -1673,7 +1673,7 @@ fn follower_parent_record_requires_exact_finalized_block_and_historical_committe
     let snapshot = outbe_consensus::proof::build_committee_snapshot(
         &addresses,
         &encoded_pubkeys,
-        scheme.active_vrf_material_version(),
+        scheme.expected_vrf_material_version(),
         scheme
             .identity()
             .map(|public_key| public_key.encode().as_ref().to_vec())

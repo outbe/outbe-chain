@@ -35,7 +35,7 @@
 
 #![allow(dead_code)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::num::{NonZeroU16, NonZeroUsize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -193,6 +193,7 @@ impl ConsensusRelay for MockRelay {
 pub struct MockReporter {
     finalized_views: Arc<CommonwareMutex<std::collections::HashSet<View>>>,
     latest_view: Arc<CommonwareMutex<View>>,
+    finalized_signers: Arc<CommonwareMutex<HashMap<View, Vec<u32>>>>,
 }
 
 impl MockReporter {
@@ -207,6 +208,14 @@ impl MockReporter {
     pub fn latest_finalized_view(&self) -> View {
         *self.latest_view.lock()
     }
+
+    pub fn finalized_signers(&self, view: View) -> Vec<u32> {
+        self.finalized_signers
+            .lock()
+            .get(&view)
+            .cloned()
+            .unwrap_or_default()
+    }
 }
 
 impl ConsensusReporter for MockReporter {
@@ -215,6 +224,15 @@ impl ConsensusReporter for MockReporter {
     fn report(&mut self, activity: Self::Activity) -> commonware_actor::Feedback {
         if let Activity::Finalization(finalization) = activity {
             let view = finalization.view();
+            self.finalized_signers.lock().insert(
+                view,
+                finalization
+                    .certificate
+                    .signers
+                    .iter()
+                    .map(|signer| signer.get())
+                    .collect(),
+            );
             let mut finalized = self.finalized_views.lock();
             finalized.insert(view);
             let mut latest = self.latest_view.lock();
@@ -282,6 +300,7 @@ impl Default for CycleOptions {
 pub struct CycleOutcome {
     pub finalized_view_per_node: Vec<View>,
     pub view_finalized_per_node: Vec<bool>,
+    pub view_one_signers_per_node: Vec<Vec<u32>>,
     pub leader_index: usize,
 }
 
@@ -302,6 +321,7 @@ pub struct Harness {
     polynomial: commonware_cryptography::bls12381::primitives::sharing::Sharing<MinSig>,
     shares: Vec<commonware_cryptography::bls12381::primitives::group::Share>,
     participants: OrderedSet<bls12381::PublicKey>,
+    invalid_seed_partial_nodes: HashSet<usize>,
 }
 
 impl Harness {
@@ -435,7 +455,18 @@ impl Harness {
             polynomial,
             shares,
             participants,
+            invalid_seed_partial_nodes: HashSet::new(),
         }
+    }
+
+    /// Configure one node to emit a valid vote paired with an
+    /// identity-attributable seed partial over the wrong message.
+    pub fn inject_invalid_seed_partial(&mut self, node: usize) {
+        assert!(
+            node < self.nodes.len(),
+            "fault node must belong to the committee"
+        );
+        self.invalid_seed_partial_nodes.insert(node);
     }
 
     /// Compute the leader for view 1 of `epoch` using the harness's
@@ -502,6 +533,7 @@ impl Harness {
             let res_mux = node.res_mux.clone();
             let result_tx = result_tx.clone();
             let task_ctx = self.ctx.child("node").with_attribute("index", i);
+            let inject_invalid_seed_partial = self.invalid_seed_partial_nodes.contains(&i);
 
             self.ctx
                 .child("driver")
@@ -548,7 +580,7 @@ impl Harness {
                         .expect("take or register subchannels")
                     };
                     // (5) Build HybridScheme signer for this node.
-                    let scheme = HybridScheme::<MinSig>::signer(
+                    let mut scheme = HybridScheme::<MinSig>::signer(
                         &namespace(),
                         participants.clone(),
                         signing_key,
@@ -556,6 +588,9 @@ impl Harness {
                         share,
                     )
                     .expect("HybridScheme::signer");
+                    if inject_invalid_seed_partial {
+                        scheme = scheme.with_invalid_seed_partial_for_test();
+                    }
                     // (6) Build & start Engine.
                     let elector_cfg =
                         commonware_consensus::simplex::elector::RoundRobin::<Sha256>::default();
@@ -631,6 +666,7 @@ impl Harness {
         // didn't deliver in time — pull the reporter directly).
         let mut finalized_view_per_node = Vec::with_capacity(n);
         let mut view_finalized_per_node = Vec::with_capacity(n);
+        let mut view_one_signers_per_node = Vec::with_capacity(n);
         #[allow(clippy::needless_range_loop)]
         for i in 0..n {
             let reporter = snapshots[i]
@@ -638,11 +674,69 @@ impl Harness {
                 .unwrap_or_else(|| self.nodes[i].reporter.clone());
             finalized_view_per_node.push(reporter.latest_finalized_view());
             view_finalized_per_node.push(reporter.view_finalized(View::new(1)));
+            view_one_signers_per_node.push(reporter.finalized_signers(View::new(1)));
         }
         CycleOutcome {
             finalized_view_per_node,
             view_finalized_per_node,
+            view_one_signers_per_node,
             leader_index,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use commonware_runtime::Runner as _;
+
+    #[test]
+    fn honest_simplex_nodes_exclude_invalid_seed_partial_and_finalize_with_clean_quorum() {
+        let runner = deterministic::Runner::timed(Duration::from_secs(30));
+        runner.start(|ctx| async move {
+            let epoch = Epoch::new(2);
+            let mut harness = Harness::new(&ctx, 4).await;
+            let faulty = harness.leader_for_view_one(epoch);
+            harness.inject_invalid_seed_partial(faulty);
+
+            let outcome = harness
+                .run_cycle(
+                    epoch,
+                    CycleOptions {
+                        leader_timeout: Duration::from_millis(500),
+                        run_for: Duration::from_millis(2_000),
+                        ..Default::default()
+                    },
+                )
+                .await;
+
+            for (node, finalized) in outcome.view_finalized_per_node.iter().enumerate() {
+                if node == faulty {
+                    continue;
+                }
+                assert!(
+                    finalized,
+                    "honest node {node} must finalize from the three clean pairs: {:?}",
+                    outcome.view_finalized_per_node
+                );
+            }
+            for (node, signers) in outcome.view_one_signers_per_node.iter().enumerate() {
+                if node == faulty {
+                    // A Byzantine process may accept its own malformed local
+                    // activity. The contract under test is what honest peers
+                    // admit through the real network batcher/certificate gate.
+                    continue;
+                }
+                assert_eq!(
+                    signers.len(),
+                    3,
+                    "n=4 quorum must contain three clean pairs"
+                );
+                assert!(
+                    !signers.contains(&(faulty as u32)),
+                    "the invalid vote+partial pair must not enter the certificate"
+                );
+            }
+        });
     }
 }

@@ -157,6 +157,9 @@ struct RoleFields<V: Variant> {
     expected_vrf_material_version: u64,
     /// Pre-computed namespaces.
     namespace: Namespace,
+    /// Test-harness fault injection. Production schemes always leave this false.
+    #[cfg(any(test, feature = "test-utils"))]
+    invalid_seed_partial_for_test: bool,
 }
 
 /// The role-specific data for a hybrid scheme participant.
@@ -278,6 +281,8 @@ impl<V: Variant> HybridScheme<V> {
                     vrf_materials,
                     expected_vrf_material_version,
                     namespace: scheme_namespace,
+                    #[cfg(any(test, feature = "test-utils"))]
+                    invalid_seed_partial_for_test: false,
                 },
                 individual_key,
                 index,
@@ -322,9 +327,30 @@ impl<V: Variant> HybridScheme<V> {
                     vrf_materials,
                     expected_vrf_material_version,
                     namespace: scheme_namespace,
+                    #[cfg(any(test, feature = "test-utils"))]
+                    invalid_seed_partial_for_test: false,
                 },
             },
         })
+    }
+
+    /// Make this signer emit an identity-attributable seed partial over the
+    /// wrong message. Used only by the real Simplex engine test harness.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn with_invalid_seed_partial_for_test(mut self) -> Self {
+        if let Role::Signer { fields, .. } = &mut self.role {
+            fields.invalid_seed_partial_for_test = true;
+        }
+        self
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    fn invalid_seed_partial_for_test(&self) -> bool {
+        match &self.role {
+            Role::Signer { fields, .. } | Role::Verifier { fields } => {
+                fields.invalid_seed_partial_for_test
+            }
+        }
     }
 
     /// The committee binding for this scheme, regardless of role — the single
@@ -350,10 +376,11 @@ impl<V: Variant> HybridScheme<V> {
     /// Returns the public identity of the committee (BLS MinSig group public key).
     pub fn identity(&self) -> Option<V::Public> {
         self.vrf_materials()
-            .public(self.active_vrf_material_version())
+            .public(self.expected_vrf_material_version())
     }
 
-    pub fn active_vrf_material_version(&self) -> u64 {
+    /// Returns the immutable VRF material version pinned when this epoch scheme was built.
+    pub fn expected_vrf_material_version(&self) -> u64 {
         self.fields().expected_vrf_material_version
     }
 
@@ -368,7 +395,7 @@ impl<V: Variant> HybridScheme<V> {
         R: CryptoRngCore,
     {
         let proof = &certificate.vrf_proof;
-        if proof.material_version != self.active_vrf_material_version() {
+        if proof.material_version != self.expected_vrf_material_version() {
             return None;
         }
         // The consensus seed namespace is scheme-relative: it MUST match the
@@ -470,7 +497,7 @@ impl<V: Variant> HybridScheme<V> {
             signer_index = attestation.signer.get(),
             epoch = round.epoch().get(),
             view = round.view().get(),
-            expected_material_version = self.active_vrf_material_version(),
+            expected_material_version = self.expected_vrf_material_version(),
             received_material_version = signature.vrf_material_version,
             "dropping vote and VRF partial from quorum admission"
         );
@@ -530,7 +557,7 @@ impl<V: Variant> HybridScheme<V> {
         let Some(signature) = attestation.signature.get() else {
             return SeedPartialVerdict::Valid;
         };
-        if signature.vrf_material_version != self.active_vrf_material_version() {
+        if signature.vrf_material_version != self.expected_vrf_material_version() {
             return SeedPartialVerdict::StaleVersion;
         }
         if self.verify_vrf_partial(rng, subject, attestation, strategy) {
@@ -556,8 +583,7 @@ pub enum SeedPartialVerdict {
     /// identity signature proving the signer authored it — slashable byzantine.
     AttributableInvalid,
     /// Active-version partial that fails verification but whose rider identity
-    /// signature does not verify — probable relay forgery; neutralize, do not
-    /// attribute.
+    /// signature does not verify — probable relay forgery; drop, do not attribute.
     Unattributable,
 }
 
@@ -633,6 +659,12 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
 
         // BLS threshold seed partial (MinSig)
         let seed_message = seed_message_from_subject(&subject);
+        #[cfg(any(test, feature = "test-utils"))]
+        let seed_message = if self.invalid_seed_partial_for_test() {
+            b"outbe-test/invalid-seed-partial".to_vec()
+        } else {
+            seed_message.to_vec()
+        };
         let bls_seed_partial =
             vrf_materials.sign_seed(vrf_material_version, &namespace.seed, &seed_message)?;
 
@@ -764,11 +796,11 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
         // this pinned scheme or was admitted by `verify_attestations` for the
         // exact subject. Keep the version check fail-closed so a future caller
         // cannot assemble a certificate from a heterogeneous set.
-        let active_vrf_version = self.active_vrf_material_version();
+        let expected_vrf_version = self.expected_vrf_material_version();
         let seed_partials: Vec<PartialSignature<V>> = entries
             .iter()
             .filter_map(|(signer, sig)| {
-                (sig.vrf_material_version == active_vrf_version).then_some(PartialSignature {
+                (sig.vrf_material_version == expected_vrf_version).then_some(PartialSignature {
                     index: *signer,
                     value: sig.bls_seed_partial,
                 })
@@ -779,7 +811,7 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
             crate::metrics::record_vrf_recover_failed_under_quorum();
             tracing::warn!(
                 target: "outbe::hybrid",
-                active_vrf_version,
+                expected_vrf_version,
                 quorum,
                 seed_partials = seed_partials.len(),
                 "refusing to assemble a certificate without a VRF quorum"
@@ -788,12 +820,12 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
         }
         let Some(vrf_proof) =
             self.vrf_materials()
-                .recover_proof::<M>(active_vrf_version, &seed_partials, strategy)
+                .recover_proof::<M>(expected_vrf_version, &seed_partials, strategy)
         else {
             crate::metrics::record_vrf_recover_failed_under_quorum();
             tracing::warn!(
                 target: "outbe::hybrid",
-                active_vrf_version,
+                expected_vrf_version,
                 quorum,
                 seed_partials = seed_partials.len(),
                 "refusing to assemble a certificate after VRF recovery failed"
@@ -861,7 +893,7 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
         }
 
         let proof = &certificate.vrf_proof;
-        if proof.material_version != self.active_vrf_material_version() {
+        if proof.material_version != self.expected_vrf_material_version() {
             return false;
         }
         let seed_message = seed_message_from_subject(&subject);
@@ -1370,7 +1402,7 @@ mod tests {
         provider.activate(1, dkg.polynomial, Some(share));
 
         assert_eq!(
-            scheme.active_vrf_material_version(),
+            scheme.expected_vrf_material_version(),
             0,
             "an epoch-scoped scheme must not follow later provider activation"
         );
@@ -1550,8 +1582,8 @@ mod tests {
 
         let mut rng = bls_batch_verification_rng();
 
-        // Control: assembling directly from the corrupted attestations (no
-        // sanitization) yields a certificate whose proof does NOT verify — the
+        // Control: assembling directly from the corrupted attestations (without
+        // admission verification) yields a certificate whose proof does NOT verify — the
         // poison the attack relied on.
         let poisoned = verifier
             .assemble::<_, N3f1>(corrupted.clone(), &Sequential)
@@ -1561,7 +1593,7 @@ mod tests {
             verifier
                 .verified_vrf_seed_for_round(&mut rng, round, &poisoned, &Sequential)
                 .is_none(),
-            "control: the unsanitized garbage partial poisons the recovered proof"
+            "control: the unverified garbage partial poisons the recovered proof"
         );
 
         // Production path: the batcher drops the whole vote+partial pair.
@@ -1603,7 +1635,7 @@ mod tests {
     /// When more than `f` partials are unusable, fewer than quorum complete
     /// attestations remain and no certificate is assembled.
     #[test]
-    fn test_excess_byzantine_seed_partials_forfeit_not_poison() {
+    fn excess_invalid_seed_partials_prevent_certificate_assembly() {
         let (schemes, verifier) = signers_and_verifier(4);
         let round = Round::new(Epoch::new(1), View::new(2));
         let proposal = sample_proposal(round.epoch(), round.view(), 7);
@@ -1645,7 +1677,7 @@ mod tests {
     /// partial is retained (not retagged), recovery succeeds, and the proof
     /// verifies.
     #[test]
-    fn test_valid_seed_partials_survive_sanitization() {
+    fn valid_seed_partials_form_a_verifiable_certificate() {
         let (schemes, verifier) = signers_and_verifier(4);
         let round = Round::new(Epoch::new(1), View::new(2));
         let proposal = sample_proposal(round.epoch(), round.view(), 9);
