@@ -462,6 +462,10 @@ impl ChainSpecParser for OutbeChainSpecParser {
     const SUPPORTED_CHAINS: &'static [&'static str] =
         reth_ethereum::cli::chainspec::SUPPORTED_CHAINS;
 
+    fn default_value() -> Option<&'static str> {
+        None
+    }
+
     fn parse(s: &str) -> eyre::Result<Arc<Self::ChainSpec>> {
         let chain_spec: Arc<Self::ChainSpec> =
             reth_ethereum::cli::chainspec::chain_value_parser(s)?
@@ -509,6 +513,31 @@ fn apply_outbe_gas_price_oracle_defaults<C: reth_cli::chainspec::ChainSpecParser
         ));
         node.rpc.gas_price_oracle.max_price = OUTBE_MAX_SUGGESTED_GAS_PRICE;
     }
+}
+
+fn command_requires_crs<C: reth_cli::chainspec::ChainSpecParser, Ext, SubCmd>(
+    command: &reth_ethereum::cli::interface::Commands<C, Ext, SubCmd>,
+) -> bool
+where
+    Ext: clap::Args + std::fmt::Debug,
+    SubCmd: clap::Subcommand + std::fmt::Debug,
+{
+    matches!(command, reth_ethereum::cli::interface::Commands::Node(_))
+}
+
+fn initialize_crs_for_command<C, Ext, SubCmd>(
+    command: &reth_ethereum::cli::interface::Commands<C, Ext, SubCmd>,
+    initialize: impl FnOnce() -> eyre::Result<()>,
+) -> eyre::Result<()>
+where
+    C: reth_cli::chainspec::ChainSpecParser,
+    Ext: clap::Args + std::fmt::Debug,
+    SubCmd: clap::Subcommand + std::fmt::Debug,
+{
+    if command_requires_crs(command) {
+        initialize()?;
+    }
+    Ok(())
 }
 
 fn handle_consensus_thread_join(joined: thread::Result<eyre::Result<()>>) -> eyre::Result<()> {
@@ -843,19 +872,22 @@ fn run_node() -> eyre::Result<()> {
     // the offer-decryption key exists only inside the enclave (single path, no
     // in-process key material).
 
-    // Initialize the hash-pinned Barretenberg global CRS before block
-    // execution. Tribute admission is consensus-critical, so a node that
-    // cannot initialize the verifier must not start.
-    // Must run before the tokio runtime starts — `setup_srs` uses
-    // `reqwest::blocking` internally and would panic from an async context.
-    outbe_zkproof::init_crs()?;
-
     // Pool lifetime hardening. Must run BEFORE CLI parsing: clap reads these as
     // its own defaults, so explicit `--txpool.*` flags still win.
     let _ = outbe_default_txpool_values().try_init();
 
     let mut cli = Cli::<OutbeChainSpecParser, ConsensusArgs, OutbeRpcModuleValidator>::parse();
     apply_outbe_gas_price_oracle_defaults(&mut cli.command);
+
+    // Initialize the hash-pinned Barretenberg global CRS before block
+    // execution. Tribute admission is consensus-critical, so a node that
+    // cannot initialize the verifier must not start. Database and other
+    // operator commands never execute proofs and must remain offline.
+    // This still runs before `Cli::run` creates the Tokio runtime because
+    // `setup_srs` uses `reqwest::blocking` internally.
+    initialize_crs_for_command(&cli.command, || {
+        outbe_zkproof::init_crs().map_err(eyre::Report::from)
+    })?;
 
     let bridge = ConsensusExecutionBridge::new();
 
@@ -2438,6 +2470,142 @@ mod tests {
         let err = super::OutbeRpcModuleValidator::parse_selection("eth,outbee")
             .expect_err("typoed custom namespace must be rejected");
         assert!(err.contains("Unknown RPC module: 'outbee'"));
+    }
+
+    fn install_cli_defaults_for_test() {
+        let _ = super::outbe_default_txpool_values().try_init();
+    }
+
+    #[test]
+    fn database_cli_requires_an_explicit_chain_instead_of_parsing_mainnet() {
+        install_cli_defaults_for_test();
+        type OutbeCli = reth_ethereum::cli::interface::Cli<
+            super::OutbeChainSpecParser,
+            outbe_engine::args::ConsensusArgs,
+            super::OutbeRpcModuleValidator,
+        >;
+
+        let error = <OutbeCli as clap::Parser>::try_parse_from(["outbe-chain", "db", "path"])
+            .expect_err("database commands must require an explicit Outbe ChainSpec");
+
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+        let rendered = error.to_string();
+        assert!(rendered.contains("required argument"), "{rendered}");
+        assert!(rendered.contains("chain"), "{rendered}");
+        assert!(!rendered.contains("mainnet"), "{rendered}");
+    }
+
+    #[test]
+    fn node_cli_also_requires_an_explicit_chain() {
+        install_cli_defaults_for_test();
+        type OutbeCli = reth_ethereum::cli::interface::Cli<
+            super::OutbeChainSpecParser,
+            outbe_engine::args::ConsensusArgs,
+            super::OutbeRpcModuleValidator,
+        >;
+
+        let error = <OutbeCli as clap::Parser>::try_parse_from(["outbe-chain", "node"])
+            .expect_err("node execution must require an explicit Outbe ChainSpec");
+
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+        assert!(error.to_string().contains("chain"));
+    }
+
+    #[test]
+    fn explicit_ethereum_mainnet_remains_invalid_for_outbe() {
+        install_cli_defaults_for_test();
+        type OutbeCli = reth_ethereum::cli::interface::Cli<
+            super::OutbeChainSpecParser,
+            outbe_engine::args::ConsensusArgs,
+            super::OutbeRpcModuleValidator,
+        >;
+
+        let error = <OutbeCli as clap::Parser>::try_parse_from([
+            "outbe-chain",
+            "db",
+            "path",
+            "--chain",
+            "mainnet",
+        ])
+        .expect_err("Ethereum mainnet must not satisfy mandatory Outbe ChainSpec validation");
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("mandatory teeAttestationV1")
+                || rendered.contains("mandatory OCOMP fork install"),
+            "{rendered}"
+        );
+    }
+
+    #[derive(Clone, Debug, Default)]
+    struct ExplicitFixtureChainSpecParser;
+
+    impl reth_cli::chainspec::ChainSpecParser for ExplicitFixtureChainSpecParser {
+        type ChainSpec = reth_chainspec::ChainSpec<outbe_primitives::OutbeHeader>;
+
+        const SUPPORTED_CHAINS: &'static [&'static str] = &["mainnet"];
+
+        fn default_value() -> Option<&'static str> {
+            None
+        }
+
+        fn parse(value: &str) -> eyre::Result<Arc<Self::ChainSpec>> {
+            Ok(reth_ethereum::cli::chainspec::chain_value_parser(value)?
+                .as_ref()
+                .clone()
+                .map_header(outbe_primitives::OutbeHeader::new)
+                .into())
+        }
+    }
+
+    #[test]
+    fn only_node_execution_requires_the_crs() {
+        install_cli_defaults_for_test();
+        type FixtureCli = reth_ethereum::cli::interface::Cli<
+            ExplicitFixtureChainSpecParser,
+            outbe_engine::args::ConsensusArgs,
+            super::OutbeRpcModuleValidator,
+        >;
+
+        let node = <FixtureCli as clap::Parser>::try_parse_from([
+            "outbe-chain",
+            "node",
+            "--chain",
+            "mainnet",
+        ])
+        .expect("explicit fixture node chain");
+        assert!(super::command_requires_crs(&node.command));
+        let mut node_initialized = false;
+        super::initialize_crs_for_command(&node.command, || {
+            node_initialized = true;
+            Ok(())
+        })
+        .unwrap();
+        assert!(node_initialized);
+
+        let database = <FixtureCli as clap::Parser>::try_parse_from([
+            "outbe-chain",
+            "db",
+            "path",
+            "--chain",
+            "mainnet",
+        ])
+        .expect("explicit fixture database chain");
+        assert!(!super::command_requires_crs(&database.command));
+        let mut database_initialized = false;
+        super::initialize_crs_for_command(&database.command, || {
+            database_initialized = true;
+            Ok(())
+        })
+        .unwrap();
+        assert!(!database_initialized);
     }
 
     // --- parse_dkg_key_backend ---

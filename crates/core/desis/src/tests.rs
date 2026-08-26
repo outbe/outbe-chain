@@ -9,6 +9,7 @@ use outbe_primitives::storage::StorageHandle;
 use crate::api::{AuctionBriefReceipt, AuctionBriefRejectionReason};
 use crate::constants::{
     IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, ORIGIN_ROUTER_ADDRESS,
+    PROMIS_LOAD_STRIKE_USD,
 };
 use crate::runtime;
 use crate::schema::{AuctionConfig, AuctionStage, BidData, DesisContract};
@@ -25,8 +26,111 @@ const SRC_CHAIN: u32 = 1;
 /// anchors to that same midnight (the normal on-time case).
 const NOW: u64 = 1_699_920_000 + 5;
 const ANCHOR: u64 = NOW - NOW % 86_400;
-const LOAD_MINOR: u128 = crate::constants::PROMIS_LOAD * PROMIS_LOAD_MINOR;
 const ENTRY_PRICE: u128 = 2_000_000; // 2.0 on the COEN/840 scale; escrow basis = promis_load
+/// The load the ladder picks for `ENTRY_PRICE`, pinned by `the_fixture_load_is_the_one_the_ladder_picks`.
+const LOAD_MINOR: u128 = 100 * PROMIS_LOAD_MINOR;
+
+// --- PROMIS load ladder ---
+
+/// The launch decade: 100 000 PROMIS at COEN/USD = 0.001.
+const LAUNCH_EXPONENT: u32 = 11;
+
+fn ladder(current: Option<u32>, rate_minor: u128) -> u32 {
+    runtime::promis_load_exponent(current, U256::from(rate_minor))
+}
+
+fn ladder_load(current: Option<u32>, rate_minor: u128) -> u128 {
+    runtime::promis_load_minor(ladder(current, rate_minor))
+}
+
+/// The override is an e2e affordance; a production build must run the ladder.
+#[test]
+#[cfg(not(feature = "e2e-test"))]
+fn a_production_build_has_no_load_override() {
+    assert!(crate::constants::PROMIS_LOAD_OVERRIDE.is_none());
+}
+
+#[test]
+fn the_fixture_load_is_the_one_the_ladder_picks() {
+    assert_eq!(ladder_load(None, ENTRY_PRICE), LOAD_MINOR);
+}
+
+#[test]
+fn the_anchor_holds_the_strike_across_the_decades() {
+    let strike_minor = u128::from(PROMIS_LOAD_STRIKE_USD) * 1_000_000;
+    for (rate_minor, expected) in [
+        (100u128, 1_000_000_000_000u128),
+        (1_000, 100_000_000_000),
+        (10_000, 10_000_000_000),
+        (100_000, 1_000_000_000),
+        (1_000_000, 100_000_000),
+    ] {
+        let load = ladder_load(None, rate_minor);
+        assert_eq!(load, expected, "load at rate {rate_minor}");
+        assert_eq!(
+            load * rate_minor / 1_000_000,
+            strike_minor,
+            "strike at rate {rate_minor}"
+        );
+    }
+}
+
+#[test]
+fn a_cold_chain_takes_the_anchors_answer() {
+    assert_eq!(ladder(None, 1_000), LAUNCH_EXPONENT);
+    assert_eq!(ladder(None, 10_000), LAUNCH_EXPONENT - 1);
+}
+
+#[test]
+fn the_load_steps_down_only_past_the_widened_upper_edge() {
+    // The 0.01 boundary sits at 10_000; the band pushes the step to 10_200.
+    assert_eq!(ladder(Some(LAUNCH_EXPONENT), 10_000), LAUNCH_EXPONENT);
+    assert_eq!(ladder(Some(LAUNCH_EXPONENT), 10_199), LAUNCH_EXPONENT);
+    assert_eq!(ladder(Some(LAUNCH_EXPONENT), 10_200), LAUNCH_EXPONENT - 1);
+}
+
+#[test]
+fn the_load_steps_up_only_below_the_widened_lower_edge() {
+    // Coming from the decade above, the same boundary releases at 9_800.
+    assert_eq!(ladder(Some(LAUNCH_EXPONENT - 1), 10_000), LAUNCH_EXPONENT - 1);
+    assert_eq!(ladder(Some(LAUNCH_EXPONENT - 1), 9_800), LAUNCH_EXPONENT - 1);
+    assert_eq!(ladder(Some(LAUNCH_EXPONENT - 1), 9_799), LAUNCH_EXPONENT);
+}
+
+#[test]
+fn the_deadband_is_held_from_whichever_side_the_chain_arrived() {
+    for rate_minor in [9_800u128, 10_000, 10_199] {
+        assert_eq!(ladder(Some(LAUNCH_EXPONENT), rate_minor), LAUNCH_EXPONENT);
+        assert_eq!(
+            ladder(Some(LAUNCH_EXPONENT - 1), rate_minor),
+            LAUNCH_EXPONENT - 1
+        );
+    }
+}
+
+#[test]
+fn a_rate_that_gaps_several_decades_lands_where_the_anchor_says() {
+    assert_eq!(ladder(Some(LAUNCH_EXPONENT), 1_000_000), LAUNCH_EXPONENT - 3);
+    assert_eq!(ladder(Some(LAUNCH_EXPONENT), 1), LAUNCH_EXPONENT + 3);
+}
+
+#[test]
+fn the_band_survives_integer_division_in_the_narrowest_decade() {
+    // A 2% band on a boundary of 10 rounds to nothing if the edges are divided down.
+    assert_eq!(ladder(Some(14), 10), 14);
+    assert_eq!(ladder(Some(14), 11), 13);
+}
+
+#[test]
+fn an_unpriced_or_absurd_rate_saturates_instead_of_underflowing() {
+    assert_eq!(ladder_load(None, 0), 100_000_000_000_000);
+    assert_eq!(ladder_load(None, u128::MAX), 1);
+}
+
+#[test]
+fn a_corrupt_stored_exponent_cannot_index_past_the_table() {
+    assert_eq!(ladder(Some(u32::MAX), 1_000), LAUNCH_EXPONENT);
+}
 
 fn bidder(n: u8) -> Address {
     let mut bytes = [0u8; 20];
@@ -57,12 +161,26 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
 }
 
 fn brief_at(s: &StorageHandle, worldwide_day: WorldwideDay, supply_promis: u128, green: bool) {
+    brief_at_rate(s, worldwide_day, supply_promis, ENTRY_PRICE, green)
+}
+
+/// Brief a day quoted at `rate`, which is what the PROMIS load is picked from.
+fn brief_at_rate(
+    s: &StorageHandle,
+    worldwide_day: WorldwideDay,
+    supply_promis: u128,
+    rate: u128,
+    green: bool,
+) {
     assert_eq!(
         crate::api::dispatch_auction_brief(
             s.clone(),
             worldwide_day,
             U256::from(supply_promis),
-            entry_price_rows(),
+            vec![crate::schema::ReferenceCurrencyPrice {
+                iso_code: REFERENCE_ISO,
+                entry_price_minor: U256::from(rate),
+            }],
             green,
             NOW,
             crate::api::BriefOverflowPolicy::CarryOver,
@@ -923,6 +1041,60 @@ fn schedule_retires_an_overdue_day() {
         .iter()
         .any(|log| log.topics().first() == Some(&overdue_sig));
     assert!(found, "expected AuctionOverdue event");
+}
+
+/// One decade up the rate ladder the same PROMIS buys ten times the Intexes, and
+/// the bid floor has to be restated with it or it sits above the whole tirage.
+#[test]
+fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
+    with_storage(|s| {
+        open_clearing(&s, 100);
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            SRC_CHAIN,
+            1,
+            0,
+            1,
+            bids(100, 200),
+        )
+        .unwrap();
+        mark_done(&s, SRC_CHAIN, 1, 1, 100);
+        assert_eq!(clear(&s).issued_intex_count, 100);
+
+        // Ten times the rate of the fixture, which is past the deadband.
+        brief_at_rate(&s, NEXT_WORLDWIDE_DAY, 100 * LOAD_MINOR, 10 * ENTRY_PRICE, true);
+        runtime::schedule_tick(&s, NOW).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 86_400).unwrap();
+        runtime::schedule_tick(&s, ANCHOR + 2 * 86_400).unwrap();
+
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(
+            contract
+                .config_promis_load_minor
+                .read(&NEXT_WORLDWIDE_DAY)
+                .unwrap(),
+            U256::from(LOAD_MINOR / 10),
+            "the load stepped one decade down"
+        );
+        assert_eq!(
+            contract
+                .pending_supply_intex
+                .read(&NEXT_WORLDWIDE_DAY)
+                .unwrap(),
+            1_000,
+            "the same PROMIS splits into ten times the tirage"
+        );
+        assert_eq!(
+            contract
+                .config_min_bid_quantity
+                .read(&NEXT_WORLDWIDE_DAY)
+                .unwrap(),
+            40,
+            "the floor follows the tirage instead of staying at yesterday's scale"
+        );
+    });
 }
 
 #[test]
@@ -2038,7 +2210,7 @@ fn escrow_basis_is_promis_load() {
     let cfg = AuctionConfig::from_reference_prices(vec![crate::schema::ReferenceCurrencyPrice {
         iso_code: REFERENCE_ISO,
         entry_price_minor: U256::from(1_000_150u64),
-    }]);
+    }], LOAD_MINOR);
     assert_eq!(cfg.escrow_basis_minor(), cfg.promis_load_minor);
 }
 

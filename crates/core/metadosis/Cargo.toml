@@ -26,6 +26,7 @@ outbe-oracle.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 k256 = { workspace = true, optional = true }
 
 [dev-dependencies]

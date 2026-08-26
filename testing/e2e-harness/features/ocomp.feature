@@ -153,6 +153,22 @@ Feature: Off-chain computation and Metadosis
     And the held validator vote is broadcast at the exclusive deadline
     Then the no-quorum job expires at its exclusive deadline without creating Nod
 
+  @ocomp-public-expiry-retry
+  # OCOMP-TEST-ID: OCM-PUB-005
+  Scenario: An expired public job retries with its frozen receipt and completes
+    Given a fresh four-validator OCOMP short-window public measurement localnet
+    When validators 2 and 3 OCOMP workers are stopped before the job
+    And an operator submits one encrypted tribute offer
+    Then the tribute transaction succeeds and supply becomes one
+    And every validator projects the same tribute and indexes
+    Then Metadosis creates one finalized JobIntent from that public Tribute
+    When the production OCOMP domains process that finalized JobIntent
+    And validator 2 prepares one valid vote without broadcasting it
+    And the held validator vote is broadcast at the exclusive deadline
+    Then the no-quorum job expires at its exclusive deadline without creating Nod
+    When the stopped OCOMP workers restart for the automatic retry
+    Then the retry preserves the frozen receipt and completes on every validator
+
   @ocomp-public-mutation
   # OCOMP-TEST-ID: OCM-PUB-002
   Scenario: A changed binding cannot mutate a non-quorum job or prevent exact recovery

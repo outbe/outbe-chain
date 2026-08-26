@@ -8910,6 +8910,7 @@ dependencies = [
  "outbe-validatorset",
  "proptest",
  "thiserror 2.0.18",
+ "tracing",
  "trybuild",
 ]
 
@@ -9047,6 +9048,7 @@ dependencies = [
  "hex",
  "k256 0.13.4",
  "libc",
+ "metrics",
  "outbe-common",
  "outbe-compressed-entities",
  "outbe-consensus",
@@ -9073,6 +9075,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
  "zeroize",
  "zeromq",
 ]
