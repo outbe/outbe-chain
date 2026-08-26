@@ -142,12 +142,27 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
     /// @param token  ERC20 token address, or address(0) for native ETH
     /// @param amount Amount to deposit (ERC20 only; ignored for native -- use msg.value)
     function deposit(address token, uint256 amount) external payable {
-        if (!IERC6909(address(COMPACT)).isOperator(msg.sender, address(this))) revert OperatorNotApproved();
+        _deposit(msg.sender, token, amount);
+    }
+
+    /// @notice Deposit tokens as collateral credited to another solver.
+    /// @dev Funds come from msg.sender, but the collateral belongs to `solver` and cannot be
+    ///      reclaimed by the payer. `solver` must have called COMPACT.setOperator(address(this), true).
+    /// @param solver Address credited with the collateral
+    /// @param token  ERC20 token address, or address(0) for native ETH
+    /// @param amount Amount to deposit (ERC20 only; ignored for native -- use msg.value)
+    function depositFor(address solver, address token, uint256 amount) external payable {
+        if (solver == address(0)) revert ZeroAddress();
+        _deposit(solver, token, amount);
+    }
+
+    function _deposit(address solver, address token, uint256 amount) private {
+        if (!IERC6909(address(COMPACT)).isOperator(solver, address(this))) revert OperatorNotApproved();
 
         if (token == address(0)) {
-            _depositNative();
+            _depositNative(solver);
         } else {
-            _depositERC20(token, amount);
+            _depositERC20(solver, token, amount);
         }
     }
 
@@ -306,24 +321,24 @@ contract SolverEscrow is ISolverEscrow, Ownable2Step {
         delete locks[orderId];
     }
 
-    function _depositNative() private {
+    function _depositNative(address solver) private {
         if (msg.value == 0) revert InvalidAmount();
 
-        COMPACT.depositNative{value: msg.value}(LOCK_TAG, msg.sender);
+        COMPACT.depositNative{value: msg.value}(LOCK_TAG, solver);
 
-        emit Deposited(msg.sender, address(0), msg.value);
+        emit Deposited(solver, address(0), msg.value);
     }
 
-    function _depositERC20(address token, uint256 amount) private {
+    function _depositERC20(address solver, address token, uint256 amount) private {
         if (amount == 0) revert InvalidAmount();
         if (msg.value != 0) revert InvalidAmount();
 
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         IERC20(token).forceApprove(address(COMPACT), amount);
 
-        COMPACT.depositERC20(token, LOCK_TAG, amount, msg.sender);
+        COMPACT.depositERC20(token, LOCK_TAG, amount, solver);
 
-        emit Deposited(msg.sender, token, amount);
+        emit Deposited(solver, token, amount);
     }
 
     function _lockId(address token) internal view returns (uint256) {
