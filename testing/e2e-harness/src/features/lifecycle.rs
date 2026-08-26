@@ -9,6 +9,7 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use cucumber::{then, when};
+use outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K;
 
 use crate::world::rpc::Rpc;
 use crate::world::World;
@@ -27,6 +28,16 @@ fn lockstep_ok(rpc: &Rpc, committee: u16, joiner: u16) -> bool {
         prev = vh;
     }
     true
+}
+
+fn wait_validator_status(rpc: &Rpc, port: u16, address: &str, wanted: u64) -> bool {
+    for _ in 0..30 {
+        if rpc.validator_status(port, address) == Some(wanted) {
+            return true;
+        }
+        sleep(Duration::from_secs(2));
+    }
+    rpc.validator_status(port, address) == Some(wanted)
 }
 
 /// S1 — submit a tribute offer from the operator.
@@ -113,29 +124,126 @@ fn full_node_parity(world: &mut World) {
     );
 }
 
-/// S2 — stake the full node, confirm PENDING + not-yet-participant, confirm ready.
-#[when("the full node stakes and confirms readiness")]
-fn full_node_stakes_confirms(world: &mut World) {
+/// S2 — register while the FullNode remains live, finalize that admission, then
+/// restart the exact same datadir in shareless validator mode.
+#[when("the synced full node restarts as a registered shareless validator")]
+fn full_node_restarts_as_shareless_validator(world: &mut World) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
-    world.localnet.stop_joiner_full_node(idx);
+    let joiner_port = world.validators.http_port(idx);
+
     world
         .localnet
         .provision_existing_node_as_joiner(idx)
         .expect("register the existing NodeHost as a validator");
-    world
-        .localnet
-        .launch_joiner(idx, &[])
-        .expect("restart synced slot in validator mode");
     let key = world.validators.joiner().evm_key().expect("joiner key");
     let addr = world.rpc.address_of(&key).expect("joiner address");
     world.state.joiner_addr = Some(addr.clone());
 
-    world.rpc.stake(&key, 1000).expect("stake");
-    sleep(Duration::from_secs(6));
+    // Provisioning waits for mined receipts. Hold the role switch until a
+    // finalized block at or beyond the current committee head contains both
+    // registerValidator and setP2pAddress, and until the still-running FullNode
+    // has followed that exact finalized history.
+    let admission_barrier = world.rpc.head(primary).expect("committee admission head");
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(primary, admission_barrier, 60),
+        "validator registration and P2P announcement did not finalize"
+    );
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(joiner_port, admission_barrier, 60),
+        "FullNode did not ingest its finalized validator admission"
+    );
+    assert_eq!(
+        world.rpc.validator_status(joiner_port, &addr),
+        Some(0),
+        "FullNode did not observe its REGISTERED validator identity"
+    );
+
+    let full_node_finalized = world
+        .rpc
+        .finalized(joiner_port)
+        .expect("FullNode finalized height before role switch");
+    world.localnet.stop_joiner_full_node(idx);
+    world
+        .localnet
+        .launch_joiner(idx, &[])
+        .expect("restart synced slot in validator mode");
+    world.state.promoted_validator_pid = Some(
+        world
+            .localnet
+            .validator_pid(idx)
+            .expect("shareless validator PID"),
+    );
+
+    assert!(
+        world
+            .rpc
+            .wait_finalized_at_least(joiner_port, full_node_finalized.saturating_add(3), 60,),
+        "REGISTERED shareless validator did not advance finalized height before stake"
+    );
+}
+
+/// S2 — prove the promoted process remains a non-voting shareless verifier
+/// while it follows consensus finality, before any stake is submitted.
+#[then("it keeps finalizing without stake, a share, or consensus participation")]
+fn shareless_validator_keeps_finalizing_before_stake(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let idx = world.validators.joiner_index();
+    let joiner_port = world.validators.http_port(idx);
+    let addr = world.state.joiner_addr.clone().expect("joiner address");
+
     assert_eq!(
         world.rpc.validator_status(primary, &addr),
-        Some(1),
+        Some(0),
+        "shareless validator must remain REGISTERED before stake"
+    );
+    assert_eq!(
+        world.rpc.stake_on(primary, &addr),
+        Some(alloy_primitives::U256::ZERO),
+        "shareless validator acquired stake before the explicit stake step"
+    );
+    assert!(
+        !world.rpc.is_participant(primary, &addr),
+        "REGISTERED shareless validator must not be a consensus participant"
+    );
+    assert_eq!(
+        world.rpc.has_share(primary, &addr),
+        Some(false),
+        "REGISTERED shareless validator has an on-chain BLS share"
+    );
+    assert!(
+        !world.localnet.has_share_file(idx),
+        "REGISTERED shareless validator persisted DKG share material before DKG"
+    );
+    let committee_finalized = world
+        .rpc
+        .finalized(primary)
+        .expect("committee finalized tip");
+    let joiner_finalized = world
+        .rpc
+        .finalized(joiner_port)
+        .expect("shareless validator finalized tip");
+    assert!(
+        committee_finalized.saturating_sub(joiner_finalized) <= 3,
+        "shareless validator is not in finalized lockstep before stake: committee={committee_finalized}, joiner={joiner_finalized}"
+    );
+}
+
+/// S2 — only after validator-mode synchronization has been proven, stake and
+/// confirm readiness for the next DKG target.
+#[when("the shareless validator stakes and confirms readiness")]
+fn shareless_validator_stakes_confirms(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let key = world.validators.joiner().evm_key().expect("joiner key");
+    let addr = world.state.joiner_addr.clone().expect("joiner address");
+
+    world.rpc.stake(&key, 1000).expect("stake");
+    assert!(
+        wait_validator_status(&world.rpc, primary, &addr, 1),
         "staked joiner is PENDING"
     );
     assert!(
@@ -146,7 +254,7 @@ fn full_node_stakes_confirms(world: &mut World) {
 }
 
 /// S2 + S6 — the joiner activates via reshare while an in-flight offer lands once.
-#[then("it is promoted to an active participant and the in-flight offer lands once")]
+#[then("it activates through DKG in the same process and the in-flight offer lands once")]
 fn promoted_with_inflight_offer(world: &mut World) {
     let primary = world.validators.primary_port();
     let idx = world.validators.joiner_index();
@@ -194,6 +302,38 @@ fn promoted_with_inflight_offer(world: &mut World) {
         "active set grew to 5"
     );
     assert_eq!(
+        world.rpc.has_share(primary, &addr),
+        Some(true),
+        "ACTIVE joiner has no canonical BLS share"
+    );
+    let mut share_promoted = false;
+    for _ in 0..30 {
+        if world.localnet.has_share_file(idx) {
+            share_promoted = true;
+            break;
+        }
+        sleep(Duration::from_secs(1));
+    }
+    assert!(
+        share_promoted,
+        "DKG activation did not persist and load the joiner's threshold share"
+    );
+    assert!(
+        !world.localnet.validator_exited(idx),
+        "joiner process exited during automatic DKG activation"
+    );
+    assert_eq!(
+        world
+            .localnet
+            .validator_pid(idx)
+            .expect("ACTIVE joiner PID"),
+        world
+            .state
+            .promoted_validator_pid
+            .expect("shareless validator PID captured before stake"),
+        "DKG activation restarted the outbe-chain process"
+    );
+    assert_eq!(
         world.rpc.supply(primary).as_deref(),
         Some("2"),
         "in-flight offer landed once"
@@ -211,7 +351,44 @@ fn promoted_with_inflight_offer(world: &mut World) {
         )
         .expect("in-flight Tribute and indexes must match across the promoted committee");
 
-    sleep(Duration::from_secs(30)); // settle: engine restarts for the new epoch
+    // ACTIVE is committed by the old committee at the boundary. Capture the
+    // counter before its delayed accounting closes: at most that one
+    // canonically pre-eligibility finalization may still be charged. After the
+    // close, require a fully-accounted five-block signing window with no new
+    // misses, proving that this process is signing rather than merely following.
+    let voter_misses_at_activation = world
+        .rpc
+        .voter_miss_count(primary, &addr)
+        .expect("joiner voter-miss count at activation");
+    let eligibility_height = world.rpc.head(primary).expect("activation height");
+    assert!(
+        world
+            .rpc
+            .wait_block(primary, eligibility_height + LATE_FINALIZE_WINDOW_K, 60)
+            .is_some(),
+        "committee did not close the pre-eligibility voter-accounting window"
+    );
+    let voter_misses_after_boundary = world
+        .rpc
+        .voter_miss_count(primary, &addr)
+        .expect("joiner voter-miss count after pre-eligibility window");
+    assert!(
+        voter_misses_after_boundary <= voter_misses_at_activation.saturating_add(1),
+        "ACTIVE joiner accumulated voter misses beyond the one pre-eligibility boundary finalization: before={voter_misses_at_activation}, after={voter_misses_after_boundary}"
+    );
+    let signing_target = world.rpc.head(primary).unwrap_or_default() + 5;
+    assert!(
+        world
+            .rpc
+            .wait_block(primary, signing_target + LATE_FINALIZE_WINDOW_K, 60)
+            .is_some(),
+        "committee did not account the post-activation signing window"
+    );
+    assert_eq!(
+        world.rpc.voter_miss_count(primary, &addr),
+        Some(voter_misses_after_boundary),
+        "ACTIVE joiner accumulated voter misses after same-process DKG activation"
+    );
     assert!(
         lockstep_ok(&world.rpc, primary, joiner_port),
         "activated joiner does not advance in lockstep (has no working share)"
