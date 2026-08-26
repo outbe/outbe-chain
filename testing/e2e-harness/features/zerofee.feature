@@ -9,8 +9,10 @@ Feature: EIP-7702 ZeroFee sponsorship, replay, and daily quota
     Given a fresh localnet with a 20-block voting window
     And the committee has reached a usable height
     Then Pectra and the ZeroFee views are ready
-    When a funded fresh account delegates to ZeroFee with EIP-7702
+    When an account with one atomic COEN bootstraps its ZeroFee delegation
     Then the exact ZeroFee delegation designator is installed
+    When the exact included ZeroFee bootstrap transaction is replayed
+    Then the bootstrap replay is rejected without changing account or quota state
     When the account submits eight eligible sponsored reward calls
     Then all eight calls succeed without fees and consume the full quota
     When the exact included sponsored ZeroFee transaction is replayed
@@ -19,6 +21,8 @@ Feature: EIP-7702 ZeroFee sponsorship, replay, and daily quota
     Then the exhausted ZeroFee state is identical on every validator
     When the entire committee restarts after quota exhaustion
     Then the exhausted ZeroFee state is identical on every validator
+    When the exact included ZeroFee bootstrap transaction is replayed
+    Then the bootstrap replay is rejected without changing account or quota state
     When the exact included sponsored ZeroFee transaction is replayed
     Then the replay is rejected without changing delegation or quota
     When the account submits a ninth eligible sponsored reward call
@@ -43,8 +47,10 @@ Feature: EIP-7702 ZeroFee sponsorship, replay, and daily quota
     Given a fresh localnet near the next UTC worldwide-day boundary
     And the committee has reached a usable height
     Then the controlled COEN USD quote is finalized through the real price feeder
-    When a funded fresh account delegates to ZeroFee with EIP-7702
+    When an account with one atomic COEN bootstraps its ZeroFee delegation
     Then the exact ZeroFee delegation designator is installed
+    When the exact included ZeroFee bootstrap transaction is replayed
+    Then the bootstrap replay is rejected without changing account or quota state
     When the account submits eight eligible sponsored reward calls
     Then all eight calls succeed without fees and consume the full quota
     When the chain crosses into the next worldwide day

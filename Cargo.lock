@@ -8196,6 +8196,7 @@ dependencies = [
 name = "outbe-cli"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-eips 2.0.4",
  "alloy-primitives",
  "alloy-sol-types",
@@ -8208,6 +8209,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-rpc",
  "outbe-tee",
+ "outbe-zerofee",
  "reqwest 0.12.28",
  "ring",
  "serde",
