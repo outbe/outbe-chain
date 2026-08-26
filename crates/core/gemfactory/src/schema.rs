@@ -16,9 +16,13 @@ pub enum GemTypes {
 #[storage_schema]
 #[contract(addr = GEM_FACTORY_ADDRESS)]
 pub struct GemFactoryContract {
+    /// Slot 0: reserved storage schema version.
     #[attribute(order = 0)]
-    pub total_gems_issued: outbe_primitives::storage::dsl::Value<U256>,
+    pub _reserved_schema_version: outbe_primitives::storage::dsl::Value<u32>,
 
     #[attribute(order = 1)]
+    pub total_gems_issued: outbe_primitives::storage::dsl::Value<U256>,
+
+    #[attribute(order = 2)]
     pub total_intex_parked: outbe_primitives::storage::dsl::Value<U256>,
 }

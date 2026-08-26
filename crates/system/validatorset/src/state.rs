@@ -18,7 +18,7 @@
 //!   committee hash itself, even when they share the same `(epoch, hash)`
 //!   inputs.
 //!
-//! The store layout is fixed to ValidatorSet storage slots 31..40 (see
+//! The store layout is fixed to ValidatorSet storage slots 32..41 (see
 //! [`schema::ValidatorSet`](crate::schema::ValidatorSet)). Writes are
 //! field-by-field and **end with the `exists` flag**, so a partial write
 //! observed via a checkpoint-rolled-back transaction is never reachable: the

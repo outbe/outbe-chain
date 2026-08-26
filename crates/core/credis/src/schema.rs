@@ -78,28 +78,32 @@ pub struct Anadosis {
 #[storage_schema]
 #[contract(addr = CREDIS_ADDRESS)]
 pub struct CredisContract {
-    /// slots 0..8: position head record keyed by position_id (9 slots).
+    /// Slot 0: reserved storage schema version.
     #[attribute(order = 0)]
+    pub _reserved_schema_version: outbe_primitives::storage::dsl::Value<u32>,
+
+    /// slots 1..9: position head record keyed by position_id (9 slots).
+    #[attribute(order = 1)]
     pub positions: outbe_primitives::storage::dsl::Map<U256, Position>,
 
-    /// slots 9..13: anadosis record keyed by anadosis_key (5 slots).
-    #[attribute(order = 1)]
+    /// slots 10..14: anadosis record keyed by anadosis_key (5 slots).
+    #[attribute(order = 2)]
     pub anadosis_records: outbe_primitives::storage::dsl::Map<B256, Anadosis>,
 
-    /// slot 14: per-account count of positions ever created.
-    #[attribute(order = 2)]
+    /// slot 15: per-account count of positions ever created.
+    #[attribute(order = 3)]
     pub address_position_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
 
-    /// slot 15: per-account index — keccak(addr ++ idx_be32) → position_id.
-    #[attribute(order = 3)]
+    /// slot 16: per-account index — keccak(addr ++ idx_be32) → position_id.
+    #[attribute(order = 4)]
     pub address_position_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    /// slot 16: total positions ever created (for getAllPositions iteration).
-    #[attribute(order = 4)]
+    /// slot 17: total positions ever created (for getAllPositions iteration).
+    #[attribute(order = 5)]
     pub total_positions: outbe_primitives::storage::dsl::Value<u64>,
 
-    /// slot 17: dense index — index → position_id.
-    #[attribute(order = 5)]
+    /// slot 18: dense index — index → position_id.
+    #[attribute(order = 6)]
     pub position_id_at_index: outbe_primitives::storage::dsl::Map<u64, U256>,
 }
 

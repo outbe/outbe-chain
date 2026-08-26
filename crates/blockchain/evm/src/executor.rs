@@ -100,7 +100,8 @@ pub mod marker_addresses {
         STAKING_ADDRESS,
         REWARDS_ADDRESS,
         // V2 Phase 1 accounting-progress marker. System-only (no precompile
-        // dispatch); the `[0xef]` marker preserves slot 0 across EIP-161 cleanup.
+        // dispatch); the `[0xef]` marker preserves its versioned storage account
+        // across EIP-161 cleanup.
         ACCOUNTING_PROGRESS_ADDRESS,
         ORACLE_ADDRESS,
         OUTBE_SYSTEM_TX_ADDRESS,

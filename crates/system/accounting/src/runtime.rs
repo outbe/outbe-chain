@@ -4,7 +4,7 @@
 //!
 //! * [`record_phase1_progress`] — writes `last_accounted_block_number = N`
 //!   after the V2 Phase 1 system tx for block `N` has successfully
-//!   committed. Sole writer for slot 0 of `ACCOUNTING_PROGRESS_ADDRESS`
+//!   committed. Sole writer for slot 1 of `ACCOUNTING_PROGRESS_ADDRESS`
 //!   (INV4). Invoked by the executor reorder.
 //! * [`read_last_accounted_block_number`] — read-only accessor for Cycle
 //!   and Rewards. Returns `0` on a fresh chain.
@@ -20,7 +20,7 @@ use crate::state;
 
 /// Records that V2 Phase 1 for `block_number` has successfully committed.
 ///
-/// **Sole writer** for `ACCOUNTING_PROGRESS_ADDRESS` slot 0 (INV4).
+/// **Sole writer** for `ACCOUNTING_PROGRESS_ADDRESS` slot 1 (INV4).
 /// Invoked by the V2 executor Phase 1 path. The caller is
 /// responsible for ordering: Phase 1 commits an exact-parent successor
 /// block, so `block_number` should equal the parent height being

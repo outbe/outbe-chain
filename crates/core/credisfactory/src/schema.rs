@@ -18,14 +18,18 @@ use outbe_primitives::addresses::CREDIS_FACTORY_ADDRESS;
 #[storage_schema]
 #[contract(addr = CREDIS_FACTORY_ADDRESS)]
 pub struct CredisFactoryContract {
-    /// slot 0: per-position denomination id (widened from `u8` to `u32` for
+    /// Slot 0: reserved storage schema version.
+    #[attribute(order = 0)]
+    pub _reserved_schema_version: outbe_primitives::storage::dsl::Value<u32>,
+
+    /// slot 1: per-position denomination id (widened from `u8` to `u32` for
     /// the storage primitive's `StorageKey` requirements). Keyed by
     /// `position_id`.
-    #[attribute(order = 0)]
+    #[attribute(order = 1)]
     pub position_denom: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    /// slot 1: per-position reclaim commitment. Inserted into the gratispool
+    /// slot 2: per-position reclaim commitment. Inserted into the gratispool
     /// when the position's final anadosis is paid. Keyed by `position_id`.
-    #[attribute(order = 1)]
+    #[attribute(order = 2)]
     pub position_reclaim_commitment: outbe_primitives::storage::dsl::Map<U256, U256>,
 }

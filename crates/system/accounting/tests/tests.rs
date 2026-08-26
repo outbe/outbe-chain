@@ -62,9 +62,9 @@ fn accounting_progress_address_is_ee04_and_user_calls_do_not_dispatch() {
 }
 
 /// AC3 / INV4: `record_phase1_progress` and
-/// `read_last_accounted_block_number` round-trip the canonical slot 0.
+/// `read_last_accounted_block_number` round-trip the canonical slot 1.
 #[test]
-fn accounting_progress_slot0_roundtrips_last_accounted_block_number() {
+fn accounting_progress_slot1_roundtrips_last_accounted_block_number() {
     with_ctx(0, |ctx| {
         record_phase1_progress(ctx, 42).expect("write progress");
         let read = read_last_accounted_block_number(ctx).expect("read progress");
@@ -79,6 +79,13 @@ fn accounting_progress_slot0_roundtrips_last_accounted_block_number() {
 
         // Reading directly through the schema facade returns the same value.
         let accounting: Accounting<'_> = ctx.storage.contract::<Accounting<'_>>();
+        assert_eq!(
+            accounting
+                ._reserved_schema_version
+                .read()
+                .expect("schema version read"),
+            0
+        );
         let raw = accounting
             .last_accounted_block_number
             .read()
@@ -97,7 +104,7 @@ fn accounting_progress_slot0_roundtrips_last_accounted_block_number() {
 }
 
 /// AC4 (mirror) / INV3: `ACCOUNTING_PROGRESS_ADDRESS` is in the executor's
-/// EIP-161 marker allowlist, ensuring slot 0 is preserved under state-root
+/// EIP-161 marker allowlist, preserving its storage account under state-root
 /// cleanup. Asserts the real `OUTBE_RUNTIME_MARKER_ADDRESSES` const value.
 #[test]
 fn accounting_progress_address_is_eip161_preserved() {
@@ -105,23 +112,23 @@ fn accounting_progress_address_is_eip161_preserved() {
         outbe_evm::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES
             .contains(&ACCOUNTING_PROGRESS_ADDRESS),
         "INV3: ACCOUNTING_PROGRESS_ADDRESS must be in the executor's EIP-161 marker \
-         allowlist (OUTBE_RUNTIME_MARKER_ADDRESSES) so slot 0 survives state-root cleanup",
+         allowlist (OUTBE_RUNTIME_MARKER_ADDRESSES) so its storage survives state-root cleanup",
     );
 }
 
-/// INV2 mirror: a fresh chain (no Phase 1 commit) reads `0` from slot 0.
+/// INV2 mirror: a fresh chain (no Phase 1 commit) reads `0` from slot 1.
 #[test]
 fn genesis_progress_reads_zero_before_first_phase1_write() {
     with_ctx(0, |ctx| {
-        let initial = read_last_accounted_block_number(ctx).expect("read genesis slot 0");
+        let initial = read_last_accounted_block_number(ctx).expect("read genesis slot 1");
         assert_eq!(
             initial, 0,
-            "genesis slot 0 must read as zero before any Phase 1 commit",
+            "genesis slot 1 must read as zero before any Phase 1 commit",
         );
 
-        // Reserved slots 1..=15 must also be zero on a fresh chain
+        // Reserved slots 2..=16 must also be zero on a fresh chain
         // (no field is declared at those slot indices in the schema).
-        for slot_index in 1u64..=15 {
+        for slot_index in 2u64..=16 {
             let slot = ctx
                 .storage
                 .sload(

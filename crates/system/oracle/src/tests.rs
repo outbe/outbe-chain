@@ -2079,6 +2079,7 @@ mod oracle_tests {
 
         with_storage(|storage| {
             let oracle = OracleContract::new(storage.clone());
+            assert_eq!(oracle._reserved_schema_version.slot(), U256::ZERO);
             oracle.reference_currencies.push(840).unwrap();
             oracle.reference_currencies.push(978).unwrap();
 
@@ -2113,14 +2114,14 @@ mod oracle_tests {
 
             // Hard-coded slot used by scripts/seed_genesis.py; keep in sync.
             assert_eq!(
-                slot, 55,
+                slot, 56,
                 "macro-assigned reference_currencies slot changed; update scripts/seed_genesis.py"
             );
         });
     }
 
     /// Parity guard for the `settlement_iso_to_pair` base slot used by
-    /// `scripts/seed_genesis.py` (slot 42). Writes a distinctive marker, then
+    /// `scripts/seed_genesis.py` (slot 43). Writes a distinctive marker, then
     /// scans base slots 0..128 to recover the macro-assigned slot via the
     /// known `keccak256(left_pad(key, 32) || be(base, 32))` derivation.
     #[test]
@@ -2142,7 +2143,7 @@ mod oracle_tests {
                 let word = storage.sload(ORACLE_ADDRESS, slot).unwrap();
                 if word == U256::from_be_bytes(marker.0) {
                     assert_eq!(
-                        base, 42,
+                        base, 43,
                         "macro-assigned settlement_iso_to_pair slot changed; \
                          update scripts/seed_genesis.py"
                     );

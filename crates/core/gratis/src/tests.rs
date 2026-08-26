@@ -468,9 +468,10 @@ fn test_mine_coen_failure_no_partial_burn() {
 #[test]
 fn test_storage_dsl_layout_matches_legacy_shape() {
     with_gratis(|g| {
-        assert_eq!(g.total_supply.slot(), U256::ZERO);
-        assert_eq!(g.balances.base_slot(), U256::from(1u64));
-        assert_eq!(g.pledged_balances.base_slot(), U256::from(2u64));
+        assert_eq!(g._reserved_schema_version.slot(), U256::ZERO);
+        assert_eq!(g.total_supply.slot(), U256::from(1u64));
+        assert_eq!(g.balances.base_slot(), U256::from(2u64));
+        assert_eq!(g.pledged_balances.base_slot(), U256::from(3u64));
     });
 }
 

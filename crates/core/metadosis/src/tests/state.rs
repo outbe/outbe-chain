@@ -403,16 +403,17 @@ fn test_mark_failed_allows_any_non_completed_status() {
 #[test]
 fn test_storage_dsl_layout_is_compatible_with_previous_slots() {
     with_contract(|m| {
-        assert_eq!(m.bootstrap_end_time.slot(), U256::ZERO);
-        assert_eq!(m.worldwide_days.base_slot(), U256::from(1u64));
+        assert_eq!(m._reserved_schema_version.slot(), U256::ZERO);
+        assert_eq!(m.bootstrap_end_time.slot(), U256::from(1u64));
+        assert_eq!(m.worldwide_days.base_slot(), U256::from(2u64));
         assert_eq!(<WorldwideDay as StorageRecord>::SLOTS, 9);
-        assert_eq!(m.day_limit_amount.base_slot(), U256::from(10u64));
-        assert_eq!(m.day_limit_used.base_slot(), U256::from(11u64));
-        assert_eq!(m.active_wwd_count.slot(), U256::from(12u64));
-        assert_eq!(m.active_wwds.base_slot(), U256::from(13u64));
-        assert_eq!(m.config_oracle_pair_hash.slot(), U256::from(14u64));
-        assert_eq!(m.day_limit_exists.base_slot(), U256::from(15u64));
-        assert_eq!(m.day_limit_count.slot(), U256::from(16u64));
-        assert_eq!(m.day_limit_dates.base_slot(), U256::from(17u64));
+        assert_eq!(m.day_limit_amount.base_slot(), U256::from(11u64));
+        assert_eq!(m.day_limit_used.base_slot(), U256::from(12u64));
+        assert_eq!(m.active_wwd_count.slot(), U256::from(13u64));
+        assert_eq!(m.active_wwds.base_slot(), U256::from(14u64));
+        assert_eq!(m.config_oracle_pair_hash.slot(), U256::from(15u64));
+        assert_eq!(m.day_limit_exists.base_slot(), U256::from(16u64));
+        assert_eq!(m.day_limit_count.slot(), U256::from(17u64));
+        assert_eq!(m.day_limit_dates.base_slot(), U256::from(18u64));
     });
 }

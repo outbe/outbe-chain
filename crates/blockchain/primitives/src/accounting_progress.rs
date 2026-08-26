@@ -15,9 +15,9 @@ use crate::error::Result;
 /// Read-only view of the V2 Phase 1 accounting-progress slot.
 ///
 /// Implementations resolve the EVM storage backing
-/// `ACCOUNTING_PROGRESS_ADDRESS` slot 0 and return the persisted
-/// `last_accounted_block_number`. A fresh chain (no Phase 1 commit yet)
-/// must return `0`.
+/// `ACCOUNTING_PROGRESS_ADDRESS` slot 1 and return the persisted
+/// `last_accounted_block_number`. Slot 0 is the schema version. A fresh chain
+/// (no Phase 1 commit yet) must return `0`.
 pub trait AccountingProgressView {
     /// Returns the highest block number whose Phase 1 system tx has
     /// recorded progress. Returns `0` if no Phase 1 has committed yet

@@ -63,38 +63,42 @@ pub struct GemData {
 #[storage_schema]
 #[contract(addr = GEM_ADDRESS)]
 pub struct GemContract {
+    /// Slot 0: reserved storage schema version.
     #[attribute(order = 0)]
-    pub total_supply: outbe_primitives::storage::dsl::Value<u64>,
+    pub _reserved_schema_version: outbe_primitives::storage::dsl::Value<u32>,
 
     #[attribute(order = 1)]
-    pub gem_items: outbe_primitives::storage::dsl::Map<U256, GemData>,
+    pub total_supply: outbe_primitives::storage::dsl::Value<u64>,
 
     #[attribute(order = 2)]
-    pub owner_gem_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
+    pub gem_items: outbe_primitives::storage::dsl::Map<U256, GemData>,
 
     #[attribute(order = 3)]
-    pub owner_gem_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub owner_gem_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
 
     #[attribute(order = 4)]
-    pub all_gem_ids: outbe_primitives::storage::dsl::List<U256>,
+    pub owner_gem_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     #[attribute(order = 5)]
+    pub all_gem_ids: outbe_primitives::storage::dsl::List<U256>,
+
+    #[attribute(order = 6)]
     pub gem_index: outbe_primitives::storage::dsl::Map<U256, u32>,
 
     // --- Unqualified-gem bin index (PancakeSwap LB-style 3-level radix-256 trie) ---
-    #[attribute(order = 6)]
+    #[attribute(order = 7)]
     pub bin_tree_root: outbe_primitives::storage::dsl::Value<U256>,
 
-    #[attribute(order = 7)]
+    #[attribute(order = 8)]
     pub bin_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
 
-    #[attribute(order = 8)]
+    #[attribute(order = 9)]
     pub bin_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
 
-    #[attribute(order = 9)]
+    #[attribute(order = 10)]
     pub unqualified_bin_count: outbe_primitives::storage::dsl::Map<u32, u32>,
 
-    #[attribute(order = 10)]
+    #[attribute(order = 11)]
     pub unqualified_bin_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
 }
 

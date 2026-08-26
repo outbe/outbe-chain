@@ -25,49 +25,53 @@ pub struct IssuanceParams {
 #[storage_schema]
 #[contract(addr = INTEX_FACTORY_ADDRESS)]
 pub struct IntexFactoryContract {
-    /// `keccak256(holder ++ series_id_be32)` -> authorized settler address.
+    /// Slot 0: reserved storage schema version.
     #[attribute(order = 0)]
+    pub _reserved_schema_version: outbe_primitives::storage::dsl::Value<u32>,
+
+    /// `keccak256(holder ++ series_id_be32)` -> authorized settler address.
+    #[attribute(order = 1)]
     pub authorized_settler: outbe_primitives::storage::dsl::Map<B256, Address>,
 
     /// series_id -> cumulative settle count.
-    #[attribute(order = 1)]
+    #[attribute(order = 2)]
     pub settle_count: outbe_primitives::storage::dsl::Map<u32, U256>,
 
     /// `keccak256(series_id_be32 ++ holder)` -> monotonic minePromis sequence.
-    #[attribute(order = 2)]
+    #[attribute(order = 3)]
     pub mine_seq: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     // Unqualified-series bin index (by floor_price_minor) for begin_block qualify.
-    #[attribute(order = 3)]
-    pub bin_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 4)]
-    pub bin_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub bin_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 5)]
+    pub bin_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    #[attribute(order = 6)]
     pub bin_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     /// bin_id -> count of series in the bin.
-    #[attribute(order = 6)]
+    #[attribute(order = 7)]
     pub unqualified_bin_count: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// `keccak256(bin_id_be32 ++ index_be32)` -> series_id.
-    #[attribute(order = 7)]
+    #[attribute(order = 8)]
     pub unqualified_bin_series: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     // Qualified-series bin index (by call_price_minor) for the daily
     // Called scan. A series moves here from the unqualified index on qualify.
-    #[attribute(order = 8)]
-    pub qualified_bin_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 9)]
-    pub qualified_bin_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub qualified_bin_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 10)]
+    pub qualified_bin_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    #[attribute(order = 11)]
     pub qualified_bin_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     /// bin_id -> count of series in the bin.
-    #[attribute(order = 11)]
+    #[attribute(order = 12)]
     pub qualified_bin_count: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// `keccak256(bin_id_be32 ++ index_be32)` -> series_id.
-    #[attribute(order = 12)]
+    #[attribute(order = 13)]
     pub qualified_bin_series: outbe_primitives::storage::dsl::Map<B256, u32>,
 
     // Genesis parameter-profile selector (0 = prod, 1 = dev); see crate::config.
-    #[attribute(order = 13)]
+    #[attribute(order = 14)]
     pub config_profile: outbe_primitives::storage::dsl::Value<u8>,
 }
 

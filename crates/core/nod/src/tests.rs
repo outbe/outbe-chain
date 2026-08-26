@@ -478,52 +478,56 @@ fn test_precompile_enumerable_methods_address_index() {
 #[test]
 fn test_storage_dsl_layout_is_compatible_with_previous_slots() {
     with_nod(|nod| {
-        assert_eq!(nod.total_supply.slot(), alloy_primitives::U256::ZERO);
+        assert_eq!(
+            nod._reserved_schema_version.slot(),
+            alloy_primitives::U256::ZERO
+        );
+        assert_eq!(nod.total_supply.slot(), alloy_primitives::U256::from(1u64));
         assert_eq!(
             nod.nod_items.base_slot(),
-            alloy_primitives::U256::from(1u64)
+            alloy_primitives::U256::from(2u64)
         );
         assert_eq!(<crate::schema::NodItemState as StorageRecord>::SLOTS, 11);
         assert_eq!(
             nod.nod_buckets.base_slot(),
-            alloy_primitives::U256::from(12u64)
+            alloy_primitives::U256::from(13u64)
         );
         assert_eq!(<crate::schema::NodBucketState as StorageRecord>::SLOTS, 5);
         assert_eq!(
             nod.owner_nod_counts.base_slot(),
-            alloy_primitives::U256::from(17u64)
+            alloy_primitives::U256::from(18u64)
         );
         assert_eq!(
             nod.owner_nod_ids.base_slot(),
-            alloy_primitives::U256::from(18u64)
+            alloy_primitives::U256::from(19u64)
         );
         // LB-style bin index slots (replaced the legacy unqualified_heap).
         assert_eq!(
             nod.bin_tree_root.slot(),
-            alloy_primitives::U256::from(19u64)
-        );
-        assert_eq!(
-            nod.bin_tree_mid.base_slot(),
             alloy_primitives::U256::from(20u64)
         );
         assert_eq!(
-            nod.bin_tree_leaf.base_slot(),
+            nod.bin_tree_mid.base_slot(),
             alloy_primitives::U256::from(21u64)
         );
         assert_eq!(
-            nod.unqualified_bin_count.base_slot(),
+            nod.bin_tree_leaf.base_slot(),
             alloy_primitives::U256::from(22u64)
         );
         assert_eq!(
-            nod.unqualified_bin_buckets.base_slot(),
+            nod.unqualified_bin_count.base_slot(),
             alloy_primitives::U256::from(23u64)
         );
+        assert_eq!(
+            nod.unqualified_bin_buckets.base_slot(),
+            alloy_primitives::U256::from(24u64)
+        );
         // ERC-721 Enumerable global index. StorageVec hides its base
-        // slot, so we only pin the reverse-map slot here; slot 24 is
+        // slot, so we only pin the reverse-map slot here; slot 25 is
         // owned by `global_nod_ids` (List<U256>).
         assert_eq!(
             nod.global_nod_index.base_slot(),
-            alloy_primitives::U256::from(25u64)
+            alloy_primitives::U256::from(26u64)
         );
     });
 }

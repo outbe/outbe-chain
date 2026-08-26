@@ -97,13 +97,13 @@ pub const REWARDS_ADDRESS: Address = address!("0x0000000000000000000000000000000
 
 /// Accounting progress marker address.
 ///
-/// Holds persistent V2 Phase 1 accounting progress (slot 0 =
-/// `last_accounted_block_number: u64`). System-only: there is **no** EVM
-/// precompile dispatch registered at this address, so user transactions
-/// CALLing it execute as no-op accounts. Only the V2 executor Phase 1 path
-/// may write slot 0. The address is included in the executor's EIP-161
-/// marker-bytecode allowlist so the slot survives state-root computation
-/// across all blocks.
+/// Holds persistent V2 Phase 1 accounting progress (slot 0 is the schema
+/// version; slot 1 is `last_accounted_block_number: u64`). System-only: there
+/// is **no** EVM precompile dispatch registered at this address, so user
+/// transactions CALLing it execute as no-op accounts. Only the V2 executor
+/// Phase 1 path may write slot 1. The address is included in the executor's
+/// EIP-161 marker-bytecode allowlist so its storage survives state-root
+/// computation across all blocks.
 pub const ACCOUNTING_PROGRESS_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE04");
 

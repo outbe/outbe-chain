@@ -126,12 +126,16 @@ impl SeriesRecord {
 #[storage_schema]
 #[contract(addr = INTEX_ADDRESS)]
 pub struct IntexContract {
+    /// Slot 0: reserved storage schema version.
     #[attribute(order = 0)]
-    pub series: outbe_primitives::storage::dsl::Map<u32, SeriesRecord>,
+    pub _reserved_schema_version: outbe_primitives::storage::dsl::Value<u32>,
 
     #[attribute(order = 1)]
-    pub total_series: outbe_primitives::storage::dsl::Value<u64>,
+    pub series: outbe_primitives::storage::dsl::Map<u32, SeriesRecord>,
 
     #[attribute(order = 2)]
+    pub total_series: outbe_primitives::storage::dsl::Value<u64>,
+
+    #[attribute(order = 3)]
     pub series_id_at_index: outbe_primitives::storage::dsl::Map<u64, u32>,
 }

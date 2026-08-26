@@ -78,7 +78,7 @@ pub fn record_finalized_participation(
     vs.record_finalized_participation(voters, absent)?;
     vs.finalized_participation_recorded.write(&fb_hash, true)?;
 
-    // Prune ring: bound the guard (slot 30) to the last
+    // Prune ring: bound the guard (slot 31) to the last
     // FINALIZED_PARTICIPATION_RETAIN finalized blocks. A finalized block older than
     // the K-block late-finalize window can never be replayed, so clearing the guard
     // flag of the block RETAIN records ago reclaims its slot without weakening the
@@ -94,7 +94,7 @@ pub fn record_finalized_participation(
     Ok(())
 }
 
-/// Number of recent finalized blocks whose participation guard (slot 30) stays
+/// Number of recent finalized blocks whose participation guard (slot 31) stays
 /// live. The replay horizon is the K-block late-finalize window, so retaining the
 /// last `FINALIZED_PARTICIPATION_RETAIN` blocks is generous; older guard flags are
 /// pruned by [`record_finalized_participation`]. Changing it is a hard fork.

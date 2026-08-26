@@ -9,7 +9,11 @@ use outbe_primitives::addresses::TRIBUTE_FACTORY_ADDRESS;
 #[storage_schema]
 #[contract(addr = TRIBUTE_FACTORY_ADDRESS)]
 pub struct TributeFactoryContract {
-    // slot 0: used SU hash marker (suHash → bool)
+    /// Slot 0: reserved storage schema version.
     #[attribute(order = 0)]
+    pub _reserved_schema_version: outbe_primitives::storage::dsl::Value<u32>,
+
+    // slot 1: used SU hash marker (suHash → bool)
+    #[attribute(order = 1)]
     pub used_su_hashes: outbe_primitives::storage::dsl::Map<B256, bool>,
 }

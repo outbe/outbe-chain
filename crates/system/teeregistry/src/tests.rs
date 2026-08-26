@@ -182,7 +182,7 @@ fn boundary_recipient_keys_are_independent_of_registration() {
         let validator = Address::repeat_byte(0x11);
 
         // A boundary announcement does not bootstrap the registry nor populate
-        // the authoritative registration `recipient_x25519` (slot 9).
+        // the authoritative registration `recipient_x25519` (slot 10).
         reg.record_boundary_recipient_keys(&[(validator, B256::repeat_byte(0xA1))])
             .unwrap();
         assert!(!reg.is_bootstrapped().unwrap());

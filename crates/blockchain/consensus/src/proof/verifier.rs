@@ -97,7 +97,7 @@ pub enum VoteSubject {
 /// Field shapes are minimal on purpose: the verifier is self-contained and
 /// must not need anything beyond what is required to verify BLS aggregate
 /// vote + threshold VRF. The on-chain persistence lives in
-/// `CommitteeSnapshotStore` slots 31..40 in `ValidatorSet`; the verifier
+/// `CommitteeSnapshotStore` slots 32..41 in `ValidatorSet`; the verifier
 /// only requires this borrowed view.
 #[derive(Debug, Clone, Copy)]
 pub struct CommitteeSnapshotView<'a> {

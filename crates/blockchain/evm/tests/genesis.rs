@@ -3,9 +3,9 @@
 //! These tests pin three independent contracts for the V2 greenfield genesis:
 //!
 //! 1. `scripts/seed_genesis.py` writes `ACCOUNTING_PROGRESS_ADDRESS = 0xEE04`
-//!    with the canonical `0xef` marker bytecode and `slot 0 = 0`.
+//!    with the canonical `0xef` marker bytecode and `slot 1 = 0`.
 //! 2. The Python seeder must not write any `ValidatorSet` storage entry at
-//!    the direct slots 31..40 — those are reserved for the runtime
+//!    the direct slots 32..41 — those are reserved for the runtime
 //!    `CommitteeSnapshotStore` whose first writer is block 1's
 //!    `BoundaryOutcome` system transaction.
 //! 3. The genesis JSON produced by the seeder must not embed private DKG
@@ -134,9 +134,9 @@ fn storage_keys(entry: &Value) -> Vec<String> {
 }
 
 /// the Python seeder writes `ACCOUNTING_PROGRESS_ADDRESS` with
-/// marker bytecode `0xef` and explicit `slot 0 = 0`.
+/// marker bytecode `0xef` and explicit `slot 1 = 0`.
 #[test]
-fn accounting_progress_address_seeded_with_marker_and_zero_slot0() {
+fn accounting_progress_address_seeded_with_marker_and_zero_slot1() {
     let (_tmp, genesis, _raw) = run_seed_genesis(
         FIXTURE_GENESIS,
         FIXTURE_SEED,
@@ -150,81 +150,83 @@ fn accounting_progress_address_seeded_with_marker_and_zero_slot0() {
         .expect("EE04 entry has `code` field");
     assert_eq!(
         code, MARKER_BYTECODE_HEX,
-        "EE04 must carry the `{MARKER_BYTECODE_HEX}` marker bytecode so slot 0 \
-         survives EIP-161 cleanup (executor allowlist guarantees no dispatch)"
+        "EE04 must carry the `{MARKER_BYTECODE_HEX}` marker bytecode so the \
+         storage account survives EIP-161 cleanup (executor allowlist guarantees no dispatch)"
     );
 
     let storage = entry
         .get("storage")
         .and_then(Value::as_object)
         .expect("EE04 entry has `storage` map");
-    let slot0 = storage
-        .get(ZERO_WORD_HEX)
+    let slot1_key = format!("0x{:064x}", 1);
+    let slot1 = storage
+        .get(&slot1_key)
         .and_then(Value::as_str)
-        .expect("EE04 storage maps slot 0 to a value");
+        .expect("EE04 storage maps slot 1 to a value");
     assert_eq!(
-        slot0, ZERO_WORD_HEX,
-        "EE04 slot 0 (last_accounted_block_number) must be zero at genesis"
+        slot1, ZERO_WORD_HEX,
+        "EE04 slot 1 (last_accounted_block_number) must be zero at genesis"
     );
 }
 
 /// `seed_genesis.py` does not write any direct-slot
-/// storage entry at `ValidatorSet` slots 31..40, matching the Rust schema in
-/// `crates/system/validatorset/src/schema.rs` (slots 31..39 are mappings
-/// with no base-slot value, slot 40 is a reserved `Slot<B256>` that must be
+/// storage entry at `ValidatorSet` slots 32..41, matching the Rust schema in
+/// `crates/system/validatorset/src/schema.rs` (slots 32..40 are mappings
+/// with no base-slot value, slot 41 is a reserved `Slot<B256>` that must be
 /// zero at genesis).
 ///
 /// This protects the invariant that genesis carries no committee-snapshot
 /// material; block 1's `BoundaryOutcome` system tx is the first writer.
 #[test]
-fn seed_genesis_writes_committee_snapshot_slots_31_to_40_matching_rust_schema() {
+fn seed_genesis_writes_committee_snapshot_slots_32_to_41_matching_rust_schema() {
     // 1. Rust-schema sanity: the slot indices on the contract facade must be
-    //    exactly 31..40. If schema drift moves them, this test fails loudly.
+    //    exactly 32..41. If schema drift moves them, this test fails loudly.
     let mut storage = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut storage, |storage| {
         let vs = ValidatorSet::new(storage);
-        assert_eq!(vs.committee_snapshot_exists.base_slot(), U256::from(31u64));
-        assert_eq!(vs.committee_snapshot_len.base_slot(), U256::from(32u64));
+        assert_eq!(vs._reserved_schema_version.slot(), U256::ZERO);
+        assert_eq!(vs.committee_snapshot_exists.base_slot(), U256::from(32u64));
+        assert_eq!(vs.committee_snapshot_len.base_slot(), U256::from(33u64));
         assert_eq!(
             vs.committee_snapshot_address_at.base_slot(),
-            U256::from(33u64)
-        );
-        assert_eq!(
-            vs.committee_snapshot_pubkey_lo_at.base_slot(),
             U256::from(34u64)
         );
         assert_eq!(
-            vs.committee_snapshot_pubkey_hi_at.base_slot(),
+            vs.committee_snapshot_pubkey_lo_at.base_slot(),
             U256::from(35u64)
         );
         assert_eq!(
-            vs.committee_snapshot_vrf_material_version.base_slot(),
+            vs.committee_snapshot_pubkey_hi_at.base_slot(),
             U256::from(36u64)
         );
         assert_eq!(
-            vs.committee_snapshot_vrf_group_public_key_hash.base_slot(),
+            vs.committee_snapshot_vrf_material_version.base_slot(),
             U256::from(37u64)
         );
         assert_eq!(
-            vs.committee_snapshot_vrf_group_public_key_len.base_slot(),
+            vs.committee_snapshot_vrf_group_public_key_hash.base_slot(),
             U256::from(38u64)
+        );
+        assert_eq!(
+            vs.committee_snapshot_vrf_group_public_key_len.base_slot(),
+            U256::from(39u64)
         );
         assert_eq!(
             vs.committee_snapshot_vrf_group_public_key_chunk_at
                 .base_slot(),
-            U256::from(39u64)
+            U256::from(40u64)
         );
         assert_eq!(
             vs._reserved_committee_snapshot_slot_40.slot(),
-            U256::from(40u64)
+            U256::from(41u64)
         );
     });
 
-    // 2. Python-output check: for each slot in 31..=40, the corresponding
+    // 2. Python-output check: for each slot in 32..=41, the corresponding
     //    direct slot key (`hex32(N)`) must be absent from the seeded
-    //    `VALIDATOR_SET_ADDRESS` storage. Mappings (slots 31..39) write at
+    //    `VALIDATOR_SET_ADDRESS` storage. Mappings (slots 32..40) write at
     //    keccak-derived keys and never the base slot itself; the reserved
-    //    `Slot<B256>` at 40 must be untouched.
+    //    `Slot<B256>` at 41 must be untouched.
     let (_tmp, genesis, _raw) = run_seed_genesis(
         FIXTURE_GENESIS,
         FIXTURE_SEED,
@@ -232,12 +234,12 @@ fn seed_genesis_writes_committee_snapshot_slots_31_to_40_matching_rust_schema() 
     );
     let entry = alloc_entry(&genesis, VALIDATOR_SET_ADDRESS_HEX);
     let keys = storage_keys(entry);
-    for slot in 31u64..=40 {
+    for slot in 32u64..=41 {
         let hex = format!("0x{:064x}", slot);
         assert!(
             !keys.iter().any(|k| k == &hex),
             "seed_genesis.py wrote direct-slot entry at ValidatorSet slot {slot} \
-             ({hex}); slots 31..40 are reserved for runtime CommitteeSnapshotStore"
+             ({hex}); slots 32..41 are reserved for runtime CommitteeSnapshotStore"
         );
     }
 }
@@ -387,7 +389,7 @@ fn genesis_json_does_not_contain_private_dkg_shares() {
 /// T-4 (runtime semantic) / block 1's begin-zone layout under V2
 /// includes `BoundaryOutcome`, which carries the genesis `DkgManager` output
 /// and seeds the epoch-0 `CommitteeSnapshotStore`. Without this entry the
-/// CommitteeSnapshot at slots 31..40 never gets written and block 2 cannot
+/// CommitteeSnapshot at slots 32..41 never gets written and block 2 cannot
 /// look up the active committee.
 #[test]
 fn genesis_seeds_epoch0_committee_snapshot() {

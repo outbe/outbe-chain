@@ -179,7 +179,7 @@ ORACLE_ADDRESS = "000000000000000000000000000000000000ee05"
 # protects its account (and slot 0) from EIP-161 cleanup before the
 # first sponsored tx ever lands.
 ZEROFEE_ADDRESS = "000000000000000000000000000000000000ee09"
-# TEE registry precompile at 0xEE0A. Genesis seeds only slot 2 (`policy_hash`),
+# TEE registry precompile at 0xEE0A. Genesis seeds only slot 3 (`policy_hash`),
 # and only when `tee_policy` is present in the seed config; the rest of the
 # registry is written by the block-1 `TeeBootstrap` system tx. The account is
 # preserved across EIP-161 at runtime by `OUTBE_RUNTIME_MARKER_ADDRESSES`; when a
@@ -197,7 +197,7 @@ DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS = 151_200
 DEFAULT_EPOCH_LENGTH_BLOCKS = 1_200
 SECONDS_PER_DAY = 86_400
 
-# IntexFactory profile selector (config slot 13). Numbers live in Rust
+# IntexFactory profile selector (config slot 14). Numbers live in Rust
 # (crates/core/intexfactory/src/config.rs); genesis only picks one.
 INTEX_PROFILE_SELECTORS = {"prod": 0, "dev": 1}
 
@@ -546,30 +546,32 @@ def pair_hash(base: str, quote: str) -> bytes:
 def seed_gratis(storage: StorageBuilder, balances: dict):
     """
     Gratis storage layout:
-      slot 0: total_supply (U256)
-      slot 1: mapping(address => U256) balances (available)
-      slot 2: mapping(address => U256) pledged_balances (not seeded here)
+      slot 0: reserved storage schema version (u32)
+      slot 1: total_supply (U256)
+      slot 2: mapping(address => U256) balances (available)
+      slot 3: mapping(address => U256) pledged_balances (not seeded here)
     """
     total = 0
     for addr, amount_str in balances.items():
         amount = parse_int(amount_str)
         total += amount
-        storage.set_mapping(1, address_bytes(addr), amount)
-    storage.set_slot(0, total)
+        storage.set_mapping(2, address_bytes(addr), amount)
+    storage.set_slot(1, total)
 
 
 def seed_promis(storage: StorageBuilder, balances: dict):
     """
     Promis storage layout:
-      slot 0: total_supply (U256)
-      slot 1: mapping(address => U256) balances
+      slot 0: reserved storage schema version (u32)
+      slot 1: total_supply (U256)
+      slot 2: mapping(address => U256) balances
     """
     total = 0
     for addr, amount_str in balances.items():
         amount = parse_int(amount_str)
         total += amount
-        storage.set_mapping(1, address_bytes(addr), amount)
-    storage.set_slot(0, total)
+        storage.set_mapping(2, address_bytes(addr), amount)
+    storage.set_slot(1, total)
 
 
 def seed_coen(alloc: dict, balances: dict):
@@ -603,18 +605,19 @@ def owner_index_key(owner: str, index: int) -> bytes:
 def seed_tributes(storage: StorageBuilder, tributes: list):
     """
     Tribute storage layout:
-      slot 0: total_supply (u64)
-      slot 1: mapping(B256 => Address) owners
-      slot 2: mapping(B256 => u32) worldwide_days
-      slot 3: mapping(B256 => U256) issuance_amounts
-      slot 4: mapping(B256 => u32) settlement_currencies
-      slot 5: mapping(B256 => U256) nominal_amounts
-      slot 6: mapping(u32 => u32) day_tribute_counts
-      slot 7: mapping(u32 => U256) day_nominal_amounts
-      slot 8: mapping(u32 => bool) day_blocked
-      slot 9: mapping(B256 => B256) day_token_ids
-      slot 10: mapping(Address => u32) owner_tribute_counts
-      slot 11: mapping(B256 => B256) owner_tribute_ids
+      slot 0: reserved storage schema version (u32)
+      slot 1: total_supply (u64)
+      slot 2: mapping(B256 => Address) owners
+      slot 3: mapping(B256 => u32) worldwide_days
+      slot 4: mapping(B256 => U256) issuance_amounts
+      slot 5: mapping(B256 => u32) settlement_currencies
+      slot 6: mapping(B256 => U256) nominal_amounts
+      slot 7: mapping(u32 => u32) day_tribute_counts
+      slot 8: mapping(u32 => U256) day_nominal_amounts
+      slot 9: mapping(u32 => bool) day_blocked
+      slot 10: mapping(B256 => B256) day_token_ids
+      slot 11: mapping(Address => u32) owner_tribute_counts
+      slot 12: mapping(B256 => B256) owner_tribute_ids
     """
     # Track per-day and per-owner counters
     day_counts: dict[int, int] = {}
@@ -632,40 +635,40 @@ def seed_tributes(storage: StorageBuilder, tributes: list):
         token_id = tribute_token_id(owner, wwd)
 
         # Store tribute fields
-        storage.set_mapping(1, token_id, address_as_u256(owner))
-        storage.set_mapping(2, token_id, wwd)
-        storage.set_mapping(3, token_id, settlement)
-        storage.set_mapping(4, token_id, currency)
-        storage.set_mapping(5, token_id, nominal)
+        storage.set_mapping(2, token_id, address_as_u256(owner))
+        storage.set_mapping(3, token_id, wwd)
+        storage.set_mapping(4, token_id, settlement)
+        storage.set_mapping(5, token_id, currency)
+        storage.set_mapping(6, token_id, nominal)
 
-        # Day index (slot 9)
+        # Day index (slot 10)
         day_idx = day_counts.get(wwd, 0)
         di_key = day_index_key(wwd, day_idx)
-        storage.set_mapping_b256(9, di_key, token_id)
+        storage.set_mapping_b256(10, di_key, token_id)
         day_counts[wwd] = day_idx + 1
 
         # Day nominal accumulator
         day_nominals[wwd] = day_nominals.get(wwd, 0) + nominal
 
-        # Owner index (slot 11)
+        # Owner index (slot 12)
         owner_lower = owner.lower()
         oi = owner_counts.get(owner_lower, 0)
         oi_key = owner_index_key(owner, oi)
-        storage.set_mapping_b256(11, oi_key, token_id)
+        storage.set_mapping_b256(12, oi_key, token_id)
         owner_counts[owner_lower] = oi + 1
 
     # Write day counts and nominals
     for wwd, count in day_counts.items():
-        storage.set_mapping(6, u32_bytes(wwd), count)
+        storage.set_mapping(7, u32_bytes(wwd), count)
     for wwd, nominal_total in day_nominals.items():
-        storage.set_mapping(7, u32_bytes(wwd), nominal_total)
+        storage.set_mapping(8, u32_bytes(wwd), nominal_total)
 
     # Write owner counts
     for owner, count in owner_counts.items():
-        storage.set_mapping(10, address_bytes(owner), count)
+        storage.set_mapping(11, address_bytes(owner), count)
 
     # Total supply
-    storage.set_slot(0, len(tributes))
+    storage.set_slot(1, len(tributes))
 
 
 def seed_tribute_day_totals(storage: StorageBuilder, days: list[int]):
@@ -674,18 +677,19 @@ def seed_tribute_day_totals(storage: StorageBuilder, days: list[int]):
     `initialized == true && !is_sealed`, and a directly-seeded OFFERING worldwide
     day never ran the metadosis `unseal_day` that normally initializes it.
 
-    `day_totals` is `Map<WorldwideDay, DayTotals>` at TributeContract slot 8
-    (storage_schema cumulative offsets: `total_supply`@0 = 1 slot, then
-    `tributes: Map<_, TributeData>` reserves `TributeData::SLOTS` = 7 slots
-    (1..7), so `day_totals` lands at slot 8). Within the `DayTotals` record the
-    field offset is the cumulative slot index by `#[attribute(order)]`:
-    `initialized`@0, `tribute_count`@1, `tribute_nominal_amount`@2,
-    `is_sealed`@3 (its `order = 4` only sorts; the gap at 3 is not reserved).
-    So `day_totals[wwd].initialized` is `Mapping(base_slot=8).get(wwd)`; writing
+    `day_totals` is `Map<WorldwideDay, DayTotals>` at TributeContract slot 9
+    (storage_schema cumulative offsets: `schema_version`@0 and
+    `total_supply`@1 = 1 slot each, then `tributes: Map<_, TributeData>` reserves
+    `TributeData::SLOTS` = 7 slots (2..8), so `day_totals` lands at slot 9).
+    Within the `DayTotals` record the field offset is the cumulative slot index
+    by `#[attribute(order)]`: `initialized`@0, `tribute_count`@1,
+    `tribute_nominal_amount`@2, `is_sealed`@3 (its `order = 4` only sorts; the
+    gap at 3 is not reserved).
+    So `day_totals[wwd].initialized` is `Mapping(base_slot=9).get(wwd)`; writing
     1 makes the record exist + initialized, with `is_sealed` left at its `false`
-    default (slot 11)."""
+    default (slot 12)."""
     for wwd in days:
-        storage.set_mapping(8, u32_bytes(wwd), 1)
+        storage.set_mapping(9, u32_bytes(wwd), 1)
 
 
 def nod_id_gen(owner: str, worldwide_day: int, index: int) -> bytes:
@@ -703,18 +707,19 @@ def nod_bucket_key(wwd: int, league_id: int, floor_price: int) -> bytes:
 def seed_nods(storage: StorageBuilder, nods: list):
     """
     Nod storage layout:
-      slot 0: total_supply (u64)
-      slot 1: mapping(B256 => Address) item_owners
-      slot 2: mapping(B256 => U256) item_gratis_loads
-      slot 3: mapping(B256 => u32) item_worldwide_days
-      slot 4: mapping(B256 => u32) item_league_ids
-      slot 5: mapping(B256 => U256) item_floor_prices
-      slot 6: mapping(B256 => B256) item_bucket_keys
-      slot 7: mapping(B256 => U256) bucket_floor_prices
-      slot 8: mapping(B256 => u64) bucket_total_nods
-      slot 9: mapping(B256 => bool) bucket_is_qualified
-      slot 10: mapping(Address => u32) owner_nod_counts
-      slot 11: mapping(B256 => B256) owner_nod_ids
+      slot 0: reserved storage schema version (u32)
+      slot 1: total_supply (u64)
+      slot 2: mapping(B256 => Address) item_owners
+      slot 3: mapping(B256 => U256) item_gratis_loads
+      slot 4: mapping(B256 => u32) item_worldwide_days
+      slot 5: mapping(B256 => u32) item_league_ids
+      slot 6: mapping(B256 => U256) item_floor_prices
+      slot 7: mapping(B256 => B256) item_bucket_keys
+      slot 8: mapping(B256 => U256) bucket_floor_prices
+      slot 9: mapping(B256 => u64) bucket_total_nods
+      slot 10: mapping(B256 => bool) bucket_is_qualified
+      slot 11: mapping(Address => u32) owner_nod_counts
+      slot 12: mapping(B256 => B256) owner_nod_ids
     """
     # Track counters
     owner_counts: dict[str, int] = {}
@@ -735,55 +740,56 @@ def seed_nods(storage: StorageBuilder, nods: list):
         bk = nod_bucket_key(wwd, league_id, floor_price)
 
         # Item fields
-        storage.set_mapping(1, nod_id, address_as_u256(owner))
-        storage.set_mapping(2, nod_id, gratis_load)
-        storage.set_mapping(3, nod_id, wwd)
-        storage.set_mapping(4, nod_id, league_id)
-        storage.set_mapping(5, nod_id, floor_price)
-        storage.set_mapping_b256(6, nod_id, bk)
+        storage.set_mapping(2, nod_id, address_as_u256(owner))
+        storage.set_mapping(3, nod_id, gratis_load)
+        storage.set_mapping(4, nod_id, wwd)
+        storage.set_mapping(5, nod_id, league_id)
+        storage.set_mapping(6, nod_id, floor_price)
+        storage.set_mapping_b256(7, nod_id, bk)
 
         # Bucket
         bk_tuple = bytes(bk)
         bucket_totals[bk_tuple] = bucket_totals.get(bk_tuple, 0) + 1
         # Store floor price for this bucket (idempotent)
-        storage.set_mapping(7, bk, floor_price)
+        storage.set_mapping(8, bk, floor_price)
 
-        # Owner index (slots 10-11)
+        # Owner index (slots 11-12)
         owner_lower = owner.lower()
         oi = owner_counts.get(owner_lower, 0)
         oi_key = owner_index_key(owner, oi)
-        storage.set_mapping_b256(11, oi_key, nod_id)
+        storage.set_mapping_b256(12, oi_key, nod_id)
         owner_counts[owner_lower] = oi + 1
 
     # Write bucket totals
     for bk_bytes, total in bucket_totals.items():
-        storage.set_mapping(8, bk_bytes, total)
+        storage.set_mapping(9, bk_bytes, total)
 
     # Write owner counts
     for owner, count in owner_counts.items():
-        storage.set_mapping(10, address_bytes(owner), count)
+        storage.set_mapping(11, address_bytes(owner), count)
 
     # Total supply
-    storage.set_slot(0, len(nods))
+    storage.set_slot(1, len(nods))
 
 
 def seed_metadosis(storage: StorageBuilder, config: dict):
     """
     Metadosis storage layout:
-      slot 0: bootstrap_end_time (u64)
-      slot 1: mapping(u32 => u8) wwd_status
-      slot 2: mapping(u32 => u8) wwd_day_type
-      slot 3: mapping(u32 => u64) wwd_forming_start
-      slot 4: mapping(u32 => u64) wwd_forming_end
-      slot 5: mapping(u32 => u64) wwd_lookback_end
-      slot 6: mapping(u32 => u64) wwd_offering_end
-      slot 7: mapping(u32 => u64) wwd_scheduled_process_time
-      slot 8: mapping(u32 => U256) wwd_previous_vwap
-      slot 9: mapping(u32 => U256) wwd_current_vwap
-      slot 10: mapping(u32 => U256) day_limit_amount
-      slot 11: mapping(u32 => bool) day_limit_used
-      slot 12: active_wwd_count (u32)
-      slot 13: mapping(u32 => u32) active_wwds (index => wwd)
+      slot 0: reserved storage schema version (u32)
+      slot 1: bootstrap_end_time (u64)
+      slot 2: mapping(u32 => u8) wwd_status
+      slot 3: mapping(u32 => u8) wwd_day_type
+      slot 4: mapping(u32 => u64) wwd_forming_start
+      slot 5: mapping(u32 => u64) wwd_forming_end
+      slot 6: mapping(u32 => u64) wwd_lookback_end
+      slot 7: mapping(u32 => u64) wwd_offering_end
+      slot 8: mapping(u32 => u64) wwd_scheduled_process_time
+      slot 9: mapping(u32 => U256) wwd_previous_vwap
+      slot 10: mapping(u32 => U256) wwd_current_vwap
+      slot 11: mapping(u32 => U256) day_limit_amount
+      slot 12: mapping(u32 => bool) day_limit_used
+      slot 13: active_wwd_count (u32)
+      slot 14: mapping(u32 => u32) active_wwds (index => wwd)
     """
     wwds = config.get("worldwide_days", [])
 
@@ -791,34 +797,34 @@ def seed_metadosis(storage: StorageBuilder, config: dict):
         wwd = entry["wwd"]
         wwd_key = u32_bytes(wwd)
 
-        storage.set_mapping(1, wwd_key, entry.get("status", 0))
-        storage.set_mapping(2, wwd_key, entry.get("day_type", 0))
-        storage.set_mapping(3, wwd_key, entry.get("forming_start", 0))
-        storage.set_mapping(4, wwd_key, entry.get("forming_end", 0))
-        storage.set_mapping(5, wwd_key, entry.get("lookback_end", 0))
-        storage.set_mapping(6, wwd_key, entry.get("offering_end", 0))
-        storage.set_mapping(7, wwd_key, entry.get("scheduled_process_time", 0))
+        storage.set_mapping(2, wwd_key, entry.get("status", 0))
+        storage.set_mapping(3, wwd_key, entry.get("day_type", 0))
+        storage.set_mapping(4, wwd_key, entry.get("forming_start", 0))
+        storage.set_mapping(5, wwd_key, entry.get("forming_end", 0))
+        storage.set_mapping(6, wwd_key, entry.get("lookback_end", 0))
+        storage.set_mapping(7, wwd_key, entry.get("offering_end", 0))
+        storage.set_mapping(8, wwd_key, entry.get("scheduled_process_time", 0))
 
         prev_vwap = parse_int(entry.get("previous_vwap", "0"))
         curr_vwap = parse_int(entry.get("current_vwap", "0"))
-        storage.set_mapping(8, wwd_key, prev_vwap)
-        storage.set_mapping(9, wwd_key, curr_vwap)
+        storage.set_mapping(9, wwd_key, prev_vwap)
+        storage.set_mapping(10, wwd_key, curr_vwap)
 
         # Day limit
         day_limit = parse_int(entry.get("day_limit", "0"))
         if day_limit > 0:
-            storage.set_mapping(10, wwd_key, day_limit)
+            storage.set_mapping(11, wwd_key, day_limit)
 
         # Active WWD list
-        storage.set_mapping(13, u32_bytes(idx), wwd)
+        storage.set_mapping(14, u32_bytes(idx), wwd)
 
     # Active WWD count
-    storage.set_slot(12, len(wwds))
+    storage.set_slot(13, len(wwds))
 
     # Bootstrap end time
     bootstrap_end = config.get("bootstrap_end_time", 0)
     if bootstrap_end:
-        storage.set_slot(0, bootstrap_end)
+        storage.set_slot(1, bootstrap_end)
 
 
 def seed_validator_set(
@@ -833,29 +839,30 @@ def seed_validator_set(
 ):
     """
     ValidatorSet storage layout:
-      slots 0-4: config
-      slots 5-18: per-validator mappings and reverse indexes
-      slot 20: validator_count
-      slots 21-26: epoch / consensus-set tracking
-      slot 27: re-registration cooldown
-      slots 28-29: versioned Commonware P2P address registry
+      slot 0: reserved storage schema version
+      slots 1-5: config
+      slots 6-19: per-validator mappings and reverse indexes
+      slot 21: validator_count
+      slots 22-27: epoch / consensus-set tracking
+      slot 28: re-registration cooldown
+      slots 29-30: versioned Commonware P2P address registry
     """
-    storage.set_slot(0, address_as_u256(config.get("owner", "0x0000000000000000000000000000000000000000")))
-    storage.set_slot(1, parse_int(config.get("max_validators", 128)))
+    storage.set_slot(1, address_as_u256(config.get("owner", "0x0000000000000000000000000000000000000000")))
+    storage.set_slot(2, parse_int(config.get("max_validators", 128)))
     if "epoch_duration" in config:
         raise ValueError("validator_set.epoch_duration is deprecated; use config.epochLengthBlocks")
     if "epoch_length_blocks" in config:
         raise ValueError("validator_set.epoch_length_blocks is deprecated; use config.epochLengthBlocks")
-    storage.set_slot(2, epoch_length_blocks)
-    storage.set_slot(3, min_stake)
-    storage.set_slot(4, 1)
-    storage.set_slot(20, len(validators))
-    storage.set_slot(21, parse_int(config.get("epoch_number", 0)))
-    storage.set_slot(22, parse_int(config.get("epoch_start_timestamp", epoch_start_timestamp)))
-    storage.set_slot(23, parse_int(config.get("epoch_start_block", 0)))
-    storage.set_slot(25, 0)
-    storage.set_slot(26, parse_int(config.get("active_consensus_set_hash", 0)))
-    storage.set_slot(27, parse_int(config.get(
+    storage.set_slot(3, epoch_length_blocks)
+    storage.set_slot(4, min_stake)
+    storage.set_slot(5, 1)
+    storage.set_slot(21, len(validators))
+    storage.set_slot(22, parse_int(config.get("epoch_number", 0)))
+    storage.set_slot(23, parse_int(config.get("epoch_start_timestamp", epoch_start_timestamp)))
+    storage.set_slot(24, parse_int(config.get("epoch_start_block", 0)))
+    storage.set_slot(26, 0)
+    storage.set_slot(27, parse_int(config.get("active_consensus_set_hash", 0)))
+    storage.set_slot(28, parse_int(config.get(
         "reregistration_cooldown_blocks",
         DEFAULT_REREGISTRATION_COOLDOWN_BLOCKS,
     )))
@@ -866,20 +873,20 @@ def seed_validator_set(
         pk_hi = pk[32:] + (b"\x00" * 16)
         pk_hash = keccak256(pk)
 
-        storage.set_mapping_b256(5, address_bytes(addr), pk[:32])
-        storage.set_mapping_b256(6, address_bytes(addr), pk_hi)
-        storage.set_mapping(7, address_bytes(addr), validator_stake)
-        storage.set_mapping(8, address_bytes(addr), 2)  # ACTIVE
-        storage.set_mapping(13, address_bytes(addr), 0)
-        storage.set_mapping(16, address_bytes(addr), index)
-        storage.set_mapping(17, u64_bytes(index), address_as_u256(addr))
-        storage.set_mapping(18, pk_hash, address_as_u256(addr))
-        storage.set_mapping(24, address_bytes(addr), 1)
+        storage.set_mapping_b256(6, address_bytes(addr), pk[:32])
+        storage.set_mapping_b256(7, address_bytes(addr), pk_hi)
+        storage.set_mapping(8, address_bytes(addr), validator_stake)
+        storage.set_mapping(9, address_bytes(addr), 2)  # ACTIVE
+        storage.set_mapping(14, address_bytes(addr), 0)
+        storage.set_mapping(17, address_bytes(addr), index)
+        storage.set_mapping(18, u64_bytes(index), address_as_u256(addr))
+        storage.set_mapping(19, pk_hash, address_as_u256(addr))
+        storage.set_mapping(25, address_bytes(addr), 1)
         p2p_seed = encode_p2p_address_payload(validator.get("p2p_address"))
         if p2p_seed is not None:
             version, payload = p2p_seed
-            storage.set_mapping(28, address_bytes(addr), version)
-            write_mapping_bytes(storage, 29, address_bytes(addr), payload)
+            storage.set_mapping(29, address_bytes(addr), version)
+            write_mapping_bytes(storage, 30, address_bytes(addr), payload)
 
 
 def seed_staking(
@@ -892,43 +899,44 @@ def seed_staking(
 ):
     """
     Staking storage layout:
-      slots 0-2: config
-      slot 3: mapping(validator => stake_amount)
-      slot 4: total_staked
+      slot 0: reserved storage schema version
+      slots 1-3: config
+      slot 4: mapping(validator => stake_amount)
+      slot 5: total_staked
     """
     if validator_stake < min_stake:
         raise ValueError("genesis_validator_stake must be >= min_stake")
 
-    storage.set_slot(0, min_stake)
+    storage.set_slot(1, min_stake)
     unbonding_period = parse_int(config.get("unbonding_period", DEFAULT_UNBONDING_PERIOD))
-    storage.set_slot(1, unbonding_period)
-    storage.set_slot(2, parse_int(config.get("max_stake_percent", 33)))
+    storage.set_slot(2, unbonding_period)
+    storage.set_slot(3, parse_int(config.get("max_stake_percent", 33)))
     storage.set_slot(
-        11,
+        12,
         parse_int(config.get("slashed_withdrawal_delay", unbonding_period * 2)),
     )
 
     total_staked = 0
     for validator in validators:
-        storage.set_mapping(3, address_bytes(validator["address"]), validator_stake)
+        storage.set_mapping(4, address_bytes(validator["address"]), validator_stake)
         total_staked += validator_stake
 
-    storage.set_slot(4, total_staked)
+    storage.set_slot(5, total_staked)
     return total_staked
 
 
 def seed_rewards(storage: StorageBuilder, genesis_timestamp: int):
     """
     Rewards storage layout:
-      slot 0: genesis_utc_day (uint32 yyyymmdd of genesis timestamp).
+      slot 0: reserved storage schema version.
+      slot 1: genesis_utc_day (uint32 yyyymmdd of genesis timestamp).
 
-    NOTE: `genesis_utc_day` moved from slot 1 to slot 0 when the leading
-    `pending_rewards` field was removed (PR #12 / 941c4eb). The runtime also
-    lazily anchors this value at block 0 via `rewards::ensure_genesis_anchor`
+    The runtime lazily anchors `genesis_utc_day` at block 0 via
+    `rewards::ensure_genesis_anchor`
     (= timestamp_to_date_key(block0.timestamp)); seeding it here keeps genesis
     state explicit and matches that block-0 value.
     """
-    storage.set_slot(0, timestamp_to_utc_date_key(genesis_timestamp))
+    storage.set_slot(1, timestamp_to_utc_date_key(genesis_timestamp))
 
 
 def seed_tee_policy(genesis: dict, alloc: dict, seed: dict):
@@ -936,7 +944,7 @@ def seed_tee_policy(genesis: dict, alloc: dict, seed: dict):
     in the seed config.
 
     Writes two places:
-      1. `TeeRegistry` (0xEE0A) slot 2 = `policy_hash` — the consensus-critical,
+      1. `TeeRegistry` (0xEE0A) slot 3 = `policy_hash` — the consensus-critical,
          deterministic gate the Phase 3b `TeeBootstrap` handler reads from EVM
          state. The account also gets marker bytecode so the slot survives
          EIP-161 cleanup until block 1.
@@ -944,7 +952,7 @@ def seed_tee_policy(genesis: dict, alloc: dict, seed: dict):
          `QuotePolicy` (defense-in-depth measurement check at enclave connect).
 
     No-op when `tee_policy` is absent: genesis is unchanged and the handler skips
-    measurement enforcement (slot 2 == ZERO).
+    measurement enforcement (slot 3 == ZERO).
     """
     policy = seed.get("tee_policy")
     if not policy:
@@ -955,7 +963,7 @@ def seed_tee_policy(genesis: dict, alloc: dict, seed: dict):
     policy_hash = compute_tee_policy_hash(allowed_mrsigner, allowed_mrenclave, min_isv_svn)
 
     storage = StorageBuilder()
-    storage.set_raw_slot_hex(2, "0x" + policy_hash.hex())
+    storage.set_raw_slot_hex(3, "0x" + policy_hash.hex())
     entry = alloc.setdefault(TEE_REGISTRY_ADDRESS, {})
     entry["code"] = MARKER_CODE
     entry.setdefault("balance", "0x0")
@@ -976,10 +984,8 @@ def seed_zerofee(storage: StorageBuilder):
     """
     ZeroFee paymaster storage layout:
       slot 0: schema version (uint32) — pinned at 1 for the initial
-              `Map<Address, u64> counter` layout. The macro's
-              `counter` Map keys are `keccak256(addr || base_slot)` so
-              they never collide with slot 0 even though `counter`
-              nominally uses slot 0 as the base_slot for keccak.
+              `Map<Address, u64> counter` layout.
+      slot 1: `Map<Address, u64> counter` keccak base.
 
     The slot-0 schema marker is required by the README rule
     "All precompiles ... storage versioned (slot 0 = version)". A
@@ -992,36 +998,38 @@ def seed_zerofee(storage: StorageBuilder):
 def seed_accounting_progress(storage: StorageBuilder):
     """
     Accounting progress storage layout (V2):
-      slot 0: last_accounted_block_number (u64) — pre-V2 genesis is `0`
+      slot 0: reserved storage schema version (u32)
+      slot 1: last_accounted_block_number (u64) — pre-V2 genesis is `0`
               meaning Phase 1 has not yet processed any block. The first
               certified-parent accounting begin-zone system transaction
               advances this slot for block N >= 2.
 
-    Genesis V2 requires this slot to be explicitly written so the resulting
-    storage map contains the canonical zero word, matching the Rust schema
+    Genesis V2 explicitly writes slot 1 so the resulting storage map contains
+    the canonical zero word, matching the Rust schema
     `outbe_accounting::schema::Accounting::last_accounted_block_number`.
     """
-    storage.set_slot(0, 0)
+    storage.set_slot(1, 0)
 
 
 def seed_oracle(storage: StorageBuilder, config: dict):
     """
     Oracle storage layout:
-      slots 0-7: config
-      slot 8: pair_count
-      slot 9: mapping(pair_id => pair_hash)
-      slot 10: mapping(pair_hash => pair_id)
-      slot 11: mapping(pair_hash => is_vote_target)
-      slots 12-14: exchange_rate / block / timestamp
-      slot 15: feeder delegations
+      slot 0: reserved storage schema version
+      slots 1-8: config
+      slot 9: pair_count
+      slot 10: mapping(pair_id => pair_hash)
+      slot 11: mapping(pair_hash => pair_id)
+      slot 12: mapping(pair_hash => is_vote_target)
+      slots 13-15: exchange_rate / block / timestamp
+      slot 16: feeder delegations
       slots 33-34: protected validators
       slots 41-43: settlement currency runtime mappings
       slots 44-47: reversible pair/settlement metadata
-      slot 55: reference_currencies (StorageVec<u16>)
+      slot 56: reference_currencies (StorageVec<u16>)
     """
     cfg = config.get("config", {})
-    storage.set_slot(0, parse_int(cfg.get("vote_period", 2)))
-    storage.set_slot(1, parse_int(cfg.get("reward_band", "20000000000000000")))
+    storage.set_slot(1, parse_int(cfg.get("vote_period", 2)))
+    storage.set_slot(2, parse_int(cfg.get("reward_band", "20000000000000000")))
     penalties_enabled = cfg.get("penalties_enabled", True)
     if penalties_enabled:
         min_valid_per_window = cfg.get("min_valid_per_window", "50000000000000000")
@@ -1029,17 +1037,17 @@ def seed_oracle(storage: StorageBuilder, config: dict):
     else:
         min_valid_per_window = "0"
         slash_fraction = "0"
-    storage.set_slot(2, parse_int(cfg.get("slash_window", 96)))
-    storage.set_slot(3, parse_int(min_valid_per_window))
-    storage.set_slot(4, parse_int(slash_fraction))
-    storage.set_slot(5, parse_int(cfg.get("lookback_duration", 86400)))
-    storage.set_slot(6, 1 if cfg.get("enabled", True) else 0)
-    storage.set_slot(7, 1 if cfg.get("initialized", True) else 0)
+    storage.set_slot(3, parse_int(cfg.get("slash_window", 96)))
+    storage.set_slot(4, parse_int(min_valid_per_window))
+    storage.set_slot(5, parse_int(slash_fraction))
+    storage.set_slot(6, parse_int(cfg.get("lookback_duration", 86400)))
+    storage.set_slot(7, 1 if cfg.get("enabled", True) else 0)
+    storage.set_slot(8, 1 if cfg.get("initialized", True) else 0)
 
     pair_hashes: dict[tuple[str, str], bytes] = {}
     pair_ids: dict[tuple[str, str], int] = {}
     pairs = config.get("pairs", [])
-    storage.set_slot(8, len(pairs))
+    storage.set_slot(9, len(pairs))
 
     for idx, pair in enumerate(pairs, start=1):
         base = pair["base"]
@@ -1051,44 +1059,44 @@ def seed_oracle(storage: StorageBuilder, config: dict):
         pair_hashes[key] = h
         pair_ids[key] = idx
 
-        storage.set_mapping_b256(9, u32_bytes(idx), h)
-        storage.set_mapping(10, h, idx)
-        storage.set_mapping(11, h, 1 if pair.get("vote_target", True) else 0)
-        # pair_id_to_base / pair_id_to_quote (macro slots 43/44).
-        write_mapping_string(storage, 43, u32_bytes(idx), base)
-        write_mapping_string(storage, 44, u32_bytes(idx), quote)
+        storage.set_mapping_b256(10, u32_bytes(idx), h)
+        storage.set_mapping(11, h, idx)
+        storage.set_mapping(12, h, 1 if pair.get("vote_target", True) else 0)
+        # pair_id_to_base / pair_id_to_quote (macro slots 44/45).
+        write_mapping_string(storage, 44, u32_bytes(idx), base)
+        write_mapping_string(storage, 45, u32_bytes(idx), quote)
 
         rate = parse_int(pair.get("initial_rate", "0"))
         if rate:
-            storage.set_mapping(12, h, rate)
-            storage.set_mapping(13, h, parse_int(pair.get("initial_block", 0)))
-            storage.set_mapping(14, h, parse_int(pair.get("initial_timestamp", 0)))
+            storage.set_mapping(13, h, rate)
+            storage.set_mapping(14, h, parse_int(pair.get("initial_block", 0)))
+            storage.set_mapping(15, h, parse_int(pair.get("initial_timestamp", 0)))
 
     for rate_entry in config.get("initial_rates", []):
         key = (rate_entry["base"], rate_entry["quote"])
         h = pair_hashes.get(key)
         if h is None:
             raise ValueError(f"initial rate pair is not registered: {key[0]}/{key[1]}")
-        storage.set_mapping(12, h, parse_int(rate_entry["rate"]))
-        storage.set_mapping(13, h, parse_int(rate_entry.get("block", 0)))
-        storage.set_mapping(14, h, parse_int(rate_entry.get("timestamp", 0)))
+        storage.set_mapping(13, h, parse_int(rate_entry["rate"]))
+        storage.set_mapping(14, h, parse_int(rate_entry.get("block", 0)))
+        storage.set_mapping(15, h, parse_int(rate_entry.get("timestamp", 0)))
 
     for delegation in config.get("feeder_delegations", []):
         validator = delegation["validator"]
         feeder = delegation["feeder"]
-        storage.set_mapping(15, address_bytes(validator), address_as_u256(feeder))
+        storage.set_mapping(16, address_bytes(validator), address_as_u256(feeder))
 
     protected = config.get("protected_validators", [])
     if protected:
-        # config_allow_protected (macro slot 33) / protected_validator (slot 32).
-        storage.set_slot(33, 1)
+        # config_allow_protected (macro slot 34) / protected_validator (slot 33).
+        storage.set_slot(34, 1)
         for validator in protected:
-            storage.set_mapping(32, address_bytes(validator), 1)
+            storage.set_mapping(33, address_bytes(validator), 1)
 
     settlements = config.get("settlement_currencies", [])
     seen_iso: set[int] = set()
-    # settlement_count (macro slot 40).
-    storage.set_slot(40, len(settlements))
+    # settlement_count (macro slot 41).
+    storage.set_slot(41, len(settlements))
     for idx, settlement in enumerate(settlements):
         iso_code = parse_int(settlement["iso_code"])
         if iso_code == 0:
@@ -1105,22 +1113,22 @@ def seed_oracle(storage: StorageBuilder, config: dict):
         if h is None:
             raise ValueError(f"settlement pair is not registered: {pair_base}/{pair_quote}")
 
-        # settlement_iso_to_denom (41) / settlement_iso_to_pair (42) /
-        # settlement_index_to_iso (45) / settlement_iso_to_denom_string (46).
-        storage.set_mapping_b256(41, u32_bytes(iso_code), keccak256(denom.encode()))
-        storage.set_mapping_b256(42, u32_bytes(iso_code), h)
-        storage.set_mapping(45, u32_bytes(idx), iso_code)
-        write_mapping_string(storage, 46, u32_bytes(iso_code), denom)
+        # settlement_iso_to_denom (42) / settlement_iso_to_pair (43) /
+        # settlement_index_to_iso (46) / settlement_iso_to_denom_string (47).
+        storage.set_mapping_b256(42, u32_bytes(iso_code), keccak256(denom.encode()))
+        storage.set_mapping_b256(43, u32_bytes(iso_code), h)
+        storage.set_mapping(46, u32_bytes(idx), iso_code)
+        write_mapping_string(storage, 47, u32_bytes(iso_code), denom)
 
-    # S-curve genesis seeds (macro slots 34-38). `resolve_tribute_price` reads
+    # S-curve genesis seeds (macro slots 35-39). `resolve_tribute_price` reads
     # `max(per-day VWAP, S-curve)`; pre-seeded OFFERING days have no runtime-
     # computed per-day VWAP, so without an S-curve entry the price is 0 and
     # `offerTribute` reverts with `NominalPriceUnavailable`. Each seed gives a
     # pair a peak at a worldwide day so days within the S-curve period resolve.
     scurve_seeds = config.get("scurve_seeds", [])
     if scurve_seeds:
-        storage.set_slot(34, len(scurve_seeds))  # scurve_count
-        storage.set_slot(38, 0)  # scurve_oldest_idx
+        storage.set_slot(35, len(scurve_seeds))  # scurve_count
+        storage.set_slot(39, 0)  # scurve_oldest_idx
         for idx, sc in enumerate(scurve_seeds):
             pair = (sc["pair_base"], sc["pair_quote"])
             pid = pair_ids.get(pair)
@@ -1129,27 +1137,27 @@ def seed_oracle(storage: StorageBuilder, config: dict):
                     f"scurve seed pair is not registered: {pair[0]}/{pair[1]}"
                 )
             peak_day_ts = wwd_to_day_timestamp(parse_int(sc["peak_day"]))
-            storage.set_mapping(35, u32_bytes(idx), pid)  # scurve_pair_id
-            storage.set_mapping(36, u32_bytes(idx), peak_day_ts)  # scurve_peak_day
+            storage.set_mapping(36, u32_bytes(idx), pid)  # scurve_pair_id
+            storage.set_mapping(37, u32_bytes(idx), peak_day_ts)  # scurve_peak_day
             storage.set_mapping(
-                37, u32_bytes(idx), parse_int(sc["peak_price"])
+                38, u32_bytes(idx), parse_int(sc["peak_price"])
             )  # scurve_peak_price
 
-    # Reference currencies (slot 55): hard-coded protocol default [840] = USD.
-    # Stored as a StorageVec<u16>: length at slot 55, data at keccak256(55) + index.
+    # Reference currencies (slot 56): hard-coded protocol default [840] = USD.
+    # Stored as a StorageVec<u16>: length at slot 56, data at keccak256(56) + index.
     # Slot is verified by the `test_reference_currencies_slot_parity` test in
     # `crates/system/oracle/src/tests.rs`; keep this constant in sync with the
     # macro-assigned layout if `OracleContract` field order changes.
     reference_currencies = [840]
-    storage.set_slot(55, len(reference_currencies))
+    storage.set_slot(56, len(reference_currencies))
     for i, iso_code in enumerate(reference_currencies):
-        storage.set_raw_slot(data_slot(55) + i, iso_code)
+        storage.set_raw_slot(data_slot(56) + i, iso_code)
 
 
 # --- External contracts ---
 
 def seed_intex_factory(storage: StorageBuilder, config: dict):
-    """Write the profile selector (slot 13) from `profile: "prod"|"dev"`;
+    """Write the profile selector (slot 14) from `profile: "prod"|"dev"`;
     prod is the default and seeds nothing."""
     profile = str(config.get("profile", "prod")).lower()
     if profile not in INTEX_PROFILE_SELECTORS:
@@ -1160,7 +1168,7 @@ def seed_intex_factory(storage: StorageBuilder, config: dict):
     selector = INTEX_PROFILE_SELECTORS[profile]
     if selector == 0:
         return
-    storage.set_slot(13, selector)
+    storage.set_slot(14, selector)
 
 
 def seed_external_contracts(alloc, contracts_list, contracts_dir):
@@ -1326,9 +1334,9 @@ def main():
         )
         print(f"  Rewards: {len(rewards_storage.entries)} storage entries")
 
-    # V2 Phase 1 accounting progress (slot 0 = 0). Always seeded — independent
+    # V2 Phase 1 accounting progress (slot 1 = 0). Always seeded — independent
     # of validator count — because the executor needs the marker bytecode +
-    # an explicit slot 0 = 0 word to record `last_accounted_block_number`
+    # an explicit slot 1 = 0 word to record `last_accounted_block_number`
     # under EIP-161-safe storage.
     accounting_storage = StorageBuilder()
     seed_accounting_progress(accounting_storage)
@@ -1336,16 +1344,15 @@ def main():
         accounting_storage.entries
     )
     print(
-        f"  AccountingProgress: slot 0 = 0, "
+        f"  AccountingProgress: slot 1 = 0, "
         f"{len(accounting_storage.entries)} storage entries"
     )
 
     # ZeroFee paymaster: slot 0 = schema version (1). Honors the README
     # rule "All precompiles storage versioned (slot 0 = version)" and
     # lets a future migration probe slot 0 to decide whether to apply
-    # a layout transformation. The `counter` Map keys are keccak-derived
-    # and never write to slot 0 directly, so the version marker has no
-    # collision risk.
+    # a layout transformation. The `counter` Map uses slot 1 as its
+    # keccak base and never writes to slot 0 directly.
     zerofee_storage = StorageBuilder()
     seed_zerofee(zerofee_storage)
     alloc[ZEROFEE_ADDRESS].setdefault("storage", {}).update(zerofee_storage.entries)
@@ -1354,7 +1361,7 @@ def main():
         f"{len(zerofee_storage.entries)} storage entries"
     )
 
-    # TEE attestation policy (WS-B): seeds TeeRegistry slot 2 (policy_hash) +
+    # TEE attestation policy (WS-B): seeds TeeRegistry slot 3 (policy_hash) +
     # config.teePolicy, but only when `tee_policy` is present in the seed config.
     seed_tee_policy(genesis, alloc, seed)
 

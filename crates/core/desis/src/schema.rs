@@ -103,53 +103,57 @@ pub struct ClearingResult {
 #[storage_schema]
 #[contract(addr = DESIS_ADDRESS)]
 pub struct DesisContract {
+    /// Slot 0: reserved storage schema version.
+    #[attribute(order = 0)]
+    pub _reserved_schema_version: outbe_primitives::storage::dsl::Value<u32>,
+
     // --- Auction config (per series) ---
     /// series_id -> promis_load_minor.
-    #[attribute(order = 0)]
-    pub config_promis_load_minor: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 1)]
-    pub config_min_bid_price: outbe_primitives::storage::dsl::Map<u32, u64>,
+    pub config_promis_load_minor: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 2)]
-    pub config_cost_amount_minor: outbe_primitives::storage::dsl::Map<u32, u64>,
+    pub config_min_bid_price: outbe_primitives::storage::dsl::Map<u32, u64>,
     #[attribute(order = 3)]
+    pub config_cost_amount_minor: outbe_primitives::storage::dsl::Map<u32, u64>,
+    #[attribute(order = 4)]
     pub config_min_bid_quantity: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// COEN/USD oracle price (1e18) captured at auction start; carried to IntexFactory.
-    #[attribute(order = 4)]
+    #[attribute(order = 5)]
     pub config_coen_price: outbe_primitives::storage::dsl::Map<u32, U256>,
 
     // --- Auction stage ---
     /// series_id -> AuctionStage (u8).
-    #[attribute(order = 5)]
+    #[attribute(order = 6)]
     pub auction_stage: outbe_primitives::storage::dsl::Map<u32, u8>,
 
     // --- Bid-batch metadata ---
     /// series_id -> source-chain endpoint id of the last accepted bid batch.
-    #[attribute(order = 6)]
+    #[attribute(order = 7)]
     pub bid_source_eid: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// series_id -> highest accepted bid-batch generation.
-    #[attribute(order = 7)]
+    #[attribute(order = 8)]
     pub last_bids_generation: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// series_id -> bid count.
-    #[attribute(order = 8)]
+    #[attribute(order = 9)]
     pub bid_count: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// keccak256(series_id_be32 ++ index_be32) -> bidder address.
-    #[attribute(order = 9)]
+    #[attribute(order = 10)]
     pub bid_bidder: outbe_primitives::storage::dsl::Map<B256, Address>,
     /// Packed bid fields: limbs[0]=price(u64), limbs[1]=quantity(u16)<<32|timestamp(u32).
-    #[attribute(order = 10)]
+    #[attribute(order = 11)]
     pub bid_packed: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     // --- Pending clearing ---
     /// series_id -> supply (Intex units) pending at clearing stage.
-    #[attribute(order = 11)]
+    #[attribute(order = 12)]
     pub pending_supply_intex: outbe_primitives::storage::dsl::Map<u32, u32>,
 
     // --- Global clearing state ---
     /// Most recently cleared series_id (for minBidQty 4% derivation).
-    #[attribute(order = 12)]
+    #[attribute(order = 13)]
     pub last_cleared_series_id: outbe_primitives::storage::dsl::Value<u32>,
     /// issuedIntexCount from the most recent clearing (for minBidQty 4% derivation).
-    #[attribute(order = 13)]
+    #[attribute(order = 14)]
     pub last_clearing_issued_count: outbe_primitives::storage::dsl::Value<u32>,
 }
 

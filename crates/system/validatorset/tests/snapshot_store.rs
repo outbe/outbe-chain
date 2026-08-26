@@ -1,6 +1,6 @@
 //! Integration tests for the V2 `CommitteeSnapshotStore`.
 //!
-//! Layout tests pin the schema slot indices for slot 30 and slots 31..40 so
+//! Layout tests pin the schema slot indices for slot 31 and slots 32..41 so
 //! schema drift is caught as a wire-format-breaking change. Hash and key
 //! formula tests pin the byte layout. The atomicity tests use
 //! the V2 atomic boundary hook (`activate_boundary_atomic`) to verify that
@@ -39,67 +39,68 @@ fn legacy_active_set_hash(addresses: &[Address]) -> B256 {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Slot stability: slots 31..40 are at the expected indices.
+// 1. Slot stability: slots 32..41 are at the expected indices.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn committee_snapshot_storage_slots_31_to_40_are_stable() {
+fn committee_snapshot_storage_slots_32_to_41_are_stable() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let vs = ValidatorSet::new(storage);
+        assert_eq!(vs._reserved_schema_version.slot(), U256::ZERO);
 
-        assert_eq!(vs.committee_snapshot_exists.base_slot(), U256::from(31u64));
-        assert_eq!(vs.committee_snapshot_len.base_slot(), U256::from(32u64));
+        assert_eq!(vs.committee_snapshot_exists.base_slot(), U256::from(32u64));
+        assert_eq!(vs.committee_snapshot_len.base_slot(), U256::from(33u64));
         assert_eq!(
             vs.committee_snapshot_address_at.base_slot(),
-            U256::from(33u64)
-        );
-        assert_eq!(
-            vs.committee_snapshot_pubkey_lo_at.base_slot(),
             U256::from(34u64)
         );
         assert_eq!(
-            vs.committee_snapshot_pubkey_hi_at.base_slot(),
+            vs.committee_snapshot_pubkey_lo_at.base_slot(),
             U256::from(35u64)
         );
         assert_eq!(
-            vs.committee_snapshot_vrf_material_version.base_slot(),
+            vs.committee_snapshot_pubkey_hi_at.base_slot(),
             U256::from(36u64)
         );
         assert_eq!(
-            vs.committee_snapshot_vrf_group_public_key_hash.base_slot(),
+            vs.committee_snapshot_vrf_material_version.base_slot(),
             U256::from(37u64)
         );
         assert_eq!(
-            vs.committee_snapshot_vrf_group_public_key_len.base_slot(),
+            vs.committee_snapshot_vrf_group_public_key_hash.base_slot(),
             U256::from(38u64)
+        );
+        assert_eq!(
+            vs.committee_snapshot_vrf_group_public_key_len.base_slot(),
+            U256::from(39u64)
         );
         assert_eq!(
             vs.committee_snapshot_vrf_group_public_key_chunk_at
                 .base_slot(),
-            U256::from(39u64)
+            U256::from(40u64)
         );
         assert_eq!(
             vs._reserved_committee_snapshot_slot_40.slot(),
-            U256::from(40u64),
+            U256::from(41u64),
         );
     });
 }
 
 // ---------------------------------------------------------------------------
-// 2. Slot 30 (`finalized_participation_recorded`) does not move.
+// 2. Slot 31 (`finalized_participation_recorded`) does not move.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn validator_set_slot30_finalized_participation_recorded_does_not_move() {
+fn validator_set_slot31_finalized_participation_recorded_does_not_move() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let vs = ValidatorSet::new(storage);
         assert_eq!(
             vs.finalized_participation_recorded.base_slot(),
-            U256::from(30u64),
-            "slot 30 (finalized_participation_recorded) must not move; \
-             V2 snapshot extension starts at slot 31"
+            U256::from(31u64),
+            "slot 31 (finalized_participation_recorded) must not move; \
+             V2 snapshot extension starts at slot 32"
         );
     });
 }

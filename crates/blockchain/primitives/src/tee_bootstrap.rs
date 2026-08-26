@@ -33,7 +33,7 @@ pub const MAX_TEE_POLICY_ENTRIES: usize = 64;
 
 /// Genesis TEE attestation policy: the allowlist a `TeeBootstrap` payload's
 /// enclave registrations are checked against (Phase 3b). Carried in the signed
-/// payload and bound to the genesis-seeded `TeeRegistry.policy_hash` (slot 2);
+/// payload and bound to the genesis-seeded `TeeRegistry.policy_hash` (slot 3);
 /// the handler enforces it deterministically.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TeePolicy {
@@ -533,7 +533,7 @@ mod tests {
     fn policy_hash_matches_genesis_seed_golden() {
         // Cross-language golden: these MUST equal `scripts/seed_genesis.py`
         // `compute_tee_policy_hash` for the same inputs, so a genesis-seeded
-        // `TeeRegistry.policy_hash` (slot 2) matches the producer's
+        // `TeeRegistry.policy_hash` (slot 3) matches the producer's
         // `payload.policy_hash` and the Phase 3b binding check passes. If this
         // test fails, the Rust and Python policy-hash encodings have diverged.
         let p = TeePolicy {

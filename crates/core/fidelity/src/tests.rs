@@ -33,8 +33,12 @@ fn test_set_and_get_fidelity_index() {
 fn test_storage_dsl_layout_is_compatible_with_previous_slots() {
     with_contract(|contract| {
         assert_eq!(
-            contract.fidelity_indices.base_slot(),
+            contract._reserved_schema_version.slot(),
             alloy_primitives::U256::ZERO
+        );
+        assert_eq!(
+            contract.fidelity_indices.base_slot(),
+            alloy_primitives::U256::from(1u64)
         );
     });
 }

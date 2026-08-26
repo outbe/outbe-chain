@@ -4,7 +4,7 @@
 //! Under V2 Certified-Parent Accounting, Phase 1
 //! (`CertifiedParentAccounting`) writes
 //! `last_accounted_block_number := parent_block_number` to
-//! `ACCOUNTING_PROGRESS_ADDRESS` slot 0 BEFORE Phase 2 (`CycleTick`)
+//! `ACCOUNTING_PROGRESS_ADDRESS` slot 1 BEFORE Phase 2 (`CycleTick`)
 //! executes. This module surfaces that property as an
 //! explicit gate so a regression that reorders Phase 1 vs Phase 2 — or
 //! adds a Cycle trigger that reads validator-pool state racing the

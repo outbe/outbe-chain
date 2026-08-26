@@ -43,8 +43,12 @@ fn test_storage_dsl_layout_is_compatible_with_previous_slots() {
     StorageHandle::enter(&mut storage, |storage| {
         let factory = TributeFactoryContract::new(storage.clone());
         assert_eq!(
-            factory.used_su_hashes.base_slot(),
+            factory._reserved_schema_version.slot(),
             alloy_primitives::U256::ZERO
+        );
+        assert_eq!(
+            factory.used_su_hashes.base_slot(),
+            alloy_primitives::U256::from(1u64)
         );
     });
 }

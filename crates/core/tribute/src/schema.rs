@@ -51,24 +51,28 @@ pub struct DayTotals {
 #[storage_schema]
 #[contract(addr = TRIBUTE_ADDRESS)]
 pub struct TributeContract {
+    /// Slot 0: reserved storage schema version.
     #[attribute(order = 0)]
-    pub total_supply: outbe_primitives::storage::dsl::Value<u64>,
+    pub _reserved_schema_version: outbe_primitives::storage::dsl::Value<u32>,
 
     #[attribute(order = 1)]
-    pub tributes: outbe_primitives::storage::dsl::Map<U256, TributeData>,
+    pub total_supply: outbe_primitives::storage::dsl::Value<u64>,
 
     #[attribute(order = 2)]
-    pub day_totals: outbe_primitives::storage::dsl::Map<WorldwideDay, DayTotals>,
+    pub tributes: outbe_primitives::storage::dsl::Map<U256, TributeData>,
 
     #[attribute(order = 3)]
-    pub day_index_counts: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
+    pub day_totals: outbe_primitives::storage::dsl::Map<WorldwideDay, DayTotals>,
 
     #[attribute(order = 4)]
-    pub day_token_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub day_index_counts: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
     #[attribute(order = 5)]
-    pub owner_index_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
+    pub day_token_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     #[attribute(order = 6)]
+    pub owner_index_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
+
+    #[attribute(order = 7)]
     pub owner_tribute_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
 }

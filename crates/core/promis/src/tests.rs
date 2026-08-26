@@ -171,8 +171,12 @@ fn test_mine_coen_failure_no_partial_burn() {
 #[test]
 fn test_storage_dsl_layout_is_compatible_with_previous_slots() {
     with_promis_mut(|p| {
-        assert_eq!(p.total_supply.slot(), alloy_primitives::U256::ZERO);
-        assert_eq!(p.balances.base_slot(), alloy_primitives::U256::from(1u64));
+        assert_eq!(
+            p._reserved_schema_version.slot(),
+            alloy_primitives::U256::ZERO
+        );
+        assert_eq!(p.total_supply.slot(), alloy_primitives::U256::from(1u64));
+        assert_eq!(p.balances.base_slot(), alloy_primitives::U256::from(2u64));
     });
 }
 

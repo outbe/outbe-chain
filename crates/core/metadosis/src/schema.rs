@@ -61,33 +61,37 @@ pub struct WorldwideDay {
 #[storage_schema]
 #[contract(addr = METADOSIS_ADDRESS)]
 pub struct MetadosisContract {
+    /// Slot 0: reserved storage schema version.
     #[attribute(order = 0)]
-    pub bootstrap_end_time: outbe_primitives::storage::dsl::Value<u64>,
+    pub _reserved_schema_version: outbe_primitives::storage::dsl::Value<u32>,
 
     #[attribute(order = 1)]
-    pub worldwide_days: outbe_primitives::storage::dsl::Map<WorldwideDayKey, WorldwideDay>,
+    pub bootstrap_end_time: outbe_primitives::storage::dsl::Value<u64>,
 
     #[attribute(order = 2)]
-    pub day_limit_amount: outbe_primitives::storage::dsl::Map<WorldwideDayKey, U256>,
+    pub worldwide_days: outbe_primitives::storage::dsl::Map<WorldwideDayKey, WorldwideDay>,
 
     #[attribute(order = 3)]
-    pub day_limit_used: outbe_primitives::storage::dsl::Map<WorldwideDayKey, bool>,
+    pub day_limit_amount: outbe_primitives::storage::dsl::Map<WorldwideDayKey, U256>,
 
     #[attribute(order = 4)]
-    pub active_wwd_count: outbe_primitives::storage::dsl::Value<u32>,
+    pub day_limit_used: outbe_primitives::storage::dsl::Map<WorldwideDayKey, bool>,
 
     #[attribute(order = 5)]
-    pub active_wwds: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub active_wwd_count: outbe_primitives::storage::dsl::Value<u32>,
 
     #[attribute(order = 6)]
-    pub config_oracle_pair_hash: outbe_primitives::storage::dsl::Value<B256>,
+    pub active_wwds: outbe_primitives::storage::dsl::Map<u32, u32>,
 
     #[attribute(order = 7)]
-    pub day_limit_exists: outbe_primitives::storage::dsl::Map<WorldwideDayKey, bool>,
+    pub config_oracle_pair_hash: outbe_primitives::storage::dsl::Value<B256>,
 
     #[attribute(order = 8)]
-    pub day_limit_count: outbe_primitives::storage::dsl::Value<u32>,
+    pub day_limit_exists: outbe_primitives::storage::dsl::Map<WorldwideDayKey, bool>,
 
     #[attribute(order = 9)]
+    pub day_limit_count: outbe_primitives::storage::dsl::Value<u32>,
+
+    #[attribute(order = 10)]
     pub day_limit_dates: outbe_primitives::storage::dsl::Map<u32, u32>,
 }

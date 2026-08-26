@@ -31,32 +31,36 @@ use outbe_primitives::addresses::GRATIS_POOL_ADDRESS;
 #[storage_schema]
 #[contract(addr = GRATIS_POOL_ADDRESS)]
 pub struct GratisPoolContract {
-    /// slot 0: per-denomination frontier — `filled_subtrees[denom_id][level]`,
-    /// keyed by `keccak256(denom_id || level_be32)`.
+    /// Slot 0: reserved storage schema version.
     #[attribute(order = 0)]
+    pub _reserved_schema_version: outbe_primitives::storage::dsl::Value<u32>,
+
+    /// slot 1: per-denomination frontier — `filled_subtrees[denom_id][level]`,
+    /// keyed by `keccak256(denom_id || level_be32)`.
+    #[attribute(order = 1)]
     pub filled_subtrees: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    /// slot 1: per-denomination next leaf index — `next_index[denom_id as u32]`.
-    #[attribute(order = 1)]
+    /// slot 2: per-denomination next leaf index — `next_index[denom_id as u32]`.
+    #[attribute(order = 2)]
     pub next_index: outbe_primitives::storage::dsl::Map<u32, u32>,
 
-    /// slot 2: per-denomination root ring buffer — `roots[denom_id][slot]`,
+    /// slot 3: per-denomination root ring buffer — `roots[denom_id][slot]`,
     /// keyed by `keccak256(denom_id || slot_be32)` where `slot ∈ [0, ROOT_WINDOW)`.
-    #[attribute(order = 2)]
+    #[attribute(order = 3)]
     pub roots: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    /// slot 3: per-denomination ring-buffer head — `current_root_index[denom_id as u32]`.
-    #[attribute(order = 3)]
+    /// slot 4: per-denomination ring-buffer head — `current_root_index[denom_id as u32]`.
+    #[attribute(order = 4)]
     pub current_root_index: outbe_primitives::storage::dsl::Map<u32, u32>,
 
-    /// slot 4: global set of spent nullifiers — membership = nullifier has
+    /// slot 5: global set of spent nullifiers — membership = nullifier has
     /// been consumed by a `verify_and_spend_*` call.
-    #[attribute(order = 4)]
+    #[attribute(order = 5)]
     pub nullifier_spent: outbe_primitives::storage::dsl::Set<U256>,
 
-    /// slot 5: global set of existing commitments — membership = commitment
+    /// slot 6: global set of existing commitments — membership = commitment
     /// has been appended to some per-denomination tree.
-    #[attribute(order = 5)]
+    #[attribute(order = 6)]
     pub commitment_exists: outbe_primitives::storage::dsl::Set<U256>,
 }
 

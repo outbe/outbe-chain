@@ -149,7 +149,7 @@ pub fn dispatch(
 /// - the signers form a strict supermajority (`> 2/3`) of the active consensus
 ///   set.
 /// - the payload's signed `policy` allowlist commits to its `policy_hash`,
-///   and — when a genesis `teePolicy` is seeded (`TeeRegistry.policy_hash` slot 2
+///   and — when a genesis `teePolicy` is seeded (`TeeRegistry.policy_hash` slot 3
 ///   != ZERO) — the allowlist matches that genesis hash and every registration's
 ///   MRSIGNER/MRENCLAVE/isv_svn satisfies the AND-policy. The policy hash is read
 ///   from EVM storage so the gate is deterministic on proposer + verifier.

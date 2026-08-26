@@ -8,13 +8,10 @@
 //! ```
 //!
 //! Slot 0 carries the schema version (currently `1`), written at
-//! genesis by `scripts/seed_genesis.py::seed_zerofee`. The macro-
-//! allocated `counter` Map uses slot 0 as its keccak base, but Map
-//! entries are stored at `keccak256(addr || base_slot)`, which never
-//! collides with slot 0 itself. A future layout migration would bump
-//! the version marker and key its transformation off it; today the
-//! only consumer is the README rule "All precompiles ... slot 0 =
-//! version" plus future migration logic.
+//! genesis by `scripts/seed_genesis.py::seed_zerofee`. The embedded
+//! `_reserved_schema_version` field reserves that slot in the contract
+//! facade; the `counter` Map uses slot 1 as its keccak base. A future
+//! layout migration bumps the version marker before using new fields.
 
 use alloy_primitives::Address;
 use outbe_macros::{contract, storage_schema};
@@ -29,8 +26,12 @@ use outbe_primitives::addresses::ZEROFEE_ADDRESS;
 #[storage_schema]
 #[contract(addr = ZEROFEE_ADDRESS)]
 pub struct ZeroFeeContract {
-    // slot N (macro-allocated): per-signer packed `(date_key u32, count u32)`.
+    /// Slot 0: reserved storage schema version (currently `1` at genesis).
     #[attribute(order = 0)]
+    pub _reserved_schema_version: outbe_primitives::storage::dsl::Value<u32>,
+
+    // slot 1: per-signer packed `(date_key u32, count u32)`.
+    #[attribute(order = 1)]
     pub counter: outbe_primitives::storage::dsl::Map<Address, u64>,
 }
 

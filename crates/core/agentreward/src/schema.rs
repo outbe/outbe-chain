@@ -16,32 +16,36 @@ use outbe_primitives::storage::types::StorageKey;
 #[storage_schema]
 #[contract(addr = AGENT_REWARD_ADDRESS)]
 pub struct AgentRewardContract {
-    // slot 0: WAA tribute count per day+address (key: B256 = keccak(day, addr))
+    /// Slot 0: reserved storage schema version.
     #[attribute(order = 0)]
+    pub _reserved_schema_version: outbe_primitives::storage::dsl::Value<u32>,
+
+    // slot 1: WAA tribute count per day+address (key: B256 = keccak(day, addr))
+    #[attribute(order = 1)]
     pub waa_tribute_counts: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    // slot 1: SRA tribute count per day+address (key: B256 = keccak(day, addr))
-    #[attribute(order = 1)]
+    // slot 2: SRA tribute count per day+address (key: B256 = keccak(day, addr))
+    #[attribute(order = 2)]
     pub sra_tribute_counts: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    // slot 2: claimable reward per address
-    #[attribute(order = 2)]
+    // slot 3: claimable reward per address
+    #[attribute(order = 3)]
     pub claimable_rewards: outbe_primitives::storage::dsl::Map<Address, U256>,
 
-    // slot 3: WAA address count per day
-    #[attribute(order = 3)]
+    // slot 4: WAA address count per day
+    #[attribute(order = 4)]
     pub waa_address_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
-    // slot 4: WAA address list — key = keccak(day, index), value = address
-    #[attribute(order = 4)]
+    // slot 5: WAA address list — key = keccak(day, index), value = address
+    #[attribute(order = 5)]
     pub waa_addresses: outbe_primitives::storage::dsl::Map<B256, Address>,
 
-    // slot 5: SRA address count per day
-    #[attribute(order = 5)]
+    // slot 6: SRA address count per day
+    #[attribute(order = 6)]
     pub sra_address_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u32>,
 
-    // slot 6: SRA address list — key = keccak(day, index), value = address
-    #[attribute(order = 6)]
+    // slot 7: SRA address list — key = keccak(day, index), value = address
+    #[attribute(order = 7)]
     pub sra_addresses: outbe_primitives::storage::dsl::Map<B256, Address>,
 }
 

@@ -5,9 +5,10 @@ use outbe_primitives::addresses::GRATIS_ADDRESS;
 /// EVM storage layout for the Gratis token contract.
 ///
 /// Storage slots:
-///   0: total_supply (U256)
-///   1: mapping(address => U256) — available balance
-///   2: mapping(address => U256) — per-account pledged amount
+///   0: reserved storage schema version (u32)
+///   1: total_supply (U256)
+///   2: mapping(address => U256) — available balance
+///   3: mapping(address => U256) — per-account pledged amount
 ///
 /// The aggregate pledged supply (`pledged_total_supply()`) is derived as
 /// `balances[CREDIS_ADDRESS]` and is no longer stored separately.
@@ -17,15 +18,19 @@ use outbe_primitives::addresses::GRATIS_ADDRESS;
 #[storage_schema]
 #[contract(addr = GRATIS_ADDRESS)]
 pub struct Gratis {
-    // Slot 0: Total supply of gratis tokens
+    /// Slot 0: reserved storage schema version.
     #[attribute(order = 0)]
+    pub _reserved_schema_version: outbe_primitives::storage::dsl::Value<u32>,
+
+    // Slot 1: Total supply of gratis tokens
+    #[attribute(order = 1)]
     pub total_supply: outbe_primitives::storage::dsl::Value<U256>,
 
-    // Slot 1: mapping(address => balance)
-    #[attribute(order = 1)]
+    // Slot 2: mapping(address => balance)
+    #[attribute(order = 2)]
     pub balances: outbe_primitives::storage::dsl::Map<Address, U256>,
 
-    // Slot 2: mapping(address => amount currently pledged by that address)
-    #[attribute(order = 2)]
+    // Slot 3: mapping(address => amount currently pledged by that address)
+    #[attribute(order = 3)]
     pub pledged_balances: outbe_primitives::storage::dsl::Map<Address, U256>,
 }

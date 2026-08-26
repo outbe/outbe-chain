@@ -56,7 +56,14 @@ fn test_set_overwrites_previous() {
 #[test]
 fn test_storage_dsl_layout_is_compatible_with_previous_slots() {
     with_contract(|c| {
-        assert_eq!(c.total_unallocated.slot(), alloy_primitives::U256::ZERO);
+        assert_eq!(
+            c._reserved_schema_version.slot(),
+            alloy_primitives::U256::ZERO
+        );
+        assert_eq!(
+            c.total_unallocated.slot(),
+            alloy_primitives::U256::from(1u64)
+        );
     });
 }
 

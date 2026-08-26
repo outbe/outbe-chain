@@ -193,7 +193,7 @@ struct GenesisTeePolicyJson {
 
 /// Read the genesis TEE attestation policy from `config.teePolicy`. Returns an
 /// empty (unconfigured) policy when absent — the producer then emits a payload
-/// whose `policy_hash` the Phase 3b handler does not bind (genesis slot 2 stays
+/// whose `policy_hash` the Phase 3b handler does not bind (genesis slot 3 stays
 /// ZERO). When present it MUST match what `seed_genesis.py` hashed into
 /// `TeeRegistry.policy_hash`, so the producer's `payload.policy_hash` equals the
 /// genesis-seeded value and the bootstrap is accepted. Used to build the

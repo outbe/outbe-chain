@@ -100,65 +100,69 @@ pub struct NodBucketState {
 #[storage_schema]
 #[contract(addr = NOD_ADDRESS)]
 pub struct NodContract {
-    // slot 0: total nod items
+    /// Slot 0: reserved storage schema version.
     #[attribute(order = 0)]
+    pub _reserved_schema_version: outbe_primitives::storage::dsl::Value<u32>,
+
+    // slot 1: total nod items
+    #[attribute(order = 1)]
     pub total_supply: outbe_primitives::storage::dsl::Value<u64>,
 
-    // slots 1-11: item state record keyed by nod_id
-    #[attribute(order = 1)]
+    // slots 2-12: item state record keyed by nod_id
+    #[attribute(order = 2)]
     pub nod_items: outbe_primitives::storage::dsl::Map<U256, NodItemState>,
 
-    // slots 12-16: bucket state record keyed by bucket_key
-    #[attribute(order = 2)]
+    // slots 13-17: bucket state record keyed by bucket_key
+    #[attribute(order = 3)]
     pub nod_buckets: outbe_primitives::storage::dsl::Map<B256, NodBucketState>,
 
     // --- Enumeration indexes ---
-    // slot 17: owner → count of nods ever issued
-    #[attribute(order = 4)]
+    // slot 18: owner → count of nods ever issued
+    #[attribute(order = 5)]
     pub owner_nod_counts: outbe_primitives::storage::dsl::Map<Address, u32>,
 
-    // slot 18: per-owner nod index — keccak(owner ++ index) → nod_id
-    #[attribute(order = 5)]
+    // slot 19: per-owner nod index — keccak(owner ++ index) → nod_id
+    #[attribute(order = 6)]
     pub owner_nod_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
 
     // --- Unqualified-bucket bin index (PancakeSwap LB-style trie) ---
 
-    // slot 19: top-level 256-bit bitmap. Bit `i` is set iff `bin_tree_mid[i]`
+    // slot 20: top-level 256-bit bitmap. Bit `i` is set iff `bin_tree_mid[i]`
     // is non-zero. Indexed by bits [16:24] of bin_id.
-    #[attribute(order = 10)]
+    #[attribute(order = 11)]
     pub bin_tree_root: outbe_primitives::storage::dsl::Value<U256>,
 
-    // slot 20: mid-level bitmaps. Key = bits [16:24] of bin_id (kept as u32
+    // slot 21: mid-level bitmaps. Key = bits [16:24] of bin_id (kept as u32
     // because StorageKey is only impl'd for u32/u64/U256 in this workspace).
     // Bit `j` is set iff `bin_tree_leaf[(key << 8) | j]` is non-zero.
-    #[attribute(order = 11)]
+    #[attribute(order = 12)]
     pub bin_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
 
-    // slot 21: leaf-level bitmaps. Key = bits [8:24] of bin_id (u16 worth of
+    // slot 22: leaf-level bitmaps. Key = bits [8:24] of bin_id (u16 worth of
     // address space, encoded as u32 for StorageKey). Bit `k` is set iff bin
     // `(key << 8) | k` currently holds at least one bucket_key.
-    #[attribute(order = 12)]
+    #[attribute(order = 13)]
     pub bin_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
 
-    // slot 22: per-bin count of bucket_keys parked in the bin.
-    #[attribute(order = 13)]
+    // slot 23: per-bin count of bucket_keys parked in the bin.
+    #[attribute(order = 14)]
     pub unqualified_bin_count: outbe_primitives::storage::dsl::Map<u32, u32>,
 
-    // slot 23: per-bin bucket index — keccak(bin_id ++ index) → bucket_key.
+    // slot 24: per-bin bucket index — keccak(bin_id ++ index) → bucket_key.
     // Insertion-ordered; on qualification, the bin is either drained
     // wholesale (count := 0, bit cleared) or compacted (survivors moved up).
-    #[attribute(order = 14)]
+    #[attribute(order = 15)]
     pub unqualified_bin_buckets: outbe_primitives::storage::dsl::Map<B256, B256>,
 
     // --- Global enumeration (ERC-721 Enumerable) ---
 
-    // slot 24: dense global list — global_nod_ids[i] = nod_id for i in
+    // slot 25: dense global list — global_nod_ids[i] = nod_id for i in
     // [0, total_supply). Kept gap-free via swap-on-delete in mine_gratis.
-    #[attribute(order = 15)]
+    #[attribute(order = 16)]
     pub global_nod_ids: outbe_primitives::storage::dsl::List<U256>,
 
-    // slot 25: reverse lookup nod_id → its current index in global_nod_ids.
-    #[attribute(order = 16)]
+    // slot 26: reverse lookup nod_id → its current index in global_nod_ids.
+    #[attribute(order = 17)]
     pub global_nod_index: outbe_primitives::storage::dsl::Map<U256, u32>,
 }
 

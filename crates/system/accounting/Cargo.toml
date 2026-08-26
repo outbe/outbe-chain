@@ -7,10 +7,10 @@ publish.workspace = true
 
 # V2 Phase 1 accounting-progress runtime module.
 #
-# Owns the persistent slot `last_accounted_block_number: u64` at
-# `ACCOUNTING_PROGRESS_ADDRESS = 0x...EE04`. System-only: no precompile
-# dispatch is registered, so user CALLs cannot reach this address. Only
-# the V2 executor Phase 1 path may write slot 0.
+# Owns `last_accounted_block_number: u64` at slot 1 of
+# `ACCOUNTING_PROGRESS_ADDRESS = 0x...EE04`; slot 0 is the schema version.
+# System-only: no precompile dispatch is registered, so user CALLs cannot reach
+# this address. Only the V2 executor Phase 1 path may write slot 1.
 
 [dependencies]
 outbe-macros.workspace = true

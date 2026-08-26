@@ -1,6 +1,6 @@
 use outbe_macros::contract;
 use outbe_primitives::addresses::CYCLE_ADDRESS;
-use outbe_primitives::storage::types::Mapping;
+use outbe_primitives::storage::types::{Mapping, Slot};
 
 /// EVM storage layout for the Cycle dispatcher.
 ///
@@ -13,10 +13,14 @@ use outbe_primitives::storage::types::Mapping;
 /// wall time.
 ///
 /// Storage slots:
-///   0:  last_executed_at             — mapping(uint32 => uint64)
-///   1:  last_executed_block_number   — mapping(uint32 => uint64)
+///   0:  reserved storage schema version — u32
+///   1:  last_executed_at             — mapping(uint32 => uint64)
+///   2:  last_executed_block_number   — mapping(uint32 => uint64)
 #[contract(addr = CYCLE_ADDRESS)]
 pub struct Cycle {
+    /// Slot 0: reserved storage schema version.
+    pub _reserved_schema_version: Slot<u32>,
+
     /// Per-trigger last-fired slot timestamp. Stored as the slot value
     /// (`offset + k * period`), not `block.timestamp`, so the
     /// scheduling math in [`crate::triggers::next_fire_at`] is
