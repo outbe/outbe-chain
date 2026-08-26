@@ -929,27 +929,30 @@ fn schedule_retires_an_overdue_day() {
 fn schedule_derives_min_bid_qty_from_prior_clearing() {
     with_storage(|s| {
         open_clearing(&s, 100);
-        runtime::process_bids_batch(
-            s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
-            1,
-            0,
-            1,
-            (0..100u8)
-                .map(|i| BidData {
-                    bidder_address: bidder(i),
-                    intex_bid_rate: 200,
-                    timestamp: i as u32,
-                    intex_quantity: 1,
-                    issuance_currency: REFERENCE_ISO,
-                    reference_currency: REFERENCE_ISO,
-                })
-                .collect(),
-        )
-        .unwrap();
-        mark_done(&s, SRC_CHAIN, 1, 1, 100);
+        // Two batches, because one hundred bids do not fit a single codec message.
+        for (batch_index, range) in [(0u16, 0u8..64), (1, 64..100)] {
+            runtime::process_bids_batch(
+                s.clone(),
+                ORIGIN_ROUTER_ADDRESS,
+                WORLDWIDE_DAY,
+                SRC_CHAIN,
+                1,
+                batch_index,
+                2,
+                range
+                    .map(|i| BidData {
+                        bidder_address: bidder(i),
+                        intex_bid_rate: 200,
+                        timestamp: i as u32,
+                        intex_quantity: 1,
+                        issuance_currency: REFERENCE_ISO,
+                        reference_currency: REFERENCE_ISO,
+                    })
+                    .collect(),
+            )
+            .unwrap();
+        }
+        mark_done(&s, SRC_CHAIN, 1, 2, 100);
         clear(&s);
 
         brief_at(&s, NEXT_WORLDWIDE_DAY, 10 * LOAD_MINOR, true);
