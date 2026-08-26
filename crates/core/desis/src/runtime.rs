@@ -706,9 +706,9 @@ pub fn force_clear(
     clear_inner(storage, worldwide_day, &snapshot, &included, &skipped).map(Some)
 }
 
-/// Begin-block tick: attempt to clear every day awaiting the fan-in gate. Each
-/// day runs in its own checkpoint — an Err rolls that day back (retried next
-/// block) and never escapes into the block hook chain.
+/// Cycle `auction_clearing` trigger: attempt to clear every day awaiting the
+/// fan-in gate. Each day runs in its own checkpoint — an Err rolls that day
+/// back (retried next slot) and never escapes into the trigger chain.
 pub fn tick_gate(ctx: &BlockRuntimeContext) -> Result<()> {
     let storage = ctx.storage.clone();
     let count = {
