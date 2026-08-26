@@ -1,39 +1,42 @@
 # Off-chain PoC process and artifact topology
 
-Status: **UPDATED ON 2026-08-06**
+Status: **UPDATED ON 2026-08-26**
 
 This document is the current process/transport decision for OCOMP. It supersedes
-the former node-control and per-unit Unix-socket design.
+the former node-control, per-unit Unix-socket and standalone-Supervisor designs.
 
 ## 1. Decision
 
-One validator administrative domain contains four roles:
+One validator administrative domain contains three process roles. The Supervisor
+is an embedded `outbe-chain` ExEx component, not a fourth process:
 
 ```text
 public finalized chain RPC
        | blocks, receipts, logs, eth_call, eth_getProof
        v
-+-------------------+       filesystem CAS       +-------------------+
-| SnapshotExporter  | --------------------------> | Supervisor        |
-| public RPC reader |                             | scheduler + voter |
-+-------------------+                             +---------+---------+
-                                                          |
-                           Axum: register only             |
-                 +----------------------------------------+
-                 |                                        |
-                 | ZeroMQ ROUTER/DEALER over loopback TCP |
-                 | work, accepted, heartbeat, cancel, done|
-                 v                                        v
-           +------------+  +------------+  ...      +------------+
-           | Worker 0   |  | Worker 1   |           | Worker 3   |
-           | Salvo obs. |  | Salvo obs. |           | Salvo obs. |
-           +------------+  +------------+           +------------+
++-------------------+       filesystem CAS       +-----------------------+
+| SnapshotExporter  | --------------------------> | outbe-chain node      |
+| public RPC reader |                             | embedded Supervisor   |
++-------------------+                             | scheduler + voter     |
+                                                  +-----------+-----------+
+                                                              |
+                               Axum: register only             |
+                     +----------------------------------------+
+                     |                                        |
+                     | ZeroMQ ROUTER/DEALER over loopback TCP |
+                     | work, accepted, heartbeat, cancel, done|
+                     v                                        v
+               +------------+  +------------+  ...      +------------+
+               | Worker 0   |  | Worker 1   |           | Worker 3   |
+               | Salvo obs. |  | Salvo obs. |           | Salvo obs. |
+               +------------+  +------------+           +------------+
 ```
 
-The node exposes no OCOMP-private socket or TCP service. Supervisor and
-SnapshotExporter discover finalized jobs and reconstruct authority using the
-node's existing public RPC. Supervisor prepares, signs and submits the normal
-validator-associated result-vote transaction over that RPC.
+The node owns the loopback OCOMP registration/status HTTP endpoint and ZeroMQ
+router. Its embedded Supervisor discovers finalized jobs directly from the ExEx
+stream; SnapshotExporter reconstructs finalized authority using the node's
+existing public RPC. The embedded Supervisor prepares, signs and submits the
+normal validator-associated result-vote transaction over that RPC.
 
 There is no CAS daemon. Each validator domain owns one bounded filesystem CAS;
 correctness is re-established from canonical bytes, digests, roots and the
@@ -88,10 +91,11 @@ the Supervisor's RPC discovery loop.
 
 ## 4. Worker population and lifecycle
 
-One Supervisor accepts between one and four Worker processes. Worker ordinals
+One embedded Supervisor accepts between one and four external Worker processes. Worker ordinals
 `0..3` derive distinct process nonces and therefore distinct worker IDs. The
-direct `ocomp.sh` launcher starts the configured population and verifies the
-connected count through Supervisor status. OCOMP has no systemd units.
+generated launch bundle starts the configured population and verifies the
+connected count through Supervisor status. It has systemd units for the external
+SnapshotExporter and Worker, but never for a second Supervisor process.
 
 Registration is idempotent for one live process nonce. Re-registration or lease
 expiry invalidates the prior connection, requeues unfinished work with a new
@@ -123,7 +127,7 @@ only process identity and service-user helpers.
 
 | Failure | Local outcome | Chain outcome |
 |---|---|---|
-| Supervisor absent | no scheduling or vote; journal resumes after restart | blocks/finality continue |
+| node or embedded Supervisor unavailable | no scheduling or vote; journals resume with the node | the node service must recover |
 | SnapshotExporter absent | no new authenticated manifest | blocks/finality continue |
 | Worker disconnect/crash | active lease expires, is cancelled and requeued | unchanged |
 | fifth Worker | registration rejected by the bounded registry | unchanged |

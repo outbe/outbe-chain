@@ -36,7 +36,6 @@ DEFAULT_PORTS = {
     "mongodb_port": 27017,
     "public_rpc_port": 80,
     "public_radicle_status_port": 8080,
-    "ocomp_supervisor_port": 9765,
 }
 
 SECP256K1_P = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F
@@ -60,6 +59,28 @@ def quote(value: Any) -> str:
 
 def port_of(config: dict[str, Any], name: str) -> int:
     return int(config.get(name, DEFAULT_PORTS[name]))
+
+
+def embedded_ocomp_endpoint_port(config: dict[str, Any], consensus_port: int) -> int:
+    """Return the node-owned Worker registration endpoint.
+
+    The node derives this endpoint from its consensus listener. Keep accepting
+    the old configuration key only as a compatibility assertion; it must not
+    select a second, standalone Supervisor endpoint.
+    """
+    if not 1 <= consensus_port < 65535:
+        raise ValueError(
+            f"consensus port leaves no embedded OCOMP endpoint: {consensus_port}"
+        )
+    endpoint_port = consensus_port + 1
+    if "ocomp_supervisor_port" in config:
+        configured = int(config["ocomp_supervisor_port"])
+        if configured != endpoint_port:
+            raise ValueError(
+                "ocomp_supervisor_port is legacy and must equal the node-owned "
+                f"endpoint consensus_port + 1 ({endpoint_port}), not {configured}"
+            )
+    return endpoint_port
 
 
 def write_script(path: Path, body: str) -> None:
@@ -447,7 +468,9 @@ exec {quote(binary)} --config {quote(f"{base_dir}/validator-{index}/feeder.toml"
 """
 
 
-def start_all_script(*, config: dict[str, Any], index: int, base_dir: str) -> str:
+def start_all_script(
+    *, config: dict[str, Any], index: int, base_dir: str, ocomp_endpoint_port: int
+) -> str:
     directory = f"{base_dir}/validator-{index}"
     status_port = port_of(config, "radicle_status_port")
     rpc_port = port_of(config, "rpc_port")
@@ -488,14 +511,21 @@ done
 nohup ./run-feeder.sh > logs/feeder.log 2>&1 &
 echo $! > feeder.pid
 
-# OCOMP runs as its own processes: the node's ExEx drives them but does not
-# host them. The Supervisor must answer before the Worker can register.
-nohup ./run-ocomp-supervisor.sh > logs/ocomp-supervisor.log 2>&1 &
-echo $! > ocomp-supervisor.pid
+# The node owns the embedded OCOMP Supervisor. Wait for its registration
+# endpoint before starting the external SnapshotExporter and Worker clients.
+ocomp_ready=0
 for _ in $(seq 1 60); do
-  if (exec 3<>/dev/tcp/127.0.0.1/{{SUPERVISOR_PORT}}) 2>/dev/null; then exec 3>&-; break; fi
+  if (exec 3<>/dev/tcp/127.0.0.1/{ocomp_endpoint_port}) 2>/dev/null; then
+    exec 3>&-
+    ocomp_ready=1
+    break
+  fi
   sleep 1
 done
+if [ "$ocomp_ready" -ne 1 ]; then
+  echo "node-owned OCOMP endpoint 127.0.0.1:{ocomp_endpoint_port} did not become ready" >&2
+  exit 1
+fi
 nohup ./run-ocomp-exporter.sh > logs/ocomp-exporter.log 2>&1 &
 echo $! > ocomp-exporter.pid
 nohup ./run-ocomp-worker.sh > logs/ocomp-worker.log 2>&1 &
@@ -506,7 +536,7 @@ echo "validator-{index} started:"
 echo "  node:    logs/node.log    (pid $(cat node.pid))"
 echo "  radicle: logs/radicle.log (pid $(cat radicle.pid))"
 echo "  feeder:  logs/feeder.log  (pid $(cat feeder.pid))"
-echo "  ocomp:   logs/ocomp-supervisor.log, logs/ocomp-exporter.log, logs/ocomp-worker.log"
+echo "  ocomp:   embedded Supervisor in node, logs/ocomp-exporter.log, logs/ocomp-worker.log"
 echo "  enclave: docker logs outbe-enclave-{index}"
 echo "  mongo:   docker logs outbe-mongo-{index}"
 """
@@ -516,7 +546,7 @@ def stop_all_script(*, index: int, base_dir: str) -> str:
     directory = f"{base_dir}/validator-{index}"
     return f"""
 cd {quote(directory)}
-for name in ocomp-worker ocomp-exporter ocomp-supervisor feeder node radicle enclave; do
+for name in ocomp-worker ocomp-exporter feeder node radicle enclave; do
   if [ -f "$name.pid" ]; then
     pid="$(cat "$name.pid")"
     if kill -0 "$pid" 2>/dev/null; then
@@ -596,19 +626,14 @@ export OUTBE_OCOMP_RPC_URL="http://127.0.0.1:{port_of(config, "rpc_port")}"
 """
 
 
-def ocomp_supervisor_script(*, config: dict[str, Any], index: int, base_dir: str, identity: dict[str, Any]) -> str:
-    binary = str(config.get("ocomp_binary", "outbe-ocomp"))
-    return f"""
-# OCOMP Supervisor: hands work to the Workers and submits their results.
-# Runs as its own process; the node only talks to it over loopback.
-{ocomp_role_preamble(config=config, index=index, base_dir=base_dir, identity=identity).strip()}
-
-exec {quote(binary)} supervisor \\
-  --supervisor-address 127.0.0.1:{port_of(config, "ocomp_supervisor_port")}
-"""
-
-
-def ocomp_exporter_script(*, config: dict[str, Any], index: int, base_dir: str, identity: dict[str, Any]) -> str:
+def ocomp_exporter_script(
+    *,
+    config: dict[str, Any],
+    index: int,
+    base_dir: str,
+    identity: dict[str, Any],
+    ocomp_endpoint_port: int,
+) -> str:
     binary = str(config.get("ocomp_binary", "outbe-ocomp"))
     database = f"outbe_projection_validator_{index}_ocomp"
     return f"""
@@ -618,11 +643,19 @@ export OUTBE_OCOMP_PROJECTION_MONGODB_URI="mongodb://127.0.0.1:{port_of(config, 
 export OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE={quote(database)}
 
 exec {quote(binary)} snapshot-exporter \\
-  --supervisor-address 127.0.0.1:{port_of(config, "ocomp_supervisor_port")}
+  --supervisor-address 127.0.0.1:{ocomp_endpoint_port}
 """
 
 
-def ocomp_worker_script(*, config: dict[str, Any], index: int, base_dir: str, identity: dict[str, Any], ordinal: int = 0) -> str:
+def ocomp_worker_script(
+    *,
+    config: dict[str, Any],
+    index: int,
+    base_dir: str,
+    identity: dict[str, Any],
+    ocomp_endpoint_port: int,
+    ordinal: int = 0,
+) -> str:
     binary = str(config.get("ocomp_binary", "outbe-ocomp"))
     # Same shape the harness uses: first byte identifies the host, the last
     # four the worker ordinal, so every worker process gets a distinct nonce.
@@ -637,7 +670,7 @@ exec {quote(binary)} worker \\
   --boot-nonce 0x{nonce} \\
   --worker-ordinal {ordinal} \\
   --protocol-bundle-hash {identity["protocol_bundle_hash"]} \\
-  --supervisor-address 127.0.0.1:{port_of(config, "ocomp_supervisor_port")}
+  --supervisor-address 127.0.0.1:{ocomp_endpoint_port}
 """
 
 # ---------------------------------------------------------------------------
@@ -794,9 +827,8 @@ UNIT_ROLES = (
     ("enclave", "TEE enclave", None),
     ("radicle", "Radicle sidecar", "outbe-enclave@%i.service"),
     ("node", "validator node", "outbe-radicle@%i.service"),
-    ("ocomp-supervisor", "OCOMP Supervisor", "outbe-node@%i.service"),
-    ("ocomp-exporter", "OCOMP SnapshotExporter", "outbe-ocomp-supervisor@%i.service"),
-    ("ocomp-worker", "OCOMP Worker", "outbe-ocomp-supervisor@%i.service"),
+    ("ocomp-exporter", "OCOMP SnapshotExporter", "outbe-node@%i.service"),
+    ("ocomp-worker", "OCOMP Worker", "outbe-node@%i.service"),
     ("feeder", "price oracle feeder", "outbe-node@%i.service"),
 )
 
@@ -831,6 +863,7 @@ WantedBy=multi-user.target
 def write_systemd_units(output_dir: Path, base_dir: str) -> None:
     unit_dir = output_dir / "systemd"
     unit_dir.mkdir(parents=True, exist_ok=True)
+    (unit_dir / "outbe-ocomp-supervisor@.service").unlink(missing_ok=True)
     for role, description, after in UNIT_ROLES:
         unit = systemd_unit(
             role=role, description=description, after=after, base_dir=base_dir
@@ -842,12 +875,30 @@ def write_systemd_units(output_dir: Path, base_dir: str) -> None:
 INDEX="${{1:?usage: install-systemd.sh <validator-index>}}"
 
 sudo install -m 644 {quote(base_dir)}/systemd/outbe-*@.service /etc/systemd/system/
+
+# A previous bundle may have installed a standalone Supervisor. Stop it before
+# removing its template: proceeding while it still owns the payout journal
+# would violate the node's single-owner invariant. Only absence is a no-op;
+# every real stop/disable failure remains fatal under `set -e`.
+LEGACY_OCOMP_UNIT="outbe-ocomp-supervisor@$INDEX.service"
+LEGACY_OCOMP_TEMPLATE=/etc/systemd/system/outbe-ocomp-supervisor@.service
+if sudo systemctl is-active --quiet "$LEGACY_OCOMP_UNIT"; then
+  sudo systemctl stop "$LEGACY_OCOMP_UNIT"
+fi
+if sudo systemctl is-active --quiet "$LEGACY_OCOMP_UNIT"; then
+  echo "$LEGACY_OCOMP_UNIT is still active; refusing to start the embedded OCOMP topology" >&2
+  exit 1
+fi
+if [ -e "$LEGACY_OCOMP_TEMPLATE" ] || [ -L "$LEGACY_OCOMP_TEMPLATE" ]; then
+  sudo systemctl disable "$LEGACY_OCOMP_UNIT"
+  sudo rm -f -- "$LEGACY_OCOMP_TEMPLATE"
+fi
 sudo systemctl daemon-reload
 
 # MongoDB stays a container; bring it up before anything that projects into it.
 {quote(base_dir)}/validator-"$INDEX"/run-mongodb.sh
 
-for role in enclave radicle node ocomp-supervisor ocomp-exporter ocomp-worker feeder; do
+for role in enclave radicle node ocomp-exporter ocomp-worker feeder; do
   sudo systemctl enable --now "outbe-$role@$INDEX.service"
 done
 
@@ -1137,7 +1188,7 @@ number and `validator list` shows four active validators.
 | Component | Process | Notes |
 |---|---|---|
 | Execution + consensus | `outbe-chain node` | one binary, no Engine API split |
-| OCOMP Supervisor | `outbe-ocomp supervisor` | own process; hands out work, submits results |
+| OCOMP Supervisor | embedded in `outbe-chain node` | ExEx hands out work and submits results |
 | OCOMP SnapshotExporter | `outbe-ocomp snapshot-exporter` | own process; materializes finalized inputs |
 | OCOMP Worker | `outbe-ocomp worker` | own process, ordinal 0 |
 | TEE enclave | Docker container | the node refuses to start without it |
@@ -1147,10 +1198,10 @@ number and `validator list` shows four active validators.
 
 ## Notes
 
-- OCOMP is three separate processes per validator, not something the node
-  hosts: the node carries only the ExEx that drives them. They are started by
-  `start-all.sh` after the node and talk to it over loopback.
-- The OCOMP roles sign their submissions with `ocomp-evm-key.hex`,
+- The OCOMP Supervisor is the node-owned ExEx. `start-all.sh` waits for its
+  embedded registration endpoint, then starts only the external SnapshotExporter
+  and Worker clients over loopback.
+- The embedded OCOMP Supervisor signs its submissions with `ocomp-evm-key.hex`,
   which defaults to a copy of the validator's own EVM key. To use a dedicated
   operational key, replace that file and register it on-chain with
   `outbe-cli validator delegate ocomp <address>`.
@@ -1196,6 +1247,8 @@ def render(
     for index, validator in enumerate(validators):
         directory = output_dir / f"validator-{index}"
         host, _, consensus_port = validator["p2p_address"].rpartition(":")
+        ocomp_endpoint_port = embedded_ocomp_endpoint_port(config, int(consensus_port))
+        (directory / "run-ocomp-supervisor.sh").unlink(missing_ok=True)
 
         write_script(directory / "run-mongodb.sh", mongodb_script(config=config, index=index))
         write_script(
@@ -1238,21 +1291,23 @@ def render(
             caddy_install_script(config=config, base_dir=base_dir, index=index),
         )
         write_script(
-            directory / "run-ocomp-supervisor.sh",
-            ocomp_supervisor_script(
-                config=config, index=index, base_dir=base_dir, identity=identity
-            ),
-        )
-        write_script(
             directory / "run-ocomp-exporter.sh",
             ocomp_exporter_script(
-                config=config, index=index, base_dir=base_dir, identity=identity
+                config=config,
+                index=index,
+                base_dir=base_dir,
+                identity=identity,
+                ocomp_endpoint_port=ocomp_endpoint_port,
             ),
         )
         write_script(
             directory / "run-ocomp-worker.sh",
             ocomp_worker_script(
-                config=config, index=index, base_dir=base_dir, identity=identity
+                config=config,
+                index=index,
+                base_dir=base_dir,
+                identity=identity,
+                ocomp_endpoint_port=ocomp_endpoint_port,
             ),
         )
         signer_key = (
@@ -1270,9 +1325,12 @@ def render(
         feeder_path.chmod(0o600)
         write_script(
             directory / "start-all.sh",
-            start_all_script(config=config, index=index, base_dir=base_dir)
-            .replace("{SUPERVISOR_PORT}", str(port_of(config, "ocomp_supervisor_port")))
-            .replace("{TEE_PORT}", str(port_of(config, "tee_enclave_port"))),
+            start_all_script(
+                config=config,
+                index=index,
+                base_dir=base_dir,
+                ocomp_endpoint_port=ocomp_endpoint_port,
+            ).replace("{TEE_PORT}", str(port_of(config, "tee_enclave_port"))),
         )
         write_script(directory / "stop-all.sh", stop_all_script(index=index, base_dir=base_dir))
 

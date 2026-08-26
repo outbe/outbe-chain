@@ -401,8 +401,15 @@ fn verify_fresh_devnet_process(
     let processes = scenario["ocomp"]["topology"]["processes"]
         .as_array()
         .ok_or_else(|| eyre::eyre!("fresh-devnet scenario has no process topology"))?;
+    ensure!(
+        processes.iter().all(|process| matches!(
+            process["role"].as_str(),
+            Some("snapshot_exporter" | "worker")
+        )),
+        "fresh-devnet process topology contains a non-external OCOMP role"
+    );
     for validator_index in 0..4_u64 {
-        for role in ["supervisor", "snapshot_exporter", "worker"] {
+        for role in ["snapshot_exporter", "worker"] {
             ensure!(
                 processes.iter().any(|process| {
                     process["validator_index"].as_u64() == Some(validator_index)
@@ -1243,7 +1250,7 @@ mod tests {
         }
         let mut processes = Vec::new();
         for validator_index in 0..4 {
-            for role in ["supervisor", "snapshot_exporter", "worker"] {
+            for role in ["snapshot_exporter", "worker"] {
                 processes.push(serde_json::json!({
                     "validator_index": validator_index,
                     "role": role,
@@ -1473,6 +1480,22 @@ mod tests {
             process_artifacts: Vec::new(),
         };
         verify_fresh_devnet_process(root.path(), &receipt).unwrap();
+
+        scenario["ocomp"]["topology"]["processes"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "validator_index": 0,
+                "role": "supervisor",
+                "stopped_at_millis": null
+            }));
+        std::fs::write(&scenario_path, serde_json::to_vec(&scenario).unwrap()).unwrap();
+        assert!(verify_fresh_devnet_process(root.path(), &receipt).is_err());
+        scenario["ocomp"]["topology"]["processes"]
+            .as_array_mut()
+            .unwrap()
+            .pop();
+        std::fs::write(&scenario_path, serde_json::to_vec(&scenario).unwrap()).unwrap();
 
         let retained_chain = std::fs::read(artifacts.join("outbe-chain")).unwrap();
         std::fs::write(artifacts.join("outbe-chain"), b"tampered binary").unwrap();

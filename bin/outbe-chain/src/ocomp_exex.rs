@@ -66,7 +66,7 @@ use reth_provider::{
 };
 use tracing::{error, info, warn};
 
-/// Days a payout tick looks back over, matching the standalone Supervisor.
+/// Days each embedded payout tick looks back over.
 const PAYOUT_LOOKBACK_DAYS: u32 = 30;
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
@@ -1346,7 +1346,7 @@ where
         Ok(())
     }
 
-    /// Ticks the payout sender the standalone Supervisor process would tick.
+    /// Ticks the payout sender owned by the embedded Supervisor.
     /// One tick at a time: the submitter journals its own progress, so a later
     /// block simply resumes where this one stopped.
     fn drive_payout(&mut self, head: B256) {

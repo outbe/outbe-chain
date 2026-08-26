@@ -222,17 +222,13 @@ printf '%s' "$(tr -d '[:space:]' < /var/lib/outbe/testnet/fullnode/reth-p2p-secr
   --http.api eth,net,web3,outbe \
   --projection.mongodb-uri "$OUTBE_PROJECTION_MONGODB_URI" \
   --projection.mongodb-database outbe_testnet_fullnode_0 \
-  --ocomp.supervisor-socket /opt/outbe-chain/ocomp/run/node-supervisor.sock \
-  --ocomp.snapshot-exporter-socket /opt/outbe-chain/ocomp/run/node-snapshot-exporter.sock \
-  --ocomp.protocol-bundle-hash <0x-protocol-bundle-hash> \
-  --ocomp.boot-nonce <nonzero-0x32-byte-boot-nonce> \
   --tee-enclave-socket 127.0.0.1:17000
 ```
 
 A FullNode never receives a founding consensus share or an OCOMP signing key.
-It must run the same SnapshotExporter/worker services as a validator and the
-keyless `outbe-ocomp follower` role under the matching deployment identity. The
-follower independently executes Lysis and commits its canonical result locally;
-it does not read `OUTBE_OCOMP_RPC_URL` and cannot submit a vote. At the first
+Its node-owned embedded Supervisor runs in FullNode policy, while the same
+external SnapshotExporter and Worker services used by a validator connect to the
+node-owned endpoint. The embedded runtime independently executes Lysis and
+commits its canonical result locally; it cannot submit a vote. At the first
 quorum-forming vote, the node waits for that durable result and fails closed on
 any digest/root/manifest mismatch.

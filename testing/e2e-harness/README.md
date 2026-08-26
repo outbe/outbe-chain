@@ -30,9 +30,10 @@ dynamic OCOMP founder registration for the complete genesis ValidatorSet, and
 socket readiness before launching the validator cohort, then returns only after
 all validator RPC heights have advanced beyond genesis. Runtime ownership is
 not declared ready at that point alone: the harness installs the OCOMP delegate
-bindings, starts one Supervisor and one SnapshotExporter per validator, starts
-Worker-0, and requires every Supervisor to report exactly one registered and
-connected Worker. `status` repeats the RPC and Supervisor probes.
+bindings, observes the Supervisor embedded in each node, starts one external
+SnapshotExporter and Worker-0 per validator, and requires every Supervisor to
+report exactly one registered and connected Worker. `status` repeats the RPC and
+node-owned Supervisor probes.
 Runtime ownership is recorded atomically in
 `<OUT_DIR>/localnet-state-v1.json`; stale or PID-reused
 records are never treated as a live network. Bootstrap scans for free complete

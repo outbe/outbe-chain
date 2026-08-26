@@ -94,16 +94,15 @@ The current workspace contains 66 Cargo packages.
 its fuzz targets are verification evidence for ADR-B-WIR-001 and ADR-B-EVM-003 and must be run by
 an explicit CI job rather than silently counted among the 65 packages.
 
-### Planned OCOMP PoC surfaces
+### OCOMP process surfaces
 
-These surfaces are required by ADR-S-OCM-001 through ADR-S-OCM-004 and PFS-002,
-but do not yet exist in the workspace. Listing them here records a coverage Gap,
-not a package or implementation claim.
+These surfaces implement the process boundaries required by ADR-S-OCM-001
+through ADR-S-OCM-004 and PFS-002. The Supervisor is node-owned; only the
+SnapshotExporter and Worker are standalone processes.
 
-| Planned surface | Owning ADR(s) | Required boundary |
+| Surface | Owning ADR(s) | Required boundary |
 |---|---|---|
-| OCOMP kernel/job state inside `outbe-chain` | ADR-S-OCM-001, ADR-S-OCM-004 | finalized lifecycle, attestation gate, full-result votes and typed quorum apply |
-| standalone supervisor | ADR-S-OCM-001, ADR-S-OCM-003, ADR-S-VAL-002 | cursor, planner, scheduler, reducer, dedicated role EVM signer and journal |
+| OCOMP kernel/job state and embedded Supervisor inside `outbe-chain` | ADR-S-OCM-001, ADR-S-OCM-003, ADR-S-OCM-004, ADR-S-VAL-002 | finalized lifecycle, cursor, planner, scheduler, reducer, payout signer and journals |
 | standalone snapshot exporter | ADR-S-OCM-001, ADR-S-OCM-002 | opaque finalized read lease to authenticated CAS manifest |
 | standalone worker | ADR-S-OCM-001, ADR-S-OCM-003 | one immutable `UnitId`, sandboxed and retryable |
 | validator vote submitter | ADR-S-OCM-003, ADR-S-OCM-004, ADR-S-VAL-002 | submit its own attested full result from a role-delegated EVM signer through the restricted ZeroFee seam; no relay or public activator |

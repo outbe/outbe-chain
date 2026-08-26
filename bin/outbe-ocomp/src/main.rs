@@ -2,8 +2,6 @@ use std::env;
 use std::ffi::OsString;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
 use alloy_primitives::{keccak256, B256};
@@ -13,12 +11,6 @@ use outbe_ocomp::bundle::PinnedProtocolBundle;
 use outbe_ocomp::cas::CasLimits;
 use outbe_ocomp::control::{effective_uid, poc_schema_limits, EndpointIdentity};
 use outbe_ocomp::inbox::WorkerInboxLimits;
-use outbe_ocomp::payout_submitter::{
-    LocalPayoutTransactionPreparerV1, PayoutSubmissionConfigV1, PayoutTickOutcomeV1,
-    SupervisorPayoutSubmitterV1,
-};
-use outbe_ocomp::result_attestation::LocalResultVoteAttesterV1;
-use outbe_ocomp::result_signer::OcompSigner;
 use outbe_ocomp::rpc_discovery::{
     FinalizedRpcDiscoveryConfigV1, FinalizedRpcDiscoveryPurposeV1, FinalizedRpcDiscoveryV1,
 };
@@ -26,24 +18,11 @@ use outbe_ocomp::rpc_input_exporter::{
     RpcInputExporterConfigV1, RpcInputExporterErrorV1, RpcInputExporterV1,
 };
 use outbe_ocomp::rpc_projection::RpcProjectionConfigV1;
-use outbe_ocomp::sign_once::SignOnceStore;
-use outbe_ocomp::supervisor_export::{
-    SupervisorExportAdoption, SupervisorExportAdoptionConfig, SupervisorExportAdoptionOutcome,
-};
-use outbe_ocomp::supervisor_job::{
-    CompletedSupervisorJobV1, SupervisorJobRunnerConfigV1, SupervisorJobRunnerErrorV1,
-    SupervisorJobRunnerV1,
-};
-use outbe_ocomp::vote_submitter::{
-    LocalVoteTransactionPreparerV1, PublicVoteRpcClientV1, SupervisorVoteSubmitterV1,
-    VoteSubmissionConfigV1, VoteSubmissionOutcomeV1,
-};
 use outbe_ocomp::worker::{run_worker, WorkerConfig};
-use outbe_ocomp::worker_transport::{SupervisorWorkerServerV1, MAX_REGISTERED_WORKERS};
+use outbe_ocomp::worker_transport::MAX_REGISTERED_WORKERS;
 use outbe_ocomp_protocol::capacity::OCOMP_POC_CAS_QUOTA_BYTES;
 use outbe_offchain_storage::MongoStorageConfig;
 use outbe_primitives::signer::OutbeEvmSigner;
-use outbe_primitives::time::{previous_date_key, worldwide_day_from_timestamp};
 
 #[derive(Debug, Parser)]
 #[command(name = "outbe-ocomp")]
@@ -55,7 +34,6 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Role {
-    Supervisor(RuntimeArgs),
     SnapshotExporter(RuntimeArgs),
     Worker(WorkerArgs),
     /// Print the address of the role-delegated OCOMP transaction signer.
@@ -85,7 +63,7 @@ struct RuntimeArgs {
     #[arg(long, hide = true, value_name = "PATH")]
     development_root: Option<PathBuf>,
     /// Loopback Supervisor endpoint where OCOMP workers register for work.
-    #[arg(long, value_name = "IP:PORT", default_value = "127.0.0.1:9765")]
+    #[arg(long, value_name = "IP:PORT", default_value = "127.0.0.1:30401")]
     supervisor_address: SocketAddr,
 }
 
@@ -95,9 +73,8 @@ const CAS_MAX_OBJECT_BYTES: u64 = 1_048_576;
 const CAS_MAX_TOTAL_BYTES: u64 = OCOMP_POC_CAS_QUOTA_BYTES;
 const WORKER_INBOX_MAX_ARTIFACT_BYTES: u64 = 1_048_576;
 const WORKER_INBOX_MAX_TOTAL_BYTES: u64 = 67_108_864;
-const SUPERVISOR_RPC_MAX_RESPONSE_BYTES: usize = 33_554_432;
-const SUPERVISOR_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
-const SUPERVISOR_PAYOUT_LOOKBACK_DAYS: u32 = 30;
+const OCOMP_RPC_MAX_RESPONSE_BYTES: usize = 33_554_432;
+const EXPORTER_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
 const OCOMP_TRIBUTE_PAGE_LIMIT: usize = 256;
 const PROJECTION_START_BLOCK: u64 = 1;
 
@@ -135,17 +112,10 @@ impl ProductionConfig {
 struct ProductionLayout {
     cas_root: PathBuf,
     worker_inbox_root: PathBuf,
-    supervisor_journal_root: PathBuf,
     snapshot_exporter_journal_root: PathBuf,
-    supervisor_export_binding_root: PathBuf,
-    supervisor_job_root: PathBuf,
-    supervisor_vote_submission_root: PathBuf,
-    supervisor_payout_submission_root: PathBuf,
-    supervisor_sign_once_root: PathBuf,
     snapshot_exporter_input_ref_root: PathBuf,
     snapshot_exporter_receipt_root: PathBuf,
     ocomp_evm_key_path: PathBuf,
-    ocomp_result_key_path: PathBuf,
     protocol_bundle_path: PathBuf,
 }
 
@@ -162,22 +132,14 @@ impl ProductionLayout {
             .join(format!("validator-{validator_index}"))
             .join("ocomp")
             .join("domain-v1");
-        let supervisor_root = domain_root.join("supervisor-v1");
         let exporter_root = domain_root.join("exporter-v1");
         Ok(Self {
             cas_root: domain_root.join("cas-v1"),
             worker_inbox_root: domain_root.join("worker-inbox-v1"),
-            supervisor_journal_root: supervisor_root.join("discovery"),
             snapshot_exporter_journal_root: exporter_root.join("discovery"),
-            supervisor_export_binding_root: supervisor_root.join("export-bindings"),
-            supervisor_job_root: supervisor_root.join("jobs"),
-            supervisor_vote_submission_root: supervisor_root.join("vote-submissions"),
-            supervisor_payout_submission_root: supervisor_root.join("payout-submissions"),
-            supervisor_sign_once_root: supervisor_root.join("sign-once"),
             snapshot_exporter_input_ref_root: exporter_root.join("input-refs"),
             snapshot_exporter_receipt_root: exporter_root.join("receipts"),
             ocomp_evm_key_path: domain_root.join("ocomp-evm-key.hex"),
-            ocomp_result_key_path: domain_root.join("ocomp-key-v1.hex"),
             protocol_bundle_path: domain_root.join("protocol-bundle-v1.ocb1"),
         })
     }
@@ -189,17 +151,10 @@ struct RuntimeProfile {
     supervisor_address: SocketAddr,
     cas_root: PathBuf,
     worker_inbox_root: PathBuf,
-    supervisor_journal_root: PathBuf,
     snapshot_exporter_journal_root: PathBuf,
-    supervisor_export_binding_root: PathBuf,
-    supervisor_job_root: PathBuf,
-    supervisor_vote_submission_root: PathBuf,
-    supervisor_payout_submission_root: PathBuf,
-    supervisor_sign_once_root: PathBuf,
     snapshot_exporter_input_ref_root: PathBuf,
     snapshot_exporter_receipt_root: PathBuf,
     ocomp_evm_key_path: PathBuf,
-    ocomp_result_key_path: PathBuf,
     protocol_bundle_path: PathBuf,
 }
 
@@ -219,17 +174,10 @@ impl RuntimeProfile {
                 supervisor_address: args.supervisor_address,
                 cas_root: layout.cas_root,
                 worker_inbox_root: layout.worker_inbox_root,
-                supervisor_journal_root: layout.supervisor_journal_root,
                 snapshot_exporter_journal_root: layout.snapshot_exporter_journal_root,
-                supervisor_export_binding_root: layout.supervisor_export_binding_root,
-                supervisor_job_root: layout.supervisor_job_root,
-                supervisor_vote_submission_root: layout.supervisor_vote_submission_root,
-                supervisor_payout_submission_root: layout.supervisor_payout_submission_root,
-                supervisor_sign_once_root: layout.supervisor_sign_once_root,
                 snapshot_exporter_input_ref_root: layout.snapshot_exporter_input_ref_root,
                 snapshot_exporter_receipt_root: layout.snapshot_exporter_receipt_root,
                 ocomp_evm_key_path: layout.ocomp_evm_key_path,
-                ocomp_result_key_path: layout.ocomp_result_key_path,
                 protocol_bundle_path: layout.protocol_bundle_path,
             });
         };
@@ -250,19 +198,10 @@ impl RuntimeProfile {
             supervisor_address: args.supervisor_address,
             cas_root: root.join("cas-v1"),
             worker_inbox_root: root.join("worker-inbox-v1"),
-            supervisor_journal_root: root.join("supervisor-v1").join("discovery"),
             snapshot_exporter_journal_root: root.join("exporter-v1").join("discovery"),
-            supervisor_export_binding_root: root.join("supervisor-v1").join("export-bindings"),
-            supervisor_job_root: root.join("supervisor-v1").join("jobs"),
-            supervisor_vote_submission_root: root.join("supervisor-v1").join("vote-submissions"),
-            supervisor_payout_submission_root: root
-                .join("supervisor-v1")
-                .join("payout-submissions"),
-            supervisor_sign_once_root: root.join("supervisor-v1").join("sign-once"),
             snapshot_exporter_input_ref_root: root.join("exporter-v1").join("input-refs"),
             snapshot_exporter_receipt_root: root.join("exporter-v1").join("receipts"),
             ocomp_evm_key_path: root.join("ocomp-evm-key.hex"),
-            ocomp_result_key_path: root.join("ocomp-key-v1.hex"),
             protocol_bundle_path: root.join("protocol-bundle-v1.ocb1"),
         })
     }
@@ -306,7 +245,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             })?;
             Ok(())
         }
-        Role::Supervisor(args) => run_supervisor(&args),
         Role::SnapshotExporter(args) => run_snapshot_exporter(&args),
         Role::SignerAddress(args) => print_signer_address(&args),
     }
@@ -352,277 +290,6 @@ fn print_signer_address(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-fn run_supervisor(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let runtime = RuntimeProfile::resolve(args)?;
-    let limits = poc_schema_limits();
-    let identity = EndpointIdentity {
-        chain_id: required_env("OCOMP_CHAIN_ID")?.parse()?,
-        genesis_hash: required_env("OCOMP_GENESIS_HASH")?.parse()?,
-        boot_nonce: required_env("OCOMP_BOOT_NONCE")?.parse()?,
-        protocol_bundle_hash: required_env("OCOMP_PROTOCOL_BUNDLE_HASH")?.parse()?,
-    };
-    install_consensus_domain(identity.chain_id)?;
-    let protocol_bundle = PinnedProtocolBundle::decode(
-        &std::fs::read(&runtime.protocol_bundle_path)?,
-        identity.protocol_bundle_hash,
-        &limits,
-    )?;
-    let fork_id = protocol_bundle.bundle().fork_id;
-    let rpc_url = required_env("OUTBE_OCOMP_RPC_URL")?;
-    let mut discovery = FinalizedRpcDiscoveryV1::open(FinalizedRpcDiscoveryConfigV1 {
-        rpc_url: rpc_url.clone(),
-        rpc_max_response_bytes: SUPERVISOR_RPC_MAX_RESPONSE_BYTES,
-        journal_root: runtime.supervisor_journal_root.clone(),
-        projection_start_block: PROJECTION_START_BLOCK,
-        identity,
-        fork_id: protocol_bundle.bundle().fork_id,
-        limits,
-        purpose: FinalizedRpcDiscoveryPurposeV1::VotingAuthority,
-    })?;
-    let adoption = SupervisorExportAdoption::open(SupervisorExportAdoptionConfig {
-        cas_root: runtime.cas_root.clone(),
-        cas_limits: CasLimits {
-            max_object_bytes: CAS_MAX_OBJECT_BYTES,
-            max_total_bytes: CAS_MAX_TOTAL_BYTES,
-        },
-        input_ref_root: runtime.snapshot_exporter_input_ref_root.clone(),
-        receipt_root: runtime.snapshot_exporter_receipt_root.clone(),
-        binding_root: runtime.supervisor_export_binding_root.clone(),
-        protocol_bundle: protocol_bundle.clone(),
-        limits,
-    })?;
-    let payout_job_root = runtime.supervisor_job_root.clone();
-    let worker_server = SupervisorWorkerServerV1::start(
-        runtime.supervisor_address,
-        identity,
-        required_env("OCOMP_REGISTRY_GENERATION")?.parse()?,
-        limits,
-    )?;
-    let runner = Arc::new(SupervisorJobRunnerV1::open(
-        SupervisorJobRunnerConfigV1 {
-            cas_root: runtime.cas_root,
-            cas_limits: CasLimits {
-                max_object_bytes: CAS_MAX_OBJECT_BYTES,
-                max_total_bytes: CAS_MAX_TOTAL_BYTES,
-            },
-            input_ref_root: runtime.snapshot_exporter_input_ref_root,
-            job_root: runtime.supervisor_job_root,
-            worker_inbox_root: runtime.worker_inbox_root,
-            worker_inbox_limits: WorkerInboxLimits {
-                max_artifact_bytes: WORKER_INBOX_MAX_ARTIFACT_BYTES,
-                max_total_bytes: WORKER_INBOX_MAX_TOTAL_BYTES,
-            },
-            protocol_bundle,
-            limits,
-        },
-        worker_server.dispatcher(),
-    )?);
-    let evm_signer =
-        OutbeEvmSigner::from_strict_file(&runtime.ocomp_evm_key_path, runtime.owner_uid)?;
-    let result_signer = OcompSigner::from_file(&runtime.ocomp_result_key_path, runtime.owner_uid)?;
-    let sign_once =
-        SignOnceStore::open(runtime.supervisor_sign_once_root, runtime.owner_uid, limits)?;
-    let attester =
-        LocalResultVoteAttesterV1::new(identity, fork_id, result_signer, sign_once, limits)?;
-    let vote_preparer =
-        LocalVoteTransactionPreparerV1::new(evm_signer, attester, identity.chain_id, limits)?;
-    let sender_address = vote_preparer.sender_address();
-    let vote_rpc = PublicVoteRpcClientV1::new(rpc_url, SUPERVISOR_RPC_MAX_RESPONSE_BYTES)?;
-    let mut vote_submitter = SupervisorVoteSubmitterV1::open(
-        VoteSubmissionConfigV1 {
-            journal_root: runtime.supervisor_vote_submission_root,
-            expected_chain_id: identity.chain_id,
-            sender_address,
-            limits,
-        },
-        vote_rpc,
-    )?;
-    let payout_signer =
-        OutbeEvmSigner::from_strict_file(&runtime.ocomp_evm_key_path, runtime.owner_uid)?;
-    let payout_preparer = LocalPayoutTransactionPreparerV1::new(payout_signer, identity.chain_id)?;
-    let payout_rpc = PublicVoteRpcClientV1::new(
-        required_env("OUTBE_OCOMP_RPC_URL")?,
-        SUPERVISOR_RPC_MAX_RESPONSE_BYTES,
-    )?;
-    let mut payout_submitter = SupervisorPayoutSubmitterV1::open(
-        PayoutSubmissionConfigV1 {
-            journal_root: runtime.supervisor_payout_submission_root,
-            job_root: payout_job_root,
-            expected_chain_id: identity.chain_id,
-            sender_address: payout_preparer.sender_address(),
-            limits,
-        },
-        payout_rpc,
-    )?;
-    let mut handled_job_id = None;
-    let mut completed_result: Option<CompletedSupervisorJobV1> = None;
-    let mut last_submission_outcome = None;
-    let mut last_payout_outcome = None;
-    let mut running_job_id = None;
-    let mut running_job_cancel: Option<Arc<AtomicBool>> = None;
-    let (job_result_tx, job_result_rx) = mpsc::channel::<(
-        B256,
-        Result<CompletedSupervisorJobV1, SupervisorJobRunnerErrorV1>,
-    )>();
-    loop {
-        if let Err(error) = runner.poll_workers() {
-            eprintln!("OCOMP supervisor worker-registration retry: {error}");
-        }
-        if let Err(error) = discovery.reconcile_once() {
-            eprintln!("OCOMP supervisor discovery retry: {error}");
-        }
-        cancel_superseded_job(
-            running_job_id,
-            discovery
-                .current_record()
-                .map(|record| record.spec.summary.job_id),
-            running_job_cancel.as_deref(),
-        );
-        match job_result_rx.try_recv() {
-            Ok((job_id, Ok(completed))) => {
-                eprintln!(
-                    "OCOMP supervisor computed job {} with {} units and result {}",
-                    completed.job_id, completed.exact_unit_count, completed.result_digest
-                );
-                if running_job_id == Some(job_id) {
-                    running_job_id = None;
-                    running_job_cancel = None;
-                }
-                if discovery
-                    .current_record()
-                    .is_some_and(|record| record.spec.summary.job_id == job_id)
-                {
-                    completed_result = Some(completed);
-                }
-            }
-            Ok((job_id, Err(error))) => {
-                if running_job_id == Some(job_id) {
-                    running_job_id = None;
-                    running_job_cancel = None;
-                }
-                eprintln!("OCOMP supervisor Lysis job {job_id} retry: {error}");
-            }
-            Err(mpsc::TryRecvError::Empty) => {}
-            Err(mpsc::TryRecvError::Disconnected) => {
-                return Err("OCOMP Supervisor job result channel disconnected".into());
-            }
-        }
-        if let Some(record) = discovery.current_record() {
-            let job_id = record.spec.summary.job_id;
-            if handled_job_id != Some(job_id) {
-                if completed_result
-                    .as_ref()
-                    .is_some_and(|completed| completed.job_id != job_id)
-                {
-                    completed_result = None;
-                    last_submission_outcome = None;
-                }
-                match adoption.try_adopt(&record) {
-                    Ok(SupervisorExportAdoptionOutcome::Adopted(binding)) => {
-                        if completed_result.is_none() && running_job_id.is_none() {
-                            let runner = Arc::clone(&runner);
-                            let result_tx = job_result_tx.clone();
-                            let job_record = record.clone();
-                            let job_id = job_record.spec.summary.job_id;
-                            let cancelled = Arc::new(AtomicBool::new(false));
-                            running_job_id = Some(job_id);
-                            running_job_cancel = Some(Arc::clone(&cancelled));
-                            std::thread::Builder::new()
-                                .name("ocomp-supervisor-job".to_owned())
-                                .spawn(move || {
-                                    let result =
-                                        runner.run_to_result(&job_record, &binding, &cancelled);
-                                    let _ = result_tx.send((job_id, result));
-                                })?;
-                        }
-                        if let Some(completed) = completed_result.as_ref() {
-                            match vote_submitter.reconcile(
-                                &vote_preparer,
-                                completed.job_id,
-                                completed.result_digest,
-                                &completed.canonical_result,
-                                &record.spec,
-                            ) {
-                                Ok(outcome) => {
-                                    if last_submission_outcome != Some(outcome) {
-                                        eprintln!(
-                                            "OCOMP supervisor vote submission for {}: {outcome:?}",
-                                            completed.job_id
-                                        );
-                                        last_submission_outcome = Some(outcome);
-                                    }
-                                    if let VoteSubmissionOutcomeV1::Finalized(inclusion) = outcome {
-                                        if inclusion.success {
-                                            eprintln!(
-                                                "OCOMP supervisor finalized result vote {} in block {}",
-                                                completed.result_digest, inclusion.block_number
-                                            );
-                                        } else {
-                                            eprintln!(
-                                                "OCOMP supervisor result vote {} finalized with a reverted receipt in block {}",
-                                                completed.result_digest, inclusion.block_number
-                                            );
-                                        }
-                                        handled_job_id = Some(job_id);
-                                        completed_result = None;
-                                    }
-                                }
-                                Err(error) => {
-                                    eprintln!("OCOMP supervisor vote-submission retry: {error}");
-                                }
-                            }
-                        }
-                    }
-                    Ok(SupervisorExportAdoptionOutcome::Pending) => {}
-                    Err(error) => eprintln!("OCOMP supervisor export-adoption retry: {error}"),
-                }
-            }
-        }
-        // Payouts share the vote signer's nonce, so a tick runs only while no
-        // vote work is pending, and one tick drives its batch to finality.
-        if completed_result.is_none() && running_job_id.is_none() {
-            match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-                Err(error) => eprintln!("OCOMP supervisor payout clock retry: {error}"),
-                Ok(now) => {
-                    // Payout days live in worldwide-day space (UTC+14).
-                    let today = worldwide_day_from_timestamp(now.as_secs());
-                    let mut days = Vec::with_capacity(SUPERVISOR_PAYOUT_LOOKBACK_DAYS as usize + 1);
-                    let mut day = today;
-                    for _ in 0..=SUPERVISOR_PAYOUT_LOOKBACK_DAYS {
-                        days.push(day);
-                        day = previous_date_key(day);
-                    }
-                    days.reverse();
-                    match payout_submitter.tick(&payout_preparer, &days) {
-                        Ok(outcome) => {
-                            if last_payout_outcome != Some(outcome) {
-                                if outcome != PayoutTickOutcomeV1::Idle {
-                                    eprintln!("OCOMP supervisor payout: {outcome:?}");
-                                }
-                                last_payout_outcome = Some(outcome);
-                            }
-                        }
-                        Err(error) => eprintln!("OCOMP supervisor payout retry: {error}"),
-                    }
-                }
-            }
-        }
-        std::thread::sleep(SUPERVISOR_RECONCILE_INTERVAL);
-    }
-}
-
-fn cancel_superseded_job(
-    running_job_id: Option<B256>,
-    current_job_id: Option<B256>,
-    cancelled: Option<&AtomicBool>,
-) {
-    if running_job_id.is_some() && running_job_id != current_job_id {
-        if let Some(cancelled) = cancelled {
-            cancelled.store(true, Ordering::Release);
-        }
-    }
-}
-
 fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = RuntimeProfile::resolve(args)?;
     let limits = poc_schema_limits();
@@ -641,7 +308,7 @@ fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::E
     let rpc_url = required_env("OUTBE_OCOMP_RPC_URL")?;
     let mut discovery = FinalizedRpcDiscoveryV1::open(FinalizedRpcDiscoveryConfigV1 {
         rpc_url: rpc_url.clone(),
-        rpc_max_response_bytes: SUPERVISOR_RPC_MAX_RESPONSE_BYTES,
+        rpc_max_response_bytes: OCOMP_RPC_MAX_RESPONSE_BYTES,
         journal_root: runtime.snapshot_exporter_journal_root,
         projection_start_block: PROJECTION_START_BLOCK,
         identity,
@@ -651,10 +318,10 @@ fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::E
     })?;
     let exporter_config = RpcInputExporterConfigV1 {
         rpc_url: rpc_url.clone(),
-        rpc_max_response_bytes: SUPERVISOR_RPC_MAX_RESPONSE_BYTES,
+        rpc_max_response_bytes: OCOMP_RPC_MAX_RESPONSE_BYTES,
         projection: RpcProjectionConfigV1 {
             rpc_url,
-            rpc_max_response_bytes: SUPERVISOR_RPC_MAX_RESPONSE_BYTES,
+            rpc_max_response_bytes: OCOMP_RPC_MAX_RESPONSE_BYTES,
             mongo: MongoStorageConfig {
                 uri: required_env("OUTBE_OCOMP_PROJECTION_MONGODB_URI")?,
                 database: required_env("OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE")?,
@@ -683,7 +350,7 @@ fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::E
         RpcInputExporterErrorV1::is_retryable_startup,
         |error| {
             eprintln!("OCOMP snapshot exporter startup retry: {error}");
-            std::thread::sleep(SUPERVISOR_RECONCILE_INTERVAL);
+            std::thread::sleep(EXPORTER_RECONCILE_INTERVAL);
         },
     )?;
     let mut exported_job_id = None;
@@ -703,7 +370,7 @@ fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::E
                 }
             }
         }
-        std::thread::sleep(SUPERVISOR_RECONCILE_INTERVAL);
+        std::thread::sleep(EXPORTER_RECONCILE_INTERVAL);
     }
 }
 
@@ -742,19 +409,6 @@ mod tests {
     use super::*;
 
     const HASH: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
-
-    #[test]
-    fn newer_discovery_cancels_the_running_job_before_replacement() {
-        let running = B256::repeat_byte(0xA1);
-        let newer = B256::repeat_byte(0xB2);
-        let cancelled = AtomicBool::new(false);
-
-        cancel_superseded_job(Some(running), Some(running), Some(&cancelled));
-        assert!(!cancelled.load(Ordering::Acquire));
-
-        cancel_superseded_job(Some(running), Some(newer), Some(&cancelled));
-        assert!(cancelled.load(Ordering::Acquire));
-    }
 
     #[test]
     fn snapshot_exporter_startup_retries_only_retryable_failures() {
@@ -837,11 +491,16 @@ mod tests {
     }
 
     #[test]
+    fn standalone_supervisor_subcommand_is_removed() {
+        assert!(Cli::try_parse_from(["outbe-ocomp", "supervisor"]).is_err());
+    }
+
+    #[test]
     fn development_profile_is_rooted_and_does_not_relax_release_defaults() {
         let root = tempfile::tempdir().unwrap();
         let args = RuntimeArgs {
             development_root: Some(root.path().to_path_buf()),
-            supervisor_address: "127.0.0.1:9765".parse().unwrap(),
+            supervisor_address: "127.0.0.1:30401".parse().unwrap(),
         };
         let resolved = RuntimeProfile::resolve(&args);
         #[cfg(debug_assertions)]
@@ -864,7 +523,7 @@ mod tests {
 
         let relative = RuntimeArgs {
             development_root: Some(PathBuf::from("relative-domain")),
-            supervisor_address: "127.0.0.1:9765".parse().unwrap(),
+            supervisor_address: "127.0.0.1:30401".parse().unwrap(),
         };
         assert!(RuntimeProfile::resolve(&relative).is_err());
     }
@@ -881,14 +540,14 @@ mod tests {
 
     #[test]
     fn worker_observability_ports_follow_the_worker_ordinal() {
-        let supervisor = "127.0.0.1:9765".parse().unwrap();
+        let supervisor = "127.0.0.1:30401".parse().unwrap();
         assert_eq!(
             worker_observability_address(supervisor, 0).unwrap(),
-            "127.0.0.1:9767".parse().unwrap()
+            "127.0.0.1:30403".parse().unwrap()
         );
         assert_eq!(
             worker_observability_address(supervisor, 3).unwrap(),
-            "127.0.0.1:9770".parse().unwrap()
+            "127.0.0.1:30406".parse().unwrap()
         );
         assert!(worker_observability_address(supervisor, 4).is_err());
     }
@@ -911,21 +570,13 @@ mod tests {
             .join("domain-v1");
 
         assert_eq!(
-            layout.supervisor_vote_submission_root,
-            domain.join("supervisor-v1").join("vote-submissions")
-        );
-        assert_eq!(
             layout.protocol_bundle_path,
             domain.join("protocol-bundle-v1.ocb1")
         );
         assert_eq!(layout.ocomp_evm_key_path, domain.join("ocomp-evm-key.hex"));
         assert_eq!(
-            layout.ocomp_result_key_path,
-            domain.join("ocomp-key-v1.hex")
-        );
-        assert_eq!(
-            layout.supervisor_sign_once_root,
-            domain.join("supervisor-v1").join("sign-once")
+            layout.snapshot_exporter_journal_root,
+            domain.join("exporter-v1").join("discovery")
         );
     }
 

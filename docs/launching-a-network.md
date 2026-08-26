@@ -146,12 +146,12 @@ founding DKG ceremony and needs every genesis validator online.
 curl -s -X POST http://<machine>/ -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}'
 
-systemctl list-units 'outbe-*' --no-pager     # 7 services per machine
+systemctl list-units 'outbe-*' --no-pager     # 6 services per machine
 journalctl -u outbe-node@0 -f
 ```
 
 Healthy means: every machine reports an advancing block number, `net_peerCount`
-is `n-1` on each, and all seven services are `active`.
+is `n-1` on each, and all six services are `active`.
 
 ## Ports
 
@@ -162,8 +162,9 @@ client means opening `8776` more widely — see `docs/using-radicle.md`.
 Published by caddy: RPC on `80`, Radicle status on `8080`.
 
 Loopback only, never exposed: RPC `8545`, authrpc `8551`, metrics `9101`,
-Radicle status `8876`, the enclave socket `17000`, MongoDB `27017`, OCOMP
-`9765-9767`.
+Radicle status `8876`, the enclave socket `17000`, MongoDB `27017`, and the
+node-owned OCOMP endpoints `30401-30406` (HTTP registration, ZeroMQ and Worker
+observability for the default consensus port `30400`).
 
 ## What runs on each machine
 
@@ -172,13 +173,14 @@ Radicle status `8876`, the enclave socket `17000`, MongoDB `27017`, OCOMP
 | Execution + consensus | `outbe-chain node` | one binary, no Engine API split |
 | TEE enclave | `gramine-sgx`, host process | node will not start without it |
 | Radicle sidecar | `outbe-radicle` | validator startup requires its control socket; seeds only repository ids registered on-chain (`docs/using-radicle.md`) |
-| OCOMP Supervisor | `outbe-ocomp supervisor` | own process |
+| OCOMP Supervisor | embedded in `outbe-chain` | ExEx discovers finalized jobs and owns scheduling, vote and payout journals |
 | OCOMP SnapshotExporter | `outbe-ocomp snapshot-exporter` | own process |
 | OCOMP Worker | `outbe-ocomp worker` | own process |
 | Price feeder | `outbe-feeder` | submits oracle votes |
 | Projection store | MongoDB container | replica set `rs0`, mandatory |
 
-All seven run under systemd as `outbe-<role>@<index>.service`.
+The six external services run under systemd as
+`outbe-<role>@<index>.service`; the Supervisor shares the node service.
 
 ## Failures worth recognising
 

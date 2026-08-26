@@ -433,7 +433,7 @@ fn fifth_node_syncs_as_full_node(world: &mut World) {
     world
         .ocomp
         .start_keyless_full_node_roles(validator_index)
-        .expect("start non-voting FullNode Lysis follower and snapshot exporter");
+        .expect("start the FullNode external SnapshotExporter and Worker");
     let joined = world
         .rpc
         .wait_block(world.validators.http_port(index), target, 60)
@@ -464,14 +464,6 @@ fn fifth_full_node_has_state_but_no_vote_capability(world: &mut World) {
         record.validator_index == Some(u8::try_from(index).expect("joiner index fits u8"))
             && record.role == OcompProcessRole::Worker
             && record.worker_ordinal == Some(0)
-            && record.stopped_at_millis.is_none()
-    }));
-    assert!(!world.ocomp.process_records().iter().any(|record| {
-        record.validator_index == Some(u8::try_from(index).expect("joiner index fits u8"))
-            && matches!(
-                record.role,
-                OcompProcessRole::Supervisor | OcompProcessRole::Follower
-            )
             && record.stopped_at_millis.is_none()
     }));
 }
@@ -604,11 +596,6 @@ fn certified_boundary_adds_fifth_ocomp_domain(world: &mut World) {
                 && record.stopped_at_millis.is_none()
         }));
     }
-    assert!(!world.ocomp.process_records().iter().any(|record| {
-        record.validator_index == Some(4)
-            && record.role == OcompProcessRole::Supervisor
-            && record.stopped_at_millis.is_none()
-    }));
 }
 
 #[then("job B opens with five members and quorum four while job A remains four of three")]
@@ -4438,7 +4425,7 @@ fn job_a_opens_on_the_historical_four_validator_snapshot(world: &mut World) {
             .ocomp_finality_before_fault
             .zip(world.rpc.finalized(world.validators.primary_port()))
             .is_some_and(|(before, after)| after > before),
-        "consensus finality did not advance with two OCOMP supervisors stopped"
+        "consensus finality did not advance with two OCOMP Workers stopped"
     );
     world.state.ocomp_dynamic_job_requests = vec![request];
 }
@@ -4733,7 +4720,7 @@ fn no_quorum_job_expires_without_nod(world: &mut World) {
     assert!(
         world.rpc.finalized(primary).unwrap_or_default()
             > world.state.ocomp_finality_before_fault.unwrap_or_default(),
-        "consensus finality did not advance while two Supervisors were stopped"
+        "consensus finality did not advance while two OCOMP Workers were stopped"
     );
     world.state.ocomp_vote_accountability = Some(accountability);
     world.state.ocomp_expired_without_nod = Some(true);

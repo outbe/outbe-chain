@@ -124,10 +124,6 @@ pub(crate) const OCOMP_DYNAMIC_VOTE_WINDOW_BLOCKS: u64 = OCOMP_TEST_EPOCH_LENGTH
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OcompProcessRole {
-    Supervisor,
-    /// Compute-only FullNode role: executes canonical Lysis and commits the
-    /// local result, but never opens a voting runtime.
-    Follower,
     SnapshotExporter,
     Worker,
 }
@@ -136,9 +132,6 @@ pub enum OcompProcessRole {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OcompProcessFault {
-    StopSupervisor {
-        validator_index: u8,
-    },
     StopSnapshotExporter {
         validator_index: u8,
     },
@@ -408,7 +401,6 @@ struct OwnedProcess {
 #[derive(Debug)]
 struct OcompDomain {
     root: PathBuf,
-    supervisor: Option<OwnedProcess>,
     snapshot_exporter: Option<OwnedProcess>,
     workers: BTreeMap<u32, OwnedProcess>,
 }
@@ -417,7 +409,6 @@ impl OcompDomain {
     fn new(root: PathBuf) -> Self {
         Self {
             root,
-            supervisor: None,
             snapshot_exporter: None,
             workers: BTreeMap::new(),
         }
@@ -541,9 +532,7 @@ impl OcompTopology {
                     "staged FullNode domain belongs to validator-{index}, not validator-{validator_index}"
                 );
                 eyre::ensure!(
-                    domain.supervisor.is_none()
-                        && domain.snapshot_exporter.is_none()
-                        && domain.workers.is_empty(),
+                    domain.snapshot_exporter.is_none() && domain.workers.is_empty(),
                     "keyless FullNode roles must stop before validator activation"
                 );
                 domain
@@ -1699,16 +1688,10 @@ impl OcompTopology {
             .ok_or_else(|| eyre::eyre!("OCOMP launch identity is not established"))?;
         let domain = self.keyless_full_node_domain(validator_index)?;
         eyre::ensure!(
-            domain.supervisor.is_none()
-                && domain.snapshot_exporter.is_none()
-                && domain.workers.is_empty(),
+            domain.snapshot_exporter.is_none() && domain.workers.is_empty(),
             "keyless FullNode OCOMP roles are already started"
         );
-        let exporter = self.spawn_keyless_full_node_role(
-            validator_index,
-            OcompProcessRole::SnapshotExporter,
-            identity,
-        )?;
+        let exporter = self.spawn_keyless_full_node_exporter(validator_index, identity)?;
         self.attach_keyless_full_node_owned(
             validator_index,
             OcompProcessRole::SnapshotExporter,
@@ -1791,7 +1774,7 @@ impl OcompTopology {
     ) -> Result<()> {
         let domain = self.domain(validator_index)?;
         eyre::ensure!(
-            domain.supervisor.is_none() && domain.snapshot_exporter.is_none(),
+            domain.snapshot_exporter.is_none(),
             "validator-{validator_index} OCOMP runtime is already started"
         );
 
@@ -1873,7 +1856,7 @@ impl OcompTopology {
             expected_observability_port
         );
 
-        let mut command = self.release_role_command(validator_index, OcompProcessRole::Worker)?;
+        let mut command = self.release_role_command(validator_index);
         command
             .arg("worker")
             .arg("--chain-id")
@@ -1904,14 +1887,10 @@ impl OcompTopology {
     }
 
     #[cfg(feature = "ocomp-integration")]
-    fn release_role_command(&self, validator_index: u8, role: OcompProcessRole) -> Result<Command> {
-        eyre::ensure!(
-            role != OcompProcessRole::Follower,
-            "the FullNode Supervisor is embedded in outbe-chain; no external follower role exists"
-        );
+    fn release_role_command(&self, validator_index: u8) -> Command {
         let mut command = Command::new(&self.cfg.bin_ocomp);
         configure_release_layout(&mut command, &self.cfg.dir, validator_index);
-        Ok(command)
+        command
     }
 
     #[cfg(feature = "ocomp-integration")]
@@ -1922,13 +1901,11 @@ impl OcompTopology {
         identity: OcompLaunchIdentityV1,
     ) -> Result<ChildGuard> {
         let domain_root = self.domain(validator_index)?.root.clone();
-        let role_name = match role {
-            OcompProcessRole::Supervisor => "supervisor",
-            OcompProcessRole::SnapshotExporter => "snapshot-exporter",
-            _ => {
-                eyre::bail!("validator service launcher accepts only fixed node-facing roles");
-            }
-        };
+        eyre::ensure!(
+            role == OcompProcessRole::SnapshotExporter,
+            "validator service launcher accepts only the external SnapshotExporter role"
+        );
+        let role_name = "snapshot-exporter";
         let log_path = domain_root.join(format!("{role_name}.log"));
         let log = OpenOptions::new()
             .create(true)
@@ -1936,7 +1913,7 @@ impl OcompTopology {
             .open(&log_path)?;
         let stderr = log.try_clone()?;
 
-        let mut command = self.release_role_command(validator_index, role)?;
+        let mut command = self.release_role_command(validator_index);
         command
             .arg(role_name)
             .current_dir(&self.cfg.repo)
@@ -1957,36 +1934,20 @@ impl OcompTopology {
                 format!("{:#x}", identity.protocol_bundle_hash),
             )
             .env("OCOMP_REGISTRY_GENERATION", "1");
-        match role {
-            OcompProcessRole::Supervisor => {
-                let validator_index = usize::from(validator_index);
-                command
-                    .arg("--supervisor-address")
-                    .arg(format!(
-                        "127.0.0.1:{}",
-                        self.cfg.ocomp_supervisor_port(validator_index)
-                    ))
-                    .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(validator_index))
-                    .env(OCOMP_VALIDATOR_INDEX_ENV, validator_index.to_string());
-            }
-            OcompProcessRole::SnapshotExporter => {
-                let validator_index = usize::from(validator_index);
-                command
-                    .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(validator_index))
-                    .env(
-                        "OUTBE_OCOMP_PROJECTION_MONGODB_URI",
-                        &self.cfg.projection_mongodb_uri,
-                    )
-                    .env(
-                        "OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE",
-                        format!(
-                            "{}_ocomp",
-                            self.cfg.validator_projection_database(validator_index)
-                        ),
-                    );
-            }
-            _ => unreachable!("fixed node-facing role validated above"),
-        }
+        let validator_index = usize::from(validator_index);
+        command
+            .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(validator_index))
+            .env(
+                "OUTBE_OCOMP_PROJECTION_MONGODB_URI",
+                &self.cfg.projection_mongodb_uri,
+            )
+            .env(
+                "OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE",
+                format!(
+                    "{}_ocomp",
+                    self.cfg.validator_projection_database(validator_index)
+                ),
+            );
         if self.cfg.debug {
             eprintln!(
                 "[ocomp] launch validator-{validator_index} {role_name}: {}",
@@ -2002,20 +1963,13 @@ impl OcompTopology {
     }
 
     #[cfg(feature = "ocomp-integration")]
-    fn spawn_keyless_full_node_role(
+    fn spawn_keyless_full_node_exporter(
         &self,
         validator_index: u8,
-        role: OcompProcessRole,
         identity: OcompLaunchIdentityV1,
     ) -> Result<ChildGuard> {
         let domain_root = self.keyless_full_node_domain(validator_index)?.root.clone();
-        let role_name = match role {
-            OcompProcessRole::Follower => "follower",
-            OcompProcessRole::SnapshotExporter => "snapshot-exporter",
-            _ => {
-                eyre::bail!("FullNode launcher accepts only follower/exporter roles");
-            }
-        };
+        let role_name = "snapshot-exporter";
         let log_path = domain_root.join(format!("{role_name}.log"));
         let log = OpenOptions::new()
             .create(true)
@@ -2023,7 +1977,7 @@ impl OcompTopology {
             .open(&log_path)?;
         let stderr = log.try_clone()?;
         let index = usize::from(validator_index);
-        let mut command = self.release_role_command(validator_index, role)?;
+        let mut command = self.release_role_command(validator_index);
         command
             .arg(role_name)
             .current_dir(&self.cfg.repo)
@@ -2043,30 +1997,16 @@ impl OcompTopology {
                 "OCOMP_PROTOCOL_BUNDLE_HASH",
                 format!("{:#x}", identity.protocol_bundle_hash),
             );
-        match role {
-            OcompProcessRole::Follower => {
-                command
-                    .arg("--supervisor-address")
-                    .arg(format!(
-                        "127.0.0.1:{}",
-                        self.cfg.ocomp_supervisor_port(index)
-                    ))
-                    .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(index));
-            }
-            OcompProcessRole::SnapshotExporter => {
-                command
-                    .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(index))
-                    .env(
-                        "OUTBE_OCOMP_PROJECTION_MONGODB_URI",
-                        &self.cfg.projection_mongodb_uri,
-                    )
-                    .env(
-                        "OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE",
-                        format!("{}_ocomp", self.cfg.validator_projection_database(index)),
-                    );
-            }
-            _ => unreachable!("role validated above"),
-        }
+        command
+            .env("OUTBE_OCOMP_RPC_URL", self.cfg.rpc_url(index))
+            .env(
+                "OUTBE_OCOMP_PROJECTION_MONGODB_URI",
+                &self.cfg.projection_mongodb_uri,
+            )
+            .env(
+                "OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE",
+                format!("{}_ocomp", self.cfg.validator_projection_database(index)),
+            );
         command.stdout(Stdio::from(log)).stderr(Stdio::from(stderr));
         ChildGuard::spawn(
             format!("full-node-{validator_index} OCOMP {role_name}"),
@@ -2111,7 +2051,6 @@ impl OcompTopology {
             OcompProcessRole::Worker => {
                 domain.workers.insert(0, process);
             }
-            _ => unreachable!("role validated above"),
         }
         Ok(())
     }
@@ -2124,7 +2063,6 @@ impl OcompTopology {
                 let process = match role {
                     OcompProcessRole::SnapshotExporter => domain.snapshot_exporter.as_mut(),
                     OcompProcessRole::Worker => domain.workers.get_mut(&0),
-                    _ => unreachable!(),
                 }
                 .ok_or_else(|| eyre::eyre!("FullNode OCOMP {role:?} is missing"))?;
                 (process.record_index, process.guard.exited())
@@ -2134,7 +2072,6 @@ impl OcompTopology {
                 let role_name = match role {
                     OcompProcessRole::SnapshotExporter => "snapshot-exporter",
                     OcompProcessRole::Worker => "worker-0",
-                    _ => unreachable!(),
                 };
                 eyre::bail!(
                     "FullNode OCOMP {role_name} exited during startup:\n{}",
@@ -2528,14 +2465,6 @@ impl OcompTopology {
             eyre::bail!("OCOMP scenario reached the bounded fault-record limit");
         }
         match fault {
-            OcompProcessFault::StopSupervisor { validator_index } => {
-                let process = self
-                    .domain_mut(validator_index)?
-                    .supervisor
-                    .take()
-                    .ok_or_else(|| eyre::eyre!("supervisor is not running"))?;
-                self.stop_owned(process);
-            }
             OcompProcessFault::StopSnapshotExporter { validator_index } => {
                 let process = self
                     .domain_mut(validator_index)?
@@ -2621,16 +2550,6 @@ impl OcompTopology {
             eyre::bail!("OCOMP scenario reached the bounded process-record limit");
         }
         match role {
-            OcompProcessRole::Follower => {
-                eyre::bail!("keyless FullNode roles use their dedicated attachment path");
-            }
-            OcompProcessRole::Supervisor => {
-                let index = validator_index
-                    .ok_or_else(|| eyre::eyre!("supervisor requires a validator index"))?;
-                if worker_ordinal.is_some() || self.domain(index)?.supervisor.is_some() {
-                    eyre::bail!("invalid or duplicate supervisor attachment");
-                }
-            }
             OcompProcessRole::SnapshotExporter => {
                 let index = validator_index
                     .ok_or_else(|| eyre::eyre!("snapshot exporter requires a validator index"))?;
@@ -2663,13 +2582,6 @@ impl OcompTopology {
             record_index,
         };
         match role {
-            OcompProcessRole::Follower => {
-                unreachable!("keyless FullNode roles use their dedicated attachment path")
-            }
-            OcompProcessRole::Supervisor => {
-                self.domain_mut(validator_index.expect("validated above"))?
-                    .supervisor = Some(process);
-            }
             OcompProcessRole::SnapshotExporter => {
                 self.domain_mut(validator_index.expect("validated above"))?
                     .snapshot_exporter = Some(process);
@@ -2816,12 +2728,10 @@ impl Drop for OcompTopology {
         if let Some((_, domain)) = self.keyless_full_node_domain.as_mut() {
             domain.workers.clear();
             domain.snapshot_exporter.take();
-            domain.supervisor.take();
         }
         for domain in &mut self.domains {
             domain.workers.clear();
             domain.snapshot_exporter.take();
-            domain.supervisor.take();
         }
     }
 }
@@ -5273,6 +5183,13 @@ mod tests {
     }
 
     #[test]
+    fn node_owned_ocomp_roles_are_not_external_harness_processes() {
+        for role in ["supervisor", "follower"] {
+            assert!(serde_json::from_str::<OcompProcessRole>(&format!("\"{role}\"")).is_err());
+        }
+    }
+
+    #[test]
     fn typed_fault_stops_only_the_selected_owned_process() {
         if std::env::var_os(CHILD_MODE).is_some() {
             loop {
@@ -5282,24 +5199,34 @@ mod tests {
 
         let mut topology = topology();
         topology
-            .attach_owned(Some(0), OcompProcessRole::Supervisor, None, child_guard())
+            .attach_owned(
+                Some(0),
+                OcompProcessRole::SnapshotExporter,
+                None,
+                child_guard(),
+            )
             .unwrap();
         topology
-            .attach_owned(Some(1), OcompProcessRole::Supervisor, None, child_guard())
+            .attach_owned(
+                Some(1),
+                OcompProcessRole::SnapshotExporter,
+                None,
+                child_guard(),
+            )
             .unwrap();
 
         topology
-            .apply_process_fault(OcompProcessFault::StopSupervisor { validator_index: 0 })
+            .apply_process_fault(OcompProcessFault::StopSnapshotExporter { validator_index: 0 })
             .unwrap();
 
         assert!(topology.records[0].stopped_at_millis.is_some());
         assert!(topology.records[1].stopped_at_millis.is_none());
-        assert!(topology.domains[0].supervisor.is_none());
-        assert!(topology.domains[1].supervisor.is_some());
+        assert!(topology.domains[0].snapshot_exporter.is_none());
+        assert!(topology.domains[1].snapshot_exporter.is_some());
         assert_eq!(
             topology.faults,
             vec![OcompFaultRecordV1 {
-                fault: OcompProcessFault::StopSupervisor { validator_index: 0 },
+                fault: OcompProcessFault::StopSnapshotExporter { validator_index: 0 },
                 applied_at_millis: topology.faults[0].applied_at_millis,
             }]
         );
