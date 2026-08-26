@@ -13,14 +13,14 @@ pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x6Dda31E7211c31dB8E5AF24c7
 /// Minimum-bid-quantity floor: 4% of the prior series' issued count (basis points).
 pub const BID_QUANTITY_FLOOR_BPS: u32 = 400;
 
-/// Currency the load is anchored to; mirrors the oracle's `DAY_TYPE_ISO`.
-pub const PROMIS_LOAD_ANCHOR_ISO: u16 = 840;
+/// Currency one Intex strikes in; mirrors the oracle's `DAY_TYPE_ISO`.
+pub const PROMIS_LOAD_STRIKE_ISO: u16 = 840;
 
-/// Digits `load_minor × coen_usd_rate_minor` carries, pinning one Intex at 100 USD.
-pub const PROMIS_LOAD_ANCHOR_DIGITS: u32 = 15;
+/// Digits of `load_minor × rate_minor`, which holds one Intex's strike in [100, 1000) USD.
+pub const PROMIS_LOAD_STRIKE_DIGITS: u32 = 15;
 
-/// Deadband at each decade boundary, so a rate loitering there stops flipping the load.
-pub const PROMIS_LOAD_BAND_BPS: u32 = 200;
+/// Deadband at each decade boundary, so a rate loitering there stops flipping the load daily.
+pub const PROMIS_LOAD_DEADBAND_BPS: u32 = 200;
 
 /// Fixed load bypassing the ladder: an e2e day cannot afford one laddered Intex.
 #[cfg(not(feature = "e2e-test"))]

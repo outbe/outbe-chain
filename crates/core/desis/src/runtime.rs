@@ -17,7 +17,7 @@ use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
     DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_REFERENCE_PRICES,
     MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS,
-    PROMIS_LOAD_ANCHOR_DIGITS, PROMIS_LOAD_ANCHOR_ISO, PROMIS_LOAD_BAND_BPS,
+    PROMIS_LOAD_STRIKE_DIGITS, PROMIS_LOAD_STRIKE_ISO, PROMIS_LOAD_DEADBAND_BPS,
     PROMIS_LOAD_OVERRIDE, REFUND_CHUNK_LEN,
     REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
@@ -92,10 +92,10 @@ pub(crate) fn record_preflighted_brief(
     Ok(())
 }
 
-const PROMIS_LOAD_MAX_EXPONENT: u32 = PROMIS_LOAD_ANCHOR_DIGITS - 1;
+const PROMIS_LOAD_MAX_EXPONENT: u32 = PROMIS_LOAD_STRIKE_DIGITS - 1;
 
-const POW10: [u128; PROMIS_LOAD_ANCHOR_DIGITS as usize + 1] = {
-    let mut table = [1u128; PROMIS_LOAD_ANCHOR_DIGITS as usize + 1];
+const POW10: [u128; PROMIS_LOAD_STRIKE_DIGITS as usize + 1] = {
+    let mut table = [1u128; PROMIS_LOAD_STRIKE_DIGITS as usize + 1];
     let mut i = 1;
     while i < table.len() {
         table[i] = table[i - 1] * 10;
@@ -121,7 +121,7 @@ fn decimal_digits(rate: U256) -> u32 {
 
 /// The decade the anchor alone picks, which puts `load × rate` at the 100 USD strike.
 fn anchor_exponent(rate: U256) -> u32 {
-    PROMIS_LOAD_ANCHOR_DIGITS
+    PROMIS_LOAD_STRIKE_DIGITS
         .saturating_sub(decimal_digits(rate))
         .min(PROMIS_LOAD_MAX_EXPONENT)
 }
@@ -134,10 +134,10 @@ pub(crate) fn promis_load_exponent(current: Option<u32>, rate: U256) -> u32 {
         return anchor_exponent(rate);
     };
     let exponent = exponent.min(PROMIS_LOAD_MAX_EXPONENT);
-    let decade = (PROMIS_LOAD_ANCHOR_DIGITS - exponent) as usize;
+    let decade = (PROMIS_LOAD_STRIKE_DIGITS - exponent) as usize;
     let scaled = rate * U256::from(10_000u32);
-    let lo = U256::from(POW10[decade - 1]) * U256::from(10_000 - PROMIS_LOAD_BAND_BPS);
-    let hi = U256::from(POW10[decade]) * U256::from(10_000 + PROMIS_LOAD_BAND_BPS);
+    let lo = U256::from(POW10[decade - 1]) * U256::from(10_000 - PROMIS_LOAD_DEADBAND_BPS);
+    let hi = U256::from(POW10[decade]) * U256::from(10_000 + PROMIS_LOAD_DEADBAND_BPS);
     if scaled >= lo && scaled < hi {
         exponent
     } else {
@@ -162,7 +162,7 @@ fn step_promis_load(
     // widest load is the honest answer: this day cannot be priced at all.
     let Some(rate) = reference_prices
         .iter()
-        .find(|row| row.iso_code == PROMIS_LOAD_ANCHOR_ISO)
+        .find(|row| row.iso_code == PROMIS_LOAD_STRIKE_ISO)
         .map(|row| row.entry_price_minor)
     else {
         return Ok(promis_load_minor(
