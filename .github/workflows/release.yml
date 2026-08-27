@@ -89,24 +89,24 @@ jobs:
       contents: read
       actions: write
     env:
-      MAINNET_GENESIS_SHA256: ${{ vars.MAINNET_GENESIS_SHA256 }}
-      MAINNET_GENESIS_URL: ${{ vars.MAINNET_GENESIS_URL }}
+      OUTBE_MAINNET_GENESIS_SHA256: ${{ vars.OUTBE_MAINNET_GENESIS_SHA256 }}
+      OUTBE_MAINNET_GENESIS_URL: ${{ vars.OUTBE_MAINNET_GENESIS_URL }}
     steps:
       - uses: actions/checkout@v6
       - name: Dispatch mainnet-release.yml for this tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          OUTBE_RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-mainnet\.[0-9]+$ ]] || {
-            echo "not an immutable Mainnet tag: ${RELEASE_TAG}" >&2
+          [[ "${OUTBE_RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-mainnet\.[0-9]+$ ]] || {
+            echo "not an immutable Mainnet tag: ${OUTBE_RELEASE_TAG}" >&2
             exit 2
           }
-          test -n "${MAINNET_GENESIS_URL}"
-          [[ "${MAINNET_GENESIS_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          test -n "${OUTBE_MAINNET_GENESIS_URL}"
+          [[ "${OUTBE_MAINNET_GENESIS_SHA256}" =~ ^[0-9a-f]{64}$ ]]
           gh workflow run mainnet-release.yml \
             --ref main \
-            --field release_tag="${RELEASE_TAG}" \
-            --field genesis_url="${MAINNET_GENESIS_URL}" \
-            --field genesis_sha256="${MAINNET_GENESIS_SHA256}"
+            --field release_tag="${OUTBE_RELEASE_TAG}" \
+            --field genesis_url="${OUTBE_MAINNET_GENESIS_URL}" \
+            --field genesis_sha256="${OUTBE_MAINNET_GENESIS_SHA256}"

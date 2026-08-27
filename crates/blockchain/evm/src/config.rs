@@ -1966,7 +1966,7 @@ mod tests {
     }
 
     #[test]
-    fn config_fixture_uses_the_shared_outbe_test_process_chain() {
+    fn config_fixture_uses_the_gramine_direct_dev_chain_identity() {
         let chain_spec = test_chain_spec();
         assert_eq!(chain_spec.chain().id(), GRAMINE_DIRECT_DEV_CHAIN_ID);
         assert_eq!(

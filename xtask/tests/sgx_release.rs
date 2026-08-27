@@ -472,17 +472,18 @@ fn mainnet_release_workflow_requires_a_pinned_genesis_and_closed_profile() {
         "genesis_sha256:",
         "environment: mainnet-release",
         "runs-on: mainnet-release-sgx",
-        "MAINNET_SGX_SIGNING_KEY_B64",
+        "OUTBE_MAINNET_SGX_SIGNING_KEY_B64",
         "--network mainnet",
-        "--genesis \"${MAINNET_GENESIS}\"",
+        "--genesis \"${RUNNER_TEMP}/release-inputs/mainnet-genesis.json\"",
         "outbe-tee-enclave-mainnet",
     ] {
         assert!(workflow.contains(required), "missing {required}");
     }
     assert!(workflow.contains("sha256sum --check"));
-    assert!(
-        workflow.contains("test \"$(jq -er '.config.chainId' \"${MAINNET_GENESIS}\")\" = '676'")
-    );
+    assert!(workflow.contains(concat!(
+        "test \"$(jq -er '.config.chainId' \\\n",
+        "            \"${RUNNER_TEMP}/release-inputs/mainnet-genesis.json\")\" = '676'"
+    )));
     assert!(!workflow.contains("testnet"));
     assert!(!workflow.contains("--clobber"));
     assert!(!workflow.contains("gh release upload"));
@@ -494,8 +495,12 @@ fn mainnet_release_workflow_requires_a_pinned_genesis_and_closed_profile() {
         fs::read_to_string(root.join(".github/workflows/release.yml")).expect("release dispatcher");
     assert!(dispatcher.contains("!contains(github.ref_name, '-mainnet.')"));
     assert!(dispatcher.contains("gh workflow run mainnet-release.yml"));
-    assert!(dispatcher.contains("MAINNET_GENESIS_URL: ${{ vars.MAINNET_GENESIS_URL }}"));
-    assert!(dispatcher.contains("MAINNET_GENESIS_SHA256: ${{ vars.MAINNET_GENESIS_SHA256 }}"));
+    assert!(dispatcher.contains(
+        "OUTBE_MAINNET_GENESIS_URL: ${{ vars.OUTBE_MAINNET_GENESIS_URL }}"
+    ));
+    assert!(dispatcher.contains(
+        "OUTBE_MAINNET_GENESIS_SHA256: ${{ vars.OUTBE_MAINNET_GENESIS_SHA256 }}"
+    ));
 }
 
 #[test]
