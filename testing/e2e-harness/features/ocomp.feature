@@ -19,8 +19,9 @@ Feature: Off-chain computation and Metadosis
     And every OCOMP transaction signer is distinct and scoped only to the OCOMP role
     When the committee logical clock reaches the fresh capacity OFFERING window
     Then the same fresh capacity day advances through LOOKBACK to OFFERING
-    When an operator submits one encrypted tribute offer
+    When an operator submits one encrypted tribute offer with WAA and SRA beneficiaries
     Then the tribute transaction succeeds and supply becomes one
+    And the WAA and SRA beneficiaries have no reward before their execution UTC day settles
     And every validator projects the same tribute and indexes
     And every validator serves the same independently verified compressed tribute
     When a fifth node syncs as a non-voting FullNode
@@ -50,6 +51,10 @@ Feature: Off-chain computation and Metadosis
     When the day's auction proceeds arrive from one chain
     Then every certified contributor is paid their share
     And the public Tribute owner settles its Nod and redeems its exact Gratis into COEN
+    When the offer execution UTC day reaches its next ProtocolCycle settlement
+    Then every validator observes the same nonzero WAA and SRA AgentReward
+    When both beneficiaries claim their complete AgentReward with paid transactions
+    Then the paid claims clear both claimables and debit the AgentReward escrow exactly
 
   @ocomp-materialization
   Scenario: A certified generation is materialized into user NODs in bounded batches

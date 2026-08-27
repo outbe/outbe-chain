@@ -456,14 +456,17 @@ impl Localnet {
             self.radicle_control_socket(i).display(),
             "--radicle.status-address",
             format!("127.0.0.1:{}", self.cfg.radicle_status_port(i)),
-            // Pool-eviction scenarios must converge in seconds, not the
-            // production 600s / 120s: shorten both the pending staleness
-            // interval and the parked lifetime.
-            "--txpool.outbe.pending-staleness-secs",
-            "20",
-            "--txpool.lifetime",
-            "30s",
         ]);
+        if opts.is_txpool_eviction_profile {
+            // The dedicated pool-eviction scenario must converge in seconds,
+            // while every ordinary localnet retains production pool policy.
+            a.extend(args![
+                "--txpool.outbe.pending-staleness-secs",
+                "20",
+                "--txpool.lifetime",
+                "30s",
+            ]);
+        }
         if self.tee_enabled() {
             a.extend(args![
                 "--tee-enclave-socket",

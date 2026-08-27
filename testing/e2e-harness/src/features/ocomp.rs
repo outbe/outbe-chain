@@ -251,6 +251,7 @@ fn fresh_metadosis_capacity_localnet_at_forming(world: &mut World) {
         voting_window: Some(6),
         unix_time_offset_secs: Some(initial_offset),
         genesis_timestamp_pre_shifted: true,
+        is_txpool_eviction_profile: false,
     };
     launch_prepared_ocomp(world, &mut start_opts, &prepared, true);
     wait_for_finalized_ocomp_activation(world);
@@ -2108,7 +2109,10 @@ pub(crate) fn restart_committee_at_logical_time(
     let before_height = before_restart[0].block_number;
     let offset = logical_time_offset(requested_timestamp, unix_time_secs());
     let price_publication = crate::features::price_oracle::stop_before_clock_restart(world);
-    stop_ocomp_roles_before_committee_time_change(world);
+    let ocomp_resume_plan = world
+        .ocomp
+        .suspend_node_facing_roles()
+        .expect("suspend OCOMP node-facing roles before committee time change");
     world
         .localnet
         .restart_committee_at_unix_time_offset(offset)
@@ -2125,52 +2129,16 @@ pub(crate) fn restart_committee_at_logical_time(
     let _ = finalized_points_at_common_height(world, minimum_height);
     let pending_price_publication =
         crate::features::price_oracle::resume_after_clock_restart(world, price_publication);
-    restart_ocomp_roles_after_committee_time_change(world);
+    world
+        .ocomp
+        .resume_node_facing_roles(ocomp_resume_plan)
+        .expect("resume OCOMP node-facing roles after committee time change");
     (
         offset,
         before_restart,
         minimum_height,
         pending_price_publication,
     )
-}
-
-fn stop_ocomp_roles_before_committee_time_change(world: &mut World) {
-    for validator_index in 0..4_u8 {
-        world
-            .ocomp
-            .apply_process_fault(OcompProcessFault::StopWorker {
-                validator_index,
-                worker_ordinal: 0,
-            })
-            .unwrap_or_else(|error| {
-                panic!("stop validator-{validator_index} Worker before node restart: {error}")
-            });
-        world
-            .ocomp
-            .apply_process_fault(OcompProcessFault::StopSnapshotExporter { validator_index })
-            .unwrap_or_else(|error| {
-                panic!("stop validator-{validator_index} RPC exporter before node restart: {error}")
-            });
-    }
-}
-
-fn restart_ocomp_roles_after_committee_time_change(world: &mut World) {
-    for validator_index in 0..4_u8 {
-        world
-            .ocomp
-            .restart_snapshot_exporter(validator_index)
-            .unwrap_or_else(|error| {
-                panic!("restart validator-{validator_index} RPC exporter: {error}")
-            });
-        world
-            .ocomp
-            .restart_worker(validator_index, 0)
-            .unwrap_or_else(|error| panic!("restart validator-{validator_index} Worker: {error}"));
-    }
-    world
-        .ocomp
-        .ensure_validator_roles_alive()
-        .expect("all OCOMP RPC exporters remain live after logical-time change");
 }
 
 fn finalized_points_at_common_height(
@@ -2965,7 +2933,10 @@ fn held_vote_is_broadcast_at_deadline(world: &mut World) {
 
 #[then("three matching validator domains atomically apply Lysis and create the Nod")]
 fn quorum_applies_lysis_and_creates_nod(world: &mut World) {
-    quorum_applies_lysis_and_creates_nod_with_vote_count(world, 4);
+    quorum_applies_lysis_and_creates_nod_with_vote_expectation(
+        world,
+        PublicVoteSetExpectation::AnyQuorum,
+    );
 }
 
 #[then("Lysis and OCOMP use the WWD VWAP below the active S-curve")]
@@ -3004,30 +2975,69 @@ fn lysis_and_ocomp_use_wwd_below_scurve(world: &mut World) {
 
 #[then("three compatible validator domains atomically apply Lysis and create the Nod")]
 fn compatible_quorum_applies_lysis_and_creates_nod(world: &mut World) {
-    quorum_applies_lysis_and_creates_nod_with_vote_count(world, 3);
+    quorum_applies_lysis_and_creates_nod_with_vote_expectation(
+        world,
+        PublicVoteSetExpectation::Exact(&[1, 2, 3]),
+    );
 }
 
-fn quorum_applies_lysis_and_creates_nod_with_vote_count(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PublicVoteSetExpectation {
+    AnyQuorum,
+    Exact(&'static [u16]),
+}
+
+fn public_vote_set_matches(
+    expectation: PublicVoteSetExpectation,
+    validator_indexes: &[u16],
+    quorum_threshold: usize,
+) -> bool {
+    match expectation {
+        PublicVoteSetExpectation::AnyQuorum => validator_indexes.len() >= quorum_threshold,
+        PublicVoteSetExpectation::Exact(expected) => validator_indexes == expected,
+    }
+}
+
+fn completed_accountability_is_preserved(
+    expected: &crate::world::rpc::OcompPublicVoteAccountabilityV1,
+    observed: &crate::world::rpc::OcompPublicVoteAccountabilityV1,
+) -> bool {
+    expected.job_id == observed.job_id
+        && expected.result_validator_set_epoch == observed.result_validator_set_epoch
+        && expected.result_committee_set_hash == observed.result_committee_set_hash
+        && expected.result_ocomp_binding_hash == observed.result_ocomp_binding_hash
+        && expected.member_count == observed.member_count
+        && expected.quorum_threshold == observed.quorum_threshold
+        && expected.quorum_result_digest == observed.quorum_result_digest
+        && expected.quorum_height == observed.quorum_height
+        && expected.quorum_signer_bitmap == observed.quorum_signer_bitmap
+        && expected
+            .slot_validator_indexes
+            .iter()
+            .all(|index| observed.slot_validator_indexes.contains(index))
+        && expected
+            .slot_first_signatures
+            .iter()
+            .all(|signature| observed.slot_first_signatures.contains(signature))
+}
+
+fn quorum_applies_lysis_and_creates_nod_with_vote_expectation(
     world: &mut World,
-    expected_vote_count: usize,
+    vote_expectation: PublicVoteSetExpectation,
 ) {
     let request = world
         .state
         .ocomp_job_request
         .clone()
         .expect("finalized public JobIntent");
-    quorum_applies_lysis_and_creates_nod_for_request(world, request, expected_vote_count);
+    quorum_applies_lysis_and_creates_nod_for_request(world, request, vote_expectation);
 }
 
 fn quorum_applies_lysis_and_creates_nod_for_request(
     world: &mut World,
     request: crate::world::rpc::OcompPublicJobRequestV1,
-    expected_vote_count: usize,
+    vote_expectation: PublicVoteSetExpectation,
 ) {
-    assert!(
-        matches!(expected_vote_count, 3 | 4),
-        "PoC quorum scenario expects either three or four public votes"
-    );
     let deadline = Instant::now() + Duration::from_secs(600);
     loop {
         let ports = world.validators.committee_ports();
@@ -3105,7 +3115,11 @@ fn quorum_applies_lysis_and_creates_nod_for_request(
                     .collect::<Vec<_>>();
                 if observed.iter().all(|value| {
                     value.as_ref().is_some_and(|accountability| {
-                        accountability.slot_validator_indexes.len() == expected_vote_count
+                        public_vote_set_matches(
+                            vote_expectation,
+                            &accountability.slot_validator_indexes,
+                            usize::from(accountability.quorum_threshold),
+                        )
                     })
                 }) {
                     let first = observed[0]
@@ -3119,21 +3133,13 @@ fn quorum_applies_lysis_and_creates_nod_for_request(
                 }
                 assert!(
                     Instant::now() < accountability_deadline,
-                    "the expected {expected_vote_count} timely validator votes did not reach \
+                    "the expected {vote_expectation:?} validator vote set did not reach \
                      finalized accountability: {observed:?}"
                 );
                 sleep(Duration::from_millis(250));
             };
             assert_eq!(accountability.job_id, activation.job_id);
-            let expected_validator_indexes = if expected_vote_count == 4 {
-                vec![0, 1, 2, 3]
-            } else {
-                vec![1, 2, 3]
-            };
-            assert_eq!(
-                accountability.slot_validator_indexes,
-                expected_validator_indexes
-            );
+            let observed_vote_count = accountability.slot_validator_indexes.len();
             assert_eq!(
                 accountability.quorum_result_digest,
                 Some(activation.result_digest)
@@ -3189,7 +3195,7 @@ fn quorum_applies_lysis_and_creates_nod_for_request(
                     .iter()
                     .filter(|transaction| transaction.success)
                     .count(),
-                expected_vote_count,
+                observed_vote_count,
                 "unexpected number of independent successful public validator result votes"
             );
             let mut signers = first_votes
@@ -3200,7 +3206,7 @@ fn quorum_applies_lysis_and_creates_nod_for_request(
             signers.dedup();
             assert_eq!(
                 signers.len(),
-                expected_vote_count,
+                observed_vote_count,
                 "public result votes must come from the expected distinct validator EVM signers"
             );
             assert!(
@@ -3798,7 +3804,11 @@ fn completed_job_and_generation_are_unchanged(world: &mut World) {
             .rpc
             .finalized_ocomp_vote_accountability_on(port, activation.job_id)
             .expect("accountability after public retry/mutation");
-        assert_eq!(&accountability, expected_accountability);
+        assert!(
+            completed_accountability_is_preserved(expected_accountability, &accountability),
+            "completed accountability binding/quorum changed after public retry/mutation: \
+             expected={expected_accountability:?} observed={accountability:?}"
+        );
 
         let generation = world
             .rpc
@@ -4912,7 +4922,11 @@ fn retry_preserves_receipt_and_completes(world: &mut World) {
         .ocomp_retry_job_request
         .clone()
         .expect("finalized automatic retry JobIntent");
-    quorum_applies_lysis_and_creates_nod_for_request(world, retry.clone(), 4);
+    quorum_applies_lysis_and_creates_nod_for_request(
+        world,
+        retry.clone(),
+        PublicVoteSetExpectation::Exact(&[0, 1, 2, 3]),
+    );
 
     let activation = world
         .state
@@ -5206,7 +5220,10 @@ fn restart_completed_network_and_ocomp_processes(world: &mut World) {
     // External clients depend on node RPC and projection storage. Stop the
     // complete cohort before taking down any validator, exactly as the initial
     // production-shaped launch starts them only after committee readiness.
-    stop_ocomp_roles_before_committee_time_change(world);
+    let ocomp_resume_plan = world
+        .ocomp
+        .suspend_node_facing_roles()
+        .expect("suspend OCOMP node-facing roles before preserved-data restart");
     world
         .localnet
         .restart_committee_preserving_enclaves()
@@ -5232,7 +5249,10 @@ fn restart_completed_network_and_ocomp_processes(world: &mut World) {
         }),
     );
     let _ = finalized_points_at_common_height(world, convergence_target);
-    restart_ocomp_roles_after_committee_time_change(world);
+    world
+        .ocomp
+        .resume_node_facing_roles(ocomp_resume_plan)
+        .expect("resume OCOMP node-facing roles after preserved-data restart");
 }
 
 #[then("the completed generation and exact vote replay remain identical")]
@@ -5478,13 +5498,80 @@ fn runtime_traces_cover_ocomp_execution_paths(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::{
-        bounded_completion_decision, dynamic_live_ports_after_jail,
-        dynamic_oracle_refresh_timestamp, dynamic_pre_restart_vote_baseline_ready,
-        first_protocol_cycle_at_or_after_interval, joiner_restart_is_in_safe_early_epoch_window,
-        monotonic_progress_decision, post_restart_convergence_target, BoundedCompletionDecision,
-        ProgressWaitDecision, RestartBarrierDecision, RestartBarrierState,
-        OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
+        bounded_completion_decision, completed_accountability_is_preserved,
+        dynamic_live_ports_after_jail, dynamic_oracle_refresh_timestamp,
+        dynamic_pre_restart_vote_baseline_ready, first_protocol_cycle_at_or_after_interval,
+        joiner_restart_is_in_safe_early_epoch_window, monotonic_progress_decision,
+        post_restart_convergence_target, public_vote_set_matches, BoundedCompletionDecision,
+        ProgressWaitDecision, PublicVoteSetExpectation, RestartBarrierDecision,
+        RestartBarrierState, OCOMP_CAPACITY_SUBMISSION_CONCURRENCY,
     };
+    use crate::world::rpc::OcompPublicVoteAccountabilityV1;
+
+    fn completed_accountability() -> OcompPublicVoteAccountabilityV1 {
+        OcompPublicVoteAccountabilityV1 {
+            job_id: alloy_primitives::B256::repeat_byte(0x11),
+            result_validator_set_epoch: 7,
+            result_committee_set_hash: alloy_primitives::B256::repeat_byte(0x22),
+            result_ocomp_binding_hash: alloy_primitives::B256::repeat_byte(0x33),
+            member_count: 4,
+            quorum_threshold: 3,
+            slot_validator_indexes: vec![0, 1, 2],
+            slot_first_signatures: vec![(0, vec![0xa0]), (1, vec![0xa1]), (2, vec![0xa2])],
+            quorum_result_digest: Some(alloy_primitives::B256::repeat_byte(0x44)),
+            quorum_height: Some(92),
+            quorum_signer_bitmap: Some(vec![0b0000_0111]),
+            closed_height: None,
+            timely_bitmap: None,
+            matching_bitmap: None,
+            divergent_bitmap: None,
+            missing_bitmap: None,
+            equivocation_bitmap: None,
+        }
+    }
+
+    #[test]
+    fn completed_accountability_allows_only_monotonic_late_vote_extension() {
+        let expected = completed_accountability();
+        let mut extended = expected.clone();
+        extended.slot_validator_indexes.push(3);
+        extended.slot_first_signatures.push((3, vec![0xa3]));
+
+        assert!(completed_accountability_is_preserved(&expected, &extended));
+
+        let mut changed_quorum = extended.clone();
+        changed_quorum.quorum_height = Some(93);
+        assert!(!completed_accountability_is_preserved(
+            &expected,
+            &changed_quorum
+        ));
+
+        let mut replaced_signature = extended;
+        replaced_signature.slot_first_signatures[0].1 = vec![0xff];
+        assert!(!completed_accountability_is_preserved(
+            &expected,
+            &replaced_signature
+        ));
+    }
+
+    #[test]
+    fn ordinary_ocomp_completion_accepts_the_first_canonical_quorum() {
+        assert!(public_vote_set_matches(
+            PublicVoteSetExpectation::AnyQuorum,
+            &[0, 1, 2],
+            3,
+        ));
+        assert!(!public_vote_set_matches(
+            PublicVoteSetExpectation::AnyQuorum,
+            &[0, 1],
+            3,
+        ));
+        assert!(!public_vote_set_matches(
+            PublicVoteSetExpectation::Exact(&[1, 2, 3]),
+            &[0, 1, 2],
+            3,
+        ));
+    }
 
     #[test]
     fn dynamic_pre_restart_baseline_waits_for_all_three_job_b_votes() {
