@@ -1075,3 +1075,21 @@ fn the_payout_drain_takes_a_bounded_slice_and_reaches_every_round() {
         assert_eq!(outbe_intex::api::active_dist_count(&s).unwrap(), 0);
     });
 }
+
+#[test]
+fn a_day_no_chain_ever_paid_into_leaves_the_awaiting_set() {
+    with_factory(|s| {
+        let wwd = WorldwideDay::new(2026_0301);
+        // Two winning chains and not one delivery: the fan-in can never complete.
+        outbe_intex::api::arm_proceeds(&s, wwd, &[10, 20], DEADLINE_FUTURE).unwrap();
+        assert_eq!(outbe_intex::api::awaiting_proceeds_count(&s).unwrap(), 1);
+
+        // Before the deadline the day is still owed its proceeds.
+        runtime::sweep_proceeds_deadlines(&s, DEADLINE_FUTURE - 1).unwrap();
+        assert_eq!(outbe_intex::api::awaiting_proceeds_count(&s).unwrap(), 1);
+
+        // Past it there is nothing left to wait for, so the day stops being swept.
+        runtime::sweep_proceeds_deadlines(&s, DEADLINE_FUTURE + 1).unwrap();
+        assert_eq!(outbe_intex::api::awaiting_proceeds_count(&s).unwrap(), 0);
+    });
+}

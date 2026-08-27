@@ -404,11 +404,11 @@ pub(crate) fn try_settle_proceeds(
 
     let pot = outbe_intex::api::take_proceeds_pot(storage, worldwide_day)?;
     if pot.is_zero() {
-        // Nothing new to pay. Once every chain is in, finalize (clears the map);
-        // a forced empty round just idles until a late arrival tops the pot up.
-        if complete {
-            outbe_intex::api::finalize_proceeds(storage, worldwide_day)?;
-        }
+        // Nothing to pay, and nothing left to wait for: an incomplete fan-in only
+        // reaches here past its deadline. Finalize either way, so a day no chain
+        // ever paid into leaves the awaiting set instead of being re-swept forever.
+        // A later arrival is still caught, and burned, by the branches above.
+        outbe_intex::api::finalize_proceeds(storage, worldwide_day)?;
         return Ok(());
     }
 
