@@ -555,12 +555,12 @@ where
             }
             _ = poll.tick() => {
                 if let Err(error) = runtime.reconcile() {
-                    runtime.latch_fatal(B256::ZERO, error.to_string())?;
+                    runtime.latch_fatal(B256::ZERO, format!("{error:#}"))?;
                     wait_for_node_teardown().await;
                 }
                 while let Ok(outcome) = runtime.compute_rx.try_recv() {
                     if let Err(error) = runtime.handle_compute(outcome) {
-                        runtime.latch_fatal(B256::ZERO, error.to_string())?;
+                        runtime.latch_fatal(B256::ZERO, format!("{error:#}"))?;
                         wait_for_node_teardown().await;
                     }
                     if runtime.fatal.is_some() {
@@ -569,7 +569,7 @@ where
                 }
                 while let Ok(outcome) = runtime.vote_rx.try_recv() {
                     if let Err(error) = runtime.handle_vote(outcome) {
-                        runtime.latch_fatal(B256::ZERO, error.to_string())?;
+                        runtime.latch_fatal(B256::ZERO, format!("{error:#}"))?;
                         wait_for_node_teardown().await;
                     }
                     if runtime.fatal.is_some() {
@@ -1264,7 +1264,7 @@ where
         match classified {
             Ok(projection) => Ok(Some(projection)),
             Err(error) => {
-                self.latch_fatal(job_id, error.to_string())?;
+                self.latch_fatal(job_id, format!("{error:#}"))?;
                 Ok(None)
             }
         }
