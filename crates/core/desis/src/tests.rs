@@ -237,6 +237,38 @@ fn mark_done(s: &StorageHandle, chain: u32, gen: u32, total_batches: u16, total_
     .unwrap();
 }
 
+/// Relay `n` bids the way the codec does: batches no wider than one message, then
+/// the done marker. A single oversized batch is refused at the intake.
+fn relay_bids(s: &StorageHandle, chain: u32, gen: u32, n: u8, rate: u32) {
+    let cap = u8::try_from(crate::constants::MAX_BIDS_PER_BATCH).unwrap();
+    let total_batches = u16::from(n.div_ceil(cap));
+    for batch_index in 0..total_batches {
+        let start = u8::try_from(batch_index).unwrap() * cap;
+        let end = start.saturating_add(cap).min(n);
+        runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            chain,
+            gen,
+            batch_index,
+            total_batches,
+            (start..end)
+                .map(|i| BidData {
+                    bidder_address: bidder(i),
+                    intex_bid_rate: rate,
+                    timestamp: i as u32,
+                    intex_quantity: 1,
+                    issuance_currency: REFERENCE_ISO,
+                    reference_currency: REFERENCE_ISO,
+                })
+                .collect(),
+        )
+        .unwrap();
+    }
+    mark_done(s, chain, gen, total_batches, u32::from(n));
+}
+
 /// Run the begin-block gate clearing for the day (every snapshot chain finalized).
 fn clear(s: &StorageHandle) -> crate::schema::ClearingResult {
     runtime::force_clear(s.clone(), WORLDWIDE_DAY, NOW)
@@ -1058,18 +1090,7 @@ fn schedule_retires_an_overdue_day() {
 fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
     with_storage(|s| {
         open_clearing(&s, 100);
-        runtime::process_bids_batch(
-            s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
-            1,
-            0,
-            1,
-            bids(100, 200),
-        )
-        .unwrap();
-        mark_done(&s, SRC_CHAIN, 1, 1, 100);
+        relay_bids(&s, SRC_CHAIN, 1, 100, 200);
         assert_eq!(clear(&s).issued_intex_count, 100);
 
         // Ten times the rate of the fixture, which is past the deadband.
@@ -1116,27 +1137,7 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
 fn schedule_derives_min_bid_qty_from_prior_clearing() {
     with_storage(|s| {
         open_clearing(&s, 100);
-        runtime::process_bids_batch(
-            s.clone(),
-            ORIGIN_ROUTER_ADDRESS,
-            WORLDWIDE_DAY,
-            SRC_CHAIN,
-            1,
-            0,
-            1,
-            (0..100u8)
-                .map(|i| BidData {
-                    bidder_address: bidder(i),
-                    intex_bid_rate: 200,
-                    timestamp: i as u32,
-                    intex_quantity: 1,
-                    issuance_currency: REFERENCE_ISO,
-                    reference_currency: REFERENCE_ISO,
-                })
-                .collect(),
-        )
-        .unwrap();
-        mark_done(&s, SRC_CHAIN, 1, 1, 100);
+        relay_bids(&s, SRC_CHAIN, 1, 100, 200);
         clear(&s);
 
         brief_at(&s, NEXT_WORLDWIDE_DAY, 10 * LOAD_MINOR, true);
@@ -1189,6 +1190,33 @@ fn process_bids_rejects_non_origin_caller() {
             bids(3, 200)
         )
         .is_err());
+        let contract = s.contract::<DesisContract>();
+        assert_eq!(contract.day_bid_count.read(&WORLDWIDE_DAY).unwrap(), 0);
+    });
+}
+
+#[test]
+fn process_bids_rejects_an_oversized_batch() {
+    use crate::constants::MAX_BIDS_PER_BATCH;
+    with_storage(|s| {
+        open_revealing(&s);
+        let over = u8::try_from(MAX_BIDS_PER_BATCH + 1).unwrap();
+        let error = runtime::process_bids_batch(
+            s.clone(),
+            ORIGIN_ROUTER_ADDRESS,
+            WORLDWIDE_DAY,
+            SRC_CHAIN,
+            1,
+            0,
+            1,
+            bids(over, 200),
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:?}").contains("over the"),
+            "unexpected error: {error:?}"
+        );
+        // Refused at the intake, so clearing never sees a day it cannot refund.
         let contract = s.contract::<DesisContract>();
         assert_eq!(contract.day_bid_count.read(&WORLDWIDE_DAY).unwrap(), 0);
     });

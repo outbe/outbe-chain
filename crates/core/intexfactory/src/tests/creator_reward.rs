@@ -973,3 +973,21 @@ fn late_proceeds_after_an_ownerless_certified_day_burn() {
         assert_eq!(s.balance(INTEX_FACTORY_ADDRESS).unwrap(), U256::ZERO);
     });
 }
+
+#[test]
+fn a_day_no_chain_ever_paid_into_leaves_the_awaiting_set() {
+    with_factory(|s| {
+        let wwd = WorldwideDay::new(2026_0301);
+        // Two winning chains and not one delivery: the fan-in can never complete.
+        outbe_intex::api::arm_proceeds(&s, wwd, &[10, 20], DEADLINE_FUTURE).unwrap();
+        assert_eq!(outbe_intex::api::awaiting_proceeds_count(&s).unwrap(), 1);
+
+        // Before the deadline the day is still owed its proceeds.
+        runtime::sweep_proceeds_deadlines(&s, DEADLINE_FUTURE - 1).unwrap();
+        assert_eq!(outbe_intex::api::awaiting_proceeds_count(&s).unwrap(), 1);
+
+        // Past it there is nothing left to wait for, so the day stops being swept.
+        runtime::sweep_proceeds_deadlines(&s, DEADLINE_FUTURE + 1).unwrap();
+        assert_eq!(outbe_intex::api::awaiting_proceeds_count(&s).unwrap(), 0);
+    });
+}

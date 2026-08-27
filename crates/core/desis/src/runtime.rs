@@ -15,10 +15,10 @@ use outbe_intexfactory::SeriesId;
 
 use crate::constants::{
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, COMMIT_WINDOW_SECONDS, DAY_STATE_GREEN,
-    DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_REFERENCE_PRICES,
-    MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_DEADBAND_BPS,
-    PROMIS_LOAD_OVERRIDE, PROMIS_LOAD_STRIKE_ISO, PROMIS_LOAD_STRIKE_USD, REFUND_CHUNK_LEN,
-    REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
+    DAY_STATE_RED, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, MAX_BIDS_PER_BATCH,
+    MAX_BID_BATCHES, MAX_REFERENCE_PRICES, MAX_REFUND_CHUNKS, MIN_COMMIT_WINDOW_SECONDS,
+    ORIGIN_ROUTER_ADDRESS, PROMIS_LOAD_DEADBAND_BPS, PROMIS_LOAD_OVERRIDE, PROMIS_LOAD_STRIKE_ISO,
+    PROMIS_LOAD_STRIKE_USD, REFUND_CHUNK_LEN, REVEAL_WINDOW_SECONDS, SETTLEMENT_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -621,10 +621,15 @@ pub fn process_bids_batch(
     require_origin_router(caller)?;
     require_nonzero_worldwide_day(worldwide_day)?;
     // The arrival bitmap is a U256, so at most 256 batches (batch_index 0..=255) are trackable.
-    if total_batches == 0 || total_batches > 256 || batch_index >= total_batches {
+    if total_batches == 0 || total_batches > MAX_BID_BATCHES || batch_index >= total_batches {
         return Err(PrecompileError::Revert(
             "processBidsBatch: invalid batch index/total".into(),
         ));
+    }
+    // Same reason as the currency check below: an over-wide batch is admissible
+    // here but not at clearing, where the refund fan-out would reject the day.
+    if bids.len() > MAX_BIDS_PER_BATCH {
+        return Err(DesisError::BidBatchTooLarge(bids.len(), MAX_BIDS_PER_BATCH).into());
     }
     // Checked here because clearing cannot recover from it: an unspellable code would
     // otherwise surface as a day whose clearing reverts every block.
@@ -832,9 +837,9 @@ pub fn force_clear(
     clear_inner(storage, worldwide_day, &snapshot, &included, &skipped).map(Some)
 }
 
-/// Begin-block tick: attempt to clear every day awaiting the fan-in gate. Each
-/// day runs in its own checkpoint — an Err rolls that day back (retried next
-/// block) and never escapes into the block hook chain.
+/// Cycle `auction_clearing` trigger: attempt to clear every day awaiting the
+/// fan-in gate. Each day runs in its own checkpoint — an Err rolls that day
+/// back (retried next slot) and never escapes into the trigger chain.
 pub fn tick_gate(ctx: &BlockRuntimeContext) -> Result<()> {
     let storage = ctx.storage.clone();
     let count = {
