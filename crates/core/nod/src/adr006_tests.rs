@@ -151,6 +151,7 @@ fn certified_generation_is_available_through_the_public_nod_abi() {
         worldwide_day,
         generation: 9,
         job_id: B256::repeat_byte(0x44),
+        protocol_bundle_hash: B256::repeat_byte(0x5b),
         program_semantics_hash: B256::repeat_byte(0x55),
         nod_root: B256::repeat_byte(0x11),
         bucket_root: B256::repeat_byte(0x22),
@@ -193,6 +194,9 @@ fn certified_generation_is_available_through_the_public_nod_abi() {
             .unwrap();
         nod.ocomp_materialization_job_id
             .write(&worldwide_day, generation.job_id)
+            .unwrap();
+        nod.ocomp_materialization_protocol_bundle_hash
+            .write(&worldwide_day, generation.protocol_bundle_hash)
             .unwrap();
         nod.ocomp_materialization_program_semantics_hash
             .write(&worldwide_day, generation.program_semantics_hash)
@@ -305,5 +309,84 @@ fn qualify_nods_skips_the_block_when_the_pair_has_no_published_rate() {
             storage.clone(),
         );
         crate::hooks::qualify_nods(&ctx, &scope, &parent).unwrap();
+    });
+}
+
+#[test]
+fn the_certified_bundle_survives_a_read_and_leaves_nothing_behind_when_cleared() {
+    let worldwide_day = WorldwideDay::new(20_260_726);
+    let bundle = B256::repeat_byte(0x5b);
+    let mut provider = HashMapStorageProvider::new(1);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let nod = NodContract::new(storage.clone());
+        nod.ocomp_target_generation
+            .write(&worldwide_day, 9)
+            .unwrap();
+        nod.ocomp_materialization_job_id
+            .write(&worldwide_day, B256::repeat_byte(0x44))
+            .unwrap();
+        nod.ocomp_materialization_protocol_bundle_hash
+            .write(&worldwide_day, bundle)
+            .unwrap();
+        nod.ocomp_materialization_program_semantics_hash
+            .write(&worldwide_day, B256::repeat_byte(0x55))
+            .unwrap();
+        nod.ocomp_namespace_root
+            .write(&worldwide_day, B256::repeat_byte(0x11))
+            .unwrap();
+        nod.ocomp_bucket_root
+            .write(&worldwide_day, B256::repeat_byte(0x22))
+            .unwrap();
+        nod.ocomp_output_manifest_root
+            .write(&worldwide_day, B256::repeat_byte(0x33))
+            .unwrap();
+        let shape = NodCertifiedGenerationProjection {
+            worldwide_day,
+            generation: 9,
+            job_id: B256::repeat_byte(0x44),
+            protocol_bundle_hash: bundle,
+            program_semantics_hash: B256::repeat_byte(0x55),
+            nod_root: B256::repeat_byte(0x11),
+            bucket_root: B256::repeat_byte(0x22),
+            output_manifest_root: B256::repeat_byte(0x33),
+            tribute_count: 7,
+            nod_count: 7,
+            bucket_count: 2,
+            nod_amount_total: U256::from(50_000),
+            nod_gratis_consumed: U256::from(7_000),
+            issued_at: 1_753_488_000,
+            next_nod_ordinal: 0,
+            last_progress_height: 4_096,
+        };
+        nod.ocomp_generation_metadata
+            .write(&worldwide_day, shape.metadata_word())
+            .unwrap();
+        nod.ocomp_nod_amount_total
+            .write(&worldwide_day, shape.nod_amount_total)
+            .unwrap();
+        nod.ocomp_nod_gratis_consumed
+            .write(&worldwide_day, shape.nod_gratis_consumed)
+            .unwrap();
+        nod.ocomp_materialization_last_progress_height
+            .write(&worldwide_day, shape.last_progress_height)
+            .unwrap();
+
+        let read = nod
+            .ocomp_certified_generation(worldwide_day)
+            .unwrap()
+            .expect("a generation with a non-zero number is present");
+        assert_eq!(
+            read.protocol_bundle_hash, bundle,
+            "materialization reads the bundle from the chain, so it has to come back"
+        );
+
+        nod.clear_ocomp_certified_generation(worldwide_day).unwrap();
+        assert!(
+            nod.ocomp_certified_generation(worldwide_day)
+                .unwrap()
+                .is_none(),
+            "clearing has to wipe the bundle too, or the day reads as residual state"
+        );
     });
 }
