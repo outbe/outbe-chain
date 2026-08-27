@@ -291,7 +291,7 @@ fn venue_side(world: &World) -> VenueSide {
 
 const AUCTION_START_TIMEOUT: Duration = Duration::from_secs(1200);
 
-#[then("the auction for that day opens on the target chain")]
+#[then("the auction for that day opens on every chain it named")]
 fn auction_opens_on_target(world: &mut World) {
     // The start message goes to every chain the day names, so every chain
     // has to answer for it.
@@ -473,7 +473,7 @@ const BIDDER_ALLOWANCE: u128 = 1_000_000_000 * 1_000_000_000_000_000_000;
 const BIDS: [(u16, u32); 2] = [(30, 800_000), (40, 700_000)];
 
 #[cfg(feature = "ocomp-integration")]
-#[when("two bidders commit their bids")]
+#[when("two bidders commit their bids on every chain")]
 fn bidders_commit(world: &mut World) {
     let worldwide_day = settled_day(world);
     // The same two bidders trade on every chain the day opened on: one keypair
@@ -501,7 +501,7 @@ fn bidders_commit(world: &mut World) {
 }
 
 #[cfg(feature = "ocomp-integration")]
-#[when("those bidders reveal their bids once the venue is revealing")]
+#[when("those bidders reveal their bids once the venues are revealing")]
 fn bidders_reveal(world: &mut World) {
     advance_past_window_to_stage(world, 1);
 
@@ -580,7 +580,7 @@ fn auction_clears(world: &mut World) {
 }
 
 #[cfg(feature = "ocomp-integration")]
-#[then("the cleared day mints the Intex on the target chain")]
+#[then("the cleared day mints the Intex on every chain it issued to")]
 fn issuance_mints_intex(world: &mut World) {
     let bidders = world.state.auction_bidders.clone();
     let home = world.rpc.url(world.validators.primary_port());
@@ -650,7 +650,7 @@ fn mints_landed_on(side: &VenueSide, bidders: &[bidders::Bidder], worldwide_day:
 }
 
 #[cfg(feature = "ocomp-integration")]
-#[then("the escrow settles the day and returns what the bids did not buy")]
+#[then("each escrow settles the day and returns what the bids did not buy")]
 fn escrow_refunds_the_rest(world: &mut World) {
     // Each chain settled its own bids, so each has to give back what it did
     // not buy.

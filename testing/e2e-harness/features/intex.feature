@@ -37,14 +37,14 @@ Feature: Intex from auction to Promis
     When the committee logical clock reaches the public capacity processing time
     And the committee clock settles after the jump
     Then Metadosis creates one finalized JobIntent from that public Tribute
-    And the auction for that day opens on the target chain
-    When two bidders commit their bids
+    And the auction for that day opens on every chain it named
+    When two bidders commit their bids on every chain
     And the production OCOMP domains process that finalized JobIntent
     Then three matching validator domains atomically apply Lysis and create the Nod
-    When those bidders reveal their bids once the venue is revealing
+    When those bidders reveal their bids once the venues are revealing
     Then the auction clears and the venue moves past its reveal window
-    And the cleared day mints the Intex on the target chain
-    And the escrow settles the day and returns what the bids did not buy
+    And the cleared day mints the Intex on every chain it issued to
+    And each escrow settles the day and returns what the bids did not buy
 
   # Two series rather than one: the sweeps decide per (reference currency,
   # worldwide day), so a single series makes every group a group of one and
