@@ -1120,7 +1120,7 @@ fn run_node() -> eyre::Result<()> {
         let chain_id = reth_ethereum::chainspec::EthChainSpec::chain(&*node.chain_spec()).id();
         outbe_consensus::proof::init_consensus_chain_id(chain_id)
             .wrap_err("bind consensus process to the selected chain id")?;
-        outbe_consensus::storage_identity::validate_consensus_storage_identity(
+        outbe_consensus::storage_identity::bind_consensus_storage_identity(
             &consensus_storage,
             chain_id,
             node.chain_spec().genesis_hash(),

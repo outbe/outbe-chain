@@ -11,13 +11,13 @@ pub const CONSENSUS_IDENTITY_FILE: &str = "outbe-consensus-identity-v1.json";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct ConsensusStorageIdentityV1 {
+struct ConsensusStorageIdentityRecordV1 {
     version: u8,
     chain_id: u64,
     genesis_hash: B256,
 }
 
-pub fn validate_consensus_storage_identity(
+pub fn bind_consensus_storage_identity(
     storage_dir: &Path,
     chain_id: u64,
     genesis_hash: B256,
@@ -39,7 +39,7 @@ pub fn validate_consensus_storage_identity(
         );
     }
 
-    let identity = ConsensusStorageIdentityV1 {
+    let identity = ConsensusStorageIdentityRecordV1 {
         version: 1,
         chain_id,
         genesis_hash,
@@ -91,8 +91,9 @@ fn validate_existing_marker(
             marker_path.display()
         );
     }
-    let identity: ConsensusStorageIdentityV1 = serde_json::from_slice(&fs::read(marker_path)?)?;
-    let expected = ConsensusStorageIdentityV1 {
+    let identity: ConsensusStorageIdentityRecordV1 =
+        serde_json::from_slice(&fs::read(marker_path)?)?;
+    let expected = ConsensusStorageIdentityRecordV1 {
         version: 1,
         chain_id,
         genesis_hash,
@@ -120,18 +121,18 @@ mod tests {
     #[test]
     fn mainnet_fresh_storage_is_bound_and_reopens_exactly() {
         let dir = tempfile::tempdir().unwrap();
-        validate_consensus_storage_identity(dir.path(), MAINNET_CHAIN_ID, GENESIS).unwrap();
+        bind_consensus_storage_identity(dir.path(), MAINNET_CHAIN_ID, GENESIS).unwrap();
 
         let marker = fs::read_to_string(dir.path().join(CONSENSUS_IDENTITY_FILE)).unwrap();
         assert_eq!(
-            serde_json::from_str::<ConsensusStorageIdentityV1>(&marker).unwrap(),
-            ConsensusStorageIdentityV1 {
+            serde_json::from_str::<ConsensusStorageIdentityRecordV1>(&marker).unwrap(),
+            ConsensusStorageIdentityRecordV1 {
                 version: 1,
                 chain_id: MAINNET_CHAIN_ID,
                 genesis_hash: GENESIS,
             }
         );
-        validate_consensus_storage_identity(dir.path(), MAINNET_CHAIN_ID, GENESIS).unwrap();
+        bind_consensus_storage_identity(dir.path(), MAINNET_CHAIN_ID, GENESIS).unwrap();
     }
 
     #[test]
@@ -144,7 +145,7 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             fs::write(dir.path().join(CONSENSUS_IDENTITY_FILE), marker).unwrap();
             assert!(
-                validate_consensus_storage_identity(dir.path(), MAINNET_CHAIN_ID, GENESIS).is_err()
+                bind_consensus_storage_identity(dir.path(), MAINNET_CHAIN_ID, GENESIS).is_err()
             );
         }
     }
@@ -153,9 +154,7 @@ mod tests {
     fn mainnet_rejects_nonempty_storage_without_an_identity_marker() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("outbe-simplex-0"), b"legacy").unwrap();
-        assert!(
-            validate_consensus_storage_identity(dir.path(), MAINNET_CHAIN_ID, GENESIS).is_err()
-        );
+        assert!(bind_consensus_storage_identity(dir.path(), MAINNET_CHAIN_ID, GENESIS).is_err());
     }
 
     #[test]
@@ -166,7 +165,7 @@ mod tests {
         ] {
             let dir = tempfile::tempdir().unwrap();
             fs::write(dir.path().join("existing"), b"legacy").unwrap();
-            validate_consensus_storage_identity(dir.path(), chain_id, GENESIS).unwrap();
+            bind_consensus_storage_identity(dir.path(), chain_id, GENESIS).unwrap();
             assert!(!dir.path().join(CONSENSUS_IDENTITY_FILE).exists());
         }
     }

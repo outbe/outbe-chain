@@ -2,6 +2,7 @@ use std::{collections::BTreeMap, fs, io::Cursor, process::Command};
 
 use alloy_primitives::B256;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use outbe_consensus::storage_identity::bind_consensus_storage_identity;
 use outbe_evm::tee_attestation_activation::DcapChainSpecBindingV1;
 use outbe_primitives::{
     chain::TESTNET_CHAIN_ID,
@@ -657,7 +658,7 @@ fn verification_rejects_artifact_substitution() {
 }
 
 #[test]
-fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
+fn release_manifest_candidate_binds_one_identity_through_the_mainnet_pipeline() {
     let root = tempfile::tempdir().expect("tempdir");
     let fixture = signed_fixture();
     let source = SourceIdentity {
@@ -1014,6 +1015,28 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
         mainnet_bundle_manifest.measurements.isv_prod_id,
         mainnet_bundle_manifest.measurements.isv_svn,
     );
+    let mainnet_binding = DcapChainSpecBindingV1::from_genesis_path(&mainnet_genesis)
+        .expect("parse Mainnet DCAP ChainSpec binding");
+    assert_eq!(mainnet_binding.chain_id, 676);
+    let consensus_storage = root.path().join("mainnet-consensus");
+    bind_consensus_storage_identity(
+        &consensus_storage,
+        mainnet_binding.chain_id,
+        mainnet_binding.genesis_hash,
+    )
+    .expect("bind fresh Mainnet consensus storage");
+    bind_consensus_storage_identity(
+        &consensus_storage,
+        mainnet_binding.chain_id,
+        mainnet_binding.genesis_hash,
+    )
+    .expect("reopen exact Mainnet consensus storage");
+    assert!(bind_consensus_storage_identity(
+        &consensus_storage,
+        mainnet_binding.chain_id,
+        B256::repeat_byte(0xff),
+    )
+    .is_err());
     let mainnet_genesis_bytes = fs::read(&mainnet_genesis).unwrap();
     let mainnet_policy_bytes = mainnet_policy.encode_canonical().unwrap();
     let mainnet_policy_schedule_bytes = mainnet_policy_schedule.encode_canonical().unwrap();
@@ -1108,6 +1131,10 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
         .expect("Mainnet release manifest candidate");
     assert_eq!(mainnet_manifest["network"]["chain_id"], 676);
     assert_eq!(mainnet_manifest["network"]["chain_name"], "outbe-mainnet-1");
+    assert_eq!(
+        mainnet_manifest["network"]["genesis_hash"],
+        format!("{:#x}", mainnet_binding.genesis_hash)
+    );
     assert_eq!(
         mainnet_manifest["network"]["genesis_file"]["path"],
         "mainnet-genesis.json"
