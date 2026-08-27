@@ -19,7 +19,6 @@ use alloy_signer_local::PrivateKeySigner;
 use clap::{Parser, ValueEnum};
 use eyre::{bail, ensure, eyre, Result, WrapErr as _};
 use outbe_evm::tee_attestation_activation::DcapChainSpecBindingV1;
-use outbe_primitives::chain::OutbeNetwork;
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
     DcapCollateralKind, DcapEvidenceV1, NodeIdV1, RegistrationIntentV1,
@@ -28,6 +27,7 @@ use outbe_tee::dcap_protocol::{DcapPckCaV1, DcapPlatformTcbStatusV1, DcapVerific
 use outbe_tee::node_host::{
     connect_or_initialize_node_host_enclave, load_committed_enclave_manifest_v1, NodeHostIdentityV1,
 };
+use outbe_tee::release_dcap_artifacts::ReleaseDcapArtifactSetV1;
 use rand_core::{OsRng, RngCore as _};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -56,81 +56,19 @@ const COMPONENT_FILES: [(DcapCollateralKind, &str); 8] = [
     ),
 ];
 
-const COMMON_RELEASE_DCAP_ARTIFACT_PATHS: [&str; 17] = [
-    "collateral/capture-provenance.json",
-    "collateral/pck-certificate-chain.pem0",
-    "collateral/pck-crl-issuer-chain.pem",
-    "collateral/pck.crl.der",
-    "collateral/qe-identity-issuer-chain.pem",
-    "collateral/qe-identity.json",
-    "collateral/root-ca.crl.der",
-    "collateral/tcb-info-issuer-chain.pem",
-    "collateral/tcb-info.json",
-    "enclave-signature.bin",
-    "evidence-v1.bin",
-    "intent-v1.bin",
-    "node-signature.bin",
-    "policy-schedule-v1.bin",
-    "policy-v1.bin",
-    "quote-v3.bin",
-    "verifier-outcome-v1.bin",
-];
-
-/// Exact non-secret archive contract for one production release network.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-pub enum ReleaseDcapArtifactSetV1 {
+pub(crate) enum ReleaseDcapNetworkArg {
     Testnet,
     Mainnet,
 }
 
-impl ReleaseDcapArtifactSetV1 {
+impl ReleaseDcapNetworkArg {
     #[must_use]
-    pub const fn for_network(network: OutbeNetwork) -> Option<Self> {
-        match network {
-            OutbeNetwork::Testnet => Some(Self::Testnet),
-            OutbeNetwork::Mainnet => Some(Self::Mainnet),
-            OutbeNetwork::Devnet => None,
-        }
-    }
-
-    #[must_use]
-    pub const fn genesis_artifact_path(self) -> &'static str {
+    pub(crate) const fn artifact_set(self) -> ReleaseDcapArtifactSetV1 {
         match self {
-            Self::Testnet => "testnet-genesis.json",
-            Self::Mainnet => "mainnet-genesis.json",
+            Self::Testnet => ReleaseDcapArtifactSetV1::Testnet,
+            Self::Mainnet => ReleaseDcapArtifactSetV1::Mainnet,
         }
-    }
-
-    #[must_use]
-    pub const fn network(self) -> OutbeNetwork {
-        match self {
-            Self::Testnet => OutbeNetwork::Testnet,
-            Self::Mainnet => OutbeNetwork::Mainnet,
-        }
-    }
-
-    #[must_use]
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::Testnet => "testnet",
-            Self::Mainnet => "mainnet",
-        }
-    }
-
-    #[must_use]
-    pub const fn bundle_manifest_path(self) -> &'static str {
-        match self {
-            Self::Testnet => "metadata/testnet-sgx-bundle.json",
-            Self::Mainnet => "metadata/mainnet-sgx-bundle.json",
-        }
-    }
-
-    #[must_use]
-    pub fn paths(self) -> BTreeSet<&'static str> {
-        COMMON_RELEASE_DCAP_ARTIFACT_PATHS
-            .into_iter()
-            .chain([self.genesis_artifact_path()])
-            .collect()
     }
 }
 
@@ -161,7 +99,7 @@ impl ExpectedPckCa {
 struct Cli {
     /// Canonical production network bound by the bundle, genesis, and evidence.
     #[arg(long, value_enum)]
-    network: ReleaseDcapArtifactSetV1,
+    network: ReleaseDcapNetworkArg,
     /// Exact Cosign-verified OCI reference, including @sha256:<digest>.
     #[arg(long)]
     image: String,
@@ -242,18 +180,18 @@ pub fn main() -> Result<()> {
 }
 
 fn run(cli: Cli) -> Result<()> {
+    let network = cli.network.artifact_set();
     let repo = fs::canonicalize(cli.repo.unwrap_or_else(default_repo))
         .wrap_err("resolve repository checkout")?;
     let bundle = fs::canonicalize(&cli.bundle).wrap_err("resolve signed SGX bundle")?;
     let output_dir = absolute_path(&cli.output_dir)?;
     ensure!(!output_dir.exists(), "output directory already exists");
     let image_digest = exact_image_digest(&cli.image)?.to_owned();
-    let bundle_manifest: BundleManifest =
-        read_json(&bundle.join(cli.network.bundle_manifest_path()))?;
+    let bundle_manifest: BundleManifest = read_json(&bundle.join(network.bundle_manifest_path()))?;
     let genesis = fs::canonicalize(&cli.genesis)
-        .wrap_err_with(|| format!("resolve final {} genesis ChainSpec", cli.network.label()))?;
+        .wrap_err_with(|| format!("resolve final {} genesis ChainSpec", network.label()))?;
     let genesis_bytes = fs::read(&genesis)
-        .wrap_err_with(|| format!("read final {} genesis ChainSpec", cli.network.label()))?;
+        .wrap_err_with(|| format!("read final {} genesis ChainSpec", network.label()))?;
 
     command_ok(
         Command::new("cargo")
@@ -263,7 +201,7 @@ fn run(cli: Cli) -> Result<()> {
                 "sgx",
                 "verify",
                 "--network",
-                cli.network.label(),
+                network.label(),
                 "--bundle",
             ])
             .arg(&bundle)
@@ -271,7 +209,7 @@ fn run(cli: Cli) -> Result<()> {
         "verify exact signed SGX bundle",
     )?;
     let binding = DcapChainSpecBindingV1::from_genesis_path(&genesis).map_err(eyre::Report::msg)?;
-    ensure_release_chain_id(cli.network, binding.chain_id)?;
+    ensure_release_chain_id(network, binding.chain_id)?;
     ensure!(
         !bundle_manifest.measurements.debug,
         "debug enclave cannot satisfy H1"
@@ -457,7 +395,7 @@ fn run(cli: Cli) -> Result<()> {
     let mut artifacts = BTreeMap::new();
     write_artifact(
         &output_dir,
-        cli.network.genesis_artifact_path(),
+        network.genesis_artifact_path(),
         &genesis_bytes,
         &mut artifacts,
     )?;
@@ -516,7 +454,7 @@ fn run(cli: Cli) -> Result<()> {
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
     ensure!(
-        declared_artifacts == cli.network.paths(),
+        declared_artifacts == network.paths(),
         "release DCAP runner did not retain the exact canonical artifact set"
     );
     ensure_no_secret_markers(&output_dir)?;
@@ -581,8 +519,8 @@ fn run(cli: Cli) -> Result<()> {
         "intent": {"profile": "validator", "sha256": hex::encode(Sha256::digest(&intent_bytes))},
         "network": {
             "chain_id": binding.chain_id,
-            "chain_name": cli.network.network().chain_name(),
-            "profile": cli.network.label()
+            "chain_name": network.network().chain_name(),
+            "profile": network.label()
         },
         "policy": {
             "activation_height": binding.activation_height,
@@ -592,7 +530,7 @@ fn run(cli: Cli) -> Result<()> {
             "policy_schedule_hash": hex::encode(binding.policy_schedule_hash),
             "policy_schedule_sha256": hex::encode(Sha256::digest(&binding.policy_schedule_bytes)),
             "policy_version": binding.policy_version,
-            "profile_selection": format!("validator exercises the consensus-participating {} registration path; the canonical block-1 policy binds the same release measurement for validator and full-node", cli.network.label()),
+            "profile_selection": format!("validator exercises the consensus-participating {} registration path; the canonical block-1 policy binds the same release measurement for validator and full-node", network.label()),
             "sha256": hex::encode(Sha256::digest(&policy_bytes))
         },
         "measurements": bundle_manifest.measurements,
@@ -1019,7 +957,7 @@ fn default_repo() -> PathBuf {
 mod tests {
     use super::*;
     use outbe_primitives::{
-        chain::TESTNET_CHAIN_ID,
+        chain::{OutbeNetwork, TESTNET_CHAIN_ID},
         tee_attestation_v1::{PlatformTcbStatusSetV1, QvlTcbStatusV1, TeePolicyV1},
         tee_genesis_v1::{initial_tee_policy_v1, InitialTeeProfileV1, ProductionSgxMeasurementV1},
     };
@@ -1042,7 +980,10 @@ mod tests {
             "/tmp/evidence",
         ])
         .expect("Mainnet release CLI");
-        assert_eq!(mainnet.network, ReleaseDcapArtifactSetV1::Mainnet);
+        assert_eq!(
+            mainnet.network.artifact_set(),
+            ReleaseDcapArtifactSetV1::Mainnet
+        );
         assert_eq!(mainnet.genesis, PathBuf::from("/tmp/mainnet-genesis.json"));
 
         assert!(Cli::try_parse_from([

@@ -17835,6 +17835,7 @@ dependencies = [
  "outbe-node",
  "outbe-ocomp-protocol",
  "outbe-primitives",
+ "outbe-tee",
  "reth-chainspec",
  "reth-ethereum",
  "serde",

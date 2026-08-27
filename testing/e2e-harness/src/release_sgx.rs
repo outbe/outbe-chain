@@ -17,7 +17,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use walkdir::WalkDir;
 
-use crate::release_dcap::ReleaseDcapArtifactSetV1;
+use outbe_tee::release_dcap_artifacts::ReleaseDcapArtifactSetV1;
+
+use crate::release_dcap::ReleaseDcapNetworkArg;
 
 const RELEASE_FEATURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/release-features");
 
@@ -25,7 +27,7 @@ const RELEASE_FEATURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/release-fea
 pub struct ReleaseSgxCli {
     /// Canonical production network bound by the bundle and runtime identity.
     #[arg(long, value_enum)]
-    network: ReleaseDcapArtifactSetV1,
+    network: ReleaseDcapNetworkArg,
     /// Exact published OCI reference, including @sha256:<digest>.
     #[arg(long)]
     image: String,
@@ -77,7 +79,7 @@ impl ReleaseConfig {
             image: cli.image.clone(),
             image_digest,
             keep_work_dir: cli.keep_work_dir,
-            network: cli.network,
+            network: cli.network.artifact_set(),
             repo,
             work_dir,
         })
@@ -826,7 +828,10 @@ mod tests {
             "/tmp/evidence.json",
         ])
         .expect("Mainnet hardware CLI");
-        assert_eq!(parsed.release.network, ReleaseDcapArtifactSetV1::Mainnet);
+        assert_eq!(
+            parsed.release.network.artifact_set(),
+            ReleaseDcapArtifactSetV1::Mainnet
+        );
         assert!(TestCli::try_parse_from([
             "release-sgx",
             "--image",
