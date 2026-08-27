@@ -378,7 +378,7 @@ boundaries are also intentionally limited as follows:
 
 There are no `@todo` placeholders for excluded checks.
 
-## Published testnet SGX release acceptance
+## Published production SGX release acceptance
 
 `outbe-release-sgx-e2e` is a second Rust/Cucumber entrypoint for one exact published
 `image@sha256:...`. It is separate from the localnet World because release acceptance owns
@@ -386,6 +386,7 @@ an immutable bundle/image/sealed-state fixture, not validators or MongoDB:
 
 ```bash
 cargo run --release -p outbe-e2e-harness --bin outbe-release-sgx-e2e -- \
+  --network testnet \
   --image 'ghcr.io/outbe/outbe-tee-enclave-testnet@sha256:<64-hex-digest>' \
   --bundle /tmp/extracted-signed-sgx-bundle \
   --evidence /tmp/hardware-sgx.json
@@ -410,9 +411,10 @@ evidence. Accepted DCAP evidence is produced by a separate exact-release runner:
 
 ```bash
 cargo run --locked -p outbe-e2e-harness --bin outbe-release-dcap-evidence -- \
+  --network testnet \
   --image 'ghcr.io/outbe/outbe-tee-enclave-testnet@sha256:<64-hex-digest>' \
   --bundle /tmp/extracted-signed-sgx-bundle \
-  --testnet-genesis release/testnet-genesis.json \
+  --genesis release/testnet-genesis.json \
   --expected-pck-ca processor \
   --output-dir /tmp/hardware-dcap-processor
 ```

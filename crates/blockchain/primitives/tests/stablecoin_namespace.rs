@@ -6,9 +6,11 @@ use outbe_primitives::{
         is_stablecoin_address, STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS,
         STABLECOIN_MARKER_CODE, STABLECOIN_POLICY_REGISTRY_ADDRESS,
     },
-    chain::{DEVNET_CHAIN_ID, DEVNET_CHAIN_NAME, TESTNET_CHAIN_ID, TESTNET_CHAIN_NAME},
+    chain::{
+        DEVNET_CHAIN_ID, DEVNET_CHAIN_NAME, MAINNET_CHAIN_ID, MAINNET_CHAIN_NAME, TESTNET_CHAIN_ID,
+        TESTNET_CHAIN_NAME,
+    },
     stablecoin::{predict_stablecoin, stablecoin_token_id_preimage},
-    stablecoin_fork::STABLECOIN_V1_MAINNET_STATUS,
 };
 use serde::Deserialize;
 
@@ -26,7 +28,6 @@ struct NetworkCorpus {
     prefix: String,
     marker: String,
     networks: Vec<NetworkVector>,
-    mainnet: MainnetStatus,
 }
 
 #[derive(Deserialize)]
@@ -39,11 +40,6 @@ struct NetworkVector {
     preimage: String,
     token_id: String,
     token: String,
-}
-
-#[derive(Deserialize)]
-struct MainnetStatus {
-    status: String,
 }
 
 #[test]
@@ -79,12 +75,13 @@ fn independent_network_vectors_pin_current_supported_geneses() {
         hex::decode(corpus.marker.trim_start_matches("0x")).unwrap(),
         STABLECOIN_MARKER_CODE
     );
-    assert_eq!(corpus.mainnet.status, STABLECOIN_V1_MAINNET_STATUS);
+    assert_eq!(corpus.networks.len(), 3);
 
     for vector in corpus.networks {
         match vector.name.as_str() {
             DEVNET_CHAIN_NAME => assert_eq!(vector.chain_id, DEVNET_CHAIN_ID),
             TESTNET_CHAIN_NAME => assert_eq!(vector.chain_id, TESTNET_CHAIN_ID),
+            MAINNET_CHAIN_NAME => assert_eq!(vector.chain_id, MAINNET_CHAIN_ID),
             other => panic!("unexpected network vector {other}"),
         }
         let issuer = Address::from_str(&vector.issuer).unwrap();

@@ -55,17 +55,23 @@ REPO_ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import launch_bundle  # noqa: E402  (sibling module, path set just above)
 
-# Baseline profile: every protocol parameter a network.yaml does not set comes
+# Canonical production baseline: every protocol parameter a network.yaml does not set comes
 # from this file, so the defaults have exactly one home — and it is the same
 # yaml format, readable and runnable on its own.
 BASE_PROFILE_PATH = SCRIPT_DIR / "testnet.yaml"
 
 DEFAULT_CHAIN_ID = 424242
-# A `gramine-direct-dev` enclave is unattested, so it is confined to the devnet
-# chain id; `dcap-required` is confined to the testnet one. Mixing them would
+# A `gramine-direct-dev` enclave is unattested, so it is confined to non-Mainnet
+# development use; `dcap-required` is confined to Testnet or Mainnet. Mixing them would
 # put an unattested enclave on an attested network, or the reverse.
 DEVNET_CHAIN_ID = 424242
 TESTNET_CHAIN_ID = 54322345
+MAINNET_CHAIN_ID = 676
+NETWORK_IDENTITIES = {
+    "devnet": (DEVNET_CHAIN_ID, "outbe-devnet-1"),
+    "testnet": (TESTNET_CHAIN_ID, "outbe-testnet-1"),
+    "mainnet": (MAINNET_CHAIN_ID, "outbe-mainnet-1"),
+}
 DEFAULT_GAS_LIMIT = "0x1c9c380"
 DEFAULT_EPOCH_LENGTH_BLOCKS = 300
 DEFAULT_DKG_PREPARE_WINDOW_BLOCKS = 30
@@ -104,6 +110,7 @@ SEED_SECTIONS = (
 )
 
 TOP_LEVEL_KEYS = {
+    "network",
     "validators",
     "keys_dir",
     "chain_id",
@@ -373,10 +380,27 @@ def validate_config(config: dict[str, Any]) -> None:
     unknown_tee = sorted(set(tee) - TEE_KEYS)
     if unknown_tee:
         raise ValueError(f"unknown tee key(s): {', '.join(unknown_tee)}")
+    network, chain_id, _ = network_identity(config)
     mode = tee.get("mode")
     if mode not in ("gramine-direct-dev", "dcap-required"):
         raise ValueError("tee.mode must be gramine-direct-dev or dcap-required")
-    chain_id = int(config.get("chain_id", DEFAULT_CHAIN_ID))
+    if network == "mainnet":
+        if mode != "dcap-required":
+            raise ValueError("Mainnet requires tee.mode dcap-required")
+        if config.get("allow_unattested_chain_id"):
+            raise ValueError("Mainnet forbids allow_unattested_chain_id")
+        if "protocol_constants" in config:
+            raise ValueError(
+                "Mainnet forbids protocol_constants overrides and uses canonical production defaults"
+            )
+        endpoints = [
+            str(config.get("price_feed_rest", "")),
+            str(config.get("price_feed_websocket", "")),
+        ]
+        if not all(endpoints):
+            raise ValueError("Mainnet requires explicit production price feed endpoints")
+        if any("testnet" in endpoint.lower() for endpoint in endpoints):
+            raise ValueError("Mainnet may not use a testnet price endpoint")
     if (
         mode == "gramine-direct-dev"
         and chain_id != DEVNET_CHAIN_ID
@@ -389,10 +413,10 @@ def validate_config(config: dict[str, Any]) -> None:
             f"must say so with `allow_unattested_chain_id: true`"
         )
     if mode == "dcap-required":
-        if chain_id != TESTNET_CHAIN_ID:
+        if chain_id not in (TESTNET_CHAIN_ID, MAINNET_CHAIN_ID):
             raise ValueError(
-                f"tee.mode dcap-required requires the testnet chain id "
-                f"{TESTNET_CHAIN_ID}, not {chain_id}"
+                f"tee.mode dcap-required requires the testnet or mainnet chain id "
+                f"({TESTNET_CHAIN_ID} or {MAINNET_CHAIN_ID}), not {chain_id}"
             )
         image = str(config.get("enclave_image", ""))
         if re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", image) is None:
@@ -421,6 +445,29 @@ def validate_config(config: dict[str, Any]) -> None:
                 f"port collision: {seen[port_value]} and {name} both use {port_value}"
             )
         seen[port_value] = name
+
+
+def network_identity(config: dict[str, Any]) -> tuple[str, int, str]:
+    chain_id = int(config.get("chain_id", DEFAULT_CHAIN_ID))
+    inferred = next(
+        (name for name, (known_id, _) in NETWORK_IDENTITIES.items() if known_id == chain_id),
+        None,
+    )
+    if inferred is None:
+        raise ValueError(f"unknown Outbe chain id {chain_id}")
+    requested = config.get("network")
+    if requested is None:
+        if inferred == "mainnet":
+            raise ValueError("Mainnet chain id 676 requires explicit `network: mainnet`")
+        requested = inferred
+    if requested not in NETWORK_IDENTITIES:
+        raise ValueError(f"unknown Outbe network {requested!r}")
+    expected_id, chain_name = NETWORK_IDENTITIES[requested]
+    if chain_id != expected_id:
+        raise ValueError(
+            f"{requested} requires chain id {expected_id}, not {chain_id}"
+        )
+    return requested, chain_id, chain_name
 
 
 # ---------------------------------------------------------------------------
@@ -789,10 +836,16 @@ def ensure_ocomp_registrations(
     seeded_genesis: Path,
     keys_dir: Path,
     validators: list[dict[str, Any]],
+    allow_generation: bool = True,
 ) -> Path:
     """Collect one registration per founder into a staging directory, minting
     the missing ones. The proof of possession signs the seeded genesis hash, so
     a registration can only be produced once that hash exists."""
+    validate_ocomp_registration_inventory(
+        keys_dir=keys_dir,
+        validator_count=len(validators),
+        allow_generation=allow_generation,
+    )
     bindings_path = work_dir / "ocomp-bindings-v1.json"
     subprocess.run(
         [
@@ -867,6 +920,24 @@ def ensure_ocomp_registrations(
             f"in the yaml to reproduce this exact genesis"
         )
     return staging
+
+
+def validate_ocomp_registration_inventory(
+    *, keys_dir: Path, validator_count: int, allow_generation: bool
+) -> None:
+    if allow_generation:
+        return
+    missing = [
+        index
+        for index in range(validator_count)
+        if not (keys_dir / f"validator-{index}" / "ocomp-registration-v1.ocb1").is_file()
+    ]
+    if missing:
+        rendered = ", ".join(f"validator-{index}" for index in missing)
+        raise ValueError(
+            "Mainnet requires operator-provided OCOMP registration files; missing "
+            + rendered
+        )
 
 
 def run_ocomp_stage(
@@ -976,6 +1047,7 @@ def main() -> None:
     config_path = args.config.resolve()
     config = load_yaml(args.config)
     validate_config(config)
+    network, chain_id, chain_name = network_identity(config)
 
     def relative_to_config(value: str) -> Path:
         candidate = Path(value)
@@ -1031,6 +1103,7 @@ def main() -> None:
             seeded_genesis=seeded,
             keys_dir=keys_dir,
             validators=validators,
+            allow_generation=network != "mainnet",
         )
         ocomp_genesis = run_ocomp_stage(
             chain_binary=chain_binary,
@@ -1061,6 +1134,14 @@ def main() -> None:
         keys_dir=keys_dir,
         repo_root=REPO_ROOT,
     )
+    identity_path = output.parent / "network-identity.json"
+    identity_path.write_text(
+        json.dumps(
+            {"network": network, "chainId": chain_id, "chainName": chain_name},
+            indent=2,
+        )
+        + "\n"
+    )
 
     print()
     print(f"genesis:         {output}")
@@ -1068,6 +1149,7 @@ def main() -> None:
     print(f"bootnodes:       {output.parent / 'reth-bootnodes.txt'}")
     print(f"launch scripts:  {output.parent}/validator-N/")
     print(f"instructions:    {output.parent / 'DEPLOY.md'}")
+    print(f"network identity:{identity_path}")
 
 
 if __name__ == "__main__":

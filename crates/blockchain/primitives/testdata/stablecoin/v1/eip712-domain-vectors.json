@@ -20,6 +20,13 @@
       "domainSeparator": "0x24aae2a2078bc2de3469da62ff425b346368ad5de045f3e522e81d0ccac6a425"
     },
     {
+      "name": "Example Dollar",
+      "nameHash": "0x17a54889b83dec81b32ed808e4aa5e7c9966186f658cbc146e6b11e8435b0a9f",
+      "chainId": 676,
+      "verifyingContract": "0x53c0232442bb7951098f3e4c2d9751e2d0d33564",
+      "domainSeparator": "0x0c42886de638f55263886351ee424f51fc70ccd71565c06342557215ae759ee5"
+    },
+    {
       "name": "Yen 円",
       "nameHash": "0x89117ee78e35f108e508b5f5f2355101343c061d6b083583a25f3dab29566d45",
       "chainId": 54322345,

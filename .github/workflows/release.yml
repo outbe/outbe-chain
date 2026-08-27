@@ -23,13 +23,13 @@ permissions:
   security-events: write
 
 jobs:
-  # Immutable testnet tags (vX.Y.Z-testnet.N) are released by
-  # .github/workflows/testnet-release.yml, which owns the reproducible ELF build,
+  # Immutable production-network tags are released by their protected SGX
+  # workflows, which own the reproducible ELF build,
   # the signed SGX bundle and the GitHub release itself. goreleaser must not
   # create that release first, or the SGX pipeline's finalize step aborts on an
   # already-existing tag.
   goreleaser:
-    if: "!contains(github.ref_name, '-rc') && !contains(github.ref_name, '-testnet.')"
+    if: "!contains(github.ref_name, '-rc') && !contains(github.ref_name, '-testnet.') && !contains(github.ref_name, '-mainnet.')"
     runs-on: depot-ubuntu-24.04-4
     steps:
       - uses: actions/checkout@v6
@@ -77,3 +77,36 @@ jobs:
           gh workflow run testnet-release.yml \
             --ref main \
             --field release_tag="${RELEASE_TAG}"
+
+  # Mainnet uses the same immutable tag binding, but its exact genesis is an
+  # explicit protected-environment input rather than a tracked placeholder.
+  dispatch-mainnet-release:
+    name: dispatch protected Mainnet SGX release
+    if: contains(github.ref_name, '-mainnet.')
+    runs-on: ubuntu-24.04
+    environment: mainnet-release
+    permissions:
+      contents: read
+      actions: write
+    env:
+      OUTBE_MAINNET_GENESIS_SHA256: ${{ vars.OUTBE_MAINNET_GENESIS_SHA256 }}
+      OUTBE_MAINNET_GENESIS_URL: ${{ vars.OUTBE_MAINNET_GENESIS_URL }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Dispatch mainnet-release.yml for this tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OUTBE_RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "${OUTBE_RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-mainnet\.[0-9]+$ ]] || {
+            echo "not an immutable Mainnet tag: ${OUTBE_RELEASE_TAG}" >&2
+            exit 2
+          }
+          test -n "${OUTBE_MAINNET_GENESIS_URL}"
+          [[ "${OUTBE_MAINNET_GENESIS_SHA256}" =~ ^[0-9a-f]{64}$ ]]
+          gh workflow run mainnet-release.yml \
+            --ref main \
+            --field release_tag="${OUTBE_RELEASE_TAG}" \
+            --field genesis_url="${OUTBE_MAINNET_GENESIS_URL}" \
+            --field genesis_sha256="${OUTBE_MAINNET_GENESIS_SHA256}"

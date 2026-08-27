@@ -34,10 +34,12 @@ const PAGE_CACHE_SIZE: NonZeroUsize = NZUsize!(10);
 #[derive(Clone)]
 struct NullSender<P> {
     participants: Vec<P>,
+    send_notifications: Option<mpsc::SyncSender<()>>,
 }
 
 struct NullCheckedSender<P> {
     recipients: Vec<P>,
+    send_notifications: Option<mpsc::SyncSender<()>>,
 }
 
 impl<P> CheckedSender for NullCheckedSender<P>
@@ -51,6 +53,9 @@ where
     }
 
     fn send(self, _message: impl Into<IoBufs> + Send, _priority: bool) -> Unreliable<Feedback> {
+        if let Some(notifications) = self.send_notifications {
+            let _ = notifications.try_send(());
+        }
         Unreliable::Outcome(Feedback::Ok)
     }
 }
@@ -74,7 +79,10 @@ where
             Recipients::Some(recipients) => recipients,
             Recipients::One(recipient) => vec![recipient],
         };
-        Ok(NullCheckedSender { recipients })
+        Ok(NullCheckedSender {
+            recipients,
+            send_notifications: self.send_notifications.clone(),
+        })
     }
 }
 
@@ -134,6 +142,7 @@ fn tokio_runner_waits_for_real_voter_journal_flush() {
 
         let sender = NullSender {
             participants: vec![public_key.clone()],
+            send_notifications: None,
         };
         let vote_network = (sender.clone(), NullReceiver(PhantomData));
         let certificate_network = (sender.clone(), NullReceiver(PhantomData));
@@ -265,14 +274,20 @@ fn planned_abort_during_pending_sync_reopens_the_same_voter_journal() {
             write_buffer: NZUsize!(4 * 1024),
             page_cache: CacheRef::from_pooler(context, PAGE_SIZE, PAGE_CACHE_SIZE),
         };
+        let (durable_vote_tx, durable_vote_rx) = mpsc::sync_channel(1);
         let networks = || {
-            let sender = NullSender {
+            let vote_sender = NullSender {
                 participants: vec![public_key.clone()],
+                send_notifications: Some(durable_vote_tx.clone()),
+            };
+            let other_sender = NullSender {
+                participants: vec![public_key.clone()],
+                send_notifications: None,
             };
             (
-                (sender.clone(), NullReceiver(PhantomData)),
-                (sender.clone(), NullReceiver(PhantomData)),
-                (sender, NullReceiver(PhantomData)),
+                (vote_sender, NullReceiver(PhantomData)),
+                (other_sender.clone(), NullReceiver(PhantomData)),
+                (other_sender, NullReceiver(PhantomData)),
             )
         };
 
@@ -280,7 +295,9 @@ fn planned_abort_during_pending_sync_reopens_the_same_voter_journal() {
         let engine = Engine::new(first_context, engine_config(&context));
         let (vote, certificate, resolver) = networks();
         let first_handle = engine.start(vote, certificate, resolver);
-        context.sleep(Duration::from_millis(75)).await;
+        durable_vote_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("first outbound vote proves the journal header and vote are durable");
 
         // Hold the only blocking worker while the voter reaches another
         // journal sync. This is the storage schedule under which a planned

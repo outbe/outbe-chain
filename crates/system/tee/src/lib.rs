@@ -26,6 +26,7 @@ pub mod node_host;
 pub mod offer_encrypt;
 pub mod protocol;
 pub mod quote;
+pub mod release_dcap_artifacts;
 pub mod remote_session;
 pub mod session;
 pub mod tee_dkg;

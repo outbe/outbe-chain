@@ -181,12 +181,12 @@ class ConfigValidationTests(unittest.TestCase):
             CG.validate_config(config)
         CG.validate_config(config | {"allow_unattested_chain_id": True})
 
-    def test_dcap_requires_the_testnet_chain_and_a_pinned_digest(self):
+    def test_dcap_requires_a_production_chain_and_a_pinned_digest(self):
         config = minimal_config("./keys") | {
             "chain_id": 424242,
             "tee": {"mode": "dcap-required"},
         }
-        with self.assertRaisesRegex(ValueError, "testnet chain id"):
+        with self.assertRaisesRegex(ValueError, "testnet or mainnet chain id"):
             CG.validate_config(config)
 
         config["chain_id"] = 54322345
@@ -196,6 +196,64 @@ class ConfigValidationTests(unittest.TestCase):
 
         config["enclave_image"] = "outbe-tee-enclave@sha256:" + "ab" * 32
         CG.validate_config(config)
+
+    def test_mainnet_profile_uses_the_canonical_identity_and_production_inputs(self):
+        config = minimal_config("./keys") | {
+            "network": "mainnet",
+            "chain_id": 676,
+            "tee": {"mode": "dcap-required"},
+            "enclave_image": "outbe-tee-enclave@sha256:" + "ab" * 32,
+            "price_feed_rest": "https://prices.outbe.net",
+            "price_feed_websocket": "prices.outbe.net",
+        }
+
+        CG.validate_config(config)
+        self.assertEqual(
+            CG.network_identity(config),
+            ("mainnet", 676, "outbe-mainnet-1"),
+        )
+
+    def test_mainnet_profile_rejects_identity_and_test_shortcut_drift(self):
+        config = minimal_config("./keys") | {
+            "network": "mainnet",
+            "chain_id": 54322345,
+            "tee": {"mode": "dcap-required"},
+            "enclave_image": "outbe-tee-enclave@sha256:" + "ab" * 32,
+            "price_feed_rest": "https://prc.testnet.outbe.net",
+            "price_feed_websocket": "prc.testnet.outbe.net",
+        }
+        with self.assertRaisesRegex(ValueError, "mainnet.*676"):
+            CG.validate_config(config)
+
+        config["chain_id"] = 676
+        with self.assertRaisesRegex(ValueError, "testnet price endpoint"):
+            CG.validate_config(config)
+
+        config["price_feed_rest"] = "https://prices.outbe.net"
+        config["price_feed_websocket"] = "prices.outbe.net"
+        config["protocol_constants"] = {"schemaVersion": 1}
+        with self.assertRaisesRegex(ValueError, "protocol_constants"):
+            CG.validate_config(config)
+
+    def test_unknown_chain_identity_is_rejected(self):
+        config = minimal_config("./keys") | {
+            "chain_id": 999999,
+            "allow_unattested_chain_id": True,
+        }
+        with self.assertRaisesRegex(ValueError, "unknown Outbe chain id"):
+            CG.validate_config(config)
+
+    def test_mainnet_requires_preexisting_ocomp_registrations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            keys = pathlib.Path(tmp)
+            for index in range(4):
+                (keys / f"validator-{index}").mkdir()
+            with self.assertRaisesRegex(ValueError, "Mainnet.*OCOMP registration"):
+                CG.validate_ocomp_registration_inventory(
+                    keys_dir=keys,
+                    validator_count=4,
+                    allow_generation=False,
+                )
 
     def test_port_collisions_are_rejected(self):
         config = minimal_config("./keys") | {"rpc_port": 9101}  # same as metrics
@@ -416,6 +474,26 @@ class SeedStageTests(unittest.TestCase):
             validator_set = alloc[SEED_GENESIS.VALIDATOR_SET_ADDRESS]
             slot20 = "0x" + f"{20:064x}"  # validator_count
             self.assertEqual(int(validator_set["storage"][slot20], 16), 4)
+
+    def test_mainnet_profile_seeds_chain_676_with_canonical_production_defaults(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = minimal_config(tmp) | {
+                "network": "mainnet",
+                "chain_id": 676,
+                "tee": {"mode": "dcap-required"},
+                "enclave_image": "outbe-tee-enclave@sha256:" + "ab" * 32,
+                "price_feed_rest": "https://prices.outbe.net",
+                "price_feed_websocket": "prices.outbe.net",
+            }
+            CG.validate_config(config)
+            seeded = self.seed_once(pathlib.Path(tmp), config)
+
+            self.assertEqual(seeded["config"]["chainId"], 676)
+            self.assertNotIn("protocolConstants", seeded["config"])
+            baseline = CG.load_yaml(CG.BASE_PROFILE_PATH)
+            rewards_storage = seeded["alloc"][SEED_GENESIS.REWARDS_ADDRESS]["storage"]
+            self.assertTrue(rewards_storage)
+            self.assertEqual(CG.build_seed(config)["rewards"], baseline["rewards"])
 
     def test_seeded_genesis_is_reproducible_for_a_pinned_timestamp(self):
         """The OCOMP registrations sign the seeded genesis hash, so the same

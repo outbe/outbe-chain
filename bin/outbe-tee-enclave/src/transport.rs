@@ -2086,7 +2086,7 @@ mod tests {
         let (evidence, policy) = intent_bound_processor_fixture_wire_bytes();
 
         let DcapVerificationOutcomeV1::Accepted(verdict) = client
-            .verify_dcap_evidence_v1(&evidence, &policy, 1_785_491_440)
+            .verify_dcap_evidence_v1(&evidence, &policy, 1_787_850_648)
             .unwrap()
         else {
             panic!("testnet policy must accept the authenticated Processor fixture")
@@ -2116,7 +2116,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             client
-                .verify_dcap_evidence_v1(&unattested, &policy, 1_785_491_440)
+                .verify_dcap_evidence_v1(&unattested, &policy, 1_787_850_648)
                 .unwrap(),
             DcapVerificationOutcomeV1::Rejected(DcapRejectCodeV1::EvidenceNonCanonical)
         );

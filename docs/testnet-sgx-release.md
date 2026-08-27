@@ -251,15 +251,18 @@ containers is not a signer-rotation procedure.
 
 ```bash
 mise run release-sgx-prepare -- \
+  --network testnet \
   --elf-output /tmp/outbe-elf-a --output /tmp/outbe-sgx-a
 mise run release-sgx-compare -- \
   --first /tmp/outbe-sgx-a --second /tmp/outbe-sgx-b \
   --output /tmp/outbe-sgx-reproducibility.json
 mise run release-sgx-sign -- \
+  --network testnet \
   --unsigned /tmp/outbe-sgx-a --key-file /secure/testnet-sgx-key.pem \
   --output /tmp/outbe-sgx-signed
-mise run release-sgx-verify -- --bundle /tmp/outbe-sgx-signed
+mise run release-sgx-verify -- --network testnet --bundle /tmp/outbe-sgx-signed
 mise run release-sgx-archive -- \
+  --network testnet \
   --bundle /tmp/outbe-sgx-signed --output /tmp/outbe-tee-enclave-sgx.tar
 ```
 
@@ -274,6 +277,7 @@ On an SGX host, the exact-artifact acceptance command is also exposed through `m
 
 ```bash
 mise run release-sgx-hardware-e2e -- \
+  --network testnet \
   --image "$IMAGE" \
   --bundle /tmp/extracted-signed-sgx-bundle \
   --evidence /tmp/hardware-sgx.json
@@ -284,8 +288,10 @@ evidence, run the public-verifier path after the image has been verified and pul
 
 ```bash
 cargo run --locked -p outbe-e2e-harness --bin outbe-release-dcap-evidence -- \
+  --network testnet \
   --image "$IMAGE" \
   --bundle /tmp/extracted-signed-sgx-bundle \
+  --genesis release/testnet-genesis.json \
   --expected-pck-ca processor \
   --output-dir /tmp/hardware-dcap-processor
 ```

@@ -54,7 +54,7 @@ prepare() {
 
 sign_bundle() {
   require_env SIGSTRUCT_DATE
-  [[ -f /run/secrets/testnet-sgx-key.pem ]] || { echo "missing testnet SGX signing key" >&2; exit 2; }
+  [[ -f /run/secrets/sgx-signing-key.pem ]] || { echo "missing SGX signing key" >&2; exit 2; }
   [[ -f /unsigned/SHA256SUMS.unsigned ]] || { echo "missing unsigned SGX bundle" >&2; exit 2; }
 
   cp -a /unsigned/. /out/
@@ -64,7 +64,7 @@ sign_bundle() {
   )
   gramine-sgx-sign \
     --date "${SIGSTRUCT_DATE}" \
-    --key /run/secrets/testnet-sgx-key.pem \
+    --key /run/secrets/sgx-signing-key.pem \
     --chroot "${bundle_root}" \
     --libpal "${installed}/gramine/libpal.so" \
     --manifest "${installed}/outbe-tee-enclave.manifest" \

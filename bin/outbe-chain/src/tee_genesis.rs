@@ -11,10 +11,7 @@ use outbe_primitives::tee_genesis_v1::{
     initial_tee_policy_v1, tee_attestation_v1_genesis_field, InitialTeeProfileV1,
     ProductionSgxMeasurementV1,
 };
-use reth_cli::chainspec::ChainSpecParser as _;
 use reth_ethereum::chainspec::EthChainSpec as _;
-
-use crate::OutbeChainSpecParser;
 
 const TEE_ATTESTATION_FIELD: &str = "teeAttestationV1";
 
@@ -186,8 +183,12 @@ fn validate_output(
     expected_genesis_hash: B256,
     expected_profile: InitialTeeProfileV1,
 ) -> eyre::Result<()> {
-    let parsed = OutbeChainSpecParser::parse(utf8_path(output, "output genesis")?)
-        .wrap_err("validate generated mandatory teeAttestationV1 ChainSpec")?;
+    let parsed =
+        reth_ethereum::cli::chainspec::chain_value_parser(utf8_path(output, "output genesis")?)
+            .wrap_err("parse generated mandatory teeAttestationV1 ChainSpec")?
+            .as_ref()
+            .clone()
+            .map_header(outbe_primitives::OutbeHeader::new);
     ensure!(
         parsed.chain().id() == expected_chain_id,
         "generated genesis changed chain ID"
@@ -196,9 +197,10 @@ fn validate_output(
         parsed.genesis_hash() == expected_genesis_hash,
         "teeAttestationV1 unexpectedly changed the genesis header hash"
     );
+    crate::validate_outbe_chain_spec(&parsed)?;
     let activation =
         outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
-            parsed.as_ref(),
+            &parsed,
         );
     let mode = activation
         .activation()
@@ -247,7 +249,8 @@ mod tests {
         METADOSIS_STORAGE_LAYOUT_GENESIS_KEY, OCOMP_FORK_INSTALL_GENESIS_KEY,
     };
     use outbe_ocomp_protocol::profile::poc_schema_limits;
-    use outbe_primitives::chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID};
+    use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
+    use reth_cli::chainspec::ChainSpecParser as _;
 
     fn write_base_genesis(path: &Path, chain_id: u64) {
         let mut genesis = serde_json::json!({
@@ -317,6 +320,16 @@ mod tests {
         }
     }
 
+    fn parse_generated(
+        path: &Path,
+    ) -> reth_ethereum::chainspec::ChainSpec<outbe_primitives::OutbeHeader> {
+        reth_ethereum::cli::chainspec::chain_value_parser(path.to_str().unwrap())
+            .unwrap()
+            .as_ref()
+            .clone()
+            .map_header(outbe_primitives::OutbeHeader::new)
+    }
+
     #[test]
     fn gramine_direct_dev_genesis_is_valid_and_does_not_change_header_hash() {
         let root = tempfile::tempdir().unwrap();
@@ -334,7 +347,7 @@ mod tests {
         ))
         .unwrap();
 
-        let after = OutbeChainSpecParser::parse(output.to_str().unwrap()).unwrap();
+        let after = parse_generated(&output);
         assert_eq!(after.genesis_hash(), before);
         let json: serde_json::Value = serde_json::from_slice(&fs::read(output).unwrap()).unwrap();
         assert!(json["config"][TEE_ATTESTATION_FIELD].is_object());
@@ -361,7 +374,29 @@ mod tests {
         testnet.minimum_isv_svn = Some(2);
         testnet.minimum_tcb_evaluation_data_number = Some(17);
         generate_genesis(&testnet).unwrap();
-        let parsed = OutbeChainSpecParser::parse(output.to_str().unwrap()).unwrap();
+        let parsed = parse_generated(&output);
+        assert_eq!(parsed.genesis_hash(), before);
+    }
+
+    #[test]
+    fn dcap_genesis_accepts_mainnet_and_preserves_its_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let input = root.path().join("mainnet-base.json");
+        let output = root.path().join("mainnet.json");
+        write_base_genesis(&input, MAINNET_CHAIN_ID);
+        let before = reth_ethereum::cli::chainspec::chain_value_parser(input.to_str().unwrap())
+            .unwrap()
+            .genesis_hash();
+        let mut mainnet = args(input, output.clone(), TeeGenesisMode::DcapRequired);
+        mainnet.mrenclave = Some("11".repeat(32));
+        mainnet.mrsigner = Some("22".repeat(32));
+        mainnet.isv_prod_id = Some(1);
+        mainnet.minimum_isv_svn = Some(2);
+        mainnet.minimum_tcb_evaluation_data_number = Some(17);
+
+        generate_genesis(&mainnet).unwrap();
+        let parsed = crate::OutbeChainSpecParser::parse(output.to_str().unwrap()).unwrap();
+        assert_eq!(parsed.chain().id(), MAINNET_CHAIN_ID);
         assert_eq!(parsed.genesis_hash(), before);
     }
 

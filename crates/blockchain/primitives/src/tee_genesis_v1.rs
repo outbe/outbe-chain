@@ -11,7 +11,7 @@ use alloy_primitives::{keccak256, B256, U256};
 use serde_json::{json, Value};
 
 use crate::{
-    chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID},
+    chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID},
     tee_attestation_v1::{
         AttestationMode, PlatformTcbStatusSetV1, QvlTcbStatusV1, ResourceScheduleV1,
         TeeMeasurementRuleV1, TeePolicyScheduleEntryV1, TeePolicyScheduleV1, TeePolicyV1,
@@ -26,6 +26,11 @@ pub const GRAMINE_DIRECT_DEV_CHAIN_ID: u64 = DEVNET_CHAIN_ID;
 /// `GramineDirectDev` policy; this is not a runtime fallback from DCAP.
 pub const fn is_gramine_direct_dev_chain_id(chain_id: u64) -> bool {
     chain_id == DEVNET_CHAIN_ID || chain_id == TESTNET_CHAIN_ID
+}
+
+/// Returns whether the chain has a production DCAP identity.
+pub const fn is_dcap_required_chain_id(chain_id: u64) -> bool {
+    chain_id == TESTNET_CHAIN_ID || chain_id == MAINNET_CHAIN_ID
 }
 
 /// SHA-256 of Intel's pinned SGX Root CA DER certificate.
@@ -80,9 +85,9 @@ pub fn initial_tee_policy_v1(
                 "DcapRequired may not use reserved GramineDirectDev chain ID {GRAMINE_DIRECT_DEV_CHAIN_ID}"
             ));
         }
-        InitialTeeProfileV1::DcapRequired(_) if chain_id != TESTNET_CHAIN_ID => {
+        InitialTeeProfileV1::DcapRequired(_) if !is_dcap_required_chain_id(chain_id) => {
             return Err(format!(
-                "DcapRequired requires testnet chain ID {TESTNET_CHAIN_ID}"
+                "DcapRequired requires testnet or mainnet chain ID ({TESTNET_CHAIN_ID} or {MAINNET_CHAIN_ID})"
             ));
         }
         InitialTeeProfileV1::GramineDirectDev if !is_gramine_direct_dev_chain_id(chain_id) => {
@@ -190,7 +195,7 @@ pub fn tee_attestation_v1_genesis_field(policy: &TeePolicyV1) -> Result<Value, S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chain::{DEVNET_CHAIN_ID, TESTNET_CHAIN_ID};
+    use crate::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
 
     fn dcap_measurement() -> ProductionSgxMeasurementV1 {
         ProductionSgxMeasurementV1 {
@@ -203,13 +208,19 @@ mod tests {
     }
 
     #[test]
-    fn dcap_stays_testnet_only_while_gramine_accepts_devnet_and_testnet() {
+    fn dcap_accepts_testnet_and_mainnet_while_gramine_stays_non_mainnet() {
         let genesis_hash = B256::repeat_byte(0x33);
         assert_eq!(GRAMINE_DIRECT_DEV_CHAIN_ID, DEVNET_CHAIN_ID);
         assert_ne!(GRAMINE_DIRECT_DEV_CHAIN_ID, TESTNET_CHAIN_ID);
         assert!(initial_tee_policy_v1(
             InitialTeeProfileV1::DcapRequired(dcap_measurement()),
             TESTNET_CHAIN_ID,
+            genesis_hash,
+        )
+        .is_ok());
+        assert!(initial_tee_policy_v1(
+            InitialTeeProfileV1::DcapRequired(dcap_measurement()),
+            MAINNET_CHAIN_ID,
             genesis_hash,
         )
         .is_ok());
@@ -226,7 +237,7 @@ mod tests {
             genesis_hash,
         )
         .unwrap_err()
-        .contains("testnet"));
+        .contains("testnet or mainnet"));
         assert!(initial_tee_policy_v1(
             InitialTeeProfileV1::GramineDirectDev,
             TESTNET_CHAIN_ID,
@@ -239,6 +250,12 @@ mod tests {
             genesis_hash,
         )
         .is_ok());
+        assert!(initial_tee_policy_v1(
+            InitialTeeProfileV1::GramineDirectDev,
+            MAINNET_CHAIN_ID,
+            genesis_hash,
+        )
+        .is_err());
         assert!(initial_tee_policy_v1(
             InitialTeeProfileV1::GramineDirectDev,
             TESTNET_CHAIN_ID + 1,
@@ -319,17 +336,21 @@ mod tests {
             schedule.active_policy(1).unwrap().attestation_mode,
             AttestationMode::GramineDirectDev
         );
+        assert_eq!(schedule.active_policy(1).unwrap(), &policy);
         assert_eq!(
             field["policyScheduleHash"],
             json!(schedule.schedule_hash().unwrap())
         );
-        assert_ne!(
-            policy.measurement_rules[0].mrenclave,
-            policy.measurement_rules[1].mrenclave
+        assert_eq!(policy.measurement_rules.len(), 1);
+        let rule = &policy.measurement_rules[0];
+        assert_eq!(
+            rule.mrenclave,
+            keccak256(b"outbe/tee/gramine-direct-dev/mrenclave/v1")
         );
-        assert_ne!(
-            policy.measurement_rules[0].mrsigner,
-            policy.measurement_rules[1].mrsigner
+        assert_eq!(
+            rule.mrsigner,
+            keccak256(b"outbe/tee/gramine-direct-dev/mrsigner/v1")
         );
+        assert_ne!(rule.mrenclave, rule.mrsigner);
     }
 }

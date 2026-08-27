@@ -207,6 +207,10 @@ fn ocomp_transactions(
     for (kind, input) in [
         (SystemTxKind::CycleTick, SystemTxInputV2::CycleTick),
         (
+            SystemTxKind::RewardsGemDelivery,
+            SystemTxInputV2::RewardsGemDelivery,
+        ),
+        (
             SystemTxKind::OracleSlashWindow,
             SystemTxInputV2::OracleSlashWindow,
         ),
@@ -301,15 +305,22 @@ fn gas_04_osaka_user_tx_cap_accepts_visible_outbe_system_tx_envelopes() {
         ),
         signed_v2(
             &signer,
-            SystemTxKind::OracleSlashWindow,
+            SystemTxKind::RewardsGemDelivery,
             3,
+            2,
+            SystemTxInputV2::RewardsGemDelivery,
+        ),
+        signed_v2(
+            &signer,
+            SystemTxKind::OracleSlashWindow,
+            4,
             2,
             SystemTxInputV2::OracleSlashWindow,
         ),
         signed_v2(
             &signer,
             SystemTxKind::HookEvents,
-            4,
+            5,
             2,
             SystemTxInputV2::HookEvents,
         ),
@@ -510,21 +521,28 @@ fn block_b_ge_2_layout_requires_certified_parent_accounting_body0() {
         2,
         SystemTxInputV2::CycleTick,
     );
+    let rewards2 = signed_v2(
+        &signer,
+        SystemTxKind::RewardsGemDelivery,
+        3,
+        2,
+        SystemTxInputV2::RewardsGemDelivery,
+    );
     let oracle2 = signed_v2(
         &signer,
         SystemTxKind::OracleSlashWindow,
-        3,
+        4,
         2,
         SystemTxInputV2::OracleSlashWindow,
     );
     let hook_events2 = signed_v2(
         &signer,
         SystemTxKind::HookEvents,
-        4,
+        5,
         2,
         SystemTxInputV2::HookEvents,
     );
-    let body_bad_hash = body(vec![phase1, late2, cycle2, oracle2, hook_events2]);
+    let body_bad_hash = body(vec![phase1, late2, cycle2, rewards2, oracle2, hook_events2]);
     let header_bad_hash = header_for(2, parent_hash);
     let err_bad_hash = validate_system_tx_consensus_boundary(&body_bad_hash, &header_bad_hash)
         .expect_err(
@@ -657,15 +675,22 @@ fn with_tx_root_forwards_transaction_root_on_wellformed_block() {
         ),
         signed_v2(
             &signer,
-            SystemTxKind::OracleSlashWindow,
+            SystemTxKind::RewardsGemDelivery,
             3,
+            2,
+            SystemTxInputV2::RewardsGemDelivery,
+        ),
+        signed_v2(
+            &signer,
+            SystemTxKind::OracleSlashWindow,
+            4,
             2,
             SystemTxInputV2::OracleSlashWindow,
         ),
         signed_v2(
             &signer,
             SystemTxKind::HookEvents,
-            4,
+            5,
             2,
             SystemTxInputV2::HookEvents,
         ),
@@ -747,8 +772,8 @@ fn v2_envelope_with_unknown_selector_rejects() {
 // ---------------------------------------------------------------------------
 
 /// Build the canonical block-2 begin-zone set with a chosen LateFinalizeCredits
-/// body artifact (ordinals 0..=3): CPA, LateFinalizeCredits, CycleTick,
-/// OracleSlashWindow, HookEvents.
+/// body artifact (ordinals 0..=5): CPA, LateFinalizeCredits, CycleTick,
+/// RewardsGemDelivery, OracleSlashWindow, HookEvents.
 fn begin_zone_txs_block2(
     signer: &OutbeEvmSigner,
     parent_hash: B256,
@@ -782,15 +807,22 @@ fn begin_zone_txs_block2(
         ),
         signed_v2(
             signer,
-            SystemTxKind::OracleSlashWindow,
+            SystemTxKind::RewardsGemDelivery,
             3,
+            2,
+            SystemTxInputV2::RewardsGemDelivery,
+        ),
+        signed_v2(
+            signer,
+            SystemTxKind::OracleSlashWindow,
+            4,
             2,
             SystemTxInputV2::OracleSlashWindow,
         ),
         signed_v2(
             signer,
             SystemTxKind::HookEvents,
-            4,
+            5,
             2,
             SystemTxInputV2::HookEvents,
         ),

@@ -46,7 +46,7 @@ use outbe_primitives::projection::{
     projection_readiness, ProjectionCheckpoint, ProjectionReadinessHandle, ProjectionStatus,
 };
 use outbe_primitives::OutbeHeader;
-use reth_chainspec::ChainSpec;
+use reth_chainspec::{ChainSpec, EthChainSpec};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_ethereum::cli::interface::Cli;
 use reth_node_builder::NodeHandle;
@@ -619,22 +619,34 @@ impl ChainSpecParser for OutbeChainSpecParser {
                 .clone()
                 .map_header(OutbeHeader::new)
                 .into();
-        outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
-            chain_spec.as_ref(),
-        )
-        .activation()
-        .map_err(|error| eyre::eyre!("invalid mandatory teeAttestationV1 ChainSpec: {error}"))?;
-        outbe_node::ocomp::fork::require_startup_ocomp_fork_install(chain_spec.as_ref())?;
-        outbe_chain_constants::initialize(
-            chain_spec
-                .genesis
-                .config
-                .extra_fields
-                .get(outbe_chain_constants::GENESIS_CONFIG_KEY),
-        )
-        .map_err(|error| eyre::eyre!("invalid config.outbeProtocol: {error}"))?;
+        validate_outbe_chain_spec(chain_spec.as_ref())?;
+        outbe_consensus::proof::init_consensus_chain_id(chain_spec.chain().id())
+            .map_err(|error| eyre::eyre!("invalid consensus chain identity: {error}"))?;
         Ok(chain_spec)
     }
+}
+
+fn validate_outbe_chain_spec(chain_spec: &ChainSpec<OutbeHeader>) -> eyre::Result<()> {
+    let chain_id = chain_spec.chain().id();
+    eyre::ensure!(
+        outbe_primitives::chain::network_for_chain_id(chain_id).is_some(),
+        "unknown Outbe chain ID {chain_id}"
+    );
+    outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+        chain_spec,
+    )
+    .activation()
+    .map_err(|error| eyre::eyre!("invalid mandatory teeAttestationV1 ChainSpec: {error}"))?;
+    outbe_node::ocomp::fork::require_startup_ocomp_fork_install(chain_spec)?;
+    outbe_chain_constants::initialize(
+        chain_spec
+            .genesis
+            .config
+            .extra_fields
+            .get(outbe_chain_constants::GENESIS_CONFIG_KEY),
+    )
+    .map_err(|error| eyre::eyre!("invalid config.outbeProtocol: {error}"))?;
+    Ok(())
 }
 
 /// Ceiling for advised gas price: one COEN per gas, already far above anything
@@ -1104,6 +1116,16 @@ fn run_node() -> eyre::Result<()> {
         if args.keys_dir.is_none() {
             args.keys_dir = Some(keys_dir.clone());
         }
+
+        let chain_id = reth_ethereum::chainspec::EthChainSpec::chain(&*node.chain_spec()).id();
+        outbe_consensus::proof::init_consensus_chain_id(chain_id)
+            .wrap_err("bind consensus process to the selected chain id")?;
+        outbe_consensus::storage_identity::bind_consensus_storage_identity(
+            &consensus_storage,
+            chain_id,
+            node.chain_spec().genesis_hash(),
+        )
+        .wrap_err("validate consensus restart storage identity")?;
 
         // Migrate DKG files from legacy location (consensus/) to keys/.
         outbe_engine::stack::migrate_dkg_keys_if_needed(&consensus_storage, &keys_dir)?;
@@ -2751,7 +2773,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_ethereum_mainnet_remains_invalid_for_outbe() {
+    fn reth_mainnet_alias_is_not_outbe_mainnet_676() {
         install_cli_defaults_for_test();
         type OutbeCli = reth_ethereum::cli::interface::Cli<
             super::OutbeChainSpecParser,
@@ -2770,9 +2792,9 @@ mod tests {
 
         assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
         let rendered = error.to_string();
+        assert!(rendered.contains("unknown Outbe chain ID 1"), "{rendered}");
         assert!(
-            rendered.contains("mandatory teeAttestationV1")
-                || rendered.contains("mandatory OCOMP fork install"),
+            !rendered.contains("unknown Outbe chain ID 676"),
             "{rendered}"
         );
     }
