@@ -33,6 +33,7 @@ members = [
     "crates/system/vote",
     "crates/system/offchain-data",
     "crates/system/ocomp-protocol",
+    "crates/system/ocompregistry",
     "crates/core/compressed-entities",
     # core outbe
     "crates/core/gratis",
@@ -137,6 +138,7 @@ outbe-update = { path = "crates/system/update" }
 outbe-vote = { path = "crates/system/vote" }
 outbe-offchain-data = { path = "crates/system/offchain-data" }
 outbe-ocomp-protocol = { path = "crates/system/ocomp-protocol" }
+outbe-ocompregistry = { path = "crates/system/ocompregistry" }
 outbe-ocomp = { path = "bin/outbe-ocomp" }
 heartwood-outbe-radicle = { package = "outbe-radicle", git = "https://github.com/outbe/outbe-heartwood.git", rev = "b76a17801329291153585ed31db61ee3c658046e" }
 radicle-log = { git = "https://github.com/outbe/outbe-heartwood.git", rev = "b76a17801329291153585ed31db61ee3c658046e" }

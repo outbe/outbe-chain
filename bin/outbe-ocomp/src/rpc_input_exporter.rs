@@ -3,6 +3,7 @@
 use std::{
     collections::{BTreeSet, VecDeque},
     path::PathBuf,
+    sync::{Arc, Mutex},
 };
 
 use alloy_primitives::{keccak256, B256};
@@ -54,17 +55,27 @@ pub struct RpcInputExporterConfigV1 {
 pub struct RpcInputExporterV1 {
     config: RpcInputExporterConfigV1,
     rpc: PublicOcompRpcClientV1,
-    projection: RpcFinalizedProjectionV1,
+    projection: Arc<Mutex<RpcFinalizedProjectionV1>>,
     cas: FilesystemCas,
     reader: FilesystemCasReader,
 }
 
 impl RpcInputExporterV1 {
     pub fn open(config: RpcInputExporterConfigV1) -> Result<Self, RpcInputExporterErrorV1> {
-        let rpc =
-            PublicOcompRpcClientV1::new(config.rpc_url.clone(), config.rpc_max_response_bytes)?;
         let projection = RpcFinalizedProjectionV1::open(config.projection.clone())
             .map_err(projection_open_error)?;
+        Self::open_with_shared_projection(config, Arc::new(Mutex::new(projection)))
+    }
+
+    /// Opens one bundle-pinned exporter lane over the process-owned finalized
+    /// projection. Sharing this handle is what lets active and retiring bundle
+    /// lanes coexist without competing for the Mongo writer lease.
+    pub fn open_with_shared_projection(
+        config: RpcInputExporterConfigV1,
+        projection: Arc<Mutex<RpcFinalizedProjectionV1>>,
+    ) -> Result<Self, RpcInputExporterErrorV1> {
+        let rpc =
+            PublicOcompRpcClientV1::new(config.rpc_url.clone(), config.rpc_max_response_bytes)?;
         let cas = FilesystemCas::open(
             &config.cas_root,
             CasWriterRole::SnapshotExporter,
@@ -107,20 +118,21 @@ impl RpcInputExporterV1 {
         if finalized.job_id != job_id {
             return Err(RpcInputExporterErrorV1::Authority("discovery JobId"));
         }
-        let pin = self
+        let mut projection = self
             .projection
+            .lock()
+            .map_err(|_| RpcInputExporterErrorV1::Authority("projection lock"))?;
+        let pin = projection
             .install_retention_pin(&finalized)
             .map_err(|error| stage("install Tribute retention pin", error))?;
-        let projected = self
-            .projection
+        let projected = projection
             .project_through(finalized.request.block_number)
             .map_err(|error| stage("project finalized receipts", error))?;
         if projected < finalized.request.block_number {
             return Err(RpcInputExporterErrorV1::Authority("projection checkpoint"));
         }
 
-        let partition = self
-            .projection
+        let partition = projection
             .tribute_source()
             .reconstruct_partition(
                 pin,

@@ -49,6 +49,9 @@ pub(crate) const PROMIS_LIMIT_ADDR: Address =
 pub(crate) const DESIS_ADDR: Address = address!("0x0000000000000000000000000000000000001016");
 /// Update precompile (protocol-version governance).
 pub(crate) const UPDATE_ADDR: Address = address!("0x000000000000000000000000000000000000EE0B");
+#[cfg(feature = "ocomp-integration")]
+pub(crate) const OCOMP_REGISTRY_ADDR: Address =
+    address!("0x000000000000000000000000000000000000EE12");
 /// Vote precompile (generic proposal/voting).
 pub(crate) const VOTE_ADDR: Address = address!("0x000000000000000000000000000000000000EE0C");
 /// EIP-7702 ZeroFee delegation target and view precompile.

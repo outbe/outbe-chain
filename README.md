@@ -486,7 +486,10 @@ consecutive ports.
 For each genesis validator the node owns one embedded OCOMP Supervisor. The
 persistent owner also starts one external SnapshotExporter and Worker ordinal 0.
 `start` and `status` succeed only when every Worker is registered and connected
-to its node-owned Supervisor.
+to its node-owned Supervisor. Post-genesis bundle changes use the staged
+[OCOMP successor procedure](docs/launching-a-network.md#updating-the-ocomp-protocol-bundle): old jobs keep their exact
+bundle pin, new jobs switch at the activation block, and activation itself does
+not restart any process.
 
 ### Managed localnet stack
 

@@ -33,8 +33,8 @@ use outbe_ocomp::{
     embedded_checkpoint::{OcompExExCheckpointStoreV1, OcompExExCheckpointV1},
     embedded_runtime::{
         EmbeddedComputeOutcomeV1, EmbeddedMaterializationOutcomeV1, EmbeddedNodePolicyV1,
-        EmbeddedOcompDomainConfigV1, EmbeddedOcompDomainV1, EmbeddedOcompRuntimeErrorV1,
-        EmbeddedPayoutOutcomeV1, EmbeddedVoteOutcomeV1,
+        EmbeddedOcompBundleConfigV1, EmbeddedOcompDomainConfigV1, EmbeddedOcompDomainV1,
+        EmbeddedOcompRuntimeErrorV1, EmbeddedPayoutOutcomeV1, EmbeddedVoteOutcomeV1,
     },
     supervisor::DiscoveryRecord,
 };
@@ -71,13 +71,19 @@ const PAYOUT_LOOKBACK_DAYS: u32 = 30;
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Clone)]
-pub struct OcompExExConfigV1 {
-    pub domain_root: PathBuf,
+pub struct OcompExExBundleConfigV1 {
     pub worker_address: std::net::SocketAddr,
     pub identity: EndpointIdentity,
     pub protocol_bundle: PinnedProtocolBundle,
+}
+
+#[derive(Clone)]
+pub struct OcompExExConfigV1 {
+    pub domain_root: PathBuf,
+    pub bundles: Vec<OcompExExBundleConfigV1>,
     pub policy: EmbeddedNodePolicyV1,
     pub validator_rpc_url: Option<String>,
+    pub chain_id: u64,
     pub genesis_hash: B256,
 }
 
@@ -406,10 +412,16 @@ where
     let provider = ctx.provider().clone();
     let domain = EmbeddedOcompDomainV1::open(EmbeddedOcompDomainConfigV1 {
         domain_root: config.domain_root,
-        worker_address: config.worker_address,
-        identity: config.identity,
         registry_generation: 1,
-        protocol_bundle: config.protocol_bundle,
+        bundles: config
+            .bundles
+            .into_iter()
+            .map(|bundle| EmbeddedOcompBundleConfigV1 {
+                worker_address: bundle.worker_address,
+                identity: bundle.identity,
+                protocol_bundle: bundle.protocol_bundle,
+            })
+            .collect(),
         policy: config.policy,
         validator_rpc_url: config.validator_rpc_url,
         limits: poc_schema_limits(),
@@ -518,7 +530,7 @@ where
         payout_rx,
         payout_active: false,
         materialization_attempt_heights: BTreeMap::new(),
-        chain_id: config.identity.chain_id,
+        chain_id: config.chain_id,
         genesis_hash: config.genesis_hash,
         fatal: None,
     };
@@ -1332,6 +1344,13 @@ where
             return Ok(());
         }
         self.domain.spawn_validator_materialization(
+            self.jobs
+                .get(&head.job_id)
+                .ok_or_else(|| eyre::eyre!("materialization head has no OCOMP runtime job"))?
+                .record
+                .spec
+                .summary
+                .protocol_bundle_hash,
             head,
             profile.batch_subtree_height,
             self.materialization_tx.clone(),

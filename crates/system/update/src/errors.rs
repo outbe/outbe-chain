@@ -27,6 +27,12 @@ pub enum UpdateError {
     TeePolicyChainIdentityMismatch,
     #[error("successor TEE policy activation height does not match the update")]
     TeePolicyActivationMismatch,
+    #[error("invalid canonical OCOMP successor authority")]
+    InvalidOcompSuccessor,
+    #[error("successor OCOMP authority chain identity does not match the update")]
+    OcompSuccessorChainIdentityMismatch,
+    #[error("successor OCOMP authority activation height does not match the update")]
+    OcompSuccessorActivationMismatch,
 }
 
 impl From<UpdateError> for PrecompileError {

@@ -1,7 +1,9 @@
+use std::collections::BTreeSet;
 use std::env;
 use std::ffi::OsString;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use alloy_primitives::{keccak256, B256};
@@ -14,9 +16,8 @@ use outbe_ocomp::inbox::WorkerInboxLimits;
 use outbe_ocomp::rpc_discovery::{
     FinalizedRpcDiscoveryConfigV1, FinalizedRpcDiscoveryPurposeV1, FinalizedRpcDiscoveryV1,
 };
-use outbe_ocomp::rpc_input_exporter::{
-    RpcInputExporterConfigV1, RpcInputExporterErrorV1, RpcInputExporterV1,
-};
+use outbe_ocomp::rpc_input_exporter::{RpcInputExporterConfigV1, RpcInputExporterV1};
+use outbe_ocomp::rpc_projection::RpcFinalizedProjectionV1;
 use outbe_ocomp::rpc_projection::RpcProjectionConfigV1;
 use outbe_ocomp::worker::{run_worker, WorkerConfig};
 use outbe_ocomp::worker_transport::MAX_REGISTERED_WORKERS;
@@ -77,6 +78,7 @@ const OCOMP_RPC_MAX_RESPONSE_BYTES: usize = 33_554_432;
 const EXPORTER_RECONCILE_INTERVAL: Duration = Duration::from_secs(1);
 const OCOMP_TRIBUTE_PAGE_LIMIT: usize = 256;
 const PROJECTION_START_BLOCK: u64 = 1;
+const PROTOCOL_BUNDLE_HASHES_ENV: &str = "OCOMP_PROTOCOL_BUNDLE_HASHES";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct ProductionConfig {
@@ -117,6 +119,7 @@ struct ProductionLayout {
     snapshot_exporter_receipt_root: PathBuf,
     ocomp_evm_key_path: PathBuf,
     protocol_bundle_path: PathBuf,
+    protocol_bundle_catalog: PathBuf,
 }
 
 impl ProductionLayout {
@@ -141,6 +144,7 @@ impl ProductionLayout {
             snapshot_exporter_receipt_root: exporter_root.join("receipts"),
             ocomp_evm_key_path: domain_root.join("ocomp-evm-key.hex"),
             protocol_bundle_path: domain_root.join("protocol-bundle-v1.ocb1"),
+            protocol_bundle_catalog: domain_root.join("protocol-bundles-v1"),
         })
     }
 }
@@ -156,6 +160,7 @@ struct RuntimeProfile {
     snapshot_exporter_receipt_root: PathBuf,
     ocomp_evm_key_path: PathBuf,
     protocol_bundle_path: PathBuf,
+    protocol_bundle_catalog: PathBuf,
 }
 
 impl RuntimeProfile {
@@ -179,6 +184,7 @@ impl RuntimeProfile {
                 snapshot_exporter_receipt_root: layout.snapshot_exporter_receipt_root,
                 ocomp_evm_key_path: layout.ocomp_evm_key_path,
                 protocol_bundle_path: layout.protocol_bundle_path,
+                protocol_bundle_catalog: layout.protocol_bundle_catalog,
             });
         };
 
@@ -203,6 +209,7 @@ impl RuntimeProfile {
             snapshot_exporter_receipt_root: root.join("exporter-v1").join("receipts"),
             ocomp_evm_key_path: root.join("ocomp-evm-key.hex"),
             protocol_bundle_path: root.join("protocol-bundle-v1.ocb1"),
+            protocol_bundle_catalog: root.join("protocol-bundles-v1"),
         })
     }
 }
@@ -213,7 +220,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             install_consensus_domain(args.chain_id)?;
             let runtime = RuntimeProfile::resolve(&args.runtime)?;
             let limits = poc_schema_limits();
-            let canonical_bundle = std::fs::read(&runtime.protocol_bundle_path)?;
+            let canonical_bundle = std::fs::read(protocol_bundle_path_for_hash(
+                &runtime,
+                args.protocol_bundle_hash,
+            )?)?;
             let protocol_bundle = PinnedProtocolBundle::decode(
                 &canonical_bundle,
                 args.protocol_bundle_hash,
@@ -236,7 +246,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     max_object_bytes: CAS_MAX_OBJECT_BYTES,
                     max_total_bytes: CAS_MAX_TOTAL_BYTES,
                 },
-                inbox_root: runtime.worker_inbox_root,
+                inbox_root: runtime
+                    .worker_inbox_root
+                    .join(hex::encode(args.protocol_bundle_hash.as_slice())),
                 inbox_limits: WorkerInboxLimits {
                     max_artifact_bytes: WORKER_INBOX_MAX_ARTIFACT_BYTES,
                     max_total_bytes: WORKER_INBOX_MAX_TOTAL_BYTES,
@@ -293,85 +305,151 @@ fn print_signer_address(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Er
 fn run_snapshot_exporter(args: &RuntimeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = RuntimeProfile::resolve(args)?;
     let limits = poc_schema_limits();
-    let identity = EndpointIdentity {
-        chain_id: required_env("OCOMP_CHAIN_ID")?.parse()?,
-        genesis_hash: required_env("OCOMP_GENESIS_HASH")?.parse()?,
-        boot_nonce: required_env("OCOMP_BOOT_NONCE")?.parse()?,
-        protocol_bundle_hash: required_env("OCOMP_PROTOCOL_BUNDLE_HASH")?.parse()?,
-    };
-    install_consensus_domain(identity.chain_id)?;
-    let protocol_bundle = PinnedProtocolBundle::decode(
-        &std::fs::read(&runtime.protocol_bundle_path)?,
-        identity.protocol_bundle_hash,
-        &limits,
-    )?;
+    let chain_id = required_env("OCOMP_CHAIN_ID")?.parse()?;
+    let genesis_hash = required_env("OCOMP_GENESIS_HASH")?.parse()?;
+    let boot_nonce = required_env("OCOMP_BOOT_NONCE")?.parse()?;
+    let bundle_hashes = required_protocol_bundle_hashes()?;
+    install_consensus_domain(chain_id)?;
     let rpc_url = required_env("OUTBE_OCOMP_RPC_URL")?;
-    let mut discovery = FinalizedRpcDiscoveryV1::open(FinalizedRpcDiscoveryConfigV1 {
+    let projection_config = RpcProjectionConfigV1 {
         rpc_url: rpc_url.clone(),
         rpc_max_response_bytes: OCOMP_RPC_MAX_RESPONSE_BYTES,
-        journal_root: runtime.snapshot_exporter_journal_root,
-        projection_start_block: PROJECTION_START_BLOCK,
-        identity,
-        fork_id: protocol_bundle.bundle().fork_id,
-        limits,
-        purpose: FinalizedRpcDiscoveryPurposeV1::InputReplay,
-    })?;
-    let exporter_config = RpcInputExporterConfigV1 {
-        rpc_url: rpc_url.clone(),
-        rpc_max_response_bytes: OCOMP_RPC_MAX_RESPONSE_BYTES,
-        projection: RpcProjectionConfigV1 {
-            rpc_url,
-            rpc_max_response_bytes: OCOMP_RPC_MAX_RESPONSE_BYTES,
-            mongo: MongoStorageConfig {
-                uri: required_env("OUTBE_OCOMP_PROJECTION_MONGODB_URI")?,
-                database: required_env("OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE")?,
-            },
-            chain_id: identity.chain_id,
-            genesis_hash: identity.genesis_hash,
-            start_block: PROJECTION_START_BLOCK,
-            tribute_page_limit: OCOMP_TRIBUTE_PAGE_LIMIT,
+        mongo: MongoStorageConfig {
+            uri: required_env("OUTBE_OCOMP_PROJECTION_MONGODB_URI")?,
+            database: required_env("OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE")?,
         },
-        chain_id: identity.chain_id,
-        genesis_hash: identity.genesis_hash,
-        fork_id: protocol_bundle.bundle().fork_id,
-        protocol_bundle_hash: identity.protocol_bundle_hash,
-        cas_root: runtime.cas_root,
-        cas_limits: CasLimits {
-            max_object_bytes: CAS_MAX_OBJECT_BYTES,
-            max_total_bytes: CAS_MAX_TOTAL_BYTES,
-        },
-        input_ref_root: runtime.snapshot_exporter_input_ref_root,
-        receipt_root: runtime.snapshot_exporter_receipt_root,
-        protocol_bundle,
-        limits,
+        chain_id,
+        genesis_hash,
+        start_block: PROJECTION_START_BLOCK,
+        tribute_page_limit: OCOMP_TRIBUTE_PAGE_LIMIT,
     };
-    let mut exporter = retry_snapshot_exporter_startup(
-        || RpcInputExporterV1::open(exporter_config.clone()),
-        RpcInputExporterErrorV1::is_retryable_startup,
+    let projection = retry_snapshot_exporter_startup(
+        || RpcFinalizedProjectionV1::open(projection_config.clone()),
+        |error| {
+            matches!(
+                error,
+                outbe_ocomp::rpc_projection::RpcProjectionErrorV1::StorageUnavailable
+            )
+        },
         |error| {
             eprintln!("OCOMP snapshot exporter startup retry: {error}");
             std::thread::sleep(EXPORTER_RECONCILE_INTERVAL);
         },
     )?;
-    let mut exported_job_id = None;
+    let shared_projection = Arc::new(Mutex::new(projection));
+    let mut lanes = Vec::with_capacity(bundle_hashes.len());
+    for protocol_bundle_hash in bundle_hashes {
+        let identity = EndpointIdentity {
+            chain_id,
+            genesis_hash,
+            boot_nonce,
+            protocol_bundle_hash,
+        };
+        let protocol_bundle = PinnedProtocolBundle::decode(
+            &std::fs::read(protocol_bundle_path_for_hash(
+                &runtime,
+                protocol_bundle_hash,
+            )?)?,
+            protocol_bundle_hash,
+            &limits,
+        )?;
+        let hash_directory = hex::encode(protocol_bundle_hash.as_slice());
+        let discovery = FinalizedRpcDiscoveryV1::open(FinalizedRpcDiscoveryConfigV1 {
+            rpc_url: rpc_url.clone(),
+            rpc_max_response_bytes: OCOMP_RPC_MAX_RESPONSE_BYTES,
+            journal_root: runtime.snapshot_exporter_journal_root.join(&hash_directory),
+            projection_start_block: PROJECTION_START_BLOCK,
+            identity,
+            fork_id: protocol_bundle.bundle().fork_id,
+            limits,
+            purpose: FinalizedRpcDiscoveryPurposeV1::InputReplay,
+        })?;
+        let exporter_config = RpcInputExporterConfigV1 {
+            rpc_url: rpc_url.clone(),
+            rpc_max_response_bytes: OCOMP_RPC_MAX_RESPONSE_BYTES,
+            projection: projection_config.clone(),
+            chain_id,
+            genesis_hash,
+            fork_id: protocol_bundle.bundle().fork_id,
+            protocol_bundle_hash,
+            cas_root: runtime.cas_root.clone(),
+            cas_limits: CasLimits {
+                max_object_bytes: CAS_MAX_OBJECT_BYTES,
+                max_total_bytes: CAS_MAX_TOTAL_BYTES,
+            },
+            input_ref_root: runtime.snapshot_exporter_input_ref_root.clone(),
+            receipt_root: runtime.snapshot_exporter_receipt_root.clone(),
+            protocol_bundle,
+            limits,
+        };
+        let exporter = RpcInputExporterV1::open_with_shared_projection(
+            exporter_config,
+            shared_projection.clone(),
+        )?;
+        lanes.push((protocol_bundle_hash, discovery, exporter, None));
+    }
     loop {
-        if let Err(error) = discovery.reconcile_once() {
-            eprintln!("OCOMP snapshot exporter discovery retry: {error}");
-        }
-        if let Some(record) = discovery.current_record() {
-            let job_id = record.spec.summary.job_id;
-            if exported_job_id != Some(job_id) {
-                match exporter.export(&record) {
-                    Ok(()) => {
-                        eprintln!("OCOMP snapshot exporter published finalized input for {job_id}");
-                        exported_job_id = Some(job_id);
+        for (bundle_hash, discovery, exporter, exported_job_id) in &mut lanes {
+            if let Err(error) = discovery.reconcile_once() {
+                eprintln!("OCOMP snapshot exporter discovery retry for {bundle_hash}: {error}");
+            }
+            if let Some(record) = discovery.current_record() {
+                let job_id = record.spec.summary.job_id;
+                if *exported_job_id != Some(job_id) {
+                    match exporter.export(&record) {
+                        Ok(()) => {
+                            eprintln!(
+                                "OCOMP snapshot exporter published finalized input for {job_id} using {bundle_hash}"
+                            );
+                            *exported_job_id = Some(job_id);
+                        }
+                        Err(error) => eprintln!(
+                            "OCOMP snapshot exporter public input retry for {bundle_hash}: {error}"
+                        ),
                     }
-                    Err(error) => eprintln!("OCOMP snapshot exporter public input retry: {error}"),
                 }
             }
         }
         std::thread::sleep(EXPORTER_RECONCILE_INTERVAL);
     }
+}
+
+fn required_protocol_bundle_hashes() -> Result<Vec<B256>, Box<dyn std::error::Error>> {
+    let encoded = env::var(PROTOCOL_BUNDLE_HASHES_ENV)
+        .or_else(|_| env::var("OCOMP_PROTOCOL_BUNDLE_HASH"))
+        .map_err(|_| {
+            format!("required environment variable {PROTOCOL_BUNDLE_HASHES_ENV} is missing")
+        })?;
+    let mut unique = BTreeSet::new();
+    for item in encoded.split(',') {
+        if item.is_empty() || item.trim() != item {
+            return Err("OCOMP protocol bundle hash list is not canonical".into());
+        }
+        unique.insert(item.parse::<B256>()?);
+    }
+    if unique.is_empty() || unique.len() > 2 || unique.iter().any(B256::is_zero) {
+        return Err(
+            "OCOMP protocol bundle hash list must contain one or two non-zero hashes".into(),
+        );
+    }
+    Ok(unique.into_iter().collect())
+}
+
+fn protocol_bundle_path_for_hash(
+    runtime: &RuntimeProfile,
+    protocol_bundle_hash: B256,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let catalog_path = runtime.protocol_bundle_catalog.join(format!(
+        "{}.ocb1",
+        hex::encode(protocol_bundle_hash.as_slice())
+    ));
+    if catalog_path.is_file() {
+        return Ok(catalog_path);
+    }
+    if runtime.protocol_bundle_path.is_file() {
+        return Ok(runtime.protocol_bundle_path.clone());
+    }
+    Err(format!("OCOMP protocol bundle {protocol_bundle_hash} is not installed").into())
 }
 
 fn retry_snapshot_exporter_startup<T, E>(

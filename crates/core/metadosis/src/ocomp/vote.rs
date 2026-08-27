@@ -368,7 +368,10 @@ impl MetadosisContract<'_> {
                 ));
             }
             let authority = self
-                .read_ocomp_activation_authority(limits)?
+                .read_ocomp_activation_authority_for_bundle(
+                    record.intent.protocol_bundle_hash,
+                    limits,
+                )?
                 .ok_or_else(|| {
                     storage_corruption_message("OCOMP activation authority is not installed")
                 })?;

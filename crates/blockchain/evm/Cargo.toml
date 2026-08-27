@@ -41,6 +41,7 @@ outbe-agentreward.workspace = true
 outbe-cca.workspace = true
 outbe-metadosis.workspace = true
 outbe-ocomp-protocol.workspace = true
+outbe-ocompregistry.workspace = true
 outbe-validatorset.workspace = true
 outbe-consensus.workspace = true
 outbe-slashindicator.workspace = true
