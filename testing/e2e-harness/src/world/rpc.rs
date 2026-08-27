@@ -2738,6 +2738,7 @@ impl Rpc {
             worldwide_day: WorldwideDay::new(nod.worldwideDay),
             generation: nod.generation,
             job_id: active.job_id,
+            protocol_bundle_hash: B256::repeat_byte(0x5b),
             program_semantics_hash: active.program_semantics_hash,
             nod_root: nod.nodRoot,
             bucket_root: nod.bucketRoot,

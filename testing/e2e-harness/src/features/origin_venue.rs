@@ -1,7 +1,11 @@
 //! Steps for the intex engine deployed onto the committee's own chain.
 
+#[cfg(feature = "ocomp-integration")]
 use std::thread::sleep;
-use std::time::{Duration, Instant};
+#[cfg(feature = "ocomp-integration")]
+use std::time::Duration;
+#[cfg(feature = "ocomp-integration")]
+use std::time::Instant;
 
 #[cfg(feature = "ocomp-integration")]
 use alloy_primitives::{Address, U256};
@@ -11,10 +15,14 @@ use crate::env::environment;
 use crate::internal::eth;
 #[cfg(feature = "ocomp-integration")]
 use crate::world::bidders;
-use crate::world::venue_probes::{IAuctionStage, IProceedsRoute};
+#[cfg(feature = "ocomp-integration")]
+use crate::world::venue_probes;
+#[cfg(feature = "ocomp-integration")]
+use crate::world::venue_probes::IAuctionStage;
+use crate::world::venue_probes::IProceedsRoute;
 #[cfg(feature = "ocomp-integration")]
 use crate::world::venue_probes::{IIssuedSeries, IParkedWork, IPaymentToken};
-use crate::world::{origin_venue, venue_probes, World};
+use crate::world::{origin_venue, World};
 
 const ORIGIN_DEPLOY_FUNDING_COEN: u64 = 5_400;
 
@@ -289,8 +297,10 @@ fn venue_side(world: &World) -> VenueSide {
     }
 }
 
+#[cfg(feature = "ocomp-integration")]
 const AUCTION_START_TIMEOUT: Duration = Duration::from_secs(1200);
 
+#[cfg(feature = "ocomp-integration")]
 #[then("the auction for that day opens on every chain it named")]
 fn auction_opens_on_target(world: &mut World) {
     // The start message goes to every chain the day names, so every chain
