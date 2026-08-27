@@ -51,6 +51,7 @@ MONGO_IMAGE = "mongo:7"
 # default. Used to size the Radicle sidecar's connection limits so validators
 # joining later do not require a restart of everyone already running.
 DEFAULT_MAX_VALIDATORS = 128
+OCOMP_BUNDLE_LANE_STRIDE = 6
 
 
 def quote(value: Any) -> str:
@@ -333,6 +334,7 @@ def node_script(
     repo_root: str,
     consensus_port: int,
     host: str,
+    identity: dict[str, Any],
 ) -> str:
     binary = str(config.get("node_binary", "outbe-chain"))
     # Which TEE transport the node must speak. `dcap-required` always uses the
@@ -358,13 +360,21 @@ def node_script(
 KEYS={quote(validator_keys)}
 DATA={quote(validator_dir + "/data")}
 DOMAIN={quote(validator_dir + "/ocomp/domain-v1")}
+BUNDLE_HASH={quote(identity["protocol_bundle_hash"])}
 
-mkdir -p "$DATA" "$DOMAIN" {quote(validator_dir + "/logs")}
+mkdir -p "$DATA" "$DOMAIN/protocol-bundles-v1" {quote(validator_dir + "/logs")}
 install -m 600 "$KEYS/ocomp-key-v1.hex" "$DOMAIN/ocomp-key-v1.hex"
 install -m 600 "$KEYS/ocomp-evm-key.hex" "$DOMAIN/ocomp-evm-key.hex"
-# Every OCOMP role loads the bundle from the domain and checks it against the
-# hash it was started with, so stage it alongside the keys.
+# Preserve the V1 compatibility path and publish the same canonical bytes in
+# the hash-addressed catalog used by successor-aware Nodes and exporters.
 install -m 640 {quote(base_dir + "/protocol-bundle-v1.ocb1")} "$DOMAIN/protocol-bundle-v1.ocb1"
+install -m 640 {quote(base_dir + "/protocol-bundles-v1")}/"${{BUNDLE_HASH#0x}}.ocb1" \
+  "$DOMAIN/protocol-bundles-v1/${{BUNDLE_HASH#0x}}.ocb1"
+
+if [ -f {quote(validator_dir + "/ocomp-bundles.env")} ]; then
+  source {quote(validator_dir + "/ocomp-bundles.env")}
+  export OCOMP_PROTOCOL_BUNDLE_HASHES
+fi
 
 # reth reads the p2p key from the file verbatim, so normalize it in place.
 printf '%s' "$(tr -d '[:space:]' < "$KEYS/reth-p2p-secret.hex")" > "$KEYS/reth-p2p-secret.hex"
@@ -612,6 +622,7 @@ export OCOMP_CHAIN_ID={identity["chain_id"]}
 export OCOMP_GENESIS_HASH={identity["genesis_hash"]}
 export OCOMP_BOOT_NONCE=0x{f"{index + 1:02x}" * 32}
 export OCOMP_PROTOCOL_BUNDLE_HASH={identity["protocol_bundle_hash"]}
+export OCOMP_PROTOCOL_BUNDLE_HASHES={identity["protocol_bundle_hash"]}
 export OCOMP_REGISTRY_GENERATION=1
 export OUTBE_OCOMP_RPC_URL="http://127.0.0.1:{port_of(config, "rpc_port")}"
 """
@@ -630,6 +641,12 @@ def ocomp_exporter_script(
     return f"""
 # OCOMP SnapshotExporter: materializes the finalized inputs the Workers read.
 {ocomp_role_preamble(config=config, index=index, base_dir=base_dir, identity=identity).strip()}
+if [ -f {quote(base_dir + f"/validator-{index}/ocomp-bundles.env")} ]; then
+  # Operator-owned allow-list. Add the staged hash here and restart only the
+  # exporter before submitting the Update proposal.
+  source {quote(base_dir + f"/validator-{index}/ocomp-bundles.env")}
+  export OCOMP_PROTOCOL_BUNDLE_HASHES
+fi
 export OUTBE_OCOMP_PROJECTION_MONGODB_URI="mongodb://127.0.0.1:{port_of(config, "mongodb_port")}/?replicaSet=rs0"
 export OUTBE_OCOMP_PROJECTION_MONGODB_DATABASE={quote(database)}
 
@@ -652,16 +669,61 @@ def ocomp_worker_script(
     # four the worker ordinal, so every worker process gets a distinct nonce.
     nonce = f"{index + 1:02x}" + "00" * 27 + f"{ordinal:08x}"
     return f"""
-# OCOMP Worker {ordinal}: runs the actual computation and signs its result.
+# OCOMP Worker {ordinal}: runs the active-bundle computation and signs its result.
 {ocomp_role_preamble(config=config, index=index, base_dir=base_dir, identity=identity).strip()}
+source {quote(base_dir + f"/validator-{index}/ocomp-active.env")}
+: "${{OCOMP_ACTIVE_PROTOCOL_BUNDLE_HASH:?missing active bundle hash}}"
+BUNDLE_NAME="${{OCOMP_ACTIVE_PROTOCOL_BUNDLE_HASH#0x}}.ocb1"
+[ -f {quote(base_dir + f"/validator-{index}/ocomp/domain-v1/protocol-bundles-v1")}/"$BUNDLE_NAME" ] || {{
+  echo "active bundle is not installed: $BUNDLE_NAME" >&2
+  exit 1
+}}
+export OCOMP_PROTOCOL_BUNDLE_HASH="$OCOMP_ACTIVE_PROTOCOL_BUNDLE_HASH"
 
 exec {quote(binary)} worker \\
   --chain-id {identity["chain_id"]} \\
   --genesis-hash {identity["genesis_hash"]} \\
   --boot-nonce 0x{nonce} \\
   --worker-ordinal {ordinal} \\
-  --protocol-bundle-hash {identity["protocol_bundle_hash"]} \\
+  --protocol-bundle-hash "$OCOMP_ACTIVE_PROTOCOL_BUNDLE_HASH" \\
   --supervisor-address 127.0.0.1:{ocomp_endpoint_port}
+"""
+
+
+def ocomp_successor_worker_script(
+    *,
+    config: dict[str, Any],
+    index: int,
+    base_dir: str,
+    identity: dict[str, Any],
+    ocomp_endpoint_port: int,
+) -> str:
+    binary = str(config.get("ocomp_binary", "outbe-ocomp"))
+    successor_endpoint = ocomp_endpoint_port + OCOMP_BUNDLE_LANE_STRIDE
+    if successor_endpoint > 65535:
+        raise ValueError("consensus port leaves no OCOMP successor endpoint")
+    nonce = f"{index + 1:02x}" + "00" * 26 + "01" + "00000000"
+    return f"""
+# Dormant V2 Worker lane. The operator writes ocomp-successor.env and starts
+# its systemd unit before the Update proposal; activation itself starts no
+# process and changes no local files.
+{ocomp_role_preamble(config=config, index=index, base_dir=base_dir, identity=identity).strip()}
+source {quote(base_dir + f"/validator-{index}/ocomp-successor.env")}
+: "${{OCOMP_SUCCESSOR_PROTOCOL_BUNDLE_HASH:?missing successor bundle hash}}"
+BUNDLE_NAME="${{OCOMP_SUCCESSOR_PROTOCOL_BUNDLE_HASH#0x}}.ocb1"
+[ -f {quote(base_dir + f"/validator-{index}/ocomp/domain-v1/protocol-bundles-v1")}/"$BUNDLE_NAME" ] || {{
+  echo "successor bundle is not installed: $BUNDLE_NAME" >&2
+  exit 1
+}}
+export OCOMP_PROTOCOL_BUNDLE_HASH="$OCOMP_SUCCESSOR_PROTOCOL_BUNDLE_HASH"
+
+exec {quote(binary)} worker \
+  --chain-id {identity["chain_id"]} \
+  --genesis-hash {identity["genesis_hash"]} \
+  --boot-nonce 0x{nonce} \
+  --worker-ordinal 0 \
+  --protocol-bundle-hash "$OCOMP_SUCCESSOR_PROTOCOL_BUNDLE_HASH" \
+  --supervisor-address 127.0.0.1:{successor_endpoint}
 """
 
 # ---------------------------------------------------------------------------
@@ -820,6 +882,7 @@ UNIT_ROLES = (
     ("node", "validator node", "outbe-radicle@%i.service"),
     ("ocomp-exporter", "OCOMP SnapshotExporter", "outbe-node@%i.service"),
     ("ocomp-worker", "OCOMP Worker", "outbe-node@%i.service"),
+    ("ocomp-successor-worker", "OCOMP successor Worker", "outbe-node@%i.service"),
     ("feeder", "price oracle feeder", "outbe-node@%i.service"),
 )
 
@@ -963,6 +1026,7 @@ def build_distribution(
     ]
     enclave_dir = output_dir / "enclave"
     systemd_dir = output_dir / "systemd"
+    bundle_catalog_dir = output_dir / "protocol-bundles-v1"
 
     names = []
     for index in range(len(validators)):
@@ -973,6 +1037,8 @@ def build_distribution(
                 shutil.copy2(item, staging / item.name)
         if systemd_dir.is_dir():
             shutil.copytree(systemd_dir, staging / "systemd")
+        if bundle_catalog_dir.is_dir():
+            shutil.copytree(bundle_catalog_dir, staging / "protocol-bundles-v1")
         if enclave_dir.is_dir():
             shutil.copytree(enclave_dir, staging / "enclave")
         # This machine's run scripts and ONLY this machine's key material.
@@ -1075,6 +1141,7 @@ Every machine gets the shared files plus **only its own** key directory:
 # from this directory on the operator workstation, for machine N (0..3):
 ssh <machine-N> "mkdir -p {base_dir} {keys_dir}"
 scp genesis.json reth-bootnodes.txt protocol-bundle-v1.ocb1 <machine-N>:{base_dir}/
+scp -r protocol-bundles-v1 <machine-N>:{base_dir}/
 scp -r validator-N <machine-N>:{base_dir}/
 scp -r {local_keys_dir}/validator-N <machine-N>:{keys_dir}/
 ```
@@ -1162,7 +1229,7 @@ number and `validator list` shows four active validators.
 | Execution + consensus | `outbe-chain node` | one binary, no Engine API split |
 | OCOMP Supervisor | embedded in `outbe-chain node` | ExEx hands out work and submits results |
 | OCOMP SnapshotExporter | `outbe-ocomp snapshot-exporter` | own process; materializes finalized inputs |
-| OCOMP Worker | `outbe-ocomp worker` | own process, ordinal 0 |
+| OCOMP Worker | `outbe-ocomp worker` | initial lane plus one dormant successor lane |
 | TEE enclave | Docker container | the node refuses to start without it |
 | Radicle | `outbe-radicle` | validator startup requires its control socket |
 | Price feeder | `outbe-feeder` | submits oracle votes |
@@ -1177,6 +1244,11 @@ number and `validator list` shows four active validators.
   which defaults to a copy of the validator's own EVM key. To use a dedicated
   operational key, replace that file and register it on-chain with
   `outbe-cli validator delegate ocomp <address>`.
+- An OCOMP successor is installed as `protocol-bundles-v1/<hash>.ocb1` before
+  its Update proposal. Put both hashes in `validator-N/ocomp-bundles.env`, put
+  the successor hash in `validator-N/ocomp-successor.env`, restart the Node and
+  SnapshotExporter before the proposal, and start
+  `outbe-ocomp-successor-worker@N`. Do not restart anything at activation.
 - `reth-bootnodes.txt` pins each machine's reth identity:
 {bootnode_lines}
 - Re-running `create_genesis.py` without the pinned `timestamp:` produces a
@@ -1215,6 +1287,12 @@ def render(
         )
     (output_dir / "reth-bootnodes.txt").write_text("\n".join(enodes) + "\n")
     identity = ocomp_identity(genesis_path, keys_dir)
+    bundle_catalog = output_dir / "protocol-bundles-v1"
+    bundle_catalog.mkdir(parents=True, exist_ok=True)
+    initial_catalog_bundle = bundle_catalog / (
+        identity["protocol_bundle_hash"].removeprefix("0x") + ".ocb1"
+    )
+    shutil.copy2(output_dir / "protocol-bundle-v1.ocb1", initial_catalog_bundle)
 
     for index, validator in enumerate(validators):
         directory = output_dir / f"validator-{index}"
@@ -1246,6 +1324,7 @@ def render(
                 repo_root=str(repo_root),
                 consensus_port=int(consensus_port),
                 host=host,
+                identity=identity,
             ),
         )
         write_script(
@@ -1280,6 +1359,22 @@ def render(
                 identity=identity,
                 ocomp_endpoint_port=ocomp_endpoint_port,
             ),
+        )
+        write_script(
+            directory / "run-ocomp-successor-worker.sh",
+            ocomp_successor_worker_script(
+                config=config,
+                index=index,
+                base_dir=base_dir,
+                identity=identity,
+                ocomp_endpoint_port=ocomp_endpoint_port,
+            ),
+        )
+        (directory / "ocomp-bundles.env").write_text(
+            f'OCOMP_PROTOCOL_BUNDLE_HASHES={identity["protocol_bundle_hash"]}\n'
+        )
+        (directory / "ocomp-active.env").write_text(
+            f'OCOMP_ACTIVE_PROTOCOL_BUNDLE_HASH={identity["protocol_bundle_hash"]}\n'
         )
         signer_key = (
             (keys_dir / f"validator-{index}" / "evm-key.hex")

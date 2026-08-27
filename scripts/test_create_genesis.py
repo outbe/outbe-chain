@@ -574,6 +574,7 @@ class LaunchBundleTests(unittest.TestCase):
         }))
         marker = keys_dir / "validator-0" / "ocomp-registration-v1.genesis-hash"
         marker.write_text(genesis_hash + "\n")
+        (output_dir / "protocol-bundle-v1.ocb1").write_bytes(b"canonical-ocomp-v1")
         config = minimal_config(str(keys_dir)) | (config_overrides or {})
         LB.render(
             config=config,
@@ -649,7 +650,11 @@ class LaunchBundleTests(unittest.TestCase):
                     subprocess.run(["bash", "-n", str(script)], check=True)
                 self.assertEqual(
                     {path.name for path in directory.glob("run-ocomp-*.sh")},
-                    {"run-ocomp-exporter.sh", "run-ocomp-worker.sh"},
+                    {
+                        "run-ocomp-exporter.sh",
+                        "run-ocomp-worker.sh",
+                        "run-ocomp-successor-worker.sh",
+                    },
                 )
                 self.assertTrue((directory / "feeder.toml").is_file())
 
@@ -658,7 +663,8 @@ class LaunchBundleTests(unittest.TestCase):
             _, _, output_dir = self.render(tmp)
             script = (output_dir / "validator-2" / "run-ocomp-worker.sh").read_text()
             # The bundle hash sits after the genesis hash and the fork id.
-            self.assertIn("--protocol-bundle-hash 0x" + "cd" * 32, script)
+            self.assertIn("--protocol-bundle-hash \"$OCOMP_ACTIVE_PROTOCOL_BUNDLE_HASH\"", script)
+            self.assertIn("ocomp-active.env", script)
             self.assertIn("--chain-id 424242", script)
             self.assertIn("--genesis-hash 0x" + "ab" * 32, script)
             # Each host gets a distinct boot nonce, ordinal in the low bytes.
@@ -667,12 +673,45 @@ class LaunchBundleTests(unittest.TestCase):
     def test_every_ocomp_role_gets_the_shared_environment(self):
         with tempfile.TemporaryDirectory() as tmp:
             _, _, output_dir = self.render(tmp)
-            for role in ("exporter", "worker"):
+            for role in ("exporter", "worker", "successor-worker"):
                 script = (output_dir / "validator-0" / f"run-ocomp-{role}.sh").read_text()
                 for var in ("OUTBE_OCOMP_BASE_PATH", "OCOMP_VALIDATOR_INDEX",
                             "OCOMP_CHAIN_ID", "OCOMP_GENESIS_HASH", "OCOMP_BOOT_NONCE",
                             "OCOMP_PROTOCOL_BUNDLE_HASH", "OCOMP_REGISTRY_GENERATION"):
                     self.assertIn(var, script, f"{role} script is missing {var}")
+
+    def test_successor_bundle_catalog_and_dormant_worker_are_release_ready(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, _, output_dir = self.render(tmp)
+            bundle_hash = "cd" * 32
+            catalog_bundle = output_dir / "protocol-bundles-v1" / f"{bundle_hash}.ocb1"
+            self.assertEqual(
+                catalog_bundle.read_bytes(),
+                (output_dir / "protocol-bundle-v1.ocb1").read_bytes(),
+            )
+            node = (output_dir / "validator-0" / "run-node.sh").read_text()
+            self.assertIn("protocol-bundles-v1/${BUNDLE_HASH#0x}.ocb1", node)
+            self.assertIn("ocomp-bundles.env", node)
+            active = output_dir / "validator-0" / "ocomp-active.env"
+            self.assertEqual(
+                active.read_text(),
+                "OCOMP_ACTIVE_PROTOCOL_BUNDLE_HASH=0x" + bundle_hash + "\n",
+            )
+            exporter = (output_dir / "validator-0" / "run-ocomp-exporter.sh").read_text()
+            self.assertIn("ocomp-bundles.env", exporter)
+            successor = (
+                output_dir / "validator-0" / "run-ocomp-successor-worker.sh"
+            ).read_text()
+            self.assertIn("OCOMP_SUCCESSOR_PROTOCOL_BUNDLE_HASH", successor)
+            self.assertIn("--supervisor-address 127.0.0.1:30407", successor)
+            unit = output_dir / "systemd" / "outbe-ocomp-successor-worker@.service"
+            self.assertTrue(unit.is_file())
+            installer = (output_dir / "install-systemd.sh").read_text()
+            self.assertNotIn(
+                "for role in enclave radicle node ocomp-exporter ocomp-worker "
+                "ocomp-successor-worker feeder",
+                installer,
+            )
 
     def test_start_all_waits_for_the_node_owned_endpoint_before_the_worker(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -777,6 +816,7 @@ class LaunchBundleTests(unittest.TestCase):
                 "node",
                 "ocomp-exporter",
                 "ocomp-worker",
+                "ocomp-successor-worker",
                 "feeder",
             ):
                 unit = unit_dir / f"outbe-{role}@.service"
@@ -792,6 +832,7 @@ class LaunchBundleTests(unittest.TestCase):
                     "outbe-node@.service",
                     "outbe-ocomp-exporter@.service",
                     "outbe-ocomp-worker@.service",
+                    "outbe-ocomp-successor-worker@.service",
                     "outbe-feeder@.service",
                 },
             )
@@ -800,7 +841,7 @@ class LaunchBundleTests(unittest.TestCase):
             self.assertIn("outbe-radicle@%i.service", node)
             radicle = (unit_dir / "outbe-radicle@.service").read_text()
             self.assertIn("outbe-enclave@%i.service", radicle)
-            for role in ("ocomp-exporter", "ocomp-worker"):
+            for role in ("ocomp-exporter", "ocomp-worker", "ocomp-successor-worker"):
                 unit = (unit_dir / f"outbe-{role}@.service").read_text()
                 self.assertIn("Requires=outbe-node@%i.service", unit)
             # The enclave needs root for /dev/sgx_*.

@@ -1,6 +1,7 @@
 //! Vote target-module handler for scheduling protocol updates.
 
 use alloy_primitives::{Address, U256};
+use outbe_ocompregistry::OcompRegistry;
 use outbe_primitives::addresses::UPDATE_ADDRESS;
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
@@ -40,34 +41,39 @@ impl VoteTarget for UpdateVoteTarget {
         let decoded = ScheduleUpdatePayload::from_value(&payload).map_err(|err| {
             PrecompileError::Fatal(format!("stored Update proposal payload is invalid: {err}"))
         })?;
-        match Update::new(ctx.storage.clone()).schedule_update_from_propose_classified(
-            proposal_id,
-            &payload,
-            ctx.block.block_number,
-        )? {
-            Ok(()) => {
-                if let Some(policy) = decoded.tee_policy().map_err(|err| {
-                    PrecompileError::Fatal(format!(
-                        "stored Update successor TEE policy is invalid: {err}"
-                    ))
-                })? {
-                    if let Err(err) = TeeRegistry::new(ctx.storage.clone())
-                        .stage_successor_policy_v1(proposal_id, &policy)
-                    {
-                        return classify_tee_policy_stage_error(err);
-                    }
-                }
-                Ok(TargetExecutionOutcome::Applied)
+        let outcome = ctx.with_checkpoint(|| {
+            match Update::new(ctx.storage.clone()).schedule_update_from_propose_classified(
+                proposal_id,
+                &payload,
+                ctx.block.block_number,
+            )? {
+                Ok(()) => {}
+                Err(err) => return Err(classify_domain_error_as_precompile(err)),
             }
-            Err(err) => classify_domain_error(err),
+            if let Some(policy) = decoded.tee_policy().map_err(|err| {
+                PrecompileError::Fatal(format!(
+                    "stored Update successor TEE policy is invalid: {err}"
+                ))
+            })? {
+                TeeRegistry::new(ctx.storage.clone())
+                    .stage_successor_policy_v1(proposal_id, &policy)?;
+            }
+            if let Some(successor) = decoded.ocomp_successor().map_err(|err| {
+                PrecompileError::Fatal(format!("stored Update OCOMP successor is invalid: {err}"))
+            })? {
+                OcompRegistry::new(ctx.storage.clone()).stage_successor(
+                    proposal_id,
+                    &successor,
+                    &outbe_ocompregistry::poc_schema_limits(),
+                )?;
+            }
+            Ok(())
+        });
+        match outcome {
+            Ok(()) => Ok(TargetExecutionOutcome::Applied),
+            Err(PrecompileError::Revert(reason)) => Ok(TargetExecutionOutcome::Error { reason }),
+            Err(err) => Err(err),
         }
-    }
-}
-
-fn classify_tee_policy_stage_error(err: PrecompileError) -> Result<TargetExecutionOutcome> {
-    match err {
-        PrecompileError::Revert(reason) => Ok(TargetExecutionOutcome::Error { reason }),
-        other => Err(other),
     }
 }
 
@@ -86,9 +92,22 @@ fn classify_domain_error(err: UpdateError) -> Result<TargetExecutionOutcome> {
         | UpdateError::InvalidScheduledUpdateStatus
         | UpdateError::InvalidTeePolicy
         | UpdateError::TeePolicyChainIdentityMismatch
-        | UpdateError::TeePolicyActivationMismatch => Err(PrecompileError::Fatal(format!(
+        | UpdateError::TeePolicyActivationMismatch
+        | UpdateError::InvalidOcompSuccessor
+        | UpdateError::OcompSuccessorChainIdentityMismatch
+        | UpdateError::OcompSuccessorActivationMismatch => Err(PrecompileError::Fatal(format!(
             "Update Vote target invariant failure: {err}"
         ))),
+    }
+}
+
+fn classify_domain_error_as_precompile(err: UpdateError) -> PrecompileError {
+    match classify_domain_error(err) {
+        Ok(TargetExecutionOutcome::Error { reason }) => PrecompileError::Revert(reason),
+        Ok(TargetExecutionOutcome::Applied) => {
+            PrecompileError::Fatal("unexpected applied Update classification".into())
+        }
+        Err(error) => error,
     }
 }
 
@@ -122,6 +141,9 @@ mod tests {
             UpdateError::InvalidTeePolicy,
             UpdateError::TeePolicyChainIdentityMismatch,
             UpdateError::TeePolicyActivationMismatch,
+            UpdateError::InvalidOcompSuccessor,
+            UpdateError::OcompSuccessorChainIdentityMismatch,
+            UpdateError::OcompSuccessorActivationMismatch,
         ] {
             assert!(matches!(
                 classify_domain_error(err),

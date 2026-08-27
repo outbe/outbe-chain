@@ -749,6 +749,159 @@ fn two_eligible_days_create_independently_progressing_live_jobs() {
 }
 
 #[test]
+fn fresh_job_uses_active_successor_while_pre_activation_job_keeps_predecessor_pin() {
+    let genesis_hash = B256::repeat_byte(0x91);
+    let mut provider =
+        HashMapStorageProvider::new_with_chain_identity(chain::CHAIN_ID, genesis_hash);
+    outbe_fidelity::enclave_client::test_enclave::install();
+    let fixture = prepare_ready_days_fixture(&mut provider, true);
+    let limits = poc_schema_limits();
+    let initial_activation_height = fixture.block_number - 1;
+    let successor_activation_height = fixture.block_number + 1;
+    let install = crate::fixture_kernel::fork_install_fixture(
+        crate::OcompForkInstallClassification::Measurement,
+        initial_activation_height,
+        chain::CHAIN_ID,
+        genesis_hash,
+    );
+    let initial_authority = outbe_ocompregistry::OcompProtocolAuthorityV1 {
+        request_profile: outbe_ocompregistry::OcompRequestProfile::decode_canonical(
+            &install.request_profile.encode_canonical(&limits).unwrap(),
+            &limits,
+        )
+        .unwrap(),
+        protocol_bundle: install.protocol_bundle.clone(),
+    };
+    let initial_bundle_hash = initial_authority.request_profile.protocol_bundle_hash;
+    let mut successor_bundle = initial_authority.protocol_bundle.clone();
+    successor_bundle.protocol_version += 1;
+    successor_bundle.fork_id = B256::repeat_byte(0x92);
+    successor_bundle.request_semantics_version += 1;
+    successor_bundle.lysis_program_semantics_hash = B256::repeat_byte(0x93);
+    let successor_bundle_hash = successor_bundle.protocol_bundle_hash(&limits).unwrap();
+    let successor = outbe_ocompregistry::OcompSuccessorV1 {
+        activation_height: successor_activation_height,
+        predecessor_protocol_bundle_hash: initial_bundle_hash,
+        authority: outbe_ocompregistry::OcompProtocolAuthorityV1 {
+            request_profile: outbe_ocompregistry::OcompRequestProfile {
+                fork_id: successor_bundle.fork_id,
+                protocol_bundle_hash: successor_bundle_hash,
+                correctness_profile_id: successor_bundle.correctness_profile_id,
+                ..initial_authority.request_profile.clone()
+            },
+            protocol_bundle: successor_bundle,
+        },
+    };
+
+    provider.set_block_number(initial_activation_height);
+    StorageHandle::enter(&mut provider, |storage| {
+        outbe_ocompregistry::OcompRegistry::new(storage)
+            .initialize_genesis_authority(
+                &initial_authority,
+                install.install_hash(&limits).unwrap(),
+                initial_activation_height,
+                initial_activation_height,
+                &limits,
+            )
+            .unwrap();
+    });
+
+    provider.set_block_number(fixture.block_number);
+    let first_intent_id = StorageHandle::enter(&mut provider, |storage| {
+        let mut registry = outbe_ocompregistry::OcompRegistry::new(storage.clone());
+        registry
+            .stage_successor(U256::from(1), &successor, &limits)
+            .unwrap();
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(
+                fixture.block_number,
+                fixture.block_time,
+                chain::CHAIN_ID,
+            ),
+            storage.clone(),
+        );
+        run_terminal_request(&ctx, &fixture.scope).unwrap();
+        let metadosis = MetadosisContract::new(storage.clone());
+        let first_intent_id = metadosis
+            .ocomp_fsm_state(
+                fixture.first_wwd,
+                &limits,
+                JobFsmLimits {
+                    max_terminal_records: 365,
+                },
+            )
+            .unwrap()
+            .projection()
+            .live_intent_id
+            .unwrap();
+        let first = metadosis
+            .ocomp_job_record(first_intent_id, &limits)
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.intent.protocol_bundle_hash, initial_bundle_hash);
+        assert_eq!(
+            registry.resolve_lineage(first_intent_id).unwrap(),
+            Some(initial_bundle_hash)
+        );
+        first_intent_id
+    });
+
+    provider.set_block_number(successor_activation_height);
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut registry = outbe_ocompregistry::OcompRegistry::new(storage.clone());
+        registry
+            .promote_staged_successor(U256::from(1), successor_activation_height, &limits)
+            .unwrap();
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(
+                successor_activation_height,
+                fixture.block_time + 1,
+                chain::CHAIN_ID,
+            ),
+            storage.clone(),
+        );
+        run_terminal_request(&ctx, &fixture.scope).unwrap();
+
+        let metadosis = MetadosisContract::new(storage.clone());
+        let second_intent_id = metadosis
+            .ocomp_fsm_state(
+                fixture.later_wwd,
+                &limits,
+                JobFsmLimits {
+                    max_terminal_records: 365,
+                },
+            )
+            .unwrap()
+            .projection()
+            .live_intent_id
+            .unwrap();
+        let second = metadosis
+            .ocomp_job_record(second_intent_id, &limits)
+            .unwrap()
+            .unwrap();
+        assert_eq!(second.intent.protocol_bundle_hash, successor_bundle_hash);
+        assert_eq!(
+            registry.resolve_lineage(second_intent_id).unwrap(),
+            Some(successor_bundle_hash)
+        );
+        assert_eq!(
+            registry.resolve_lineage(first_intent_id).unwrap(),
+            Some(initial_bundle_hash),
+            "activation must not rewrite an existing V1 lineage"
+        );
+        assert_eq!(
+            registry
+                .active_authority(&limits)
+                .unwrap()
+                .unwrap()
+                .request_profile
+                .protocol_bundle_hash,
+            successor_bundle_hash
+        );
+    });
+}
+
+#[test]
 fn three_eligible_days_create_independently_progressing_live_jobs() {
     let mut provider = HashMapStorageProvider::new(chain::CHAIN_ID);
     outbe_fidelity::enclave_client::test_enclave::install();

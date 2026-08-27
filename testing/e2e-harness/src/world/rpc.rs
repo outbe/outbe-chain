@@ -28,6 +28,8 @@ use outbe_ocomp_protocol::{
     state::{ActiveGenerationV1, OcompJobRecordV1},
     vote::OcompVoteAccountabilityV1,
 };
+#[cfg(feature = "ocomp-integration")]
+use outbe_ocompregistry::precompile::IOcompRegistry;
 use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
 use serde::{Deserialize, Serialize};
 
@@ -890,6 +892,46 @@ impl Rpc {
     /// Active protocol version (`IUpdate.getActiveVersion`).
     pub fn active_version(&self) -> Option<u64> {
         self.active_version_on_url(&self.cfg.rpc0)
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn active_ocomp_protocol_bundle_hash_on(&self, port: u16) -> Option<B256> {
+        eth::read_call(
+            &self.url(port),
+            addresses::OCOMP_REGISTRY_ADDR,
+            &IOcompRegistry::activeProtocolBundleHashCall {},
+        )
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn retiring_ocomp_protocol_bundle_hash_on(&self, port: u16) -> Option<B256> {
+        eth::read_call(
+            &self.url(port),
+            addresses::OCOMP_REGISTRY_ADDR,
+            &IOcompRegistry::retiringProtocolBundleHashCall {},
+        )
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn ocomp_live_lineage_count_on(&self, port: u16, bundle_hash: B256) -> Option<u32> {
+        eth::read_call(
+            &self.url(port),
+            addresses::OCOMP_REGISTRY_ADDR,
+            &IOcompRegistry::liveLineageCountCall {
+                protocolBundleHash: bundle_hash,
+            },
+        )
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn ocomp_retention_until_on(&self, port: u16, bundle_hash: B256) -> Option<u64> {
+        eth::read_call(
+            &self.url(port),
+            addresses::OCOMP_REGISTRY_ADDR,
+            &IOcompRegistry::retentionUntilCall {
+                protocolBundleHash: bundle_hash,
+            },
+        )
     }
 
     /// Active protocol version on the node at `port`.
