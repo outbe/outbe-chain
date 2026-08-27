@@ -348,13 +348,19 @@ fn u64_word(value: u64) -> [u8; 32] {
     word
 }
 
+fn u128_word(value: u128) -> [u8; 32] {
+    let mut word = [0u8; 32];
+    word[16..32].copy_from_slice(&value.to_be_bytes());
+    word
+}
+
 fn valid_emit_words() -> [[u8; 32]; EMIT_MINT_FIELD_WORDS] {
     let mut words = [[0u8; 32]; EMIT_MINT_FIELD_WORDS];
     words[0] = u64_word(31_337);
     words[1] = fr_be(&Fr::from(102u64));
     words[2] = fr_be(&Fr::from(103u64));
     words[3] = owner_word(0x22);
-    words[4] = u64_word(40);
+    words[4] = u128_word(40);
     words[5] = fr_be(&Fr::from(104u64));
     words
 }
@@ -498,6 +504,30 @@ fn emit_mint_rejects_invalid_mint_units_word() {
 }
 
 #[test]
+fn emit_mint_accepts_units_across_the_full_u128_range() {
+    // Amounts above the old u64 bound are the reason the circuit widened to
+    // u128: the word must decode whenever it fits the right-aligned 16 bytes.
+    for units in [u64::MAX as u128, u128::MAX] {
+        let mut words = valid_emit_words();
+        words[4] = u128_word(units);
+        let proof = combined_emit_proof(&words, EMIT_MINT_PROOF_WORDS);
+        assert_eq!(
+            decode_emit_mint_public_inputs(&proof).unwrap().mint_units,
+            units
+        );
+    }
+    // The byte just above the u128 half overflows the word's right-aligned
+    // sixteen bytes and is rejected.
+    let mut words = valid_emit_words();
+    words[4][15] = 1;
+    let proof = combined_emit_proof(&words, EMIT_MINT_PROOF_WORDS);
+    assert!(matches!(
+        decode_emit_mint_public_inputs(&proof),
+        Err(ZkProofError::InvalidEmitMintUnits)
+    ));
+}
+
+#[test]
 fn emit_mint_rejects_short_header() {
     assert!(matches!(
         decode_emit_mint_public_inputs(&[0u8; 3]),
@@ -531,14 +561,14 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
     use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
     use outbe_zk_canonical::CircuitId as _;
 
-    assert_eq!(EmitMint::VERSION, "1.2.1");
+    assert_eq!(EmitMint::VERSION, "1.3.0");
     assert_eq!(
         EmitMint::CIRCUIT_HASH,
-        alloy_primitives::hex!("660241ad71ce858076910b3ee574344cdd387c76da00aca9f7d6eef0eaecae5e")
+        alloy_primitives::hex!("50301cde55ecb04fd579b61ca1c68bbbf7b4379075edc7e0a1c176e082c2fe05")
     );
     assert_eq!(
         EmitMint::VK_HASH,
-        alloy_primitives::hex!("83fba463574615271f9fca3003f9ab26e5a4283e385712c205b4a0e104445048")
+        alloy_primitives::hex!("88d9a8e51e6833a22f5dacfec09f60b9fbb800eccea4be23c0859550fabea5d6")
     );
 
     crate::verify::init_crs().expect("CRS init");
@@ -562,6 +592,9 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
     };
     let owner = [0x22u8; 20];
     let chain_id = 31_337u64;
+    // u128 amounts above the u64 range, exercising the widened public word.
+    let note_amount = (1u128 << 80) + 100;
+    let mint_units = (1u128 << 80) + 40;
     let spend_key = Field::from(17u64);
     let serial = emit_hash(
         "EMIT_NOTE_SN",
@@ -569,7 +602,7 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
     );
     let commitment = emit_hash(
         "EMIT_COMMITMENT",
-        &[Field::from(chain_id), serial, Field::from(100u64)],
+        &[Field::from(chain_id), serial, Field::from(note_amount)],
     );
     let mut path = [Field::from(0u64); 20];
     path[0] = emit_hash("EMIT_EMPTY", &[Field::from(chain_id)]);
@@ -581,10 +614,7 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
     for sibling in path {
         root = h3(domain, root, sibling);
     }
-    let nullifier = emit_hash(
-        "EMIT_NULLIFIER",
-        &[Field::from(chain_id), serial, spend_key],
-    );
+    let nullifier = emit_hash("EMIT_NULLIFIER", &[commitment, spend_key]);
     let next_key = emit_hash("EMIT_CHANGE_KEY", &[spend_key, nullifier]);
     let change = emit_hash(
         "EMIT_COMMITMENT",
@@ -603,11 +633,11 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
         root,
         nullifier,
         note_owner: Field::from_be_bytes_mod_order(&owner),
-        mint_units: 40,
+        mint_units,
         change_commitment: change,
     };
     let witness = Witness {
-        note_amount: 100,
+        note_amount,
         note_spend_key: spend_key,
         leaf_index: 0,
         auth_path: path,

@@ -363,7 +363,7 @@ debug = 0
 alloy-evm = { git = "https://github.com/outbedev/alloy-evm", rev = "88e239e601eea130ef6644ffa672970e39332f70" }
 
 # Dev-time binding to the in-flight outbe-circuits working tree (branch
-# generalize-merkle-tree). Drop this table when the next circuits release
+# change-emit). Drop this table when the next circuits release
 # tag lands and the four git pins above move to it.
 [patch."https://github.com/outbe/outbe-circuits.git"]
 outbe-zk-canonical = { path = "../outbe-circuits/crates/outbe-zk-canonical" }

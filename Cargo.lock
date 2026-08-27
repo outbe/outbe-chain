@@ -9352,7 +9352,6 @@ dependencies = [
 [[package]]
 name = "outbe-protocol"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.13.0#fbbb07625760a21fdba0171595d7801de6098039"
 dependencies = [
  "alloy-primitives",
  "ark-bn254 0.6.0",
@@ -9426,7 +9425,6 @@ dependencies = [
 [[package]]
 name = "outbe-protocol-derive"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.13.0#fbbb07625760a21fdba0171595d7801de6098039"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -9907,7 +9905,6 @@ dependencies = [
 [[package]]
 name = "outbe-zk-backend"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.13.0#fbbb07625760a21fdba0171595d7801de6098039"
 dependencies = [
  "acir",
  "acvm",
@@ -9925,8 +9922,8 @@ dependencies = [
 [[package]]
 name = "outbe-zk-canonical"
 version = "0.11.0"
-source = "git+https://github.com/outbe/outbe-circuits.git?tag=v0.13.0#fbbb07625760a21fdba0171595d7801de6098039"
 dependencies = [
+ "alloy-primitives",
  "ark-bn254 0.6.0",
  "ark-ff 0.6.0",
  "ark-std 0.6.0",
@@ -9934,6 +9931,7 @@ dependencies = [
  "hex-literal",
  "outbe-protocol",
  "serde_json",
+ "sha2 0.10.9",
  "tiny-keccak",
  "toml 0.8.23",
 ]

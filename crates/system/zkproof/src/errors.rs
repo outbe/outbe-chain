@@ -32,7 +32,7 @@ pub enum ZkProofError {
     InvalidEmitChainId,
     #[error("zk_verify: emit owner word exceeds the 160-bit address bound")]
     InvalidEmitOwnerField,
-    #[error("zk_verify: emit mint units word is not a right-aligned uint64")]
+    #[error("zk_verify: emit mint units word is not a right-aligned uint128")]
     InvalidEmitMintUnits,
     #[error("zk verifier CRS initialization failed: {0}")]
     CrsInitialization(String),

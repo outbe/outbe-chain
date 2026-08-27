@@ -86,21 +86,18 @@ pub fn note_sn(note_owner: [u8; 20], note_spend_key: Field) -> Field {
 /// `C = P(EMIT_COMMITMENT, [chain_id, note_sn, note_amount])` — the only
 /// commitment form the runtime ever appends; opaque caller-supplied
 /// commitments are prohibited.
-pub fn note_commitment(chain_id: u64, note_sn: Field, note_amount: u64) -> Field {
+pub fn note_commitment(chain_id: u64, note_sn: Field, note_amount: u128) -> Field {
     p(
         tag_commitment(),
         &[Field::from(chain_id), note_sn, Field::from(note_amount)],
     )
 }
 
-/// `nullifier = P(EMIT_NULLIFIER, [chain_id, note_sn, spend_key])` —
-/// amount-independent, so serial-sharing notes strand each other exactly as
-/// in the circuit.
-pub fn nullifier(chain_id: u64, note_sn: Field, note_spend_key: Field) -> Field {
-    p(
-        tag_nullifier(),
-        &[Field::from(chain_id), note_sn, note_spend_key],
-    )
+/// `nullifier = P(EMIT_NULLIFIER, [note_commitment, spend_key])` — binds the
+/// full commitment (chain, serial, and amount), so distinct commitments
+/// always yield distinct nullifiers.
+pub fn nullifier(note_commitment: Field, note_spend_key: Field) -> Field {
+    p(tag_nullifier(), &[note_commitment, note_spend_key])
 }
 
 /// `next_key = P(EMIT_CHANGE_KEY, [spend_key, nullifier])` — the

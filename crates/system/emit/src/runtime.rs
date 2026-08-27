@@ -27,7 +27,7 @@ pub(crate) struct MintStatement {
     pub root: B256,
     pub nullifier: B256,
     pub note_owner: Address,
-    pub mint_units: u64,
+    pub mint_units: u128,
     pub change_commitment: B256,
 }
 
@@ -80,18 +80,18 @@ pub(crate) fn burn(
     if value.is_zero() {
         return Err(EmitError::BurnValueZero.into());
     }
-    // TODO: Consider using `u128` in zkp circuit to support larger burns.
-    if value > U256::from(u64::MAX) {
-        return Err(EmitError::BurnValueExceedsUint64.into());
+    // The circuit's note amounts are u128; the burn bound matches so a note
+    // can hold any burnable value.
+    if value > U256::from(u128::MAX) {
+        return Err(EmitError::BurnValueExceedsUint128.into());
     }
-    let amount = value.to::<u64>();
+    let amount = u128::try_from(value).expect("value fits u128 after the bound check");
     let serial = field_from_be_bytes(&note_sn.0)
         .ok_or(EmitError::NonCanonicalField("noteSn"))
         .map_err(PrecompileError::from)?;
     if serial.is_zero() {
         return Err(EmitError::MustBeNonZero("noteSn").into());
     }
-
     let (chain_id, zeros) = chain_state(&storage)?;
     let emit: EmitContract<'_> = storage.contract();
     let leaf_count = emit.leaf_count.read()?;
@@ -149,7 +149,7 @@ pub(crate) fn burn(
     })
 }
 
-/// `mint(...)` — consume a frozen `outbe.emit.mint@1.2.1` proof.
+/// `mint(...)` — consume a frozen `outbe.emit.mint@1.3.0` proof.
 pub(crate) fn mint(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -171,7 +171,8 @@ pub(crate) fn mint(
     }
 
     // Statement field elements must be canonical before they are compared or
-    // hashed. `chain_id` and `mint_units` are already exact ABI-decoded u64s.
+    // hashed. `chain_id` and `mint_units` are already exact ABI-decoded
+    // integers (u64 and u128).
     let root = field_from_be_bytes(&statement.root.0)
         .ok_or_else(|| PrecompileError::from(EmitError::NonCanonicalField("root")))?;
     let nullifier = field_from_be_bytes(&statement.nullifier.0)
