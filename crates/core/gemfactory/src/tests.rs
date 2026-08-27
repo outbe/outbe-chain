@@ -773,3 +773,157 @@ fn mint_merchant_gem_after_expiry_rejects() {
         assert!(err_msg(r).contains("expired"));
     });
 }
+
+// ---------------------------------------------------------------------------
+// position expiry reclaim
+// ---------------------------------------------------------------------------
+
+/// Promis Reserve balance — where an expired position's unissued capacity lands.
+fn reserve(storage: &StorageHandle) -> U256 {
+    outbe_promislimit::PromisLimitContract::new(storage.clone())
+        .get_total_unallocated()
+        .unwrap()
+}
+
+/// Runs the daily expiry sweep at `timestamp`, returning how many positions retired.
+fn sweep(storage: &StorageHandle, timestamp: u64) -> u32 {
+    let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+        outbe_primitives::block::BlockContext::empty_for_tests(1, timestamp, 1),
+        storage.clone(),
+    );
+    crate::expiry::sweep_expired(&ctx).unwrap()
+}
+
+#[test]
+fn the_expiry_sweep_leaves_a_live_position_untouched() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        let id = seed_and_park(
+            storage,
+            six_decimal_unit(),
+            six_decimal_unit(),
+            six_decimal_u128(),
+        );
+        let capacity = parked_capacity(six_decimal_u128());
+
+        // One second before the validity window closes.
+        assert_eq!(sweep(storage, T_NOW + POSITION_VALIDITY_SECONDS - 1), 0);
+
+        let factory = GemFactoryContract::new(storage.clone());
+        assert_eq!(
+            factory
+                .positions
+                .get(id)
+                .unwrap()
+                .unwrap()
+                .remaining_capacity,
+            capacity
+        );
+        assert_eq!(factory.active_len().unwrap(), 1);
+        assert_eq!(reserve(storage), U256::ZERO);
+    });
+}
+
+#[test]
+fn an_expired_position_returns_only_its_unissued_capacity_to_the_promis_reserve() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        let id = seed_and_park(
+            storage,
+            six_decimal_unit(),
+            six_decimal_unit(),
+            six_decimal_u128(),
+        );
+        let capacity = parked_capacity(six_decimal_u128());
+
+        // Issue one gem, so part of the capacity left as a live gem load and
+        // only the remainder is still the position's to return.
+        let load = U256::from(10u64) * six_decimal_unit();
+        runtime::mint_merchant_gem(storage, ALICE, id, BOB, load).unwrap();
+        let unissued = capacity - load;
+
+        assert_eq!(sweep(storage, T_NOW + POSITION_VALIDITY_SECONDS), 1);
+        assert_eq!(reserve(storage), unissued);
+
+        let factory = GemFactoryContract::new(storage.clone());
+        // Cumulative statistic: unchanged by the reclaim, as it is by issuance.
+        assert_eq!(factory.total_intex_parked.read().unwrap(), capacity);
+        // The record survives as a spent NFT; only its capacity is gone.
+        let rec = factory.positions.get(id).unwrap().unwrap();
+        assert_eq!(rec.remaining_capacity, U256::ZERO);
+        assert_eq!(rec.merchant, ALICE);
+        assert_eq!(factory.owner_of(id).unwrap(), ALICE);
+        assert_eq!(factory.active_len().unwrap(), 0);
+
+        // A later run has nothing left to visit and credits nothing.
+        assert_eq!(sweep(storage, T_NOW + 2 * POSITION_VALIDITY_SECONDS), 0);
+        assert_eq!(reserve(storage), unissued);
+    });
+}
+
+#[test]
+fn the_sweep_retires_a_mid_index_position_without_skipping_its_neighbours() {
+    with_storage(None, |storage| {
+        let mut factory = GemFactoryContract::new(storage.clone());
+        let each = U256::from(7u64) * six_decimal_unit();
+        // Three positions; only the middle one has lapsed.
+        let ids = [U256::from(1u64), U256::from(2u64), U256::from(3u64)];
+        for (i, id) in ids.iter().enumerate() {
+            factory
+                .add_position(&GemPosition {
+                    position_id: *id,
+                    merchant: ALICE,
+                    source_intex_id: source_intex_id(),
+                    remaining_capacity: each,
+                    source_entry_price: six_decimal_unit(),
+                    source_floor_price: six_decimal_unit(),
+                    issuance_currency: 840,
+                    reference_currency: 840,
+                    parked_at: if i == 1 { 0 } else { T_NOW },
+                })
+                .unwrap();
+        }
+        assert_eq!(sweep(storage, T_NOW), 1);
+        assert_eq!(reserve(storage), each);
+        assert_eq!(factory.active_len().unwrap(), 2);
+
+        // The swap-pop moved the tail into the hole; both survivors are still
+        // listed exactly once and still hold their capacity.
+        let mut listed = vec![
+            factory.active_at(0).unwrap().unwrap(),
+            factory.active_at(1).unwrap().unwrap(),
+        ];
+        listed.sort();
+        assert_eq!(listed, vec![ids[0], ids[2]]);
+        for id in [ids[0], ids[2]] {
+            assert_eq!(
+                factory
+                    .positions
+                    .get(id)
+                    .unwrap()
+                    .unwrap()
+                    .remaining_capacity,
+                each
+            );
+        }
+    });
+}
+
+/// Pins the appended expiry-index slots: reordering live `GemFactoryContract`
+/// storage would silently repoint existing positions.
+#[test]
+fn gem_factory_storage_layout_pins_the_expiry_index_slots() {
+    with_storage(None, |storage| {
+        let factory = GemFactoryContract::new(storage.clone());
+        // Pre-existing slots must not move.
+        assert_eq!(factory.total_gems_issued.slot(), U256::from(0u64));
+        assert_eq!(factory.total_intex_parked.slot(), U256::from(1u64));
+        assert_eq!(factory.positions.base_slot(), U256::from(2u64));
+        assert_eq!(factory.position_owner_counts.base_slot(), U256::from(10u64));
+        assert_eq!(factory.position_owner_ids.base_slot(), U256::from(11u64));
+        // The expiry index is appended after them: `active_positions` takes 12,
+        // which `StorageVec` does not expose, so the map behind it pins the run.
+        assert_eq!(factory.active_position_index.base_slot(), U256::from(13u64));
+        assert_eq!(factory.expiry_scan_cursor.slot(), U256::from(14u64));
+    });
+}

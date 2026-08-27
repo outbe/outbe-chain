@@ -18,3 +18,9 @@ pub const POSITION_VALIDITY_SECONDS: u64 = 365 * 24 * 3600;
 /// monetary values and the transfer moves raw token units, so an asset on any
 /// other scale would move the wrong sum.
 pub const SETTLEMENT_ASSET_DECIMALS: u8 = 6;
+
+/// Max positions the expiry sweep visits per daily run; the cursor resumes the
+/// rest on the next run so one sweep can never outgrow a block. An entry
+/// displaced past the cursor is picked up a day later, which cannot change an
+/// outcome: a position stays expired once `POSITION_VALIDITY_SECONDS` lapses.
+pub const MAX_POSITION_EXPIRY_VISITS: u32 = 4096;

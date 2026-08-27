@@ -3,16 +3,7 @@ use outbe_intex::{SeriesId, SERIES_ID_LEN};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum GemTypes {
-    Genesis = 0,
-    Validator = 1,
-    Sra = 2,
-    Wallet = 3,
-    Cca = 4,
-    Merchant = 5,
-}
+pub use outbe_gem::GemTypes;
 
 /// A merchant's parked-Intex position: the pool of Promis capacity from which
 /// Merchant gems are issued. Modeled as a single-owner, non-transferable NFT
@@ -68,6 +59,22 @@ pub struct GemFactoryContract {
 
     #[attribute(order = 4)]
     pub position_owner_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
+
+    /// Dense index of the positions still holding reclaimable capacity.
+    /// Membership invariant: a position is listed until the expiry sweep
+    /// retires it, so the sweep visits only positions that can still return
+    /// capacity instead of the whole book.
+    #[attribute(order = 5)]
+    pub active_positions: outbe_primitives::storage::dsl::List<U256>,
+
+    /// position_id → its slot in [`Self::active_positions`], for O(1) swap-remove.
+    #[attribute(order = 6)]
+    pub active_position_index: outbe_primitives::storage::dsl::Map<U256, u32>,
+
+    /// Resume point of the expiry sweep, stored as `index + 1`; `0` means
+    /// "start a fresh pass from the top".
+    #[attribute(order = 7)]
+    pub expiry_scan_cursor: outbe_primitives::storage::dsl::Value<u32>,
 }
 
 impl GemFactoryContract<'_> {

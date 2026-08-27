@@ -11,6 +11,19 @@ pub enum GemState {
     Settled = 3,
 }
 
+/// Issuing class of a gem. Lives here beside [`GemState`] because it is the
+/// enum behind [`GemData::gem_type`]; `gemfactory` re-exports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum GemTypes {
+    Genesis = 0,
+    Validator = 1,
+    Sra = 2,
+    Wallet = 3,
+    Cca = 4,
+    Merchant = 5,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct GemAddParams {
     pub owner: Address,

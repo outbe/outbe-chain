@@ -10,11 +10,45 @@ run = "forge build"
 description = "Export contracts ABI"
 depends = ["build"]
 run = '''
+set -e
 echo 'Exporting ABI for smart contracts'
+
+# Forge keys artifacts by file name alone, so two `<C>.sol` anywhere in the
+# compile graph collide on `out/<C>.sol/<C>.json` and whichever is written last
+# wins — non-deterministically. This tree has ten `IERC20.sol` and three
+# `IEntryPoint.sol`, so pin the source each export must come from and verify
+# every one BEFORE writing: a collision then fails the task instead of
+# publishing a wrong ABI or leaving abi-export/ half-written.
+#
+# `IERC20` is deliberately forge-std's, not OpenZeppelin's: it carries
+# `name`/`symbol`/`decimals`, which OZ splits out into `IERC20Metadata`.
+CONTRACTS='IERC20 IEntryPoint SmartAccountFactory ITokenBundle'
+
+expected_source() {
+  case "$1" in
+    IERC20)              echo "dependencies/forge-std-1.16.1/src/interfaces/IERC20.sol" ;;
+    IEntryPoint)         echo "dependencies/eth-infinitism-account-abstraction-0.9.0/contracts/interfaces/IEntryPoint.sol" ;;
+    SmartAccountFactory) echo "src/SmartAccountFactory.sol" ;;
+    ITokenBundle)        echo "src/interfaces/ITokenBundle.sol" ;;
+  esac
+}
+
+for contract in $CONTRACTS; do
+  artifact="./out/${contract}.sol/${contract}.json"
+  expected=$(expected_source "$contract")
+  actual=$(jq -r '.metadata.settings.compilationTarget | keys[0]' "$artifact")
+  if [ "$actual" != "$expected" ]; then
+    echo "export-abi: ${contract} resolved to ${actual}, expected ${expected}" >&2
+    echo "  another ${contract}.sol won out/${contract}.sol/. Remove the stray copy," >&2
+    echo "  or update expected_source() if the move was intended." >&2
+    exit 1
+  fi
+done
+
 mkdir -p ./abi-export
 rm -rf ./abi-export/*.json
-for contract in IERC20 IEntryPoint SmartAccountFactory ITokenBundle; do
-  cat ./out/${contract}.sol/${contract}.json | jq -r '.abi' > ./abi-export/${contract}.json
+for contract in $CONTRACTS; do
+  jq -r '.abi' "./out/${contract}.sol/${contract}.json" > ./abi-export/${contract}.json
 done
 '''
 

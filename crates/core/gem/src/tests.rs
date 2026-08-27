@@ -10,7 +10,7 @@ use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
 use crate::api;
 use crate::precompile::{dispatch, IGem};
-use crate::schema::{GemAddParams, GemContract, GemState};
+use crate::schema::{GemAddParams, GemContract, GemState, GemTypes};
 
 const T_NOW: u64 = 1_700_000_000;
 const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
@@ -25,7 +25,7 @@ fn with_storage<R>(f: impl FnOnce(&StorageHandle) -> R) -> R {
 fn sample_params(owner: Address) -> GemAddParams {
     GemAddParams {
         owner,
-        gem_type: 2, // WALLET
+        gem_type: GemTypes::Sra as u8,
         gem_load_minor: U256::from(1_000_000u64),
         entry_price_minor: U256::from(500_000u64),
         cost_amount_minor: U256::from(500_000u64),
@@ -578,12 +578,55 @@ fn breach_window(now: u64, breach: U256, breach_days: usize) -> Vec<(u32, Option
 }
 
 fn qualified_gem(storage: &StorageHandle) -> U256 {
+    qualified_gem_of(storage, GemTypes::Sra)
+}
+
+fn qualified_gem_of(storage: &StorageHandle, gem_type: GemTypes) -> U256 {
     let mut p = sample_params(ALICE);
+    p.gem_type = gem_type as u8;
     // Issue well before the window so no day is skipped as pre-issuance.
     p.issued_at = T_NOW - 100 * 86_400;
     let gem_id = api::add_gem(storage, p).unwrap();
     api::set_state(storage, gem_id, GemState::Qualified).unwrap();
     gem_id
+}
+
+/// Promis Reserve balance — what a forfeited Merchant `gem_load_minor` returns to.
+fn reserve(storage: &StorageHandle) -> U256 {
+    outbe_promislimit::PromisLimitContract::new(storage.clone())
+        .get_total_unallocated()
+        .unwrap()
+}
+
+/// Calls `gem_type`'s gem and lets its notice period lapse, returning the gem's load.
+fn call_then_lapse(storage: &StorageHandle, gem_type: GemTypes) -> U256 {
+    let gem_id = qualified_gem_of(storage, gem_type);
+    let item = api::get_gem(storage, gem_id).unwrap().unwrap();
+    let breach_days = (crate::constants::CALL_THRESHOLD / 86_400) as usize;
+    let window = breach_window(T_NOW, item.call_price_minor + U256::from(1u64), breach_days);
+
+    let mut gem = GemContract::new(storage.clone());
+    assert!(gem.trigger_call(&window, gem_id, T_NOW).unwrap());
+    assert!(gem.forfeit(gem_id, T_NOW + 7 * 86_400 + 1).unwrap());
+    item.gem_load_minor
+}
+
+#[test]
+fn forfeiting_a_merchant_gem_returns_its_load_to_the_promis_reserve() {
+    with_storage(|storage| {
+        let load = call_then_lapse(storage, GemTypes::Merchant);
+        assert_eq!(reserve(storage), load);
+    });
+}
+
+#[test]
+fn forfeiting_an_agent_gem_returns_nothing_to_the_promis_reserve() {
+    with_storage(|storage| {
+        // An agent-class load is caller-supplied and never drawn from the
+        // Reserve, so there is nothing to give back.
+        call_then_lapse(storage, GemTypes::Wallet);
+        assert_eq!(reserve(storage), U256::ZERO);
+    });
 }
 
 #[test]

@@ -4,6 +4,7 @@ pub mod precompile;
 pub mod schema;
 
 pub mod constants;
+pub mod expiry;
 pub(crate) mod runtime;
 pub(crate) mod sol_ext;
 pub(crate) mod state;

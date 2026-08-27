@@ -33,7 +33,49 @@ impl GemFactoryContract<'_> {
         )?;
         self.position_owner_counts
             .write(&pos.merchant, owner_count + 1)?;
+
+        self.insert_active(pos.position_id)?;
         Ok(())
+    }
+
+    // --- Dense active-position index (expiry sweep) ---
+
+    /// Appends a position to the dense active index.
+    pub(crate) fn insert_active(&mut self, position_id: U256) -> Result<()> {
+        let index = self.active_positions.len()?;
+        self.active_positions.push(position_id)?;
+        self.active_position_index.write(&position_id, index)?;
+        Ok(())
+    }
+
+    /// Swap-removes a position from the dense active index. Caller guarantees
+    /// the position is currently listed.
+    pub(crate) fn remove_active(&mut self, position_id: U256) -> Result<()> {
+        let index = self.active_position_index.read(&position_id)?;
+        let last = self
+            .active_positions
+            .len()?
+            .checked_sub(1)
+            .ok_or(GemFactoryError::PositionNotFound)?;
+        if index != last {
+            let moved = self
+                .active_positions
+                .get(last)?
+                .ok_or(GemFactoryError::PositionNotFound)?;
+            self.active_positions.set(index, moved)?;
+            self.active_position_index.write(&moved, index)?;
+        }
+        self.active_positions.pop()?;
+        self.active_position_index.clear(&position_id)?;
+        Ok(())
+    }
+
+    pub fn active_len(&self) -> Result<u32> {
+        self.active_positions.len()
+    }
+
+    pub fn active_at(&self, index: u32) -> Result<Option<U256>> {
+        self.active_positions.get(index)
     }
 
     // --- Position NFT views (ERC-721-style, non-transferable) ---

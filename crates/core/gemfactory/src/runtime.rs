@@ -17,7 +17,7 @@ use crate::constants::{
     CALL_RATE, FLOOR_RATE, POSITION_VALIDITY_SECONDS, SETTLEMENT_ASSET_DECIMALS, SRA_RATE,
 };
 use crate::errors::GemFactoryError;
-use crate::precompile::IGemFactory::{GemBurned, GemIssued, GemSettled};
+use crate::precompile::IGemFactory::{GemBurned, GemIssued, GemPositionExpired, GemSettled};
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
 use crate::sol_ext::{IIntexNFT1155, IERC20};
 
@@ -493,6 +493,46 @@ fn derived_call_price(entry_price: U256) -> Result<U256> {
         .checked_mul(U256::from(100 + CALL_RATE))
         .ok_or(GemFactoryError::Overflow)?;
     Ok(acc / U256::from(100u64))
+}
+
+/// Retires one expired GemPosition: the Promis capacity it never issued goes
+/// back to the Reserve 1:1, exactly as a voided Credis position returns its
+/// burned collateral. Idempotent — a retired position holds no capacity, so a
+/// repeat credits nothing.
+pub(crate) fn reclaim_expired_position(
+    storage: &StorageHandle<'_>,
+    position_id: U256,
+) -> Result<U256> {
+    let mut factory = GemFactoryContract::new(storage.clone());
+    let mut record = factory
+        .positions
+        .get(position_id)?
+        .ok_or(GemFactoryError::PositionNotFound)?;
+
+    // `total_intex_parked` is a cumulative statistic — issuing a gem does not
+    // reduce it either — so it is deliberately left alone here.
+    let reclaimed = record.remaining_capacity;
+    if !reclaimed.is_zero() {
+        record.remaining_capacity = U256::ZERO;
+        factory.positions.update(&record)?;
+
+        outbe_promislimit::PromisLimitContract::new(storage.clone())
+            .add_to_total_unallocated(reclaimed)?;
+    }
+
+    // The record itself survives as a spent NFT: `position_owner_ids` has no
+    // removal path, so deleting it would strand the merchant's owner index.
+    factory.remove_active(position_id)?;
+
+    emit_event(
+        storage,
+        GemPositionExpired {
+            positionId: position_id,
+            merchant: record.merchant,
+            reclaimedCapacity: reclaimed,
+        },
+    )?;
+    Ok(reclaimed)
 }
 
 fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {

@@ -247,6 +247,11 @@ fn forfeit_members(
             ))
         })?;
         api::remove_nod(storage, scope, item, bucket)?;
+        // The loaded capacity was drawn from the Reserve at metadosis and is
+        // never minted now that mining is closed, so it returns 1:1 instead of
+        // disappearing with the Nod.
+        outbe_promislimit::PromisLimitContract::new(storage.clone())
+            .add_to_total_unallocated(gratis_load_minor)?;
         nod.emit(INod::NodForfeited {
             owner,
             nodId: nod_id.to_u256(),

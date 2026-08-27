@@ -26,11 +26,41 @@ run = "forge lint"
 description = "Export contracts ABI to ./abi-export"
 depends = ["build"]
 run = '''
+set -e
 echo 'Exporting ABI for intent contracts'
+
+# Forge keys artifacts by file name alone, so two `<C>.sol` anywhere in the
+# compile graph collide on `out/<C>.sol/<C>.json` and whichever is written last
+# wins — non-deterministically. Pin the source each export must come from and
+# verify every one BEFORE writing, so a collision fails the task instead of
+# publishing a wrong ABI or leaving abi-export/ half-written.
+CONTRACTS='Router ERC20 SolverEscrow Auction'
+
+expected_source() {
+  case "$1" in
+    Router)       echo "src/router/Router.sol" ;;
+    SolverEscrow) echo "src/SolverEscrow.sol" ;;
+    Auction)      echo "src/Auction.sol" ;;
+    ERC20)        echo "dependencies/openzeppelin-contracts-5.6.1/contracts/token/ERC20/ERC20.sol" ;;
+  esac
+}
+
+for contract in $CONTRACTS; do
+  artifact="./out/${contract}.sol/${contract}.json"
+  expected=$(expected_source "$contract")
+  actual=$(jq -r '.metadata.settings.compilationTarget | keys[0]' "$artifact")
+  if [ "$actual" != "$expected" ]; then
+    echo "export-abi: ${contract} resolved to ${actual}, expected ${expected}" >&2
+    echo "  another ${contract}.sol won out/${contract}.sol/. Remove the stray copy," >&2
+    echo "  or update expected_source() if the move was intended." >&2
+    exit 1
+  fi
+done
+
 mkdir -p ./abi-export
 rm -rf ./abi-export/*.json
-for contract in Router ERC20 SolverEscrow Auction; do
-  cat ./out/${contract}.sol/${contract}.json | jq -r '.abi' > ./abi-export/${contract}.json
+for contract in $CONTRACTS; do
+  jq -r '.abi' "./out/${contract}.sol/${contract}.json" > ./abi-export/${contract}.json
 done
 '''
 

@@ -4,7 +4,7 @@ use outbe_primitives::time::timestamp_to_date_key;
 
 use crate::errors::GemError;
 use crate::precompile::IGem::{GemBurned, GemCalled, GemQualified};
-use crate::schema::{GemContract, GemState};
+use crate::schema::{GemContract, GemState, GemTypes};
 
 impl GemContract<'_> {
     /// `rate` is COEN/`iso_code`. Each currency walks its own bin trie, so the
@@ -97,6 +97,14 @@ impl GemContract<'_> {
             return Ok(false);
         }
         self.burn(&item)?;
+        // Only a Merchant gem's load was drawn from the Reserve — it comes out
+        // of the parked Intex capacity behind the position that issued it. The
+        // agent classes take a caller-supplied load with no draw at all, so
+        // crediting them would create reserve capacity from nothing.
+        if item.gem_type == GemTypes::Merchant as u8 {
+            outbe_promislimit::PromisLimitContract::new(self.storage.clone())
+                .add_to_total_unallocated(item.gem_load_minor)?;
+        }
         self.emit(GemBurned {
             gemId: gem_id,
             owner: item.owner,

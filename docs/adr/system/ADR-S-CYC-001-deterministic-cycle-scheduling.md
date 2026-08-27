@@ -44,6 +44,8 @@ The currently registered schedule is:
 | 5 | `auction_clearing` | every 10 min | auction clearing sweep | not required | yes |
 | 6 | `intex_notify` | every 10 min | Intex lifecycle-notice drain | not required | yes |
 | 7 | `credis_call_daily` | daily 00:00 UTC | Credis price-path scan: latch, call, void | not required | no |
+| 8 | `nod_call_daily` | daily 00:00 UTC | Nod bucket force-call / forfeit-burn scan | not required | no |
+| 9 | `gem_position_expiry_daily` | daily 00:00 UTC | GemPosition expiry sweep: return unissued capacity to the Promis Reserve | not required | no |
 
 Ids are permanent: they are emitted as the indexed `id` on `CycleTriggerExecuted` and key
 the `Cycle` mappings, so new triggers append and existing ones are never renumbered.

@@ -27,6 +27,7 @@ pub enum TriggerId {
     IntexNotify = 6,
     CredisCallDaily = 7,
     NodCallDaily = 8,
+    GemPositionExpiryDaily = 9,
 }
 
 impl TriggerId {
@@ -76,6 +77,7 @@ pub enum TriggerHandler {
     IntexNotify,
     CredisCallDaily,
     NodCallDaily,
+    GemPositionExpiryDaily,
 }
 
 impl TriggerHandler {
@@ -94,6 +96,7 @@ impl TriggerHandler {
             Self::IntexNotify => outbe_intexfactory::qualified::drain_notices(ctx),
             Self::CredisCallDaily => outbe_credisfactory::called::run_daily(ctx),
             Self::NodCallDaily => outbe_nod::called::run_call_daily(ctx, scope, parent),
+            Self::GemPositionExpiryDaily => outbe_gemfactory::expiry::run_expiry_daily(ctx),
         }
     }
 }
@@ -122,7 +125,7 @@ const OUTBOUND_POLL_PERIOD_SECONDS: u64 = 30;
 /// fires triggers independently per slot.
 /// Active trigger table in permanent numeric-id order. The dispatcher walks
 /// this order when several handlers are due in the same block.
-pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 8] {
+pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [TriggerSpec; 9] {
     [
         TriggerSpec {
             id: TriggerId::ProtocolCycle.as_u32(),
@@ -220,10 +223,22 @@ pub const fn active_triggers(metadosis_advance_interval_seconds: u64) -> [Trigge
             coalesces_backlog: false,
             handler: TriggerHandler::NodCallDaily,
         },
+        TriggerSpec {
+            id: TriggerId::GemPositionExpiryDaily.as_u32(),
+            label: "gem_position_expiry_daily",
+            period_seconds: 86_400,
+            start_offset_seconds: 0,
+            // Compares `parked_at` against the block timestamp to return a
+            // lapsed position's unissued capacity to the Promis Reserve; reads
+            // neither oracle history nor the parent block's settlement accounting.
+            requires_accounting_window: false,
+            coalesces_backlog: false,
+            handler: TriggerHandler::GemPositionExpiryDaily,
+        },
     ]
 }
 
-pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 8] =
+pub const ACTIVE_TRIGGER_ARRAY: [TriggerSpec; 9] =
     active_triggers(outbe_chain_constants::DEFAULT_METADOSIS_ADVANCE_INTERVAL_SECONDS);
 pub const ACTIVE_TRIGGERS: &[TriggerSpec] = &ACTIVE_TRIGGER_ARRAY;
 
@@ -289,6 +304,12 @@ mod protocol_parameter_tests {
         assert!(matches!(
             configured[7].handler,
             TriggerHandler::NodCallDaily
+        ));
+        assert_eq!(configured[8].period_seconds, 86_400);
+        assert_eq!(configured[8].start_offset_seconds, 0);
+        assert!(matches!(
+            configured[8].handler,
+            TriggerHandler::GemPositionExpiryDaily
         ));
 
         let defaults =

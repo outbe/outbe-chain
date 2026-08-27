@@ -92,8 +92,14 @@ fn the_load_steps_down_only_past_the_widened_upper_edge() {
 #[test]
 fn the_load_steps_up_only_below_the_widened_lower_edge() {
     // Coming from the decade above, the same boundary releases at 9_800.
-    assert_eq!(ladder(Some(LAUNCH_EXPONENT - 1), 10_000), LAUNCH_EXPONENT - 1);
-    assert_eq!(ladder(Some(LAUNCH_EXPONENT - 1), 9_800), LAUNCH_EXPONENT - 1);
+    assert_eq!(
+        ladder(Some(LAUNCH_EXPONENT - 1), 10_000),
+        LAUNCH_EXPONENT - 1
+    );
+    assert_eq!(
+        ladder(Some(LAUNCH_EXPONENT - 1), 9_800),
+        LAUNCH_EXPONENT - 1
+    );
     assert_eq!(ladder(Some(LAUNCH_EXPONENT - 1), 9_799), LAUNCH_EXPONENT);
 }
 
@@ -110,7 +116,10 @@ fn the_deadband_is_held_from_whichever_side_the_chain_arrived() {
 
 #[test]
 fn a_rate_that_gaps_several_decades_lands_where_the_anchor_says() {
-    assert_eq!(ladder(Some(LAUNCH_EXPONENT), 1_000_000), LAUNCH_EXPONENT - 3);
+    assert_eq!(
+        ladder(Some(LAUNCH_EXPONENT), 1_000_000),
+        LAUNCH_EXPONENT - 3
+    );
     assert_eq!(ladder(Some(LAUNCH_EXPONENT), 1), LAUNCH_EXPONENT + 3);
 }
 
@@ -1064,7 +1073,13 @@ fn a_decade_step_rescales_both_the_tirage_and_the_min_bid_floor() {
         assert_eq!(clear(&s).issued_intex_count, 100);
 
         // Ten times the rate of the fixture, which is past the deadband.
-        brief_at_rate(&s, NEXT_WORLDWIDE_DAY, 100 * LOAD_MINOR, 10 * ENTRY_PRICE, true);
+        brief_at_rate(
+            &s,
+            NEXT_WORLDWIDE_DAY,
+            100 * LOAD_MINOR,
+            10 * ENTRY_PRICE,
+            true,
+        );
         runtime::schedule_tick(&s, NOW).unwrap();
         runtime::schedule_tick(&s, ANCHOR + 86_400).unwrap();
         runtime::schedule_tick(&s, ANCHOR + 2 * 86_400).unwrap();
@@ -2207,10 +2222,13 @@ fn clearing_without_winners_discards_the_day_contributor_map() {
 #[test]
 fn escrow_basis_is_promis_load() {
     // wCOEN escrow basis = promis_load per Intex; entry no longer drives it.
-    let cfg = AuctionConfig::from_reference_prices(vec![crate::schema::ReferenceCurrencyPrice {
-        iso_code: REFERENCE_ISO,
-        entry_price_minor: U256::from(1_000_150u64),
-    }], LOAD_MINOR);
+    let cfg = AuctionConfig::from_reference_prices(
+        vec![crate::schema::ReferenceCurrencyPrice {
+            iso_code: REFERENCE_ISO,
+            entry_price_minor: U256::from(1_000_150u64),
+        }],
+        LOAD_MINOR,
+    );
     assert_eq!(cfg.escrow_basis_minor(), cfg.promis_load_minor);
 }
 

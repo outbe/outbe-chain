@@ -10,7 +10,7 @@ pub(crate) mod state;
 
 pub use constants::{CALL_THRESHOLD, CALL_WINDOW};
 pub use hooks::GemLifecycle;
-pub use schema::{GemAddParams, GemContract, GemData, GemState};
+pub use schema::{GemAddParams, GemContract, GemData, GemState, GemTypes};
 
 #[cfg(test)]
 mod tests;

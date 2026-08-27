@@ -14,10 +14,12 @@ outbe-intex.workspace = true
 outbe-vaultrouter.workspace = true
 outbe-promisfactory.workspace = true
 outbe-oracle.workspace = true
+outbe-promislimit.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
 base64 = "0.22"
+tracing.workspace = true
 
 [dev-dependencies]
 outbe-primitives = { workspace = true, features = ["test-utils"] }
