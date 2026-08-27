@@ -19,8 +19,8 @@ pub enum EmitError {
     NotInitialized,
     #[error("Emit burn value must be non-zero")]
     BurnValueZero,
-    #[error("Emit burn value exceeds uint64")]
-    BurnValueExceedsUint64,
+    #[error("Emit burn value exceeds uint128")]
+    BurnValueExceedsUint128,
     #[error("Emit {0} is not a canonical BN254 field")]
     NonCanonicalField(&'static str),
     #[error("Emit {0} must be non-zero")]

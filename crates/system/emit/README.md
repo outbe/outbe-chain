@@ -39,7 +39,7 @@ cast send "$EMIT_ADDR" 'burn(bytes32)' "$NOTE_SN" \
 
 # Redeem: prove membership + ownership; credit the payout recipient.
 cast send "$EMIT_ADDR" \
-  'mint(address,uint64,bytes32,bytes32,address,uint64,bytes32,bytes)' \
+  'mint(address,uint64,bytes32,bytes32,address,uint128,bytes32,bytes)' \
   "$PAYOUT" "$CHAIN_ID" "$ROOT" "$NULLIFIER" "$NOTE_OWNER" "$MINT_UNITS" \
   "$CHANGE_COMMITMENT" "$PROOF" \
   --private-key "$RECIPIENT_KEY" --rpc-url "$RPC_URL"
@@ -50,27 +50,27 @@ Methods:
 - `burn(bytes32 noteSn) external payable` — derives the commitment from the
   runtime chain ID, `noteSn`, and `msg.value`; initializes the tree on the
   first call.
-- `mint(address payoutRecipient, uint64 chainId, bytes32 root, bytes32 nullifier, address noteOwner, uint64 mintUnits, bytes32 changeCommitment, bytes proof) external` —
+- `mint(address payoutRecipient, uint64 chainId, bytes32 root, bytes32 nullifier, address noteOwner, uint128 mintUnits, bytes32 changeCommitment, bytes proof) external` —
   proves membership under an accepted root, nullifies, credits `mintUnits`,
   and appends the deterministic change commitment on partial mints.
 
 Rules:
 
-- `msg.value` on `burn`: positive and fits `uint64` (native base units, 1:1
+- `msg.value` on `burn`: positive and fits `uint128` (native base units, 1:1
   with circuit units).
 - `mint` requires an initialized tree; caller must be `noteOwner`; calldata
   statement fields must equal the proof's embedded statement; `chainId` must
   equal the runtime chain ID.
 - `root` must be inside the 32-root window; each nullifier is single-use.
 - `proof` is the combined UltraHonkKeccak wire for the frozen
-  `outbe.emit.mint@1.2.1` circuit, capped at 16,384 bytes.
+  `outbe.emit.mint@1.3.0` circuit, enforced at its exact frozen length.
 - `NewNote.noteAmount == 0` is the sentinel for a partial mint's private
   change note.
 
 Events:
 
-- `NewNote(bytes32 indexed commitment, uint32 leafIndex, bytes32 rootAfter, uint64 noteAmount)`
-- `NoteUsed(address indexed noteOwner, address indexed payoutRecipient, bytes32 indexed nullifier, uint64 mintAmount)`
+- `NewNote(bytes32 indexed commitment, uint32 leafIndex, bytes32 rootAfter, uint128 noteAmount)`
+- `NoteUsed(address indexed noteOwner, address indexed payoutRecipient, bytes32 indexed nullifier, uint128 mintAmount)`
 
 Infrastructure failures (`UnderfundedBurn`, `VerifierUnavailable`) map to
 fatal block aborts, not reverts.
@@ -114,7 +114,7 @@ C_change, root_after)                     NoteUsed(noteOwner, payoutRecipient, n
                                           the change commitment (noteAmount = 0 sentinel)
 "Validate amount, balance, supply,
 note_sn, duplicate C and tree capacity"   burn guards in order: value non-zero, fits
-                                          uint64, noteSn canonical and non-zero, tree
+                                          uint128, noteSn canonical and non-zero, tree
                                           capacity, derived commitment non-zero, no
                                           duplicate commitment
 ```
@@ -251,18 +251,18 @@ never receives it; only the mint circuit sees it, as a private witness.
 
 ```text
 note_sn  = P(TAG_NOTE_SN, [note_owner, note_spend_key])
-N        = P(TAG_NULLIFIER, [pool_id, note_sn, note_spend_key])
+N        = P(TAG_NULLIFIER, [note_commitment, note_spend_key])
 K_change = P(TAG_CHANGE_KEY, [note_spend_key, N])
 ```
 
-- **One-time use — fresh key per note.** For a fixed
-  `(pool_id, note_owner, note_spend_key)`, the nullifier `N` is independent of
-  the note amount. Reusing one owner/key pair across notes with different
-  amounts creates distinct commitments that share a single nullifier: the
-  first accepted mint permanently strands every sibling note. Equal-amount
-  reuse additionally collides on the commitment itself and is rejected at
-  burn as a duplicate. Wallets must generate a fresh initial key for every
-  note.
+- **One-time use — fresh key per note.** The nullifier `N` binds the full
+  note commitment (chain, serial, and amount), so notes are nullified
+  independently: reusing one owner/key pair across notes with different
+  amounts creates distinct commitments with distinct nullifiers, each
+  spendable on its own. Equal-amount reuse collides on the commitment itself
+  and is rejected at burn as a duplicate. Wallets must still generate a
+  fresh initial key for every note (an equal-amount burn is otherwise
+  indistinguishable from a duplicate).
 - **Secrecy in transfer.** Anyone holding `note_spend_key` can construct the
   mint witness and trace deterministic change successors — privacy destroyed,
   griefing enabled. Runtime `caller == noteOwner` still prevents a different

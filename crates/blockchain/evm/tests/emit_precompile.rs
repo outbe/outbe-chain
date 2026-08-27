@@ -1,6 +1,6 @@
 //! Execution-level coverage for the Emit precompile route: the full
 //! burn → partial mint → full mint → replay scenario with real generated
-//! `outbe.emit.mint@1.2.1` proofs, plus frame/value boundary cases extending
+//! `outbe.emit.mint@1.3.0` proofs, plus frame/value boundary cases extending
 //! the `precompile_value_boundary` patterns.
 
 use alloy_evm::{Evm as _, EvmFactory as _};
@@ -226,13 +226,13 @@ fn prove_mint(
     tree: &ReferenceTree,
     owner: Address,
     key: Field,
-    note_amount: u64,
+    note_amount: u128,
     leaf_index: u32,
     root_leaf_count: usize,
-    mint_units: u64,
+    mint_units: u128,
 ) -> Vec<u8> {
     let serial = derive_note_sn(owner.into(), key);
-    let nullifier = derive_nullifier(CHAIN_ID, serial, key);
+    let nullifier = derive_nullifier(note_commitment(CHAIN_ID, serial, note_amount), key);
     let remaining = note_amount - mint_units;
     let change = if remaining > 0 {
         let next_key = change_key(key, nullifier);
@@ -279,7 +279,7 @@ fn mint_tx(
     root: Field,
     nullifier: Field,
     owner: Address,
-    units: u64,
+    units: u128,
     change: Field,
     proof: &[u8],
 ) -> Bytes {
@@ -407,7 +407,7 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     let root_after_burn = tree.root_at(1);
 
     // Bob's partial proof mints 40 to Carol; the change note is appended.
-    let nullifier = derive_nullifier(pool, serial, key);
+    let nullifier = derive_nullifier(note_commitment(pool, serial, 100), key);
     let next_key = change_key(key, nullifier);
     let change = note_commitment(pool, derive_note_sn(BOB.into(), next_key), 60);
     let partial_proof = prove_mint(&tree, BOB, key, 100, note_leaf, 1, 40);
@@ -453,7 +453,7 @@ fn emit_burn_partial_mint_full_mint_and_replay() {
     let db = chained_db(db, outcome);
 
     // Bob's successor proof mints the remaining 60 to Dave — NoteUsed only.
-    let next_nullifier = derive_nullifier(pool, derive_note_sn(BOB.into(), next_key), next_key);
+    let next_nullifier = derive_nullifier(change, next_key);
     let full_proof = prove_mint(&tree, BOB, next_key, 60, change_leaf, 2, 60);
     let outcome = run(
         db.clone(),
@@ -627,7 +627,7 @@ fn root_evicted_by_32_later_appends_is_stale() {
     db = chained_db(db, outcome);
     let old_root = tree.root_at(1);
     let proof = prove_mint(&tree, BOB, key, 100, note_leaf, 1, 40);
-    let nullifier = derive_nullifier(pool, serial, key);
+    let nullifier = derive_nullifier(note_commitment(pool, serial, 100), key);
     let change = note_commitment(
         pool,
         derive_note_sn(BOB.into(), change_key(key, nullifier)),
@@ -671,7 +671,7 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
 
     // Value on the mint selector: refused before dispatch touches state.
     let proof = prove_mint(&tree, BOB, Field::from(17u64), 100, 0, 1, 40);
-    let nullifier = derive_nullifier(pool, serial, Field::from(17u64));
+    let nullifier = derive_nullifier(note_commitment(pool, serial, 100), Field::from(17u64));
     let change = note_commitment(
         pool,
         derive_note_sn(BOB.into(), change_key(Field::from(17u64), nullifier)),
@@ -759,7 +759,7 @@ fn value_on_mint_and_borrowed_frames_cannot_reach_emit_state() {
         );
         assert!(matches!(burned.result, ExecutionResult::Success { .. }));
         db = chained_db(db, burned);
-        let owner_nullifier = derive_nullifier(pool, owner_serial, key);
+        let owner_nullifier = derive_nullifier(note_commitment(pool, owner_serial, 100), key);
         let owner_change = note_commitment(
             pool,
             derive_note_sn(BORROWER.into(), change_key(key, owner_nullifier)),
