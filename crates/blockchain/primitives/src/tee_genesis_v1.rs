@@ -336,17 +336,21 @@ mod tests {
             schedule.active_policy(1).unwrap().attestation_mode,
             AttestationMode::GramineDirectDev
         );
+        assert_eq!(schedule.active_policy(1).unwrap(), &policy);
         assert_eq!(
             field["policyScheduleHash"],
             json!(schedule.schedule_hash().unwrap())
         );
-        assert_ne!(
-            policy.measurement_rules[0].mrenclave,
-            policy.measurement_rules[1].mrenclave
+        assert_eq!(policy.measurement_rules.len(), 1);
+        let rule = &policy.measurement_rules[0];
+        assert_eq!(
+            rule.mrenclave,
+            keccak256(b"outbe/tee/gramine-direct-dev/mrenclave/v1")
         );
-        assert_ne!(
-            policy.measurement_rules[0].mrsigner,
-            policy.measurement_rules[1].mrsigner
+        assert_eq!(
+            rule.mrsigner,
+            keccak256(b"outbe/tee/gramine-direct-dev/mrsigner/v1")
         );
+        assert_ne!(rule.mrenclave, rule.mrsigner);
     }
 }
