@@ -53,6 +53,7 @@ pub mod executor;
 pub mod finalization;
 pub mod follow;
 pub mod reporter;
+pub mod storage_identity;
 pub(crate) mod test_faults;
 #[cfg(test)]
 mod test_fixtures;

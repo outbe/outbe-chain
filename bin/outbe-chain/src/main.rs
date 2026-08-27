@@ -46,7 +46,7 @@ use outbe_primitives::projection::{
     projection_readiness, ProjectionCheckpoint, ProjectionReadinessHandle, ProjectionStatus,
 };
 use outbe_primitives::OutbeHeader;
-use reth_chainspec::ChainSpec;
+use reth_chainspec::{ChainSpec, EthChainSpec};
 use reth_cli::chainspec::ChainSpecParser;
 use reth_ethereum::cli::interface::Cli;
 use reth_node_builder::NodeHandle;
@@ -619,6 +619,8 @@ impl ChainSpecParser for OutbeChainSpecParser {
                 .clone()
                 .map_header(OutbeHeader::new)
                 .into();
+        outbe_consensus::proof::init_consensus_chain_id(chain_spec.chain().id())
+            .map_err(|error| eyre::eyre!("invalid consensus chain identity: {error}"))?;
         outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
             chain_spec.as_ref(),
         )
@@ -1104,6 +1106,16 @@ fn run_node() -> eyre::Result<()> {
         if args.keys_dir.is_none() {
             args.keys_dir = Some(keys_dir.clone());
         }
+
+        let chain_id = reth_ethereum::chainspec::EthChainSpec::chain(&*node.chain_spec()).id();
+        outbe_consensus::proof::init_consensus_chain_id(chain_id)
+            .wrap_err("bind consensus process to the selected chain id")?;
+        outbe_consensus::storage_identity::validate_consensus_storage_identity(
+            &consensus_storage,
+            chain_id,
+            node.chain_spec().genesis_hash(),
+        )
+        .wrap_err("validate consensus restart storage identity")?;
 
         // Migrate DKG files from legacy location (consensus/) to keys/.
         outbe_engine::stack::migrate_dkg_keys_if_needed(&consensus_storage, &keys_dir)?;

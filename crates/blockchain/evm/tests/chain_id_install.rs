@@ -18,17 +18,26 @@ use std::sync::Arc;
 
 use outbe_consensus::proof::{consensus_chain_id, outbe_app_namespace};
 use outbe_evm::OutbeEvmConfig;
-use outbe_primitives::{consensus::ConsensusExecutionBridge, OutbeHeader};
-use reth_ethereum::chainspec::{ChainSpec, EthChainSpec, MAINNET};
+use outbe_primitives::{chain::MAINNET_CHAIN_ID, consensus::ConsensusExecutionBridge, OutbeHeader};
+use reth_chainspec::{Chain, ChainSpec, ChainSpecBuilder, EthChainSpec};
+use reth_ethereum::chainspec::MAINNET;
 
 fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
-    MAINNET.as_ref().clone().map_header(OutbeHeader::new).into()
+    Arc::new(
+        ChainSpecBuilder::default()
+            .chain(Chain::from_id(MAINNET_CHAIN_ID))
+            .genesis(MAINNET.genesis.clone())
+            .cancun_activated()
+            .build()
+            .map_header(OutbeHeader::new),
+    )
 }
 
 #[test]
 fn new_with_bridge_installs_consensus_chain_id() {
     let chain_spec = test_chain_spec();
     let expected = chain_spec.chain().id();
+    assert_eq!(expected, MAINNET_CHAIN_ID);
     // The binding is only meaningful if the chain id differs from the default 0.
     assert_ne!(
         expected, 0,

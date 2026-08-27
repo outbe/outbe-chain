@@ -8660,7 +8660,7 @@ mod tests {
         // path reads — otherwise the late-finalize BLS check fails on a namespace
         // mismatch (`b"outbe" || 0` at sign time vs `b"outbe" || CHAIN_ID` at
         // verify time). CHAIN_ID matches `test_chain_spec()` (MAINNET id 1).
-        outbe_consensus::proof::init_consensus_chain_id(CHAIN_ID);
+        outbe_consensus::proof::init_consensus_chain_id(CHAIN_ID).unwrap();
 
         let epoch = 0u64;
         // Real BLS committee of 4 (committee addresses are the late-credit voters).
