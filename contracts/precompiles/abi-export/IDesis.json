@@ -384,6 +384,37 @@
   },
   {
     "type": "event",
+    "name": "PromisLoadStepped",
+    "inputs": [
+      {
+        "name": "worldwideDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "previousLoadMinor",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
+      },
+      {
+        "name": "newLoadMinor",
+        "type": "uint128",
+        "indexed": false,
+        "internalType": "uint128"
+      },
+      {
+        "name": "coenUsdRateMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "ReferenceCurrencyLetterTaken",
     "inputs": [
       {

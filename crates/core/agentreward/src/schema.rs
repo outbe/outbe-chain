@@ -6,9 +6,10 @@ use outbe_primitives::storage::types::StorageKey;
 
 /// EVM storage layout for the Agent Reward contract.
 ///
-/// Tracks tribute counts per address/day, claimable reward balances per
-/// address, and per-day address lists for the WAA (wallet) and SRA
-/// (signer-of-record) participant pools.
+/// Tracks tribute counts per address/reward UTC day, claimable reward balances
+/// per address, and per-day address lists for the WAA (wallet) and SRA
+/// (signer-of-record) participant pools. A reward day is the calendar day when
+/// an offer executes, not the Tribute's target WorldwideDay.
 ///
 /// Naming history: `wallet_*` was renamed to `waa_*` and `sfa_*` to
 /// `sra_*` as part (Phase 2 of the Cycle epic) so the on-chain

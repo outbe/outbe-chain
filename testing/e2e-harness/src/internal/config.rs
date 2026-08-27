@@ -190,7 +190,7 @@ impl Config {
 
     /// Loopback HTTP port where validator `i`'s OCOMP Supervisor accepts workers.
     #[cfg_attr(not(feature = "ocomp-integration"), allow(dead_code))]
-    pub fn ocomp_supervisor_port(&self, i: usize) -> u16 {
+    pub fn ocomp_endpoint_port(&self, i: usize) -> u16 {
         self.ports.port(Service::OcompSupervisor, i)
     }
 
@@ -306,7 +306,7 @@ mod tests {
         assert_eq!(cfg.tee_port(joiner), cfg.http_port(joiner) + 1);
         assert!(cfg.http_port(14) > cfg.http_port(joiner));
         assert!(cfg.consensus_port(15) > cfg.http_port(14));
-        assert_eq!(cfg.ocomp_supervisor_port(15), cfg.consensus_port(15) + 1);
+        assert_eq!(cfg.ocomp_endpoint_port(15), cfg.consensus_port(15) + 1);
 
         // The committee size never moves, however many nodes are added.
         assert_eq!(cfg.validators, env.validators);

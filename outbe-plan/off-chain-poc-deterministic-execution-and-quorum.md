@@ -923,7 +923,7 @@ For one exact manifest:
 - duplicate exact completion;
 - stale lease/session completion;
 - retry on a different slot/process;
-- restart supervisor with verified CAS artifacts;
+- restart the node-owned embedded Supervisor with verified CAS artifacts;
 - finalize forward, reverse and shuffled completion journals through the same
   exact plan-order cursor;
 - remove, duplicate, reorder or substitute one admitted artifact/chunk;
@@ -1040,7 +1040,7 @@ Later implementation is complete only when retained evidence proves:
 6. the node, not supervisor/worker, derives and signs the digest;
 7. exact sign retry is idempotent and conflicting retry refuses after restart;
 8. four certificate subsets pass and all signer/digest mutations fail;
-9. a stopped fourth supervisor leaves its on-chain vote slot empty while three
+9. a stopped fourth Worker leaves its on-chain vote slot empty while three
    matching timely votes still complete the job;
 10. every domain submits its own signed full result through the normal
     transaction surface, and the q-forming vote applies in the same block;

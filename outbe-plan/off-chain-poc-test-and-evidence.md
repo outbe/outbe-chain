@@ -125,10 +125,10 @@ distributed behavior.
 The PoC extends this owner instead of creating another harness. Required gaps
 are:
 
-1. an `OcompTopology` handle owning four Supervisor/exporter/CAS domains,
-   bounded one-unit Worker processes, Axum registration endpoints and ZeroMQ
-   TCP command channels;
-2. Supervisor-only stop/restart, message-drop, CAS/Mongo corruption, Worker
+1. an `OcompTopology` handle observing four node-owned embedded Supervisor
+   domains and owning exporter/CAS domains, bounded Worker processes, Axum
+   registration endpoints and ZeroMQ TCP command channels;
+2. Worker/exporter stop/restart, message-drop, CAS/Mongo corruption, Worker
    schedule and bundle-mismatch controls;
 3. public OCOMP transaction/view/proof helpers and exact-block state snapshots;
 4. a deterministic persisted-finality/orphan fixture driving the production
@@ -200,7 +200,7 @@ success capability, result or receipt.
 | Test ID | Real path | Required evidence |
 |---|---|---|
 | `OCM-PUB-001` | RPC -> txpool -> P2P -> proposal -> import -> replay | cap-1 and cap accepted; cap+1 rejected consistently; same receipt/state/CE/header result on all nodes |
-| `OCM-PUB-002` | public `submitLysisResult(bytes)` changed-binding rejection and recovery | one representative changed binding rejects with exact scoped pre/post equality; restarting the stopped supervisors forms the valid quorum through RPC/txpool/P2P/import |
+| `OCM-PUB-002` | public `submitLysisResult(bytes)` changed-binding rejection and recovery | one representative changed binding rejects with exact scoped pre/post equality; restarting the stopped Workers lets the embedded Supervisors form the valid quorum through RPC/txpool/P2P/import |
 | `OCM-PUB-003` | begin-zone expiry versus public full-result votes | height `< deadline` may fill a slot and q may apply; height `= deadline` first expires a non-quorum job and rejects a new slot; the live public receipt may be included at `deadline` or `deadline + 1` and is late in both cases; no proposer-order race; a terminal job still accepts the fourth timely accountability vote |
 | `OCM-PUB-004` | completed full-result vote replay | duplicate same-validator vote is idempotent with no new owner effects/events; changed binding or equivocation follows the frozen rejection/evidence rule and cannot change the terminal result |
 
@@ -282,14 +282,14 @@ One closure run builds binaries once and creates a fresh generated devnet:
 
 ```text
 validator domain 0..3
-  outbe-chain node               owns consensus, pin and OCOMP key
-  outbe-ocomp supervisor         owns scheduling journal
+  outbe-chain node               owns consensus, embedded Supervisor,
+                                 scheduling/vote journals and OCOMP key
   outbe-ocomp snapshot-exporter  read-only checkpoint + Mongo access
   validator-local CAS directory  never chain authority
-  Supervisor-launched workers    1..4 bounded one-unit child processes
+  outbe-ocomp worker             1..4 bounded external processes
 
-validator node vote submitter
-  receives one bounded signed result from its local supervisor
+embedded Supervisor vote submitter
+  receives one bounded result from its local Worker
   submits through the restricted validator ZeroFee transaction seam
 ```
 
@@ -301,7 +301,8 @@ concern, not protocol evidence.
 There is no relay or public activation transaction. Each validator domain submits
 its own full-result vote. The transaction that records the third matching slot
 also applies the result under one outer checkpoint. Nodes remain running when
-supervisors, exporters, workers or CAS access are stopped.
+exporters, workers or CAS access are stopped. The embedded Supervisor shares the
+node lifecycle and is not an independently stoppable harness process.
 
 ### 5.2 Thirteen-step proof map
 
@@ -316,7 +317,7 @@ evidence ledger.
 | 1 | `OCM-E2E-001`, `OCM-E2E-004` | finalized public Tribute receipts, deterministic fixture bytes and CE/Mongo commitment parity for leagues/currencies/exclusion |
 | 2 | `OCM-E2E-001`, `OCM-REQ-001` | request block/finality refs, split receipt, intent OCB1, voting/apply preconditions, expiry and event |
 | 3 | `OCM-E2E-001` | exact request-height public proofs showing one early effect, zero new Nod/contributor/Tribute-consume effect and no duplicate on retry |
-| 4 | `OCM-E2E-001` | supervisor-3 exit status while node-3 and committee finality advance |
+| 4 | `OCM-E2E-001` | worker-3 exit status while node-3 and committee finality advance |
 | 5 | `OCM-E2E-001`, `OCM-CAS-001`, `OCM-DET-001` | three independent manifest roots, plan hashes and identical result digests; domain-local process/artifact identities |
 | 6 | `OCM-E2E-001`, `OCM-VOT-001`, `OCM-PUB-001` | three separately signed full-result vote transactions, compact slots, identical derived digest and txpool/gossip/inclusion refs |
 | 7 | `OCM-E2E-001`, `OCM-APL-002` | finalized q-forming vote receipt, the one stored canonical result, terminal job and all public owner/generation reads and proofs |
@@ -324,7 +325,7 @@ evidence ledger.
 | 9 | `OCM-E2E-001`, `OCM-DET-001` | 1/2/4-worker schedules, seeds/retries and byte-identical artifacts |
 | 10 | `OCM-E2E-001`, `OCM-SIG-001`, `OCM-PUB-002` | durable first sign record, typed refusal and failed public mutation receipts with unchanged live state |
 | 11 | `OCM-E2E-001`, `OCM-TIM-001` | correlated delay=0/delay=N fresh fixtures and normalized semantic equality |
-| 12 | `OCM-E2E-001`, `OCM-PUB-003` | two supervisors stopped, finality advancing, finalized expiry/release/requeue and zero Nod/fallback |
+| 12 | `OCM-E2E-001`, `OCM-PUB-003` | two Workers stopped, finality advancing, finalized expiry/release/requeue and zero Nod/fallback |
 | 13 | `OCM-E2E-001`, `OCM-TRC-001` | exact-block traces from proposer/import/replay plus static boundary result; forbidden counters all zero |
 
 For step 11, `OCM-TIM-001` uses the same production request and quorum-apply

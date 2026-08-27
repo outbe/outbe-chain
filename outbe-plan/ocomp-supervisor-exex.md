@@ -365,8 +365,8 @@ ordinary historical block replay
 Параллельный replay engine не добавляется. Текущий протокол допускает несколько live jobs,
 поэтому ExEx держит минимальную in-memory map `JobId → local state/runner`. Она восстанавливается
 canonical scan от durable watermark и существующего retention registry/CAS. Новый durable
-multi-job ledger, scheduler или policy запрещены scope. Текущая standalone-логика
-`cancel_superseded_job` в embedded path не используется.
+multi-job ledger, scheduler или policy запрещены scope. `cancel_superseded_job`
+в embedded path не используется.
 
 После restart `LocalReady`/`Verified` переоткрывает immutable manifest, plan, admissions и
 result chunks по существующим deterministic CAS references. Один durable local result record
@@ -403,8 +403,7 @@ serving; сами chunks не дублируются.
 - `bin/outbe-chain/src/main.rs` — Node mode, Node-owned Worker endpoint, ExEx install,
   FullNode progression gate и typed shutdown wiring;
 - `bin/outbe-ocomp/src/lib.rs` — экспортировать существующие reusable Supervisor pieces;
-- `bin/outbe-ocomp/src/main.rs` — удалить standalone Supervisor runtime path, сохранив
-  Worker и необходимые operational roles;
+- `bin/outbe-ocomp/src/main.rs` — оставить Worker и необходимые operational roles;
 - `bin/outbe-ocomp/src/supervisor_job.rs` — переиспользовать compute runner без изменения
   Lysis semantics; runner принимает Node-owned dispatcher и возвращает typed error class;
 - `bin/outbe-ocomp/src/worker_transport.rs` — переиспользовать ZeroMQ router; wire не менять;
@@ -468,7 +467,7 @@ FullNode:
 
 Topology/E2E:
 
-1. Standalone Supervisor не запускается.
+1. Supervisor запускается внутри Validator и FullNode.
 2. Validator и FullNode Nodes сами поднимают ZeroMQ.
 3. Workers подключаются напрямую к соответствующей Node.
 4. Tribute → Metadosis → JobIntent → Workers → validator votes → quorum → FullNode exact
@@ -518,7 +517,7 @@ E2E compile, production-shaped LocalNet outside sandbox, документаци�
    `StartupRecovery → Running` и orderly fatal handoff в `outbe-chain` ExEx. Отдельный
    функционально завершённый checkpoint внутри текущей testnet-preparation ветки; consensus,
    canonical state, wire/layout, Reth и harness не меняются.
-7. **Runtime/E2E/docs**: удалить standalone Supervisor startup, обновить wrappers, production
+7. **Runtime/E2E/docs**: зафиксировать embedded Supervisor topology в wrappers, production
    E2E, ADR/flow/runbook и выполнить финальный scope audit.
 
 Каждый PR компилируется, проходит применимые тесты и не направляет production в частично
@@ -528,7 +527,7 @@ Hot files и допустимые semantic passes:
 
 | Hot file | Pass 1 | Pass 2 (только integration correction) |
 |---|---|---|
-| `bin/outbe-ocomp/src/main.rs` | извлечь standalone assembly в library seam | удалить старый Supervisor routing |
+| `bin/outbe-ocomp/src/main.rs` | открыть reusable assembly через library seam | ограничить CLI external operational roles |
 | `bin/outbe-ocomp/src/supervisor_job.rs` | injected dispatcher + typed result | integration correction |
 | `bin/outbe-chain/src/main.rs` | embedded runtime wiring | shutdown/startup correction |
 | `crates/blockchain/consensus/src/executor/actor.rs` | optional readiness + tests | integration correction |

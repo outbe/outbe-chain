@@ -119,9 +119,9 @@ documentation. The canonical dev `localnet-bootstrap/start/status/stop` lifecycl
 by one persistent Rust-harness process: it checks Mongo reachability/primary election,
 starts the full mock-enclave cohort before validators, uses distinct validator databases,
 persists one resolved all-service port layout across bootstrap/start, then starts one OCOMP
-Supervisor, SnapshotExporter and Worker-0 per validator. Running readiness requires advancing
-RPCs and exact Worker registration/connection at every Supervisor, and is published in an atomic
-owner/RPC/OCOMP state record. Stop verifies the exact owner process before
+SnapshotExporter and Worker-0 per validator against the Supervisor embedded in each node. Running
+readiness requires advancing RPCs and exact Worker registration/connection at every embedded
+Supervisor, and is published in an atomic owner/RPC/OCOMP state record. Stop verifies the exact owner process before
 signalling it and preserves chain data; clean clears validator runtime data inside the
 dedicated LocalNet directory while preserving bootstrap inputs and receipts.
 The separate Tribute demo stack remains a scoped demonstration workflow, not the canonical

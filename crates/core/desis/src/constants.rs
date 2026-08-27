@@ -13,8 +13,22 @@ pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x6Dda31E7211c31dB8E5AF24c7
 /// Minimum-bid-quantity floor: 4% of the prior series' issued count (basis points).
 pub const BID_QUANTITY_FLOOR_BPS: u32 = 400;
 
-/// PROMIS load: 100k PROMIS per 1 Intex (scale 1e6 PROMIS-units on the wire).
-pub const PROMIS_LOAD: u128 = 100_000;
+/// Currency one Intex strikes in; mirrors the oracle's `DAY_TYPE_ISO`.
+pub const PROMIS_LOAD_STRIKE_ISO: u16 = 840;
+
+/// What one Intex strikes at. The ladder steps by decades, so the strike drifts
+/// from here up to ten times it before resetting; only powers of ten are valid.
+pub const PROMIS_LOAD_STRIKE_USD: u32 = 100;
+
+/// Deadband at each decade boundary, so a rate loitering there stops flipping the load daily.
+pub const PROMIS_LOAD_DEADBAND_BPS: u32 = 200;
+
+/// Fixed load bypassing the ladder. The harness seeds the day's mint cap at 500
+/// PROMIS, far under one laddered Intex, so a laddered e2e day would issue none.
+#[cfg(not(feature = "e2e-test"))]
+pub const PROMIS_LOAD_OVERRIDE: Option<u128> = None;
+#[cfg(feature = "e2e-test")]
+pub const PROMIS_LOAD_OVERRIDE: Option<u128> = Some(1);
 
 /// Bid fan-in deadline: clearing proceeds without chains that have not reported
 /// BIDS_DONE within this window after the clearing stage starts. A repair window

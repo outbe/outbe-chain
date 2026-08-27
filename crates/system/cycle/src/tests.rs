@@ -776,6 +776,67 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
 }
 
 #[test]
+fn next_day_cycle_settlement_pays_previous_utc_day_agent_activity() {
+    const REWARD_UTC_DAY: u32 = 20_240_101;
+
+    let mut storage = cycle_storage();
+    storage.enter(|handle| {
+        let anchor_ts = GENESIS_TS + 60;
+        let ctx_anchor = BlockRuntimeContext::new(block_ctx(1, anchor_ts), handle.clone());
+        anchor_genesis(&ctx_anchor);
+        dispatch_triggers(&ctx_anchor).unwrap();
+
+        let wallet = Address::repeat_byte(0x71);
+        let sra = Address::repeat_byte(0x72);
+        let reward_day = outbe_common::WorldwideDay::new(REWARD_UTC_DAY);
+        let mut agent_reward = outbe_agentreward::AgentRewardContract::new(handle.clone());
+        agent_reward
+            .increment_waa_tribute(reward_day, wallet)
+            .unwrap();
+        agent_reward.increment_sra_tribute(reward_day, sra).unwrap();
+
+        let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 60;
+        let ctx_fire = BlockRuntimeContext::new(block_ctx(2, fire_ts), handle);
+        account_parent(&ctx_fire, 2);
+        dispatch_triggers(&ctx_fire).unwrap();
+
+        let agent_reward = outbe_agentreward::AgentRewardContract::new(ctx_fire.storage.clone());
+        let wallet_claimable = agent_reward.get_claimable_reward(wallet).unwrap();
+        let sra_claimable = agent_reward.get_claimable_reward(sra).unwrap();
+        assert!(
+            !wallet_claimable.is_zero(),
+            "the next UTC day must pay the previous day's WAA activity"
+        );
+        assert!(
+            !sra_claimable.is_zero(),
+            "the next UTC day must pay the previous day's SRA activity"
+        );
+        assert!(
+            agent_reward
+                .get_all_waa_counts(reward_day)
+                .unwrap()
+                .is_empty(),
+            "settled WAA counters must be cleared"
+        );
+        assert!(
+            agent_reward
+                .get_all_sra_counts(reward_day)
+                .unwrap()
+                .is_empty(),
+            "settled SRA counters must be cleared"
+        );
+        assert_eq!(
+            ctx_fire
+                .storage
+                .balance(outbe_primitives::addresses::AGENT_REWARD_ADDRESS)
+                .unwrap(),
+            wallet_claimable + sra_claimable,
+            "the AgentReward native balance must back every new claim"
+        );
+    });
+}
+
+#[test]
 fn prepared_validator_topup_and_terminal_residue_conserve_the_allocation() {
     let mut storage = cycle_storage();
     storage.enter(|handle| {
