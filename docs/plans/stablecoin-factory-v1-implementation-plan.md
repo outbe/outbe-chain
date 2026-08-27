@@ -50,7 +50,7 @@ the owning ADR and its vectors:
 1. Factory `0x...EE0F`, Policy Registry `0x...EE10`, dynamic prefix `0x53c0` and
    marker `0xef`;
 2. genesis activation with no Update/protocol-version gate, schema version `1`,
-   fresh-genesis devnet/testnet applicability and unsupported mainnet deployment;
+   fresh-genesis Devnet, Testnet, and Mainnet applicability;
 3. EIP-712 domain version `"1"` (role ids are frozen by SCF-001);
 4. public bonded caps 16 globally and one per proposer inside Vote's 64 total slots;
 5. policy membership batch cap 64; Factory and Policy list page cap 100 with no
