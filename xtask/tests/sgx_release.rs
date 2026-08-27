@@ -2,7 +2,6 @@ use std::{collections::BTreeMap, fs, io::Cursor, process::Command};
 
 use alloy_primitives::B256;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use outbe_e2e_harness::release_dcap::RELEASE_DCAP_ARTIFACT_PATHS;
 use outbe_evm::tee_attestation_activation::DcapChainSpecBindingV1;
 use outbe_primitives::{
     chain::TESTNET_CHAIN_ID,
@@ -20,7 +19,7 @@ use xtask::release::sgx::{
     build_bundle_manifest, build_release_manifest_candidate, canonical_json,
     compare_unsigned_trees, normalize_cosign_json_output, parse_oci_descriptor,
     parse_sigstruct_view, verify_signed_bundle, write_deterministic_bundle_archive, BundleSpec,
-    SourceIdentity, VerifiedReleaseInputs,
+    SgxReleaseNetwork, SourceIdentity, VerifiedReleaseInputs,
 };
 
 const SIGSTRUCT: &str = "Attributes:\n\
@@ -48,6 +47,32 @@ fn repo_root() -> std::path::PathBuf {
 }
 
 #[test]
+fn release_network_profiles_are_canonical_and_closed() {
+    assert_eq!(SgxReleaseNetwork::Testnet.chain_id(), 54_322_345);
+    assert_eq!(SgxReleaseNetwork::Testnet.chain_name(), "outbe-testnet-1");
+    assert_eq!(SgxReleaseNetwork::Mainnet.chain_id(), 676);
+    assert_eq!(SgxReleaseNetwork::Mainnet.chain_name(), "outbe-mainnet-1");
+    assert_eq!(SgxReleaseNetwork::Mainnet.authorization_scope(), "mainnet");
+}
+
+#[test]
+fn mainnet_and_testnet_specs_share_physical_sgx_policy_but_not_identity() {
+    let root = repo_root();
+    let testnet = BundleSpec::read(&root.join("release/testnet-sgx-bundle-v1.json")).unwrap();
+    let mainnet = BundleSpec::read(&root.join("release/mainnet-sgx-bundle-v1.json")).unwrap();
+
+    assert_eq!(testnet.gramine, mainnet.gramine);
+    assert_eq!(testnet.install_root, mainnet.install_root);
+    assert_eq!(testnet.platform, mainnet.platform);
+    assert_eq!(testnet.project_toolchain, mainnet.project_toolchain);
+    assert_eq!(testnet.sealed_state_schema, mainnet.sealed_state_schema);
+    assert_eq!(testnet.sgx, mainnet.sgx);
+    assert_ne!(testnet.authorization_scope, mainnet.authorization_scope);
+    assert_ne!(testnet.chain_id, mainnet.chain_id);
+    assert_ne!(testnet.network_name, mainnet.network_name);
+}
+
+#[test]
 fn repository_default_testnet_genesis_is_dcap_required_but_not_release_authority() {
     let binding = DcapChainSpecBindingV1::from_genesis_path(
         &repo_root().join("release/testnet-genesis.json"),
@@ -55,6 +80,12 @@ fn repository_default_testnet_genesis_is_dcap_required_but_not_release_authority
     .expect("repository default testnet genesis must be a valid DCAP ChainSpec");
 
     assert_eq!(binding.chain_id, TESTNET_CHAIN_ID);
+    assert_eq!(
+        binding.genesis_hash,
+        "0x5d3cffd449afeed2edbbaa6423588c1df2545ebce56bb92a494f9ae0495fa345"
+            .parse::<B256>()
+            .unwrap()
+    );
     assert_eq!(binding.activation_height, 1);
     assert_eq!(
         binding.policy.attestation_mode,
@@ -62,6 +93,12 @@ fn repository_default_testnet_genesis_is_dcap_required_but_not_release_authority
     );
     assert_eq!(binding.policy.measurement_rules.len(), 1);
     assert_eq!(binding.policy.minimum_tcb_evaluation_data_number, 1);
+    assert_eq!(binding.policy.maximum_lease, 2_592_000);
+    let genesis: serde_json::Value = serde_json::from_slice(
+        &fs::read(repo_root().join("release/testnet-genesis.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(genesis["baseFeePerGas"], "0x7");
     for rule in &binding.policy.measurement_rules {
         assert_eq!(rule.mrenclave, B256::from([0x11; 32]));
         assert_eq!(rule.mrsigner, B256::from([0x22; 32]));
@@ -84,11 +121,14 @@ fn repository_default_testnet_genesis_is_dcap_required_but_not_release_authority
 }
 
 fn processor_dcap_artifact_fixtures(
-    testnet_genesis: &[u8],
+    network: SgxReleaseNetwork,
+    genesis: &[u8],
     policy: &[u8],
     policy_schedule: &[u8],
 ) -> BTreeMap<String, Vec<u8>> {
-    let mut artifacts = RELEASE_DCAP_ARTIFACT_PATHS
+    let mut artifacts = network
+        .dcap_artifact_set()
+        .paths()
         .into_iter()
         .map(|name| {
             (
@@ -107,14 +147,15 @@ fn processor_dcap_artifact_fixtures(
         "policy-schedule-v1.bin".to_owned(),
         policy_schedule.to_vec(),
     );
-    artifacts.insert("testnet-genesis.json".to_owned(), testnet_genesis.to_vec());
+    artifacts.insert(network.genesis_artifact_name().to_owned(), genesis.to_vec());
     artifacts
 }
 
 fn write_processor_dcap_archive(
     path: &std::path::Path,
     evidence: &[u8],
-    testnet_genesis: &[u8],
+    network: SgxReleaseNetwork,
+    genesis: &[u8],
     policy: &[u8],
     policy_schedule: &[u8],
     source_date_epoch: i64,
@@ -132,7 +173,7 @@ fn write_processor_dcap_archive(
     archive
         .append_data(&mut directory, "collateral", Cursor::new([]))
         .expect("append Processor DCAP collateral directory");
-    let mut artifacts = processor_dcap_artifact_fixtures(testnet_genesis, policy, policy_schedule);
+    let mut artifacts = processor_dcap_artifact_fixtures(network, genesis, policy, policy_schedule);
     artifacts.insert("hardware-dcap-evidence.json".to_owned(), evidence.to_vec());
     for (name, bytes) in artifacts {
         let mut header = tar::Header::new_gnu();
@@ -151,17 +192,18 @@ fn write_processor_dcap_archive(
         .expect("finish Processor DCAP evidence archive");
 }
 
-fn write_testnet_genesis(
+fn write_release_genesis(
     root: &std::path::Path,
+    network: SgxReleaseNetwork,
     mrenclave: &str,
     mrsigner: &str,
     isv_prod_id: u16,
     isv_svn: u16,
 ) -> (std::path::PathBuf, TeePolicyV1, TeePolicyScheduleV1) {
-    let path = root.join("testnet-genesis.json");
+    let path = root.join(network.genesis_artifact_name());
     let mut genesis = serde_json::json!({
         "config": {
-            "chainId": TESTNET_CHAIN_ID,
+            "chainId": network.chain_id(),
             "homesteadBlock": 0,
             "eip150Block": 0,
             "eip155Block": 0,
@@ -197,7 +239,7 @@ fn write_testnet_genesis(
             minimum_isv_svn: isv_svn,
             minimum_tcb_evaluation_data_number: 1,
         }),
-        TESTNET_CHAIN_ID,
+        network.chain_id(),
         base.genesis_hash(),
     )
     .unwrap();
@@ -327,7 +369,9 @@ fn cli_exposes_typed_sgx_release_commands() {
     let manifest_help = String::from_utf8(manifest.stdout).expect("UTF-8 manifest help");
     assert!(manifest_help.contains("--processor-dcap-archive"));
     assert!(manifest_help.contains("--processor-dcap-evidence"));
-    assert!(manifest_help.contains("--testnet-genesis"));
+    assert!(manifest_help.contains("--network"));
+    assert!(manifest_help.contains("--genesis"));
+    assert!(!manifest_help.contains("--testnet-genesis"));
     assert!(!manifest_help.contains("--platform-dcap-evidence"));
 }
 
@@ -355,6 +399,8 @@ fn privileged_release_workflow_pins_source_and_never_replaces_assets() {
     assert!(workflow.contains("[.tag, .object.sha] | @tsv"));
     assert!(workflow.contains("test \"${signed_tag_name}\" = \"${RELEASE_TAG}\""));
     assert!(workflow.contains("runs-on: testnet-release-sgx"));
+    assert_eq!(workflow.matches("--network testnet").count(), 7);
+    assert!(workflow.contains("--genesis \"${TESTNET_GENESIS}\""));
     assert!(workflow.contains("--expected-pck-ca processor"));
     assert!(workflow.contains("--processor-dcap-archive"));
     assert!(workflow.contains("--processor-dcap-evidence"));
@@ -363,8 +409,13 @@ fn privileged_release_workflow_pins_source_and_never_replaces_assets() {
         workflow
             .matches("--testnet-genesis \"${TESTNET_GENESIS}\"")
             .count(),
-        2,
-        "hardware capture and finalization must consume the same immutable testnet genesis"
+        1,
+        "the Testnet-only hardware runner must consume the immutable Testnet genesis"
+    );
+    assert_eq!(
+        workflow.matches("--genesis \"${TESTNET_GENESIS}\"").count(),
+        1,
+        "profile-aware finalization must consume the same immutable Testnet genesis"
     );
     assert!(workflow.contains("git ls-files --error-unmatch \"${TESTNET_GENESIS}\""));
     assert!(workflow.contains("outbe-release-dcap-evidence"));
@@ -528,6 +579,28 @@ fn canonical_manifest_binds_identity_measurements_and_every_bundle_file() {
 }
 
 #[test]
+fn signed_bundle_identity_is_not_transferable_between_testnet_and_mainnet() {
+    let fixture = signed_fixture();
+    let root = repo_root();
+    let testnet = BundleSpec::read(&root.join("release/testnet-sgx-bundle-v1.json")).unwrap();
+    let mainnet = BundleSpec::read(&root.join("release/mainnet-sgx-bundle-v1.json")).unwrap();
+    let source = SourceIdentity {
+        source_commit: "a".repeat(40),
+        source_date_epoch: 1_784_636_360,
+        release_tag: "v0.1.1-mainnet.1".to_owned(),
+    };
+    let manifest = build_bundle_manifest(fixture.path(), &mainnet, &source, SIGSTRUCT).unwrap();
+
+    assert_eq!(manifest.authorization_scope, "mainnet");
+    assert_eq!(manifest.chain_id, 676);
+    assert_eq!(manifest.network_name, "outbe-mainnet-1");
+    verify_signed_bundle(fixture.path(), &manifest, &mainnet, SIGSTRUCT).unwrap();
+    let error = verify_signed_bundle(fixture.path(), &manifest, &testnet, SIGSTRUCT)
+        .expect_err("Mainnet bundle must not verify under Testnet profile");
+    assert!(error.to_string().contains("network contract"));
+}
+
+#[test]
 fn verification_rejects_artifact_substitution() {
     let fixture = signed_fixture();
     let spec = repo_spec();
@@ -566,8 +639,9 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
     };
     let bundle_manifest = build_bundle_manifest(fixture.path(), &repo_spec(), &source, SIGSTRUCT)
         .expect("bundle manifest");
-    let (testnet_genesis, testnet_policy, testnet_policy_schedule) = write_testnet_genesis(
+    let (testnet_genesis, testnet_policy, testnet_policy_schedule) = write_release_genesis(
         root.path(),
+        SgxReleaseNetwork::Testnet,
         &bundle_manifest.measurements.mrenclave,
         &bundle_manifest.measurements.mrsigner,
         bundle_manifest.measurements.isv_prod_id,
@@ -731,6 +805,7 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
             "Intel SGX PCK Platform CA"
         };
         let artifacts = processor_dcap_artifact_fixtures(
+            SgxReleaseNetwork::Testnet,
             &testnet_genesis_bytes,
             &testnet_policy_bytes,
             &testnet_policy_schedule_bytes,
@@ -814,12 +889,14 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
     write_processor_dcap_archive(
         &processor_dcap_archive,
         &processor_evidence,
+        SgxReleaseNetwork::Testnet,
         &testnet_genesis_bytes,
         &testnet_policy_bytes,
         &testnet_policy_schedule_bytes,
         source.source_date_epoch,
     );
     let inputs = VerifiedReleaseInputs {
+        network: SgxReleaseNetwork::Testnet,
         bundle: fixture.path().to_owned(),
         bundle_archive,
         cosign_image_verification,
@@ -833,7 +910,7 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
         oci_evidence,
         sbom,
         sgx_evidence,
-        testnet_genesis,
+        genesis: testnet_genesis,
     };
     let manifest = build_release_manifest_candidate(&inputs).expect("release manifest candidate");
 
@@ -880,11 +957,185 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
         .expect("OCI gate");
     assert_eq!(oci_gate["evidence"].as_array().expect("evidence").len(), 4);
 
+    let mainnet_spec = BundleSpec::read(&repo_root().join("release/mainnet-sgx-bundle-v1.json"))
+        .expect("Mainnet bundle spec");
+    let mainnet_source = SourceIdentity {
+        source_commit: source.source_commit.clone(),
+        source_date_epoch: source.source_date_epoch,
+        release_tag: "v0.1.1-mainnet.1".to_owned(),
+    };
+    let mainnet_bundle_manifest =
+        build_bundle_manifest(fixture.path(), &mainnet_spec, &mainnet_source, SIGSTRUCT)
+            .expect("Mainnet bundle manifest");
+    let mainnet_bundle_manifest_path = fixture
+        .path()
+        .join(SgxReleaseNetwork::Mainnet.bundle_manifest_path());
+    fs::write(
+        &mainnet_bundle_manifest_path,
+        canonical_json(&mainnet_bundle_manifest).expect("canonical Mainnet bundle manifest"),
+    )
+    .expect("write Mainnet bundle manifest");
+    let mainnet_bundle_manifest_digest = hex::encode(Sha256::digest(
+        fs::read(&mainnet_bundle_manifest_path).expect("read Mainnet bundle manifest"),
+    ));
+    let (mainnet_genesis, mainnet_policy, mainnet_policy_schedule) = write_release_genesis(
+        root.path(),
+        SgxReleaseNetwork::Mainnet,
+        &mainnet_bundle_manifest.measurements.mrenclave,
+        &mainnet_bundle_manifest.measurements.mrsigner,
+        mainnet_bundle_manifest.measurements.isv_prod_id,
+        mainnet_bundle_manifest.measurements.isv_svn,
+    );
+    let mainnet_genesis_bytes = fs::read(&mainnet_genesis).unwrap();
+    let mainnet_policy_bytes = mainnet_policy.encode_canonical().unwrap();
+    let mainnet_policy_schedule_bytes = mainnet_policy_schedule.encode_canonical().unwrap();
+
+    let mut mainnet_elf = elf.clone();
+    mainnet_elf["release"]["tag"] = serde_json::json!(mainnet_source.release_tag.clone());
+    let mainnet_elf_manifest = root.path().join("mainnet-release-manifest.json");
+    fs::write(
+        &mainnet_elf_manifest,
+        canonical_json(&mainnet_elf).expect("canonical Mainnet ELF manifest"),
+    )
+    .expect("write Mainnet ELF manifest");
+    let mut mainnet_oci = oci.clone();
+    mainnet_oci["bundle_manifest_digest"]["value"] =
+        serde_json::json!(mainnet_bundle_manifest_digest);
+    mainnet_oci["image_reference"] =
+        serde_json::json!("ghcr.io/outbe/outbe-tee-enclave-mainnet:v0.1.1-mainnet.1");
+    mainnet_oci["source"] = serde_json::to_value(&mainnet_bundle_manifest.source).unwrap();
+    let mainnet_oci_evidence = root.path().join("mainnet-oci.json");
+    fs::write(
+        &mainnet_oci_evidence,
+        canonical_json(&mainnet_oci).expect("canonical Mainnet OCI evidence"),
+    )
+    .expect("write Mainnet OCI evidence");
+
+    let mut mainnet_dcap = fresh_dcap("processor", 1);
+    mainnet_dcap["artifacts"] = serde_json::Value::Object(
+        processor_dcap_artifact_fixtures(
+            SgxReleaseNetwork::Mainnet,
+            &mainnet_genesis_bytes,
+            &mainnet_policy_bytes,
+            &mainnet_policy_schedule_bytes,
+        )
+        .into_iter()
+        .map(|(name, bytes)| {
+            (
+                name,
+                serde_json::json!({
+                    "sha256": hex::encode(Sha256::digest(&bytes)),
+                    "size": bytes.len()
+                }),
+            )
+        })
+        .collect(),
+    );
+    mainnet_dcap["policy"] = serde_json::json!({
+        "activation_height": 1,
+        "chain_id": SgxReleaseNetwork::Mainnet.chain_id(),
+        "genesis_hash": hex::encode(mainnet_policy.genesis_hash),
+        "policy_hash": hex::encode(mainnet_policy.policy_hash().unwrap()),
+        "policy_schedule_hash": hex::encode(mainnet_policy_schedule.schedule_hash().unwrap()),
+        "policy_schedule_sha256": hex::encode(Sha256::digest(&mainnet_policy_schedule_bytes)),
+        "policy_version": 1,
+        "sha256": hex::encode(Sha256::digest(&mainnet_policy_bytes))
+    });
+    let mainnet_processor_evidence = root.path().join("mainnet-hardware-dcap-processor.json");
+    let mainnet_processor_evidence_bytes =
+        canonical_json(&mainnet_dcap).expect("canonical Mainnet Processor evidence");
+    fs::write(
+        &mainnet_processor_evidence,
+        &mainnet_processor_evidence_bytes,
+    )
+    .expect("write Mainnet Processor evidence");
+    let mainnet_processor_archive = root.path().join("mainnet-hardware-dcap-processor.tar");
+    write_processor_dcap_archive(
+        &mainnet_processor_archive,
+        &mainnet_processor_evidence_bytes,
+        SgxReleaseNetwork::Mainnet,
+        &mainnet_genesis_bytes,
+        &mainnet_policy_bytes,
+        &mainnet_policy_schedule_bytes,
+        mainnet_source.source_date_epoch,
+    );
+    let mainnet_bundle_archive = root.path().join("mainnet-outbe-tee-enclave-sgx.tar");
+    write_deterministic_bundle_archive(
+        fixture.path(),
+        &mainnet_bundle_archive,
+        mainnet_source.source_date_epoch,
+    )
+    .expect("archive Mainnet bundle fixture");
+    let mainnet_inputs = VerifiedReleaseInputs {
+        network: SgxReleaseNetwork::Mainnet,
+        bundle_archive: mainnet_bundle_archive,
+        elf_manifest: mainnet_elf_manifest,
+        oci_evidence: mainnet_oci_evidence,
+        processor_dcap_archive: mainnet_processor_archive,
+        processor_dcap_evidence: mainnet_processor_evidence.clone(),
+        genesis: mainnet_genesis,
+        ..inputs.clone()
+    };
+    let mainnet_manifest = build_release_manifest_candidate(&mainnet_inputs)
+        .expect("Mainnet release manifest candidate");
+    assert_eq!(mainnet_manifest["network"]["chain_id"], 676);
+    assert_eq!(mainnet_manifest["network"]["chain_name"], "outbe-mainnet-1");
+    assert_eq!(
+        mainnet_manifest["network"]["genesis_file"]["path"],
+        "mainnet-genesis.json"
+    );
+    assert_eq!(
+        mainnet_manifest["artifacts"][1]["tee"]["authorization_scope"],
+        "mainnet"
+    );
+
+    for foreign_member in ["testnet-genesis.json", "mainnet-genesis.json"] {
+        let mut invalid = mainnet_dcap.clone();
+        let artifacts = invalid["artifacts"].as_object_mut().unwrap();
+        if foreign_member == "testnet-genesis.json" {
+            let mainnet_record = artifacts.remove("mainnet-genesis.json").unwrap();
+            artifacts.insert(foreign_member.to_owned(), mainnet_record);
+        } else {
+            artifacts.remove(foreign_member);
+        }
+        fs::write(
+            &mainnet_processor_evidence,
+            canonical_json(&invalid).expect("canonical invalid Mainnet evidence"),
+        )
+        .expect("write invalid Mainnet evidence");
+        let error = build_release_manifest_candidate(&mainnet_inputs)
+            .expect_err("foreign or missing Mainnet genesis member must fail");
+        assert!(
+            error.to_string().contains("release ChainSpec binding")
+                || error.to_string().contains("exact canonical artifact set"),
+            "unexpected rejection: {error:?}"
+        );
+    }
+    let mut dual = mainnet_dcap.clone();
+    let record = dual["artifacts"]["mainnet-genesis.json"].clone();
+    dual["artifacts"]
+        .as_object_mut()
+        .unwrap()
+        .insert("testnet-genesis.json".to_owned(), record);
+    fs::write(
+        &mainnet_processor_evidence,
+        canonical_json(&dual).expect("canonical dual-network evidence"),
+    )
+    .expect("write dual-network evidence");
+    let error = build_release_manifest_candidate(&mainnet_inputs)
+        .expect_err("dual-network genesis members must fail");
+    assert!(
+        error.to_string().contains("exact canonical artifact set"),
+        "unexpected rejection: {error:?}"
+    );
+    fs::remove_file(mainnet_bundle_manifest_path).expect("remove Mainnet bundle metadata");
+
     let mut substituted_retained_policy = testnet_policy_bytes.clone();
     substituted_retained_policy[0] ^= 1;
     write_processor_dcap_archive(
         &inputs.processor_dcap_archive,
         &processor_evidence,
+        SgxReleaseNetwork::Testnet,
         &testnet_genesis_bytes,
         &substituted_retained_policy,
         &testnet_policy_schedule_bytes,
@@ -896,6 +1147,7 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
     write_processor_dcap_archive(
         &inputs.processor_dcap_archive,
         &processor_evidence,
+        SgxReleaseNetwork::Testnet,
         &testnet_genesis_bytes,
         &testnet_policy_bytes,
         &testnet_policy_schedule_bytes,
@@ -914,6 +1166,7 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
     write_processor_dcap_archive(
         &inputs.processor_dcap_archive,
         &truncated_artifact_set,
+        SgxReleaseNetwork::Testnet,
         &testnet_genesis_bytes,
         &testnet_policy_bytes,
         &testnet_policy_schedule_bytes,
@@ -927,6 +1180,7 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
     write_processor_dcap_archive(
         &inputs.processor_dcap_archive,
         &processor_evidence,
+        SgxReleaseNetwork::Testnet,
         &testnet_genesis_bytes,
         &testnet_policy_bytes,
         &testnet_policy_schedule_bytes,
@@ -942,6 +1196,7 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
     write_processor_dcap_archive(
         &inputs.processor_dcap_archive,
         &disconnected_pck_crl,
+        SgxReleaseNetwork::Testnet,
         &testnet_genesis_bytes,
         &testnet_policy_bytes,
         &testnet_policy_schedule_bytes,
@@ -955,6 +1210,7 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
     write_processor_dcap_archive(
         &inputs.processor_dcap_archive,
         &processor_evidence,
+        SgxReleaseNetwork::Testnet,
         &testnet_genesis_bytes,
         &testnet_policy_bytes,
         &testnet_policy_schedule_bytes,
@@ -974,6 +1230,7 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
     write_processor_dcap_archive(
         &inputs.processor_dcap_archive,
         &pre_collateral_consensus_time,
+        SgxReleaseNetwork::Testnet,
         &testnet_genesis_bytes,
         &testnet_policy_bytes,
         &testnet_policy_schedule_bytes,
@@ -987,6 +1244,7 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
     write_processor_dcap_archive(
         &inputs.processor_dcap_archive,
         &processor_evidence,
+        SgxReleaseNetwork::Testnet,
         &testnet_genesis_bytes,
         &testnet_policy_bytes,
         &testnet_policy_schedule_bytes,
@@ -1000,6 +1258,7 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
     write_processor_dcap_archive(
         &inputs.processor_dcap_archive,
         &zero_topology_evidence,
+        SgxReleaseNetwork::Testnet,
         &testnet_genesis_bytes,
         &testnet_policy_bytes,
         &testnet_policy_schedule_bytes,
@@ -1012,6 +1271,7 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
     write_processor_dcap_archive(
         &inputs.processor_dcap_archive,
         &processor_evidence,
+        SgxReleaseNetwork::Testnet,
         &testnet_genesis_bytes,
         &testnet_policy_bytes,
         &testnet_policy_schedule_bytes,
@@ -1053,7 +1313,7 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
     .expect("replace Processor evidence with wrong testnet binding");
     let error = build_release_manifest_candidate(&inputs)
         .expect_err("wrong testnet ChainSpec binding must not pass finalization");
-    assert!(error.to_string().contains("testnet ChainSpec binding"));
+    assert!(error.to_string().contains("release ChainSpec binding"));
 
     fs::write(
         &inputs.processor_dcap_evidence,
@@ -1070,7 +1330,7 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
     .expect("replace Processor evidence with wrong policy bytes binding");
     let error = build_release_manifest_candidate(&inputs)
         .expect_err("substituted policy bytes must not pass finalization");
-    assert!(error.to_string().contains("testnet ChainSpec binding"));
+    assert!(error.to_string().contains("release ChainSpec binding"));
 
     fs::write(
         &inputs.processor_dcap_evidence,
@@ -1087,7 +1347,7 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
     .expect("replace Processor evidence with wrong policy schedule bytes binding");
     let error = build_release_manifest_candidate(&inputs)
         .expect_err("substituted policy schedule bytes must not pass finalization");
-    assert!(error.to_string().contains("testnet ChainSpec binding"));
+    assert!(error.to_string().contains("release ChainSpec binding"));
 
     fs::write(
         &inputs.processor_dcap_evidence,
@@ -1097,12 +1357,12 @@ fn release_manifest_candidate_binds_bundle_image_sbom_and_hardware_evidence() {
 
     let mut substituted_testnet_genesis = testnet_genesis_bytes.clone();
     substituted_testnet_genesis.push(b'\n');
-    fs::write(&inputs.testnet_genesis, substituted_testnet_genesis)
+    fs::write(&inputs.genesis, substituted_testnet_genesis)
         .expect("substitute testnet genesis bytes");
     let error = build_release_manifest_candidate(&inputs)
         .expect_err("substituted testnet genesis bytes must not pass finalization");
-    assert!(error.to_string().contains("testnet ChainSpec binding"));
-    fs::write(&inputs.testnet_genesis, &testnet_genesis_bytes)
+    assert!(error.to_string().contains("release ChainSpec binding"));
+    fs::write(&inputs.genesis, &testnet_genesis_bytes)
         .expect("restore exact testnet genesis bytes");
 
     let mut incomplete_crl = fresh_dcap("processor", 1);

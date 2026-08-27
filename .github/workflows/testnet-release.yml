@@ -101,9 +101,11 @@ jobs:
         run: |
           set -euo pipefail
           cargo xtask release sgx prepare \
+            --network testnet \
             --elf-output "${RUNNER_TEMP}/elf-a" \
             --output "${RUNNER_TEMP}/unsigned-a"
           cargo xtask release sgx prepare \
+            --network testnet \
             --elf-output "${RUNNER_TEMP}/elf-b" \
             --output "${RUNNER_TEMP}/unsigned-b"
           cargo xtask release sgx compare \
@@ -192,12 +194,16 @@ jobs:
           tar -xf "${RUNNER_TEMP}/release-inputs/unsigned-sgx-bundle.tar" \
             -C "${RUNNER_TEMP}/unsigned"
           cargo xtask release sgx sign \
+            --network testnet \
             --unsigned "${RUNNER_TEMP}/unsigned" \
             --key-file "${RUNNER_TEMP}/testnet-sgx-key.pem" \
             --output "${RUNNER_TEMP}/signed"
-          cargo xtask release sgx verify --bundle "${RUNNER_TEMP}/signed"
+          cargo xtask release sgx verify \
+            --network testnet \
+            --bundle "${RUNNER_TEMP}/signed"
           mkdir "${RUNNER_TEMP}/signed-output"
           cargo xtask release sgx archive \
+            --network testnet \
             --bundle "${RUNNER_TEMP}/signed" \
             --output "${RUNNER_TEMP}/signed-output/outbe-tee-enclave-sgx.tar"
 
@@ -276,6 +282,7 @@ jobs:
           tar -xf "${RUNNER_TEMP}/package/outbe-tee-enclave-sgx.tar" \
             -C "${RUNNER_TEMP}/signed"
           cargo xtask release sgx image \
+            --network testnet \
             --bundle "${RUNNER_TEMP}/signed" \
             --image "${IMAGE_REPOSITORY}:${RELEASE_TAG}" \
             --output "${RUNNER_TEMP}/published/oci-evidence.json" \
@@ -518,6 +525,7 @@ jobs:
             --numeric-owner -cf "${RUNNER_TEMP}/final/hardware-dcap-processor.tar" \
             -C "${RUNNER_TEMP}/hardware-dcap-processor" .
           cargo xtask release sgx manifest \
+            --network testnet \
             --elf-manifest "${RUNNER_TEMP}/release-inputs/elf-release-manifest.json" \
             --bundle "${RUNNER_TEMP}/signed" \
             --bundle-archive "${RUNNER_TEMP}/published/outbe-tee-enclave-sgx.tar" \
@@ -531,7 +539,7 @@ jobs:
             --hardware-evidence "${RUNNER_TEMP}/hardware/hardware-sgx.json" \
             --processor-dcap-archive "${RUNNER_TEMP}/final/hardware-dcap-processor.tar" \
             --processor-dcap-evidence "${RUNNER_TEMP}/final/hardware-dcap-processor.json" \
-            --testnet-genesis "${TESTNET_GENESIS}" \
+            --genesis "${TESTNET_GENESIS}" \
             --output "${RUNNER_TEMP}/final/ReleaseManifest.json"
           python3 -m venv "${RUNNER_TEMP}/release-verifier"
           "${RUNNER_TEMP}/release-verifier/bin/pip" install \

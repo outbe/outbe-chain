@@ -4,7 +4,7 @@
 //! Begin/Chunk/Finish verifier both execute in the exact published Gramine SGX
 //! enclave; QPL/PCCS never enters consensus or supplies a verdict.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::Read as _;
 use std::net::TcpListener;
@@ -19,6 +19,7 @@ use alloy_signer_local::PrivateKeySigner;
 use clap::{Parser, ValueEnum};
 use eyre::{bail, ensure, eyre, Result, WrapErr as _};
 use outbe_evm::tee_attestation_activation::DcapChainSpecBindingV1;
+use outbe_primitives::chain::OutbeNetwork;
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
     DcapCollateralKind, DcapEvidenceV1, NodeIdV1, RegistrationIntentV1,
@@ -55,8 +56,7 @@ const COMPONENT_FILES: [(DcapCollateralKind, &str); 8] = [
     ),
 ];
 
-/// Exact non-secret member set retained by a successful release DCAP capture.
-pub const RELEASE_DCAP_ARTIFACT_PATHS: [&str; 18] = [
+const COMMON_RELEASE_DCAP_ARTIFACT_PATHS: [&str; 17] = [
     "collateral/capture-provenance.json",
     "collateral/pck-certificate-chain.pem0",
     "collateral/pck-crl-issuer-chain.pem",
@@ -73,9 +73,42 @@ pub const RELEASE_DCAP_ARTIFACT_PATHS: [&str; 18] = [
     "policy-schedule-v1.bin",
     "policy-v1.bin",
     "quote-v3.bin",
-    "testnet-genesis.json",
     "verifier-outcome-v1.bin",
 ];
+
+/// Exact non-secret archive contract for one production release network.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReleaseDcapArtifactSetV1 {
+    Testnet,
+    Mainnet,
+}
+
+impl ReleaseDcapArtifactSetV1 {
+    #[must_use]
+    pub const fn for_network(network: OutbeNetwork) -> Option<Self> {
+        match network {
+            OutbeNetwork::Testnet => Some(Self::Testnet),
+            OutbeNetwork::Mainnet => Some(Self::Mainnet),
+            OutbeNetwork::Devnet => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn genesis_artifact_path(self) -> &'static str {
+        match self {
+            Self::Testnet => "testnet-genesis.json",
+            Self::Mainnet => "mainnet-genesis.json",
+        }
+    }
+
+    #[must_use]
+    pub fn paths(self) -> BTreeSet<&'static str> {
+        COMMON_RELEASE_DCAP_ARTIFACT_PATHS
+            .into_iter()
+            .chain([self.genesis_artifact_path()])
+            .collect()
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum ExpectedPckCa {
@@ -443,9 +476,12 @@ fn run(cli: Cli) -> Result<()> {
         &capture_provenance,
         &mut artifacts,
     )?;
-    let declared_artifacts = artifacts.keys().map(String::as_str).collect::<Vec<_>>();
+    let declared_artifacts = artifacts
+        .keys()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
     ensure!(
-        declared_artifacts.as_slice() == RELEASE_DCAP_ARTIFACT_PATHS,
+        declared_artifacts == ReleaseDcapArtifactSetV1::Testnet.paths(),
         "release DCAP runner did not retain the exact canonical artifact set"
     );
     ensure_no_secret_markers(&output_dir)?;
@@ -937,6 +973,26 @@ mod tests {
         tee_attestation_v1::{PlatformTcbStatusSetV1, QvlTcbStatusV1, TeePolicyV1},
         tee_genesis_v1::{initial_tee_policy_v1, InitialTeeProfileV1, ProductionSgxMeasurementV1},
     };
+
+    #[test]
+    fn release_artifact_sets_are_closed_and_differ_only_by_genesis() {
+        let testnet = ReleaseDcapArtifactSetV1::for_network(OutbeNetwork::Testnet).unwrap();
+        let mainnet = ReleaseDcapArtifactSetV1::for_network(OutbeNetwork::Mainnet).unwrap();
+        assert!(ReleaseDcapArtifactSetV1::for_network(OutbeNetwork::Devnet).is_none());
+        assert_eq!(testnet.paths().len(), 18);
+        assert_eq!(mainnet.paths().len(), 18);
+        assert!(testnet.paths().contains("testnet-genesis.json"));
+        assert!(!testnet.paths().contains("mainnet-genesis.json"));
+        assert!(mainnet.paths().contains("mainnet-genesis.json"));
+        assert!(!mainnet.paths().contains("testnet-genesis.json"));
+
+        let common = testnet
+            .paths()
+            .intersection(&mainnet.paths())
+            .copied()
+            .collect::<BTreeSet<_>>();
+        assert_eq!(common.len(), 17);
+    }
 
     fn testnet_policy(measurements: &Measurements) -> TeePolicyV1 {
         initial_tee_policy_v1(
