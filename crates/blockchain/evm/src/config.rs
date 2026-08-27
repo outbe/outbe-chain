@@ -1869,6 +1869,7 @@ mod tests {
             encode_outbe_block_artifacts, ConsensusHeaderArtifact, ExecutionSummaryArtifact,
             LateFinalizeCreditsArtifact, OutbeBlockArtifacts, PerBlockCredit,
         },
+        tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID,
         OutbeHeader,
     };
     use reth_chainspec::ChainInfo;
@@ -1958,7 +1959,20 @@ mod tests {
     }
 
     fn test_chain_spec() -> std::sync::Arc<ChainSpec<OutbeHeader>> {
-        MAINNET.as_ref().clone().map_header(OutbeHeader::new).into()
+        let mut spec = MAINNET.as_ref().clone();
+        spec.chain = GRAMINE_DIRECT_DEV_CHAIN_ID.into();
+        spec.genesis.config.chain_id = GRAMINE_DIRECT_DEV_CHAIN_ID;
+        spec.map_header(OutbeHeader::new).into()
+    }
+
+    #[test]
+    fn config_fixture_uses_the_shared_outbe_test_process_chain() {
+        let chain_spec = test_chain_spec();
+        assert_eq!(chain_spec.chain().id(), GRAMINE_DIRECT_DEV_CHAIN_ID);
+        assert_eq!(
+            chain_spec.genesis.config.chain_id,
+            GRAMINE_DIRECT_DEV_CHAIN_ID
+        );
     }
 
     #[test]
