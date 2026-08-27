@@ -232,6 +232,13 @@ pub const STABLECOIN_POLICY_REGISTRY_ADDRESS: Address =
 pub const RADICLE_REGISTRY_ADDRESS: Address =
     address!("0x000000000000000000000000000000000000EE11");
 
+/// OCOMP protocol authority registry precompile.
+///
+/// Owns the genesis, active, staged, and retiring protocol bundles. OCOMP
+/// consumers such as Metadosis pin work to an authority exposed here rather
+/// than storing a private copy of the protocol policy.
+pub const OCOMP_REGISTRY_ADDRESS: Address = address!("0x000000000000000000000000000000000000EE12");
+
 /// Genesis-reserved two-byte class for dynamic stablecoin token addresses.
 pub const STABLECOIN_ADDRESS_PREFIX: [u8; 2] = [0x53, 0xc0];
 

@@ -72,7 +72,7 @@ builds:
     targets:
       - x86_64-unknown-linux-gnu
   # OCOMP supervisor / snapshot-exporter / worker entrypoint. Deployed next to
-  # outbe-chain on validators (see ocomp.sh and deploy/systemd/outbe-ocomp*).
+  # outbe-chain on validators; only the exporter and Worker remain external.
   - builder: rust
     id: outbe-ocomp
     binary: outbe-ocomp
@@ -88,11 +88,8 @@ builds:
 # Creates archives for each target.
 archives:
   - formats: [tar.gz]
-    # Deployment assets shipped alongside the binaries so an operator can install
-    # the OCOMP stack from the release archive alone.
+    # Shared deployment assets shipped alongside the binaries.
     files:
-      - src: ocomp.sh
-      - src: ocomp.env.example
       - src: deploy/systemd/*
         dst: deploy/systemd
     # this name template makes the OS and Arch compatible with the results of `uname`.

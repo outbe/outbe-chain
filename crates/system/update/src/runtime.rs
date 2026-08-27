@@ -1,4 +1,5 @@
 use alloy_primitives::U256;
+use outbe_ocompregistry::{poc_schema_limits, OcompRegistry};
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_teeregistry::TeeRegistry;
@@ -112,6 +113,8 @@ impl Update<'_> {
                 self.activate_scheduled_update(ctx, registry, proposal_id)?;
             }
         }
+        OcompRegistry::new(ctx.storage.clone())
+            .try_retire_predecessor(block_number, &poc_schema_limits())?;
         Ok(())
     }
 
@@ -153,6 +156,7 @@ impl Update<'_> {
             }
 
             self.reconcile_staged_tee_policy(ctx, &scheduled)?;
+            self.reconcile_staged_ocomp_successor(ctx, &scheduled)?;
 
             self.set_active_version(scheduled.version, scheduled.activation_height)?;
             self.set_scheduled_update_status(proposal_id, ScheduledUpdateStatus::Activated)?;
@@ -192,6 +196,37 @@ impl Update<'_> {
             tee_registry
                 .discard_staged_successor_policy_v1(staged_proposal_id)
                 .map_err(|err| fatal_tee_policy_activation(err, staged_proposal_id))?;
+        }
+        Ok(())
+    }
+
+    fn reconcile_staged_ocomp_successor(
+        &mut self,
+        ctx: &BlockRuntimeContext,
+        activating: &crate::state::ScheduledUpdateInfo,
+    ) -> Result<()> {
+        let mut registry = OcompRegistry::new(self.storage.clone());
+        let Some((staged_proposal_id, _)) = registry.staged_successor(&poc_schema_limits())? else {
+            return Ok(());
+        };
+        if staged_proposal_id == activating.proposal_id {
+            return registry.promote_staged_successor(
+                staged_proposal_id,
+                ctx.block.block_number,
+                &poc_schema_limits(),
+            );
+        }
+        let staged_update = self
+            .read_scheduled_update(staged_proposal_id)?
+            .ok_or_else(|| {
+                PrecompileError::Fatal(format!(
+                "staged OCOMP successor references missing Update proposal {staged_proposal_id}"
+            ))
+            })?;
+        if staged_update.status != ScheduledUpdateStatus::Scheduled
+            || staged_update.version <= activating.version
+        {
+            registry.discard_staged_successor(staged_proposal_id)?;
         }
         Ok(())
     }

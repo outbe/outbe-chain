@@ -146,12 +146,12 @@ founding DKG ceremony and needs every genesis validator online.
 curl -s -X POST http://<machine>/ -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}'
 
-systemctl list-units 'outbe-*' --no-pager     # 7 services per machine
+systemctl list-units 'outbe-*' --no-pager     # 6 services per machine
 journalctl -u outbe-node@0 -f
 ```
 
 Healthy means: every machine reports an advancing block number, `net_peerCount`
-is `n-1` on each, and all seven services are `active`.
+is `n-1` on each, and all six services are `active`.
 
 ## Ports
 
@@ -162,8 +162,9 @@ client means opening `8776` more widely — see `docs/using-radicle.md`.
 Published by caddy: RPC on `80`, Radicle status on `8080`.
 
 Loopback only, never exposed: RPC `8545`, authrpc `8551`, metrics `9101`,
-Radicle status `8876`, the enclave socket `17000`, MongoDB `27017`, OCOMP
-`9765-9767`.
+Radicle status `8876`, the enclave socket `17000`, MongoDB `27017`, and the
+node-owned OCOMP endpoints `30401-30406` (HTTP registration, ZeroMQ and Worker
+observability for the default consensus port `30400`).
 
 ## What runs on each machine
 
@@ -172,13 +173,14 @@ Radicle status `8876`, the enclave socket `17000`, MongoDB `27017`, OCOMP
 | Execution + consensus | `outbe-chain node` | one binary, no Engine API split |
 | TEE enclave | `gramine-sgx`, host process | node will not start without it |
 | Radicle sidecar | `outbe-radicle` | validator startup requires its control socket; seeds only repository ids registered on-chain (`docs/using-radicle.md`) |
-| OCOMP Supervisor | `outbe-ocomp supervisor` | own process |
+| OCOMP Supervisor | embedded in `outbe-chain` | ExEx discovers finalized jobs and owns scheduling, vote and payout journals |
 | OCOMP SnapshotExporter | `outbe-ocomp snapshot-exporter` | own process |
 | OCOMP Worker | `outbe-ocomp worker` | own process |
 | Price feeder | `outbe-feeder` | submits oracle votes |
 | Projection store | MongoDB container | replica set `rs0`, mandatory |
 
-All seven run under systemd as `outbe-<role>@<index>.service`.
+The six external services run under systemd as
+`outbe-<role>@<index>.service`; the Supervisor shares the node service.
 
 ## Failures worth recognising
 
@@ -198,3 +200,89 @@ Regenerating the genesis invalidates the OCOMP registrations (they sign its
 hash) and every node's stored state. To restart cleanly: stop the services,
 delete `validator-N/data`, `validator-N/consensus` and `tee/`, drop the
 `outbe_*` MongoDB databases, then deploy the new archives and start again.
+
+## Updating the OCOMP protocol bundle
+
+After the initial launch, OCOMP bundles are upgraded through `Update`; genesis
+is not edited. The OCOMP Registry at
+`0x000000000000000000000000000000000000EE12` owns active, staged and retiring
+authorities. Metadosis only pins each lineage to the bundle active when that
+lineage starts.
+
+The transition contract is:
+
+- existing jobs and their retries continue on the predecessor bundle;
+- fresh jobs at or after the activation block use the successor;
+- every Node and SnapshotExporter has both bundles, and a Worker exists for
+  each bundle, before governance;
+- activation changes consensus authority without restarting any process.
+
+### Build and preload a successor
+
+Build `outbe-chain`, `outbe-ocomp` and the canonical successor `.ocb1` from one
+release revision. Then generate the predecessor-bound proposal artifacts:
+
+```bash
+mkdir -p release/protocol-bundles-v1
+
+outbe-chain ocomp successor \
+  --genesis /opt/outbe-chain/genesis.json \
+  --predecessor-bundle protocol-bundle-v1.ocb1 \
+  --successor-bundle protocol-bundle-v2.ocb1 \
+  --activation-height "$ACTIVATION_HEIGHT" \
+  --update-version "$UPDATE_VERSION" \
+  --info "OCOMP V2" \
+  --successor-output release/ocomp-successor-v2.ocs1 \
+  --proposal-output release/ocomp-update-v2.json \
+  --bundle-catalog-dir release/protocol-bundles-v1
+```
+
+The command validates the chain identity and predecessor relationship and
+writes canonical `OCS1`, ready-to-submit Update JSON, and a non-overwriting
+`<successor-hash>.ocb1` catalog entry. A proposal may carry both `teePolicy` and
+`ocompSuccessor`; Update stages and activates both atomically.
+
+On every validator, install the successor in the node domain catalog and add
+both adjacent hashes to the exporter environment:
+
+```bash
+DOMAIN=/opt/outbe-chain/validator-N/ocomp/domain-v1
+V1_HASH=0x...
+V2_HASH=0x...
+
+sudo install -m 640 \
+  "/opt/outbe-chain/protocol-bundles-v1/${V2_HASH#0x}.ocb1" \
+  "$DOMAIN/protocol-bundles-v1/${V2_HASH#0x}.ocb1"
+
+printf 'OCOMP_PROTOCOL_BUNDLE_HASHES=%s,%s\n' "$V1_HASH" "$V2_HASH" \
+  > /opt/outbe-chain/validator-N/ocomp-bundles.env
+printf 'OCOMP_SUCCESSOR_PROTOCOL_BUNDLE_HASH=%s\n' "$V2_HASH" \
+  > /opt/outbe-chain/validator-N/ocomp-successor.env
+```
+
+Before submitting the proposal, perform one ordinary maintenance restart so
+the embedded Supervisor loads both catalog entries, then run the initial and
+successor Workers. The successor lane uses the node-derived OCOMP base port
+plus six; one SnapshotExporter serves both lanes.
+
+At `activationHeight`, do not restart Node, SnapshotExporter or either Worker.
+Verify that the active hash is the successor, the pending predecessor job still
+has its original pin, and a fresh job is processed by the successor Worker.
+
+### Retirement and the next upgrade
+
+The Registry exposes `retiringProtocolBundleHash()`,
+`liveLineageCount(bundleHash)` and `retentionUntil(bundleHash)`. Remove the
+predecessor only after the retiring hash becomes zero. During a normal
+maintenance restart, stop its Worker, delete its hash-addressed catalog file,
+and remove its hash from `ocomp-bundles.env`.
+
+During that maintenance window also write the surviving active hash to
+`ocomp-active.env`. Before the next proposal, append the new successor hash to
+`ocomp-bundles.env` and write it to `ocomp-successor.env`.
+
+The populated hash catalog is authoritative. The legacy
+`protocol-bundle-v1.ocb1` path is only an initial compatibility fallback and is
+ignored once catalog entries exist. Consequently, after V1 retirement the next
+transition loads V2 plus V3 rather than permanently forcing V1 into every
+runtime.

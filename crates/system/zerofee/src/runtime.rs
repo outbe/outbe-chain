@@ -25,8 +25,9 @@
 //! caller — `signer != ZEROFEE_ADDRESS` and the `0xef0100 ++ ZEROFEE_ADDRESS`
 //! code pattern are observable on the caller side without any storage I/O.
 
+use alloy_eips::eip7702::SignedAuthorization;
 use alloy_primitives::{Address, U256};
-use alloy_sol_types::SolEvent;
+use alloy_sol_types::{SolCall, SolEvent};
 use outbe_primitives::{
     addresses::{TRIBUTE_FACTORY_ADDRESS, ZEROFEE_ADDRESS},
     storage::StorageHandle,
@@ -35,13 +36,107 @@ use outbe_primitives::{
 
 use crate::{
     constants::{
-        FREE_TX_DAILY_CALLDATA_BYTES, FREE_TX_DAILY_GAS_LIMIT, FREE_TX_DAILY_LIMIT,
-        FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT, MIN_FREE_TX_MAX_FEE_PER_GAS,
+        FREE_TX_BOOTSTRAP_GAS_LIMIT, FREE_TX_DAILY_CALLDATA_BYTES, FREE_TX_DAILY_GAS_LIMIT,
+        FREE_TX_DAILY_LIMIT, FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT, MIN_FREE_TX_MAX_FEE_PER_GAS,
     },
     hooks::{ZeroFeePolicyError, ZeroFeeTransaction},
     precompile::IZeroFee,
     schema::ZeroFeeContract,
 };
+
+/// Execution-layer independent view of a possible first ZeroFee delegation.
+#[derive(Debug, Clone, Copy)]
+pub struct BootstrapTransactionView<'a> {
+    /// Recovered signer of the outer EIP-7702 transaction.
+    pub signer: Address,
+    /// Chain ID carried by the outer transaction.
+    pub tx_chain_id: Option<u64>,
+    /// Chain ID of the block being validated.
+    pub network_chain_id: u64,
+    /// Outer transaction nonce before REVM increments the sender.
+    pub nonce: u64,
+    /// Outer call target.
+    pub to: Option<Address>,
+    /// Native value attached to the outer call.
+    pub value: U256,
+    /// Outer calldata.
+    pub input: &'a [u8],
+    /// Outer gas limit.
+    pub gas_limit: u64,
+    /// EIP-1559 max fee per gas.
+    pub max_fee_per_gas: u128,
+    /// EIP-1559 priority fee per gas.
+    pub max_priority_fee_per_gas: Option<u128>,
+    /// Whether the EIP-2930 access list is empty.
+    pub access_list_empty: bool,
+    /// Signed EIP-7702 authorization list.
+    pub authorization_list: &'a [SignedAuthorization],
+}
+
+/// A transaction whose signed shape exactly matches the bootstrap protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BootstrapCandidate {
+    /// Self-authorizing account.
+    pub signer: Address,
+    /// Expected pre-state account nonce.
+    pub nonce: u64,
+}
+
+/// Minimal pre-state account view required to authorize a bootstrap waiver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BootstrapAccountView {
+    /// Native balance before transaction execution.
+    pub balance: U256,
+    /// Account nonce before transaction execution.
+    pub nonce: u64,
+    /// Whether the account has no deployed or delegated code.
+    pub code_empty: bool,
+}
+
+/// Classifies the exact signed EIP-7702 bootstrap envelope.
+///
+/// A non-match is deliberately represented as `None`: callers must continue
+/// through normal paid-transaction validation instead of turning a merely
+/// similar transaction into a new consensus-visible ZeroFee failure class.
+pub fn classify_bootstrap(tx: &BootstrapTransactionView<'_>) -> Option<BootstrapCandidate> {
+    if tx.tx_chain_id != Some(tx.network_chain_id)
+        || tx.to != Some(ZEROFEE_ADDRESS)
+        || tx.value != U256::ZERO
+        || tx.gas_limit > FREE_TX_BOOTSTRAP_GAS_LIMIT
+        || tx.max_fee_per_gas < MIN_FREE_TX_MAX_FEE_PER_GAS
+        || tx.max_priority_fee_per_gas != Some(0)
+        || !tx.access_list_empty
+    {
+        return None;
+    }
+
+    let [authorization] = tx.authorization_list else {
+        return None;
+    };
+    let authorization_nonce = tx.nonce.checked_add(1)?;
+    if authorization.chain_id != U256::from(tx.network_chain_id)
+        || authorization.address != ZEROFEE_ADDRESS
+        || authorization.nonce != authorization_nonce
+        || authorization.recover_authority().ok()? != tx.signer
+    {
+        return None;
+    }
+
+    let expected_input = IZeroFee::authorizeSponsorshipCall { signer: tx.signer }.abi_encode();
+    if tx.input != expected_input.as_slice() {
+        return None;
+    }
+
+    Some(BootstrapCandidate {
+        signer: tx.signer,
+        nonce: tx.nonce,
+    })
+}
+
+/// Rechecks the stateful positive-balance, empty-code bootstrap requirements.
+pub fn authorize_bootstrap(candidate: BootstrapCandidate, account: BootstrapAccountView) -> bool {
+    !account.balance.is_zero() && account.nonce == candidate.nonce && account.code_empty
+}
 
 /// Stateless envelope classification for the sponsored free-tx path.
 ///
@@ -202,7 +297,9 @@ pub fn record_sponsorship_use(
 mod tests {
     use super::*;
     use crate::schema::pack_counter;
-    use alloy_primitives::{address, Address, U256};
+    use alloy_eips::eip7702::Authorization;
+    use alloy_primitives::{address, Address, Signature, U256};
+    use alloy_sol_types::SolCall;
     use outbe_primitives::{
         addresses::{AGENT_REWARD_ADDRESS, ZEROFEE_ADDRESS},
         storage::{hashmap::HashMapStorageProvider, StorageHandle},
@@ -215,6 +312,235 @@ mod tests {
     /// tests; only the day-key derived from it.
     const BLOCK_TS: u64 = 1_775_001_600;
     const BLOCK_DAY: u32 = 20_260_401;
+
+    #[test]
+    fn classify_bootstrap_accepts_exact_self_authorization() {
+        let nonce = 7;
+        let chain_id = 31_337;
+        let authorization = Authorization {
+            chain_id: U256::from(chain_id),
+            address: ZEROFEE_ADDRESS,
+            nonce: nonce + 1,
+        }
+        .into_signed(Signature::test_signature());
+        let signer = authorization.recover_authority().unwrap();
+        let input = IZeroFee::authorizeSponsorshipCall { signer }.abi_encode();
+        let authorizations = [authorization];
+        let tx = BootstrapTransactionView {
+            signer,
+            tx_chain_id: Some(chain_id),
+            network_chain_id: chain_id,
+            nonce,
+            to: Some(ZEROFEE_ADDRESS),
+            value: U256::ZERO,
+            input: &input,
+            gas_limit: FREE_TX_BOOTSTRAP_GAS_LIMIT,
+            max_fee_per_gas: MIN_FREE_TX_MAX_FEE_PER_GAS,
+            max_priority_fee_per_gas: Some(0),
+            access_list_empty: true,
+            authorization_list: &authorizations,
+        };
+
+        assert_eq!(
+            classify_bootstrap(&tx),
+            Some(BootstrapCandidate { signer, nonce })
+        );
+    }
+
+    #[test]
+    fn classify_bootstrap_rejects_every_noncanonical_outer_field() {
+        let nonce = 7;
+        let chain_id = 31_337;
+        let authorization = Authorization {
+            chain_id: U256::from(chain_id),
+            address: ZEROFEE_ADDRESS,
+            nonce: nonce + 1,
+        }
+        .into_signed(Signature::test_signature());
+        let signer = authorization.recover_authority().unwrap();
+        let input = IZeroFee::authorizeSponsorshipCall { signer }.abi_encode();
+        let authorizations = [authorization];
+        let exact = BootstrapTransactionView {
+            signer,
+            tx_chain_id: Some(chain_id),
+            network_chain_id: chain_id,
+            nonce,
+            to: Some(ZEROFEE_ADDRESS),
+            value: U256::ZERO,
+            input: &input,
+            gas_limit: FREE_TX_BOOTSTRAP_GAS_LIMIT,
+            max_fee_per_gas: MIN_FREE_TX_MAX_FEE_PER_GAS,
+            max_priority_fee_per_gas: Some(0),
+            access_list_empty: true,
+            authorization_list: &authorizations,
+        };
+
+        let mut invalid = exact;
+        invalid.tx_chain_id = None;
+        assert_eq!(classify_bootstrap(&invalid), None);
+        invalid = exact;
+        invalid.to = Some(Address::ZERO);
+        assert_eq!(classify_bootstrap(&invalid), None);
+        invalid = exact;
+        invalid.value = U256::from(1);
+        assert_eq!(classify_bootstrap(&invalid), None);
+        invalid = exact;
+        invalid.input = &[];
+        assert_eq!(classify_bootstrap(&invalid), None);
+        invalid = exact;
+        invalid.gas_limit = FREE_TX_BOOTSTRAP_GAS_LIMIT + 1;
+        assert_eq!(classify_bootstrap(&invalid), None);
+        invalid = exact;
+        invalid.max_fee_per_gas = MIN_FREE_TX_MAX_FEE_PER_GAS - 1;
+        assert_eq!(classify_bootstrap(&invalid), None);
+        invalid = exact;
+        invalid.max_priority_fee_per_gas = Some(1);
+        assert_eq!(classify_bootstrap(&invalid), None);
+        invalid = exact;
+        invalid.access_list_empty = false;
+        assert_eq!(classify_bootstrap(&invalid), None);
+    }
+
+    fn classify_test_authorizations(
+        signer: Address,
+        nonce: u64,
+        chain_id: u64,
+        authorizations: &[alloy_eips::eip7702::SignedAuthorization],
+    ) -> Option<BootstrapCandidate> {
+        let input = IZeroFee::authorizeSponsorshipCall { signer }.abi_encode();
+        classify_bootstrap(&BootstrapTransactionView {
+            signer,
+            tx_chain_id: Some(chain_id),
+            network_chain_id: chain_id,
+            nonce,
+            to: Some(ZEROFEE_ADDRESS),
+            value: U256::ZERO,
+            input: &input,
+            gas_limit: FREE_TX_BOOTSTRAP_GAS_LIMIT,
+            max_fee_per_gas: MIN_FREE_TX_MAX_FEE_PER_GAS,
+            max_priority_fee_per_gas: Some(0),
+            access_list_empty: true,
+            authorization_list: authorizations,
+        })
+    }
+
+    #[test]
+    fn classify_bootstrap_rejects_noncanonical_authorization_list() {
+        let nonce = 7;
+        let chain_id = 31_337;
+
+        let wildcard = Authorization {
+            chain_id: U256::ZERO,
+            address: ZEROFEE_ADDRESS,
+            nonce: nonce + 1,
+        }
+        .into_signed(Signature::test_signature());
+        let wildcard_signer = wildcard.recover_authority().unwrap();
+        assert_eq!(
+            classify_test_authorizations(wildcard_signer, nonce, chain_id, &[wildcard]),
+            None
+        );
+
+        let stale = Authorization {
+            chain_id: U256::from(chain_id),
+            address: ZEROFEE_ADDRESS,
+            nonce,
+        }
+        .into_signed(Signature::test_signature());
+        let stale_signer = stale.recover_authority().unwrap();
+        assert_eq!(
+            classify_test_authorizations(stale_signer, nonce, chain_id, &[stale]),
+            None
+        );
+
+        let wrong_target = Authorization {
+            chain_id: U256::from(chain_id),
+            address: Address::ZERO,
+            nonce: nonce + 1,
+        }
+        .into_signed(Signature::test_signature());
+        let wrong_target_signer = wrong_target.recover_authority().unwrap();
+        assert_eq!(
+            classify_test_authorizations(wrong_target_signer, nonce, chain_id, &[wrong_target]),
+            None
+        );
+
+        let exact = Authorization {
+            chain_id: U256::from(chain_id),
+            address: ZEROFEE_ADDRESS,
+            nonce: nonce + 1,
+        }
+        .into_signed(Signature::test_signature());
+        let exact_signer = exact.recover_authority().unwrap();
+        assert_eq!(
+            classify_test_authorizations(
+                exact_signer,
+                nonce,
+                chain_id,
+                &[exact.clone(), exact.clone()],
+            ),
+            None
+        );
+        assert_eq!(
+            classify_test_authorizations(Address::ZERO, nonce, chain_id, &[exact]),
+            None
+        );
+    }
+
+    #[test]
+    fn authorize_bootstrap_accepts_one_atomic_unit_with_empty_code() {
+        let nonce = 7;
+        assert!(authorize_bootstrap(
+            BootstrapCandidate {
+                signer: SIGNER,
+                nonce,
+            },
+            BootstrapAccountView {
+                balance: U256::from(1),
+                nonce,
+                code_empty: true,
+            },
+        ));
+    }
+
+    #[test]
+    fn authorize_bootstrap_rejects_zero_balance() {
+        assert!(!authorize_bootstrap(
+            BootstrapCandidate {
+                signer: SIGNER,
+                nonce: 7,
+            },
+            BootstrapAccountView {
+                balance: U256::ZERO,
+                nonce: 7,
+                code_empty: true,
+            },
+        ));
+    }
+
+    #[test]
+    fn authorize_bootstrap_rejects_stale_nonce_or_existing_code() {
+        let candidate = BootstrapCandidate {
+            signer: SIGNER,
+            nonce: 7,
+        };
+        assert!(!authorize_bootstrap(
+            candidate,
+            BootstrapAccountView {
+                balance: U256::from(1),
+                nonce: 8,
+                code_empty: true,
+            },
+        ));
+        assert!(!authorize_bootstrap(
+            candidate,
+            BootstrapAccountView {
+                balance: U256::from(1),
+                nonce: 7,
+                code_empty: false,
+            },
+        ));
+    }
 
     fn sponsored_target() -> Address {
         // First whitelisted address — value is incidental, only being

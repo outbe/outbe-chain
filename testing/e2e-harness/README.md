@@ -30,9 +30,10 @@ dynamic OCOMP founder registration for the complete genesis ValidatorSet, and
 socket readiness before launching the validator cohort, then returns only after
 all validator RPC heights have advanced beyond genesis. Runtime ownership is
 not declared ready at that point alone: the harness installs the OCOMP delegate
-bindings, starts one Supervisor and one SnapshotExporter per validator, starts
-Worker-0, and requires every Supervisor to report exactly one registered and
-connected Worker. `status` repeats the RPC and Supervisor probes.
+bindings, observes the Supervisor embedded in each node, starts one external
+SnapshotExporter and Worker-0 per validator, and requires every Supervisor to
+report exactly one registered and connected Worker. `status` repeats the RPC and
+node-owned Supervisor probes.
 Runtime ownership is recorded atomically in
 `<OUT_DIR>/localnet-state-v1.json`; stale or PID-reused
 records are never treated as a live network. Bootstrap scans for free complete
@@ -68,7 +69,7 @@ to Cucumber's `--tags` filter. Current live-node mappings are:
 | `PFS-002-01` through `-24` | Dynamic OCOMP membership, the validator system-vote lane, deadline accountability and independent FullNode Lysis following; the 4→5 process is the current reachable acceptance lane |
 | `PFS-005-01`, `-09` plus named recovery/rejection tags | Vote approval/activation, restart boundaries, rejection paths, unsupported-version stall and operator binary replacement |
 | `PFS-006-01`, `-02`, `-03`, `-04`, `-06`, `-09` | Join/exit/claim accounting, stale join, DKG recovery, slash idempotency, checkpoint restarts and full-committee sealed TEE recovery |
-| `PFS-007-01` through `-12` | Pectra/ZeroFee readiness, native EIP-7702 delegation, quota/fallback, exact replay, restart persistence, invalid authorization and day reset |
+| `PFS-007-01` through `-12` | Pectra/ZeroFee readiness, one-atomic-unit EIP-7702 bootstrap, quota/fallback, exact replay, restart persistence, invalid authorization and day reset |
 | `PFS-008-01` through `-08` | Cold/chained sync, upstream loss/switch, validator recovery, boundary restarts and idempotent warm promotion |
 | `PFS-010-01` through `-04` | Shared policy, bonded Factory approval/refund, issuer ledger operations, duplicate-ticker rejection and same-binary full-committee restart |
 
@@ -179,7 +180,7 @@ Then, e.g.:
 ```sh
 # Omit --projection-mongodb-uri to use the harness-owned replica set.
 # Through the mock enclave on an isolated GramineDirectDev chain.
-cargo run --release -p outbe-e2e-harness --bin outbe-e2e -- \
+cargo run --release -p outbe-e2e-harness --features ocomp-integration --bin outbe-e2e -- \
   --tee mock --validators 4
 # a fully-capable box: everything must run (unmet ⇒ fail, not skip)
 cargo run --release -p outbe-e2e-harness --bin outbe-e2e -- \

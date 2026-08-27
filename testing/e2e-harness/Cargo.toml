@@ -18,6 +18,7 @@ ocomp-finality-fixture = [
     "dep:outbe-metadosis",
     "dep:outbe-node",
     "dep:outbe-ocomp-protocol",
+    "dep:outbe-ocompregistry",
     "dep:outbe-oracle",
     "dep:reth-chainspec",
     "dep:reth-primitives-traits",
@@ -86,6 +87,7 @@ outbe-nodfactory = { workspace = true, optional = true }
 outbe-node = { workspace = true, optional = true }
 outbe-operator = { workspace = true, optional = true }
 outbe-ocomp-protocol = { workspace = true, optional = true }
+outbe-ocompregistry = { workspace = true, optional = true }
 outbe-offchain-data = { workspace = true, optional = true }
 outbe-offchain-storage = { workspace = true, optional = true }
 outbe-oracle = { workspace = true, optional = true }

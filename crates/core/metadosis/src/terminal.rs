@@ -13,7 +13,7 @@ use crate::{
     aggregate::{ValidatedWwdAggregate, WwdStatus},
     commit::commit_outer_transition,
     constants::MAX_RETAINED_WWDS,
-    ocomp::schema::poc_schema_limits,
+    ocomp::{schema::poc_schema_limits, OcompRequestProfileExt},
     precompile::IMetadosis,
     reducer::{reduce_outer_wwd, OuterWwdEvent, OuterWwdTransition, OuterWwdTransitionKind},
 };

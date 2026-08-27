@@ -1,6 +1,7 @@
 # ADR-S-OCM-001: OCOMP is an operational kernel for closed typed programs
 
-- **Status:** Accepted; dynamic ACTIVE-ValidatorSet membership implementation in progress
+- **Status:** Accepted; process-boundary amendment accepted 2026-08-26;
+  successor-authority amendment accepted 2026-08-27
 - **Date:** 2026-08-04
 - **Decision owners:** System Space, consensus execution and Core program maintainers
 - **Scope:** OCOMP lifecycle/process boundary and the contract between shared
@@ -42,6 +43,29 @@ The kernel and program own different truths:
 
 | OCOMP kernel owns | Typed program owns |
 |---|---|
+
+### Successor-authority amendment (2026-08-27)
+
+`ProtocolBundleV1` remains the concrete, closed, typed program contract. A
+running network nevertheless needs a consensus-owned way to replace that
+authority without rewriting genesis or reassigning in-flight work. Therefore a
+standalone `OcompRegistry` owns exactly one active authority, at most one staged
+successor, and at most one retiring predecessor.
+
+This is an authority lifecycle registry, not the generic program registry
+rejected by this ADR. It cannot register arbitrary programs, executable bytes,
+dispatch adapters, commands, paths or generic result types. Its canonical
+`OcompSuccessorV1` is predecessor-bound and chain-bound; `Update` stages it for
+a fixed future height. Activation atomically makes the successor active while
+retaining the predecessor only for already pinned typed lineages. Metadosis
+creates and releases those pins but does not own authority policy.
+
+A new successor cannot be staged until the retiring predecessor has no live
+lineages, its retention deadline has passed, and Registry retirement has
+completed. This permits bounded V1-to-V2-to-V3 upgrades while keeping no more
+than two adjacent authorities live during any one transition. Activation does
+not require a process restart; operators preload both exact hash-addressed
+bundles before governance.
 | finalized discovery and job identity | trigger and domain subject |
 | pending, expiry and terminal lifecycle shell | program-specific preconditions, capacity claims and cleanup |
 | process/control-plane boundaries | authenticated input schema and completeness |
@@ -68,26 +92,25 @@ capability exists.
 One validator domain contains:
 
 - `outbe-chain`, which owns consensus, finalized job state, OCOMP attestation
-  authority and q-forming result verification/apply;
-- a separate OCOMP supervisor process, which discovers work, plans,
-  schedules and journals, then hosts the closed program's pure finalizer after
-  complete verified admission, and owns only the role-delegated EVM key used to
-  submit the public result-vote transaction;
+  authority and q-forming result verification/apply, plus an embedded Supervisor
+  ExEx that discovers work, plans, schedules and journals, then hosts the closed
+  program's pure finalizer after complete verified admission and uses only the
+  role-delegated EVM key to submit the public result-vote transaction;
 - a separate read-only snapshot exporter;
-- retryable one-unit worker child processes launched by the Supervisor's fixed
-  PoC adapter; and
+- retryable external one-unit Worker processes connected to the node-owned
+  Supervisor endpoint; and
 - untrusted content-addressed artifact storage.
 
 The PoC proves these process and protocol boundaries, not protection from root
 or a compromised host. Distinct service identities, host sandboxing and
 service-manager policy are MVP deployment hardening.
 
-The Rust E2E harness starts node, Supervisor and SnapshotExporter independently
-and records their child processes. The Supervisor's bounded PoC launcher starts
-one production worker child per immutable unit; the harness may launch that
-same entrypoint directly only in a narrow process-boundary test. The node never
-spawns workers or depends on Supervisor lifetime for consensus progress. Many
-workers under one Supervisor remain one Byzantine validator domain.
+The Rust E2E harness starts the node, SnapshotExporter and Workers and records
+those process roles. It probes the embedded Supervisor through the node-owned
+registration/status endpoint; there is no independently launched Supervisor
+process or Supervisor-only fault branch. The node never spawns arbitrary
+workers, and the consensus loop does not wait synchronously for compute. Many
+Workers under one embedded Supervisor remain one Byzantine validator domain.
 
 ### Logical job and worker-shard boundary
 
@@ -228,12 +251,12 @@ completeness and mutation authority.
 
 - **Keep Lysis entirely special-cased:** the next large computation would need
   another lifecycle, signer, recovery and result-apply mechanism.
-- **Freeze a one-entry consensus registry:** it duplicates
-  `ProtocolBundleV1` without proving heterogeneous dispatch.
+- **Freeze a generic one-entry program registry:** it would duplicate
+  `ProtocolBundleV1` and imply heterogeneous dispatch without proving it. The
+  accepted successor-authority registry above instead governs revisions of the
+  same closed typed protocol and exposes no generic dispatch surface.
 - **Expose generic task/result bytes:** type erasure hides domain authority and
   creates an arbitrary execution surface.
-- **Run the supervisor inside the node:** compute crashes and resource pressure
-  would share the consensus failure boundary.
 - **Let the node spawn arbitrary workers:** it turns a bounded protocol into a
   privileged command-execution API.
 

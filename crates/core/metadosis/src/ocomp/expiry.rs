@@ -13,6 +13,7 @@ use crate::{
 };
 
 use super::{
+    profile::OcompRequestProfileExt,
     schema::{poc_schema_limits, OcompExpiryDisposition},
     state::{DayPhase, JobFsmProjection},
     vote::ResponseWindowCloseV1,

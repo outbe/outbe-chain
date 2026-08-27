@@ -130,12 +130,11 @@ jobs:
             -C "${RUNNER_TEMP}/elf-a" .
           tar -tf "${RUNNER_TEMP}/release-inputs/outbe-linux-x86_64.tar" \
             | grep -qx './bin/outbe-ocomp'
-          # OCOMP install script and unit files, so an operator can deploy the
-          # stack from the release alone.
+          # Shared deployment unit files shipped with the signed binaries.
           tar --sort=name --format=gnu --mtime="@${epoch}" \
             --owner=0 --group=0 --numeric-owner \
             -cf "${RUNNER_TEMP}/release-inputs/outbe-deploy-assets.tar" \
-            ocomp.sh ocomp.env.example deploy/systemd
+            deploy/systemd
 
       - name: Upload exact unsigned release inputs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

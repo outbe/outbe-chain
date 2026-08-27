@@ -407,8 +407,10 @@ def validate_config(config: dict[str, Any]) -> None:
         for name in launch_bundle.DEFAULT_PORTS
         if (port_value := int(config.get(name, launch_bundle.DEFAULT_PORTS[name])))
     }
-    ports["consensus_p2p_port"] = int(
-        config.get("consensus_p2p_port", DEFAULT_CONSENSUS_P2P_PORT)
+    consensus_port = int(config.get("consensus_p2p_port", DEFAULT_CONSENSUS_P2P_PORT))
+    ports["consensus_p2p_port"] = consensus_port
+    ports["ocomp_embedded_port"] = launch_bundle.embedded_ocomp_endpoint_port(
+        config, consensus_port
     )
     seen: dict[int, str] = {}
     for name, port_value in sorted(ports.items()):

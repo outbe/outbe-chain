@@ -8156,12 +8156,14 @@ dependencies = [
  "outbe-node",
  "outbe-ocomp",
  "outbe-ocomp-protocol",
+ "outbe-ocompregistry",
  "outbe-operator",
  "outbe-primitives",
  "outbe-radicle 0.1.0",
  "outbe-rpc",
  "outbe-tee",
  "outbe-txpool",
+ "outbe-update",
  "outbe-validatorset",
  "outbe-zkproof",
  "reqwest 0.12.28",
@@ -8196,6 +8198,7 @@ dependencies = [
 name = "outbe-cli"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-eips 2.0.4",
  "alloy-primitives",
  "alloy-sol-types",
@@ -8208,6 +8211,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-rpc",
  "outbe-tee",
+ "outbe-zerofee",
  "reqwest 0.12.28",
  "ring",
  "serde",
@@ -8442,6 +8446,7 @@ dependencies = [
  "outbe-node",
  "outbe-nodfactory",
  "outbe-ocomp-protocol",
+ "outbe-ocompregistry",
  "outbe-offchain-data",
  "outbe-offchain-storage",
  "outbe-operator",
@@ -8587,6 +8592,7 @@ dependencies = [
  "outbe-node",
  "outbe-nodfactory",
  "outbe-ocomp-protocol",
+ "outbe-ocompregistry",
  "outbe-offchain-data",
  "outbe-offchain-storage",
  "outbe-oracle",
@@ -8902,6 +8908,7 @@ dependencies = [
  "outbe-nod",
  "outbe-nodfactory",
  "outbe-ocomp-protocol",
+ "outbe-ocompregistry",
  "outbe-offchain-storage",
  "outbe-oracle",
  "outbe-primitives",
@@ -9108,6 +9115,19 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "outbe-ocompregistry"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "outbe-chain-constants",
+ "outbe-consensus",
+ "outbe-macros",
+ "outbe-ocomp-protocol",
+ "outbe-primitives",
 ]
 
 [[package]]
@@ -9639,6 +9659,8 @@ dependencies = [
  "alloy-consensus",
  "alloy-eips 2.0.4",
  "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
  "alloy-sol-types",
  "eyre",
  "futures",
@@ -9673,6 +9695,8 @@ dependencies = [
  "alloy-sol-types",
  "hex",
  "outbe-macros",
+ "outbe-ocomp-protocol",
+ "outbe-ocompregistry",
  "outbe-primitives",
  "outbe-teeregistry",
  "outbe-validatorset",

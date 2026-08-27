@@ -9,6 +9,7 @@
 //! values and undotted version strings are rejected. `teePolicy` is optional;
 //! unknown fields and non-canonical encodings are rejected.
 
+use outbe_ocompregistry::{poc_schema_limits, OcompSuccessorV1};
 use outbe_primitives::tee_attestation_v1::{TeePolicyV1, MAX_TEE_POLICY_BYTES};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -29,6 +30,8 @@ pub struct ScheduleUpdatePayload {
     pub info: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tee_policy: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ocomp_successor: Option<String>,
 }
 
 impl ScheduleUpdatePayload {
@@ -38,6 +41,7 @@ impl ScheduleUpdatePayload {
             activation_height,
             info: info.into(),
             tee_policy: None,
+            ocomp_successor: None,
         }
     }
 
@@ -58,7 +62,20 @@ impl ScheduleUpdatePayload {
             activation_height,
             info: info.into(),
             tee_policy: Some(hex::encode(canonical)),
+            ocomp_successor: None,
         })
+    }
+
+    /// Adds one exact predecessor-bound OCOMP successor to this Update.
+    pub fn with_ocomp_successor(
+        mut self,
+        successor: &OcompSuccessorV1,
+    ) -> std::result::Result<Self, UpdateError> {
+        let canonical = successor
+            .encode_canonical(&poc_schema_limits())
+            .map_err(|_| UpdateError::InvalidOcompSuccessor)?;
+        self.ocomp_successor = Some(hex::encode(canonical));
+        Ok(self)
     }
 
     pub fn from_value(payload: &Value) -> std::result::Result<Self, UpdateError> {
@@ -93,6 +110,30 @@ impl ScheduleUpdatePayload {
             .map_err(|_| UpdateError::InvalidTeePolicy)
     }
 
+    pub fn ocomp_successor(&self) -> std::result::Result<Option<OcompSuccessorV1>, UpdateError> {
+        let Some(encoded) = self.ocomp_successor.as_deref() else {
+            return Ok(None);
+        };
+        let maximum_hex_len = poc_schema_limits()
+            .codec
+            .max_allocation_bytes
+            .checked_mul(2)
+            .ok_or(UpdateError::InvalidOcompSuccessor)?;
+        if encoded.is_empty()
+            || encoded.len() > maximum_hex_len
+            || encoded.len() % 2 != 0
+            || !encoded
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(UpdateError::InvalidOcompSuccessor);
+        }
+        let canonical = hex::decode(encoded).map_err(|_| UpdateError::InvalidOcompSuccessor)?;
+        OcompSuccessorV1::decode_canonical(&canonical, &poc_schema_limits())
+            .map(Some)
+            .map_err(|_| UpdateError::InvalidOcompSuccessor)
+    }
+
     pub fn validate(
         &self,
         current_height: u64,
@@ -114,6 +155,14 @@ impl ScheduleUpdatePayload {
             }
             if policy.activation_height != self.activation_height {
                 return Err(UpdateError::TeePolicyActivationMismatch);
+            }
+        }
+        if let Some(successor) = self.ocomp_successor()? {
+            if successor.authority.request_profile.chain_id != chain_id {
+                return Err(UpdateError::OcompSuccessorChainIdentityMismatch);
+            }
+            if successor.activation_height != self.activation_height {
+                return Err(UpdateError::OcompSuccessorActivationMismatch);
             }
         }
         Ok(())

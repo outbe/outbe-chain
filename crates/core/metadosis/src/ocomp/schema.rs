@@ -13,7 +13,6 @@ use super::codec::{max_canonical_object_bytes, read_canonical_optional};
 pub(crate) use super::index::ResponseDeadlineKey;
 use super::index::{insert_ready_key, remove_ready_key};
 pub(crate) use super::index::{remove_response_deadline_key, ReadyIndexKey};
-pub(super) use super::profile::validate_request_profile;
 pub use super::profile::{poc_schema_limits, OcompRequestProfile};
 pub(crate) use super::transitions::OcompExpiryDisposition;
 

@@ -43,6 +43,8 @@ enum OcompCommand {
     Bindings(OcompBindingsArgs),
     /// Install a block-1 Measurement OCOMP profile using all founder registrations.
     Genesis(OcompGenesisArgs),
+    /// Build a predecessor-bound OCOMP successor and ready-to-submit Update payload.
+    Successor(OcompSuccessorArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -77,6 +79,37 @@ struct OcompGenesisArgs {
     protocol_bundle_output: PathBuf,
 }
 
+#[derive(Debug, clap::Args)]
+struct OcompSuccessorArgs {
+    /// Existing OCOMP-armed chain genesis (supplies immutable network policy).
+    #[arg(long)]
+    genesis: PathBuf,
+    /// Canonical bundle currently active on-chain.
+    #[arg(long)]
+    predecessor_bundle: PathBuf,
+    /// Canonical bundle produced by the successor release build.
+    #[arg(long)]
+    successor_bundle: PathBuf,
+    /// Fixed block at which Update activates this successor.
+    #[arg(long)]
+    activation_height: u64,
+    /// Software protocol version carried by the enclosing Update proposal.
+    #[arg(long)]
+    update_version: String,
+    /// Human-readable Update proposal note.
+    #[arg(long, default_value = "OCOMP protocol successor")]
+    info: String,
+    /// New canonical OCS1 evidence file.
+    #[arg(long)]
+    successor_output: PathBuf,
+    /// New ready-to-submit Update proposal JSON.
+    #[arg(long)]
+    proposal_output: PathBuf,
+    /// Existing directory where the hash-named successor .ocb1 is installed.
+    #[arg(long)]
+    bundle_catalog_dir: PathBuf,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OcompBindingsDocumentV1 {
@@ -92,7 +125,132 @@ pub(crate) fn run(arguments: &[String]) -> eyre::Result<()> {
     match OcompCli::parse_from(ocomp_arguments).command {
         OcompCommand::Bindings(args) => write_bindings(&args),
         OcompCommand::Genesis(args) => generate_genesis(&args),
+        OcompCommand::Successor(args) => generate_successor(&args),
     }
+}
+
+fn generate_successor(args: &OcompSuccessorArgs) -> eyre::Result<()> {
+    ensure!(
+        args.activation_height > 1,
+        "successor activation height must be above genesis"
+    );
+    require_new_output(&args.successor_output, "OCOMP successor")?;
+    require_new_output(&args.proposal_output, "Update proposal")?;
+    ensure!(
+        args.bundle_catalog_dir.is_dir(),
+        "OCOMP bundle catalog directory does not exist: {}",
+        args.bundle_catalog_dir.display()
+    );
+
+    let limits = outbe_ocomp_protocol::profile::poc_schema_limits();
+    let chain_spec: ChainSpec<OutbeHeader> = reth_ethereum::cli::chainspec::chain_value_parser(
+        utf8_path(&args.genesis, "OCOMP genesis")?,
+    )?
+    .as_ref()
+    .clone()
+    .map_header(OutbeHeader::new);
+    let install = outbe_node::ocomp::fork::require_startup_ocomp_fork_install(&chain_spec)?;
+    let predecessor_bytes = fs::read(&args.predecessor_bundle).wrap_err_with(|| {
+        format!(
+            "read predecessor OCOMP bundle {}",
+            args.predecessor_bundle.display()
+        )
+    })?;
+    let successor_bytes = fs::read(&args.successor_bundle).wrap_err_with(|| {
+        format!(
+            "read successor OCOMP bundle {}",
+            args.successor_bundle.display()
+        )
+    })?;
+    let predecessor = ProtocolBundleV1::decode_canonical(&predecessor_bytes, &limits)?;
+    let successor_bundle = ProtocolBundleV1::decode_canonical(&successor_bytes, &limits)?;
+    ensure!(
+        predecessor.encode_canonical(&limits)? == predecessor_bytes,
+        "predecessor OCOMP bundle is not canonical"
+    );
+    ensure!(
+        successor_bundle.encode_canonical(&limits)? == successor_bytes,
+        "successor OCOMP bundle is not canonical"
+    );
+    let predecessor_hash = predecessor.protocol_bundle_hash(&limits)?;
+    if predecessor.protocol_version == 1 {
+        ensure!(
+            predecessor_hash == install.request_profile.protocol_bundle_hash,
+            "version-1 predecessor does not match the genesis OCOMP authority"
+        );
+    }
+    let successor_hash = successor_bundle.protocol_bundle_hash(&limits)?;
+    let base_profile = outbe_ocompregistry::OcompRequestProfile::decode_canonical(
+        &install.request_profile.encode_canonical(&limits)?,
+        &limits,
+    )?;
+    let predecessor_authority = outbe_ocompregistry::OcompProtocolAuthorityV1 {
+        request_profile: outbe_ocompregistry::OcompRequestProfile {
+            fork_id: predecessor.fork_id,
+            protocol_bundle_hash: predecessor_hash,
+            correctness_profile_id: predecessor.correctness_profile_id,
+            ..base_profile.clone()
+        },
+        protocol_bundle: predecessor,
+    };
+    let successor = outbe_ocompregistry::OcompSuccessorV1 {
+        activation_height: args.activation_height,
+        predecessor_protocol_bundle_hash: predecessor_hash,
+        authority: outbe_ocompregistry::OcompProtocolAuthorityV1 {
+            request_profile: outbe_ocompregistry::OcompRequestProfile {
+                fork_id: successor_bundle.fork_id,
+                protocol_bundle_hash: successor_hash,
+                correctness_profile_id: successor_bundle.correctness_profile_id,
+                ..base_profile
+            },
+            protocol_bundle: successor_bundle,
+        },
+    };
+    successor.validate_against(&predecessor_authority, args.activation_height - 1, &limits)?;
+    let successor_canonical = successor.encode_canonical(&limits)?;
+    let update_version = outbe_update::version::try_parse_protocol_version(&args.update_version)
+        .map_err(|error| eyre::eyre!("invalid Update protocol version: {error}"))?;
+    let payload = outbe_update::ScheduleUpdatePayload::new(
+        update_version,
+        args.activation_height,
+        args.info.clone(),
+    )
+    .with_ocomp_successor(&successor)
+    .map_err(|error| eyre::eyre!("build Update payload: {error}"))?;
+    let catalog_path = args
+        .bundle_catalog_dir
+        .join(format!("{}.ocb1", hex::encode(successor_hash.as_slice())));
+    require_new_output(&catalog_path, "hash-named OCOMP successor bundle")?;
+
+    write_new_file(
+        &args.successor_output,
+        &successor_canonical,
+        "OCOMP successor",
+    )?;
+    if let Err(error) = write_new_file(
+        &args.proposal_output,
+        &pretty_json(&payload)?,
+        "Update proposal",
+    )
+    .and_then(|()| {
+        write_new_file(
+            &catalog_path,
+            &successor_bytes,
+            "hash-named OCOMP successor bundle",
+        )
+    }) {
+        let _ = fs::remove_file(&args.successor_output);
+        let _ = fs::remove_file(&args.proposal_output);
+        let _ = fs::remove_file(&catalog_path);
+        return Err(error);
+    }
+    println!(
+        "wrote OCOMP successor: predecessor={predecessor_hash}, successor={successor_hash}, activation={}, payload={}, bundle={}",
+        args.activation_height,
+        args.proposal_output.display(),
+        catalog_path.display()
+    );
+    Ok(())
 }
 
 fn write_bindings(args: &OcompBindingsArgs) -> eyre::Result<()> {

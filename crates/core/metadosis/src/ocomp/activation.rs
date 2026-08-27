@@ -5,6 +5,8 @@ use outbe_intex::{install_certified_contributor_root, CertifiedContributorRootV1
 use outbe_lysis::activation_v1::{self, LysisApplyPlanV1, LysisOwnerReceiptsV1};
 use outbe_nod::schema::NodContract;
 use outbe_nodfactory::certified::{install_certified_generation, CertifiedNodGenerationV1};
+#[cfg(any(test, feature = "test-utils"))]
+use outbe_ocomp_protocol::OCB1_HEADER_LEN;
 use outbe_ocomp_protocol::{
     error::ProtocolError,
     hash::hash_framed,
@@ -19,7 +21,7 @@ use outbe_ocomp_protocol::{
     },
     registry::HashDomain,
     state::{ActiveGenerationV1, OcompCompletedBindingV1, OcompJobRecordV1, OcompJobStatus},
-    SchemaLimits, OCB1_HEADER_LEN,
+    SchemaLimits,
 };
 use outbe_primitives::error::{PrecompileError, Result as PrecompileResult};
 use outbe_primitives::storage::StorageHandle;
@@ -42,7 +44,9 @@ use crate::{
 };
 
 use super::{
-    profile::OcompRequestProfile, state::JobFsmLimits, transitions::OcompExpiryDisposition,
+    profile::{OcompRequestProfile, OcompRequestProfileExt},
+    state::JobFsmLimits,
+    transitions::OcompExpiryDisposition,
 };
 
 /// Complete immutable consensus authority used by public LYSIS_V1 activation.
@@ -183,7 +187,7 @@ pub(crate) fn apply_quorum_result(
     }
 
     let profile = metadosis
-        .read_ocomp_request_profile(limits)?
+        .read_ocomp_request_profile_for_bundle(record.intent.protocol_bundle_hash, limits)?
         .ok_or_else(|| storage_corruption_message("pending OCOMP job has no request profile"))?;
     if record.intent.chain_id != profile.chain_id
         || record.intent.genesis_hash != profile.genesis_hash
@@ -582,6 +586,7 @@ impl MetadosisContract<'_> {
     /// Installs the immutable protocol bundle exactly once. Voting membership
     /// comes only from each job's pinned ValidatorSet snapshot. The former
     /// committee storage field stays reserved and must remain zero.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn initialize_ocomp_activation_authority(
         &mut self,
         bundle: &ProtocolBundleV1,
@@ -622,6 +627,52 @@ impl MetadosisContract<'_> {
     }
 
     pub fn read_ocomp_activation_authority(
+        &self,
+        limits: &SchemaLimits,
+    ) -> PrecompileResult<Option<OcompActivationAuthorityV1>> {
+        if let Some(authority) = outbe_ocompregistry::OcompRegistry::new(self.storage.clone())
+            .active_authority(limits)?
+        {
+            return Ok(Some(OcompActivationAuthorityV1 {
+                bundle: authority.protocol_bundle,
+            }));
+        }
+        #[cfg(any(test, feature = "test-utils"))]
+        {
+            self.read_legacy_ocomp_activation_authority(limits)
+        }
+        #[cfg(not(any(test, feature = "test-utils")))]
+        Ok(None)
+    }
+
+    pub(crate) fn read_ocomp_activation_authority_for_bundle(
+        &self,
+        bundle_hash: B256,
+        limits: &SchemaLimits,
+    ) -> PrecompileResult<Option<OcompActivationAuthorityV1>> {
+        if let Some(authority) = outbe_ocompregistry::OcompRegistry::new(self.storage.clone())
+            .authority_by_bundle_hash(bundle_hash, limits)?
+        {
+            return Ok(Some(OcompActivationAuthorityV1 {
+                bundle: authority.protocol_bundle,
+            }));
+        }
+        #[cfg(any(test, feature = "test-utils"))]
+        {
+            let legacy = self.read_legacy_ocomp_activation_authority(limits)?;
+            Ok(legacy.filter(|authority| {
+                authority
+                    .bundle
+                    .protocol_bundle_hash(limits)
+                    .is_ok_and(|hash| hash == bundle_hash)
+            }))
+        }
+        #[cfg(not(any(test, feature = "test-utils")))]
+        Ok(None)
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    fn read_legacy_ocomp_activation_authority(
         &self,
         limits: &SchemaLimits,
     ) -> PrecompileResult<Option<OcompActivationAuthorityV1>> {

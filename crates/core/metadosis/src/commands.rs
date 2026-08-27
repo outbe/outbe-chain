@@ -12,7 +12,9 @@ use outbe_primitives::{
     },
 };
 
-use crate::{commit::commit_transition, schema::MetadosisContract};
+use crate::commit::commit_transition;
+#[cfg(test)]
+use crate::schema::MetadosisContract;
 
 pub fn init_genesis_day(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     let binding = metadosis_init_genesis_binding(
@@ -119,8 +121,17 @@ pub fn install_fork_profile(
     commit_transition::<MetadosisForkProfile, _>(ctx.storage.clone(), binding, |storage| {
         outbe_validatorset::contract::ValidatorSet::new(storage.clone())
             .initialize_founder_ocomp_registrations(&install.founder_registrations)?;
-        MetadosisContract::new(storage.clone()).initialize_ocomp_fork_install(
-            install,
+        let request_profile = outbe_ocompregistry::OcompRequestProfile::decode_canonical(
+            &install.request_profile.encode_canonical(&limits)?,
+            &limits,
+        )?;
+        outbe_ocompregistry::OcompRegistry::new(storage.clone()).initialize_genesis_authority(
+            &outbe_ocompregistry::OcompProtocolAuthorityV1 {
+                request_profile,
+                protocol_bundle: install.protocol_bundle.clone(),
+            },
+            binding,
+            install.activation_height,
             ctx.block.block_number,
             &limits,
         )?;

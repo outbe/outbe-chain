@@ -33,6 +33,7 @@ use crate::{
 
 use super::{
     authority::current_ocomp_attempt_snapshot,
+    profile::OcompRequestProfileExt,
     schema::{poc_schema_limits, OcompRequestProfile},
     state::RequestEffectMode,
 };
@@ -71,7 +72,7 @@ enum TerminalRootSource {
 #[derive(Clone, Copy)]
 enum RequestCommitKind {
     Fresh,
-    Retry,
+    Retry { predecessor_intent_id: B256 },
 }
 
 /// Executes the bounded end-zone request transition against the executor-owned
@@ -389,16 +390,23 @@ fn build_and_commit_retry(
 ) -> Result<TerminalRequestOutcome> {
     let TerminalRequestContext {
         ctx,
-        profile,
+        profile: _,
         wwd,
         pending_nonce,
         outer_transition: _,
         roots,
     } = *request;
     let schema_limits = poc_schema_limits();
-    let (_, previous) = metadosis
+    let (previous_intent_id, previous) = metadosis
         .latest_terminal_job_record(wwd, &schema_limits)?
         .ok_or_else(|| storage_corruption_message("OCOMP retry has no retained terminal job"))?;
+    let pinned_profile = metadosis
+        .read_ocomp_request_profile_for_bundle(
+            previous.intent.protocol_bundle_hash,
+            &schema_limits,
+        )?
+        .ok_or_else(|| storage_corruption_message("OCOMP retry authority is unavailable"))?;
+    let profile = &pinned_profile;
     let terminal = previous
         .terminal
         .as_ref()
@@ -529,7 +537,9 @@ fn build_and_commit_retry(
         request,
         &intent,
         &receipt,
-        RequestCommitKind::Retry,
+        RequestCommitKind::Retry {
+            predecessor_intent_id: previous_intent_id,
+        },
     )
 }
 
@@ -544,7 +554,7 @@ fn commit_and_emit_request(
     let intent_id = intent.intent_id(&schema_limits).map_err(|error| {
         let operation = match kind {
             RequestCommitKind::Fresh => "hash OCOMP intent",
-            RequestCommitKind::Retry => "hash OCOMP retry intent",
+            RequestCommitKind::Retry { .. } => "hash OCOMP retry intent",
         };
         storage_corruption_message(format!("{operation}: {error}"))
     })?;
@@ -554,26 +564,84 @@ fn commit_and_emit_request(
         .map_err(|error| {
             let operation = match kind {
                 RequestCommitKind::Fresh => "hash OCOMP activation preconditions",
-                RequestCommitKind::Retry => "hash OCOMP retry preconditions",
+                RequestCommitKind::Retry { .. } => "hash OCOMP retry preconditions",
             };
             storage_corruption_message(format!("{operation}: {error}"))
         })?;
 
-    metadosis.commit_ocomp_request(
-        request.outer_transition,
-        intent,
-        receipt,
-        &schema_limits,
-        request.profile.fsm_limits(),
-    )?;
-    metadosis.emit(IMetadosis::OffchainJobRequested {
-        intentId: intent_id,
-        wwd: request.wwd.value(),
-        pendingNonce: request.pending_nonce,
-        attempt: intent.attempt,
-        activationPreconditionsHash: activation_preconditions_hash,
-    })?;
-    Ok(TerminalRequestOutcome::IntentCreated(intent_id))
+    request.ctx.with_checkpoint(|| {
+        let mut registry = outbe_ocompregistry::OcompRegistry::new(request.ctx.storage.clone());
+        let mut release_predecessor = None;
+        if registry.active_authority(&schema_limits)?.is_some() {
+            let (pinned_bundle, predecessor_to_release) = match kind {
+                RequestCommitKind::Fresh => {
+                    (registry.pin_lineage(intent_id, &schema_limits)?, None)
+                }
+                RequestCommitKind::Retry {
+                    predecessor_intent_id,
+                } => {
+                    #[cfg(any(test, feature = "test-utils"))]
+                    if registry.resolve_lineage(predecessor_intent_id)?.is_none() {
+                        (registry.pin_lineage(intent_id, &schema_limits)?, None)
+                    } else {
+                        (
+                            registry.pin_inherited_lineage(
+                                intent_id,
+                                predecessor_intent_id,
+                                &schema_limits,
+                            )?,
+                            Some(predecessor_intent_id),
+                        )
+                    }
+                    #[cfg(not(any(test, feature = "test-utils")))]
+                    {
+                        (
+                            registry.pin_inherited_lineage(
+                                intent_id,
+                                predecessor_intent_id,
+                                &schema_limits,
+                            )?,
+                            Some(predecessor_intent_id),
+                        )
+                    }
+                }
+            };
+            if pinned_bundle != intent.protocol_bundle_hash {
+                return Err(storage_corruption_message(
+                    "OCOMP intent bundle differs from its Registry lineage pin",
+                ));
+            }
+            release_predecessor = predecessor_to_release;
+        }
+
+        metadosis.commit_ocomp_request(
+            request.outer_transition,
+            intent,
+            receipt,
+            &schema_limits,
+            request.profile.fsm_limits(),
+        )?;
+        if let Some(predecessor_intent_id) = release_predecessor {
+            let released = registry.release_lineage(
+                predecessor_intent_id,
+                request.ctx.block.block_number,
+                &schema_limits,
+            )?;
+            if !released {
+                return Err(storage_corruption_message(
+                    "OCOMP retry predecessor lineage was not pinned",
+                ));
+            }
+        }
+        metadosis.emit(IMetadosis::OffchainJobRequested {
+            intentId: intent_id,
+            wwd: request.wwd.value(),
+            pendingNonce: request.pending_nonce,
+            attempt: intent.attempt,
+            activationPreconditionsHash: activation_preconditions_hash,
+        })?;
+        Ok(TerminalRequestOutcome::IntentCreated(intent_id))
+    })
 }
 
 fn candidate_tribute_projection(
