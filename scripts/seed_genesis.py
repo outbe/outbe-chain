@@ -169,6 +169,10 @@ GEM_FACTORY_ADDRESS = "0000000000000000000000000000000000002013"
 # liquidity source/target registry (see `seed_vault_router`). Mirrors the Rust
 # constant `outbe_primitives::addresses::VAULT_ROUTER_ADDRESS`.
 VAULT_ROUTER_ADDRESS = "0000000000000000000000000000000000001017"
+# Paynote shielded ERC20 note pool. Registered as a VaultRouter liquidity
+# source so `deposit` can route pulled ERC20 into the asset's reserve vault.
+# Mirrors the Rust constant `outbe_primitives::addresses::PAYNOTE_ADDRESS`.
+PAYNOTE_ADDRESS = "0000000000000000000000000000000000001019"
 # Gem NFT token precompile. Genesis can seed Settled gems (see `seed_gems`) so a
 # demo account has a mineable gem to convert Gem -> Promis -> Gratis; Gratis and
 # Promis are TEE-encrypted and can no longer be plaintext-seeded at genesis.
@@ -1030,6 +1034,7 @@ VAULT_ROUTER_LIQUIDITY_SOURCES = [
     (INTEX_FACTORY_ADDRESS, 2),   # IntexCostAmount
     (CREDIS_FACTORY_ADDRESS, 3),  # CredisCostAmount
     (GEM_FACTORY_ADDRESS, 4),     # GemCostAmount
+    (PAYNOTE_ADDRESS, 5),         # PaynoteDeposit
 ]
 VAULT_ROUTER_LIQUIDITY_TARGETS = [
     (CREDIS_FACTORY_ADDRESS, 1),  # Credis

@@ -54,6 +54,7 @@ outbe-zerofee.workspace = true
 outbe-cycle.workspace = true
 outbe-accounting.workspace = true
 outbe-zkproof.workspace = true
+outbe-paynote.workspace = true
 
 # Alloy
 alloy-consensus.workspace = true

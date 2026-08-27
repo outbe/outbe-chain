@@ -3,12 +3,16 @@ pragma solidity ^0.8.0;
 
 /// @notice Local stablecoin vault routing and authorization surface.
 interface IVaultRouter {
+    /// @dev Append-only: the discriminant is persisted in
+    ///      `liquidity_source_types`, so existing variants must never be
+    ///      reordered or removed.
     enum StablesSource {
         Unknown,
         NodCostAmount,
         IntexCostAmount,
         CredisCostAmount,
-        GemCostAmount
+        GemCostAmount,
+        PaynoteDeposit
     }
 
     enum StablesTarget {
