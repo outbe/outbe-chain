@@ -54,6 +54,13 @@ const RPC_TIMEOUT: Duration = Duration::from_secs(10);
 /// still be unable to induce the supervisor to sign an unbounded fee promise.
 pub const MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS: u128 = MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS * 2;
 
+/// The price a submitter signs with, held inside the envelope it is about to be
+/// checked against. The node's suggestion follows the base fee, which moves with
+/// traffic; signing it unclamped makes a submitter reject its own transaction.
+pub fn fee_within_envelope(suggested: u128, min_fee: u128, max_fee: u128) -> u128 {
+    suggested.clamp(min_fee, max_fee)
+}
+
 #[derive(Clone, Debug)]
 pub struct VoteSubmissionConfigV1 {
     pub journal_root: PathBuf,
@@ -406,7 +413,8 @@ impl<R: VoteSubmissionRpcV1> SupervisorVoteSubmitterV1<R> {
             .rpc
             .canonical_nonce(self.config.sender_address)
             .map_err(rpc_error)?;
-        let max_fee_per_gas = self.rpc.gas_price().map_err(rpc_error)?.clamp(
+        let max_fee_per_gas = fee_within_envelope(
+            self.rpc.gas_price().map_err(rpc_error)?,
             MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
             MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
         );
@@ -1488,6 +1496,43 @@ impl PublicVoteRpcErrorV1 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_suggestion_above_the_ceiling_is_signed_at_the_ceiling() {
+        let suggested = MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS + 2;
+        let fee = fee_within_envelope(
+            suggested,
+            MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+            MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
+        );
+        assert_eq!(fee, MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS);
+    }
+
+    #[test]
+    fn a_suggestion_below_the_floor_is_signed_at_the_floor() {
+        let fee = fee_within_envelope(
+            0,
+            MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+            MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
+        );
+        assert_eq!(fee, MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS);
+    }
+
+    #[test]
+    fn every_suggestion_lands_inside_the_envelope_the_submitter_validates() {
+        for suggested in [0, 1, 7, 13, 14, 15, 1_000_000, u128::MAX] {
+            let fee = fee_within_envelope(
+                suggested,
+                MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS,
+                MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
+            );
+            assert!(
+                (MIN_OCOMP_SYSTEM_CARRIER_MAX_FEE_PER_GAS..=MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS)
+                    .contains(&fee),
+                "suggestion {suggested} left the envelope as {fee}"
+            );
+        }
+    }
+
     use std::sync::{Arc, Mutex};
 
     use alloy_consensus::TxEip1559;

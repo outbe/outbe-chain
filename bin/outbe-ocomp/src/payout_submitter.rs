@@ -42,7 +42,8 @@ use thiserror::Error;
 
 use crate::payout_artifact::CONTRIBUTOR_PAYOUT_ARTIFACT_FILE;
 use crate::vote_submitter::{
-    PublicVoteRpcClientV1, VoteInclusionV1, VoteSubmissionRpcV1, MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
+    fee_within_envelope, PublicVoteRpcClientV1, VoteInclusionV1, VoteSubmissionRpcV1,
+    MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
 };
 
 const JOURNAL_MAGIC: [u8; 8] = *b"OUTBPAY1";
@@ -684,7 +685,8 @@ impl<R: PayoutSubmissionRpcV1> SupervisorPayoutSubmitterV1<R> {
             .rpc
             .canonical_nonce(self.config.sender_address)
             .map_err(rpc_error)?;
-        let max_fee_per_gas = self.rpc.gas_price().map_err(rpc_error)?.clamp(
+        let max_fee_per_gas = fee_within_envelope(
+            self.rpc.gas_price().map_err(rpc_error)?,
             outbe_zerofee::MIN_ZERO_FEE_CONTRIBUTOR_BATCH_MAX_FEE_PER_GAS,
             MAX_OCOMP_SIGNER_MAX_FEE_PER_GAS,
         );
