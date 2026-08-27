@@ -574,24 +574,25 @@ fn auction_clears(world: &mut World) {
 #[cfg(feature = "ocomp-integration")]
 #[then("the cleared day mints the Intex on the target chain")]
 fn issuance_mints_intex(world: &mut World) {
-    let contracts = world
-        .state
-        .origin_contracts
-        .clone()
-        .expect("a deploy recorded its addresses");
     let bidders = world.state.auction_bidders.clone();
     let home = world.rpc.url(world.validators.primary_port());
-    let side = venue_side(world);
-    let url = side.url.clone();
     let worldwide_day = settled_day(world);
-
     assert_ne!(
         venue_probes::cleared_empty(&home, worldwide_day),
         Some(true),
         "day {worldwide_day} cleared empty: the day's supply bought no whole Intex, so there is \
          nothing to issue and this scenario cannot cover minting"
     );
+    // The day issues to every chain it opened on, so every chain has to show the
+    // series and the units its own bidders won.
+    for side in venue_sides(world) {
+        mints_landed_on(&side, &bidders, worldwide_day);
+    }
+}
 
+#[cfg(feature = "ocomp-integration")]
+fn mints_landed_on(side: &VenueSide, bidders: &[bidders::Bidder], worldwide_day: u32) {
+    let url = side.url.clone();
     let deadline = Instant::now() + AUCTION_STAGE_TIMEOUT;
     let series = loop {
         if let Some(series) = venue_probes::issued_series(&url, side.target_router) {
@@ -599,26 +600,26 @@ fn issuance_mints_intex(world: &mut World) {
         }
         assert!(
             Instant::now() < deadline,
-            "day {worldwide_day} cleared but the target chain never received issuance instructions"
+            "day {worldwide_day} cleared but {url} never received issuance instructions"
         );
         sleep(Duration::from_secs(2));
     };
-
     let exists = eth::read_call(
         &url,
         side.intex_nft,
         &IIssuedSeries::seriesExistsCall { seriesId: series },
     )
     .expect("ask the collection whether the series exists");
-    assert!(exists, "series {series} was instructed but never created");
-
+    assert!(
+        exists,
+        "series {series} was instructed but never created on {url}"
+    );
     let token_id = eth::read_call(
         &url,
         side.intex_nft,
         &IIssuedSeries::issuedTokenIdCall { seriesId: series },
     )
     .expect("derive the token id of the issued series");
-
     let minted: U256 = bidders
         .iter()
         .map(|bidder| {
@@ -635,15 +636,23 @@ fn issuance_mints_intex(world: &mut World) {
         .sum();
     assert!(
         !minted.is_zero(),
-        "series {series} exists but no bidder holds any Intex ({} mints were deferred)",
-        venue_probes::deferred_mints(&url, contracts.target_router)
+        "series {series} exists on {url} but no bidder holds any Intex ({} mints were deferred)",
+        venue_probes::deferred_mints(&url, side.target_router)
     );
 }
 
 #[cfg(feature = "ocomp-integration")]
 #[then("the escrow settles the day and returns what the bids did not buy")]
 fn escrow_refunds_the_rest(world: &mut World) {
-    let side = venue_side(world);
+    // Each chain settled its own bids, so each has to give back what it did
+    // not buy.
+    for side in venue_sides(world) {
+        refunds_landed_on(world, &side);
+    }
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn refunds_landed_on(world: &World, side: &VenueSide) {
     let url = side.url.clone();
     let worldwide_day = settled_day(world);
     let topic0 = alloy_primitives::keccak256(
