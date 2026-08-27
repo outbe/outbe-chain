@@ -301,9 +301,8 @@ fn repository_contract_has_no_runtime_signing_or_direct_fallback() {
         );
     }
 
-    let adapter =
-        fs::read_to_string(root.join("scripts/release/build-testnet-sgx-bundle-in-container.sh"))
-            .expect("Gramine container adapter");
+    let adapter = fs::read_to_string(root.join("scripts/release/build-sgx-bundle-in-container.sh"))
+        .expect("Gramine container adapter");
     assert!(adapter.contains("--chroot \"${bundle_root}\""));
     assert!(adapter.contains("verify_dcap_native_qvl.py"));
     assert!(adapter.contains("--install-dir"));
@@ -399,23 +398,16 @@ fn privileged_release_workflow_pins_source_and_never_replaces_assets() {
     assert!(workflow.contains("[.tag, .object.sha] | @tsv"));
     assert!(workflow.contains("test \"${signed_tag_name}\" = \"${RELEASE_TAG}\""));
     assert!(workflow.contains("runs-on: testnet-release-sgx"));
-    assert_eq!(workflow.matches("--network testnet").count(), 7);
+    assert_eq!(workflow.matches("--network testnet").count(), 9);
     assert!(workflow.contains("--genesis \"${TESTNET_GENESIS}\""));
     assert!(workflow.contains("--expected-pck-ca processor"));
     assert!(workflow.contains("--processor-dcap-archive"));
     assert!(workflow.contains("--processor-dcap-evidence"));
     assert!(workflow.contains("TESTNET_GENESIS: release/testnet-genesis.json"));
     assert_eq!(
-        workflow
-            .matches("--testnet-genesis \"${TESTNET_GENESIS}\"")
-            .count(),
-        1,
-        "the Testnet-only hardware runner must consume the immutable Testnet genesis"
-    );
-    assert_eq!(
         workflow.matches("--genesis \"${TESTNET_GENESIS}\"").count(),
-        1,
-        "profile-aware finalization must consume the same immutable Testnet genesis"
+        2,
+        "both hardware acquisition and finalization must consume the immutable Testnet genesis"
     );
     assert!(workflow.contains("git ls-files --error-unmatch \"${TESTNET_GENESIS}\""));
     assert!(workflow.contains("outbe-release-dcap-evidence"));
@@ -467,6 +459,42 @@ fn privileged_release_workflow_pins_source_and_never_replaces_assets() {
     let cargo_config =
         fs::read_to_string(root.join(".cargo/config.toml")).expect("Cargo configuration");
     assert!(cargo_config.contains("xtask = \"run --locked --package xtask --\""));
+}
+
+#[test]
+fn mainnet_release_workflow_requires_a_pinned_genesis_and_closed_profile() {
+    let root = repo_root();
+    let workflow = fs::read_to_string(root.join(".github/workflows/mainnet-release.yml"))
+        .expect("mainnet release workflow");
+    for required in [
+        "genesis_url:",
+        "genesis_sha256:",
+        "environment: mainnet-release",
+        "runs-on: mainnet-release-sgx",
+        "MAINNET_SGX_SIGNING_KEY_B64",
+        "--network mainnet",
+        "--genesis \"${MAINNET_GENESIS}\"",
+        "outbe-tee-enclave-mainnet",
+    ] {
+        assert!(workflow.contains(required), "missing {required}");
+    }
+    assert!(workflow.contains("sha256sum --check"));
+    assert!(
+        workflow.contains("test \"$(jq -er '.config.chainId' \"${MAINNET_GENESIS}\")\" = '676'")
+    );
+    assert!(!workflow.contains("testnet"));
+    assert!(!workflow.contains("--clobber"));
+    assert!(!workflow.contains("gh release upload"));
+    assert!(workflow.contains("--draft --prerelease"));
+    assert!(workflow.contains("cmp --silent"));
+    assert_eq!(workflow.matches("--network mainnet").count(), 9);
+
+    let dispatcher =
+        fs::read_to_string(root.join(".github/workflows/release.yml")).expect("release dispatcher");
+    assert!(dispatcher.contains("!contains(github.ref_name, '-mainnet.')"));
+    assert!(dispatcher.contains("gh workflow run mainnet-release.yml"));
+    assert!(dispatcher.contains("MAINNET_GENESIS_URL: ${{ vars.MAINNET_GENESIS_URL }}"));
+    assert!(dispatcher.contains("MAINNET_GENESIS_SHA256: ${{ vars.MAINNET_GENESIS_SHA256 }}"));
 }
 
 #[test]

@@ -1614,7 +1614,7 @@ pub fn sign(
         .args(["-v", &format!("{}:/unsigned:ro", unsigned.display())])
         .args([
             "-v",
-            &format!("{}:/run/secrets/testnet-sgx-key.pem:ro", key_file.display()),
+            &format!("{}:/run/secrets/sgx-signing-key.pem:ro", key_file.display()),
         ])
         .args(["-v", &format!("{}:/out", output.display())])
         .arg(&toolchain_image)
@@ -2002,7 +2002,7 @@ pub fn repository_root() -> Result<PathBuf> {
 fn require_release_checkout(repo_root: &Path, network: SgxReleaseNetwork) -> Result<()> {
     for relative in [
         network.bundle_spec_path(),
-        "scripts/release/build-testnet-sgx-bundle-in-container.sh",
+        "scripts/release/build-sgx-bundle-in-container.sh",
         "xtask/Cargo.toml",
     ] {
         if !repo_root.join(relative).is_file() {
@@ -2343,7 +2343,7 @@ fn current_id(flag: &str) -> Result<String> {
 }
 
 fn container_adapter() -> &'static str {
-    "/source/scripts/release/build-testnet-sgx-bundle-in-container.sh"
+    "/source/scripts/release/build-sgx-bundle-in-container.sh"
 }
 
 fn run_status(command: &mut Command, description: &str) -> Result<()> {

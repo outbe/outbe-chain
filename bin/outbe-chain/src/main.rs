@@ -2773,7 +2773,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_ethereum_mainnet_remains_invalid_for_outbe() {
+    fn reth_mainnet_alias_is_not_outbe_mainnet_676() {
         install_cli_defaults_for_test();
         type OutbeCli = reth_ethereum::cli::interface::Cli<
             super::OutbeChainSpecParser,
@@ -2792,9 +2792,9 @@ mod tests {
 
         assert_eq!(error.kind(), clap::error::ErrorKind::InvalidValue);
         let rendered = error.to_string();
+        assert!(rendered.contains("unknown Outbe chain ID 1"), "{rendered}");
         assert!(
-            rendered.contains("mandatory teeAttestationV1")
-                || rendered.contains("mandatory OCOMP fork install"),
+            !rendered.contains("unknown Outbe chain ID 676"),
             "{rendered}"
         );
     }

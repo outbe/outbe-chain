@@ -14,7 +14,7 @@
     "release/dcap-native-qvl-v1.json",
     "release/mainnet-sgx-bundle-v1.json",
     "release/project-toolchain-v1.json",
-    "scripts/release/build-testnet-sgx-bundle-in-container.sh",
+    "scripts/release/build-sgx-bundle-in-container.sh",
     "scripts/release/verify_dcap_native_qvl.py",
     "scripts/release/verify_project_toolchain.py",
     "xtask/Cargo.toml",

@@ -84,6 +84,7 @@ class ProjectToolchainContractTests(unittest.TestCase):
                 "release/dcap-native-qvl-v1.json",
                 "release/project-toolchain-v1.json",
                 "release/reproducible-elf-build-v1.json",
+                "release/mainnet-sgx-bundle-v1.json",
                 "release/testnet-sgx-bundle-v1.json",
             ):
                 destination = root / relative
