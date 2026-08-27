@@ -278,14 +278,13 @@ fn pow_hash(
     nonce: u64,
 ) -> [u8; 32] {
     use sha2::{Digest as _, Sha256};
-    let mut preimage = String::new();
-    preimage.push_str(&alloy_primitives::hex::encode(holder.as_slice()));
-    preimage.push_str(&alloy_primitives::hex::encode(
-        promis_amount.to_be_bytes::<32>(),
-    ));
-    preimage.push_str(&alloy_primitives::hex::encode(series.as_slice()));
-    preimage.push_str(&alloy_primitives::hex::encode(seq.to_be_bytes()));
-    let mut data = preimage.into_bytes();
+    // The engine hashes the raw bytes, so anything else mines a nonce it will
+    // reject: SHA256(holder ++ amount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8).
+    let mut data = Vec::with_capacity(20 + 32 + 14 + 4 + 8);
+    data.extend_from_slice(holder.as_slice());
+    data.extend_from_slice(&promis_amount.to_be_bytes::<32>());
+    data.extend_from_slice(series.as_slice());
+    data.extend_from_slice(&seq.to_be_bytes());
     data.extend_from_slice(&nonce.to_be_bytes());
     Sha256::digest(&data).into()
 }
