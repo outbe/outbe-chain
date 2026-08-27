@@ -293,7 +293,15 @@ const AUCTION_START_TIMEOUT: Duration = Duration::from_secs(1200);
 
 #[then("the auction for that day opens on the target chain")]
 fn auction_opens_on_target(world: &mut World) {
-    let venue = venue_side(world);
+    // The start message goes to every chain the day names, so every chain
+    // has to answer for it.
+    for venue in venue_sides(world) {
+        auction_opened_on(world, &venue);
+    }
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn auction_opened_on(world: &World, venue: &VenueSide) {
     let url = venue.url.clone();
     // Desis and the origin router answer on the committee, whichever chain the
     // venue itself sits on.
