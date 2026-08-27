@@ -118,7 +118,7 @@ impl DcapChainSpecBindingV1 {
             || policy.accepted_qe_tcb_status != QvlTcbStatusV1::UpToDate
         {
             return Err(
-                "active testnet policy must admit Platform UpToDate | SWHardeningNeeded | ConfigurationAndSWHardeningNeeded and QE UpToDate"
+                "active DCAP policy must admit Platform UpToDate | SWHardeningNeeded | ConfigurationAndSWHardeningNeeded and QE UpToDate"
                     .into(),
             );
         }
@@ -132,7 +132,7 @@ impl DcapChainSpecBindingV1 {
         });
         if policy.measurement_rules.len() != 1 || !matches_rule {
             return Err(
-                "active testnet policy does not exactly bind the signed bundle measurement".into(),
+                "active DCAP policy does not exactly bind the signed bundle measurement".into(),
             );
         }
         let expected = initial_tee_policy_v1(
@@ -146,10 +146,10 @@ impl DcapChainSpecBindingV1 {
             self.chain_id,
             self.genesis_hash,
         )
-        .map_err(|error| format!("derive canonical initial testnet policy: {error}"))?;
+        .map_err(|error| format!("derive canonical initial DCAP policy: {error}"))?;
         if *policy != expected {
             return Err(
-                "active testnet policy does not equal the canonical initial policy for the signed release"
+                "active DCAP policy does not equal the canonical initial policy for the signed release"
                     .into(),
             );
         }

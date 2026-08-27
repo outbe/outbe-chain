@@ -250,6 +250,7 @@ mod tests {
     };
     use outbe_ocomp_protocol::profile::poc_schema_limits;
     use outbe_primitives::chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID};
+    use reth_cli::chainspec::ChainSpecParser as _;
 
     fn write_base_genesis(path: &Path, chain_id: u64) {
         let mut genesis = serde_json::json!({
@@ -394,7 +395,7 @@ mod tests {
         mainnet.minimum_tcb_evaluation_data_number = Some(17);
 
         generate_genesis(&mainnet).unwrap();
-        let parsed = parse_generated(&output);
+        let parsed = crate::OutbeChainSpecParser::parse(output.to_str().unwrap()).unwrap();
         assert_eq!(parsed.chain().id(), MAINNET_CHAIN_ID);
         assert_eq!(parsed.genesis_hash(), before);
     }

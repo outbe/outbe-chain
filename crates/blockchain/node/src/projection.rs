@@ -1557,9 +1557,9 @@ mod tests {
         evaluate_ocomp_projection_containment, prepare_offchain_data_projection,
         project_through_target, projection_failure_class, record_finalized_target,
         record_or_publish_finalized_target, require_finalized_checkpoint, run_projection_loop,
-        spawn_detached_projection_work, supervise_projection_future, FinalizedTarget,
-        OcompProjectionContainment, OffchainDataProjectionConfig, ProjectionRuntime,
-        MONGO_RECONNECT_DEADLINE,
+        spawn_detached_projection_work, supervise_projection_future, validate_projection_network,
+        FinalizedTarget, OcompProjectionContainment, OffchainDataProjectionConfig,
+        ProjectionRuntime, MONGO_RECONNECT_DEADLINE,
     };
     use alloy_consensus::Header;
     use alloy_primitives::B256;
@@ -3058,15 +3058,16 @@ mod tests {
             self.inner.apply_atomic(batch)
         }
     }
-}
-#[test]
-fn projection_network_gate_accepts_known_networks_and_rejects_unknown_ids() {
-    for chain_id in [
-        outbe_primitives::chain::DEVNET_CHAIN_ID,
-        outbe_primitives::chain::TESTNET_CHAIN_ID,
-        outbe_primitives::chain::MAINNET_CHAIN_ID,
-    ] {
-        validate_projection_network(chain_id).unwrap();
+
+    #[test]
+    fn projection_network_gate_accepts_known_networks_and_rejects_unknown_ids() {
+        for chain_id in [
+            outbe_primitives::chain::DEVNET_CHAIN_ID,
+            outbe_primitives::chain::TESTNET_CHAIN_ID,
+            outbe_primitives::chain::MAINNET_CHAIN_ID,
+        ] {
+            validate_projection_network(chain_id).unwrap();
+        }
+        assert!(validate_projection_network(1_000_000_001).is_err());
     }
-    assert!(validate_projection_network(1_000_000_001).is_err());
 }
