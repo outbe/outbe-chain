@@ -96,7 +96,7 @@ sol! {
     }
 
     interface IPromisMining {
-        function minePromis(bytes14 seriesId, uint256 amount, uint256 nonce, bytes32 mac, uint64 opNonce)
+        function minePromis(bytes14 seriesId, uint256 amount, uint64 nonce, bytes32 mac, uint64 opNonce)
             external
             returns (uint256 promisAmount);
     }
@@ -319,7 +319,7 @@ pub fn mine_promis(
         &IPromisMining::minePromisCall {
             seriesId: series,
             amount: U256::from(amount),
-            nonce: U256::from(nonce),
+            nonce,
             mac: mac.into(),
             opNonce: op_nonce,
         },
