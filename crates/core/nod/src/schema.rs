@@ -122,6 +122,7 @@ pub struct NodCertifiedGenerationProjection {
     pub generation: u64,
     pub job_id: B256,
     pub program_semantics_hash: B256,
+    pub protocol_bundle_hash: B256,
     pub nod_root: B256,
     pub bucket_root: B256,
     pub output_manifest_root: B256,
@@ -330,6 +331,13 @@ pub struct NodContract {
     /// the last pass completed and the next starts from the top.
     #[attribute(order = 43)]
     pub call_scan_cursor: outbe_primitives::storage::dsl::Value<u32>,
+
+    /// Protocol bundle the certified generation was produced under. Materialization
+    /// reads it here rather than from a runtime job registry, which the node is free
+    /// to forget once every job is terminal.
+    #[attribute(order = 44)]
+    pub ocomp_materialization_protocol_bundle_hash:
+        outbe_primitives::storage::dsl::Map<WorldwideDay, B256>,
 }
 
 impl<'storage> NodContract<'storage> {
@@ -401,6 +409,9 @@ impl<'storage> NodContract<'storage> {
         let nod_amount_total = self.ocomp_nod_amount_total.read(&worldwide_day)?;
         let nod_gratis_consumed = self.ocomp_nod_gratis_consumed.read(&worldwide_day)?;
         let job_id = self.ocomp_materialization_job_id.read(&worldwide_day)?;
+        let protocol_bundle_hash = self
+            .ocomp_materialization_protocol_bundle_hash
+            .read(&worldwide_day)?;
         let program_semantics_hash = self
             .ocomp_materialization_program_semantics_hash
             .read(&worldwide_day)?;
@@ -419,6 +430,7 @@ impl<'storage> NodContract<'storage> {
                 || !nod_amount_total.is_zero()
                 || !nod_gratis_consumed.is_zero()
                 || !job_id.is_zero()
+                || !protocol_bundle_hash.is_zero()
                 || !program_semantics_hash.is_zero()
                 || next_nod_ordinal != 0
                 || last_progress_height != 0
@@ -435,11 +447,15 @@ impl<'storage> NodContract<'storage> {
             || output_manifest_root.is_zero()
             || !(metadata >> 160usize).is_zero()
             || job_id.is_zero()
+            || protocol_bundle_hash.is_zero()
             || program_semantics_hash.is_zero()
         {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "installed Nod OCOMP generation is malformed".into(),
-            ));
+            return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
+                "installed Nod OCOMP generation is malformed: day {} generation {generation} \
+                 nod_root {nod_root} bucket_root {bucket_root} manifest {output_manifest_root} \
+                 job {job_id} bundle {protocol_bundle_hash} semantics {program_semantics_hash}",
+                worldwide_day.value()
+            )));
         }
         let issued_at = (metadata & U256::from(u64::MAX)).to::<u64>();
         let tribute_count = ((metadata >> 64usize) & U256::from(u32::MAX)).to::<u32>();
@@ -461,6 +477,7 @@ impl<'storage> NodContract<'storage> {
             worldwide_day,
             generation,
             job_id,
+            protocol_bundle_hash,
             program_semantics_hash,
             nod_root,
             bucket_root,
@@ -495,6 +512,8 @@ impl<'storage> NodContract<'storage> {
         self.ocomp_nod_gratis_consumed
             .write(&worldwide_day, U256::ZERO)?;
         self.ocomp_materialization_job_id
+            .write(&worldwide_day, B256::ZERO)?;
+        self.ocomp_materialization_protocol_bundle_hash
             .write(&worldwide_day, B256::ZERO)?;
         self.ocomp_materialization_program_semantics_hash
             .write(&worldwide_day, B256::ZERO)?;

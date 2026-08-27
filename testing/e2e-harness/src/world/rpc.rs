@@ -2738,6 +2738,8 @@ impl Rpc {
             worldwide_day: WorldwideDay::new(nod.worldwideDay),
             generation: nod.generation,
             job_id: active.job_id,
+            // The public read does not surface it, and no assertion here looks at it.
+            protocol_bundle_hash: B256::ZERO,
             program_semantics_hash: active.program_semantics_hash,
             nod_root: nod.nodRoot,
             bucket_root: nod.bucketRoot,
