@@ -30,9 +30,8 @@ pub const TARGET_CHAIN_ID: u64 = 31338;
 const READY_TRIES: u32 = 60;
 
 /// Addresses one target-chain deploy produced.
-/// Native float each bridging contract holds to pay dispatch fees. The mock
-/// mailbox quotes a hundred wei a message, so this covers a scenario many times
-/// over without pretending to be a fee market.
+/// Native float the router holds to pay dispatch fees, as the deploy tops it up
+/// on a real target. A user pays for their own NFT hop, so the bridge needs none.
 const BRIDGE_FLOAT_WEI: u64 = 1_000_000_000_000_000_000;
 
 #[derive(Clone, Debug)]
@@ -297,14 +296,12 @@ impl TargetChain {
         // A router pays the bridge fee out of its own native float and reverts
         // `NotEnoughNative` when it holds none; production tops it up, and so
         // must a chain that is expected to send anything home.
-        for holder in [contracts.target_router, contracts.nft_bridge] {
-            crate::internal::eth::send_value(
-                &url,
-                holder,
-                DEPLOYER_KEY,
-                alloy_primitives::U256::from(BRIDGE_FLOAT_WEI),
-            )?;
-        }
+        crate::internal::eth::send_value(
+            &url,
+            contracts.target_router,
+            DEPLOYER_KEY,
+            alloy_primitives::U256::from(BRIDGE_FLOAT_WEI),
+        )?;
         self.send(
             &url,
             contracts.escrow,
