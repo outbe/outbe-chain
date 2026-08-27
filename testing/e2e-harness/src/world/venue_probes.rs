@@ -57,10 +57,6 @@ sol! {
         function flushPendingSend(uint256 idx) external;
         function nextParkedIdx() external view returns (uint256);
         function retryDelivery(uint256 idx) external;
-        function parked(uint256 idx)
-            external
-            view
-            returns (address target, bool done, bytes memory sender, bytes memory payload);
     }
 
     #[sol(alloy_sol_types = alloy_sol_types)]
@@ -484,25 +480,9 @@ pub(crate) fn parked_deliveries(world: &World) -> String {
                     format!("{data} ({text})")
                 })
                 .collect();
-            // The reason alone does not say which message died; the parked entry
-            // carries the recipient and the payload whose second byte is the type.
-            let mut described = Vec::new();
-            let mut idx = U256::ZERO;
-            while idx < U256::from(entries.len()) {
-                match eth::read_call(&url, contracts.loopback, &IParkedWork::parkedCall { idx }) {
-                    Some(entry) => described.push(format!(
-                        "to {} type {}",
-                        entry.target,
-                        entry.payload.get(1).copied().unwrap_or_default()
-                    )),
-                    None => described.push("unreadable entry".to_owned()),
-                }
-                idx += U256::from(1);
-            }
             format!(
-                "{} parked deliveries ({}): {}",
+                "{} parked deliveries: {}",
                 entries.len(),
-                described.join(", "),
                 reasons.join(" | ")
             )
         }
