@@ -1,6 +1,8 @@
-//! Transaction building and signing (EIP-155 legacy transactions).
+//! Transaction building and signing.
 
-use alloy_primitives::{keccak256, Address, U256};
+use alloy_consensus::{SignableTransaction as _, TxEip7702};
+use alloy_eips::eip2718::Encodable2718 as _;
+use alloy_primitives::{keccak256, Address, Signature, U256};
 use eyre::Result;
 use k256::ecdsa::signature::hazmat::PrehashSigner;
 use k256::ecdsa::SigningKey;
@@ -73,6 +75,24 @@ impl TxSigner {
     /// nonce))` digest defined by EIP-7702. Keep new use-sites narrow.
     pub fn key(&self) -> &SigningKey {
         &self.key
+    }
+
+    /// Sign and EIP-2718 encode an EIP-7702 transaction.
+    pub(crate) fn sign_eip7702_tx(&self, tx: TxEip7702) -> Result<Vec<u8>> {
+        let hash = tx.signature_hash();
+        let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = self
+            .key
+            .sign_prehash(hash.as_slice())
+            .map_err(|error| eyre::eyre!("EIP-7702 transaction signing failed: {error}"))?;
+        let signature = Signature::from_bytes_and_parity(
+            signature.to_bytes().as_slice(),
+            recovery_id.to_byte() != 0,
+        )
+        .normalized_s();
+        let signed = tx.into_signed(signature);
+        let mut raw_transaction = Vec::with_capacity(signed.encode_2718_len());
+        signed.encode_2718(&mut raw_transaction);
+        Ok(raw_transaction)
     }
 
     /// Build, sign, and send a transaction to the given contract.

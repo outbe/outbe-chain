@@ -82,7 +82,7 @@ fn readiness(world: &mut World) {
     world.rpc.assert_zerofee_readiness();
 }
 
-#[when("a funded fresh account delegates to ZeroFee with EIP-7702")]
+#[when("an account with one atomic COEN bootstraps its ZeroFee delegation")]
 fn delegate(world: &mut World) {
     let funder = world
         .validators
@@ -91,11 +91,24 @@ fn delegate(world: &mut World) {
     world
         .rpc
         .prepare_zerofee_account(&funder, &mut world.state)
-        .expect("fund and delegate fresh account");
+        .expect("bootstrap fresh ZeroFee account");
 }
 
 #[then("the exact ZeroFee delegation designator is installed")]
 fn delegation_installed(world: &mut World) {
+    world.rpc.assert_zerofee_delegation(&world.state);
+}
+
+#[when("the exact included ZeroFee bootstrap transaction is replayed")]
+fn replay_bootstrap_transaction(world: &mut World) {
+    world
+        .rpc
+        .replay_zerofee_bootstrap_transaction(&world.state)
+        .expect("replay exact included bootstrap transaction");
+}
+
+#[then("the bootstrap replay is rejected without changing account or quota state")]
+fn bootstrap_replay_rejected(world: &mut World) {
     world.rpc.assert_zerofee_delegation(&world.state);
 }
 

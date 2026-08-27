@@ -10,6 +10,16 @@ pub struct PinnedProtocolBundle {
 }
 
 impl PinnedProtocolBundle {
+    pub fn decode_canonical(
+        canonical: &[u8],
+        limits: &SchemaLimits,
+    ) -> Result<Self, ProtocolError> {
+        let bundle = ProtocolBundleV1::decode_canonical(canonical, limits)?;
+        bundle.validate_lysis_v1_input_codecs()?;
+        let hash = bundle.protocol_bundle_hash(limits)?;
+        Ok(Self { bundle, hash })
+    }
+
     pub fn decode(
         canonical: &[u8],
         expected_hash: B256,

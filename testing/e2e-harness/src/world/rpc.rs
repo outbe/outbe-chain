@@ -28,6 +28,8 @@ use outbe_ocomp_protocol::{
     state::{ActiveGenerationV1, OcompJobRecordV1},
     vote::OcompVoteAccountabilityV1,
 };
+#[cfg(feature = "ocomp-integration")]
+use outbe_ocompregistry::precompile::IOcompRegistry;
 use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
 use serde::{Deserialize, Serialize};
 
@@ -890,6 +892,46 @@ impl Rpc {
     /// Active protocol version (`IUpdate.getActiveVersion`).
     pub fn active_version(&self) -> Option<u64> {
         self.active_version_on_url(&self.cfg.rpc0)
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn active_ocomp_protocol_bundle_hash_on(&self, port: u16) -> Option<B256> {
+        eth::read_call(
+            &self.url(port),
+            addresses::OCOMP_REGISTRY_ADDR,
+            &IOcompRegistry::activeProtocolBundleHashCall {},
+        )
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn retiring_ocomp_protocol_bundle_hash_on(&self, port: u16) -> Option<B256> {
+        eth::read_call(
+            &self.url(port),
+            addresses::OCOMP_REGISTRY_ADDR,
+            &IOcompRegistry::retiringProtocolBundleHashCall {},
+        )
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn ocomp_live_lineage_count_on(&self, port: u16, bundle_hash: B256) -> Option<u32> {
+        eth::read_call(
+            &self.url(port),
+            addresses::OCOMP_REGISTRY_ADDR,
+            &IOcompRegistry::liveLineageCountCall {
+                protocolBundleHash: bundle_hash,
+            },
+        )
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    pub fn ocomp_retention_until_on(&self, port: u16, bundle_hash: B256) -> Option<u64> {
+        eth::read_call(
+            &self.url(port),
+            addresses::OCOMP_REGISTRY_ADDR,
+            &IOcompRegistry::retentionUntilCall {
+                protocolBundleHash: bundle_hash,
+            },
+        )
     }
 
     /// Active protocol version on the node at `port`.
@@ -3239,11 +3281,19 @@ impl Rpc {
         let address =
             eth::address_of(key).ok_or_else(|| eyre!("derive ZeroFee fixture address"))?;
         let funder_key = funder.evm_key()?;
-        // This signer must pay for the EIP-7702 delegation and, in the quota
-        // lifecycle scenario, one deliberately non-sponsored fallback call.
-        // Sponsored calls themselves must leave this post-delegation balance
-        // unchanged; the assertions below verify that separately.
-        eth::send_value(&self.cfg.rpc0, address, &funder_key, eth::coen(10))?;
+        // Seed the exact eligibility boundary: one atomic unit is 0.000001
+        // COEN. The bootstrap itself must neither consume that unit nor touch
+        // the daily quota.
+        eth::send_value(&self.cfg.rpc0, address, &funder_key, U256::from(1))?;
+        let bootstrap_balance_before = eth::balance(&self.cfg.rpc0, address)
+            .ok_or_else(|| eyre!("read pre-bootstrap balance"))?;
+        if bootstrap_balance_before != U256::from(1) {
+            return Err(eyre!(
+                "bootstrap fixture balance must be exactly one atomic unit, got {bootstrap_balance_before}"
+            ));
+        }
+        let bootstrap_nonce_before =
+            eth::nonce(&self.cfg.rpc0, address).ok_or_else(|| eyre!("read bootstrap nonce"))?;
 
         let auth = eth::read_call(
             &self.cfg.rpc0,
@@ -3261,11 +3311,63 @@ impl Rpc {
             return Err(eyre!("fresh counter must be (today, 0), got {counter:?}"));
         }
 
-        state.zerofee_delegation_receipt = Some(eth::install_delegation(
-            &self.cfg.rpc0,
-            key,
-            addresses::ZEROFEE_ADDR,
-        )?);
+        let bootstrap_hash = self
+            .sh()
+            .cli_required([
+                "--private-key",
+                key,
+                "--rpc-url",
+                self.cfg.rpc0.as_str(),
+                "zero-fee",
+                "bootstrap",
+            ])?
+            .trim()
+            .to_owned();
+        if !self.wait_successful_receipt(&bootstrap_hash, 20) {
+            return Err(eyre!(
+                "product CLI ZeroFee bootstrap was not mined successfully: {bootstrap_hash}"
+            ));
+        }
+        state.zerofee_delegation_receipt = Some(
+            eth::receipt_json(&self.cfg.rpc0, &bootstrap_hash)
+                .ok_or_else(|| eyre!("read product CLI bootstrap receipt"))?,
+        );
+        let bootstrap_receipt = state
+            .zerofee_delegation_receipt
+            .as_ref()
+            .expect("bootstrap receipt was just stored");
+        if !receipt_status(bootstrap_receipt) {
+            return Err(eyre!("one-unit ZeroFee bootstrap receipt failed"));
+        }
+        let bootstrap_balance_after = eth::balance(&self.cfg.rpc0, address)
+            .ok_or_else(|| eyre!("read post-bootstrap balance"))?;
+        if bootstrap_balance_after != bootstrap_balance_before {
+            return Err(eyre!(
+                "bootstrap changed native balance: before={bootstrap_balance_before}, after={bootstrap_balance_after}"
+            ));
+        }
+        let bootstrap_nonce_after = eth::nonce(&self.cfg.rpc0, address)
+            .ok_or_else(|| eyre!("read post-bootstrap nonce"))?;
+        let expected_bootstrap_nonce = bootstrap_nonce_before
+            .checked_add(2)
+            .ok_or_else(|| eyre!("bootstrap nonce overflow"))?;
+        if bootstrap_nonce_after != expected_bootstrap_nonce {
+            return Err(eyre!(
+                "bootstrap nonce must advance by two: before={bootstrap_nonce_before}, after={bootstrap_nonce_after}"
+            ));
+        }
+        let counter_after_bootstrap = self
+            .zerofee_counter(address)
+            .ok_or_else(|| eyre!("read post-bootstrap ZeroFee counter"))?;
+        if counter_after_bootstrap.1 != 0 {
+            return Err(eyre!(
+                "bootstrap must not consume quota, got {counter_after_bootstrap:?}"
+            ));
+        }
+
+        // Top up only after bootstrap evidence is captured; the main scenario
+        // later needs enough COEN for its deliberately paid fallback call.
+        eth::send_value(&self.cfg.rpc0, address, &funder_key, eth::coen(10))?;
         let delegation_hash = state
             .zerofee_delegation_receipt
             .as_ref()
@@ -3324,6 +3426,37 @@ impl Rpc {
             before_counter,
             "replay changed ZeroFee counter"
         );
+        self.assert_zerofee_delegation(state);
+        Ok(())
+    }
+
+    pub fn replay_zerofee_bootstrap_transaction(&self, state: &FixtureState) -> Result<()> {
+        let raw = state
+            .zerofee_delegation_raw
+            .as_deref()
+            .ok_or_else(|| eyre!("missing exact included bootstrap transaction"))?;
+        let address = zerofee_address(state);
+        let before_balance = eth::balance(&self.cfg.rpc0, address);
+        let before_nonce = eth::nonce(&self.cfg.rpc0, address);
+        let before_counter = self.zerofee_counter(address);
+        let error = eth::raw_json_result(
+            &self.cfg.rpc0,
+            "eth_sendRawTransaction",
+            serde_json::json!([raw]),
+        )
+        .expect_err("exact included bootstrap transaction replay unexpectedly accepted");
+        if error.to_string().is_empty() {
+            return Err(eyre!("bootstrap replay returned an empty RPC error"));
+        }
+        if eth::balance(&self.cfg.rpc0, address) != before_balance {
+            return Err(eyre!("bootstrap replay changed signer balance"));
+        }
+        if eth::nonce(&self.cfg.rpc0, address) != before_nonce {
+            return Err(eyre!("bootstrap replay changed signer nonce"));
+        }
+        if self.zerofee_counter(address) != before_counter {
+            return Err(eyre!("bootstrap replay changed ZeroFee counter"));
+        }
         self.assert_zerofee_delegation(state);
         Ok(())
     }

@@ -116,6 +116,7 @@ impl MetadosisContract<'_> {
             self.write_ocomp_job_record(intent_id, &record, schema_limits)?;
             self.push_terminal_intent(wwd, intent_id, fsm_limits.max_terminal_records)?;
             self.remove_live_scheduler(intent_id)?;
+            self.release_ocomp_lineage(intent_id, at_height, schema_limits)?;
         } else {
             let ready_key = ReadyIndexKey::from_projection(projection)?;
             let mut ready_index = self.read_ready_index()?;
@@ -523,6 +524,7 @@ impl MetadosisContract<'_> {
                         "terminal no-retry WWD unexpectedly remains in READY index",
                     ));
                 }
+                self.release_ocomp_lineage(live_intent_id, at_height, schema_limits)?;
                 return Ok(OcompExpiryDisposition::TerminalNoRetry {
                     next_pending_nonce,
                     retained_lysis_budget,
@@ -706,6 +708,7 @@ impl MetadosisContract<'_> {
                         "terminal no-retry WWD unexpectedly remains in READY index",
                     ));
                 }
+                self.release_ocomp_lineage(intent_id, at_height, schema_limits)?;
                 return Ok(OcompExpiryDisposition::TerminalNoRetry {
                     next_pending_nonce: terminal.next_pending_nonce,
                     retained_lysis_budget,
@@ -924,6 +927,7 @@ impl MetadosisContract<'_> {
             commit_outer_transition(self, wwd, outer_transition, activated_at_height)?;
             self.remove_live_scheduler(intent_id)?;
             self.ocomp_fsm_states.get_bytes(&wwd).clear()?;
+            self.release_ocomp_lineage(intent_id, activated_at_height, schema_limits)?;
 
             let frozen = &record.intent.frozen_metadosis_values;
             self.emit(IMetadosis::MetadosisExecuted {
@@ -951,5 +955,29 @@ impl MetadosisContract<'_> {
             })?;
             Ok(completed_binding)
         })()
+    }
+
+    fn release_ocomp_lineage(
+        &mut self,
+        lineage: B256,
+        at_height: u64,
+        schema_limits: &SchemaLimits,
+    ) -> Result<()> {
+        let mut registry = outbe_ocompregistry::OcompRegistry::new(self.storage.clone());
+        if registry.active_authority(schema_limits)?.is_none() {
+            #[cfg(any(test, feature = "test-utils"))]
+            return Ok(());
+            #[cfg(not(any(test, feature = "test-utils")))]
+            return Err(storage_corruption_message(
+                "terminal OCOMP WWD has no active Registry authority",
+            ));
+        }
+        let released = registry.release_lineage(lineage, at_height, schema_limits)?;
+        if !released {
+            return Err(storage_corruption_message(
+                "terminal OCOMP WWD has no Registry lineage pin",
+            ));
+        }
+        Ok(())
     }
 }

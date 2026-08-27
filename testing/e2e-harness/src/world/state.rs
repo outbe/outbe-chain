@@ -281,6 +281,15 @@ pub struct FixtureState {
     /// Public, finalized Metadosis request observed identically on every
     /// validator. This is evidence only; the harness cannot create the job.
     pub ocomp_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
+    /// Successor activation evidence captured while a V1 job remains live.
+    pub ocomp_successor_bundle_hash: Option<alloy_primitives::B256>,
+    pub ocomp_successor_activation_height: Option<u64>,
+    pub ocomp_successor_node_pids_before_activation: Vec<u32>,
+    pub ocomp_successor_node_pids_after_activation: Vec<u32>,
+    /// Fresh post-activation request pinned to and completed by the successor.
+    pub ocomp_successor_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
+    /// Deterministic predecessor retention deadline observed after V1 release.
+    pub ocomp_predecessor_retention_until: Option<u64>,
     /// Finalized automatic successor to an expired public OCOMP request.
     pub ocomp_retry_job_request: Option<crate::world::rpc::OcompPublicJobRequestV1>,
     /// Finalized height observed after the retry completed and finality advanced.
@@ -477,6 +486,12 @@ impl Default for FixtureState {
             projection_outage_finalized_before: None,
             ocomp_activation_height: None,
             ocomp_job_request: None,
+            ocomp_successor_bundle_hash: None,
+            ocomp_successor_activation_height: None,
+            ocomp_successor_node_pids_before_activation: Vec::new(),
+            ocomp_successor_node_pids_after_activation: Vec::new(),
+            ocomp_successor_job_request: None,
+            ocomp_predecessor_retention_until: None,
             ocomp_retry_job_request: None,
             ocomp_retry_completed_finality: None,
             ocomp_dynamic_worldwide_days: Vec::new(),

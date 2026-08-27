@@ -13,7 +13,7 @@ use crate::{
     commit::commit_outer_transition,
     constants::{RED_DAY_REDUCTION_COEF, SYMBOLIC_RATE},
     errors::MetadosisError,
-    ocomp::schema::OcompRequestProfile,
+    ocomp::{schema::OcompRequestProfile, OcompRequestProfileExt},
     precompile::IMetadosis,
     reducer::{reduce_outer_wwd, OuterWwdEvent, ReadyDisposition},
     schema::MetadosisContract,

@@ -30,6 +30,13 @@ pub const FREE_TX_DAILY_LIMIT: u32 = 8;
 /// `offerTribute` performs an UltraHonk verification.
 pub const FREE_TX_DAILY_GAS_LIMIT: u64 = 500_000;
 
+/// Maximum gas limit for the one-time self-authorized EIP-7702 bootstrap.
+///
+/// The bootstrap transaction only installs the canonical ZeroFee delegation
+/// and calls the paymaster's read-only authorization view. It is deliberately
+/// narrower than the ordinary sponsored-call budget.
+pub const FREE_TX_BOOTSTRAP_GAS_LIMIT: u64 = 100_000;
+
 /// Maximum sponsored gas limit for calls to the TributeFactory.
 ///
 /// This matches the explicit transaction limit used by `outbe-cli tribute

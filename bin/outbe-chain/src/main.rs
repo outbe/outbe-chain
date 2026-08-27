@@ -52,13 +52,159 @@ use reth_ethereum::cli::interface::Cli;
 use reth_node_builder::NodeHandle;
 use reth_provider::{BlockIdReader, HeaderProvider, StateProviderFactory};
 use reth_rpc_server_types::{RethRpcModule, RpcModuleSelection, RpcModuleValidator};
-use std::{path::PathBuf, sync::Arc, thread, time::Duration};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+    thread,
+    time::Duration,
+};
 use tokio::sync::oneshot;
 use tracing::info;
 
 mod ocomp_exex;
 mod ocomp_genesis;
 mod tee_genesis;
+
+fn load_installed_ocomp_bundles(
+    domain_root: &Path,
+    initial: outbe_ocomp::bundle::PinnedProtocolBundle,
+    configured_hashes: Option<&str>,
+    limits: &outbe_ocomp_protocol::SchemaLimits,
+) -> eyre::Result<Vec<outbe_ocomp::bundle::PinnedProtocolBundle>> {
+    let catalog_root = domain_root.join("protocol-bundles-v1");
+    let initial_hash = initial.hash();
+    let mut bundles = BTreeMap::new();
+    let metadata = match std::fs::symlink_metadata(&catalog_root) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return select_installed_ocomp_bundles(
+                initial,
+                initial_hash,
+                bundles,
+                configured_hashes,
+            )
+        }
+        Err(error) => return Err(error).wrap_err("inspect OCOMP bundle catalog"),
+    };
+    if !metadata.file_type().is_dir() || metadata.file_type().is_symlink() {
+        eyre::bail!("OCOMP bundle catalog must be a real directory");
+    }
+    for entry in std::fs::read_dir(&catalog_root).wrap_err("read OCOMP bundle catalog")? {
+        let entry = entry.wrap_err("read OCOMP bundle catalog entry")?;
+        let metadata = std::fs::symlink_metadata(entry.path())
+            .wrap_err("inspect OCOMP bundle catalog entry")?;
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            eyre::bail!("OCOMP bundle catalog entries must be regular files");
+        }
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| eyre::eyre!("OCOMP bundle filename is not UTF-8"))?;
+        let hash_hex = name
+            .strip_suffix(".ocb1")
+            .ok_or_else(|| eyre::eyre!("OCOMP bundle filename must end in .ocb1"))?;
+        if hash_hex.len() != 64
+            || !hash_hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            eyre::bail!("OCOMP bundle filename must be 64 lowercase hex characters plus .ocb1");
+        }
+        let canonical = std::fs::read(entry.path()).wrap_err("read installed OCOMP bundle")?;
+        let bundle =
+            outbe_ocomp::bundle::PinnedProtocolBundle::decode_canonical(&canonical, limits)
+                .wrap_err("decode installed OCOMP bundle")?;
+        if hex::encode(bundle.hash().as_slice()) != hash_hex {
+            eyre::bail!("installed OCOMP bundle filename does not match its canonical hash");
+        }
+        if let Some(existing) = bundles.insert(bundle.hash(), bundle.clone()) {
+            if existing != bundle {
+                eyre::bail!("conflicting installed OCOMP bundle bytes");
+            }
+        }
+    }
+    select_installed_ocomp_bundles(initial, initial_hash, bundles, configured_hashes)
+}
+
+fn select_installed_ocomp_bundles(
+    initial: outbe_ocomp::bundle::PinnedProtocolBundle,
+    initial_hash: alloy_primitives::B256,
+    bundles: BTreeMap<alloy_primitives::B256, outbe_ocomp::bundle::PinnedProtocolBundle>,
+    configured_hashes: Option<&str>,
+) -> eyre::Result<Vec<outbe_ocomp::bundle::PinnedProtocolBundle>> {
+    if bundles.is_empty() {
+        if let Some(configured) = configured_hashes {
+            let hashes = parse_ocomp_bundle_hashes(configured)?;
+            if hashes.as_slice() != [initial_hash] {
+                eyre::bail!(
+                    "configured OCOMP bundle hashes require a populated hash-addressed catalog"
+                );
+            }
+        }
+        return Ok(vec![initial]);
+    }
+    ordered_installed_ocomp_bundle_hashes(initial_hash, &bundles, configured_hashes)?
+        .into_iter()
+        .map(|hash| {
+            bundles.get(&hash).cloned().ok_or_else(|| {
+                eyre::eyre!("configured OCOMP bundle {hash} is not installed in the catalog")
+            })
+        })
+        .collect()
+}
+
+fn ordered_installed_ocomp_bundle_hashes<V>(
+    initial_hash: alloy_primitives::B256,
+    bundles: &BTreeMap<alloy_primitives::B256, V>,
+    configured_hashes: Option<&str>,
+) -> eyre::Result<Vec<alloy_primitives::B256>> {
+    if bundles.is_empty() || bundles.len() > 2 {
+        eyre::bail!("OCOMP runtime supports exactly active plus one staged/retiring bundle");
+    }
+    if let Some(configured) = configured_hashes {
+        let hashes = parse_ocomp_bundle_hashes(configured)?;
+        if hashes.len() != bundles.len() || hashes.iter().any(|hash| !bundles.contains_key(hash)) {
+            eyre::bail!("OCOMP bundle catalog must exactly match OCOMP_PROTOCOL_BUNDLE_HASHES");
+        }
+        return Ok(hashes);
+    }
+
+    if bundles.len() > 1 && !bundles.contains_key(&initial_hash) {
+        eyre::bail!(
+            "OCOMP_PROTOCOL_BUNDLE_HASHES is required to order a post-genesis two-bundle catalog"
+        );
+    }
+    let mut hashes = bundles.keys().copied().collect::<Vec<_>>();
+    hashes.sort_by_key(|hash| *hash != initial_hash);
+    Ok(hashes)
+}
+
+fn parse_ocomp_bundle_hashes(value: &str) -> eyre::Result<Vec<alloy_primitives::B256>> {
+    let mut hashes = Vec::new();
+    for encoded in value.split(',') {
+        let hex_value = encoded
+            .strip_prefix("0x")
+            .ok_or_else(|| eyre::eyre!("OCOMP bundle hash must have a 0x prefix"))?;
+        if hex_value.len() != 64
+            || !hex_value
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            eyre::bail!("OCOMP bundle hash must be 64 lowercase hex characters after 0x");
+        }
+        let decoded = hex::decode(hex_value).wrap_err("decode configured OCOMP bundle hash")?;
+        let hash = alloy_primitives::B256::from_slice(&decoded);
+        if hashes.contains(&hash) {
+            eyre::bail!("OCOMP bundle hash list contains a duplicate");
+        }
+        hashes.push(hash);
+    }
+    if hashes.is_empty() || hashes.len() > 2 {
+        eyre::bail!("OCOMP bundle hash list must contain one or two adjacent authorities");
+    }
+    Ok(hashes)
+}
 
 struct RenewalNodeAuthorityV1(k256::ecdsa::SigningKey);
 
@@ -1215,15 +1361,56 @@ fn run_node() -> eyre::Result<()> {
             ocomp_fork_install.request_profile.protocol_bundle_hash,
             &ocomp_limits,
         )?;
-        let ocomp_worker_port = args
+        let configured_ocomp_bundle_hashes =
+            std::env::var("OCOMP_PROTOCOL_BUNDLE_HASHES").ok();
+        let ocomp_bundles = load_installed_ocomp_bundles(
+            &ocomp_domain_root,
+            ocomp_bundle,
+            configured_ocomp_bundle_hashes.as_deref(),
+            &ocomp_limits,
+        )?;
+        let ocomp_worker_base_port = args
             .listen_address
             .port()
             .checked_add(1)
             .ok_or_else(|| eyre::eyre!("consensus port leaves no OCOMP Worker endpoint port"))?;
-        let ocomp_worker_address = std::net::SocketAddr::new(
-            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
-            ocomp_worker_port,
-        );
+        let mut ocomp_runtime_bundles = Vec::with_capacity(ocomp_bundles.len());
+        let ocomp_lane_port_stride = u16::try_from(
+            outbe_ocomp::worker_transport::MAX_REGISTERED_WORKERS,
+        )
+        .map_err(|_| eyre::eyre!("OCOMP worker limit exceeds u16"))?
+        .checked_add(2)
+        .ok_or_else(|| eyre::eyre!("OCOMP bundle lane port stride overflow"))?;
+        for (index, bundle) in ocomp_bundles.into_iter().enumerate() {
+            let lane = u16::try_from(index)
+                .map_err(|_| eyre::eyre!("OCOMP bundle lane count exceeds u16"))?;
+            let port_offset = lane
+                .checked_mul(ocomp_lane_port_stride)
+                .ok_or_else(|| eyre::eyre!("OCOMP bundle lane port offset overflow"))?;
+            let worker_port = ocomp_worker_base_port
+                .checked_add(port_offset)
+                .ok_or_else(|| eyre::eyre!("OCOMP bundle lane leaves no Worker endpoint port"))?;
+            let worker_address = std::net::SocketAddr::new(
+                std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                worker_port,
+            );
+            info!(
+                bundle_hash = %bundle.hash(),
+                lane = index,
+                %worker_address,
+                "loaded pinned OCOMP runtime bundle lane"
+            );
+            ocomp_runtime_bundles.push(ocomp_exex::OcompExExBundleConfigV1 {
+                worker_address,
+                identity: outbe_ocomp_protocol::local_control::EndpointIdentity {
+                    chain_id: builder.config().chain.chain().id(),
+                    genesis_hash: builder.config().chain.genesis_hash(),
+                    boot_nonce: ocomp_install_hash,
+                    protocol_bundle_hash: bundle.hash(),
+                },
+                protocol_bundle: bundle,
+            });
+        }
         let ocomp_policy = if args.is_validator {
             outbe_ocomp::embedded_runtime::EmbeddedNodePolicyV1::Validator
         } else {
@@ -1242,16 +1429,10 @@ fn run_node() -> eyre::Result<()> {
         };
         let ocomp_exex_config = ocomp_exex::OcompExExConfigV1 {
             domain_root: ocomp_domain_root,
-            worker_address: ocomp_worker_address,
-            identity: outbe_ocomp_protocol::local_control::EndpointIdentity {
-                chain_id: builder.config().chain.chain().id(),
-                genesis_hash: builder.config().chain.genesis_hash(),
-                boot_nonce: ocomp_install_hash,
-                protocol_bundle_hash: ocomp_fork_install.request_profile.protocol_bundle_hash,
-            },
-            protocol_bundle: ocomp_bundle,
+            bundles: ocomp_runtime_bundles,
             policy: ocomp_policy,
             validator_rpc_url: ocomp_validator_rpc_url,
+            chain_id: builder.config().chain.chain().id(),
             genesis_hash: builder.config().chain.genesis_hash(),
         };
         let ocomp_baseline = ProjectionCheckpoint {
@@ -2151,6 +2332,58 @@ mod tests {
     }
 
     struct ExecutionTeardownSentinel(Arc<AtomicBool>);
+
+    #[test]
+    fn ocomp_bundle_catalog_can_rotate_from_v1_v2_to_v2_v3() {
+        let v1 = alloy_primitives::B256::repeat_byte(0x11);
+        let v2 = alloy_primitives::B256::repeat_byte(0x22);
+        let v3 = alloy_primitives::B256::repeat_byte(0x33);
+        let installed = std::collections::BTreeMap::from([(v2, ()), (v3, ())]);
+        let configured = format!("{v2:#x},{v3:#x}");
+
+        let ordered =
+            super::ordered_installed_ocomp_bundle_hashes(v1, &installed, Some(&configured))
+                .expect("post-genesis adjacent authorities should not force V1");
+
+        assert_eq!(ordered, vec![v2, v3]);
+    }
+
+    #[test]
+    fn post_genesis_two_bundle_catalog_requires_explicit_lane_order() {
+        let v1 = alloy_primitives::B256::repeat_byte(0x11);
+        let v2 = alloy_primitives::B256::repeat_byte(0x22);
+        let v3 = alloy_primitives::B256::repeat_byte(0x33);
+        let installed = std::collections::BTreeMap::from([(v2, ()), (v3, ())]);
+
+        let error = super::ordered_installed_ocomp_bundle_hashes(v1, &installed, None)
+            .expect_err("hash order must be explicit after genesis V1 is retired");
+
+        assert!(error
+            .to_string()
+            .contains("OCOMP_PROTOCOL_BUNDLE_HASHES is required"));
+    }
+
+    #[test]
+    fn configured_ocomp_bundle_hashes_are_exact_lowercase_and_unique() {
+        let hash = alloy_primitives::B256::repeat_byte(0xab);
+        assert_eq!(
+            super::parse_ocomp_bundle_hashes(&format!("{hash:#x}"))
+                .expect("canonical hash should parse"),
+            vec![hash]
+        );
+        assert!(
+            super::parse_ocomp_bundle_hashes(&format!("{hash:#x},{hash:#x}"))
+                .expect_err("duplicate must fail")
+                .to_string()
+                .contains("duplicate")
+        );
+        assert!(super::parse_ocomp_bundle_hashes(
+            "0xABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABABAB"
+        )
+        .expect_err("uppercase must fail")
+        .to_string()
+        .contains("lowercase"));
+    }
 
     impl Drop for ExecutionTeardownSentinel {
         fn drop(&mut self) {

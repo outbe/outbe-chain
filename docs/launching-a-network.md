@@ -200,3 +200,89 @@ Regenerating the genesis invalidates the OCOMP registrations (they sign its
 hash) and every node's stored state. To restart cleanly: stop the services,
 delete `validator-N/data`, `validator-N/consensus` and `tee/`, drop the
 `outbe_*` MongoDB databases, then deploy the new archives and start again.
+
+## Updating the OCOMP protocol bundle
+
+After the initial launch, OCOMP bundles are upgraded through `Update`; genesis
+is not edited. The OCOMP Registry at
+`0x000000000000000000000000000000000000EE12` owns active, staged and retiring
+authorities. Metadosis only pins each lineage to the bundle active when that
+lineage starts.
+
+The transition contract is:
+
+- existing jobs and their retries continue on the predecessor bundle;
+- fresh jobs at or after the activation block use the successor;
+- every Node and SnapshotExporter has both bundles, and a Worker exists for
+  each bundle, before governance;
+- activation changes consensus authority without restarting any process.
+
+### Build and preload a successor
+
+Build `outbe-chain`, `outbe-ocomp` and the canonical successor `.ocb1` from one
+release revision. Then generate the predecessor-bound proposal artifacts:
+
+```bash
+mkdir -p release/protocol-bundles-v1
+
+outbe-chain ocomp successor \
+  --genesis /opt/outbe-chain/genesis.json \
+  --predecessor-bundle protocol-bundle-v1.ocb1 \
+  --successor-bundle protocol-bundle-v2.ocb1 \
+  --activation-height "$ACTIVATION_HEIGHT" \
+  --update-version "$UPDATE_VERSION" \
+  --info "OCOMP V2" \
+  --successor-output release/ocomp-successor-v2.ocs1 \
+  --proposal-output release/ocomp-update-v2.json \
+  --bundle-catalog-dir release/protocol-bundles-v1
+```
+
+The command validates the chain identity and predecessor relationship and
+writes canonical `OCS1`, ready-to-submit Update JSON, and a non-overwriting
+`<successor-hash>.ocb1` catalog entry. A proposal may carry both `teePolicy` and
+`ocompSuccessor`; Update stages and activates both atomically.
+
+On every validator, install the successor in the node domain catalog and add
+both adjacent hashes to the exporter environment:
+
+```bash
+DOMAIN=/opt/outbe-chain/validator-N/ocomp/domain-v1
+V1_HASH=0x...
+V2_HASH=0x...
+
+sudo install -m 640 \
+  "/opt/outbe-chain/protocol-bundles-v1/${V2_HASH#0x}.ocb1" \
+  "$DOMAIN/protocol-bundles-v1/${V2_HASH#0x}.ocb1"
+
+printf 'OCOMP_PROTOCOL_BUNDLE_HASHES=%s,%s\n' "$V1_HASH" "$V2_HASH" \
+  > /opt/outbe-chain/validator-N/ocomp-bundles.env
+printf 'OCOMP_SUCCESSOR_PROTOCOL_BUNDLE_HASH=%s\n' "$V2_HASH" \
+  > /opt/outbe-chain/validator-N/ocomp-successor.env
+```
+
+Before submitting the proposal, perform one ordinary maintenance restart so
+the embedded Supervisor loads both catalog entries, then run the initial and
+successor Workers. The successor lane uses the node-derived OCOMP base port
+plus six; one SnapshotExporter serves both lanes.
+
+At `activationHeight`, do not restart Node, SnapshotExporter or either Worker.
+Verify that the active hash is the successor, the pending predecessor job still
+has its original pin, and a fresh job is processed by the successor Worker.
+
+### Retirement and the next upgrade
+
+The Registry exposes `retiringProtocolBundleHash()`,
+`liveLineageCount(bundleHash)` and `retentionUntil(bundleHash)`. Remove the
+predecessor only after the retiring hash becomes zero. During a normal
+maintenance restart, stop its Worker, delete its hash-addressed catalog file,
+and remove its hash from `ocomp-bundles.env`.
+
+During that maintenance window also write the surviving active hash to
+`ocomp-active.env`. Before the next proposal, append the new successor hash to
+`ocomp-bundles.env` and write it to `ocomp-successor.env`.
+
+The populated hash catalog is authoritative. The legacy
+`protocol-bundle-v1.ocb1` path is only an initial compatibility fallback and is
+ignored once catalog entries exist. Consequently, after V1 retirement the next
+transition loads V2 plus V3 rather than permanently forcing V1 into every
+runtime.

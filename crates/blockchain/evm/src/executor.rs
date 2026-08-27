@@ -39,7 +39,7 @@ use outbe_primitives::{
     OutbeHeader,
 };
 use outbe_validatorset::ValidatorLifecycle;
-use outbe_zerofee::ZeroFeeTransaction;
+use outbe_zerofee::{BootstrapTransactionView, ZeroFeeTransaction};
 use reth_ethereum::{
     evm::{primitives::Evm, revm::context::TxEnv, RethReceiptBuilder},
     provider::BlockExecutionResult,
@@ -152,7 +152,7 @@ pub mod marker_addresses {
     use alloy_primitives::Address;
     use outbe_primitives::addresses::*;
 
-    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 36] = [
+    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 37] = [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
         CREDIS_ADDRESS,
@@ -203,6 +203,9 @@ pub mod marker_addresses {
         // genesis-seeded, so the runtime 0xEF marker is its only EIP-161
         // preservation path (reth22-1 class).
         L2_REGISTRY_ADDRESS,
+        // OCOMP authority and lineage registry. Fresh genesis initializes it
+        // at height 32; the marker preserves successor/refcount state.
+        OCOMP_REGISTRY_ADDRESS,
         UPDATE_ADDRESS,
         VOTE_ADDRESS,
         // System-only compressed-entity commitment state (no public dispatch).
@@ -566,6 +569,31 @@ where
         max_fee_per_gas: tx.max_fee_per_gas(),
         max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
     }
+}
+
+fn bootstrap_transaction<'a, T>(
+    tx: &'a T,
+    signer: Address,
+    network_chain_id: u64,
+) -> Option<BootstrapTransactionView<'a>>
+where
+    T: alloy_consensus::Transaction + ?Sized,
+{
+    let authorization_list = tx.authorization_list()?;
+    Some(BootstrapTransactionView {
+        signer,
+        tx_chain_id: tx.chain_id(),
+        network_chain_id,
+        nonce: tx.nonce(),
+        to: tx.to(),
+        value: tx.value(),
+        input: tx.input().as_ref(),
+        gas_limit: tx.gas_limit(),
+        max_fee_per_gas: tx.max_fee_per_gas(),
+        max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
+        access_list_empty: tx.access_list().is_some_and(|list| list.is_empty()),
+        authorization_list,
+    })
 }
 
 /// Runs the Outbe pre-execution hook chain against a pre-built runtime context.
@@ -4033,11 +4061,19 @@ where
                 );
                 let mut provider = DirectStorageProvider::new(db, ctx);
                 let storage = StorageHandle::new(&mut provider);
-                storage.with_account_info(signer, |info| Ok((info.code_hash, info.code.clone())))
+                storage.with_account_info(signer, |info| {
+                    Ok((
+                        info.balance,
+                        info.nonce,
+                        info.is_empty_code_hash(),
+                        info.code_hash,
+                        info.code.clone(),
+                    ))
+                })
             };
 
-            let (code_hash, maybe_code) = match signer_state {
-                Ok(code) => code,
+            let (balance, nonce, code_empty, code_hash, maybe_code) = match signer_state {
+                Ok(state) => state,
                 Err(err) => {
                     return Err(BlockExecutionError::Internal(
                         InternalBlockExecutionError::Other(
@@ -4046,6 +4082,34 @@ where
                     ));
                 }
             };
+
+            let bootstrap_candidate = bootstrap_transaction(tx, signer, chain_id)
+                .and_then(|view| outbe_zerofee::classify_bootstrap(&view));
+            let bootstrap_authorized = bootstrap_candidate.is_some_and(|candidate| {
+                outbe_zerofee::authorize_bootstrap(
+                    candidate,
+                    outbe_zerofee::BootstrapAccountView {
+                        balance,
+                        nonce,
+                        code_empty,
+                    },
+                )
+            });
+
+            if bootstrap_authorized {
+                let snapshot = self.inner.evm.enable_zero_fee_overrides();
+                tx_env.gas_price = 0;
+                tx_env.gas_priority_fee = Some(0);
+                let result = self.inner.execute_transaction_with_commit_condition(
+                    WithTxEnv {
+                        tx_env,
+                        tx: Arc::new(recovered),
+                    },
+                    f,
+                );
+                self.inner.evm.restore_zero_fee_overrides(snapshot);
+                return result;
+            }
 
             let delegated_to = if let Some(code) = maybe_code {
                 code.eip7702_address()
@@ -4369,8 +4433,12 @@ where
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use alloy_consensus::{SignableTransaction as _, Transaction as _, TxEip1559, TxReceipt as _};
-    use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718};
+    use alloy_consensus::{
+        SignableTransaction as _, Transaction as _, TxEip1559, TxEip7702, TxReceipt as _,
+    };
+    use alloy_eips::{
+        eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718, eip7702::Authorization,
+    };
     use alloy_evm::{
         eth::{EthBlockExecutionCtx, EthBlockExecutor},
         RecoveredTx as _,
@@ -4379,6 +4447,7 @@ mod tests {
         address, keccak256, logs_bloom, Address, Bytes, Log, Signature, TxKind, B256, U256,
     };
     use alloy_sol_types::{SolCall, SolEvent};
+    use k256::ecdsa::signature::hazmat::PrehashSigner as _;
     use outbe_common::WorldwideDay;
     use outbe_compressed_entities::{
         CandidateCacheLimits, CeMdbx, CeWorkConfig, CompressedTreeService, EnvironmentIdentity,
@@ -12953,6 +13022,182 @@ mod tests {
                 ..Default::default()
             },
         }
+    }
+
+    fn sign_test_hash(key: &k256::ecdsa::SigningKey, hash: &B256) -> alloy_primitives::Signature {
+        let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = key
+            .sign_prehash(hash.as_slice())
+            .expect("test prehash signing must succeed");
+        alloy_primitives::Signature::from_bytes_and_parity(
+            signature.to_bytes().as_slice(),
+            recovery_id.to_byte() != 0,
+        )
+        .normalized_s()
+    }
+
+    fn bootstrap_test_tx() -> reth_primitives_traits::Recovered<reth_ethereum::TransactionSigned> {
+        let key = k256::ecdsa::SigningKey::from_slice(&[0x11; 32]).unwrap();
+        let signer = Address::from_public_key(key.verifying_key());
+        let authorization = Authorization {
+            chain_id: U256::from(CHAIN_ID),
+            address: ZEROFEE_ADDRESS,
+            nonce: 1,
+        };
+        let authorization_signature = sign_test_hash(&key, &authorization.signature_hash());
+        let signed_authorization = authorization.into_signed(authorization_signature);
+        let input = outbe_zerofee::precompile::IZeroFee::authorizeSponsorshipCall { signer }
+            .abi_encode()
+            .into();
+        let tx = TxEip7702 {
+            chain_id: CHAIN_ID,
+            nonce: 0,
+            gas_limit: outbe_zerofee::FREE_TX_BOOTSTRAP_GAS_LIMIT,
+            max_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
+            max_priority_fee_per_gas: 0,
+            to: ZEROFEE_ADDRESS,
+            value: U256::ZERO,
+            access_list: Default::default(),
+            authorization_list: vec![signed_authorization],
+            input,
+        };
+        let tx_signature = sign_test_hash(&key, &tx.signature_hash());
+        let recovered = reth_ethereum::TransactionSigned::from(tx.into_signed(tx_signature))
+            .try_into_recovered()
+            .expect("bootstrap signer must recover");
+        assert_eq!(Address::from(*recovered.signer()), signer);
+        recovered
+    }
+
+    #[test]
+    fn eip7702_bootstrap_accepts_one_atomic_unit_without_fee_or_quota() {
+        let config = OutbeEvmConfig::new(test_chain_spec());
+        let recovered = bootstrap_test_tx();
+        let replay = recovered.clone();
+        let signer = Address::from(*recovered.signer());
+        let initial_balance = U256::from(1);
+
+        let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+        let marker = Bytecode::new_legacy([0xef].into());
+        db.insert_account_info(
+            ZEROFEE_ADDRESS,
+            AccountInfo {
+                code_hash: marker.hash_slow(),
+                code: Some(marker),
+                ..Default::default()
+            },
+        );
+        db.insert_account_info(
+            signer,
+            AccountInfo {
+                balance: initial_balance,
+                nonce: 0,
+                ..Default::default()
+            },
+        );
+        let mut state = State::builder()
+            .with_database(db)
+            .with_bundle_update()
+            .build();
+
+        {
+            let evm = config.evm_with_env(&mut state, pectra_evm_env(1));
+            let ctx = execution_ctx(Some(1), Bytes::new());
+            let mut executor = config.create_executor(evm, ctx);
+
+            let gas_output = executor
+                .execute_transaction(recovered)
+                .expect("one-unit bootstrap must execute under the fee waiver");
+            assert!(
+                gas_output.tx_gas_used() > 0,
+                "bootstrap gas must remain visible in block accounting"
+            );
+            assert!(
+                gas_output.tx_gas_used() <= outbe_zerofee::FREE_TX_BOOTSTRAP_GAS_LIMIT,
+                "bootstrap gas must fit its signed limit"
+            );
+            assert_eq!(
+                executor.current_execution_summary().validator_fee_sum,
+                U256::ZERO,
+                "bootstrap must not credit a validator fee"
+            );
+            assert_eq!(executor.receipts().len(), 1);
+            assert!(executor.receipts()[0].success);
+
+            executor
+                .execute_transaction(replay)
+                .expect_err("same-block bootstrap replay must fail against current state");
+            assert_eq!(
+                executor.receipts().len(),
+                1,
+                "replay must not append a receipt"
+            );
+        }
+        state.merge_transitions(BundleRetention::Reverts);
+
+        let account = state
+            .basic(signer)
+            .expect("bootstrap account read")
+            .expect("bootstrap account exists");
+        assert_eq!(
+            account.balance, initial_balance,
+            "bootstrap must not charge COEN"
+        );
+        assert_eq!(
+            account.nonce, 2,
+            "outer tx plus self-authorization consume two nonces"
+        );
+        assert_eq!(
+            account.code.and_then(|code| code.eip7702_address()),
+            Some(ZEROFEE_ADDRESS),
+            "bootstrap must install the canonical delegation"
+        );
+        assert_eq!(
+            zerofee_counter_for(&mut state, signer),
+            0,
+            "bootstrap must leave all daily sponsored calls available"
+        );
+    }
+
+    #[test]
+    fn eip7702_bootstrap_rejects_zero_balance_without_state_change() {
+        let config = OutbeEvmConfig::new(test_chain_spec());
+        let recovered = bootstrap_test_tx();
+        let signer = Address::from(*recovered.signer());
+
+        let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+        let marker = Bytecode::new_legacy([0xef].into());
+        db.insert_account_info(
+            ZEROFEE_ADDRESS,
+            AccountInfo {
+                code_hash: marker.hash_slow(),
+                code: Some(marker),
+                ..Default::default()
+            },
+        );
+        db.insert_account_info(signer, AccountInfo::default());
+        let mut state = State::builder()
+            .with_database(db)
+            .with_bundle_update()
+            .build();
+
+        {
+            let evm = config.evm_with_env(&mut state, pectra_evm_env(1));
+            let ctx = execution_ctx(Some(1), Bytes::new());
+            let mut executor = config.create_executor(evm, ctx);
+            let _error = executor
+                .execute_transaction(recovered)
+                .expect_err("zero-balance bootstrap must not receive the waiver");
+            assert!(executor.receipts().is_empty());
+        }
+
+        let account = state
+            .basic(signer)
+            .expect("bootstrap account read")
+            .expect("bootstrap account exists");
+        assert!(account.balance.is_zero());
+        assert_eq!(account.nonce, 0);
+        assert!(account.is_empty_code_hash());
+        assert_eq!(zerofee_counter_for(&mut state, signer), 0);
     }
 
     fn cache_db_with_paymaster_account(
