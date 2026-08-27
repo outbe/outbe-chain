@@ -138,7 +138,6 @@ fn seed_projection(
                 worldwide_day,
                 generation,
                 job_id: B256::repeat_byte(0x11),
-                protocol_bundle_hash: B256::repeat_byte(0x5b),
                 program_semantics_hash: B256::repeat_byte(0x22),
                 nod_root: population.root,
                 bucket_root: B256::repeat_byte(0x33),

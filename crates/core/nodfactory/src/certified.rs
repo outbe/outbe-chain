@@ -130,7 +130,6 @@ pub fn install_certified_generation(
         worldwide_day,
         generation: next_generation,
         job_id: input.binding.job_id,
-        protocol_bundle_hash: input.binding.protocol_bundle_hash,
         program_semantics_hash: input.program_semantics_hash,
         nod_root: input.roots.nod_root,
         bucket_root: input.roots.bucket_root,
@@ -160,8 +159,6 @@ pub fn install_certified_generation(
             .write(&worldwide_day, installed.nod_gratis_consumed)?;
         nod.ocomp_materialization_job_id
             .write(&worldwide_day, installed.job_id)?;
-        nod.ocomp_materialization_protocol_bundle_hash
-            .write(&worldwide_day, installed.protocol_bundle_hash)?;
         nod.ocomp_materialization_program_semantics_hash
             .write(&worldwide_day, installed.program_semantics_hash)?;
         nod.ocomp_materialization_next_nod_ordinal
@@ -234,10 +231,7 @@ fn validate_input(
     if input.issued_at == 0 {
         return Err(revert("certified Nod logical issuance time is zero"));
     }
-    if input.binding.job_id.is_zero()
-        || input.binding.protocol_bundle_hash.is_zero()
-        || input.program_semantics_hash.is_zero()
-    {
+    if input.binding.job_id.is_zero() || input.program_semantics_hash.is_zero() {
         return Err(revert("certified Nod materialization binding is zero"));
     }
     if input.roots.nod_root.is_zero()
@@ -552,7 +546,6 @@ mod tests {
                 worldwide_day: WorldwideDay::new(input.precondition.wwd),
                 generation: 1,
                 job_id: input.binding.job_id,
-                protocol_bundle_hash: input.binding.protocol_bundle_hash,
                 program_semantics_hash: input.program_semantics_hash,
                 nod_root: input.roots.nod_root,
                 bucket_root: input.roots.bucket_root,
