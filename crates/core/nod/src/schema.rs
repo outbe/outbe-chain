@@ -450,9 +450,12 @@ impl<'storage> NodContract<'storage> {
             || protocol_bundle_hash.is_zero()
             || program_semantics_hash.is_zero()
         {
-            return Err(outbe_primitives::error::PrecompileError::Fatal(
-                "installed Nod OCOMP generation is malformed".into(),
-            ));
+            return Err(outbe_primitives::error::PrecompileError::Fatal(format!(
+                "installed Nod OCOMP generation is malformed: day {} generation {generation} \
+                 nod_root {nod_root} bucket_root {bucket_root} manifest {output_manifest_root} \
+                 job {job_id} bundle {protocol_bundle_hash} semantics {program_semantics_hash}",
+                worldwide_day.value()
+            )));
         }
         let issued_at = (metadata & U256::from(u64::MAX)).to::<u64>();
         let tribute_count = ((metadata >> 64usize) & U256::from(u32::MAX)).to::<u32>();
