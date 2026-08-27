@@ -39,7 +39,7 @@ the normal paid path without consuming another quota slot.
 | Step | Owner | Command/effect | Durable evidence |
 |---:|---|---|---|
 | 1 | genesis/node | expose Pectra and ZeroFee allocation | genesis/code/storage reads |
-| 2 | EOA/payer | submit EIP-7702 self- or sponsor-paid delegation | delegation designator on EOA |
+| 2 | EOA/CLI | submit the one-atomic-unit ZeroFee bootstrap | successful receipt, delegation designator, unchanged balance and quota |
 | 3 | EOA/txpool/executor | execute eight eligible calls | receipts, events, counter, balances |
 | 4 | EOA/txpool/executor | submit ninth eligible call | failed mined receipt and code 110 |
 | 5 | EOA | submit a tipped call | successful paid receipt and fee debit |
@@ -54,8 +54,8 @@ the active day; paid transactions do not enter this equation.
 ## Observable completion contract
 
 Completion is proved by canonical receipts, ZeroFee events/views, EOA code and
-balance deltas. A submitted hash alone is insufficient. Committee finality/parity
-must be added when the shell flow is migrated to the Rust harness.
+balance deltas. A submitted hash alone is insufficient. The Rust harness owns
+committee finality/parity, bootstrap replay, and restart persistence evidence.
 
 ## Replay, retry, restart and failure
 
@@ -68,12 +68,12 @@ counter. A paid retry follows ordinary nonce and fee rules.
 | Id | Scenario | Given / canonical inputs | When / trigger | Then / outputs and postconditions | Verification |
 |---|---|---|---|---|---|
 | PFS-007-01 | Pectra and ZeroFee readiness | clean Pectra genesis | network finalizes first block | marker/schema/views are canonical | live Rust `zerofee.feature` |
-| PFS-007-02 | install delegation | EOA, chain id and nonce; optional distinct payer | submit native Alloy set-code authorization | exact `0xef0100 ++ ZeroFee` designator without requiring authority balance | live Rust |
+| PFS-007-02 | bootstrap delegation | EOA with exactly one atomic unit, canonical chain id and nonce | submit the self-authorized ZeroFee bootstrap envelope | exact `0xef0100 ++ ZeroFee` designator, unchanged balance, nonce `N+2`, quota 0 | live Rust |
 | PFS-007-03 | consume sponsored quota | delegated EOA, count 0 | submit eight eligible calls | 8 successful receipts, zero fees, events and count 8 | live Rust |
 | PFS-007-04 | quota exhaustion soft failure | delegated EOA, count 8 | submit ninth eligible call | mined status 0, code 110, no debit/increment | live Rust |
 | PFS-007-05 | paid fallback remains available | delegated EOA, exhausted quota | submit tipped call | status 1, positive fee, count 8, no sponsorship event | live Rust |
-| PFS-007-06 | CLI authorization | signer key and RPC chain id | run `zero-fee eip7702-authorize` | canonical target/chain/nonce/signature JSON | live Rust |
-| PFS-007-07 | authorization replay | included raw delegation transaction and consumed nonce | resubmit the exact signed transaction before and after restart | rejected; delegation/quota/balance remain canonical on every validator | `@pfs-007-07` live-node |
+| PFS-007-06 | CLI bootstrap | signer key, positive balance and RPC state | run `zero-fee bootstrap` | exact signed type-4 transaction is submitted; zero balance stops before submission | CLI unit/mock RPC plus live Rust |
+| PFS-007-07 | bootstrap replay | included raw bootstrap transaction and consumed nonce | resubmit the exact signed transaction before and after restart | rejected; delegation/quota/balance remain canonical on every validator | `@pfs-007-07` live-node |
 | PFS-007-08 | restart with exhausted quota | finalized count 8 | restart one validator, then the full committee | delegation and quota remain identical; replay remains rejected; paid path works | `@pfs-007-08` live-node |
 | PFS-007-09 | wrong-chain authorization | funded account and otherwise valid authorization | sign for a different chain id | no delegation or quota state is installed | `@pfs-007-09` live-node |
 | PFS-007-10 | wrong delegation target | funded delegated account | install a non-ZeroFee target and send a sponsored-shaped call | no sponsorship; quota remains unchanged | `@pfs-007-10` live-node |
@@ -81,8 +81,9 @@ counter. A paid retry follows ordinary nonce and fee rules.
 | PFS-007-12 | worldwide-day lazy reset | exhausted quota immediately before the UTC day boundary | advance through the boundary and submit the first eligible call | quota resets lazily once and converges on every validator | `@pfs-007-12` live-node |
 | PFS-007-13 | zero-balance validator Gem cashout | validator owns a reward Gem and settlement allowance but has exactly zero spendable COEN | distinct validator installs ZeroFee delegation; owner sends `settleGem`, `mineGemPromis`, `mineCoen` | three sponsored receipts, quota 3/8, reserve and confidential ledger exact, final native balance equals Gem load | `@gem-settlement` release SGX |
 
-## Open questions and technical debt
+## Evidence boundary
 
-- Port the six implemented shell phases into `testing/e2e-harness` and add committee finality/state parity.
-- Add a mise task and CI lane; the shell entrypoint is currently orphaned.
-- Add authorization replay and restart persistence scenarios.
+The behavioral scenarios and product-CLI path live in
+`testing/e2e-harness/features/zerofee.feature`. A green release claim still
+requires running that four-validator feature on a host supported by the pinned
+Gramine image and retaining the resulting harness evidence.

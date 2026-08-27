@@ -6,7 +6,7 @@
 pub mod maintain;
 
 use alloy_eips::{eip7840::BlobParams, merge::EPOCH_SLOTS};
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, KECCAK256_EMPTY, U256};
 use outbe_ocomp_protocol::system_carrier::{
     classify_ocomp_system_carrier, OcompSystemCarrierCandidate, OcompSystemCarrierError,
     OcompSystemCarrierView,
@@ -20,7 +20,7 @@ use outbe_primitives::{
     system_tx::OcompLifecycleActivation,
     OutbePrimitives,
 };
-use outbe_zerofee::{ZeroFeeHookId, ZeroFeeTransaction};
+use outbe_zerofee::{BootstrapTransactionView, ZeroFeeHookId, ZeroFeeTransaction};
 use reth_chainspec::{ChainSpecProvider, EthChainSpec, EthereumHardforks};
 use reth_evm::ConfigureEvm;
 use reth_node_builder::{
@@ -60,6 +60,31 @@ where
         max_fee_per_gas: tx.max_fee_per_gas(),
         max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
     }
+}
+
+fn bootstrap_transaction<'a, T>(
+    tx: &'a T,
+    signer: Address,
+    network_chain_id: u64,
+) -> Option<BootstrapTransactionView<'a>>
+where
+    T: alloy_consensus::Transaction + ?Sized,
+{
+    let authorization_list = tx.authorization_list()?;
+    Some(BootstrapTransactionView {
+        signer,
+        tx_chain_id: tx.chain_id(),
+        network_chain_id,
+        nonce: tx.nonce(),
+        to: tx.to(),
+        value: tx.value(),
+        input: tx.input().as_ref(),
+        gas_limit: tx.gas_limit(),
+        max_fee_per_gas: tx.max_fee_per_gas(),
+        max_priority_fee_per_gas: tx.max_priority_fee_per_gas(),
+        access_list_empty: tx.access_list().is_some_and(|list| list.is_empty()),
+        authorization_list,
+    })
 }
 
 fn classify_ocomp_carrier<T>(
@@ -593,6 +618,18 @@ where
         let tx = parts.transaction.transaction();
         let signer = tx.sender();
         let zero_fee_tx = zero_fee_transaction(tx, signer);
+        let normal_fee_outcome = |parts: ValidOutcomeParts<Tx>| {
+            let cost = *parts.transaction.transaction().cost();
+            if cost > parts.balance {
+                let balance = parts.balance;
+                TransactionValidationOutcome::Invalid(
+                    parts.transaction.into_transaction(),
+                    InvalidPoolTransactionError::Overdraft { cost, balance },
+                )
+            } else {
+                valid_outcome(parts)
+            }
+        };
         let classification = outbe_zerofee::registry().classify(&zero_fee_tx);
         match classification {
             Ok(Some(candidate)) => match self.validate_zero_fee_state(candidate) {
@@ -605,28 +642,43 @@ where
                     InvalidPoolTransactionError::other(OutbeZeroFeePoolError(err.to_string())),
                 ),
             },
-            Ok(None) => match self.try_eip7702_sponsorship(signer, &zero_fee_tx) {
-                Ok(SponsorshipOutcome::Accepted) => {
-                    parts.balance = U256::MAX;
-                    valid_outcome(parts)
-                }
-                Ok(SponsorshipOutcome::NotSponsored) => {
-                    let cost = *parts.transaction.transaction().cost();
-                    if cost > parts.balance {
-                        let balance = parts.balance;
-                        TransactionValidationOutcome::Invalid(
-                            parts.transaction.into_transaction(),
-                            InvalidPoolTransactionError::Overdraft { cost, balance },
-                        )
-                    } else {
-                        valid_outcome(parts)
+            Ok(None) => {
+                let bootstrap_candidate = bootstrap_transaction(
+                    parts.transaction.transaction(),
+                    signer,
+                    self.inner.chain_id(),
+                )
+                .and_then(|view| outbe_zerofee::classify_bootstrap(&view));
+                if let Some(candidate) = bootstrap_candidate {
+                    match self.validate_bootstrap_state(candidate) {
+                        Ok(true) => {
+                            parts.balance = U256::MAX;
+                            return valid_outcome(parts);
+                        }
+                        Ok(false) => return normal_fee_outcome(parts),
+                        Err(err) => {
+                            return TransactionValidationOutcome::Invalid(
+                                parts.transaction.into_transaction(),
+                                InvalidPoolTransactionError::other(OutbeZeroFeePoolError(
+                                    err.to_string(),
+                                )),
+                            )
+                        }
                     }
                 }
-                Err(err) => TransactionValidationOutcome::Invalid(
-                    parts.transaction.into_transaction(),
-                    InvalidPoolTransactionError::other(OutbeZeroFeePoolError(err.to_string())),
-                ),
-            },
+
+                match self.try_eip7702_sponsorship(signer, &zero_fee_tx) {
+                    Ok(SponsorshipOutcome::Accepted) => {
+                        parts.balance = U256::MAX;
+                        valid_outcome(parts)
+                    }
+                    Ok(SponsorshipOutcome::NotSponsored) => normal_fee_outcome(parts),
+                    Err(err) => TransactionValidationOutcome::Invalid(
+                        parts.transaction.into_transaction(),
+                        InvalidPoolTransactionError::other(OutbeZeroFeePoolError(err.to_string())),
+                    ),
+                }
+            }
             Err(err) => TransactionValidationOutcome::Invalid(
                 parts.transaction.into_transaction(),
                 InvalidPoolTransactionError::other(OutbeZeroFeePoolError(err.to_string())),
@@ -707,6 +759,34 @@ where
             .authorize_fee_waiver(storage, candidate)
             .map(|_| ())
             .map_err(|e| OutbeZeroFeePoolError(e.to_string()))
+    }
+
+    fn validate_bootstrap_state(
+        &self,
+        candidate: outbe_zerofee::BootstrapCandidate,
+    ) -> Result<bool, OutbeZeroFeePoolError> {
+        let state = self
+            .inner
+            .client()
+            .latest()
+            .map_err(|e| OutbeZeroFeePoolError(e.to_string()))?;
+        let Some(account) = state
+            .basic_account(&candidate.signer)
+            .map_err(|e| OutbeZeroFeePoolError(e.to_string()))?
+        else {
+            return Ok(false);
+        };
+
+        Ok(outbe_zerofee::authorize_bootstrap(
+            candidate,
+            outbe_zerofee::BootstrapAccountView {
+                balance: account.balance,
+                nonce: account.nonce,
+                code_empty: account
+                    .bytecode_hash
+                    .is_none_or(|code_hash| code_hash == KECCAK256_EMPTY),
+            },
+        ))
     }
 }
 
@@ -830,9 +910,13 @@ impl PoolTransactionError for OutbeOcompSystemCarrierPoolError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_consensus::{SignableTransaction as _, Transaction as _, TxEip1559};
-    use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718 as _};
+    use alloy_consensus::{SignableTransaction as _, Transaction as _, TxEip1559, TxEip7702};
+    use alloy_eips::{
+        eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718 as _, eip7702::Authorization,
+    };
     use alloy_primitives::{Bytes, Signature, TxKind, B256};
+    use alloy_signer::SignerSync as _;
+    use alloy_signer_local::PrivateKeySigner;
     use alloy_sol_types::SolCall;
     use outbe_primitives::addresses::{ORACLE_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS};
     use reth_ethereum::TransactionSigned;
@@ -882,6 +966,121 @@ mod tests {
             .expect("test transaction signer should recover");
 
         EthPooledTransaction::new(recovered, encoded_length)
+    }
+
+    fn bootstrap_pooled_tx() -> (EthPooledTransaction, Address) {
+        let signer: PrivateKeySigner =
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+                .parse()
+                .unwrap();
+        let signer_address = signer.address();
+        let authorization = Authorization {
+            chain_id: U256::from(CHAIN_ID),
+            address: outbe_zerofee::ZEROFEE_ADDRESS,
+            nonce: 1,
+        };
+        let signed_authorization = authorization.clone().into_signed(
+            signer
+                .sign_hash_sync(&authorization.signature_hash())
+                .unwrap(),
+        );
+        let input: Bytes = outbe_zerofee::precompile::IZeroFee::authorizeSponsorshipCall {
+            signer: signer_address,
+        }
+        .abi_encode()
+        .into();
+        let tx = TxEip7702 {
+            chain_id: CHAIN_ID,
+            nonce: 0,
+            gas_limit: outbe_zerofee::FREE_TX_BOOTSTRAP_GAS_LIMIT,
+            max_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
+            max_priority_fee_per_gas: 0,
+            to: outbe_zerofee::ZEROFEE_ADDRESS,
+            value: U256::ZERO,
+            access_list: Default::default(),
+            authorization_list: vec![signed_authorization],
+            input,
+        };
+        let signature = signer.sign_hash_sync(&tx.signature_hash()).unwrap();
+        let tx: TransactionSigned = tx.into_signed(signature).into();
+        let encoded_length = tx.encode_2718_len();
+        let recovered = tx.try_into_recovered().unwrap();
+
+        (
+            EthPooledTransaction::new(recovered, encoded_length),
+            signer_address,
+        )
+    }
+
+    #[test]
+    fn pool_admits_true_type4_bootstrap_with_one_atomic_unit() {
+        use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+        use reth_transaction_pool::{
+            blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
+        };
+
+        let (transaction, signer) = bootstrap_pooled_tx();
+        let chain_spec = reth_chainspec::ChainSpecBuilder::mainnet()
+            .prague_activated()
+            .build();
+        let provider = MockEthProvider::<reth_ethereum::EthPrimitives>::new()
+            .with_chain_spec(chain_spec)
+            .with_genesis_block();
+        provider.add_account(signer, ExtendedAccount::new(0, U256::from(1)));
+        let inner = EthTransactionValidatorBuilder::new(
+            provider,
+            reth_ethereum::evm::EthEvmConfig::mainnet(),
+        )
+        .set_eip7702(true)
+        .disable_balance_check()
+        .build(InMemoryBlobStore::default());
+        let validator =
+            OutbeTransactionValidator::new(inner, OcompLifecycleActivation::at_block(1));
+
+        let outcome = futures::executor::block_on(
+            validator.validate_transaction(TransactionOrigin::External, transaction),
+        );
+        let TransactionValidationOutcome::Valid { balance, .. } = outcome else {
+            panic!("one-unit bootstrap must be admitted, got {outcome:?}");
+        };
+        assert_eq!(balance, U256::MAX, "bootstrap must receive the pool waiver");
+    }
+
+    #[test]
+    fn pool_rejects_true_type4_bootstrap_with_zero_balance() {
+        use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
+        use reth_transaction_pool::{
+            blobstore::InMemoryBlobStore, validate::EthTransactionValidatorBuilder,
+        };
+
+        let (transaction, signer) = bootstrap_pooled_tx();
+        let chain_spec = reth_chainspec::ChainSpecBuilder::mainnet()
+            .prague_activated()
+            .build();
+        let provider = MockEthProvider::<reth_ethereum::EthPrimitives>::new()
+            .with_chain_spec(chain_spec)
+            .with_genesis_block();
+        provider.add_account(signer, ExtendedAccount::new(0, U256::ZERO));
+        let inner = EthTransactionValidatorBuilder::new(
+            provider,
+            reth_ethereum::evm::EthEvmConfig::mainnet(),
+        )
+        .set_eip7702(true)
+        .disable_balance_check()
+        .build(InMemoryBlobStore::default());
+        let validator =
+            OutbeTransactionValidator::new(inner, OcompLifecycleActivation::at_block(1));
+
+        let outcome = futures::executor::block_on(
+            validator.validate_transaction(TransactionOrigin::External, transaction),
+        );
+        let TransactionValidationOutcome::Invalid(_, error) = outcome else {
+            panic!("zero-balance bootstrap must be rejected, got {outcome:?}");
+        };
+        assert!(matches!(
+            error,
+            InvalidPoolTransactionError::Overdraft { balance, .. } if balance.is_zero()
+        ));
     }
 
     fn oracle_submit_vote_input() -> Bytes {

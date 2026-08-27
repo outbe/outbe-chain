@@ -32,8 +32,8 @@ pub mod schema;
 pub mod state;
 
 pub use constants::{
-    FREE_TX_DAILY_CALLDATA_BYTES, FREE_TX_DAILY_GAS_LIMIT, FREE_TX_DAILY_LIMIT,
-    FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT, MIN_FREE_TX_MAX_FEE_PER_GAS,
+    FREE_TX_BOOTSTRAP_GAS_LIMIT, FREE_TX_DAILY_CALLDATA_BYTES, FREE_TX_DAILY_GAS_LIMIT,
+    FREE_TX_DAILY_LIMIT, FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT, MIN_FREE_TX_MAX_FEE_PER_GAS,
 };
 pub use hooks::{
     registry, ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHook, ZeroFeeHookId,
@@ -45,7 +45,8 @@ pub use intexfactory::{
 };
 pub use outbe_primitives::addresses::ZEROFEE_ADDRESS;
 pub use runtime::{
-    authorize_sponsorship, classify_sponsorship, precheck_sponsorship, record_sponsorship_use,
-    SponsorshipAuthorization,
+    authorize_bootstrap, authorize_sponsorship, classify_bootstrap, classify_sponsorship,
+    precheck_sponsorship, record_sponsorship_use, BootstrapAccountView, BootstrapCandidate,
+    BootstrapTransactionView, SponsorshipAuthorization,
 };
 pub use schema::{pack_counter, unpack_counter, ZeroFeeContract};
