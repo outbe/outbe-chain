@@ -619,24 +619,34 @@ impl ChainSpecParser for OutbeChainSpecParser {
                 .clone()
                 .map_header(OutbeHeader::new)
                 .into();
+        validate_outbe_chain_spec(chain_spec.as_ref())?;
         outbe_consensus::proof::init_consensus_chain_id(chain_spec.chain().id())
             .map_err(|error| eyre::eyre!("invalid consensus chain identity: {error}"))?;
-        outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
-            chain_spec.as_ref(),
-        )
-        .activation()
-        .map_err(|error| eyre::eyre!("invalid mandatory teeAttestationV1 ChainSpec: {error}"))?;
-        outbe_node::ocomp::fork::require_startup_ocomp_fork_install(chain_spec.as_ref())?;
-        outbe_chain_constants::initialize(
-            chain_spec
-                .genesis
-                .config
-                .extra_fields
-                .get(outbe_chain_constants::GENESIS_CONFIG_KEY),
-        )
-        .map_err(|error| eyre::eyre!("invalid config.outbeProtocol: {error}"))?;
         Ok(chain_spec)
     }
+}
+
+fn validate_outbe_chain_spec(chain_spec: &ChainSpec<OutbeHeader>) -> eyre::Result<()> {
+    let chain_id = chain_spec.chain().id();
+    eyre::ensure!(
+        outbe_primitives::chain::network_for_chain_id(chain_id).is_some(),
+        "unknown Outbe chain ID {chain_id}"
+    );
+    outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
+        chain_spec,
+    )
+    .activation()
+    .map_err(|error| eyre::eyre!("invalid mandatory teeAttestationV1 ChainSpec: {error}"))?;
+    outbe_node::ocomp::fork::require_startup_ocomp_fork_install(chain_spec)?;
+    outbe_chain_constants::initialize(
+        chain_spec
+            .genesis
+            .config
+            .extra_fields
+            .get(outbe_chain_constants::GENESIS_CONFIG_KEY),
+    )
+    .map_err(|error| eyre::eyre!("invalid config.outbeProtocol: {error}"))?;
+    Ok(())
 }
 
 /// Ceiling for advised gas price: one COEN per gas, already far above anything

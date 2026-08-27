@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, fs, io::Cursor, process::Command};
 use alloy_primitives::B256;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use outbe_e2e_harness::release_dcap::RELEASE_DCAP_ARTIFACT_PATHS;
-use outbe_evm::tee_attestation_activation::DcapTestnetChainSpecBindingV1;
+use outbe_evm::tee_attestation_activation::DcapChainSpecBindingV1;
 use outbe_primitives::{
     chain::TESTNET_CHAIN_ID,
     tee_attestation_v1::{
@@ -49,7 +49,7 @@ fn repo_root() -> std::path::PathBuf {
 
 #[test]
 fn repository_default_testnet_genesis_is_dcap_required_but_not_release_authority() {
-    let binding = DcapTestnetChainSpecBindingV1::from_genesis_path(
+    let binding = DcapChainSpecBindingV1::from_genesis_path(
         &repo_root().join("release/testnet-genesis.json"),
     )
     .expect("repository default testnet genesis must be a valid DCAP ChainSpec");

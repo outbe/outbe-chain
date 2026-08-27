@@ -13,7 +13,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use eyre::{bail, eyre, Result, WrapErr};
 use filetime::FileTime;
 use outbe_e2e_harness::release_dcap::RELEASE_DCAP_ARTIFACT_PATHS;
-use outbe_evm::tee_attestation_activation::DcapTestnetChainSpecBindingV1;
+use outbe_evm::tee_attestation_activation::DcapChainSpecBindingV1;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
@@ -259,7 +259,7 @@ fn build_release_manifest_from_evidence(
     let oci: OciBuildEvidence = read_canonical_json(&inputs.oci_evidence)?;
     validate_final_release_identity(&release, &bundle, &oci)?;
     require_nonempty_regular_file(&inputs.testnet_genesis, "testnet genesis ChainSpec")?;
-    let testnet_binding = DcapTestnetChainSpecBindingV1::from_genesis_path(&inputs.testnet_genesis)
+    let testnet_binding = DcapChainSpecBindingV1::from_genesis_path(&inputs.testnet_genesis)
         .map_err(|error| eyre!("testnet ChainSpec binding is invalid: {error}"))?;
     require_bundle_measurement_binding(&testnet_binding, &bundle)?;
 
@@ -450,7 +450,7 @@ fn require_fresh_dcap_hardware_evidence(
     expected_pck_ca: &str,
     bundle: &BundleManifest,
     oci: &OciBuildEvidence,
-    testnet_binding: &DcapTestnetChainSpecBindingV1,
+    testnet_binding: &DcapChainSpecBindingV1,
     testnet_genesis: &Path,
 ) -> Result<Value> {
     let evidence = require_evidence_result(path, &["passed"])?;
@@ -597,7 +597,7 @@ fn require_fresh_dcap_hardware_evidence(
 }
 
 fn require_bundle_measurement_binding(
-    binding: &DcapTestnetChainSpecBindingV1,
+    binding: &DcapChainSpecBindingV1,
     bundle: &BundleManifest,
 ) -> Result<()> {
     if bundle.measurements.debug {
@@ -622,7 +622,7 @@ fn require_bundle_measurement_binding(
 
 fn require_testnet_chain_spec_evidence(
     evidence: &Value,
-    binding: &DcapTestnetChainSpecBindingV1,
+    binding: &DcapChainSpecBindingV1,
     testnet_genesis: &Path,
 ) -> Result<()> {
     let string_at = |pointer: &str| {

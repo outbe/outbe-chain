@@ -18,7 +18,7 @@ use alloy_signer::SignerSync as _;
 use alloy_signer_local::PrivateKeySigner;
 use clap::{Parser, ValueEnum};
 use eyre::{bail, ensure, eyre, Result, WrapErr as _};
-use outbe_evm::tee_attestation_activation::DcapTestnetChainSpecBindingV1;
+use outbe_evm::tee_attestation_activation::DcapChainSpecBindingV1;
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapCollateralComponentV1,
     DcapCollateralKind, DcapEvidenceV1, NodeIdV1, RegistrationIntentV1,
@@ -202,8 +202,8 @@ fn run(cli: Cli) -> Result<()> {
             .current_dir(&repo),
         "verify exact signed SGX bundle",
     )?;
-    let binding = DcapTestnetChainSpecBindingV1::from_genesis_path(&testnet_genesis)
-        .map_err(eyre::Report::msg)?;
+    let binding =
+        DcapChainSpecBindingV1::from_genesis_path(&testnet_genesis).map_err(eyre::Report::msg)?;
     ensure!(
         !bundle_manifest.measurements.debug,
         "debug enclave cannot satisfy H1"
