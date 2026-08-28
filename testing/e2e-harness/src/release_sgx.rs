@@ -17,10 +17,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use walkdir::WalkDir;
 
+use outbe_tee::release_dcap_artifacts::ReleaseDcapArtifactSetV1;
+
+use crate::release_dcap::ReleaseDcapNetworkArg;
+
 const RELEASE_FEATURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/release-features");
 
 #[derive(clap::Args, Clone, Debug)]
 pub struct ReleaseSgxCli {
+    /// Canonical production network bound by the bundle and runtime identity.
+    #[arg(long, value_enum)]
+    network: ReleaseDcapNetworkArg,
     /// Exact published OCI reference, including @sha256:<digest>.
     #[arg(long)]
     image: String,
@@ -45,6 +52,7 @@ struct ReleaseConfig {
     image: String,
     image_digest: String,
     keep_work_dir: bool,
+    network: ReleaseDcapArtifactSetV1,
     repo: PathBuf,
     work_dir: PathBuf,
 }
@@ -71,6 +79,7 @@ impl ReleaseConfig {
             image: cli.image.clone(),
             image_digest,
             keep_work_dir: cli.keep_work_dir,
+            network: cli.network.artifact_set(),
             repo,
             work_dir,
         })
@@ -127,7 +136,7 @@ impl Default for ReleaseSgxWorld {
             .expect("release SGX environment is set")
             .clone();
         let manifest =
-            read_json::<BundleManifest>(&cfg.bundle.join("metadata/testnet-sgx-bundle.json"))
+            read_json::<BundleManifest>(&cfg.bundle.join(cfg.network.bundle_manifest_path()))
                 .expect("read signed SGX bundle manifest");
         let seal_dir = cfg.work_dir.join("sealed-state");
         fs::create_dir(&seal_dir).expect("create sealed-state directory");
@@ -195,9 +204,12 @@ pub async fn run() {
     }
 }
 
-#[cucumber::given("an exact signed testnet SGX bundle and published image")]
+#[cucumber::given("an exact signed production SGX bundle and published image")]
 fn exact_release(world: &mut ReleaseSgxWorld) {
-    assert_eq!(world.manifest.authorization_scope, "testnet");
+    assert_eq!(
+        world.manifest.authorization_scope,
+        world.cfg.network.label()
+    );
     assert!(!world.manifest.measurements.debug);
     assert_eq!(world.manifest.sealed_state_schema, 1);
     command_ok(
@@ -213,7 +225,15 @@ fn exact_release(world: &mut ReleaseSgxWorld) {
 fn verify_bundle_and_runtime(world: &mut ReleaseSgxWorld) {
     command_ok(
         Command::new("cargo")
-            .args(["xtask", "release", "sgx", "verify", "--bundle"])
+            .args([
+                "xtask",
+                "release",
+                "sgx",
+                "verify",
+                "--network",
+                world.cfg.network.label(),
+                "--bundle",
+            ])
             .arg(&world.cfg.bundle)
             .current_dir(&world.cfg.repo),
         "verify exact signed SGX bundle",
@@ -300,6 +320,12 @@ fn restart_same_signer(world: &mut ReleaseSgxWorld) {
         run_until_log(
             &world.cfg.image,
             &world.seal_dir,
+            world
+                .cfg
+                .network
+                .network()
+                .chain_id()
+                .expect("assigned network"),
             "first",
             "self-generated (fresh, sealed)",
             &world.cfg.work_dir,
@@ -310,6 +336,12 @@ fn restart_same_signer(world: &mut ReleaseSgxWorld) {
         run_until_log(
             &world.cfg.image,
             &world.seal_dir,
+            world
+                .cfg
+                .network
+                .network()
+                .chain_id()
+                .expect("assigned network"),
             "second",
             "self-generated (restored from seal)",
             &world.cfg.work_dir,
@@ -340,7 +372,15 @@ fn substitute_artifact(world: &mut ReleaseSgxWorld) {
 #[cucumber::then("release verification rejects the substituted artifact")]
 fn substitution_rejected(world: &mut ReleaseSgxWorld) {
     let status = Command::new("cargo")
-        .args(["xtask", "release", "sgx", "verify", "--bundle"])
+        .args([
+            "xtask",
+            "release",
+            "sgx",
+            "verify",
+            "--network",
+            world.cfg.network.label(),
+            "--bundle",
+        ])
         .arg(world.cfg.work_dir.join("tampered-bundle"))
         .current_dir(&world.cfg.repo)
         .stdout(Stdio::null())
@@ -427,6 +467,12 @@ fn resign_with_different_key(world: &mut ReleaseSgxWorld) {
         run_until_log(
             &world.mismatch_image,
             &world.seal_dir,
+            world
+                .cfg
+                .network
+                .network()
+                .chain_id()
+                .expect("assigned network"),
             "mismatch",
             "self-generated (fresh, sealed)",
             &world.cfg.work_dir,
@@ -473,6 +519,11 @@ fn write_evidence(world: &mut ReleaseSgxWorld) {
             "reference": world.cfg.image
         },
         "measurements": world.manifest.measurements,
+        "network": {
+            "chain_id": world.cfg.network.network().chain_id().expect("assigned network"),
+            "chain_name": world.cfg.network.network().chain_name(),
+            "profile": world.cfg.network.label()
+        },
         "result": "passed",
         "schema_version": "1.0.0"
     });
@@ -561,6 +612,7 @@ fn add_sgx_devices(command: &mut Command) -> Result<()> {
 fn run_until_log(
     image: &str,
     seal_dir: &Path,
+    chain_id: u64,
     suffix: &str,
     marker: &str,
     work_dir: &Path,
@@ -569,6 +621,7 @@ fn run_until_log(
     let log_path = work_dir.join(format!("{suffix}.log"));
     let log = File::create(&log_path).wrap_err("create enclave log")?;
     let mut command = Command::new("docker");
+    let chain_id = format!("0x{chain_id:064x}");
     command.args(["run", "--rm", "--name", &name]);
     add_sgx_devices(&mut command)?;
     command
@@ -580,7 +633,7 @@ fn run_until_log(
             "--tee-dir",
             "/var/lib/outbe/tee",
             "--chain-id",
-            "0x0000000000000000000000000000000000000000000000000000000000000101",
+            &chain_id,
         ])
         .stdout(Stdio::from(log.try_clone()?))
         .stderr(Stdio::from(log));
@@ -752,7 +805,56 @@ fn unix_seconds() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser as _;
     use sha2::{Digest as _, Sha256};
+
+    #[derive(Debug, clap::Parser)]
+    struct TestCli {
+        #[command(flatten)]
+        release: ReleaseSgxCli,
+    }
+
+    #[test]
+    fn hardware_sgx_cli_requires_an_explicit_production_network() {
+        let parsed = TestCli::try_parse_from([
+            "release-sgx",
+            "--network",
+            "mainnet",
+            "--image",
+            "ghcr.io/outbe/enclave@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--bundle",
+            "/tmp/bundle",
+            "--evidence",
+            "/tmp/evidence.json",
+        ])
+        .expect("Mainnet hardware CLI");
+        assert_eq!(
+            parsed.release.network.artifact_set(),
+            ReleaseDcapArtifactSetV1::Mainnet
+        );
+        assert!(TestCli::try_parse_from([
+            "release-sgx",
+            "--image",
+            "ghcr.io/outbe/enclave@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--bundle",
+            "/tmp/bundle",
+            "--evidence",
+            "/tmp/evidence.json",
+        ])
+        .is_err());
+        assert!(TestCli::try_parse_from([
+            "release-sgx",
+            "--network",
+            "devnet",
+            "--image",
+            "ghcr.io/outbe/enclave@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--bundle",
+            "/tmp/bundle",
+            "--evidence",
+            "/tmp/evidence.json",
+        ])
+        .is_err());
+    }
 
     #[test]
     fn exact_image_reference_requires_lowercase_sha256() {

@@ -59,6 +59,9 @@ cargo build --release -p outbe-keygen --bin outbe-keygen   # key generation
   signed ReleaseManifest measurements by following
   [Testnet SGX release and rollout](testnet-sgx-release.md). Do not build or sign the
   release bundle on the validator host.
+- For Mainnet chain ID 676, use the separate protected profile and exact genesis in
+  [Mainnet SGX/DCAP release and rollout](mainnet-sgx-release.md). Testnet artifacts and
+  authorization scope are rejected.
 - A funded relay EVM account and per-node persistent Reth P2P, EVM and
   consensus-BLS key files. The relay may be different from the node EVM address.
 

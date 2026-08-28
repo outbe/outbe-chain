@@ -285,11 +285,11 @@ reserves that address class and requires a collision scan before genesis is froz
 
 ### Genesis deployment classification
 
-Stablecoin V1 ships only in a fresh devnet/testnet genesis containing the Factory and
+Stablecoin V1 ships only in a fresh Devnet, Testnet, or Mainnet genesis containing the Factory and
 Policy marker accounts. The reserved class is protected from CREATE/CREATE2 from
 block 0. Existing state that executed without the class guard is unsupported.
-Mainnet remains unsupported until its chain id and fresh genesis are separately
-frozen.
+Mainnet uses the canonical Outbe identity `676 / outbe-mainnet-1`; it does not
+introduce a network-specific Stablecoin runtime branch or state migration.
 
 ## Protocol lock and implementation evidence
 

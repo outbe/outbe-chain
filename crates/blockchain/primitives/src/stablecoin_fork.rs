@@ -12,12 +12,11 @@ pub const STABLECOIN_V1_SCHEMA_VERSION: u32 = 1;
 
 pub const STABLECOIN_V1_ACTIVATION: &str = "genesis";
 pub const STABLECOIN_V1_NAMESPACE_RESERVATION: &str = "reserved-in-genesis";
-pub const STABLECOIN_V1_SUPPORTED_NETWORKS: [&str; 2] = [
+pub const STABLECOIN_V1_SUPPORTED_NETWORKS: [&str; 3] = [
     "outbe-devnet-1-fresh-genesis",
     "outbe-testnet-1-fresh-genesis",
+    "outbe-mainnet-1-fresh-genesis",
 ];
-pub const STABLECOIN_V1_MAINNET_STATUS: &str =
-    "unsupported-until-chain-id-fresh-genesis-and-release-gates-are-frozen";
 
 /// Exact StablecoinCreate proposal bond: 1,000,000 COEN in six-decimal `unit`.
 pub const STABLECOIN_CREATE_BOND: U256 = uint!(1_000_000_000_000_U256);

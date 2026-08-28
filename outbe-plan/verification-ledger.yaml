@@ -1,9 +1,0 @@
-schema_version: 1
-kind: outbe_verification_ledger_index
-domain_packs:
-  - namespace: OCOMP
-    schema_version: 1
-    path: outbe-plan/off-chain-poc-evidence-ledger.yaml
-  - namespace: METADOSIS
-    schema_version: 1
-    path: outbe-plan/metadosis-evidence-ledger.yaml

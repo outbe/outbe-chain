@@ -9,6 +9,8 @@
 //! - [`downtime`] / [`stale_join`] / [`lifecycle`] / [`restart`] / [`dkg`] /
 //!   [`follower`] back the S1-S7 + follower validator-lifecycle scenarios.
 
+#[cfg(feature = "ocomp-integration")]
+pub mod agent_reward;
 pub mod common;
 pub mod governance;
 pub mod intex_lifecycle;

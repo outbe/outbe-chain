@@ -761,6 +761,14 @@ mod tests {
                 ..Default::default()
             },
         );
+        db.insert_account_info(
+            outbe_primitives::addresses::OCOMP_REGISTRY_ADDRESS,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
+                code: Some(marker_code),
+                ..Default::default()
+            },
+        );
     }
 
     fn assert_seeded_validators(db: &mut TestDb, validators: &[Address]) {

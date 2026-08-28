@@ -48,6 +48,8 @@ use reth_tasks::Runtime;
 
 const GENESIS_VALIDATOR_PUBKEY: &str =
     "111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111";
+const GENESIS_VALIDATOR_RADICLE_NODE_ID: &str =
+    "2121212121212121212121212121212121212121212121212121212121212121";
 
 /// Block-1 timestamp the reth payload harness generates: it starts at the
 /// genesis timestamp (`0x65f1b057`) and increments by one per block, so the
@@ -99,7 +101,7 @@ fn seed_single_validator_genesis(signer: &OutbeEvmSigner) -> eyre::Result<Genesi
     std::fs::write(
         &validators_path,
         format!(
-            r#"[{{ "address": "0x{addr:x}", "public_key": "{GENESIS_VALIDATOR_PUBKEY}" }}]"#,
+            r#"[{{ "address": "0x{addr:x}", "public_key": "{GENESIS_VALIDATOR_PUBKEY}", "radicle_node_id": "{GENESIS_VALIDATOR_RADICLE_NODE_ID}" }}]"#,
             addr = signer.address()
         ),
     )?;

@@ -23,7 +23,7 @@ use outbe_offchain_storage::{
     StorageError, StorageErrorKind, StorageReaderHandle, StorageWriterHandle,
 };
 use outbe_primitives::{
-    chain::{is_devnet, is_testnet},
+    chain::network_for_chain_id,
     projection::{projection_readiness, ProjectionCheckpoint},
 };
 use reth_chain_state::ForkChoiceSubscriptions;
@@ -151,12 +151,7 @@ pub struct ReadyOffchainDataProjection {
 pub fn prepare_offchain_data_projection(
     config: OffchainDataProjectionConfig,
 ) -> eyre::Result<PreparedOffchainDataProjection> {
-    if !is_devnet(config.chain_id) && !is_testnet(config.chain_id) {
-        bail!(
-            "ADR-005 Mongo execution reads are disabled outside Outbe devnet/testnet (chain_id {})",
-            config.chain_id
-        );
-    }
+    validate_projection_network(config.chain_id)?;
     if config.start_block != 1 {
         bail!(
             "ADR-005 requires projection start_block 1, found {}",
@@ -224,6 +219,13 @@ pub fn prepare_offchain_data_projection(
             Err(error) => return Err(error.into_eyre()),
         }
     }
+}
+
+fn validate_projection_network(chain_id: u64) -> eyre::Result<()> {
+    if network_for_chain_id(chain_id).is_none() {
+        bail!("offchain projection rejects unknown Outbe chain ID {chain_id}");
+    }
+    Ok(())
 }
 
 enum PrepareProjectionError {
@@ -1555,9 +1557,9 @@ mod tests {
         evaluate_ocomp_projection_containment, prepare_offchain_data_projection,
         project_through_target, projection_failure_class, record_finalized_target,
         record_or_publish_finalized_target, require_finalized_checkpoint, run_projection_loop,
-        spawn_detached_projection_work, supervise_projection_future, FinalizedTarget,
-        OcompProjectionContainment, OffchainDataProjectionConfig, ProjectionRuntime,
-        MONGO_RECONNECT_DEADLINE,
+        spawn_detached_projection_work, supervise_projection_future, validate_projection_network,
+        FinalizedTarget, OcompProjectionContainment, OffchainDataProjectionConfig,
+        ProjectionRuntime, MONGO_RECONNECT_DEADLINE,
     };
     use alloy_consensus::Header;
     use alloy_primitives::B256;
@@ -3055,5 +3057,17 @@ mod tests {
             }
             self.inner.apply_atomic(batch)
         }
+    }
+
+    #[test]
+    fn projection_network_gate_accepts_known_networks_and_rejects_unknown_ids() {
+        for chain_id in [
+            outbe_primitives::chain::DEVNET_CHAIN_ID,
+            outbe_primitives::chain::TESTNET_CHAIN_ID,
+            outbe_primitives::chain::MAINNET_CHAIN_ID,
+        ] {
+            validate_projection_network(chain_id).unwrap();
+        }
+        assert!(validate_projection_network(1_000_000_001).is_err());
     }
 }

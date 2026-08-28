@@ -10,9 +10,8 @@ use outbe_primitives::{
         STABLECOIN_POLICY_MEMBER_BATCH_CAP, STABLECOIN_V1_ABSOLUTE_VOTE_PENDING_CAP,
         STABLECOIN_V1_ACCOUNT_ACCESS_OWNER, STABLECOIN_V1_ACTIVATION,
         STABLECOIN_V1_BENCHMARK_BUDGETS, STABLECOIN_V1_GAS, STABLECOIN_V1_GAS_FORMULA,
-        STABLECOIN_V1_MAINNET_STATUS, STABLECOIN_V1_MAINTAINED_SDK,
-        STABLECOIN_V1_NAMESPACE_RESERVATION, STABLECOIN_V1_REOPEN_RULES,
-        STABLECOIN_V1_SCHEMA_VERSION, STABLECOIN_V1_SUPPORTED_NETWORKS,
+        STABLECOIN_V1_MAINTAINED_SDK, STABLECOIN_V1_NAMESPACE_RESERVATION,
+        STABLECOIN_V1_REOPEN_RULES, STABLECOIN_V1_SCHEMA_VERSION, STABLECOIN_V1_SUPPORTED_NETWORKS,
         STABLECOIN_V1_TOOLING_OWNER, STABLECOIN_V1_WALL_TIME_CLASSIFICATION,
     },
     storage::gas::PRECOMPILE_BASE_GAS,
@@ -70,10 +69,7 @@ fn fork_manifest_matches_canonical_rust_constants() {
         .map(|network| network.as_str().unwrap())
         .collect();
     assert_eq!(networks, STABLECOIN_V1_SUPPORTED_NETWORKS);
-    assert_eq!(
-        manifest["activation"]["mainnet"],
-        STABLECOIN_V1_MAINNET_STATUS
-    );
+    assert!(manifest["activation"].get("mainnet").is_none());
     assert_eq!(
         manifest["proposal"]["bondBaseUnits"],
         STABLECOIN_CREATE_BOND.to_string()
@@ -179,7 +175,7 @@ fn fork_manifest_contains_no_provisional_values() {
             .as_array()
             .unwrap()
             .len(),
-        2
+        STABLECOIN_V1_SUPPORTED_NETWORKS.len()
     );
     assert!(!manifest["reopenRules"].as_array().unwrap().is_empty());
 }
@@ -249,6 +245,14 @@ fn independent_foundry_domain_vectors_pin_version_chain_and_token() {
     assert_eq!(typehash, B256::from_str(&fixture.domain_typehash).unwrap());
     assert_eq!(fixture.version, STABLECOIN_EIP712_DOMAIN_VERSION);
     assert_eq!(version_hash, B256::from_str(&fixture.version_hash).unwrap());
+
+    assert!(
+        fixture
+            .vectors
+            .iter()
+            .any(|vector| vector.chain_id == outbe_primitives::chain::MAINNET_CHAIN_ID),
+        "the independent corpus must include the Mainnet EIP-712 domain"
+    );
 
     for vector in fixture.vectors {
         let name_hash = keccak256(vector.name.as_bytes());

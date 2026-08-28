@@ -172,6 +172,8 @@ struct SgxArgs {
 enum SgxCommand {
     /// Prepare an unsigned deterministic Gramine bundle from a verified ELF build.
     Prepare {
+        #[arg(long, value_enum)]
+        network: sgx::SgxReleaseNetwork,
         #[arg(long)]
         elf_output: PathBuf,
         #[arg(long)]
@@ -186,8 +188,10 @@ enum SgxCommand {
         #[arg(long)]
         output: PathBuf,
     },
-    /// Authorize an unsigned bundle with the protected testnet SGX key.
+    /// Authorize an unsigned bundle with the protected network SGX key.
     Sign {
+        #[arg(long, value_enum)]
+        network: sgx::SgxReleaseNetwork,
         #[arg(long)]
         unsigned: PathBuf,
         #[arg(long)]
@@ -197,11 +201,15 @@ enum SgxCommand {
     },
     /// Verify checksums, canonical metadata and the enclave SIGSTRUCT.
     Verify {
+        #[arg(long, value_enum)]
+        network: sgx::SgxReleaseNetwork,
         #[arg(long)]
         bundle: PathBuf,
     },
     /// Create a deterministic archive from an already verified signed bundle.
     Archive {
+        #[arg(long, value_enum)]
+        network: sgx::SgxReleaseNetwork,
         #[arg(long)]
         bundle: PathBuf,
         #[arg(long)]
@@ -209,6 +217,8 @@ enum SgxCommand {
     },
     /// Build an immutable OCI image from an already verified signed bundle.
     Image {
+        #[arg(long, value_enum)]
+        network: sgx::SgxReleaseNetwork,
         #[arg(long)]
         bundle: PathBuf,
         #[arg(long)]
@@ -221,6 +231,8 @@ enum SgxCommand {
     },
     /// Promote one exact ELF, signed SGX bundle and OCI image to a verified ReleaseManifest.
     Manifest {
+        #[arg(long, value_enum)]
+        network: sgx::SgxReleaseNetwork,
         #[arg(long)]
         elf_manifest: PathBuf,
         #[arg(long)]
@@ -247,9 +259,9 @@ enum SgxCommand {
         processor_dcap_archive: PathBuf,
         #[arg(long)]
         processor_dcap_evidence: PathBuf,
-        /// Final testnet genesis whose block-1 policy authorizes this enclave.
+        /// Final network genesis whose block-1 policy authorizes this enclave.
         #[arg(long)]
-        testnet_genesis: PathBuf,
+        genesis: PathBuf,
         #[arg(long)]
         output: PathBuf,
     },
@@ -331,10 +343,14 @@ fn main() -> Result<()> {
         },
         Command::Release(release) => match release.command {
             ReleaseCommand::Sgx(sgx_args) => match sgx_args.command {
-                SgxCommand::Prepare { elf_output, output } => {
-                    sgx::prepare(&repo_root, &elf_output, &output)?;
+                SgxCommand::Prepare {
+                    network,
+                    elf_output,
+                    output,
+                } => {
+                    sgx::prepare(&repo_root, network, &elf_output, &output)?;
                     println!(
-                        "unsigned deterministic testnet SGX bundle: {}",
+                        "unsigned deterministic {network:?} SGX bundle: {}",
                         output.display()
                     );
                 }
@@ -350,34 +366,44 @@ fn main() -> Result<()> {
                     );
                 }
                 SgxCommand::Sign {
+                    network,
                     unsigned,
                     key_file,
                     output,
                 } => {
-                    sgx::sign(&repo_root, &unsigned, &key_file, &output)?;
-                    println!("signed testnet SGX bundle: {}", output.display());
+                    sgx::sign(&repo_root, network, &unsigned, &key_file, &output)?;
+                    println!("signed {network:?} SGX bundle: {}", output.display());
                 }
-                SgxCommand::Verify { bundle } => {
-                    sgx::verify(&repo_root, &bundle)?;
-                    println!("verified signed testnet SGX bundle: {}", bundle.display());
-                }
-                SgxCommand::Archive { bundle, output } => {
-                    sgx::archive(&repo_root, &bundle, &output)?;
+                SgxCommand::Verify { network, bundle } => {
+                    sgx::verify(&repo_root, network, &bundle)?;
                     println!(
-                        "deterministic signed testnet SGX archive: {}",
+                        "verified signed {network:?} SGX bundle: {}",
+                        bundle.display()
+                    );
+                }
+                SgxCommand::Archive {
+                    network,
+                    bundle,
+                    output,
+                } => {
+                    sgx::archive(&repo_root, network, &bundle, &output)?;
+                    println!(
+                        "deterministic signed {network:?} SGX archive: {}",
                         output.display()
                     );
                 }
                 SgxCommand::Image {
+                    network,
                     bundle,
                     image,
                     output,
                     push,
                 } => {
-                    sgx::build_image(&repo_root, &bundle, &image, &output, push)?;
-                    println!("testnet SGX OCI evidence: {}", output.display());
+                    sgx::build_image(&repo_root, network, &bundle, &image, &output, push)?;
+                    println!("{network:?} SGX OCI evidence: {}", output.display());
                 }
                 SgxCommand::Manifest {
+                    network,
                     elf_manifest,
                     bundle,
                     bundle_archive,
@@ -391,12 +417,13 @@ fn main() -> Result<()> {
                     hardware_evidence,
                     processor_dcap_archive,
                     processor_dcap_evidence,
-                    testnet_genesis,
+                    genesis,
                     output,
                 } => {
                     sgx::finalize_release_manifest(
                         &repo_root,
                         &sgx::VerifiedReleaseInputs {
+                            network,
                             bundle,
                             bundle_archive,
                             cosign_image_verification,
@@ -410,11 +437,11 @@ fn main() -> Result<()> {
                             oci_evidence,
                             sbom,
                             sgx_evidence,
-                            testnet_genesis,
+                            genesis,
                         },
                         &output,
                     )?;
-                    println!("verified testnet ReleaseManifest: {}", output.display());
+                    println!("verified {network:?} ReleaseManifest: {}", output.display());
                 }
             },
         },

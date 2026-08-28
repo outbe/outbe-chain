@@ -63,6 +63,8 @@ pub struct StartOpts {
     /// immutable manifest binding from it. Nodes still receive the clock
     /// offset, but the common start path must not shift genesis a second time.
     pub genesis_timestamp_pre_shifted: bool,
+    /// Short-lived pool policy used only by the dedicated eviction scenario.
+    pub is_txpool_eviction_profile: bool,
 }
 
 impl StartOpts {
@@ -72,6 +74,15 @@ impl StartOpts {
             voting_window: Some(window),
             unix_time_offset_secs: None,
             genesis_timestamp_pre_shifted: false,
+            is_txpool_eviction_profile: false,
+        }
+    }
+
+    pub fn with_txpool_eviction_profile(window: u64) -> Self {
+        Self {
+            voting_window: Some(window),
+            is_txpool_eviction_profile: true,
+            ..Self::default()
         }
     }
 
@@ -96,6 +107,7 @@ impl StartOpts {
             voting_window: Some(window),
             unix_time_offset_secs: Some(target as i64 - now_secs as i64),
             genesis_timestamp_pre_shifted: false,
+            is_txpool_eviction_profile: false,
         }
     }
 }
@@ -686,5 +698,17 @@ mod tests {
             Some((next_day - LEAD) as i64 - NOW as i64)
         );
         assert!(!opts.genesis_timestamp_pre_shifted);
+        assert!(!opts.is_txpool_eviction_profile);
+    }
+
+    #[test]
+    fn shortened_txpool_policy_is_an_explicit_scenario_profile() {
+        let ordinary = StartOpts::with_voting_window(6);
+        let eviction = StartOpts::with_txpool_eviction_profile(6);
+
+        assert!(!ordinary.is_txpool_eviction_profile);
+        assert!(eviction.is_txpool_eviction_profile);
+        assert_eq!(eviction.voting_window, Some(6));
+        assert_eq!(eviction.unix_time_offset_secs, None);
     }
 }

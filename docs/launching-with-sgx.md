@@ -11,7 +11,7 @@ Supported profiles are:
 
 | Chain policy | Local enclave | Remote attestation | Intended use |
 | --- | --- | --- | --- |
-| `DcapRequired` | production `outbe-tee-enclave`, `gramine-sgx`, NodeHost | DCAP | testnet/production admission |
+| `DcapRequired` | production `outbe-tee-enclave`, `gramine-sgx`, NodeHost | DCAP | Testnet and Mainnet production admission |
 | `GramineDirectDev` | production `outbe-tee-enclave`, `gramine-sgx`, NodeHost | none | real SGX development network without Intel collateral |
 | `GramineDirectDev` | production or mock enclave, `gramine-direct`, development session | none | hardware-free development |
 | `GramineDirectDev` | mock enclave as a native host process, development session | none | development on hosts where Gramine cannot run |
@@ -34,10 +34,10 @@ collateral or claim remote hardware attestation; on chain it remains
 
 The two chain policies remain distinct:
 
-- `DcapRequired` is the testnet Intel SGX x86_64 mode on chain ID `54322345`.
-  It requires the V1 manifest from block 1, an authorized SGX enclave, quote
-  and canonical collateral. A missing or rejected dependency stops startup;
-  it never falls back to development mode.
+- `DcapRequired` is the Intel SGX x86_64 production mode for Testnet chain ID
+  `54322345` and Mainnet chain ID `676`. It requires the V1 manifest from block
+  1, an authorized SGX enclave, quote and canonical collateral. A missing or
+  rejected dependency stops startup; it never falls back to development mode.
 - `GramineDirectDev` accepts development evidence. That policy can be exercised
   either without hardware or by the production SGX-without-DCAP profile above;
   neither is DCAP or release-attestation evidence.
@@ -69,6 +69,11 @@ The checked-in B1 candidate now declares `sgx.remote_attestation = "dcap"` and
 builds the enclave with exactly `native-dcap`. It still must not be deployed to
 the `DcapRequired` testnet until B1 binds the reproducible artifact set; H1, P1
 and E1 own hardware acceptance, performance and testnet E2E.
+
+Mainnet uses the same fail-closed DCAP path under the distinct identity
+`676`/`outbe-mainnet-1`. Its network-scoped manifest and protected workflow are
+documented in [Mainnet SGX release](mainnet-sgx-release.md); Testnet artifacts
+cannot satisfy that Mainnet release contract.
 
 ## Run the isolated development network
 
@@ -150,7 +155,7 @@ to `gramine-direct`. The launcher does not mount QVL or require DCAP libraries
 for this mode. Selecting `DcapRequired` still requires DCAP and cannot use this
 path.
 
-## Construct the testnet ChainSpec
+## Construct a production DCAP ChainSpec
 
 Use only measurements and TCB values taken from the exact frozen release. The
 command below validates and writes a ChainSpec; it does not prove that the
@@ -159,7 +164,7 @@ release passed hardware gates:
 ```sh
 target/debug/outbe-chain tee genesis \
   --input /path/to/final-seeded-genesis.json \
-  --output /path/to/testnet-genesis.json \
+  --output /path/to/network-genesis.json \
   --mode dcap-required \
   --mrenclave 0x<exact-32-byte-release-measurement> \
   --mrsigner 0x<exact-32-byte-release-signer> \
@@ -172,8 +177,8 @@ The command refuses zero measurements, the devnet chain ID,
 input/output aliasing and overwrite of an existing output. The product
 ChainSpec parser then requires the canonical `teeAttestationV1` field at every
 startup. A hand-authored manifest cannot select `GramineDirectDev` outside
-devnet chain ID `424242` or select `DcapRequired` outside testnet chain ID
-`54322345`.
+Devnet/Testnet chain IDs `424242`/`54322345` or select `DcapRequired` outside
+Testnet/Mainnet chain IDs `54322345`/`676`.
 
 `scripts/prepare_network.py` exposes the same boundary for generated launch
 plans:
@@ -192,9 +197,11 @@ python3 scripts/prepare_network.py \
   --minimum-tcb-evaluation-data-number <number>
 ```
 
-Do not use placeholder measurements. Do not start the testnet until the I9
-release checkpoint records the exact signed artifacts and all required
-hardware evidence.
+Do not use placeholder measurements. For Testnet, do not start the network
+until the I9 release checkpoint records the exact signed artifacts and all
+required hardware evidence. For Mainnet, follow the protected workflow and
+network-bound inputs in [Mainnet SGX release](mainnet-sgx-release.md), including
+an explicit `--network mainnet` selection.
 
 ## Verify identity and offer-key readiness
 

@@ -132,8 +132,10 @@ orchestration:
 
 ```bash
 mise run release-sgx-prepare -- \
+  --network testnet \
   --elf-output /tmp/outbe-rebuild-a --output /tmp/outbe-sgx-a
 mise run release-sgx-prepare -- \
+  --network testnet \
   --elf-output /tmp/outbe-rebuild-b --output /tmp/outbe-sgx-b
 mise run release-sgx-compare -- \
   --first /tmp/outbe-sgx-a --second /tmp/outbe-sgx-b \

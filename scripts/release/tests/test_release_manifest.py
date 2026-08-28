@@ -106,6 +106,29 @@ class ReleaseManifestTests(unittest.TestCase):
         kwargs.update(overrides)
         return release_manifest.build_manifest(**kwargs)
 
+    @staticmethod
+    def network_identity(network: str) -> dict:
+        if network == "mainnet":
+            chain_id = 676
+            chain_name = "outbe-mainnet-1"
+            genesis_path = "mainnet-genesis.json"
+        elif network == "testnet":
+            chain_id = 54_322_345
+            chain_name = "outbe-testnet-1"
+            genesis_path = "testnet-genesis.json"
+        else:
+            raise AssertionError(f"unsupported fixture network: {network}")
+        return {
+            "chain_id": chain_id,
+            "chain_name": chain_name,
+            "genesis_hash": "0x" + "c" * 64,
+            "genesis_file": {
+                "digest": {"algorithm": "sha256", "value": "d" * 64},
+                "path": genesis_path,
+                "size": 1,
+            },
+        }
+
     def test_manifest_is_canonical_and_validates_against_schema(self) -> None:
         manifest = self.build()
         schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -190,12 +213,60 @@ class ReleaseManifestTests(unittest.TestCase):
             }
         )
         manifest["artifacts"].append(signed)
+        manifest["network"] = self.network_identity("testnet")
         schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
         Draft202012Validator(schema).validate(manifest)
 
         del signed["tee"]["mrsigner"]
         with self.assertRaises(ValidationError):
             Draft202012Validator(schema).validate(manifest)
+
+    def test_signed_release_network_and_provenance_identity_are_atomic(self) -> None:
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        for network in ("testnet", "mainnet"):
+            manifest = self.build()
+            manifest["network"] = self.network_identity(network)
+            workflow = f".github/workflows/{network}-release.yml"
+            manifest["build"]["provenance"].update(
+                {
+                    "mode": "github-actions",
+                    "workflow": workflow,
+                    "certificate_identity": (
+                        "https://github.com/outbe/outbe-chain/"
+                        f".github/workflows/{network}-release.yml@refs/heads/main"
+                    ),
+                    "certificate_oidc_issuer": "https://token.actions.githubusercontent.com",
+                    "certificate_workflow_sha": "a" * 40,
+                }
+            )
+            signed = copy.deepcopy(manifest["artifacts"][1])
+            signed["tee"] = {
+                "authorization_scope": network,
+                "isv_prod_id": 1,
+                "isv_svn": 1,
+                "mock": False,
+                "mrenclave": "a" * 64,
+                "mrsigner": "b" * 64,
+                "sealed_state_schema": 1,
+                "stage": "signed",
+            }
+            manifest["artifacts"].append(signed)
+            Draft202012Validator(schema).validate(manifest)
+
+            mixed = copy.deepcopy(manifest)
+            mixed["artifacts"][-1]["tee"]["authorization_scope"] = (
+                "mainnet" if network == "testnet" else "testnet"
+            )
+            with self.assertRaises(ValidationError):
+                Draft202012Validator(schema).validate(mixed)
+
+            mixed = copy.deepcopy(manifest)
+            foreign = "mainnet" if network == "testnet" else "testnet"
+            mixed["build"]["provenance"]["workflow"] = (
+                f".github/workflows/{foreign}-release.yml"
+            )
+            with self.assertRaises(ValidationError):
+                Draft202012Validator(schema).validate(mixed)
 
     def test_github_actions_provenance_requires_certificate_binding(self) -> None:
         manifest = self.build()

@@ -120,13 +120,17 @@ argument, compensating controls, owner and expiry/review trigger. A comment that
 unreachable is not permanent proof; a regression test or binary reachability evidence must
 support security-relevant exceptions.
 
-### Protected testnet SGX and OCI authorization
+### Protected production-network SGX and OCI authorization
 
-The testnet enclave is packaged from the independently reproduced production ELF by
-typed `cargo xtask release sgx` commands, exposed to operators through `mise` tasks.
+The Testnet and Mainnet enclaves are packaged from the independently reproduced production
+ELF by typed `cargo xtask release sgx --network testnet|mainnet` commands, exposed to
+operators through `mise` tasks. Both profiles use the same physical Gramine, SGX and ISV
+policy. Their chain ID, chain name, genesis, OCI repository, authorization scope and
+Sigstore workflow identity are disjoint and fail closed when mixed.
 Two unsigned Gramine trees are prepared in the digest-pinned Gramine 1.9 builder and
-compared before authorization. The protected `testnet-release` GitHub Environment is
-the only workflow scope that can read `TESTNET_SGX_SIGNING_KEY_B64`. The key is decoded
+compared before authorization. The protected `testnet-release` and `mainnet-release`
+GitHub Environments are the only workflow scopes that can read their respective signing
+keys. A key is decoded
 with owner-only permissions, mounted read-only into one signing container, destroyed by
 an exit trap and never uploaded or copied into the runtime tree.
 
@@ -136,7 +140,7 @@ no key generation, runtime signing or `gramine-direct` fallback. Development and
 runtime signing lives in the explicit `Dockerfile.test` path and requires a separately
 mounted scenario key.
 
-The protected workflow:
+Each protected workflow:
 
 1. reads an existing annotated `vX.Y.Z-testnet.N` tag through the GitHub Git API, requires
    its signature verification result to be `verified`, requires the embedded signed tag

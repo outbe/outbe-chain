@@ -279,28 +279,49 @@ def repository_differences(repo_root: Path) -> list[str]:
         if required_input not in elf.get("inputs", []):
             differences.append(f"ELF release inputs do not bind {required_input}")
 
-    sgx = _read_json(repo_root / "release/testnet-sgx-bundle-v1.json")
-    _require_equal(
-        differences,
-        label="SGX project toolchain contract",
-        actual=sgx.get("project_toolchain"),
-        expected=CONTRACT_PATH,
-    )
-    _require_equal(
-        differences,
-        label="SGX Gramine version",
-        actual=sgx.get("gramine", {}).get("version"),
-        expected=gramine["version"],
-    )
-    _require_equal(
-        differences,
-        label="SGX Gramine source commit",
-        actual=sgx.get("gramine", {}).get("source_commit"),
-        expected=gramine["source_commit"],
-    )
-    for required_input in (CONTRACT_PATH, "scripts/release/verify_project_toolchain.py"):
-        if required_input not in sgx.get("inputs", []):
-            differences.append(f"SGX release inputs do not bind {required_input}")
+    sgx_profiles = {
+        network: _read_json(repo_root / f"release/{network}-sgx-bundle-v1.json")
+        for network in ("testnet", "mainnet")
+    }
+    for network, sgx in sgx_profiles.items():
+        _require_equal(
+            differences,
+            label=f"{network} SGX project toolchain contract",
+            actual=sgx.get("project_toolchain"),
+            expected=CONTRACT_PATH,
+        )
+        _require_equal(
+            differences,
+            label=f"{network} SGX Gramine version",
+            actual=sgx.get("gramine", {}).get("version"),
+            expected=gramine["version"],
+        )
+        _require_equal(
+            differences,
+            label=f"{network} SGX Gramine source commit",
+            actual=sgx.get("gramine", {}).get("source_commit"),
+            expected=gramine["source_commit"],
+        )
+        for required_input in (CONTRACT_PATH, "scripts/release/verify_project_toolchain.py"):
+            if required_input not in sgx.get("inputs", []):
+                differences.append(
+                    f"{network} SGX release inputs do not bind {required_input}"
+                )
+    for field in (
+        "bundle_version",
+        "gramine",
+        "install_root",
+        "platform",
+        "sealed_state_schema",
+        "sgx",
+        "spec_version",
+    ):
+        _require_equal(
+            differences,
+            label=f"SGX physical profile parity for {field}",
+            actual=sgx_profiles["mainnet"].get(field),
+            expected=sgx_profiles["testnet"].get(field),
+        )
 
     qvl = _read_json(repo_root / "release/dcap-native-qvl-v1.json")
     _require_equal(
