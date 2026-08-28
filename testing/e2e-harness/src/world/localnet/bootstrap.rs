@@ -35,7 +35,7 @@ const VALIDATOR_BALANCE_HEX: &str = "0x2540be400";
 const DEV_FELONY_THRESHOLD: u64 = 30;
 /// `IntexFactory.config_profile` selector slot; `1` selects the DEV parameter profile
 /// (24h qualification, 3-day call window) over PROD's unwalkable 21-day timings.
-const INTEX_CONFIG_PROFILE_SLOT: u64 = 13;
+const INTEX_CONFIG_PROFILE_SLOT: u64 = 10;
 const INTEX_PROFILE_DEV: u64 = 1;
 
 const PROPOSER_FELONY_SLOT: u64 = 1;
