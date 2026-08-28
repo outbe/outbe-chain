@@ -568,6 +568,145 @@ mod call_sweep {
         });
     }
 
+    /// Drive `worldwide_day` to Called at `scan_ts` and return the deadline its
+    /// group now carries.
+    fn call_and_deadline(s: &StorageHandle<'_>, worldwide_day: u32, scan_ts: u64) -> u64 {
+        let ctx = BlockRuntimeContext::new(
+            BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+            s.clone(),
+        );
+        called::scan_and_call(&ctx).unwrap();
+        IntexFactoryContract::new(s.clone())
+            .called_group_deadline
+            .read(&IntexFactoryContract::scoped(REFERENCE_ISO, worldwide_day))
+            .unwrap()
+    }
+
+    fn sweep_at(s: &StorageHandle<'_>, now: u64) {
+        let ctx =
+            BlockRuntimeContext::new(BlockContext::empty_for_tests(2, now, CHAIN_ID), s.clone());
+        crate::expired::sweep_expiry_deadlines(&ctx).unwrap();
+    }
+
+    fn unallocated(s: &StorageHandle<'_>) -> U256 {
+        outbe_promislimit::PromisLimitContract::new(s.clone())
+            .get_total_unallocated()
+            .unwrap()
+    }
+
+    fn priced_window(s: &StorageHandle<'_>, scan_ts: u64) {
+        let oracle = OracleContract::new(s.clone());
+        let pair = setup_pair(&oracle);
+        let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+        fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER + 1));
+    }
+
+    /// The one place an off-by-one costs capacity twice: settlement is legal at
+    /// the deadline itself (`settle_rejects_expired_deadline` pins that side), and
+    /// a block hook runs before the block's transactions, so the sweep must wait
+    /// for the tick after it.
+    #[test]
+    fn the_sweep_waits_until_settlement_has_actually_closed() {
+        with_factory(|s| {
+            let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+            priced_window(&s, scan_ts);
+            seed_called_candidate(&s, 20260101);
+            let deadline = call_and_deadline(&s, 20260101, scan_ts);
+
+            sweep_at(&s, deadline);
+            assert_eq!(unallocated(&s), U256::ZERO, "still settleable");
+            assert_eq!(
+                outbe_intex::api::read_series(
+                    &s,
+                    SeriesId::for_pair(WorldwideDay::new(20260101), 840, REFERENCE_ISO).unwrap()
+                )
+                .unwrap()
+                .lifecycle_state()
+                .unwrap(),
+                outbe_intex::IntexState::Called
+            );
+
+            sweep_at(&s, deadline + 1);
+            assert_eq!(
+                unallocated(&s),
+                U256::from(100u64) * U256::from(1_000_000_000_000_000_000u128)
+            );
+        });
+    }
+
+    #[test]
+    fn expiry_returns_only_the_load_nobody_realised() {
+        with_factory(|s| {
+            let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+            priced_window(&s, scan_ts);
+            seed_called_candidate(&s, 20260101);
+            let series_id =
+                SeriesId::for_pair(WorldwideDay::new(20260101), 840, REFERENCE_ISO).unwrap();
+            outbe_intex::api::record_settled_units(&s, series_id, 30).unwrap();
+            outbe_intex::api::record_parked_units(&s, series_id, 25).unwrap();
+
+            let deadline = call_and_deadline(&s, 20260101, scan_ts);
+            sweep_at(&s, deadline + 1);
+
+            assert_eq!(
+                unallocated(&s),
+                U256::from(45u64) * U256::from(1_000_000_000_000_000_000u128)
+            );
+        });
+    }
+
+    #[test]
+    fn a_second_pass_over_an_expired_group_credits_nothing() {
+        with_factory(|s| {
+            let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+            priced_window(&s, scan_ts);
+            seed_called_candidate(&s, 20260101);
+            let deadline = call_and_deadline(&s, 20260101, scan_ts);
+
+            sweep_at(&s, deadline + 1);
+            let after_first = unallocated(&s);
+            sweep_at(&s, deadline + 2);
+            assert_eq!(unallocated(&s), after_first);
+
+            // The queue drained, so its indices start over rather than climbing.
+            let factory = IntexFactoryContract::new(s.clone());
+            assert_eq!(factory.called_head.read().unwrap(), 0);
+            assert_eq!(factory.called_tail.read().unwrap(), 0);
+        });
+    }
+
+    #[test]
+    fn a_backlog_larger_than_one_block_drains_over_the_next_ones() {
+        with_factory(|s| {
+            let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+            priced_window(&s, scan_ts);
+            // One series per group, so the action budget bounds the groups taken.
+            let groups = MAX_SERIES_ACTIONS_PER_SWEEP + MAX_SERIES_ACTIONS_PER_SWEEP / 2;
+            for day in 20260101..20260101 + groups {
+                seed_called_candidate(&s, day);
+            }
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+                s.clone(),
+            );
+            while called::run_call_slice(&ctx).unwrap() > 0 {}
+            called::scan_and_call(&ctx).unwrap();
+            while called::run_call_slice(&ctx).unwrap() > 0 {}
+
+            let deadline = scan_ts + 7 * DAY;
+            let per_group = U256::from(100u64) * U256::from(1_000_000_000_000_000_000u128);
+
+            sweep_at(&s, deadline + 1);
+            assert_eq!(
+                unallocated(&s),
+                per_group * U256::from(MAX_SERIES_ACTIONS_PER_SWEEP)
+            );
+
+            sweep_at(&s, deadline + 2);
+            assert_eq!(unallocated(&s), per_group * U256::from(groups));
+        });
+    }
+
     #[test]
     fn a_sweep_wider_than_one_run_finishes_over_the_next_blocks() {
         with_factory(|s| {

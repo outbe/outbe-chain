@@ -7,6 +7,7 @@ pub mod called;
 pub mod config;
 pub mod constants;
 pub mod errors;
+pub(crate) mod expired;
 pub mod precompile;
 pub mod qualified;
 pub(crate) mod runtime;

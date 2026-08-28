@@ -224,6 +224,70 @@ impl IntexFactoryContract<'_> {
         self.called_queue_at.write(&tail, key)?;
         self.called_tail.write(tail.saturating_add(1))
     }
+
+    /// The queue slot's group, or `None` for a slot whose group already expired.
+    pub(crate) fn called_queue_slot(&self, index: u32) -> Result<Option<(u16, WorldwideDay)>> {
+        let key = self.called_queue_at.read(&index)?;
+        // `scoped` puts a non-zero ISO code in the high half, so zero is free to
+        // mean "taken already" and can never collide with a real group.
+        Ok((key != 0).then(|| Self::unscoped(key)))
+    }
+
+    pub(crate) fn called_group(
+        &self,
+        reference_currency: u16,
+        worldwide_day: WorldwideDay,
+    ) -> Result<Group> {
+        let key = Self::scoped(reference_currency, worldwide_day.value());
+        let count = self.called_group_count.read(&key)?;
+        let mut members = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            members.push(SeriesId::from_word(self.called_group_members.read(
+                &Self::group_member_key(reference_currency, worldwide_day, index),
+            )?));
+        }
+        Ok(Group {
+            iso_code: reference_currency,
+            worldwide_day,
+            members,
+        })
+    }
+
+    /// Drop an expired group and free its queue slot.
+    pub(crate) fn remove_called_group(
+        &mut self,
+        reference_currency: u16,
+        worldwide_day: WorldwideDay,
+        queue_index: u32,
+    ) -> Result<()> {
+        let key = Self::scoped(reference_currency, worldwide_day.value());
+        let count = self.called_group_count.read(&key)?;
+        for index in 0..count {
+            self.called_group_members.clear(&Self::group_member_key(
+                reference_currency,
+                worldwide_day,
+                index,
+            ))?;
+        }
+        self.called_group_count.clear(&key)?;
+        self.called_group_deadline.clear(&key)?;
+        self.called_queue_at.clear(&queue_index)
+    }
+
+    /// Move the head past slots emptied behind it, and reset the queue once it
+    /// drains so the indices never climb without bound.
+    pub(crate) fn compact_called_queue(&mut self) -> Result<()> {
+        let tail = self.called_tail.read()?;
+        let mut head = self.called_head.read()?;
+        while head < tail && self.called_queue_at.read(&head)? == 0 {
+            head = head.saturating_add(1);
+        }
+        if head >= tail {
+            self.called_head.write(0)?;
+            return self.called_tail.write(0);
+        }
+        self.called_head.write(head)
+    }
 }
 
 impl<'storage> IntexFactoryContract<'storage> {
