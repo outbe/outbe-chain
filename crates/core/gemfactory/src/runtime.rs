@@ -91,6 +91,7 @@ pub fn mint_gem(
             entryPrice: entry_price,
             costAmount: cost_amount,
             floorPrice: floor_price,
+            referenceCurrency: reference_currency,
             issuedAt: issued_at,
         },
     )?;
@@ -256,6 +257,7 @@ pub fn mint_merchant_gem(
             entryPrice: entry_price,
             costAmount: cost_amount,
             floorPrice: floor_price,
+            referenceCurrency: record.reference_currency,
             issuedAt: now,
         },
     )?;
@@ -478,6 +480,47 @@ fn asset_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
     )?;
     IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
         .map_err(|_| PrecompileError::Revert("isoCode undecodable".into()))
+}
+
+/// What settling `gem_id` with `asset` costs and which currency that is, without
+/// moving anything. Same acceptance and conversion the settlement itself runs.
+pub fn quote_settlement(
+    storage: &StorageHandle<'_>,
+    gem_id: U256,
+    asset: Address,
+) -> Result<(u16, U256)> {
+    let item = gem_api::get_gem(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
+    let currency = accept_payment_asset(storage, asset, &item)?;
+    let settlement_currency = match currency {
+        PaymentCurrency::Reference => item.reference_currency,
+        PaymentCurrency::Issuance => item.issuance_currency,
+    };
+    Ok((
+        settlement_currency,
+        cost_in_token(storage, &item, asset, currency)?,
+    ))
+}
+
+/// The full terms of a parked position, for the merchant issuing gems from it.
+pub fn position_data(
+    storage: &StorageHandle<'_>,
+    position_id: U256,
+) -> Result<crate::precompile::IGemFactory::PositionData> {
+    let record = GemFactoryContract::new(storage.clone())
+        .positions
+        .get(position_id)?
+        .ok_or(GemFactoryError::PositionNotFound)?;
+    Ok(crate::precompile::IGemFactory::PositionData {
+        positionId: record.position_id,
+        merchant: record.merchant,
+        sourceIntexId: record.source_intex_id.into(),
+        remainingCapacity: record.remaining_capacity,
+        sourceEntryPrice: record.source_entry_price,
+        sourceFloorPrice: record.source_floor_price,
+        issuanceCurrency: record.issuance_currency,
+        referenceCurrency: record.reference_currency,
+        parkedAt: record.parked_at,
+    })
 }
 
 pub fn mine_gem_promis(

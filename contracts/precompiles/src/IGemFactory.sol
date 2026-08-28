@@ -20,7 +20,20 @@ interface IGemFactory {
     ///         `outbe_deriveKeys` + `IPromis.opNonceOf`) and the bound amount is the
     ///         gem's load. Returns the minted Promis amount.
     function mineGemPromis(uint256 gemId, uint64 nonce, bytes32 mac, uint64 opNonce) external returns (uint256);
+    /// @notice Cumulative totals since genesis. `totalIntexParked` counts every
+    ///         Promis unit ever parked; it is not reduced when a position drains
+    ///         or expires.
     function getStatistics() external view returns (uint256 totalGemsIssued, uint256 totalIntexParked);
+
+    /// @notice What settling `gemId` with `asset` costs, and which of the gem's
+    ///         two currencies that asset settles on. Reverts for an asset the
+    ///         gem does not accept.
+    /// @return settlementCurrency ISO 4217 code the payment is denominated in.
+    /// @return amount Payable amount in `asset`'s own minor units.
+    function quoteSettlement(uint256 gemId, address asset)
+        external
+        view
+        returns (uint16 settlementCurrency, uint256 amount);
 
     // --- GemPosition NFT (ERC-721-style, non-transferable; owner = merchant) ---
     /// @notice Number of GemPositions owned by `owner`.
@@ -31,6 +44,21 @@ interface IGemFactory {
     function tokenURI(uint256 positionId) external view returns (string memory);
     /// @notice `positionId` at `index` within `owner`'s positions.
     function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
+    /// @notice Full terms of the position `positionId`.
+    function getPosition(uint256 positionId) external view returns (PositionData memory);
+
+    /// @notice A merchant's parked Intex: the pool Merchant gems are drawn from.
+    struct PositionData {
+        uint256 positionId;
+        address merchant;
+        bytes14 sourceIntexId;
+        uint256 remainingCapacity;
+        uint256 sourceEntryPrice;
+        uint256 sourceFloorPrice;
+        uint16 issuanceCurrency;
+        uint16 referenceCurrency;
+        uint64 parkedAt;
+    }
 
     // --- Events (emitted by the GemFactory precompile) ---
     /// @notice A new gem was minted (agent reward, merchant, or genesis flow).
@@ -42,6 +70,7 @@ interface IGemFactory {
         uint256 entryPrice,
         uint256 costAmount,
         uint256 floorPrice,
+        uint16 referenceCurrency,
         uint64 issuedAt
     );
     /// @notice A gem's Cost Amount was settled into the Reserve.

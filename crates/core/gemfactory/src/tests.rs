@@ -678,6 +678,58 @@ fn parking_rejects_a_series_whose_reference_currency_is_unregistered() {
 }
 
 #[test]
+fn the_quote_agrees_with_what_settling_charges_on_both_rails() {
+    let usd_rate = U256::from(2u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(usd_rate));
+    let quoted = StorageHandle::enter(&mut provider, |storage| {
+        register_currency(&storage, 978, six_decimal_unit());
+        let gem_id = mint_at_live_rate(
+            &storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(10u64) * six_decimal_unit(),
+            978,
+            840,
+        )
+        .unwrap();
+        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+
+        // Both rails quote, and neither quote moves anything.
+        let (ref_iso, ref_amount) = runtime::quote_settlement(&storage, gem_id, STABLE).unwrap();
+        let (iss_iso, iss_amount) =
+            runtime::quote_settlement(&storage, gem_id, STABLE_EUR).unwrap();
+        assert_eq!(ref_iso, 840);
+        assert_eq!(iss_iso, 978);
+        assert_eq!(iss_amount, ref_amount / U256::from(2u64));
+
+        runtime::settle_gem(&storage, ALICE, gem_id, STABLE_EUR).unwrap();
+        iss_amount
+    });
+
+    assert_eq!(settled_event(&provider).amountPaid, quoted);
+}
+
+#[test]
+fn a_position_reports_its_full_terms() {
+    with_storage(Some(U256::from(2u64) * six_decimal_unit()), |storage| {
+        let id = seed_and_park(
+            storage,
+            six_decimal_unit(),
+            six_decimal_unit(),
+            six_decimal_u128(),
+        );
+        let data = runtime::position_data(storage, id).unwrap();
+        assert_eq!(data.merchant, ALICE);
+        assert_eq!(data.sourceEntryPrice, six_decimal_unit());
+        assert_eq!(data.sourceFloorPrice, six_decimal_unit());
+        assert_eq!(data.issuanceCurrency, 840);
+        assert_eq!(data.referenceCurrency, 840);
+        assert_eq!(data.parkedAt, T_NOW);
+        assert_eq!(data.remainingCapacity, parked_capacity(six_decimal_u128()));
+    });
+}
+
+#[test]
 fn cross_currency_settlement_rejects_a_stale_leg_without_settling_the_gem() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
