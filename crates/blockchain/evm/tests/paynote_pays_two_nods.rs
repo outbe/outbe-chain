@@ -9,6 +9,9 @@
 //! What it pins that the module tests cannot:
 //!   * a note deposited by the real `deposit` path — commitment derived by the
 //!     runtime, not handed to it — is spendable by `mineGratis`;
+//!   * notes are bearer instruments: `ALICE2` pays for the deposit and `ALICE1`
+//!     spends it. Spend authority is knowledge of the note spend key, and
+//!     nothing on chain ties the depositor to the Nods the note pays for;
 //!   * a partial spend leaves change *in the pool*, and that change note is a
 //!     first-class note: it pays the next Nod on its own;
 //!   * one note is one payment. Replaying the first proof against the second Nod
@@ -52,7 +55,11 @@ use revm::{
     Context,
 };
 
-const OWNER: Address = Address::new([0x11; 20]);
+/// Owns both Nods, holds the note spend key, and calls `mineGratis`.
+const ALICE1: Address = Address::new([0x11; 20]);
+/// Funds the pool. Never appears again: the note it deposits is spent by
+/// `ALICE1`, and the chain never learns the two are related.
+const ALICE2: Address = Address::new([0x12; 20]);
 const ASSET: Address = Address::new([0x33; 20]);
 const VAULT: Address = Address::new([0x55; 20]);
 
@@ -70,7 +77,7 @@ const BLOCK_TIMESTAMP: u64 = 1_700_000_000;
 
 /// One Nod per owner per day, so two Nods for one owner means two days. They
 /// have to share an owner: the note names its spender, and `mineGratis` demands
-/// the spender be the Nod's owner.
+/// the spender be the Nod's owner. That spender is `ALICE1`, not the depositor.
 const DAYS: [u32; 2] = [20_241_220, 20_241_221];
 
 type EvmCtx = revm::Context<
@@ -102,7 +109,7 @@ fn always_returns(word: B256) -> AccountInfo {
 
 fn nod_params(day: u32) -> NodIssueParams {
     NodIssueParams {
-        owner: OWNER,
+        owner: ALICE1,
         gratis_load_minor: U256::from(GRATIS_LOAD),
         worldwide_day: WorldwideDay::new(day),
         league_id: 1,
@@ -154,7 +161,7 @@ fn seed_compressed_entities_genesis(storage: &StorageHandle<'_>) {
 }
 
 /// A chain with the vault registry seeded and two qualified, costed Nods
-/// already issued to `OWNER` — everything the scenario needs before the first
+/// already issued to `ALICE1` — everything the scenario needs before the first
 /// note exists.
 fn fixture() -> (
     EvmCtx,
@@ -173,7 +180,7 @@ fn fixture() -> (
     let parent = NodRepositoryReader::new(adapter);
     let scope = Arc::new(ExecutionScope::new());
 
-    let block = BlockContext::new(1, BLOCK_TIMESTAMP, CHAIN_ID, OWNER, vec![OWNER]);
+    let block = BlockContext::new(1, BLOCK_TIMESTAMP, CHAIN_ID, ALICE1, vec![ALICE1]);
     let mut provider = DirectStorageProvider::new(&mut database, block);
     let nods = StorageHandle::enter(&mut provider, |storage| {
         seed_compressed_entities_genesis(&storage);
@@ -206,13 +213,14 @@ fn call(
     ctx: &mut EvmCtx,
     scope: Arc<ExecutionScope>,
     readers: Option<RuntimeBodyReaders>,
+    caller: Address,
     target: Address,
     calldata: Bytes,
     is_static: bool,
 ) -> outbe_primitives::storage::SubCallOutput {
     sub_call::run(
         ctx,
-        OWNER,
+        caller,
         false,
         SpecId::PRAGUE,
         readers,
@@ -240,6 +248,7 @@ fn view<C: SolCall>(
         ctx,
         scope.clone(),
         None,
+        ALICE1,
         target,
         Bytes::from(c.abi_encode()),
         true,
@@ -282,12 +291,12 @@ fn mine_gratis(
         ctx,
         scope,
         GRATIS_ADDRESS,
-        IGratis::opNonceOfCall { account: OWNER },
+        IGratis::opNonceOfCall { account: ALICE1 },
     );
-    let modify_key = derive_modify_key(&test_enclave::state_key(), OWNER).unwrap();
+    let modify_key = derive_modify_key(&test_enclave::state_key(), ALICE1).unwrap();
     let mac = modify_mac(
         &modify_key,
-        OWNER,
+        ALICE1,
         GratisOp::Mint,
         U256::from(GRATIS_LOAD),
         op_nonce,
@@ -300,6 +309,7 @@ fn mine_gratis(
         ctx,
         scope.clone(),
         Some(readers.clone()),
+        ALICE1,
         NOD_FACTORY_ADDRESS,
         Bytes::from(
             INodFactory::mineGratisCall {
@@ -325,12 +335,14 @@ fn assert_mined(out: &outbe_primitives::storage::SubCallOutput, what: &str) -> U
     INodFactory::mineGratisCall::abi_decode_returns(&out.returndata).expect("minted amount")
 }
 
-/// Deposits `note` into the pool through the real `deposit` path.
-fn deposit(ctx: &mut EvmCtx, scope: &Arc<ExecutionScope>, note: &Note) {
+/// Deposits `note` into the pool through the real `deposit` path, paid for by
+/// `depositor` — who need not be the account that will later spend it.
+fn deposit(ctx: &mut EvmCtx, scope: &Arc<ExecutionScope>, depositor: Address, note: &Note) {
     let out = call(
         ctx,
         scope.clone(),
         None,
+        depositor,
         PAYNOTE_ADDRESS,
         Bytes::from(
             IPayNote::depositCall {
@@ -354,18 +366,18 @@ fn deposit(ctx: &mut EvmCtx, scope: &Arc<ExecutionScope>, note: &Note) {
 fn one_deposited_note_pays_two_nods_through_its_change() {
     let (mut ctx, scope, readers, nods) = fixture();
 
-    // One deposit funds both Nods. The pool derives the leaf itself from the
-    // asset and amount it moved, so the note the prover holds is only valid
-    // because it matches what the deposit actually did.
+    // One deposit funds both Nods, and ALICE2 pays for it. The pool derives the
+    // leaf itself from the asset and amount it moved, so the note ALICE1 proves
+    // against is only valid because it matches what ALICE2's deposit did.
     let funding = note(CHAIN_ID, NOTE_KEY, ASSET, 2 * COST);
-    deposit(&mut ctx, &scope, &funding);
+    deposit(&mut ctx, &scope, ALICE2, &funding);
     assert_eq!(leaf_count(&mut ctx, &scope), 1);
 
     let mut tree = ReferenceTree::new(CHAIN_ID);
     let leaf = tree.append(funding.commitment);
 
     // First Nod: spend half the note.
-    let first_proof = spend_proof(CHAIN_ID, &tree, leaf, &funding, OWNER, COST);
+    let first_proof = spend_proof(CHAIN_ID, &tree, leaf, &funding, ALICE1, COST);
     let minted = assert_mined(
         &mine_gratis(&mut ctx, &scope, &readers, nods[0], &first_proof),
         "mine the first Nod with the deposited note",
@@ -412,7 +424,7 @@ fn one_deposited_note_pays_two_nods_through_its_change() {
     );
 
     // Second Nod: paid entirely by the change note.
-    let change_proof = spend_proof(CHAIN_ID, &tree, change_leaf, &change, OWNER, COST);
+    let change_proof = spend_proof(CHAIN_ID, &tree, change_leaf, &change, ALICE1, COST);
     let minted = assert_mined(
         &mine_gratis(&mut ctx, &scope, &readers, nods[1], &change_proof),
         "mine the second Nod with the change note",
