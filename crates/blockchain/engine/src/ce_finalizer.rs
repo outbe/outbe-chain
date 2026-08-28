@@ -5,7 +5,7 @@
 //! DB-only canonical/root check, and the CE tree commit which must all complete
 //! before the actor may acknowledge the finalized block.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use alloy_consensus::{BlockHeader as _, TxReceipt};
 use alloy_eips::BlockNumHash;
@@ -32,6 +32,32 @@ use crate::ce_recovery::{CanonicalCeReplayBlock, CanonicalCeReplaySource};
 
 /// The authoritative compressed-entity root is storage slot 1 at `0xEE0D`.
 const CE_ROOT_SLOT: B256 = B256::new(U256::from_limbs([1, 0, 0, 0]).to_be_bytes::<32>());
+/// Poll durable Reth state while an advisory persistence notification is absent.
+const CE_PERSISTENCE_RECHECK_INTERVAL: Duration = Duration::from_secs(1);
+/// A finalized delivery must recover or fail before it can stall the executor forever.
+const CE_PERSISTENCE_DEADLINE: Duration = Duration::from_secs(30);
+
+#[derive(Clone, Copy, Debug)]
+struct CePersistenceWaitPolicy {
+    recheck_interval: Duration,
+    deadline: Duration,
+}
+
+impl Default for CePersistenceWaitPolicy {
+    fn default() -> Self {
+        Self {
+            recheck_interval: CE_PERSISTENCE_RECHECK_INTERVAL,
+            deadline: CE_PERSISTENCE_DEADLINE,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DurableCeProbe {
+    Absent,
+    DifferentHash(B256),
+    Exact(B256),
+}
 
 fn is_pending_executed_state(error: &ProviderError, height: u64) -> bool {
     matches!(
@@ -333,6 +359,7 @@ pub struct RethCeFinalizer {
     persisted: Arc<futures::lock::Mutex<BoxStream<'static, BlockNumHash>>>,
     tree: Arc<dyn FinalizedCeTree>,
     finalization: Arc<futures::lock::Mutex<()>>,
+    wait_policy: CePersistenceWaitPolicy,
 }
 
 impl std::fmt::Debug for RethCeFinalizer {
@@ -347,12 +374,23 @@ impl RethCeFinalizer {
     /// Captures the persistence subscription eagerly, before any finalized
     /// delivery can enter the executor actor.
     pub fn new(state: Arc<dyn DurableCeState>, tree: Arc<dyn FinalizedCeTree>) -> Self {
+        Self::with_wait_policy(state, tree, CePersistenceWaitPolicy::default())
+    }
+
+    fn with_wait_policy(
+        state: Arc<dyn DurableCeState>,
+        tree: Arc<dyn FinalizedCeTree>,
+        wait_policy: CePersistenceWaitPolicy,
+    ) -> Self {
+        debug_assert!(!wait_policy.recheck_interval.is_zero());
+        debug_assert!(!wait_policy.deadline.is_zero());
         let persisted = state.persisted_blocks();
         Self {
             state,
             persisted: Arc::new(futures::lock::Mutex::new(persisted)),
             tree,
             finalization: Arc::new(futures::lock::Mutex::new(())),
+            wait_policy,
         }
     }
 
@@ -426,9 +464,9 @@ impl RethCeFinalizer {
                 block.block_hash
             );
         }
-        let authoritative_root = match self.verify_durable(block)? {
-            Some(root) => root,
-            None => {
+        let authoritative_root = match self.probe_durable(block)? {
+            DurableCeProbe::Exact(root) => root,
+            DurableCeProbe::Absent | DurableCeProbe::DifferentHash(_) => {
                 self.wait_for_exact_persistence(block).await?;
                 self.verify_durable(block)?.ok_or_else(|| {
                     eyre::eyre!(
@@ -531,18 +569,26 @@ impl RethCeFinalizer {
     }
 
     fn verify_durable(&self, block: FinalizedCeBlock) -> eyre::Result<Option<B256>> {
-        let Some(evidence) = self.state.block_and_root(block.height)? else {
-            return Ok(None);
-        };
-        if evidence.block_hash != block.block_hash {
-            eyre::bail!(
+        match self.probe_durable(block)? {
+            DurableCeProbe::Absent => Ok(None),
+            DurableCeProbe::Exact(root) => Ok(Some(root)),
+            DurableCeProbe::DifferentHash(actual) => eyre::bail!(
                 "durable canonical conflict at height {}: finalized={}, Reth={}",
                 block.height,
                 block.block_hash,
-                evidence.block_hash
-            );
+                actual
+            ),
         }
-        Ok(Some(validate_durable_header_evidence(
+    }
+
+    fn probe_durable(&self, block: FinalizedCeBlock) -> eyre::Result<DurableCeProbe> {
+        let Some(evidence) = self.state.block_and_root(block.height)? else {
+            return Ok(DurableCeProbe::Absent);
+        };
+        if evidence.block_hash != block.block_hash {
+            return Ok(DurableCeProbe::DifferentHash(evidence.block_hash));
+        }
+        Ok(DurableCeProbe::Exact(validate_durable_header_evidence(
             block.height,
             evidence,
         )?))
@@ -550,41 +596,80 @@ impl RethCeFinalizer {
 
     async fn wait_for_exact_persistence(&self, block: FinalizedCeBlock) -> eyre::Result<()> {
         let mut persisted = self.persisted.lock().await;
-        while let Some(notification) = persisted.next().await {
-            if notification.number < block.height {
-                continue;
+        let deadline = tokio::time::sleep(self.wait_policy.deadline);
+        tokio::pin!(deadline);
+        let first_recheck = tokio::time::Instant::now() + self.wait_policy.recheck_interval;
+        let mut rechecks =
+            tokio::time::interval_at(first_recheck, self.wait_policy.recheck_interval);
+        rechecks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            tokio::select! {
+                biased;
+                _ = &mut deadline => {
+                    // Resolve the boundary race in favor of durable proof: a block
+                    // becoming visible at the deadline still completes online.
+                    if matches!(self.probe_durable(block)?, DurableCeProbe::Exact(_)) {
+                        return Ok(());
+                    }
+                    eyre::bail!(
+                        "finalized CE persistence deadline exceeded for {}/{} after {:?}",
+                        block.height,
+                        block.block_hash,
+                        self.wait_policy.deadline
+                    );
+                }
+                _ = rechecks.tick() => {
+                    if matches!(self.probe_durable(block)?, DurableCeProbe::Exact(_)) {
+                        return Ok(());
+                    }
+                }
+                notification = persisted.next() => {
+                    let Some(notification) = notification else {
+                        return Err(eyre::eyre!(
+                            "Reth persistence stream ended before finalized CE block {}/{}",
+                            block.height,
+                            block.block_hash
+                        ));
+                    };
+                    if notification.number < block.height {
+                        continue;
+                    }
+                    if notification.number == block.height
+                        && notification.hash == block.block_hash
+                    {
+                        // Notifications are advisory. Accept the wake only after
+                        // the exact target is visible through a fresh DB-only read.
+                        if matches!(self.probe_durable(block)?, DurableCeProbe::Exact(_)) {
+                            return Ok(());
+                        }
+                        continue;
+                    }
+                    if notification.number == block.height {
+                        // Reth can persist a speculative canonical head at H before
+                        // consensus finalizes a different block at the same H. The
+                        // finalized block was already submitted through newPayload and
+                        // FCU, so wait for its replacement persistence notification.
+                        // Treating the old same-height hash as "passed" kills an honest
+                        // validator during an ordinary pre-finalization reorg.
+                        continue;
+                    }
+                    if matches!(self.probe_durable(block)?, DurableCeProbe::Exact(_)) {
+                        // This is a watch stream, so a slow receiver may observe a
+                        // later durable tip. The target is accepted only after a fresh
+                        // DB-only transaction proves its exact canonical identity.
+                        return Ok(());
+                    }
+                    eyre::bail!(
+                        "Reth persistence passed finalized CE block {}/{} with {}/{}",
+                        block.height,
+                        block.block_hash,
+                        notification.number,
+                        notification.hash
+                    );
+                }
             }
-            if notification.number == block.height && notification.hash == block.block_hash {
-                return Ok(());
-            }
-            if notification.number == block.height {
-                // Reth can persist a speculative canonical head at H before
-                // consensus finalizes a different block at the same H. The
-                // finalized block was already submitted through newPayload and
-                // FCU, so wait for its replacement persistence notification.
-                // Treating the old same-height hash as "passed" kills an honest
-                // validator during an ordinary pre-finalization reorg.
-                continue;
-            }
-            if notification.number > block.height && self.verify_durable(block)?.is_some() {
-                // This is a watch stream, so a slow receiver may observe a
-                // later durable tip. The target is accepted only after a fresh
-                // DB-only transaction proves its exact canonical identity.
-                return Ok(());
-            }
-            eyre::bail!(
-                "Reth persistence passed finalized CE block {}/{} with {}/{}",
-                block.height,
-                block.block_hash,
-                notification.number,
-                notification.hash
-            );
         }
-        Err(eyre::eyre!(
-            "Reth persistence stream ended before finalized CE block {}/{}",
-            block.height,
-            block.block_hash
-        ))
     }
 }
 
@@ -595,6 +680,7 @@ impl FinalizedCeCommitter for RethCeFinalizer {
             persisted: Arc::clone(&self.persisted),
             tree: Arc::clone(&self.tree),
             finalization: Arc::clone(&self.finalization),
+            wait_policy: self.wait_policy,
         };
         async move { this.commit(block).await }.boxed()
     }
@@ -873,6 +959,24 @@ mod tests {
         RethCeFinalizer::new(state, tree)
     }
 
+    fn finalizer_with_wait_policy(
+        state: Arc<FakeDurableState>,
+        tree: Arc<FakeTree>,
+        recheck_interval: Duration,
+        deadline: Duration,
+    ) -> RethCeFinalizer {
+        let state: Arc<dyn DurableCeState> = state;
+        let tree: Arc<dyn FinalizedCeTree> = tree;
+        RethCeFinalizer::with_wait_policy(
+            state,
+            tree,
+            CePersistenceWaitPolicy {
+                recheck_interval,
+                deadline,
+            },
+        )
+    }
+
     #[tokio::test]
     async fn waits_for_exact_persistence_before_applying_tree() {
         let staged = candidate();
@@ -894,6 +998,99 @@ mod tests {
             .unwrap();
         task.await.unwrap().unwrap();
         assert_eq!(tree.attempts(), 1);
+    }
+
+    #[tokio::test]
+    async fn missing_persistence_notification_recovers_from_durable_state() {
+        let staged = candidate();
+        let root = staged.new_root();
+        let (state, _persisted_tx_kept_open) = FakeDurableState::new();
+        let tree = FakeTree::new(Some(staged));
+        let finalizer = Arc::new(finalizer_with_wait_policy(
+            state.clone(),
+            tree.clone(),
+            Duration::from_millis(5),
+            Duration::from_millis(100),
+        ));
+
+        let commit = {
+            let finalizer = finalizer.clone();
+            tokio::spawn(async move { finalizer.commit(finalized_block()).await })
+        };
+        tokio::task::yield_now().await;
+
+        // Model a lost/coalesced persistence notification: the canonical block
+        // is now DB-visible, but no stream item wakes the already-waiting
+        // finalizer to perform its DB-only recheck.
+        state.set(1, hash(2), root);
+        assert!(state.block_and_root(1).unwrap().is_some());
+
+        tokio::time::timeout(Duration::from_millis(250), commit)
+            .await
+            .expect("durable DB recheck must produce a bounded outcome")
+            .expect("commit task must not panic")
+            .expect("exact durable state must recover online");
+        assert_eq!(tree.attempts(), 1);
+    }
+
+    #[tokio::test]
+    async fn persistence_notification_before_db_visibility_waits_for_durable_state() {
+        let staged = candidate();
+        let root = staged.new_root();
+        let (state, persisted_tx) = FakeDurableState::new();
+        let tree = FakeTree::new(Some(staged));
+        let finalizer = Arc::new(finalizer_with_wait_policy(
+            state.clone(),
+            tree.clone(),
+            Duration::from_millis(5),
+            Duration::from_millis(100),
+        ));
+
+        let commit = {
+            let finalizer = finalizer.clone();
+            tokio::spawn(async move { finalizer.commit(finalized_block()).await })
+        };
+        tokio::task::yield_now().await;
+        persisted_tx
+            .unbounded_send(BlockNumHash::new(1, hash(2)))
+            .unwrap();
+        tokio::task::yield_now().await;
+        assert!(!commit.is_finished());
+        assert_eq!(tree.attempts(), 0);
+
+        state.set(1, hash(2), root);
+        tokio::time::timeout(Duration::from_millis(250), commit)
+            .await
+            .expect("DB recheck must observe state published after its notification")
+            .expect("commit task must not panic")
+            .expect("exact durable state must complete the finalization");
+        assert_eq!(tree.attempts(), 1);
+    }
+
+    #[tokio::test]
+    async fn missing_durable_persistence_fails_at_deadline_without_tree_apply() {
+        let staged = candidate();
+        let (state, _persisted_tx_kept_open) = FakeDurableState::new();
+        let tree = FakeTree::new(Some(staged));
+        let finalizer = finalizer_with_wait_policy(
+            state,
+            tree.clone(),
+            Duration::from_millis(5),
+            Duration::from_millis(25),
+        );
+
+        let error = tokio::time::timeout(
+            Duration::from_millis(250),
+            finalizer.commit(finalized_block()),
+        )
+        .await
+        .expect("missing durable state must fail within its configured deadline")
+        .unwrap_err();
+
+        let message = error.to_string();
+        assert!(message.contains("finalized CE persistence deadline exceeded"));
+        assert!(message.contains("after 25ms"));
+        assert_eq!(tree.attempts(), 0);
     }
 
     #[tokio::test]
@@ -922,8 +1119,14 @@ mod tests {
         let staged = candidate();
         let root = staged.new_root();
         let (state, persisted_tx) = FakeDurableState::new();
+        state.set(1, hash(9), root);
         let tree = FakeTree::new(Some(staged));
-        let finalizer = Arc::new(finalizer(state.clone(), tree.clone()));
+        let finalizer = Arc::new(finalizer_with_wait_policy(
+            state.clone(),
+            tree.clone(),
+            Duration::from_millis(5),
+            Duration::from_millis(100),
+        ));
 
         let task = {
             let finalizer = finalizer.clone();
@@ -952,12 +1155,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn durable_hash_conflict_fails_before_tree_apply() {
+    async fn same_height_speculative_state_fails_only_at_deadline() {
         let staged = candidate();
         let root = staged.new_root();
-        let (state, _tx) = FakeDurableState::new();
+        let (state, _persisted_tx_kept_open) = FakeDurableState::new();
         state.set(1, hash(7), root);
         let tree = FakeTree::new(Some(staged));
+        let error = finalizer_with_wait_policy(
+            state,
+            tree.clone(),
+            Duration::from_millis(5),
+            Duration::from_millis(25),
+        )
+        .commit(finalized_block())
+        .await
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("finalized CE persistence deadline exceeded"));
+        assert_eq!(tree.attempts(), 0);
+    }
+
+    #[tokio::test]
+    async fn redelivery_with_durable_hash_conflict_fails_before_tree_apply() {
+        let root = candidate().new_root();
+        let (state, _tx) = FakeDurableState::new();
+        state.set(1, hash(7), root);
+        let tree = FakeTree::committed();
         let error = finalizer(state, tree.clone())
             .commit(finalized_block())
             .await
