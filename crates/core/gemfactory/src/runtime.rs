@@ -2,7 +2,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
 use outbe_intex::SeriesId;
-use outbe_oracle::api::{fresh_coen_rate_for, fresh_currency_cross_rate};
+use outbe_oracle::api::fresh_coen_rate_for;
 use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
@@ -13,9 +13,7 @@ use outbe_primitives::units::SCALE_1E6_U256;
 
 use outbe_common::pow;
 
-use crate::constants::{
-    CALL_RATE, FLOOR_RATE, POSITION_VALIDITY_SECONDS, SETTLEMENT_ASSET_DECIMALS, SRA_RATE,
-};
+use crate::constants::{CALL_RATE, FLOOR_RATE, POSITION_VALIDITY_SECONDS, SRA_RATE};
 use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::{GemBurned, GemIssued, GemSettled};
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
@@ -278,32 +276,12 @@ pub fn settle_gem(
 
     // The payer chooses the rail by the asset they bring; the gem accepts either
     // of its two currencies and nothing else.
-    let expected = match accept_payment_asset(storage, asset, &item)? {
+    let currency = accept_payment_asset(storage, asset, &item)?;
+    let expected = match currency {
         PaymentCurrency::Reference => item.reference_currency,
         PaymentCurrency::Issuance => item.issuance_currency,
     };
-
-    // Amounts are protocol-scale, and the transfer moves raw token units, so an
-    // asset on a different scale would move the wrong sum. Nothing enforces the
-    // scale at registration, so it is checked here.
-    let asset_decimals = read_decimals(storage, asset)?;
-    if asset_decimals != SETTLEMENT_ASSET_DECIMALS {
-        return Err(GemFactoryError::SettlementDecimalsMismatch {
-            asset,
-            decimals: asset_decimals,
-            expected: SETTLEMENT_ASSET_DECIMALS,
-        }
-        .into());
-    }
-
-    // The Cost Amount is denominated in the reference currency, so a settlement
-    // that resolves to the issuance currency is charged at the live cross rate.
-    let amount_paid = fresh_currency_cross_rate(
-        storage.clone(),
-        item.reference_currency,
-        expected,
-        item.cost_amount_minor,
-    )?;
+    let amount_paid = cost_in_token(storage, &item, asset, currency)?;
 
     gem_api::set_state(storage, gem_id, GemState::Settled)?;
 
@@ -332,12 +310,17 @@ fn read_decimals(storage: &StorageHandle<'_>, asset: Address) -> Result<u8> {
     IERC20::decimalsCall::abi_decode_returns(&ret).map_err(|_| GemFactoryError::InvalidAsset.into())
 }
 
+/// Pulls `amount` of `asset` from `caller` and deposits what actually arrived
+/// into the reserve vault. Fee-on-transfer safe: the deposit follows the measured
+/// balance delta rather than the requested amount, and zero shares is a refusal
+/// rather than a silent no-op.
 fn deposit_to_vault(
     storage: &StorageHandle<'_>,
     caller: Address,
     amount: U256,
     asset: Address,
 ) -> Result<()> {
+    let before = erc20_balance_of(storage, asset, GEM_FACTORY_ADDRESS)?;
     let transfer = IERC20::transferFromCall {
         from: caller,
         to: GEM_FACTORY_ADDRESS,
@@ -345,18 +328,31 @@ fn deposit_to_vault(
     }
     .abi_encode();
     storage.call(asset, U256::ZERO, transfer.into())?;
+    let after = erc20_balance_of(storage, asset, GEM_FACTORY_ADDRESS)?;
+    let received = after
+        .checked_sub(before)
+        .ok_or_else(|| PrecompileError::Revert("settlement balance underflow".into()))?;
 
     let approve = IERC20::approveCall {
         spender: VAULT_ROUTER_ADDRESS,
-        amount,
+        amount: received,
     }
     .abi_encode();
     storage.call(asset, U256::ZERO, approve.into())?;
 
     // Deposit into the reserve vault via the router's Solidity ABI.
-    outbe_vaultrouter::api::deposit(storage, asset, amount)?;
+    let shares = outbe_vaultrouter::api::deposit(storage, asset, received)?;
+    if shares.is_zero() {
+        return Err(GemFactoryError::ZeroSharesReceived.into());
+    }
 
     Ok(())
+}
+
+fn erc20_balance_of(storage: &StorageHandle<'_>, asset: Address, account: Address) -> Result<U256> {
+    let ret = storage.staticcall(asset, IERC20::balanceOfCall { account }.abi_encode().into())?;
+    IERC20::balanceOfCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("ERC20 balanceOf undecodable".into()))
 }
 
 /// Which of a gem's two currencies a payment asset is denominated in.
@@ -395,6 +391,70 @@ fn accept_payment_asset(
         return Ok(PaymentCurrency::Issuance);
     }
     Err(GemFactoryError::SettlementCurrencyMismatch { iso_code: iso }.into())
+}
+
+/// Cost of one gem in `asset`'s minor units. The reference currency needs no
+/// rate; the issuance currency converts through COEN —
+/// `cost * rate(COEN/iss) / rate(COEN/ref)` — with the decimals scaling folded
+/// into the same division, so it rounds once.
+fn cost_in_token(
+    storage: &StorageHandle<'_>,
+    item: &outbe_gem::GemData,
+    asset: Address,
+    currency: PaymentCurrency,
+) -> Result<U256> {
+    let asset_decimals = read_decimals(storage, asset)?;
+    if currency == PaymentCurrency::Reference {
+        return cost_to_payment_units(item.cost_amount_minor, U256::ONE, U256::ONE, asset_decimals);
+    }
+
+    let rate_issuance = fresh_coen_rate_for(storage.clone(), item.issuance_currency)?;
+    let rate_reference = fresh_coen_rate_for(storage.clone(), item.reference_currency)?;
+    cost_to_payment_units(
+        item.cost_amount_minor,
+        rate_issuance,
+        rate_reference,
+        asset_decimals,
+    )
+}
+
+/// Converts a six-decimal cost into payment-token minor units, optionally
+/// applying an ISO/ISO rate. Scaling is cancelled before multiplication where
+/// possible and the result is rounded up exactly once, in favour of the reserve.
+fn cost_to_payment_units(
+    cost: U256,
+    rate_numerator: U256,
+    rate_denominator: U256,
+    payment_decimals: u8,
+) -> Result<U256> {
+    const COST_DECIMALS: u32 = 6;
+    const MAX_PAYMENT_DECIMALS: u8 = 18;
+
+    if payment_decimals > MAX_PAYMENT_DECIMALS {
+        return Err(GemFactoryError::UnsupportedPaymentDecimals(payment_decimals).into());
+    }
+    if rate_denominator.is_zero() {
+        return Err(PrecompileError::Revert(
+            "settlement rate denominator is zero".into(),
+        ));
+    }
+
+    let mut numerator = cost
+        .checked_mul(rate_numerator)
+        .ok_or_else(|| PrecompileError::Revert("settlement conversion overflow".into()))?;
+    let mut denominator = rate_denominator;
+    let payment_decimals = u32::from(payment_decimals);
+    if payment_decimals < COST_DECIMALS {
+        denominator = denominator
+            .checked_mul(U256::from(10u64).pow(U256::from(COST_DECIMALS - payment_decimals)))
+            .ok_or_else(|| PrecompileError::Revert("settlement conversion overflow".into()))?;
+    } else if payment_decimals > COST_DECIMALS {
+        numerator = numerator
+            .checked_mul(U256::from(10u64).pow(U256::from(payment_decimals - COST_DECIMALS)))
+            .ok_or_else(|| PrecompileError::Revert("settlement conversion overflow".into()))?;
+    }
+
+    Ok(numerator.div_ceil(denominator))
 }
 
 /// Reads the settlement asset's ISO 4217 code via a static sub-call.

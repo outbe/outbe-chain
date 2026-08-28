@@ -26,6 +26,8 @@ const STABLE: Address = address!("0x00000000000000000000000000000000000000AA");
 /// Mock stablecoin whose `isoCode()` is 978 (EUR): a currency mismatch for a
 /// USD-denominated gem.
 const STABLE_EUR: Address = address!("0x00000000000000000000000000000000000000BB");
+/// Mock USD stablecoin carrying eighteen decimals instead of six.
+const STABLE_18: Address = address!("0x00000000000000000000000000000000000000CC");
 
 /// A no-op authorization for mine paths that reject before reaching the (enclave)
 /// Promis mint (ownership/state/PoW failures).
@@ -77,6 +79,9 @@ fn stub_stablecoin(
     // The deposit path pulls and approves before handing over to the router.
     storage.stub_sub_call_at_selector(asset, IERC20::transferFromCall::SELECTOR, word(1));
     storage.stub_sub_call_at_selector(asset, IERC20::approveCall::SELECTOR, word(1));
+    // The stub cannot vary between the two reads, so the measured delta is zero
+    // here; the deposit's share check is what guards that on chain.
+    storage.stub_sub_call_at_selector(asset, IERC20::balanceOfCall::SELECTOR, word(0));
 }
 
 fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
@@ -91,6 +96,7 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
     // settlement path can tell a USD asset from a EUR one.
     stub_stablecoin(&mut storage, STABLE, 840, 6);
     stub_stablecoin(&mut storage, STABLE_EUR, 978, 6);
+    stub_stablecoin(&mut storage, STABLE_18, 840, 18);
     // Every asset the tests pass in has a registered vault.
     storage.stub_sub_call_at_selector(
         outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
@@ -510,6 +516,62 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
         gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
         let res = runtime::settle_gem(&storage, ALICE, gem_id, STABLE);
         assert!(err_msg(res).contains("no registered vault"));
+    });
+}
+
+#[test]
+fn settlement_scales_the_cost_to_the_asset_decimals() {
+    let usd_rate = U256::from(2u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(usd_rate));
+    let cost = StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = runtime::mint_gem(
+            &storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(10u64) * six_decimal_unit(),
+            840,
+            840,
+        )
+        .unwrap();
+        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        let cost = gem_api::get_gem(&storage, gem_id)
+            .unwrap()
+            .unwrap()
+            .cost_amount_minor;
+        // An eighteen-decimal asset was a hard revert before; now it scales.
+        runtime::settle_gem(&storage, ALICE, gem_id, STABLE_18).unwrap();
+        cost
+    });
+
+    let event = settled_event(&provider);
+    assert_eq!(event.amountPaid, cost * U256::from(1_000_000_000_000u64));
+}
+
+#[test]
+fn settle_rejects_a_deposit_that_mints_no_shares() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(rate));
+    provider.stub_sub_call_at_selector(
+        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        IVaultRouter::depositCall::SELECTOR,
+        word(0),
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = runtime::mint_gem(
+            &storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(10u64) * six_decimal_unit(),
+            840,
+            840,
+        )
+        .unwrap();
+        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        let res = runtime::settle_gem(&storage, ALICE, gem_id, STABLE);
+        // `settle_gem` flips the state before the transfer on purpose, so a
+        // re-entrant call finds a Settled gem; unwinding it is the transaction
+        // frame's job, not this function's.
+        assert!(err_msg(res).contains("zero shares"));
     });
 }
 
