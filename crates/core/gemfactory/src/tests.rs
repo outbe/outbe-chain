@@ -163,7 +163,7 @@ fn mint_genesis_pays_like_agents_but_born_qualified() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let load = U256::from(10u64) * six_decimal_unit();
-        let gem_id = runtime::mint_gem(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
+        let gem_id = mint_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
 
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
         // Genesis now pays like Wallet/Cca/Validator: cost = entry × load,
@@ -192,7 +192,7 @@ fn mint_validator_post_genesis_behaves_like_wallet() {
     with_storage(Some(rate), |storage| {
         let load = U256::from(5u64) * six_decimal_unit();
         let gem_id =
-            runtime::mint_gem(storage, ALICE, GemTypes::Validator, load, 840, 840).unwrap();
+            mint_at_live_rate(storage, ALICE, GemTypes::Validator, load, 840, 840).unwrap();
 
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
         // Same as WALLET: cost = entry × load, floor with 8% markup, Issued.
@@ -214,7 +214,7 @@ fn mint_wallet_cost_and_floor_markup_state_issued() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let load = U256::from(5u64) * six_decimal_unit();
-        let gem_id = runtime::mint_gem(storage, ALICE, GemTypes::Wallet, load, 840, 840).unwrap();
+        let gem_id = mint_at_live_rate(storage, ALICE, GemTypes::Wallet, load, 840, 840).unwrap();
 
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
         // entry = coen_rate = 2; cost = entry * load / six_decimal_unit() = 2 * 5 = 10
@@ -235,7 +235,7 @@ fn mint_wallet_cost_and_floor_markup_state_issued() {
 #[test]
 fn mint_rejects_positive_price_and_load_when_six_decimal_cost_rounds_to_zero() {
     with_storage(Some(U256::ONE), |storage| {
-        let result = runtime::mint_gem(storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840);
+        let result = mint_at_live_rate(storage, ALICE, GemTypes::Wallet, U256::ONE, 840, 840);
         assert!(
             result.is_err(),
             "positive economics produced a zero-cost Gem"
@@ -248,7 +248,7 @@ fn mint_sra_applies_64_percent_discount() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let load = U256::from(10u64) * six_decimal_unit();
-        let gem_id = runtime::mint_gem(storage, ALICE, GemTypes::Sra, load, 840, 840).unwrap();
+        let gem_id = mint_at_live_rate(storage, ALICE, GemTypes::Sra, load, 840, 840).unwrap();
 
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
         // entry = rate = 2; cost = 2 * 10 * 64 / 100 = 12.8 (six-decimal)
@@ -262,7 +262,7 @@ fn mint_cca_no_discount() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let load = U256::from(7u64) * six_decimal_unit();
-        let gem_id = runtime::mint_gem(storage, ALICE, GemTypes::Cca, load, 840, 840).unwrap();
+        let gem_id = mint_at_live_rate(storage, ALICE, GemTypes::Cca, load, 840, 840).unwrap();
 
         let item = gem_api::get_gem(storage, gem_id).unwrap().unwrap();
         // entry = rate = 2; cost = 2 * 7 = 14
@@ -277,7 +277,7 @@ fn mint_cca_no_discount() {
 fn mint_gem_rejects_merchant_type() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
-        let res = runtime::mint_gem(
+        let res = mint_at_live_rate(
             storage,
             ALICE,
             GemTypes::Merchant,
@@ -293,7 +293,7 @@ fn mint_gem_rejects_merchant_type() {
 fn mint_zero_owner_rejected() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
-        let res = runtime::mint_gem(
+        let res = mint_at_live_rate(
             storage,
             Address::ZERO,
             GemTypes::Wallet,
@@ -310,7 +310,7 @@ fn mint_no_oracle_setup_rejected() {
     // The reference currency is registered but its COEN pair is not, so the gem
     // has no price to anchor its entry, floor and call to and minting reverts.
     with_storage(None, |storage| {
-        let res = runtime::mint_gem(
+        let res = mint_at_live_rate(
             storage,
             ALICE,
             GemTypes::Wallet,
@@ -336,7 +336,7 @@ fn mint_rejects_a_stale_oracle_rate_before_writing_a_gem() {
         )
         .unwrap();
 
-        let error = runtime::mint_gem(
+        let error = mint_at_live_rate(
             storage,
             ALICE,
             GemTypes::Wallet,
@@ -361,7 +361,7 @@ fn mint_rejects_a_stale_oracle_rate_before_writing_a_gem() {
 fn settle_wallet_settles_with_a_registered_asset() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
-        let gem_id = runtime::mint_gem(
+        let gem_id = mint_at_live_rate(
             storage,
             ALICE,
             GemTypes::Wallet,
@@ -388,7 +388,7 @@ fn settlement_event_reports_the_rail_the_asset_matched() {
     let rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(rate));
     let gem_id = StorageHandle::enter(&mut provider, |storage| {
-        let gem_id = runtime::mint_gem(
+        let gem_id = mint_at_live_rate(
             &storage,
             ALICE,
             GemTypes::Wallet,
@@ -410,6 +410,29 @@ fn settlement_event_reports_the_rail_the_asset_matched() {
         .expect("settlement emits GemSettled");
     assert_eq!(event.gemId, gem_id);
     assert_eq!(event.settlementCurrency, 840);
+}
+
+/// Mints at the fixture's live COEN/reference rate. The production caller
+/// resolves the price for the gem's own day; these tests only need a price that
+/// matches the rate the fixture published.
+fn mint_at_live_rate(
+    storage: &StorageHandle<'_>,
+    owner: Address,
+    gem_type: GemTypes,
+    gem_load: U256,
+    issuance_currency: u16,
+    reference_currency: u16,
+) -> outbe_primitives::error::Result<U256> {
+    let price = outbe_oracle::api::fresh_coen_rate_for(storage.clone(), reference_currency)?;
+    runtime::mint_gem(
+        storage,
+        owner,
+        gem_type,
+        gem_load,
+        issuance_currency,
+        reference_currency,
+        price,
+    )
 }
 
 /// The single `GemSettled` a settlement emitted.
@@ -442,7 +465,7 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
     let mut provider = test_storage(Some(usd_rate));
     let cost = StorageHandle::enter(&mut provider, |storage| {
         register_currency(&storage, 978, six_decimal_unit());
-        let gem_id = runtime::mint_gem(
+        let gem_id = mint_at_live_rate(
             &storage,
             ALICE,
             GemTypes::Wallet,
@@ -472,7 +495,7 @@ fn the_reference_currency_settles_without_reading_any_issuance_rate() {
     let mut provider = test_storage(Some(usd_rate));
     let cost = StorageHandle::enter(&mut provider, |storage| {
         // Issuance 978 is never registered, so it carries no rate at all.
-        let gem_id = runtime::mint_gem(
+        let gem_id = mint_at_live_rate(
             &storage,
             ALICE,
             GemTypes::Wallet,
@@ -506,7 +529,7 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
         word(0),
     );
     StorageHandle::enter(&mut provider, |storage| {
-        let gem_id = runtime::mint_gem(
+        let gem_id = mint_at_live_rate(
             &storage,
             ALICE,
             GemTypes::Wallet,
@@ -526,7 +549,7 @@ fn settlement_scales_the_cost_to_the_asset_decimals() {
     let usd_rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(usd_rate));
     let cost = StorageHandle::enter(&mut provider, |storage| {
-        let gem_id = runtime::mint_gem(
+        let gem_id = mint_at_live_rate(
             &storage,
             ALICE,
             GemTypes::Wallet,
@@ -559,7 +582,7 @@ fn settle_rejects_a_deposit_that_mints_no_shares() {
         word(0),
     );
     StorageHandle::enter(&mut provider, |storage| {
-        let gem_id = runtime::mint_gem(
+        let gem_id = mint_at_live_rate(
             &storage,
             ALICE,
             GemTypes::Wallet,
@@ -585,7 +608,7 @@ fn an_unassigned_issuance_code_mints_and_settles_on_the_reference_rail() {
     let rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(rate));
     let cost = StorageHandle::enter(&mut provider, |storage| {
-        let gem_id = runtime::mint_gem(
+        let gem_id = mint_at_live_rate(
             &storage,
             ALICE,
             GemTypes::Wallet,
@@ -613,7 +636,7 @@ fn mint_rejects_an_issuance_code_outside_the_three_digit_range() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         for iso in [0u16, 1000u16] {
-            let res = runtime::mint_gem(
+            let res = mint_at_live_rate(
                 storage,
                 ALICE,
                 GemTypes::Wallet,
@@ -673,7 +696,7 @@ fn cross_currency_settlement_rejects_a_stale_leg_without_settling_the_gem() {
             .reference_currencies
             .push(978)
             .unwrap();
-        let gem_id = runtime::mint_gem(
+        let gem_id = mint_at_live_rate(
             storage,
             ALICE,
             GemTypes::Wallet,
@@ -707,7 +730,7 @@ fn cross_currency_settlement_rejects_a_stale_leg_without_settling_the_gem() {
 fn settle_rejects_wrong_settlement_currency() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
-        let gem_id = runtime::mint_gem(
+        let gem_id = mint_at_live_rate(
             storage,
             ALICE,
             GemTypes::Wallet,
@@ -728,7 +751,7 @@ fn settle_rejects_wrong_settlement_currency() {
 fn settle_rejects_non_owner() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
-        let gem_id = runtime::mint_gem(
+        let gem_id = mint_at_live_rate(
             storage,
             ALICE,
             GemTypes::Wallet,
@@ -747,7 +770,7 @@ fn settle_rejects_non_owner() {
 fn settle_rejects_non_qualified_state() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
-        let gem_id = runtime::mint_gem(
+        let gem_id = mint_at_live_rate(
             storage,
             ALICE,
             GemTypes::Wallet,
@@ -773,7 +796,7 @@ fn mine_gem_promis_full_genesis_flow() {
         // can't service — force `Settled` directly so this test still covers
         // the mine → burn → Promis path. The paid settle is exercised on
         // localnet with a real Reserve (see TODO below).
-        let gem_id = runtime::mint_gem(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
+        let gem_id = mint_at_live_rate(storage, ALICE, GemTypes::Genesis, load, 840, 840).unwrap();
 
         gem_api::set_state(storage, gem_id, GemState::Settled).unwrap();
         let nonce = find_valid_nonce(gem_id);
@@ -805,7 +828,7 @@ fn mine_gem_promis_full_genesis_flow() {
 fn mine_gem_promis_rejects_non_settled() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
-        let gem_id = runtime::mint_gem(
+        let gem_id = mint_at_live_rate(
             storage,
             ALICE,
             GemTypes::Wallet,
@@ -824,7 +847,7 @@ fn mine_gem_promis_rejects_non_settled() {
 fn mine_gem_promis_rejects_non_owner() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
-        let gem_id = runtime::mint_gem(
+        let gem_id = mint_at_live_rate(
             storage,
             ALICE,
             GemTypes::Genesis,
@@ -848,7 +871,7 @@ fn statistics_track_mint_count() {
         // per mint so the same (owner, block) pair doesn't collide.
         for i in 0..3 {
             let load = base + U256::from(i as u64);
-            runtime::mint_gem(storage, ALICE, GemTypes::Wallet, load, 840, 840).unwrap();
+            mint_at_live_rate(storage, ALICE, GemTypes::Wallet, load, 840, 840).unwrap();
         }
         let factory = GemFactoryContract::new(storage.clone());
         assert_eq!(factory.total_gems_issued.read().unwrap(), U256::from(3u64));

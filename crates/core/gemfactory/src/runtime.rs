@@ -19,6 +19,8 @@ use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
 use crate::sol_ext::{IIntexNFT1155, IReferenceCurrency, IERC20};
 use outbe_vaultrouter::api::IVaultRouter;
 
+/// Mints one agent-class gem priced at `entry_price`, the COEN rate in
+/// `reference_currency` that the caller resolved for the gem's own day.
 pub fn mint_gem(
     storage: &StorageHandle<'_>,
     owner: Address,
@@ -26,9 +28,13 @@ pub fn mint_gem(
     gem_load: U256,
     issuance_currency: u16,
     reference_currency: u16,
+    entry_price: U256,
 ) -> Result<U256> {
     if owner.is_zero() {
         return Err(GemFactoryError::InvalidOwner.into());
+    }
+    if entry_price.is_zero() {
+        return Err(GemFactoryError::OracleUnavailable.into());
     }
 
     // The issuance currency is the holder's own label: the network keeps no list
@@ -42,12 +48,12 @@ pub fn mint_gem(
     }
     outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
 
-    // Entry/floor/call are measured against the reference currency (the same
-    // COEN/<reference> rate the qualify/call scans compare against).
-    let coen_rate = read_reference_oracle_rate(storage, reference_currency)?;
+    // Entry/floor/call are measured against the reference currency, so the caller
+    // resolves the price: it knows which day the gem belongs to, which this
+    // function does not.
     let issued_at = storage.timestamp()?.to::<u64>();
-    let (cost_amount, floor_price, initial_state) = compute_params(gem_type, gem_load, coen_rate)?;
-    let entry_price = coen_rate;
+    let (cost_amount, floor_price, initial_state) =
+        compute_params(gem_type, gem_load, entry_price)?;
     let call_price = derived_call_price(entry_price)?;
 
     let params = GemAddParams {

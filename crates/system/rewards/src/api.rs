@@ -500,11 +500,11 @@ fn deliver_oldest_reward_gem_batch_inner(
             ))
         },
     )?;
-    if outbe_oracle::api::fresh_coen_rate_for_opt(ctx.storage.clone(), reference_currency)?
-        .is_none()
-    {
+    let Some(entry_price) =
+        outbe_oracle::api::fresh_coen_rate_for_opt(ctx.storage.clone(), reference_currency)?
+    else {
         return Ok(RewardGemDeliveryOutcome::PendingRate { reward_utc_day });
-    }
+    };
 
     for (owner, load) in recipients {
         outbe_gemfactory::api::mint_gem(
@@ -514,6 +514,7 @@ fn deliver_oldest_reward_gem_batch_inner(
             load,
             issuance_currency,
             reference_currency,
+            entry_price,
         )?;
     }
     for index in 0..recipient_count {
