@@ -24,8 +24,11 @@ pub enum NodFactoryError {
     #[error("PayNote proof names spender {actual}, expected {expected}")]
     PayNoteSpenderMismatch { expected: Address, actual: Address },
 
-    #[error("PayNote proof carries asset {actual}, expected {expected}")]
-    PayNoteAssetMismatch { expected: Address, actual: Address },
+    #[error("PayNote proof carries asset {asset}, which is not registered for reference currency {reference_currency}")]
+    PayNoteAssetMismatch {
+        asset: Address,
+        reference_currency: u16,
+    },
 
     #[error("PayNote covers {covered}, nod cost is {required}")]
     PayNoteUndercoversCost { covered: u128, required: u128 },
@@ -62,9 +65,6 @@ pub enum NodFactoryError {
 
     #[error("certified Nod generation is not fully materialized")]
     NodGenerationNotMaterialized,
-
-    #[error("no settlement asset registered for reference currency {reference_currency}")]
-    NoSettlementAsset { reference_currency: u16 },
 
     #[error("nod call settlement deadline has expired")]
     CallDeadlineExpired,

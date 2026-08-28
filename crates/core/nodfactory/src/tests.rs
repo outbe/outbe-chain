@@ -159,14 +159,16 @@ impl World {
     /// Publishes `asset` as the only asset registered under the Nod's reference
     /// currency, which is the asset a covering PayNote must carry.
     fn register_reference_currency_asset(&mut self, asset: Address) {
+        self.register_reference_currency_assets(vec![asset]);
+    }
+
+    fn register_reference_currency_assets(&mut self, assets: Vec<Address>) {
         use outbe_vaultrouter::api::IVaultRouter;
 
         self.provider.stub_sub_call_at_selector(
             outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
             IVaultRouter::referenceCurrencyAssetsCall::SELECTOR,
-            Bytes::from(
-                IVaultRouter::referenceCurrencyAssetsCall::abi_encode_returns(&vec![asset]),
-            ),
+            Bytes::from(IVaultRouter::referenceCurrencyAssetsCall::abi_encode_returns(&assets)),
         );
     }
 
@@ -516,7 +518,7 @@ fn a_covering_paynote_mines_a_paid_nod_and_books_the_nullifier() {
     assert_eq!(paid[0].owner, input.owner);
     assert_eq!(
         paid[0].asset, NOTE_ASSET,
-        "the log must name the reference-currency asset"
+        "the log must name the asset the note carried"
     );
     assert_eq!(paid[0].amountCovered, input.cost_amount_minor);
 
@@ -645,12 +647,39 @@ fn a_paynote_in_the_wrong_asset_cannot_pay_this_nod() {
     assert!(
         matches!(error, PrecompileError::Revert(ref reason)
             if reason == &NodFactoryError::PayNoteAssetMismatch {
-                expected: NOTE_ASSET,
-                actual: other_asset,
+                asset: other_asset,
+                reference_currency: input.reference_currency,
             }
             .to_string()),
         "unexpected error: {error:?}"
     );
+}
+
+#[test]
+fn any_asset_registered_for_the_reference_currency_pays_the_nod() {
+    let mut world = World::new();
+    let input = paid_params(Address::repeat_byte(0x6a));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    // The registry lists interchangeable assets for the currency; the payer
+    // picks which one their note carries, and it need not be the first.
+    let second_asset = Address::repeat_byte(0x6b);
+    world.register_reference_currency_assets(vec![NOTE_ASSET, second_asset]);
+    let cost = u128::try_from(input.cost_amount_minor).unwrap();
+    let (proof, nullifier) = world.fund_note(second_asset, input.owner, cost, cost);
+    let nonce = find_valid_nonce(nod_id);
+
+    let minted = world
+        .try_mine(
+            nod_id,
+            input.owner,
+            nonce,
+            mine_auth(input.owner, input.gratis_load_minor),
+            &proof,
+        )
+        .unwrap();
+    assert_eq!(minted, input.gratis_load_minor);
+    assert!(world.enter(|storage, _, _| outbe_paynote::api::is_spent(&storage, nullifier).unwrap()));
 }
 
 #[test]

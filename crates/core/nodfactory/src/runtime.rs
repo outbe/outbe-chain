@@ -263,10 +263,6 @@ fn discharge_cost(
         return Ok(None);
     }
 
-    // The cost is denominated in the Nod's own reference currency, so the asset
-    // the note must carry comes from the router's registry for that currency
-    // rather than from the caller.
-    let expected_asset = settlement_asset(storage, item.reference_currency)?;
     let cost_minor =
         u128::try_from(cost).map_err(|_| NodFactoryError::SettlementCostTooLarge { cost })?;
 
@@ -282,13 +278,7 @@ fn discharge_cost(
         }
         .into());
     }
-    if claim.asset != expected_asset {
-        return Err(NodFactoryError::PayNoteAssetMismatch {
-            expected: expected_asset,
-            actual: claim.asset,
-        }
-        .into());
-    }
+    check_settlement_asset(storage, item.reference_currency, claim.asset)?;
     if claim.spend_amount < cost_minor {
         return Err(NodFactoryError::PayNoteUndercoversCost {
             covered: claim.spend_amount,
@@ -304,14 +294,28 @@ fn discharge_cost(
     }))
 }
 
-/// Resolves the settlement asset for a reference currency from the vault
-/// router's registry. Registry order carries no meaning, so the first entry is
-/// as good as any; an empty registry is a configuration error, not a payer one.
-fn settlement_asset(storage: &StorageHandle<'_>, reference_currency: u16) -> Result<Address> {
-    outbe_vaultrouter::api::reference_currency_assets(storage, reference_currency)?
-        .into_iter()
-        .next()
-        .ok_or_else(|| NodFactoryError::NoSettlementAsset { reference_currency }.into())
+/// Rejects a note whose asset the vault router does not register under
+/// `reference_currency`.
+///
+/// The cost is denominated in the Nod's own reference currency, so any asset
+/// registered under it settles the Nod: the registry lists interchangeable
+/// alternatives, not a preference, and the payer picks which one their note
+/// carries. An empty registry is a configuration error, not a payer one.
+fn check_settlement_asset(
+    storage: &StorageHandle<'_>,
+    reference_currency: u16,
+    asset: Address,
+) -> Result<()> {
+    let registered =
+        outbe_vaultrouter::api::reference_currency_assets(storage, reference_currency)?;
+    if !registered.contains(&asset) {
+        return Err(NodFactoryError::PayNoteAssetMismatch {
+            asset,
+            reference_currency,
+        }
+        .into());
+    }
+    Ok(())
 }
 
 /// PoW gate for `mine_gratis`, delegating to the shared [`outbe_common::pow`]
