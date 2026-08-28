@@ -1,6 +1,6 @@
 //! Execution-level coverage for the Emit precompile route: the full
 //! burn → partial mint → full mint → replay scenario with real generated
-//! `outbe.emit.mint@1.3.0` proofs, plus frame/value boundary cases extending
+//! `outbe.emit.mint@1.4.1` proofs, plus frame/value boundary cases extending
 //! the `precompile_value_boundary` patterns.
 
 use alloy_evm::{Evm as _, EvmFactory as _};
@@ -947,6 +947,6 @@ fn emit_runtime_marker_is_preserved_and_tree_capacity_is_bounded() {
     // `genesis.rs`; this test pins the module-level facts Emit depends on.
     use outbe_evm::executor::marker_addresses::OUTBE_RUNTIME_MARKER_ADDRESSES;
     assert!(OUTBE_RUNTIME_MARKER_ADDRESSES.contains(&EMIT_ADDRESS));
-    assert_eq!(EMIT_TREE_CAPACITY, 1 << EMIT_TREE_DEPTH);
-    assert_eq!(EMIT_TREE_DEPTH, 20);
+    assert_eq!(EMIT_TREE_CAPACITY, (1u64 << EMIT_TREE_DEPTH) - 1);
+    assert_eq!(EMIT_TREE_DEPTH, 32);
 }

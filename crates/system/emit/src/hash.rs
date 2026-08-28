@@ -1,8 +1,8 @@
 //! Rust mirror of the Emit hash and tree formulas.
 //!
 //! Copied from the frozen circuit formulas in
-//! `outbe-emit-mint-circuit/src/emit.nr` and
-//! `outbe-circuit-core/src/hash.nr`:
+//! `outbe-emit-mint-circuit/src/emit.nr` and `outbe-circuit-core`'s
+//! `hash.nr` / `tags.nr` / `merkle_tree.nr`:
 //!
 //! - BN254 fields use canonical 32-byte big-endian encodings; a word that
 //!   would require reduction is invalid input.
@@ -10,7 +10,10 @@
 //!   c])[0]` — exactly noir's `hash_2` / `hash_3` (the `outbe-poseidon`
 //!   sponge with `len = 2` / `len = 3`).
 //! - `p(tag, values)` mirrors noir `hash_multi(tag, values)`: it absorbs
-//!   the exact purpose tag, the tuple arity, then the ordered values.
+//!   the tag, the tuple arity, then the ordered values.
+//! - Every purpose tag is domain-folded — `h2(EMIT_DOMAIN, base)` with the
+//!   shared base tags (`NOTE_SN`, `COMMITMENT`, …) — so no Emit hash can
+//!   collide with another domain's hash of the same purpose.
 //! - Merkle inner nodes are `h3(EMIT_DOMAIN, left, right)` where
 //!   `EMIT_DOMAIN` is the big-endian ASCII `OUTBE_EMIT`.
 
@@ -53,24 +56,50 @@ pub fn emit_domain() -> Field {
     ascii_field("OUTBE_EMIT")
 }
 
+/// Base purpose tags, shared by every circuit (`outbe-circuit-core::tags`).
+fn base_tag_note_sn() -> Field {
+    ascii_field("NOTE_SN")
+}
+
+fn base_tag_commitment() -> Field {
+    ascii_field("COMMITMENT")
+}
+
+fn base_tag_nullifier() -> Field {
+    ascii_field("NULLIFIER")
+}
+
+fn base_tag_change_key() -> Field {
+    ascii_field("CHANGE_KEY")
+}
+
+fn base_tag_empty() -> Field {
+    ascii_field("EMPTY")
+}
+
+/// Emit's instance of a shared base tag: `H2(EMIT_DOMAIN, base)`.
+fn emit_tag(base: Field) -> Field {
+    h2(emit_domain(), base)
+}
+
 pub fn tag_note_sn() -> Field {
-    ascii_field("EMIT_NOTE_SN")
+    emit_tag(base_tag_note_sn())
 }
 
 pub fn tag_commitment() -> Field {
-    ascii_field("EMIT_COMMITMENT")
+    emit_tag(base_tag_commitment())
 }
 
 pub fn tag_nullifier() -> Field {
-    ascii_field("EMIT_NULLIFIER")
+    emit_tag(base_tag_nullifier())
 }
 
 pub fn tag_change_key() -> Field {
-    ascii_field("EMIT_CHANGE_KEY")
+    emit_tag(base_tag_change_key())
 }
 
 pub fn tag_empty() -> Field {
-    ascii_field("EMIT_EMPTY")
+    emit_tag(base_tag_empty())
 }
 
 /// An owner address absorbed as one big-endian integer, matching the circuit.

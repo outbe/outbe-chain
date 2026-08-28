@@ -63,7 +63,7 @@ Rules:
   equal the runtime chain ID.
 - `root` must be inside the 32-root window; each nullifier is single-use.
 - `proof` is the combined UltraHonkKeccak wire for the frozen
-  `outbe.emit.mint@1.3.0` circuit, enforced at its exact frozen length.
+  `outbe.emit.mint@1.4.1` circuit, enforced at its exact frozen length.
 - `NewNote.noteAmount == 0` is the sentinel for a partial mint's private
   change note.
 
@@ -77,7 +77,7 @@ fatal block aborts, not reverts.
 
 Limits:
 
-- Tree depth 20 → 1,048,576 commitments.
+- Tree depth 32 → 4,294,967,296 commitments (bounded to 4,294,967,295 by the u32 leaf counter).
 - Root window 32.
 - Base gas burn 530,000, mint 3,517,500 (`ZK_VERIFY_GAS` 3,000,000 +
   517,500).

@@ -17,7 +17,7 @@ use crate::runtime::{self, MintStatement};
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[IEmit::burnCall::SELECTOR];
 
 /// Base gas for `burn`: chain-ID absorption, the in-memory zero ladder,
-/// commitment derivation, and one depth-20 append.
+/// commitment derivation, and one depth-32 append.
 pub const EMIT_BURN_BASE_GAS: u64 = 530_000;
 
 /// Base gas for `mint`: one UltraHonkKeccak verification plus chain-ID
