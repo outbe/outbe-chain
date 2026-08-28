@@ -157,7 +157,7 @@ fn nod_item_v1_uses_one_strict_canonical_protobuf_representation() {
     assert_eq!(decode_nod_item_v1(&payload).unwrap(), body);
 }
 
-/// Field 12 carried the Nod's settled flag until settlement moved to a Paynote
+/// Field 12 carried the Nod's settled flag until settlement moved to a PayNote
 /// spend at mine time. It was written only when a Nod was settled, so retiring
 /// it left every live body's bytes untouched — but a body that does carry it
 /// describes state this schema no longer has, and must be refused rather than

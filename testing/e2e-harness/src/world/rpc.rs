@@ -437,7 +437,7 @@ impl Rpc {
             nonce: 0,
             mac: B256::ZERO,
             opNonce: 0,
-            paynoteProof: Bytes::new(),
+            payNoteProof: Bytes::new(),
         };
         // This is an intentional negative transaction. Supplying an explicit
         // bounded gas limit prevents the RPC client from replacing the actual
@@ -580,7 +580,7 @@ impl Rpc {
             .map_err(|error| eyre!("capacity owner NOD body read failed: {error}"))?;
         if !body.costAmountMinor.is_zero() {
             return Err(eyre!(
-                "capacity NOD carries a nonzero cost ({}) and needs a paynote spend to mine",
+                "capacity NOD carries a nonzero cost ({}) and needs a PayNote spend to mine",
                 body.costAmountMinor
             ));
         }
@@ -617,8 +617,8 @@ impl Rpc {
                 mac: B256::from(mac),
                 opNonce: op_nonce,
                 // Capacity NODs are certified with a zero cost, so there is no
-                // note to spend. A nonzero cost would need a paynote proof.
-                paynoteProof: Bytes::new(),
+                // note to spend. A nonzero cost would need a PayNote proof.
+                payNoteProof: Bytes::new(),
             },
             None,
         )?;

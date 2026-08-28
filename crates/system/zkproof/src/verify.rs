@@ -11,7 +11,7 @@ use alloy_primitives::Address;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
 use outbe_zk_canonical::noir::CIRCUIT_REGISTRY;
-use outbe_zk_canonical::noir::{full_proof::FullProof, paynote::Paynote};
+use outbe_zk_canonical::noir::{full_proof::FullProof, paynote::Paynote as PayNote};
 use outbe_zk_canonical::{CircuitId, RegistryEntry};
 use tracing::{info, trace};
 
@@ -53,7 +53,7 @@ const PAYNOTE_PUBLIC_PREFIX_LEN: usize = 4 + PAYNOTE_PUBLIC_INPUT_COUNT * 32;
 /// Proof words in a canonical `outbe.paynote@1.0.0` combined proof. The
 /// UltraHonkKeccak transcript of the frozen circuit is fixed-length, so this
 /// is part of the pinned circuit identity (same VK, same transcript shape).
-/// Paynote is a 2^14 circuit — one tier above emit_mint's 2^13, hence a longer
+/// PayNote is a 2^14 circuit — one tier above emit_mint's 2^13, hence a longer
 /// transcript than that circuit's 238. Asserted against a real proof by
 /// `outbe-paynote`'s round-trip test.
 pub const PAYNOTE_PROOF_WORDS: usize = 250;
@@ -64,7 +64,7 @@ pub const PAYNOTE_COMBINED_LEN: usize = PAYNOTE_PUBLIC_PREFIX_LEN + 32 * PAYNOTE
 /// Public claim carried by the canonical `outbe.paynote@1.0.0` combined-proof
 /// format, in circuit order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PaynotePublicInputs {
+pub struct PayNotePublicInputs {
     pub chain_id: u64,
     pub root: [u8; 32],
     pub nullifier: [u8; 32],
@@ -206,7 +206,7 @@ pub fn verify_full_proof(combined_proof: &[u8]) -> Result<bool, ZkProofError> {
 /// Barretenberg; this claim is what the caller books against its own state.
 pub fn decode_paynote_public_inputs(
     combined_proof: &[u8],
-) -> Result<PaynotePublicInputs, ZkProofError> {
+) -> Result<PayNotePublicInputs, ZkProofError> {
     let header = combined_proof
         .get(..4)
         .ok_or(ZkProofError::CombinedProofTooShort(combined_proof.len()))?;
@@ -249,7 +249,7 @@ pub fn decode_paynote_public_inputs(
     let spend_amount =
         read_u128_be_padded(&words[5]).ok_or(ZkProofError::NonCanonicalPublicInput(5))?;
 
-    Ok(PaynotePublicInputs {
+    Ok(PayNotePublicInputs {
         chain_id,
         root: words[1],
         nullifier: words[2],
@@ -266,7 +266,7 @@ pub fn decode_paynote_public_inputs(
 /// return `Ok(false)`.
 pub fn verify_paynote(combined_proof: &[u8]) -> Result<bool, ZkProofError> {
     decode_paynote_public_inputs(combined_proof)?;
-    verify_inner(Paynote::VK_BYTES, combined_proof)
+    verify_inner(PayNote::VK_BYTES, combined_proof)
 }
 
 /// Stateless lookup against `outbe-zk-canonical`'s static circuit registry.

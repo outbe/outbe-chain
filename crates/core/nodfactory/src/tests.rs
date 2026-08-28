@@ -23,7 +23,7 @@ use outbe_paynote::test_support as paynote_support;
 
 use crate::{api, errors::NodFactoryError, precompile::INodFactory, runtime};
 
-/// The chain ID `World`'s storage provider reports; Paynote folds it into
+/// The chain ID `World`'s storage provider reports; PayNote folds it into
 /// every commitment, so fixtures must be built under the same one.
 const CHAIN_ID: u64 = 1;
 
@@ -157,7 +157,7 @@ impl World {
     }
 
     /// Publishes `asset` as the only asset registered under the Nod's reference
-    /// currency, which is the asset a covering paynote must carry.
+    /// currency, which is the asset a covering PayNote must carry.
     fn register_reference_currency_asset(&mut self, asset: Address) {
         use outbe_vaultrouter::api::IVaultRouter;
 
@@ -170,7 +170,7 @@ impl World {
         );
     }
 
-    /// Seeds the Paynote pool with one note and returns a spend proof over it
+    /// Seeds the PayNote pool with one note and returns a spend proof over it
     /// alongside the nullifier that spend would book.
     fn fund_note(
         &mut self,
@@ -469,7 +469,7 @@ fn a_nod_qualifying_after_issuance_still_mines() {
         .is_none());
 }
 
-// ---- paynote-discharged cost ---------------------------------------------
+// ---- PayNote-discharged cost ---------------------------------------------
 //
 // A Nod's cost is paid by spending a note, not by a transfer. The value itself
 // reached the reserve vault when the note was deposited, so what these tests
@@ -547,7 +547,7 @@ fn a_paynote_short_of_the_cost_leaves_the_nod_and_the_note_intact() {
         .unwrap_err();
     assert!(
         matches!(error, PrecompileError::Revert(ref reason)
-            if reason == &NodFactoryError::PaynoteUndercoversCost {
+            if reason == &NodFactoryError::PayNoteUndercoversCost {
                 covered: cost - 1,
                 required: cost,
             }
@@ -612,7 +612,7 @@ fn a_paynote_naming_another_spender_cannot_pay_this_nod() {
         .unwrap_err();
     assert!(
         matches!(error, PrecompileError::Revert(ref reason)
-            if reason == &NodFactoryError::PaynoteSpenderMismatch {
+            if reason == &NodFactoryError::PayNoteSpenderMismatch {
                 expected: input.owner,
                 actual: stranger,
             }
@@ -644,7 +644,7 @@ fn a_paynote_in_the_wrong_asset_cannot_pay_this_nod() {
         .unwrap_err();
     assert!(
         matches!(error, PrecompileError::Revert(ref reason)
-            if reason == &NodFactoryError::PaynoteAssetMismatch {
+            if reason == &NodFactoryError::PayNoteAssetMismatch {
                 expected: NOTE_ASSET,
                 actual: other_asset,
             }
@@ -716,7 +716,7 @@ fn a_free_nod_mines_without_a_note_and_refuses_one() {
         .unwrap_err();
     assert!(
         matches!(error, PrecompileError::Revert(ref reason)
-            if reason == &NodFactoryError::UnexpectedPaynoteProof.to_string()),
+            if reason == &NodFactoryError::UnexpectedPayNoteProof.to_string()),
         "unexpected error: {error:?}"
     );
 

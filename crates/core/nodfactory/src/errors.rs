@@ -21,19 +21,19 @@ pub enum NodFactoryError {
     #[error("nod is not qualified")]
     NodNotQualified,
 
-    #[error("paynote proof names spender {actual}, expected {expected}")]
-    PaynoteSpenderMismatch { expected: Address, actual: Address },
+    #[error("PayNote proof names spender {actual}, expected {expected}")]
+    PayNoteSpenderMismatch { expected: Address, actual: Address },
 
-    #[error("paynote proof carries asset {actual}, expected {expected}")]
-    PaynoteAssetMismatch { expected: Address, actual: Address },
+    #[error("PayNote proof carries asset {actual}, expected {expected}")]
+    PayNoteAssetMismatch { expected: Address, actual: Address },
 
-    #[error("paynote covers {covered}, nod cost is {required}")]
-    PaynoteUndercoversCost { covered: u128, required: u128 },
+    #[error("PayNote covers {covered}, nod cost is {required}")]
+    PayNoteUndercoversCost { covered: u128, required: u128 },
 
-    #[error("a zero-cost nod takes no paynote proof")]
-    UnexpectedPaynoteProof,
+    #[error("a zero-cost nod takes no PayNote proof")]
+    UnexpectedPayNoteProof,
 
-    #[error("nod cost {cost} exceeds the maximum a paynote can cover")]
+    #[error("nod cost {cost} exceeds the maximum a PayNote can cover")]
     SettlementCostTooLarge { cost: U256 },
 
     #[error("insufficient proof of work")]

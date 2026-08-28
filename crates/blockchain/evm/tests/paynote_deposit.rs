@@ -1,4 +1,4 @@
-//! EVM-level integration test for `IPaynote.deposit`.
+//! EVM-level integration test for `IPayNote.deposit`.
 //!
 //! The paynote crate's own tests can only cover `deposit`'s pre-mutation
 //! guards: its body performs three real sub-calls — `asset.transferFrom`,
@@ -11,7 +11,7 @@
 //!
 //! What this pins that unit tests cannot:
 //!   * `PAYNOTE_ADDRESS` must be a registered VaultRouter liquidity source —
-//!     the `PaynoteDeposit` discriminant seeded at genesis is load-bearing.
+//!     the `PayNoteDeposit` discriminant seeded at genesis is load-bearing.
 //!   * the asset must have a registered reserve vault.
 //!   * a revert anywhere in that chain rolls the tree back atomically.
 //!   * the appended leaf is the runtime-derived commitment, readable through
@@ -24,7 +24,7 @@ use alloy_sol_types::SolCall;
 use outbe_compressed_entities::ExecutionScope;
 use outbe_evm::sub_call;
 use outbe_paynote::hash::{field_to_be_bytes, note_commitment, note_sn, Field};
-use outbe_paynote::precompile::IPaynote;
+use outbe_paynote::precompile::IPayNote;
 use outbe_primitives::addresses::PAYNOTE_ADDRESS;
 use outbe_primitives::{
     block::BlockContext,
@@ -44,7 +44,7 @@ const ASSET: Address = Address::new([0x33; 20]);
 const VAULT: Address = Address::new([0x55; 20]);
 const UNREGISTERED_ASSET: Address = Address::new([0x66; 20]);
 
-/// `StablesSource::PaynoteDeposit` — the discriminant `seed_genesis.py`
+/// `StablesSource::PayNoteDeposit` — the discriminant `seed_genesis.py`
 /// registers for `PAYNOTE_ADDRESS`.
 const PAYNOTE_DEPOSIT_SOURCE: u8 = 4;
 
@@ -92,7 +92,7 @@ fn note_serial_word() -> alloy_primitives::B256 {
 
 /// A database with the two counterparty stubs deployed and VaultRouter seeded
 /// as production genesis would: a vault registered for `ASSET`, and paynote
-/// authorized as a `PaynoteDeposit` liquidity source unless `authorize_paynote`
+/// authorized as a `PayNoteDeposit` liquidity source unless `authorize_paynote`
 /// says otherwise.
 fn seeded_db(register_vault: bool, authorize_paynote: bool) -> CacheDB<EmptyDB> {
     let mut database = CacheDB::new(EmptyDB::default());
@@ -121,7 +121,7 @@ fn seeded_db(register_vault: bool, authorize_paynote: bool) -> CacheDB<EmptyDB> 
 
 fn deposit_calldata(asset: Address, amount: u128) -> Bytes {
     Bytes::from(
-        IPaynote::depositCall {
+        IPayNote::depositCall {
             asset,
             amount,
             noteSn: note_serial_word(),
@@ -175,11 +175,11 @@ macro_rules! assert_pristine {
         let count = run_call!(
             $ctx,
             PAYNOTE_ADDRESS,
-            Bytes::from(IPaynote::leafCountCall {}.abi_encode()),
+            Bytes::from(IPayNote::leafCountCall {}.abi_encode()),
             true
         );
         assert_eq!(
-            IPaynote::leafCountCall::abi_decode_returns(&count.returndata).unwrap(),
+            IPayNote::leafCountCall::abi_decode_returns(&count.returndata).unwrap(),
             0,
             "a failed deposit must leave no leaf behind"
         );
@@ -207,11 +207,11 @@ fn deposit_routes_through_vault_router_and_appends_the_derived_commitment() {
     let count = run_call!(
         &mut ctx,
         PAYNOTE_ADDRESS,
-        Bytes::from(IPaynote::leafCountCall {}.abi_encode()),
+        Bytes::from(IPayNote::leafCountCall {}.abi_encode()),
         true
     );
     assert_eq!(
-        IPaynote::leafCountCall::abi_decode_returns(&count.returndata).unwrap(),
+        IPayNote::leafCountCall::abi_decode_returns(&count.returndata).unwrap(),
         1
     );
 
@@ -224,11 +224,11 @@ fn deposit_routes_through_vault_router_and_appends_the_derived_commitment() {
     let present = run_call!(
         &mut ctx,
         PAYNOTE_ADDRESS,
-        Bytes::from(IPaynote::hasCommitmentCall { commitment }.abi_encode()),
+        Bytes::from(IPayNote::hasCommitmentCall { commitment }.abi_encode()),
         true
     );
     assert!(
-        IPaynote::hasCommitmentCall::abi_decode_returns(&present.returndata).unwrap(),
+        IPayNote::hasCommitmentCall::abi_decode_returns(&present.returndata).unwrap(),
         "the derived commitment must be a leaf of the tree"
     );
 
@@ -237,22 +237,22 @@ fn deposit_routes_through_vault_router_and_appends_the_derived_commitment() {
     let root = run_call!(
         &mut ctx,
         PAYNOTE_ADDRESS,
-        Bytes::from(IPaynote::currentRootCall {}.abi_encode()),
+        Bytes::from(IPayNote::currentRootCall {}.abi_encode()),
         true
     );
-    let root = IPaynote::currentRootCall::abi_decode_returns(&root.returndata).unwrap();
+    let root = IPayNote::currentRootCall::abi_decode_returns(&root.returndata).unwrap();
     let known = run_call!(
         &mut ctx,
         PAYNOTE_ADDRESS,
-        Bytes::from(IPaynote::isKnownRootCall { root }.abi_encode()),
+        Bytes::from(IPayNote::isKnownRootCall { root }.abi_encode()),
         true
     );
-    assert!(IPaynote::isKnownRootCall::abi_decode_returns(&known.returndata).unwrap());
+    assert!(IPayNote::isKnownRootCall::abi_decode_returns(&known.returndata).unwrap());
 }
 
 #[test]
 fn deposit_reverts_and_leaves_no_leaf_when_paynote_is_not_a_liquidity_source() {
-    // Genesis authorization is load-bearing: without the `PaynoteDeposit`
+    // Genesis authorization is load-bearing: without the `PayNoteDeposit`
     // source registration, VaultRouter rejects the routed deposit.
     let mut ctx = evm_ctx(seeded_db(true, false));
 
@@ -318,11 +318,11 @@ fn a_second_identical_deposit_reverts_on_the_duplicate_leaf() {
     let count = run_call!(
         &mut ctx,
         PAYNOTE_ADDRESS,
-        Bytes::from(IPaynote::leafCountCall {}.abi_encode()),
+        Bytes::from(IPayNote::leafCountCall {}.abi_encode()),
         true
     );
     assert_eq!(
-        IPaynote::leafCountCall::abi_decode_returns(&count.returndata).unwrap(),
+        IPayNote::leafCountCall::abi_decode_returns(&count.returndata).unwrap(),
         1
     );
 }
@@ -350,11 +350,11 @@ fn a_differing_amount_under_the_same_serial_is_a_distinct_leaf() {
     let count = run_call!(
         &mut ctx,
         PAYNOTE_ADDRESS,
-        Bytes::from(IPaynote::leafCountCall {}.abi_encode()),
+        Bytes::from(IPayNote::leafCountCall {}.abi_encode()),
         true
     );
     assert_eq!(
-        IPaynote::leafCountCall::abi_decode_returns(&count.returndata).unwrap(),
+        IPayNote::leafCountCall::abi_decode_returns(&count.returndata).unwrap(),
         2
     );
 
@@ -364,11 +364,11 @@ fn a_differing_amount_under_the_same_serial_is_a_distinct_leaf() {
         let present = run_call!(
             &mut ctx,
             PAYNOTE_ADDRESS,
-            Bytes::from(IPaynote::hasCommitmentCall { commitment }.abi_encode()),
+            Bytes::from(IPayNote::hasCommitmentCall { commitment }.abi_encode()),
             true
         );
         assert!(
-            IPaynote::hasCommitmentCall::abi_decode_returns(&present.returndata).unwrap(),
+            IPayNote::hasCommitmentCall::abi_decode_returns(&present.returndata).unwrap(),
             "the leaf for amount {amount} must be present"
         );
     }

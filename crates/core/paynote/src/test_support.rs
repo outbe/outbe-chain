@@ -1,4 +1,4 @@
-//! Proving and pool-seeding fixtures for Paynote, shared by this crate's own
+//! Proving and pool-seeding fixtures for PayNote, shared by this crate's own
 //! tests and by downstream modules that consume notes (`nodfactory`, …).
 //!
 //! Enabled by the `test-utils` feature. Witness construction and proving stay
@@ -10,7 +10,7 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_protocol::protocol::zk::{Circuit, ProofGenerator};
 use outbe_protocol::OutbeV1;
 use outbe_zk_backend::barretenberg::Barretenberg;
-use outbe_zk_canonical::noir::paynote::{Paynote, PublicInputs, Witness};
+use outbe_zk_canonical::noir::paynote::{Paynote as PayNote, PublicInputs, Witness};
 
 use ark_ff::{BigInteger as _, PrimeField};
 
@@ -19,7 +19,7 @@ use crate::hash::{
     note_nullifier, note_sn, Field,
 };
 use crate::runtime;
-use crate::schema::{PaynoteContract, PAYNOTE_ROOT_WINDOW, PAYNOTE_TREE_DEPTH};
+use crate::schema::{PayNoteContract, PAYNOTE_ROOT_WINDOW, PAYNOTE_TREE_DEPTH};
 
 // ---- reference tree -------------------------------------------------------
 
@@ -100,7 +100,7 @@ pub fn note(chain_id: u64, key: u64, asset: Address, amount: u128) -> Note {
 }
 
 pub fn combined_from(public: &PublicInputs, proof_words: &[Vec<u8>]) -> Vec<u8> {
-    let fields = <Paynote as Circuit<OutbeV1>>::public_inputs(public);
+    let fields = <PayNote as Circuit<OutbeV1>>::public_inputs(public);
     let mut combined = Vec::with_capacity(4 + 32 * (fields.len() + proof_words.len()));
     combined.extend_from_slice(&(fields.len() as u32).to_be_bytes());
     for f in fields {
@@ -119,7 +119,7 @@ pub fn combined_from(public: &PublicInputs, proof_words: &[Vec<u8>]) -> Vec<u8> 
 /// ERC20/VaultRouter sub-calls cannot be served in-memory.
 pub fn seed_pool(provider: &mut HashMapStorageProvider, chain_id: u64, leaves: &[Field]) {
     provider.enter(|storage| {
-        let paynote: PaynoteContract<'_> = storage.contract();
+        let paynote: PayNoteContract<'_> = storage.contract();
         let zeros = empty_subtrees(chain_id, PAYNOTE_TREE_DEPTH).unwrap();
         let empty_root = B256::new(field_to_be_bytes(zeros[PAYNOTE_TREE_DEPTH]));
         paynote.current_root.write(empty_root).unwrap();
@@ -189,7 +189,7 @@ pub fn note_and_spend_proof(
         auth_path: tree.path_at(leaf_index),
     };
     let proof =
-        ProofGenerator::<OutbeV1, Paynote>::generate(&Barretenberg::default(), &witness, &public)
+        ProofGenerator::<OutbeV1, PayNote>::generate(&Barretenberg::default(), &witness, &public)
             .expect("paynote proof generation");
 
     SpendFixture {

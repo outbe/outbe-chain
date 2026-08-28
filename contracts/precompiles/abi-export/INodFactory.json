@@ -55,7 +55,7 @@
         "internalType": "uint64"
       },
       {
-        "name": "paynoteProof",
+        "name": "payNoteProof",
         "type": "bytes",
         "internalType": "bytes"
       }

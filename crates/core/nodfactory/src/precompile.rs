@@ -17,7 +17,7 @@ sol!(
     "../../../contracts/precompiles/src/INodFactory.sol"
 );
 
-/// `mineGratis` runs the pinned UltraHonk verifier on its Paynote proof, so its
+/// `mineGratis` runs the pinned UltraHonk verifier on its PayNote proof, so its
 /// base gas must bound that work before storage is available to see whether the
 /// Nod is free and skips verification entirely.
 pub fn base_gas(input: &[u8]) -> u64 {
@@ -59,7 +59,7 @@ pub fn dispatch(
                         nod_id: WwdEntityId::from(c.nodId),
                         nonce: c.nonce,
                         auth,
-                        paynote_proof: &c.paynoteProof,
+                        paynote_proof: &c.payNoteProof,
                     },
                 )
             }),

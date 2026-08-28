@@ -5,14 +5,14 @@ pragma solidity ^0.8.0;
 interface IVaultRouter {
     /// @dev The discriminant is persisted in `liquidity_source_types`, so this
     ///      enum is append-only from here on. It was renumbered once, when Nod
-    ///      settlement moved to Paynote and `NodCostAmount` was dropped; any
+    ///      settlement moved to PayNote and `NodCostAmount` was dropped; any
     ///      chain seeded before that must be re-seeded from `seed_genesis.py`.
     enum StablesSource {
         Unknown,
         IntexCostAmount,
         CredisCostAmount,
         GemCostAmount,
-        PaynoteDeposit
+        PayNoteDeposit
     }
 
     enum StablesTarget {

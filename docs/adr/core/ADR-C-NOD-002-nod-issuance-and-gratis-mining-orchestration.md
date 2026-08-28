@@ -1,4 +1,4 @@
-# ADR-C-NOD-002: NodFactory materializes certified NOD generations and orchestrates Paynote-discharged Gratis mining
+# ADR-C-NOD-002: NodFactory materializes certified NOD generations and orchestrates PayNote-discharged Gratis mining
 
 - **Status:** Accepted; cost discharge remains subject to the technical debt below
 - **Date:** 2026-08-12
@@ -113,11 +113,11 @@ mutation to ADR-C-NOD-001, and emits `NodIssued`.
 `INodFactory.mineGratis` is the only user ABI command. It rejects value and
 requires an exact 36-byte NOD id.
 
-A NOD's cost is discharged by spending a Paynote, not by a transparent transfer,
+A NOD's cost is discharged by spending a PayNote, not by a transparent transfer,
 and there is no separate settlement command or persisted settled flag. The
 underlying assets reach the reserve vault when the note is deposited through
-`IPaynote.deposit`, which routes them under `StablesSource::PaynoteDeposit`.
-What `mineGratis` verifies is the proof obligation: `paynoteProof` must name the
+`IPayNote.deposit`, which routes them under `StablesSource::PayNoteDeposit`.
+What `mineGratis` verifies is the proof obligation: `payNoteProof` must name the
 caller as its spender, carry the asset VaultRouter resolves from
 `referenceCurrencyAssets` for the NOD's `reference_currency`, and cover the
 recorded `cost_amount_minor`. `NodPaid` names the spent nullifier rather than a
@@ -129,10 +129,10 @@ lifting an observed proof to pay for their own NOD; notes are otherwise bearer
 instruments and anyone may relay them.
 
 `mineGratis` requires caller ownership, valid bounded PoW, a qualified bucket,
-a covering Paynote spend, and no incomplete certified generation for that
+a covering PayNote spend, and no incomplete certified generation for that
 WorldwideDay. It moves no value, consumes the NOD, emits `NodBurned`, and mints
 exactly the recorded `gratis_load_minor` through Gratisfactory, including the
-Fidelity cohort update. NOD deletion is the mining replay guard; the Paynote
+Fidelity cohort update. NOD deletion is the mining replay guard; the PayNote
 nullifier is the payment's.
 
 Materialized entries are ordinary NOD ledger entries. Supply, ownership,
@@ -144,9 +144,9 @@ that acceptance lane.
 ## Atomicity and determinism
 
 The outer EVM transaction journal is the rollback domain. A failure in NOD
-issuance or removal, Paynote verification, nullifier booking, event emission,
+issuance or removal, PayNote verification, nullifier booking, event emission,
 Gratis mint, or Fidelity mutation reverts all preceding effects in the same
-command. Paynote books its nullifier before `mineGratis` checks the claim, so
+command. PayNote books its nullifier before `mineGratis` checks the claim, so
 the shared checkpoint is what keeps a rejected mine from destroying the note for
 nothing. Verification runs after the cheap ownership, PoW, and qualification
 gates, so a doomed mine never pays for proof work.
@@ -173,18 +173,18 @@ over the exact encoded NOD id and a big-endian `u64` nonce.
 ## Open questions and technical debt
 
 - When multiple assets are registered for one reference currency, cost discharge
-  currently accepts a Paynote carrying the first even though registry order has
+  currently accepts a PayNote carrying the first even though registry order has
   no economic meaning. A future policy must define spender choice or canonical
   selection.
 - A spend that covers more than `cost_amount_minor` is accepted and the excess is
   not refunded. The circuit can produce exact change, so the spender controls
   this; whether the runtime should instead require equality is open.
 - VaultRouter share results and exact received value need an explicit receipt if
-  economic conservation depends on them. The Paynote deposit path, not
+  economic conservation depends on them. The PayNote deposit path, not
   NodFactory, is now where that evidence must come from.
 - `issue_nod` remains a conventional Rust capability. A future revision may bind
   it to an unforgeable Lysis receipt without adding a public issuance selector.
 - Reentrancy, rollback, and nonzero-cost discharge require tests against real
-  ERC20 and vault implementations end to end, through a real Paynote deposit.
+  ERC20 and vault implementations end to end, through a real PayNote deposit.
 - PoW difficulty and preimage versioning must state whether existing NODs retain
   issuance-era rules across a protocol update.

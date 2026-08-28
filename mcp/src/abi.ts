@@ -18,7 +18,7 @@ import IGratis from "../../contracts/precompiles/abi-export/IGratis.json";
 import IMetadosis from "../../contracts/precompiles/abi-export/IMetadosis.json";
 import INod from "../../contracts/precompiles/abi-export/INod.json";
 import IOracle from "../../contracts/precompiles/abi-export/IOracle.json";
-import IPaynote from "../../contracts/precompiles/abi-export/IPaynote.json";
+import IPayNote from "../../contracts/precompiles/abi-export/IPayNote.json";
 import IPromis from "../../contracts/precompiles/abi-export/IPromis.json";
 import IPromisLimit from "../../contracts/precompiles/abi-export/IPromisLimit.json";
 import ISlashIndicator from "../../contracts/precompiles/abi-export/ISlashIndicator.json";
@@ -42,7 +42,7 @@ export const PRECOMPILE_ABI = {
   IMetadosis: asAbi(IMetadosis),
   INod: asAbi(INod),
   IOracle: asAbi(IOracle),
-  IPaynote: asAbi(IPaynote),
+  IPayNote: asAbi(IPayNote),
   IPromis: asAbi(IPromis),
   IPromisLimit: asAbi(IPromisLimit),
   ISlashIndicator: asAbi(ISlashIndicator),

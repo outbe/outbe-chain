@@ -38,7 +38,7 @@ pub(crate) const GEM_FACTORY_ADDR: Address = address!("0x00000000000000000000000
 #[cfg(feature = "ocomp-integration")]
 pub(crate) const VAULT_ROUTER_ADDR: Address =
     address!("0x0000000000000000000000000000000000001017");
-/// Paynote shielded note pool; a Nod's cost is discharged by spending one.
+/// PayNote shielded note pool; a Nod's cost is discharged by spending one.
 #[cfg(feature = "ocomp-integration")]
 pub(crate) const PAYNOTE_ADDR: Address = address!("0x0000000000000000000000000000000000001019");
 /// Metadosis worldwide-day registry (`getWorldwideDay(uint32)`).

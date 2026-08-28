@@ -1,4 +1,4 @@
-//! Building and spending a Paynote against a live chain.
+//! Building and spending a PayNote against a live chain.
 //!
 //! A Nod's cost is discharged by burning a note rather than by a transfer, so
 //! the settlement scenario has to do off-chain what a wallet would: pick a
@@ -18,7 +18,7 @@ use outbe_paynote::test_support::{combined_from, ReferenceTree};
 use outbe_protocol::protocol::zk::ProofGenerator;
 use outbe_protocol::OutbeV1;
 use outbe_zk_backend::barretenberg::Barretenberg;
-use outbe_zk_canonical::noir::paynote::{Paynote, PublicInputs, Witness};
+use outbe_zk_canonical::noir::paynote::{Paynote as PayNote, PublicInputs, Witness};
 
 use crate::internal::{addresses, eth};
 use crate::world::World;
@@ -53,7 +53,7 @@ impl Note {
         }
     }
 
-    /// The `noteSn` argument `IPaynote.deposit` takes.
+    /// The `noteSn` argument `IPayNote.deposit` takes.
     pub(crate) fn serial_word(&self) -> B256 {
         B256::new(field_to_be_bytes(self.serial))
     }
@@ -97,7 +97,7 @@ pub(crate) fn prove_spend(world: &World, port: u16, note: &Note, spender: Addres
         auth_path: tree.path_at(leaf_index),
     };
     let proof =
-        ProofGenerator::<OutbeV1, Paynote>::generate(&Barretenberg::default(), &witness, &public)
+        ProofGenerator::<OutbeV1, PayNote>::generate(&Barretenberg::default(), &witness, &public)
             .expect("paynote spend proof");
     combined_from(&public, &proof.proof)
 }

@@ -23,7 +23,7 @@ pub const PAYNOTE_TREE_DEPTH: usize = 32;
 /// Held as `u64` on purpose. The circuit's `leaf_index` is a `u32`, so the last
 /// valid index is `2^32 - 1` and the capacity itself does **not** fit in `u32`
 /// — a `u32` counter would wrap on the final append instead of reporting a full
-/// tree. [`PaynoteContract::leaf_count`] is therefore `u64` and every append
+/// tree. [`PayNoteContract::leaf_count`] is therefore `u64` and every append
 /// guards against this bound before incrementing.
 pub const PAYNOTE_TREE_CAPACITY: u64 = 1 << PAYNOTE_TREE_DEPTH;
 
@@ -34,10 +34,10 @@ pub const PAYNOTE_TREE_CAPACITY: u64 = 1 << PAYNOTE_TREE_DEPTH;
 /// invalidate it. Accepting the last 32 roots absorbs that race.
 pub const PAYNOTE_ROOT_WINDOW: u32 = 32;
 
-/// EVM storage layout for the chain's Paynote pool (V1).
+/// EVM storage layout for the chain's PayNote pool (V1).
 #[storage_schema]
 #[contract(addr = PAYNOTE_ADDRESS)]
-pub struct PaynoteContract {
+pub struct PayNoteContract {
     // slot 0: latest commitment root
     #[attribute(order = 0)]
     pub current_root: outbe_primitives::storage::dsl::Value<B256>,

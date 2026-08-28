@@ -329,7 +329,7 @@ pub const VAULT_ROUTER_ADDRESS: Address = address!("0x00000000000000000000000000
 /// diff a proposal against the canon/meta-canon.
 pub const GOVERNANCE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001018");
 
-/// Paynote precompile address (stateful). Shielded ERC20 note pool: a
+/// PayNote precompile address (stateful). Shielded ERC20 note pool: a
 /// depth-32 incremental commitment tree seeded lazily by the first `deposit`,
 /// permanent commitment/nullifier sets, and a 32-root acceptance window.
 /// `deposit` routes the pulled ERC20 into its reserve vault through

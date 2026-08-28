@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity ^0.8.0;
 
-/// @title IPaynote
+/// @title IPayNote
 /// @notice Shielded ERC20 note pool at
 ///         0x0000000000000000000000000000000000001019.
 ///
@@ -16,7 +16,7 @@ pragma solidity ^0.8.0;
 ///         frozen `outbe.paynote`, version 1.0.0, UltraHonkKeccak proof and is exposed
 ///         only as the in-process Rust API `outbe_paynote::api::consume`, for
 ///         integration by other precompile modules.
-interface IPaynote {
+interface IPayNote {
     /// @notice The pool holds no vault for this asset.
     error AssetVaultMissing(address asset);
     /// @notice A field-typed argument is not a canonical BN254 word.

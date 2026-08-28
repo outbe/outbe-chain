@@ -102,15 +102,15 @@ pub struct MineGratisRequest<'proof> {
 }
 
 /// Atomic mine-gratis path: validate ownership + PoW + bucket qualification,
-/// discharge the Nod's cost by spending a Paynote, burn the Nod (emitting
+/// discharge the Nod's cost by spending a PayNote, burn the Nod (emitting
 /// `NodBurned`), then delegate the matching gratis mint to `gratisfactory`
 /// (which mints to the owner and records the Fidelity cohort; the
 /// `GratisMinted` event is emitted by the Gratis token). Returns the minted
 /// amount.
 ///
 /// This path moves no value. The cost's underlying assets already reached the
-/// reserve vault when the note was deposited through `IPaynote.deposit`, which
-/// routes them under `StablesSource::PaynoteDeposit`. What happens here is the
+/// reserve vault when the note was deposited through `IPayNote.deposit`, which
+/// routes them under `StablesSource::PayNoteDeposit`. What happens here is the
 /// proof obligation: `paynote_proof` must name `caller` as its spender, carry
 /// the asset registered for the Nod's `reference_currency`, and cover
 /// `cost_amount_minor`. A zero-cost Nod takes an empty proof and no asset.
@@ -241,7 +241,7 @@ struct PaidCost {
     spend_amount: u128,
 }
 
-/// Discharges `item`'s cost by spending one Paynote, returning `None` when the
+/// Discharges `item`'s cost by spending one PayNote, returning `None` when the
 /// Nod is free and therefore owes nothing.
 ///
 /// The proof is the payment. `consume` books its nullifier before returning, so
@@ -258,7 +258,7 @@ fn discharge_cost(
     let cost = item.cost_amount_minor;
     if cost.is_zero() {
         if !paynote_proof.is_empty() {
-            return Err(NodFactoryError::UnexpectedPaynoteProof.into());
+            return Err(NodFactoryError::UnexpectedPayNoteProof.into());
         }
         return Ok(None);
     }
@@ -272,25 +272,25 @@ fn discharge_cost(
 
     let claim = outbe_paynote::api::consume(storage, paynote_proof)?;
 
-    // Paynote notes are bearer instruments: the proof names its own spender and
+    // PayNote notes are bearer instruments: the proof names its own spender and
     // anyone can relay it. Binding that spender to the caller is what stops an
     // observer from lifting a broadcast proof to pay for their own Nod.
     if claim.spender != caller {
-        return Err(NodFactoryError::PaynoteSpenderMismatch {
+        return Err(NodFactoryError::PayNoteSpenderMismatch {
             expected: caller,
             actual: claim.spender,
         }
         .into());
     }
     if claim.asset != expected_asset {
-        return Err(NodFactoryError::PaynoteAssetMismatch {
+        return Err(NodFactoryError::PayNoteAssetMismatch {
             expected: expected_asset,
             actual: claim.asset,
         }
         .into());
     }
     if claim.spend_amount < cost_minor {
-        return Err(NodFactoryError::PaynoteUndercoversCost {
+        return Err(NodFactoryError::PayNoteUndercoversCost {
             covered: claim.spend_amount,
             required: cost_minor,
         }

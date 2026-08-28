@@ -1,4 +1,4 @@
-//! Unit and dispatch tests for the Paynote precompile.
+//! Unit and dispatch tests for the PayNote precompile.
 //!
 //! The round-trip tests are the load-bearing ones: they prove a real
 //! `outbe.paynote@1.0.0` statement from **Rust-computed** public inputs and
@@ -18,10 +18,10 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_zk_canonical::noir::paynote::PublicInputs;
 
 use crate::hash::{empty_subtrees, field_to_be_bytes, Field};
-use crate::precompile::{base_gas, dispatch, IPaynote, PAYABLE_SELECTORS};
+use crate::precompile::{base_gas, dispatch, IPayNote, PAYABLE_SELECTORS};
 use crate::runtime;
 use crate::schema::{
-    PaynoteContract, PAYNOTE_ROOT_WINDOW, PAYNOTE_TREE_CAPACITY, PAYNOTE_TREE_DEPTH,
+    PayNoteContract, PAYNOTE_ROOT_WINDOW, PAYNOTE_TREE_CAPACITY, PAYNOTE_TREE_DEPTH,
 };
 
 const CHAIN_ID: u64 = 31_337;
@@ -69,7 +69,7 @@ fn paynote_takes_no_native_value() {
 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.enter(|storage| {
-        let data = IPaynote::currentRootCall {}.abi_encode();
+        let data = IPayNote::currentRootCall {}.abi_encode();
         let result = dispatch(storage, &data, ALICE, U256::from(1u64));
         assert!(
             result.is_err(),
@@ -82,7 +82,7 @@ fn paynote_takes_no_native_value() {
 fn unknown_selector_is_priced_out_of_gas() {
     assert_eq!(base_gas(&[0xde, 0xad, 0xbe, 0xef]), u64::MAX);
     assert_eq!(
-        base_gas(&IPaynote::currentRootCall {}.abi_encode()),
+        base_gas(&IPayNote::currentRootCall {}.abi_encode()),
         crate::precompile::PAYNOTE_VIEW_BASE_GAS
     );
 }
@@ -137,7 +137,7 @@ fn incremental_append_matches_naive_recompute() {
     }
 
     provider.enter(|storage| {
-        let paynote: PaynoteContract<'_> = storage.contract();
+        let paynote: PayNoteContract<'_> = storage.contract();
         assert_eq!(paynote.leaf_count.read().unwrap(), leaves.len() as u64);
         assert_eq!(
             paynote.current_root.read().unwrap(),
@@ -157,7 +157,7 @@ fn root_window_retains_only_the_last_entries() {
     seed_pool(&mut provider, CHAIN_ID, &leaves);
 
     provider.enter(|storage| {
-        let paynote: PaynoteContract<'_> = storage.contract();
+        let paynote: PayNoteContract<'_> = storage.contract();
         let roots = paynote.recent_roots.read_all().unwrap();
         assert_eq!(roots.len(), PAYNOTE_ROOT_WINDOW as usize);
         assert!(
@@ -184,20 +184,20 @@ fn deposit_guards_fire_before_any_sub_call() {
 
     provider.enter(|storage| {
         let result = runtime::deposit(storage, ALICE, USDC, 0, b256(serial));
-        assert_revert(result, "Paynote deposit amount must be non-zero");
+        assert_revert(result, "PayNote deposit amount must be non-zero");
     });
     provider.enter(|storage| {
         let result = runtime::deposit(storage, ALICE, Address::ZERO, 100, b256(serial));
-        assert_revert(result, "Paynote asset must be non-zero");
+        assert_revert(result, "PayNote asset must be non-zero");
     });
     provider.enter(|storage| {
         let result = runtime::deposit(storage, ALICE, USDC, 100, B256::ZERO);
-        assert_revert(result, "Paynote noteSn must be non-zero");
+        assert_revert(result, "PayNote noteSn must be non-zero");
     });
     provider.enter(|storage| {
         // All-ones is above the BN254 modulus, so it is not a canonical word.
         let result = runtime::deposit(storage, ALICE, USDC, 100, B256::repeat_byte(0xff));
-        assert_revert(result, "Paynote noteSn is not a canonical BN254 field");
+        assert_revert(result, "PayNote noteSn is not a canonical BN254 field");
     });
 }
 
@@ -210,7 +210,7 @@ fn consume_on_a_pristine_pool_reverts() {
     provider.enter(|storage| {
         assert_revert(
             runtime::consume(&storage, &proof),
-            "Paynote is not initialized",
+            "PayNote is not initialized",
         );
     });
 }
@@ -228,7 +228,7 @@ fn consume_rejects_a_root_outside_the_window() {
     provider.enter(|storage| {
         assert_revert(
             runtime::consume(&storage, &proof),
-            "Paynote root is not recent",
+            "PayNote root is not recent",
         );
     });
 }
@@ -241,7 +241,7 @@ fn consume_rejects_a_foreign_chain_statement() {
     provider.enter(|storage| {
         assert_revert(
             runtime::consume(&storage, &proof),
-            "Paynote chain ID does not match runtime",
+            "PayNote chain ID does not match runtime",
         );
     });
 }
@@ -257,7 +257,7 @@ fn consume_rejects_a_malformed_proof() {
     provider.enter(|storage| {
         let result = runtime::consume(&storage, &[0u8; 8]);
         assert!(
-            matches!(result, Err(PrecompileError::Revert(ref m)) if m.starts_with("Paynote proof is malformed")),
+            matches!(result, Err(PrecompileError::Revert(ref m)) if m.starts_with("PayNote proof is malformed")),
             "got {result:?}"
         );
     });
@@ -289,7 +289,7 @@ fn full_spend_round_trip_books_the_nullifier_and_no_change() {
         assert_eq!(claim.spender, SPENDER);
         assert_eq!(claim.spend_amount, 100);
 
-        let paynote: PaynoteContract<'_> = storage.contract();
+        let paynote: PayNoteContract<'_> = storage.contract();
         assert!(paynote
             .spent_nullifiers
             .read(&b256(public.nullifier))
@@ -314,7 +314,7 @@ fn replaying_a_spent_proof_reverts() {
     provider.enter(|storage| {
         assert_revert(
             runtime::consume(&storage, &proof),
-            "Paynote nullifier has already been spent",
+            "PayNote nullifier has already been spent",
         );
     });
 }
@@ -333,7 +333,7 @@ fn partial_spend_appends_exactly_the_circuit_derived_change() {
         let claim = runtime::consume(&storage, &proof).expect("valid partial spend");
         assert_eq!(claim.spend_amount, 40);
 
-        let paynote: PaynoteContract<'_> = storage.contract();
+        let paynote: PayNoteContract<'_> = storage.contract();
         assert_eq!(
             paynote.leaf_count.read().unwrap(),
             2,
@@ -369,7 +369,7 @@ fn a_note_cannot_be_spent_as_a_different_asset() {
     provider.enter(|storage| {
         assert_revert(
             runtime::consume(&storage, &proof),
-            "Paynote root is not recent",
+            "PayNote root is not recent",
         );
     });
 }

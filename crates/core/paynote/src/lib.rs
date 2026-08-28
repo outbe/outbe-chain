@@ -1,4 +1,4 @@
-//! Paynote — shielded ERC20 note pool (`0x…1019`).
+//! PayNote — shielded ERC20 note pool (`0x…1019`).
 //!
 //! A **deposit** pulls an ERC20 from the caller, routes it into the asset's
 //! reserve vault through VaultRouter, and appends a note commitment to a
@@ -35,8 +35,8 @@ mod sol_ext;
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_support;
 
-pub use api::PaynoteClaim;
-pub use schema::PaynoteContract;
+pub use api::PayNoteClaim;
+pub use schema::PayNoteContract;
 
 #[cfg(test)]
 mod tests;

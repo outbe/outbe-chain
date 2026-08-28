@@ -508,7 +508,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     let fixture = deploy_settlement_fixture(world);
     // The cost is paid by depositing a note and then spending it. The value
     // reaches the reserve vault at deposit time, so the owner funds and
-    // approves the Paynote pool rather than the NodFactory.
+    // approves the PayNote pool rather than the NodFactory.
     let payer_key = key.clone();
     let payer_address = owner;
     fund_and_approve(
@@ -520,21 +520,21 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         body.costAmountMinor,
     );
     let cost_minor =
-        u128::try_from(body.costAmountMinor).expect("Nod cost fits a paynote spend amount");
+        u128::try_from(body.costAmountMinor).expect("Nod cost fits a PayNote spend amount");
     let note = paynote::Note::new(chain_id_u64(world), fixture.asset, cost_minor);
     let deposit = eth::send_call_outcome(
         &url,
         addresses::PAYNOTE_ADDR,
         &payer_key,
-        &eth::IPaynote::depositCall {
+        &eth::IPayNote::depositCall {
             asset: fixture.asset,
             amount: cost_minor,
             noteSn: note.serial_word(),
         },
         None,
     )
-    .expect("deposit the Nod's cost as a paynote");
-    assert_mined_success(&deposit, "deposit the Nod's cost as a paynote");
+    .expect("deposit the Nod's cost as a PayNote");
+    assert_mined_success(&deposit, "deposit the Nod's cost as a PayNote");
     assert_eq!(
         eth::read_call(
             &url,
@@ -577,14 +577,14 @@ fn owner_redeems_materialized_nod(world: &mut World) {
             nonce: pow,
             mac: B256::from(mint_mac),
             opNonce: mint_nonce,
-            paynoteProof: paynote_proof.into(),
+            payNoteProof: paynote_proof.into(),
         },
         None,
     )
-    .expect("mine Gratis by spending the deposited paynote");
+    .expect("mine Gratis by spending the deposited PayNote");
     assert_mined_success(
         &mine_gratis,
-        "mine Gratis by spending the deposited paynote",
+        "mine Gratis by spending the deposited PayNote",
     );
     assert_eq!(
         gratis_balance(&url, owner, &keys.view),

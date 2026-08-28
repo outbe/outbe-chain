@@ -27,7 +27,7 @@ interface INodFactory {
 
     error NodMaterializationRejected(uint8 code);
 
-    /// @notice Emitted when a Nod's cost is discharged by burning a Paynote.
+    /// @notice Emitted when a Nod's cost is discharged by burning a PayNote.
     ///         Names the spent nullifier instead of a payer address: the note
     ///         is what pays, and it is deliberately not linkable to a payer.
     event NodPaid(address indexed owner, uint256 nodId, address asset, bytes32 nullifier, uint256 amountCovered);
@@ -57,8 +57,8 @@ interface INodFactory {
     ///         caller's current on-chain gratis op-nonce. The Nod owner is the
     ///         gratis recipient, so they can always supply this authorization.
     ///
-    ///         The Nod's cost is discharged here, by spending a Paynote rather
-    ///         than by a prior transparent payment. `paynoteProof` MUST be an
+    ///         The Nod's cost is discharged here, by spending a PayNote rather
+    ///         than by a prior transparent payment. `payNoteProof` MUST be an
     ///         `outbe.paynote` spend proof naming the caller as its spender,
     ///         carrying the asset the VaultRouter has registered under the
     ///         Nod's `referenceCurrency`, and covering `costAmountMinor`. The
@@ -66,9 +66,9 @@ interface INodFactory {
     ///         was deposited, so this call moves no tokens; it burns the note's
     ///         nullifier and logs `NodPaid`.
     ///
-    ///         Empty `paynoteProof` bytes are accepted only for a zero-cost
+    ///         Empty `payNoteProof` bytes are accepted only for a zero-cost
     ///         Nod, and a zero-cost Nod rejects a non-empty proof.
-    function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce, bytes calldata paynoteProof)
+    function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce, bytes calldata payNoteProof)
         external
         returns (uint256);
 
