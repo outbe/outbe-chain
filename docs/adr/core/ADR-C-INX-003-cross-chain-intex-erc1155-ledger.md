@@ -23,15 +23,18 @@ issued-to-settled conversion and Promis-authorized settled burn are explicit com
 Enumerable owner/holder indexes are derived state updated atomically with ERC-1155
 balances and supply.
 
-The series FSM is `Absent -> Issued -> Qualified -> Called`; expiry is either made a
-real persisted terminal state or is defined strictly as an event plus deterministic
-deadline predicate. Issued transferability and settlement guards derive from this one
-state. Upgrade and role changes are governed protocol activations, not ordinary admin
+The series FSM is `Absent -> Issued -> Qualified -> Called`. Expiry is persisted in
+the Rust ledger and derived here: storage keeps `Called`, and the views report
+`Expired` once `calledAt + callNoticePeriod` is strictly past. Nothing writes the
+variant, because no transaction arrives at the deadline to carry it and every
+freeze compares the stored field — storing it would unfreeze the series. Issued
+transferability and settlement guards derive from this one state. Upgrade and role changes are governed protocol activations, not ordinary admin
 maintenance.
 
 ## Authoritative interfaces
 
-- `createSeries`, `mint`, `markQualified`, `markCalled`, `expireSeries` own lifecycle.
+- `createSeries`, `mint`, `markQualified`, `markCalled` own lifecycle; expiry has no
+  command, only the derived read.
 - `settle` atomically burns issued from one holder and mints settled to another.
 - `burnSettled` is the Promis consumption seam.
 - `crosschainBurn/crosschainMint` are available only to the paired bridge profile.
@@ -60,8 +63,7 @@ and makes no stability promise across intervening transactions.
 ## Determinism and bounds
 
 Supply, quantity and auction-win widths are checked before narrowing. Holder/series
-enumeration and `expireSeries(limit)` require bounded cursors. No command copies an
-unbounded holder set. Metadata strings have an operational cap or immutable content hash.
+enumeration requires bounded cursors. No command copies an unbounded holder set. Metadata strings have an operational cap or immutable content hash.
 
 ## Compatibility, trust and activation
 
@@ -95,7 +97,7 @@ transport. Reconciliation across those authorities belongs to PFS-004.
   semantics and prevent repeated or partial mass expiry.
 - Audit token-id collision/classification for arbitrary ERC-1155 ids and reject unknown
   ids in every mutation route.
-- Bound `expireSeries`, holder snapshots, pagination and metadata; add randomized model
+- Bound holder snapshots, pagination and metadata; add randomized model
   tests for index/supply conservation.
 - Replace immediate `DEFAULT_ADMIN_ROLE` upgrades/role grants with governed delay,
   storage-layout validation and incident recovery.

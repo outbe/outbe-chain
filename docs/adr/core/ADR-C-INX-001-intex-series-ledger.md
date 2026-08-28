@@ -27,11 +27,19 @@ only legal transitions are:
 Absent --create--> Issued
 Issued --mark_qualified--> Qualified
 Issued | Qualified --mark_called(canonical_time)--> Called
+Called --expire_series--> Expired
 ```
 
-Called is terminal in the Rust ledger. Creation requires nonzero `issued_at`, the
-record existence sentinel. Lifecycle is stored as `u8` but every read/mutation must
-decode it through the typed enum and reject unknown values.
+Expired is terminal and means the settlement window closed, not that anything
+burned: a series whose units were all settled in time reaches it with nothing
+forfeited. Creation requires nonzero `issued_at`, the record existence sentinel.
+Lifecycle is stored as `u8` but every read/mutation must decode it through the
+typed enum and reject unknown values.
+
+Two per-series counters accompany the record: units settled and units parked into
+Gem positions. They only grow, their sum never exceeds the issued count, and
+`issued - settled - parked` is what expiry forfeits — the Promis load of those
+units returns to the unallocated limit and is credited once per called group.
 
 Series are append-only in a dense global enumeration. Identity fields are not
 rewritten by lifecycle transitions.
@@ -121,29 +129,27 @@ later from retired Tributes.
 
 ## Open questions and technical debt
 
-1. Reconcile the three-state Rust FSM with the richer Solidity ERC-1155 lifecycle,
-   including expiry/sweep after Called deadline.
-2. `mark_called` accepts zero or caller-supplied timestamp at the internal seam.
+1. `mark_called` accepts zero or caller-supplied timestamp at the internal seam.
    Validate canonical nonzero block time inside the module or narrow the API.
-3. Creation validates almost no economic fields beyond sentinel time. Define which
+2. Creation validates almost no economic fields beyond sentinel time. Define which
    representational invariants (nonzero count/load/prices, currency validity, ordered
    call thresholds) belong in the ledger versus factory.
-4. Contributor recording says “pre-deduplicated” but does not itself prove uniqueness
+3. Contributor recording says “pre-deduplicated” but does not itself prove uniqueness
    or checked sum. Enforce the canonical aggregation contract.
-5. Define whether a second proceeds distribution for a series is forbidden. Current
+4. Define whether a second proceeds distribution for a series is forbidden. Current
    completion clears contributor provenance, making legitimate repeat delivery
    impossible or unsafe.
-6. Add compare-and-set expectations to progress saves so stale internal writers
+5. Add compare-and-set expectations to progress saves so stale internal writers
    cannot move cursor/paid values backward.
-7. Replace saturating cursor arithmetic in the factory seam with checked bounds and
+6. Replace saturating cursor arithmetic in the factory seam with checked bounds and
    make malformed progress an invariant error.
-8. Add structural closure tests for global enumeration and both directions of the
+7. Add structural closure tests for global enumeration and both directions of the
    active distribution dense set.
-9. Add generated lifecycle/distribution models with every injected failure and
+8. Add generated lifecycle/distribution models with every injected failure and
    retry.
-10. Define maximum series and contributor counts, pagination and begin-block work
+9. Define maximum series and contributor counts, pagination and begin-block work
     bounds.
-11. Plan migration beyond `u32` UNIX timestamps before 2106 and test boundary
+10. Plan migration beyond `u32` UNIX timestamps before 2106 and test boundary
     rejection now.
-12. Add structural caller tests for every mutation API; private crate visibility is
+11. Add structural caller tests for every mutation API; private crate visibility is
     insufficient authority.

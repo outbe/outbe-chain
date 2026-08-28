@@ -32,7 +32,12 @@ The Metadosis Citadel path admits exactly three new typed contribution sources:
    rejection receipt.
 
 Normal RED-day auction-base routing, certified OCOMP unused-Lysis routing and
-Desis unused-clearing returns retain their existing semantics. Tribute nominal
+Desis unused-clearing returns retain their existing semantics. IntexFactory adds one
+more accepted `add` source: the Promis load of Intex units nobody realised by the
+time their call window closed. It is symmetric with the returns above — capacity a
+clearing consumed and no holder ever mined — and is credited once per called group,
+carrying the day, the reference currency and the forfeited unit count for
+reconciliation. Tribute nominal
 or issuance value is never converted into this accumulator. Every source is
 enumerable; raw `set` is not a generic setter.
 
