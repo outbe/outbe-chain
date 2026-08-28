@@ -24,6 +24,9 @@ pub enum DesisError {
 
     #[error("relayed bid names a currency no series id can spell: issuance {0}, reference {1}")]
     UnspellableBidCurrency(u16, u16),
+
+    #[error("relayed bid batch carries {0} bids, over the {1} the codec may send")]
+    BidBatchTooLarge(usize, usize),
 }
 
 impl From<DesisError> for outbe_primitives::error::PrecompileError {

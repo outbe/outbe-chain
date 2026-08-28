@@ -1,11 +1,11 @@
 @hardware-sgx @release
-Feature: Published testnet SGX release
-  The exact image promoted for testnet must contain the protected-job signature,
+Feature: Published production SGX release
+  The exact image promoted for the selected production network must contain the protected-job signature,
   execute on SGX hardware, preserve same-signer sealed identity across restart,
   and fail closed when artifacts or signer identity change.
 
   Scenario: Published signed enclave image is immutable and restart-safe
-    Given an exact signed testnet SGX bundle and published image
+    Given an exact signed production SGX bundle and published image
     Then the signed bundle and immutable runtime layout verify
     When the published image probes hardware SGX
     Then the hardware report matches the signed enclave measurements

@@ -4846,6 +4846,14 @@ mod tests {
             },
         );
         db.insert_account_info(
+            outbe_primitives::addresses::OCOMP_REGISTRY_ADDRESS,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
+                code: Some(marker_code.clone()),
+                ..Default::default()
+            },
+        );
+        db.insert_account_info(
             CYCLE_ADDRESS,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
@@ -4925,6 +4933,14 @@ mod tests {
         );
         db.insert_account_info(
             outbe_primitives::addresses::METADOSIS_ADDRESS,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
+                code: Some(marker_code.clone()),
+                ..Default::default()
+            },
+        );
+        db.insert_account_info(
+            outbe_primitives::addresses::OCOMP_REGISTRY_ADDRESS,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code),
@@ -5038,6 +5054,7 @@ mod tests {
             outbe_primitives::addresses::REWARDS_ADDRESS,
             outbe_primitives::addresses::AGENT_REWARD_ADDRESS,
             outbe_primitives::addresses::METADOSIS_ADDRESS,
+            outbe_primitives::addresses::OCOMP_REGISTRY_ADDRESS,
             outbe_primitives::addresses::TRIBUTE_ADDRESS,
             NOD_ADDRESS,
             outbe_primitives::addresses::COMPRESSED_ENTITIES_ADDRESS,
@@ -5161,6 +5178,14 @@ mod tests {
         );
         db.insert_account_info(
             outbe_primitives::addresses::METADOSIS_ADDRESS,
+            AccountInfo {
+                code_hash: marker_code.hash_slow(),
+                code: Some(marker_code.clone()),
+                ..Default::default()
+            },
+        );
+        db.insert_account_info(
+            outbe_primitives::addresses::OCOMP_REGISTRY_ADDRESS,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code),
@@ -6114,11 +6139,10 @@ mod tests {
         }
 
         let chain_spec = |activate: fn(ChainSpecBuilder) -> ChainSpecBuilder| {
-            Arc::new(
-                activate(ChainSpecBuilder::from(&*MAINNET))
-                    .build()
-                    .map_header(OutbeHeader::new),
-            )
+            let mut spec = activate(ChainSpecBuilder::from(&*MAINNET)).build();
+            spec.chain = CHAIN_ID.into();
+            spec.genesis.config.chain_id = CHAIN_ID;
+            Arc::new(spec.map_header(OutbeHeader::new))
         };
         let cases = [
             Case {
@@ -6265,12 +6289,12 @@ mod tests {
         }
 
         for ocomp in [false, true] {
-            let chain_spec = Arc::new(
-                ChainSpecBuilder::from(&*MAINNET)
-                    .shanghai_activated()
-                    .build()
-                    .map_header(OutbeHeader::new),
-            );
+            let mut spec = ChainSpecBuilder::from(&*MAINNET)
+                .shanghai_activated()
+                .build();
+            spec.chain = CHAIN_ID.into();
+            spec.genesis.config.chain_id = CHAIN_ID;
+            let chain_spec = Arc::new(spec.map_header(OutbeHeader::new));
             let mut database = CacheDB::<EmptyDBTyped<ProviderError>>::default();
             database.insert_account_info(
                 alloy_evm::eth::dao_fork::DAO_HARDFORK_ACCOUNTS[0],
@@ -8659,8 +8683,9 @@ mod tests {
         // aggregate signed below uses the same `finalize_namespace` the verify
         // path reads — otherwise the late-finalize BLS check fails on a namespace
         // mismatch (`b"outbe" || 0` at sign time vs `b"outbe" || CHAIN_ID` at
-        // verify time). CHAIN_ID matches `test_chain_spec()` (MAINNET id 1).
-        outbe_consensus::proof::init_consensus_chain_id(CHAIN_ID);
+        // verify time). CHAIN_ID matches the Outbe Devnet identity used by
+        // `test_chain_spec()` throughout this shared lib-test process.
+        outbe_consensus::proof::init_consensus_chain_id(CHAIN_ID).unwrap();
 
         let epoch = 0u64;
         // Real BLS committee of 4 (committee addresses are the late-credit voters).

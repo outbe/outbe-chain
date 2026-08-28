@@ -28,9 +28,8 @@ fn apply_pre_execution_changes_skips_phase1_for_block_1() {
     assert!(!matches!(cursor, SystemTxPhase::Phase1Preexecuted { .. }));
 }
 
-/// Cursor body_index ordering for the V2 block-`n>=2` canonical layout.
-/// Reorder is correct iff Phase 1 owns body_index 0, CycleTick owns 1, an
-/// optional BoundaryOutcome owns 2, and OracleSlashWindow owns the last slot.
+/// Cursor body-index ordering through the first scheduled phase of the V2
+/// block-`n>=2` canonical layout.
 #[test]
 fn phase1_receipt_index_0_before_cycle_tick() {
     let phase1 = SystemTxPhase::initial_for_block(BLOCK_2, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
@@ -52,9 +51,10 @@ fn phase1_receipt_index_0_before_cycle_tick() {
     assert_eq!(cycle.body_index(), Some(2));
 }
 
-/// Block `n>=2` body-index map: Phase 1 → CycleTick → (optional
-/// BoundaryOutcome) → OracleSlashWindow → UserTxs. Reorder must preserve the
-/// ordering relative to the body receipt slots.
+/// Block `n>=2` body-index map: Phase 1 → LateFinalizeCredits → CycleTick →
+/// RewardsGemDelivery → (optional BoundaryOutcome) → OracleSlashWindow →
+/// HookEvents → UserTxs. Reorder must preserve the ordering relative to the
+/// body receipt slots.
 #[test]
 fn phase1_reordering_preserves_body_receipt_order() {
     let kinds_no_boundary = expected_begin_block_kinds(BLOCK_42, false, false);
@@ -64,6 +64,7 @@ fn phase1_reordering_preserves_body_receipt_order() {
             SystemTxKind::CertifiedParentAccounting,
             SystemTxKind::LateFinalizeCredits,
             SystemTxKind::CycleTick,
+            SystemTxKind::RewardsGemDelivery,
             SystemTxKind::OracleSlashWindow,
             SystemTxKind::HookEvents,
         ]
@@ -76,6 +77,7 @@ fn phase1_reordering_preserves_body_receipt_order() {
             SystemTxKind::CertifiedParentAccounting,
             SystemTxKind::LateFinalizeCredits,
             SystemTxKind::CycleTick,
+            SystemTxKind::RewardsGemDelivery,
             SystemTxKind::BoundaryOutcome,
             SystemTxKind::OracleSlashWindow,
             SystemTxKind::HookEvents,
@@ -87,16 +89,18 @@ fn phase1_reordering_preserves_body_receipt_order() {
     let phase1 = SystemTxPhase::initial_for_block(BLOCK_42, GENESIS_BOOTSTRAP_BLOCK_NUMBER);
     let late = phase1.advance_after_commit(true, false);
     let cycle = late.advance_after_commit(true, false);
-    let boundary = cycle.advance_after_commit(true, false);
+    let rewards = cycle.advance_after_commit(true, false);
+    let boundary = rewards.advance_after_commit(true, false);
     let oracle = boundary.advance_after_commit(true, false);
     let hook_events = oracle.advance_after_commit(true, false);
     let after_hook_events = hook_events.advance_after_commit(true, false);
     assert_eq!(phase1.body_index(), Some(0));
     assert_eq!(late.body_index(), Some(1));
     assert_eq!(cycle.body_index(), Some(2));
-    assert_eq!(boundary.body_index(), Some(3));
-    assert_eq!(oracle.body_index(), Some(4));
-    assert_eq!(hook_events.body_index(), Some(5));
+    assert_eq!(rewards.body_index(), Some(3));
+    assert_eq!(boundary.body_index(), Some(4));
+    assert_eq!(oracle.body_index(), Some(5));
+    assert_eq!(hook_events.body_index(), Some(6));
     assert_eq!(after_hook_events, SystemTxPhase::UserTxs);
 }
 

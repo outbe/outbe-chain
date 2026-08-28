@@ -25,6 +25,7 @@ outbe-consensus.workspace = true
 outbe-evm.workspace = true
 outbe-e2e-harness = { path = "../testing/e2e-harness", features = ["ocomp-integration"] }
 outbe-primitives.workspace = true
+outbe-tee.workspace = true
 reth-chainspec.workspace = true
 reth-ethereum.workspace = true
 serde.workspace = true

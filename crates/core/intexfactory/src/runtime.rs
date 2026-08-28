@@ -342,6 +342,14 @@ pub fn distribute(
         return Err(IntexFactoryError::ZeroAmount.into());
     }
     outbe_intex::api::credit_proceeds(storage, worldwide_day, src_chain_id, amount)?;
+    emit_event(
+        storage,
+        crate::precompile::IIntexFactory::ProceedsCredited {
+            worldwideDay: worldwide_day.value(),
+            srcChainId: src_chain_id,
+            amount,
+        },
+    )?;
     let now = storage.timestamp()?.to::<u64>();
     try_settle_proceeds(storage, worldwide_day, now)
 }
@@ -395,11 +403,11 @@ pub(crate) fn try_settle_proceeds(
 
     let pot = outbe_intex::api::take_proceeds_pot(storage, worldwide_day)?;
     if pot.is_zero() {
-        // Nothing new to pay. Once every chain is in, finalize (clears the map);
-        // a forced empty round just idles until a late arrival tops the pot up.
-        if complete {
-            outbe_intex::api::finalize_proceeds(storage, worldwide_day)?;
-        }
+        // Nothing to pay, and nothing left to wait for: an incomplete fan-in only
+        // reaches here past its deadline. Finalize either way, so a day no chain
+        // ever paid into leaves the awaiting set instead of being re-swept forever.
+        // A later arrival is still caught, and burned, by the branches above.
+        outbe_intex::api::finalize_proceeds(storage, worldwide_day)?;
         return Ok(());
     }
 
@@ -605,10 +613,12 @@ fn decode_contributor_leaf(
 }
 
 /// Begin-block sweep: settle every series whose proceeds fan-in deadline has
-/// passed. Each series runs in its own checkpoint so one failure is retried next
-/// block instead of halting the block.
+/// passed. The set holds one entry per day and releases it once its deadline is
+/// out, so a whole pass is a handful of reads. Each series runs in its own
+/// checkpoint so one failure is retried next block instead of halting the block.
 pub(crate) fn sweep_proceeds_deadlines(storage: &StorageHandle<'_>, now: u64) -> Result<()> {
     let count = outbe_intex::api::awaiting_proceeds_count(storage)?;
+    // Read the set before settling: settling swap-removes from it.
     let mut worldwide_days = Vec::with_capacity(count as usize);
     for i in 0..count {
         worldwide_days.push(outbe_intex::api::awaiting_proceeds_at(storage, i)?);
@@ -717,6 +727,8 @@ pub(crate) fn pay_chunk(
 /// that mutates underneath us.
 pub(crate) fn drain_distributions(storage: &StorageHandle<'_>) -> Result<()> {
     let count = outbe_intex::api::active_dist_count(storage)?;
+    // One open round per day, and each pays at most a chunk per block, so the
+    // set is a handful. Read it before paying: finishing a round removes from it.
     let mut worldwide_days = Vec::with_capacity(count as usize);
     for i in 0..count {
         worldwide_days.push(outbe_intex::api::active_dist_at(storage, i)?);

@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use alloy_primitives::{keccak256, B256};
 use clap::{Args, Parser, Subcommand};
-use outbe_consensus::{config::init_consensus_chain_id, proof::constants::consensus_chain_id};
+use outbe_consensus::config::init_consensus_chain_id;
+#[cfg(test)]
+use outbe_consensus::proof::constants::consensus_chain_id;
 use outbe_ocomp::bundle::PinnedProtocolBundle;
 use outbe_ocomp::cas::CasLimits;
 use outbe_ocomp::control::{effective_uid, poc_schema_limits, EndpointIdentity};
@@ -471,14 +473,7 @@ fn required_env(name: &'static str) -> Result<String, Box<dyn std::error::Error>
 }
 
 fn install_consensus_domain(chain_id: u64) -> Result<(), Box<dyn std::error::Error>> {
-    init_consensus_chain_id(chain_id);
-    let installed = consensus_chain_id();
-    if installed != chain_id {
-        return Err(format!(
-            "process consensus domain is already bound to chain {installed}, requested {chain_id}"
-        )
-        .into());
-    }
+    init_consensus_chain_id(chain_id)?;
     Ok(())
 }
 

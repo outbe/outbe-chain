@@ -664,6 +664,13 @@ fn every_testnet_only_flag_is_rejected_for_unregistered_networks() {
 }
 
 #[test]
+fn every_testnet_only_flag_is_rejected_for_mainnet() {
+    let chain_id = outbe_primitives::chain::MAINNET_CHAIN_ID;
+    assert!(validate_testnet_only_flags(true, None, chain_id).is_err());
+    assert!(validate_testnet_only_flags(false, Some(0), chain_id).is_err());
+}
+
+#[test]
 fn activated_dkg_cleanup_removes_retry_and_pending_artifacts() {
     let dir = tempfile::tempdir().unwrap();
     for file in [

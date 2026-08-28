@@ -64,8 +64,8 @@ class CaptureDcapCollateralTests(unittest.TestCase):
 
         self.assertEqual(metadata["type"], "processor")
         self.assertIn("Intel SGX PCK Processor CA", metadata["issuer"])
-        self.assertEqual(metadata["this_update"], "2026-07-28T05:33:19Z")
-        self.assertEqual(metadata["next_update"], "2026-08-27T05:33:19Z")
+        self.assertEqual(metadata["this_update"], "2026-08-26T23:46:46Z")
+        self.assertEqual(metadata["next_update"], "2026-09-25T23:46:46Z")
         self.assertGreater(metadata["size"], 0)
         self.assertRegex(metadata["sha256"], r"^[0-9a-f]{64}$")
 
