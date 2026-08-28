@@ -127,7 +127,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         calledAt = d.calledAt;
         totalSupply = d.totalSupply;
         status = d.status;
-        state = d.state;
+        state = _effectiveState(d);
     }
 
     /// @notice Amount won at auction per address per token id (recorded at mint, never changes).
@@ -492,7 +492,22 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         if ($.seriesData[tokenId].issuedAt == 0) {
             revert NonexistentToken(tokenId);
         }
-        return $.seriesData[tokenId];
+        IIntexNFT1155.SeriesData memory data = $.seriesData[tokenId];
+        data.state = _effectiveState(data);
+        return data;
+    }
+
+    /// @dev A called series whose notice period has run out reports `Expired`. Derived,
+    ///      never stored: no transaction arrives at the deadline to write it, and every
+    ///      freeze reads the stored field, so storing it would unfreeze the series.
+    function _effectiveState(IIntexNFT1155.SeriesData memory data) private view returns (IIntexNFT1155.IntexState) {
+        if (
+            data.state == IIntexNFT1155.IntexState.Called
+                && block.timestamp > uint256(data.calledAt) + data.callTrigger.callNoticePeriod
+        ) {
+            return IIntexNFT1155.IntexState.Expired;
+        }
+        return data.state;
     }
 
     /// @inheritdoc IIntexNFT1155
