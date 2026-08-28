@@ -902,7 +902,7 @@ fn funded_malformed_calldata_fails_without_stranding_value() {
         BOB,
         1,
         Field::from(0u64),
-        &hex!("00000000").to_vec(),
+        hex!("00000000").as_ref(),
     );
     let oog_db = base_db();
     let outcome = run(

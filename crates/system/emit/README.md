@@ -6,7 +6,7 @@ tree; `mint` redeems a note with a zero-knowledge proof, credits the payout
 recipient, and nullifies the note. Note contents (owner, spend key, amount)
 never touch the chain.
 
-The Emit precompile address is `0x000000000000000000000000000000000000EE12`
+The Emit precompile address is `0x000000000000000000000000000000000000EE13`
 (`EMIT_ADDRESS`).
 
 ## Protocol onepager
@@ -31,7 +31,7 @@ Write calls are signed EVM transactions to `EMIT_ADDRESS`; only `burn` carries
 value — every other selector refuses credited value.
 
 ```bash
-EMIT_ADDR=0x000000000000000000000000000000000000EE12
+EMIT_ADDR=0x000000000000000000000000000000000000EE13
 
 # Lock 1 native unit into a note with serial number note_sn.
 cast send "$EMIT_ADDR" 'burn(bytes32)' "$NOTE_SN" \
@@ -94,12 +94,12 @@ as Alice creating a Bob-owned note, followed by Bob redeeming it.
 - Cyan blocks are ledger processing. All diagrams use a forced dark background.
 
 `Ledger` in the diagrams is the chain's Emit precompile at
-`0x000000000000000000000000000000000000EE12`; the mapping below translates
+`0x000000000000000000000000000000000000EE13`; the mapping below translates
 diagram vocabulary to the implemented ABI surface.
 
 ```text
 Diagram term                              Implemented precompile surface
-Ledger                                    Emit precompile at EMIT_ADDRESS (0x000000000000000000000000000000000000EE12)
+Ledger                                    Emit precompile at EMIT_ADDRESS (0x000000000000000000000000000000000000EE13)
 burn(caller, native_value, note_sn)       burn(bytes32 noteSn), payable — value is msg.value
 BurnReceipt(C, note_amount, leaf_index,
 root_after)                               NewNote(commitment, leafIndex, rootAfter, noteAmount) event

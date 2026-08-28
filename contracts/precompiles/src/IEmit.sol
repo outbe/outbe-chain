@@ -3,7 +3,7 @@ pragma solidity ^0.8.30;
 
 /// @title IEmit
 /// @notice Emit private-note tree precompile at
-///         0x000000000000000000000000000000000000EE12
+///         0x000000000000000000000000000000000000EE13
 interface IEmit {
     /// Burn native COEN into a private note. The commitment is derived from
     /// the runtime chain ID, `noteSn`, and the caller-supplied value; the note
