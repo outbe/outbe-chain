@@ -40,6 +40,8 @@
 
 mod aggregate;
 pub mod api;
+#[cfg(feature = "bench-utils")]
+pub mod bench_support;
 pub mod commands;
 mod commit;
 pub mod config;

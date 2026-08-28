@@ -22,5 +22,11 @@ pub use qualified::IntexLifecycle;
 pub use runtime::{marked_up, to_wire_price};
 pub use schema::{IntexFactoryContract, IssuanceParams};
 
+/// Narrow benchmark-only access to the already-public issuance hand-off type.
+#[cfg(feature = "bench-utils")]
+pub mod bench_support {
+    pub use crate::runtime::IssuanceLeg;
+}
+
 #[cfg(test)]
 mod tests;
