@@ -8147,6 +8147,7 @@ dependencies = [
  "hex",
  "k256 0.13.4",
  "outbe-chain-constants",
+ "outbe-common",
  "outbe-compressed-entities",
  "outbe-consensus",
  "outbe-engine",
