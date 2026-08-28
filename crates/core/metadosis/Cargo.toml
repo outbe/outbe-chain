@@ -42,6 +42,7 @@ outbe-fidelity = { workspace = true, features = ["test-enclave"] }
 
 [features]
 default = []
+bench-utils = []
 test-utils = ["dep:k256", "outbe-validatorset/test-utils"]
 
 [lints]

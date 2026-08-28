@@ -53,7 +53,7 @@ impl TributeFactoryContract<'_> {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "bench-utils"))]
     pub(crate) fn offer_tribute_with_processor(
         &mut self,
         scope: &ExecutionScope,

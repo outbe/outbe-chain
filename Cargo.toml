@@ -76,6 +76,7 @@ members = [
     # testing
     "testing/e2e-harness",
     "testing/lysis-v1-reference",
+    "testing/protocol-benchmarks",
 ]
 exclude = [
     "vendor/commonware-consensus",
