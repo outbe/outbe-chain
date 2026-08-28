@@ -7114,6 +7114,12 @@ mod tests {
                     block_ts,
                 )
                 .unwrap();
+                // Close every reward day these tests use, so delivery prices the
+                // batch instead of waiting for the day to finalize.
+                outbe_oracle::schema::OracleContract::new(storage.clone())
+                    .utc_day_vwap_last_finalized
+                    .write(29_991_231)
+                    .unwrap();
                 let rewards = outbe_rewards::schema::Rewards::new(storage.clone());
                 rewards
                     .daily_voter_count
@@ -7313,6 +7319,12 @@ mod tests {
                         .write(&voter, 1)
                         .unwrap();
                 }
+                // Close every reward day these tests use, so delivery prices the
+                // batch instead of waiting for the day to finalize.
+                outbe_oracle::schema::OracleContract::new(storage.clone())
+                    .utc_day_vwap_last_finalized
+                    .write(29_991_231)
+                    .unwrap();
                 outbe_oracle::api::set_exchange_rate(
                     storage,
                     Address::ZERO,
@@ -7683,6 +7695,12 @@ mod tests {
                     TEST_BLOCK_TIMESTAMP_BASE + 1,
                 )
                 .unwrap();
+                // Close every reward day these tests use, so delivery prices the
+                // batch instead of waiting for the day to finalize.
+                outbe_oracle::schema::OracleContract::new(storage.clone())
+                    .utc_day_vwap_last_finalized
+                    .write(29_991_231)
+                    .unwrap();
                 outbe_rewards::api::prepare_daily_validator_gem_batch(
                     &ctx,
                     20_240_101,
