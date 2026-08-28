@@ -16,6 +16,11 @@ use outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K;
 /// Validator rewards are denominated in USD by protocol policy
 pub const REWARD_GEM_CURRENCY: u16 = 840;
 
+/// How many days before a reward day the delivery may look for a finalized VWAP
+/// when the reward day itself carries none. Bounds the walk; past it the live
+/// quote takes over, so no batch can stall on a permanently unpriced day.
+pub const MAX_REWARD_PRICE_LOOKBACK_DAYS: u32 = 7;
+
 /// Number of inclusion-distance slots, `k ∈ {0..=K}` ⇒ `K + 1` weights.
 pub const LATE_FINALIZE_SLOTS: usize = LATE_FINALIZE_WINDOW_K as usize + 1;
 

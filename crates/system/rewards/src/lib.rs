@@ -15,6 +15,13 @@
 //! paths so external callers (RPC, executor, builder, validator set)
 //! keep compiling without a sweeping rename. Migrate call sites
 //! opportunistically when next touched, then drop the re-exports.
+use alloy_sol_types::sol;
+
+sol!(
+    #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
+    "../../../contracts/precompiles/src/IRewards.sol"
+);
+
 pub mod api;
 pub mod constants;
 pub mod finalized_metadata_hook;

@@ -1,0 +1,33 @@
+[
+  {
+    "type": "event",
+    "name": "RewardGemBatchPriced",
+    "inputs": [
+      {
+        "name": "rewardUtcDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "entryPrice",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "source",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "sourceDay",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  }
+]
