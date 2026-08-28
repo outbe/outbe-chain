@@ -603,10 +603,13 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
                 &storage,
                 scope,
                 parent,
-                population.actions[0].owner,
-                nod_id,
-                0,
-                dummy_auth(),
+                api::MineGratisRequest {
+                    caller: population.actions[0].owner,
+                    nod_id,
+                    nonce: 0,
+                    auth: dummy_auth(),
+                    paynote_proof: &[],
+                },
             )
         })
         .unwrap_err();
@@ -619,11 +622,6 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
     world.provider.set_block_number(2);
     apply(&mut world, &batch(&population, 8, 2)).unwrap();
     world.qualify(nod_id);
-    world
-        .enter(|storage, scope, parent| {
-            api::settle_nod(&storage, scope, parent, population.actions[0].owner, nod_id)
-        })
-        .unwrap();
     let nonce = find_valid_nonce(nod_id);
     assert_eq!(
         world
@@ -632,13 +630,16 @@ fn certified_nods_cannot_be_mined_until_the_generation_is_complete() {
                     &storage,
                     scope,
                     parent,
-                    population.actions[0].owner,
-                    nod_id,
-                    nonce,
-                    mine_auth(
-                        population.actions[0].owner,
-                        population.actions[0].gratis_load_minor,
-                    ),
+                    api::MineGratisRequest {
+                        caller: population.actions[0].owner,
+                        nod_id,
+                        nonce,
+                        auth: mine_auth(
+                            population.actions[0].owner,
+                            population.actions[0].gratis_load_minor,
+                        ),
+                        paynote_proof: &[],
+                    },
                 )
             })
             .unwrap(),

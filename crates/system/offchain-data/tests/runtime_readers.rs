@@ -88,7 +88,6 @@ fn nod(nod_id: WwdEntityId, bucket_key: B256) -> NodItemState {
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 1_752_534_000,
-        is_settled: false,
     }
 }
 

@@ -10,6 +10,7 @@ use outbe_primitives::storage::types::StorageKey as _;
 use outbe_tee::protocol::{GratisOp, Ledger, PromisOp};
 
 use crate::env::environment;
+use crate::features::paynote;
 use crate::internal::{addresses, eth};
 use crate::world::forge::{self, address_from, DEPLOYER_KEY};
 use crate::world::World;
@@ -490,7 +491,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     let (nod_id, mut body) = wait_for_materialized_nod(world, port, owner);
     assert!(
         !body.costAmountMinor.is_zero(),
-        "settlement E2E requires a paid Nod"
+        "settlement E2E requires a Nod with a nonzero cost"
     );
     assert!(!body.gratisLoadMinor.is_zero());
 
@@ -502,43 +503,38 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         crate::features::price_oracle::publish_controlled_quote(world, qualifying_rate);
         body = wait_for_qualified_materialized_nod(world, port, owner, &nod_id);
     }
-    assert!(body.isQualified, "settled Nod must be mineable");
+    assert!(body.isQualified, "the Nod must be qualified to be mineable");
 
     let fixture = deploy_settlement_fixture(world);
-    let payer = world.validators.get(0);
-    let payer_key = payer.evm_key().expect("validator payer key");
-    let payer_address = world
-        .rpc
-        .address_of(&payer_key)
-        .expect("validator payer address")
-        .parse::<Address>()
-        .expect("canonical validator payer");
+    // The cost is paid by depositing a note and then spending it. The value
+    // reaches the reserve vault at deposit time, so the owner funds and
+    // approves the Paynote pool rather than the NodFactory.
+    let payer_key = key.clone();
+    let payer_address = owner;
     fund_and_approve(
         world,
         fixture.asset,
         &payer_key,
         payer_address,
-        addresses::NOD_FACTORY_ADDR,
+        addresses::PAYNOTE_ADDR,
         body.costAmountMinor,
     );
-    let settle = eth::send_call_outcome(
+    let cost_minor =
+        u128::try_from(body.costAmountMinor).expect("Nod cost fits a paynote spend amount");
+    let note = paynote::Note::new(chain_id_u64(world), fixture.asset, cost_minor);
+    let deposit = eth::send_call_outcome(
         &url,
-        addresses::NOD_FACTORY_ADDR,
+        addresses::PAYNOTE_ADDR,
         &payer_key,
-        &eth::INodFactory::settleNodCall {
-            nodId: U256::from_be_slice(&nod_id),
+        &eth::IPaynote::depositCall {
+            asset: fixture.asset,
+            amount: cost_minor,
+            noteSn: note.serial_word(),
         },
         None,
     )
-    .expect("settle materialized Nod");
-    assert_mined_success(&settle, "settle materialized Nod");
-    let settled = world
-        .rpc
-        .materialized_nod_for_owner(port, owner)
-        .expect("settled Nod lookup")
-        .expect("settled owner Nod")
-        .1;
-    assert!(settled.isSettled, "Nod did not persist settled state");
+    .expect("deposit the Nod's cost as a paynote");
+    assert_mined_success(&deposit, "deposit the Nod's cost as a paynote");
     assert_eq!(
         eth::read_call(
             &url,
@@ -548,8 +544,10 @@ fn owner_redeems_materialized_nod(world: &mut World) {
             },
         ),
         Some(body.costAmountMinor),
-        "reserve vault did not receive exact Nod cost"
+        "reserve vault did not receive exact Nod cost at deposit time"
     );
+
+    let paynote_proof = paynote::prove_spend(world, port, &note, owner);
 
     let keys = eth::derive_account_keys(&url, &key, Ledger::Gratis)
         .expect("derive public Tribute owner Gratis keys");
@@ -579,11 +577,15 @@ fn owner_redeems_materialized_nod(world: &mut World) {
             nonce: pow,
             mac: B256::from(mint_mac),
             opNonce: mint_nonce,
+            paynoteProof: paynote_proof.into(),
         },
         None,
     )
-    .expect("mine Gratis from settled Nod");
-    assert_mined_success(&mine_gratis, "mine Gratis from settled Nod");
+    .expect("mine Gratis by spending the deposited paynote");
+    assert_mined_success(
+        &mine_gratis,
+        "mine Gratis by spending the deposited paynote",
+    );
     assert_eq!(
         gratis_balance(&url, owner, &keys.view),
         gratis_before + body.gratisLoadMinor,
@@ -671,11 +673,10 @@ fn wait_for_qualified_materialized_nod(
         let (candidate, observation) = match world.rpc.materialized_nod_for_owner(port, owner) {
             Ok(Some((nod_id, body))) => {
                 let observation = format!(
-                    "nod_id=0x{} qualified={} floor={} settled={}",
+                    "nod_id=0x{} qualified={} floor={}",
                     hex::encode(&nod_id),
                     body.isQualified,
                     body.floorPriceMinor,
-                    body.isSettled,
                 );
                 (Some((nod_id, body)), observation)
             }
@@ -1068,6 +1069,13 @@ fn transaction_is_reward_delivery_for_gem(
                         })
                 })
             })
+}
+
+fn chain_id_u64(world: &World) -> u64 {
+    world
+        .rpc
+        .chain_id(world.validators.primary_port())
+        .expect("settlement chain ID")
 }
 
 fn chain_id_b256(world: &World) -> B256 {

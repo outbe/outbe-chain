@@ -113,7 +113,6 @@ fn stored_events_carry_exact_canonical_nod_bodies_and_commitments() {
         issuance_currency: 0,
         reference_currency: 0,
         issued_at: 0,
-        is_settled: false,
     });
     let max_day = WorldwideDay::new(u32::MAX);
     assert_item_roundtrip(NodItemState {
@@ -128,7 +127,6 @@ fn stored_events_carry_exact_canonical_nod_bodies_and_commitments() {
         issuance_currency: u16::MAX,
         reference_currency: u16::MAX,
         issued_at: u64::MAX,
-        is_settled: true,
     });
     assert_bucket_roundtrip(NodBucketState {
         bucket_key: B256::ZERO,

@@ -1026,15 +1026,18 @@ def seed_metadosis(storage: StorageBuilder, config: dict):
 # VaultRouter default liquidity registry seeded at genesis. The discriminant
 # values MUST match the IVaultRouter.StablesSource / StablesTarget enum ordering
 # (see contracts/precompiles/src/IVaultRouter.sol).
-#   StablesSource: Unknown=0 NodCostAmount=1 IntexCostAmount=2
-#                  CredisCostAmount=3 GemCostAmount=4
+#   StablesSource: Unknown=0 IntexCostAmount=1 CredisCostAmount=2
+#                  GemCostAmount=3 PaynoteDeposit=4
 #   StablesTarget: Unknown=0 Credis=1
+#
+# NodFactory is deliberately absent: a Nod's cost is discharged by spending a
+# Paynote at mine time, and the underlying assets reached the vault through
+# PAYNOTE_ADDRESS when the note was deposited.
 VAULT_ROUTER_LIQUIDITY_SOURCES = [
-    (NOD_FACTORY_ADDRESS, 1),     # NodCostAmount
-    (INTEX_FACTORY_ADDRESS, 2),   # IntexCostAmount
-    (CREDIS_FACTORY_ADDRESS, 3),  # CredisCostAmount
-    (GEM_FACTORY_ADDRESS, 4),     # GemCostAmount
-    (PAYNOTE_ADDRESS, 5),         # PaynoteDeposit
+    (INTEX_FACTORY_ADDRESS, 1),   # IntexCostAmount
+    (CREDIS_FACTORY_ADDRESS, 2),  # CredisCostAmount
+    (GEM_FACTORY_ADDRESS, 3),     # GemCostAmount
+    (PAYNOTE_ADDRESS, 4),         # PaynoteDeposit
 ]
 VAULT_ROUTER_LIQUIDITY_TARGETS = [
     (CREDIS_FACTORY_ADDRESS, 1),  # Credis

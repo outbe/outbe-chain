@@ -96,7 +96,6 @@ fn nod_item_at(owner: Address, iso: u16, floor_price_minor: U256) -> NodItemStat
         issuance_currency: iso,
         reference_currency: iso,
         issued_at: START,
-        is_settled: false,
     }
 }
 

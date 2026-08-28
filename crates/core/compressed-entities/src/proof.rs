@@ -1094,7 +1094,6 @@ mod tests {
             issuance_currency: 840,
             reference_currency: 978,
             issued_at: 123,
-            is_settled: false,
         };
         let (bucket_id, bucket_bytes, bucket_leaf) = bucket_body(0x33);
         let cases = [

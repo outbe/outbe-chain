@@ -1,7 +1,8 @@
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolInterface};
+use alloy_sol_types::{sol, SolCall, SolInterface};
 use outbe_primitives::dispatch::{dispatch_call, mutate, view};
 use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 
 use crate::runtime;
 use outbe_compressed_entities::{ExecutionScope, ParentBodySource, WwdEntityId};
@@ -15,6 +16,16 @@ sol!(
     #![sol(alloy_sol_types = alloy_sol_types, extra_derives(Debug, PartialEq))]
     "../../../contracts/precompiles/src/INodFactory.sol"
 );
+
+/// `mineGratis` runs the pinned UltraHonk verifier on its Paynote proof, so its
+/// base gas must bound that work before storage is available to see whether the
+/// Nod is free and skips verification entirely.
+pub fn base_gas(input: &[u8]) -> u64 {
+    match input.first_chunk::<4>() {
+        Some(&INodFactory::mineGratisCall::SELECTOR) => outbe_zkproof::constants::ZK_VERIFY_GAS,
+        _ => PRECOMPILE_BASE_GAS,
+    }
+}
 
 /// Dispatches NodFactory calls through the block-scoped compressed-body lifecycle.
 pub fn dispatch(
@@ -34,9 +45,6 @@ pub fn dispatch(
     dispatch_call(data, INodFactory::INodFactoryCalls::abi_decode, |call| {
         use INodFactory::INodFactoryCalls::*;
         match call {
-            settleNod(c) => mutate(c, caller, |sender, c| {
-                runtime::settle_nod(&storage, scope, parent, sender, WwdEntityId::from(c.nodId))
-            }),
             mineGratis(c) => mutate(c, caller, |sender, c| {
                 let auth = outbe_gratisfactory::api::ModifyAuth {
                     mac: c.mac.0,
@@ -46,10 +54,13 @@ pub fn dispatch(
                     &storage,
                     scope,
                     parent,
-                    sender,
-                    WwdEntityId::from(c.nodId),
-                    c.nonce,
-                    auth,
+                    runtime::MineGratisRequest {
+                        caller: sender,
+                        nod_id: WwdEntityId::from(c.nodId),
+                        nonce: c.nonce,
+                        auth,
+                        paynote_proof: &c.paynoteProof,
+                    },
                 )
             }),
             materializationHead(c) => view(c, |_| {

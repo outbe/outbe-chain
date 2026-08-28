@@ -13,6 +13,8 @@ outbe-ocomp-protocol.workspace = true
 outbe-primitives.workspace = true
 outbe-nod.workspace = true
 outbe-vaultrouter.workspace = true
+outbe-paynote.workspace = true
+outbe-zkproof.workspace = true
 outbe-gratisfactory.workspace = true
 outbe-validatorset.workspace = true
 alloy-primitives.workspace = true
@@ -22,6 +24,9 @@ hex.workspace = true
 
 [dev-dependencies]
 outbe-nod = { workspace = true, features = ["test-utils"] }
+# Real paynote proofs for the cost-discharge tests.
+outbe-paynote = { workspace = true, features = ["test-utils"] }
+outbe-validatorset = { workspace = true, features = ["test-utils"] }
 outbe-offchain-storage.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 # `test-enclave` drives the confidential Gratis path in `mine_gratis` tests via

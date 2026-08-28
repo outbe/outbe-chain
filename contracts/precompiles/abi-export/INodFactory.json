@@ -53,25 +53,11 @@
         "name": "opNonce",
         "type": "uint64",
         "internalType": "uint64"
-      }
-    ],
-    "outputs": [
+      },
       {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "settleNod",
-    "inputs": [
-      {
-        "name": "nodId",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "paynoteProof",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [
@@ -305,16 +291,10 @@
   },
   {
     "type": "event",
-    "name": "NodSettled",
+    "name": "NodPaid",
     "inputs": [
       {
         "name": "owner",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "payer",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -332,7 +312,13 @@
         "internalType": "address"
       },
       {
-        "name": "amountPaid",
+        "name": "nullifier",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "amountCovered",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

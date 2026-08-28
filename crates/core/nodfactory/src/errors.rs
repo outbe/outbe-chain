@@ -1,3 +1,4 @@
+use alloy_primitives::{Address, U256};
 use outbe_common::pow::PowError;
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
@@ -20,11 +21,20 @@ pub enum NodFactoryError {
     #[error("nod is not qualified")]
     NodNotQualified,
 
-    #[error("nod is already settled")]
-    NodAlreadySettled,
+    #[error("paynote proof names spender {actual}, expected {expected}")]
+    PaynoteSpenderMismatch { expected: Address, actual: Address },
 
-    #[error("nod is not settled")]
-    NodNotSettled,
+    #[error("paynote proof carries asset {actual}, expected {expected}")]
+    PaynoteAssetMismatch { expected: Address, actual: Address },
+
+    #[error("paynote covers {covered}, nod cost is {required}")]
+    PaynoteUndercoversCost { covered: u128, required: u128 },
+
+    #[error("a zero-cost nod takes no paynote proof")]
+    UnexpectedPaynoteProof,
+
+    #[error("nod cost {cost} exceeds the maximum a paynote can cover")]
+    SettlementCostTooLarge { cost: U256 },
 
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,

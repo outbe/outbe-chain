@@ -35,7 +35,6 @@ fn item(owner: Address, day: WorldwideDay) -> NodItemState {
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 1_752_534_000,
-        is_settled: false,
     }
 }
 

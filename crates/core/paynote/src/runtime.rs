@@ -32,6 +32,10 @@ pub struct PaynoteClaim {
     pub asset: Address,
     pub spender: Address,
     pub spend_amount: u128,
+    /// The canonical nullifier this spend booked. It is the only public
+    /// identifier of the payment, so a consuming module can record which note
+    /// paid it without learning anything that links back to the depositor.
+    pub nullifier: B256,
 }
 
 /// Reads the live chain ID and derives its full in-memory empty ladder.
@@ -311,5 +315,6 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<Payno
         asset: claim.asset,
         spender: claim.spender,
         spend_amount: claim.spend_amount,
+        nullifier: nullifier_word,
     })
 }

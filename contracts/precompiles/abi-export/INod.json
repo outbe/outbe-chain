@@ -174,11 +174,6 @@
             "internalType": "bool"
           },
           {
-            "name": "isSettled",
-            "type": "bool",
-            "internalType": "bool"
-          },
-          {
             "name": "issuanceCurrency",
             "type": "uint16",
             "internalType": "uint16"

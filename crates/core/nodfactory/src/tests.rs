@@ -19,7 +19,13 @@ use outbe_primitives::{
 use outbe_tee::protocol::GratisOp;
 use outbe_tee_enclave::gratis::{derive_modify_key, modify_mac};
 
-use crate::{api, errors::NodFactoryError, precompile::INodFactory, runtime, sol_ext::IERC20};
+use outbe_paynote::test_support as paynote_support;
+
+use crate::{api, errors::NodFactoryError, precompile::INodFactory, runtime};
+
+/// The chain ID `World`'s storage provider reports; Paynote folds it into
+/// every commitment, so fixtures must be built under the same one.
+const CHAIN_ID: u64 = 1;
 
 fn dummy_auth() -> ModifyAuth {
     ModifyAuth {
@@ -83,10 +89,6 @@ fn paid_params(owner: Address) -> NodIssueParams {
     }
 }
 
-fn word(value: U256) -> Bytes {
-    Bytes::from(value.to_be_bytes::<32>().to_vec())
-}
-
 fn find_valid_nonce(nod_id: WwdEntityId) -> u64 {
     (0_u64..100_000)
         .find(|nonce| runtime::validate_pow(nod_id, *nonce).is_ok())
@@ -130,17 +132,33 @@ impl World {
             .unwrap()
     }
 
-    fn settle(&mut self, nod_id: WwdEntityId, payer: Address) -> U256 {
-        self.try_settle(nod_id, payer).unwrap()
+    fn try_mine(
+        &mut self,
+        nod_id: WwdEntityId,
+        caller: Address,
+        nonce: u64,
+        auth: ModifyAuth,
+        paynote_proof: &[u8],
+    ) -> Result<U256, PrecompileError> {
+        self.enter(|storage, scope, parent| {
+            api::mine_gratis(
+                &storage,
+                scope,
+                parent,
+                api::MineGratisRequest {
+                    caller,
+                    nod_id,
+                    nonce,
+                    auth,
+                    paynote_proof,
+                },
+            )
+        })
     }
 
-    fn try_settle(&mut self, nod_id: WwdEntityId, payer: Address) -> Result<U256, PrecompileError> {
-        self.enter(|storage, scope, parent| api::settle_nod(&storage, scope, parent, payer, nod_id))
-    }
-
-    /// Stubs the vault router's asset registry plus the ERC20 and deposit legs
-    /// the settlement path drives on the resolved asset.
-    fn register_settlement_asset(&mut self, asset: Address, deposited: U256) {
+    /// Publishes `asset` as the only asset registered under the Nod's reference
+    /// currency, which is the asset a covering paynote must carry.
+    fn register_reference_currency_asset(&mut self, asset: Address) {
         use outbe_vaultrouter::api::IVaultRouter;
 
         self.provider.stub_sub_call_at_selector(
@@ -150,28 +168,29 @@ impl World {
                 IVaultRouter::referenceCurrencyAssetsCall::abi_encode_returns(&vec![asset]),
             ),
         );
-        self.provider.stub_sub_call_at_selector(
-            asset,
-            IERC20::transferFromCall::SELECTOR,
-            word(U256::from(1)),
-        );
-        self.provider.stub_sub_call_at_selector(
-            asset,
-            IERC20::approveCall::SELECTOR,
-            word(U256::from(1)),
-        );
-        self.provider.stub_sub_call_at_selector(
-            outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
-            IVaultRouter::depositCall::SELECTOR,
-            word(deposited),
-        );
     }
 
-    fn is_settled(&mut self, nod_id: WwdEntityId) -> bool {
-        self.enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
-            .unwrap()
-            .unwrap()
-            .is_settled
+    /// Seeds the Paynote pool with one note and returns a spend proof over it
+    /// alongside the nullifier that spend would book.
+    fn fund_note(
+        &mut self,
+        asset: Address,
+        spender: Address,
+        note_amount: u128,
+        spend_amount: u128,
+    ) -> (Vec<u8>, B256) {
+        let fixture = paynote_support::note_and_spend_proof(
+            CHAIN_ID,
+            asset,
+            spender,
+            note_amount,
+            spend_amount,
+        );
+        paynote_support::seed_pool(&mut self.provider, CHAIN_ID, &[fixture.commitment]);
+        let nullifier = B256::new(outbe_paynote::hash::field_to_be_bytes(
+            fixture.public.nullifier,
+        ));
+        (fixture.proof, nullifier)
     }
 
     /// Stamps the bucket's call directly. The scan that decides *when* to stamp
@@ -308,10 +327,13 @@ fn failed_authorization_preserves_the_loaded_nod() {
                 &storage,
                 scope,
                 parent,
-                Address::repeat_byte(0x44),
-                nod_id,
-                nonce,
-                dummy_auth(),
+                api::MineGratisRequest {
+                    caller: Address::repeat_byte(0x44),
+                    nod_id,
+                    nonce,
+                    auth: dummy_auth(),
+                    paynote_proof: &[],
+                },
             )
         })
         .unwrap_err();
@@ -331,7 +353,6 @@ fn invalid_gratis_mac_rolls_back_the_nod_burn() {
     let input = params(Address::repeat_byte(0x45));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
-    world.settle(nod_id, input.owner);
     let nonce = find_valid_nonce(nod_id);
 
     world
@@ -340,10 +361,13 @@ fn invalid_gratis_mac_rolls_back_the_nod_burn() {
                 &storage,
                 scope,
                 parent,
-                input.owner,
-                nod_id,
-                nonce,
-                dummy_auth(),
+                api::MineGratisRequest {
+                    caller: input.owner,
+                    nod_id,
+                    nonce,
+                    auth: dummy_auth(),
+                    paynote_proof: &[],
+                },
             )
         })
         .unwrap_err();
@@ -359,7 +383,6 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
     let input = params(Address::repeat_byte(0x55));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
-    world.settle(nod_id, input.owner);
     world.provider.clear_events(NOD_ADDRESS);
     world.provider.clear_events(NOD_FACTORY_ADDRESS);
     let nonce = find_valid_nonce(nod_id);
@@ -369,10 +392,13 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
                 &storage,
                 scope,
                 parent,
-                input.owner,
-                nod_id,
-                nonce,
-                mine_auth(input.owner, input.gratis_load_minor),
+                api::MineGratisRequest {
+                    caller: input.owner,
+                    nod_id,
+                    nonce,
+                    auth: mine_auth(input.owner, input.gratis_load_minor),
+                    paynote_proof: &[],
+                },
             )
         })
         .unwrap();
@@ -409,140 +435,14 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
     );
 }
 
+/// Mining stays available to a Nod that qualified after issuance; there is no
+/// separate pre-payment step to sequence against any more.
 #[test]
-fn mine_gratis_rejects_an_unsettled_nod() {
-    let mut world = World::new();
-    let input = params(Address::repeat_byte(0x56));
-    let nod_id = world.issue(&input);
-    world.qualify(nod_id);
-    let nonce = find_valid_nonce(nod_id);
-
-    let error = world
-        .enter(|storage, scope, parent| {
-            api::mine_gratis(
-                &storage,
-                scope,
-                parent,
-                input.owner,
-                nod_id,
-                nonce,
-                mine_auth(input.owner, input.gratis_load_minor),
-            )
-        })
-        .unwrap_err();
-    assert!(matches!(
-        error,
-        PrecompileError::Revert(ref reason) if reason == &NodFactoryError::NodNotSettled.to_string()
-    ));
-    assert!(world
-        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
-        .unwrap()
-        .is_some());
-}
-
-#[test]
-fn settle_nod_accepts_any_payer() {
-    let mut world = World::new();
-    let input = params(Address::repeat_byte(0x57));
-    let nod_id = world.issue(&input);
-    assert!(!world.is_settled(nod_id));
-    world.provider.clear_events(NOD_FACTORY_ADDRESS);
-
-    let stranger = Address::repeat_byte(0x58);
-    assert_eq!(world.settle(nod_id, stranger), input.cost_amount_minor);
-    assert!(world.is_settled(nod_id));
-
-    let settled: Vec<_> = world
-        .provider
-        .get_ordered_events()
-        .iter()
-        .filter(|event| event.address == NOD_FACTORY_ADDRESS)
-        .filter_map(|event| INodFactory::NodSettled::decode_log_data(&event.data).ok())
-        .collect();
-    assert_eq!(settled.len(), 1);
-    assert_eq!(settled[0].owner, input.owner);
-    assert_eq!(settled[0].payer, stranger);
-    assert_eq!(settled[0].amountPaid, input.cost_amount_minor);
-}
-
-#[test]
-fn settle_nod_rejects_double_settlement() {
-    let mut world = World::new();
-    let input = params(Address::repeat_byte(0x59));
-    let nod_id = world.issue(&input);
-    world.settle(nod_id, input.owner);
-
-    let error = world.try_settle(nod_id, input.owner).unwrap_err();
-    assert!(matches!(
-        error,
-        PrecompileError::Revert(ref reason)
-            if reason == &NodFactoryError::NodAlreadySettled.to_string()
-    ));
-}
-
-#[test]
-fn settle_nod_fails_when_the_reference_currency_has_no_registered_asset() {
-    use outbe_vaultrouter::api::IVaultRouter;
-
-    let mut world = World::new();
-    let input = paid_params(Address::repeat_byte(0x5c));
-    let nod_id = world.issue(&input);
-    world.provider.stub_sub_call_at_selector(
-        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
-        IVaultRouter::referenceCurrencyAssetsCall::SELECTOR,
-        Bytes::from(IVaultRouter::referenceCurrencyAssetsCall::abi_encode_returns(&Vec::new())),
-    );
-
-    let error = world.try_settle(nod_id, input.owner).unwrap_err();
-    assert!(matches!(
-        error,
-        PrecompileError::Revert(ref reason)
-            if reason == &NodFactoryError::NoSettlementAsset {
-                reference_currency: input.reference_currency,
-            }
-            .to_string()
-    ));
-    // The settled flag is written before the asset sub-calls, so the checkpoint
-    // must have unwound it.
-    assert!(!world.is_settled(nod_id));
-}
-
-#[test]
-fn settle_nod_pays_the_cost_amount_with_the_registered_reference_currency_asset() {
-    let mut world = World::new();
-    let input = paid_params(Address::repeat_byte(0x5e));
-    let nod_id = world.issue(&input);
-    let asset = Address::repeat_byte(0x5f);
-    world.register_settlement_asset(asset, input.cost_amount_minor);
-    world.provider.clear_events(NOD_FACTORY_ADDRESS);
-
-    let paid = world.settle(nod_id, Address::repeat_byte(0x60));
-    assert_eq!(paid, input.cost_amount_minor);
-    assert!(world.is_settled(nod_id));
-
-    let settled: Vec<_> = world
-        .provider
-        .get_ordered_events()
-        .iter()
-        .filter(|event| event.address == NOD_FACTORY_ADDRESS)
-        .filter_map(|event| INodFactory::NodSettled::decode_log_data(&event.data).ok())
-        .collect();
-    assert_eq!(settled.len(), 1);
-    assert_eq!(
-        settled[0].asset, asset,
-        "the log must name the resolved asset"
-    );
-    assert_eq!(settled[0].amountPaid, input.cost_amount_minor);
-}
-
-#[test]
-fn settle_before_qualification_then_mine_after() {
+fn a_nod_qualifying_after_issuance_still_mines() {
     let mut world = World::new();
     let input = params(Address::repeat_byte(0x5a));
     let nod_id = world.issue(&input);
 
-    // Paying is allowed while the bucket is still unqualified.
-    world.settle(nod_id, Address::repeat_byte(0x5b));
     world.qualify(nod_id);
 
     let nonce = find_valid_nonce(nod_id);
@@ -552,10 +452,13 @@ fn settle_before_qualification_then_mine_after() {
                 &storage,
                 scope,
                 parent,
-                input.owner,
-                nod_id,
-                nonce,
-                mine_auth(input.owner, input.gratis_load_minor),
+                api::MineGratisRequest {
+                    caller: input.owner,
+                    nod_id,
+                    nonce,
+                    auth: mine_auth(input.owner, input.gratis_load_minor),
+                    paynote_proof: &[],
+                },
             )
         })
         .unwrap();
@@ -564,6 +467,316 @@ fn settle_before_qualification_then_mine_after() {
         .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
         .unwrap()
         .is_none());
+}
+
+// ---- paynote-discharged cost ---------------------------------------------
+//
+// A Nod's cost is paid by spending a note, not by a transfer. The value itself
+// reached the reserve vault when the note was deposited, so what these tests
+// pin is the proof obligation: the right spender, the right asset, enough
+// covered, and exactly one spend per note.
+
+const NOTE_ASSET: Address = Address::new([0x71; 20]);
+
+#[test]
+fn a_covering_paynote_mines_a_paid_nod_and_books_the_nullifier() {
+    let mut world = World::new();
+    let input = paid_params(Address::repeat_byte(0x61));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_reference_currency_asset(NOTE_ASSET);
+    let cost = u128::try_from(input.cost_amount_minor).unwrap();
+    let (proof, _nullifier) = world.fund_note(NOTE_ASSET, input.owner, cost, cost);
+    world.provider.clear_events(NOD_FACTORY_ADDRESS);
+    let nonce = find_valid_nonce(nod_id);
+
+    let minted = world
+        .try_mine(
+            nod_id,
+            input.owner,
+            nonce,
+            mine_auth(input.owner, input.gratis_load_minor),
+            &proof,
+        )
+        .unwrap();
+    assert_eq!(minted, input.gratis_load_minor);
+    assert!(world
+        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .unwrap()
+        .is_none());
+
+    let paid: Vec<_> = world
+        .provider
+        .get_ordered_events()
+        .iter()
+        .filter(|event| event.address == NOD_FACTORY_ADDRESS)
+        .filter_map(|event| INodFactory::NodPaid::decode_log_data(&event.data).ok())
+        .collect();
+    assert_eq!(paid.len(), 1);
+    assert_eq!(paid[0].owner, input.owner);
+    assert_eq!(
+        paid[0].asset, NOTE_ASSET,
+        "the log must name the reference-currency asset"
+    );
+    assert_eq!(paid[0].amountCovered, input.cost_amount_minor);
+
+    let spent = world
+        .enter(|storage, _, _| outbe_paynote::api::is_spent(&storage, paid[0].nullifier).unwrap());
+    assert!(spent, "mining must burn the note it was paid with");
+}
+
+#[test]
+fn a_paynote_short_of_the_cost_leaves_the_nod_and_the_note_intact() {
+    let mut world = World::new();
+    let input = paid_params(Address::repeat_byte(0x62));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_reference_currency_asset(NOTE_ASSET);
+    let cost = u128::try_from(input.cost_amount_minor).unwrap();
+    let (proof, _nullifier) = world.fund_note(NOTE_ASSET, input.owner, cost, cost - 1);
+    let nonce = find_valid_nonce(nod_id);
+
+    let error = world
+        .try_mine(
+            nod_id,
+            input.owner,
+            nonce,
+            mine_auth(input.owner, input.gratis_load_minor),
+            &proof,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(error, PrecompileError::Revert(ref reason)
+            if reason == &NodFactoryError::PaynoteUndercoversCost {
+                covered: cost - 1,
+                required: cost,
+            }
+            .to_string()),
+        "unexpected error: {error:?}"
+    );
+    assert!(world
+        .enter(|storage, scope, parent| nod_api::get_item(&storage, scope, parent, nod_id))
+        .unwrap()
+        .is_some());
+}
+
+/// `consume` books the nullifier before the cover check runs, so this is the
+/// test that proves the whole mine is one rollback unit: a rejected mine must
+/// leave the note spendable rather than destroying it for nothing.
+#[test]
+fn a_rejected_mine_unbooks_the_nullifier_it_had_already_spent() {
+    let mut world = World::new();
+    let input = paid_params(Address::repeat_byte(0x63));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_reference_currency_asset(NOTE_ASSET);
+    let cost = u128::try_from(input.cost_amount_minor).unwrap();
+    let (proof, nullifier) = world.fund_note(NOTE_ASSET, input.owner, cost, cost - 1);
+    let nonce = find_valid_nonce(nod_id);
+
+    world
+        .try_mine(
+            nod_id,
+            input.owner,
+            nonce,
+            mine_auth(input.owner, input.gratis_load_minor),
+            &proof,
+        )
+        .unwrap_err();
+
+    let spent =
+        world.enter(|storage, _, _| outbe_paynote::api::is_spent(&storage, nullifier).unwrap());
+    assert!(!spent, "a reverted mine must not consume the note");
+}
+
+#[test]
+fn a_paynote_naming_another_spender_cannot_pay_this_nod() {
+    let mut world = World::new();
+    let input = paid_params(Address::repeat_byte(0x64));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_reference_currency_asset(NOTE_ASSET);
+    let cost = u128::try_from(input.cost_amount_minor).unwrap();
+    let stranger = Address::repeat_byte(0x65);
+    let (proof, _nullifier) = world.fund_note(NOTE_ASSET, stranger, cost, cost);
+    let nonce = find_valid_nonce(nod_id);
+
+    let error = world
+        .try_mine(
+            nod_id,
+            input.owner,
+            nonce,
+            mine_auth(input.owner, input.gratis_load_minor),
+            &proof,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(error, PrecompileError::Revert(ref reason)
+            if reason == &NodFactoryError::PaynoteSpenderMismatch {
+                expected: input.owner,
+                actual: stranger,
+            }
+            .to_string()),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn a_paynote_in_the_wrong_asset_cannot_pay_this_nod() {
+    let mut world = World::new();
+    let input = paid_params(Address::repeat_byte(0x66));
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_reference_currency_asset(NOTE_ASSET);
+    let other_asset = Address::repeat_byte(0x67);
+    let cost = u128::try_from(input.cost_amount_minor).unwrap();
+    let (proof, _nullifier) = world.fund_note(other_asset, input.owner, cost, cost);
+    let nonce = find_valid_nonce(nod_id);
+
+    let error = world
+        .try_mine(
+            nod_id,
+            input.owner,
+            nonce,
+            mine_auth(input.owner, input.gratis_load_minor),
+            &proof,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(error, PrecompileError::Revert(ref reason)
+            if reason == &NodFactoryError::PaynoteAssetMismatch {
+                expected: NOTE_ASSET,
+                actual: other_asset,
+            }
+            .to_string()),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn one_note_cannot_pay_two_nods() {
+    let mut world = World::new();
+    let first = paid_params(Address::repeat_byte(0x68));
+    let first_id = world.issue(&first);
+    world.qualify(first_id);
+    world.register_reference_currency_asset(NOTE_ASSET);
+    let cost = u128::try_from(first.cost_amount_minor).unwrap();
+    let (proof, _nullifier) = world.fund_note(NOTE_ASSET, first.owner, cost, cost);
+
+    world
+        .try_mine(
+            first_id,
+            first.owner,
+            find_valid_nonce(first_id),
+            mine_auth(first.owner, first.gratis_load_minor),
+            &proof,
+        )
+        .unwrap();
+
+    let second = NodIssueParams {
+        worldwide_day: WorldwideDay::new(20_241_221),
+        ..paid_params(first.owner)
+    };
+    let second_id = world.issue(&second);
+    world.qualify(second_id);
+    let error = world
+        .try_mine(
+            second_id,
+            second.owner,
+            find_valid_nonce(second_id),
+            mine_auth(second.owner, second.gratis_load_minor),
+            &proof,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(error, PrecompileError::Revert(ref reason) if reason.contains("nullifier")),
+        "replaying a spent note must revert, got: {error:?}"
+    );
+}
+
+#[test]
+fn a_free_nod_mines_without_a_note_and_refuses_one() {
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0x69));
+    assert!(input.cost_amount_minor.is_zero());
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_reference_currency_asset(NOTE_ASSET);
+    let (proof, _nullifier) = world.fund_note(NOTE_ASSET, input.owner, 10, 10);
+    let nonce = find_valid_nonce(nod_id);
+
+    let error = world
+        .try_mine(
+            nod_id,
+            input.owner,
+            nonce,
+            mine_auth(input.owner, input.gratis_load_minor),
+            &proof,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(error, PrecompileError::Revert(ref reason)
+            if reason == &NodFactoryError::UnexpectedPaynoteProof.to_string()),
+        "unexpected error: {error:?}"
+    );
+
+    let minted = world
+        .try_mine(
+            nod_id,
+            input.owner,
+            nonce,
+            mine_auth(input.owner, input.gratis_load_minor),
+            &[],
+        )
+        .unwrap();
+    assert_eq!(minted, input.gratis_load_minor);
+}
+
+/// `spend_amount` is a `u128` in the circuit while a Nod cost is a `U256`, so
+/// the conversion is checked rather than truncating a cost no note could cover.
+#[test]
+fn a_nod_cost_wider_than_a_paynote_amount_is_rejected_not_truncated() {
+    let mut world = World::new();
+    let cost = U256::from(u128::MAX) + U256::ONE;
+    let input = NodIssueParams {
+        cost_amount_minor: cost,
+        ..params(Address::repeat_byte(0x6a))
+    };
+    let nod_id = world.issue(&input);
+    world.qualify(nod_id);
+    world.register_reference_currency_asset(NOTE_ASSET);
+    let nonce = find_valid_nonce(nod_id);
+
+    let error = world
+        .try_mine(
+            nod_id,
+            input.owner,
+            nonce,
+            mine_auth(input.owner, input.gratis_load_minor),
+            &[0x00],
+        )
+        .unwrap_err();
+    assert!(
+        matches!(error, PrecompileError::Revert(ref reason)
+            if reason == &NodFactoryError::SettlementCostTooLarge { cost }.to_string()),
+        "unexpected error: {error:?}"
+    );
+}
+
+#[test]
+fn mine_gratis_charges_zk_verification_base_gas() {
+    assert_eq!(
+        crate::precompile::base_gas(&INodFactory::mineGratisCall::SELECTOR),
+        outbe_zkproof::constants::ZK_VERIFY_GAS
+    );
+    assert_eq!(
+        crate::precompile::base_gas(&INodFactory::materializationHeadCall::SELECTOR),
+        outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS
+    );
+    assert_eq!(
+        crate::precompile::base_gas(&[]),
+        outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS
+    );
 }
 
 #[test]
@@ -600,7 +813,6 @@ fn a_called_nod_still_mines_at_the_settlement_deadline() {
     let input = params(Address::repeat_byte(0x55));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
-    world.settle(nod_id, input.owner);
 
     let called_at = 1_700_000_000;
     world.mark_called(nod_id, called_at);
@@ -613,10 +825,13 @@ fn a_called_nod_still_mines_at_the_settlement_deadline() {
                 &storage,
                 scope,
                 parent,
-                input.owner,
-                nod_id,
-                nonce,
-                mine_auth(input.owner, input.gratis_load_minor),
+                api::MineGratisRequest {
+                    caller: input.owner,
+                    nod_id,
+                    nonce,
+                    auth: mine_auth(input.owner, input.gratis_load_minor),
+                    paynote_proof: &[],
+                },
             )
         })
         .unwrap();
@@ -631,7 +846,6 @@ fn mining_is_rejected_once_the_settlement_deadline_has_passed() {
     let input = params(Address::repeat_byte(0x55));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
-    world.settle(nod_id, input.owner);
 
     let called_at = 1_700_000_000;
     world.mark_called(nod_id, called_at);
@@ -644,10 +858,13 @@ fn mining_is_rejected_once_the_settlement_deadline_has_passed() {
                 &storage,
                 scope,
                 parent,
-                input.owner,
-                nod_id,
-                nonce,
-                mine_auth(input.owner, input.gratis_load_minor),
+                api::MineGratisRequest {
+                    caller: input.owner,
+                    nod_id,
+                    nonce,
+                    auth: mine_auth(input.owner, input.gratis_load_minor),
+                    paynote_proof: &[],
+                },
             )
         })
         .unwrap_err();

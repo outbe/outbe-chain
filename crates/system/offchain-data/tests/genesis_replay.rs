@@ -345,7 +345,6 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 1_752_534_000,
-        is_settled: false,
     };
     let bucket_id = WwdEntityId::from_day_and_digest(day, bucket_key.0);
     let mut execution = HashMapStorageProvider::new(1);

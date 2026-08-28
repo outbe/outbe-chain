@@ -133,7 +133,6 @@ fn nod_item_v1_uses_one_strict_canonical_protobuf_representation() {
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 5,
-        is_settled: false,
     };
     let expected = hex::decode(concat!(
         "0a2000000001",
@@ -156,6 +155,38 @@ fn nod_item_v1_uses_one_strict_canonical_protobuf_representation() {
     let payload = encode_nod_item_v1(&body).unwrap();
     assert_eq!(payload, expected);
     assert_eq!(decode_nod_item_v1(&payload).unwrap(), body);
+}
+
+/// Field 12 carried the Nod's settled flag until settlement moved to a Paynote
+/// spend at mine time. It was written only when a Nod was settled, so retiring
+/// it left every live body's bytes untouched — but a body that does carry it
+/// describes state this schema no longer has, and must be refused rather than
+/// quietly decoded without it.
+#[test]
+fn a_nod_item_carrying_the_retired_settled_field_is_rejected() {
+    let body = NodItemBodyV1 {
+        nod_id: WwdEntityId::from_day_and_digest(WorldwideDay::from(1), [0x11; 32]),
+        owner: Address::repeat_byte(0x22),
+        gratis_load_minor: U256::from(1),
+        worldwide_day: WorldwideDay::from(1),
+        league_id: 2,
+        floor_price_minor: U256::from(2),
+        bucket_key: B256::repeat_byte(0x33),
+        cost_amount_minor: U256::from(3),
+        issuance_currency: 840,
+        reference_currency: 978,
+        issued_at: 5,
+    };
+    let payload = encode_nod_item_v1(&body).unwrap();
+    assert!(decode_nod_item_v1(&payload).is_ok());
+
+    // `0x60, 0x01` is field 12, varint wire type, value 1 — the settled marker.
+    let mut settled = payload.clone();
+    settled.extend_from_slice(&[0x60, 0x01]);
+    assert!(matches!(
+        decode_nod_item_v1(&settled),
+        Err(CanonicalBodyError::UnknownField { field: 12 })
+    ));
 }
 
 #[test]
@@ -361,7 +392,6 @@ fn protobuf_profile_rejects_order_length_width_wire_and_range_violations() {
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 5,
-        is_settled: false,
     };
     assert!(matches!(
         decode_nod_item_v1(&shorten_length_delimited(

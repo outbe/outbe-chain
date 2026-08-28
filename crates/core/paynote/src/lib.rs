@@ -32,6 +32,9 @@ pub mod runtime;
 pub mod schema;
 mod sol_ext;
 
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_support;
+
 pub use api::PaynoteClaim;
 pub use schema::PaynoteContract;
 

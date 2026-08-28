@@ -46,7 +46,7 @@ const UNREGISTERED_ASSET: Address = Address::new([0x66; 20]);
 
 /// `StablesSource::PaynoteDeposit` — the discriminant `seed_genesis.py`
 /// registers for `PAYNOTE_ADDRESS`.
-const PAYNOTE_DEPOSIT_SOURCE: u8 = 5;
+const PAYNOTE_DEPOSIT_SOURCE: u8 = 4;
 
 const DEPOSIT_AMOUNT: u128 = 1_000;
 const SPEND_KEY: u64 = 17;

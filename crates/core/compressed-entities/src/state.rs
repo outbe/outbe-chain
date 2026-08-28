@@ -20,7 +20,7 @@ use crate::{
 // transaction's immediate SLOAD/SSTORE work. These reserves cover the later
 // no-refund end-block zeroing only.
 const SSTORE_RESET_GAS: u64 = 5_000;
-pub(crate) const MAX_STORED_BODY_BYTES_V1: usize = 228;
+pub(crate) const MAX_STORED_BODY_BYTES_V1: usize = 226;
 /// The identity is two plain words now (slot 10 and slot 13), not a
 /// dynamic byte record, so cleanup zeroes exactly two slots.
 const BODY_IDENTITY_SLOTS: u64 = 2;

@@ -152,7 +152,7 @@ pub mod marker_addresses {
     use alloy_primitives::Address;
     use outbe_primitives::addresses::*;
 
-    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 37] = [
+    pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 38] = [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
         CREDIS_ADDRESS,
@@ -210,6 +210,10 @@ pub mod marker_addresses {
         VOTE_ADDRESS,
         // System-only compressed-entity commitment state (no public dispatch).
         COMPRESSED_ENTITIES_ADDRESS,
+        // Paynote note pool. The commitment tree, nullifier set and root window
+        // all live in its storage and it is not genesis-seeded, so this marker
+        // is its only EIP-161 preservation path (reth22-1 class).
+        PAYNOTE_ADDRESS,
     ];
 }
 
@@ -10120,7 +10124,6 @@ mod tests {
                             issuance_currency: 840,
                             reference_currency: 840,
                             issued_at: 1,
-                            is_settled: false,
                         },
                         U256::from(450_000_000u64),
                     )
@@ -10429,7 +10432,6 @@ mod tests {
                             issuance_currency: 840,
                             reference_currency: 978,
                             issued_at: 15,
-                            is_settled: false,
                         },
                         U256::from(16),
                     )?;
@@ -10521,7 +10523,6 @@ mod tests {
                     issuance_currency: 840,
                     reference_currency: 978,
                     issued_at: 15,
-                    is_settled: false,
                 },
                 U256::from(16),
             )?;

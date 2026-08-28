@@ -1,6 +1,6 @@
-# ADR-C-NOD-002: NodFactory materializes certified NOD generations and orchestrates settlement and Gratis mining
+# ADR-C-NOD-002: NodFactory materializes certified NOD generations and orchestrates Paynote-discharged Gratis mining
 
-- **Status:** Accepted; settlement implementation remains subject to the technical debt below
+- **Status:** Accepted; cost discharge remains subject to the technical debt below
 - **Date:** 2026-08-12
 - **Owners:** `crates/core/nod`, `crates/core/nodfactory`
 - **Depends on:** ADR-C-LYS-001, ADR-C-NOD-001, ADR-C-GRT-002,
@@ -103,45 +103,53 @@ state. Startup and finalized-block reconciliation release a reference when the
 corresponding transaction is already finalized, including a crash after
 finalization but before the submitting thread performed its local release.
 
-## Ordinary NOD issuance and settlement
+## Ordinary NOD issuance and mining
 
 `issue_nod` is a system-only typed command intended for Lysis materialization.
 It validates owner and uniqueness, derives the canonical NOD and currency-bound
 bucket identities, stamps canonical block time, delegates authenticated ledger
 mutation to ADR-C-NOD-001, and emits `NodIssued`.
 
-`INodFactory.settleNod` and `INodFactory.mineGratis` are the user ABI commands.
-Both reject value and require an exact 36-byte NOD id.
+`INodFactory.mineGratis` is the only user ABI command. It rejects value and
+requires an exact 36-byte NOD id.
 
-`settleNod` is unrestricted in payer and takes no asset argument. Any address
-may settle any live NOD, including before its bucket qualifies. For nonzero cost,
-the asset is resolved from VaultRouter's `referenceCurrencyAssets` registry for
-the NOD's `reference_currency`, transferred from the payer to NodFactory,
-approved for VaultRouter, and deposited as the exact recorded cost. The NOD body
-is then marked settled and `NodSettled` identifies the asset. Settlement is part
-of the authenticated NOD body and therefore cannot leak to a later NOD issued
-under a reused derived identity.
+A NOD's cost is discharged by spending a Paynote, not by a transparent transfer,
+and there is no separate settlement command or persisted settled flag. The
+underlying assets reach the reserve vault when the note is deposited through
+`IPaynote.deposit`, which routes them under `StablesSource::PaynoteDeposit`.
+What `mineGratis` verifies is the proof obligation: `paynoteProof` must name the
+caller as its spender, carry the asset VaultRouter resolves from
+`referenceCurrencyAssets` for the NOD's `reference_currency`, and cover the
+recorded `cost_amount_minor`. `NodPaid` names the spent nullifier rather than a
+payer, which is the property the scheme exists for. A zero-cost NOD takes empty
+proof bytes and resolves no asset; a non-empty proof on one is rejected.
+
+Binding the proof's spender to the caller is what stops a third party from
+lifting an observed proof to pay for their own NOD; notes are otherwise bearer
+instruments and anyone may relay them.
 
 `mineGratis` requires caller ownership, valid bounded PoW, a qualified bucket,
-a settled NOD, and no incomplete certified generation for that WorldwideDay. It
-moves no value, consumes the NOD, emits `NodBurned`, and mints exactly the
-recorded `gratis_load_minor` through Gratisfactory, including the Fidelity
-cohort update. NOD deletion is the mining replay guard.
+a covering Paynote spend, and no incomplete certified generation for that
+WorldwideDay. It moves no value, consumes the NOD, emits `NodBurned`, and mints
+exactly the recorded `gratis_load_minor` through Gratisfactory, including the
+Fidelity cohort update. NOD deletion is the mining replay guard; the Paynote
+nullifier is the payment's.
 
 Materialized entries are ordinary NOD ledger entries. Supply, ownership,
-enumeration, metadata, bucket, settlement, and mining behavior therefore use the
-existing ABI and authenticated storage. Current materialization acceptance proves
+enumeration, metadata, bucket, and mining behavior therefore use the existing
+ABI and authenticated storage. Current materialization acceptance proves
 `tokenOfOwnerByIndex` and `nodData` through the real OCOMP path; mining is outside
 that acceptance lane.
 
 ## Atomicity and determinism
 
-The outer EVM transaction journal is the rollback domain. A failure in transfer,
-approval, vault deposit, settlement write, NOD issuance or removal, event
-emission, Gratis mint, or Fidelity mutation reverts all preceding effects in the
-same command. `settleNod` follows checks-effects-interactions so re-entry for the
-same NOD observes the settled flag. `mineGratis` performs no external payment
-calls before consuming its replay guard.
+The outer EVM transaction journal is the rollback domain. A failure in NOD
+issuance or removal, Paynote verification, nullifier booking, event emission,
+Gratis mint, or Fidelity mutation reverts all preceding effects in the same
+command. Paynote books its nullifier before `mineGratis` checks the claim, so
+the shared checkpoint is what keeps a rejected mine from destroying the note for
+nothing. Verification runs after the cheap ownership, PoW, and qualification
+gates, so a doomed mine never pays for proof work.
 
 NOD identity and bucket identity are derived rather than caller-selected.
 Issuance economics come from certified Lysis output and are transported without
@@ -157,25 +165,26 @@ over the exact encoded NOD id and a big-endian `u64` nonce.
 - Completed generations leave no duplicate per-WWD materialization state.
 - Materialization may span arbitrarily many batches without a second deadline
   state machine.
-- Settlement and mining remain separate from the authenticated NOD ledger while
-  committing their effects atomically.
+- Cost discharge and mining remain separate from the authenticated NOD ledger
+  while committing their effects atomically.
 - Scaling to extremely large generations requires a separate design; it is not
   hidden behind the V1 interface.
 
 ## Open questions and technical debt
 
-- When multiple assets are registered for one reference currency,
-  `settleNod` currently selects the first even though registry order has no
-  economic meaning. A future policy must define payer choice or canonical
+- When multiple assets are registered for one reference currency, cost discharge
+  currently accepts a Paynote carrying the first even though registry order has
+  no economic meaning. A future policy must define spender choice or canonical
   selection.
-- ERC20 `transferFrom` and `approve` return data must be decoded and required to
-  be true. Allowance handling for zero-first, fee-on-transfer, rebasing, and
-  malicious tokens needs production evidence.
+- A spend that covers more than `cost_amount_minor` is accepted and the excess is
+  not refunded. The circuit can produce exact change, so the spender controls
+  this; whether the runtime should instead require equality is open.
 - VaultRouter share results and exact received value need an explicit receipt if
-  economic conservation depends on them.
+  economic conservation depends on them. The Paynote deposit path, not
+  NodFactory, is now where that evidence must come from.
 - `issue_nod` remains a conventional Rust capability. A future revision may bind
   it to an unforgeable Lysis receipt without adding a public issuance selector.
-- Reentrancy, rollback, and nonzero-cost settlement require tests against real
-  ERC20 and vault implementations.
+- Reentrancy, rollback, and nonzero-cost discharge require tests against real
+  ERC20 and vault implementations end to end, through a real Paynote deposit.
 - PoW difficulty and preimage versioning must state whether existing NODs retain
   issuance-era rules across a protocol update.
