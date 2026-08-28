@@ -650,6 +650,24 @@ fn mint_gem_position_burns_parks_and_mints_nft() {
 }
 
 #[test]
+fn parking_marks_the_units_realised_on_the_source_series() {
+    with_storage(None, |storage| {
+        seed_and_park(
+            storage,
+            six_decimal_unit(),
+            six_decimal_unit(),
+            six_decimal_u128(),
+        );
+        // Their load lives in the position now, so the source series can no
+        // longer forfeit them.
+        assert_eq!(
+            outbe_intex::api::parked_units(storage, source_intex_id()).unwrap(),
+            PARK_UNITS as u32
+        );
+    });
+}
+
+#[test]
 fn mint_gem_position_unknown_source_rejects() {
     with_storage(None, |storage| {
         let r =

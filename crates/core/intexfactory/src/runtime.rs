@@ -786,7 +786,7 @@ pub fn settle(
     }
 
     // Dual-wallet authorization: only the holder or its authorized settler.
-    let mut factory = IntexFactoryContract::new(storage.clone());
+    let factory = IntexFactoryContract::new(storage.clone());
     if intex_holder != settler
         && factory.read_authorized_settler(intex_holder, series_id)? != settler
     {
@@ -849,7 +849,11 @@ pub fn settle(
         .into(),
     )?;
 
-    factory.bump_settle_count(series_id)?;
+    // The settled units leave the forfeitable set for good: their Promis load is
+    // the settler's from here on, whether or not they ever mine it.
+    let settled_units = u32::try_from(amount)
+        .map_err(|_| PrecompileError::Revert("settled amount exceeds u32".into()))?;
+    outbe_intex::api::record_settled_units(storage, series_id, settled_units)?;
 
     emit_event(
         storage,

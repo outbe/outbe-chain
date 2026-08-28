@@ -38,14 +38,6 @@ impl IntexFactoryContract<'_> {
         self.authorized_settler.write(&key, settler)
     }
 
-    // --- settleCount ---
-
-    pub(crate) fn bump_settle_count(&mut self, series_id: SeriesId) -> Result<()> {
-        let current = self.settle_count.read(&series_id)?;
-        self.settle_count
-            .write(&series_id, current.saturating_add(U256::from(1)))
-    }
-
     // --- mineSeq ---
 
     pub(crate) fn read_mine_seq(&self, series_id: SeriesId, holder: Address) -> Result<u32> {
