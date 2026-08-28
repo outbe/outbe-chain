@@ -380,7 +380,16 @@ pub(crate) fn try_call_group(
     for &series_id in &group.members {
         outbe_intex::api::mark_called(storage, series_id, called_at)?;
     }
+    // The group leaves the price index for good, so park it with its members and
+    // deadline: nothing else maps (iso, day) back to its series, and the expiry
+    // sweep has to find them again when the settlement window closes.
     factory.remove_qualified_group(group.iso_code, group.worldwide_day)?;
+    factory.push_called_group(
+        group.iso_code,
+        group.worldwide_day,
+        u64::from(called_at) + u64::from(series.call_notice_period),
+        &group.members,
+    )?;
 
     // A slice of this sweep runs in a block hook, which cannot call contracts, so the notices leave from
     // the `intex_notify` trigger. Each carries its own series: the group has left the index by then.

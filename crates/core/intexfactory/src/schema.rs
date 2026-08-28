@@ -148,6 +148,31 @@ pub struct IntexFactoryContract {
     /// Queue index -> which mark the notice carries; see `NOTICE_QUALIFIED`.
     #[attribute(order = 30)]
     pub notify_kind: outbe_primitives::storage::dsl::Map<u32, u8>,
+
+    // Called groups waiting for their settlement window to close. A called group
+    // has left the qualified bin index and there is no other (iso, day) -> series
+    // index anywhere, so the members parked here are the only way back to them.
+    // Entries arrive in call order, which is why the expiry sweep can decide on
+    // the head alone in the common block.
+    #[attribute(order = 31)]
+    pub called_head: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 32)]
+    pub called_tail: outbe_primitives::storage::dsl::Value<u32>,
+    /// Queue index -> `scoped(iso, day)`. Zero marks a slot whose group already
+    /// expired: a frozen notice period can order two groups against their arrival,
+    /// so the sweep may take one from behind the head and leave a hole.
+    #[attribute(order = 33)]
+    pub called_queue_at: outbe_primitives::storage::dsl::Map<u32, u64>,
+    /// `scoped(iso, day)` -> when the group's settlement window closes. Stored
+    /// rather than derived so the sweep can decide on the head without loading a
+    /// series record every block.
+    #[attribute(order = 34)]
+    pub called_group_deadline: outbe_primitives::storage::dsl::Map<u64, u64>,
+    #[attribute(order = 35)]
+    pub called_group_count: outbe_primitives::storage::dsl::Map<u64, u32>,
+    /// `keccak256(iso_be16 ++ worldwide_day_be32 ++ index_be32)` -> series_id word.
+    #[attribute(order = 36)]
+    pub called_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
 }
 
 impl IntexFactoryContract<'_> {

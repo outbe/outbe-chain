@@ -194,6 +194,36 @@ impl IntexFactoryContract<'_> {
             members: self.qualified_group_members(reference_currency, worldwide_day)?,
         })
     }
+
+    // --- called groups awaiting their deadline ---
+
+    /// Park a called group with the members and deadline the expiry sweep needs.
+    /// The qualified bin index has just dropped it, and nothing else holds the
+    /// (iso, day) -> series mapping, so this is the only record of what it held.
+    pub(crate) fn push_called_group(
+        &mut self,
+        reference_currency: u16,
+        worldwide_day: WorldwideDay,
+        deadline: u64,
+        members: &[SeriesId],
+    ) -> Result<()> {
+        if members.is_empty() {
+            return Ok(());
+        }
+        let key = Self::scoped(reference_currency, worldwide_day.value());
+        for (index, series_id) in members.iter().enumerate() {
+            self.called_group_members.write(
+                &Self::group_member_key(reference_currency, worldwide_day, index as u32),
+                series_id.to_word(),
+            )?;
+        }
+        self.called_group_count.write(&key, members.len() as u32)?;
+        self.called_group_deadline.write(&key, deadline)?;
+
+        let tail = self.called_tail.read()?;
+        self.called_queue_at.write(&tail, key)?;
+        self.called_tail.write(tail.saturating_add(1))
+    }
 }
 
 impl<'storage> IntexFactoryContract<'storage> {

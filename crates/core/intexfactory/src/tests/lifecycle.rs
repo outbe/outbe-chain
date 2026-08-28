@@ -392,6 +392,7 @@ mod call_sweep {
     use outbe_oracle::schema::OracleContract;
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+    use outbe_primitives::storage::types::Storable;
     use outbe_primitives::storage::StorageHandle;
     use outbe_primitives::time::{previous_date_key, timestamp_to_date_key};
 
@@ -516,6 +517,55 @@ mod call_sweep {
                 == outbe_intex::IntexState::Called
         })
         .count() as u32
+    }
+
+    #[test]
+    fn a_called_group_is_parked_with_its_members_and_call_time() {
+        with_factory(|s| {
+            let oracle = OracleContract::new(s.clone());
+            let pair = setup_pair(&oracle);
+            let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+            let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts));
+            fill_window(&oracle, last_closed_day, pair, U256::from(TRIGGER + 1));
+            seed_called_candidate(&s, 20260101);
+
+            let ctx = BlockRuntimeContext::new(
+                BlockContext::empty_for_tests(1, scan_ts, CHAIN_ID),
+                s.clone(),
+            );
+            assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
+
+            let factory = IntexFactoryContract::new(s.clone());
+            let day = WorldwideDay::new(20260101);
+            let key = IntexFactoryContract::scoped(REFERENCE_ISO, day.value());
+
+            // The price index has dropped the group, and the parked copy is the
+            // only way back to the series it held.
+            assert!(factory
+                .qualified_group_members(REFERENCE_ISO, day)
+                .unwrap()
+                .is_empty());
+            assert_eq!(factory.called_queue_at.read(&0).unwrap(), key);
+            assert_eq!(factory.called_tail.read().unwrap(), 1);
+            assert_eq!(factory.called_group_count.read(&key).unwrap(), 1);
+            assert_eq!(
+                factory.called_group_deadline.read(&key).unwrap(),
+                scan_ts + 7 * DAY
+            );
+            assert_eq!(
+                SeriesId::from_word(
+                    factory
+                        .called_group_members
+                        .read(&IntexFactoryContract::group_member_key(
+                            REFERENCE_ISO,
+                            day,
+                            0
+                        ))
+                        .unwrap()
+                ),
+                SeriesId::for_pair(day, 840, REFERENCE_ISO).unwrap()
+            );
+        });
     }
 
     #[test]
