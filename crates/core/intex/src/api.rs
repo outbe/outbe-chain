@@ -105,12 +105,19 @@ pub fn mark_called(storage: &StorageHandle<'_>, series_id: SeriesId, called_at: 
     registry.update_series_record(&record)
 }
 
+/// What a series forfeited when its call window closed.
+pub struct Forfeited {
+    /// Units still unsettled and unparked at the deadline; zero for a series whose
+    /// units were all realised in time.
+    pub units: u32,
+    /// The series' own frozen load per unit, so the caller needs no second read.
+    pub promis_load_minor: U256,
+}
+
 /// `Called -> Expired`. The call window closed: every unit still unsettled and
 /// unparked is forfeited, and its Promis load is the caller's to return to the
-/// pool. Returns that unit count, which is zero for a series whose units were
-/// all realised in time — reaching `Expired` means the window shut, not that
-/// anything burned.
-pub fn expire_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<u32> {
+/// pool. Reaching `Expired` means the window shut, not that anything burned.
+pub fn expire_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<Forfeited> {
     let mut registry = IntexContract::new(storage.clone());
     let mut record = registry.load_series(series_id)?;
     if record.lifecycle_state()? != IntexState::Called {
@@ -132,8 +139,12 @@ pub fn expire_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result
         .ok_or(IntexError::RealisedUnitsOverflow)?;
 
     record.state = IntexState::Expired as u8;
+    let promis_load_minor = record.promis_load_minor;
     registry.update_series_record(&record)?;
-    Ok(forfeited)
+    Ok(Forfeited {
+        units: forfeited,
+        promis_load_minor,
+    })
 }
 
 /// Record `units` settled against `series_id`. Their Promis load belongs to the

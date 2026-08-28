@@ -1097,7 +1097,7 @@ fn called_series(storage: &StorageHandle, worldwide_day: u32) -> SeriesId {
 fn expiry_forfeits_every_unrealised_unit() {
     with_registry(|s| {
         let id = called_series(&s, 40);
-        assert_eq!(api::expire_series(&s, id).unwrap(), 100);
+        assert_eq!(api::expire_series(&s, id).unwrap().units, 100);
         assert_eq!(
             api::read_series(&s, id).unwrap().lifecycle_state().unwrap(),
             IntexState::Expired
@@ -1114,7 +1114,7 @@ fn expiry_forfeits_only_what_was_left_unrealised() {
 
         assert_eq!(api::settled_units(&s, id).unwrap(), 30);
         assert_eq!(api::parked_units(&s, id).unwrap(), 25);
-        assert_eq!(api::expire_series(&s, id).unwrap(), 45);
+        assert_eq!(api::expire_series(&s, id).unwrap().units, 45);
     });
 }
 
@@ -1125,7 +1125,7 @@ fn a_fully_realised_series_still_expires_but_forfeits_nothing() {
         api::record_settled_units(&s, id, 60).unwrap();
         api::record_parked_units(&s, id, 40).unwrap();
 
-        assert_eq!(api::expire_series(&s, id).unwrap(), 0);
+        assert_eq!(api::expire_series(&s, id).unwrap().units, 0);
         assert_eq!(
             api::read_series(&s, id).unwrap().lifecycle_state().unwrap(),
             IntexState::Expired
@@ -1195,6 +1195,6 @@ fn realised_units_can_never_exceed_the_issued_count() {
         // One unit past the cap means the two ledgers disagree; the forfeit
         // arithmetic would underflow later, so it is refused here instead.
         assert!(api::record_parked_units(&s, id, 1).is_err());
-        assert_eq!(api::expire_series(&s, id).unwrap(), 0);
+        assert_eq!(api::expire_series(&s, id).unwrap().units, 0);
     });
 }

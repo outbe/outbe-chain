@@ -535,7 +535,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
     /// @inheritdoc IIntexNFT1155
     function uri(uint256 tokenId) public view override(ERC1155Upgradeable, IIntexNFT1155) returns (string memory) {
-        return IntexMetadata.tokenURI(_s().seriesData[tokenId], block.timestamp);
+        IIntexNFT1155.SeriesData memory data = _s().seriesData[tokenId];
+        data.state = _effectiveState(data);
+        return IntexMetadata.tokenURI(data);
     }
 
     /// @inheritdoc IIntexNFT1155

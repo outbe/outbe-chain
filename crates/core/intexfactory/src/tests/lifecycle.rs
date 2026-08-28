@@ -655,6 +655,64 @@ mod call_sweep {
         });
     }
 
+    /// A day's group holds one series per issuance currency, and the credit is
+    /// written once for the whole group — so the total has to be the sum over its
+    /// members, with neither double-counted nor dropped.
+    #[test]
+    fn a_group_credits_every_member_exactly_once() {
+        with_factory(|s| {
+            let scan_ts = ISSUED_AT as u64 + 60 * DAY;
+            priced_window(&s, scan_ts);
+
+            let day = WorldwideDay::new(20260101);
+            let trigger = U256::from(TRIGGER);
+            let mut members = Vec::new();
+            for (issuance, count) in [(840u16, 100u32), (978u16, 40u32)] {
+                let series_id = SeriesId::for_pair(day, issuance, REFERENCE_ISO).unwrap();
+                let params = outbe_intex::CreateSeriesParams {
+                    series_id,
+                    worldwide_day: day,
+                    issued_intex_count: count,
+                    promis_load_minor: 1_000_000_000_000_000_000,
+                    entry_price_minor: trigger,
+                    floor_price_minor: trigger,
+                    call_price_minor: trigger,
+                    call_trigger: outbe_intex::IntexCallTrigger {
+                        call_window: WINDOW_DAYS * DAY as u32,
+                        call_threshold: 21 * DAY as u32,
+                        call_notice_period: 7 * DAY as u32,
+                    },
+                    issued_at: ISSUED_AT,
+                    issuance_currency: issuance,
+                    reference_currency: REFERENCE_ISO,
+                };
+                outbe_intex::api::create_series(&s, params).unwrap();
+                outbe_intex::api::mark_qualified(&s, series_id).unwrap();
+                members.push(series_id);
+            }
+            IntexFactoryContract::new(s.clone())
+                .insert_qualified_group(REFERENCE_ISO, day, trigger, &members)
+                .unwrap();
+
+            let deadline = call_and_deadline(&s, 20260101, scan_ts);
+            sweep_at(&s, deadline + 1);
+
+            assert_eq!(
+                unallocated(&s),
+                U256::from(140u64) * U256::from(1_000_000_000_000_000_000u128)
+            );
+            for series_id in members {
+                assert_eq!(
+                    outbe_intex::api::read_series(&s, series_id)
+                        .unwrap()
+                        .lifecycle_state()
+                        .unwrap(),
+                    outbe_intex::IntexState::Expired
+                );
+            }
+        });
+    }
+
     #[test]
     fn a_second_pass_over_an_expired_group_credits_nothing() {
         with_factory(|s| {

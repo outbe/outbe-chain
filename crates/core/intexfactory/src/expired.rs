@@ -35,6 +35,9 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
     let now = ctx.block.timestamp;
     let mut budget = MAX_SERIES_ACTIONS_PER_SWEEP;
     for index in head..tail {
+        // Checked before the group, not against its size: a group larger than the
+        // whole budget must still make progress rather than stall forever, so one
+        // group may overshoot and the next block starts fresh.
         if budget == 0 {
             break;
         }
@@ -81,13 +84,13 @@ fn expire_group(
 
     let mut credit = U256::ZERO;
     for &series_id in &group.members {
-        // The load is the series' own frozen copy, not the day's auction config:
-        // the record is what its units were issued against.
-        let series = outbe_intex::api::read_series(storage, series_id)?;
+        // The load comes back with the transition: it is the series' own frozen
+        // copy, not the day's auction config, and reading it here would mean
+        // loading the same record twice.
         let forfeited = outbe_intex::api::expire_series(storage, series_id)?;
-        let returned = series
+        let returned = forfeited
             .promis_load_minor
-            .checked_mul(U256::from(forfeited))
+            .checked_mul(U256::from(forfeited.units))
             .ok_or_else(|| PrecompileError::Revert("forfeited promis load overflow".into()))?;
         credit = credit
             .checked_add(returned)
@@ -97,7 +100,7 @@ fn expire_group(
             storage,
             crate::precompile::IIntexFactory::SeriesExpired {
                 seriesId: series_id.into(),
-                forfeitedUnits: forfeited,
+                forfeitedUnits: forfeited.units,
                 returnedPromis: returned,
             },
         )?;

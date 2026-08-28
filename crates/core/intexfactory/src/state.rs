@@ -211,6 +211,15 @@ impl IntexFactoryContract<'_> {
             return Ok(());
         }
         let key = Self::scoped(reference_currency, worldwide_day.value());
+        // A day's group is called once, so a second push would orphan the first
+        // queue slot and let the same members be credited twice.
+        if self.called_group_count.read(&key)? != 0 {
+            return Err(IntexFactoryError::GroupAlreadyIndexed {
+                iso: reference_currency,
+                worldwide_day,
+            }
+            .into());
+        }
         for (index, series_id) in members.iter().enumerate() {
             self.called_group_members.write(
                 &Self::group_member_key(reference_currency, worldwide_day, index as u32),
