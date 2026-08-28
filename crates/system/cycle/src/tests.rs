@@ -130,10 +130,16 @@ fn seed_fresh_reward_oracle(ctx: &BlockRuntimeContext) {
         ctx.block.timestamp,
     )
     .unwrap();
-    ctx.storage
-        .contract::<outbe_oracle::schema::OracleContract<'_>>()
-        .reference_currencies
-        .push(840)
+    let oracle = ctx
+        .storage
+        .contract::<outbe_oracle::schema::OracleContract<'_>>();
+    oracle.reference_currencies.push(840).unwrap();
+    // Every reward day these tests use is closed, so delivery prices the batch
+    // instead of waiting for the day to finalize. No day carries a VWAP, so the
+    // price ladder falls through to the live quote seeded above.
+    oracle
+        .utc_day_vwap_last_finalized
+        .write(29_991_231)
         .unwrap();
 }
 
