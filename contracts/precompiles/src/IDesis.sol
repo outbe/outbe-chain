@@ -78,10 +78,7 @@ interface IDesis {
     ///         Emitted only on a step: never while the deadband holds, and never
     ///         when the ladder takes its first position on a fresh chain.
     event PromisLoadStepped(
-        uint32 indexed worldwideDay,
-        uint128 previousLoadMinor,
-        uint128 newLoadMinor,
-        uint256 coenUsdRateMinor
+        uint32 indexed worldwideDay, uint128 previousLoadMinor, uint128 newLoadMinor, uint256 coenUsdRateMinor
     );
 
     event ReferenceCurrencyLetterTaken(uint32 indexed worldwideDay, uint16 indexed isoCode, uint16 indexed takenBy);
