@@ -2551,9 +2551,43 @@ fn mine_succeeds_after_materialization_completion(world: &mut World) {
         .first()
         .expect("first capacity owner key")
         .clone();
+    let port = world.validators.primary_port();
+    let owner = world
+        .rpc
+        .address_of(&private_key)
+        .expect("capacity owner address")
+        .parse::<alloy_primitives::Address>()
+        .expect("canonical capacity owner address");
+    let nod_id = world
+        .rpc
+        .nod_id_of_owner_by_index_on(port, owner, 0)
+        .expect("capacity owner NOD read")
+        .expect("capacity owner NOD is available");
+    let body = world
+        .rpc
+        .nod_data_on(port, &nod_id)
+        .expect("capacity owner NOD body");
+    // Mining always burns a note, so the capacity Nod needs one deposited under
+    // an asset the router registers for its reference currency — the fixture
+    // genesis registers liquidity sources but no vault.
+    assert_eq!(
+        body.referenceCurrency, 840,
+        "the settlement fixture only registers an asset for USD"
+    );
+    let fixture = crate::features::settlement::deploy_settlement_fixture(world);
+    let cost = u128::try_from(body.costAmountMinor)
+        .expect("capacity Nod cost fits a PayNote spend amount");
+    let proof = crate::features::paynote::deposit_and_prove(
+        world,
+        port,
+        &private_key,
+        owner,
+        fixture.asset,
+        cost,
+    );
     world
         .rpc
-        .mine_first_materialized_capacity_nod(world.validators.primary_port(), &private_key)
+        .mine_first_materialized_capacity_nod(port, &private_key, &proof)
         .expect("post-completion mineGratis");
 }
 

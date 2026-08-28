@@ -96,8 +96,7 @@ pub struct MineGratisRequest<'proof> {
     pub nod_id: WwdEntityId,
     pub nonce: u64,
     pub auth: outbe_gratisfactory::api::ModifyAuth,
-    /// Spend proof for the note discharging the Nod's cost; empty for a
-    /// zero-cost Nod.
+    /// Spend proof for the note discharging the Nod's cost.
     pub paynote_proof: &'proof [u8],
 }
 
@@ -113,7 +112,7 @@ pub struct MineGratisRequest<'proof> {
 /// routes them under `StablesSource::PayNoteDeposit`. What happens here is the
 /// proof obligation: `paynote_proof` must name `caller` as its spender, carry
 /// the asset registered for the Nod's `reference_currency`, and cover
-/// `cost_amount_minor`. A zero-cost Nod takes an empty proof and no asset.
+/// `cost_amount_minor`.
 pub fn mine_gratis(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
@@ -207,18 +206,16 @@ fn mine_gratis_inner(
     let gratis_load_minor = item.body().gratis_load_minor;
     nod_api::remove_nod(storage, scope, item, bucket)?;
 
-    if let Some(paid) = paid {
-        emit_event(
-            storage,
-            INodFactory::NodPaid {
-                owner,
-                nodId: nod_id.to_u256(),
-                asset: paid.asset,
-                nullifier: paid.nullifier,
-                amountCovered: U256::from(paid.spend_amount),
-            },
-        )?;
-    }
+    emit_event(
+        storage,
+        INodFactory::NodPaid {
+            owner,
+            nodId: nod_id.to_u256(),
+            asset: paid.asset,
+            nullifier: paid.nullifier,
+            amountCovered: U256::from(paid.spend_amount),
+        },
+    )?;
 
     emit_event(
         storage,
@@ -241,8 +238,7 @@ struct PaidCost {
     spend_amount: u128,
 }
 
-/// Discharges `item`'s cost by spending one PayNote, returning `None` when the
-/// Nod is free and therefore owes nothing.
+/// Discharges `item`'s cost by spending one PayNote.
 ///
 /// The proof is the payment. `consume` books its nullifier before returning, so
 /// the note cannot be spent twice; running inside the caller's checkpoint means
@@ -254,15 +250,8 @@ fn discharge_cost(
     item: &NodItemState,
     caller: Address,
     paynote_proof: &[u8],
-) -> Result<Option<PaidCost>> {
+) -> Result<PaidCost> {
     let cost = item.cost_amount_minor;
-    if cost.is_zero() {
-        if !paynote_proof.is_empty() {
-            return Err(NodFactoryError::UnexpectedPayNoteProof.into());
-        }
-        return Ok(None);
-    }
-
     let cost_minor =
         u128::try_from(cost).map_err(|_| NodFactoryError::SettlementCostTooLarge { cost })?;
 
@@ -287,11 +276,11 @@ fn discharge_cost(
         .into());
     }
 
-    Ok(Some(PaidCost {
+    Ok(PaidCost {
         asset: claim.asset,
         nullifier: claim.nullifier,
         spend_amount: claim.spend_amount,
-    }))
+    })
 }
 
 /// Rejects a note whose asset the vault router does not register under

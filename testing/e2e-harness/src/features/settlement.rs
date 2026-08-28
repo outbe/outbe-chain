@@ -44,9 +44,9 @@ sol! {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct SettlementFixture {
-    asset: Address,
-    vault: Address,
+pub(crate) struct SettlementFixture {
+    pub(crate) asset: Address,
+    pub(crate) vault: Address,
 }
 
 #[given("the committee has reached a usable finalized height")]
@@ -509,32 +509,10 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     // The cost is paid by depositing a note and then spending it. The value
     // reaches the reserve vault at deposit time, so the owner funds and
     // approves the PayNote pool rather than the NodFactory.
-    let payer_key = key.clone();
-    let payer_address = owner;
-    fund_and_approve(
-        world,
-        fixture.asset,
-        &payer_key,
-        payer_address,
-        addresses::PAYNOTE_ADDR,
-        body.costAmountMinor,
-    );
     let cost_minor =
         u128::try_from(body.costAmountMinor).expect("Nod cost fits a PayNote spend amount");
-    let note = paynote::Note::new(chain_id_u64(world), fixture.asset, cost_minor);
-    let deposit = eth::send_call_outcome(
-        &url,
-        addresses::PAYNOTE_ADDR,
-        &payer_key,
-        &eth::IPayNote::depositCall {
-            asset: fixture.asset,
-            amount: cost_minor,
-            noteSn: note.serial_word(),
-        },
-        None,
-    )
-    .expect("deposit the Nod's cost as a PayNote");
-    assert_mined_success(&deposit, "deposit the Nod's cost as a PayNote");
+    let paynote_proof =
+        paynote::deposit_and_prove(world, port, &key, owner, fixture.asset, cost_minor);
     assert_eq!(
         eth::read_call(
             &url,
@@ -546,8 +524,6 @@ fn owner_redeems_materialized_nod(world: &mut World) {
         Some(body.costAmountMinor),
         "reserve vault did not receive exact Nod cost at deposit time"
     );
-
-    let paynote_proof = paynote::prove_spend(world, port, &note, owner);
 
     let keys = eth::derive_account_keys(&url, &key, Ledger::Gratis)
         .expect("derive public Tribute owner Gratis keys");
@@ -630,7 +606,7 @@ fn owner_redeems_materialized_nod(world: &mut World) {
     assert_eq!(gratis_balance(&url, owner, &keys.view), gratis_before);
     assert_eq!(native_after + fee, native_before + body.gratisLoadMinor);
     eprintln!(
-        "settlement_evidence kind=nod_to_coen owner={owner:#x} nod_id=0x{} payer={payer_address:#x} asset={:#x} vault={:#x} cost={} gratis={} tx={} native_before={} native_after={} gas={fee}",
+        "settlement_evidence kind=nod_to_coen owner={owner:#x} nod_id=0x{} asset={:#x} vault={:#x} cost={} gratis={} tx={} native_before={} native_after={} gas={fee}",
         hex::encode(&nod_id), fixture.asset, fixture.vault, body.costAmountMinor,
         body.gratisLoadMinor, mine_coen.transaction_hash, native_before, native_after
     );
@@ -702,7 +678,7 @@ fn wait_for_qualified_materialized_nod(
     }
 }
 
-fn deploy_settlement_fixture(world: &World) -> SettlementFixture {
+pub(crate) fn deploy_settlement_fixture(world: &World) -> SettlementFixture {
     let port = world.validators.primary_port();
     let url = world.rpc.url(port);
     let funder = world.validators.get(0);
@@ -782,7 +758,7 @@ fn deploy_settlement_fixture(world: &World) -> SettlementFixture {
     SettlementFixture { asset, vault }
 }
 
-fn fund_and_approve(
+pub(crate) fn fund_and_approve(
     world: &World,
     asset: Address,
     owner_key: &str,
@@ -1071,13 +1047,6 @@ fn transaction_is_reward_delivery_for_gem(
             })
 }
 
-fn chain_id_u64(world: &World) -> u64 {
-    world
-        .rpc
-        .chain_id(world.validators.primary_port())
-        .expect("settlement chain ID")
-}
-
 fn chain_id_b256(world: &World) -> B256 {
     B256::from(U256::from(
         world
@@ -1127,7 +1096,7 @@ fn assert_success(url: &str, tx: &str, label: &str) {
     let _ = successful_receipt(url, tx, label);
 }
 
-fn assert_mined_success(outcome: &eth::MinedCallOutcome, label: &str) {
+pub(crate) fn assert_mined_success(outcome: &eth::MinedCallOutcome, label: &str) {
     assert!(outcome.success, "{label} reverted: {}", outcome.receipt);
 }
 

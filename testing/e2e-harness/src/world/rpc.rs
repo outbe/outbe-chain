@@ -565,7 +565,12 @@ impl Rpc {
     }
 
     #[cfg(feature = "ocomp-integration")]
-    pub fn mine_first_materialized_capacity_nod(&self, port: u16, private_key: &str) -> Result<()> {
+    pub fn mine_first_materialized_capacity_nod(
+        &self,
+        port: u16,
+        private_key: &str,
+        pay_note_proof: &[u8],
+    ) -> Result<()> {
         let owner = self
             .address_of(private_key)
             .ok_or_else(|| eyre!("derive capacity owner"))?
@@ -578,12 +583,6 @@ impl Rpc {
         let body = self
             .nod_data_on(port, &nod_id)
             .map_err(|error| eyre!("capacity owner NOD body read failed: {error}"))?;
-        if !body.costAmountMinor.is_zero() {
-            return Err(eyre!(
-                "capacity NOD carries a nonzero cost ({}) and needs a PayNote spend to mine",
-                body.costAmountMinor
-            ));
-        }
         let entity = outbe_compressed_entities::WwdEntityId::try_from(nod_id.as_slice())?;
         let nonce = (0_u64..100_000)
             .find(|nonce| outbe_nodfactory::runtime::validate_pow(entity, *nonce).is_ok())
@@ -616,9 +615,7 @@ impl Rpc {
                 nonce,
                 mac: B256::from(mac),
                 opNonce: op_nonce,
-                // Capacity NODs are certified with a zero cost, so there is no
-                // note to spend. A nonzero cost would need a PayNote proof.
-                payNoteProof: Bytes::new(),
+                payNoteProof: Bytes::copy_from_slice(pay_note_proof),
             },
             None,
         )?;
@@ -674,7 +671,7 @@ impl Rpc {
     }
 
     #[cfg(feature = "ocomp-integration")]
-    fn nod_id_of_owner_by_index_on(
+    pub(crate) fn nod_id_of_owner_by_index_on(
         &self,
         port: u16,
         owner: Address,
@@ -693,7 +690,7 @@ impl Rpc {
     }
 
     #[cfg(feature = "ocomp-integration")]
-    fn nod_data_on(
+    pub(crate) fn nod_data_on(
         &self,
         port: u16,
         nod_id: &[u8],

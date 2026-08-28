@@ -75,17 +75,9 @@ fn params(owner: Address) -> NodIssueParams {
         league_id: 1,
         floor_price_minor: U256::from(540),
         entry_price_minor: U256::from(500),
-        cost_amount_minor: U256::ZERO,
+        cost_amount_minor: U256::from(500),
         issuance_currency: 840,
         reference_currency: 840,
-    }
-}
-
-/// Same Nod, but with a cost that forces the real payment path.
-fn paid_params(owner: Address) -> NodIssueParams {
-    NodIssueParams {
-        cost_amount_minor: U256::from(500),
-        ..params(owner)
     }
 }
 
@@ -193,6 +185,15 @@ impl World {
             fixture.public.nullifier,
         ));
         (fixture.proof, nullifier)
+    }
+
+    /// Registers `NOTE_ASSET` for the Nod's reference currency and mints a note
+    /// that exactly covers its cost, returning the spend proof `mine_gratis`
+    /// needs.
+    fn covering_proof(&mut self, input: &NodIssueParams) -> Vec<u8> {
+        self.register_reference_currency_asset(NOTE_ASSET);
+        let cost = u128::try_from(input.cost_amount_minor).unwrap();
+        self.fund_note(NOTE_ASSET, input.owner, cost, cost).0
     }
 
     /// Stamps the bucket's call directly. The scan that decides *when* to stamp
@@ -355,6 +356,7 @@ fn invalid_gratis_mac_rolls_back_the_nod_burn() {
     let input = params(Address::repeat_byte(0x45));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
+    let proof = world.covering_proof(&input);
     let nonce = find_valid_nonce(nod_id);
 
     world
@@ -368,7 +370,7 @@ fn invalid_gratis_mac_rolls_back_the_nod_burn() {
                     nod_id,
                     nonce,
                     auth: dummy_auth(),
-                    paynote_proof: &[],
+                    paynote_proof: &proof,
                 },
             )
         })
@@ -387,6 +389,7 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
     world.qualify(nod_id);
     world.provider.clear_events(NOD_ADDRESS);
     world.provider.clear_events(NOD_FACTORY_ADDRESS);
+    let proof = world.covering_proof(&input);
     let nonce = find_valid_nonce(nod_id);
     let minted = world
         .enter(|storage, scope, parent| {
@@ -399,7 +402,7 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
                     nod_id,
                     nonce,
                     auth: mine_auth(input.owner, input.gratis_load_minor),
-                    paynote_proof: &[],
+                    paynote_proof: &proof,
                 },
             )
         })
@@ -432,6 +435,7 @@ fn qualified_mine_deletes_item_and_last_bucket_then_emits_burn() {
         [
             (NOD_ADDRESS, INod::NodBodyDeleted::SIGNATURE_HASH),
             (NOD_ADDRESS, INod::NodBucketBodyDeleted::SIGNATURE_HASH),
+            (NOD_FACTORY_ADDRESS, INodFactory::NodPaid::SIGNATURE_HASH),
             (NOD_FACTORY_ADDRESS, INodFactory::NodBurned::SIGNATURE_HASH),
         ]
     );
@@ -447,6 +451,7 @@ fn a_nod_qualifying_after_issuance_still_mines() {
 
     world.qualify(nod_id);
 
+    let proof = world.covering_proof(&input);
     let nonce = find_valid_nonce(nod_id);
     let minted = world
         .enter(|storage, scope, parent| {
@@ -459,7 +464,7 @@ fn a_nod_qualifying_after_issuance_still_mines() {
                     nod_id,
                     nonce,
                     auth: mine_auth(input.owner, input.gratis_load_minor),
-                    paynote_proof: &[],
+                    paynote_proof: &proof,
                 },
             )
         })
@@ -483,7 +488,7 @@ const NOTE_ASSET: Address = Address::new([0x71; 20]);
 #[test]
 fn a_covering_paynote_mines_a_paid_nod_and_books_the_nullifier() {
     let mut world = World::new();
-    let input = paid_params(Address::repeat_byte(0x61));
+    let input = params(Address::repeat_byte(0x61));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_reference_currency_asset(NOTE_ASSET);
@@ -530,7 +535,7 @@ fn a_covering_paynote_mines_a_paid_nod_and_books_the_nullifier() {
 #[test]
 fn a_paynote_short_of_the_cost_leaves_the_nod_and_the_note_intact() {
     let mut world = World::new();
-    let input = paid_params(Address::repeat_byte(0x62));
+    let input = params(Address::repeat_byte(0x62));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_reference_currency_asset(NOTE_ASSET);
@@ -568,7 +573,7 @@ fn a_paynote_short_of_the_cost_leaves_the_nod_and_the_note_intact() {
 #[test]
 fn a_rejected_mine_unbooks_the_nullifier_it_had_already_spent() {
     let mut world = World::new();
-    let input = paid_params(Address::repeat_byte(0x63));
+    let input = params(Address::repeat_byte(0x63));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_reference_currency_asset(NOTE_ASSET);
@@ -594,7 +599,7 @@ fn a_rejected_mine_unbooks_the_nullifier_it_had_already_spent() {
 #[test]
 fn a_paynote_naming_another_spender_cannot_pay_this_nod() {
     let mut world = World::new();
-    let input = paid_params(Address::repeat_byte(0x64));
+    let input = params(Address::repeat_byte(0x64));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_reference_currency_asset(NOTE_ASSET);
@@ -626,7 +631,7 @@ fn a_paynote_naming_another_spender_cannot_pay_this_nod() {
 #[test]
 fn a_paynote_in_the_wrong_asset_cannot_pay_this_nod() {
     let mut world = World::new();
-    let input = paid_params(Address::repeat_byte(0x66));
+    let input = params(Address::repeat_byte(0x66));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_reference_currency_asset(NOTE_ASSET);
@@ -658,7 +663,7 @@ fn a_paynote_in_the_wrong_asset_cannot_pay_this_nod() {
 #[test]
 fn any_asset_registered_for_the_reference_currency_pays_the_nod() {
     let mut world = World::new();
-    let input = paid_params(Address::repeat_byte(0x6a));
+    let input = params(Address::repeat_byte(0x6a));
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     // The registry lists interchangeable assets for the currency; the payer
@@ -685,7 +690,7 @@ fn any_asset_registered_for_the_reference_currency_pays_the_nod() {
 #[test]
 fn one_note_cannot_pay_two_nods() {
     let mut world = World::new();
-    let first = paid_params(Address::repeat_byte(0x68));
+    let first = params(Address::repeat_byte(0x68));
     let first_id = world.issue(&first);
     world.qualify(first_id);
     world.register_reference_currency_asset(NOTE_ASSET);
@@ -704,7 +709,7 @@ fn one_note_cannot_pay_two_nods() {
 
     let second = NodIssueParams {
         worldwide_day: WorldwideDay::new(20_241_221),
-        ..paid_params(first.owner)
+        ..params(first.owner)
     };
     let second_id = world.issue(&second);
     world.qualify(second_id);
@@ -723,46 +728,6 @@ fn one_note_cannot_pay_two_nods() {
     );
 }
 
-#[test]
-fn a_free_nod_mines_without_a_note_and_refuses_one() {
-    let mut world = World::new();
-    let input = params(Address::repeat_byte(0x69));
-    assert!(input.cost_amount_minor.is_zero());
-    let nod_id = world.issue(&input);
-    world.qualify(nod_id);
-    world.register_reference_currency_asset(NOTE_ASSET);
-    let (proof, _nullifier) = world.fund_note(NOTE_ASSET, input.owner, 10, 10);
-    let nonce = find_valid_nonce(nod_id);
-
-    let error = world
-        .try_mine(
-            nod_id,
-            input.owner,
-            nonce,
-            mine_auth(input.owner, input.gratis_load_minor),
-            &proof,
-        )
-        .unwrap_err();
-    assert!(
-        matches!(error, PrecompileError::Revert(ref reason)
-            if reason == &NodFactoryError::UnexpectedPayNoteProof.to_string()),
-        "unexpected error: {error:?}"
-    );
-
-    let minted = world
-        .try_mine(
-            nod_id,
-            input.owner,
-            nonce,
-            mine_auth(input.owner, input.gratis_load_minor),
-            &[],
-        )
-        .unwrap();
-    assert_eq!(minted, input.gratis_load_minor);
-}
-
-/// `spend_amount` is a `u128` in the circuit while a Nod cost is a `U256`, so
-/// the conversion is checked rather than truncating a cost no note could cover.
 #[test]
 fn a_nod_cost_wider_than_a_paynote_amount_is_rejected_not_truncated() {
     let mut world = World::new();
@@ -847,6 +812,7 @@ fn a_called_nod_still_mines_at_the_settlement_deadline() {
     world.mark_called(nod_id, called_at);
     world.set_timestamp(called_at + CALL_NOTICE_PERIOD);
 
+    let proof = world.covering_proof(&input);
     let nonce = find_valid_nonce(nod_id);
     let minted = world
         .enter(|storage, scope, parent| {
@@ -859,7 +825,7 @@ fn a_called_nod_still_mines_at_the_settlement_deadline() {
                     nod_id,
                     nonce,
                     auth: mine_auth(input.owner, input.gratis_load_minor),
-                    paynote_proof: &[],
+                    paynote_proof: &proof,
                 },
             )
         })

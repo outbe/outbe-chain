@@ -59,6 +59,53 @@ impl Note {
     }
 }
 
+/// Deposits a note covering `cost_minor` of `asset` for `payer`, then proves a
+/// spend of it — the proof `mineGratis` takes.
+///
+/// Every Nod is paid for by burning a note, so a Nod that costs nothing still
+/// has to present one. The pool refuses a zero deposit, so a free Nod is paid
+/// with the smallest note that can exist.
+pub(crate) fn deposit_and_prove(
+    world: &World,
+    port: u16,
+    payer_key: &str,
+    payer: Address,
+    asset: Address,
+    cost_minor: u128,
+) -> Vec<u8> {
+    let amount = cost_minor.max(1);
+    crate::features::settlement::fund_and_approve(
+        world,
+        asset,
+        payer_key,
+        payer,
+        addresses::PAYNOTE_ADDR,
+        U256::from(amount),
+    );
+    let chain_id = world
+        .rpc
+        .chain_id(port)
+        .expect("read chain ID for the note commitment");
+    let note = Note::new(chain_id, asset, amount);
+    let deposit = eth::send_call_outcome(
+        &world.rpc.url(port),
+        addresses::PAYNOTE_ADDR,
+        payer_key,
+        &eth::IPayNote::depositCall {
+            asset,
+            amount,
+            noteSn: note.serial_word(),
+        },
+        None,
+    )
+    .expect("deposit the note that pays for the Nod");
+    crate::features::settlement::assert_mined_success(
+        &deposit,
+        "deposit the note that pays for the Nod",
+    );
+    prove_spend(world, port, &note, payer)
+}
+
 /// Proves a full spend of `note` by `spender` against the pool's live tree.
 ///
 /// Every leaf ever appended is read back from `NewNote`, so the proof is built
