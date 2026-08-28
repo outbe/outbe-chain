@@ -8611,6 +8611,7 @@ dependencies = [
  "outbe-stablecoinpolicy",
  "outbe-staking",
  "outbe-tee",
+ "outbe-tee-enclave",
  "outbe-teeregistry",
  "outbe-tribute",
  "outbe-tributefactory",

@@ -84,10 +84,15 @@ pub struct Note {
     pub serial: Field,
     pub commitment: Field,
     pub nullifier: Field,
+    pub asset: Address,
+    pub amount: u128,
 }
 
 pub fn note(chain_id: u64, key: u64, asset: Address, amount: u128) -> Note {
-    let key = Field::from(key);
+    note_under_key(chain_id, Field::from(key), asset, amount)
+}
+
+fn note_under_key(chain_id: u64, key: Field, asset: Address, amount: u128) -> Note {
     let serial = note_sn(key).unwrap();
     let commitment = note_commitment(chain_id, serial, asset.into(), amount).unwrap();
     let nullifier = note_nullifier(commitment, key).unwrap();
@@ -96,7 +101,74 @@ pub fn note(chain_id: u64, key: u64, asset: Address, amount: u128) -> Note {
         serial,
         commitment,
         nullifier,
+        asset,
+        amount,
     }
+}
+
+/// The change note a `spend_amount` spend of `note` leaves behind: the leaf the
+/// pool appends, and the only thing its owner can pay with next. `None` for a
+/// full spend, which the circuit represents with the zero sentinel rather than
+/// a note for nothing.
+///
+/// The change key is derived from the spent note's key and nullifier, so the
+/// spender can rebuild the change note from what they already hold — nothing
+/// about it is published beyond the commitment.
+pub fn change_note(chain_id: u64, note: &Note, spend_amount: u128) -> Option<Note> {
+    let remaining = note.amount.checked_sub(spend_amount)?;
+    if remaining == 0 {
+        return None;
+    }
+    let key = change_key(note.key, note.nullifier).unwrap();
+    Some(note_under_key(chain_id, key, note.asset, remaining))
+}
+
+/// Proves `spender` spending `spend_amount` of the note sitting at `leaf_index`
+/// in `tree`, returning combined public-inputs-plus-proof bytes.
+///
+/// The tree is a parameter because a note's auth path only exists relative to
+/// the pool state it is spent against — including any change leaf an earlier
+/// spend appended.
+pub fn spend_proof(
+    chain_id: u64,
+    tree: &ReferenceTree,
+    leaf_index: u32,
+    note: &Note,
+    spender: Address,
+    spend_amount: u128,
+) -> Vec<u8> {
+    let (public, proof) = prove_spend(chain_id, tree, leaf_index, note, spender, spend_amount);
+    combined_from(&public, &proof)
+}
+
+fn prove_spend(
+    chain_id: u64,
+    tree: &ReferenceTree,
+    leaf_index: u32,
+    n: &Note,
+    spender: Address,
+    spend_amount: u128,
+) -> (PublicInputs, Vec<Vec<u8>>) {
+    let public = PublicInputs {
+        chain_id,
+        root: tree.root(),
+        nullifier: n.nullifier,
+        asset: address_field(n.asset.into()),
+        spender: address_field(spender.into()),
+        spend_amount,
+        change_commitment: change_note(chain_id, n, spend_amount)
+            .map_or(Field::from(0u64), |change| change.commitment),
+    };
+    let witness = Witness {
+        note_amount: n.amount,
+        note_spend_key: n.key,
+        leaf_index,
+        auth_path: tree.path_at(leaf_index),
+    };
+    let proof =
+        ProofGenerator::<OutbeV1, PayNote>::generate(&Barretenberg::default(), &witness, &public)
+            .expect("paynote proof generation");
+    (public, proof.proof)
 }
 
 pub fn combined_from(public: &PublicInputs, proof_words: &[Vec<u8>]) -> Vec<u8> {
@@ -163,38 +235,11 @@ pub fn note_and_spend_proof(
     let n = note(chain_id, 17, asset, note_amount);
     let mut tree = ReferenceTree::new(chain_id);
     let leaf_index = tree.append(n.commitment);
-
-    let remaining = note_amount - spend_amount;
-    let change_commitment = if remaining > 0 {
-        let next_key = change_key(n.key, n.nullifier).unwrap();
-        let next_serial = note_sn(next_key).unwrap();
-        note_commitment(chain_id, next_serial, asset.into(), remaining).unwrap()
-    } else {
-        Field::from(0u64)
-    };
-
-    let public = PublicInputs {
-        chain_id,
-        root: tree.root(),
-        nullifier: n.nullifier,
-        asset: address_field(asset.into()),
-        spender: address_field(spender.into()),
-        spend_amount,
-        change_commitment,
-    };
-    let witness = Witness {
-        note_amount,
-        note_spend_key: n.key,
-        leaf_index,
-        auth_path: tree.path_at(leaf_index),
-    };
-    let proof =
-        ProofGenerator::<OutbeV1, PayNote>::generate(&Barretenberg::default(), &witness, &public)
-            .expect("paynote proof generation");
+    let (public, proof) = prove_spend(chain_id, &tree, leaf_index, &n, spender, spend_amount);
 
     SpendFixture {
         commitment: n.commitment,
-        proof: combined_from(&public, &proof.proof),
+        proof: combined_from(&public, &proof),
         public,
         tree,
     }
