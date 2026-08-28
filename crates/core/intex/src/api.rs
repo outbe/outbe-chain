@@ -105,6 +105,119 @@ pub fn mark_called(storage: &StorageHandle<'_>, series_id: SeriesId, called_at: 
     registry.update_series_record(&record)
 }
 
+/// `Called -> Expired`. The call window closed: every unit still unsettled and
+/// unparked is forfeited, and its Promis load is the caller's to return to the
+/// pool. Returns that unit count, which is zero for a series whose units were
+/// all realised in time — reaching `Expired` means the window shut, not that
+/// anything burned.
+pub fn expire_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<u32> {
+    let mut registry = IntexContract::new(storage.clone());
+    let mut record = registry.load_series(series_id)?;
+    if record.lifecycle_state()? != IntexState::Called {
+        return Err(IntexError::InvalidState {
+            expected: IntexState::Called as u8,
+            actual: record.state,
+        }
+        .into());
+    }
+
+    let settled = registry.settled_units.read(&series_id)?;
+    let parked = registry.parked_units.read(&series_id)?;
+    // Checked, never saturating: the ERC-1155 supply cap keeps settled + parked
+    // within the issued count, so an underflow is corrupt state, not "nothing owed".
+    let forfeited = record
+        .issued_intex_count
+        .checked_sub(settled)
+        .and_then(|left| left.checked_sub(parked))
+        .ok_or(IntexError::RealisedUnitsOverflow)?;
+
+    record.state = IntexState::Expired as u8;
+    registry.update_series_record(&record)?;
+    Ok(forfeited)
+}
+
+/// Record `units` settled against `series_id`. Their Promis load belongs to the
+/// settler from now on and never returns to the pool.
+pub fn record_settled_units(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    units: u32,
+) -> Result<()> {
+    add_realised_units(storage, series_id, units, RealisedKind::Settled)
+}
+
+/// Record `units` parked into a Gem position. Their Promis load moved into the
+/// position and is accounted for there.
+pub fn record_parked_units(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    units: u32,
+) -> Result<()> {
+    add_realised_units(storage, series_id, units, RealisedKind::Parked)
+}
+
+/// Units settled so far against `series_id`.
+pub fn settled_units(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<u32> {
+    IntexContract::new(storage.clone())
+        .settled_units
+        .read(&series_id)
+}
+
+/// Units parked into Gem positions from `series_id`.
+pub fn parked_units(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<u32> {
+    IntexContract::new(storage.clone())
+        .parked_units
+        .read(&series_id)
+}
+
+enum RealisedKind {
+    Settled,
+    Parked,
+}
+
+fn add_realised_units(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    units: u32,
+    kind: RealisedKind,
+) -> Result<()> {
+    if units == 0 {
+        return Ok(());
+    }
+    let registry = IntexContract::new(storage.clone());
+    let record = registry.load_series(series_id)?;
+    let settled = registry.settled_units.read(&series_id)?;
+    let parked = registry.parked_units.read(&series_id)?;
+
+    let (settled, parked) = match kind {
+        RealisedKind::Settled => (
+            settled
+                .checked_add(units)
+                .ok_or(IntexError::RealisedUnitsOverflow)?,
+            parked,
+        ),
+        RealisedKind::Parked => (
+            settled,
+            parked
+                .checked_add(units)
+                .ok_or(IntexError::RealisedUnitsOverflow)?,
+        ),
+    };
+    // The sum is bounded by the issued count; crossing it means the two ledgers
+    // disagree and the forfeit arithmetic would underflow later.
+    if settled
+        .checked_add(parked)
+        .is_none_or(|realised| realised > record.issued_intex_count)
+    {
+        return Err(IntexError::RealisedUnitsOverflow.into());
+    }
+
+    match kind {
+        RealisedKind::Settled => registry.settled_units.write(&series_id, settled),
+        RealisedKind::Parked => registry.parked_units.write(&series_id, parked),
+    }
+}
+
 /// Backdate a series' issuance stamp. Test-only: the Called sweep counts breach
 /// days from `issued_at`, so a scenario that cannot spend days living through them
 /// has to be able to place issuance behind the days it seeded.

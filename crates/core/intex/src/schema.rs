@@ -12,13 +12,17 @@ use std::fmt;
 
 use crate::errors::IntexError;
 
-/// Series lifecycle state. `Issued -> Qualified -> Called`.
+/// Series lifecycle state. `Issued -> Qualified -> Called -> Expired`.
+///
+/// `Expired` means the call window closed, not that anything burned: a series
+/// whose units were all settled in time reaches it with nothing forfeited.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum IntexState {
     Issued = 0,
     Qualified = 1,
     Called = 2,
+    Expired = 3,
 }
 
 impl IntexState {
@@ -27,6 +31,7 @@ impl IntexState {
             0 => Ok(Self::Issued),
             1 => Ok(Self::Qualified),
             2 => Ok(Self::Called),
+            3 => Ok(Self::Expired),
             other => Err(IntexError::InvalidStateValue(other)),
         }
     }
@@ -478,6 +483,20 @@ pub struct IntexContract {
     /// keccak256(wwd_be32 ++ word_index_be32) -> 256 paid flags, one per leaf.
     #[attribute(order = 26)]
     pub ocomp_paid_leaves: outbe_primitives::storage::dsl::Map<B256, U256>,
+
+    // --- Realised units, for the forfeit arithmetic at expiry ---
+    // Both are cumulative and only ever grow; a series forfeits
+    // `issued_intex_count - settled_units - parked_units` units at its deadline.
+    // They live here rather than on `SeriesRecord` because a record write rewrites
+    // every field, and rather than in IntexFactory because GemFactory writes one of
+    // them and must not depend on the factory.
+    /// series_id -> units settled so far (their load is the settler's).
+    #[attribute(order = 27)]
+    pub settled_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
+
+    /// series_id -> units parked into Gem positions (their load moved with them).
+    #[attribute(order = 28)]
+    pub parked_units: outbe_primitives::storage::dsl::Map<SeriesId, u32>,
 }
 
 impl IntexContract<'_> {

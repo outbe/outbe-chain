@@ -30,6 +30,8 @@ pub enum IntexError {
     CostAmountOverflow,
     #[error("invalid series id components")]
     InvalidSeriesId,
+    #[error("realised units exceed the issued count for series")]
+    RealisedUnitsOverflow,
 }
 
 impl From<IntexError> for PrecompileError {
