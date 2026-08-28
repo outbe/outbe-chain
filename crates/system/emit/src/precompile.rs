@@ -11,7 +11,7 @@ use outbe_primitives::storage::StorageHandle;
 
 use crate::runtime::{self, MintStatement};
 
-/// Selectors on the Emit precompile (`0x…EE12`) that accept native value: only
+/// Selectors on the Emit precompile (`0x…EE13`) that accept native value: only
 /// `burn`. The route table binds this list to the address's `ValuePolicy` at
 /// compile time; `mint` refuses any credited value.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[IEmit::burnCall::SELECTOR];

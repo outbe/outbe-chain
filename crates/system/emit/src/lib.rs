@@ -1,4 +1,4 @@
-//! Emit private-note tree precompile (`0x…EE12`).
+//! Emit private-note tree precompile (`0x…EE13`).
 //!
 //! One native precompile exposing exactly two ABI methods, `burn` and `mint`
 //! (see `contracts/precompiles/src/IEmit.sol`). Burn is a runtime-only

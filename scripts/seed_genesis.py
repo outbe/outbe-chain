@@ -224,7 +224,7 @@ RADICLE_REGISTRY_ADDRESS = "000000000000000000000000000000000000ee11"
 # `outbe_primitives::addresses::EMIT_ADDRESS`. Genesis reserves and marks the
 # account only; its chain-specific empty ladder and tree are derived at runtime
 # by the first burn, so no Emit field state is ever precomputed here.
-EMIT_ADDRESS = "000000000000000000000000000000000000ee12"
+EMIT_ADDRESS = "000000000000000000000000000000000000ee13"
 STABLECOIN_ADDRESS_PREFIX = "53c0"
 OUTBE_SYSTEM_TX_ADDRESS = "ff00000000000000000000000000000000000001"
 
