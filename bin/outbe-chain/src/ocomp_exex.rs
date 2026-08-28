@@ -555,12 +555,12 @@ where
             }
             _ = poll.tick() => {
                 if let Err(error) = runtime.reconcile() {
-                    runtime.latch_fatal(B256::ZERO, error.to_string())?;
+                    runtime.latch_fatal(B256::ZERO, format!("{error:#}"))?;
                     wait_for_node_teardown().await;
                 }
                 while let Ok(outcome) = runtime.compute_rx.try_recv() {
                     if let Err(error) = runtime.handle_compute(outcome) {
-                        runtime.latch_fatal(B256::ZERO, error.to_string())?;
+                        runtime.latch_fatal(B256::ZERO, format!("{error:#}"))?;
                         wait_for_node_teardown().await;
                     }
                     if runtime.fatal.is_some() {
@@ -569,7 +569,7 @@ where
                 }
                 while let Ok(outcome) = runtime.vote_rx.try_recv() {
                     if let Err(error) = runtime.handle_vote(outcome) {
-                        runtime.latch_fatal(B256::ZERO, error.to_string())?;
+                        runtime.latch_fatal(B256::ZERO, format!("{error:#}"))?;
                         wait_for_node_teardown().await;
                     }
                     if runtime.fatal.is_some() {
@@ -1264,7 +1264,7 @@ where
         match classified {
             Ok(projection) => Ok(Some(projection)),
             Err(error) => {
-                self.latch_fatal(job_id, error.to_string())?;
+                self.latch_fatal(job_id, format!("{error:#}"))?;
                 Ok(None)
             }
         }
@@ -1311,7 +1311,7 @@ where
                 outbe_chain_constants::get_nod_materialization_max_attempts_per_block(),
         };
         let represented_validator = match self.domain.validator_sender_address() {
-            Some(sender) => outbe_validatorset::contract::ValidatorSet::new(storage)
+            Some(sender) => outbe_validatorset::contract::ValidatorSet::new(storage.clone())
                 .resolve_validator_for_role(
                     sender,
                     outbe_validatorset::delegation::ValidatorDelegateRole::Ocomp,
@@ -1343,14 +1343,14 @@ where
         {
             return Ok(());
         }
+        // The bundle the generation was certified under is chain state, not runtime
+        // state: a node that has forgotten every terminal job still materializes.
+        let protocol_bundle_hash = outbe_nod::NodContract::new(storage)
+            .ocomp_certified_generation(outbe_common::WorldwideDay::from(head.worldwide_day))?
+            .ok_or_else(|| eyre::eyre!("materialization head has no certified generation"))?
+            .protocol_bundle_hash;
         self.domain.spawn_validator_materialization(
-            self.jobs
-                .get(&head.job_id)
-                .ok_or_else(|| eyre::eyre!("materialization head has no OCOMP runtime job"))?
-                .record
-                .spec
-                .summary
-                .protocol_bundle_hash,
+            protocol_bundle_hash,
             head,
             profile.batch_subtree_height,
             self.materialization_tx.clone(),
