@@ -110,6 +110,12 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
         word(1),
     );
     StorageHandle::enter(&mut storage, |handle| {
+        // Registry membership is independent of whether a price exists: 840 is a
+        // reference currency in every fixture, priced or not.
+        OracleContract::new(handle.clone())
+            .reference_currencies
+            .push(840u16)
+            .unwrap();
         if let Some(rate) = rate {
             outbe_oracle::api::register_pair(handle.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
                 .unwrap();
@@ -122,9 +128,6 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
                 T_NOW,
             )
             .unwrap();
-            // Register ISO 840 (USD) so mint_gem currency-validation passes.
-            let oracle = OracleContract::new(handle.clone());
-            oracle.reference_currencies.push(840u16).unwrap();
         }
     });
     storage
@@ -304,9 +307,8 @@ fn mint_zero_owner_rejected() {
 
 #[test]
 fn mint_no_oracle_setup_rejected() {
-    // Without `seed_oracle`, neither the reference-currency list nor the
-    // settlement-iso-to-pair mapping is populated, so the first validation
-    // (reference_currency) must revert before we get to rate resolution.
+    // The reference currency is registered but its COEN pair is not, so the gem
+    // has no price to anchor its entry, floor and call to and minting reverts.
     with_storage(None, |storage| {
         let res = runtime::mint_gem(
             storage,
@@ -316,7 +318,7 @@ fn mint_no_oracle_setup_rejected() {
             840,
             840,
         );
-        assert!(err_msg(res).contains("reference currency"));
+        assert!(err_msg(res).contains("not registered"));
     });
 }
 
@@ -572,6 +574,83 @@ fn settle_rejects_a_deposit_that_mints_no_shares() {
         // re-entrant call finds a Settled gem; unwinding it is the transaction
         // frame's job, not this function's.
         assert!(err_msg(res).contains("zero shares"));
+    });
+}
+
+#[test]
+fn an_unassigned_issuance_code_mints_and_settles_on_the_reference_rail() {
+    // 899 is inside the three-digit range but is not an assigned ISO 4217 code.
+    // Gem no longer refuses it: nothing prices against it, and no settlement
+    // asset can ever report it, so it is inert — exactly as it is for a bid.
+    let rate = U256::from(2u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(rate));
+    let cost = StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = runtime::mint_gem(
+            &storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(10u64) * six_decimal_unit(),
+            899,
+            840,
+        )
+        .unwrap();
+        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        let cost = gem_api::get_gem(&storage, gem_id)
+            .unwrap()
+            .unwrap()
+            .cost_amount_minor;
+        runtime::settle_gem(&storage, ALICE, gem_id, STABLE).unwrap();
+        cost
+    });
+
+    let event = settled_event(&provider);
+    assert_eq!(event.settlementCurrency, 840);
+    assert_eq!(event.amountPaid, cost);
+}
+
+#[test]
+fn mint_rejects_an_issuance_code_outside_the_three_digit_range() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        for iso in [0u16, 1000u16] {
+            let res = runtime::mint_gem(
+                storage,
+                ALICE,
+                GemTypes::Wallet,
+                six_decimal_unit(),
+                iso,
+                840,
+            );
+            assert!(err_msg(res).contains("is not an ISO 4217 currency code"));
+        }
+    });
+}
+
+#[test]
+fn parking_rejects_a_series_whose_reference_currency_is_unregistered() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(rate), |storage| {
+        outbe_intex::api::create_series(
+            storage,
+            outbe_intex::CreateSeriesParams {
+                series_id: source_intex_id(),
+                worldwide_day: WorldwideDay::new(0),
+                issued_intex_count: PARK_UNITS as u32,
+                promis_load_minor: six_decimal_u128(),
+                entry_price_minor: six_decimal_unit(),
+                floor_price_minor: six_decimal_unit(),
+                call_price_minor: U256::ZERO,
+                call_trigger: outbe_intex::IntexCallTrigger::default(),
+                issued_at: T_NOW as u32,
+                issuance_currency: 840,
+                // 978 is never pushed into the reference registry here.
+                reference_currency: 978,
+            },
+        )
+        .unwrap();
+        let res =
+            runtime::mint_gem_position(storage, ALICE, source_intex_id(), U256::from(PARK_UNITS));
+        assert!(err_msg(res).contains("reference currency"));
     });
 }
 

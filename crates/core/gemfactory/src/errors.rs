@@ -53,9 +53,6 @@ pub enum GemFactoryError {
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
 
-    #[error("issuance currency {iso_code} is not registered")]
-    IssuanceCurrencyNotRegistered { iso_code: u16 },
-
     #[error("{currency} is not an ISO 4217 currency code")]
     InvalidCurrency { currency: u16 },
 

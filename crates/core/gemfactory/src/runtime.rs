@@ -7,7 +7,6 @@ use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::stablecoin::iso_4217_alpha;
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::units::SCALE_1E6_U256;
 
@@ -32,10 +31,10 @@ pub fn mint_gem(
         return Err(GemFactoryError::InvalidOwner.into());
     }
 
-    // The issuance currency is a label until settlement resolves it, so it only
-    // has to be a real ISO 4217 code — no registry membership. Mirrors
-    // `tributefactory::offer_tribute`.
-    if iso_4217_alpha(issuance_currency).is_none() {
+    // The issuance currency is the holder's own label: the network keeps no list
+    // of them, so only its three-digit range is checked, exactly as the auction
+    // checks a bid's. An unassigned code simply never matches a settlement asset.
+    if issuance_currency == 0 || issuance_currency > 999 {
         return Err(GemFactoryError::InvalidCurrency {
             currency: issuance_currency,
         }
@@ -109,6 +108,14 @@ pub fn mint_gem_position(
 
     let series = outbe_intex::api::get_series(storage, source_intex_id)?
         .ok_or(GemFactoryError::SourceIntexNotFound)?;
+
+    // A reference currency the registry does not carry is one no qualification
+    // scan walks, so its gems could never leave Issued. Refuse the position
+    // rather than mint gems that can only expire.
+    outbe_oracle::api::check_reference_currency_with_storage(
+        storage.clone(),
+        series.reference_currency,
+    )?;
 
     // Burn `amount` of the merchant's Intex units; `parkIntex` returns the
     // burned count (and reverts on a non-parkable state or a zero amount).
