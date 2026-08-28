@@ -212,6 +212,10 @@ pub fn mint_merchant_gem(
         .checked_sub(gem_load)
         .ok_or(GemFactoryError::InsufficientCapacity)?;
 
+    // Both maxima are an anti-dilution floor, not a price measurement: a merchant
+    // gem is never priced below what its source Intex was priced at, so a dip
+    // after parking cannot cheapen the gems drawn from it. That the live quote
+    // and the parked snapshot come from different price bases is the point.
     let coen_rate = read_reference_oracle_rate(storage, record.reference_currency)?;
     let entry_price = coen_rate.max(record.source_entry_price);
     let cost_amount = compute_cost(entry_price, gem_load, 100)?;
