@@ -29,11 +29,11 @@ interface IGemFactory {
     ///         two currencies that asset settles on. Reverts for an asset the
     ///         gem does not accept.
     /// @return settlementCurrency ISO 4217 code the payment is denominated in.
-    /// @return amount Payable amount in `asset`'s own minor units.
+    /// @return payableUnits Amount to pay, in `asset`'s own minor units.
     function quoteSettlement(uint256 gemId, address asset)
         external
         view
-        returns (uint16 settlementCurrency, uint256 amount);
+        returns (uint16 settlementCurrency, uint256 payableUnits);
 
     // --- GemPosition NFT (ERC-721-style, non-transferable; owner = merchant) ---
     /// @notice Number of GemPositions owned by `owner`.

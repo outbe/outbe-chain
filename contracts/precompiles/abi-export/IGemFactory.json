@@ -230,7 +230,7 @@
         "internalType": "uint16"
       },
       {
-        "name": "amount",
+        "name": "payableUnits",
         "type": "uint256",
         "internalType": "uint256"
       }

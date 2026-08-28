@@ -123,6 +123,29 @@ export function registerViewTools(server: McpServer, ctx: Ctx): void {
   );
 
   server.tool(
+    "gem_position_get",
+    "Parked-Intex position terms by id: merchant, source series, remaining capacity, " +
+      "the entry/floor prices its gems are anchored to, both currencies and when it was parked.",
+    { id: z.string().describe("Position token id (decimal or 0x hex)") },
+    handler(async ({ id }) =>
+      ok(await view(ctx, "gemfactory", "getPosition", [BigInt(id)])),
+    ),
+  );
+
+  server.tool(
+    "gem_settle_quote",
+    "What settling a gem with a given asset costs, and which of the gem's two currencies " +
+      "that asset settles on. `payableUnits` is in the asset's own minor units.",
+    {
+      id: z.string().describe("Gem token id (decimal or 0x hex)"),
+      asset: addr.describe("Settlement stablecoin the holder intends to pay with"),
+    },
+    handler(async ({ id, asset }) =>
+      ok(await view(ctx, "gemfactory", "quoteSettlement", [BigInt(id), asset])),
+    ),
+  );
+
+  server.tool(
     "gems_by_owner",
     "List Gems owned by an address with decoded status for each (Gem has no bulk getter, " +
       "so this enumerates balanceOf -> tokenOfOwnerByIndex -> getGemStatus).",
