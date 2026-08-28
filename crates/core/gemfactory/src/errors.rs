@@ -44,11 +44,11 @@ pub enum GemFactoryError {
     #[error("invalid asset")]
     InvalidAsset,
 
-    #[error("settlement asset {asset} is not registered for settlement currency {expected}")]
-    SettlementCurrencyMismatch {
-        asset: alloy_primitives::Address,
-        expected: u16,
-    },
+    #[error("settlement asset {asset} has no registered vault")]
+    SettlementAssetNotRegistered { asset: alloy_primitives::Address },
+
+    #[error("settlement asset currency {iso_code} does not match the gem")]
+    SettlementCurrencyMismatch { iso_code: u16 },
 
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,

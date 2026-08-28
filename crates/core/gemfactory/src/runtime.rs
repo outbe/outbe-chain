@@ -2,7 +2,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{api as gem_api, GemAddParams, GemState};
 use outbe_intex::SeriesId;
-use outbe_oracle::api::{fresh_coen_rate_for, fresh_currency_cross_rate, require_coen_pair};
+use outbe_oracle::api::{fresh_coen_rate_for, fresh_currency_cross_rate};
 use outbe_primitives::addresses::{
     GEM_FACTORY_ADDRESS, INTEX_NFT1155_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
@@ -19,7 +19,8 @@ use crate::constants::{
 use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::{GemBurned, GemIssued, GemSettled};
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
-use crate::sol_ext::{IIntexNFT1155, IERC20};
+use crate::sol_ext::{IIntexNFT1155, IReferenceCurrency, IERC20};
+use outbe_vaultrouter::api::IVaultRouter;
 
 pub fn mint_gem(
     storage: &StorageHandle<'_>,
@@ -275,14 +276,12 @@ pub fn settle_gem(
         _ => return Err(GemFactoryError::InvalidState.into()),
     }
 
-    // The Cost Amount is paid in the gem's Settlement Currency. The asset must
-    // be registered on the vault router as denominating it — a token's own
-    // `isoCode()` is self-reported, registry membership is not.
-    let expected =
-        settlement_currency_iso(storage, item.issuance_currency, item.reference_currency);
-    if !outbe_vaultrouter::api::reference_currency_assets(storage, expected)?.contains(&asset) {
-        return Err(GemFactoryError::SettlementCurrencyMismatch { asset, expected }.into());
-    }
+    // The payer chooses the rail by the asset they bring; the gem accepts either
+    // of its two currencies and nothing else.
+    let expected = match accept_payment_asset(storage, asset, &item)? {
+        PaymentCurrency::Reference => item.reference_currency,
+        PaymentCurrency::Issuance => item.issuance_currency,
+    };
 
     // Amounts are protocol-scale, and the transfer moves raw token units, so an
     // asset on a different scale would move the wrong sum. Nothing enforces the
@@ -360,18 +359,52 @@ fn deposit_to_vault(
     Ok(())
 }
 
-/// Issuance currency when a COEN
-/// pair is registered for it in the Oracle, otherwise the reference currency.
-fn settlement_currency_iso(
+/// Which of a gem's two currencies a payment asset is denominated in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PaymentCurrency {
+    Reference,
+    Issuance,
+}
+
+/// Rejects `asset` unless the router holds a vault for it and the asset reports
+/// one of the gem's two currencies; returns which one. Registration is checked
+/// first: an unregistered asset need not implement `isoCode()` at all. Reference
+/// is matched before issuance, so a single-currency gem takes the no-rate branch.
+fn accept_payment_asset(
     storage: &StorageHandle<'_>,
-    issuance_currency: u16,
-    reference_currency: u16,
-) -> u16 {
-    if require_coen_pair(storage.clone(), issuance_currency).is_ok() {
-        issuance_currency
-    } else {
-        reference_currency
+    asset: Address,
+    item: &outbe_gem::GemData,
+) -> Result<PaymentCurrency> {
+    let ret = storage.staticcall(
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::assetVaultsCountCall { asset }
+            .abi_encode()
+            .into(),
+    )?;
+    let vaults = IVaultRouter::assetVaultsCountCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("assetVaultsCount undecodable".into()))?;
+    if vaults.is_zero() {
+        return Err(GemFactoryError::SettlementAssetNotRegistered { asset }.into());
     }
+
+    let iso = asset_iso_code(storage, asset)?;
+    if iso == item.reference_currency {
+        return Ok(PaymentCurrency::Reference);
+    }
+    if iso == item.issuance_currency {
+        return Ok(PaymentCurrency::Issuance);
+    }
+    Err(GemFactoryError::SettlementCurrencyMismatch { iso_code: iso }.into())
+}
+
+/// Reads the settlement asset's ISO 4217 code via a static sub-call.
+fn asset_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
+    let ret = storage.staticcall(
+        asset,
+        IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
+    )?;
+    IReferenceCurrency::isoCodeCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Revert("isoCode undecodable".into()))
 }
 
 pub fn mine_gem_promis(

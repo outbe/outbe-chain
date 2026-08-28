@@ -13,6 +13,9 @@ use outbe_tee_enclave::promis::{decrypt_balance, derive_modify_key, derive_view_
 use crate::constants::POSITION_VALIDITY_SECONDS;
 use crate::runtime;
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
+use crate::sol_ext::{IReferenceCurrency, IERC20};
+use alloy_sol_types::SolCall;
+use outbe_vaultrouter::api::IVaultRouter;
 
 const T_NOW: u64 = 1_700_000_000;
 const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
@@ -54,6 +57,28 @@ fn promis_auth(account: Address, amount: U256, nonce: u64) -> ModifyAuth {
 /// Units the stubbed `parkIntex` reports as burned (its `uint256` return).
 const PARK_UNITS: u64 = 100;
 
+fn word(value: u64) -> alloy_primitives::Bytes {
+    alloy_primitives::Bytes::from(U256::from(value).to_be_bytes::<32>().to_vec())
+}
+
+/// Stubs one settlement stablecoin's `isoCode()` and `decimals()`.
+fn stub_stablecoin(
+    storage: &mut HashMapStorageProvider,
+    asset: Address,
+    iso_code: u64,
+    decimals: u64,
+) {
+    storage.stub_sub_call_at_selector(
+        asset,
+        IReferenceCurrency::isoCodeCall::SELECTOR,
+        word(iso_code),
+    );
+    storage.stub_sub_call_at_selector(asset, IERC20::decimalsCall::SELECTOR, word(decimals));
+    // The deposit path pulls and approves before handing over to the router.
+    storage.stub_sub_call_at_selector(asset, IERC20::transferFromCall::SELECTOR, word(1));
+    storage.stub_sub_call_at_selector(asset, IERC20::approveCall::SELECTOR, word(1));
+}
+
 fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(1);
     storage.set_timestamp(U256::from(T_NOW));
@@ -62,25 +87,21 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
         outbe_primitives::addresses::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::from(U256::from(PARK_UNITS).to_be_bytes::<32>().to_vec()),
     );
-    // Stub the settlement stablecoins' ERC20 returns (a 32-byte word): `decimals()`
-    // must read as the six-decimal settlement scale.
-    storage.stub_sub_call_at(
-        STABLE,
-        alloy_primitives::Bytes::from(U256::from(6u64).to_be_bytes::<32>().to_vec()),
-    );
-    storage.stub_sub_call_at(
-        STABLE_EUR,
-        alloy_primitives::Bytes::from(U256::from(6u64).to_be_bytes::<32>().to_vec()),
-    );
-    // Stub VaultRouter `referenceCurrencyAssets` as `[STABLE]` for every ISO:
-    // the USD stablecoin is the only registered settlement asset in tests.
-    let mut assets = Vec::with_capacity(96);
-    assets.extend_from_slice(&U256::from(32u64).to_be_bytes::<32>()); // offset
-    assets.extend_from_slice(&U256::from(1u64).to_be_bytes::<32>()); // length
-    assets.extend_from_slice(STABLE.into_word().as_slice());
-    storage.stub_sub_call_at(
+    // Each stablecoin answers `isoCode()` and `decimals()` separately, so the
+    // settlement path can tell a USD asset from a EUR one.
+    stub_stablecoin(&mut storage, STABLE, 840, 6);
+    stub_stablecoin(&mut storage, STABLE_EUR, 978, 6);
+    // Every asset the tests pass in has a registered vault.
+    storage.stub_sub_call_at_selector(
         outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
-        alloy_primitives::Bytes::from(assets),
+        IVaultRouter::assetVaultsCountCall::SELECTOR,
+        word(1),
+    );
+    // `deposit` reports minted shares.
+    storage.stub_sub_call_at_selector(
+        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        IVaultRouter::depositCall::SELECTOR,
+        word(1),
     );
     StorageHandle::enter(&mut storage, |handle| {
         if let Some(rate) = rate {
@@ -343,9 +364,9 @@ fn settle_wallet_settles_with_a_registered_asset() {
         .unwrap();
         gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
 
-        // STABLE is the router's registered asset for 840, so the settlement
-        // currency check passes and the gem settles. Real vault interaction is
-        // covered by integration tests; here the router is stubbed.
+        // STABLE reports 840, which is the gem's reference currency, so it
+        // settles on the reference rail. Real vault interaction is covered by
+        // integration tests; here the router is stubbed.
         runtime::settle_gem(storage, ALICE, gem_id, STABLE).unwrap();
         assert_eq!(
             gem_api::get_gem(storage, gem_id).unwrap().unwrap().state,
@@ -355,7 +376,7 @@ fn settle_wallet_settles_with_a_registered_asset() {
 }
 
 #[test]
-fn settlement_event_reports_the_actual_fallback_currency() {
+fn settlement_event_reports_the_rail_the_asset_matched() {
     let rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(rate));
     let gem_id = StorageHandle::enter(&mut provider, |storage| {
@@ -381,6 +402,115 @@ fn settlement_event_reports_the_actual_fallback_currency() {
         .expect("settlement emits GemSettled");
     assert_eq!(event.gemId, gem_id);
     assert_eq!(event.settlementCurrency, 840);
+}
+
+/// The single `GemSettled` a settlement emitted.
+fn settled_event(provider: &HashMapStorageProvider) -> crate::precompile::IGemFactory::GemSettled {
+    provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| crate::precompile::IGemFactory::GemSettled::decode_log(log).ok())
+        .next()
+        .expect("settlement emits GemSettled")
+        .data
+}
+
+/// Registers and prices `COEN/<iso>` and adds `iso` to the reference registry.
+fn register_currency(storage: &StorageHandle<'_>, iso: u16, rate: U256) {
+    let pair = outbe_oracle::api::AddressPair::new_coen_to(iso);
+    outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+    outbe_oracle::api::set_exchange_rate(storage.clone(), Address::ZERO, pair, rate, 1, T_NOW)
+        .unwrap();
+    OracleContract::new(storage.clone())
+        .reference_currencies
+        .push(iso)
+        .unwrap();
+}
+
+#[test]
+fn the_issuance_currency_settles_through_the_coen_pivot() {
+    // COEN/USD 2.0, COEN/EUR 1.0: the same cost converts to half as many EUR units.
+    let usd_rate = U256::from(2u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(usd_rate));
+    let cost = StorageHandle::enter(&mut provider, |storage| {
+        register_currency(&storage, 978, six_decimal_unit());
+        let gem_id = runtime::mint_gem(
+            &storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(10u64) * six_decimal_unit(),
+            978,
+            840,
+        )
+        .unwrap();
+        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        let cost = gem_api::get_gem(&storage, gem_id)
+            .unwrap()
+            .unwrap()
+            .cost_amount_minor;
+        // Paying with the EUR asset picks the issuance rail.
+        runtime::settle_gem(&storage, ALICE, gem_id, STABLE_EUR).unwrap();
+        cost
+    });
+
+    let event = settled_event(&provider);
+    assert_eq!(event.settlementCurrency, 978);
+    assert_eq!(event.amountPaid, cost / U256::from(2u64));
+}
+
+#[test]
+fn the_reference_currency_settles_without_reading_any_issuance_rate() {
+    let usd_rate = U256::from(2u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(usd_rate));
+    let cost = StorageHandle::enter(&mut provider, |storage| {
+        // Issuance 978 is never registered, so it carries no rate at all.
+        let gem_id = runtime::mint_gem(
+            &storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(10u64) * six_decimal_unit(),
+            978,
+            840,
+        )
+        .unwrap();
+        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        let cost = gem_api::get_gem(&storage, gem_id)
+            .unwrap()
+            .unwrap()
+            .cost_amount_minor;
+        runtime::settle_gem(&storage, ALICE, gem_id, STABLE).unwrap();
+        cost
+    });
+
+    let event = settled_event(&provider);
+    assert_eq!(event.settlementCurrency, 840);
+    assert_eq!(event.amountPaid, cost);
+}
+
+#[test]
+fn settle_rejects_an_asset_with_no_registered_vault() {
+    let rate = U256::from(2u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(rate));
+    // Override the blanket vault count: this asset has none.
+    provider.stub_sub_call_at_selector(
+        outbe_primitives::addresses::VAULT_ROUTER_ADDRESS,
+        IVaultRouter::assetVaultsCountCall::SELECTOR,
+        word(0),
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = runtime::mint_gem(
+            &storage,
+            ALICE,
+            GemTypes::Wallet,
+            U256::from(10u64) * six_decimal_unit(),
+            840,
+            840,
+        )
+        .unwrap();
+        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        let res = runtime::settle_gem(&storage, ALICE, gem_id, STABLE);
+        assert!(err_msg(res).contains("no registered vault"));
+    });
 }
 
 #[test]
@@ -446,10 +576,10 @@ fn settle_rejects_wrong_settlement_currency() {
         )
         .unwrap();
         gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
-        // Paying a USD gem with a EUR (978) stablecoin must revert before any
-        // vault interaction.
+        // Paying a USD gem with a EUR (978) stablecoin matches neither of its
+        // currencies, so it reverts before any vault interaction.
         let res = runtime::settle_gem(storage, ALICE, gem_id, STABLE_EUR);
-        assert!(err_msg(res).contains("settlement currency"));
+        assert!(err_msg(res).contains("does not match the gem"));
     });
 }
 
