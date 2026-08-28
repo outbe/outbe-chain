@@ -12,11 +12,14 @@ use alloy_primitives::B256;
 use outbe_macros::{contract, storage_schema};
 use outbe_primitives::addresses::EMIT_ADDRESS;
 
-/// Commitment-tree depth (fixed by the `outbe.emit.mint@1.3.0` circuit).
-pub const EMIT_TREE_DEPTH: usize = 20;
+/// Commitment-tree depth (fixed by the `outbe.emit.mint@1.4.1` circuit:
+/// the protocol-canonical depth in `outbe_circuit_core::merkle_tree`).
+pub const EMIT_TREE_DEPTH: usize = 32;
 
-/// Tree capacity: `2^20` leaves.
-pub const EMIT_TREE_CAPACITY: u32 = 1 << EMIT_TREE_DEPTH;
+/// Tree capacity: `2^32` leaves geometrically; the u32 `leaf_count` cannot
+/// count them all, so the tree is declared full one leaf early and the last
+/// append is refused before the index counter would overflow.
+pub const EMIT_TREE_CAPACITY: u64 = (1u64 << EMIT_TREE_DEPTH) - 1;
 
 /// Number of accepted roots retained for mint proofs (the root window).
 pub const EMIT_ROOT_WINDOW: u32 = 32;

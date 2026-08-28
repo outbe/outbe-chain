@@ -34,19 +34,19 @@ const FULL_PROOF_PROOF_FIELD_COUNT: usize = 274;
 pub const FULL_PROOF_COMBINED_LEN: usize =
     4 + (FULL_PROOF_PUBLIC_INPUT_COUNT + FULL_PROOF_PROOF_FIELD_COUNT) * 32;
 
-/// Public-input count fixed by the `outbe.emit.mint@1.3.0` ABI: `chain_id`,
+/// Public-input count fixed by the `outbe.emit.mint@1.4.1` ABI: `chain_id`,
 /// `root`, `nullifier`, the owner as one 160-bit-bounded field word,
 /// `mint_units`, `change_commitment`.
 const EMIT_MINT_PUBLIC_INPUT_COUNT: usize = 6;
 /// Byte length of the combined-proof public section: 4-byte count header plus
 /// 6 canonical 32-byte words.
 const EMIT_MINT_PUBLIC_PREFIX_LEN: usize = 4 + EMIT_MINT_PUBLIC_INPUT_COUNT * 32;
-/// Proof words in a canonical `outbe.emit.mint@1.3.0` combined proof. The
+/// Proof words in a canonical `outbe.emit.mint@1.4.1` combined proof. The
 /// UltraHonkKeccak transcript of the frozen circuit is fixed-length, so this
 /// is part of the pinned circuit identity (same VK, same transcript shape).
-pub const EMIT_MINT_PROOF_WORDS: usize = 238;
-/// Exact total length of a canonical `outbe.emit.mint@1.3.0` combined proof:
-/// 4-byte count header, 6 public words, 238 proof words.
+pub const EMIT_MINT_PROOF_WORDS: usize = 250;
+/// Exact total length of a canonical `outbe.emit.mint@1.4.1` combined proof:
+/// 4-byte count header, 6 public words, 250 proof words.
 pub const EMIT_MINT_COMBINED_LEN: usize = EMIT_MINT_PUBLIC_PREFIX_LEN + 32 * EMIT_MINT_PROOF_WORDS;
 
 /// Public claim carried by the canonical `outbe.full_proof@1.1.0`
@@ -91,7 +91,7 @@ pub struct PayNotePublicInputs {
     pub change_commitment: [u8; 32],
 }
 
-/// Public claim carried by the canonical `outbe.emit.mint@1.3.0`
+/// Public claim carried by the canonical `outbe.emit.mint@1.4.1`
 /// combined-proof format, in circuit order: `chain_id`, `root`, `nullifier`,
 /// owner as one 160-bit-bounded field, `mint_units`, `change_commitment`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -300,7 +300,7 @@ pub fn verify_paynote(combined_proof: &[u8]) -> Result<bool, ZkProofError> {
 }
 
 /// Decode and validate the 6 public inputs embedded in a canonical
-/// `outbe.emit.mint@1.3.0` combined proof.
+/// `outbe.emit.mint@1.4.1` combined proof.
 ///
 /// Accepts only the exact wire the frozen circuit fixes: a 6-count header,
 /// one right-aligned `u64` chain-ID word at index `0`, canonical BN254 field
@@ -363,7 +363,7 @@ pub fn decode_emit_mint_public_inputs(
     })
 }
 
-/// Verify the pinned canonical `outbe.emit.mint@1.3.0` circuit.
+/// Verify the pinned canonical `outbe.emit.mint@1.4.1` circuit.
 ///
 /// Malformed combined proofs are errors. Well-formed proofs that do not
 /// verify return `Ok(false)`.
@@ -473,20 +473,6 @@ fn bool_to_32b(b: bool) -> [u8; 32] {
         out[31] = 1;
     }
     out
-}
-
-/// Read a u128 from the right-aligned 16 bytes of a 32-byte big-endian
-/// uint256 slot. Returns None if the upper 16 bytes are non-zero.
-fn read_u128_be_padded(slot: &[u8]) -> Option<u128> {
-    if slot.len() != 32 {
-        return None;
-    }
-    if slot[..16].iter().any(|&b| b != 0) {
-        return None;
-    }
-    let mut buf = [0u8; 16];
-    buf.copy_from_slice(&slot[16..32]);
-    Some(u128::from_be_bytes(buf))
 }
 
 fn is_canonical_field_word(word: &[u8; 32]) -> bool {

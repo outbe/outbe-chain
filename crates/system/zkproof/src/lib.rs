@@ -22,8 +22,8 @@ mod tests;
 pub use errors::ZkProofError;
 pub use precompile::{dispatch_groth16, dispatch_poseidon, groth16_base_gas, poseidon_base_gas};
 pub use verify::{
-    decode_emit_mint_public_inputs, decode_full_proof_public_inputs,
-    decode_paynote_public_inputs, init_crs, verify_emit_mint, verify_full_proof, verify_paynote,
-    EmitMintPublicInputs, FullProofPublicInputs, PayNotePublicInputs, EMIT_MINT_COMBINED_LEN,
-    FULL_PROOF_COMBINED_LEN, PAYNOTE_COMBINED_LEN, PAYNOTE_PROOF_WORDS,
+    decode_emit_mint_public_inputs, decode_full_proof_public_inputs, decode_paynote_public_inputs,
+    init_crs, verify_emit_mint, verify_full_proof, verify_paynote, EmitMintPublicInputs,
+    FullProofPublicInputs, PayNotePublicInputs, EMIT_MINT_COMBINED_LEN, FULL_PROOF_COMBINED_LEN,
+    PAYNOTE_COMBINED_LEN, PAYNOTE_PROOF_WORDS,
 };

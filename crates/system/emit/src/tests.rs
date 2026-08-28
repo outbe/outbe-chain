@@ -117,35 +117,35 @@ fn formulas_match_pinned_circuit_vector() {
     let cases: [(Field, &str); 8] = [
         (
             serial,
-            "0x10c7f3172df9914075efe18b47d80ba46591bebf9b33883d9a079f59c2c5df7a",
+            "0x0bb7a42dc8456b387d334b2b46ff1833eeda93134e947bcb9759363ebeb15f14",
         ),
         (
             commitment,
-            "0x0a9ad4bd6cb921dd155cb648b65b5c88b22224cc41b7053942be6720f189c097",
+            "0x05385d6c092d5782cbb10feccf6df7640cc939fd3038b1c520b2ff333b83e253",
         ),
         (
             n,
-            "0x24a31916ba38fa2d0781c9a59636b1f05c022f988410f12cc9c3b5c5c43e7bf8",
+            "0x0313e99f04e2379d755effaf8779c759ab95f7eaecaef242d9848910f6ac0341",
         ),
         (
             next_key,
-            "0x1561f36fd86db01e249489430a4842ed3a8ccdb1c6760c4620ed71c570ac441b",
+            "0x13a21f3e5b2f165925e2e45c7c99f1d6b1234b1a05977a17d3fa3400f07b089d",
         ),
         (
             next_serial,
-            "0x19cb9c7ebc20da2533dc8230b65064f216e9efb199d520469f6fda761abf487b",
+            "0x0412d75e9e1db9af5a0b448f2cb18e6ee775d4a1fa4913997c3df4f4284d33f1",
         ),
         (
             change,
-            "0x25a9c95c49041c4505ff0a701bfa0b040784958b60dba83ee4ac8bb22aa728ef",
+            "0x079ee35ff7fc49b9b94fe998b5364dc4ada312e6bf8366bf02e99b7804a1fff5",
         ),
         (
             next_n,
-            "0x17bea835c4d05269b920adfb94cb917f39f5782b7633e4e8a13805f620bbe5dc",
+            "0x28932366274f124353ec30f7f417645c4ce2577a265460a6c54aa4c71346ccdd",
         ),
         (
             root,
-            "0x0fcf9017b1240fd6bf1a87b3da7728ea62f94f220518d7378e421e1e85ccbe02",
+            "0x088f9b2d8926e4e2516c0ffe30953a1b83009f66b4e7fdf8ba6582ea7e2c51db",
         ),
     ];
     for (actual, expected) in cases {
@@ -954,7 +954,7 @@ fn plan_scenario_partial_then_full_mint_with_real_proofs() {
 
 /// The u128 amount cutover end to end: a note above the u64 range burns,
 /// partially mints an above-u64 payout, and fully mints the remainder —
-/// through the real dispatch, decoder, and 1.3.0 proofs.
+/// through the real dispatch, decoder, and 1.4.1 proofs.
 #[test]
 fn amounts_above_the_u64_range_mint_end_to_end() {
     outbe_zkproof::init_crs().expect("CRS init");
@@ -1109,7 +1109,7 @@ fn full_tree_rejects_burns_and_partial_mints() {
     run_burn(&mut provider, ALICE, 100, b256(serial)).unwrap();
     provider.enter(|storage| {
         let emit: EmitContract<'_> = storage.contract();
-        emit.leaf_count.write(EMIT_TREE_CAPACITY).unwrap();
+        emit.leaf_count.write(EMIT_TREE_CAPACITY as u32).unwrap();
     });
 
     let result = run_burn(&mut provider, ALICE, 1, b256(Field::from(777u64)));
@@ -1141,7 +1141,7 @@ fn full_tree_rejects_burns_and_partial_mints() {
     assert_revert(result, "Emit commitment tree is full");
     provider.enter(|storage| {
         let emit: EmitContract<'_> = storage.contract();
-        assert_eq!(emit.leaf_count.read().unwrap(), EMIT_TREE_CAPACITY);
+        assert_eq!(emit.leaf_count.read().unwrap(), EMIT_TREE_CAPACITY as u32);
         assert!(!emit.spent_nullifiers.read(&b256(nullifier)).unwrap());
     });
 }

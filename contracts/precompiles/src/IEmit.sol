@@ -19,7 +19,7 @@ interface IEmit {
     /// embedded proof statement must equal the explicit calldata fields, and
     /// `chainId` must equal the runtime chain ID. `proof` is the combined
     /// UltraHonkKeccak wire for the frozen Emit mint circuit
-    /// (`outbe.emit.mint`, version 1.3.0), enforced at its exact frozen
+    /// (`outbe.emit.mint`, version 1.4.1), enforced at its exact frozen
     /// length.
     function mint(
         address payoutRecipient,

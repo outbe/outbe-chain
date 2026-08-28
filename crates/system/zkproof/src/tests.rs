@@ -561,14 +561,14 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
     use outbe_zk_canonical::noir::emit_mint::{EmitMint, PublicInputs, Witness};
     use outbe_zk_canonical::CircuitId as _;
 
-    assert_eq!(EmitMint::VERSION, "1.3.0");
+    assert_eq!(EmitMint::VERSION, "1.4.1");
     assert_eq!(
         EmitMint::CIRCUIT_HASH,
-        alloy_primitives::hex!("50301cde55ecb04fd579b61ca1c68bbbf7b4379075edc7e0a1c176e082c2fe05")
+        alloy_primitives::hex!("373839906d1be64ea45407d74ca5681426aef630c2ddc5baa980ad21394f737b")
     );
     assert_eq!(
         EmitMint::VK_HASH,
-        alloy_primitives::hex!("88d9a8e51e6833a22f5dacfec09f60b9fbb800eccea4be23c0859550fabea5d6")
+        alloy_primitives::hex!("479c5cd018d80b644afff8658c6f4c7489cc05264ad187c536451b4a91edf9c6")
     );
 
     crate::verify::init_crs().expect("CRS init");
@@ -581,10 +581,11 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
         <<OutbeV1 as Suite>::Hash as FieldHasher<Field>>::hash(&[a, b, c]).unwrap()
     };
     let ascii = |text: &str| Field::from_be_bytes_mod_order(text.as_bytes());
-    // Mirror of the circuit's `hash_multi(tag, values)`: seed with the tag
-    // and arity, then fold the values. No domain prelude.
-    let emit_hash = |tag: &str, values: &[Field]| -> Field {
-        let mut state = h2(ascii(tag), Field::from(values.len() as u64));
+    // Mirror of the circuit's `hash_multi(tag, values)` seeded with the
+    // domain-folded purpose tag: `tag = h2(EMIT_DOMAIN, base)`.
+    let emit_tag = |base: &str| h2(ascii("OUTBE_EMIT"), ascii(base));
+    let emit_hash = |base: &str, values: &[Field]| -> Field {
+        let mut state = h2(emit_tag(base), Field::from(values.len() as u64));
         for value in values {
             state = h2(state, *value);
         }
@@ -597,31 +598,31 @@ fn emit_mint_real_proof_verifies_and_binds_every_public_word() {
     let mint_units = (1u128 << 80) + 40;
     let spend_key = Field::from(17u64);
     let serial = emit_hash(
-        "EMIT_NOTE_SN",
+        "NOTE_SN",
         &[Field::from_be_bytes_mod_order(&owner), spend_key],
     );
     let commitment = emit_hash(
-        "EMIT_COMMITMENT",
+        "COMMITMENT",
         &[Field::from(chain_id), serial, Field::from(note_amount)],
     );
-    let mut path = [Field::from(0u64); 20];
-    path[0] = emit_hash("EMIT_EMPTY", &[Field::from(chain_id)]);
+    let mut path = [Field::from(0u64); 32];
+    path[0] = emit_hash("EMPTY", &[Field::from(chain_id)]);
     let domain = ascii("OUTBE_EMIT");
-    for level in 1..20 {
+    for level in 1..32 {
         path[level] = h3(domain, path[level - 1], path[level - 1]);
     }
     let mut root = commitment;
     for sibling in path {
         root = h3(domain, root, sibling);
     }
-    let nullifier = emit_hash("EMIT_NULLIFIER", &[commitment, spend_key]);
-    let next_key = emit_hash("EMIT_CHANGE_KEY", &[spend_key, nullifier]);
+    let nullifier = emit_hash("NULLIFIER", &[commitment, spend_key]);
+    let next_key = emit_hash("CHANGE_KEY", &[spend_key, nullifier]);
     let change = emit_hash(
-        "EMIT_COMMITMENT",
+        "COMMITMENT",
         &[
             Field::from(chain_id),
             emit_hash(
-                "EMIT_NOTE_SN",
+                "NOTE_SN",
                 &[Field::from_be_bytes_mod_order(&owner), next_key],
             ),
             Field::from(60u64),

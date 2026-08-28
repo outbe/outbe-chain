@@ -95,7 +95,7 @@ pub(crate) fn burn(
     let (chain_id, zeros) = chain_state(&storage)?;
     let emit: EmitContract<'_> = storage.contract();
     let leaf_count = emit.leaf_count.read()?;
-    if leaf_count >= EMIT_TREE_CAPACITY {
+    if leaf_count as u64 >= EMIT_TREE_CAPACITY {
         return Err(EmitError::TreeFull.into());
     }
 
@@ -149,7 +149,7 @@ pub(crate) fn burn(
     })
 }
 
-/// `mint(...)` — consume a frozen `outbe.emit.mint@1.3.0` proof.
+/// `mint(...)` — consume a frozen `outbe.emit.mint@1.4.1` proof.
 pub(crate) fn mint(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -254,7 +254,7 @@ pub(crate) fn mint(
     let change_word = B256::new(field_to_be_bytes(change));
     if partial {
         let leaf_count = emit.leaf_count.read()?;
-        if leaf_count >= EMIT_TREE_CAPACITY {
+        if leaf_count as u64 >= EMIT_TREE_CAPACITY {
             return Err(EmitError::TreeFull.into());
         }
         // Anyone knowing the current key can pre-create the deterministic
