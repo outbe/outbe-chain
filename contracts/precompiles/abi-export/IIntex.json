@@ -154,6 +154,21 @@
             "name": "costAmountMinor",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "settledUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "parkedUnits",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "outstandingUnits",
+            "type": "uint32",
+            "internalType": "uint32"
           }
         ]
       }

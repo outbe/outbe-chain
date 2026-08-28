@@ -275,8 +275,9 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
   server.tool(
     "intex_series_info",
     "Canonical series record from the outbe Intex: promis load, entry/floor/call prices, currencies, " +
-      "lifecycle state (Issued/Qualified/Called), issued/called timestamps, and the derived " +
-      "callDeadline/expired pair — check `expired` before attempting settle (past-deadline settles revert).",
+      "lifecycle state (Issued/Qualified/Called/Expired), issued/called timestamps, the derived " +
+      "callDeadline/expired pair — check `expired` before attempting settle (past-deadline settles revert) — " +
+      "and how the issued units split into settled, parked and still-outstanding.",
     { series: seriesArg, network: networkArg.optional() },
     handler(async ({ series, network }) => {
       const n = await resolveNetwork(network ?? "outbe-testnet");
@@ -298,6 +299,11 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         floorPrice: { raw: d.floorPriceMinor.toString(), value: formatUnits(u256(d.floorPriceMinor), 6), scale: "1e6 ISO stable-unit" },
         callPrice: { raw: d.callPriceMinor.toString(), value: formatUnits(u256(d.callPriceMinor), 6), scale: "1e6 ISO stable-unit" },
         issuedIntexCount: Number(d.issuedIntexCount),
+        // Where the issued units stand: settled and parked ones keep their Promis
+        // load, outstanding ones lose it to the pool when the call window closes.
+        settledUnits: Number(d.settledUnits),
+        parkedUnits: Number(d.parkedUnits),
+        outstandingUnits: Number(d.outstandingUnits),
         costAmount: { raw: d.costAmountMinor.toString(), value: formatUnits(u256(d.costAmountMinor), 6), scale: "1e6 ISO stable-unit" },
         callWindow: Number(d.callWindow),
         callThreshold: Number(d.callThreshold),

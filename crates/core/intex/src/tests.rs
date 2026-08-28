@@ -1134,6 +1134,37 @@ fn a_fully_realised_series_still_expires_but_forfeits_nothing() {
 }
 
 #[test]
+fn the_view_carries_what_is_still_unrealised() {
+    with_registry(|s| {
+        let id = called_series(&s, 46);
+        api::record_settled_units(&s, id, 30).unwrap();
+        api::record_parked_units(&s, id, 25).unwrap();
+
+        let data = dispatch_series_data(&s, id);
+        assert_eq!(data.settledUnits, 30);
+        assert_eq!(data.parkedUnits, 25);
+        assert_eq!(data.outstandingUnits, 45);
+
+        api::expire_series(&s, id).unwrap();
+        assert_eq!(dispatch_series_data(&s, id).outstandingUnits, 45);
+    });
+}
+
+fn dispatch_series_data(storage: &StorageHandle, series_id: SeriesId) -> IIntex::SeriesData {
+    let call = IIntex::seriesDataCall {
+        seriesId: series_id.into(),
+    };
+    let out = dispatch(
+        storage.clone(),
+        &call.abi_encode(),
+        Address::ZERO,
+        U256::ZERO,
+    )
+    .unwrap();
+    IIntex::seriesDataCall::abi_decode_returns(&out).unwrap()
+}
+
+#[test]
 fn expiry_is_rejected_before_the_series_is_called() {
     with_registry(|s| {
         api::create_series(&s, sample_params(43)).unwrap();
