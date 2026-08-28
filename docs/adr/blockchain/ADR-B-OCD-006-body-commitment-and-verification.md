@@ -88,7 +88,7 @@ message NodItemBody {
   uint32 league_id = 5;                  // <= u16::MAX
   bytes floor_price_minor = 6;           // U256 BE32
   bytes bucket_key = 7;                  // B256, 32 bytes
-  bytes cost_amount_minor = 8;            // U256 BE32
+  // 8 retired: the cost is derived from the bucket entry price and the load
   uint32 issuance_currency = 9;          // <= u16::MAX
   uint32 reference_currency = 10;        // <= u16::MAX
   uint64 issued_at = 11;

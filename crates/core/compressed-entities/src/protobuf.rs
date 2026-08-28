@@ -31,7 +31,6 @@ pub struct NodItemBodyV1 {
     pub league_id: u16,
     pub floor_price_minor: U256,
     pub bucket_key: B256,
-    pub cost_amount_minor: U256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
     pub issued_at: u64,
@@ -200,7 +199,6 @@ pub fn encode_nod_item_v1(body: &NodItemBodyV1) -> Result<Vec<u8>, CanonicalBody
     encode_optional_varint_field(5, u64::from(body.league_id), &mut output);
     encode_bytes_field(6, &body.floor_price_minor.to_be_bytes::<32>(), &mut output);
     encode_bytes_field(7, body.bucket_key.as_slice(), &mut output);
-    encode_bytes_field(8, &body.cost_amount_minor.to_be_bytes::<32>(), &mut output);
     encode_optional_varint_field(9, u64::from(body.issuance_currency), &mut output);
     encode_optional_varint_field(10, u64::from(body.reference_currency), &mut output);
     encode_optional_varint_field(11, body.issued_at, &mut output);
@@ -217,7 +215,6 @@ pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyEr
     let league_id = optional_u16(&mut fields, 5)?;
     let floor_price_minor = decode_u256(required_bytes(&mut fields, 6)?, 6)?;
     let bucket_key = B256::from(fixed_bytes::<32>(required_bytes(&mut fields, 7)?, 7)?);
-    let cost_amount_minor = decode_u256(required_bytes(&mut fields, 8)?, 8)?;
     let issuance_currency = optional_u16(&mut fields, 9)?;
     let reference_currency = optional_u16(&mut fields, 10)?;
     let issued_at = optional_varint(&mut fields, 11)?;
@@ -231,7 +228,6 @@ pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyEr
         league_id,
         floor_price_minor,
         bucket_key,
-        cost_amount_minor,
         issuance_currency,
         reference_currency,
         issued_at,

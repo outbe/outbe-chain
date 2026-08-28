@@ -51,7 +51,6 @@ fn assert_item_roundtrip(record: NodItemState) {
     assert_eq!(reconstructed.league_id, record.league_id);
     assert_eq!(reconstructed.floor_price_minor, record.floor_price_minor);
     assert_eq!(reconstructed.bucket_key, record.bucket_key);
-    assert_eq!(reconstructed.cost_amount_minor, record.cost_amount_minor);
     assert_eq!(reconstructed.issuance_currency, record.issuance_currency);
     assert_eq!(reconstructed.reference_currency, record.reference_currency);
     assert_eq!(reconstructed.issued_at, record.issued_at);
@@ -109,7 +108,6 @@ fn stored_events_carry_exact_canonical_nod_bodies_and_commitments() {
         league_id: 0,
         floor_price_minor: U256::ZERO,
         bucket_key: B256::ZERO,
-        cost_amount_minor: U256::ZERO,
         issuance_currency: 0,
         reference_currency: 0,
         issued_at: 0,
@@ -123,7 +121,6 @@ fn stored_events_carry_exact_canonical_nod_bodies_and_commitments() {
         league_id: u16::MAX,
         floor_price_minor: U256::MAX,
         bucket_key: B256::repeat_byte(u8::MAX),
-        cost_amount_minor: U256::MAX,
         issuance_currency: u16::MAX,
         reference_currency: u16::MAX,
         issued_at: u64::MAX,

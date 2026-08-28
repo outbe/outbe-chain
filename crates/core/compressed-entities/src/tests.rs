@@ -129,7 +129,6 @@ fn nod_item_v1_uses_one_strict_canonical_protobuf_representation() {
         league_id: 2,
         floor_price_minor: U256::from(2),
         bucket_key: B256::repeat_byte(0x33),
-        cost_amount_minor: U256::from(3),
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 5,
@@ -145,7 +144,6 @@ fn nod_item_v1_uses_one_strict_canonical_protobuf_representation() {
         "32200000000000000000000000000000000000000000000000000000000000000002",
         "3a20",
         "3333333333333333333333333333333333333333333333333333333333333333",
-        "42200000000000000000000000000000000000000000000000000000000000000003",
         "48c806",
         "50d207",
         "5805"
@@ -172,7 +170,6 @@ fn a_nod_item_carrying_the_retired_settled_field_is_rejected() {
         league_id: 2,
         floor_price_minor: U256::from(2),
         bucket_key: B256::repeat_byte(0x33),
-        cost_amount_minor: U256::from(3),
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 5,
@@ -186,6 +183,40 @@ fn a_nod_item_carrying_the_retired_settled_field_is_rejected() {
     assert!(matches!(
         decode_nod_item_v1(&settled),
         Err(CanonicalBodyError::UnknownField { field: 12 })
+    ));
+}
+
+/// Field 8 carried the Nod's cost until it became a derivation from the
+/// bucket's entry price and the Nod's gratis load. Every body wrote it, so
+/// retiring it is a deliberate wire break: a body that still carries it states
+/// a cost this schema no longer owns, and must be refused rather than decoded
+/// with the value dropped on the floor.
+#[test]
+fn a_nod_item_carrying_the_retired_cost_field_is_rejected() {
+    // The exact bytes this schema produced before the cost became a derivation
+    // from the bucket's entry price and the Nod's gratis load: field 8 sitting
+    // in its canonical position between `bucket_key` and `issuance_currency`.
+    let with_cost = hex::decode(concat!(
+        "0a2000000001",
+        "11111111111111111111111111111111111111111111111111111111",
+        "1214",
+        "2222222222222222222222222222222222222222",
+        "1a200000000000000000000000000000000000000000000000000000000000000001",
+        "2001",
+        "2802",
+        "32200000000000000000000000000000000000000000000000000000000000000002",
+        "3a20",
+        "3333333333333333333333333333333333333333333333333333333333333333",
+        "42200000000000000000000000000000000000000000000000000000000000000003",
+        "48c806",
+        "50d207",
+        "5805"
+    ))
+    .unwrap();
+
+    assert!(matches!(
+        decode_nod_item_v1(&with_cost),
+        Err(CanonicalBodyError::UnknownField { field: 8 })
     ));
 }
 
@@ -388,7 +419,6 @@ fn protobuf_profile_rejects_order_length_width_wire_and_range_violations() {
         league_id: 2,
         floor_price_minor: U256::from(2),
         bucket_key: B256::repeat_byte(0x33),
-        cost_amount_minor: U256::from(3),
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 5,

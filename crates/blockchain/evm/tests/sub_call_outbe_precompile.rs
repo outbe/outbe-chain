@@ -274,7 +274,6 @@ fn subcall_reaches_nod_with_the_same_runtime_body_readers() {
         league_id: 3,
         floor_price_minor: U256::from(10),
         bucket_key,
-        cost_amount_minor: U256::from(12),
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 1_700_000_000,

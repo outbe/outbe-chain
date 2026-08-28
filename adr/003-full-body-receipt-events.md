@@ -156,7 +156,6 @@ worldwide_day
 league_id
 floor_price_minor
 bucket_key
-cost_amount_minor
 issuance_currency
 reference_currency
 issued_at

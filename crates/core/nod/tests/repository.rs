@@ -45,7 +45,6 @@ fn nod(nod_id: WwdEntityId, owner: Address) -> NodItemState {
         league_id: u16::MAX,
         floor_price_minor: U256::ZERO,
         bucket_key: B256::repeat_byte(0x33),
-        cost_amount_minor: U256::MAX,
         issuance_currency: 0,
         reference_currency: u16::MAX,
         issued_at: u64::MAX,
@@ -269,7 +268,6 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
             league_id: 0,
             floor_price_minor: U256::ZERO,
             bucket_key: B256::ZERO,
-            cost_amount_minor: U256::ZERO,
             issuance_currency: 0,
             reference_currency: 0,
             issued_at: 0,
@@ -282,7 +280,6 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
             league_id: u16::MAX,
             floor_price_minor: U256::MAX,
             bucket_key: B256::repeat_byte(u8::MAX),
-            cost_amount_minor: U256::MAX,
             issuance_currency: u16::MAX,
             reference_currency: u16::MAX,
             issued_at: u64::MAX,
@@ -297,7 +294,6 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
         assert_eq!(decoded.league_id, body.league_id);
         assert_eq!(decoded.floor_price_minor, body.floor_price_minor);
         assert_eq!(decoded.bucket_key, body.bucket_key);
-        assert_eq!(decoded.cost_amount_minor, body.cost_amount_minor);
         assert_eq!(decoded.issuance_currency, body.issuance_currency);
         assert_eq!(decoded.reference_currency, body.reference_currency);
         assert_eq!(decoded.issued_at, body.issued_at);

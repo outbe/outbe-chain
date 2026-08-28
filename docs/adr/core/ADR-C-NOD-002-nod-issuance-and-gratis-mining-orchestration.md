@@ -118,11 +118,15 @@ and there is no separate settlement command or persisted settled flag. The
 underlying assets reach the reserve vault when the note is deposited through
 `IPayNote.deposit`, which routes them under `StablesSource::PayNoteDeposit`.
 What `mineGratis` verifies is the proof obligation: `payNoteProof` must name the
-caller as its spender, carry the asset VaultRouter resolves from
+caller as its spender, carry one of the assets VaultRouter registers under
 `referenceCurrencyAssets` for the NOD's `reference_currency`, and cover the
-recorded `cost_amount_minor`. `NodPaid` names the spent nullifier rather than a
-payer, which is the property the scheme exists for. A zero-cost NOD takes empty
-proof bytes and resolves no asset; a non-empty proof on one is rejected.
+NOD's cost. `NodPaid` names the spent nullifier rather than a payer, which is
+the property the scheme exists for.
+
+The cost is not stored on the NOD. It is derived on demand as
+`floor(bucket.entry_price_minor * gratis_load_minor / 1e6)` — the same formula
+Lysis mints the NOD from — so there is one definition and nothing to keep in
+sync. Lysis rejects a zero cost at issuance, so every NOD has a note to burn.
 
 Binding the proof's spender to the caller is what stops a third party from
 lifting an observed proof to pay for their own NOD; notes are otherwise bearer
@@ -172,11 +176,7 @@ over the exact encoded NOD id and a big-endian `u64` nonce.
 
 ## Open questions and technical debt
 
-- When multiple assets are registered for one reference currency, cost discharge
-  currently accepts a PayNote carrying the first even though registry order has
-  no economic meaning. A future policy must define spender choice or canonical
-  selection.
-- A spend that covers more than `cost_amount_minor` is accepted and the excess is
+- A spend that covers more than the NOD's cost is accepted and the excess is
   not refunded. The circuit can produce exact change, so the spender controls
   this; whether the runtime should instead require equality is open.
 - VaultRouter share results and exact received value need an explicit receipt if

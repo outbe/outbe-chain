@@ -341,7 +341,6 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
         league_id: 7,
         floor_price_minor: U256::from(14),
         bucket_key,
-        cost_amount_minor: U256::from(15),
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 1_752_534_000,
@@ -395,7 +394,7 @@ fn replay_from_genesis_converges_for_mint_update_and_delete_in_all_namespaces() 
 
     // Block 2: update each namespace through the generic capability boundary.
     tribute.tribute_price_minor += U256::from(1);
-    nod.cost_amount_minor += U256::from(1);
+    nod.gratis_load_minor += U256::from(1);
     execution.set_block_number(2);
     let scope = execution_scope(&tree, tree_parent);
     let seal2 = StorageHandle::enter(&mut execution, |storage| {

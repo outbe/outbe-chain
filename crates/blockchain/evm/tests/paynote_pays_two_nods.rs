@@ -114,8 +114,8 @@ fn nod_params(day: u32) -> NodIssueParams {
         worldwide_day: WorldwideDay::new(day),
         league_id: 1,
         floor_price_minor: U256::from(540),
-        entry_price_minor: U256::from(500),
-        cost_amount_minor: U256::from(COST),
+        // The cost is derived, never stored: entry_price x gratis_load / 1e6.
+        entry_price_minor: U256::from(COST * 1_000_000 / GRATIS_LOAD),
         issuance_currency: REFERENCE_CURRENCY,
         reference_currency: REFERENCE_CURRENCY,
     }

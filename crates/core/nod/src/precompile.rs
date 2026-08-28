@@ -87,7 +87,7 @@ pub fn dispatch(
                 let bucket = api::get_bucket(&storage, scope, parent, bucket_id)?
                     .ok_or(NodError::BucketNotFound)?;
                 let called_at = nod.bucket_called_at.read(&item.bucket_key)?;
-                Ok(to_abi_data(&item, &bucket, called_at))
+                to_abi_data(&item, &bucket, called_at)
             }),
             certifiedGeneration(c) => view(c, |c| {
                 let worldwide_day = WorldwideDay::new(c.worldwideDay);
@@ -102,6 +102,8 @@ pub fn dispatch(
 
 fn token_uri(item: &NodItemState, bucket: &NodBucketState) -> Result<String> {
     let nod_id_str = item.nod_id.to_u256().to_string();
+    let cost_amount_minor =
+        api::cost_amount_minor(bucket.entry_price_minor, item.gratis_load_minor)?;
     let json = format!(
         "{{\"name\":\"Nod #{}\",\"description\":\"{}\",\"image\":\"{}{}\",\"attributes\":[{{\"trait_type\":\"token_id\",\"value\":\"{}\"}},{{\"trait_type\":\"worldwide_day\",\"value\":{}}},{{\"trait_type\":\"league_id\",\"value\":{}}},{{\"trait_type\":\"floor_price_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"gratis_load_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_of_gratis_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"cost_amount_minor\",\"value\":\"{}\"}},{{\"trait_type\":\"is_qualified\",\"value\":{}}},{{\"trait_type\":\"issued_at\",\"value\":{}}},{{\"trait_type\":\"reference_currency\",\"value\":{}}},{{\"trait_type\":\"issuance_currency\",\"value\":{}}}]}}",
         nod_id_str,
@@ -114,7 +116,7 @@ fn token_uri(item: &NodItemState, bucket: &NodBucketState) -> Result<String> {
         item.floor_price_minor,
         item.gratis_load_minor,
         bucket.entry_price_minor,
-        item.cost_amount_minor,
+        cost_amount_minor,
         if bucket.is_qualified { "true" } else { "false" },
         item.issued_at,
         item.reference_currency,
@@ -124,8 +126,12 @@ fn token_uri(item: &NodItemState, bucket: &NodBucketState) -> Result<String> {
     Ok(format!("data:application/json;base64,{encoded}"))
 }
 
-fn to_abi_data(item: &NodItemState, bucket: &NodBucketState, called_at: u64) -> INod::NodData {
-    INod::NodData {
+fn to_abi_data(
+    item: &NodItemState,
+    bucket: &NodBucketState,
+    called_at: u64,
+) -> Result<INod::NodData> {
+    Ok(INod::NodData {
         nodId: item.nod_id.to_u256(),
         owner: item.owner,
         worldwideDay: item.worldwide_day.into(),
@@ -133,13 +139,13 @@ fn to_abi_data(item: &NodItemState, bucket: &NodBucketState, called_at: u64) -> 
         floorPriceMinor: item.floor_price_minor,
         gratisLoadMinor: item.gratis_load_minor,
         costOfGratisMinor: bucket.entry_price_minor,
-        costAmountMinor: item.cost_amount_minor,
+        costAmountMinor: api::cost_amount_minor(bucket.entry_price_minor, item.gratis_load_minor)?,
         isQualified: bucket.is_qualified,
         issuanceCurrency: item.issuance_currency,
         referenceCurrency: item.reference_currency,
         issuedAt: item.issued_at,
         calledAt: called_at,
-    }
+    })
 }
 
 fn to_abi_certified_generation(

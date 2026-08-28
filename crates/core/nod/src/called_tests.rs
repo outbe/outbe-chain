@@ -92,7 +92,6 @@ fn nod_item_at(owner: Address, iso: u16, floor_price_minor: U256) -> NodItemStat
         league_id: 4,
         floor_price_minor,
         bucket_key: NodContract::bucket_key(worldwide_day, floor_price_minor, iso),
-        cost_amount_minor: U256::from(17),
         issuance_currency: iso,
         reference_currency: iso,
         issued_at: START,

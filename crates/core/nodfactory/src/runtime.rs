@@ -65,7 +65,6 @@ fn issue_nod_inner(
         league_id: params.league_id,
         floor_price_minor: params.floor_price_minor,
         bucket_key,
-        cost_amount_minor: params.cost_amount_minor,
         issuance_currency: params.issuance_currency,
         reference_currency: params.reference_currency,
         issued_at,
@@ -82,7 +81,10 @@ fn issue_nod_inner(
             floorPriceMinor: params.floor_price_minor,
             gratisLoadMinor: params.gratis_load_minor,
             entryPriceMinor: params.entry_price_minor,
-            costAmountMinor: params.cost_amount_minor,
+            costAmountMinor: nod_api::cost_amount_minor(
+                params.entry_price_minor,
+                params.gratis_load_minor,
+            )?,
         },
     )?;
 
@@ -111,8 +113,8 @@ pub struct MineGratisRequest<'proof> {
 /// reserve vault when the note was deposited through `IPayNote.deposit`, which
 /// routes them under `StablesSource::PayNoteDeposit`. What happens here is the
 /// proof obligation: `paynote_proof` must name `caller` as its spender, carry
-/// the asset registered for the Nod's `reference_currency`, and cover
-/// `cost_amount_minor`.
+/// the asset registered for the Nod's `reference_currency`, and cover the Nod's
+/// cost.
 pub fn mine_gratis(
     storage: &StorageHandle<'_>,
     scope: &ExecutionScope,
@@ -200,7 +202,13 @@ fn mine_gratis_inner(
         return Err(NodFactoryError::CallDeadlineExpired.into());
     }
 
-    let paid = discharge_cost(storage, item.body(), caller, paynote_proof)?;
+    let paid = discharge_cost(
+        storage,
+        item.body(),
+        bucket.body().entry_price_minor,
+        caller,
+        paynote_proof,
+    )?;
 
     let owner = item.body().owner;
     let gratis_load_minor = item.body().gratis_load_minor;
@@ -248,10 +256,11 @@ struct PaidCost {
 fn discharge_cost(
     storage: &StorageHandle<'_>,
     item: &NodItemState,
+    entry_price_minor: U256,
     caller: Address,
     paynote_proof: &[u8],
 ) -> Result<PaidCost> {
-    let cost = item.cost_amount_minor;
+    let cost = nod_api::cost_amount_minor(entry_price_minor, item.gratis_load_minor)?;
     let cost_minor =
         u128::try_from(cost).map_err(|_| NodFactoryError::SettlementCostTooLarge { cost })?;
 

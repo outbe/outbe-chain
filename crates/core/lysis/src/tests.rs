@@ -415,10 +415,6 @@ fn gas_08_lysis_dense_day_completes_and_emits_body_mutations() {
         assert_eq!(item.worldwide_day, wwd);
         assert_eq!(item.league_id, 1);
         assert!(!item.gratis_load_minor.is_zero());
-        assert_eq!(
-            item.cost_amount_minor,
-            cost_of_gratis * item.gratis_load_minor / SIX_DECIMAL_SCALE,
-        );
         issued_gratis += item.gratis_load_minor;
     }
     assert_eq!(issued_gratis + result.remaining_gratis, gratis_allocation);
@@ -855,16 +851,24 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
     assert_eq!(item.floor_price_minor, expected_action.floor_price_minor);
     assert_eq!(item.gratis_load_minor, expected_action.gratis_load_minor);
     assert_eq!(item.bucket_key, expected_action.bucket_key);
-    assert_eq!(item.cost_amount_minor, expected_action.cost_amount_minor);
     assert_eq!(item.issuance_currency, expected_action.issuance_currency);
     assert_eq!(item.reference_currency, expected_action.reference_currency);
     assert_eq!(item.issued_at, expected_action.issued_at);
 
+    // The cost is derived from the bucket entry price and the load, never
+    // stored: this pins that derivation to what lysis itself computed.
+    let cost = outbe_nod::api::cost_amount_minor(
+        expected_action.entry_price_minor,
+        item.gratis_load_minor,
+    )
+    .expect("derive the Nod cost");
+    assert_eq!(cost, expected_action.cost_amount_minor);
+
     let expected = cost_of_gratis * item.gratis_load_minor / SIX_DECIMAL_SCALE;
     assert_eq!(
-        item.cost_amount_minor,
+        cost,
         expected,
-        "cost_amount_minor must use the WWD VWAP below the active S-curve and equal \
+        "the Nod cost must use the WWD VWAP below the active S-curve and equal \
          cost_of_gratis * gratis_load / SIX_DECIMAL_SCALE; \
          pre-fix value (missing /SCALE) would be {}",
         cost_of_gratis * item.gratis_load_minor
@@ -872,9 +876,8 @@ fn lysis_reads_repository_body_with_empty_legacy_evm_body_state() {
 
     let upper_bound = coen(1_000u64);
     assert!(
-        item.cost_amount_minor <= upper_bound,
-        "cost_amount_minor {} looks like a 10^12-scaled value; likely a scale-mismatch regression",
-        item.cost_amount_minor
+        cost <= upper_bound,
+        "Nod cost {cost} looks like a 10^12-scaled value; likely a scale-mismatch regression"
     );
 }
 

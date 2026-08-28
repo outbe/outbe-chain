@@ -74,11 +74,17 @@ fn params(owner: Address) -> NodIssueParams {
         worldwide_day: WorldwideDay::new(20_241_220),
         league_id: 1,
         floor_price_minor: U256::from(540),
-        entry_price_minor: U256::from(500),
-        cost_amount_minor: U256::from(500),
+        entry_price_minor: U256::from(500_000),
         issuance_currency: 840,
         reference_currency: 840,
     }
+}
+
+/// The Nod's derived cost, in the `u128` minor units a PayNote spend carries.
+fn cost_of(input: &NodIssueParams) -> u128 {
+    let cost = outbe_nod::api::cost_amount_minor(input.entry_price_minor, input.gratis_load_minor)
+        .expect("derive the Nod cost");
+    u128::try_from(cost).expect("test Nod cost fits a PayNote spend amount")
 }
 
 fn find_valid_nonce(nod_id: WwdEntityId) -> u64 {
@@ -192,7 +198,7 @@ impl World {
     /// needs.
     fn covering_proof(&mut self, input: &NodIssueParams) -> Vec<u8> {
         self.register_reference_currency_asset(NOTE_ASSET);
-        let cost = u128::try_from(input.cost_amount_minor).unwrap();
+        let cost = cost_of(input);
         self.fund_note(NOTE_ASSET, input.owner, cost, cost).0
     }
 
@@ -492,7 +498,7 @@ fn a_covering_paynote_mines_a_paid_nod_and_books_the_nullifier() {
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_reference_currency_asset(NOTE_ASSET);
-    let cost = u128::try_from(input.cost_amount_minor).unwrap();
+    let cost = cost_of(&input);
     let (proof, _nullifier) = world.fund_note(NOTE_ASSET, input.owner, cost, cost);
     world.provider.clear_events(NOD_FACTORY_ADDRESS);
     let nonce = find_valid_nonce(nod_id);
@@ -525,7 +531,7 @@ fn a_covering_paynote_mines_a_paid_nod_and_books_the_nullifier() {
         paid[0].asset, NOTE_ASSET,
         "the log must name the asset the note carried"
     );
-    assert_eq!(paid[0].amountCovered, input.cost_amount_minor);
+    assert_eq!(paid[0].amountCovered, U256::from(cost_of(&input)));
 
     let spent = world
         .enter(|storage, _, _| outbe_paynote::api::is_spent(&storage, paid[0].nullifier).unwrap());
@@ -539,7 +545,7 @@ fn a_paynote_short_of_the_cost_leaves_the_nod_and_the_note_intact() {
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_reference_currency_asset(NOTE_ASSET);
-    let cost = u128::try_from(input.cost_amount_minor).unwrap();
+    let cost = cost_of(&input);
     let (proof, _nullifier) = world.fund_note(NOTE_ASSET, input.owner, cost, cost - 1);
     let nonce = find_valid_nonce(nod_id);
 
@@ -577,7 +583,7 @@ fn a_rejected_mine_unbooks_the_nullifier_it_had_already_spent() {
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_reference_currency_asset(NOTE_ASSET);
-    let cost = u128::try_from(input.cost_amount_minor).unwrap();
+    let cost = cost_of(&input);
     let (proof, nullifier) = world.fund_note(NOTE_ASSET, input.owner, cost, cost - 1);
     let nonce = find_valid_nonce(nod_id);
 
@@ -603,7 +609,7 @@ fn a_paynote_naming_another_spender_cannot_pay_this_nod() {
     let nod_id = world.issue(&input);
     world.qualify(nod_id);
     world.register_reference_currency_asset(NOTE_ASSET);
-    let cost = u128::try_from(input.cost_amount_minor).unwrap();
+    let cost = cost_of(&input);
     let stranger = Address::repeat_byte(0x65);
     let (proof, _nullifier) = world.fund_note(NOTE_ASSET, stranger, cost, cost);
     let nonce = find_valid_nonce(nod_id);
@@ -636,7 +642,7 @@ fn a_paynote_in_the_wrong_asset_cannot_pay_this_nod() {
     world.qualify(nod_id);
     world.register_reference_currency_asset(NOTE_ASSET);
     let other_asset = Address::repeat_byte(0x67);
-    let cost = u128::try_from(input.cost_amount_minor).unwrap();
+    let cost = cost_of(&input);
     let (proof, _nullifier) = world.fund_note(other_asset, input.owner, cost, cost);
     let nonce = find_valid_nonce(nod_id);
 
@@ -670,7 +676,7 @@ fn any_asset_registered_for_the_reference_currency_pays_the_nod() {
     // picks which one their note carries, and it need not be the first.
     let second_asset = Address::repeat_byte(0x6b);
     world.register_reference_currency_assets(vec![NOTE_ASSET, second_asset]);
-    let cost = u128::try_from(input.cost_amount_minor).unwrap();
+    let cost = cost_of(&input);
     let (proof, nullifier) = world.fund_note(second_asset, input.owner, cost, cost);
     let nonce = find_valid_nonce(nod_id);
 
@@ -694,7 +700,7 @@ fn one_note_cannot_pay_two_nods() {
     let first_id = world.issue(&first);
     world.qualify(first_id);
     world.register_reference_currency_asset(NOTE_ASSET);
-    let cost = u128::try_from(first.cost_amount_minor).unwrap();
+    let cost = cost_of(&first);
     let (proof, _nullifier) = world.fund_note(NOTE_ASSET, first.owner, cost, cost);
 
     world
@@ -732,8 +738,11 @@ fn one_note_cannot_pay_two_nods() {
 fn a_nod_cost_wider_than_a_paynote_amount_is_rejected_not_truncated() {
     let mut world = World::new();
     let cost = U256::from(u128::MAX) + U256::ONE;
+    // The cost is derived as entry_price x gratis_load / 1e6, so a load of
+    // exactly 1e6 makes the entry price the cost.
     let input = NodIssueParams {
-        cost_amount_minor: cost,
+        gratis_load_minor: U256::from(1_000_000),
+        entry_price_minor: cost,
         ..params(Address::repeat_byte(0x6a))
     };
     let nod_id = world.issue(&input);

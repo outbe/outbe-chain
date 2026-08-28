@@ -249,7 +249,6 @@ fn nod_body(nod_id: WwdEntityId, owner: Address, bucket_key: B256) -> NodItemSta
         league_id: 7,
         floor_price_minor: U256::from(102),
         bucket_key,
-        cost_amount_minor: U256::from(103),
         issuance_currency: 840,
         reference_currency: 978,
         issued_at: 123_456,
