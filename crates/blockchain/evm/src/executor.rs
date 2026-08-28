@@ -210,8 +210,8 @@ pub mod marker_addresses {
         VOTE_ADDRESS,
         // System-only compressed-entity commitment state (no public dispatch).
         COMPRESSED_ENTITIES_ADDRESS,
-        // PayNote note pool. The commitment tree, nullifier set and root window
-        // all live in its storage and it is not genesis-seeded, so this marker
+        // PayNote pool. All data live in its storage,
+        // and it is not genesis-seeded, so this marker
         // is its only EIP-161 preservation path (reth22-1 class).
         PAYNOTE_ADDRESS,
     ];

@@ -2,12 +2,10 @@
 pragma solidity ^0.8.0;
 
 /// @title IPayNote
-/// @notice Shielded ERC20 note pool at
-///         0x0000000000000000000000000000000000001019.
-///
+/// @notice Shielded pool at 0x0000000000000000000000000000000000001019.
 ///         A deposit pulls `amount` of `asset` from the caller, routes it into
 ///         the asset's reserve vault via VaultRouter, and appends a note
-///         commitment to a depth-32 incremental Merkle tree. The commitment is
+///         commitment to an incremental Merkle tree. The commitment is
 ///         always derived by the runtime from the transfer it actually
 ///         performed — opaque caller-supplied commitments are prohibited, so
 ///         Merkle membership attests both the asset and the amount.
@@ -29,13 +27,11 @@ interface IPayNote {
     error TreeFull();
 
     /// @notice Deposit `amount` of `asset` into the pool under `noteSn`.
-    /// @dev `noteSn` is the note serial — a hiding commitment to the spend key,
+    /// @dev `noteSn` is the note serial number — a hiding commitment to the spend key,
     ///      chosen off-chain as `P(NOTE_SN, [spendKey])`. It reveals nothing
-    ///      about the key. The runtime derives the leaf as
-    ///      `P(COMMITMENT, [chainId, noteSn, asset, amount])` from the transfer
-    ///      it performed. `asset` must have a vault registered in VaultRouter.
+    ///      about the key.
     /// @param asset ERC20 to deposit; must have a registered reserve vault.
-    /// @param amount Units to pull from the caller. Must be positive.
+    /// @param amount Units to pull from the caller.
     /// @param noteSn Caller-supplied note serial. Must be a non-zero canonical
     ///        BN254 field word.
     function deposit(address asset, uint128 amount, bytes32 noteSn) external;

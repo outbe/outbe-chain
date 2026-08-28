@@ -51,23 +51,35 @@ interface INodFactory {
         bytes32 stateEventDigest
     );
 
-    /// @notice Burn the caller-owned Nod and mint its gratis load to the
-    ///         caller. Authorized by the caller's Gratis modify key: `mac =
-    ///         HMAC(modifyKey, op-preimage)` where `opNonce` MUST equal the
-    ///         caller's current on-chain gratis op-nonce. The Nod owner is the
-    ///         gratis recipient, so they can always supply this authorization.
+    /// @notice Burn the caller-owned Nod and mint its gratis load to the caller.
     ///
-    ///         The Nod's cost is discharged here, by spending a PayNote rather
-    ///         than by a prior transparent payment. `payNoteProof` MUST be an
-    ///         `outbe.paynote` spend proof naming the caller as its spender,
-    ///         carrying the asset the VaultRouter has registered under the
-    ///         Nod's `referenceCurrency`, and covering `costAmountMinor`. The
-    ///         underlying value already reached the reserve vault when the note
-    ///         was deposited, so this call moves no tokens; it burns the note's
-    ///         nullifier and logs `NodPaid`.
+    /// @dev Callable only by the Nod's owner, who is also the gratis recipient
+    ///      and so can always supply the mint authorization.
     ///
-    ///         Empty `payNoteProof` bytes are accepted only for a zero-cost
-    ///         Nod, and a zero-cost Nod rejects a non-empty proof.
+    ///      The Nod's cost is discharged here, by spending a PayNote rather than
+    ///      by a prior transparent payment. The underlying value already reached
+    ///      the reserve vault when the note was deposited, so this call moves no
+    ///      tokens: it books the note's nullifier, appends any change note to the
+    ///      pool, and logs `NodPaid` naming that nullifier.
+    ///
+    ///      Guards run cheapest-first and the whole call is one rollback unit:
+    ///      owner, proof of work, bucket qualification, and the call-notice
+    ///      deadline are checked before the proof is verified, so a doomed call
+    ///      never pays for verification and a late failure leaves the note
+    ///      spendable. Reverts if the Nod's OCOMP generation is not yet fully
+    ///      materialized.
+    ///
+    /// @param nodId        Identifier of a Nod owned by the caller.
+    /// @param nonce        Proof-of-work nonce. `sha256(nodId_be32 || nonce_be8)`
+    ///                     MUST have the protocol's required leading zero bytes.
+    /// @param mac          Gratis mint authorization, `HMAC(modifyKey,
+    ///                     op-preimage)` under the caller's Gratis modify key.
+    /// @param opNonce      MUST equal the caller's current on-chain gratis
+    ///                     op-nonce; binds `mac` to exactly this mint.
+    /// @param payNoteProof `outbe.paynote` spend proof, carrying the asset the VaultRouter has
+    ///                     registered under the Nod's `referenceCurrency`, and
+    ///                     covering at least `costAmountMinor`.
+    /// @return Gratis minor units minted to the caller.
     function mineGratis(uint256 nodId, uint64 nonce, bytes32 mac, uint64 opNonce, bytes calldata payNoteProof)
         external
         returns (uint256);
