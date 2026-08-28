@@ -11,7 +11,7 @@ Feature: Transaction-pool eviction
   # healthy transaction submitted alongside must keep being mined.
 
   Scenario: A transaction that can never be mined is evicted from every pool
-    Given a fresh localnet with a 6-block voting window
+    Given a fresh txpool-eviction localnet with a 6-block voting window
     And the committee has reached a usable height
     When an operator submits a transaction with an unreachable nonce
     Then the unreachable transaction sits in the pool

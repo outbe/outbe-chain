@@ -39,9 +39,9 @@ use crate::internal::{
     addresses,
     config::Config,
     eth::{
-        self, IGovernance, IL2Registry, IMetadosis, INod, IRadicleRegistry, ISlashIndicator,
-        IStaking, ITeeRegistryV1, ITribute, IUpdate, IValidatorSet, IValidatorSetRaw, IVote,
-        IZeroFee,
+        self, IAgentReward, IGovernance, IL2Registry, IMetadosis, INod, IRadicleRegistry,
+        ISlashIndicator, IStaking, ITeeRegistryV1, ITribute, IUpdate, IValidatorSet,
+        IValidatorSetRaw, IVote, IZeroFee,
     },
     parse::{self, ScheduledUpdate, VoteStatus},
     shell::Sh,
@@ -75,6 +75,34 @@ fn zerofee_rollover_wait_budget_secs(latest_timestamp: u64) -> u64 {
     remaining
         .saturating_add(FINALITY_SLACK_SECONDS)
         .max(MINIMUM_WAIT_SECONDS)
+}
+
+#[cfg(feature = "ocomp-integration")]
+fn encode_reward_bearing_tribute_plaintext(
+    creator: Address,
+    tribute_draft_id: B256,
+    amount_base: &str,
+    amount_atto: &str,
+    su_hash: B256,
+    wallet_addresses: &[Address],
+    sra_addresses: &[Address],
+) -> Result<Vec<u8>> {
+    serde_json::to_vec(&serde_json::json!({
+        "creator": format!("{creator:#x}"),
+        "tribute_draft_id": format!("{tribute_draft_id:#x}"),
+        "amount_base": amount_base,
+        "amount_atto": amount_atto,
+        "su_hashes": [format!("{su_hash:#x}")],
+        "wallet_addresses": wallet_addresses
+            .iter()
+            .map(|address| format!("{address:#x}"))
+            .collect::<Vec<_>>(),
+        "sra_addresses": sra_addresses
+            .iter()
+            .map(|address| format!("{address:#x}"))
+            .collect::<Vec<_>>(),
+    }))
+    .map_err(Into::into)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1556,6 +1584,38 @@ impl Rpc {
         eth::balance(&self.url(port), addr.parse().ok()?)
     }
 
+    /// AgentReward claimable balance observed through the public ABI on one
+    /// validator.
+    pub fn get_agent_reward_claimable_balance_on(
+        &self,
+        port: u16,
+        account: Address,
+    ) -> Option<U256> {
+        eth::read_call(
+            &self.url(port),
+            addresses::AGENT_REWARD_ADDR,
+            &IAgentReward::getClaimableBalanceCall { account },
+        )
+    }
+
+    /// Claim the caller's complete AgentReward through an ordinary paid
+    /// transaction and return its public receipt.
+    pub fn claim_all_agent_reward(&self, key: &str) -> Result<serde_json::Value> {
+        let tx_hash = eth::send_call(
+            &self.cfg.rpc0,
+            addresses::AGENT_REWARD_ADDR,
+            key,
+            &IAgentReward::claimRewardCall { amount: U256::ZERO },
+            None,
+        )?;
+        let receipt = eth::receipt_json(&self.cfg.rpc0, &tx_hash)
+            .ok_or_else(|| eyre!("AgentReward claim receipt unavailable: {tx_hash}"))?;
+        if !receipt_status(&receipt) {
+            return Err(eyre!("AgentReward claim reverted: {tx_hash}"));
+        }
+        Ok(receipt)
+    }
+
     pub fn staking_balance_on(&self, port: u16) -> Option<U256> {
         eth::balance(&self.url(port), addresses::STK_ADDR)
     }
@@ -2059,6 +2119,86 @@ impl Rpc {
             self.address_of(key).unwrap_or_else(|| "unknown".to_owned()),
         );
         Some(tx_hash)
+    }
+
+    /// Submit one real encrypted Tribute whose enclave result attributes one
+    /// WAA and one SRA beneficiary. This is a harness-only producer for the
+    /// existing public ABI; production reward accounting remains unchanged.
+    #[cfg(feature = "ocomp-integration")]
+    pub fn submit_tribute_offer_with_agent_rewards(
+        &self,
+        key: &str,
+        wwd: &str,
+        wallet_addresses: &[Address],
+        sra_addresses: &[Address],
+    ) -> Option<String> {
+        let worldwide_day = wwd.parse::<u32>().ok()?;
+        let creator = eth::address_of(key)?;
+        let bootstrapped: bool = eth::read_call(
+            &self.cfg.rpc0,
+            outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+            &ITeeRegistryV1::isBootstrappedCall {},
+        )?;
+        if !bootstrapped {
+            return None;
+        }
+        let offer_public_key: U256 = eth::read_call(
+            &self.cfg.rpc0,
+            outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+            &ITeeRegistryV1::tributeOfferPublicKeyCall {},
+        )?;
+        let entropy = format!(
+            "agent-reward-tribute:{creator:#x}:{worldwide_day}:{}",
+            unix_time_millis()
+        );
+        let tribute_draft_id = keccak256(entropy.as_bytes());
+        let su_hash = keccak256([entropy.as_bytes(), b":su"].concat());
+        let plaintext = encode_reward_bearing_tribute_plaintext(
+            creator,
+            tribute_draft_id,
+            "100",
+            "0",
+            su_hash,
+            wallet_addresses,
+            sra_addresses,
+        )
+        .ok()?;
+        let (cipher_text, nonce, ephemeral_public_key) =
+            outbe_tee::offer_encrypt::encrypt_tribute_offer(
+                &offer_public_key.to_be_bytes::<32>(),
+                &plaintext,
+            )
+            .ok()?;
+        let call = ITributeFactory::offerTributeCall {
+            cipherText: cipher_text.into(),
+            nonce: nonce.to_vec().into(),
+            ephemeralPubkey: U256::from_be_bytes(ephemeral_public_key),
+            worldwideDay: worldwide_day,
+            tributeCurrency: 840,
+            referenceCurrency: 840,
+            excludeFromIntexIssuance: false,
+            zkProof: Bytes::new(),
+            zkVerificationKey: Bytes::new(),
+            zkPublicKey: Bytes::new(),
+            zkMerkleRoot: Bytes::new(),
+            signature: Bytes::new(),
+        };
+        let outcome = eth::send_call_outcome(
+            &self.cfg.rpc0,
+            outbe_primitives::addresses::TRIBUTE_FACTORY_ADDRESS,
+            key,
+            &call,
+            Some(U256::ZERO),
+        )
+        .ok()?;
+        eprintln!(
+            "E2E_TRIBUTE_TIMELINE stage=agent-reward-submitted wall_ms={} tx={} owner={creator:#x} wwd={worldwide_day} waa={} sra={}",
+            unix_time_millis(),
+            outcome.transaction_hash,
+            wallet_addresses.len(),
+            sra_addresses.len(),
+        );
+        Some(outcome.transaction_hash)
     }
 
     /// Submit one real encrypted Tribute while keeping issuance and reference
@@ -4237,5 +4377,34 @@ mod ocomp_tests {
     fn zerofee_rollover_wait_budget_covers_the_canonical_distance_to_boundary() {
         assert_eq!(zerofee_rollover_wait_budget_secs(1_787_615_641), 419);
         assert_eq!(zerofee_rollover_wait_budget_secs(1_787_615_950), 150);
+    }
+
+    #[cfg(feature = "ocomp-integration")]
+    #[test]
+    fn encoded_reward_bearing_tribute_plaintext_preserves_waa_and_sra_beneficiaries() {
+        let creator = Address::repeat_byte(0x11);
+        let waa = Address::repeat_byte(0x22);
+        let sra = Address::repeat_byte(0x33);
+        let plaintext = encode_reward_bearing_tribute_plaintext(
+            creator,
+            B256::repeat_byte(0x44),
+            "100",
+            "0",
+            B256::repeat_byte(0x55),
+            &[waa],
+            &[sra],
+        )
+        .expect("encode reward-bearing Tribute plaintext");
+        let payload: serde_json::Value =
+            serde_json::from_slice(&plaintext).expect("decode Tribute plaintext");
+
+        assert_eq!(
+            payload["wallet_addresses"],
+            serde_json::json!([format!("{waa:#x}")])
+        );
+        assert_eq!(
+            payload["sra_addresses"],
+            serde_json::json!([format!("{sra:#x}")])
+        );
     }
 }
