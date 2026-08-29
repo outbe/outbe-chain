@@ -82,9 +82,7 @@ library IntexMetadata {
             "\"},",
             settled
                 ? ""
-                : string.concat(
-                    "{\"trait_type\":\"Series State\",\"value\":\"", _stateString(data.state), "\"},"
-                ),
+                : string.concat("{\"trait_type\":\"Series State\",\"value\":\"", _stateString(data.state), "\"},"),
             "{\"trait_type\":\"Worldwide Day\",\"value\":",
             Strings.toString(data.worldwideDay),
             ",\"display_type\":\"number\"},",
