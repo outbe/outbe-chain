@@ -8,9 +8,9 @@ use eyre::{Result, WrapErr as _};
 use outbe_primitives::{
     addresses::TEE_REGISTRY_ADDRESS,
     tee_attestation_v1::{
-        AttestationEvidenceV1, AttestationOperationV1, DcapEvidenceV1,
-        EnclaveInitializationManifestV1, RegistrationIntentV1, RegistryMutatorV1,
-        TeeRegistryGasScheduleV1,
+        AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapEvidenceV1,
+        EnclaveInitializationManifestV1, GramineDirectEvidenceV1, RegistrationIntentV1,
+        RegistryMutatorV1, TeeRegistryGasScheduleV1,
     },
     tee_registry_abi_v1::ITeeRegistryV1,
 };
@@ -26,7 +26,7 @@ use crate::{
 
 use super::{
     registry::{
-        read_finalized_renewal_view_v1, FinalizedRenewalChainViewV1, NodeBindingSelectorV1,
+        read_finalized_bound_renewal_view_v1, FinalizedRenewalChainViewV1, NodeBindingSelectorV1,
         RenewalBindingV1,
     },
     renewal_journal::{
@@ -39,6 +39,13 @@ pub trait RenewalEnclaveV1 {
         &mut self,
         intent: &RegistrationIntentV1,
     ) -> Result<GeneratedDcapQuoteV1>;
+
+    fn sign_registration_intent_dev_v1(
+        &mut self,
+        _intent: &RegistrationIntentV1,
+    ) -> Result<[u8; 64]> {
+        eyre::bail!("renewal enclave does not support GramineDirectDev intent signing")
+    }
 }
 
 impl RenewalEnclaveV1 for AuthorizedEnclaveClient {
@@ -47,6 +54,14 @@ impl RenewalEnclaveV1 for AuthorizedEnclaveClient {
         intent: &RegistrationIntentV1,
     ) -> Result<GeneratedDcapQuoteV1> {
         AuthorizedEnclaveClient::generate_dcap_quote(self, intent)
+            .map_err(|error| eyre::eyre!(error))
+    }
+
+    fn sign_registration_intent_dev_v1(
+        &mut self,
+        intent: &RegistrationIntentV1,
+    ) -> Result<[u8; 64]> {
+        AuthorizedEnclaveClient::sign_registration_intent_dev_v1(self, intent)
             .map_err(|error| eyre::eyre!(error))
     }
 }
@@ -121,7 +136,7 @@ pub async fn run_renewal_once_v1(
     }
     let _upgrade_guard = upgrade_guard;
     let journal = RenewalJournalGuard::acquire(&config.node_data_dir)?;
-    let view = read_finalized_renewal_view_v1(rpc, &config.selector).await?;
+    let view = read_finalized_bound_renewal_view_v1(rpc, &config.selector).await?;
     validate_identity(config, &view)?;
 
     if let Some(snapshot) = journal.load()? {
@@ -262,29 +277,22 @@ async fn prepare_attempt(
     let desired_valid_until = next_renewal_deadline(&view.binding, view.policy.maximum_lease)
         .ok_or_else(|| eyre::eyre!("maximum renewal lease overflows timestamp"))?;
     let intent = renewal_intent(config, view, desired_valid_until)?;
-    let generated_evidence = generate_evidence(enclave, &intent, &view.policy)?;
-    let window = dcap_collateral_validity_window_v1(&generated_evidence.0, &view.policy)
-        .map_err(|error| eyre::eyre!("validate signed renewal collateral window: {error:?}"))?;
-    let ceiling = window
-        .expiration_ceiling
-        .checked_sub(view.policy.collateral_margin)
-        .ok_or_else(|| eyre::eyre!("renewal collateral cannot satisfy the active margin"))?;
-    if window.issue_floor > view.schedule.finalized_timestamp || desired_valid_until > ceiling {
-        eyre::bail!("fresh Intel collateral cannot cover the exact next renewal deadline");
-    }
+    let generated_evidence = generate_renewal_evidence(
+        enclave,
+        &intent,
+        &view.policy,
+        view.schedule.finalized_timestamp,
+        desired_valid_until,
+    )?;
     let intent_hash = intent
         .intent_hash()
         .map_err(|error| eyre::eyre!("hash renewal intent: {error}"))?;
     let node_signature = node_signer
         .sign_node_hash(intent_hash)
         .wrap_err("sign renewal intent with node authority")?;
-    let enclave_signature = generated_evidence.1;
-    let evidence_value = AttestationEvidenceV1::Dcap(generated_evidence.0);
-    let evidence = evidence_value
-        .encode_canonical()
-        .map_err(|error| eyre::eyre!("encode canonical renewal evidence: {error}"))?;
-    let evidence_hash = dcap_evidence_hash_v1(&evidence)
-        .map_err(|code| eyre::eyre!("hash canonical renewal DCAP evidence: {code:?}"))?;
+    let enclave_signature = generated_evidence.enclave_signature;
+    let evidence = generated_evidence.evidence;
+    let evidence_hash = generated_evidence.evidence_hash;
     let calldata = ITeeRegistryV1::renewEnclaveCall {
         evidence: evidence.clone().into(),
         nodeSignature: node_signature.to_vec().into(),
@@ -333,8 +341,8 @@ async fn prepare_attempt(
         calldata_hash: keccak256(&calldata),
         calldata,
         requested_valid_until: intent.requested_valid_until,
-        collateral_valid_until: window.expiration_ceiling,
-        collateral_margin: view.policy.collateral_margin,
+        collateral_valid_until: generated_evidence.collateral_valid_until,
+        collateral_margin: generated_evidence.collateral_margin,
         // `relay` is retained in the V1 journal shape for restart compatibility;
         // manual renewal binds it to the caller's global EVM signer.
         relay: evm_signer.address(),
@@ -379,7 +387,80 @@ fn renewal_intent(
     })
 }
 
-fn generate_evidence(
+struct GeneratedRenewalEvidenceV1 {
+    evidence: Vec<u8>,
+    evidence_hash: B256,
+    enclave_signature: [u8; 64],
+    collateral_valid_until: u64,
+    collateral_margin: u64,
+}
+
+fn generate_renewal_evidence(
+    enclave: &mut impl RenewalEnclaveV1,
+    intent: &RegistrationIntentV1,
+    policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
+    finalized_timestamp: u64,
+    desired_valid_until: u64,
+) -> Result<GeneratedRenewalEvidenceV1> {
+    match policy.attestation_mode {
+        AttestationMode::DcapRequired => {
+            let (dcap, enclave_signature) = generate_dcap_evidence(enclave, intent, policy)?;
+            let window = dcap_collateral_validity_window_v1(&dcap, policy).map_err(|error| {
+                eyre::eyre!("validate signed renewal collateral window: {error:?}")
+            })?;
+            let ceiling = window
+                .expiration_ceiling
+                .checked_sub(policy.collateral_margin)
+                .ok_or_else(|| {
+                    eyre::eyre!("renewal collateral cannot satisfy the active margin")
+                })?;
+            if window.issue_floor > finalized_timestamp || desired_valid_until > ceiling {
+                eyre::bail!("fresh Intel collateral cannot cover the exact next renewal deadline");
+            }
+            let value = AttestationEvidenceV1::Dcap(dcap);
+            let evidence = value
+                .encode_canonical()
+                .map_err(|error| eyre::eyre!("encode canonical renewal evidence: {error}"))?;
+            let evidence_hash = dcap_evidence_hash_v1(&evidence)
+                .map_err(|code| eyre::eyre!("hash canonical renewal DCAP evidence: {code:?}"))?;
+            Ok(GeneratedRenewalEvidenceV1 {
+                evidence,
+                evidence_hash,
+                enclave_signature,
+                collateral_valid_until: window.expiration_ceiling,
+                collateral_margin: policy.collateral_margin,
+            })
+        }
+        AttestationMode::GramineDirectDev => {
+            let enclave_signature = enclave
+                .sign_registration_intent_dev_v1(intent)
+                .wrap_err("sign renewal intent inside GramineDirectDev enclave")?;
+            if !intent.verify_enclave_signature(&enclave_signature) {
+                eyre::bail!("GramineDirectDev enclave signature does not bind renewal intent");
+            }
+            let value = AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+                intent: intent.clone(),
+                dev_attestation_public: intent.attestation_ed25519,
+                dev_signature: enclave_signature,
+            });
+            let evidence_hash = value
+                .evidence_hash()
+                .map_err(|error| eyre::eyre!("hash canonical renewal evidence: {error}"))?;
+            let evidence = value
+                .encode_canonical()
+                .map_err(|error| eyre::eyre!("encode canonical renewal evidence: {error}"))?;
+            Ok(GeneratedRenewalEvidenceV1 {
+                evidence,
+                evidence_hash,
+                enclave_signature,
+                collateral_valid_until: u64::MAX,
+                collateral_margin: 0,
+            })
+        }
+    }
+}
+
+fn generate_dcap_evidence(
     enclave: &mut impl RenewalEnclaveV1,
     intent: &RegistrationIntentV1,
     policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
@@ -525,9 +606,102 @@ fn next_renewal_deadline(binding: &RenewalBindingV1, lease_period: u64) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rpc::FinalityRpc;
     use crate::tx::RawRelayTransactionV1;
     use alloy_primitives::Address;
-    use outbe_primitives::tee_attestation_v1::{AttestationMode, NodeIdV1};
+    use ed25519_dalek::Signer as _;
+    use outbe_primitives::{
+        chain::DEVNET_CHAIN_ID,
+        tee_attestation_v1::{AttestationMode, EnclaveInitializationManifestV1, NodeIdV1},
+        tee_genesis_v1::{initial_tee_policy_v1, InitialTeeProfileV1},
+        tee_operator_v1::TeeRenewalScheduleV1,
+    };
+
+    struct DirectOnlyEnclave {
+        signer: ed25519_dalek::SigningKey,
+        dcap_calls: usize,
+        direct_calls: usize,
+    }
+
+    impl RenewalEnclaveV1 for DirectOnlyEnclave {
+        fn generate_dcap_quote(
+            &mut self,
+            _intent: &RegistrationIntentV1,
+        ) -> Result<GeneratedDcapQuoteV1> {
+            self.dcap_calls += 1;
+            eyre::bail!("DCAP must not be invoked for GramineDirectDev renewal")
+        }
+
+        fn sign_registration_intent_dev_v1(
+            &mut self,
+            intent: &RegistrationIntentV1,
+        ) -> Result<[u8; 64]> {
+            self.direct_calls += 1;
+            Ok(self
+                .signer
+                .sign(intent.intent_hash().unwrap().as_slice())
+                .to_bytes())
+        }
+    }
+
+    struct PreparationRpc;
+
+    impl FinalityRpc for PreparationRpc {
+        async fn transaction_receipt(
+            &self,
+            _transaction_hash: &str,
+        ) -> Result<Option<serde_json::Value>> {
+            eyre::bail!("unused transaction_receipt")
+        }
+
+        async fn logs(
+            &self,
+            _address: Address,
+            _topics: &[Option<String>],
+            _from_block: &str,
+            _to_block: &str,
+        ) -> Result<Vec<serde_json::Value>> {
+            eyre::bail!("unused logs")
+        }
+
+        async fn block_by_number(&self, _block: u64) -> Result<serde_json::Value> {
+            eyre::bail!("unused block_by_number")
+        }
+
+        async fn finalized_block(&self) -> Result<serde_json::Value> {
+            eyre::bail!("unused finalized_block")
+        }
+
+        async fn call_at(&self, _to: Address, _data: &[u8], _block_tag: &str) -> Result<Vec<u8>> {
+            eyre::bail!("unused call_at")
+        }
+    }
+
+    impl RenewalRpc for PreparationRpc {
+        async fn chain_id(&self) -> Result<u64> {
+            Ok(DEVNET_CHAIN_ID)
+        }
+
+        async fn gas_price(&self) -> Result<U256> {
+            Ok(U256::from(1_000_000_000_u64))
+        }
+
+        async fn transaction_count(&self, _address: Address) -> Result<u64> {
+            Ok(7)
+        }
+
+        async fn balance(&self, _address: Address) -> Result<U256> {
+            Ok(U256::MAX)
+        }
+
+        async fn send_raw_transaction(&self, _raw_transaction: &[u8]) -> Result<String> {
+            eyre::bail!("unused send_raw_transaction")
+        }
+
+        async fn tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1> {
+            eyre::bail!("unused tee_renewal_schedule_v1")
+        }
+    }
 
     fn binding() -> RenewalBindingV1 {
         RenewalBindingV1 {
@@ -676,5 +850,156 @@ mod tests {
             "known transaction"
         )));
         assert!(!transaction_is_already_known(&eyre::eyre!("nonce too low")));
+    }
+
+    #[test]
+    fn direct_dev_renewal_uses_only_the_enclave_intent_signature() {
+        let genesis_hash = B256::repeat_byte(0x44);
+        let policy = initial_tee_policy_v1(
+            InitialTeeProfileV1::GramineDirectDev,
+            DEVNET_CHAIN_ID,
+            genesis_hash,
+        )
+        .unwrap();
+        let signer = ed25519_dalek::SigningKey::from_bytes(&[0x45; 32]);
+        let mut intent =
+            RegistrationIntentV1::decode_canonical(&target_attempt().0.intent).unwrap();
+        intent.chain_id = policy.chain_id;
+        intent.genesis_hash = genesis_hash;
+        intent.attestation_mode = AttestationMode::GramineDirectDev;
+        intent.policy_hash = policy.policy_hash().unwrap();
+        intent.attestation_ed25519 = signer.verifying_key().to_bytes();
+        intent.enclave_id = intent.derived_enclave_id().unwrap();
+        let mut enclave = DirectOnlyEnclave {
+            signer,
+            dcap_calls: 0,
+            direct_calls: 0,
+        };
+
+        let generated =
+            generate_renewal_evidence(&mut enclave, &intent, &policy, 100, 700).unwrap();
+        assert_eq!(enclave.dcap_calls, 0);
+        assert_eq!(enclave.direct_calls, 1);
+        assert_eq!(generated.collateral_valid_until, u64::MAX);
+        assert_eq!(generated.collateral_margin, 0);
+        let decoded = AttestationEvidenceV1::decode_canonical(&generated.evidence).unwrap();
+        assert_eq!(decoded.evidence_hash().unwrap(), generated.evidence_hash);
+        let AttestationEvidenceV1::GramineDirectDev(direct) = decoded else {
+            panic!("expected GramineDirectDev evidence");
+        };
+        assert_eq!(direct.intent, intent);
+        assert_eq!(direct.dev_attestation_public, intent.attestation_ed25519);
+        assert_eq!(direct.dev_signature, generated.enclave_signature);
+    }
+
+    #[tokio::test]
+    async fn direct_dev_prepare_builds_the_shared_calldata_and_relay_transaction() {
+        let genesis_hash = B256::repeat_byte(0x51);
+        let policy = initial_tee_policy_v1(
+            InitialTeeProfileV1::GramineDirectDev,
+            DEVNET_CHAIN_ID,
+            genesis_hash,
+        )
+        .unwrap();
+        let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x52; 32]);
+        let node_signer = k256::ecdsa::SigningKey::from_bytes((&[0x53; 32]).into()).unwrap();
+        let node_id = NodeIdV1 {
+            reth_p2p_public: node_signer
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()
+                .unwrap(),
+        };
+        let manifest = EnclaveInitializationManifestV1 {
+            chain_id: policy.chain_id,
+            genesis_hash,
+            node_id: node_id.clone(),
+            initialization_challenge: [0x54; 32],
+            node_host_noise_x25519: [0x55; 32],
+            recipient_x25519: [0x56; 32],
+            attestation_ed25519: enclave_signer.verifying_key().to_bytes(),
+            noise_responder_x25519: [0x57; 32],
+        };
+        let binding = RenewalBindingV1 {
+            node_id_hash: node_id.node_id_hash().unwrap(),
+            enclave_id: manifest.enclave_id().unwrap(),
+            binding_id: B256::repeat_byte(0x58),
+            intent_hash: B256::repeat_byte(0x59),
+            evidence_hash: B256::repeat_byte(0x5a),
+            policy_hash: policy.policy_hash().unwrap(),
+            binding_version: 1,
+            registration_version: 3,
+            renewal_nonce: 2,
+            transition_nonce: 0,
+            lease_started_at: 100,
+            valid_until: 1_000,
+            collateral_valid_until: u64::MAX,
+            recipient_x25519: B256::from(manifest.recipient_x25519),
+            attestation_ed25519: B256::from(manifest.attestation_ed25519),
+            noise_responder_x25519: B256::from(manifest.noise_responder_x25519),
+            mrenclave: policy.measurement_rules[0].mrenclave,
+            mrsigner: policy.measurement_rules[0].mrsigner,
+            isv_prod_id: policy.measurement_rules[0].isv_prod_id,
+            isv_svn: policy.measurement_rules[0].minimum_isv_svn,
+            platform_tcb_status: 0,
+            verdict_hash: B256::repeat_byte(0x5b),
+            node_host_authorization_hash: manifest.node_host_authorization_hash().unwrap(),
+        };
+        let schedule = TeeRenewalScheduleV1 {
+            finalized_height: 120,
+            finalized_hash: B256::repeat_byte(0x5c),
+            finalized_timestamp: 900,
+            epoch_number: 2,
+            epoch_start_height: 100,
+            epoch_length_blocks: 100,
+            next_freeze_height: 180,
+            planned_activation_height: 200,
+            dkg_prepare_window_blocks: 20,
+            minimum_block_time_millis: 2_000,
+        };
+        let view = FinalizedRenewalChainViewV1 {
+            schedule,
+            policy,
+            binding,
+            tribute_offer_public: B256::repeat_byte(0x5d),
+        };
+        let config = RenewalServiceConfigV1 {
+            node_data_dir: tempfile::tempdir().unwrap().path().to_path_buf(),
+            selector: NodeBindingSelectorV1::NodeHost(node_id.reth_p2p_public),
+            manifest,
+        };
+        let relay = RelaySignerV1::new(&hex::encode([0x5e; 32])).unwrap();
+        let mut enclave = DirectOnlyEnclave {
+            signer: enclave_signer,
+            dcap_calls: 0,
+            direct_calls: 0,
+        };
+
+        let attempt = prepare_attempt(
+            &PreparationRpc,
+            &relay,
+            &mut enclave,
+            &|_| Ok([0x5f; 65]),
+            &config,
+            &view,
+        )
+        .await
+        .unwrap();
+        assert_eq!(enclave.dcap_calls, 0);
+        assert_eq!(enclave.direct_calls, 1);
+        assert_eq!(attempt.collateral_valid_until, u64::MAX);
+        assert_eq!(attempt.collateral_margin, 0);
+        let call = ITeeRegistryV1::renewEnclaveCall::abi_decode(&attempt.calldata).unwrap();
+        assert_eq!(call.evidence.as_ref(), attempt.evidence);
+        assert_eq!(call.nodeSignature.as_ref(), attempt.node_signature);
+        assert_eq!(call.enclaveSignature.as_ref(), attempt.enclave_signature);
+        assert_eq!(attempt.relay, relay.address());
+        assert_eq!(attempt.relay_variants.len(), 1);
+        assert_eq!(attempt.relay_variants[0].account_nonce, 7);
+        assert_eq!(
+            attempt.relay_variants[0].calldata_hash,
+            attempt.calldata_hash
+        );
     }
 }

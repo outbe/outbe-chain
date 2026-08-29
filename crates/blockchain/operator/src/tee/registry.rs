@@ -192,10 +192,18 @@ pub async fn read_finalized_renewal_view_v1(
     rpc: &(impl RenewalRpc + Sync),
     selector: &NodeBindingSelectorV1,
 ) -> Result<FinalizedRenewalChainViewV1> {
+    let view = read_finalized_bound_renewal_view_v1(rpc, selector).await?;
+    require_dcap_renewal_mode_v1(view.policy.attestation_mode)?;
+    Ok(view)
+}
+
+/// Read the exact finalized policy and required binding for the shared manual
+/// renewal lifecycle, independent of the genesis-selected evidence mode.
+pub async fn read_finalized_bound_renewal_view_v1(
+    rpc: &(impl RenewalRpc + Sync),
+    selector: &NodeBindingSelectorV1,
+) -> Result<FinalizedRenewalChainViewV1> {
     let view = read_finalized_registry_view_v1(rpc, selector).await?;
-    if view.policy.attestation_mode != AttestationMode::DcapRequired {
-        eyre::bail!("DCAP renewal is disabled for non-DcapRequired networks");
-    }
     let binding = view
         .binding
         .ok_or_else(|| eyre::eyre!("finalized Registry has no enclave binding for this node"))?;
@@ -205,6 +213,13 @@ pub async fn read_finalized_renewal_view_v1(
         binding,
         tribute_offer_public: view.tribute_offer_public,
     })
+}
+
+fn require_dcap_renewal_mode_v1(mode: AttestationMode) -> Result<()> {
+    if mode != AttestationMode::DcapRequired {
+        eyre::bail!("DCAP renewal is disabled for non-DcapRequired networks");
+    }
+    Ok(())
 }
 
 /// Read the exact finalized policy and optional node binding used by initial
@@ -341,5 +356,16 @@ mod tests {
             ITeeRegistryV1::validatorEnclaveBindingCall::SELECTOR
         );
         assert_ne!(node, validator);
+    }
+
+    #[test]
+    fn legacy_dcap_reader_gate_stays_dcap_only() {
+        assert!(require_dcap_renewal_mode_v1(AttestationMode::DcapRequired).is_ok());
+        assert!(
+            require_dcap_renewal_mode_v1(AttestationMode::GramineDirectDev)
+                .unwrap_err()
+                .to_string()
+                .contains("DCAP renewal is disabled")
+        );
     }
 }

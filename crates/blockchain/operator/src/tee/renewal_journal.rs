@@ -66,14 +66,27 @@ impl PreparedRenewalV1 {
             .map_err(|error| eyre::eyre!("hash renewal journal intent: {error}"))?;
         let evidence = AttestationEvidenceV1::decode_canonical(&self.evidence)
             .map_err(|error| eyre::eyre!("decode renewal journal evidence: {error}"))?;
-        let evidence_intent = match &evidence {
-            AttestationEvidenceV1::Dcap(value) => &value.intent,
-            AttestationEvidenceV1::GramineDirectDev(_) => {
-                eyre::bail!("renewal journal contains non-DCAP evidence");
+        let (evidence_intent, evidence_hash) = match &evidence {
+            AttestationEvidenceV1::Dcap(value) => (
+                &value.intent,
+                dcap_evidence_hash_v1(&self.evidence)
+                    .map_err(|code| eyre::eyre!("hash renewal journal DCAP evidence: {code:?}"))?,
+            ),
+            AttestationEvidenceV1::GramineDirectDev(value) => {
+                if value.dev_attestation_public != value.intent.attestation_ed25519
+                    || value.dev_signature.as_slice() != self.enclave_signature.as_slice()
+                    || !value.intent.verify_enclave_signature(&value.dev_signature)
+                {
+                    eyre::bail!("renewal journal contains invalid GramineDirectDev evidence");
+                }
+                (
+                    &value.intent,
+                    evidence
+                        .evidence_hash()
+                        .map_err(|error| eyre::eyre!("hash renewal journal evidence: {error}"))?,
+                )
             }
         };
-        let evidence_hash = dcap_evidence_hash_v1(&self.evidence)
-            .map_err(|code| eyre::eyre!("hash renewal journal DCAP evidence: {code:?}"))?;
         if intent_hash != self.intent_hash
             || evidence_intent != &intent
             || evidence_hash != self.evidence_hash
@@ -96,12 +109,23 @@ impl PreparedRenewalV1 {
                 eyre::bail!("renewal journal contains a competing relay variant");
             }
         }
-        let ceiling = self
-            .collateral_valid_until
-            .checked_sub(self.collateral_margin)
-            .ok_or_else(|| eyre::eyre!("renewal collateral margin underflow"))?;
-        if self.requested_valid_until > ceiling {
-            eyre::bail!("renewal journal lease exceeds collateral ceiling");
+        match evidence {
+            AttestationEvidenceV1::Dcap(_) => {
+                let ceiling = self
+                    .collateral_valid_until
+                    .checked_sub(self.collateral_margin)
+                    .ok_or_else(|| eyre::eyre!("renewal collateral margin underflow"))?;
+                if self.requested_valid_until > ceiling {
+                    eyre::bail!("renewal journal lease exceeds collateral ceiling");
+                }
+            }
+            AttestationEvidenceV1::GramineDirectDev(_) => {
+                if self.collateral_valid_until != u64::MAX || self.collateral_margin != 0 {
+                    eyre::bail!(
+                        "renewal journal has non-canonical GramineDirectDev collateral fields"
+                    );
+                }
+            }
         }
         Ok(())
     }
@@ -392,9 +416,10 @@ fn sync_directory(path: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use alloy_primitives::U256;
+    use ed25519_dalek::Signer as _;
     use outbe_primitives::tee_attestation_v1::{
         AttestationMode, AttestationOperationV1, DcapCollateralComponentV1, DcapCollateralKind,
-        DcapEvidenceV1, NodeIdV1,
+        DcapEvidenceV1, GramineDirectEvidenceV1, NodeIdV1,
     };
 
     fn binding() -> RenewalBindingV1 {
@@ -507,6 +532,30 @@ mod tests {
         }
     }
 
+    fn direct_attempt() -> PreparedRenewalV1 {
+        let mut attempt = attempt();
+        let signer = ed25519_dalek::SigningKey::from_bytes(&[0x31; 32]);
+        let mut intent = RegistrationIntentV1::decode_canonical(&attempt.intent).unwrap();
+        intent.attestation_mode = AttestationMode::GramineDirectDev;
+        intent.attestation_ed25519 = signer.verifying_key().to_bytes();
+        intent.enclave_id = intent.derived_enclave_id().unwrap();
+        let intent_hash = intent.intent_hash().unwrap();
+        let signature = signer.sign(intent_hash.as_slice()).to_bytes();
+        let evidence_value = AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+            intent: intent.clone(),
+            dev_attestation_public: intent.attestation_ed25519,
+            dev_signature: signature,
+        });
+        attempt.intent = intent.encode_canonical().unwrap();
+        attempt.intent_hash = intent_hash;
+        attempt.evidence = evidence_value.encode_canonical().unwrap();
+        attempt.evidence_hash = evidence_value.evidence_hash().unwrap();
+        attempt.enclave_signature = signature.to_vec();
+        attempt.collateral_valid_until = u64::MAX;
+        attempt.collateral_margin = 0;
+        attempt
+    }
+
     #[test]
     fn owner_only_atomic_round_trip_and_generation() {
         let root = tempfile::tempdir().unwrap();
@@ -559,5 +608,45 @@ mod tests {
         drop(guard);
         fs::write(directory.join(JOURNAL), b"corrupt").unwrap();
         assert!(inspect_journal(root.path()).is_err());
+    }
+
+    #[test]
+    fn direct_dev_journal_round_trips_and_rejects_signature_or_sentinel_drift() {
+        let root = tempfile::tempdir().unwrap();
+        let guard = RenewalJournalGuard::acquire(root.path()).unwrap();
+        let direct = direct_attempt();
+        guard
+            .store(RenewalJournalSnapshotV1::new(
+                RenewalJournalStateV1::Prepared {
+                    attempt: direct.clone(),
+                },
+            ))
+            .unwrap();
+        assert_eq!(guard.load().unwrap().unwrap().lifecycle.attempt(), &direct);
+        drop(guard);
+
+        let mut bad_signature = direct.clone();
+        bad_signature.enclave_signature[0] ^= 1;
+        assert!(
+            RenewalJournalSnapshotV1::new(RenewalJournalStateV1::Prepared {
+                attempt: bad_signature,
+            })
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("GramineDirectDev evidence")
+        );
+
+        let mut bad_sentinel = direct;
+        bad_sentinel.collateral_margin = 1;
+        assert!(
+            RenewalJournalSnapshotV1::new(RenewalJournalStateV1::Prepared {
+                attempt: bad_sentinel,
+            })
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("collateral fields")
+        );
     }
 }

@@ -9167,6 +9167,7 @@ dependencies = [
  "alloy-eips 2.0.4",
  "alloy-primitives",
  "alloy-sol-types",
+ "ed25519-dalek",
  "eyre",
  "hex",
  "k256 0.13.4",
