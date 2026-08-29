@@ -196,6 +196,10 @@ pub struct GemContract {
     /// no record load.
     #[attribute(order = 23)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<U256, u64>,
+
+    /// gem_id -> consecutive failed forfeit attempts. Cleared on success.
+    #[attribute(order = 23)]
+    pub expiry_attempts: outbe_primitives::storage::dsl::Map<U256, u32>,
 }
 
 impl GemContract<'_> {

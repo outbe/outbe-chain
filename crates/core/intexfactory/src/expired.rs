@@ -9,7 +9,7 @@ use outbe_primitives::{
     storage::StorageHandle,
 };
 
-use crate::constants::MAX_SERIES_ACTIONS_PER_SWEEP;
+use crate::constants::{EXPIRY_STALL_THRESHOLD, MAX_SERIES_ACTIONS_PER_SWEEP};
 use crate::runtime::emit_event;
 use crate::schema::IntexFactoryContract;
 
@@ -43,7 +43,10 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
         }
 
         match storage.with_checkpoint(|| expire_group(storage, iso_code, worldwide_day, index)) {
-            Ok(members) => budget = budget.saturating_sub(members),
+            Ok(members) => {
+                budget = budget.saturating_sub(members);
+                factory.expiry_attempts.clear(&key)?;
+            }
             Err(error) => {
                 tracing::warn!(
                     target: "outbe::intexfactory",
@@ -52,6 +55,18 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
                     error = ?error,
                     "expiry sweep: skipping group"
                 );
+                let attempts = factory.expiry_attempts.read(&key)?.saturating_add(1);
+                factory.expiry_attempts.write(&key, attempts)?;
+                if attempts == EXPIRY_STALL_THRESHOLD {
+                    emit_event(
+                        storage,
+                        crate::precompile::IIntexFactory::SeriesExpiryStalled {
+                            worldwideDay: worldwide_day.value(),
+                            referenceCurrency: iso_code,
+                            attempts,
+                        },
+                    )?;
+                }
             }
         }
     }

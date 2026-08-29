@@ -151,6 +151,10 @@ pub struct IntexFactoryContract {
     /// `keccak256(iso_be16 ++ worldwide_day_be32 ++ index_be32)` -> series_id word.
     #[attribute(order = 33)]
     pub called_group_members: outbe_primitives::storage::dsl::Map<B256, U256>,
+
+    /// `scoped(iso, day)` -> consecutive failed expiry attempts. Cleared on success.
+    #[attribute(order = 34)]
+    pub expiry_attempts: outbe_primitives::storage::dsl::Map<u64, u32>,
 }
 
 impl IntexFactoryContract<'_> {

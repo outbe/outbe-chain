@@ -6,7 +6,9 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 
 use crate::errors::GemFactoryError;
 
-use crate::constants::{MAX_POSITION_EXPIRIES_PER_RUN, POSITION_VALIDITY_SECONDS};
+use crate::constants::{
+    EXPIRY_STALL_THRESHOLD, MAX_POSITION_EXPIRIES_PER_RUN, POSITION_VALIDITY_SECONDS,
+};
 use crate::runtime::emit_event;
 use crate::schema::GemFactoryContract;
 
@@ -48,7 +50,10 @@ pub(crate) fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> 
         budget -= 1;
 
         match storage.with_checkpoint(|| expire_position(ctx, position_id)) {
-            Ok(()) => expired = expired.saturating_add(1),
+            Ok(()) => {
+                expired = expired.saturating_add(1);
+                factory.expiry_attempts.clear(&position_id)?;
+            }
             Err(error) => {
                 tracing::warn!(
                     target: "outbe::gemfactory",
@@ -56,6 +61,20 @@ pub(crate) fn sweep_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> 
                     error = ?error,
                     "position sweep: skipping position"
                 );
+                let attempts = factory
+                    .expiry_attempts
+                    .read(&position_id)?
+                    .saturating_add(1);
+                factory.expiry_attempts.write(&position_id, attempts)?;
+                if attempts == EXPIRY_STALL_THRESHOLD {
+                    emit_event(
+                        storage,
+                        crate::precompile::IGemFactory::GemPositionExpiryStalled {
+                            positionId: position_id,
+                            attempts,
+                        },
+                    )?;
+                }
             }
         }
     }

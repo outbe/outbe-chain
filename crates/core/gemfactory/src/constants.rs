@@ -17,3 +17,8 @@ pub const POSITION_VALIDITY_SECONDS: u64 = 365 * 24 * 3600;
 /// Positions the daily sweep may retire before it gives out: they are parked in
 /// bursts and expire in the same bursts a year later.
 pub const MAX_POSITION_EXPIRIES_PER_RUN: u32 = 256;
+
+/// Consecutive failed expiry attempts before the stall is announced on chain.
+/// Below this a retry is ordinary; at it, the capacity is stuck and only a log
+/// line would say so otherwise.
+pub const EXPIRY_STALL_THRESHOLD: u32 = 3;

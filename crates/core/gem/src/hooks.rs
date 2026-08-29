@@ -12,7 +12,8 @@ use outbe_primitives::{
 };
 
 use crate::constants::{
-    CALL_WINDOW, MAX_GEM_CALL_ACTIONS_PER_RUN, MAX_GEM_QUALIFICATIONS_PER_BLOCK,
+    CALL_WINDOW, EXPIRY_STALL_THRESHOLD, MAX_GEM_CALL_ACTIONS_PER_RUN,
+    MAX_GEM_QUALIFICATIONS_PER_BLOCK,
 };
 use crate::schema::GemContract;
 use crate::state::{CurrencyBins, QualifiedBins};
@@ -260,10 +261,21 @@ fn sweep_expired(ctx: &BlockRuntimeContext) -> Result<u32> {
         }
         budget -= 1;
         match ctx.storage.with_checkpoint(|| gem.forfeit(gem_id, now)) {
-            Ok(true) => burned = burned.saturating_add(1),
+            Ok(true) => {
+                burned = burned.saturating_add(1);
+                gem.expiry_attempts.clear(&gem_id)?;
+            }
             Ok(false) => {}
             Err(error) => {
                 tracing::warn!(target: "outbe::gem", %gem_id, error = ?error, "expiry sweep: skipping gem");
+                let attempts = gem.expiry_attempts.read(&gem_id)?.saturating_add(1);
+                gem.expiry_attempts.write(&gem_id, attempts)?;
+                if attempts == EXPIRY_STALL_THRESHOLD {
+                    gem.emit(crate::precompile::IGem::GemExpiryStalled {
+                        gemId: gem_id,
+                        attempts,
+                    })?;
+                }
             }
         }
     }
