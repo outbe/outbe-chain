@@ -34,10 +34,9 @@ impl BlockLifecycle for GemLifecycle {
 /// Qualifies every reference currency the oracle knows about, each against its
 /// own COEN rate, sharing one per-block budget. An uninitialized registry does
 /// no work. A currency whose COEN pair is unregistered or unpriced is skipped
-/// for this block rather than halting it — the registry lists currencies
-/// independently of whether a pair has been priced yet. The scan resumes from a
-/// persisted currency cursor, so a spent budget defers the rest of the list to
-/// the next block instead of dropping it.
+/// for this block rather than halting it. The scan resumes from a persisted
+/// currency cursor, so a spent budget defers the rest of the list to the next
+/// block instead of dropping it.
 pub fn scan_and_qualify(ctx: &BlockRuntimeContext) -> Result<()> {
     let currencies = get_all_reference_currencies(ctx)?;
     if currencies.is_empty() {

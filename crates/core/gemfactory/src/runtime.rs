@@ -37,9 +37,7 @@ pub fn mint_gem(
         return Err(GemFactoryError::OracleUnavailable.into());
     }
 
-    // The issuance currency is the holder's own label: the network keeps no list
-    // of them, so only its three-digit range is checked, exactly as the auction
-    // checks a bid's. An unassigned code simply never matches a settlement asset.
+    // The holder's own label: only its range is checked, as the auction checks a bid's.
     if issuance_currency == 0 || issuance_currency > 999 {
         return Err(GemFactoryError::InvalidCurrency {
             currency: issuance_currency,
@@ -48,9 +46,7 @@ pub fn mint_gem(
     }
     outbe_oracle::api::check_reference_currency_with_storage(storage.clone(), reference_currency)?;
 
-    // Entry/floor/call are measured against the reference currency, so the caller
-    // resolves the price: it knows which day the gem belongs to, which this
-    // function does not.
+    // The caller resolves the price: it knows which day the gem belongs to.
     let issued_at = storage.timestamp()?.to::<u64>();
     let (cost_amount, floor_price, initial_state) =
         compute_params(gem_type, gem_load, entry_price)?;
@@ -91,6 +87,7 @@ pub fn mint_gem(
             entryPrice: entry_price,
             costAmount: cost_amount,
             floorPrice: floor_price,
+            issuanceCurrency: issuance_currency,
             referenceCurrency: reference_currency,
             issuedAt: issued_at,
         },
@@ -116,9 +113,7 @@ pub fn mint_gem_position(
     let series = outbe_intex::api::get_series(storage, source_intex_id)?
         .ok_or(GemFactoryError::SourceIntexNotFound)?;
 
-    // A reference currency the registry does not carry is one no qualification
-    // scan walks, so its gems could never leave Issued. Refuse the position
-    // rather than mint gems that can only expire.
+    // A currency no qualification scan walks would leave every gem stuck in Issued.
     outbe_oracle::api::check_reference_currency_with_storage(
         storage.clone(),
         series.reference_currency,
@@ -212,10 +207,7 @@ pub fn mint_merchant_gem(
         .checked_sub(gem_load)
         .ok_or(GemFactoryError::InsufficientCapacity)?;
 
-    // Both maxima are an anti-dilution floor, not a price measurement: a merchant
-    // gem is never priced below what its source Intex was priced at, so a dip
-    // after parking cannot cheapen the gems drawn from it. That the live quote
-    // and the parked snapshot come from different price bases is the point.
+    // Both maxima are an anti-dilution floor, not a price: never below the source Intex.
     let coen_rate = read_reference_oracle_rate(storage, record.reference_currency)?;
     let entry_price = coen_rate.max(record.source_entry_price);
     let cost_amount = compute_cost(entry_price, gem_load, 100)?;
@@ -261,6 +253,7 @@ pub fn mint_merchant_gem(
             entryPrice: entry_price,
             costAmount: cost_amount,
             floorPrice: floor_price,
+            issuanceCurrency: record.issuance_currency,
             referenceCurrency: record.reference_currency,
             issuedAt: now,
         },
@@ -293,8 +286,7 @@ pub fn settle_gem(
         _ => return Err(GemFactoryError::InvalidState.into()),
     }
 
-    // The payer chooses the rail by the asset they bring; the gem accepts either
-    // of its two currencies and nothing else.
+    // The payer picks the rail by the asset they bring.
     let currency = accept_payment_asset(storage, asset, &item)?;
     let expected = match currency {
         PaymentCurrency::Reference => item.reference_currency,
@@ -305,8 +297,6 @@ pub fn settle_gem(
     gem_api::set_state(storage, gem_id, GemState::Settled)?;
 
     if !amount_paid.is_zero() {
-        // The caller pays in `asset`, validated above to match the Settlement
-        // Currency.
         deposit_to_vault(storage, caller, amount_paid, asset)?;
     }
 
@@ -329,10 +319,8 @@ fn read_decimals(storage: &StorageHandle<'_>, asset: Address) -> Result<u8> {
     IERC20::decimalsCall::abi_decode_returns(&ret).map_err(|_| GemFactoryError::InvalidAsset.into())
 }
 
-/// Pulls `amount` of `asset` from `caller` and deposits what actually arrived
-/// into the reserve vault. Fee-on-transfer safe: the deposit follows the measured
-/// balance delta rather than the requested amount, and zero shares is a refusal
-/// rather than a silent no-op.
+/// Pulls `amount` from `caller` and deposits what actually arrived. Fee-on-transfer
+/// safe: the deposit follows the measured delta, and zero shares is a refusal.
 fn deposit_to_vault(
     storage: &StorageHandle<'_>,
     caller: Address,
@@ -381,10 +369,9 @@ enum PaymentCurrency {
     Issuance,
 }
 
-/// Rejects `asset` unless the router holds a vault for it and the asset reports
-/// one of the gem's two currencies; returns which one. Registration is checked
-/// first: an unregistered asset need not implement `isoCode()` at all. Reference
-/// is matched before issuance, so a single-currency gem takes the no-rate branch.
+/// Which of the gem's two currencies `asset` is denominated in. Registration is
+/// checked first, so an unregistered asset need not implement `isoCode()` at all;
+/// reference is matched first, so a single-currency gem takes the no-rate branch.
 fn accept_payment_asset(
     storage: &StorageHandle<'_>,
     asset: Address,
@@ -412,15 +399,10 @@ fn accept_payment_asset(
     Err(GemFactoryError::SettlementCurrencyMismatch { iso_code: iso }.into())
 }
 
-/// Cost of one gem in `asset`'s minor units. The reference currency needs no
-/// rate; the issuance currency converts through COEN —
-/// `cost * rate(COEN/iss) / rate(COEN/ref)` — with the decimals scaling folded
-/// into the same division, so it rounds once.
-///
-/// The two rates cancel, so the ratio is scale-free — but only because both legs
-/// are `COEN/<iso>` markets, which the oracle quotes at six decimals while every
-/// other market it carries is eighteen (`pair_scales`). Reading one leg from a
-/// market of the other class would be wrong by twelve orders of magnitude.
+/// Cost of one gem in `asset`'s minor units. The reference rail needs no rate; the
+/// issuance rail converts through COEN, decimals folded into the same division so
+/// it rounds once. The rates cancel only because both legs are `COEN/<iso>` markets,
+/// which the oracle quotes at six decimals and every other market at eighteen.
 fn cost_in_token(
     storage: &StorageHandle<'_>,
     item: &outbe_gem::GemData,
@@ -442,9 +424,7 @@ fn cost_in_token(
     )
 }
 
-/// Converts a six-decimal cost into payment-token minor units, optionally
-/// applying an ISO/ISO rate. Scaling is cancelled before multiplication where
-/// possible and the result is rounded up exactly once, in favour of the reserve.
+/// Six-decimal cost into payment-token minor units, rounded up exactly once.
 fn cost_to_payment_units(
     cost: U256,
     rate_numerator: U256,
@@ -491,8 +471,7 @@ fn asset_iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
         .map_err(|_| PrecompileError::Revert("isoCode undecodable".into()))
 }
 
-/// What settling `gem_id` with `asset` costs and which currency that is, without
-/// moving anything. Same acceptance and conversion the settlement itself runs.
+/// What settling `gem_id` with `asset` costs, and in which currency.
 pub fn quote_settlement(
     storage: &StorageHandle<'_>,
     gem_id: U256,
@@ -510,7 +489,7 @@ pub fn quote_settlement(
     ))
 }
 
-/// The full terms of a parked position, for the merchant issuing gems from it.
+/// The full terms of a parked position.
 pub fn position_data(
     storage: &StorageHandle<'_>,
     position_id: U256,

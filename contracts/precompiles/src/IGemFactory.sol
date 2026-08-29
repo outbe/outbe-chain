@@ -70,6 +70,7 @@ interface IGemFactory {
         uint256 entryPrice,
         uint256 costAmount,
         uint256 floorPrice,
+        uint16 issuanceCurrency,
         uint16 referenceCurrency,
         uint64 issuedAt
     );

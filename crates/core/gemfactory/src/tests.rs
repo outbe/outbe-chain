@@ -79,8 +79,7 @@ fn stub_stablecoin(
     // The deposit path pulls and approves before handing over to the router.
     storage.stub_sub_call_at_selector(asset, IERC20::transferFromCall::SELECTOR, word(1));
     storage.stub_sub_call_at_selector(asset, IERC20::approveCall::SELECTOR, word(1));
-    // The stub cannot vary between the two reads, so the measured delta is zero
-    // here; the deposit's share check is what guards that on chain.
+    // A fixed stub cannot vary between the two reads, so the delta is zero here.
     storage.stub_sub_call_at_selector(asset, IERC20::balanceOfCall::SELECTOR, word(0));
 }
 
@@ -92,8 +91,7 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
         outbe_primitives::addresses::INTEX_NFT1155_ADDRESS,
         alloy_primitives::Bytes::from(U256::from(PARK_UNITS).to_be_bytes::<32>().to_vec()),
     );
-    // Each stablecoin answers `isoCode()` and `decimals()` separately, so the
-    // settlement path can tell a USD asset from a EUR one.
+    // Answered per selector, so the settlement path can tell USD from EUR.
     stub_stablecoin(&mut storage, STABLE, 840, 6);
     stub_stablecoin(&mut storage, STABLE_EUR, 978, 6);
     stub_stablecoin(&mut storage, STABLE_18, 840, 18);

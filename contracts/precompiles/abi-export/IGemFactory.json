@@ -370,6 +370,12 @@
         "internalType": "uint256"
       },
       {
+        "name": "issuanceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
         "name": "referenceCurrency",
         "type": "uint16",
         "indexed": false,

@@ -26,11 +26,9 @@ use outbe_primitives::{
     error::{PrecompileError, Result},
 };
 
-use crate::constants::{MAX_REWARD_PRICE_LOOKBACK_DAYS, REWARD_GEM_CURRENCY};
+use crate::constants::REWARD_GEM_CURRENCY;
 use crate::runtime::day_number_since_genesis;
 use crate::schema::Rewards;
-use crate::IRewards;
-use outbe_primitives::time::previous_date_key;
 
 /// Returns the raw fee total accumulated for the given UTC day. This is
 /// the value `on_finalized_metadata` writes per finalized block via
@@ -389,7 +387,7 @@ pub fn deliver_oldest_reward_gem_batch(
 fn deliver_oldest_reward_gem_batch_inner(
     ctx: &BlockRuntimeContext,
 ) -> Result<RewardGemDeliveryOutcome> {
-    let mut rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
+    let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     let head = rewards.reward_gem_queue_head.read()?;
     let tail = rewards.reward_gem_queue_tail.read()?;
     let pending_batch_count = require_reward_gem_queue_consistency(&rewards, head, tail)?;
@@ -502,9 +500,8 @@ fn deliver_oldest_reward_gem_batch_inner(
             ))
         },
     )?;
-    let Some(price) = resolve_reward_entry_price(ctx, reward_utc_day, reference_currency)? else {
-        // Delivery retries every block, so an event here would repeat for as long
-        // as the stall lasts; the log is the alarm, and the batch is untouched.
+    let Some(entry_price) = resolve_reward_entry_price(ctx, reward_utc_day, reference_currency)?
+    else {
         tracing::warn!(
             target: "outbe::rewards",
             reward_utc_day,
@@ -512,7 +509,6 @@ fn deliver_oldest_reward_gem_batch_inner(
         );
         return Ok(RewardGemDeliveryOutcome::PendingRate { reward_utc_day });
     };
-    let entry_price = price.entry_price;
 
     for (owner, load) in recipients {
         outbe_gemfactory::api::mint_gem(
@@ -525,13 +521,6 @@ fn deliver_oldest_reward_gem_batch_inner(
             entry_price,
         )?;
     }
-    rewards.emit(IRewards::RewardGemBatchPriced {
-        rewardUtcDay: reward_utc_day,
-        entryPrice: entry_price,
-        source: price.source as u8,
-        sourceDay: price.source_day,
-    })?;
-
     for index in 0..recipient_count {
         owners.write(&index, Address::ZERO)?;
         loads.write(&index, U256::ZERO)?;
@@ -558,46 +547,18 @@ fn deliver_oldest_reward_gem_batch_inner(
     })
 }
 
-/// Where a delivered batch's entry price came from. The values are the `source`
-/// field of [`crate::IRewards::RewardGemBatchPriced`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum RewardPriceSource {
-    /// The reward day's own finalized VWAP.
-    RewardDayVwap = 1,
-    /// An earlier finalized day's VWAP, because the reward day carries none.
-    EarlierDayVwap = 2,
-    /// The live quote, because no day within the lookback carries a VWAP.
-    LiveQuote = 3,
-}
-
-/// The price a batch mints at, and where it came from.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct RewardEntryPrice {
-    entry_price: U256,
-    source: RewardPriceSource,
-    /// UTC day the price was read from; zero for the live quote.
-    source_day: u32,
-}
-
-/// Resolves the COEN price a batch for `reward_utc_day` mints at.
+/// The COEN price a batch for `reward_utc_day` mints at.
 ///
-/// The reward belongs to its day, so that day's own finalized VWAP is the answer
-/// whenever it exists. Two fallbacks follow it, because a past day can be
-/// permanently unpriced — a day no pair had data for is finalized empty, a gap
-/// wider than the oracle's backfill cap skips days whose aggregates are already
-/// evicted, and the days before the first finalization are empty by
-/// construction. A reward must never be lost to any of those.
-///
-/// `None` means "not priceable yet", not "no price": the batch stays queued and
-/// retries, exactly as it does today.
+/// The reward belongs to its day, so that day's finalized VWAP is the answer.
+/// A day the oracle closed empty falls back to the live quote — today's rule —
+/// so no reward is ever lost to a day that carries no price. `None` means the
+/// day is not closed yet: the batch waits, exactly as it does today.
 fn resolve_reward_entry_price(
     ctx: &BlockRuntimeContext,
     reward_utc_day: u32,
     reference_currency: u16,
-) -> Result<Option<RewardEntryPrice>> {
+) -> Result<Option<U256>> {
     let oracle = outbe_oracle::schema::OracleContract::new(ctx.storage.clone());
-    // A day above the watermark is not closed yet, which is not the same as
-    // carrying no price. Wait for it rather than reaching past it.
     if reward_utc_day > oracle.utc_day_vwap_last_finalized.read()? {
         return Ok(None);
     }
@@ -605,35 +566,14 @@ fn resolve_reward_entry_price(
     if let Some(index) =
         outbe_oracle::api::coen_pair_index_opt(ctx.storage.clone(), reference_currency)?
     {
-        let mut day = reward_utc_day;
-        for step in 0..=MAX_REWARD_PRICE_LOOKBACK_DAYS {
-            if let Some(vwap) =
-                outbe_oracle::api::get_utc_day_vwap(ctx.storage.clone(), day, index)?
-            {
-                let source = if step == 0 {
-                    RewardPriceSource::RewardDayVwap
-                } else {
-                    RewardPriceSource::EarlierDayVwap
-                };
-                return Ok(Some(RewardEntryPrice {
-                    entry_price: vwap,
-                    source,
-                    source_day: day,
-                }));
-            }
-            day = previous_date_key(day);
+        if let Some(vwap) =
+            outbe_oracle::api::get_utc_day_vwap(ctx.storage.clone(), reward_utc_day, index)?
+        {
+            return Ok(Some(vwap));
         }
     }
 
-    Ok(
-        outbe_oracle::api::fresh_coen_rate_for_opt(ctx.storage.clone(), reference_currency)?.map(
-            |rate| RewardEntryPrice {
-                entry_price: rate,
-                source: RewardPriceSource::LiveQuote,
-                source_day: 0,
-            },
-        ),
-    )
+    outbe_oracle::api::fresh_coen_rate_for_opt(ctx.storage.clone(), reference_currency)
 }
 
 fn reward_gem_batch_digest(
@@ -760,18 +700,6 @@ mod tests {
         // an unfinalized day. No day carries a VWAP unless a test writes one, so
         // the ladder falls through to the live quote seeded above.
         oracle.utc_day_vwap_last_finalized.write(29991231).unwrap();
-    }
-
-    /// Publishes `vwap` as `day`'s finalized COEN/840 VWAP.
-    fn seed_utc_day_vwap(ctx: &BlockRuntimeContext, day: u32, vwap: U256) {
-        let index = outbe_oracle::api::coen_pair_index_opt(ctx.storage.clone(), 840)
-            .unwrap()
-            .expect("COEN/840 registered");
-        outbe_oracle::schema::OracleContract::new(ctx.storage.clone())
-            .utc_day_vwap_value
-            .get_nested(&day)
-            .write(&index, vwap)
-            .unwrap();
     }
 
     fn one_coen840() -> U256 {
@@ -1299,96 +1227,6 @@ mod tests {
                 }
             ));
             assert_eq!(voter_gem_loads(&ctx, VAL_Y), vec![U256::from(20u64)]);
-        });
-    }
-
-    /// The entry price the delivered gems were minted at.
-    fn delivered_entry_price(ctx: &BlockRuntimeContext, voter: Address) -> U256 {
-        let gem = outbe_gem::GemContract::new(ctx.storage.clone());
-        let gem_id = gem.token_of_owner_by_index(voter, 0).unwrap();
-        outbe_gem::api::get_gem(&ctx.storage, gem_id)
-            .unwrap()
-            .unwrap()
-            .entry_price_minor
-    }
-
-    /// Prepares a one-voter batch for 20240101 and delivers it, returning the
-    /// entry price its gem carries.
-    fn deliver_one(ctx: &BlockRuntimeContext) -> U256 {
-        prepare_daily_validator_gem_batch(ctx, 20240101, U256::from(90u64), &[(VAL_Z, 1)]).unwrap();
-        assert!(matches!(
-            deliver_oldest_reward_gem_batch(ctx).unwrap(),
-            RewardGemDeliveryOutcome::Delivered { .. }
-        ));
-        delivered_entry_price(ctx, VAL_Z)
-    }
-
-    #[test]
-    fn a_reward_batch_prices_off_its_own_day() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
-            bootstrap_genesis(&ctx);
-            // The live quote and the day's VWAP differ, so the assertion can only
-            // pass if the reward day's own price won.
-            seed_oracle(&ctx, U256::from(9u64) * one_coen840());
-            seed_utc_day_vwap(&ctx, 20240101, U256::from(2u64) * one_coen840());
-
-            assert_eq!(deliver_one(&ctx), U256::from(2u64) * one_coen840());
-        });
-    }
-
-    #[test]
-    fn a_reward_batch_falls_back_to_the_nearest_earlier_priced_day() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
-            bootstrap_genesis(&ctx);
-            seed_oracle(&ctx, U256::from(9u64) * one_coen840());
-            // 20240101 itself is finalized but empty; the day before carries a price.
-            seed_utc_day_vwap(&ctx, 20231231, U256::from(3u64) * one_coen840());
-
-            assert_eq!(deliver_one(&ctx), U256::from(3u64) * one_coen840());
-        });
-    }
-
-    #[test]
-    fn a_reward_batch_falls_back_to_the_live_quote_when_no_day_is_priced() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
-            bootstrap_genesis(&ctx);
-            // No day carries a VWAP at all: the ladder's last rung is today's
-            // behaviour, so the batch still delivers rather than stalling.
-            seed_oracle(&ctx, U256::from(9u64) * one_coen840());
-
-            assert_eq!(deliver_one(&ctx), U256::from(9u64) * one_coen840());
-        });
-    }
-
-    #[test]
-    fn a_reward_batch_waits_while_its_day_is_not_finalized() {
-        let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-        storage.enter(|handle| {
-            let ctx = BlockRuntimeContext::new(block_ctx(1, GENESIS_TS + 60), handle);
-            bootstrap_genesis(&ctx);
-            seed_oracle(&ctx, U256::from(9u64) * one_coen840());
-            // An unclosed day is not an unpriced one: the batch must wait for it
-            // rather than reach past it to an earlier day or the live quote.
-            outbe_oracle::schema::OracleContract::new(ctx.storage.clone())
-                .utc_day_vwap_last_finalized
-                .write(20231231)
-                .unwrap();
-
-            prepare_daily_validator_gem_batch(&ctx, 20240101, U256::from(90u64), &[(VAL_Z, 1)])
-                .unwrap();
-            assert!(matches!(
-                deliver_oldest_reward_gem_batch(&ctx).unwrap(),
-                RewardGemDeliveryOutcome::PendingRate {
-                    reward_utc_day: 20240101
-                }
-            ));
-            assert!(voter_gem_loads(&ctx, VAL_Z).is_empty());
         });
     }
 

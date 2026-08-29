@@ -7114,8 +7114,7 @@ mod tests {
                     block_ts,
                 )
                 .unwrap();
-                // Close every reward day these tests use, so delivery prices the
-                // batch instead of waiting for the day to finalize.
+                // Close the reward day so delivery prices the batch instead of waiting.
                 outbe_oracle::schema::OracleContract::new(storage.clone())
                     .utc_day_vwap_last_finalized
                     .write(29_991_231)
@@ -7319,8 +7318,7 @@ mod tests {
                         .write(&voter, 1)
                         .unwrap();
                 }
-                // Close every reward day these tests use, so delivery prices the
-                // batch instead of waiting for the day to finalize.
+                // Close the reward day so delivery prices the batch instead of waiting.
                 outbe_oracle::schema::OracleContract::new(storage.clone())
                     .utc_day_vwap_last_finalized
                     .write(29_991_231)
@@ -7695,8 +7693,7 @@ mod tests {
                     TEST_BLOCK_TIMESTAMP_BASE + 1,
                 )
                 .unwrap();
-                // Close every reward day these tests use, so delivery prices the
-                // batch instead of waiting for the day to finalize.
+                // Close the reward day so delivery prices the batch instead of waiting.
                 outbe_oracle::schema::OracleContract::new(storage.clone())
                     .utc_day_vwap_last_finalized
                     .write(29_991_231)

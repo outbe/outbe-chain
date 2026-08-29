@@ -162,9 +162,8 @@ pub struct GemContract {
     #[attribute(order = 13)]
     pub qualify_scan_cursor: outbe_primitives::storage::dsl::Map<u16, u32>,
 
-    /// Index into the reference-currency registry the next qualify scan starts
-    /// from. Without it every block would restart at the first currency and a
-    /// heavy one would starve everything behind it once the budget ran out.
+    /// Where the next qualify scan starts, so a heavy currency cannot starve the
+    /// ones behind it when the per-block budget runs out.
     #[attribute(order = 14)]
     pub qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
 }
