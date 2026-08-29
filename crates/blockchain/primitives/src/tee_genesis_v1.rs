@@ -30,7 +30,20 @@ pub const fn is_gramine_direct_dev_chain_id(chain_id: u64) -> bool {
 
 /// Returns whether the chain has a production DCAP identity.
 pub const fn is_dcap_required_chain_id(chain_id: u64) -> bool {
-    chain_id == TESTNET_CHAIN_ID || chain_id == MAINNET_CHAIN_ID
+    chain_id == DEVNET_CHAIN_ID || chain_id == TESTNET_CHAIN_ID || chain_id == MAINNET_CHAIN_ID
+}
+
+/// Returns whether a product network may select this explicit attestation
+/// mode at genesis. The selected mode is subsequently fixed for the life of
+/// the chain by TeeRegistry successor-policy validation.
+pub const fn is_attestation_mode_allowed_for_chain_id(
+    chain_id: u64,
+    mode: AttestationMode,
+) -> bool {
+    match mode {
+        AttestationMode::DcapRequired => is_dcap_required_chain_id(chain_id),
+        AttestationMode::GramineDirectDev => is_gramine_direct_dev_chain_id(chain_id),
+    }
 }
 
 /// SHA-256 of Intel's pinned SGX Root CA DER certificate.
@@ -82,18 +95,23 @@ pub fn initial_tee_policy_v1(
     if genesis_hash.is_zero() {
         return Err("TEE genesis policy requires a non-zero genesis hash".into());
     }
-    match profile {
-        InitialTeeProfileV1::DcapRequired(_) if chain_id == GRAMINE_DIRECT_DEV_CHAIN_ID => {
+    match profile.attestation_mode() {
+        AttestationMode::DcapRequired
+            if !is_attestation_mode_allowed_for_chain_id(
+                chain_id,
+                AttestationMode::DcapRequired,
+            ) =>
+        {
             return Err(format!(
-                "DcapRequired may not use reserved GramineDirectDev chain ID {GRAMINE_DIRECT_DEV_CHAIN_ID}"
+                "DcapRequired requires devnet, testnet, or mainnet chain ID ({DEVNET_CHAIN_ID}, {TESTNET_CHAIN_ID}, or {MAINNET_CHAIN_ID})"
             ));
         }
-        InitialTeeProfileV1::DcapRequired(_) if !is_dcap_required_chain_id(chain_id) => {
-            return Err(format!(
-                "DcapRequired requires testnet or mainnet chain ID ({TESTNET_CHAIN_ID} or {MAINNET_CHAIN_ID})"
-            ));
-        }
-        InitialTeeProfileV1::GramineDirectDev if !is_gramine_direct_dev_chain_id(chain_id) => {
+        AttestationMode::GramineDirectDev
+            if !is_attestation_mode_allowed_for_chain_id(
+                chain_id,
+                AttestationMode::GramineDirectDev,
+            ) =>
+        {
             return Err(format!(
                 "GramineDirectDev requires devnet or testnet chain ID ({DEVNET_CHAIN_ID} or {TESTNET_CHAIN_ID})"
             ));
@@ -211,7 +229,7 @@ mod tests {
     }
 
     #[test]
-    fn dcap_accepts_testnet_and_mainnet_while_gramine_stays_non_mainnet() {
+    fn devnet_and_testnet_accept_both_modes_while_mainnet_requires_dcap() {
         let genesis_hash = B256::repeat_byte(0x33);
         assert_eq!(GRAMINE_DIRECT_DEV_CHAIN_ID, DEVNET_CHAIN_ID);
         assert_ne!(GRAMINE_DIRECT_DEV_CHAIN_ID, TESTNET_CHAIN_ID);
@@ -232,15 +250,14 @@ mod tests {
             DEVNET_CHAIN_ID,
             genesis_hash,
         )
-        .unwrap_err()
-        .contains("reserved"));
+        .is_ok());
         assert!(initial_tee_policy_v1(
             InitialTeeProfileV1::DcapRequired(dcap_measurement()),
             DEVNET_CHAIN_ID + 1,
             genesis_hash,
         )
         .unwrap_err()
-        .contains("testnet or mainnet"));
+        .contains("devnet, testnet, or mainnet"));
         assert!(initial_tee_policy_v1(
             InitialTeeProfileV1::GramineDirectDev,
             TESTNET_CHAIN_ID,

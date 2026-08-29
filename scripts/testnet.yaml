@@ -31,9 +31,8 @@ validators:
 # in this yaml.
 keys_dir: ./keys
 
-# `gramine-direct-dev` runs the enclave unattested and is for a devnet only.
-# A production network uses `dcap-required` with real SGX hardware, chain id
-# 54322345, and the exact release measurements below.
+# Devnet and Testnet explicitly select either `gramine-direct-dev` or
+# `dcap-required`. Mainnet accepts only `dcap-required`; there is no fallback.
 tee:
   mode: gramine-direct-dev
   # mrenclave: "<32-byte hex>"

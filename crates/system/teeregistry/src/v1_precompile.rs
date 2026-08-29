@@ -866,6 +866,7 @@ mod tests {
     use super::*;
     use alloy_sol_types::SolValue;
     use outbe_primitives::{
+        chain::TESTNET_CHAIN_ID,
         storage::{hashmap::HashMapStorageProvider, PrecompileStorageProvider},
         tee_attestation_v1::{
             AttestationEvidenceV1, AttestationOperationV1, DcapCollateralComponentV1,
@@ -875,11 +876,12 @@ mod tests {
     };
 
     const GENESIS: B256 = B256::repeat_byte(0x31);
+    const CHAIN_ID: u64 = TESTNET_CHAIN_ID;
 
     fn policy() -> TeePolicyV1 {
         let resources = ResourceScheduleV1::normative().unwrap();
         let mut chain_id = [0_u8; 32];
-        chain_id[24..].copy_from_slice(&31337_u64.to_be_bytes());
+        chain_id[24..].copy_from_slice(&CHAIN_ID.to_be_bytes());
         TeePolicyV1 {
             policy_version: 1,
             chain_id,
@@ -918,7 +920,7 @@ mod tests {
 
     #[test]
     fn staged_successor_view_is_canonical_and_distinguishes_absence() {
-        let mut provider = HashMapStorageProvider::new_with_chain_identity(31337, GENESIS);
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS);
         provider.set_block_number(10);
         let current = policy();
         provider
@@ -1084,7 +1086,7 @@ mod tests {
 
     #[test]
     fn register_precharges_exact_protocol_gas_before_evidence_decode() {
-        let mut provider = HashMapStorageProvider::new_with_chain_identity(31337, GENESIS);
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS);
         provider.set_block_number(1);
         provider
             .enter(|storage| TeeRegistry::new(storage).install_initial_policy_v1(&policy()))
@@ -1157,7 +1159,7 @@ mod tests {
     fn gramine_direct_dev_register_precharge_uses_active_policy_mode() {
         let mut active_policy = policy();
         active_policy.attestation_mode = AttestationMode::GramineDirectDev;
-        let mut provider = HashMapStorageProvider::new_with_chain_identity(31337, GENESIS);
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS);
         provider.set_block_number(1);
         provider
             .enter(|storage| TeeRegistry::new(storage).install_initial_policy_v1(&active_policy))
@@ -1217,7 +1219,7 @@ mod tests {
             RegistryMutatorV1::RenewEnclave,
             RegistryMutatorV1::ReplaceEnclaveBinding,
         ] {
-            let mut provider = HashMapStorageProvider::new_with_chain_identity(31337, GENESIS);
+            let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS);
             provider.set_block_number(1);
             provider
                 .enter(|storage| TeeRegistry::new(storage).install_initial_policy_v1(&policy()))
@@ -1265,7 +1267,7 @@ mod tests {
     #[test]
     fn cap_plus_one_rejects_before_policy_read_or_gas_charge() {
         let input = call(vec![0; MAX_ATTESTATION_EVIDENCE_BYTES + 1], 65, 64);
-        let mut provider = HashMapStorageProvider::new_with_chain_identity(31337, GENESIS);
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS);
         provider.set_gas_limit(u64::MAX);
         let result = provider
             .enter(|storage| dispatch(storage, &input, Address::repeat_byte(0x99), U256::ZERO));
@@ -1276,7 +1278,7 @@ mod tests {
     #[test]
     fn empty_binding_views_are_fixed_and_not_ready() {
         let validator = Address::repeat_byte(0x61);
-        let mut provider = HashMapStorageProvider::new_with_chain_identity(31337, GENESIS);
+        let mut provider = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, GENESIS);
         let ready_call = ITeeRegistryV1::isValidatorEnclaveReadyCall { validator };
         let ready = provider
             .enter(|storage| dispatch(storage, &ready_call.abi_encode(), Address::ZERO, U256::ZERO))

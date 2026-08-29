@@ -8,6 +8,7 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::{
     error::{PrecompileError, Result},
     tee_attestation_v1::{NodeIdV1, TeePolicyV1, MAX_TEE_POLICY_BYTES},
+    tee_genesis_v1::is_attestation_mode_allowed_for_chain_id,
 };
 use outbe_validatorset::contract::ValidatorSet;
 #[cfg(feature = "tee-attestation-v1")]
@@ -214,12 +215,18 @@ impl TeeRegistry<'_> {
         let canonical = policy
             .encode_canonical()
             .map_err(|error| revert_codec("invalid initial V1 policy", error))?;
-        let expected_chain_id = chain_id_word(self.storage.chain_id()?);
+        let chain_id = self.storage.chain_id()?;
+        let expected_chain_id = chain_id_word(chain_id);
         if policy.chain_id != expected_chain_id
             || policy.genesis_hash != self.storage.genesis_hash()?
         {
             return Err(PrecompileError::Revert(
                 "initial V1 policy chain identity mismatch".into(),
+            ));
+        }
+        if !is_attestation_mode_allowed_for_chain_id(chain_id, policy.attestation_mode) {
+            return Err(PrecompileError::Revert(
+                "initial V1 policy attestation mode is not allowed for this chain".into(),
             ));
         }
         if policy.policy_version != 1
@@ -293,6 +300,11 @@ impl TeeRegistry<'_> {
         if policy.chain_id != current.chain_id || policy.genesis_hash != current.genesis_hash {
             return Err(PrecompileError::Revert(
                 "successor V1 policy chain identity mismatch".into(),
+            ));
+        }
+        if policy.attestation_mode != current.attestation_mode {
+            return Err(PrecompileError::Revert(
+                "successor V1 policy cannot change attestation mode".into(),
             ));
         }
         if policy.policy_version != expected_version {
@@ -417,6 +429,11 @@ impl TeeRegistry<'_> {
         let current_hash = current
             .policy_hash()
             .map_err(|error| revert_codec("invalid current V1 policy", error))?;
+        if policy.attestation_mode != current.attestation_mode {
+            return Err(PrecompileError::Fatal(
+                "staged successor V1 policy changes attestation mode".into(),
+            ));
+        }
         if policy.chain_id != current.chain_id
             || policy.genesis_hash != current.genesis_hash
             || policy.predecessor_policy_hash != current_hash

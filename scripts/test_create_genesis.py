@@ -170,27 +170,23 @@ class ConfigValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "tee.mode"):
             CG.validate_config(config)
 
-    def test_dev_enclave_is_confined_to_the_devnet_chain(self):
+    def test_testnet_direct_dev_needs_no_secondary_opt_in(self):
         config = minimal_config("./keys") | {"chain_id": 54322345}
-        with self.assertRaisesRegex(ValueError, "unattested"):
+        CG.validate_config(config)
+
+    def test_mainnet_rejects_direct_dev(self):
+        config = minimal_config("./keys") | {
+            "network": "mainnet",
+            "chain_id": 676,
+        }
+        with self.assertRaisesRegex(ValueError, "Mainnet requires"):
             CG.validate_config(config)
 
-    def test_unattested_on_a_non_devnet_chain_needs_an_explicit_opt_in(self):
-        config = minimal_config("./keys") | {"chain_id": 54322345}
-        with self.assertRaisesRegex(ValueError, "allow_unattested_chain_id"):
-            CG.validate_config(config)
-        CG.validate_config(config | {"allow_unattested_chain_id": True})
-
-    def test_dcap_requires_a_production_chain_and_a_pinned_digest(self):
+    def test_dcap_requires_a_pinned_digest_on_every_approved_network(self):
         config = minimal_config("./keys") | {
             "chain_id": 424242,
             "tee": {"mode": "dcap-required"},
         }
-        with self.assertRaisesRegex(ValueError, "testnet or mainnet chain id"):
-            CG.validate_config(config)
-
-        config["chain_id"] = 54322345
-        config["enclave_image"] = "outbe-tee-enclave:latest"
         with self.assertRaisesRegex(ValueError, "immutable digest"):
             CG.validate_config(config)
 
@@ -236,10 +232,7 @@ class ConfigValidationTests(unittest.TestCase):
             CG.validate_config(config)
 
     def test_unknown_chain_identity_is_rejected(self):
-        config = minimal_config("./keys") | {
-            "chain_id": 999999,
-            "allow_unattested_chain_id": True,
-        }
+        config = minimal_config("./keys") | {"chain_id": 999999}
         with self.assertRaisesRegex(ValueError, "unknown Outbe chain id"):
             CG.validate_config(config)
 

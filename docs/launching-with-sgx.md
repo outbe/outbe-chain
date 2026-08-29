@@ -11,7 +11,7 @@ Supported profiles are:
 
 | Chain policy | Local enclave | Remote attestation | Intended use |
 | --- | --- | --- | --- |
-| `DcapRequired` | production `outbe-tee-enclave`, `gramine-sgx`, NodeHost | DCAP | Testnet and Mainnet production admission |
+| `DcapRequired` | production `outbe-tee-enclave`, `gramine-sgx`, NodeHost | DCAP | Devnet/Testnet optional, Mainnet mandatory |
 | `GramineDirectDev` | production `outbe-tee-enclave`, `gramine-sgx`, NodeHost | none | real SGX development network without Intel collateral |
 | `GramineDirectDev` | production or mock enclave, `gramine-direct`, development session | none | hardware-free development |
 | `GramineDirectDev` | mock enclave as a native host process, development session | none | development on hosts where Gramine cannot run |
@@ -34,10 +34,11 @@ collateral or claim remote hardware attestation; on chain it remains
 
 The two chain policies remain distinct:
 
-- `DcapRequired` is the Intel SGX x86_64 production mode for Testnet chain ID
-  `54322345` and Mainnet chain ID `676`. It requires the V1 manifest from block
-  1, an authorized SGX enclave, quote and canonical collateral. A missing or
-  rejected dependency stops startup; it never falls back to development mode.
+- `DcapRequired` is the Intel SGX x86_64 mode for Devnet chain ID `424242`,
+  Testnet chain ID `54322345` and Mainnet chain ID `676`. It requires the V1
+  manifest from block 1, an authorized SGX enclave, quote and canonical
+  collateral. A missing or rejected dependency stops startup; it never falls
+  back to development mode.
 - `GramineDirectDev` accepts development evidence. That policy can be exercised
   either without hardware or by the production SGX-without-DCAP profile above;
   neither is DCAP or release-attestation evidence.
@@ -173,12 +174,13 @@ target/debug/outbe-chain tee genesis \
   --minimum-tcb-evaluation-data-number <reviewed-nonzero-tcb-number>
 ```
 
-The command refuses zero measurements, the devnet chain ID,
+The command refuses zero measurements, unknown chain identities,
 input/output aliasing and overwrite of an existing output. The product
 ChainSpec parser then requires the canonical `teeAttestationV1` field at every
 startup. A hand-authored manifest cannot select `GramineDirectDev` outside
 Devnet/Testnet chain IDs `424242`/`54322345` or select `DcapRequired` outside
-Testnet/Mainnet chain IDs `54322345`/`676`.
+Devnet/Testnet/Mainnet chain IDs `424242`/`54322345`/`676`. The selected mode
+is immutable for the chain lifetime; successor policies cannot switch modes.
 
 `scripts/prepare_network.py` exposes the same boundary for generated launch
 plans:

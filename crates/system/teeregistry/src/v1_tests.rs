@@ -3,6 +3,7 @@ use alloy_sol_types::{sol, SolCall, SolEvent};
 use ed25519_dalek::Signer as _;
 use k256::ecdsa::signature::hazmat::PrehashSigner as _;
 use outbe_primitives::{
+    chain::{DEVNET_CHAIN_ID, MAINNET_CHAIN_ID, TESTNET_CHAIN_ID},
     error::PrecompileError,
     signer::OutbeEvmSigner,
     storage::{hashmap::HashMapStorageProvider, PrecompileStorageProvider, StorageHandle},
@@ -66,7 +67,7 @@ sol! {
     }
 }
 
-const CHAIN_ID: u64 = 1;
+const CHAIN_ID: u64 = TESTNET_CHAIN_ID;
 const NOW: u64 = 10_000;
 const MRENCLAVE: B256 = B256::repeat_byte(0x81);
 const MRSIGNER: B256 = B256::repeat_byte(0x82);
@@ -112,7 +113,11 @@ fn policy(genesis_hash: B256, statuses: PlatformTcbStatusSetV1) -> TeePolicyV1 {
 }
 
 fn storage(genesis_hash: B256) -> HashMapStorageProvider {
-    let mut storage = HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, genesis_hash);
+    storage_for_chain(CHAIN_ID, genesis_hash)
+}
+
+fn storage_for_chain(chain_id: u64, genesis_hash: B256) -> HashMapStorageProvider {
+    let mut storage = HashMapStorageProvider::new_with_chain_identity(chain_id, genesis_hash);
     storage.set_block_number(10);
     storage.set_timestamp(U256::from(NOW));
     storage
@@ -1894,6 +1899,53 @@ fn initial_policy_is_state_authority_and_is_write_once() {
 }
 
 #[test]
+fn initial_policy_rejects_direct_dev_on_mainnet_before_registry_writes() {
+    let genesis_hash = B256::repeat_byte(0x19);
+    let mut direct = policy(
+        genesis_hash,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
+    );
+    direct.chain_id = U256::from(MAINNET_CHAIN_ID).to_be_bytes();
+    direct.attestation_mode = AttestationMode::GramineDirectDev;
+    let mut provider = storage_for_chain(MAINNET_CHAIN_ID, genesis_hash);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut registry = TeeRegistry::new(storage);
+        assert!(
+            revert_message(registry.install_initial_policy_v1(&direct).unwrap_err())
+                .contains("attestation mode")
+        );
+        assert_eq!(registry.active_v1_policy_len.read().unwrap(), 0);
+        assert!(registry.active_v1_policy_hash.read().unwrap().is_zero());
+    });
+}
+
+#[test]
+fn initial_policy_accepts_both_non_mainnet_modes_and_mainnet_dcap() {
+    for (chain_id, mode) in [
+        (DEVNET_CHAIN_ID, AttestationMode::DcapRequired),
+        (DEVNET_CHAIN_ID, AttestationMode::GramineDirectDev),
+        (TESTNET_CHAIN_ID, AttestationMode::DcapRequired),
+        (TESTNET_CHAIN_ID, AttestationMode::GramineDirectDev),
+        (MAINNET_CHAIN_ID, AttestationMode::DcapRequired),
+    ] {
+        let genesis_hash = B256::from(U256::from(chain_id).to_be_bytes());
+        let mut initial = policy(
+            genesis_hash,
+            PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
+        );
+        initial.chain_id = U256::from(chain_id).to_be_bytes();
+        initial.attestation_mode = mode;
+        let mut provider = storage_for_chain(chain_id, genesis_hash);
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut registry = TeeRegistry::new(storage);
+            registry.install_initial_policy_v1(&initial).unwrap();
+            assert_eq!(registry.active_policy_v1().unwrap(), initial);
+        });
+    }
+}
+
+#[test]
 fn stages_exactly_one_predecessor_bound_successor_policy() {
     let genesis_hash = B256::repeat_byte(0x15);
     let current = policy(
@@ -1934,6 +1986,16 @@ fn stages_exactly_one_predecessor_bound_successor_policy() {
         )
         .contains("current plus one"));
 
+        let mut wrong_mode = successor.clone();
+        wrong_mode.attestation_mode = AttestationMode::GramineDirectDev;
+        assert!(revert_message(
+            registry
+                .stage_successor_policy_v1(U256::from(6), &wrong_mode)
+                .unwrap_err()
+        )
+        .contains("attestation mode"));
+        assert_eq!(registry.staged_successor_policy_v1().unwrap(), None);
+
         registry
             .stage_successor_policy_v1(U256::from(7), &successor)
             .unwrap();
@@ -1963,6 +2025,42 @@ fn stages_exactly_one_predecessor_bound_successor_policy() {
         )
         .contains("predecessor"));
     });
+}
+
+#[test]
+fn successor_policy_rejects_both_attestation_mode_switch_directions() {
+    for active_mode in [
+        AttestationMode::DcapRequired,
+        AttestationMode::GramineDirectDev,
+    ] {
+        let genesis_hash = B256::repeat_byte(active_mode as u8);
+        let mut current = policy(
+            genesis_hash,
+            PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
+        );
+        current.attestation_mode = active_mode;
+        let mut successor = current.clone();
+        successor.policy_version = 2;
+        successor.activation_height = 50;
+        successor.predecessor_policy_hash = current.policy_hash().unwrap();
+        successor.attestation_mode = match active_mode {
+            AttestationMode::DcapRequired => AttestationMode::GramineDirectDev,
+            AttestationMode::GramineDirectDev => AttestationMode::DcapRequired,
+        };
+        let mut provider = storage(genesis_hash);
+        StorageHandle::enter(&mut provider, |storage| {
+            let mut registry = TeeRegistry::new(storage);
+            registry.install_initial_policy_v1(&current).unwrap();
+            assert!(revert_message(
+                registry
+                    .stage_successor_policy_v1(U256::from(20), &successor)
+                    .unwrap_err()
+            )
+            .contains("attestation mode"));
+            assert_eq!(registry.staged_successor_policy_v1().unwrap(), None);
+            assert_eq!(registry.active_policy_v1().unwrap(), current);
+        });
+    }
 }
 
 #[test]
@@ -2004,6 +2102,63 @@ fn promotes_staged_successor_exactly_at_activation_height_and_replays_idempotent
             .unwrap();
         assert_eq!(registry.active_policy_v1().unwrap(), successor);
         assert_eq!(registry.staged_successor_policy_v1().unwrap(), None);
+    });
+}
+
+#[test]
+fn promotion_rejects_a_preexisting_cross_mode_successor() {
+    let genesis_hash = B256::repeat_byte(0x18);
+    let current = policy(
+        genesis_hash,
+        PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
+    );
+    let mut successor = current.clone();
+    successor.policy_version = 2;
+    successor.activation_height = 50;
+    successor.predecessor_policy_hash = current.policy_hash().unwrap();
+    successor.attestation_mode = AttestationMode::GramineDirectDev;
+    let canonical = successor.encode_canonical().unwrap();
+    let policy_hash = successor.policy_hash().unwrap();
+    let proposal_id = U256::from(18);
+    let mut provider = storage(genesis_hash);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let mut registry = TeeRegistry::new(storage);
+        registry.install_initial_policy_v1(&current).unwrap();
+        for (index, chunk) in canonical.chunks(32).enumerate() {
+            let mut word = [0u8; 32];
+            word[..chunk.len()].copy_from_slice(chunk);
+            registry
+                .staged_v1_policy_chunk
+                .write(&(index as u32), B256::from(word))
+                .unwrap();
+        }
+        registry
+            .staged_v1_policy_len
+            .write(canonical.len() as u32)
+            .unwrap();
+        registry.staged_v1_policy_hash.write(policy_hash).unwrap();
+        registry
+            .staged_v1_policy_proposal_id
+            .write(proposal_id)
+            .unwrap();
+        registry
+            .staged_v1_policy_activation_height
+            .write(successor.activation_height)
+            .unwrap();
+
+        assert!(format!(
+            "{}",
+            registry
+                .promote_staged_successor_policy_v1(proposal_id, 50)
+                .unwrap_err()
+        )
+        .contains("attestation mode"));
+        assert_eq!(registry.active_policy_v1().unwrap(), current);
+        assert_eq!(
+            registry.staged_successor_policy_v1().unwrap(),
+            Some((proposal_id, successor))
+        );
     });
 }
 

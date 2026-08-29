@@ -71,8 +71,7 @@ validators:
 keys_dir: ./keys                 # keys_dir/validator-N/ from outbe-keygen
 
 tee:
-  mode: gramine-direct-dev       # real SGX, no Intel collateral
-allow_unattested_chain_id: true  # required: this mode is normally devnet-only
+  mode: gramine-direct-dev       # explicit real SGX, no Intel collateral
 signed_enclave_dir: ./signed     # the artifacts you just signed
 
 # Where the bundle lands on the machines.
