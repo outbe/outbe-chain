@@ -404,6 +404,13 @@ impl PriceOracleTopology {
             .map(|publication| publication.oracle_block)
     }
 
+    pub(crate) fn read_controlled_quote(&self) -> Option<(String, String)> {
+        self.mock.as_ref().map(|mock| {
+            let book = mock.book();
+            (book.price, book.volume)
+        })
+    }
+
     pub fn publish_quote(&mut self, price: &str, volume: &str) -> Result<u64> {
         if self.feeder.is_none() {
             bail!("price feeder must be running before changing the controlled quote")

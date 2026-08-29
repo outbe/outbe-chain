@@ -22,6 +22,16 @@ fn fresh_localnet(world: &mut World, window: u64) {
     boot_localnet(world, window, &[]);
 }
 
+#[given(expr = "a fresh txpool-eviction localnet with a {int}-block voting window")]
+fn fresh_txpool_eviction_localnet(world: &mut World, window: u64) {
+    boot_localnet_with_opts(
+        world,
+        window,
+        &[],
+        StartOpts::with_txpool_eviction_profile(window),
+    );
+}
+
 #[given(expr = "a fresh stablecoin localnet with a {int}-block voting window")]
 fn fresh_stablecoin_localnet(world: &mut World, window: u64) {
     boot_localnet(

@@ -26,6 +26,7 @@ outbe-intex = { workspace = true, features = ["test-utils"] }
 workspace = true
 
 [features]
+bench-utils = []
 # Retarget the intex contract addresses at the throwaway CREATE3 set an e2e chain
 # deploys with the well-known anvil key, and let a payout e2e credit proceeds
 # without a deployed router. Never enabled in a release build.

@@ -3381,16 +3381,19 @@ fn clear_seeded_metadosis_days(genesis: &mut serde_json::Value, chain_id: u64) -
     let mut provider = HashMapStorageProvider::new(chain_id);
     {
         let alloc = genesis
-            .get("alloc")
-            .and_then(serde_json::Value::as_object)
+            .get_mut("alloc")
+            .and_then(serde_json::Value::as_object_mut)
             .ok_or_else(|| eyre::eyre!("generated genesis has no alloc object"))?;
         let metadosis_key = find_alloc_address_key(alloc, METADOSIS_ADDRESS)?
             .ok_or_else(|| eyre::eyre!("generated genesis has no Metadosis account"))?;
         let words = alloc
-            .get(&metadosis_key)
-            .and_then(|account| account.get("storage"))
-            .and_then(serde_json::Value::as_object)
-            .ok_or_else(|| eyre::eyre!("Metadosis genesis account has no storage object"))?;
+            .get_mut(&metadosis_key)
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or_else(|| eyre::eyre!("Metadosis genesis account is not an object"))?
+            .entry("storage".to_owned())
+            .or_insert_with(|| serde_json::json!({}))
+            .as_object()
+            .ok_or_else(|| eyre::eyre!("Metadosis genesis account storage is not an object"))?;
         for (slot, value) in words {
             provider.storage.insert(
                 (METADOSIS_ADDRESS, parse_hex_word(slot)?),
@@ -5228,9 +5231,22 @@ mod tests {
 
     #[cfg(feature = "ocomp-integration")]
     #[test]
-    fn fresh_metadosis_capacity_fixture_starts_without_active_day_or_shortened_phases() {
+    fn fresh_metadosis_capacity_fixture_materializes_omitted_storage() {
         let topology = topology();
         prepare_public_measurement_genesis_fixture(&topology);
+        let genesis_path = topology.cfg.dir.join("genesis.json");
+        let mut genesis: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&genesis_path).unwrap()).unwrap();
+        let alloc = genesis["alloc"].as_object_mut().unwrap();
+        let metadosis_key = find_alloc_address_key(alloc, METADOSIS_ADDRESS)
+            .unwrap()
+            .unwrap();
+        alloc[&metadosis_key]
+            .as_object_mut()
+            .unwrap()
+            .remove("storage");
+        std::fs::write(&genesis_path, serde_json::to_vec_pretty(&genesis).unwrap()).unwrap();
+
         let (prepared, private_keys) = topology
             .prepare_fresh_metadosis_capacity_fork_install(3)
             .unwrap();

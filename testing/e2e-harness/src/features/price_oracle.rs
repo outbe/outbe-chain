@@ -58,10 +58,11 @@ pub(crate) fn resume_after_clock_restart(
     previous_block: Option<u64>,
 ) -> Option<PendingPricePublication> {
     let previous_block = previous_block?;
+    let expected_rate = feeder_restart_expected_rate(world.price_oracle.read_controlled_quote());
     start_feeder(world);
     Some(PendingPricePublication {
         strictly_after_block: previous_block,
-        expected_rate: EXPECTED_RATE,
+        expected_rate,
         deadline: Instant::now() + PUBLICATION_TIMEOUT,
     })
 }
@@ -102,6 +103,7 @@ pub(crate) fn publish_controlled_quote(world: &mut World, expected_rate: U256) {
 }
 
 fn start_feeder(world: &mut World) {
+    let (price, volume) = feeder_start_quote(world.price_oracle.read_controlled_quote());
     let validator = world.validators.get(0);
     let private_key = validator.evm_key().expect("validator-0 EVM key for feeder");
     let validator_address = world
@@ -125,12 +127,45 @@ fn start_feeder(world: &mut World) {
             &private_key,
             &validator_address,
             crate::world::price_oracle::PriceQuote {
-                price: MOCK_PRICE,
-                volume: MOCK_VOLUME,
+                price: &price,
+                volume: &volume,
             },
             vote_period,
         )
         .expect("start production price feeder against controlled source");
+}
+
+fn feeder_start_quote(current: Option<(String, String)>) -> (String, String) {
+    current.unwrap_or_else(|| (MOCK_PRICE.to_owned(), MOCK_VOLUME.to_owned()))
+}
+
+fn feeder_restart_expected_rate(current: Option<(String, String)>) -> U256 {
+    let (price, _) = feeder_start_quote(current);
+    parse_scale6_rate(&price).unwrap_or_else(|| {
+        panic!("controlled feeder quote `{price}` is not a canonical scale-6 rate")
+    })
+}
+
+fn parse_scale6_rate(price: &str) -> Option<U256> {
+    let (whole, fraction) = price.split_once('.').unwrap_or((price, ""));
+    if whole.is_empty()
+        || fraction.len() > 6
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let whole = whole.parse::<U256>().ok()?;
+    let mut fraction = fraction.to_owned();
+    fraction.extend(std::iter::repeat_n('0', 6 - fraction.len()));
+    let fraction = if fraction.is_empty() {
+        U256::ZERO
+    } else {
+        fraction.parse::<U256>().ok()?
+    };
+    whole
+        .checked_mul(U256::from(1_000_000_u64))?
+        .checked_add(fraction)
 }
 
 fn wait_for_unanimous_publication(
@@ -234,5 +269,22 @@ mod tests {
         assert_eq!(FX_TTL_SECS, 6 * 60 * 60);
         assert_eq!(scale6_quote(U256::from(1_080_001_u64)), "1.080001");
         assert_eq!(scale6_quote(U256::from(2_u64)), "0.000002");
+    }
+
+    #[test]
+    fn feeder_restart_preserves_the_current_controlled_quote() {
+        assert_eq!(
+            feeder_start_quote(None),
+            (MOCK_PRICE.to_owned(), MOCK_VOLUME.to_owned())
+        );
+        assert_eq!(
+            feeder_start_quote(Some(("1.080001".into(), "77.000000".into()))),
+            ("1.080001".into(), "77.000000".into())
+        );
+        assert_eq!(
+            feeder_restart_expected_rate(Some(("1.080001".into(), "77.000000".into()))),
+            U256::from(1_080_001_u64)
+        );
+        assert_eq!(feeder_restart_expected_rate(None), EXPECTED_RATE);
     }
 }

@@ -57,6 +57,7 @@ trybuild = "1"
 
 [features]
 default = []
+bench-utils = []
 test-utils = []
 tee-attestation-v1 = []
 

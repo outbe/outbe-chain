@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 use eyre::Result;
-use xtask::{ocomp, release::sgx, stablecoin};
+use xtask::{ocomp, protocol_bench, release::sgx, stablecoin};
 
 #[derive(Debug, Parser)]
 #[command(about = "Outbe repository development and release automation")]
@@ -19,6 +19,40 @@ enum Command {
     Stablecoin(StablecoinArgs),
     /// Generate and verify Off-chain Computation PoC development artifacts.
     Ocomp(OcompArgs),
+    /// Run deterministic protocol gas and latency benchmarks.
+    ProtocolBench(ProtocolBenchArgs),
+}
+
+#[derive(Debug, Args)]
+struct ProtocolBenchArgs {
+    #[command(subcommand)]
+    command: ProtocolBenchCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ProtocolBenchCommand {
+    /// Run selected Rust protocol scenarios.
+    Run(ProtocolBenchOptions),
+    /// Fail when deterministic gas output differs from the checked baseline.
+    BaselineCheck(ProtocolBenchOptions),
+    /// Explicitly replace the deterministic gas baseline after a validated run.
+    BaselineUpdate(ProtocolBenchOptions),
+}
+
+#[derive(Debug, Args)]
+struct ProtocolBenchOptions {
+    /// Samples per selected scenario (minimum 3).
+    #[arg(long, default_value_t = 300)]
+    samples: usize,
+    /// Scenario id substring, or `all`.
+    #[arg(long, default_value = "all")]
+    filter: String,
+    /// Optional machine-readable report destination.
+    #[arg(long)]
+    json: Option<PathBuf>,
+    /// Optional deterministic gas baseline path.
+    #[arg(long)]
+    baseline: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -271,6 +305,27 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let repo_root = sgx::repository_root()?;
     match cli.command {
+        Command::ProtocolBench(arguments) => {
+            let (action, options) = match arguments.command {
+                ProtocolBenchCommand::Run(options) => (protocol_bench::Action::Run, options),
+                ProtocolBenchCommand::BaselineCheck(options) => {
+                    (protocol_bench::Action::BaselineCheck, options)
+                }
+                ProtocolBenchCommand::BaselineUpdate(options) => {
+                    (protocol_bench::Action::BaselineUpdate, options)
+                }
+            };
+            protocol_bench::run(
+                &repo_root,
+                action,
+                &protocol_bench::Options {
+                    samples: options.samples,
+                    filter: &options.filter,
+                    json: options.json.as_deref(),
+                    baseline: options.baseline.as_deref(),
+                },
+            )?;
+        }
         Command::Ocomp(ocomp_args) => match ocomp_args.command {
             OcompCommand::CapacityBudget { output } => {
                 ocomp::capacity::publish_budget(&repo_root, &output)?;
