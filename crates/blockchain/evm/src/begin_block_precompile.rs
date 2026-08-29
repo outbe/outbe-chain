@@ -399,6 +399,7 @@ pub(crate) fn run_tee_bootstrap_v1(
                 ))
             })?;
         registry.register_enclave_v1(
+            Address::from(participant.validator_binding.validator),
             &evidence,
             &participant.node_signature,
             &participant.enclave_signature,

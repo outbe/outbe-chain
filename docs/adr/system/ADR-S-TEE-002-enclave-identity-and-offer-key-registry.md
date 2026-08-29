@@ -1,7 +1,7 @@
 # ADR-S-TEE-002: TeeRegistry owns on-chain enclave identity and offer-key epochs
 
 - **Status:** Accepted for the V1 DCAP activation boundary; I9 hardware evidence remains gated
-- **Date:** 2026-07-17
+- **Date:** 2026-07-17; amended 2026-08-29 for recurring manual leases
 - **Owners/scope:** `crates/system/teeregistry`; enclave registrations,
   attestation-policy commitment, committee group key and Tribute offer-key identity
 - **Depends on:** ADR-B-CNS-001, ADR-B-CNS-002, ADR-B-CNS-003 and ADR-B-EVM-004, ADR-S-VAL-001, ADR-S-TEE-001
@@ -94,7 +94,10 @@ Unbootstrapped --validated block-1 bootstrap--> Bootstrapped(epoch E, offer O)
 
 Absent NodeHost + absent association --verified evidence + dual-signed binding-->
   Registered NodeHost(version V) + Associated EVM address
-Registered(V) --verified newer/authorized quote--> Registered(V+1)
+Registered(V, live) --verified owner renewal in final 7-day window-->
+  Registered(V+1, deadline += 14 days)
+Registered(V, expired) --verified owner rejoin + unchanged association-->
+  Registered NodeHost(V+1, fresh 14-day-bounded deadline)
 
 EVM/BLS keys --registerValidator/stake/readiness--> REGISTERED/PENDING
 PENDING --certified DKG boundary--> ACTIVE
@@ -128,10 +131,24 @@ recipient, attestation and Noise keys, active policy and the persistent compress
 Reth P2P key. The same call verifies `ValidatorNodeBindingV1` with the separately
 provisioned EVM key and NodeHost P2P key, requires it to reference that exact
 NodeHost, and writes the existing `validator_v1_node_hash` association in the same
-checkpoint. The transaction sender is only a permissionless relay. There is no
-public `bindValidatorNodeHost`, reverse map or second TEE join. Created,
-idempotent, renewal, replacement and measurement transition are explicit versioned
-outcomes and prevent stale-intent replay.
+checkpoint. There is no public `bindValidatorNodeHost` or reverse-map mutator.
+The EVM caller is the
+address principal in that immutable association: initial registration requires
+the caller to equal the address in `ValidatorNodeBindingV1`; every later mutator
+requires the stored caller-to-NodeHost association. These checks happen before
+replay handling. Created, idempotent, renewal, replacement, measurement
+transition and expired rejoin are explicit versioned outcomes and prevent
+stale-intent replay.
+
+The production lease period is 14 consensus days. Renewal is accepted only in
+the half-open final window `[deadline - 7 days, deadline)` and advances the
+deadline from the prior deadline, never from transaction inclusion time. Once
+expired, renew, replacement and measurement transition cannot revive the
+binding. Ordinary `tee join` is the recovery entry point: it submits fresh
+registration evidence while retaining the immutable address-to-NodeHost
+association. A jailed validator must complete the ordinary ValidatorSet unjail
+transition first; a role-neutral FullNode address absent from ValidatorSet may
+rejoin directly.
 
 A FullNode may store EVM/BLS key material, but its runtime does not load it and the
 association confers no consensus or OCOMP authority. Promotion stops the FullNode
@@ -151,9 +168,10 @@ The selected V1 contract is the first option. Every consensus node is required t
 run an authorized enclave before execution. For a Created binding, that enclave
 uses static-static X25519 and derived nonce with no RNG to return byte-identical
 bounded bytes; missing enclave, zero resident commitment, malformed bounds or
-prefix mismatch is fatal. Idempotent registration, renewal and replacement never
-redeliver. A node lacking the exact resident key does not enter consensus or
-transaction execution.
+prefix mismatch is fatal. Exact idempotent replay, renewal and live replacement
+never redeliver. A successful expired rejoin is a fresh Created registration and
+delivers the artifact to the re-attested enclave. A node lacking the exact
+resident key does not enter consensus or transaction execution.
 
 ## Reshare activation and group key
 
@@ -170,10 +188,14 @@ length/availability marker last. Readers fail closed on malformed length/chunks.
 
 Bootstrap replay rejects. Initial registration replay succeeds only when both the
 NodeHost record and EVM association are exact idempotent replays; partial or
-conflicting states reject without writes. Registration same-intent retry returns
-the original typed registration/delivery receipt without repeating count or
-delivery; different intent for the same registration version rejects. Boundary
-replay binds the complete artifact identity and returns the prior result.
+conflicting states reject without writes. Expired rejoin requires the existing
+caller association, stable NodeHost authorization, exact next registration and
+binding versions, a fresh binding id, and either the current enclave identity or
+a globally unseen enclave identity. Historical reverse indexes remain permanent
+anti-reuse tombstones. Registration same-intent retry returns the original typed
+registration/delivery receipt without repeating count or delivery; different
+intent for the same registration version rejects. Boundary replay binds the
+complete artifact identity and returns the prior result.
 
 Invalid user quotes, signatures and bindings are reverts. Missing or corrupt canonical policy,
 committee snapshot, group key, count/index equivalence or impossible activated

@@ -302,9 +302,12 @@ ownership?
 
 ### Answer
 
-`RESOLVED`.
+`RESOLVED`; amended 2026-08-29 for recurring manual leases.
 
-- `msg.sender` is only a permissionless relay.
+- `msg.sender` must be the EVM address in the immutable
+  address-to-NodeHost association. Initial registration creates that
+  dual-signed association atomically; later renew, replace, transition and
+  expired-rejoin operations authenticate it before replay handling.
 - Validator identity is its address plus consensus BLS public key.
 - Full-node identity is its persistent Reth P2P public key.
 - Both profiles use the same mandatory DCAP/lease flow.

@@ -162,10 +162,17 @@ pub async fn run_renewal_once_v1(
                 ..
             } => {
                 if view.binding == finalized_binding || target_matches(&view.binding, &attempt)? {
-                    if !renewal_is_open(&view.binding, view.schedule.finalized_timestamp)? {
+                    if !renewal_is_open(
+                        &view.binding,
+                        view.schedule.finalized_timestamp,
+                        view.policy.maximum_lease,
+                    )? {
                         return Ok(RenewalOutcomeV1::NotDue {
                             finalized_height: view.schedule.finalized_height,
-                            opens_at_timestamp: renewal_opens_at(&view.binding)?,
+                            opens_at_timestamp: renewal_opens_at(
+                                &view.binding,
+                                view.policy.maximum_lease,
+                            )?,
                         });
                     }
                 } else {
@@ -178,10 +185,14 @@ pub async fn run_renewal_once_v1(
         }
     }
 
-    if !renewal_is_open(&view.binding, view.schedule.finalized_timestamp)? {
+    if !renewal_is_open(
+        &view.binding,
+        view.schedule.finalized_timestamp,
+        view.policy.maximum_lease,
+    )? {
         return Ok(RenewalOutcomeV1::NotDue {
             finalized_height: view.schedule.finalized_height,
-            opens_at_timestamp: renewal_opens_at(&view.binding)?,
+            opens_at_timestamp: renewal_opens_at(&view.binding, view.policy.maximum_lease)?,
         });
     }
     let attempt = prepare_attempt(rpc, evm_signer, enclave, node_signer, config, &view).await?;
@@ -248,46 +259,18 @@ async fn prepare_attempt(
     config: &RenewalServiceConfigV1,
     view: &FinalizedRenewalChainViewV1,
 ) -> Result<PreparedRenewalV1> {
-    let desired_valid_until = view
-        .schedule
-        .finalized_timestamp
-        .checked_add(view.policy.maximum_lease)
+    let desired_valid_until = next_renewal_deadline(&view.binding, view.policy.maximum_lease)
         .ok_or_else(|| eyre::eyre!("maximum renewal lease overflows timestamp"))?;
-    let mut intent = renewal_intent(config, view, desired_valid_until)?;
-    let mut generated_evidence = generate_evidence(enclave, &intent, &view.policy)?;
-    let mut window = dcap_collateral_validity_window_v1(&generated_evidence.0, &view.policy)
+    let intent = renewal_intent(config, view, desired_valid_until)?;
+    let generated_evidence = generate_evidence(enclave, &intent, &view.policy)?;
+    let window = dcap_collateral_validity_window_v1(&generated_evidence.0, &view.policy)
         .map_err(|error| eyre::eyre!("validate signed renewal collateral window: {error:?}"))?;
     let ceiling = window
         .expiration_ceiling
         .checked_sub(view.policy.collateral_margin)
         .ok_or_else(|| eyre::eyre!("renewal collateral cannot satisfy the active margin"))?;
-    let requested_valid_until = desired_valid_until.min(ceiling);
-    let minimum_valid_until = view
-        .schedule
-        .finalized_timestamp
-        .checked_add(view.policy.minimum_lease)
-        .ok_or_else(|| eyre::eyre!("minimum renewal lease overflows timestamp"))?;
-    if window.issue_floor > view.schedule.finalized_timestamp
-        || requested_valid_until < minimum_valid_until
-    {
-        eyre::bail!("fresh Intel collateral cannot satisfy the active renewal lease policy");
-    }
-    if requested_valid_until != desired_valid_until {
-        intent.requested_valid_until = requested_valid_until;
-        generated_evidence = generate_evidence(enclave, &intent, &view.policy)?;
-        window = dcap_collateral_validity_window_v1(&generated_evidence.0, &view.policy)
-            .map_err(|error| eyre::eyre!("validate final renewal collateral window: {error:?}"))?;
-        let final_ceiling = window
-            .expiration_ceiling
-            .checked_sub(view.policy.collateral_margin)
-            .ok_or_else(|| eyre::eyre!("final renewal collateral margin underflows"))?;
-        if intent.requested_valid_until > final_ceiling
-            || window.issue_floor > view.schedule.finalized_timestamp
-        {
-            eyre::bail!(
-                "regenerated renewal evidence no longer satisfies its signed collateral ceiling"
-            );
-        }
+    if window.issue_floor > view.schedule.finalized_timestamp || desired_valid_until > ceiling {
+        eyre::bail!("fresh Intel collateral cannot cover the exact next renewal deadline");
     }
     let intent_hash = intent
         .intent_hash()
@@ -517,21 +500,26 @@ fn permanent_staleness(attempt: &PreparedRenewalV1, finalized_timestamp: u64) ->
     None
 }
 
-fn renewal_opens_at(binding: &RenewalBindingV1) -> Result<u64> {
-    let duration = binding
-        .valid_until
-        .checked_sub(binding.lease_started_at)
-        .ok_or_else(|| eyre::eyre!("finalized Registry lease interval is inconsistent"))?;
-    Ok(binding
-        .lease_started_at
-        .saturating_add(duration.saturating_mul(2).div_ceil(3)))
+fn renewal_opens_at(binding: &RenewalBindingV1, lease_period: u64) -> Result<u64> {
+    if lease_period == 0 || !lease_period.is_multiple_of(2) {
+        eyre::bail!("finalized Registry lease period is not a positive even duration");
+    }
+    Ok(binding.valid_until.saturating_sub(lease_period / 2))
 }
 
-fn renewal_is_open(binding: &RenewalBindingV1, finalized_timestamp: u64) -> Result<bool> {
+fn renewal_is_open(
+    binding: &RenewalBindingV1,
+    finalized_timestamp: u64,
+    lease_period: u64,
+) -> Result<bool> {
     if finalized_timestamp >= binding.valid_until {
-        return Ok(true);
+        eyre::bail!("finalized enclave lease expired; run tee join to recover");
     }
-    Ok(finalized_timestamp >= renewal_opens_at(binding)?)
+    Ok(finalized_timestamp >= renewal_opens_at(binding, lease_period)?)
+}
+
+fn next_renewal_deadline(binding: &RenewalBindingV1, lease_period: u64) -> Option<u64> {
+    binding.valid_until.checked_add(lease_period)
 }
 
 #[cfg(test)]
@@ -635,12 +623,15 @@ mod tests {
     }
 
     #[test]
-    fn renewal_opens_at_the_exact_registry_final_third_boundary() {
+    fn renewal_window_is_the_last_half_period_and_excludes_the_deadline() {
         let binding = binding();
-        assert_eq!(renewal_opens_at(&binding).unwrap(), 300);
-        assert!(!renewal_is_open(&binding, 299).unwrap());
-        assert!(renewal_is_open(&binding, 300).unwrap());
-        assert!(renewal_is_open(&binding, 400).unwrap());
+        let lease_period = 200;
+        assert_eq!(renewal_opens_at(&binding, lease_period).unwrap(), 300);
+        assert!(!renewal_is_open(&binding, 299, lease_period).unwrap());
+        assert!(renewal_is_open(&binding, 300, lease_period).unwrap());
+        assert!(renewal_is_open(&binding, 399, lease_period).unwrap());
+        assert!(renewal_is_open(&binding, 400, lease_period).is_err());
+        assert_eq!(next_renewal_deadline(&binding, lease_period).unwrap(), 600);
     }
 
     #[test]

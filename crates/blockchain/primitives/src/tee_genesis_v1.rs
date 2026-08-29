@@ -43,6 +43,9 @@ const INTEL_QE_VENDOR_ID: [u8; 16] = [
     0x93, 0x9a, 0x72, 0x33, 0xf7, 0x9c, 0x4c, 0xa9, 0x94, 0x0a, 0x0d, 0xb3, 0x95, 0x7f, 0x06, 0x07,
 ];
 
+/// Canonical production enclave lease period: fourteen consensus days.
+pub const PRODUCTION_TEE_LEASE_SECONDS_V1: u64 = 14 * 24 * 60 * 60;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProductionSgxMeasurementV1 {
     pub mrenclave: B256,
@@ -156,7 +159,7 @@ pub fn initial_tee_policy_v1(
         accepted_platform_tcb_statuses: PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded,
         accepted_qe_tcb_status: QvlTcbStatusV1::UpToDate,
         minimum_lease: 3_600,
-        maximum_lease: 2_592_000,
+        maximum_lease: PRODUCTION_TEE_LEASE_SECONDS_V1,
         collateral_margin: 3_600,
         resource_schedule_hash,
         measurement_rules: vec![measurement_rule],
@@ -287,7 +290,8 @@ mod tests {
             PlatformTcbStatusSetV1::UpToDateOrHardeningNeeded
         );
         assert_eq!(policy.accepted_qe_tcb_status, QvlTcbStatusV1::UpToDate);
-        assert_eq!(policy.maximum_lease, 30 * 24 * 60 * 60);
+        assert_eq!(policy.minimum_lease, 3_600);
+        assert_eq!(policy.maximum_lease, 14 * 24 * 60 * 60);
     }
 
     #[test]

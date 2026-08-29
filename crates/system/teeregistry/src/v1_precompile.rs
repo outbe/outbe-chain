@@ -1,8 +1,8 @@
 //! Active TeeRegistry V1 node-enclave registration ABI.
 //!
 //! A0 routes the production precompile address here exclusively. The global
-//! bootstrap views retain their established selectors, but the former
-//! caller-authorized registration selector is not decoded or accepted.
+//! bootstrap views retain their established selectors, while every V1 mutator
+//! authenticates the EVM caller against the canonical NodeHost association.
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolInterface};
@@ -22,13 +22,12 @@ use crate::{NodeEnclaveBindingV1, TeeRegistry, V1RegistrationOutcome};
 /// TeeRegistry V1 never accepts native token value on any selector.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
-/// Feature-gated V1 ABI entry point. The caller is deliberately ignored for
-/// registration authority: both proofs of possession are bound to the exact
-/// canonical intent, so any account may relay the transaction.
+/// Feature-gated V1 ABI entry point. Mutations bind the transaction caller to
+/// the canonical address-to-NodeHost association before replay handling.
 pub fn dispatch(
     storage: StorageHandle<'_>,
     data: &[u8],
-    _caller: Address,
+    caller: Address,
     value: U256,
 ) -> Result<Bytes> {
     reject_value(&value)?;
@@ -192,6 +191,7 @@ pub fn dispatch(
                         registration_onboarding_target(preflight.evidence)?;
                     let outcome = if policy.attestation_mode == AttestationMode::DcapRequired {
                         let onboarding = registry.register_enclave_with_onboarding_v1(
+                            caller,
                             preflight.evidence,
                             &node_signature,
                             &enclave_signature,
@@ -207,6 +207,7 @@ pub fn dispatch(
                         // development-only transport. It is not a production
                         // fallback and never enters the DcapRequired capability.
                         let outcome = registry.register_enclave_with_active_policy_v1(
+                            caller,
                             preflight.evidence,
                             &node_signature,
                             &enclave_signature,
@@ -245,6 +246,7 @@ pub fn dispatch(
                             PrecompileError::Fatal("preflight enclave signature mismatch".into())
                         })?;
                     let outcome = registry.renew_enclave_with_active_policy_v1(
+                        caller,
                         preflight.evidence,
                         &node_signature,
                         &enclave_signature,
@@ -273,6 +275,7 @@ pub fn dispatch(
                             PrecompileError::Fatal("preflight enclave signature mismatch".into())
                         })?;
                     let outcome = registry.replace_enclave_binding_with_active_policy_v1(
+                        caller,
                         preflight.evidence,
                         &node_signature,
                         &enclave_signature,
@@ -300,6 +303,7 @@ pub fn dispatch(
                             PrecompileError::Fatal("preflight enclave signature mismatch".into())
                         })?;
                     let outcome = registry.transition_enclave_measurement_with_staged_policy_v1(
+                        caller,
                         preflight.evidence,
                         &node_signature,
                         &enclave_signature,
@@ -534,12 +538,14 @@ fn preflight_evidence_mutator_call(data: &[u8]) -> Result<RegisterPreflight<'_>>
 #[cfg(test)]
 pub(crate) fn dispatch_register_after_verifier_for_test(
     storage: StorageHandle<'_>,
+    caller: Address,
     data: &[u8],
     intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
     capability: crate::v1::PostVerifierDcapCapabilityV1,
 ) -> Result<V1RegistrationOutcome> {
     dispatch_mutator_after_verifier_for_test(
         storage,
+        caller,
         data,
         intent,
         RegistryMutatorV1::RegisterEnclave,
@@ -552,6 +558,7 @@ pub(crate) fn dispatch_register_after_verifier_for_test(
 #[cfg(test)]
 pub(crate) fn dispatch_register_with_onboarding_after_verifier_for_test<F>(
     storage: StorageHandle<'_>,
+    caller: Address,
     data: &[u8],
     intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
     capability: crate::v1::PostVerifierDcapCapabilityV1,
@@ -561,7 +568,8 @@ where
     F: FnOnce([u8; 32]) -> std::result::Result<Option<Vec<u8>>, String>,
 {
     let onboarding_storage = storage.clone();
-    let outcome = dispatch_register_after_verifier_for_test(storage, data, intent, capability)?;
+    let outcome =
+        dispatch_register_after_verifier_for_test(storage, caller, data, intent, capability)?;
     let node_id_hash = intent.node_id.node_id_hash().map_err(|error| {
         PrecompileError::Revert(format!("registration node identity is invalid: {error}"))
     })?;
@@ -578,12 +586,14 @@ where
 #[cfg(test)]
 pub(crate) fn dispatch_renew_after_verifier_for_test(
     storage: StorageHandle<'_>,
+    caller: Address,
     data: &[u8],
     intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
     capability: crate::v1::PostVerifierDcapCapabilityV1,
 ) -> Result<V1RegistrationOutcome> {
     dispatch_mutator_after_verifier_for_test(
         storage,
+        caller,
         data,
         intent,
         RegistryMutatorV1::RenewEnclave,
@@ -594,12 +604,14 @@ pub(crate) fn dispatch_renew_after_verifier_for_test(
 #[cfg(test)]
 pub(crate) fn dispatch_replace_after_verifier_for_test(
     storage: StorageHandle<'_>,
+    caller: Address,
     data: &[u8],
     intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
     capability: crate::v1::PostVerifierDcapCapabilityV1,
 ) -> Result<V1RegistrationOutcome> {
     dispatch_mutator_after_verifier_for_test(
         storage,
+        caller,
         data,
         intent,
         RegistryMutatorV1::ReplaceEnclaveBinding,
@@ -610,12 +622,14 @@ pub(crate) fn dispatch_replace_after_verifier_for_test(
 #[cfg(test)]
 pub(crate) fn dispatch_transition_after_verifier_for_test(
     storage: StorageHandle<'_>,
+    caller: Address,
     data: &[u8],
     intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
     capability: crate::v1::PostVerifierDcapCapabilityV1,
 ) -> Result<V1RegistrationOutcome> {
     dispatch_mutator_after_verifier_for_test(
         storage,
+        caller,
         data,
         intent,
         RegistryMutatorV1::TransitionEnclaveMeasurement,
@@ -626,6 +640,7 @@ pub(crate) fn dispatch_transition_after_verifier_for_test(
 #[cfg(test)]
 fn dispatch_mutator_after_verifier_for_test(
     storage: StorageHandle<'_>,
+    caller: Address,
     data: &[u8],
     intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
     kind: RegistryMutatorV1,
@@ -698,7 +713,8 @@ fn dispatch_mutator_after_verifier_for_test(
                 .map_err(|_| {
                     PrecompileError::Fatal("preflight NodeHost binding signature mismatch".into())
                 })?;
-            registry.register_enclave_and_bind_after_verifier_for_test(
+            registry.register_enclave_and_bind_after_verifier_for_test_as(
+                caller,
                 intent,
                 &node_signature,
                 &enclave_signature,
@@ -710,6 +726,7 @@ fn dispatch_mutator_after_verifier_for_test(
         }
         RegistryMutatorV1::RenewEnclave => registry
             .renew_enclave_after_verifier_with_active_policy_for_test(
+                caller,
                 intent,
                 &node_signature,
                 &enclave_signature,
@@ -718,6 +735,7 @@ fn dispatch_mutator_after_verifier_for_test(
             ),
         RegistryMutatorV1::ReplaceEnclaveBinding => registry
             .replace_enclave_binding_after_verifier_with_active_policy_for_test(
+                caller,
                 intent,
                 &node_signature,
                 &enclave_signature,
@@ -726,6 +744,7 @@ fn dispatch_mutator_after_verifier_for_test(
             ),
         RegistryMutatorV1::TransitionEnclaveMeasurement => registry
             .transition_enclave_measurement_after_verifier_for_test(
+                caller,
                 intent,
                 &node_signature,
                 &enclave_signature,

@@ -551,9 +551,9 @@ impl RegistrationIntentV1 {
         ))
     }
 
-    /// Verify the node proof of possession over this exact registration
-    /// authorization. The transaction sender is deliberately not consulted:
-    /// it is only a permissionless relay.
+    /// Verify the NodeHost proof of possession over this exact registration
+    /// authorization. TeeRegistry separately authenticates the EVM caller
+    /// against the canonical address-to-NodeHost association.
     pub fn verify_node_signature(&self, signature: &[u8; 65]) -> bool {
         let Ok(hash) = self.intent_hash() else {
             return false;
@@ -1407,6 +1407,7 @@ impl TeePolicyV1 {
         if self.minimum_lease < 3_600
             || self.maximum_lease > 2_592_000
             || self.minimum_lease > self.maximum_lease
+            || !self.maximum_lease.is_multiple_of(2)
             || self.collateral_margin != 3_600
         {
             return Err(CodecError::NonCanonical("invalid TEE lease policy"));

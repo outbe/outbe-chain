@@ -10,6 +10,8 @@ use outbe_primitives::{
     tee_attestation_v1::{NodeIdV1, TeePolicyV1, MAX_TEE_POLICY_BYTES},
 };
 use outbe_validatorset::contract::ValidatorSet;
+#[cfg(feature = "tee-attestation-v1")]
+use outbe_validatorset::runtime::status as validator_status;
 
 use crate::schema::TeeRegistry;
 #[cfg(feature = "tee-attestation-v1")]
@@ -58,12 +60,19 @@ struct VerifiedEnclaveClaimsV1 {
 #[cfg(feature = "tee-attestation-v1")]
 struct VerifiedClaimsMutationV1<'a> {
     expected_operation: AttestationOperationV1,
+    caller: Option<Address>,
     intent: &'a RegistrationIntentV1,
     node_signature: &'a [u8; 65],
     enclave_signature: &'a [u8; 64],
     policy: &'a TeePolicyV1,
     claims: &'a VerifiedEnclaveClaimsV1,
     evidence_hash: B256,
+}
+
+#[cfg(feature = "tee-attestation-v1")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RegistrationCallerContextV1 {
+    expired_rejoin: bool,
 }
 
 #[cfg(feature = "tee-attestation-v1")]
@@ -115,6 +124,57 @@ pub struct NodeEnclaveBindingV1 {
 }
 
 impl TeeRegistry<'_> {
+    #[cfg(feature = "tee-attestation-v1")]
+    fn require_registration_caller_v1(
+        &self,
+        caller: Address,
+        binding: &ValidatorNodeBindingV1,
+    ) -> Result<RegistrationCallerContextV1> {
+        if caller != Address::from(binding.validator) {
+            return Err(PrecompileError::Revert(
+                "registration caller does not match the NodeHost EVM association".into(),
+            ));
+        }
+        let associated_node = self.validator_v1_node_hash.read(&caller)?;
+        let current = self.node_enclave_binding_v1(binding.node_id_hash)?;
+        let Some(current) = current else {
+            if !associated_node.is_zero() {
+                return Err(PrecompileError::Revert(
+                    "registration caller is already associated with another NodeHost".into(),
+                ));
+            }
+            return Ok(RegistrationCallerContextV1 {
+                expired_rejoin: false,
+            });
+        };
+        if associated_node != binding.node_id_hash {
+            return Err(PrecompileError::Revert(
+                "registration caller is not associated with the existing NodeHost".into(),
+            ));
+        }
+        let expired_rejoin = consensus_timestamp(&self.storage)? >= current.valid_until;
+        if expired_rejoin
+            && ValidatorSet::new(self.storage.clone())
+                .get_validator(caller)?
+                .is_some_and(|record| record.status == validator_status::JAILED)
+        {
+            return Err(PrecompileError::Revert(
+                "jailed validator must complete ordinary unjail before enclave rejoin".into(),
+            ));
+        }
+        Ok(RegistrationCallerContextV1 { expired_rejoin })
+    }
+
+    #[cfg(feature = "tee-attestation-v1")]
+    fn require_associated_caller_v1(&self, caller: Address, node_id_hash: B256) -> Result<()> {
+        if self.validator_v1_node_hash.read(&caller)? != node_id_hash {
+            return Err(PrecompileError::Revert(
+                "TEE mutator caller is not associated with the target NodeHost".into(),
+            ));
+        }
+        Ok(())
+    }
+
     #[cfg(feature = "tee-attestation-v1")]
     fn require_initial_binding_target_v1(
         intent: &RegistrationIntentV1,
@@ -717,17 +777,22 @@ impl TeeRegistry<'_> {
         Ok(V1RegistrationOutcome::Created)
     }
 
-    fn require_atomic_initial_outcome_v1(
+    #[cfg(feature = "tee-attestation-v1")]
+    fn require_atomic_registration_outcome_v1(
         registration: V1RegistrationOutcome,
         association: V1RegistrationOutcome,
+        context: RegistrationCallerContextV1,
     ) -> Result<V1RegistrationOutcome> {
-        if registration != association {
-            return Err(PrecompileError::Fatal(
-                "initial NodeHost registration and address association are partially committed"
-                    .into(),
-            ));
+        match (registration, association, context.expired_rejoin) {
+            (V1RegistrationOutcome::Created, V1RegistrationOutcome::Created, false)
+            | (V1RegistrationOutcome::Created, V1RegistrationOutcome::Idempotent, true)
+            | (V1RegistrationOutcome::Idempotent, V1RegistrationOutcome::Idempotent, _) => {
+                Ok(registration)
+            }
+            _ => Err(PrecompileError::Fatal(
+                "NodeHost registration and address association outcomes are inconsistent".into(),
+            )),
         }
-        Ok(registration)
     }
 
     /// Emit the bounded deterministic offer-key artifact for one newly created
@@ -861,10 +926,12 @@ impl TeeRegistry<'_> {
         )
     }
 
-    /// Production verifier boundary. The caller/relay is intentionally absent.
+    /// Production verifier boundary. The transaction caller is part of the
+    /// canonical NodeHost authorization and is checked before replay handling.
     #[allow(clippy::too_many_arguments)]
     pub fn register_enclave_v1(
         &mut self,
+        caller: Address,
         evidence: &[u8],
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
@@ -874,6 +941,7 @@ impl TeeRegistry<'_> {
     ) -> Result<V1RegistrationOutcome> {
         let policy = self.active_policy_v1()?;
         self.register_enclave_with_active_policy_v1(
+            caller,
             evidence,
             node_signature,
             enclave_signature,
@@ -886,12 +954,14 @@ impl TeeRegistry<'_> {
 
     pub fn renew_enclave_v1(
         &mut self,
+        caller: Address,
         evidence: &[u8],
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
     ) -> Result<V1RegistrationOutcome> {
         let policy = self.active_policy_v1()?;
         self.renew_enclave_with_active_policy_v1(
+            caller,
             evidence,
             node_signature,
             enclave_signature,
@@ -901,12 +971,14 @@ impl TeeRegistry<'_> {
 
     pub fn replace_enclave_binding_v1(
         &mut self,
+        caller: Address,
         evidence: &[u8],
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
     ) -> Result<V1RegistrationOutcome> {
         let policy = self.active_policy_v1()?;
         self.replace_enclave_binding_with_active_policy_v1(
+            caller,
             evidence,
             node_signature,
             enclave_signature,
@@ -917,6 +989,7 @@ impl TeeRegistry<'_> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn register_enclave_with_active_policy_v1(
         &mut self,
+        caller: Address,
         evidence: &[u8],
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
@@ -926,10 +999,12 @@ impl TeeRegistry<'_> {
         policy: &TeePolicyV1,
     ) -> Result<V1RegistrationOutcome> {
         Self::require_initial_binding_evidence_target_v1(evidence, binding)?;
+        let caller_context = self.require_registration_caller_v1(caller, binding)?;
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             let registration = self.apply_evidence_mutation_with_active_policy_v1(
                 AttestationOperationV1::RegisterEnclave,
+                caller,
                 evidence,
                 node_signature,
                 enclave_signature,
@@ -940,13 +1015,14 @@ impl TeeRegistry<'_> {
                 validator_signature,
                 node_binding_signature,
             )?;
-            Self::require_atomic_initial_outcome_v1(registration, association)
+            Self::require_atomic_registration_outcome_v1(registration, association, caller_context)
         })
     }
 
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn register_enclave_with_onboarding_v1(
         &mut self,
+        caller: Address,
         evidence: &[u8],
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
@@ -956,10 +1032,12 @@ impl TeeRegistry<'_> {
         policy: &TeePolicyV1,
     ) -> Result<V1OnboardingOutcome> {
         Self::require_initial_binding_evidence_target_v1(evidence, binding)?;
+        let caller_context = self.require_registration_caller_v1(caller, binding)?;
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             let onboarding = self.apply_evidence_mutation_with_onboarding_v1(
                 AttestationOperationV1::RegisterEnclave,
+                caller,
                 evidence,
                 node_signature,
                 enclave_signature,
@@ -971,13 +1049,18 @@ impl TeeRegistry<'_> {
                 validator_signature,
                 node_binding_signature,
             )?;
-            Self::require_atomic_initial_outcome_v1(onboarding.registration, association)?;
+            Self::require_atomic_registration_outcome_v1(
+                onboarding.registration,
+                association,
+                caller_context,
+            )?;
             Ok(onboarding)
         })
     }
 
     pub(crate) fn renew_enclave_with_active_policy_v1(
         &mut self,
+        caller: Address,
         evidence: &[u8],
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
@@ -985,6 +1068,7 @@ impl TeeRegistry<'_> {
     ) -> Result<V1RegistrationOutcome> {
         self.apply_evidence_mutation_with_active_policy_v1(
             AttestationOperationV1::RenewEnclave,
+            caller,
             evidence,
             node_signature,
             enclave_signature,
@@ -994,6 +1078,7 @@ impl TeeRegistry<'_> {
 
     pub(crate) fn replace_enclave_binding_with_active_policy_v1(
         &mut self,
+        caller: Address,
         evidence: &[u8],
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
@@ -1001,6 +1086,7 @@ impl TeeRegistry<'_> {
     ) -> Result<V1RegistrationOutcome> {
         self.apply_evidence_mutation_with_active_policy_v1(
             AttestationOperationV1::ReplaceEnclaveBinding,
+            caller,
             evidence,
             node_signature,
             enclave_signature,
@@ -1010,6 +1096,7 @@ impl TeeRegistry<'_> {
 
     pub(crate) fn transition_enclave_measurement_with_staged_policy_v1(
         &mut self,
+        caller: Address,
         evidence: &[u8],
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
@@ -1024,6 +1111,7 @@ impl TeeRegistry<'_> {
         }
         self.apply_evidence_mutation_with_active_policy_v1(
             AttestationOperationV1::TransitionEnclaveMeasurement,
+            caller,
             evidence,
             node_signature,
             enclave_signature,
@@ -1034,6 +1122,7 @@ impl TeeRegistry<'_> {
     fn apply_evidence_mutation_with_active_policy_v1(
         &mut self,
         expected_operation: AttestationOperationV1,
+        caller: Address,
         evidence: &[u8],
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
@@ -1041,6 +1130,7 @@ impl TeeRegistry<'_> {
     ) -> Result<V1RegistrationOutcome> {
         self.apply_evidence_mutation_with_onboarding_v1(
             expected_operation,
+            caller,
             evidence,
             node_signature,
             enclave_signature,
@@ -1054,6 +1144,7 @@ impl TeeRegistry<'_> {
     fn apply_evidence_mutation_with_onboarding_v1(
         &mut self,
         expected_operation: AttestationOperationV1,
+        caller: Address,
         evidence: &[u8],
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
@@ -1168,6 +1259,7 @@ impl TeeRegistry<'_> {
         };
         let registration = self.apply_verified_claims_mutation_v1(VerifiedClaimsMutationV1 {
             expected_operation,
+            caller: Some(caller),
             intent: &intent,
             node_signature,
             enclave_signature,
@@ -1215,6 +1307,7 @@ impl TeeRegistry<'_> {
     ) -> Result<V1RegistrationOutcome> {
         let VerifiedClaimsMutationV1 {
             expected_operation,
+            caller,
             intent,
             node_signature,
             enclave_signature,
@@ -1312,6 +1405,11 @@ impl TeeRegistry<'_> {
             .node_id
             .node_id_hash()
             .map_err(|error| revert_codec("node identity is invalid", error))?;
+        if expected_operation != AttestationOperationV1::RegisterEnclave {
+            if let Some(caller) = caller {
+                self.require_associated_caller_v1(caller, node_id_hash)?;
+            }
+        }
         let intent_hash = intent
             .intent_hash()
             .map_err(|error| revert_codec("registration intent is invalid", error))?;
@@ -1335,7 +1433,32 @@ impl TeeRegistry<'_> {
         let current = self.node_enclave_binding_v1(node_id_hash)?;
         match expected_operation {
             AttestationOperationV1::RegisterEnclave => {
-                if intent.binding_version != 1
+                if let Some(current) = current.as_ref() {
+                    if now < current.valid_until {
+                        return Err(PrecompileError::Revert(
+                            "live enclave binding must renew instead of rejoin".into(),
+                        ));
+                    }
+                    if B256::from(intent.node_host_authorization_hash)
+                        != current.node_host_authorization_hash
+                    {
+                        return Err(PrecompileError::Revert(
+                            "expired rejoin changes the persistent NodeHost authorization".into(),
+                        ));
+                    }
+                    if intent.binding_version
+                        != next_counter(current.binding_version, "binding version")?
+                        || intent.registration_version
+                            != next_counter(current.registration_version, "registration version")?
+                        || intent.renewal_nonce != current.renewal_nonce
+                        || intent.transition_nonce != current.transition_nonce
+                    {
+                        return Err(PrecompileError::Revert(
+                            "expired rejoin does not carry the exact next registration versions"
+                                .into(),
+                        ));
+                    }
+                } else if intent.binding_version != 1
                     || intent.registration_version != 0
                     || intent.renewal_nonce != 0
                     || intent.transition_nonce != 0
@@ -1360,12 +1483,13 @@ impl TeeRegistry<'_> {
                         "renewal does not carry the exact next renewal version and nonce".into(),
                     ));
                 }
-                ensure_final_third_or_expired(current, now)?;
+                ensure_renewal_window(current, policy, now)?;
             }
             AttestationOperationV1::ReplaceEnclaveBinding => {
                 let current = current.as_ref().ok_or_else(|| {
                     PrecompileError::Revert("cannot replace a missing enclave binding".into())
                 })?;
+                ensure_live_binding(current, now)?;
                 if B256::from(intent.node_host_authorization_hash)
                     != current.node_host_authorization_hash
                 {
@@ -1396,6 +1520,7 @@ impl TeeRegistry<'_> {
                 let current = current.as_ref().ok_or_else(|| {
                     PrecompileError::Revert("cannot transition a missing enclave binding".into())
                 })?;
+                ensure_live_binding(current, now)?;
                 if B256::from(intent.node_host_authorization_hash)
                     != current.node_host_authorization_hash
                 {
@@ -1427,14 +1552,31 @@ impl TeeRegistry<'_> {
             }
         }
 
-        let lease = intent
-            .requested_valid_until
-            .checked_sub(now)
-            .ok_or_else(|| PrecompileError::Revert("requested lease is already expired".into()))?;
-        if lease < policy.minimum_lease || lease > policy.maximum_lease {
-            return Err(PrecompileError::Revert(
-                "requested lease is outside active policy bounds".into(),
-            ));
+        if expected_operation == AttestationOperationV1::RenewEnclave {
+            let current = current.as_ref().ok_or_else(|| {
+                PrecompileError::Fatal("renewal binding disappeared during validation".into())
+            })?;
+            let expected_deadline = current
+                .valid_until
+                .checked_add(policy.maximum_lease)
+                .ok_or_else(|| PrecompileError::Revert("renewal deadline overflows u64".into()))?;
+            if intent.requested_valid_until != expected_deadline {
+                return Err(PrecompileError::Revert(
+                    "renewal must extend exactly one lease period from the current deadline".into(),
+                ));
+            }
+        } else {
+            let lease = intent
+                .requested_valid_until
+                .checked_sub(now)
+                .ok_or_else(|| {
+                    PrecompileError::Revert("requested lease is already expired".into())
+                })?;
+            if lease < policy.minimum_lease || lease > policy.maximum_lease {
+                return Err(PrecompileError::Revert(
+                    "requested lease is outside active policy bounds".into(),
+                ));
+            }
         }
         if policy.attestation_mode == AttestationMode::DcapRequired {
             let collateral_limit = claims
@@ -1451,25 +1593,42 @@ impl TeeRegistry<'_> {
                 ));
             }
         }
-        if expected_operation == AttestationOperationV1::RegisterEnclave && current.is_some() {
-            return Err(PrecompileError::Revert(
-                "node already has a different enclave binding".into(),
-            ));
-        }
-
         let enclave_owner = self.v1_enclave_node_hash.read(&intent.enclave_id)?;
         let binding_owner = self.v1_binding_node_hash.read(&intent.binding_id)?;
         match expected_operation {
             AttestationOperationV1::RegisterEnclave => {
-                if !enclave_owner.is_zero() {
-                    return Err(PrecompileError::Revert(
-                        "enclave is already bound to another node".into(),
-                    ));
-                }
-                if !binding_owner.is_zero() {
-                    return Err(PrecompileError::Revert(
-                        "binding id has already been used by another node".into(),
-                    ));
+                if let Some(current) = current.as_ref() {
+                    if self.v1_enclave_node_hash.read(&current.enclave_id)? != node_id_hash
+                        || self.v1_binding_node_hash.read(&current.binding_id)? != node_id_hash
+                    {
+                        return Err(PrecompileError::Fatal(
+                            "expired rejoin found inconsistent current reverse ownership".into(),
+                        ));
+                    }
+                    let same_current_enclave = intent.enclave_id == current.enclave_id;
+                    if (same_current_enclave && enclave_owner != node_id_hash)
+                        || (!same_current_enclave && !enclave_owner.is_zero())
+                    {
+                        return Err(PrecompileError::Revert(
+                            "expired rejoin enclave is not current or globally fresh".into(),
+                        ));
+                    }
+                    if !binding_owner.is_zero() {
+                        return Err(PrecompileError::Revert(
+                            "expired rejoin binding id has already been used".into(),
+                        ));
+                    }
+                } else {
+                    if !enclave_owner.is_zero() {
+                        return Err(PrecompileError::Revert(
+                            "enclave is already bound to another node".into(),
+                        ));
+                    }
+                    if !binding_owner.is_zero() {
+                        return Err(PrecompileError::Revert(
+                            "binding id has already been used by another node".into(),
+                        ));
+                    }
                 }
             }
             AttestationOperationV1::RenewEnclave => {
@@ -1586,6 +1745,7 @@ impl TeeRegistry<'_> {
     fn apply_verified_mutation_v1(
         &mut self,
         expected_operation: AttestationOperationV1,
+        caller: Option<Address>,
         intent: &RegistrationIntentV1,
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
@@ -1595,6 +1755,7 @@ impl TeeRegistry<'_> {
         let claims = VerifiedEnclaveClaimsV1::from_dcap(&capability.verdict)?;
         self.apply_verified_claims_mutation_v1(VerifiedClaimsMutationV1 {
             expected_operation,
+            caller,
             intent,
             node_signature,
             enclave_signature,
@@ -1615,6 +1776,7 @@ impl TeeRegistry<'_> {
         let policy = self.active_policy_v1()?;
         self.apply_verified_mutation_v1(
             AttestationOperationV1::RegisterEnclave,
+            None,
             intent,
             node_signature,
             enclave_signature,
@@ -1635,12 +1797,39 @@ impl TeeRegistry<'_> {
         node_binding_signature: &[u8; 65],
         capability: PostVerifierDcapCapabilityV1,
     ) -> Result<V1RegistrationOutcome> {
+        self.register_enclave_and_bind_after_verifier_for_test_as(
+            Address::from(binding.validator),
+            intent,
+            node_signature,
+            enclave_signature,
+            binding,
+            validator_signature,
+            node_binding_signature,
+            capability,
+        )
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn register_enclave_and_bind_after_verifier_for_test_as(
+        &mut self,
+        caller: Address,
+        intent: &RegistrationIntentV1,
+        node_signature: &[u8; 65],
+        enclave_signature: &[u8; 64],
+        binding: &ValidatorNodeBindingV1,
+        validator_signature: &[u8; 65],
+        node_binding_signature: &[u8; 65],
+        capability: PostVerifierDcapCapabilityV1,
+    ) -> Result<V1RegistrationOutcome> {
         let policy = self.active_policy_v1()?;
         Self::require_initial_binding_target_v1(intent, binding)?;
+        let caller_context = self.require_registration_caller_v1(caller, binding)?;
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             let registration = self.apply_verified_mutation_v1(
                 AttestationOperationV1::RegisterEnclave,
+                Some(caller),
                 intent,
                 node_signature,
                 enclave_signature,
@@ -1652,7 +1841,7 @@ impl TeeRegistry<'_> {
                 validator_signature,
                 node_binding_signature,
             )?;
-            Self::require_atomic_initial_outcome_v1(registration, association)
+            Self::require_atomic_registration_outcome_v1(registration, association, caller_context)
         })
     }
 
@@ -1667,6 +1856,28 @@ impl TeeRegistry<'_> {
         let policy = self.active_policy_v1()?;
         self.apply_verified_mutation_v1(
             AttestationOperationV1::RenewEnclave,
+            None,
+            intent,
+            node_signature,
+            enclave_signature,
+            &policy,
+            capability,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn renew_enclave_after_verifier_for_test_as(
+        &mut self,
+        caller: Address,
+        intent: &RegistrationIntentV1,
+        node_signature: &[u8; 65],
+        enclave_signature: &[u8; 64],
+        capability: PostVerifierDcapCapabilityV1,
+    ) -> Result<V1RegistrationOutcome> {
+        let policy = self.active_policy_v1()?;
+        self.apply_verified_mutation_v1(
+            AttestationOperationV1::RenewEnclave,
+            Some(caller),
             intent,
             node_signature,
             enclave_signature,
@@ -1678,6 +1889,7 @@ impl TeeRegistry<'_> {
     #[cfg(test)]
     pub(crate) fn renew_enclave_after_verifier_with_active_policy_for_test(
         &mut self,
+        caller: Address,
         intent: &RegistrationIntentV1,
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
@@ -1686,6 +1898,7 @@ impl TeeRegistry<'_> {
     ) -> Result<V1RegistrationOutcome> {
         self.apply_verified_mutation_v1(
             AttestationOperationV1::RenewEnclave,
+            Some(caller),
             intent,
             node_signature,
             enclave_signature,
@@ -1705,6 +1918,7 @@ impl TeeRegistry<'_> {
         let policy = self.active_policy_v1()?;
         self.apply_verified_mutation_v1(
             AttestationOperationV1::ReplaceEnclaveBinding,
+            None,
             intent,
             node_signature,
             enclave_signature,
@@ -1716,6 +1930,7 @@ impl TeeRegistry<'_> {
     #[cfg(test)]
     pub(crate) fn replace_enclave_binding_after_verifier_with_active_policy_for_test(
         &mut self,
+        caller: Address,
         intent: &RegistrationIntentV1,
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
@@ -1724,6 +1939,7 @@ impl TeeRegistry<'_> {
     ) -> Result<V1RegistrationOutcome> {
         self.apply_verified_mutation_v1(
             AttestationOperationV1::ReplaceEnclaveBinding,
+            Some(caller),
             intent,
             node_signature,
             enclave_signature,
@@ -1735,6 +1951,7 @@ impl TeeRegistry<'_> {
     #[cfg(test)]
     pub(crate) fn transition_enclave_measurement_after_verifier_for_test(
         &mut self,
+        caller: Address,
         intent: &RegistrationIntentV1,
         node_signature: &[u8; 65],
         enclave_signature: &[u8; 64],
@@ -1750,6 +1967,7 @@ impl TeeRegistry<'_> {
         }
         self.apply_verified_mutation_v1(
             AttestationOperationV1::TransitionEnclaveMeasurement,
+            Some(caller),
             intent,
             node_signature,
             enclave_signature,
@@ -1826,20 +2044,31 @@ fn next_counter(current: u64, name: &'static str) -> Result<u64> {
 }
 
 #[cfg(feature = "tee-attestation-v1")]
-fn ensure_final_third_or_expired(current: &NodeEnclaveBindingV1, now: u64) -> Result<()> {
+fn ensure_live_binding(current: &NodeEnclaveBindingV1, now: u64) -> Result<()> {
     if now >= current.valid_until {
-        return Ok(());
-    }
-    if current.lease_started_at >= current.valid_until || now < current.lease_started_at {
-        return Err(PrecompileError::Fatal(
-            "stored V1 lease interval is inconsistent".into(),
+        return Err(PrecompileError::Revert(
+            "enclave lease expired; registerEnclave rejoin is required".into(),
         ));
     }
-    let elapsed = u128::from(now - current.lease_started_at);
-    let duration = u128::from(current.valid_until - current.lease_started_at);
-    if elapsed * 3 < duration * 2 {
+    Ok(())
+}
+
+#[cfg(feature = "tee-attestation-v1")]
+fn ensure_renewal_window(
+    current: &NodeEnclaveBindingV1,
+    policy: &TeePolicyV1,
+    now: u64,
+) -> Result<()> {
+    ensure_live_binding(current, now)?;
+    if policy.maximum_lease == 0 || !policy.maximum_lease.is_multiple_of(2) {
+        return Err(PrecompileError::Fatal(
+            "active V1 lease period is not a positive even duration".into(),
+        ));
+    }
+    let opens_at = current.valid_until.saturating_sub(policy.maximum_lease / 2);
+    if now < opens_at {
         return Err(PrecompileError::Revert(
-            "renewal is not open before the final third of the current lease".into(),
+            "renewal window has not opened".into(),
         ));
     }
     Ok(())
