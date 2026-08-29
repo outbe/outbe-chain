@@ -213,7 +213,7 @@ mod group_scans {
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_primitives::storage::StorageHandle;
 
-    use crate::constants::{MAX_SERIES_ACTIONS_PER_SWEEP, QUALIFICATION_PERIOD};
+    use crate::constants::MAX_SERIES_ACTIONS_PER_SWEEP;
     use crate::qualified::{self, ScanBudget};
     use crate::runtime;
     use crate::schema::{IntexFactoryContract, IssuanceParams};
@@ -222,7 +222,6 @@ mod group_scans {
     const CHAIN_ID: u64 = 1;
     const REFERENCE_ISO: u16 = 840;
     const ISSUED_AT: u32 = 1_700_000_000;
-    const DAY: u64 = 24 * 60 * 60;
     const ENTRY_PRICE: u64 = 1_000_000;
     const EXPECTED_FLOOR: u64 = 1_080_000;
     const WWD: u32 = 20260212;
@@ -276,10 +275,6 @@ mod group_scans {
         }
     }
 
-    fn mature() -> u64 {
-        ISSUED_AT as u64 + 21 * DAY + 1
-    }
-
     fn above_floor() -> U256 {
         U256::from(EXPECTED_FLOOR) + U256::from(1)
     }
@@ -287,11 +282,10 @@ mod group_scans {
     fn qualify(
         s: &StorageHandle<'_>,
         f: &mut IntexFactoryContract,
-        now: u64,
         rate: U256,
     ) -> outbe_primitives::error::Result<u32> {
         let group = f.unqualified_group(REFERENCE_ISO, day())?;
-        qualified::try_qualify_group(s, f, &group, QUALIFICATION_PERIOD, now, rate)
+        qualified::try_qualify_group(s, f, &group, rate)
     }
 
     #[test]
@@ -302,7 +296,7 @@ mod group_scans {
             let members = f.unqualified_group_members(REFERENCE_ISO, day()).unwrap();
             assert_eq!(members.len(), ISSUANCES.len());
 
-            assert_eq!(qualify(&s, &mut f, mature(), above_floor()).unwrap(), 3);
+            assert_eq!(qualify(&s, &mut f, above_floor()).unwrap(), 3);
 
             for series_id in &members {
                 assert_eq!(
@@ -326,24 +320,18 @@ mod group_scans {
     }
 
     #[test]
-    fn the_gates_hold_for_the_whole_group() {
+    fn the_floor_gate_holds_for_the_whole_group() {
         with_factory(|s| {
             issue_day(&s, WWD);
             let mut f = IntexFactoryContract::new(s.clone());
             let floor = U256::from(EXPECTED_FLOOR);
-            let qualifies_at = ISSUED_AT as u64 + u64::from(QUALIFICATION_PERIOD);
 
-            // Immature by one second.
-            assert_eq!(qualify(&s, &mut f, qualifies_at, above_floor()).unwrap(), 0);
-            // Mature, but the rate only reaches the floor (strict >).
-            assert_eq!(qualify(&s, &mut f, qualifies_at + 1, floor).unwrap(), 0);
-            // Mature by one second, rate past the floor.
-            assert_eq!(
-                qualify(&s, &mut f, qualifies_at + 1, above_floor()).unwrap(),
-                3
-            );
+            // The rate only reaches the floor (strict >).
+            assert_eq!(qualify(&s, &mut f, floor).unwrap(), 0);
+            // Past the floor.
+            assert_eq!(qualify(&s, &mut f, above_floor()).unwrap(), 3);
             // Latched: the group is gone from the floor index.
-            assert_eq!(qualify(&s, &mut f, mature(), above_floor()).unwrap(), 0);
+            assert_eq!(qualify(&s, &mut f, above_floor()).unwrap(), 0);
         });
     }
 
@@ -360,22 +348,14 @@ mod group_scans {
             f.insert_unqualified(ghost, REFERENCE_ISO, U256::from(EXPECTED_FLOOR))
                 .unwrap();
 
-            assert!(qualify(&s, &mut f, mature(), above_floor()).is_err());
+            assert!(qualify(&s, &mut f, above_floor()).is_err());
 
             // The neighbouring day is untouched by it and still qualifies.
             let group = f
                 .unqualified_group(REFERENCE_ISO, WorldwideDay::new(other))
                 .unwrap();
             assert_eq!(
-                qualified::try_qualify_group(
-                    &s,
-                    &mut f,
-                    &group,
-                    QUALIFICATION_PERIOD,
-                    mature(),
-                    above_floor()
-                )
-                .unwrap(),
+                qualified::try_qualify_group(&s, &mut f, &group, above_floor()).unwrap(),
                 3
             );
         });
@@ -391,15 +371,7 @@ mod group_scans {
                 members: Vec::new(),
             };
             assert_eq!(
-                qualified::try_qualify_group(
-                    &s,
-                    &mut f,
-                    &empty,
-                    QUALIFICATION_PERIOD,
-                    mature(),
-                    above_floor()
-                )
-                .unwrap(),
+                qualified::try_qualify_group(&s, &mut f, &empty, above_floor()).unwrap(),
                 0
             );
         });

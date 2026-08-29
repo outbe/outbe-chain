@@ -102,20 +102,10 @@ fn config_dev_profile_drives_issuance_and_qualification() {
             }
         );
 
-        // The dev qualification period elapses long before the 21-day prod one.
+        // Promotion is the floor comparison alone: a rate one unit past the
+        // dev-derived floor qualifies the day.
         let rate = r.floor_price_minor + U256::from(1);
-        let after_qualification = ISSUED_AT as u64 + u64::from(dev.qualification_period) + 1;
-        assert_eq!(
-            qualify_day(
-                &s,
-                &mut f,
-                7,
-                dev.qualification_period,
-                after_qualification,
-                rate
-            ),
-            1
-        );
+        assert_eq!(qualify_day(&s, &mut f, 7, rate), 1);
         assert_eq!(
             outbe_intex::api::read_series(&s, sid(7))
                 .unwrap()
