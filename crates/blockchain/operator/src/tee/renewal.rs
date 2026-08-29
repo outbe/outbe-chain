@@ -1,4 +1,4 @@
-//! One fail-closed DCAP renewal reducer shared by the node worker and CLI.
+//! Manual, crash-replay-safe TEE lease-renewal reducer.
 
 use std::path::PathBuf;
 
@@ -605,16 +605,27 @@ fn next_renewal_deadline(binding: &RenewalBindingV1, lease_period: u64) -> Optio
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use super::*;
     use crate::rpc::FinalityRpc;
     use crate::tx::RawRelayTransactionV1;
-    use alloy_primitives::Address;
+    use alloy_consensus::{
+        transaction::SignerRecoverable as _, EthereumTxEnvelope, Transaction as _, TxEip4844,
+    };
+    use alloy_eips::eip2718::Decodable2718 as _;
+    use alloy_primitives::{Address, Bytes, TxKind};
     use ed25519_dalek::Signer as _;
+    use k256::ecdsa::signature::hazmat::PrehashSigner as _;
     use outbe_primitives::{
         chain::DEVNET_CHAIN_ID,
-        tee_attestation_v1::{AttestationMode, EnclaveInitializationManifestV1, NodeIdV1},
-        tee_genesis_v1::{initial_tee_policy_v1, InitialTeeProfileV1},
+        tee_attestation_v1::{
+            AttestationMode, DcapCollateralComponentV1, DcapCollateralKind,
+            EnclaveInitializationManifestV1, NodeIdV1,
+        },
+        tee_genesis_v1::{initial_tee_policy_v1, InitialTeeProfileV1, ProductionSgxMeasurementV1},
         tee_operator_v1::TeeRenewalScheduleV1,
+        tee_registry_abi_v1::NodeEnclaveBindingV1View,
     };
 
     struct DirectOnlyEnclave {
@@ -703,6 +714,140 @@ mod tests {
         }
     }
 
+    struct ReplayRpc {
+        policy: outbe_primitives::tee_attestation_v1::TeePolicyV1,
+        binding: RenewalBindingV1,
+        schedule: TeeRenewalScheduleV1,
+        sent: Arc<Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl FinalityRpc for ReplayRpc {
+        async fn transaction_receipt(
+            &self,
+            _transaction_hash: &str,
+        ) -> Result<Option<serde_json::Value>> {
+            eyre::bail!("unused transaction_receipt")
+        }
+
+        async fn logs(
+            &self,
+            _address: Address,
+            _topics: &[Option<String>],
+            _from_block: &str,
+            _to_block: &str,
+        ) -> Result<Vec<serde_json::Value>> {
+            eyre::bail!("unused logs")
+        }
+
+        async fn block_by_number(&self, _block: u64) -> Result<serde_json::Value> {
+            eyre::bail!("unused block_by_number")
+        }
+
+        async fn finalized_block(&self) -> Result<serde_json::Value> {
+            Ok(serde_json::json!({
+                "number": format!("0x{:x}", self.schedule.finalized_height),
+                "timestamp": format!("0x{:x}", self.schedule.finalized_timestamp),
+                "hash": format!("{:#x}", self.schedule.finalized_hash),
+                "stateRoot": format!("{:#x}", B256::repeat_byte(0x81)),
+            }))
+        }
+
+        async fn call_at(&self, _to: Address, data: &[u8], _block_tag: &str) -> Result<Vec<u8>> {
+            if data.starts_with(&ITeeRegistryV1::activePolicyV1Call::SELECTOR) {
+                let policy = Bytes::from(self.policy.encode_canonical().unwrap());
+                return Ok(ITeeRegistryV1::activePolicyV1Call::abi_encode_returns(
+                    &policy,
+                ));
+            }
+            if data.starts_with(&ITeeRegistryV1::nodeHostEnclaveBindingCall::SELECTOR) {
+                let binding = renewal_binding_view(&self.binding);
+                return Ok(
+                    ITeeRegistryV1::nodeHostEnclaveBindingCall::abi_encode_returns(&binding),
+                );
+            }
+            if data.starts_with(&ITeeRegistryV1::tributeOfferPublicKeyCall::SELECTOR) {
+                return Ok(
+                    ITeeRegistryV1::tributeOfferPublicKeyCall::abi_encode_returns(&U256::from(9)),
+                );
+            }
+            eyre::bail!("unexpected Registry call")
+        }
+    }
+
+    impl RenewalRpc for ReplayRpc {
+        async fn chain_id(&self) -> Result<u64> {
+            Ok(DEVNET_CHAIN_ID)
+        }
+
+        async fn gas_price(&self) -> Result<U256> {
+            eyre::bail!("restart replay regenerated gas price")
+        }
+
+        async fn transaction_count(&self, _address: Address) -> Result<u64> {
+            eyre::bail!("restart replay regenerated account nonce")
+        }
+
+        async fn balance(&self, _address: Address) -> Result<U256> {
+            eyre::bail!("restart replay rechecked preparation balance")
+        }
+
+        async fn send_raw_transaction(&self, raw_transaction: &[u8]) -> Result<String> {
+            self.sent.lock().unwrap().push(raw_transaction.to_vec());
+            Ok(format!("{:#x}", keccak256(raw_transaction)))
+        }
+
+        async fn tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1> {
+            Ok(self.schedule)
+        }
+    }
+
+    struct ReplayMustNotPrepare;
+
+    impl RenewalEnclaveV1 for ReplayMustNotPrepare {
+        fn generate_dcap_quote(
+            &mut self,
+            _intent: &RegistrationIntentV1,
+        ) -> Result<GeneratedDcapQuoteV1> {
+            panic!("restart replay regenerated a DCAP quote")
+        }
+
+        fn sign_registration_intent_dev_v1(
+            &mut self,
+            _intent: &RegistrationIntentV1,
+        ) -> Result<[u8; 64]> {
+            panic!("restart replay regenerated a DirectDev signature")
+        }
+    }
+
+    fn renewal_binding_view(binding: &RenewalBindingV1) -> NodeEnclaveBindingV1View {
+        NodeEnclaveBindingV1View {
+            exists: true,
+            nodeIdHash: binding.node_id_hash,
+            enclaveId: binding.enclave_id,
+            bindingId: binding.binding_id,
+            intentHash: binding.intent_hash,
+            evidenceHash: binding.evidence_hash,
+            policyHash: binding.policy_hash,
+            bindingVersion: binding.binding_version,
+            registrationVersion: binding.registration_version,
+            renewalNonce: binding.renewal_nonce,
+            transitionNonce: binding.transition_nonce,
+            leaseStartedAt: binding.lease_started_at,
+            validUntil: binding.valid_until,
+            collateralValidUntil: binding.collateral_valid_until,
+            recipientX25519: binding.recipient_x25519,
+            attestationEd25519: binding.attestation_ed25519,
+            noiseResponderX25519: binding.noise_responder_x25519,
+            mrenclave: binding.mrenclave,
+            mrsigner: binding.mrsigner,
+            isvProdId: binding.isv_prod_id,
+            isvSvn: binding.isv_svn,
+            platformTcbStatus: binding.platform_tcb_status,
+            verdictHash: binding.verdict_hash,
+            nodeHostAuthorizationHash: binding.node_host_authorization_hash,
+        }
+    }
+
     fn binding() -> RenewalBindingV1 {
         RenewalBindingV1 {
             node_id_hash: B256::repeat_byte(1),
@@ -729,6 +874,223 @@ mod tests {
             verdict_hash: B256::repeat_byte(12),
             node_host_authorization_hash: B256::repeat_byte(13),
         }
+    }
+
+    fn replay_fixture(
+        node_data_dir: &std::path::Path,
+        mode: AttestationMode,
+    ) -> (
+        ReplayRpc,
+        RelaySignerV1,
+        RenewalServiceConfigV1,
+        PreparedRenewalV1,
+    ) {
+        let genesis_hash = B256::repeat_byte(0x82);
+        let profile = match mode {
+            AttestationMode::DcapRequired => {
+                InitialTeeProfileV1::DcapRequired(ProductionSgxMeasurementV1 {
+                    mrenclave: B256::repeat_byte(0x83),
+                    mrsigner: B256::repeat_byte(0x84),
+                    isv_prod_id: 1,
+                    minimum_isv_svn: 1,
+                    minimum_tcb_evaluation_data_number: 1,
+                })
+            }
+            AttestationMode::GramineDirectDev => InitialTeeProfileV1::GramineDirectDev,
+        };
+        let policy = initial_tee_policy_v1(profile, DEVNET_CHAIN_ID, genesis_hash).unwrap();
+        let policy_hash = policy.policy_hash().unwrap();
+        let node_signer = k256::ecdsa::SigningKey::from_bytes((&[0x85; 32]).into()).unwrap();
+        let enclave_signer = ed25519_dalek::SigningKey::from_bytes(&[0x86; 32]);
+        let node_id = NodeIdV1 {
+            reth_p2p_public: node_signer
+                .verifying_key()
+                .to_encoded_point(true)
+                .as_bytes()
+                .try_into()
+                .unwrap(),
+        };
+        let manifest = EnclaveInitializationManifestV1 {
+            chain_id: policy.chain_id,
+            genesis_hash,
+            node_id: node_id.clone(),
+            initialization_challenge: [0x87; 32],
+            node_host_noise_x25519: [0x88; 32],
+            recipient_x25519: [0x89; 32],
+            attestation_ed25519: enclave_signer.verifying_key().to_bytes(),
+            noise_responder_x25519: [0x8a; 32],
+        };
+        let enclave_id = manifest.enclave_id().unwrap();
+        let node_host_authorization_hash = manifest.node_host_authorization_hash().unwrap();
+        let valid_until = 2_000_000;
+        let requested_valid_until = valid_until + policy.maximum_lease;
+        let source_collateral_valid_until = match mode {
+            AttestationMode::DcapRequired => {
+                requested_valid_until
+                    .checked_add(policy.collateral_margin)
+                    .unwrap()
+                    + 1_000
+            }
+            AttestationMode::GramineDirectDev => u64::MAX,
+        };
+        let source = RenewalBindingV1 {
+            node_id_hash: node_id.node_id_hash().unwrap(),
+            enclave_id,
+            binding_id: B256::repeat_byte(0x8b),
+            intent_hash: B256::repeat_byte(0x8c),
+            evidence_hash: B256::repeat_byte(0x8d),
+            policy_hash,
+            binding_version: 1,
+            registration_version: 1,
+            renewal_nonce: 1,
+            transition_nonce: 0,
+            lease_started_at: valid_until - policy.maximum_lease,
+            valid_until,
+            collateral_valid_until: source_collateral_valid_until,
+            recipient_x25519: B256::from(manifest.recipient_x25519),
+            attestation_ed25519: B256::from(manifest.attestation_ed25519),
+            noise_responder_x25519: B256::from(manifest.noise_responder_x25519),
+            mrenclave: B256::repeat_byte(0x83),
+            mrsigner: B256::repeat_byte(0x84),
+            isv_prod_id: 1,
+            isv_svn: 1,
+            platform_tcb_status: 0,
+            verdict_hash: B256::repeat_byte(0x8e),
+            node_host_authorization_hash,
+        };
+        let intent = RegistrationIntentV1 {
+            chain_id: policy.chain_id,
+            genesis_hash,
+            operation: AttestationOperationV1::RenewEnclave,
+            attestation_mode: mode,
+            policy_hash,
+            node_id,
+            enclave_id,
+            binding_id: source.binding_id,
+            binding_version: source.binding_version,
+            registration_version: source.registration_version + 1,
+            renewal_nonce: source.renewal_nonce + 1,
+            transition_nonce: source.transition_nonce,
+            requested_valid_until,
+            recipient_x25519: manifest.recipient_x25519,
+            attestation_ed25519: manifest.attestation_ed25519,
+            noise_responder_x25519: manifest.noise_responder_x25519,
+            node_host_authorization_hash,
+        };
+        let intent_hash = intent.intent_hash().unwrap();
+        let (node_signature_body, node_recovery): (
+            k256::ecdsa::Signature,
+            k256::ecdsa::RecoveryId,
+        ) = node_signer.sign_prehash(intent_hash.as_slice()).unwrap();
+        let mut node_signature = [0_u8; 65];
+        node_signature[..64].copy_from_slice(node_signature_body.to_bytes().as_slice());
+        node_signature[64] = node_recovery.to_byte();
+        let enclave_signature = enclave_signer.sign(intent_hash.as_slice()).to_bytes();
+        let evidence_value = match mode {
+            AttestationMode::DcapRequired => AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
+                intent: intent.clone(),
+                quote: vec![1],
+                components: [
+                    DcapCollateralKind::PckCertificateChain,
+                    DcapCollateralKind::PckCrl,
+                    DcapCollateralKind::PckCrlIssuerChain,
+                    DcapCollateralKind::RootCaCrl,
+                    DcapCollateralKind::TcbInfo,
+                    DcapCollateralKind::TcbInfoIssuerChain,
+                    DcapCollateralKind::QeIdentity,
+                    DcapCollateralKind::QeIdentityIssuerChain,
+                ]
+                .into_iter()
+                .map(|kind| DcapCollateralComponentV1 {
+                    kind,
+                    bytes: vec![kind as u8],
+                })
+                .collect(),
+                transition_key_ready_proof: None,
+            }),
+            AttestationMode::GramineDirectDev => {
+                AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+                    intent: intent.clone(),
+                    dev_attestation_public: intent.attestation_ed25519,
+                    dev_signature: enclave_signature,
+                })
+            }
+        };
+        let evidence = evidence_value.encode_canonical().unwrap();
+        let evidence_hash = match mode {
+            AttestationMode::DcapRequired => dcap_evidence_hash_v1(&evidence).unwrap(),
+            AttestationMode::GramineDirectDev => evidence_value.evidence_hash().unwrap(),
+        };
+        let calldata = ITeeRegistryV1::renewEnclaveCall {
+            evidence: evidence.clone().into(),
+            nodeSignature: node_signature.to_vec().into(),
+            enclaveSignature: enclave_signature.to_vec().into(),
+        }
+        .abi_encode();
+        let gas_limit = TeeRegistryGasScheduleV1::normative()
+            .maximum_transaction_gas(
+                RegistryMutatorV1::RenewEnclave,
+                calldata.len(),
+                evidence.len(),
+                policy.measurement_rules.len(),
+                mode,
+            )
+            .unwrap();
+        let relay = RelaySignerV1::new(&hex::encode([0x8f; 32])).unwrap();
+        let raw = relay
+            .sign_renewal(
+                DEVNET_CHAIN_ID,
+                7,
+                U256::from(2_000_000_000_u64),
+                gas_limit,
+                TEE_REGISTRY_ADDRESS,
+                &calldata,
+            )
+            .unwrap();
+        let attempt = PreparedRenewalV1 {
+            source: source.clone(),
+            intent: intent.encode_canonical().unwrap(),
+            intent_hash,
+            evidence,
+            evidence_hash,
+            node_signature: node_signature.to_vec(),
+            enclave_signature: enclave_signature.to_vec(),
+            calldata_hash: keccak256(&calldata),
+            calldata,
+            requested_valid_until,
+            collateral_valid_until: source_collateral_valid_until,
+            collateral_margin: match mode {
+                AttestationMode::DcapRequired => policy.collateral_margin,
+                AttestationMode::GramineDirectDev => 0,
+            },
+            relay: relay.address(),
+            relay_variants: vec![raw],
+        };
+        let schedule = TeeRenewalScheduleV1 {
+            finalized_height: 120,
+            finalized_hash: B256::repeat_byte(0x90),
+            finalized_timestamp: valid_until - policy.maximum_lease / 2 + 1,
+            epoch_number: 2,
+            epoch_start_height: 100,
+            epoch_length_blocks: 100,
+            next_freeze_height: 180,
+            planned_activation_height: 200,
+            dkg_prepare_window_blocks: 20,
+            minimum_block_time_millis: 2_000,
+        };
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let rpc = ReplayRpc {
+            policy,
+            binding: source,
+            schedule,
+            sent,
+        };
+        let config = RenewalServiceConfigV1 {
+            node_data_dir: node_data_dir.to_path_buf(),
+            selector: NodeBindingSelectorV1::NodeHost(manifest.node_id.reth_p2p_public),
+            manifest,
+        };
+        (rpc, relay, config, attempt)
     }
 
     fn target_attempt() -> (PreparedRenewalV1, RenewalBindingV1) {
@@ -850,6 +1212,68 @@ mod tests {
             "known transaction"
         )));
         assert!(!transaction_is_already_known(&eyre::eyre!("nonce too low")));
+    }
+
+    #[tokio::test]
+    async fn prepared_and_submitted_restarts_replay_exact_transaction_in_both_modes() {
+        for mode in [
+            AttestationMode::DcapRequired,
+            AttestationMode::GramineDirectDev,
+        ] {
+            for starts_submitted in [false, true] {
+                let node_data_dir = tempfile::tempdir().unwrap();
+                let (rpc, relay, config, attempt) = replay_fixture(node_data_dir.path(), mode);
+                let expected_raw = attempt.relay_variants[0].raw_transaction.clone();
+                let expected_hash = attempt.relay_variants[0].transaction_hash;
+                let lifecycle = if starts_submitted {
+                    RenewalJournalStateV1::Submitted {
+                        attempt: attempt.clone(),
+                        submitted_at_finalized_height: 119,
+                        transaction_hashes: vec![expected_hash],
+                    }
+                } else {
+                    RenewalJournalStateV1::Prepared {
+                        attempt: attempt.clone(),
+                    }
+                };
+                RenewalJournalGuard::acquire(node_data_dir.path())
+                    .unwrap()
+                    .store(RenewalJournalSnapshotV1::new(lifecycle))
+                    .unwrap();
+
+                let mut enclave = ReplayMustNotPrepare;
+                let node_signer = |_hash: B256| -> Result<[u8; 65]> {
+                    panic!("restart replay regenerated a NodeHost signature")
+                };
+                let outcome =
+                    run_renewal_once_v1(&rpc, &relay, &mut enclave, &node_signer, &config)
+                        .await
+                        .unwrap();
+                assert_eq!(
+                    outcome,
+                    RenewalOutcomeV1::Submitted {
+                        transaction_hash: expected_hash,
+                        replayed: true,
+                    }
+                );
+                assert_eq!(rpc.sent.lock().unwrap().as_slice(), [expected_raw]);
+                let replayed = RenewalJournalGuard::acquire(node_data_dir.path())
+                    .unwrap()
+                    .load()
+                    .unwrap()
+                    .unwrap();
+                let RenewalJournalStateV1::Submitted {
+                    attempt: replayed_attempt,
+                    transaction_hashes,
+                    ..
+                } = replayed.lifecycle
+                else {
+                    panic!("replay did not persist Submitted state");
+                };
+                assert_eq!(replayed_attempt, attempt);
+                assert_eq!(transaction_hashes, vec![expected_hash]);
+            }
+        }
     }
 
     #[test]
@@ -1001,5 +1425,32 @@ mod tests {
             attempt.relay_variants[0].calldata_hash,
             attempt.calldata_hash
         );
+        let raw_variant = &attempt.relay_variants[0];
+        let mut raw = raw_variant.raw_transaction.as_slice();
+        let envelope = EthereumTxEnvelope::<TxEip4844>::decode_2718(&mut raw).unwrap();
+        assert!(raw.is_empty());
+        assert!(matches!(&envelope, EthereumTxEnvelope::Legacy(_)));
+        assert_eq!(envelope.recover_signer().unwrap(), relay.address());
+        assert_eq!(envelope.chain_id(), Some(DEVNET_CHAIN_ID));
+        assert_eq!(envelope.nonce(), 7);
+        let normative_gas = TeeRegistryGasScheduleV1::normative()
+            .maximum_transaction_gas(
+                RegistryMutatorV1::RenewEnclave,
+                attempt.calldata.len(),
+                attempt.evidence.len(),
+                view.policy.measurement_rules.len(),
+                AttestationMode::GramineDirectDev,
+            )
+            .unwrap();
+        assert_eq!(raw_variant.gas_limit, normative_gas);
+        assert_eq!(envelope.gas_limit(), raw_variant.gas_limit);
+        assert_eq!(
+            envelope.gas_price(),
+            Some(raw_variant.gas_price.to::<u128>())
+        );
+        assert_eq!(envelope.kind(), TxKind::Call(TEE_REGISTRY_ADDRESS));
+        assert_eq!(envelope.value(), U256::ZERO);
+        assert_eq!(envelope.input().as_ref(), attempt.calldata.as_slice());
+        assert_eq!(*envelope.tx_hash(), raw_variant.transaction_hash);
     }
 }
