@@ -23,6 +23,11 @@ use crate::world::validators::RegistrationIdentity;
 
 use super::Localnet;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ManualRenewalObservationV1 {
+    pub renewal_nonce: u64,
+}
+
 fn verifier_material_paths(run_dir: &Path) -> (PathBuf, PathBuf) {
     let active_keys = run_dir.join("validator-0/data/keys");
     (
@@ -508,8 +513,11 @@ impl Localnet {
         Ok(())
     }
 
-    /// Run one idempotent manual renewal reconciliation for a node enclave.
-    pub fn renew_node_enclave(&self, index: usize) -> Result<()> {
+    /// Run manual renewal through canonical finality and return its typed evidence.
+    pub(crate) fn renew_node_enclave_until_finalized(
+        &self,
+        index: usize,
+    ) -> Result<ManualRenewalObservationV1> {
         let vd = self.cfg.validator_dir(index);
         Sh::new(&self.cfg).cli_required(args![
             "tee",
@@ -525,7 +533,22 @@ impl Localnet {
             "--private-key",
             read_evm_key(&vd)?,
         ])?;
-        Ok(())
+        let journal_path = vd.join("data/tee-renewal-v1/journal.json");
+        let journal: serde_json::Value = serde_json::from_slice(&fs::read(&journal_path)?)?;
+        if journal
+            .pointer("/lifecycle/state")
+            .and_then(|value| value.as_str())
+            != Some("finalized")
+        {
+            return Err(eyre!(
+                "manual renewal command returned without a finalized journal for node {index}"
+            ));
+        }
+        let renewal_nonce = journal
+            .pointer("/lifecycle/finalized_binding/renewalNonce")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| eyre!("finalized renewal journal has no renewal nonce"))?;
+        Ok(ManualRenewalObservationV1 { renewal_nonce })
     }
 
     /// Restart a joiner's enclave from its existing writable TEE directory.

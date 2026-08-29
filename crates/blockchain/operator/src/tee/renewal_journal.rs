@@ -69,7 +69,7 @@ impl PreparedRenewalV1 {
         let evidence_intent = match &evidence {
             AttestationEvidenceV1::Dcap(value) => &value.intent,
             AttestationEvidenceV1::GramineDirectDev(_) => {
-                eyre::bail!("automatic renewal journal contains non-DCAP evidence");
+                eyre::bail!("renewal journal contains non-DCAP evidence");
             }
         };
         let evidence_hash = dcap_evidence_hash_v1(&self.evidence)

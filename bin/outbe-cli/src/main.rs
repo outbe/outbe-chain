@@ -179,7 +179,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_tee_join() {
+    fn tee_join_with_only_the_global_private_key_parses() {
         let cli = Cli::try_parse_from([
             "outbe-cli",
             "--private-key",
@@ -197,7 +197,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_tee_renew() {
+    fn tee_renew_with_the_global_private_key_parses() {
         let cli = Cli::try_parse_from([
             "outbe-cli",
             "--private-key",
@@ -215,7 +215,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_rejects_removed_tee_key_and_renewal_forms() {
+    fn removed_tee_key_and_renewal_forms_are_rejected() {
         assert!(Cli::try_parse_from([
             "outbe-cli",
             "tee",

@@ -93,7 +93,7 @@ pub enum RenewalOutcomeV1 {
 
 pub async fn run_renewal_once_v1(
     rpc: &(impl RenewalRpc + Sync),
-    relay: &RelaySignerV1,
+    evm_signer: &RelaySignerV1,
     enclave: &mut impl RenewalEnclaveV1,
     node_signer: &impl RenewalNodeSignerV1,
     config: &RenewalServiceConfigV1,
@@ -184,7 +184,7 @@ pub async fn run_renewal_once_v1(
             opens_at_timestamp: renewal_opens_at(&view.binding)?,
         });
     }
-    let attempt = prepare_attempt(rpc, relay, enclave, node_signer, config, &view).await?;
+    let attempt = prepare_attempt(rpc, evm_signer, enclave, node_signer, config, &view).await?;
     journal.store(RenewalJournalSnapshotV1::new(
         RenewalJournalStateV1::Prepared {
             attempt: attempt.clone(),
@@ -242,7 +242,7 @@ fn validate_identity(
 
 async fn prepare_attempt(
     rpc: &(impl RenewalRpc + Sync),
-    relay: &RelaySignerV1,
+    evm_signer: &RelaySignerV1,
     enclave: &mut impl RenewalEnclaveV1,
     node_signer: &impl RenewalNodeSignerV1,
     config: &RenewalServiceConfigV1,
@@ -318,17 +318,17 @@ async fn prepare_attempt(
         )
         .map_err(|error| eyre::eyre!("calculate normative renewal gas: {error}"))?;
     let chain_id = rpc.chain_id().await?;
-    let account_nonce = rpc.transaction_count(relay.address()).await?;
+    let account_nonce = rpc.transaction_count(evm_signer.address()).await?;
     let gas_price = buffered_gas_price(rpc.gas_price().await?);
     let required_balance = gas_price.saturating_mul(U256::from(gas_limit));
-    let balance = rpc.balance(relay.address()).await?;
+    let balance = rpc.balance(evm_signer.address()).await?;
     if balance < required_balance {
         eyre::bail!(
-            "renewal relay {} has {balance} but needs at least {required_balance}",
-            relay.address()
+            "renewal EVM signer {} has {balance} but needs at least {required_balance}",
+            evm_signer.address()
         );
     }
-    let raw = relay.sign_renewal(
+    let raw = evm_signer.sign_renewal(
         chain_id,
         account_nonce,
         gas_price,
@@ -352,7 +352,9 @@ async fn prepare_attempt(
         requested_valid_until: intent.requested_valid_until,
         collateral_valid_until: window.expiration_ceiling,
         collateral_margin: view.policy.collateral_margin,
-        relay: relay.address(),
+        // `relay` is retained in the V1 journal shape for restart compatibility;
+        // manual renewal binds it to the caller's global EVM signer.
+        relay: evm_signer.address(),
         relay_variants: vec![raw],
     })
 }

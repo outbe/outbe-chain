@@ -2,12 +2,6 @@
 //! at durable key possession and node startup; validator-set activation belongs
 //! to the independent lifecycle suite.
 
-use std::{
-    fs,
-    thread::sleep,
-    time::{Duration, Instant},
-};
-
 use cucumber::{then, when};
 
 use crate::world::World;
@@ -200,49 +194,12 @@ fn manual_renewal_finalizes_for_both_roles(world: &mut World) {
         .node_offer_public(full_node)
         .expect("FullNode offer key before renewal");
     for index in [validator, full_node] {
-        let journal_path = world
-            .validators
-            .data_dir(index)
-            .join("tee-renewal-v1/journal.json");
-        let deadline = Instant::now() + Duration::from_secs(180);
-        loop {
-            world
-                .localnet
-                .renew_node_enclave(index)
-                .unwrap_or_else(|error| panic!("manually renew node {index}: {error:#}"));
-            let finalized = fs::read(&journal_path)
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-                .and_then(|journal| {
-                    journal
-                        .pointer("/lifecycle/state")
-                        .and_then(|value| value.as_str())
-                        .map(|state| state == "finalized")
-                })
-                .unwrap_or(false);
-            if finalized {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "manual renewal did not finalize for node {index}"
-            );
-            sleep(Duration::from_secs(2));
-        }
-        let journal: serde_json::Value = serde_json::from_slice(
-            &fs::read(&journal_path)
-                .unwrap_or_else(|error| panic!("read {}: {error}", journal_path.display())),
-        )
-        .expect("decode renewal journal");
+        let observation = world
+            .localnet
+            .renew_node_enclave_until_finalized(index)
+            .unwrap_or_else(|error| panic!("manually renew node {index}: {error:#}"));
         assert_eq!(
-            journal.pointer("/lifecycle/state").and_then(|v| v.as_str()),
-            Some("finalized")
-        );
-        assert_eq!(
-            journal
-                .pointer("/lifecycle/finalized_binding/renewalNonce")
-                .and_then(|value| value.as_u64()),
-            Some(1),
+            observation.renewal_nonce, 1,
             "first finalized manual renewal must advance the exact nonce once"
         );
     }

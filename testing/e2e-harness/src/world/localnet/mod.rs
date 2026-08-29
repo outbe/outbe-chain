@@ -360,6 +360,11 @@ impl Localnet {
     /// [`attach_log`](crate::internal::proc::attach_log)) — we don't stream those
     /// live, since interleaving several running nodes would be unreadable.
     fn spawn_node(&self, label: &str, node_dir: &Path, mut cmd: Command) -> Result<ChildGuard> {
+        let node_args = cmd
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        ensure_manual_tee_lease_node_args(&node_args)?;
         extend_real_sgx_process_environment(self.cfg.tee_mode, &mut cmd);
         cmd.env(
             "OUTBE_PROJECTION_MONGODB_URI",
@@ -466,6 +471,17 @@ impl Localnet {
         self.shutdown();
         Ok(())
     }
+}
+
+fn ensure_manual_tee_lease_node_args(args: &[String]) -> Result<()> {
+    if let Some(option) = args.iter().find(|arg| {
+        arg.as_str() == "--node-evm-key"
+            || arg.starts_with("--node-evm-key=")
+            || arg.starts_with("--tee-renewal.")
+    }) {
+        bail!("generated node command contains removed TEE renewal option {option}");
+    }
+    Ok(())
 }
 
 /// Co-located real enclaves share one physical EPC. A request can therefore
@@ -649,6 +665,27 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|pair| pair[0] == "--color" && pair[1] == "never"));
+    }
+
+    #[test]
+    fn generated_node_commands_reject_removed_tee_renewal_key_options() {
+        let ordinary = vec!["node".to_owned(), "--validator".to_owned()];
+        assert!(ensure_manual_tee_lease_node_args(&ordinary).is_ok());
+
+        for removed in [
+            "--node-evm-key",
+            "--node-evm-key=/tmp/evm-key.hex",
+            "--tee-renewal.relay-key",
+            "--tee-renewal.rpc-url=http://127.0.0.1:8545",
+            "--tee-renewal.poll-secs",
+            "--tee-renewal.warning-blocks",
+            "--tee-renewal.critical-blocks",
+        ] {
+            assert!(
+                ensure_manual_tee_lease_node_args(&[removed.to_owned()]).is_err(),
+                "removed option still accepted: {removed}"
+            );
+        }
     }
 
     /// Both layouts, and nothing else — in particular not `validator-*/data`.

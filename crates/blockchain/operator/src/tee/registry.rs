@@ -208,7 +208,7 @@ pub async fn read_finalized_renewal_view_v1(
     let policy = TeePolicyV1::decode_canonical(&canonical)
         .map_err(|error| eyre::eyre!("finalized TEE policy is non-canonical: {error}"))?;
     if policy.attestation_mode != AttestationMode::DcapRequired {
-        eyre::bail!("automatic DCAP renewal is disabled for non-DcapRequired networks");
+        eyre::bail!("DCAP renewal is disabled for non-DcapRequired networks");
     }
     let rpc_chain_id = rpc.chain_id().await.wrap_err("read eth_chainId")?;
     if policy.chain_id != U256::from(rpc_chain_id).to_be_bytes() {

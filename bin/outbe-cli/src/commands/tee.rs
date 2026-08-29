@@ -9,7 +9,11 @@
 //! then can the node execute offer blocks. Mirrors `secretd tx register auth` +
 //! `q register seed` + `configure-secret`, run before `secretd start`.
 
-use std::{fs, path::PathBuf, time::Duration};
+use std::{
+    fs,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
@@ -23,7 +27,7 @@ use outbe_operator::{
         inspect_upgrade_journal_v1, prepare_upgrade_journal_v1,
         read_finalized_staged_successor_policy_v1, read_renewal_status_v1, run_renewal_once_v1,
         run_upgrade_submission_v1, ExpectedOnboardingBindingV1, NodeBindingSelectorV1,
-        RenewalServiceConfigV1, UpgradeContextV1,
+        RenewalOutcomeV1, RenewalServiceConfigV1, UpgradeContextV1,
     },
     tx::RelaySignerV1,
 };
@@ -46,6 +50,8 @@ use crate::abi::{self, ITeeRegistry};
 use crate::rpc::Rpc;
 
 const DEV_NODE_HOST_DOMAIN_V1: &[u8] = b"outbe/tee/dev-node-host/v1";
+const MANUAL_RENEWAL_FINALITY_TIMEOUT: Duration = Duration::from_secs(300);
+const MANUAL_RENEWAL_RECONCILE_INTERVAL: Duration = Duration::from_secs(2);
 
 struct CliFinalityRpc<'a, R>(&'a R);
 
@@ -183,7 +189,7 @@ pub enum TeeCmd {
         node_data_dir: PathBuf,
     },
     /// Reconnect restarted B, prove its resident permanent offer key, durably
-    /// prepare exact transition bytes and submit them through the funded relay.
+    /// prepare exact transition bytes and submit them through the global EVM signer.
     UpgradeSubmit {
         #[arg(long)]
         candidate_enclave_socket: String,
@@ -344,16 +350,31 @@ async fn renew(
         sign_node_hash(&node_signing_key, hash)
             .map_err(|error| eyre::eyre!("node authority signing failed: {error}"))
     };
-    let outcome = run_renewal_once_v1(
-        &CliFinalityRpc(client),
-        &evm_signer,
-        &mut enclave,
-        &signer,
-        &config,
-    )
-    .await?;
-    println!("{outcome:#?}");
-    Ok(())
+    let started = Instant::now();
+    loop {
+        let outcome = run_renewal_once_v1(
+            &CliFinalityRpc(client),
+            &evm_signer,
+            &mut enclave,
+            &signer,
+            &config,
+        )
+        .await?;
+        match &outcome {
+            RenewalOutcomeV1::Finalized { .. } | RenewalOutcomeV1::NotDue { .. } => {
+                println!("{outcome:#?}");
+                return Ok(());
+            }
+            RenewalOutcomeV1::Submitted { .. } | RenewalOutcomeV1::Abandoned { .. } => {
+                if started.elapsed() >= MANUAL_RENEWAL_FINALITY_TIMEOUT {
+                    return Err(eyre::eyre!(
+                        "tee renew timed out waiting for canonical finality; last outcome: {outcome:#?}"
+                    ));
+                }
+                tokio::time::sleep(MANUAL_RENEWAL_RECONCILE_INTERVAL).await;
+            }
+        }
+    }
 }
 
 async fn renewal_status(
@@ -439,17 +460,17 @@ fn upgrade_copy_root(node_data_dir: &std::path::Path) -> Result<()> {
 #[allow(clippy::too_many_arguments)]
 async fn upgrade_submit(
     client: &(impl Rpc + Sync),
-    relay_private_key: Option<&str>,
+    private_key: Option<&str>,
     candidate_enclave_socket: &str,
     node_data_dir: &std::path::Path,
     reth_p2p_secret_key: Option<&std::path::Path>,
     binding_id: &str,
     valid_until: u64,
 ) -> Result<()> {
-    let relay_private_key = relay_private_key.ok_or_else(|| {
-        eyre::eyre!("tee upgrade-submit requires the global --private-key funded relay signer")
+    let private_key = private_key.ok_or_else(|| {
+        eyre::eyre!("tee upgrade-submit requires the global --private-key EVM signer")
     })?;
-    let relay = RelaySignerV1::new(relay_private_key)?;
+    let evm_signer = RelaySignerV1::new(private_key)?;
     let active = load_committed_enclave_manifest_v1(node_data_dir)
         .map_err(|error| eyre::eyre!("load committed NodeHost manifest: {error}"))?;
     let rpc_chain_id = client.eth_chain_id().await?;
@@ -466,7 +487,7 @@ async fn upgrade_submit(
     };
     let outcome = run_upgrade_submission_v1(
         &CliFinalityRpc(client),
-        &relay,
+        &evm_signer,
         &mut candidate,
         &signer,
         node_data_dir,
@@ -614,6 +635,26 @@ struct TeeJoinArgs<'a> {
     timeout_secs: u64,
 }
 
+fn authorize_validator_node_binding(
+    chain_id: [u8; 32],
+    genesis_hash: B256,
+    node_id_hash: B256,
+    evm_signer: &crate::tx::TxSigner,
+) -> Result<(ValidatorNodeBindingV1, B256, [u8; 65])> {
+    let binding = ValidatorNodeBindingV1 {
+        chain_id,
+        genesis_hash,
+        validator: evm_signer.address().into_array(),
+        node_id_hash,
+    };
+    let binding_hash = binding
+        .binding_hash()
+        .map_err(|error| eyre::eyre!("hash address-to-NodeHost binding: {error}"))?;
+    let signature = sign_node_hash(evm_signer.key(), binding_hash)
+        .map_err(|error| eyre::eyre!("sign address-to-NodeHost binding: {error}"))?;
+    Ok((binding, binding_hash, signature))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum JoinTransport {
     AuthorizedNodeHost,
@@ -674,17 +715,13 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
     let node_id_hash = node_id
         .node_id_hash()
         .map_err(|error| eyre::eyre!("hash V1 node identity: {error}"))?;
-    let validator_binding = ValidatorNodeBindingV1 {
-        chain_id: policy.chain_id,
-        genesis_hash: policy.genesis_hash,
-        validator: evm_signer.address().into_array(),
-        node_id_hash,
-    };
-    let validator_binding_hash = validator_binding
-        .binding_hash()
-        .map_err(|error| eyre::eyre!("hash address-to-NodeHost binding: {error}"))?;
-    let validator_signature = sign_node_hash(evm_signer.key(), validator_binding_hash)
-        .map_err(|error| eyre::eyre!("sign address-to-NodeHost binding: {error}"))?;
+    let (validator_binding, validator_binding_hash, validator_signature) =
+        authorize_validator_node_binding(
+            policy.chain_id,
+            policy.genesis_hash,
+            node_id_hash,
+            &evm_signer,
+        )?;
     let node_binding_signature = sign_node_hash(&node_signing_key, validator_binding_hash)
         .map_err(|error| eyre::eyre!("sign NodeHost side of address binding: {error}"))?;
     let validator_binding = validator_binding
@@ -1366,6 +1403,25 @@ mod tests {
         assert!(parse_nonzero_b256(&"11".repeat(32), "binding").is_ok());
         assert!(parse_nonzero_b256(&"00".repeat(32), "binding").is_err());
         assert!(parse_nonzero_b256(&"11".repeat(31), "binding").is_err());
+    }
+
+    #[test]
+    fn validator_node_binding_uses_the_global_transaction_signer() {
+        let signer = crate::tx::TxSigner::new(
+            "11d7b7a4b68f4f6a9f4ec50a4f3b1e6f6294e46147e37030262830716725f9a3",
+        )
+        .unwrap();
+        let (binding, binding_hash, signature) = authorize_validator_node_binding(
+            U256::from(676_u64).to_be_bytes(),
+            B256::repeat_byte(0x31),
+            B256::repeat_byte(0x42),
+            &signer,
+        )
+        .unwrap();
+
+        assert_eq!(binding.validator, signer.address().into_array());
+        assert_eq!(binding.binding_hash().unwrap(), binding_hash);
+        assert!(binding.verify_validator_signature(&signature));
     }
 
     #[test]

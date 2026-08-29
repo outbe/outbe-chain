@@ -608,7 +608,7 @@ mod tests {
     }
 
     #[test]
-    fn cli_rejects_removed_automatic_tee_renewal_options() {
+    fn automatic_tee_renewal_options_are_rejected_after_worker_removal() {
         for obsolete in [
             ["--tee-renewal.relay-key", "/tmp/relay-key.hex"],
             ["--tee-renewal.rpc-url", "http://127.0.0.1:8545"],
