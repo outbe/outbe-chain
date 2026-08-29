@@ -151,6 +151,21 @@ fn full_node_reopens_exact_key(world: &mut World) {
 fn enter_renewal_window(world: &mut World) {
     let validator = world.validators.joiner_index();
     let full_node = validator + 1;
+    let validator_deadline = world
+        .localnet
+        .node_renewal_status(validator)
+        .expect("Validator finalized lease before renewal")
+        .valid_until;
+    let full_node_deadline = world
+        .localnet
+        .node_renewal_status(full_node)
+        .expect("FullNode finalized lease before renewal")
+        .valid_until;
+    let renewal_timestamp = validator_deadline
+        .max(full_node_deadline)
+        .checked_sub(7 * 24 * 60 * 60)
+        .and_then(|timestamp| timestamp.checked_add(2))
+        .expect("manual renewal window timestamp");
     world
         .localnet
         .stop_joiner(validator)
@@ -161,7 +176,7 @@ fn enter_renewal_window(world: &mut World) {
         .expect("stop FullNode while its upstream committee restarts");
     world
         .localnet
-        .restart_committee_at_unix_time_offset(5_000)
+        .restart_committee_at_consensus_timestamp(renewal_timestamp)
         .expect("restart complete committee at a controlled testnet timestamp");
     let head = world.rpc.head(world.validators.primary_port()).unwrap_or(1);
     assert!(

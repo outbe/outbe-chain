@@ -7,7 +7,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(any(test, feature = "ocomp-integration"))]
 use eyre::ensure;
@@ -137,6 +137,23 @@ impl Localnet {
         opts.unix_time_offset_secs = Some(offset_secs);
         opts.genesis_timestamp_pre_shifted = true;
         self.start(&opts)
+    }
+
+    /// Move the test-only committee clock to an exact consensus timestamp.
+    /// Production lease duration remains unchanged; LocalNet only crosses the
+    /// otherwise real seven-day and fourteen-day boundaries immediately.
+    pub(crate) fn restart_committee_at_consensus_timestamp(
+        &mut self,
+        target_timestamp: u64,
+    ) -> Result<()> {
+        let host_timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| eyre::eyre!("host clock predates Unix epoch: {error}"))?
+            .as_secs();
+        let offset = i128::from(target_timestamp) - i128::from(host_timestamp);
+        let offset = i64::try_from(offset)
+            .map_err(|_| eyre::eyre!("test consensus clock offset exceeds i64"))?;
+        self.restart_committee_at_unix_time_offset(offset)
     }
 
     /// Restart the complete validator cohort at one quiescent barrier while

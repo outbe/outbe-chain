@@ -9,6 +9,7 @@ use std::process::Command;
 use alloy_primitives::{hex, Address, Bytes, B256};
 use eyre::{eyre, Result};
 use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
+use serde::Deserialize;
 
 use crate::internal::{
     addresses,
@@ -26,6 +27,16 @@ use super::Localnet;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ManualRenewalObservationV1 {
     pub renewal_nonce: u64,
+    pub valid_until: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ManualRenewalStatusObservationV1 {
+    pub finalized_height: u64,
+    pub finalized_timestamp: u64,
+    pub valid_until: u64,
+    pub journal_state: Option<String>,
 }
 
 fn verifier_material_paths(run_dir: &Path) -> (PathBuf, PathBuf) {
@@ -470,17 +481,26 @@ impl Localnet {
 
     /// Start a node's role-neutral enclave and complete its one on-chain TEE join.
     pub fn join_node_enclave(&mut self, index: usize) -> Result<()> {
+        let now = eth::latest_block_timestamp(&self.cfg.rpc0)
+            .ok_or_else(|| eyre!("cannot read canonical head timestamp for V1 tee join"))?;
+        let valid_until = now
+            .checked_add(outbe_primitives::tee_genesis_v1::PRODUCTION_TEE_LEASE_SECONDS_V1)
+            .ok_or_else(|| eyre!("V1 tee join lease deadline overflow"))?;
+        self.join_node_enclave_until(index, valid_until)
+    }
+
+    /// Join or recover one role-neutral enclave at an exact finalized-time
+    /// deadline. Expiry fail-stops the node process, not its enclave sidecar,
+    /// so recovery deliberately reuses an already-running sidecar.
+    pub(crate) fn join_node_enclave_until(&mut self, index: usize, valid_until: u64) -> Result<()> {
         let vd = self.cfg.validator_dir(index);
         let key = read_evm_key(&vd)?;
-        self.start_node_enclave(index)?;
+        if !self.enclaves.contains_key(&index) {
+            self.start_node_enclave(index)?;
+        }
         let port = self.cfg.tee_port(index);
         let sock = format!("127.0.0.1:{port}");
         let binding_id = random_hex_32()?;
-        let valid_until = eth::latest_block_timestamp(&self.cfg.rpc0)
-            .ok_or_else(|| eyre!("cannot read canonical head timestamp for V1 tee join"))?
-            .checked_add(7_200)
-            .ok_or_else(|| eyre!("V1 tee join lease deadline overflow"))?
-            .to_string();
         let mut join = args![
             "tee",
             "join",
@@ -491,7 +511,7 @@ impl Localnet {
             "--binding-id",
             binding_id,
             "--valid-until",
-            valid_until,
+            valid_until.to_string(),
             "--rpc-url",
             self.cfg.rpc0.as_str(),
             "--private-key",
@@ -511,6 +531,24 @@ impl Localnet {
         }
         Sh::new(&self.cfg).cli_required(join)?;
         Ok(())
+    }
+
+    /// Read one node's lease through the public CLI and its exact
+    /// consensus-finalized Registry view.
+    pub(crate) fn node_renewal_status(
+        &self,
+        index: usize,
+    ) -> Result<ManualRenewalStatusObservationV1> {
+        let vd = self.cfg.validator_dir(index);
+        let output = Sh::new(&self.cfg).cli_required(args![
+            "tee",
+            "status",
+            "--node-data-dir",
+            vd.join("data").display(),
+            "--rpc-url",
+            self.cfg.rpc0.as_str(),
+        ])?;
+        serde_json::from_str(&output).map_err(Into::into)
     }
 
     /// Run manual renewal through canonical finality and return its typed evidence.
@@ -548,7 +586,34 @@ impl Localnet {
             .pointer("/lifecycle/finalized_binding/renewalNonce")
             .and_then(serde_json::Value::as_u64)
             .ok_or_else(|| eyre!("finalized renewal journal has no renewal nonce"))?;
-        Ok(ManualRenewalObservationV1 { renewal_nonce })
+        let valid_until = journal
+            .pointer("/lifecycle/finalized_binding/validUntil")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| eyre!("finalized renewal journal has no lease deadline"))?;
+        Ok(ManualRenewalObservationV1 {
+            renewal_nonce,
+            valid_until,
+        })
+    }
+
+    /// Prove that an expired enclave cannot be renewed and must use the normal
+    /// `tee join` recovery transition.
+    pub(crate) fn renew_node_enclave_expected_failure(&self, index: usize) -> Result<String> {
+        let vd = self.cfg.validator_dir(index);
+        Sh::new(&self.cfg).cli_expected_failure(args![
+            "tee",
+            "renew",
+            "--enclave-socket",
+            format!("127.0.0.1:{}", self.cfg.tee_port(index)),
+            "--node-data-dir",
+            vd.join("data").display(),
+            "--reth-p2p-secret-key",
+            vd.join("reth-p2p-secret.hex").display(),
+            "--rpc-url",
+            self.cfg.rpc0.as_str(),
+            "--private-key",
+            read_evm_key(&vd)?,
+        ])
     }
 
     /// Restart a joiner's enclave from its existing writable TEE directory.

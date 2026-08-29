@@ -29,6 +29,21 @@ impl Localnet {
     /// policy. DCAP and GramineDirectDev differ only in attestation authority;
     /// both require the same resident offer-key delivery before node startup.
     pub fn provision_full_node_node_host(&mut self, index: usize) -> Result<()> {
+        let valid_until = eth::latest_block_timestamp(&self.cfg.rpc0)
+            .ok_or_else(|| eyre!("cannot read canonical timestamp for full-node tee join"))?
+            .checked_add(outbe_primitives::tee_genesis_v1::PRODUCTION_TEE_LEASE_SECONDS_V1)
+            .ok_or_else(|| eyre!("full-node tee join lease deadline overflow"))?;
+        self.provision_full_node_node_host_until(index, valid_until)
+    }
+
+    /// Provision a FullNode with an exact lease deadline. The lease E2E aligns
+    /// it with the founding committee so one canonical timestamp exercises
+    /// validator and FullNode expiry together.
+    pub(crate) fn provision_full_node_node_host_until(
+        &mut self,
+        index: usize,
+        valid_until: u64,
+    ) -> Result<()> {
         let node_dir = self.cfg.validator_dir(index);
         let data_dir = node_dir.join("data");
         fs::create_dir_all(&data_dir)?;
@@ -46,10 +61,6 @@ impl Localnet {
         eth::send_value(&self.cfg.rpc0, evm_address, &funder, eth::coen(100))?;
 
         self.start_node_enclave(index)?;
-        let valid_until = eth::latest_block_timestamp(&self.cfg.rpc0)
-            .ok_or_else(|| eyre!("cannot read canonical timestamp for full-node tee join"))?
-            .checked_add(7_200)
-            .ok_or_else(|| eyre!("full-node tee join lease deadline overflow"))?;
         let mut join = args![
             "tee",
             "join",
