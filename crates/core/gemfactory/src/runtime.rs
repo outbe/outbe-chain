@@ -416,6 +416,11 @@ fn accept_payment_asset(
 /// rate; the issuance currency converts through COEN —
 /// `cost * rate(COEN/iss) / rate(COEN/ref)` — with the decimals scaling folded
 /// into the same division, so it rounds once.
+///
+/// The two rates cancel, so the ratio is scale-free — but only because both legs
+/// are `COEN/<iso>` markets, which the oracle quotes at six decimals while every
+/// other market it carries is eighteen (`pair_scales`). Reading one leg from a
+/// market of the other class would be wrong by twelve orders of magnitude.
 fn cost_in_token(
     storage: &StorageHandle<'_>,
     item: &outbe_gem::GemData,
