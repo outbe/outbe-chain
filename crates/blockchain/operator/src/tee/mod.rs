@@ -11,7 +11,7 @@ pub use registry::{
     FinalizedStagedSuccessorPolicyV1, NodeBindingSelectorV1,
 };
 pub use renewal::{
-    run_renewal_once_v1, RenewalEnclaveV1, RenewalModeV1, RenewalNodeSignerV1, RenewalOutcomeV1,
+    run_renewal_once_v1, RenewalEnclaveV1, RenewalNodeSignerV1, RenewalOutcomeV1,
     RenewalServiceConfigV1,
 };
 pub use renewal_journal::{RenewalJournalSnapshotV1, RenewalJournalStateV1};

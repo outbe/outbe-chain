@@ -187,10 +187,8 @@ fn enter_renewal_window(world: &mut World) {
         .expect("restart FullNode after its upstream committee is available");
 }
 
-#[then(
-    "automatic renewal finalizes for the Validator and FullNode without changing their offer key"
-)]
-fn automatic_renewal_finalizes_for_both_roles(world: &mut World) {
+#[then("manual renewal finalizes for the Validator and FullNode without changing their offer key")]
+fn manual_renewal_finalizes_for_both_roles(world: &mut World) {
     let validator = world.validators.joiner_index();
     let full_node = validator + 1;
     let validator_offer = world
@@ -201,36 +199,36 @@ fn automatic_renewal_finalizes_for_both_roles(world: &mut World) {
         .localnet
         .node_offer_public(full_node)
         .expect("FullNode offer key before renewal");
-    let deadline = Instant::now() + Duration::from_secs(180);
-    while Instant::now() < deadline {
-        if world
-            .localnet
-            .log_has(validator, "automatic DCAP renewal finalized")
-            && world
-                .localnet
-                .log_has(full_node, "automatic DCAP renewal finalized")
-        {
-            break;
-        }
-        sleep(Duration::from_secs(2));
-    }
-    assert!(
-        world
-            .localnet
-            .log_has(validator, "automatic DCAP renewal finalized"),
-        "Validator automatic renewal did not finalize"
-    );
-    assert!(
-        world
-            .localnet
-            .log_has(full_node, "automatic DCAP renewal finalized"),
-        "FullNode automatic renewal did not finalize"
-    );
     for index in [validator, full_node] {
         let journal_path = world
             .validators
             .data_dir(index)
             .join("tee-renewal-v1/journal.json");
+        let deadline = Instant::now() + Duration::from_secs(180);
+        loop {
+            world
+                .localnet
+                .renew_node_enclave(index)
+                .unwrap_or_else(|error| panic!("manually renew node {index}: {error:#}"));
+            let finalized = fs::read(&journal_path)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                .and_then(|journal| {
+                    journal
+                        .pointer("/lifecycle/state")
+                        .and_then(|value| value.as_str())
+                        .map(|state| state == "finalized")
+                })
+                .unwrap_or(false);
+            if finalized {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "manual renewal did not finalize for node {index}"
+            );
+            sleep(Duration::from_secs(2));
+        }
         let journal: serde_json::Value = serde_json::from_slice(
             &fs::read(&journal_path)
                 .unwrap_or_else(|error| panic!("read {}: {error}", journal_path.display())),
@@ -245,7 +243,7 @@ fn automatic_renewal_finalizes_for_both_roles(world: &mut World) {
                 .pointer("/lifecycle/finalized_binding/renewalNonce")
                 .and_then(|value| value.as_u64()),
             Some(1),
-            "first finalized renewal must advance the exact nonce once"
+            "first finalized manual renewal must advance the exact nonce once"
         );
     }
     assert_eq!(

@@ -182,6 +182,42 @@ mod tests {
     fn test_cli_parse_tee_join() {
         let cli = Cli::try_parse_from([
             "outbe-cli",
+            "--private-key",
+            "11d7b7a4b68f4f6a9f4ec50a4f3b1e6f6294e46147e37030262830716725f9a3",
+            "tee",
+            "join",
+            "--enclave-socket",
+            "/tmp/enclave.sock",
+            "--binding-id",
+            "0101010101010101010101010101010101010101010101010101010101010101",
+            "--valid-until",
+            "1234567890",
+        ]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_parse_tee_renew() {
+        let cli = Cli::try_parse_from([
+            "outbe-cli",
+            "--private-key",
+            "11d7b7a4b68f4f6a9f4ec50a4f3b1e6f6294e46147e37030262830716725f9a3",
+            "tee",
+            "renew",
+            "--enclave-socket",
+            "/tmp/enclave.sock",
+            "--node-data-dir",
+            "/tmp/node",
+            "--reth-p2p-secret-key",
+            "/tmp/reth-p2p-secret-key",
+        ]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn test_cli_rejects_removed_tee_key_and_renewal_forms() {
+        assert!(Cli::try_parse_from([
+            "outbe-cli",
             "tee",
             "join",
             "--enclave-socket",
@@ -192,8 +228,18 @@ mod tests {
             "0101010101010101010101010101010101010101010101010101010101010101",
             "--valid-until",
             "1234567890",
-        ]);
-        assert!(cli.is_ok());
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from([
+            "outbe-cli",
+            "tee",
+            "renew-now",
+            "--enclave-socket",
+            "/tmp/enclave.sock",
+            "--node-data-dir",
+            "/tmp/node",
+        ])
+        .is_err());
     }
 
     #[test]

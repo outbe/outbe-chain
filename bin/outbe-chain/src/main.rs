@@ -32,15 +32,9 @@ use outbe_node::{
     },
     OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
 };
-use outbe_operator::{
-    rpc::HttpRenewalRpc,
-    tee::{
-        inspect_upgrade_journal_v1, read_renewal_status_v1, record_upgrade_finalized_v1,
-        record_upgrade_missed_cutoff_v1, record_upgrade_promoted_v1, run_renewal_once_v1,
-        NodeBindingSelectorV1, RenewalAlertLevelV1, RenewalEnclaveV1, RenewalModeV1,
-        RenewalNodeSignerV1, RenewalOutcomeV1, RenewalServiceConfigV1, UpgradeJournalStateV1,
-    },
-    tx::RelaySignerV1,
+use outbe_operator::tee::{
+    inspect_upgrade_journal_v1, record_upgrade_finalized_v1, record_upgrade_missed_cutoff_v1,
+    record_upgrade_promoted_v1, UpgradeJournalStateV1,
 };
 use outbe_primitives::projection::{
     projection_readiness, ProjectionCheckpoint, ProjectionReadinessHandle, ProjectionStatus,
@@ -65,6 +59,10 @@ use tracing::info;
 mod ocomp_exex;
 mod ocomp_genesis;
 mod tee_genesis;
+
+const TEE_UPGRADE_POLL_SECS: u64 = 30;
+const TEE_UPGRADE_WARNING_BLOCKS: u64 = 600;
+const TEE_UPGRADE_CRITICAL_BLOCKS: u64 = 120;
 
 fn load_installed_ocomp_bundles(
     domain_root: &Path,
@@ -204,142 +202,6 @@ fn parse_ocomp_bundle_hashes(value: &str) -> eyre::Result<Vec<alloy_primitives::
         eyre::bail!("OCOMP bundle hash list must contain one or two adjacent authorities");
     }
     Ok(hashes)
-}
-
-struct RenewalNodeAuthorityV1(k256::ecdsa::SigningKey);
-
-impl RenewalNodeSignerV1 for RenewalNodeAuthorityV1 {
-    fn sign_node_hash(&self, hash: alloy_primitives::B256) -> eyre::Result<[u8; 65]> {
-        use k256::ecdsa::signature::hazmat::PrehashSigner as _;
-        let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = self
-            .0
-            .sign_prehash(hash.as_slice())
-            .map_err(|error| eyre::eyre!("NodeHost renewal signing failed: {error}"))?;
-        let mut bytes = [0_u8; 65];
-        bytes[..64].copy_from_slice(&signature.to_bytes());
-        bytes[64] = recovery.to_byte();
-        Ok(bytes)
-    }
-}
-
-struct GlobalRenewalEnclaveV1;
-
-impl RenewalEnclaveV1 for GlobalRenewalEnclaveV1 {
-    fn generate_dcap_quote(
-        &mut self,
-        intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
-    ) -> eyre::Result<outbe_tee::GeneratedDcapQuoteV1> {
-        outbe_tee::generate_dcap_quote_v1(intent)
-            .map_err(|error| eyre::eyre!("generate renewal quote: {error}"))
-    }
-}
-
-struct RenewalWorkerV1 {
-    rpc_url: String,
-    relay: RelaySignerV1,
-    authority: RenewalNodeAuthorityV1,
-    config: RenewalServiceConfigV1,
-    poll_secs: u64,
-    warning_blocks: u64,
-    critical_blocks: u64,
-}
-
-async fn run_renewal_worker_v1(
-    worker: RenewalWorkerV1,
-    shutdown: tokio_util::sync::CancellationToken,
-) {
-    let rpc = HttpRenewalRpc::new(worker.rpc_url);
-    let mut enclave = GlobalRenewalEnclaveV1;
-    loop {
-        let upgrade_blocks_renewal = match inspect_upgrade_journal_v1(&worker.config.node_data_dir)
-        {
-            Ok(Some(snapshot)) => matches!(
-                snapshot.lifecycle,
-                UpgradeJournalStateV1::CandidatePrepared { .. }
-                    | UpgradeJournalStateV1::RootCopied { .. }
-                    | UpgradeJournalStateV1::CandidateKeyReady { .. }
-                    | UpgradeJournalStateV1::SubmissionPrepared { .. }
-                    | UpgradeJournalStateV1::Submitted { .. }
-                    | UpgradeJournalStateV1::Finalized { .. }
-                    | UpgradeJournalStateV1::Promoted { .. }
-                    | UpgradeJournalStateV1::TerminalMissedCutoff { .. }
-            ),
-            Ok(None) => false,
-            Err(error) => {
-                tracing::error!(error = %format!("{error:#}"), "read upgrade checkpoint before renewal failed; renewal paused fail-closed");
-                true
-            }
-        };
-        let renewal = if upgrade_blocks_renewal {
-            None
-        } else {
-            Some(
-                run_renewal_once_v1(
-                    &rpc,
-                    &worker.relay,
-                    &mut enclave,
-                    &worker.authority,
-                    &worker.config,
-                    RenewalModeV1::Automatic,
-                )
-                .await,
-            )
-        };
-        match renewal {
-            None => {}
-            Some(Ok(RenewalOutcomeV1::Submitted {
-                transaction_hash,
-                replayed,
-            })) => info!(%transaction_hash, replayed, "automatic DCAP renewal submitted"),
-            Some(Ok(RenewalOutcomeV1::Finalized {
-                finalized_height,
-                valid_until,
-            })) => info!(
-                finalized_height,
-                valid_until, "automatic DCAP renewal finalized"
-            ),
-            Some(Ok(RenewalOutcomeV1::Abandoned {
-                finalized_height,
-                reason,
-            })) => {
-                tracing::warn!(finalized_height, %reason, "stale DCAP renewal abandoned; next pass will rebuild")
-            }
-            Some(Ok(RenewalOutcomeV1::NotDue { .. })) => {}
-            Some(Err(error)) => {
-                tracing::error!(error = %format!("{error:#}"), "automatic DCAP renewal reconciliation failed")
-            }
-        }
-        match read_renewal_status_v1(
-            &rpc,
-            &worker.config.node_data_dir,
-            &worker.config.selector,
-            worker.warning_blocks,
-            worker.critical_blocks,
-        )
-        .await
-        {
-            Ok(status) if status.alert == RenewalAlertLevelV1::Critical => tracing::error!(
-                finalized_height = status.finalized_height,
-                next_freeze_height = status.next_freeze_height,
-                valid_until = status.valid_until,
-                "DCAP renewal is unsafe at the critical DKG-freeze margin"
-            ),
-            Ok(status) if status.alert == RenewalAlertLevelV1::Warning => tracing::warn!(
-                finalized_height = status.finalized_height,
-                next_freeze_height = status.next_freeze_height,
-                valid_until = status.valid_until,
-                "DCAP renewal is unsafe at the warning DKG-freeze margin"
-            ),
-            Ok(_) => {}
-            Err(error) => {
-                tracing::error!(error = %format!("{error:#}"), "read automatic DCAP renewal status failed")
-            }
-        }
-        tokio::select! {
-            () = shutdown.cancelled() => break,
-            () = tokio::time::sleep(std::time::Duration::from_secs(worker.poll_secs)) => {}
-        }
-    }
 }
 
 struct UpgradePromotionWorkerConfigV1 {
@@ -1490,8 +1352,6 @@ fn run_node() -> eyre::Result<()> {
         } else {
             None
         };
-        let mut renewal_node_host_authority = None;
-
         // Every network declares exactly one attestation policy in genesis. The
         // local session protocol is an independent, explicit operator choice:
         // GramineDirectDev may use either the development transport or a real
@@ -1539,7 +1399,6 @@ fn run_node() -> eyre::Result<()> {
                     },
                 )
                 .wrap_err("NodeHost enclave initialization failed")?;
-                renewal_node_host_authority = Some(signing);
                 // Session material for reconnect-with-identity-revalidation:
                 // loaded once here (takes the NodeHost file lock), never in the
                 // request hot path.
@@ -1602,43 +1461,6 @@ fn run_node() -> eyre::Result<()> {
                 "full-node resident offer key matched upstream before execution launch"
             );
         }
-
-        let renewal_worker = match initial_tee_policy.attestation_mode {
-            outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired => {
-                let relay_path = args.tee_renewal_relay_key.as_deref().ok_or_else(|| {
-                    eyre::eyre!(
-                        "DcapRequired automatic renewal requires --tee-renewal.relay-key"
-                    )
-                })?;
-                let relay = RelaySignerV1::from_file(relay_path).wrap_err_with(|| {
-                    format!("load funded TEE renewal relay key {}", relay_path.display())
-                })?;
-                let manifest = outbe_tee::load_committed_enclave_manifest_v1(&node_data_dir)
-                    .wrap_err("load committed NodeHost manifest for renewal")?;
-                let selector = NodeBindingSelectorV1::NodeHost(
-                    manifest.node_id.reth_p2p_public,
-                );
-                let authority = RenewalNodeAuthorityV1(
-                    renewal_node_host_authority.take().ok_or_else(|| {
-                        eyre::eyre!("NodeHost renewal authority is unavailable")
-                    })?,
-                );
-                Some(RenewalWorkerV1 {
-                    rpc_url: args.tee_renewal_rpc_url.clone(),
-                    relay,
-                    authority,
-                    config: RenewalServiceConfigV1 {
-                        node_data_dir: node_data_dir.clone(),
-                        selector,
-                        manifest,
-                    },
-                    poll_secs: args.tee_renewal_poll_secs,
-                    warning_blocks: args.tee_renewal_warning_blocks,
-                    critical_blocks: args.tee_renewal_critical_blocks,
-                })
-            }
-            outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev => None,
-        };
 
         let offchain_data = args.offchain_data()?;
         validate_adr005_node_mode(args.is_validator, args.upstream.is_some())?;
@@ -2056,9 +1878,6 @@ fn run_node() -> eyre::Result<()> {
             (None, None)
         };
 
-        let renewal_handle = renewal_worker.map(|worker| {
-            tokio::spawn(run_renewal_worker_v1(worker, shutdown_token.clone()))
-        });
         // Periodic enclave canary (signal only): known-plaintext decrypt +
         // Health telemetry through the process-global session. `0` disables.
         let tee_canary_handle = (args.tee_canary_interval_secs > 0).then(|| {
@@ -2094,9 +1913,9 @@ fn run_node() -> eyre::Result<()> {
                     chain_id: proof_chain_id,
                     genesis_hash,
                     node_data_dir: node_data_dir.clone(),
-                    poll_secs: args.tee_renewal_poll_secs,
-                    warning_blocks: args.tee_renewal_warning_blocks,
-                    critical_blocks: args.tee_renewal_critical_blocks,
+                    poll_secs: TEE_UPGRADE_POLL_SECS,
+                    warning_blocks: TEE_UPGRADE_WARNING_BLOCKS,
+                    critical_blocks: TEE_UPGRADE_CRITICAL_BLOCKS,
                     promoted,
                 },
             )))
@@ -2242,9 +2061,6 @@ fn run_node() -> eyre::Result<()> {
                 Ok(result) => result.wrap_err("Radicle observer panicked")?,
                 Err(_) => tracing::warn!("Radicle observer join deadline exceeded"),
             }
-        }
-        if let Some(handle) = renewal_handle {
-            handle.await.wrap_err("automatic DCAP renewal worker panicked")?;
         }
         if let Some(handle) = tee_canary_handle {
             handle.await.wrap_err("TEE canary worker panicked")?;

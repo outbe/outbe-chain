@@ -483,8 +483,6 @@ impl Localnet {
             sock,
             "--reth-p2p-secret-key",
             vd.join("reth-p2p-secret.hex").display(),
-            "--node-evm-key",
-            vd.join("evm-key.hex").display(),
             "--binding-id",
             binding_id,
             "--valid-until",
@@ -507,6 +505,26 @@ impl Localnet {
             join.extend(args!["--node-data-dir", vd.join("data").display()]);
         }
         Sh::new(&self.cfg).cli_required(join)?;
+        Ok(())
+    }
+
+    /// Run one idempotent manual renewal reconciliation for a node enclave.
+    pub fn renew_node_enclave(&self, index: usize) -> Result<()> {
+        let vd = self.cfg.validator_dir(index);
+        Sh::new(&self.cfg).cli_required(args![
+            "tee",
+            "renew",
+            "--enclave-socket",
+            format!("127.0.0.1:{}", self.cfg.tee_port(index)),
+            "--node-data-dir",
+            vd.join("data").display(),
+            "--reth-p2p-secret-key",
+            vd.join("reth-p2p-secret.hex").display(),
+            "--rpc-url",
+            self.cfg.rpc0.as_str(),
+            "--private-key",
+            read_evm_key(&vd)?,
+        ])?;
         Ok(())
     }
 
@@ -649,12 +667,6 @@ impl Localnet {
             vd.join("signing-key.hex").display(),
             "--validator.evm-key",
             vd.join("evm-key.hex").display(),
-            "--tee-renewal.relay-key",
-            vd.join("evm-key.hex").display(),
-            "--tee-renewal.rpc-url",
-            format!("http://127.0.0.1:{}", self.cfg.http_port(index)),
-            "--tee-renewal.poll-secs",
-            "2",
             "--consensus.listen-addr",
             format!("127.0.0.1:{}", self.cfg.consensus_port(index)),
             "--consensus.peers",

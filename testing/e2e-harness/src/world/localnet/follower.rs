@@ -1,7 +1,6 @@
 //! Full-execution follower nodes (`--upstream`). Ported `launch_follower`.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
 use std::process::Command;
 
 use eyre::{bail, eyre, Result};
@@ -16,9 +15,9 @@ use crate::internal::{
 use super::Localnet;
 
 impl Localnet {
-    /// Provision a production full-node enclave with its own persistent Reth
-    /// identity and a distinct funded relay signer. The relay submits the
-    /// Registry transaction but never authorizes the NodeHost manifest.
+    /// Provision a production full-node enclave with its persistent Reth and
+    /// EVM identities. The global EVM key owns both the Registry association
+    /// and the transaction envelope.
     pub fn provision_dcap_full_node(&mut self, index: usize) -> Result<()> {
         if !matches!(self.cfg.tee_mode, TeeMode::Real) {
             bail!("DcapRequired full-node provisioning requires --tee real");
@@ -39,15 +38,12 @@ impl Localnet {
         if !reth_secret_path.is_file() {
             fs::write(&reth_secret_path, random_hex_32()?)?;
         }
-        let relay_key = random_hex_32()?;
-        let relay_address = eth::address_of(&relay_key)
-            .ok_or_else(|| eyre!("generated full-node relay key is invalid"))?;
-        let relay_key_path = node_dir.join("relay-evm-key.hex");
-        fs::write(&relay_key_path, &relay_key)?;
-        fs::set_permissions(&relay_key_path, fs::Permissions::from_mode(0o600))?;
+        let evm_key = read_evm_key(&node_dir)?;
+        let evm_address = eth::address_of(&evm_key)
+            .ok_or_else(|| eyre!("provisioned full-node EVM key is invalid"))?;
 
         let funder = read_evm_key(&self.cfg.validator_dir(0))?;
-        eth::send_value(&self.cfg.rpc0, relay_address, &funder, eth::coen(100))?;
+        eth::send_value(&self.cfg.rpc0, evm_address, &funder, eth::coen(100))?;
 
         self.start_node_enclave(index)?;
         let valid_until = eth::latest_block_timestamp(&self.cfg.rpc0)
@@ -61,8 +57,6 @@ impl Localnet {
             format!("127.0.0.1:{}", self.cfg.tee_port(index)),
             "--reth-p2p-secret-key",
             reth_secret_path.display(),
-            "--node-evm-key",
-            node_dir.join("evm-key.hex").display(),
             "--binding-id",
             random_hex_32()?,
             "--valid-until",
@@ -70,7 +64,7 @@ impl Localnet {
             "--rpc-url",
             self.cfg.rpc0.as_str(),
             "--private-key",
-            relay_key,
+            evm_key,
             "--timeout-secs",
             "180",
         ];
@@ -83,9 +77,7 @@ impl Localnet {
 
     /// Launch a DcapRequired full node against its own initialized enclave.
     /// Startup itself verifies the resident offer key against the selected
-    /// upstream before opening networking or execution. Renewal uses that same
-    /// reachable upstream as its transaction relay; the harness follower has no
-    /// independent P2P route into the committee mempool.
+    /// upstream before opening networking or execution.
     pub fn launch_dcap_full_node(
         &mut self,
         name: &str,
@@ -102,12 +94,6 @@ impl Localnet {
             p2p_secret_file.display(),
             "--tee-enclave-socket",
             format!("127.0.0.1:{}", self.cfg.tee_port(index)),
-            "--tee-renewal.relay-key",
-            node_dir.join("relay-evm-key.hex").display(),
-            "--tee-renewal.rpc-url",
-            format!("http://127.0.0.1:{}", self.cfg.http_port(upstream_slot)),
-            "--tee-renewal.poll-secs",
-            "2",
             "--upstream",
             format!("http://127.0.0.1:{}", self.cfg.http_port(upstream_slot)),
             "--consensus.listen-addr",

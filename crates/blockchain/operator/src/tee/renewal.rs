@@ -64,12 +64,6 @@ where
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RenewalModeV1 {
-    Automatic,
-    Manual,
-}
-
 #[derive(Clone, Debug)]
 pub struct RenewalServiceConfigV1 {
     pub node_data_dir: PathBuf,
@@ -103,9 +97,7 @@ pub async fn run_renewal_once_v1(
     enclave: &mut impl RenewalEnclaveV1,
     node_signer: &impl RenewalNodeSignerV1,
     config: &RenewalServiceConfigV1,
-    mode: RenewalModeV1,
 ) -> Result<RenewalOutcomeV1> {
-    let _mode = mode;
     // Serialize renewal intent creation against upgrade preparation. Holding
     // this host-only lock across the reducer prevents the two exact-next
     // Registry counter flows from being prepared concurrently.

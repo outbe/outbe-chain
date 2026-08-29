@@ -23,11 +23,10 @@ use outbe_operator::{
         inspect_upgrade_journal_v1, prepare_upgrade_journal_v1,
         read_finalized_staged_successor_policy_v1, read_renewal_status_v1, run_renewal_once_v1,
         run_upgrade_submission_v1, ExpectedOnboardingBindingV1, NodeBindingSelectorV1,
-        RenewalModeV1, RenewalServiceConfigV1, UpgradeContextV1,
+        RenewalServiceConfigV1, UpgradeContextV1,
     },
     tx::RelaySignerV1,
 };
-use outbe_primitives::signer::OutbeEvmSigner;
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapEvidenceV1,
     GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1, RegistryMutatorV1, TeePolicyV1,
@@ -126,10 +125,6 @@ pub enum TeeCmd {
         /// Persistent Reth P2P secp256k1 secret file.
         #[arg(long)]
         reth_p2p_secret_key: Option<PathBuf>,
-        /// Separately provisioned node EVM key. It authorizes the address-to-
-        /// NodeHost association but does not create a ValidatorSet role.
-        #[arg(long)]
-        node_evm_key: PathBuf,
         /// Fresh one-use nonzero 32-byte binding id. Keep it stable while
         /// tracking one submitted transaction.
         #[arg(long)]
@@ -142,9 +137,8 @@ pub enum TeeCmd {
         #[arg(long, default_value_t = 60)]
         timeout_secs: u64,
     },
-    /// Generate, durably journal and submit one renewal through the same
-    /// reducer used by the node's automatic worker.
-    RenewNow {
+    /// Generate, durably journal, submit and reconcile one manual renewal.
+    Renew {
         /// Production enclave sidecar endpoint.
         #[arg(long)]
         enclave_socket: String,
@@ -230,7 +224,6 @@ impl TeeCmd {
                 enclave_socket,
                 node_data_dir,
                 reth_p2p_secret_key,
-                node_evm_key,
                 binding_id,
                 valid_until,
                 timeout_secs,
@@ -242,7 +235,6 @@ impl TeeCmd {
                         enclave_socket: &enclave_socket,
                         node_data_dir: node_data_dir.as_deref(),
                         reth_p2p_secret_key: reth_p2p_secret_key.as_deref(),
-                        node_evm_key: &node_evm_key,
                         binding_id: &binding_id,
                         valid_until,
                         timeout_secs,
@@ -250,12 +242,12 @@ impl TeeCmd {
                 )
                 .await
             }
-            TeeCmd::RenewNow {
+            TeeCmd::Renew {
                 enclave_socket,
                 node_data_dir,
                 reth_p2p_secret_key,
             } => {
-                renew_now(
+                renew(
                     client,
                     private_key,
                     &enclave_socket,
@@ -314,17 +306,16 @@ impl TeeCmd {
     }
 }
 
-async fn renew_now(
+async fn renew(
     client: &(impl Rpc + Sync),
-    relay_private_key: Option<&str>,
+    private_key: Option<&str>,
     enclave_socket: &str,
     node_data_dir: &std::path::Path,
     reth_p2p_secret_key: Option<&std::path::Path>,
 ) -> Result<()> {
-    let relay_key = relay_private_key.ok_or_else(|| {
-        eyre::eyre!("tee renew-now requires the global --private-key funded relay signer")
-    })?;
-    let relay = RelaySignerV1::new(relay_key)?;
+    let private_key = private_key
+        .ok_or_else(|| eyre::eyre!("tee renew requires the global --private-key EVM signer"))?;
+    let evm_signer = RelaySignerV1::new(private_key)?;
     let manifest = load_committed_enclave_manifest_v1(node_data_dir)
         .map_err(|error| eyre::eyre!("load committed NodeHost manifest: {error}"))?;
     let rpc_chain_id = client.eth_chain_id().await?;
@@ -355,11 +346,10 @@ async fn renew_now(
     };
     let outcome = run_renewal_once_v1(
         &CliFinalityRpc(client),
-        &relay,
+        &evm_signer,
         &mut enclave,
         &signer,
         &config,
-        RenewalModeV1::Manual,
     )
     .await?;
     println!("{outcome:#?}");
@@ -619,7 +609,6 @@ struct TeeJoinArgs<'a> {
     enclave_socket: &'a str,
     node_data_dir: Option<&'a std::path::Path>,
     reth_p2p_secret_key: Option<&'a std::path::Path>,
-    node_evm_key: &'a std::path::Path,
     binding_id: &'a str,
     valid_until: u64,
     timeout_secs: u64,
@@ -652,12 +641,11 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
         enclave_socket,
         node_data_dir,
         reth_p2p_secret_key,
-        node_evm_key,
         binding_id,
         valid_until,
         timeout_secs,
     } = args;
-    let relay = super::require_signer(private_key)?;
+    let evm_signer = super::require_signer(private_key)?;
     let policy = active_policy_v1(client).await?;
     let rpc_chain_id = client.eth_chain_id().await?;
     if policy.chain_id != U256::from(rpc_chain_id).to_be_bytes() {
@@ -686,19 +674,16 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
     let node_id_hash = node_id
         .node_id_hash()
         .map_err(|error| eyre::eyre!("hash V1 node identity: {error}"))?;
-    let node_evm_signer = OutbeEvmSigner::from_file(node_evm_key)
-        .map_err(|error| eyre::eyre!("load separately provisioned node EVM key: {error}"))?;
     let validator_binding = ValidatorNodeBindingV1 {
         chain_id: policy.chain_id,
         genesis_hash: policy.genesis_hash,
-        validator: node_evm_signer.address().into_array(),
+        validator: evm_signer.address().into_array(),
         node_id_hash,
     };
     let validator_binding_hash = validator_binding
         .binding_hash()
         .map_err(|error| eyre::eyre!("hash address-to-NodeHost binding: {error}"))?;
-    let validator_signature = node_evm_signer
-        .sign_hash(&validator_binding_hash)
+    let validator_signature = sign_node_hash(evm_signer.key(), validator_binding_hash)
         .map_err(|error| eyre::eyre!("sign address-to-NodeHost binding: {error}"))?;
     let node_binding_signature = sign_node_hash(&node_signing_key, validator_binding_hash)
         .map_err(|error| eyre::eyre!("sign NodeHost side of address binding: {error}"))?;
@@ -908,16 +893,16 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
         )
         .map_err(|error| eyre::eyre!("calculate V1 registration gas: {error}"))?;
 
-    // Any funded account may relay this transaction; the exact node and enclave
-    // proofs above are the only registration authority.
+    // The global EVM signer owns both the address-to-NodeHost association and
+    // the transaction envelope. No second node or renewal EVM key exists.
     let from_block = client.eth_block_number().await?;
-    let tx_hash = relay
+    let tx_hash = evm_signer
         .send_tx_with_gas(client, abi::TEE_REGISTRY_ADDR, call, U256::ZERO, gas_limit)
         .await
         .wrap_err("V1 registerEnclave submission failed")?;
     println!(
         "V1 registerEnclave submitted by {}: {tx_hash}",
-        relay.address()
+        evm_signer.address()
     );
 
     // Accept only the artifact indexed by the canonical node identity proved in
