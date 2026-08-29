@@ -33,8 +33,9 @@ use outbe_node::{
     OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
 };
 use outbe_operator::tee::{
-    inspect_upgrade_journal_v1, record_upgrade_finalized_v1, record_upgrade_missed_cutoff_v1,
-    record_upgrade_promoted_v1, UpgradeJournalStateV1,
+    inspect_upgrade_journal_v1, read_finalized_registry_view_v1, record_upgrade_finalized_v1,
+    record_upgrade_missed_cutoff_v1, record_upgrade_promoted_v1, NodeBindingSelectorV1,
+    UpgradeJournalStateV1,
 };
 use outbe_primitives::projection::{
     projection_readiness, ProjectionCheckpoint, ProjectionReadinessHandle, ProjectionStatus,
@@ -63,6 +64,7 @@ mod tee_genesis;
 const TEE_UPGRADE_POLL_SECS: u64 = 30;
 const TEE_UPGRADE_WARNING_BLOCKS: u64 = 600;
 const TEE_UPGRADE_CRITICAL_BLOCKS: u64 = 120;
+const TEE_LEASE_GUARD_POLL_SECS: u64 = 1;
 
 fn load_installed_ocomp_bundles(
     domain_root: &Path,
@@ -212,6 +214,148 @@ struct UpgradePromotionWorkerConfigV1 {
     warning_blocks: u64,
     critical_blocks: u64,
     promoted: Arc<tokio::sync::Notify>,
+}
+
+fn local_tee_rejection_message(
+    rejection: outbe_engine::validators::LocalTeeRuntimeRejectionV1,
+) -> String {
+    use outbe_engine::validators::LocalTeeRuntimeRejectionV1;
+
+    match rejection {
+        LocalTeeRuntimeRejectionV1::MissingBinding => {
+            "finalized Registry has no binding for the local NodeHost; run tee join".to_owned()
+        }
+        LocalTeeRuntimeRejectionV1::EnclaveIdentityMismatch => {
+            "finalized Registry binding does not match the committed local enclave; run tee join"
+                .to_owned()
+        }
+        LocalTeeRuntimeRejectionV1::ValidatorBindingMismatch => {
+            "finalized validator and local NodeHost bindings disagree; refusing consensus startup"
+                .to_owned()
+        }
+        LocalTeeRuntimeRejectionV1::ValidatorJailed => {
+            "validator is jailed; complete ordinary unjail and then run tee join".to_owned()
+        }
+        LocalTeeRuntimeRejectionV1::Expired { valid_until } => {
+            format!("finalized TEE lease expired at {valid_until}; stop node and run tee join")
+        }
+    }
+}
+
+fn read_finalized_local_tee_admission<P>(
+    provider: &P,
+    chain_id: u64,
+    genesis_hash: alloy_primitives::B256,
+    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+) -> eyre::Result<Option<outbe_engine::validators::LocalTeeRuntimeAdmissionV1>>
+where
+    P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
+{
+    let Some(finalized) = provider
+        .finalized_block_num_hash()
+        .wrap_err("read finalized head for TEE lease admission")?
+    else {
+        return Ok(None);
+    };
+    if finalized.number == 0 {
+        return Ok(None);
+    }
+    let header = provider
+        .sealed_header(finalized.number)
+        .wrap_err("read finalized header for TEE lease admission")?
+        .ok_or_else(|| eyre::eyre!("finalized TEE lease header is unavailable"))?;
+    eyre::ensure!(
+        header.hash() == finalized.hash,
+        "finalized TEE lease header hash mismatch: marker {}, header {}",
+        finalized.hash,
+        header.hash()
+    );
+    let state = provider
+        .state_by_block_hash(finalized.hash)
+        .wrap_err("read finalized state for TEE lease admission")?;
+    outbe_engine::validators::read_local_tee_runtime_admission_from_state(
+        &state,
+        outbe_primitives::storage::readonly::ReadOnlyBlockContext {
+            chain_id,
+            genesis_hash,
+            block_number: finalized.number,
+            timestamp: header.header().inner.timestamp,
+        },
+        identity,
+    )
+    .map(Some)
+}
+
+async fn require_upstream_fullnode_tee_admission(
+    upstream: &str,
+    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+) -> eyre::Result<()> {
+    let rpc = outbe_operator::rpc::HttpRenewalRpc::new(upstream);
+    let view = read_finalized_registry_view_v1(
+        &rpc,
+        &NodeBindingSelectorV1::NodeHost(identity.reth_p2p_public),
+    )
+    .await
+    .wrap_err("read upstream finalized FullNode TEE admission")?;
+    let binding = view.binding.ok_or_else(|| {
+        eyre::eyre!("finalized Registry has no binding for this FullNode; run tee join first")
+    })?;
+    if identity
+        .expected_enclave_id
+        .is_some_and(|expected| expected != binding.enclave_id)
+    {
+        eyre::bail!(
+            "finalized FullNode binding does not match the committed local enclave; run tee join"
+        );
+    }
+    if binding.valid_until <= view.schedule.finalized_timestamp {
+        eyre::bail!(
+            "finalized FullNode TEE lease expired at {}; run tee join before startup",
+            binding.valid_until
+        );
+    }
+    Ok(())
+}
+
+async fn run_tee_lease_guard_v1<P>(
+    provider: P,
+    chain_id: u64,
+    genesis_hash: alloy_primitives::B256,
+    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    shutdown: tokio_util::sync::CancellationToken,
+    rejected: tokio::sync::mpsc::UnboundedSender<String>,
+) where
+    P: BlockIdReader
+        + HeaderProvider<Header = OutbeHeader>
+        + StateProviderFactory
+        + Send
+        + Sync
+        + 'static,
+{
+    let mut interval = tokio::time::interval(Duration::from_secs(TEE_LEASE_GUARD_POLL_SECS));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        tokio::select! {
+            _ = shutdown.cancelled() => return,
+            _ = interval.tick() => {}
+        }
+        match read_finalized_local_tee_admission(&provider, chain_id, genesis_hash, identity) {
+            Ok(
+                None | Some(outbe_engine::validators::LocalTeeRuntimeAdmissionV1::BootstrapPending),
+            ) => {}
+            Ok(Some(outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready { .. })) => {}
+            Ok(Some(outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Rejected(reason))) => {
+                let _ = rejected.send(local_tee_rejection_message(reason));
+                return;
+            }
+            Err(error) => {
+                let _ = rejected.send(format!(
+                    "finalized TEE lease admission failed closed: {error:#}"
+                ));
+                return;
+            }
+        }
+    }
 }
 
 async fn run_upgrade_promotion_worker_v1<P>(provider: P, config: UpgradePromotionWorkerConfigV1)
@@ -592,6 +736,7 @@ enum LauncherExitCause {
     ProjectionRequested,
     OcompRequested,
     UpgradeRequested,
+    TeeLeaseRejected,
     CtrlC,
 }
 
@@ -599,7 +744,10 @@ impl LauncherExitCause {
     const fn requests_engine_shutdown(self) -> bool {
         matches!(
             self,
-            Self::ProjectionRequested | Self::OcompRequested | Self::UpgradeRequested
+            Self::ProjectionRequested
+                | Self::OcompRequested
+                | Self::UpgradeRequested
+                | Self::TeeLeaseRejected
         )
     }
 }
@@ -1352,6 +1500,7 @@ fn run_node() -> eyre::Result<()> {
         } else {
             None
         };
+        let validator_evm_address = evm_signer.as_ref().map(|signer| signer.address());
         // Every network declares exactly one attestation policy in genesis. The
         // local session protocol is an independent, explicit operator choice:
         // GramineDirectDev may use either the development transport or a real
@@ -1369,14 +1518,14 @@ fn run_node() -> eyre::Result<()> {
             .tee_session_mode
             .resolve(initial_tee_policy.attestation_mode)
             .map_err(eyre::Report::msg)?;
-        match tee_session {
+        let (node_host_signing, reth_p2p_public) = load_reth_p2p_node_host_signer(
+            &builder.config().network,
+            builder.config().datadir().p2p_secret(),
+        )?;
+        let expected_enclave_id = match tee_session {
             outbe_engine::args::ResolvedTeeSession::ProductionNodeHost => {
                 use k256::ecdsa::signature::hazmat::PrehashSigner as _;
 
-                let (signing, reth_p2p_public) = load_reth_p2p_node_host_signer(
-                    &builder.config().network,
-                    builder.config().datadir().p2p_secret(),
-                )?;
                 let client = outbe_tee::connect_or_initialize_node_host_enclave(
                     endpoint,
                     &node_data_dir,
@@ -1389,7 +1538,7 @@ fn run_node() -> eyre::Result<()> {
                         let (signature, recovery): (
                             k256::ecdsa::Signature,
                             k256::ecdsa::RecoveryId,
-                        ) = signing
+                        ) = node_host_signing
                             .sign_prehash(hash.as_slice())
                             .map_err(|error| error.to_string())?;
                         let mut bytes = [0_u8; 65];
@@ -1405,6 +1554,9 @@ fn run_node() -> eyre::Result<()> {
                 let (manifest, node_host) =
                     outbe_tee::node_host::committed_node_host_session_material(&node_data_dir)
                         .wrap_err("committed NodeHost session material load failed")?;
+                let enclave_id = manifest
+                    .enclave_id()
+                    .map_err(|error| eyre::eyre!("derive committed enclave identity: {error}"))?;
                 outbe_tee::install_authorized_enclave_client(
                     client,
                     endpoint.to_owned(),
@@ -1413,14 +1565,21 @@ fn run_node() -> eyre::Result<()> {
                     node_host,
                 )
                 .wrap_err("enclave session install failed")?;
+                Some(enclave_id)
             }
             outbe_engine::args::ResolvedTeeSession::Development => {
                 let client = outbe_tee::EnclaveClient::connect_endpoint(endpoint)
                     .wrap_err("development enclave connection failed")?;
                 outbe_tee::install_enclave_client(client, endpoint.to_owned())
                     .wrap_err("enclave session install failed")?;
+                None
             }
-        }
+        };
+        let local_tee_identity = outbe_engine::validators::LocalTeeRuntimeIdentityV1 {
+            reth_p2p_public,
+            expected_enclave_id,
+            validator: validator_evm_address,
+        };
         info!(
             socket = %socket.display(),
             node_host_identity = "reth-p2p-secp256k1",
@@ -1440,6 +1599,7 @@ fn run_node() -> eyre::Result<()> {
                     "full-node startup requires --upstream to authenticate the chain offer key"
                 )
             })?;
+            require_upstream_fullnode_tee_admission(upstream, local_tee_identity).await?;
             let expected_offer = outbe_engine::read_upstream_tribute_offer_public_key(upstream)
                 .await
                 .wrap_err("failed to read mandatory offer key from the selected upstream")?;
@@ -1697,6 +1857,30 @@ fn run_node() -> eyre::Result<()> {
             .launch()
             .await
             .wrap_err("failed launching execution node")?;
+
+        if let Some(outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Rejected(reason)) =
+            read_finalized_local_tee_admission(
+            &node.provider,
+            proof_chain_id,
+            genesis_hash,
+            local_tee_identity,
+        )?
+        {
+            eyre::bail!(
+                "local node rejected by finalized TEE lease state: {}",
+                local_tee_rejection_message(reason)
+            );
+        }
+        let (tee_lease_exit_tx, mut tee_lease_exit_rx) =
+            tokio::sync::mpsc::unbounded_channel();
+        let tee_lease_guard_handle = tokio::spawn(run_tee_lease_guard_v1(
+            node.provider.clone(),
+            proof_chain_id,
+            genesis_hash,
+            local_tee_identity,
+            shutdown_token.clone(),
+            tee_lease_exit_tx,
+        ));
 
         let (radicle_consensus, radicle_observer) = if let Some((
             validator,
@@ -1998,6 +2182,13 @@ fn run_node() -> eyre::Result<()> {
                     info!("finalized enclave upgrade requested execution restart");
                     LauncherExitCause::UpgradeRequested
                 }
+                rejection = tee_lease_exit_rx.recv() => {
+                    tracing::error!(
+                        reason = %rejection.unwrap_or_else(|| "TEE lease guard stopped without a verdict".to_owned()),
+                        "finalized TEE lease guard requested node shutdown"
+                    );
+                    LauncherExitCause::TeeLeaseRejected
+                }
                 _ = tokio::signal::ctrl_c() => {
                     info!("received shutdown signal");
                     LauncherExitCause::CtrlC
@@ -2052,10 +2243,22 @@ fn run_node() -> eyre::Result<()> {
                         let _ = done.await;
                     }
                 }
+                rejection = tee_lease_exit_rx.recv() => {
+                    tracing::error!(
+                        reason = %rejection.unwrap_or_else(|| "TEE lease guard stopped without a verdict".to_owned()),
+                        "finalized TEE lease guard requested full-node shutdown"
+                    );
+                    if let Some(done) = shutdown.shutdown() {
+                        let _ = done.await;
+                    }
+                }
             }
         }
 
         shutdown_token.cancel();
+        tee_lease_guard_handle
+            .await
+            .wrap_err("TEE lease guard panicked")?;
         if let Some(handle) = radicle_observer {
             match tokio::time::timeout(std::time::Duration::from_secs(6), handle).await {
                 Ok(result) => result.wrap_err("Radicle observer panicked")?,

@@ -6766,6 +6766,129 @@ mod tests {
     }
 
     #[test]
+    fn tee_expiry_worst_case_active_sweep_fits_cycle_tick_budget() {
+        const ACTIVE_COUNT: usize = 128;
+        const DEADLINE: u64 = 2;
+
+        let signer = test_evm_signer();
+        let proposer = signer.address();
+        let mut validators = Vec::with_capacity(ACTIVE_COUNT);
+        validators.push((proposer, dummy_pubkey(0x80)));
+        for index in 1..ACTIVE_COUNT {
+            validators.push((
+                numbered_test_address(0x81, index as u64),
+                dummy_pubkey(index as u8),
+            ));
+        }
+        let addresses: Vec<_> = validators.iter().map(|(address, _)| *address).collect();
+        let mut state = state_with_active_validators_seeded_at_block(&validators, 1, |storage| {
+            let registry = outbe_teeregistry::TeeRegistry::new(storage);
+            for (index, validator) in addresses.iter().enumerate() {
+                let node_hash = keccak256((index as u64).to_be_bytes());
+                registry
+                    .validator_v1_node_hash
+                    .write(validator, node_hash)
+                    .unwrap();
+                registry
+                    .v1_node_enclave_id
+                    .write(&node_hash, B256::with_last_byte(0x11))
+                    .unwrap();
+                registry
+                    .v1_node_binding_id
+                    .write(&node_hash, B256::with_last_byte(0x12))
+                    .unwrap();
+                registry
+                    .v1_node_intent_hash
+                    .write(&node_hash, B256::with_last_byte(0x13))
+                    .unwrap();
+                registry
+                    .v1_node_valid_until
+                    .write(&node_hash, DEADLINE)
+                    .unwrap();
+            }
+        });
+        let mut evm_env = test_evm_env(2, REWARDS_ADDRESS);
+        evm_env.block_env.timestamp = U256::from(DEADLINE);
+        let config = OutbeEvmConfig::new(test_chain_spec()).with_evm_signer(signer.clone());
+        let parent_hash = B256::repeat_byte(0x91);
+        let mut parent_metadata =
+            metadata_with(addresses.clone(), vec![1; ACTIVE_COUNT], Vec::new());
+        parent_metadata.finalized_block_number = 1;
+        parent_metadata.finalized_block_hash = parent_hash;
+        let evm = config.evm_with_env(&mut state, evm_env);
+        let mut execution = execution_ctx(Some(0), Bytes::new());
+        execution.inner.parent_hash = parent_hash;
+        execution.parent_consensus_metadata = Some(parent_metadata.clone());
+        execution.parent_artifact_hint = Some(AccountedParentArtifact {
+            summary: ExecutionSummaryArtifact {
+                validator_fee_sum: U256::ZERO,
+            },
+            timestamp: 1,
+            state_root: Some(B256::repeat_byte(0x92)),
+        });
+        execution.proposer_evm_address = Some(proposer);
+        let mut executor = config.create_executor(evm, execution);
+        super::with_phase1_verify_disabled(|| {
+            executor
+                .apply_pre_execution_changes()
+                .expect("pre-execution changes should apply");
+        });
+
+        let system_txs = begin_system_txs_for_test(
+            &config,
+            2,
+            parent_hash,
+            &Bytes::new(),
+            Some(parent_metadata),
+            proposer,
+        );
+        let mut cycle_gas = None;
+        let mut cycle_internal_gas = None;
+        let mut cycle_receipt_index = None;
+        for tx in system_txs {
+            let kind = SystemTxInputV2::decode(tx.tx().input().as_ref())
+                .expect("valid begin-zone system transaction")
+                .kind();
+            let internal_before = executor.system_tx_execution_gas;
+            let output = executor
+                .execute_transaction(tx)
+                .expect("TEE expiry begin-zone prefix should execute");
+            if kind == SystemTxKind::CycleTick {
+                cycle_gas = Some(output.tx_gas_used());
+                cycle_internal_gas = Some(
+                    executor
+                        .system_tx_execution_gas
+                        .saturating_sub(internal_before),
+                );
+                cycle_receipt_index = Some(executor.receipts().len() - 1);
+                break;
+            }
+        }
+        let cycle_gas = cycle_gas.expect("CycleTick gas must be captured");
+        let cycle_internal_gas =
+            cycle_internal_gas.expect("CycleTick internal gas must be captured");
+        let receipt = &executor.receipts()[cycle_receipt_index.expect("CycleTick receipt index")];
+        assert!(receipt.success, "worst-case TEE expiry sweep must not OOG");
+        assert_eq!(
+            receipt
+                .logs
+                .iter()
+                .filter(|log| {
+                    log.address == outbe_primitives::addresses::VALIDATOR_SET_ADDRESS
+                        && log.data.topics().first()
+                            == Some(&keccak256("ValidatorJailed(address,uint64)"))
+                })
+                .count(),
+            ACTIVE_COUNT
+        );
+        eprintln!(
+            "TEE expiry CycleTick gas: active={ACTIVE_COUNT}, visible={cycle_gas}, internal={cycle_internal_gas}, limit=30000000"
+        );
+        assert!(cycle_gas < 30_000_000);
+        assert!(cycle_internal_gas < 30_000_000);
+    }
+
+    #[test]
     fn capacity_forfeiture_cycle_tick_keeps_twenty_percent_block_headroom() {
         use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
 

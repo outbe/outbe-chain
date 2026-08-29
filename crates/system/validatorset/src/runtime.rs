@@ -1558,6 +1558,55 @@ impl ValidatorSet<'_> {
         self.punish_validator(addr, true)
     }
 
+    /// Jails an ACTIVE validator whose canonical TEE lease reached its deadline.
+    ///
+    /// This is an availability/safety transition, not a slash: bonded stake and
+    /// `slash_count` are preserved exactly. The old committee share remains
+    /// accountable in `JailRetained` until the normal validated boundary removes
+    /// it. Re-execution after the first transition is an idempotent no-op.
+    pub fn jail_validator_for_tee_expiry(&mut self, addr: Address) -> Result<bool> {
+        let before = self.validator_state(addr)?;
+        let active = match before.lifecycle().clone() {
+            ValidatorLifecycle::Active(active) => active,
+            ValidatorLifecycle::JailRetained(_) | ValidatorLifecycle::Jail(_) => {
+                return Ok(false);
+            }
+            ValidatorLifecycle::Absent => {
+                return Err(PrecompileError::Revert("validator not registered".into()));
+            }
+            lifecycle => {
+                return Err(PrecompileError::Fatal(format!(
+                    "TEE expiry sweep selected validator {addr} with ineligible status {}",
+                    registered_status(&lifecycle)?
+                )));
+            }
+        };
+        let block_number = self.storage.block_number()?;
+        let next = ValidatorLifecycle::JailRetained(state_machine::jail(active, block_number)?);
+        let after = before.clone().with_lifecycle(next)?;
+
+        let guard = self.storage.checkpoint_guard();
+        self.persist_validator_state_delta(&before, &after)?;
+        self.pending_set_change.write(true)?;
+        self.emit(IValidatorSet::ValidatorJailed {
+            validator: addr,
+            atHeight: block_number,
+        })?;
+        guard.commit();
+
+        crate::metrics::record_validator_status(addr, status::JAILED);
+        crate::metrics::record_validator_tee_expiry(addr, "deadline_jailed");
+        crate::metrics::record_pending_set_change(true);
+        warn!(
+            target: "outbe::validatorset",
+            event = "validator_tee_lease_expired",
+            validator = %addr,
+            block_number,
+            "validator jailed without slashing after TEE lease deadline",
+        );
+        Ok(true)
+    }
+
     /// Shared punitive transition for [`Self::force_exit_validator`] (`jail =
     /// false` → ACTIVE→EXITING, the validator leaves the registry via UNBONDING)
     /// and [`Self::jail_validator`] (`jail = true` → ACTIVE→JAILED, the validator

@@ -585,6 +585,7 @@ fn run_cycle_tick_at_activation(
     _metadosis_genesis_activation_height: u64,
 ) -> Result<()> {
     validate_and_record_cycle_proposer(ctx)?;
+    enforce_tee_lease_deadlines(ctx)?;
 
     #[cfg(test)]
     {
@@ -622,6 +623,7 @@ fn run_cycle_tick_with_readers_at_activation(
     metadosis_genesis_activation_height: u64,
 ) -> Result<()> {
     validate_and_record_cycle_proposer(ctx)?;
+    enforce_tee_lease_deadlines(ctx)?;
     // This body mutation must consume system-transaction gas and appear in its
     // receipt. Keep its old ordering before Cycle/Lysis so freshly issued Nod
     // buckets are not qualified until the following block.
@@ -631,6 +633,38 @@ fn run_cycle_tick_with_readers_at_activation(
         outbe_cycle::lifecycle::CycleLifecycleContext::new(ctx.clone(), scope, parent)
             .with_metadosis_genesis_activation_height(metadosis_genesis_activation_height);
     <outbe_cycle::lifecycle::CycleLifecycle as BlockLifecycle>::begin_block(&cycle_lifecycle)
+}
+
+/// Applies the canonical post-bootstrap TEE lease deadline to the bounded ACTIVE
+/// validator set. The sweep is part of receipt-visible `CycleTick`, before any
+/// user transaction in the block. Block 1 is excluded because its later
+/// `TeeBootstrap` system transaction creates the founder bindings atomically.
+fn enforce_tee_lease_deadlines(ctx: &BlockRuntimeContext) -> Result<usize> {
+    if ctx.block.block_number
+        <= crate::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT
+    {
+        return Ok(0);
+    }
+
+    let active = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone())
+        .get_active_validators()?;
+    let registry = outbe_teeregistry::TeeRegistry::new(ctx.storage.clone());
+    let mut overdue = Vec::new();
+    for validator in active {
+        let binding = registry.validator_enclave_binding_v1(validator.validator_address)?;
+        if binding.is_none_or(|binding| binding.valid_until <= ctx.block.timestamp) {
+            overdue.push(validator.validator_address);
+        }
+    }
+
+    let mut validator_set = outbe_validatorset::contract::ValidatorSet::new(ctx.storage.clone());
+    let mut jailed = 0usize;
+    for validator in overdue {
+        if validator_set.jail_validator_for_tee_expiry(validator)? {
+            jailed += 1;
+        }
+    }
+    Ok(jailed)
 }
 
 fn validate_and_record_cycle_proposer(ctx: &BlockRuntimeContext) -> Result<()> {
@@ -1276,6 +1310,33 @@ mod tests {
         )
     }
 
+    fn install_validator_lease(provider: &mut HashMapStorageProvider, valid_until: u64) {
+        provider.enter(|storage| {
+            let registry = outbe_teeregistry::TeeRegistry::new(storage);
+            let node_hash = B256::repeat_byte(0x61);
+            registry
+                .validator_v1_node_hash
+                .write(&VALIDATOR, node_hash)
+                .unwrap();
+            registry
+                .v1_node_enclave_id
+                .write(&node_hash, B256::repeat_byte(0x62))
+                .unwrap();
+            registry
+                .v1_node_binding_id
+                .write(&node_hash, B256::repeat_byte(0x63))
+                .unwrap();
+            registry
+                .v1_node_intent_hash
+                .write(&node_hash, B256::repeat_byte(0x64))
+                .unwrap();
+            registry
+                .v1_node_valid_until
+                .write(&node_hash, valid_until)
+                .unwrap();
+        });
+    }
+
     fn read_progress(provider: &mut HashMapStorageProvider) -> u64 {
         provider.enter(|storage| {
             let ctx = runtime_ctx(storage);
@@ -1395,6 +1456,82 @@ mod tests {
             let record = vs.get_validator(VALIDATOR).unwrap().unwrap();
             assert_eq!(record.blocks_proposed, 1);
         });
+    }
+
+    #[test]
+    fn tee_lease_sweep_skips_bootstrap_then_jails_at_exact_deadline_once() {
+        let deadline = 1_700_000_100;
+        let mut bootstrap = configured_storage(1, deadline);
+        bootstrap.enter(|storage| {
+            let ctx = runtime_ctx(storage.clone());
+            assert_eq!(enforce_tee_lease_deadlines(&ctx).unwrap(), 0);
+            let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+            assert_eq!(
+                vs.get_validator(VALIDATOR).unwrap().unwrap().status,
+                outbe_validatorset::runtime::status::ACTIVE
+            );
+        });
+
+        let mut before = configured_storage(2, deadline - 1);
+        install_validator_lease(&mut before, deadline);
+        before.enter(|storage| {
+            let ctx = runtime_ctx(storage.clone());
+            assert_eq!(enforce_tee_lease_deadlines(&ctx).unwrap(), 0);
+            let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+            assert_eq!(
+                vs.get_validator(VALIDATOR).unwrap().unwrap().status,
+                outbe_validatorset::runtime::status::ACTIVE
+            );
+        });
+
+        let mut at_deadline = configured_storage(2, deadline);
+        install_validator_lease(&mut at_deadline, deadline);
+        at_deadline.enter(|storage| {
+            let ctx = runtime_ctx(storage.clone());
+            assert_eq!(enforce_tee_lease_deadlines(&ctx).unwrap(), 1);
+            let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+            let jailed = vs.get_validator(VALIDATOR).unwrap().unwrap();
+            assert_eq!(jailed.status, outbe_validatorset::runtime::status::JAILED);
+            assert_eq!(jailed.slash_count, 0);
+            assert_eq!(enforce_tee_lease_deadlines(&ctx).unwrap(), 0);
+            assert_eq!(vs.get_validator(VALIDATOR).unwrap().unwrap(), jailed);
+        });
+    }
+
+    #[test]
+    fn tee_lease_sweep_treats_missing_post_bootstrap_binding_as_overdue() {
+        let mut provider = configured_storage(2, 1_700_000_200);
+        provider.enter(|storage| {
+            let ctx = runtime_ctx(storage.clone());
+            assert_eq!(enforce_tee_lease_deadlines(&ctx).unwrap(), 1);
+            let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
+            let jailed = vs.get_validator(VALIDATOR).unwrap().unwrap();
+            assert_eq!(jailed.status, outbe_validatorset::runtime::status::JAILED);
+            assert_eq!(jailed.slash_count, 0);
+        });
+    }
+
+    #[test]
+    fn tee_lease_sweep_reexecution_and_timestamp_jump_are_deterministic() {
+        let deadline = 1_700_000_100;
+        let jumped_timestamp = deadline + 10 * 1_209_600;
+        let mut base = configured_storage(12, jumped_timestamp);
+        install_validator_lease(&mut base, deadline);
+        let parent = base.storage.clone();
+
+        let run = || {
+            let mut provider = provider_from_storage(12, jumped_timestamp, parent.clone());
+            let jailed = provider.enter(|storage| {
+                let ctx = runtime_ctx(storage);
+                enforce_tee_lease_deadlines(&ctx).unwrap()
+            });
+            (jailed, provider.storage)
+        };
+
+        let first = run();
+        let replay = run();
+        assert_eq!(first.0, 1);
+        assert_eq!(first, replay);
     }
 
     #[test]

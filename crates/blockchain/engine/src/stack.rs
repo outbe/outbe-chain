@@ -7527,32 +7527,11 @@ fn refresh_validator_set_at_height(
         .provider
         .state_by_block_hash(block_hash)
         .map_err(|e| eyre::eyre!("failed to get state at freeze height {freeze_height}: {e}"))?;
-    // The reshare TARGET (next_players) is ACTIVE∪PENDING: ACTIVE members stay and
-    // PENDING joiners are activated by this ceremony. EXITING validators are excluded
-    // (the reshare removes them). Using the reshare-target reader — not the ACTIVE-only
-    // voting reader — is what lets a staked PENDING joiner receive a share.
-    let tee_attestation =
-        outbe_evm::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
-            node.chain_spec().as_ref(),
-        );
-    let activation = tee_attestation
-        .activation()
-        .map_err(|error| eyre::eyre!("invalid mandatory teeAttestationV1 ChainSpec: {error}"))?;
-    let attestation_mode = activation
-        .policy_at(outbe_evm::tee_attestation_activation::TEE_ATTESTATION_V1_ACTIVATION_HEIGHT)
-        .map_err(eyre::Report::msg)?
-        .attestation_mode;
-    let filtered = validators::read_tee_filtered_reshare_target_from_state(
-        &state,
-        outbe_primitives::storage::readonly::ReadOnlyBlockContext {
-            chain_id: node.chain_spec().chain().id(),
-            genesis_hash: genesis_hash(node)?,
-            block_number: freeze_height,
-            timestamp: header.header().inner.timestamp,
-        },
-        attestation_mode,
-    )
-    .wrap_err("failed to apply TEE readiness to frozen reshare target")?;
+    // CycleTick has already moved every overdue ACTIVE validator into the jailed
+    // lifecycle before this exact freeze state. The ordinary reshare target is
+    // therefore authoritative; legacy boundary expiry fields remain empty.
+    let filtered = validators::read_reshare_target_with_empty_tee_exclusions_from_state(&state)
+        .wrap_err("failed to read frozen reshare target after TEE deadline enforcement")?;
     let new_set = filtered.validator_set;
 
     let participants: commonware_utils::ordered::Set<bls12381::PublicKey> = new_set
