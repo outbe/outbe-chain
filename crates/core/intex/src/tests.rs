@@ -1143,10 +1143,12 @@ fn the_view_carries_what_is_still_unrealized() {
         let data = dispatch_series_data(&s, id);
         assert_eq!(data.settledUnits, 30);
         assert_eq!(data.parkedUnits, 25);
-        assert_eq!(data.unrealizedUnits, 45);
 
+        // The counters survive expiry, so the split stays readable afterwards.
         api::expire_series(&s, id).unwrap();
-        assert_eq!(dispatch_series_data(&s, id).unrealizedUnits, 45);
+        let data = dispatch_series_data(&s, id);
+        assert_eq!(data.settledUnits, 30);
+        assert_eq!(data.parkedUnits, 25);
     });
 }
 

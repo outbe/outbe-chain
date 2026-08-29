@@ -164,11 +164,6 @@
             "name": "parkedUnits",
             "type": "uint32",
             "internalType": "uint32"
-          },
-          {
-            "name": "unrealizedUnits",
-            "type": "uint32",
-            "internalType": "uint32"
           }
         ]
       }
