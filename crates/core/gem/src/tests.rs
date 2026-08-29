@@ -642,6 +642,49 @@ fn qualified_gem(storage: &StorageHandle) -> U256 {
     gem_id
 }
 
+/// The load of a gem nobody settled goes back to the emission accumulator.
+#[test]
+fn forfeiting_a_gem_returns_its_load_to_the_pool() {
+    with_storage(|storage| {
+        let gem_id = qualified_gem(storage);
+        let load = api::get_gem(storage, gem_id)
+            .unwrap()
+            .unwrap()
+            .gem_load_minor;
+        let mut gem = GemContract::new(storage.clone());
+        gem.mark_called(gem_id, T_NOW).unwrap();
+
+        // Inside the notice period nothing moves.
+        assert!(!gem.forfeit(gem_id, T_NOW + 6 * 86_400).unwrap());
+        assert_eq!(unallocated(storage), U256::ZERO);
+
+        assert!(gem.forfeit(gem_id, T_NOW + 7 * 86_400 + 1).unwrap());
+        assert_eq!(unallocated(storage), load);
+    });
+}
+
+/// A settled gem leaves the queue, so the forfeit arm can never reach it — its
+/// holder paid the strike and the load is theirs.
+#[test]
+fn a_settled_gem_is_never_forfeited() {
+    with_storage(|storage| {
+        let gem_id = qualified_gem(storage);
+        let mut gem = GemContract::new(storage.clone());
+        gem.mark_called(gem_id, T_NOW).unwrap();
+        gem.set_state(gem_id, GemState::Settled).unwrap();
+
+        assert!(!gem.forfeit(gem_id, T_NOW + 7 * 86_400 + 1).unwrap());
+        assert_eq!(unallocated(storage), U256::ZERO);
+        assert!(gem.called_queue_slot(0).unwrap().is_none());
+    });
+}
+
+fn unallocated(storage: &StorageHandle) -> U256 {
+    outbe_promislimit::PromisLimitContract::new(storage.clone())
+        .get_total_unallocated()
+        .unwrap()
+}
+
 /// The two stages keep separate structures for a reason: a gem priced above every
 /// day in the window is never visited by the price pass, yet once called it still
 /// expires on schedule, because expiry reads the queue and not the tree.

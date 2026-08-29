@@ -3,7 +3,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::time::timestamp_to_date_key;
 
 use crate::errors::GemError;
-use crate::precompile::IGem::{GemBurned, GemCalled, GemQualified};
+use crate::precompile::IGem::{GemCalled, GemExpired, GemQualified};
 use crate::schema::{GemContract, GemState};
 
 impl GemContract<'_> {
@@ -97,7 +97,13 @@ impl GemContract<'_> {
             return Ok(false);
         }
         self.burn(&item)?;
-        self.emit(GemBurned {
+        // Every gem's load comes out of a daily emission sink, and every sink's
+        // unspent remainder already returns here, so nothing realized it and it
+        // goes back. Same checkpoint as the burn: a block that burns without
+        // crediting leaves nothing to recover.
+        outbe_promislimit::PromisLimitContract::new(self.storage.clone())
+            .add_to_total_unallocated(item.gem_load_minor)?;
+        self.emit(GemExpired {
             gemId: gem_id,
             owner: item.owner,
             gemLoad: item.gem_load_minor,

@@ -8698,6 +8698,7 @@ dependencies = [
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
+ "outbe-promislimit",
  "thiserror 2.0.18",
  "tracing",
 ]

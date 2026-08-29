@@ -14,7 +14,7 @@ use outbe_common::pow;
 
 use crate::constants::{CALL_RATE, FLOOR_RATE, POSITION_VALIDITY_SECONDS, SRA_RATE};
 use crate::errors::GemFactoryError;
-use crate::precompile::IGemFactory::{GemBurned, GemIssued, GemSettled};
+use crate::precompile::IGemFactory::{GemIssued, GemMined, GemSettled};
 use crate::schema::{GemFactoryContract, GemPosition, GemTypes};
 use crate::sol_ext::{IIntexNFT1155, IReferenceCurrency, IERC20};
 use outbe_vaultrouter::api::IVaultRouter;
@@ -541,7 +541,7 @@ pub fn mine_gem_promis(
 
     emit_event(
         storage,
-        GemBurned {
+        GemMined {
             gemId: gem_id,
             owner: caller,
             gemLoad: item.gem_load_minor,
