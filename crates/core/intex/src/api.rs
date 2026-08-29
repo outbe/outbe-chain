@@ -23,6 +23,7 @@ use crate::payout::{
     encode_contributor_leaf, verify_contributor_leaf_range, ContributorLeafData,
     CONTRIBUTOR_CHUNK_CAPACITY, CONTRIBUTOR_LEAF_BYTES,
 };
+use crate::schema::SeriesRecordEntryExt;
 use crate::schema::{
     CertifiedContributorGenerationProjection, CertifiedPayoutRound, CreateSeriesParams,
     DistProgress, IntexContract, IntexState, SeriesId, SeriesRecord,
@@ -196,7 +197,13 @@ fn add_realised_units(
         return Ok(());
     }
     let registry = IntexContract::new(storage.clone());
-    let record = registry.load_series(series_id)?;
+    // One slot, not the whole record: this runs on every settle, and the cap is
+    // the only field the check needs.
+    let issued = registry
+        .series
+        .entry(series_id)
+        .issued_intex_count()
+        .read()?;
     let settled = registry.settled_units.read(&series_id)?;
     let parked = registry.parked_units.read(&series_id)?;
 
@@ -218,7 +225,7 @@ fn add_realised_units(
     // disagree and the forfeit arithmetic would underflow later.
     if settled
         .checked_add(parked)
-        .is_none_or(|realised| realised > record.issued_intex_count)
+        .is_none_or(|realised| realised > issued)
     {
         return Err(IntexError::RealisedUnitsOverflow.into());
     }
