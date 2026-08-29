@@ -139,9 +139,9 @@ impl Localnet {
         self.start(&opts)
     }
 
-    /// Move the test-only committee clock to an exact consensus timestamp.
-    /// Production lease duration remains unchanged; LocalNet only crosses the
-    /// otherwise real seven-day and fourteen-day boundaries immediately.
+    /// Point the test-only committee clock at a target consensus timestamp.
+    /// Canonical time remains subject to the production drift band and may
+    /// ratchet toward a distant target across multiple finalized blocks.
     pub(crate) fn restart_committee_at_consensus_timestamp(
         &mut self,
         target_timestamp: u64,

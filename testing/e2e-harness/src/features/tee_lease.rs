@@ -17,6 +17,7 @@ const STATUS_ACTIVE: u8 = 2;
 const STATUS_JAILED: u8 = 6;
 const WINDOW_SECONDS: u64 = 7 * 24 * 60 * 60;
 const LEASE_SECONDS: u64 = 14 * 24 * 60 * 60;
+const FINALIZED_CLOCK_STALL_TIMEOUT: Duration = Duration::from_secs(180);
 
 #[derive(Default)]
 struct LeaseScenarioState {
@@ -45,6 +46,113 @@ fn wait_until(mut predicate: impl FnMut() -> bool, attempts: u32, label: &str) {
         sleep(Duration::from_secs(2));
     }
     assert!(predicate(), "timed out waiting for {label}");
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FinalizedClockWaitDecisionV1 {
+    Reached,
+    Progressed,
+    Waiting,
+    Stalled,
+    Regressed,
+}
+
+fn classify_finalized_clock_wait(
+    current: (u64, u64),
+    target_timestamp: u64,
+    previous: (u64, u64),
+    now: Instant,
+    progress_deadline: Instant,
+) -> FinalizedClockWaitDecisionV1 {
+    if current.1 >= target_timestamp {
+        FinalizedClockWaitDecisionV1::Reached
+    } else if current.0 < previous.0 || current.1 < previous.1 {
+        FinalizedClockWaitDecisionV1::Regressed
+    } else if current.0 > previous.0 || current.1 > previous.1 {
+        FinalizedClockWaitDecisionV1::Progressed
+    } else if now >= progress_deadline {
+        FinalizedClockWaitDecisionV1::Stalled
+    } else {
+        FinalizedClockWaitDecisionV1::Waiting
+    }
+}
+
+fn finalized_clock_observation(world: &World, port: u16) -> Option<(u64, u64)> {
+    let height = world.rpc.finalized(port)?;
+    let timestamp = world.rpc.block_timestamp(port, height)?;
+    Some((height, timestamp))
+}
+
+fn wait_for_finalized_timestamp(world: &World, target_timestamp: u64, label: &str) -> (u64, u64) {
+    let port = world.validators.primary_port();
+    let initial_deadline = Instant::now() + FINALIZED_CLOCK_STALL_TIMEOUT;
+    let mut previous = loop {
+        if let Some(observation) = finalized_clock_observation(world, port) {
+            break observation;
+        }
+        assert!(
+            Instant::now() < initial_deadline,
+            "timed out reading the initial finalized clock while waiting for {label}"
+        );
+        sleep(Duration::from_secs(1));
+    };
+    let started = previous;
+    let max_step_seconds = outbe_primitives::consensus::MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS / 1_000;
+    let minimum_remaining_blocks = target_timestamp
+        .saturating_sub(previous.1)
+        .div_ceil(max_step_seconds);
+    eprintln!(
+        "[tee-lease] waiting for {label}: start_height={}, start_timestamp={}, \
+         target_timestamp={target_timestamp}, minimum_remaining_blocks={minimum_remaining_blocks}",
+        started.0, started.1
+    );
+
+    let mut progress_deadline = Instant::now() + FINALIZED_CLOCK_STALL_TIMEOUT;
+    loop {
+        let now = Instant::now();
+        let Some(current) = finalized_clock_observation(world, port) else {
+            assert!(
+                now < progress_deadline,
+                "finalized RPC stalled while waiting for {label}: \
+                 start={started:?}, last={previous:?}, target_timestamp={target_timestamp}"
+            );
+            sleep(Duration::from_secs(1));
+            continue;
+        };
+        match classify_finalized_clock_wait(
+            current,
+            target_timestamp,
+            previous,
+            now,
+            progress_deadline,
+        ) {
+            FinalizedClockWaitDecisionV1::Reached => {
+                eprintln!(
+                    "[tee-lease] reached {label}: height={}, timestamp={}, target_timestamp={target_timestamp}",
+                    current.0, current.1
+                );
+                return current;
+            }
+            FinalizedClockWaitDecisionV1::Progressed => {
+                previous = current;
+                progress_deadline = now + FINALIZED_CLOCK_STALL_TIMEOUT;
+            }
+            FinalizedClockWaitDecisionV1::Waiting => {}
+            FinalizedClockWaitDecisionV1::Stalled => {
+                panic!(
+                    "finalized clock stalled while waiting for {label}: \
+                     start={started:?}, last={current:?}, target_timestamp={target_timestamp}"
+                );
+            }
+            FinalizedClockWaitDecisionV1::Regressed => {
+                panic!(
+                    "finalized clock regressed while waiting for {label}: \
+                     previous={previous:?}, current={current:?}, target_timestamp={target_timestamp}"
+                );
+            }
+        }
+        sleep(Duration::from_secs(1));
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -240,16 +348,7 @@ fn enter_manual_renewal_window(world: &mut World) {
         .localnet
         .restart_committee_at_consensus_timestamp(opens_at + 2)
         .expect("move committee into renewal window");
-    let before = world
-        .rpc
-        .finalized(world.validators.primary_port())
-        .unwrap_or(1);
-    assert!(
-        world
-            .rpc
-            .wait_finalized_at_least(world.validators.primary_port(), before + 2, 180),
-        "committee did not finalize inside the renewal window"
-    );
+    wait_for_finalized_timestamp(world, opens_at, "the manual renewal window");
     let status = world
         .localnet
         .node_renewal_status(0)
@@ -320,6 +419,7 @@ fn reach_original_deadline(world: &mut World) {
         .localnet
         .restart_committee_at_consensus_timestamp(deadline.saturating_sub(120))
         .expect("restart committee immediately before lease deadline");
+    wait_for_finalized_timestamp(world, deadline, "the original lease deadline");
     wait_until(
         || {
             world
@@ -547,6 +647,43 @@ fn recovered_nodes_resume(world: &mut World) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn finalized_clock_wait_refreshes_only_on_monotonic_progress() {
+        let now = std::time::Instant::now();
+        let progress_deadline = now + std::time::Duration::from_secs(180);
+
+        assert_eq!(
+            super::classify_finalized_clock_wait((10, 200), 600, (9, 100), now, progress_deadline,),
+            super::FinalizedClockWaitDecisionV1::Progressed
+        );
+        assert_eq!(
+            super::classify_finalized_clock_wait((10, 200), 600, (10, 200), now, progress_deadline,),
+            super::FinalizedClockWaitDecisionV1::Waiting
+        );
+    }
+
+    #[test]
+    fn finalized_clock_wait_reaches_target_and_rejects_stall_or_regression() {
+        let now = std::time::Instant::now();
+
+        assert_eq!(
+            super::classify_finalized_clock_wait((11, 600), 600, (10, 200), now, now),
+            super::FinalizedClockWaitDecisionV1::Reached
+        );
+        assert_eq!(
+            super::classify_finalized_clock_wait((10, 599), 600, (10, 599), now, now),
+            super::FinalizedClockWaitDecisionV1::Stalled
+        );
+        assert_eq!(
+            super::classify_finalized_clock_wait((9, 201), 600, (10, 200), now, now),
+            super::FinalizedClockWaitDecisionV1::Regressed
+        );
+        assert_eq!(
+            super::classify_finalized_clock_wait((11, 199), 600, (10, 200), now, now),
+            super::FinalizedClockWaitDecisionV1::Regressed
+        );
+    }
+
     #[test]
     fn full_node_sync_probe_fails_immediately_when_the_process_exits() {
         assert_eq!(
