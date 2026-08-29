@@ -49,17 +49,20 @@ fn wait_until(mut predicate: impl FnMut() -> bool, attempts: u32, label: &str) {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FullNodeSyncProbeV1 {
+    NotTracked,
     Pending,
     Reached(u64),
     Exited,
 }
 
-const fn classify_full_node_sync_probe(
+fn classify_full_node_sync_probe(
     head: Option<u64>,
     checkpoint: u64,
-    exited: bool,
+    exited: Option<bool>,
 ) -> FullNodeSyncProbeV1 {
-    if exited {
+    if exited.is_none() {
+        FullNodeSyncProbeV1::NotTracked
+    } else if exited == Some(true) {
         FullNodeSyncProbeV1::Exited
     } else if let Some(height) = head {
         if height >= checkpoint {
@@ -85,9 +88,16 @@ fn wait_for_live_full_node_checkpoint(
     let started = Instant::now();
     loop {
         let head = world.rpc.head(port);
-        let exited = world.localnet.joiner_full_node_exited(full_node);
+        let exited = world.localnet.joiner_full_node_exit_status(full_node);
         match classify_full_node_sync_probe(head, checkpoint, exited) {
             FullNodeSyncProbeV1::Reached(height) => return Ok(height),
+            FullNodeSyncProbeV1::NotTracked => {
+                return Err(format!(
+                    "FullNode {full_node} has no owned process under canonical key {}; inspect {}",
+                    crate::world::localnet::Localnet::joiner_full_node_name(full_node),
+                    node_log.display()
+                ));
+            }
             FullNodeSyncProbeV1::Exited => {
                 return Err(format!(
                     "FullNode {full_node} exited at head {head:?} before checkpoint {checkpoint}; inspect {}",
@@ -184,7 +194,11 @@ fn full_node_joins_with_committee_deadline(world: &mut World) {
         .expect("provision role-neutral FullNode TEE identity");
     world
         .localnet
-        .launch_dcap_full_node("tee-lease-full-node", full_node, 0)
+        .launch_dcap_full_node(
+            &crate::world::localnet::Localnet::joiner_full_node_name(full_node),
+            full_node,
+            0,
+        )
         .expect("launch role-neutral FullNode");
 
     let checkpoint = world
@@ -385,7 +399,12 @@ fn missed_validator_is_jailed_without_slash(world: &mut World) {
 fn full_node_stops_and_late_renewal_fails(world: &mut World) {
     let full_node = state().full_node_index.expect("FullNode index");
     wait_until(
-        || world.localnet.joiner_full_node_exited(full_node),
+        || {
+            world
+                .localnet
+                .joiner_full_node_exit_status(full_node)
+                .expect("lease FullNode must remain owned until fail-stop")
+        },
         120,
         "expired FullNode fail-stop",
     );
@@ -465,7 +484,11 @@ fn expired_nodes_rejoin(world: &mut World) {
         .expect("restart rejoined validator");
     world
         .localnet
-        .launch_dcap_full_node("tee-lease-full-node", full_node, 0)
+        .launch_dcap_full_node(
+            &crate::world::localnet::Localnet::joiner_full_node_name(full_node),
+            full_node,
+            0,
+        )
         .expect("restart rejoined FullNode");
 }
 
@@ -527,23 +550,35 @@ mod tests {
     #[test]
     fn full_node_sync_probe_fails_immediately_when_the_process_exits() {
         assert_eq!(
-            super::classify_full_node_sync_probe(Some(6), 7, true),
+            super::classify_full_node_sync_probe(Some(6), 7, Some(true)),
             super::FullNodeSyncProbeV1::Exited
+        );
+    }
+
+    #[test]
+    fn full_node_sync_probe_never_treats_a_missing_handle_as_exit_evidence() {
+        assert_eq!(
+            super::classify_full_node_sync_probe(None, 7, None),
+            super::FullNodeSyncProbeV1::NotTracked
+        );
+        assert_eq!(
+            crate::world::localnet::Localnet::joiner_full_node_name(4),
+            "joiner-full-node-4"
         );
     }
 
     #[test]
     fn full_node_sync_probe_requires_a_live_node_at_the_checkpoint() {
         assert_eq!(
-            super::classify_full_node_sync_probe(Some(6), 7, false),
+            super::classify_full_node_sync_probe(Some(6), 7, Some(false)),
             super::FullNodeSyncProbeV1::Pending
         );
         assert_eq!(
-            super::classify_full_node_sync_probe(Some(7), 7, false),
+            super::classify_full_node_sync_probe(Some(7), 7, Some(false)),
             super::FullNodeSyncProbeV1::Reached(7)
         );
         assert_eq!(
-            super::classify_full_node_sync_probe(Some(9), 7, false),
+            super::classify_full_node_sync_probe(Some(9), 7, Some(false)),
             super::FullNodeSyncProbeV1::Reached(9)
         );
     }

@@ -66,6 +66,12 @@ fn full_node_joiner_role_args(
 }
 
 impl Localnet {
+    /// Canonical ownership key for the role-neutral FullNode process. Launch,
+    /// stop, and exit probes must all use this exact identity.
+    pub fn joiner_full_node_name(index: usize) -> String {
+        format!("joiner-full-node-{index}")
+    }
+
     /// Launch a node in non-voting full-execution mode while preserving its
     /// durable Reth datadir and role-neutral NodeHost identity.
     /// The FullNode owns an enclave and NodeHost identity in its own slot. The
@@ -93,7 +99,7 @@ impl Localnet {
         process_args.extend_from_slice(ocomp_args);
         self.extend_real_sgx_startup_timeout(&mut process_args);
 
-        let name = format!("joiner-full-node-{index}");
+        let name = Self::joiner_full_node_name(index);
         let mut command = Command::new(&self.cfg.bin_chain);
         command
             .env("RUST_MIN_STACK", "16777216")
@@ -107,15 +113,20 @@ impl Localnet {
 
     /// Stop the non-voting phase without deleting its synchronized Reth data.
     pub fn stop_joiner_full_node(&mut self, index: usize) {
-        self.followers.remove(&format!("joiner-full-node-{index}"));
+        self.followers.remove(&Self::joiner_full_node_name(index));
+    }
+
+    /// Exit state for an owned role-neutral FullNode. `None` means the process
+    /// was never registered under the canonical key and is not exit evidence.
+    pub fn joiner_full_node_exit_status(&mut self, index: usize) -> Option<bool> {
+        self.followers
+            .get_mut(&Self::joiner_full_node_name(index))
+            .map(crate::internal::proc::ChildGuard::exited)
     }
 
     /// Whether the owned non-voting FullNode process has exited.
     pub fn joiner_full_node_exited(&mut self, index: usize) -> bool {
-        match self.followers.get_mut(&format!("joiner-full-node-{index}")) {
-            Some(guard) => guard.exited(),
-            None => true,
-        }
+        self.joiner_full_node_exit_status(index).unwrap_or(true)
     }
 
     /// Generate a reusable EOA + individual MinPk BLS identity and its exact
