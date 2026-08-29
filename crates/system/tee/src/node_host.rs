@@ -12,15 +12,15 @@ use std::os::unix::fs::{
 };
 use std::path::{Path, PathBuf};
 
-use alloy_primitives::{keccak256, B256, U256};
+use alloy_primitives::{B256, U256, keccak256};
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationOperationV1, DcapEvidenceV1, EnclaveInitializationManifestV1,
-    NodeIdV1, RegistrationIntentV1, MAX_ATTESTATION_EVIDENCE_BYTES,
+    MAX_ATTESTATION_EVIDENCE_BYTES, NodeIdV1, RegistrationIntentV1,
 };
 
 use crate::{
-    remote_session::FinalizedRegistryViewV1, AuthorizedEnclaveClient, GeneratedDcapQuoteV1,
-    NodeHostNoiseKey, TransportError,
+    AuthorizedEnclaveClient, GeneratedDcapQuoteV1, NodeHostNoiseKey, TransportError,
+    remote_session::FinalizedRegistryViewV1,
 };
 
 pub const NODE_HOST_DIRECTORY_V1: &str = "tee-node-host-v1";
@@ -29,10 +29,12 @@ pub const NODE_HOST_MANIFEST_V1: &str = "initialization-manifest.bin";
 const NODE_HOST_PENDING_MANIFEST_V1: &str = "initialization-manifest.pending";
 pub const NODE_HOST_REPLACEMENT_CANDIDATE_V1: &str = "replacement-candidate.v1";
 pub const NODE_HOST_REPLACEMENT_SUBMISSION_V1: &str = "replacement-submission.v1";
+pub const NODE_HOST_REPLACEMENT_RELAY_V1: &str = "replacement-relay.v1";
 pub const NODE_HOST_REPLACEMENT_PROMOTION_V1: &str = "replacement-promotion.v1";
 const NODE_HOST_NEXT_MANIFEST_V1: &str = "initialization-manifest.next";
 const NODE_HOST_REPLACEMENT_CANDIDATE_NEXT_V1: &str = "replacement-candidate.next";
 const NODE_HOST_REPLACEMENT_SUBMISSION_NEXT_V1: &str = "replacement-submission.next";
+const NODE_HOST_REPLACEMENT_RELAY_NEXT_V1: &str = "replacement-relay.next";
 const NODE_HOST_REPLACEMENT_PROMOTION_NEXT_V1: &str = "replacement-promotion.next";
 const NODE_HOST_STATE_LOCK_V1: &str = "state.lock";
 const NODE_HOST_REPLACEMENT_WRITE_SCRATCH_V1: &str = "replacement-write.tmp";
@@ -42,6 +44,8 @@ const MAX_REPLACEMENT_CANDIDATE_BYTES: u64 = 1 + 32 + 2 + MAX_INITIALIZATION_MAN
 const REPLACEMENT_SUBMISSION_VERSION_V1: u8 = 1;
 const MAX_REPLACEMENT_SUBMISSION_BYTES: u64 =
     1 + 4 + MAX_ATTESTATION_EVIDENCE_BYTES as u64 + 65 + 64;
+const REPLACEMENT_RELAY_VERSION_V1: u8 = 1;
+const MAX_REPLACEMENT_RELAY_BYTES: u64 = MAX_ATTESTATION_EVIDENCE_BYTES as u64 + 4_096;
 const REPLACEMENT_PROMOTION_VERSION_V1: u8 = 1;
 const REPLACEMENT_PROMOTION_BYTES: u64 = 1 + 32 + 32;
 
@@ -79,6 +83,17 @@ pub struct ReplacementCandidateSubmissionV1 {
     evidence: Vec<u8>,
     node_signature: [u8; 65],
     enclave_signature: [u8; 64],
+}
+
+/// Exact signed registration transaction persisted before relay. It is bound
+/// to the durable candidate submission so a restart cannot attach another
+/// transaction to already-quoted evidence.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReplacementCandidateRelayV1 {
+    submission_hash: B256,
+    calldata_hash: B256,
+    transaction_hash: B256,
+    raw_transaction: Vec<u8>,
 }
 
 /// Opaque authority issued only after I6 verifies an exact finalized registry
@@ -215,6 +230,77 @@ impl ReplacementCandidateSubmissionV1 {
     }
 }
 
+impl ReplacementCandidateRelayV1 {
+    #[must_use]
+    pub const fn calldata_hash(&self) -> B256 {
+        self.calldata_hash
+    }
+
+    #[must_use]
+    pub const fn transaction_hash(&self) -> B256 {
+        self.transaction_hash
+    }
+
+    #[must_use]
+    pub fn raw_transaction(&self) -> &[u8] {
+        &self.raw_transaction
+    }
+
+    fn encode_canonical(&self) -> Result<Vec<u8>, TransportError> {
+        let raw_len = u32::try_from(self.raw_transaction.len())
+            .map_err(|_| TransportError::Codec("replacement relay length overflow".into()))?;
+        let mut out = Vec::with_capacity(101 + self.raw_transaction.len());
+        out.push(REPLACEMENT_RELAY_VERSION_V1);
+        out.extend_from_slice(self.submission_hash.as_slice());
+        out.extend_from_slice(self.calldata_hash.as_slice());
+        out.extend_from_slice(self.transaction_hash.as_slice());
+        out.extend_from_slice(&raw_len.to_be_bytes());
+        out.extend_from_slice(&self.raw_transaction);
+        if u64::try_from(out.len()).unwrap_or(u64::MAX) > MAX_REPLACEMENT_RELAY_BYTES {
+            return Err(TransportError::Codec(
+                "replacement relay exceeds its fixed cap".into(),
+            ));
+        }
+        Ok(out)
+    }
+
+    fn decode_canonical(input: &[u8]) -> Result<Self, TransportError> {
+        if input.len() < 101
+            || u64::try_from(input.len()).unwrap_or(u64::MAX) > MAX_REPLACEMENT_RELAY_BYTES
+            || input[0] != REPLACEMENT_RELAY_VERSION_V1
+        {
+            return Err(TransportError::Codec(
+                "replacement relay framing is invalid".into(),
+            ));
+        }
+        let raw_len = u32::from_be_bytes(
+            input[97..101]
+                .try_into()
+                .map_err(|_| TransportError::Codec("replacement relay length".into()))?,
+        ) as usize;
+        if input.len() != 101 + raw_len || raw_len == 0 {
+            return Err(TransportError::Codec(
+                "replacement relay raw transaction length is invalid".into(),
+            ));
+        }
+        let relay = Self {
+            submission_hash: B256::from_slice(&input[1..33]),
+            calldata_hash: B256::from_slice(&input[33..65]),
+            transaction_hash: B256::from_slice(&input[65..97]),
+            raw_transaction: input[101..].to_vec(),
+        };
+        if relay.submission_hash.is_zero()
+            || relay.calldata_hash.is_zero()
+            || relay.transaction_hash != keccak256(&relay.raw_transaction)
+        {
+            return Err(TransportError::Codec(
+                "replacement relay commitments are invalid".into(),
+            ));
+        }
+        Ok(relay)
+    }
+}
+
 impl ReplacementCandidateEnclaveV1 {
     #[must_use]
     pub const fn manifest(&self) -> &EnclaveInitializationManifestV1 {
@@ -243,6 +329,20 @@ impl ReplacementCandidateEnclaveV1 {
             }
         }
         Ok(generated)
+    }
+
+    pub fn request(
+        &mut self,
+        request: &crate::protocol::EnclaveRequest,
+    ) -> Result<crate::protocol::EnclaveResponse, TransportError> {
+        self.client.request(request)
+    }
+
+    pub fn sign_registration_intent_dev_v1(
+        &mut self,
+        intent: &RegistrationIntentV1,
+    ) -> Result<[u8; 64], TransportError> {
+        self.client.sign_registration_intent_dev_v1(intent)
     }
 }
 
@@ -450,21 +550,25 @@ pub fn persist_replacement_candidate_submission(
     validate_replacement_candidate_state(&candidate, &active, &node_host)?;
 
     let evidence_bytes = evidence.encode_canonical().map_err(codec_error)?;
-    let dcap = match evidence {
+    let intent = match evidence {
         AttestationEvidenceV1::Dcap(value)
-            if is_candidate_successor_operation(value.intent.operation) =>
+            if is_candidate_promotion_operation(value.intent.operation) =>
         {
-            value
+            validate_candidate_key_ready_proof(&candidate.manifest, value)?;
+            &value.intent
+        }
+        AttestationEvidenceV1::GramineDirectDev(value)
+            if value.intent.operation == AttestationOperationV1::RegisterEnclave
+                && &value.dev_signature == enclave_signature =>
+        {
+            &value.intent
         }
         AttestationEvidenceV1::Dcap(_) | AttestationEvidenceV1::GramineDirectDev(_) => {
             return Err(TransportError::Codec(
-                "candidate submission must contain DCAP replacement or measurement-transition evidence"
-                    .into(),
-            ))
+                "candidate submission is not an allowed registration or successor operation".into(),
+            ));
         }
     };
-    validate_candidate_key_ready_proof(&candidate.manifest, dcap)?;
-    let intent = &dcap.intent;
     candidate
         .manifest
         .validate_intent_binding(intent)
@@ -527,6 +631,79 @@ pub fn load_replacement_candidate_submission(
     let submission = read_replacement_submission(&paths.replacement_submission)?;
     validate_durable_replacement_submission(&candidate.manifest, &submission)?;
     Ok(Some(submission))
+}
+
+/// Persist the exact signed transaction before the first relay attempt. The
+/// transaction is inseparable from the already durable candidate submission.
+pub fn persist_replacement_candidate_relay(
+    node_data_dir: &Path,
+    calldata_hash: B256,
+    raw_transaction: &[u8],
+) -> Result<ReplacementCandidateRelayV1, TransportError> {
+    let paths = NodeHostPaths::new(node_data_dir);
+    ensure_private_directory(&paths.root)?;
+    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
+    let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
+    reconcile_replacement_state(&paths, &node_host)?;
+    if !path_exists(&paths.replacement_candidate)? || !path_exists(&paths.replacement_submission)? {
+        return Err(TransportError::Codec(
+            "replacement relay requires durable candidate submission state".into(),
+        ));
+    }
+    let candidate = read_replacement_candidate(&paths.replacement_candidate)?;
+    let submission = read_replacement_submission(&paths.replacement_submission)?;
+    validate_durable_replacement_submission(&candidate.manifest, &submission)?;
+    if calldata_hash.is_zero() || raw_transaction.is_empty() {
+        return Err(TransportError::Codec(
+            "replacement relay transaction is incomplete".into(),
+        ));
+    }
+    let relay = ReplacementCandidateRelayV1 {
+        submission_hash: submission.submission_hash()?,
+        calldata_hash,
+        transaction_hash: keccak256(raw_transaction),
+        raw_transaction: raw_transaction.to_vec(),
+    };
+    let bytes = relay.encode_canonical()?;
+    if path_exists(&paths.replacement_relay)? {
+        let durable = read_replacement_relay(&paths.replacement_relay)?;
+        if durable == relay {
+            return Ok(durable);
+        }
+        return Err(TransportError::Codec(
+            "replacement transaction conflicts with the durable relay checkpoint".into(),
+        ));
+    }
+    replace_bytes_atomically(
+        &paths.replacement_relay,
+        &paths.replacement_relay_next,
+        &paths.replacement_write_scratch,
+        &bytes,
+        &paths.root,
+    )?;
+    Ok(relay)
+}
+
+/// Reload the byte-identical signed candidate transaction after restart.
+pub fn load_replacement_candidate_relay(
+    node_data_dir: &Path,
+) -> Result<Option<ReplacementCandidateRelayV1>, TransportError> {
+    let paths = NodeHostPaths::new(node_data_dir);
+    ensure_private_directory(&paths.root)?;
+    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
+    let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
+    reconcile_replacement_state(&paths, &node_host)?;
+    if !path_exists(&paths.replacement_relay)? {
+        return Ok(None);
+    }
+    let submission = read_replacement_submission(&paths.replacement_submission)?;
+    let relay = read_replacement_relay(&paths.replacement_relay)?;
+    if relay.submission_hash != submission.submission_hash()? {
+        return Err(TransportError::Codec(
+            "replacement relay targets another durable submission".into(),
+        ));
+    }
+    Ok(Some(relay))
 }
 
 /// Constructs promotion authority only when one exact consensus-finalized
@@ -651,6 +828,8 @@ pub fn promote_replacement_candidate(
         "next replacement manifest",
     )?;
     fs::rename(&paths.next_manifest, &paths.manifest)?;
+    File::open(&paths.root)?.sync_all()?;
+    remove_file_if_exists(&paths.replacement_relay)?;
     File::open(&paths.root)?.sync_all()?;
     remove_file_if_exists(&paths.replacement_submission)?;
     File::open(&paths.root)?.sync_all()?;
@@ -992,6 +1171,11 @@ fn read_replacement_submission(
     ReplacementCandidateSubmissionV1::decode_canonical(&bytes)
 }
 
+fn read_replacement_relay(path: &Path) -> Result<ReplacementCandidateRelayV1, TransportError> {
+    let bytes = read_owned_bounded_file(path, MAX_REPLACEMENT_RELAY_BYTES, "replacement relay")?;
+    ReplacementCandidateRelayV1::decode_canonical(&bytes)
+}
+
 fn read_replacement_promotion(
     path: &Path,
 ) -> Result<FinalizedReplacementAuthorizationV1, TransportError> {
@@ -1009,21 +1193,25 @@ fn validate_durable_replacement_submission(
 ) -> Result<RegistrationIntentV1, TransportError> {
     let evidence =
         AttestationEvidenceV1::decode_canonical(&submission.evidence).map_err(codec_error)?;
-    let dcap = match evidence {
+    let intent = match evidence {
         AttestationEvidenceV1::Dcap(value)
-            if is_candidate_successor_operation(value.intent.operation) =>
+            if is_candidate_promotion_operation(value.intent.operation) =>
         {
-            value
+            validate_candidate_key_ready_proof(manifest, &value)?;
+            value.intent
+        }
+        AttestationEvidenceV1::GramineDirectDev(value)
+            if value.intent.operation == AttestationOperationV1::RegisterEnclave
+                && value.dev_signature == submission.enclave_signature =>
+        {
+            value.intent
         }
         AttestationEvidenceV1::Dcap(_) | AttestationEvidenceV1::GramineDirectDev(_) => {
             return Err(TransportError::Codec(
-                "durable submission is not DCAP replacement or measurement-transition evidence"
-                    .into(),
-            ))
+                "durable submission is not an allowed registration or successor operation".into(),
+            ));
         }
     };
-    validate_candidate_key_ready_proof(manifest, &dcap)?;
-    let intent = dcap.intent;
     manifest
         .validate_intent_binding(&intent)
         .map_err(codec_error)?;
@@ -1059,10 +1247,11 @@ fn validate_candidate_key_ready_proof(
     Ok(())
 }
 
-fn is_candidate_successor_operation(operation: AttestationOperationV1) -> bool {
+fn is_candidate_promotion_operation(operation: AttestationOperationV1) -> bool {
     matches!(
         operation,
-        AttestationOperationV1::ReplaceEnclaveBinding
+        AttestationOperationV1::RegisterEnclave
+            | AttestationOperationV1::ReplaceEnclaveBinding
             | AttestationOperationV1::TransitionEnclaveMeasurement
     )
 }
@@ -1309,6 +1498,8 @@ fn reconcile_replacement_state(
     let candidate_next_exists = path_exists(&paths.replacement_candidate_next)?;
     let mut submission_exists = path_exists(&paths.replacement_submission)?;
     let submission_next_exists = path_exists(&paths.replacement_submission_next)?;
+    let mut relay_exists = path_exists(&paths.replacement_relay)?;
+    let relay_next_exists = path_exists(&paths.replacement_relay_next)?;
     let mut promotion_exists = path_exists(&paths.replacement_promotion)?;
     let promotion_next_exists = path_exists(&paths.replacement_promotion_next)?;
     let next_exists = path_exists(&paths.next_manifest)?;
@@ -1316,7 +1507,7 @@ fn reconcile_replacement_state(
     if candidate_next_exists {
         let candidate_next = read_replacement_candidate(&paths.replacement_candidate_next)?;
         if candidate_exists {
-            if submission_exists || submission_next_exists {
+            if submission_exists || submission_next_exists || relay_exists || relay_next_exists {
                 return Err(TransportError::Codec(
                     "candidate refresh journal exists after replacement submission".into(),
                 ));
@@ -1325,7 +1516,12 @@ fn reconcile_replacement_state(
             validate_candidate_refresh_pair(&candidate, &candidate_next)?;
             remove_file_if_exists(&paths.replacement_candidate_next)?;
         } else {
-            if submission_exists || submission_next_exists || next_exists {
+            if submission_exists
+                || submission_next_exists
+                || relay_exists
+                || relay_next_exists
+                || next_exists
+            {
                 return Err(TransportError::Codec(
                     "initial candidate journal conflicts with later replacement state".into(),
                 ));
@@ -1366,6 +1562,33 @@ fn reconcile_replacement_state(
         File::open(&paths.root)?.sync_all()?;
     }
 
+    if relay_next_exists {
+        if !candidate_exists || !submission_exists {
+            return Err(TransportError::Codec(
+                "replacement relay journal is missing candidate submission state".into(),
+            ));
+        }
+        let submission = read_replacement_submission(&paths.replacement_submission)?;
+        let relay_next = read_replacement_relay(&paths.replacement_relay_next)?;
+        if relay_next.submission_hash != submission.submission_hash()? {
+            return Err(TransportError::Codec(
+                "replacement relay journal targets another submission".into(),
+            ));
+        }
+        if relay_exists {
+            if read_replacement_relay(&paths.replacement_relay)? != relay_next {
+                return Err(TransportError::Codec(
+                    "replacement relay journal conflicts with durable state".into(),
+                ));
+            }
+            remove_file_if_exists(&paths.replacement_relay_next)?;
+        } else {
+            fs::rename(&paths.replacement_relay_next, &paths.replacement_relay)?;
+            relay_exists = true;
+        }
+        File::open(&paths.root)?.sync_all()?;
+    }
+
     if promotion_next_exists {
         if !candidate_exists || !submission_exists {
             return Err(TransportError::Codec(
@@ -1390,7 +1613,7 @@ fn reconcile_replacement_state(
 
     let active_hash = active.authorization_hash().map_err(codec_error)?;
     if !candidate_exists {
-        if next_exists {
+        if next_exists || relay_exists {
             return Err(TransportError::Codec(
                 "replacement journal is missing its candidate record".into(),
             ));
@@ -1447,6 +1670,20 @@ fn reconcile_replacement_state(
     } else {
         None
     };
+    if relay_exists {
+        if !submission_exists {
+            return Err(TransportError::Codec(
+                "replacement relay is missing its durable submission".into(),
+            ));
+        }
+        let submission = read_replacement_submission(&paths.replacement_submission)?;
+        let relay = read_replacement_relay(&paths.replacement_relay)?;
+        if relay.submission_hash != submission.submission_hash()? {
+            return Err(TransportError::Codec(
+                "replacement relay targets another durable submission".into(),
+            ));
+        }
+    }
     let durable_promotion = if promotion_exists {
         Some(read_replacement_promotion(&paths.replacement_promotion)?)
     } else {
@@ -1513,6 +1750,8 @@ fn reconcile_replacement_state(
             }
             remove_file_if_exists(&paths.next_manifest)?;
         }
+        remove_file_if_exists(&paths.replacement_relay)?;
+        File::open(&paths.root)?.sync_all()?;
         remove_file_if_exists(&paths.replacement_submission)?;
         File::open(&paths.root)?.sync_all()?;
         remove_file_if_exists(&paths.replacement_candidate)?;
@@ -1574,10 +1813,12 @@ struct NodeHostPaths {
     pending_manifest: PathBuf,
     replacement_candidate: PathBuf,
     replacement_submission: PathBuf,
+    replacement_relay: PathBuf,
     replacement_promotion: PathBuf,
     next_manifest: PathBuf,
     replacement_candidate_next: PathBuf,
     replacement_submission_next: PathBuf,
+    replacement_relay_next: PathBuf,
     replacement_promotion_next: PathBuf,
     replacement_write_scratch: PathBuf,
 }
@@ -1592,10 +1833,12 @@ impl NodeHostPaths {
             pending_manifest: root.join(NODE_HOST_PENDING_MANIFEST_V1),
             replacement_candidate: root.join(NODE_HOST_REPLACEMENT_CANDIDATE_V1),
             replacement_submission: root.join(NODE_HOST_REPLACEMENT_SUBMISSION_V1),
+            replacement_relay: root.join(NODE_HOST_REPLACEMENT_RELAY_V1),
             replacement_promotion: root.join(NODE_HOST_REPLACEMENT_PROMOTION_V1),
             next_manifest: root.join(NODE_HOST_NEXT_MANIFEST_V1),
             replacement_candidate_next: root.join(NODE_HOST_REPLACEMENT_CANDIDATE_NEXT_V1),
             replacement_submission_next: root.join(NODE_HOST_REPLACEMENT_SUBMISSION_NEXT_V1),
+            replacement_relay_next: root.join(NODE_HOST_REPLACEMENT_RELAY_NEXT_V1),
             replacement_promotion_next: root.join(NODE_HOST_REPLACEMENT_PROMOTION_NEXT_V1),
             replacement_write_scratch: root.join(NODE_HOST_REPLACEMENT_WRITE_SCRATCH_V1),
             root,
@@ -1628,6 +1871,13 @@ mod tests {
     }
 
     fn replacement_fixture_for_operation(operation: AttestationOperationV1) -> ReplacementFixture {
+        replacement_fixture_for_mode(operation, AttestationMode::DcapRequired)
+    }
+
+    fn replacement_fixture_for_mode(
+        operation: AttestationOperationV1,
+        attestation_mode: AttestationMode,
+    ) -> ReplacementFixture {
         let root = tempfile::tempdir().unwrap();
         let node_data_dir = root.path().join("node-data");
         std::fs::create_dir(&node_data_dir).unwrap();
@@ -1677,7 +1927,7 @@ mod tests {
             chain_id: candidate.chain_id,
             genesis_hash: candidate.genesis_hash,
             operation,
-            attestation_mode: AttestationMode::DcapRequired,
+            attestation_mode,
             policy_hash: B256::repeat_byte(0x21),
             node_id,
             enclave_id: candidate.enclave_id().unwrap(),
@@ -1717,17 +1967,26 @@ mod tests {
                     .to_bytes();
                 proof
             });
-        let evidence = AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
-            intent,
-            quote: vec![0x51],
-            components: (1_u8..=8)
-                .map(|kind| DcapCollateralComponentV1 {
-                    kind: DcapCollateralKind::try_from(kind).unwrap(),
-                    bytes: vec![kind],
-                })
-                .collect(),
-            transition_key_ready_proof,
-        });
+        let evidence = match attestation_mode {
+            AttestationMode::DcapRequired => AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
+                intent,
+                quote: vec![0x51],
+                components: (1_u8..=8)
+                    .map(|kind| DcapCollateralComponentV1 {
+                        kind: DcapCollateralKind::try_from(kind).unwrap(),
+                        bytes: vec![kind],
+                    })
+                    .collect(),
+                transition_key_ready_proof,
+            }),
+            AttestationMode::GramineDirectDev => AttestationEvidenceV1::GramineDirectDev(
+                outbe_primitives::tee_attestation_v1::GramineDirectEvidenceV1 {
+                    intent,
+                    dev_attestation_public: enclave_signer.verifying_key().to_bytes(),
+                    dev_signature: enclave_signature,
+                },
+            ),
+        };
         persist_replacement_candidate_submission(
             &node_data_dir,
             &evidence,
@@ -1769,6 +2028,118 @@ mod tests {
             promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization).unwrap(),
             fixture.candidate
         );
+    }
+
+    #[test]
+    fn expired_rejoin_registration_reuses_the_finalized_candidate_workflow() {
+        let fixture = replacement_fixture_for_operation(AttestationOperationV1::RegisterEnclave);
+        let submission = load_replacement_candidate_submission(&fixture.node_data_dir)
+            .unwrap()
+            .unwrap();
+        let evidence = AttestationEvidenceV1::decode_canonical(submission.evidence()).unwrap();
+        let AttestationEvidenceV1::Dcap(evidence) = evidence else {
+            panic!("expected DCAP registration evidence")
+        };
+        assert_eq!(
+            evidence.intent.operation,
+            AttestationOperationV1::RegisterEnclave
+        );
+        let raw_transaction = vec![0x91, 0x92, 0x93];
+        let relay = persist_replacement_candidate_relay(
+            &fixture.node_data_dir,
+            B256::repeat_byte(0x90),
+            &raw_transaction,
+        )
+        .unwrap();
+        assert_eq!(relay.transaction_hash(), keccak256(&raw_transaction));
+        assert_eq!(
+            persist_replacement_candidate_relay(
+                &fixture.node_data_dir,
+                B256::repeat_byte(0x90),
+                &raw_transaction,
+            )
+            .unwrap(),
+            relay
+        );
+        assert!(
+            persist_replacement_candidate_relay(
+                &fixture.node_data_dir,
+                B256::repeat_byte(0x90),
+                &[0x94],
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("conflicts")
+        );
+        assert_eq!(
+            load_replacement_candidate_relay(&fixture.node_data_dir)
+                .unwrap()
+                .unwrap(),
+            relay
+        );
+        assert_eq!(
+            promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization).unwrap(),
+            fixture.candidate
+        );
+        assert!(
+            load_replacement_candidate_relay(&fixture.node_data_dir)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn development_expired_rejoin_uses_the_same_durable_promotion_journal() {
+        let fixture = replacement_fixture_for_mode(
+            AttestationOperationV1::RegisterEnclave,
+            AttestationMode::GramineDirectDev,
+        );
+        let submission = load_replacement_candidate_submission(&fixture.node_data_dir)
+            .unwrap()
+            .unwrap();
+        let evidence = AttestationEvidenceV1::decode_canonical(submission.evidence()).unwrap();
+        assert!(matches!(
+            evidence,
+            AttestationEvidenceV1::GramineDirectDev(_)
+        ));
+        assert_eq!(
+            promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization).unwrap(),
+            fixture.candidate
+        );
+    }
+
+    #[test]
+    fn restart_commits_only_the_exact_fsynced_candidate_relay_checkpoint() {
+        let fixture = replacement_fixture_for_operation(AttestationOperationV1::RegisterEnclave);
+        let relay = persist_replacement_candidate_relay(
+            &fixture.node_data_dir,
+            B256::repeat_byte(0x81),
+            &[0x82, 0x83],
+        )
+        .unwrap();
+        let bytes = std::fs::read(&fixture.paths.replacement_relay).unwrap();
+        std::fs::remove_file(&fixture.paths.replacement_relay).unwrap();
+        File::open(&fixture.paths.root).unwrap().sync_all().unwrap();
+        write_bytes_once(
+            &fixture.paths.replacement_relay_next,
+            &bytes,
+            &fixture.paths.root,
+        )
+        .unwrap();
+
+        assert_eq!(
+            load_replacement_candidate_relay(&fixture.node_data_dir)
+                .unwrap()
+                .unwrap(),
+            relay
+        );
+        assert!(fixture.paths.replacement_relay.exists());
+        assert!(!fixture.paths.replacement_relay_next.exists());
+
+        let mut corrupt = bytes;
+        *corrupt.last_mut().unwrap() ^= 1;
+        std::fs::write(&fixture.paths.replacement_relay, corrupt).unwrap();
+        assert!(load_replacement_candidate_relay(&fixture.node_data_dir).is_err());
     }
 
     #[test]
@@ -1855,13 +2226,12 @@ mod tests {
 
         let mut wrong_lease = finalized;
         wrong_lease.valid_until -= 1;
-        assert!(construct_finalized_replacement_authorization_v1(
-            &fixture.node_data_dir,
-            &wrong_lease,
-        )
-        .unwrap_err()
-        .to_string()
-        .contains("finalized Registry binding does not match"));
+        assert!(
+            construct_finalized_replacement_authorization_v1(&fixture.node_data_dir, &wrong_lease,)
+                .unwrap_err()
+                .to_string()
+                .contains("finalized Registry binding does not match")
+        );
     }
 
     #[test]
@@ -1914,10 +2284,12 @@ mod tests {
         .unwrap();
 
         let node_host = NodeHostNoiseKey::load(&fixture.paths.noise_key).unwrap();
-        assert!(reconcile_replacement_state(&fixture.paths, &node_host)
-            .unwrap_err()
-            .to_string()
-            .contains("changes replacement identity"));
+        assert!(
+            reconcile_replacement_state(&fixture.paths, &node_host)
+                .unwrap_err()
+                .to_string()
+                .contains("changes replacement identity")
+        );
         assert_eq!(
             read_manifest(&fixture.paths.manifest).unwrap(),
             fixture.active
@@ -2064,10 +2436,12 @@ mod tests {
         );
         rustix::fs::flock(&lock, FlockOperation::Unlock).unwrap();
         drop(lock);
-        assert!(result_receiver
-            .recv_timeout(Duration::from_secs(2))
-            .unwrap()
-            .is_ok());
+        assert!(
+            result_receiver
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .is_ok()
+        );
         writer.join().unwrap();
     }
 

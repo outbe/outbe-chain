@@ -334,7 +334,10 @@ Is attestation a permanent record or a renewable authorization?
 - Registration is a renewable lease.
 - Renewal requires the exact next version/nonce and a fresh intent-bound quote.
 - Exact current replay is idempotent; old or conflicting replay rejects.
-- An expired current identity may renew; a superseded identity cannot.
+- Renewal is accepted only in the final half-period window and strictly before
+  the current deadline. After expiry, recovery is a fresh `RegisterEnclave`
+  operation through the ordinary `tee join` command; a superseded identity
+  cannot be revived.
 - Replacement stages a fresh candidate B under the same persistent `NodeHost`
   authority while committed A remains the only normal startup target. The host
   creates the canonical replacement intent; B quotes and signs that exact intent,
@@ -343,6 +346,14 @@ Is attestation a permanent record or a renewable authorization?
 - Candidate state and exact submission bytes are owner-only, bounded and durable.
   Restart may resume the same enclave identity but may not silently substitute
   another B or auto-promote it.
+- `tee join` is the only operator-facing recovery workflow. For a fresh enclave
+  it drives the candidate machinery internally; no separate promotion command,
+  service or EVM key is required.
+- Crash-safe delivery additionally persists the exact signed registration
+  transaction before relay. Candidate evidence alone is insufficient because a
+  crash after relay but before recording the transaction hash would otherwise
+  make the exact finalized onboarding event ambiguous. Restart resubmits only
+  the byte-identical transaction or reconciles its exact finalized binding.
 - Local receipt, RPC or an operator flag cannot promote B. Atomic promotion
   requires an opaque authorization for the exact finalized replacement intent
   and candidate manifest; its production construction belongs to I6.

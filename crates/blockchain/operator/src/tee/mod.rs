@@ -7,8 +7,9 @@ pub mod upgrade;
 
 pub use onboarding::{await_finalized_onboarding_v1, FinalizedOnboardingV1};
 pub use registry::{
-    read_finalized_staged_successor_policy_v1, ExpectedOnboardingBindingV1,
-    FinalizedStagedSuccessorPolicyV1, NodeBindingSelectorV1,
+    read_finalized_registry_view_v1, read_finalized_staged_successor_policy_v1,
+    ExpectedOnboardingBindingV1, FinalizedRegistryChainViewV1, FinalizedStagedSuccessorPolicyV1,
+    NodeBindingSelectorV1, RenewalBindingV1,
 };
 pub use renewal::{
     run_renewal_once_v1, RenewalEnclaveV1, RenewalNodeSignerV1, RenewalOutcomeV1,

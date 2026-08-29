@@ -1,6 +1,6 @@
 //! Canonical Registry selectors and exact onboarding expectations.
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolCall;
 use eyre::{Result, WrapErr as _};
 use outbe_primitives::{
@@ -9,6 +9,7 @@ use outbe_primitives::{
     tee_operator_v1::TeeRenewalScheduleV1,
     tee_registry_abi_v1::{ITeeRegistryV1, NodeEnclaveBindingV1View},
 };
+use outbe_tee::FinalizedRegistryViewV1;
 use serde::{Deserialize, Serialize};
 
 use crate::rpc::RenewalRpc;
@@ -16,6 +17,7 @@ use crate::rpc::RenewalRpc;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NodeBindingSelectorV1 {
     NodeHost([u8; 33]),
+    Validator(Address),
 }
 
 impl NodeBindingSelectorV1 {
@@ -26,6 +28,10 @@ impl NodeBindingSelectorV1 {
                 rethP2pX: B256::from_slice(&public[1..]),
             }
             .abi_encode(),
+            Self::Validator(validator) => ITeeRegistryV1::validatorEnclaveBindingCall {
+                validator: *validator,
+            }
+            .abi_encode(),
         }
     }
 
@@ -33,7 +39,14 @@ impl NodeBindingSelectorV1 {
         &self,
         encoded: &[u8],
     ) -> alloy_sol_types::Result<NodeEnclaveBindingV1View> {
-        ITeeRegistryV1::nodeHostEnclaveBindingCall::abi_decode_returns(encoded)
+        match self {
+            Self::NodeHost(_) => {
+                ITeeRegistryV1::nodeHostEnclaveBindingCall::abi_decode_returns(encoded)
+            }
+            Self::Validator(_) => {
+                ITeeRegistryV1::validatorEnclaveBindingCall::abi_decode_returns(encoded)
+            }
+        }
     }
 }
 
@@ -109,6 +122,15 @@ pub struct FinalizedRenewalChainViewV1 {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FinalizedRegistryChainViewV1 {
+    pub schedule: TeeRenewalScheduleV1,
+    pub view: FinalizedRegistryViewV1,
+    pub policy: TeePolicyV1,
+    pub binding: Option<RenewalBindingV1>,
+    pub tribute_offer_public: B256,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FinalizedStagedSuccessorPolicyV1 {
     pub finalized_height: u64,
     pub finalized_hash: B256,
@@ -170,6 +192,27 @@ pub async fn read_finalized_renewal_view_v1(
     rpc: &(impl RenewalRpc + Sync),
     selector: &NodeBindingSelectorV1,
 ) -> Result<FinalizedRenewalChainViewV1> {
+    let view = read_finalized_registry_view_v1(rpc, selector).await?;
+    if view.policy.attestation_mode != AttestationMode::DcapRequired {
+        eyre::bail!("DCAP renewal is disabled for non-DcapRequired networks");
+    }
+    let binding = view
+        .binding
+        .ok_or_else(|| eyre::eyre!("finalized Registry has no enclave binding for this node"))?;
+    Ok(FinalizedRenewalChainViewV1 {
+        schedule: view.schedule,
+        policy: view.policy,
+        binding,
+        tribute_offer_public: view.tribute_offer_public,
+    })
+}
+
+/// Read the exact finalized policy and optional node binding used by initial
+/// join, live-lease rejection, and expired rejoin recovery.
+pub async fn read_finalized_registry_view_v1(
+    rpc: &(impl RenewalRpc + Sync),
+    selector: &NodeBindingSelectorV1,
+) -> Result<FinalizedRegistryChainViewV1> {
     let schedule = rpc
         .tee_renewal_schedule_v1()
         .await
@@ -188,6 +231,12 @@ pub async fn read_finalized_renewal_view_v1(
         .ok_or_else(|| eyre::eyre!("finalized block has no hash"))?
         .parse::<B256>()
         .wrap_err("parse finalized block hash")?;
+    let state_root = finalized
+        .get("stateRoot")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| eyre::eyre!("finalized block has no stateRoot"))?
+        .parse::<B256>()
+        .wrap_err("parse finalized block stateRoot")?;
     if number != schedule.finalized_height
         || timestamp != schedule.finalized_timestamp
         || hash != schedule.finalized_hash
@@ -207,9 +256,6 @@ pub async fn read_finalized_renewal_view_v1(
         .wrap_err("decode finalized active TEE policy")?;
     let policy = TeePolicyV1::decode_canonical(&canonical)
         .map_err(|error| eyre::eyre!("finalized TEE policy is non-canonical: {error}"))?;
-    if policy.attestation_mode != AttestationMode::DcapRequired {
-        eyre::bail!("DCAP renewal is disabled for non-DcapRequired networks");
-    }
     let rpc_chain_id = rpc.chain_id().await.wrap_err("read eth_chainId")?;
     if policy.chain_id != U256::from(rpc_chain_id).to_be_bytes() {
         eyre::bail!("finalized TEE policy chain id does not match eth_chainId");
@@ -218,11 +264,13 @@ pub async fn read_finalized_renewal_view_v1(
         .call_at(TEE_REGISTRY_ADDRESS, &selector.binding_call(), &tag)
         .await
         .wrap_err("read finalized enclave binding")?;
-    let binding = RenewalBindingV1::try_from(
-        selector
-            .decode_binding(&binding_bytes)
-            .wrap_err("decode finalized enclave binding")?,
-    )?;
+    let binding_view = selector
+        .decode_binding(&binding_bytes)
+        .wrap_err("decode finalized enclave binding")?;
+    let binding = binding_view
+        .exists
+        .then(|| RenewalBindingV1::try_from(binding_view))
+        .transpose()?;
     let offer_bytes = rpc
         .call_at(
             TEE_REGISTRY_ADDRESS,
@@ -237,8 +285,16 @@ pub async fn read_finalized_renewal_view_v1(
     if tribute_offer_public.is_zero() {
         eyre::bail!("finalized Registry tribute offer public key is zero");
     }
-    Ok(FinalizedRenewalChainViewV1 {
+    Ok(FinalizedRegistryChainViewV1 {
         schedule,
+        view: FinalizedRegistryViewV1 {
+            chain_id: policy.chain_id,
+            genesis_hash: policy.genesis_hash,
+            block_number: number,
+            block_hash: hash,
+            state_root,
+            consensus_timestamp: timestamp,
+        },
         policy,
         binding,
         tribute_offer_public,
@@ -266,4 +322,24 @@ pub struct ExpectedOnboardingBindingV1 {
     pub tribute_offer_public: [u8; 32],
     pub key_epoch: u64,
     pub tribute_offer_epoch: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finalized_join_selectors_cover_node_host_and_evm_association() {
+        let node = NodeBindingSelectorV1::NodeHost([2; 33]).binding_call();
+        let validator = NodeBindingSelectorV1::Validator(Address::repeat_byte(3)).binding_call();
+        assert_eq!(
+            &node[..4],
+            ITeeRegistryV1::nodeHostEnclaveBindingCall::SELECTOR
+        );
+        assert_eq!(
+            &validator[..4],
+            ITeeRegistryV1::validatorEnclaveBindingCall::SELECTOR
+        );
+        assert_ne!(node, validator);
+    }
 }

@@ -15,7 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
+use alloy_primitives::{Address, B256, U256, keccak256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use clap::Subcommand;
 use eyre::{Result, WrapErr};
@@ -23,26 +23,31 @@ use k256::ecdsa::signature::hazmat::PrehashSigner as _;
 use outbe_operator::{
     rpc::{FinalityRpc, RenewalRpc},
     tee::{
-        await_finalized_onboarding_v1, copy_same_platform_sealed_root_and_checkpoint_v1,
-        inspect_upgrade_journal_v1, prepare_upgrade_journal_v1,
+        ExpectedOnboardingBindingV1, NodeBindingSelectorV1, RenewalBindingV1, RenewalOutcomeV1,
+        RenewalServiceConfigV1, UpgradeContextV1, await_finalized_onboarding_v1,
+        copy_same_platform_sealed_root_and_checkpoint_v1, inspect_upgrade_journal_v1,
+        prepare_upgrade_journal_v1, read_finalized_registry_view_v1,
         read_finalized_staged_successor_policy_v1, read_renewal_status_v1, run_renewal_once_v1,
-        run_upgrade_submission_v1, ExpectedOnboardingBindingV1, NodeBindingSelectorV1,
-        RenewalOutcomeV1, RenewalServiceConfigV1, UpgradeContextV1,
+        run_upgrade_submission_v1,
     },
-    tx::RelaySignerV1,
+    tx::{RelaySignerV1, buffered_gas_price},
 };
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapEvidenceV1,
-    GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1, RegistryMutatorV1, TeePolicyV1,
-    TeeRegistryGasScheduleV1, ValidatorNodeBindingV1, ENCLAVE_ID_DOMAIN_V1,
+    ENCLAVE_ID_DOMAIN_V1, GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1,
+    RegistryMutatorV1, TeePolicyV1, TeeRegistryGasScheduleV1, ValidatorNodeBindingV1,
 };
 use outbe_tee::protocol::{
     EnclaveRequest, EnclaveResponse, MAX_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES,
     MIN_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES,
 };
 use outbe_tee::{
-    acquire_dcap_collateral_v1, load_committed_enclave_manifest_v1, EnclaveClient,
-    NodeHostIdentityV1, ReplacementCandidateEnclaveV1, RuntimeEnclaveClient,
+    AuthorizedEnclaveClient, EnclaveClient, FinalizedReplacementBindingV1, GeneratedDcapQuoteV1,
+    NodeHostIdentityV1, ReplacementCandidateEnclaveV1, acquire_dcap_collateral_v1,
+    connect_committed_node_host_enclave, construct_finalized_replacement_authorization_v1,
+    load_committed_enclave_manifest_v1, load_replacement_candidate_relay,
+    load_replacement_candidate_submission, persist_replacement_candidate_relay,
+    persist_replacement_candidate_submission, promote_replacement_candidate,
 };
 use zeroize::Zeroizing;
 
@@ -661,6 +666,51 @@ enum JoinTransport {
     Development,
 }
 
+enum JoinEnclave {
+    Committed(AuthorizedEnclaveClient),
+    Candidate(Box<ReplacementCandidateEnclaveV1>),
+    Development(Box<EnclaveClient>),
+}
+
+impl JoinEnclave {
+    fn is_candidate(&self) -> bool {
+        matches!(self, Self::Candidate(_))
+    }
+
+    fn generate_dcap_quote(
+        &mut self,
+        intent: &RegistrationIntentV1,
+    ) -> Result<GeneratedDcapQuoteV1> {
+        match self {
+            Self::Committed(client) => client.generate_dcap_quote(intent),
+            Self::Candidate(client) => client.generate_dcap_quote(intent),
+            Self::Development(_) => unreachable!("DCAP join cannot use development transport"),
+        }
+        .map_err(|error| eyre::eyre!("generate intent-bound DCAP quote: {error}"))
+    }
+
+    fn sign_registration_intent_dev_v1(
+        &mut self,
+        intent: &RegistrationIntentV1,
+    ) -> Result<[u8; 64]> {
+        match self {
+            Self::Committed(client) => client.sign_registration_intent_dev_v1(intent),
+            Self::Candidate(client) => client.sign_registration_intent_dev_v1(intent),
+            Self::Development(client) => client.sign_registration_intent_dev_v1(intent),
+        }
+        .map_err(|error| eyre::eyre!("sign development V1 intent: {error}"))
+    }
+
+    fn request(&mut self, request: &EnclaveRequest) -> Result<EnclaveResponse> {
+        match self {
+            Self::Committed(client) => client.request(request),
+            Self::Candidate(client) => client.request(request),
+            Self::Development(client) => client.request(request),
+        }
+        .map_err(|error| eyre::eyre!(error))
+    }
+}
+
 fn select_join_transport(
     attestation_mode: AttestationMode,
     has_node_data_dir: bool,
@@ -676,6 +726,84 @@ fn select_join_transport(
     }
 }
 
+fn ensure_joinable_binding(
+    binding: Option<&outbe_operator::tee::RenewalBindingV1>,
+    finalized_timestamp: u64,
+) -> Result<()> {
+    if binding.is_some_and(|binding| finalized_timestamp < binding.valid_until) {
+        eyre::bail!("finalized enclave lease is live; use `outbe-cli tee renew`");
+    }
+    Ok(())
+}
+
+fn registration_counters(
+    binding: Option<&outbe_operator::tee::RenewalBindingV1>,
+) -> Result<(u64, u64, u64, u64)> {
+    let Some(binding) = binding else {
+        return Ok((1, 0, 0, 0));
+    };
+    Ok((
+        binding
+            .binding_version
+            .checked_add(1)
+            .ok_or_else(|| eyre::eyre!("binding version exhausted"))?,
+        binding
+            .registration_version
+            .checked_add(1)
+            .ok_or_else(|| eyre::eyre!("registration version exhausted"))?,
+        binding.renewal_nonce,
+        binding.transition_nonce,
+    ))
+}
+
+fn finalized_binding_matches_intent(
+    binding: &RenewalBindingV1,
+    intent: &RegistrationIntentV1,
+) -> Result<bool> {
+    Ok(binding.node_id_hash
+        == intent
+            .node_id
+            .node_id_hash()
+            .map_err(|error| eyre::eyre!("hash registration node identity: {error}"))?
+        && binding.enclave_id == intent.enclave_id
+        && binding.binding_id == intent.binding_id
+        && binding.intent_hash
+            == intent
+                .intent_hash()
+                .map_err(|error| eyre::eyre!("hash registration intent: {error}"))?
+        && binding.binding_version == intent.binding_version
+        && binding.registration_version == intent.registration_version
+        && binding.renewal_nonce == intent.renewal_nonce
+        && binding.transition_nonce == intent.transition_nonce
+        && binding.valid_until == intent.requested_valid_until
+        && binding.recipient_x25519 == B256::from(intent.recipient_x25519)
+        && binding.attestation_ed25519 == B256::from(intent.attestation_ed25519)
+        && binding.noise_responder_x25519 == B256::from(intent.noise_responder_x25519)
+        && binding.node_host_authorization_hash == intent.node_host_authorization_hash)
+}
+
+fn committed_manifest_matches_binding(
+    manifest: &outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1,
+    binding: &RenewalBindingV1,
+) -> Result<bool> {
+    Ok(manifest
+        .node_id
+        .node_id_hash()
+        .map_err(|error| eyre::eyre!("hash committed node identity: {error}"))?
+        == binding.node_id_hash
+        && manifest
+            .enclave_id()
+            .map_err(|error| eyre::eyre!("derive committed enclave identity: {error}"))?
+            == binding.enclave_id
+        && B256::from(manifest.recipient_x25519) == binding.recipient_x25519
+        && B256::from(manifest.attestation_ed25519) == binding.attestation_ed25519
+        && B256::from(manifest.noise_responder_x25519) == binding.noise_responder_x25519
+        && manifest
+            .node_host_authorization_hash()
+            .map_err(|error| eyre::eyre!("derive committed NodeHost authorization: {error}"))?
+            == binding.node_host_authorization_hash)
+}
+
 async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
     let TeeJoinArgs {
         private_key,
@@ -686,27 +814,11 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
         valid_until,
         timeout_secs,
     } = args;
-    let evm_signer = super::require_signer(private_key)?;
-    let policy = active_policy_v1(client).await?;
+    let private_key_hex = private_key
+        .ok_or_else(|| eyre::eyre!("tee join requires the global --private-key EVM signer"))?;
+    let evm_signer = super::require_signer(Some(private_key_hex))?;
     let rpc_chain_id = client.eth_chain_id().await?;
-    if policy.chain_id != U256::from(rpc_chain_id).to_be_bytes() {
-        return Err(eyre::eyre!(
-            "active V1 policy chain id does not match eth_chainId"
-        ));
-    }
     let binding_id = parse_nonzero_b256(binding_id, "--binding-id")?;
-    let now = latest_block_timestamp(client).await?;
-    let lease = valid_until
-        .checked_sub(now)
-        .ok_or_else(|| eyre::eyre!("--valid-until is not in the future"))?;
-    if lease < policy.minimum_lease || lease > policy.maximum_lease {
-        return Err(eyre::eyre!(
-            "--valid-until lease {lease}s is outside active policy range {}..={}s",
-            policy.minimum_lease,
-            policy.maximum_lease
-        ));
-    }
-
     let path = reth_p2p_secret_key
         .ok_or_else(|| eyre::eyre!("tee join requires --reth-p2p-secret-key"))?;
     let node_signing_key = load_secp256k1_key_file(path)?;
@@ -715,6 +827,118 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
     let node_id_hash = node_id
         .node_id_hash()
         .map_err(|error| eyre::eyre!("hash V1 node identity: {error}"))?;
+    let binding_selector = NodeBindingSelectorV1::NodeHost(reth_p2p_public);
+    let finalized = read_finalized_registry_view_v1(&CliFinalityRpc(client), &binding_selector)
+        .await
+        .wrap_err("read exact finalized TeeRegistry join state")?;
+    let policy = finalized.policy.clone();
+    if policy.chain_id != U256::from(rpc_chain_id).to_be_bytes() {
+        return Err(eyre::eyre!(
+            "finalized V1 policy chain id does not match eth_chainId"
+        ));
+    }
+    if finalized
+        .binding
+        .as_ref()
+        .is_some_and(|binding| binding.node_id_hash != node_id_hash)
+    {
+        eyre::bail!("finalized Registry selector returned another node identity");
+    }
+    if let Some(node_binding) = finalized.binding.as_ref() {
+        let signer_view = read_finalized_registry_view_v1(
+            &CliFinalityRpc(client),
+            &NodeBindingSelectorV1::Validator(evm_signer.address()),
+        )
+        .await
+        .wrap_err("authenticate global EVM signer against finalized TeeRegistry association")?;
+        if signer_view.binding.as_ref() != Some(node_binding) {
+            eyre::bail!("global --private-key does not own this finalized NodeHost association");
+        }
+    }
+    let durable_resume_intent = if let Some(node_data_dir) = node_data_dir {
+        let manifest_path = node_data_dir
+            .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
+            .join(outbe_tee::node_host::NODE_HOST_MANIFEST_V1);
+        if manifest_path.exists() {
+            load_replacement_candidate_submission(node_data_dir)
+                .map_err(|error| eyre::eyre!("inspect candidate join checkpoint: {error}"))?
+                .map(|submission| {
+                    let evidence = AttestationEvidenceV1::decode_canonical(submission.evidence())
+                        .map_err(|error| {
+                        eyre::eyre!("decode candidate join checkpoint: {error}")
+                    })?;
+                    Ok::<_, eyre::Report>(match evidence {
+                        AttestationEvidenceV1::Dcap(value) => value.intent,
+                        AttestationEvidenceV1::GramineDirectDev(value) => value.intent,
+                    })
+                })
+                .transpose()?
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let resumes_finalized_target = match (&finalized.binding, &durable_resume_intent) {
+        (Some(binding), Some(intent)) => finalized_binding_matches_intent(binding, intent)?,
+        _ => false,
+    };
+    if !resumes_finalized_target {
+        if let Some(binding) = finalized
+            .binding
+            .as_ref()
+            .filter(|binding| finalized.schedule.finalized_timestamp < binding.valid_until)
+        {
+            let exact_completed_replay = if binding.binding_id == binding_id
+                && binding.valid_until == valid_until
+            {
+                if let Some(node_data_dir) = node_data_dir {
+                    let manifest = load_committed_enclave_manifest_v1(node_data_dir)
+                        .map_err(|error| eyre::eyre!("load committed replay manifest: {error}"))?;
+                    committed_manifest_matches_binding(&manifest, binding)?
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            if exact_completed_replay {
+                let mut committed = connect_committed_node_host_enclave(
+                    enclave_socket,
+                    node_data_dir.expect("completed replay requires NodeHost state"),
+                )
+                .map_err(|error| eyre::eyre!("reopen completed tee join: {error}"))?;
+                match committed.request(&EnclaveRequest::GetPublicKeys)? {
+                    EnclaveResponse::PublicKeys {
+                        offer_key_ready: true,
+                        recipient_x25519_pub,
+                        ..
+                    } if recipient_x25519_pub
+                        == <B256 as Into<[u8; 32]>>::into(finalized.tribute_offer_public) =>
+                    {
+                        println!("✓ exact tee join is already finalized and locally committed");
+                        return Ok(());
+                    }
+                    other => eyre::bail!(
+                        "finalized tee join is not durably ready in the committed enclave: {other:?}"
+                    ),
+                }
+            }
+            ensure_joinable_binding(Some(binding), finalized.schedule.finalized_timestamp)?;
+        }
+    }
+    if !resumes_finalized_target {
+        let lease = valid_until
+            .checked_sub(finalized.schedule.finalized_timestamp)
+            .ok_or_else(|| eyre::eyre!("--valid-until is not after finalized consensus time"))?;
+        if lease < policy.minimum_lease || lease > policy.maximum_lease {
+            return Err(eyre::eyre!(
+                "--valid-until lease {lease}s is outside finalized policy range {}..={}s",
+                policy.minimum_lease,
+                policy.maximum_lease
+            ));
+        }
+    }
     let (validator_binding, validator_binding_hash, validator_signature) =
         authorize_validator_node_binding(
             policy.chain_id,
@@ -727,23 +951,9 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
     let validator_binding = validator_binding
         .encode_canonical()
         .map_err(|error| eyre::eyre!("encode address-to-NodeHost binding: {error}"))?;
-    let binding_selector = NodeBindingSelectorV1::NodeHost(reth_p2p_public);
-    let node_id_for_reopen = node_id.clone();
-
     // Read the permanent chain key before generating a fresh quote. Its exact
     // value is later authenticated again inside the recipient enclave.
-    let offer_pub_u256 = call_u256(
-        client,
-        ITeeRegistry::tributeOfferPublicKeyCall {}.abi_encode(),
-    )
-    .await?;
-    if offer_pub_u256.is_zero() {
-        return Err(eyre::eyre!(
-            "chain has no bootstrapped tribute offer key (tributeOfferPublicKey == 0) — \
-             not a TEE chain, or it has not bootstrapped TEE yet"
-        ));
-    }
-    let expected_offer_pub: [u8; 32] = offer_pub_u256.to_be_bytes();
+    let expected_offer_pub: [u8; 32] = finalized.tribute_offer_public.into();
     let key_epoch = call_u256(client, ITeeRegistry::keyEpochCall {}.abi_encode())
         .await?
         .to::<u64>();
@@ -754,6 +964,12 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
     let policy_hash = policy
         .policy_hash()
         .map_err(|error| eyre::eyre!("active V1 policy is invalid: {error}"))?;
+    if !resumes_finalized_target {
+        ensure_joinable_binding(
+            finalized.binding.as_ref(),
+            finalized.schedule.finalized_timestamp,
+        )?;
+    }
 
     let join_transport = select_join_transport(policy.attestation_mode, node_data_dir.is_some())?;
     let (
@@ -769,19 +985,57 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
             fs::create_dir_all(node_data_dir).wrap_err_with(|| {
                 format!("create NodeHost data directory {}", node_data_dir.display())
             })?;
-            let client = outbe_tee::connect_or_initialize_node_host_enclave(
-                enclave_socket,
-                node_data_dir,
-                NodeHostIdentityV1 {
-                    chain_id: rpc_chain_id,
-                    genesis_hash: policy.genesis_hash,
-                    reth_p2p_public,
-                },
-                |hash| sign_node_hash(&node_signing_key, hash),
-            )
-            .map_err(|error| eyre::eyre!("production NodeHost initialization failed: {error}"))?;
-            let manifest = load_committed_enclave_manifest_v1(node_data_dir)
-                .map_err(|error| eyre::eyre!("load committed NodeHost manifest: {error}"))?;
+            let manifest_path = node_data_dir
+                .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
+                .join(outbe_tee::node_host::NODE_HOST_MANIFEST_V1);
+            let (client, manifest) = if manifest_path.exists() {
+                let committed = load_committed_enclave_manifest_v1(node_data_dir)
+                    .map_err(|error| eyre::eyre!("load committed NodeHost manifest: {error}"))?;
+                match connect_committed_node_host_enclave(enclave_socket, node_data_dir) {
+                    Ok(client) => (JoinEnclave::Committed(client), committed),
+                    Err(committed_error) if finalized.binding.is_some() => {
+                        let candidate = outbe_tee::prepare_node_host_enclave_replacement_candidate(
+                            enclave_socket,
+                            node_data_dir,
+                            NodeHostIdentityV1 {
+                                chain_id: rpc_chain_id,
+                                genesis_hash: policy.genesis_hash,
+                                reth_p2p_public,
+                            },
+                            |hash| sign_node_hash(&node_signing_key, hash),
+                        )
+                        .map_err(|candidate_error| {
+                            eyre::eyre!(
+                                "endpoint matches neither the committed enclave ({committed_error}) nor a resumable fresh candidate ({candidate_error})"
+                            )
+                        })?;
+                        let manifest = candidate.manifest().clone();
+                        (JoinEnclave::Candidate(Box::new(candidate)), manifest)
+                    }
+                    Err(error) => {
+                        return Err(eyre::eyre!(
+                            "reconnect unregistered committed NodeHost enclave: {error}"
+                        ));
+                    }
+                }
+            } else {
+                let client = outbe_tee::connect_or_initialize_node_host_enclave(
+                    enclave_socket,
+                    node_data_dir,
+                    NodeHostIdentityV1 {
+                        chain_id: rpc_chain_id,
+                        genesis_hash: policy.genesis_hash,
+                        reth_p2p_public,
+                    },
+                    |hash| sign_node_hash(&node_signing_key, hash),
+                )
+                .map_err(|error| {
+                    eyre::eyre!("production NodeHost initialization failed: {error}")
+                })?;
+                let manifest = load_committed_enclave_manifest_v1(node_data_dir)
+                    .map_err(|error| eyre::eyre!("load committed NodeHost manifest: {error}"))?;
+                (JoinEnclave::Committed(client), manifest)
+            };
             if manifest.chain_id != policy.chain_id
                 || manifest.genesis_hash != policy.genesis_hash
                 || manifest.node_id != node_id
@@ -797,7 +1051,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                 eyre::eyre!("invalid committed NodeHost authorization: {error}")
             })?;
             (
-                RuntimeEnclaveClient::Production(client),
+                client,
                 manifest.recipient_x25519,
                 manifest.attestation_ed25519,
                 manifest.noise_responder_x25519,
@@ -826,7 +1080,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
             let (enclave_id, authorization) =
                 development_identity_v1(&policy, &node_id, recipient, attestation, noise)?;
             (
-                RuntimeEnclaveClient::Development(Box::new(development)),
+                JoinEnclave::Development(Box::new(development)),
                 recipient,
                 attestation,
                 noise,
@@ -836,7 +1090,15 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
         }
     };
 
-    let intent = RegistrationIntentV1 {
+    let source_binding = if resumes_finalized_target {
+        None
+    } else {
+        finalized.binding.as_ref()
+    };
+    let (binding_version, registration_version, renewal_nonce, transition_nonce) =
+        registration_counters(source_binding)?;
+
+    let fresh_intent = RegistrationIntentV1 {
         chain_id: policy.chain_id,
         genesis_hash: policy.genesis_hash,
         operation: AttestationOperationV1::RegisterEnclave,
@@ -845,62 +1107,97 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
         node_id,
         enclave_id,
         binding_id,
-        binding_version: 1,
-        registration_version: 0,
-        renewal_nonce: 0,
-        transition_nonce: 0,
+        binding_version,
+        registration_version,
+        renewal_nonce,
+        transition_nonce,
         requested_valid_until: valid_until,
         recipient_x25519,
         attestation_ed25519,
         noise_responder_x25519,
         node_host_authorization_hash,
     };
+    let intent = durable_resume_intent.unwrap_or(fresh_intent);
+    if intent.binding_id != binding_id
+        || intent.requested_valid_until != valid_until
+        || intent.enclave_id != enclave_id
+        || intent.recipient_x25519 != recipient_x25519
+        || intent.attestation_ed25519 != attestation_ed25519
+        || intent.noise_responder_x25519 != noise_responder_x25519
+        || intent.node_host_authorization_hash != node_host_authorization_hash
+    {
+        eyre::bail!("requested tee join does not match its durable candidate checkpoint");
+    }
     let intent_hash = intent
         .intent_hash()
         .map_err(|error| eyre::eyre!("invalid V1 registration intent: {error}"))?;
-    let node_signature = sign_node_hash(&node_signing_key, intent_hash)
+    let fresh_node_signature = sign_node_hash(&node_signing_key, intent_hash)
         .map_err(|error| eyre::eyre!("sign V1 node intent: {error}"))?;
-    let (evidence, enclave_signature) = match policy.attestation_mode {
-        AttestationMode::DcapRequired => {
-            let RuntimeEnclaveClient::Production(client) = &mut enclave else {
-                unreachable!("DCAP transport selection always uses authenticated NodeHost")
-            };
-            let generated = client
-                .generate_dcap_quote(&intent)
-                .map_err(|error| eyre::eyre!("generate intent-bound DCAP quote: {error}"))?;
-            let components = acquire_dcap_collateral_v1(&generated.quote_body)
-                .map_err(|error| eyre::eyre!("acquire canonical DCAP collateral: {error}"))?;
-            let signature = generated.enclave_signature;
-            (
-                AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
-                    intent,
-                    quote: generated.quote_body,
-                    components,
-                    transition_key_ready_proof: generated.transition_key_ready_proof,
-                }),
-                signature,
-            )
-        }
-        AttestationMode::GramineDirectDev => {
-            let signature = match &mut enclave {
-                RuntimeEnclaveClient::Production(client) => client
-                    .sign_registration_intent_dev_v1(&intent)
-                    .map_err(|error| eyre::eyre!("sign SGX development V1 intent: {error}"))?,
-                RuntimeEnclaveClient::Development(client) => client
-                    .sign_registration_intent_dev_v1(&intent)
-                    .map_err(|error| eyre::eyre!("sign development V1 intent: {error}"))?,
-            };
-            (
-                AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
-                    intent,
-                    dev_attestation_public: attestation_ed25519,
-                    dev_signature: signature,
-                }),
-                signature,
-            )
-        }
+    let durable_submission = if enclave.is_candidate() {
+        let node_data_dir = node_data_dir.expect("candidate join requires NodeHost state");
+        load_replacement_candidate_submission(node_data_dir)
+            .map_err(|error| eyre::eyre!("load durable candidate submission: {error}"))?
+    } else {
+        None
     };
-    let evidence = evidence
+    let (evidence_value, node_signature, enclave_signature) = if let Some(durable) =
+        durable_submission.as_ref()
+    {
+        let evidence = AttestationEvidenceV1::decode_canonical(durable.evidence())
+            .map_err(|error| eyre::eyre!("decode durable candidate evidence: {error}"))?;
+        let durable_intent = match &evidence {
+            AttestationEvidenceV1::Dcap(value) => &value.intent,
+            AttestationEvidenceV1::GramineDirectDev(value) => &value.intent,
+        };
+        if durable_intent != &intent || durable.node_signature() != &fresh_node_signature {
+            eyre::bail!("requested tee join conflicts with the durable candidate registration");
+        }
+        (
+            evidence,
+            *durable.node_signature(),
+            *durable.enclave_signature(),
+        )
+    } else {
+        let (evidence, signature) = match policy.attestation_mode {
+            AttestationMode::DcapRequired => {
+                let generated = enclave.generate_dcap_quote(&intent)?;
+                let components = acquire_dcap_collateral_v1(&generated.quote_body)
+                    .map_err(|error| eyre::eyre!("acquire canonical DCAP collateral: {error}"))?;
+                let signature = generated.enclave_signature;
+                (
+                    AttestationEvidenceV1::Dcap(DcapEvidenceV1 {
+                        intent: intent.clone(),
+                        quote: generated.quote_body,
+                        components,
+                        transition_key_ready_proof: generated.transition_key_ready_proof,
+                    }),
+                    signature,
+                )
+            }
+            AttestationMode::GramineDirectDev => {
+                let signature = enclave.sign_registration_intent_dev_v1(&intent)?;
+                (
+                    AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+                        intent: intent.clone(),
+                        dev_attestation_public: attestation_ed25519,
+                        dev_signature: signature,
+                    }),
+                    signature,
+                )
+            }
+        };
+        if enclave.is_candidate() {
+            persist_replacement_candidate_submission(
+                node_data_dir.expect("candidate join requires NodeHost state"),
+                &evidence,
+                &fresh_node_signature,
+                &signature,
+            )
+            .map_err(|error| eyre::eyre!("persist candidate registration: {error}"))?;
+        }
+        (evidence, fresh_node_signature, signature)
+    };
+    let evidence = evidence_value
         .encode_canonical()
         .map_err(|error| eyre::eyre!("encode canonical V1 evidence: {error}"))?;
     let node_id_hash = match AttestationEvidenceV1::decode_canonical(&evidence)
@@ -933,10 +1230,103 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
     // The global EVM signer owns both the address-to-NodeHost association and
     // the transaction envelope. No second node or renewal EVM key exists.
     let from_block = client.eth_block_number().await?;
-    let tx_hash = evm_signer
-        .send_tx_with_gas(client, abi::TEE_REGISTRY_ADDR, call, U256::ZERO, gas_limit)
-        .await
-        .wrap_err("V1 registerEnclave submission failed")?;
+    let tx_hash = if enclave.is_candidate() {
+        let node_data_dir = node_data_dir.expect("candidate join requires NodeHost state");
+        let calldata_hash = keccak256(&call);
+        let relay = if let Some(durable) = load_replacement_candidate_relay(node_data_dir)
+            .map_err(|error| eyre::eyre!("load durable candidate relay: {error}"))?
+        {
+            if durable.calldata_hash() != calldata_hash {
+                eyre::bail!("durable candidate transaction targets different calldata");
+            }
+            durable
+        } else {
+            if resumes_finalized_target {
+                eyre::bail!(
+                    "finalized candidate binding has no durable pre-relay transaction checkpoint"
+                );
+            }
+            let relay_signer = RelaySignerV1::new(private_key_hex)?;
+            if relay_signer.address() != evm_signer.address() {
+                eyre::bail!("global EVM signer address is inconsistent");
+            }
+            let account_nonce = client
+                .eth_get_transaction_count(evm_signer.address())
+                .await?;
+            let gas_price = buffered_gas_price(client.eth_gas_price().await?);
+            let required_balance = gas_price.saturating_mul(U256::from(gas_limit));
+            let balance = client.eth_get_balance(evm_signer.address()).await?;
+            if balance < required_balance {
+                eyre::bail!(
+                    "TEE join EVM signer {} has {balance} but needs at least {required_balance}",
+                    evm_signer.address()
+                );
+            }
+            let raw = relay_signer.sign_renewal(
+                rpc_chain_id,
+                account_nonce,
+                gas_price,
+                gas_limit,
+                abi::TEE_REGISTRY_ADDR,
+                &call,
+            )?;
+            persist_replacement_candidate_relay(node_data_dir, calldata_hash, &raw.raw_transaction)
+                .map_err(|error| eyre::eyre!("persist exact candidate transaction: {error}"))?
+        };
+        let expected_hash = relay.transaction_hash();
+        if !resumes_finalized_target {
+            match client
+                .eth_send_raw_transaction(relay.raw_transaction())
+                .await
+            {
+                Ok(returned) => {
+                    let returned_hash = returned
+                        .parse::<B256>()
+                        .wrap_err("parse registerEnclave transaction hash")?;
+                    if returned_hash != expected_hash {
+                        eyre::bail!("RPC returned a different candidate transaction hash");
+                    }
+                }
+                Err(error) => {
+                    let message = format!("{error:#}").to_ascii_lowercase();
+                    let already_known =
+                        message.contains("already known") || message.contains("known transaction");
+                    let exact_receipt_exists = if message.contains("nonce too low") {
+                        client
+                            .eth_get_transaction_receipt(&format!(
+                                "0x{}",
+                                hex::encode(expected_hash)
+                            ))
+                            .await?
+                            .and_then(|receipt| {
+                                receipt
+                                    .get("transactionHash")
+                                    .and_then(serde_json::Value::as_str)
+                                    .map(str::to_owned)
+                            })
+                            .is_some_and(|hash| {
+                                hash.eq_ignore_ascii_case(&format!(
+                                    "0x{}",
+                                    hex::encode(expected_hash)
+                                ))
+                            })
+                    } else {
+                        false
+                    };
+                    if !already_known && !exact_receipt_exists {
+                        return Err(error)
+                            .wrap_err("relay exact candidate registerEnclave transaction");
+                    }
+                }
+            }
+        }
+        format!("0x{}", hex::encode(expected_hash))
+    } else {
+        evm_signer
+            .send_tx_with_gas(client, abi::TEE_REGISTRY_ADDR, call, U256::ZERO, gas_limit)
+            .await
+            .wrap_err("V1 registerEnclave submission failed")?
+    };
     println!(
         "V1 registerEnclave submitted by {}: {tx_hash}",
         evm_signer.address()
@@ -952,7 +1342,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
     let resp = match policy.attestation_mode {
         AttestationMode::DcapRequired => {
             let expected = ExpectedOnboardingBindingV1 {
-                selector: binding_selector,
+                selector: binding_selector.clone(),
                 chain_id: policy.chain_id,
                 genesis_hash: policy.genesis_hash,
                 node_id_hash,
@@ -992,6 +1382,15 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                 })?
         }
         AttestationMode::GramineDirectDev => {
+            if enclave.is_candidate() {
+                await_finalized_join_target(
+                    client,
+                    &binding_selector,
+                    &intent,
+                    Duration::from_secs(timeout_secs),
+                )
+                .await?;
+            }
             let sealed = poll_offer_key_sealed(
                 client,
                 &topic0,
@@ -1017,21 +1416,56 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
             tribute_offer_public,
         } => {
             if join_transport == JoinTransport::AuthorizedNodeHost {
+                let candidate_join = enclave.is_candidate();
+                let promotion = if candidate_join {
+                    let exact =
+                        read_finalized_registry_view_v1(&CliFinalityRpc(client), &binding_selector)
+                            .await
+                            .wrap_err("read finalized candidate promotion binding")?;
+                    let binding = exact.binding.ok_or_else(|| {
+                        eyre::eyre!("finalized Registry lost the candidate binding")
+                    })?;
+                    if !finalized_binding_matches_intent(&binding, &intent)? {
+                        eyre::bail!(
+                            "finalized Registry binding differs from the durable candidate intent"
+                        );
+                    }
+                    Some(FinalizedReplacementBindingV1 {
+                        view: exact.view,
+                        node_id_hash: binding.node_id_hash,
+                        enclave_id: binding.enclave_id,
+                        binding_id: binding.binding_id,
+                        intent_hash: binding.intent_hash,
+                        binding_version: binding.binding_version,
+                        registration_version: binding.registration_version,
+                        valid_until: binding.valid_until,
+                        recipient_x25519: binding.recipient_x25519.into(),
+                        attestation_ed25519: binding.attestation_ed25519.into(),
+                        noise_responder_x25519: binding.noise_responder_x25519.into(),
+                        node_host_authorization_hash: binding.node_host_authorization_hash,
+                    })
+                } else {
+                    None
+                };
                 drop(enclave);
                 let node_data_dir = node_data_dir.ok_or_else(|| {
                     eyre::eyre!("authenticated onboarding lost its required node data directory")
                 })?;
-                let mut reopened = outbe_tee::connect_or_initialize_node_host_enclave(
-                    enclave_socket,
-                    node_data_dir,
-                    NodeHostIdentityV1 {
-                        chain_id: rpc_chain_id,
-                        genesis_hash: policy.genesis_hash,
-                        reth_p2p_public: node_id_for_reopen.reth_p2p_public,
-                    },
-                    |hash| sign_node_hash(&node_signing_key, hash),
-                )
-                .map_err(|error| eyre::eyre!("reopen initialized enclave: {error}"))?;
+                if let Some(finalized_binding) = promotion {
+                    let authorization = construct_finalized_replacement_authorization_v1(
+                        node_data_dir,
+                        &finalized_binding,
+                    )
+                    .map_err(|error| {
+                        eyre::eyre!("authorize finalized candidate promotion: {error}")
+                    })?;
+                    promote_replacement_candidate(node_data_dir, &authorization).map_err(
+                        |error| eyre::eyre!("promote finalized rejoin candidate: {error}"),
+                    )?;
+                }
+                let mut reopened =
+                    connect_committed_node_host_enclave(enclave_socket, node_data_dir)
+                        .map_err(|error| eyre::eyre!("reopen committed enclave: {error}"))?;
                 match reopened.request(&EnclaveRequest::GetPublicKeys)? {
                     EnclaveResponse::PublicKeys {
                         offer_key_ready: true,
@@ -1041,7 +1475,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                     other => {
                         return Err(eyre::eyre!(
                             "durable onboarding reopen did not expose the exact permanent offer key: {other:?}"
-                        ))
+                        ));
                     }
                 }
             }
@@ -1067,40 +1501,36 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
     }
 }
 
+async fn await_finalized_join_target(
+    client: &(impl Rpc + Sync),
+    selector: &NodeBindingSelectorV1,
+    intent: &RegistrationIntentV1,
+    timeout: Duration,
+) -> Result<()> {
+    let started = tokio::time::Instant::now();
+    loop {
+        let view = read_finalized_registry_view_v1(&CliFinalityRpc(client), selector).await?;
+        match view.binding.as_ref() {
+            Some(binding) if finalized_binding_matches_intent(binding, intent)? => return Ok(()),
+            Some(binding) if view.schedule.finalized_timestamp < binding.valid_until => {
+                eyre::bail!("finalized Registry contains a competing live join binding")
+            }
+            _ => {}
+        }
+        if started.elapsed() >= timeout {
+            eyre::bail!(
+                "timed out after {}s waiting for exact finalized tee join binding",
+                timeout.as_secs()
+            );
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
 /// `eth_call` a view returning a single `uint256`.
 async fn call_u256(client: &(impl Rpc + Sync), call: Vec<u8>) -> Result<U256> {
     let result = client.eth_call(abi::TEE_REGISTRY_ADDR, &call).await?;
     U256::abi_decode(&result).wrap_err("decode uint256")
-}
-
-async fn active_policy_v1(client: &(impl Rpc + Sync)) -> Result<TeePolicyV1> {
-    let result = client
-        .eth_call(
-            abi::TEE_REGISTRY_ADDR,
-            &ITeeRegistry::activePolicyV1Call {}.abi_encode(),
-        )
-        .await
-        .wrap_err("read active V1 attestation policy")?;
-    let canonical: Bytes = ITeeRegistry::activePolicyV1Call::abi_decode_returns(&result)
-        .wrap_err("decode activePolicyV1 return")?;
-    TeePolicyV1::decode_canonical(&canonical)
-        .map_err(|error| eyre::eyre!("active V1 attestation policy is non-canonical: {error}"))
-}
-
-async fn latest_block_timestamp(client: &(impl Rpc + Sync)) -> Result<u64> {
-    let block = client
-        .eth_get_latest_block()
-        .await
-        .wrap_err("read latest block for registration lease")?;
-    let encoded = block
-        .get("timestamp")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("latest block has no hexadecimal timestamp"))?;
-    let encoded = encoded.strip_prefix("0x").unwrap_or(encoded);
-    if encoded.is_empty() {
-        return Err(eyre::eyre!("latest block timestamp is empty"));
-    }
-    u64::from_str_radix(encoded, 16).wrap_err("parse latest block timestamp")
 }
 
 fn parse_nonzero_b256(value: &str, argument: &'static str) -> Result<B256> {
@@ -1235,6 +1665,7 @@ async fn poll_offer_key_sealed(
     let topics = [Some(topic0.to_string()), Some(topic1.to_string())];
     let deadline = Duration::from_secs(timeout_secs);
     let start = tokio::time::Instant::now();
+    let mut receipt_block = None;
     loop {
         if let Some(receipt) = client
             .eth_get_transaction_receipt(transaction_hash)
@@ -1274,9 +1705,16 @@ async fn poll_offer_key_sealed(
                     ));
                 }
             }
+            let block = receipt
+                .get("blockNumber")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| eyre::eyre!("V1 registration receipt has no blockNumber"))?;
+            receipt_block = Some(block.to_owned());
         }
+        let log_from = receipt_block.as_deref().unwrap_or(&from);
+        let log_to = receipt_block.as_deref().unwrap_or("latest");
         let logs = client
-            .eth_get_logs(abi::TEE_REGISTRY_ADDR, &topics, &from, "latest")
+            .eth_get_logs(abi::TEE_REGISTRY_ADDR, &topics, log_from, log_to)
             .await
             .wrap_err("poll V1 onboarding event logs")?;
         for log in &logs {
@@ -1391,6 +1829,7 @@ fn decode_offer_key_sealed_data(data: &[u8], expected_offer_public: [u8; 32]) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy_primitives::Bytes;
 
     fn sealed_artifact(offer_public: [u8; 32]) -> Vec<u8> {
         let mut sealed = vec![0x44; MIN_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES];
@@ -1439,6 +1878,58 @@ mod tests {
             select_join_transport(AttestationMode::GramineDirectDev, false).unwrap(),
             JoinTransport::Development
         );
+    }
+
+    #[test]
+    fn expired_rejoin_uses_exact_next_binding_and_registration_versions() {
+        let mut binding = test_renewal_binding();
+        binding.binding_version = 7;
+        binding.registration_version = 11;
+        binding.renewal_nonce = 5;
+        binding.transition_nonce = 3;
+        assert_eq!(
+            registration_counters(Some(&binding)).unwrap(),
+            (8, 12, 5, 3)
+        );
+        assert_eq!(registration_counters(None).unwrap(), (1, 0, 0, 0));
+    }
+
+    #[test]
+    fn tee_join_rejects_a_live_binding_but_accepts_the_deadline_as_expired() {
+        let mut binding = test_renewal_binding();
+        binding.valid_until = 200;
+        assert!(ensure_joinable_binding(Some(&binding), 199).is_err());
+        assert!(ensure_joinable_binding(Some(&binding), 200).is_ok());
+        assert!(ensure_joinable_binding(Some(&binding), 201).is_ok());
+        assert!(ensure_joinable_binding(None, 199).is_ok());
+    }
+
+    fn test_renewal_binding() -> outbe_operator::tee::RenewalBindingV1 {
+        outbe_operator::tee::RenewalBindingV1 {
+            node_id_hash: B256::repeat_byte(1),
+            enclave_id: B256::repeat_byte(2),
+            binding_id: B256::repeat_byte(3),
+            intent_hash: B256::repeat_byte(4),
+            evidence_hash: B256::repeat_byte(5),
+            policy_hash: B256::repeat_byte(6),
+            binding_version: 1,
+            registration_version: 0,
+            renewal_nonce: 0,
+            transition_nonce: 0,
+            lease_started_at: 100,
+            valid_until: 200,
+            collateral_valid_until: 300,
+            recipient_x25519: B256::repeat_byte(7),
+            attestation_ed25519: B256::repeat_byte(8),
+            noise_responder_x25519: B256::repeat_byte(9),
+            mrenclave: B256::repeat_byte(10),
+            mrsigner: B256::repeat_byte(11),
+            isv_prod_id: 1,
+            isv_svn: 1,
+            platform_tcb_status: 0,
+            verdict_hash: B256::repeat_byte(12),
+            node_host_authorization_hash: B256::repeat_byte(13),
+        }
     }
 
     #[test]
@@ -1527,14 +2018,10 @@ mod tests {
             "topics": ["0xtopic0", "0xwrong"],
             "data": format!("0x{}", hex::encode(Bytes::from(sealed).abi_encode())),
         });
-        assert!(matching_offer_key_log(
-            &wrong_topic,
-            "0xtopic0",
-            "0xtopic1",
-            "0xaaaa",
-            offer_public,
-        )
-        .is_err());
+        assert!(
+            matching_offer_key_log(&wrong_topic, "0xtopic0", "0xtopic1", "0xaaaa", offer_public,)
+                .is_err()
+        );
     }
 
     #[tokio::test]

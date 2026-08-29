@@ -52,10 +52,12 @@ pub use host_collateral::acquire_dcap_collateral_v1;
 pub use node_host::{
     connect_committed_node_host_enclave, connect_or_initialize_node_host_enclave,
     construct_finalized_replacement_authorization_v1, load_committed_enclave_manifest_v1,
-    load_replacement_candidate_submission, persist_replacement_candidate_submission,
+    load_replacement_candidate_relay, load_replacement_candidate_submission,
+    persist_replacement_candidate_relay, persist_replacement_candidate_submission,
     prepare_node_host_enclave_replacement_candidate, promote_replacement_candidate,
     FinalizedReplacementAuthorizationV1, FinalizedReplacementBindingV1, NodeHostIdentityV1,
-    ReplacementCandidateEnclaveV1, ReplacementCandidateSubmissionV1,
+    ReplacementCandidateEnclaveV1, ReplacementCandidateRelayV1,
+    ReplacementCandidateSubmissionV1,
 };
 pub use remote_session::{
     admit_remote_session_v1, admit_rpc_trusted_remote_session_v1, FinalizedRegistryBindingV1,
