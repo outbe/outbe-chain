@@ -183,21 +183,27 @@ Before starting the node, register that enclave once:
 
 ```bash
 BINDING_ID=0x$(openssl rand -hex 32)
+NODE_EVM_KEY=0x$(tr -d '[:space:]' \
+  < /var/lib/outbe/testnet/fullnode/keys/evm-key.hex)
 LATEST_TS_HEX=$(curl -fsS -H 'content-type: application/json' \
-  --data '{"jsonrpc":"2.0","id":1,"method":"eth_getBlockByNumber","params":["latest",false]}' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"eth_getBlockByNumber","params":["finalized",false]}' \
   http://<certified-validator-rpc>:8545 | jq -r '.result.timestamp')
-VALID_UNTIL=$((LATEST_TS_HEX + 7200))
+VALID_UNTIL=$((LATEST_TS_HEX + 1209600))
 
-outbe-cli tee join \
+outbe-cli --private-key "$NODE_EVM_KEY" \
+  --rpc-url http://<certified-validator-rpc>:8545 tee join \
   --enclave-socket 127.0.0.1:17000 \
   --node-data-dir /var/lib/outbe/testnet/fullnode/data \
   --reth-p2p-secret-key /var/lib/outbe/testnet/fullnode/reth-p2p-secret.hex \
-  --node-evm-key /var/lib/outbe/testnet/fullnode/keys/evm-key.hex \
   --binding-id "$BINDING_ID" \
-  --valid-until "$VALID_UNTIL" \
-  --private-key "$FUNDED_RELAY_KEY" \
-  --rpc-url http://<certified-validator-rpc>:8545
+  --valid-until "$VALID_UNTIL"
 ```
+
+The global `--private-key` is the FullNode's persistent EVM identity and signs
+both its NodeHost association and Registry transaction; there is no separate
+relay key. Renew this 14-day lease manually during its final 7 days with
+`outbe-cli tee renew`, as described in
+[`becoming-a-validator.md`](becoming-a-validator.md#manual-tee-lease-renewal-and-expiry).
 
 Only after `tee join` succeeds, start it:
 

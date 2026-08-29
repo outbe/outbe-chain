@@ -83,21 +83,26 @@ RETH_P2P_SECRET=/var/lib/outbe/reth-p2p-secret.hex
 NODE_KEYS_DIR=/var/lib/outbe/keys
 NODE_DATA_DIR=/var/lib/outbe/<resolved-chain-data-dir>
 BINDING_ID=0x$(openssl rand -hex 32)
-VALID_UNTIL=$(( $(date -u +%s) + 86400 ))
 
 # Provision independent node key material once. FullNode runtime does not load it.
 outbe-keygen hybrid --output-dir "$NODE_KEYS_DIR"
+NODE_EVM_KEY=0x$(tr -d '[:space:]' < "$NODE_KEYS_DIR/evm-key.hex")
+
+# Bind the initial lease to finalized chain time, not the host wall clock.
+FINALIZED_TS_HEX=$(cast block finalized --field timestamp \
+  --rpc-url http://<certified-rpc>:8545)
+VALID_UNTIL=$((FINALIZED_TS_HEX + 1209600))
 
 # The exact release enclave is already running at 127.0.0.1:7000.
-# RELAY_EVM_KEY is only a funded transaction relay. The P2P and node EVM keys
-# jointly authorize the one-time address-to-NodeHost association.
-outbe-cli tee join --enclave-socket 127.0.0.1:7000 \
+# The same persistent node EVM key owns the NodeHost association and pays for
+# every TEE Registry transaction. The P2P key signs the separate NodeHost proof.
+outbe-cli --private-key "$NODE_EVM_KEY" \
+  --rpc-url http://<certified-rpc>:8545 tee join \
+  --enclave-socket 127.0.0.1:7000 \
   --node-data-dir "$NODE_DATA_DIR" \
   --reth-p2p-secret-key "$RETH_P2P_SECRET" \
-  --node-evm-key "$NODE_KEYS_DIR/evm-key.hex" \
   --binding-id "$BINDING_ID" --valid-until "$VALID_UNTIL" \
-  --private-key "$RELAY_EVM_KEY" \
-  --rpc-url http://<certified-rpc>:8545 --timeout-secs 60
+  --timeout-secs 60
 
 outbe-chain node \
   --chain /path/to/genesis.json --datadir /var/lib/outbe \
@@ -133,8 +138,9 @@ exact parent proof, OCOMP retention and snapshot arming have all succeeded.
 
 If this FullNode later receives validator role, stop it and restart validator mode
 on the same synchronized datadir using the already provisioned EVM/BLS keys. Do
-not repeat `tee join`: the P2P identity, NodeHost association, manifest, enclave,
-Noise identity, sealed state and resident offer key remain unchanged.
+not repeat `tee join` while the lease is live: the P2P identity, NodeHost
+association, manifest, enclave, Noise identity, sealed state and resident offer
+key remain unchanged. An expired lease follows the recovery procedure below.
 
 ---
 
@@ -202,19 +208,22 @@ outbe-cli validator set-p2p --symmetric <public-host>:30400 \
 NODE_DATA_DIR=/var/lib/outbe/<resolved-chain-data-dir>
 RETH_P2P_SECRET=/var/lib/outbe/reth-p2p-secret.hex
 BINDING_ID=0x$(openssl rand -hex 32)
-VALID_UNTIL=$(( $(date -u +%s) + 86400 ))
-outbe-cli tee join --enclave-socket 127.0.0.1:7000 \
+FINALIZED_TS_HEX=$(cast block finalized --field timestamp \
+  --rpc-url http://<certified-rpc>:8545)
+VALID_UNTIL=$((FINALIZED_TS_HEX + 1209600))
+outbe-cli --private-key "$EVM_KEY" \
+  --rpc-url http://<certified-rpc>:8545 tee join \
+  --enclave-socket 127.0.0.1:7000 \
   --node-data-dir "$NODE_DATA_DIR" \
   --reth-p2p-secret-key "$RETH_P2P_SECRET" \
-  --node-evm-key /var/lib/outbe/keys/evm-key.hex \
   --binding-id "$BINDING_ID" --valid-until "$VALID_UNTIL" \
-  --private-key "$RELAY_EVM_KEY" \
-  --rpc-url http://<certified-rpc>:8545 --timeout-secs 60
+  --timeout-secs 60
 ```
 
-The relay and node EVM keys may belong to different accounts. NodeHost admission
-requires canonical evidence plus signatures from the persistent P2P key and node
-EVM key, not `msg.sender`. This association does not register a validator. A
+There is no separate relay or node-EVM CLI parameter. The global `--private-key`
+is the same persistent EVM identity used for validator registration and every TEE
+Registry transaction. NodeHost admission additionally requires a signature from
+the persistent Reth P2P key. This association does not register a validator. A
 Created registration emits one matching
 `OfferKeySealedForRegistryV1`; idempotent replay, renewal and replacement never
 redeliver it.
@@ -383,7 +392,7 @@ on whether quorum has already been reached.
 | 3    | EXITING    | left the active set; still accountable (keeps signing) until the next reshare excludes it                                                   |
 | 4    | UNBONDING  | excluded by a reshare; share cleared; stake unbonding                                                                                       |
 | 5    | INACTIVE   | unbonding complete; stake withdrawn                                                                                                         |
-| 6    | JAILED     | punished on a felony (slashed + frozen); dropped from the committee at the next reshare, but kept in the registry pending unjail or unstake |
+| 6    | JAILED     | excluded from the committee at the next reshare; felony jails slash, while TEE-expiry jails do not; retained pending unjail or unstake       |
 
 ### Felony → JAILED
 
@@ -402,6 +411,47 @@ syncing. From JAILED there are two ways out:
   how soon you may unjail; default 0.)
 - **Leave:** unstake your full stake — from JAILED this enters the
   EXITING → UNBONDING → INACTIVE drain, and you are no longer a validator.
+
+### Manual TEE lease renewal and expiry
+
+Every enclave lease is 14 days. The manual renewal window is exactly the final
+7 days: `[deadline - 7 days, deadline)`. A successful renewal extends from the
+existing deadline by another 14 days, so operator timing cannot move the cycle.
+There is no automatic worker, renewal daemon, relay key, or `--tee-renewal.*`
+node option.
+
+Use finalized state for status, then run the one manual transaction during the
+window. The same global EVM key used for `tee join` signs it:
+
+```sh
+TEE_EVM_KEY=0x<same-persistent-key-used-by-tee-join>
+
+outbe-cli --rpc-url http://<certified-rpc>:8545 tee status \
+  --node-data-dir "$NODE_DATA_DIR"
+
+outbe-cli --private-key "$TEE_EVM_KEY" \
+  --rpc-url http://<certified-rpc>:8545 tee renew \
+  --enclave-socket 127.0.0.1:7000 \
+  --node-data-dir "$NODE_DATA_DIR" \
+  --reth-p2p-secret-key "$RETH_P2P_SECRET"
+```
+
+`tee renew` is safe to rerun after a crash: it journals exact signed transaction
+bytes and returns success only after the matching canonical state is finalized.
+Before the window it reports `NotDue`. At the deadline it is too late: CycleTick
+runs before user transactions and rejects renewal at timestamp `>= deadline`.
+
+At expiry, a FullNode fail-stops and an ACTIVE validator is moved to the
+non-slashing retained-jail state, then to ordinary JAILED at the next validated
+boundary. Recovery is explicit:
+
+- FullNode: keep it stopped and run a fresh `tee join` with a new binding id and
+  a new finalized-time deadline. The command handles either the same enclave or
+  a new enclave and resumes its durable promotion journal after a crash.
+- Validator: wait until the boundary has moved it to JAILED, run
+  `outbe-cli staking unjail` with the same global EVM key, perform the fresh
+  `tee join`, restart and catch up, submit `validator confirm-ready`, and wait
+  for the normal DKG boundary. Rejoin never bypasses unjail or grants a share.
 
 ---
 
@@ -450,12 +500,13 @@ address for the local BLS key, or execution history with no durable consensus
 finalization evidence. For details and operator actions, see
 [`consensus-restart-recovery.md`](consensus-restart-recovery.md).
 
-For the enclave, production requires sealing (`--tee-dir <path>` + `--chain-id`) and
-restores the exact same permanent offer key. Missing, corrupt, wrong-chain or otherwise
-unsealable permanent-key state is terminal for that identity; there is no recovery,
-replacement, forced DKG or fallback. The separate GramineDirectDev chain may use an
-explicitly ephemeral enclave only for fresh development networks and is never a restart
-fallback for production.
+For the enclave, production requires sealing (`--tee-dir <path>` + `--chain-id`)
+and restores the exact same permanent offer key. While a lease is live, missing,
+corrupt, wrong-chain or otherwise unsealable permanent-key state is terminal and
+cannot be replaced implicitly. After canonical expiry, the explicit `tee join`
+recovery path may stage the same or a new enclave, preserve the permanent offer
+key through the durable candidate/promotion workflow, and create a fresh lease.
+GramineDirectDev is never a fallback for a DcapRequired chain.
 
 ---
 
@@ -488,7 +539,8 @@ fallback for production.
 | ----------------------------------------------------------- | -------------------------------------------------------------- |
 | `outbe-keygen hybrid` / `show-pubkey` / `sign-registration` | generate keys / derive BLS pubkey / sign registration          |
 | `outbe-keygen ocomp`                                       | generate the permanent validator OCOMP key and public `ocomp-registration-v1.ocb1` artifact |
-| `outbe-cli tee join`                                        | register an exact Validator or FullNode identity and ingest its one-time permanent-key artifact through any funded relay |
+| `outbe-cli tee join`                                        | register or recover the exact Validator/FullNode enclave using the global EVM key and persistent P2P proof |
+| `outbe-cli tee status` / `tee renew`                        | inspect finalized lease state / manually renew during the final 7-day window using the global EVM key |
 | `outbe-cli validator register` / `set-p2p`                  | register (→ REGISTERED) / publish the P2P address              |
 | `outbe-cli staking stake` / `unstake` / `claim`             | stake (→ PENDING at `min_stake`) / unstake / withdraw          |
 | `outbe-cli staking unjail`                                  | return a JAILED validator → PENDING (stake ≥ min_stake)        |

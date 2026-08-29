@@ -240,11 +240,13 @@ impl Localnet {
 
     /// Five-second RPC polls allowed for block-1 TEE bootstrap. Consecutive
     /// four-enclave real-SGX evidence exceeded the production-oriented node and
-    /// per-request deadlines; keep the harness outside its ten-minute
-    /// co-located-EPC allowance so it observes the node's verdict.
+    /// per-request deadlines. A host with 187.5 MiB EPC needed more than ten
+    /// minutes while all enclave calls still made progress, so keep the harness
+    /// outside its thirty-minute co-located-EPC allowance and let it observe the
+    /// node's verdict.
     pub fn tee_bootstrap_wait_attempts(&self) -> u32 {
         if self.cfg.tee_mode.passes_sgx_devices() {
-            132
+            372
         } else {
             18
         }
@@ -264,7 +266,7 @@ impl Localnet {
     /// for the deployment topology by its operator.
     fn extend_real_sgx_startup_timeout(&self, args: &mut Vec<String>) {
         if self.cfg.tee_mode.passes_sgx_devices() {
-            args.extend(args!["--tee-bootstrap-timeout-secs", "600"]);
+            args.extend(args!["--tee-bootstrap-timeout-secs", "1800"]);
         }
     }
 
@@ -611,12 +613,12 @@ mod tests {
             .expect("allocate deterministic scenario ports");
         let localnet = Localnet::new(Config::for_scenario(&env, 1));
 
-        assert_eq!(localnet.tee_bootstrap_wait_attempts(), 132);
+        assert_eq!(localnet.tee_bootstrap_wait_attempts(), 372);
         let mut args = Vec::new();
         localnet.extend_real_sgx_startup_timeout(&mut args);
         assert_eq!(
             args,
-            ["--tee-bootstrap-timeout-secs", "600"],
+            ["--tee-bootstrap-timeout-secs", "1800"],
             "the node deadline must stay inside the harness observation envelope"
         );
     }

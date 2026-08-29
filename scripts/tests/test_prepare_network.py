@@ -412,7 +412,14 @@ class PrepareNetworkTests(unittest.TestCase):
             self.assertIn("22" * 32, tee_manifest)
             self.assertFalse((output / "test-sgx-signing-key.pem").exists())
             for index in range(4):
+                node = (output / "commands" / f"validator-{index}.sh").read_text()
                 enclave = (output / "commands" / f"enclave-{index}.sh").read_text()
+                for removed in (
+                    "--node-evm-key",
+                    "--tee-renewal.",
+                    "--private-key",
+                ):
+                    self.assertNotIn(removed, node)
                 self.assertIn(image, enclave)
                 self.assertIn("--device /dev/sgx_enclave:/dev/sgx_enclave", enclave)
                 self.assertIn("--device /dev/sgx_provision:/dev/sgx_provision", enclave)
@@ -505,6 +512,9 @@ class PrepareNetworkTests(unittest.TestCase):
                 self.assertIn("--projection.mongodb-uri", node)
                 self.assertIn("--engine.persistence-threshold 0", node)
                 self.assertIn("--engine.memory-block-buffer-target 0", node)
+                self.assertNotIn("--node-evm-key", node)
+                self.assertNotIn("--tee-renewal.", node)
+                self.assertNotIn("--private-key", node)
                 self.assertIn('export RUST_MIN_STACK="${RUST_MIN_STACK:-16777216}"', node)
                 self.assertIn(
                     f"--projection.mongodb-database 'outbe_devnet_{projection_scope}_validator_{index}'",
