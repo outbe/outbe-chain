@@ -170,6 +170,37 @@ class ConfigValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "tee.mode"):
             CG.validate_config(config)
 
+    def test_networks_expose_the_canonical_attestation_matrix(self):
+        for network, chain_id in (
+            ("devnet", 424242),
+            ("testnet", 54322345),
+        ):
+            for tee_mode in ("dcap-required", "gramine-direct-dev"):
+                config = minimal_config("./keys") | {
+                    "network": network,
+                    "chain_id": chain_id,
+                    "tee": {"mode": tee_mode},
+                }
+                if tee_mode == "dcap-required":
+                    config["enclave_image"] = (
+                        "outbe-tee-enclave@sha256:" + "ab" * 32
+                    )
+                CG.validate_config(config)
+
+        mainnet = minimal_config("./keys") | {
+            "network": "mainnet",
+            "chain_id": 676,
+            "tee": {"mode": "dcap-required"},
+            "enclave_image": "outbe-tee-enclave@sha256:" + "ab" * 32,
+            "price_feed_rest": "https://prices.outbe.net",
+            "price_feed_websocket": "prices.outbe.net",
+        }
+        CG.validate_config(mainnet)
+
+        mainnet["tee"] = {"mode": "gramine-direct-dev"}
+        with self.assertRaisesRegex(ValueError, "Mainnet requires"):
+            CG.validate_config(mainnet)
+
     def test_testnet_direct_dev_needs_no_secondary_opt_in(self):
         config = minimal_config("./keys") | {"chain_id": 54322345}
         CG.validate_config(config)

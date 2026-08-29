@@ -82,6 +82,12 @@ class PrepareNetworkTests(unittest.TestCase):
                 "mainnet", 676, "gramine-direct-dev"
             )
 
+        for tee_mode in ("dcap-required", "gramine-direct-dev"):
+            with self.assertRaisesRegex(ValueError, "unknown Outbe chain id"):
+                PREPARE_NETWORK_MODULE.resolve_network_profile(
+                    None, 999999, tee_mode
+                )
+
     def test_prefund_cli_names_raw_coen_units_without_legacy_aliases(self) -> None:
         result = subprocess.run(
             ["python3", str(PREPARE_NETWORK), "--help"],

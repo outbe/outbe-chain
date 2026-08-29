@@ -61,9 +61,9 @@ import launch_bundle  # noqa: E402  (sibling module, path set just above)
 BASE_PROFILE_PATH = SCRIPT_DIR / "testnet.yaml"
 
 DEFAULT_CHAIN_ID = 424242
-# A `gramine-direct-dev` enclave is unattested, so it is confined to non-Mainnet
-# development use; `dcap-required` is confined to Testnet or Mainnet. Mixing them would
-# put an unattested enclave on an attested network, or the reverse.
+# Devnet and Testnet may select either `gramine-direct-dev` or `dcap-required`.
+# Mainnet requires `dcap-required`. The selected mode is bound into the genesis policy
+# and cannot change through successor-policy activation.
 DEVNET_CHAIN_ID = 424242
 TESTNET_CHAIN_ID = 54322345
 MAINNET_CHAIN_ID = 676
