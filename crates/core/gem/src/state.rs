@@ -112,8 +112,8 @@ impl GemContract<'_> {
         if item.state == GemState::Issued as u8 {
             self.insert_unqualified(item.gem_id, item.floor_price_minor, item.reference_currency)?;
         } else if item.state == GemState::Qualified as u8 {
-            // Genesis gems are born Qualified — index them as callable gems.
-            self.insert_callable(item.gem_id)?;
+            // Genesis gems are born Qualified — index them by call price.
+            self.insert_qualified(item.gem_id, item.call_price_minor, item.reference_currency)?;
         }
 
         Ok(())
@@ -124,7 +124,7 @@ impl GemContract<'_> {
 
         // Settled gems (promis mining) are in neither structure.
         if item.state == GemState::Qualified as u8 {
-            self.remove_callable(item.gem_id)?;
+            self.remove_qualified(item.gem_id, item.call_price_minor, item.reference_currency)?;
         } else if item.state == GemState::Called as u8 {
             self.remove_called(item.gem_id)?;
         }
@@ -165,14 +165,14 @@ impl GemContract<'_> {
         match new_state {
             // Issued -> Qualified enters the list.
             GemState::Qualified => {
-                self.insert_callable(gem_id)?;
+                self.insert_qualified(gem_id, item.call_price_minor, item.reference_currency)?;
                 item.qualified_at = self.storage.timestamp()?.to::<u64>();
             }
             GemState::Settled => {
                 // Qualified leaves the callable list, Called the deadline queue.
                 // An Issued -> Settled jump was in neither.
                 if item.state == GemState::Qualified as u8 {
-                    self.remove_callable(gem_id)?;
+                    self.remove_qualified(gem_id, item.call_price_minor, item.reference_currency)?;
                 } else if item.state == GemState::Called as u8 {
                     self.remove_called(gem_id)?;
                 }
@@ -186,31 +186,110 @@ impl GemContract<'_> {
         Ok(())
     }
 
-    /// Append a gem to the dense callable-gem list.
-    fn insert_callable(&mut self, gem_id: U256) -> Result<()> {
-        let idx = self.callable_gems.len()?;
-        self.callable_gems.push(gem_id)?;
-        self.callable_gem_index.write(&gem_id, idx)?;
+    /// Index a qualified gem by its call price, so the daily scan enters only the
+    /// bins a breach could have reached.
+    pub(crate) fn insert_qualified(
+        &mut self,
+        gem_id: U256,
+        call_price_minor: U256,
+        reference_currency: u16,
+    ) -> Result<()> {
+        let bin_id = Self::price_to_bin(call_price_minor)?;
+        let scoped = Self::scoped(reference_currency, bin_id);
+        let count = self.qualified_bin_count.read(&scoped)?;
+        self.qualified_bin_gems.write(
+            &Self::bin_index_key(reference_currency, bin_id, count),
+            gem_id,
+        )?;
+        self.qualified_bin_count.write(&scoped, count + 1)?;
+        tree_math::add(&QualifiedBins(self, reference_currency), bin_id)?;
         Ok(())
     }
 
-    /// Swap-remove a gem from the callable-gem list. Caller guarantees the gem
-    /// is currently listed (state was Qualified or Called).
-    fn remove_callable(&mut self, gem_id: U256) -> Result<()> {
-        let idx = self.callable_gem_index.read(&gem_id)?;
-        let last = self
-            .callable_gems
-            .len()?
-            .checked_sub(1)
-            .ok_or(GemError::GemNotFound)?;
-        if idx != last {
-            let last_id = self.callable_gems.get(last)?.ok_or(GemError::GemNotFound)?;
-            self.callable_gems.set(idx, last_id)?;
-            self.callable_gem_index.write(&last_id, idx)?;
+    pub(crate) fn remove_qualified(
+        &mut self,
+        gem_id: U256,
+        call_price_minor: U256,
+        reference_currency: u16,
+    ) -> Result<()> {
+        let bin_id = Self::price_to_bin(call_price_minor)?;
+        let scoped = Self::scoped(reference_currency, bin_id);
+        let count = self.qualified_bin_count.read(&scoped)?;
+        if count == 0 {
+            return Ok(());
         }
-        self.callable_gems.pop()?;
-        self.callable_gem_index.clear(&gem_id)?;
+        let mut found: Option<u32> = None;
+        for i in 0..count {
+            if self
+                .qualified_bin_gems
+                .read(&Self::bin_index_key(reference_currency, bin_id, i))?
+                == gem_id
+            {
+                found = Some(i);
+                break;
+            }
+        }
+        let Some(idx) = found else {
+            return Ok(());
+        };
+        let last = count - 1;
+        let last_key = Self::bin_index_key(reference_currency, bin_id, last);
+        if idx != last {
+            let last_id = self.qualified_bin_gems.read(&last_key)?;
+            self.qualified_bin_gems.write(
+                &Self::bin_index_key(reference_currency, bin_id, idx),
+                last_id,
+            )?;
+        }
+        self.qualified_bin_gems.clear(&last_key)?;
+        self.qualified_bin_count.write(&scoped, last)?;
+        if last == 0 {
+            tree_math::remove(&QualifiedBins(self, reference_currency), bin_id)?;
+        }
         Ok(())
+    }
+
+    /// Gems in one bin, snapshotted: qualifying or calling one shifts the bin.
+    pub(crate) fn qualified_bin_gems_at(
+        &self,
+        reference_currency: u16,
+        bin_id: u32,
+    ) -> Result<Vec<U256>> {
+        let count = self
+            .qualified_bin_count
+            .read(&Self::scoped(reference_currency, bin_id))?;
+        let mut gems = Vec::with_capacity(count as usize);
+        for i in 0..count {
+            let id = self.qualified_bin_gems.read(&Self::bin_index_key(
+                reference_currency,
+                bin_id,
+                i,
+            ))?;
+            if !id.is_zero() {
+                gems.push(id);
+            }
+        }
+        Ok(gems)
+    }
+
+    /// The queue slot's gem, or `None` for a slot already taken.
+    pub(crate) fn called_queue_slot(&self, index: u32) -> Result<Option<U256>> {
+        let gem_id = self.called_queue_at.read(&index)?;
+        Ok((!gem_id.is_zero()).then_some(gem_id))
+    }
+
+    /// Move the head past emptied slots, resetting once the queue drains.
+    pub(crate) fn compact_called_queue(&mut self) -> Result<()> {
+        let tail = self.called_tail.read()?;
+        let mut head = self.called_head.read()?;
+        while head < tail && self.called_queue_at.read(&head)?.is_zero() {
+            head = head.saturating_add(1);
+        }
+        if head >= tail {
+            self.called_head.write(0)?;
+            return self.called_tail.write(0);
+        }
+        self.called_head.write(head)
     }
 
     /// `Qualified -> Called`. Records the call timestamp used to enforce the
@@ -225,7 +304,7 @@ impl GemContract<'_> {
         item.called_at = called_at;
         self.gem_items.update(&item)?;
 
-        self.remove_callable(gem_id)?;
+        self.remove_qualified(gem_id, item.call_price_minor, item.reference_currency)?;
         self.push_called(gem_id, called_at + u64::from(item.call_notice_period))
     }
 
@@ -366,6 +445,38 @@ impl GemContract<'_> {
 // Construct the view inline at each `tree_math` call rather than binding it, so
 // it never conflicts with a `&mut GemContract` borrow.
 pub(crate) struct CurrencyBins<'a, 'storage>(pub(crate) &'a GemContract<'storage>, pub(crate) u16);
+
+/// The qualified (call-price) trie of one reference currency.
+pub(crate) struct QualifiedBins<'a, 'storage>(pub(crate) &'a GemContract<'storage>, pub(crate) u16);
+
+impl BinTreeStorage for QualifiedBins<'_, '_> {
+    fn read_root(&self) -> Result<U256> {
+        self.0.qualified_bin_tree_root.read(&self.1)
+    }
+    fn write_root(&self, value: U256) -> Result<()> {
+        self.0.qualified_bin_tree_root.write(&self.1, value)
+    }
+    fn read_mid(&self, key: u32) -> Result<U256> {
+        self.0
+            .qualified_bin_tree_mid
+            .read(&GemContract::scoped(self.1, key))
+    }
+    fn write_mid(&self, key: u32, value: U256) -> Result<()> {
+        self.0
+            .qualified_bin_tree_mid
+            .write(&GemContract::scoped(self.1, key), value)
+    }
+    fn read_leaf(&self, key: u32) -> Result<U256> {
+        self.0
+            .qualified_bin_tree_leaf
+            .read(&GemContract::scoped(self.1, key))
+    }
+    fn write_leaf(&self, key: u32, value: U256) -> Result<()> {
+        self.0
+            .qualified_bin_tree_leaf
+            .write(&GemContract::scoped(self.1, key), value)
+    }
+}
 
 impl BinTreeStorage for CurrencyBins<'_, '_> {
     fn read_root(&self) -> Result<U256> {

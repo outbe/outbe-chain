@@ -484,7 +484,7 @@ fn qualify_resumes_from_the_bin_cursor_after_the_budget_runs_out() {
     });
 }
 
-/// `callable_gems` mixes currencies, so the call scan must read each gem's
+/// The qualified bins mix currencies, so the call scan must read each gem's
 /// breaches off its own `COEN/<iso>` VWAP window.
 #[test]
 fn call_scan_reads_each_gem_own_pair_window() {
@@ -640,6 +640,50 @@ fn qualified_gem(storage: &StorageHandle) -> U256 {
     let gem_id = api::add_gem(storage, p).unwrap();
     api::set_state(storage, gem_id, GemState::Qualified).unwrap();
     gem_id
+}
+
+/// The two stages keep separate structures for a reason: a gem priced above every
+/// day in the window is never visited by the price pass, yet once called it still
+/// expires on schedule, because expiry reads the queue and not the tree.
+#[test]
+fn a_gem_above_the_window_is_not_visited_but_still_expires() {
+    with_storage(|storage| {
+        let gem_id = qualified_gem(storage);
+        let call_price = api::get_gem(storage, gem_id)
+            .unwrap()
+            .unwrap()
+            .call_price_minor;
+
+        // Every published day sits below the gem's call price.
+        let pair = seed_currency(storage, 840, Some(U256::from(600_000u64)));
+        let oracle = OracleContract::new(storage.clone());
+        let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
+        let mut day = last_closed_day;
+        for _ in 0..(crate::constants::CALL_WINDOW / 86_400) {
+            oracle
+                .utc_day_vwap_value
+                .get_nested(&day)
+                .write(&pair, call_price - U256::from(1u64))
+                .unwrap();
+            day = previous_date_key(day);
+        }
+        oracle
+            .utc_day_vwap_last_finalized
+            .write(last_closed_day)
+            .unwrap();
+
+        assert_eq!(crate::hooks::scan_and_call(&block_ctx(storage)).unwrap(), 0);
+        assert_eq!(
+            api::get_gem(storage, gem_id).unwrap().unwrap().state,
+            GemState::Qualified as u8
+        );
+
+        // Called by hand, it leaves the tree for the queue and expires from there.
+        let mut gem = GemContract::new(storage.clone());
+        gem.mark_called(gem_id, T_NOW).unwrap();
+        assert!(gem.forfeit(gem_id, T_NOW + 7 * 86_400 + 1).unwrap());
+        assert!(api::get_gem(storage, gem_id).unwrap().is_none());
+    });
 }
 
 #[test]

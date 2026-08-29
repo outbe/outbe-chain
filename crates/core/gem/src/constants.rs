@@ -9,6 +9,11 @@ pub const BIN_STEP_BP: u16 = 25;
 /// currencies. The per-currency bin cursor resumes the rest next block.
 pub const MAX_GEM_QUALIFICATIONS_PER_BLOCK: u32 = 256;
 
+/// Gems the daily run may call, and separately forfeit, before it gives out.
+/// A correlated breach calls a whole currency at once and their notice periods
+/// then lapse together, so both arms need a ceiling.
+pub const MAX_GEM_CALL_ACTIONS_PER_RUN: u32 = 256;
+
 /// Call-trigger evaluation window in seconds (28 days): span scanned for
 /// breaches of a gem's Call Threshold. The daily scan divides by 86400.
 pub const CALL_WINDOW: u32 = 28 * 24 * 3600;
