@@ -146,11 +146,10 @@ pub struct GemContract {
     #[attribute(order = 10)]
     pub unqualified_bin_gems: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    // --- Callable-gem index: dense list of gems in Qualified or Called state,
-    // the only gems the daily Called scan needs to visit. Membership invariant:
-    // a gem is listed iff its state is Qualified or Called. Maintained by
-    // add_gem / set_state / burn. `callable_gem_index` maps gem_id -> position
-    // for O(1) swap-remove.
+    // --- Callable-gem index: dense list of gems in Qualified state, the only ones
+    // the daily Called scan has to price. A called gem moves to the deadline queue
+    // below. Maintained by add_gem / set_state / burn; `callable_gem_index` maps
+    // gem_id -> position for O(1) swap-remove.
     #[attribute(order = 11)]
     pub callable_gems: outbe_primitives::storage::dsl::List<U256>,
 
@@ -166,6 +165,24 @@ pub struct GemContract {
     /// ones behind it when the per-block budget runs out.
     #[attribute(order = 14)]
     pub qualify_currency_cursor: outbe_primitives::storage::dsl::Value<u32>,
+
+    // --- Called-gem queue: gems awaiting their notice period, in call order.
+    // Calling is driven by price, expiry only by time, so the two stages keep
+    // separate structures and the forfeit arm reads a head instead of walking.
+    #[attribute(order = 15)]
+    pub called_head: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 16)]
+    pub called_tail: outbe_primitives::storage::dsl::Value<u32>,
+    /// Queue index -> gem id; zero marks a slot already taken.
+    #[attribute(order = 17)]
+    pub called_queue_at: outbe_primitives::storage::dsl::Map<u32, U256>,
+    /// gem_id -> its queue index, for O(1) removal on settle or burn.
+    #[attribute(order = 18)]
+    pub called_queue_index: outbe_primitives::storage::dsl::Map<U256, u32>,
+    /// gem_id -> when its notice period closes. Stored so the head check costs
+    /// no record load.
+    #[attribute(order = 19)]
+    pub called_deadline: outbe_primitives::storage::dsl::Map<U256, u64>,
 }
 
 impl GemContract<'_> {

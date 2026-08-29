@@ -122,10 +122,11 @@ impl GemContract<'_> {
     pub(crate) fn burn(&mut self, item: &GemData) -> Result<()> {
         self.gem_items.delete(item.gem_id)?;
 
-        // Drop the callable-gem entry when burning a Qualified/Called gem
-        // (forfeit). Settled gems (promis mining) were never listed.
-        if item.state == GemState::Qualified as u8 || item.state == GemState::Called as u8 {
+        // Settled gems (promis mining) are in neither structure.
+        if item.state == GemState::Qualified as u8 {
             self.remove_callable(item.gem_id)?;
+        } else if item.state == GemState::Called as u8 {
+            self.remove_called(item.gem_id)?;
         }
 
         let idx = self.gem_index.read(&item.gem_id)?;
@@ -168,10 +169,12 @@ impl GemContract<'_> {
                 item.qualified_at = self.storage.timestamp()?.to::<u64>();
             }
             GemState::Settled => {
-                // Qualified|Called -> Settled leaves the list. An Issued ->
-                // Settled jump was never listed, so skip the removal.
-                if item.state != GemState::Issued as u8 {
+                // Qualified leaves the callable list, Called the deadline queue.
+                // An Issued -> Settled jump was in neither.
+                if item.state == GemState::Qualified as u8 {
                     self.remove_callable(gem_id)?;
+                } else if item.state == GemState::Called as u8 {
+                    self.remove_called(gem_id)?;
                 }
                 item.settled_at = self.storage.timestamp()?.to::<u64>();
             }
@@ -221,7 +224,26 @@ impl GemContract<'_> {
         item.state = GemState::Called as u8;
         item.called_at = called_at;
         self.gem_items.update(&item)?;
-        Ok(())
+
+        self.remove_callable(gem_id)?;
+        self.push_called(gem_id, called_at + u64::from(item.call_notice_period))
+    }
+
+    /// Append a called gem to the deadline queue.
+    fn push_called(&mut self, gem_id: U256, deadline: u64) -> Result<()> {
+        let tail = self.called_tail.read()?;
+        self.called_queue_at.write(&tail, gem_id)?;
+        self.called_queue_index.write(&gem_id, tail)?;
+        self.called_deadline.write(&gem_id, deadline)?;
+        self.called_tail.write(tail.saturating_add(1))
+    }
+
+    /// Take a gem out of the deadline queue, leaving its slot empty.
+    pub(crate) fn remove_called(&mut self, gem_id: U256) -> Result<()> {
+        let index = self.called_queue_index.read(&gem_id)?;
+        self.called_queue_at.clear(&index)?;
+        self.called_queue_index.clear(&gem_id)?;
+        self.called_deadline.clear(&gem_id)
     }
 
     fn compact_owner_index(&mut self, owner: Address, gem_id: U256) -> Result<()> {
