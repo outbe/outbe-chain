@@ -666,6 +666,50 @@ enum JoinTransport {
     Development,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum JoinOfferKeyState {
+    Keyless,
+    ReadyExact,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct JoinCompletionPlan {
+    ingest_offer_key: bool,
+    promote_candidate: bool,
+}
+
+fn plan_join_completion(
+    offer_key_state: JoinOfferKeyState,
+    is_candidate: bool,
+) -> JoinCompletionPlan {
+    JoinCompletionPlan {
+        ingest_offer_key: offer_key_state == JoinOfferKeyState::Keyless,
+        promote_candidate: is_candidate,
+    }
+}
+
+fn classify_join_offer_key_state(
+    response: EnclaveResponse,
+    expected_offer_pub: [u8; 32],
+) -> Result<JoinOfferKeyState> {
+    match response {
+        EnclaveResponse::PublicKeys {
+            offer_key_ready: false,
+            ..
+        } => Ok(JoinOfferKeyState::Keyless),
+        EnclaveResponse::PublicKeys {
+            offer_key_ready: true,
+            recipient_x25519_pub,
+            ..
+        } if recipient_x25519_pub == expected_offer_pub => Ok(JoinOfferKeyState::ReadyExact),
+        EnclaveResponse::PublicKeys {
+            offer_key_ready: true,
+            ..
+        } => eyre::bail!("resident permanent offer key does not match finalized TeeRegistry"),
+        other => eyre::bail!("expected enclave PublicKeys, got {other:?}"),
+    }
+}
+
 enum JoinEnclave {
     Committed(AuthorizedEnclaveClient),
     Candidate(Box<ReplacementCandidateEnclaveV1>),
@@ -1090,6 +1134,16 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
         }
     };
 
+    // A permanent offer key is write-once enclave state. Classify it before
+    // producing or relaying a fresh registration so a mismatched resident key
+    // cannot mutate Registry and a matching same-enclave rejoin never repeats
+    // the onboarding ingest.
+    let offer_key_state = classify_join_offer_key_state(
+        enclave.request(&EnclaveRequest::GetPublicKeys)?,
+        expected_offer_pub,
+    )?;
+    let completion_plan = plan_join_completion(offer_key_state, enclave.is_candidate());
+
     let source_binding = if resumes_finalized_target {
         None
     } else {
@@ -1332,83 +1386,87 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
         evm_signer.address()
     );
 
-    // Accept only the artifact indexed by the canonical node identity proved in
-    // the same transaction.
-    let topic0 = format!(
-        "0x{}",
-        hex::encode(ITeeRegistry::OfferKeySealedForRegistryV1::SIGNATURE_HASH)
-    );
-    let topic1 = format!("0x{}", hex::encode(node_id_hash));
-    let resp = match policy.attestation_mode {
-        AttestationMode::DcapRequired => {
-            let expected = ExpectedOnboardingBindingV1 {
-                selector: binding_selector.clone(),
-                chain_id: policy.chain_id,
-                genesis_hash: policy.genesis_hash,
-                node_id_hash,
-                enclave_id,
-                intent_hash,
-                recipient_x25519,
-                tribute_offer_public: expected_offer_pub,
-                key_epoch,
-                tribute_offer_epoch,
-            };
-            let finalized = await_finalized_onboarding_v1(
-                &CliFinalityRpc(client),
-                &tx_hash,
-                &expected,
-                Duration::from_secs(timeout_secs),
-            )
-            .await?;
-            let artifact = finalized
-                .artifact
-                .encode_canonical()
-                .map_err(|code| eyre::eyre!("encode finalized artifact: {:#06x}", code.code()))?;
-            println!(
-                "exact onboarding finalized at height {} (artifact {} bytes)",
-                finalized.finalized_height,
-                artifact.len()
-            );
-            enclave
-                .request(&EnclaveRequest::IngestDcapOnboardingArtifactV1 {
-                    artifact,
-                    expected_intent_hash: intent_hash,
-                    expected_tribute_offer_public: expected_offer_pub,
-                    expected_key_epoch: key_epoch,
-                    expected_tribute_offer_epoch: tribute_offer_epoch,
-                })
-                .map_err(|error| {
-                    eyre::eyre!("enclave purpose-bound onboarding ingest failed: {error}")
-                })?
-        }
-        AttestationMode::GramineDirectDev => {
-            if enclave.is_candidate() {
-                await_finalized_join_target(
-                    client,
-                    &binding_selector,
-                    &intent,
+    await_finalized_join_target(
+        client,
+        &binding_selector,
+        &intent,
+        Duration::from_secs(timeout_secs),
+    )
+    .await?;
+
+    let resp = if completion_plan.ingest_offer_key {
+        // Accept only the artifact indexed by the canonical node identity
+        // proved in the same transaction.
+        let topic0 = format!(
+            "0x{}",
+            hex::encode(ITeeRegistry::OfferKeySealedForRegistryV1::SIGNATURE_HASH)
+        );
+        let topic1 = format!("0x{}", hex::encode(node_id_hash));
+        match policy.attestation_mode {
+            AttestationMode::DcapRequired => {
+                let expected = ExpectedOnboardingBindingV1 {
+                    selector: binding_selector.clone(),
+                    chain_id: policy.chain_id,
+                    genesis_hash: policy.genesis_hash,
+                    node_id_hash,
+                    enclave_id,
+                    intent_hash,
+                    recipient_x25519,
+                    tribute_offer_public: expected_offer_pub,
+                    key_epoch,
+                    tribute_offer_epoch,
+                };
+                let finalized = await_finalized_onboarding_v1(
+                    &CliFinalityRpc(client),
+                    &tx_hash,
+                    &expected,
                     Duration::from_secs(timeout_secs),
                 )
                 .await?;
+                let artifact = finalized.artifact.encode_canonical().map_err(|code| {
+                    eyre::eyre!("encode finalized artifact: {:#06x}", code.code())
+                })?;
+                println!(
+                    "exact onboarding finalized at height {} (artifact {} bytes)",
+                    finalized.finalized_height,
+                    artifact.len()
+                );
+                enclave
+                    .request(&EnclaveRequest::IngestDcapOnboardingArtifactV1 {
+                        artifact,
+                        expected_intent_hash: intent_hash,
+                        expected_tribute_offer_public: expected_offer_pub,
+                        expected_key_epoch: key_epoch,
+                        expected_tribute_offer_epoch: tribute_offer_epoch,
+                    })
+                    .map_err(|error| {
+                        eyre::eyre!("enclave purpose-bound onboarding ingest failed: {error}")
+                    })?
             }
-            let sealed = poll_offer_key_sealed(
-                client,
-                &topic0,
-                &topic1,
-                &tx_hash,
-                expected_offer_pub,
-                from_block,
-                timeout_secs,
-            )
-            .await?;
-            enclave
-                .request(&EnclaveRequest::IngestSealedOfferKeyForRegistry {
-                    sealed,
-                    expected_tribute_offer_public: expected_offer_pub,
-                    chain_id: B256::from(policy.chain_id),
-                    tribute_offer_epoch,
-                })
-                .map_err(|error| eyre::eyre!("development onboarding ingest failed: {error}"))?
+            AttestationMode::GramineDirectDev => {
+                let sealed = poll_offer_key_sealed(
+                    client,
+                    &topic0,
+                    &topic1,
+                    &tx_hash,
+                    expected_offer_pub,
+                    from_block,
+                    timeout_secs,
+                )
+                .await?;
+                enclave
+                    .request(&EnclaveRequest::IngestSealedOfferKeyForRegistry {
+                        sealed,
+                        expected_tribute_offer_public: expected_offer_pub,
+                        chain_id: B256::from(policy.chain_id),
+                        tribute_offer_epoch,
+                    })
+                    .map_err(|error| eyre::eyre!("development onboarding ingest failed: {error}"))?
+            }
+        }
+    } else {
+        EnclaveResponse::OfferKeyForRegistryIngested {
+            tribute_offer_public: expected_offer_pub,
         }
     };
     match resp {
@@ -1416,8 +1474,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
             tribute_offer_public,
         } => {
             if join_transport == JoinTransport::AuthorizedNodeHost {
-                let candidate_join = enclave.is_candidate();
-                let promotion = if candidate_join {
+                let promotion = if completion_plan.promote_candidate {
                     let exact =
                         read_finalized_registry_view_v1(&CliFinalityRpc(client), &binding_selector)
                             .await
@@ -1877,6 +1934,79 @@ mod tests {
         assert_eq!(
             select_join_transport(AttestationMode::GramineDirectDev, false).unwrap(),
             JoinTransport::Development
+        );
+    }
+
+    #[test]
+    fn join_classifies_resident_offer_key_before_relay() {
+        let expected_offer_pub = [0x41; 32];
+        let public_keys = |offer_key_ready, recipient_x25519_pub| EnclaveResponse::PublicKeys {
+            offer_key_ready,
+            recipient_x25519_pub,
+            attestation_pub: [0x42; 32],
+            noise_static_pub: [0x43; 32],
+            tee_bls_pub: vec![0x44; 48],
+            dkg_enc_pub: [0x45; 32],
+            dkg_enc_sig: vec![0x46; 96],
+        };
+
+        assert_eq!(
+            classify_join_offer_key_state(
+                public_keys(true, expected_offer_pub),
+                expected_offer_pub,
+            )
+            .unwrap(),
+            JoinOfferKeyState::ReadyExact
+        );
+        assert_eq!(
+            classify_join_offer_key_state(public_keys(false, [0x47; 32]), expected_offer_pub)
+                .unwrap(),
+            JoinOfferKeyState::Keyless
+        );
+
+        let mismatch =
+            classify_join_offer_key_state(public_keys(true, [0x48; 32]), expected_offer_pub)
+                .unwrap_err();
+        assert!(mismatch
+            .to_string()
+            .contains("resident permanent offer key does not match finalized TeeRegistry"));
+
+        let unexpected =
+            classify_join_offer_key_state(EnclaveResponse::Ack, expected_offer_pub).unwrap_err();
+        assert!(unexpected
+            .to_string()
+            .contains("expected enclave PublicKeys"));
+    }
+
+    #[test]
+    fn join_completion_matrix_preserves_candidate_promotion_without_duplicate_ingest() {
+        assert_eq!(
+            plan_join_completion(JoinOfferKeyState::Keyless, false),
+            JoinCompletionPlan {
+                ingest_offer_key: true,
+                promote_candidate: false,
+            }
+        );
+        assert_eq!(
+            plan_join_completion(JoinOfferKeyState::Keyless, true),
+            JoinCompletionPlan {
+                ingest_offer_key: true,
+                promote_candidate: true,
+            }
+        );
+        assert_eq!(
+            plan_join_completion(JoinOfferKeyState::ReadyExact, false),
+            JoinCompletionPlan {
+                ingest_offer_key: false,
+                promote_candidate: false,
+            }
+        );
+        assert_eq!(
+            plan_join_completion(JoinOfferKeyState::ReadyExact, true),
+            JoinCompletionPlan {
+                ingest_offer_key: false,
+                promote_candidate: true,
+            }
         );
     }
 
