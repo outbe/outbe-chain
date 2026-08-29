@@ -101,7 +101,7 @@ fn registry_ids_are_unique_and_traversed_in_permanent_id_order() {
         .iter()
         .map(|spec| spec.id)
         .collect::<Vec<_>>();
-    assert_eq!(ids, vec![0, 1, 3, 4, 5, 6, 7, 8]);
+    assert_eq!(ids, vec![0, 1, 3, 4, 5, 6, 7, 8, 9]);
 
     let mut unique = ids.clone();
     unique.sort_unstable();

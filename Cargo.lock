@@ -8353,6 +8353,7 @@ dependencies = [
  "outbe-desis",
  "outbe-emissionlimit",
  "outbe-gem",
+ "outbe-gemfactory",
  "outbe-intexfactory",
  "outbe-macros",
  "outbe-metadosis",
@@ -8718,10 +8719,12 @@ dependencies = [
  "outbe-primitives",
  "outbe-promis",
  "outbe-promisfactory",
+ "outbe-promislimit",
  "outbe-tee",
  "outbe-tee-enclave",
  "outbe-vaultrouter",
  "thiserror 2.0.18",
+ "tracing",
 ]
 
 [[package]]

@@ -148,6 +148,8 @@ pub fn mint_gem_position(
         parked_at,
     })?;
 
+    factory.push_live_position(position_id)?;
+
     let prev_parked = factory.total_intex_parked.read()?;
     let new_parked = prev_parked
         .checked_add(capacity)
@@ -193,7 +195,7 @@ pub fn mint_merchant_gem(
         return Err(GemFactoryError::InvalidOwner.into());
     }
 
-    let factory = GemFactoryContract::new(storage.clone());
+    let mut factory = GemFactoryContract::new(storage.clone());
     let mut record = factory
         .positions
         .get(position_id)?
@@ -240,6 +242,11 @@ pub fn mint_merchant_gem(
 
     record.remaining_capacity = remaining;
     factory.positions.update(&record)?;
+    // A drained position has nothing left to return; it leaves the queue now
+    // rather than waiting out its year at the head.
+    if remaining.is_zero() {
+        factory.remove_live_position(position_id)?;
+    }
 
     let prev_total = factory.total_gems_issued.read()?;
     let new_total = prev_total
@@ -636,7 +643,7 @@ fn derived_call_price(entry_price: U256) -> Result<U256> {
     Ok(acc / U256::from(100u64))
 }
 
-fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
+pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
     storage.emit_event(GEM_FACTORY_ADDRESS, event.encode_log_data())
 }
 

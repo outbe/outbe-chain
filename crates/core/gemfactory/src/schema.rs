@@ -2,6 +2,7 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_intex::{SeriesId, SERIES_ID_LEN};
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_primitives::addresses::GEM_FACTORY_ADDRESS;
+use outbe_primitives::error::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -68,9 +69,57 @@ pub struct GemFactoryContract {
 
     #[attribute(order = 4)]
     pub position_owner_ids: outbe_primitives::storage::dsl::Map<B256, U256>,
+
+    // --- Live positions, in parking order, for the expiry sweep. Nothing else
+    // enumerates them: the owner index answers "whose", not "which are alive".
+    #[attribute(order = 5)]
+    pub live_head: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 6)]
+    pub live_tail: outbe_primitives::storage::dsl::Value<u32>,
+    /// Queue index -> position id; zero marks a slot already taken.
+    #[attribute(order = 7)]
+    pub live_queue_at: outbe_primitives::storage::dsl::Map<u32, U256>,
+    /// position_id -> its queue index, so a drained position leaves at once.
+    #[attribute(order = 8)]
+    pub live_queue_index: outbe_primitives::storage::dsl::Map<U256, u32>,
 }
 
 impl GemFactoryContract<'_> {
+    /// Append a freshly parked position to the live queue.
+    pub(crate) fn push_live_position(&mut self, position_id: U256) -> Result<()> {
+        let tail = self.live_tail.read()?;
+        self.live_queue_at.write(&tail, position_id)?;
+        self.live_queue_index.write(&position_id, tail)?;
+        self.live_tail.write(tail.saturating_add(1))
+    }
+
+    /// Take a position out of the live queue, leaving its slot empty.
+    pub(crate) fn remove_live_position(&mut self, position_id: U256) -> Result<()> {
+        let index = self.live_queue_index.read(&position_id)?;
+        self.live_queue_at.clear(&index)?;
+        self.live_queue_index.clear(&position_id)
+    }
+
+    /// The queue slot's position, or `None` for a slot already taken.
+    pub(crate) fn live_queue_slot(&self, index: u32) -> Result<Option<U256>> {
+        let position_id = self.live_queue_at.read(&index)?;
+        Ok((!position_id.is_zero()).then_some(position_id))
+    }
+
+    /// Move the head past emptied slots, resetting once the queue drains.
+    pub(crate) fn compact_live_queue(&mut self) -> Result<()> {
+        let tail = self.live_tail.read()?;
+        let mut head = self.live_head.read()?;
+        while head < tail && self.live_queue_at.read(&head)?.is_zero() {
+            head = head.saturating_add(1);
+        }
+        if head >= tail {
+            self.live_head.write(0)?;
+            return self.live_tail.write(0);
+        }
+        self.live_head.write(head)
+    }
+
     /// `position_id = keccak256("gemposition" ‖ source_intex_id_be ‖ block_number_be)`.
     /// A source Intex is parked once, so `source_intex_id` alone disambiguates.
     pub fn generate_position_id(source_intex_id: SeriesId, block_number: u64) -> U256 {
