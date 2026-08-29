@@ -495,12 +495,9 @@ fn mainnet_release_workflow_requires_a_pinned_genesis_and_closed_profile() {
         fs::read_to_string(root.join(".github/workflows/release.yml")).expect("release dispatcher");
     assert!(dispatcher.contains("!contains(github.ref_name, '-mainnet.')"));
     assert!(dispatcher.contains("gh workflow run mainnet-release.yml"));
-    assert!(dispatcher.contains(
-        "OUTBE_MAINNET_GENESIS_URL: ${{ vars.OUTBE_MAINNET_GENESIS_URL }}"
-    ));
-    assert!(dispatcher.contains(
-        "OUTBE_MAINNET_GENESIS_SHA256: ${{ vars.OUTBE_MAINNET_GENESIS_SHA256 }}"
-    ));
+    assert!(dispatcher.contains("OUTBE_MAINNET_GENESIS_URL: ${{ vars.OUTBE_MAINNET_GENESIS_URL }}"));
+    assert!(dispatcher
+        .contains("OUTBE_MAINNET_GENESIS_SHA256: ${{ vars.OUTBE_MAINNET_GENESIS_SHA256 }}"));
 }
 
 #[test]

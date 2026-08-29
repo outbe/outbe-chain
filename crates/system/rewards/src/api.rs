@@ -696,9 +696,8 @@ mod tests {
         // Register ISO 840 (USD) so mint_gem currency-validation passes.
         let oracle = outbe_oracle::schema::OracleContract::new(ctx.storage.clone());
         oracle.reference_currencies.push(840u16).unwrap();
-        // Every reward day these tests use is closed, so delivery never waits on
-        // an unfinalized day. No day carries a VWAP unless a test writes one, so
-        // the ladder falls through to the live quote seeded above.
+        // Close every reward day these tests use: none carries a VWAP, so
+        // delivery takes the live quote seeded above.
         oracle.utc_day_vwap_last_finalized.write(29991231).unwrap();
     }
 
