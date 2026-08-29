@@ -490,6 +490,56 @@ fn the_issuance_currency_settles_through_the_coen_pivot() {
 }
 
 #[test]
+fn the_issuance_rail_rounds_up_exactly_once() {
+    // COEN/USD 7.0 and a one-unit load put the cost at 7 minor units. Converting
+    // it at COEN/EUR 1.000001 lands on 1.000001 units, so a single round-up gives
+    // 2 and a second rounding anywhere in the chain could not.
+    let usd_rate = U256::from(7u64) * six_decimal_unit();
+    let mut provider = test_storage(Some(usd_rate));
+    StorageHandle::enter(&mut provider, |storage| {
+        register_currency(&storage, 978, U256::from(1_000_001u64));
+        let gem_id =
+            mint_at_live_rate(&storage, ALICE, GemTypes::Wallet, U256::ONE, 978, 840).unwrap();
+        gem_api::set_state(&storage, gem_id, GemState::Qualified).unwrap();
+        assert_eq!(
+            gem_api::get_gem(&storage, gem_id)
+                .unwrap()
+                .unwrap()
+                .cost_amount_minor,
+            U256::from(7u64)
+        );
+        runtime::settle_gem(&storage, ALICE, gem_id, STABLE_EUR).unwrap();
+    });
+
+    assert_eq!(settled_event(&provider).amountPaid, U256::from(2u64));
+}
+
+#[test]
+fn settling_on_an_unregistered_issuance_leg_is_refused() {
+    let usd_rate = U256::from(2u64) * six_decimal_unit();
+    with_storage(Some(usd_rate), |storage| {
+        // The EUR asset is a valid vault asset, but COEN/978 was never registered,
+        // so the pivot has no leg to convert through.
+        let gem_id = mint_at_live_rate(
+            storage,
+            ALICE,
+            GemTypes::Wallet,
+            six_decimal_unit(),
+            978,
+            840,
+        )
+        .unwrap();
+        gem_api::set_state(storage, gem_id, GemState::Qualified).unwrap();
+        let res = runtime::settle_gem(storage, ALICE, gem_id, STABLE_EUR);
+        assert!(err_msg(res).contains("not registered"));
+        assert_eq!(
+            gem_api::get_gem(storage, gem_id).unwrap().unwrap().state,
+            GemState::Qualified as u8
+        );
+    });
+}
+
+#[test]
 fn the_reference_currency_settles_without_reading_any_issuance_rate() {
     let usd_rate = U256::from(2u64) * six_decimal_unit();
     let mut provider = test_storage(Some(usd_rate));

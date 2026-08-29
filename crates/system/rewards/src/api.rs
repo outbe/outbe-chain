@@ -389,7 +389,7 @@ pub fn deliver_oldest_reward_gem_batch(
 fn deliver_oldest_reward_gem_batch_inner(
     ctx: &BlockRuntimeContext,
 ) -> Result<RewardGemDeliveryOutcome> {
-    let rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
+    let mut rewards: Rewards<'_> = ctx.storage.contract::<Rewards<'_>>();
     let head = rewards.reward_gem_queue_head.read()?;
     let tail = rewards.reward_gem_queue_tail.read()?;
     let pending_batch_count = require_reward_gem_queue_consistency(&rewards, head, tail)?;
@@ -525,7 +525,6 @@ fn deliver_oldest_reward_gem_batch_inner(
             entry_price,
         )?;
     }
-    let mut rewards = rewards;
     rewards.emit(IRewards::RewardGemBatchPriced {
         rewardUtcDay: reward_utc_day,
         entryPrice: entry_price,
@@ -562,7 +561,7 @@ fn deliver_oldest_reward_gem_batch_inner(
 /// Where a delivered batch's entry price came from. The values are the `source`
 /// field of [`crate::IRewards::RewardGemBatchPriced`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RewardPriceSource {
+enum RewardPriceSource {
     /// The reward day's own finalized VWAP.
     RewardDayVwap = 1,
     /// An earlier finalized day's VWAP, because the reward day carries none.
@@ -573,11 +572,11 @@ pub enum RewardPriceSource {
 
 /// The price a batch mints at, and where it came from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RewardEntryPrice {
-    pub entry_price: U256,
-    pub source: RewardPriceSource,
+struct RewardEntryPrice {
+    entry_price: U256,
+    source: RewardPriceSource,
     /// UTC day the price was read from; zero for the live quote.
-    pub source_day: u32,
+    source_day: u32,
 }
 
 /// Resolves the COEN price a batch for `reward_utc_day` mints at.

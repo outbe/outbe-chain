@@ -332,6 +332,29 @@ fn scan_qualifies_each_currency_against_its_own_rate() {
     });
 }
 
+/// The issuance currency is a settlement label and must never reach a lifecycle
+/// decision: a gem whose two currencies differ is judged by its reference alone.
+#[test]
+fn a_gem_is_qualified_by_its_reference_currency_not_its_issuance_one() {
+    with_storage(|storage| {
+        let mut p = sample_params(ALICE);
+        p.issuance_currency = EUR;
+        let gem_id = api::add_gem(storage, p).unwrap();
+        let floor = sample_params(ALICE).floor_price_minor;
+
+        // The issuance currency is well above the floor, the reference one below.
+        // Reading the wrong code would promote this gem.
+        seed_currency(storage, 840, Some(floor - U256::from(1u64)));
+        seed_currency(storage, EUR, Some(floor + U256::from(1u64)));
+
+        crate::hooks::scan_and_qualify(&block_ctx(storage)).unwrap();
+        assert_eq!(
+            api::get_gem(storage, gem_id).unwrap().unwrap().state,
+            GemState::Issued as u8
+        );
+    });
+}
+
 /// One currency filling the whole per-block budget must not starve the ones
 /// behind it: the sweep resumes where it stopped instead of restarting.
 #[test]
