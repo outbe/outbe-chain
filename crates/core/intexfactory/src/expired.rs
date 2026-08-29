@@ -1,8 +1,5 @@
-//! Begin-block expiry sweep: closes the settlement window of a called group and
-//! returns the Promis load of everything left unrealised to the unallocated
-//! limit. It only reads and writes storage — expiry on the ERC-1155 is derived,
-//! so nothing here has to call a contract — which is what lets it live in a
-//! block hook.
+//! Begin-block expiry sweep: closes a called group's settlement window and returns
+//! the Promis load of everything left unrealised to the unallocated limit.
 
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;
@@ -16,13 +13,8 @@ use crate::constants::MAX_SERIES_ACTIONS_PER_SWEEP;
 use crate::runtime::emit_event;
 use crate::schema::IntexFactoryContract;
 
-/// Advance the called queue past every group whose window has closed.
-///
-/// Groups queue in call order, so the head decides the common block: if it is
-/// not due, nothing behind it is either and the pass costs two reads. A notice
-/// period frozen per series can in principle order two groups against their
-/// arrival; the younger one then waits for the head, which delays its credit but
-/// never loses it.
+/// Advance the called queue past every group whose window has closed. Groups queue
+/// in call order, so a head that is not due ends the pass.
 pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
     let storage = &ctx.storage;
     let factory = IntexFactoryContract::new(storage.clone());
@@ -35,9 +27,8 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
     let now = ctx.block.timestamp;
     let mut budget = MAX_SERIES_ACTIONS_PER_SWEEP;
     for index in head..tail {
-        // Checked before the group, not against its size: a group larger than the
-        // whole budget must still make progress rather than stall forever, so one
-        // group may overshoot and the next block starts fresh.
+        // Not checked against the group's size: one larger than the whole budget
+        // must still make progress.
         if budget == 0 {
             break;
         }
@@ -45,15 +36,12 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
             continue;
         };
         let key = IntexFactoryContract::scoped(iso_code, worldwide_day.value());
-        // Strictly after: settlement is still legal at the deadline itself, and a
-        // block hook runs before this block's transactions. Crediting at `>=`
-        // would count a unit that is about to be settled in the same block.
+        // Strictly after, like `settle`: a block hook runs before the block's
+        // transactions, so `>=` would count a unit still legally settleable.
         if now <= factory.called_group_deadline.read(&key)? {
             break;
         }
 
-        // Isolated per group, like the other sweeps: a deterministic failure is
-        // logged and retried next block instead of halting the block.
         match storage.with_checkpoint(|| expire_group(storage, iso_code, worldwide_day, index)) {
             Ok(members) => budget = budget.saturating_sub(members),
             Err(error) => {
@@ -71,8 +59,7 @@ pub(crate) fn sweep_expiry_deadlines(ctx: &BlockRuntimeContext) -> Result<()> {
     IntexFactoryContract::new(storage.clone()).compact_called_queue()
 }
 
-/// Expire one group: every member's unrealised load returns to the pool in a
-/// single credit, and the group leaves the queue. Returns the members expired.
+/// Expire one group in a single credit. Returns the members expired.
 fn expire_group(
     storage: &StorageHandle<'_>,
     iso_code: u16,
@@ -84,9 +71,6 @@ fn expire_group(
 
     let mut credit = U256::ZERO;
     for &series_id in &group.members {
-        // The load comes back with the transition: it is the series' own frozen
-        // copy, not the day's auction config, and reading it here would mean
-        // loading the same record twice.
         let forfeited = outbe_intex::api::expire_series(storage, series_id)?;
         let returned = forfeited
             .promis_load_minor

@@ -28,11 +28,9 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     // --- Types ---
 
     /// @notice Series lifecycle state.
-    /// @dev Lifecycle: Issued -> Qualified -> Called -> Expired. `Expired` is a read-only
-    ///      value: storage keeps `Called` and the views derive expiry from
-    ///      `calledAt + callNoticePeriod` against the clock. Nothing writes it, which is
-    ///      what keeps the transfer and bridge freezes — all of which compare the stored
-    ///      field against `Called` — applying to an expired series.
+    /// @dev Lifecycle: Issued -> Qualified -> Called -> Expired. `Expired` is read-only:
+    ///      storage keeps `Called` so the transfer and bridge freezes, which compare the
+    ///      stored field, keep applying.
     enum IntexState {
         Issued,
         Qualified,

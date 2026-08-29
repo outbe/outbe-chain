@@ -56,12 +56,9 @@ library IntexGas {
     uint256 internal constant ISSUANCE_BASE = 200_000;
     uint256 internal constant ISSUANCE_PER_SERIES = 305_000;
     uint256 internal constant ISSUANCE_PER_ITEM = 270_000;
-    /// @dev Two cases bind this budget from opposite ends. The widest chunk measures ~3.31M for 64
-    ///      bidders against a live escrow. The narrowest one is dearer per bidder: the chunk that
-    ///      completes a day also routes the paid wCOEN home — sync-token leg, unwrap, factory
-    ///      hand-off — and that cost is fixed, so it lands almost entirely on the base. A two-bidder
-    ///      completing chunk measures ~440k; `LocalLoopback.t.sol` walks it and fails when the base
-    ///      no longer covers it.
+    /// @dev Measured at ~3.31M for a full 64-bidder chunk, and ~440k for a two-bidder one: the
+    ///      chunk completing a day also routes the paid wCOEN home at a fixed cost, which lands on
+    ///      the base. `LocalLoopback.t.sol` walks the narrow case.
     uint256 internal constant REFUND_BASE = 500_000;
     uint256 internal constant REFUND_PER_ITEM = 75_000;
     /// @dev Sized on the failure path: a rejected item is recorded with its revert bytes while the tokens

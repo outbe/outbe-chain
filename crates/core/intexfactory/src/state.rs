@@ -197,9 +197,8 @@ impl IntexFactoryContract<'_> {
 
     // --- called groups awaiting their deadline ---
 
-    /// Park a called group with the members and deadline the expiry sweep needs.
-    /// The qualified bin index has just dropped it, and nothing else holds the
-    /// (iso, day) -> series mapping, so this is the only record of what it held.
+    /// Park a called group with the members and deadline the expiry sweep needs:
+    /// the bin index has just dropped it and nothing else maps (iso, day) -> series.
     pub(crate) fn push_called_group(
         &mut self,
         reference_currency: u16,
@@ -211,8 +210,7 @@ impl IntexFactoryContract<'_> {
             return Ok(());
         }
         let key = Self::scoped(reference_currency, worldwide_day.value());
-        // A day's group is called once, so a second push would orphan the first
-        // queue slot and let the same members be credited twice.
+        // A second push would orphan the first slot and credit the members twice.
         if self.called_group_count.read(&key)? != 0 {
             return Err(IntexFactoryError::GroupAlreadyIndexed {
                 iso: reference_currency,
@@ -236,9 +234,8 @@ impl IntexFactoryContract<'_> {
 
     /// The queue slot's group, or `None` for a slot whose group already expired.
     pub(crate) fn called_queue_slot(&self, index: u32) -> Result<Option<(u16, WorldwideDay)>> {
+        // `scoped` keeps a non-zero ISO code in the high half, so zero cannot collide.
         let key = self.called_queue_at.read(&index)?;
-        // `scoped` puts a non-zero ISO code in the high half, so zero is free to
-        // mean "taken already" and can never collide with a real group.
         Ok((key != 0).then(|| Self::unscoped(key)))
     }
 
@@ -283,8 +280,7 @@ impl IntexFactoryContract<'_> {
         self.called_queue_at.clear(&queue_index)
     }
 
-    /// Move the head past slots emptied behind it, and reset the queue once it
-    /// drains so the indices never climb without bound.
+    /// Move the head past emptied slots, resetting once the queue drains.
     pub(crate) fn compact_called_queue(&mut self) -> Result<()> {
         let tail = self.called_tail.read()?;
         let mut head = self.called_head.read()?;

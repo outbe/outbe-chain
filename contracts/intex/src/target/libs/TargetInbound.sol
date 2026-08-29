@@ -464,8 +464,7 @@ library TargetInbound {
         catch (bytes memory reason) {
             if (_selectorOf(reason) == IIntexNFT1155.InvalidState.selector) {
                 IIntexNFT1155.IntexState state = $.intex.readData(seriesId).state;
-                // `Expired` is a called series past its notice period, so a repeated
-                // MARK_CALLED for one is still a duplicate, not an obsolete message.
+                // `Expired` is a called series past its notice period, still a duplicate.
                 bool already =
                     (msgType == BridgeMsgCodec.MSG_MARK_CALLED
                             && (state == IIntexNFT1155.IntexState.Called || state == IIntexNFT1155.IntexState.Expired))

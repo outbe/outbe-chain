@@ -497,9 +497,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         return data;
     }
 
-    /// @dev A called series whose notice period has run out reports `Expired`. Derived,
-    ///      never stored: no transaction arrives at the deadline to write it, and every
-    ///      freeze reads the stored field, so storing it would unfreeze the series.
+    /// @dev Derived, never stored: no transaction arrives at the deadline to write it.
     function _effectiveState(IIntexNFT1155.SeriesData memory data) private view returns (IIntexNFT1155.IntexState) {
         if (
             data.state == IIntexNFT1155.IntexState.Called

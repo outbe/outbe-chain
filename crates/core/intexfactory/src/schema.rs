@@ -132,23 +132,18 @@ pub struct IntexFactoryContract {
     #[attribute(order = 27)]
     pub notify_kind: outbe_primitives::storage::dsl::Map<u32, u8>,
 
-    // Called groups waiting for their settlement window to close. A called group
-    // has left the qualified bin index and there is no other (iso, day) -> series
-    // index anywhere, so the members parked here are the only way back to them.
-    // Entries arrive in call order, which is why the expiry sweep can decide on
-    // the head alone in the common block.
+    // Called groups waiting for their settlement window to close, in call order.
+    // A called group has left the bin index, so the members parked here are the
+    // only way back to its series.
     #[attribute(order = 28)]
     pub called_head: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 29)]
     pub called_tail: outbe_primitives::storage::dsl::Value<u32>,
-    /// Queue index -> `scoped(iso, day)`. Zero marks a slot whose group already
-    /// expired: a frozen notice period can order two groups against their arrival,
-    /// so the sweep may take one from behind the head and leave a hole.
+    /// Queue index -> `scoped(iso, day)`; zero marks a slot already taken.
     #[attribute(order = 30)]
     pub called_queue_at: outbe_primitives::storage::dsl::Map<u32, u64>,
-    /// `scoped(iso, day)` -> when the group's settlement window closes. Stored
-    /// rather than derived so the sweep can decide on the head without loading a
-    /// series record every block.
+    /// `scoped(iso, day)` -> when the group's settlement window closes. Stored so
+    /// the head check costs no record load.
     #[attribute(order = 31)]
     pub called_group_deadline: outbe_primitives::storage::dsl::Map<u64, u64>,
     #[attribute(order = 32)]

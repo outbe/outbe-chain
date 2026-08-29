@@ -108,16 +108,12 @@ pub fn mark_called(storage: &StorageHandle<'_>, series_id: SeriesId, called_at: 
 
 /// What a series forfeited when its call window closed.
 pub struct Forfeited {
-    /// Units still unsettled and unparked at the deadline; zero for a series whose
-    /// units were all realised in time.
     pub units: u32,
-    /// The series' own frozen load per unit, so the caller needs no second read.
     pub promis_load_minor: U256,
 }
 
-/// `Called -> Expired`. The call window closed: every unit still unsettled and
-/// unparked is forfeited, and its Promis load is the caller's to return to the
-/// pool. Reaching `Expired` means the window shut, not that anything burned.
+/// `Called -> Expired`. Every unit still unsettled and unparked is forfeited, and
+/// its load is the caller's to return to the pool.
 pub fn expire_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<Forfeited> {
     let mut registry = IntexContract::new(storage.clone());
     let mut record = registry.load_series(series_id)?;
@@ -131,8 +127,7 @@ pub fn expire_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result
 
     let settled = registry.settled_units.read(&series_id)?;
     let parked = registry.parked_units.read(&series_id)?;
-    // Checked, never saturating: the ERC-1155 supply cap keeps settled + parked
-    // within the issued count, so an underflow is corrupt state, not "nothing owed".
+    // Checked: an underflow is corrupt state, not "nothing owed".
     let forfeited = record
         .issued_intex_count
         .checked_sub(settled)
@@ -148,8 +143,7 @@ pub fn expire_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result
     })
 }
 
-/// Record `units` settled against `series_id`. Their Promis load belongs to the
-/// settler from now on and never returns to the pool.
+/// Record `units` settled: their load belongs to the settler from now on.
 pub fn record_settled_units(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
@@ -158,8 +152,7 @@ pub fn record_settled_units(
     add_realised_units(storage, series_id, units, RealisedKind::Settled)
 }
 
-/// Record `units` parked into a Gem position. Their Promis load moved into the
-/// position and is accounted for there.
+/// Record `units` parked: their load moved into the Gem position.
 pub fn record_parked_units(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
@@ -197,8 +190,7 @@ fn add_realised_units(
         return Ok(());
     }
     let registry = IntexContract::new(storage.clone());
-    // One slot, not the whole record: this runs on every settle, and the cap is
-    // the only field the check needs.
+    // One slot, not the whole record: this runs on every settle.
     let issued = registry
         .series
         .entry(series_id)
@@ -221,8 +213,7 @@ fn add_realised_units(
                 .ok_or(IntexError::RealisedUnitsOverflow)?,
         ),
     };
-    // The sum is bounded by the issued count; crossing it means the two ledgers
-    // disagree and the forfeit arithmetic would underflow later.
+    // Crossing the issued count means the two ledgers disagree.
     if settled
         .checked_add(parked)
         .is_none_or(|realised| realised > issued)

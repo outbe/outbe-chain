@@ -849,8 +849,6 @@ pub fn settle(
         .into(),
     )?;
 
-    // The settled units leave the forfeitable set for good: their Promis load is
-    // the settler's from here on, whether or not they ever mine it.
     let settled_units = u32::try_from(amount)
         .map_err(|_| PrecompileError::Revert("settled amount exceeds u32".into()))?;
     outbe_intex::api::record_settled_units(storage, series_id, settled_units)?;

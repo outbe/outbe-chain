@@ -41,8 +41,6 @@ impl BlockLifecycle for IntexLifecycle {
         // proceeds fan-in deadline has passed.
         crate::runtime::drain_distributions(&ctx.storage)?;
         crate::runtime::sweep_proceeds_deadlines(&ctx.storage, ctx.block.timestamp)?;
-        // Last: a group whose settlement window closed returns the Promis load
-        // of everything left unrealised to the unallocated limit.
         crate::expired::sweep_expiry_deadlines(ctx)?;
         Ok(())
     }

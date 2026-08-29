@@ -38,13 +38,12 @@ interface IIntex {
         uint16 referenceCurrency;
         uint32 worldwideDay;
         uint256 costAmountMinor;
-        /// @notice Units settled so far; their Promis load belongs to the settler.
+        /// @notice Units settled so far; their load belongs to the settler.
         uint32 settledUnits;
         /// @notice Units parked into Gem positions; their load moved with them.
         uint32 parkedUnits;
-        /// @notice Units nobody realised: what the series will forfeit at its
-        ///         deadline, and what it did forfeit once the state reads Expired.
-        ///         The counters are never cleared, so the number stays readable.
+        /// @notice Units nobody realised: what the series forfeits at its deadline,
+        ///         and what it did forfeit once the state reads Expired.
         uint32 outstandingUnits;
     }
 

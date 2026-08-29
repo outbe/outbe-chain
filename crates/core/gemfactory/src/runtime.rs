@@ -119,8 +119,7 @@ pub fn mint_gem_position(
         .checked_mul(units)
         .ok_or(GemFactoryError::Overflow)?;
 
-    // The load moved into this position, so those units can no longer be
-    // forfeited by the source series.
+    // Their load moved into the position, so the source series cannot forfeit them.
     let parked_units = u32::try_from(units).map_err(|_| GemFactoryError::Overflow)?;
     outbe_intex::api::record_parked_units(storage, source_intex_id, parked_units)?;
 

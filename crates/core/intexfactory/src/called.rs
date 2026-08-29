@@ -380,9 +380,7 @@ pub(crate) fn try_call_group(
     for &series_id in &group.members {
         outbe_intex::api::mark_called(storage, series_id, called_at)?;
     }
-    // The group leaves the price index for good, so park it with its members and
-    // deadline: nothing else maps (iso, day) back to its series, and the expiry
-    // sweep has to find them again when the settlement window closes.
+    // Park it with its members: the expiry sweep has no other way back to them.
     factory.remove_qualified_group(group.iso_code, group.worldwide_day)?;
     factory.push_called_group(
         group.iso_code,
