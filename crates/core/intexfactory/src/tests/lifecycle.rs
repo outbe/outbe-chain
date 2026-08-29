@@ -635,7 +635,7 @@ mod call_sweep {
     }
 
     #[test]
-    fn expiry_returns_only_the_load_nobody_realised() {
+    fn expiry_returns_only_the_load_nobody_realized() {
         with_factory(|s| {
             let scan_ts = ISSUED_AT as u64 + 60 * DAY;
             priced_window(&s, scan_ts);

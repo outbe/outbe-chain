@@ -132,7 +132,7 @@ pub fn expire_series(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result
         .issued_intex_count
         .checked_sub(settled)
         .and_then(|left| left.checked_sub(parked))
-        .ok_or(IntexError::RealisedUnitsOverflow)?;
+        .ok_or(IntexError::RealizedUnitsOverflow)?;
 
     record.state = IntexState::Expired as u8;
     let promis_load_minor = record.promis_load_minor;
@@ -149,7 +149,7 @@ pub fn record_settled_units(
     series_id: SeriesId,
     units: u32,
 ) -> Result<()> {
-    add_realised_units(storage, series_id, units, RealisedKind::Settled)
+    add_realized_units(storage, series_id, units, RealizedKind::Settled)
 }
 
 /// Record `units` parked: their load moved into the Gem position.
@@ -158,7 +158,7 @@ pub fn record_parked_units(
     series_id: SeriesId,
     units: u32,
 ) -> Result<()> {
-    add_realised_units(storage, series_id, units, RealisedKind::Parked)
+    add_realized_units(storage, series_id, units, RealizedKind::Parked)
 }
 
 /// Units settled so far against `series_id`.
@@ -175,16 +175,16 @@ pub fn parked_units(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<
         .read(&series_id)
 }
 
-enum RealisedKind {
+enum RealizedKind {
     Settled,
     Parked,
 }
 
-fn add_realised_units(
+fn add_realized_units(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
     units: u32,
-    kind: RealisedKind,
+    kind: RealizedKind,
 ) -> Result<()> {
     if units == 0 {
         return Ok(());
@@ -200,30 +200,30 @@ fn add_realised_units(
     let parked = registry.parked_units.read(&series_id)?;
 
     let (settled, parked) = match kind {
-        RealisedKind::Settled => (
+        RealizedKind::Settled => (
             settled
                 .checked_add(units)
-                .ok_or(IntexError::RealisedUnitsOverflow)?,
+                .ok_or(IntexError::RealizedUnitsOverflow)?,
             parked,
         ),
-        RealisedKind::Parked => (
+        RealizedKind::Parked => (
             settled,
             parked
                 .checked_add(units)
-                .ok_or(IntexError::RealisedUnitsOverflow)?,
+                .ok_or(IntexError::RealizedUnitsOverflow)?,
         ),
     };
     // Crossing the issued count means the two ledgers disagree.
     if settled
         .checked_add(parked)
-        .is_none_or(|realised| realised > issued)
+        .is_none_or(|realized| realized > issued)
     {
-        return Err(IntexError::RealisedUnitsOverflow.into());
+        return Err(IntexError::RealizedUnitsOverflow.into());
     }
 
     match kind {
-        RealisedKind::Settled => registry.settled_units.write(&series_id, settled),
-        RealisedKind::Parked => registry.parked_units.write(&series_id, parked),
+        RealizedKind::Settled => registry.settled_units.write(&series_id, settled),
+        RealizedKind::Parked => registry.parked_units.write(&series_id, parked),
     }
 }
 

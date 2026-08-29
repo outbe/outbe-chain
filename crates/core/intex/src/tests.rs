@@ -1082,7 +1082,7 @@ fn empty_population_and_empty_batch_are_rejected() {
 }
 
 // ---------------------------------------------------------------------
-// realised units + expiry
+// realized units + expiry
 // ---------------------------------------------------------------------
 
 /// Create a series and drive it to `Called` so expiry can be exercised.
@@ -1094,7 +1094,7 @@ fn called_series(storage: &StorageHandle, worldwide_day: u32) -> SeriesId {
 }
 
 #[test]
-fn expiry_forfeits_every_unrealised_unit() {
+fn expiry_forfeits_every_unrealized_unit() {
     with_registry(|s| {
         let id = called_series(&s, 40);
         assert_eq!(api::expire_series(&s, id).unwrap().units, 100);
@@ -1106,7 +1106,7 @@ fn expiry_forfeits_every_unrealised_unit() {
 }
 
 #[test]
-fn expiry_forfeits_only_what_was_left_unrealised() {
+fn expiry_forfeits_only_what_was_left_unrealized() {
     with_registry(|s| {
         let id = called_series(&s, 41);
         api::record_settled_units(&s, id, 30).unwrap();
@@ -1119,7 +1119,7 @@ fn expiry_forfeits_only_what_was_left_unrealised() {
 }
 
 #[test]
-fn a_fully_realised_series_still_expires_but_forfeits_nothing() {
+fn a_fully_realized_series_still_expires_but_forfeits_nothing() {
     with_registry(|s| {
         let id = called_series(&s, 42);
         api::record_settled_units(&s, id, 60).unwrap();
@@ -1134,7 +1134,7 @@ fn a_fully_realised_series_still_expires_but_forfeits_nothing() {
 }
 
 #[test]
-fn the_view_carries_what_is_still_unrealised() {
+fn the_view_carries_what_is_still_unrealized() {
     with_registry(|s| {
         let id = called_series(&s, 46);
         api::record_settled_units(&s, id, 30).unwrap();
@@ -1143,10 +1143,10 @@ fn the_view_carries_what_is_still_unrealised() {
         let data = dispatch_series_data(&s, id);
         assert_eq!(data.settledUnits, 30);
         assert_eq!(data.parkedUnits, 25);
-        assert_eq!(data.outstandingUnits, 45);
+        assert_eq!(data.unrealizedUnits, 45);
 
         api::expire_series(&s, id).unwrap();
-        assert_eq!(dispatch_series_data(&s, id).outstandingUnits, 45);
+        assert_eq!(dispatch_series_data(&s, id).unrealizedUnits, 45);
     });
 }
 
@@ -1188,7 +1188,7 @@ fn expired_is_terminal() {
 }
 
 #[test]
-fn realised_units_can_never_exceed_the_issued_count() {
+fn realized_units_can_never_exceed_the_issued_count() {
     with_registry(|s| {
         let id = called_series(&s, 45);
         api::record_settled_units(&s, id, 100).unwrap();

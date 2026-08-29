@@ -303,7 +303,7 @@ export function registerIntexTools(server: McpServer, ctx: Ctx): void {
         // load, outstanding ones lose it to the pool when the call window closes.
         settledUnits: Number(d.settledUnits),
         parkedUnits: Number(d.parkedUnits),
-        outstandingUnits: Number(d.outstandingUnits),
+        unrealizedUnits: Number(d.unrealizedUnits),
         costAmount: { raw: d.costAmountMinor.toString(), value: formatUnits(u256(d.costAmountMinor), 6), scale: "1e6 ISO stable-unit" },
         callWindow: Number(d.callWindow),
         callThreshold: Number(d.callThreshold),

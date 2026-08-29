@@ -1,5 +1,5 @@
 //! Begin-block expiry sweep: closes a called group's settlement window and returns
-//! the Promis load of everything left unrealised to the unallocated limit.
+//! the Promis load of everything left unrealized to the unallocated limit.
 
 use alloy_primitives::U256;
 use outbe_common::WorldwideDay;

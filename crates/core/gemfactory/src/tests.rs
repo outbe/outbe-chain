@@ -650,7 +650,7 @@ fn mint_gem_position_burns_parks_and_mints_nft() {
 }
 
 #[test]
-fn parking_marks_the_units_realised_on_the_source_series() {
+fn parking_marks_the_units_realized_on_the_source_series() {
     with_storage(None, |storage| {
         seed_and_park(
             storage,

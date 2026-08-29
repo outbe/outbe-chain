@@ -96,7 +96,7 @@ fn to_abi_data(r: &SeriesRecord, settled: u32, parked: u32) -> Result<IIntex::Se
         parkedUnits: parked,
         // Saturating rather than checked: a corrupt pair should read as "nothing
         // left to forfeit" on a view, not make the whole record unreadable.
-        outstandingUnits: r
+        unrealizedUnits: r
             .issued_intex_count
             .saturating_sub(settled)
             .saturating_sub(parked),

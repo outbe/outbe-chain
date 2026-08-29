@@ -166,7 +166,7 @@
             "internalType": "uint32"
           },
           {
-            "name": "outstandingUnits",
+            "name": "unrealizedUnits",
             "type": "uint32",
             "internalType": "uint32"
           }

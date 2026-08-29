@@ -42,9 +42,9 @@ interface IIntex {
         uint32 settledUnits;
         /// @notice Units parked into Gem positions; their load moved with them.
         uint32 parkedUnits;
-        /// @notice Units nobody realised: what the series forfeits at its deadline,
+        /// @notice Units nobody realized: what the series forfeits at its deadline,
         ///         and what it did forfeit once the state reads Expired.
-        uint32 outstandingUnits;
+        uint32 unrealizedUnits;
     }
 
     /// @notice Full identity + lifecycle record for a series. Reverts if the

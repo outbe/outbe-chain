@@ -101,7 +101,7 @@ interface IIntexFactory {
     event SeriesCalled(bytes14 indexed seriesId, uint32 calledAt);
 
     /// @notice The series' settlement window closed. Both are zero when every unit
-    ///         was realised in time.
+    ///         was realized in time.
     event SeriesExpired(bytes14 indexed seriesId, uint32 forfeitedUnits, uint256 returnedPromis);
 
     /// @notice One chain routed `amount` native COEN of `worldwideDay`'s auction
