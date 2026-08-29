@@ -216,6 +216,76 @@ struct UpgradePromotionWorkerConfigV1 {
     promoted: Arc<tokio::sync::Notify>,
 }
 
+/// Exact finalized checkpoint at which an already-admitted FullNode may arm its
+/// local lease guard after replaying pre-registration history from an empty DB.
+/// This is process-local startup authority, never consensus or wire state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FullNodeAdmissionAnchorV1 {
+    finalized_height: u64,
+    finalized_hash: alloy_primitives::B256,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TeeLeaseGuardGateV1 {
+    pending_full_node_anchor: Option<FullNodeAdmissionAnchorV1>,
+}
+
+impl TeeLeaseGuardGateV1 {
+    const fn new(pending_full_node_anchor: Option<FullNodeAdmissionAnchorV1>) -> Self {
+        Self {
+            pending_full_node_anchor,
+        }
+    }
+
+    const fn is_armed(self) -> bool {
+        self.pending_full_node_anchor.is_none()
+    }
+
+    const fn anchor_to_validate(
+        self,
+        local_finalized_height: u64,
+    ) -> Option<FullNodeAdmissionAnchorV1> {
+        match self.pending_full_node_anchor {
+            Some(anchor) if local_finalized_height >= anchor.finalized_height => Some(anchor),
+            _ => None,
+        }
+    }
+
+    fn validate_and_arm(
+        &mut self,
+        observed_hash: alloy_primitives::B256,
+        admission: outbe_engine::validators::LocalTeeRuntimeAdmissionV1,
+    ) -> eyre::Result<()> {
+        let Some(anchor) = self.pending_full_node_anchor else {
+            return Ok(());
+        };
+        eyre::ensure!(
+            observed_hash == anchor.finalized_hash,
+            "FullNode admission anchor hash mismatch at height {}: upstream {}, local {}",
+            anchor.finalized_height,
+            anchor.finalized_hash,
+            observed_hash
+        );
+        match admission {
+            outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready { .. } => {
+                self.pending_full_node_anchor = None;
+                Ok(())
+            }
+            outbe_engine::validators::LocalTeeRuntimeAdmissionV1::BootstrapPending => {
+                eyre::bail!(
+                    "FullNode admission anchor unexpectedly has bootstrap-pending TEE state"
+                )
+            }
+            outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Rejected(reason) => {
+                eyre::bail!(
+                    "FullNode admission anchor rejected the local identity: {}",
+                    local_tee_rejection_message(reason)
+                )
+            }
+        }
+    }
+}
+
 fn local_tee_rejection_message(
     rejection: outbe_engine::validators::LocalTeeRuntimeRejectionV1,
 ) -> String {
@@ -242,6 +312,52 @@ fn local_tee_rejection_message(
     }
 }
 
+fn tee_lease_admission_rejection(
+    admission: outbe_engine::validators::LocalTeeRuntimeAdmissionV1,
+) -> Option<String> {
+    match admission {
+        outbe_engine::validators::LocalTeeRuntimeAdmissionV1::BootstrapPending
+        | outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready { .. } => None,
+        outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Rejected(reason) => {
+            Some(local_tee_rejection_message(reason))
+        }
+    }
+}
+
+fn read_local_tee_admission_at_height<P>(
+    provider: &P,
+    chain_id: u64,
+    genesis_hash: alloy_primitives::B256,
+    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    block_number: u64,
+) -> eyre::Result<(
+    alloy_primitives::B256,
+    outbe_engine::validators::LocalTeeRuntimeAdmissionV1,
+)>
+where
+    P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
+{
+    let header = provider
+        .sealed_header(block_number)
+        .wrap_err("read exact header for TEE lease admission")?
+        .ok_or_else(|| eyre::eyre!("exact TEE lease admission header is unavailable"))?;
+    let block_hash = header.hash();
+    let state = provider
+        .state_by_block_hash(block_hash)
+        .wrap_err("read exact state for TEE lease admission")?;
+    let admission = outbe_engine::validators::read_local_tee_runtime_admission_from_state(
+        &state,
+        outbe_primitives::storage::readonly::ReadOnlyBlockContext {
+            chain_id,
+            genesis_hash,
+            block_number,
+            timestamp: header.header().inner.timestamp,
+        },
+        identity,
+    )?;
+    Ok((block_hash, admission))
+}
+
 fn read_finalized_local_tee_admission<P>(
     provider: &P,
     chain_id: u64,
@@ -260,36 +376,73 @@ where
     if finalized.number == 0 {
         return Ok(None);
     }
-    let header = provider
-        .sealed_header(finalized.number)
-        .wrap_err("read finalized header for TEE lease admission")?
-        .ok_or_else(|| eyre::eyre!("finalized TEE lease header is unavailable"))?;
+    let (header_hash, admission) = read_local_tee_admission_at_height(
+        provider,
+        chain_id,
+        genesis_hash,
+        identity,
+        finalized.number,
+    )?;
     eyre::ensure!(
-        header.hash() == finalized.hash,
+        header_hash == finalized.hash,
         "finalized TEE lease header hash mismatch: marker {}, header {}",
         finalized.hash,
-        header.hash()
+        header_hash
     );
-    let state = provider
-        .state_by_block_hash(finalized.hash)
-        .wrap_err("read finalized state for TEE lease admission")?;
-    outbe_engine::validators::read_local_tee_runtime_admission_from_state(
-        &state,
-        outbe_primitives::storage::readonly::ReadOnlyBlockContext {
-            chain_id,
-            genesis_hash,
-            block_number: finalized.number,
-            timestamp: header.header().inner.timestamp,
-        },
+    Ok(Some(admission))
+}
+
+fn read_gated_finalized_local_tee_admission<P>(
+    provider: &P,
+    chain_id: u64,
+    genesis_hash: alloy_primitives::B256,
+    identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    gate: &mut TeeLeaseGuardGateV1,
+) -> eyre::Result<Option<outbe_engine::validators::LocalTeeRuntimeAdmissionV1>>
+where
+    P: BlockIdReader + HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
+{
+    let Some(finalized) = provider
+        .finalized_block_num_hash()
+        .wrap_err("read finalized head for gated TEE lease admission")?
+    else {
+        return Ok(None);
+    };
+    if finalized.number == 0 {
+        return Ok(None);
+    }
+    let Some(anchor) = gate.anchor_to_validate(finalized.number) else {
+        return if gate.is_armed() {
+            read_finalized_local_tee_admission(provider, chain_id, genesis_hash, identity)
+        } else {
+            Ok(None)
+        };
+    };
+
+    let (anchor_hash, anchor_admission) = read_local_tee_admission_at_height(
+        provider,
+        chain_id,
+        genesis_hash,
         identity,
-    )
-    .map(Some)
+        anchor.finalized_height,
+    )?;
+    gate.validate_and_arm(anchor_hash, anchor_admission)?;
+    info!(
+        anchor_height = anchor.finalized_height,
+        anchor_hash = %anchor.finalized_hash,
+        local_finalized_height = finalized.number,
+        "FullNode local TEE lease guard armed at authenticated catch-up anchor"
+    );
+    if finalized.number == anchor.finalized_height {
+        return Ok(Some(anchor_admission));
+    }
+    read_finalized_local_tee_admission(provider, chain_id, genesis_hash, identity)
 }
 
 async fn require_upstream_fullnode_tee_admission(
     upstream: &str,
     identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
-) -> eyre::Result<()> {
+) -> eyre::Result<FullNodeAdmissionAnchorV1> {
     let rpc = outbe_operator::rpc::HttpRenewalRpc::new(upstream);
     let view = read_finalized_registry_view_v1(
         &rpc,
@@ -314,7 +467,10 @@ async fn require_upstream_fullnode_tee_admission(
             binding.valid_until
         );
     }
-    Ok(())
+    Ok(FullNodeAdmissionAnchorV1 {
+        finalized_height: view.view.block_number,
+        finalized_hash: view.view.block_hash,
+    })
 }
 
 async fn run_tee_lease_guard_v1<P>(
@@ -322,6 +478,7 @@ async fn run_tee_lease_guard_v1<P>(
     chain_id: u64,
     genesis_hash: alloy_primitives::B256,
     identity: outbe_engine::validators::LocalTeeRuntimeIdentityV1,
+    mut gate: TeeLeaseGuardGateV1,
     shutdown: tokio_util::sync::CancellationToken,
     rejected: tokio::sync::mpsc::UnboundedSender<String>,
 ) where
@@ -339,14 +496,19 @@ async fn run_tee_lease_guard_v1<P>(
             _ = shutdown.cancelled() => return,
             _ = interval.tick() => {}
         }
-        match read_finalized_local_tee_admission(&provider, chain_id, genesis_hash, identity) {
-            Ok(
-                None | Some(outbe_engine::validators::LocalTeeRuntimeAdmissionV1::BootstrapPending),
-            ) => {}
-            Ok(Some(outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready { .. })) => {}
-            Ok(Some(outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Rejected(reason))) => {
-                let _ = rejected.send(local_tee_rejection_message(reason));
-                return;
+        match read_gated_finalized_local_tee_admission(
+            &provider,
+            chain_id,
+            genesis_hash,
+            identity,
+            &mut gate,
+        ) {
+            Ok(None) => {}
+            Ok(Some(admission)) => {
+                if let Some(reason) = tee_lease_admission_rejection(admission) {
+                    let _ = rejected.send(reason);
+                    return;
+                }
             }
             Err(error) => {
                 let _ = rejected.send(format!(
@@ -1593,13 +1755,14 @@ fn run_node() -> eyre::Result<()> {
         // chain. Prove that invariant before Reth opens networking, RPC, sync or
         // execution. Losing the key is terminal for this node identity: startup
         // never invokes recovery, replacement or another bootstrap path.
-        if !args.is_validator {
+        let full_node_tee_admission_anchor = if !args.is_validator {
             let upstream = args.upstream.as_deref().ok_or_else(|| {
                 eyre::eyre!(
                     "full-node startup requires --upstream to authenticate the chain offer key"
                 )
             })?;
-            require_upstream_fullnode_tee_admission(upstream, local_tee_identity).await?;
+            let admission_anchor =
+                require_upstream_fullnode_tee_admission(upstream, local_tee_identity).await?;
             let expected_offer = outbe_engine::read_upstream_tribute_offer_public_key(upstream)
                 .await
                 .wrap_err("failed to read mandatory offer key from the selected upstream")?;
@@ -1620,7 +1783,10 @@ fn run_node() -> eyre::Result<()> {
                 %upstream,
                 "full-node resident offer key matched upstream before execution launch"
             );
-        }
+            Some(admission_anchor)
+        } else {
+            None
+        };
 
         let offchain_data = args.offchain_data()?;
         validate_adr005_node_mode(args.is_validator, args.upstream.is_some())?;
@@ -1858,18 +2024,19 @@ fn run_node() -> eyre::Result<()> {
             .await
             .wrap_err("failed launching execution node")?;
 
-        if let Some(outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Rejected(reason)) =
-            read_finalized_local_tee_admission(
+        let mut tee_lease_guard_gate =
+            TeeLeaseGuardGateV1::new(full_node_tee_admission_anchor);
+        if let Some(admission) = read_gated_finalized_local_tee_admission(
             &node.provider,
             proof_chain_id,
             genesis_hash,
             local_tee_identity,
+            &mut tee_lease_guard_gate,
         )?
         {
-            eyre::bail!(
-                "local node rejected by finalized TEE lease state: {}",
-                local_tee_rejection_message(reason)
-            );
+            if let Some(reason) = tee_lease_admission_rejection(admission) {
+                eyre::bail!("local node rejected by finalized TEE lease state: {reason}");
+            }
         }
         let (tee_lease_exit_tx, mut tee_lease_exit_rx) =
             tokio::sync::mpsc::unbounded_channel();
@@ -1878,6 +2045,7 @@ fn run_node() -> eyre::Result<()> {
             proof_chain_id,
             genesis_hash,
             local_tee_identity,
+            tee_lease_guard_gate,
             shutdown_token.clone(),
             tee_lease_exit_tx,
         ));
@@ -2373,6 +2541,129 @@ mod tests {
     }
 
     struct ExecutionTeardownSentinel(Arc<AtomicBool>);
+
+    fn full_node_admission_anchor() -> super::FullNodeAdmissionAnchorV1 {
+        super::FullNodeAdmissionAnchorV1 {
+            finalized_height: 7,
+            finalized_hash: alloy_primitives::B256::repeat_byte(0x77),
+        }
+    }
+
+    #[test]
+    fn full_node_lease_guard_waits_strictly_below_authenticated_anchor() {
+        let anchor = full_node_admission_anchor();
+        let gate = super::TeeLeaseGuardGateV1::new(Some(anchor));
+
+        assert!(!gate.is_armed());
+        assert_eq!(gate.anchor_to_validate(0), None);
+        assert_eq!(gate.anchor_to_validate(6), None);
+        assert_eq!(gate.anchor_to_validate(7), Some(anchor));
+        assert_eq!(gate.anchor_to_validate(70), Some(anchor));
+    }
+
+    #[test]
+    fn full_node_lease_guard_arms_only_on_exact_ready_anchor() {
+        let anchor = full_node_admission_anchor();
+        let mut gate = super::TeeLeaseGuardGateV1::new(Some(anchor));
+
+        gate.validate_and_arm(
+            anchor.finalized_hash,
+            outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready {
+                valid_until: 1_800_000_000,
+            },
+        )
+        .expect("exact live anchor must arm the local guard");
+
+        assert!(gate.is_armed());
+        assert_eq!(gate.anchor_to_validate(anchor.finalized_height), None);
+    }
+
+    #[test]
+    fn full_node_lease_guard_fails_closed_on_anchor_hash_mismatch() {
+        let anchor = full_node_admission_anchor();
+        let mut gate = super::TeeLeaseGuardGateV1::new(Some(anchor));
+
+        let error = gate
+            .validate_and_arm(
+                alloy_primitives::B256::repeat_byte(0x78),
+                outbe_engine::validators::LocalTeeRuntimeAdmissionV1::Ready {
+                    valid_until: 1_800_000_000,
+                },
+            )
+            .expect_err("a different local canonical hash must fail closed");
+
+        assert!(error.to_string().contains("anchor hash mismatch"));
+        assert!(!gate.is_armed());
+    }
+
+    #[test]
+    fn full_node_lease_guard_rejects_every_non_ready_anchor_verdict() {
+        use outbe_engine::validators::{LocalTeeRuntimeAdmissionV1, LocalTeeRuntimeRejectionV1};
+
+        for admission in [
+            LocalTeeRuntimeAdmissionV1::BootstrapPending,
+            LocalTeeRuntimeAdmissionV1::Rejected(LocalTeeRuntimeRejectionV1::MissingBinding),
+            LocalTeeRuntimeAdmissionV1::Rejected(
+                LocalTeeRuntimeRejectionV1::EnclaveIdentityMismatch,
+            ),
+            LocalTeeRuntimeAdmissionV1::Rejected(LocalTeeRuntimeRejectionV1::Expired {
+                valid_until: 1_700_000_000,
+            }),
+        ] {
+            let anchor = full_node_admission_anchor();
+            let mut gate = super::TeeLeaseGuardGateV1::new(Some(anchor));
+            assert!(gate
+                .validate_and_arm(anchor.finalized_hash, admission)
+                .is_err());
+            assert!(!gate.is_armed());
+        }
+    }
+
+    #[test]
+    fn validators_start_armed_and_later_rejections_remain_terminal() {
+        use outbe_engine::validators::{LocalTeeRuntimeAdmissionV1, LocalTeeRuntimeRejectionV1};
+
+        let gate = super::TeeLeaseGuardGateV1::new(None);
+        assert!(gate.is_armed());
+        assert_eq!(gate.anchor_to_validate(u64::MAX), None);
+
+        let reason = super::tee_lease_admission_rejection(LocalTeeRuntimeAdmissionV1::Rejected(
+            LocalTeeRuntimeRejectionV1::Expired { valid_until: 42 },
+        ))
+        .expect("an armed guard must preserve fail-stop semantics");
+        assert!(reason.contains("expired at 42"));
+    }
+
+    #[test]
+    fn full_node_restart_revalidates_the_new_upstream_anchor() {
+        use outbe_engine::validators::LocalTeeRuntimeAdmissionV1;
+
+        let old_anchor = full_node_admission_anchor();
+        let mut before_restart = super::TeeLeaseGuardGateV1::new(Some(old_anchor));
+        before_restart
+            .validate_and_arm(
+                old_anchor.finalized_hash,
+                LocalTeeRuntimeAdmissionV1::Ready { valid_until: 100 },
+            )
+            .unwrap();
+        assert!(before_restart.is_armed());
+
+        let new_anchor = super::FullNodeAdmissionAnchorV1 {
+            finalized_height: 12,
+            finalized_hash: alloy_primitives::B256::repeat_byte(0x12),
+        };
+        let mut after_restart = super::TeeLeaseGuardGateV1::new(Some(new_anchor));
+        assert!(!after_restart.is_armed());
+        assert_eq!(after_restart.anchor_to_validate(11), None);
+        assert_eq!(after_restart.anchor_to_validate(12), Some(new_anchor));
+        after_restart
+            .validate_and_arm(
+                new_anchor.finalized_hash,
+                LocalTeeRuntimeAdmissionV1::Ready { valid_until: 200 },
+            )
+            .unwrap();
+        assert!(after_restart.is_armed());
+    }
 
     #[test]
     fn ocomp_bundle_catalog_can_rotate_from_v1_v2_to_v2_v3() {

@@ -2,7 +2,7 @@
 
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use alloy_primitives::U256;
 use cucumber::{given, then, when};
@@ -45,6 +45,66 @@ fn wait_until(mut predicate: impl FnMut() -> bool, attempts: u32, label: &str) {
         sleep(Duration::from_secs(2));
     }
     assert!(predicate(), "timed out waiting for {label}");
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FullNodeSyncProbeV1 {
+    Pending,
+    Reached(u64),
+    Exited,
+}
+
+const fn classify_full_node_sync_probe(
+    head: Option<u64>,
+    checkpoint: u64,
+    exited: bool,
+) -> FullNodeSyncProbeV1 {
+    if exited {
+        FullNodeSyncProbeV1::Exited
+    } else if let Some(height) = head {
+        if height >= checkpoint {
+            return FullNodeSyncProbeV1::Reached(height);
+        }
+        FullNodeSyncProbeV1::Pending
+    } else {
+        FullNodeSyncProbeV1::Pending
+    }
+}
+
+fn wait_for_live_full_node_checkpoint(
+    world: &mut World,
+    full_node: usize,
+    checkpoint: u64,
+    timeout: Duration,
+) -> Result<u64, String> {
+    let port = world.validators.http_port(full_node);
+    let node_log = world
+        .localnet
+        .scenario_dir()
+        .join(format!("validator-{full_node}/node.log"));
+    let started = Instant::now();
+    loop {
+        let head = world.rpc.head(port);
+        let exited = world.localnet.joiner_full_node_exited(full_node);
+        match classify_full_node_sync_probe(head, checkpoint, exited) {
+            FullNodeSyncProbeV1::Reached(height) => return Ok(height),
+            FullNodeSyncProbeV1::Exited => {
+                return Err(format!(
+                    "FullNode {full_node} exited at head {head:?} before checkpoint {checkpoint}; inspect {}",
+                    node_log.display()
+                ));
+            }
+            FullNodeSyncProbeV1::Pending => {}
+        }
+        if started.elapsed() >= timeout {
+            return Err(format!(
+                "FullNode {full_node} remained alive but did not reach checkpoint {checkpoint} within {}s (last head {head:?}); inspect {}",
+                timeout.as_secs(),
+                node_log.display()
+            ));
+        }
+        sleep(Duration::from_secs(2));
+    }
 }
 
 fn validator_address(world: &World, index: usize) -> String {
@@ -131,13 +191,8 @@ fn full_node_joins_with_committee_deadline(world: &mut World) {
         .rpc
         .finalized(world.validators.primary_port())
         .unwrap_or(1);
-    assert!(
-        world
-            .rpc
-            .wait_block(world.validators.http_port(full_node), checkpoint, 120)
-            .is_some(),
-        "FullNode did not sync before lease testing"
-    );
+    wait_for_live_full_node_checkpoint(world, full_node, checkpoint, Duration::from_secs(120))
+        .unwrap_or_else(|error| panic!("FullNode did not sync before lease testing: {error}"));
     let status = world
         .localnet
         .node_renewal_status(full_node)
@@ -453,13 +508,8 @@ fn recovered_nodes_resume(world: &mut World) {
     let full_node = state().full_node_index.expect("FullNode index");
     let primary = world.validators.primary_port();
     let checkpoint = world.rpc.finalized(primary).expect("recovery checkpoint");
-    assert!(
-        world
-            .rpc
-            .wait_block(world.validators.http_port(full_node), checkpoint, 240)
-            .is_some(),
-        "rejoined FullNode did not resume sync"
-    );
+    wait_for_live_full_node_checkpoint(world, full_node, checkpoint, Duration::from_secs(240))
+        .unwrap_or_else(|error| panic!("rejoined FullNode did not resume sync: {error}"));
     for index in [MISSED_VALIDATOR, full_node] {
         assert_eq!(
             world
@@ -468,6 +518,33 @@ fn recovered_nodes_resume(world: &mut World) {
                 .unwrap_or_else(|error| panic!("recovered node {index} offer key: {error:#}")),
             state().permanent_offer_keys[index],
             "expired recovery changed node {index} permanent offer key"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn full_node_sync_probe_fails_immediately_when_the_process_exits() {
+        assert_eq!(
+            super::classify_full_node_sync_probe(Some(6), 7, true),
+            super::FullNodeSyncProbeV1::Exited
+        );
+    }
+
+    #[test]
+    fn full_node_sync_probe_requires_a_live_node_at_the_checkpoint() {
+        assert_eq!(
+            super::classify_full_node_sync_probe(Some(6), 7, false),
+            super::FullNodeSyncProbeV1::Pending
+        );
+        assert_eq!(
+            super::classify_full_node_sync_probe(Some(7), 7, false),
+            super::FullNodeSyncProbeV1::Reached(7)
+        );
+        assert_eq!(
+            super::classify_full_node_sync_probe(Some(9), 7, false),
+            super::FullNodeSyncProbeV1::Reached(9)
         );
     }
 }
