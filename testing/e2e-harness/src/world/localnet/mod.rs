@@ -369,7 +369,17 @@ impl Localnet {
     /// already attached to `<node_dir>/node.log` by the caller (via
     /// [`attach_log`](crate::internal::proc::attach_log)) — we don't stream those
     /// live, since interleaving several running nodes would be unreadable.
-    fn spawn_node(&self, label: &str, node_dir: &Path, mut cmd: Command) -> Result<ChildGuard> {
+    fn spawn_node(&self, label: &str, node_dir: &Path, cmd: Command) -> Result<ChildGuard> {
+        self.spawn_node_with_projection_identity(label, label, node_dir, cmd)
+    }
+
+    fn spawn_node_with_projection_identity(
+        &self,
+        label: &str,
+        projection_identity: &str,
+        node_dir: &Path,
+        mut cmd: Command,
+    ) -> Result<ChildGuard> {
         let node_args = cmd
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
@@ -382,10 +392,7 @@ impl Localnet {
         )
         .env(
             "OUTBE_PROJECTION_MONGODB_DATABASE",
-            format!(
-                "{}_scenario_{}_{}",
-                self.cfg.projection_database_prefix, self.cfg.scenario, label
-            ),
+            self.projection_database_name(projection_identity),
         );
         if self.cfg.debug {
             let prog = cmd.get_program().to_string_lossy().into_owned();
@@ -402,6 +409,13 @@ impl Localnet {
             eprintln!("[localnet] {label} pid {}", guard.pid());
         }
         Ok(guard)
+    }
+
+    fn projection_database_name(&self, identity: &str) -> String {
+        format!(
+            "{}_scenario_{}_{}",
+            self.cfg.projection_database_prefix, self.cfg.scenario, identity
+        )
     }
 
     // ---- teardown ------------------------------------------------------------
