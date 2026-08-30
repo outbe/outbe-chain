@@ -31,6 +31,20 @@ single-rate path.
 Factory calls Gem add, increments its own `total_gems_issued` statistic with checked
 arithmetic and emits issuance in one frame.
 
+### Merchant positions
+
+Parking an Intex burns its units and records the Promis capacity they carried as a
+merchant position, which issues Merchant Gems until its validity period runs out.
+Positions queue in parking order and leave that queue the moment they are drained, so
+a daily sweep decides on the head alone. Whatever capacity a position still holds when
+its validity ends returns to the unallocated limit: it came from a daily emission sink
+through the source Intex and nobody realized it. The record itself is kept — it is an
+NFT-like object with an owner index — with its remainder zeroed.
+
+The sweep fires exactly when issuing starts reverting, by copying that guard's
+condition rather than restating it, and carries a per-run ceiling because positions
+parked in a burst expire in the same burst a year later.
+
 ### Settlement and mining
 
 Only Gem owner may settle a Qualified Gem. Factory transitions to Settled, then if

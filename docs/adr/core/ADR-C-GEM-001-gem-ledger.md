@@ -27,14 +27,25 @@ Canonical lifecycle:
 Absent --add ordinary--> Issued
 Absent --add genesis--> Qualified
 Issued --qualifier rate > floor and currency matches--> Qualified
+Qualified --price breach over the call window--> Called
 Qualified --factory settlement--> Settled
+Called --factory settlement inside the notice period--> Settled
+Called --notice period lapses--> Absent/Burned
 Settled --factory burn after PoW--> Absent/Burned
 ```
 
-Only Issued records are present in the unqualified floor-bin tree. Qualification
-uses canonical Oracle rate and time, removes bin membership, updates state and emits
-the event atomically. Burn is allowed only from Settled and removes record, global
-enumeration, reverse index and owner enumeration, then decrements supply.
+Each stage keeps the structure its decision needs. Issued records sit in the
+unqualified floor-bin tree; Qualified ones in a second tree keyed by call price, so
+the daily scan enters only the bins a breach could have reached; Called ones in a
+queue ordered by the deadline their call time fixed. Calling is driven by price and
+the Oracle, expiry only by time, which is why the two never share a structure.
+
+Qualification uses canonical Oracle rate and time, moves bin membership, updates
+state and emits the event atomically. A gem burned because its notice period lapsed
+returns its Promis load to the unallocated limit — capacity that came out of a daily
+emission sink and no one realized — while a burn after PoW does not, the load having
+been minted. Both remove record, global enumeration, reverse index and owner
+enumeration, then decrement supply.
 
 ## Authority and interfaces
 
@@ -74,7 +85,9 @@ as success when state says Issued.
 
 Id derivation, type/state discriminants, currencies/scales, bin mapping/tree layout,
 array compaction and event ABI are consensus formats. Owner/global/bin scans require
-bounds; burn currently scans the owner's full list.
+bounds; burn currently scans the owner's full list. Both daily arms carry a per-run
+ceiling, because a correlated breach calls a whole currency at once and their notice
+periods then lapse together.
 
 Inspected schema/API, add/burn/global and owner indexes, bin insertion/removal,
 qualifier runtime and tests. Current code contains silent cleanup and supply clamps
