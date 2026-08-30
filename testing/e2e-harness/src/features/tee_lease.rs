@@ -705,6 +705,12 @@ fn stale_validator_recovers_through_certified_follower(world: &mut World) {
         .localnet
         .launch_validator_recovery_follower(MISSED_VALIDATOR, 0)
         .expect("launch validator datadir as certified follower");
+    assert!(
+        !world
+            .localnet
+            .validator_radicle_sidecar_running(MISSED_VALIDATOR),
+        "validator Radicle signer remained live during certified follower recovery"
+    );
     wait_until(
         || {
             world.localnet.follower_running(&follower_name)
@@ -772,11 +778,16 @@ fn stale_validator_recovers_through_certified_follower(world: &mut World) {
 
     let recovery_log = node_log_since(world, MISSED_VALIDATOR, recovery_log_offset);
     for forbidden in [
+        "loaded validator EVM signer",
         "propose requested",
         "relay forwarding proposed block",
         "restoring durable DKG dealer transcript",
+        "restoring durable dealer-only DKG transcript",
         "local validator is DKG player-only for this reshare",
+        "sent DKG ack",
+        "sent share to player",
         "recorded finalized DKG dealer log",
+        "DKG ceremony complete — threshold material obtained",
         "VRF material active",
     ] {
         assert!(
@@ -821,6 +832,10 @@ fn recovered_nodes_resume(world: &mut World) {
         STATUS_PENDING,
         "TEE join must not bypass readiness"
     );
+    let voter_misses_before_readiness = world
+        .rpc
+        .voter_miss_count(world.validators.primary_port(), &address)
+        .expect("restarted validator voter misses before readiness");
     let ready = world
         .rpc
         .confirm_ready_outcome(&validator_key, MISSED_VALIDATOR)
@@ -876,6 +891,11 @@ fn recovered_nodes_resume(world: &mut World) {
         restarted_material_version, expected_material_version,
         "restarted validator loaded a different active VRF material version"
     );
+    assert_eq!(
+        world.rpc.voter_miss_count(primary, &address),
+        Some(voter_misses_before_readiness),
+        "restarted validator accumulated voter misses through activation"
+    );
 
     let full_node = state().full_node_index.expect("FullNode index");
     let checkpoint = world.rpc.finalized(primary).expect("recovery checkpoint");
@@ -924,6 +944,11 @@ fn recovered_nodes_resume(world: &mut World) {
     assert_eq!(
         restarted_completion_material_version, expected_completion_material_version,
         "validator VRF material diverged before scenario completion"
+    );
+    assert_eq!(
+        world.rpc.voter_miss_count(primary, &address),
+        Some(voter_misses_before_readiness),
+        "restarted validator accumulated voter misses after activation"
     );
 }
 

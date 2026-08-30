@@ -12,7 +12,7 @@ use crate::internal::{
     shell::Sh,
 };
 
-use super::Localnet;
+use super::{committee::validator_protocol_environment, Localnet};
 
 const VALIDATOR_RECOVERY_FOLLOWER_FORBIDDEN_ARGS: &[&str] = &[
     "--validator",
@@ -21,6 +21,14 @@ const VALIDATOR_RECOVERY_FOLLOWER_FORBIDDEN_ARGS: &[&str] = &[
     "--radicle.control-socket",
     "--radicle.status-address",
     "--upstream.nocertify",
+];
+
+const VALIDATOR_RECOVERY_FOLLOWER_STRIPPED_ARGS: &[(&str, bool)] = &[
+    ("--validator", false),
+    ("--consensus.signing-key", true),
+    ("--validator.evm-key", true),
+    ("--radicle.control-socket", true),
+    ("--radicle.status-address", true),
 ];
 
 fn ensure_validator_recovery_follower_args(args: &[String]) -> Result<()> {
@@ -42,6 +50,53 @@ fn ensure_validator_recovery_follower_args(args: &[String]) -> Result<()> {
         bail!("validator recovery follower command contains forbidden authority/bypass option {option}");
     }
     Ok(())
+}
+
+fn derive_validator_recovery_follower_args(
+    original: &[String],
+    certified_upstream: &str,
+) -> Result<Vec<String>> {
+    let mut follower = Vec::with_capacity(original.len() + 2);
+    let mut index = 0;
+    while index < original.len() {
+        let arg = &original[index];
+        if arg == "--upstream"
+            || arg.starts_with("--upstream=")
+            || arg == "--upstream.nocertify"
+            || arg.starts_with("--upstream.nocertify=")
+        {
+            bail!("validator argv unexpectedly contains follower option {arg}");
+        }
+
+        let mut stripped = false;
+        for (option, takes_value) in VALIDATOR_RECOVERY_FOLLOWER_STRIPPED_ARGS {
+            if arg == option {
+                if *takes_value {
+                    ensure!(
+                        index + 1 < original.len(),
+                        "validator option {option} is missing its value"
+                    );
+                    index += 1;
+                }
+                stripped = true;
+                break;
+            }
+            if arg
+                .strip_prefix(option)
+                .is_some_and(|suffix| suffix.starts_with('='))
+            {
+                stripped = true;
+                break;
+            }
+        }
+        if !stripped {
+            follower.push(arg.clone());
+        }
+        index += 1;
+    }
+    follower.extend(args!["--upstream", certified_upstream]);
+    ensure_validator_recovery_follower_args(&follower)?;
+    Ok(follower)
 }
 
 impl Localnet {
@@ -141,13 +196,27 @@ impl Localnet {
             format!("127.0.0.1:{}", self.cfg.consensus_port(index)),
         ]);
         self.extend_real_sgx_startup_timeout(&mut args);
-        ensure_validator_recovery_follower_args(&args)?;
 
+        self.launch_certified_follower_with_args(name, index, args, Vec::new())
+    }
+
+    fn launch_certified_follower_with_args(
+        &mut self,
+        name: &str,
+        index: usize,
+        args: Vec<String>,
+        protocol_environment: Vec<(&'static str, String)>,
+    ) -> Result<()> {
+        let node_dir = self.cfg.validator_dir(index);
+        ensure_validator_recovery_follower_args(&args)?;
         let mut command = Command::new(&self.cfg.bin_chain);
         command
             .env("RUST_MIN_STACK", "16777216")
-            .env("RUST_LOG", "info,outbe_consensus::follow=debug")
-            .args(&args);
+            .env("RUST_LOG", "info,outbe_consensus::follow=debug");
+        for (name, value) in protocol_environment {
+            command.env(name, value);
+        }
+        command.args(&args);
         attach_log(&mut command, &node_dir)?;
         let guard = self.spawn_node(name, &node_dir, command)?;
         self.followers.insert(name.to_owned(), guard);
@@ -184,7 +253,23 @@ impl Localnet {
             bail!("{name} is already running");
         }
         self.followers.remove(&name);
-        self.launch_dcap_full_node(&name, index, upstream_slot)?;
+        let original = self
+            .validator_argv
+            .get(&index)
+            .cloned()
+            .ok_or_else(|| eyre!("validator-{index} has no captured original argv"))?;
+        let upstream = format!("http://127.0.0.1:{}", self.cfg.http_port(upstream_slot));
+        let follower_args = derive_validator_recovery_follower_args(&original, &upstream)?;
+        self.validator_recovery_original_argv
+            .entry(index)
+            .or_insert(original);
+        let protocol_environment = validator_protocol_environment(&self.start_opts);
+        self.launch_certified_follower_with_args(
+            &name,
+            index,
+            follower_args,
+            protocol_environment,
+        )?;
         Ok(name)
     }
 
@@ -195,6 +280,12 @@ impl Localnet {
     pub fn follower_running(&mut self, name: &str) -> bool {
         self.followers
             .get_mut(name)
+            .is_some_and(|guard| !guard.exited())
+    }
+
+    pub fn validator_radicle_sidecar_running(&mut self, index: usize) -> bool {
+        self.radicle_sidecars
+            .get_mut(&index)
             .is_some_and(|guard| !guard.exited())
     }
 
@@ -252,5 +343,51 @@ mod tests {
 
         let no_upstream = vec!["node".to_owned(), "--datadir".to_owned(), "data".to_owned()];
         assert!(super::ensure_validator_recovery_follower_args(&no_upstream).is_err());
+    }
+
+    #[test]
+    fn validator_recovery_follower_is_derived_from_and_preserves_exact_validator_argv() {
+        let original = vec![
+            "node".to_owned(),
+            "--chain".to_owned(),
+            "/srv/outbe/genesis.json".to_owned(),
+            "--datadir".to_owned(),
+            "/srv/outbe/validator-3/data".to_owned(),
+            "--bootnodes=enode://canonical".to_owned(),
+            "--validator".to_owned(),
+            "--consensus.signing-key".to_owned(),
+            "/srv/outbe/validator-3/signing-key.hex".to_owned(),
+            "--validator.evm-key=/srv/outbe/validator-3/evm-key.hex".to_owned(),
+            "--consensus.listen-addr".to_owned(),
+            "127.0.0.1:6103".to_owned(),
+            "--consensus.use-local-defaults".to_owned(),
+            "--radicle.control-socket".to_owned(),
+            "/srv/outbe/validator-3/radicle.sock".to_owned(),
+            "--radicle.status-address=127.0.0.1:6203".to_owned(),
+            "--tee-canary.interval-secs".to_owned(),
+            "5".to_owned(),
+        ];
+        let exact_restore = original.clone();
+
+        let follower =
+            super::derive_validator_recovery_follower_args(&original, "http://validator-0:8545")
+                .expect("derive authority-free certified follower argv");
+
+        assert_eq!(original, exact_restore, "derivation mutated original argv");
+        assert!(follower.contains(&"--bootnodes=enode://canonical".to_owned()));
+        assert!(follower.contains(&"--tee-canary.interval-secs".to_owned()));
+        assert!(follower.contains(&"--consensus.use-local-defaults".to_owned()));
+        assert!(follower.windows(2).any(|pair| {
+            pair == [
+                "--upstream".to_owned(),
+                "http://validator-0:8545".to_owned(),
+            ]
+        }));
+        super::ensure_validator_recovery_follower_args(&follower)
+            .expect("derived follower argv must stay certified and authority-free");
+        assert_eq!(
+            exact_restore, original,
+            "validator restart must retain byte-for-byte original argv"
+        );
     }
 }

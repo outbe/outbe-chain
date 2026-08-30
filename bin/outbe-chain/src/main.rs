@@ -375,6 +375,18 @@ fn tee_lease_admission_rejection(
     }
 }
 
+fn validator_recovery_startup_admission_rejection(
+    admission: outbe_engine::validators::LocalTeeRuntimeAdmissionV1,
+) -> Option<String> {
+    match admission {
+        outbe_engine::validators::LocalTeeRuntimeAdmissionV1::BootstrapPending => Some(
+            "finalized TEE admission is bootstrap-pending; refusing validator authority startup"
+                .to_owned(),
+        ),
+        other => tee_lease_admission_rejection(other),
+    }
+}
+
 fn read_local_tee_admission_at_height<P>(
     provider: &P,
     chain_id: u64,
@@ -2089,6 +2101,7 @@ fn run_node() -> eyre::Result<()> {
             .await
             .wrap_err("failed launching execution node")?;
 
+        let validator_has_recovery_anchor = args.is_validator && tee_admission_anchor.is_some();
         let mut tee_lease_guard_gate = TeeLeaseGuardGateV1::new(tee_admission_anchor);
         if let Some(admission) = read_gated_finalized_local_tee_admission(
             &node.provider,
@@ -2098,7 +2111,12 @@ fn run_node() -> eyre::Result<()> {
             &mut tee_lease_guard_gate,
         )?
         {
-            if let Some(reason) = tee_lease_admission_rejection(admission) {
+            let rejection = if validator_has_recovery_anchor {
+                validator_recovery_startup_admission_rejection(admission)
+            } else {
+                tee_lease_admission_rejection(admission)
+            };
+            if let Some(reason) = rejection {
                 eyre::bail!("local node rejected by finalized TEE lease state: {reason}");
             }
         }
@@ -2701,6 +2719,22 @@ mod tests {
         ))
         .expect("an armed guard must preserve fail-stop semantics");
         assert!(reason.contains("expired at 42"));
+    }
+
+    #[test]
+    fn validator_current_bootstrap_pending_admission_is_terminal() {
+        use outbe_engine::validators::LocalTeeRuntimeAdmissionV1;
+
+        let reason = super::validator_recovery_startup_admission_rejection(
+            LocalTeeRuntimeAdmissionV1::BootstrapPending,
+        )
+        .expect("current finalized BootstrapPending admission must fail closed");
+        assert!(reason.contains("bootstrap-pending"));
+        assert_eq!(
+            super::tee_lease_admission_rejection(LocalTeeRuntimeAdmissionV1::BootstrapPending),
+            None,
+            "legacy no-anchor startup must preserve bootstrap compatibility"
+        );
     }
 
     #[test]

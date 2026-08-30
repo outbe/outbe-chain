@@ -132,6 +132,12 @@ pub struct Localnet {
     /// with a different immutable fork install cannot join the canonical
     /// consensus namespace. All ordinary validators use `genesis.json`.
     validator_chain_manifests: HashMap<usize, PathBuf>,
+    /// Exact last-launched argv for each validator. Recovery derives its
+    /// authority-free follower argv from this snapshot and later restores it.
+    validator_argv: HashMap<usize, Vec<String>>,
+    /// Validator argv retained across one or more interrupted recovery-follower
+    /// runs until the original validator role is relaunched.
+    validator_recovery_original_argv: HashMap<usize, Vec<String>>,
     /// The options the last committee `start` ran with, replayed by `restart`.
     start_opts: StartOpts,
 }
@@ -147,6 +153,8 @@ impl Localnet {
             enclaves: HashMap::new(),
             enclave_image_id: None,
             validator_chain_manifests: HashMap::new(),
+            validator_argv: HashMap::new(),
+            validator_recovery_original_argv: HashMap::new(),
             start_opts: StartOpts::default(),
         }
     }

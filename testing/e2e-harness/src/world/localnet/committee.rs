@@ -21,6 +21,19 @@ fn unix_time_offset_arg(offset: i64) -> String {
     format!("--testnet.unix-time-offset-secs={offset}")
 }
 
+fn restore_validator_argv(
+    rebuilt: Vec<String>,
+    recovery_original: Option<Vec<String>>,
+) -> Vec<String> {
+    recovery_original.unwrap_or(rebuilt)
+}
+
+pub(super) fn validator_protocol_environment(opts: &StartOpts) -> Vec<(&'static str, String)> {
+    opts.voting_window
+        .map(|window| vec![("OUTBE_TEST_VOTING_WINDOW_BLOCKS", window.to_string())])
+        .unwrap_or_default()
+}
+
 fn committee_signal_args(pids: &[u32], signal: &str) -> Vec<String> {
     std::iter::once(format!("-{signal}"))
         .chain(std::iter::once("--".to_owned()))
@@ -492,12 +505,18 @@ impl Localnet {
 
         let mut cmd = Command::new(&self.cfg.bin_chain);
         cmd.env("RUST_MIN_STACK", "16777216");
-        if let Some(w) = opts.voting_window {
-            cmd.env("OUTBE_TEST_VOTING_WINDOW_BLOCKS", w.to_string());
+        for (name, value) in validator_protocol_environment(opts) {
+            cmd.env(name, value);
         }
         if let Some(offset) = opts.unix_time_offset_secs {
             a.push(unix_time_offset_arg(offset));
         }
+        // The recovery follower is derived from an exact validator argv
+        // snapshot. Its first subsequent validator launch consumes that
+        // snapshot verbatim instead of reconstructing a merely equivalent
+        // command from mutable harness inputs.
+        a = restore_validator_argv(a, self.validator_recovery_original_argv.remove(&i));
+        self.validator_argv.insert(i, a.clone());
         cmd.args(&a);
         attach_log(&mut cmd, &vd)?;
         let guard = self.spawn_node(&format!("validator-{i}"), &vd, cmd)?;
@@ -814,6 +833,31 @@ mod tests {
         assert_eq!(
             committee_signal_args(&[101, 202, 303, 404], "STOP"),
             ["-STOP", "--", "101", "202", "303", "404"]
+        );
+    }
+
+    #[test]
+    fn validator_restart_restores_exact_pre_recovery_argv() {
+        let rebuilt = vec!["node".to_owned(), "--validator".to_owned()];
+        let original = vec![
+            "node".to_owned(),
+            "--chain=/pinned/genesis.json".to_owned(),
+            "--validator".to_owned(),
+            "--testnet.unix-time-offset-secs=-37".to_owned(),
+        ];
+
+        assert_eq!(
+            super::restore_validator_argv(rebuilt, Some(original.clone())),
+            original
+        );
+    }
+
+    #[test]
+    fn validator_recovery_preserves_consensus_relevant_environment() {
+        let opts = super::StartOpts::with_voting_window(41);
+        assert_eq!(
+            super::validator_protocol_environment(&opts),
+            vec![("OUTBE_TEST_VOTING_WINDOW_BLOCKS", "41".to_owned())]
         );
     }
 
