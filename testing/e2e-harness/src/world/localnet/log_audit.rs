@@ -21,6 +21,7 @@ impl Localnet {
         unsupported_version: Option<u64>,
         expected_dkg_reveal: Option<&str>,
         expected_ocomp_full_node_mismatch: Option<B256>,
+        expected_tee_lease_guard_shutdown_validator: Option<usize>,
     ) -> Result<LogAudit> {
         audit_runtime_logs(
             &self.cfg.dir,
@@ -28,6 +29,7 @@ impl Localnet {
             unsupported_version,
             expected_dkg_reveal,
             expected_ocomp_full_node_mismatch,
+            expected_tee_lease_guard_shutdown_validator,
         )
     }
 }
@@ -45,6 +47,7 @@ struct LogCounts {
     expected_dkg_reveal: usize,
     expected_request_deadline_cancellation: usize,
     expected_ocomp_full_node_mismatch: usize,
+    expected_tee_lease_guard_shutdown_fatal: usize,
 }
 
 impl LogCounts {
@@ -77,6 +80,7 @@ impl LogCounts {
             "expected_dkg_reveal": self.expected_dkg_reveal,
             "expected_request_deadline_cancellation": self.expected_request_deadline_cancellation,
             "expected_ocomp_full_node_mismatch": self.expected_ocomp_full_node_mismatch,
+            "expected_tee_lease_guard_shutdown_fatal": self.expected_tee_lease_guard_shutdown_fatal,
         })
     }
 }
@@ -133,6 +137,7 @@ pub(super) fn audit_runtime_logs(
     unsupported_version: Option<u64>,
     expected_dkg_reveal: Option<&str>,
     expected_ocomp_full_node_mismatch: Option<B256>,
+    expected_tee_lease_guard_shutdown_validator: Option<usize>,
 ) -> Result<LogAudit> {
     let mut paths = Vec::new();
     collect_logs(root, &mut paths)?;
@@ -146,12 +151,13 @@ pub(super) fn audit_runtime_logs(
             Ok((path, content))
         })
         .collect::<Result<Vec<_>>>()?;
-    Ok(audit_loaded_logs_with_expectations(
+    Ok(audit_loaded_logs_with_all_expectations(
         &logs,
         validators,
         unsupported_version,
         expected_dkg_reveal,
         expected_ocomp_full_node_mismatch,
+        expected_tee_lease_guard_shutdown_validator,
     ))
 }
 
@@ -167,6 +173,24 @@ fn audit_loaded_logs_with_expectations(
     expected_dkg_reveal: Option<&str>,
     expected_ocomp_full_node_mismatch: Option<B256>,
 ) -> LogAudit {
+    audit_loaded_logs_with_all_expectations(
+        logs,
+        validators,
+        unsupported_version,
+        expected_dkg_reveal,
+        expected_ocomp_full_node_mismatch,
+        None,
+    )
+}
+
+fn audit_loaded_logs_with_all_expectations(
+    logs: &[(PathBuf, String)],
+    validators: usize,
+    unsupported_version: Option<u64>,
+    expected_dkg_reveal: Option<&str>,
+    expected_ocomp_full_node_mismatch: Option<B256>,
+    expected_tee_lease_guard_shutdown_validator: Option<usize>,
+) -> LogAudit {
     let mut findings = Vec::new();
     let mut counts = LogCounts {
         runtime_log_files: logs.len(),
@@ -179,6 +203,16 @@ fn audit_loaded_logs_with_expectations(
         .map(|job_id| expected_ocomp_full_node_mismatch_records(logs, validators, job_id))
         .transpose();
     let expected_ocomp_mismatch_records = match expected_ocomp_mismatch_records {
+        Ok(records) => records.unwrap_or_default(),
+        Err(reason) => {
+            findings.push(reason);
+            BTreeSet::new()
+        }
+    };
+    let expected_tee_lease_shutdown_records = expected_tee_lease_guard_shutdown_validator
+        .map(|validator| expected_tee_lease_guard_shutdown_records(logs, validators, validator))
+        .transpose();
+    let expected_tee_lease_shutdown_records = match expected_tee_lease_shutdown_records {
         Ok(records) => records.unwrap_or_default(),
         Err(reason) => {
             findings.push(reason);
@@ -215,6 +249,8 @@ fn audit_loaded_logs_with_expectations(
             });
             let accepted_ocomp_mismatch =
                 expected_ocomp_mismatch_records.contains(&(path.clone(), index));
+            let accepted_tee_lease_shutdown =
+                expected_tee_lease_shutdown_records.contains(&(path.clone(), index));
             if accepted_update {
                 counts.expected_update_fatal += 1;
             }
@@ -224,10 +260,14 @@ fn audit_loaded_logs_with_expectations(
             if accepted_ocomp_mismatch {
                 counts.expected_ocomp_full_node_mismatch += 1;
             }
+            if accepted_tee_lease_shutdown {
+                counts.expected_tee_lease_guard_shutdown_fatal += 1;
+            }
             if !accepted_legacy_deadline
                 && !accepted_update
                 && !accepted_reveal
                 && !accepted_ocomp_mismatch
+                && !accepted_tee_lease_shutdown
             {
                 counts.observe(line);
             }
@@ -235,6 +275,7 @@ fn audit_loaded_logs_with_expectations(
                 && !accepted_update
                 && !accepted_reveal
                 && !accepted_ocomp_mismatch
+                && !accepted_tee_lease_shutdown
                 && unexpected_log_line(line)
             {
                 findings.push(format!("{location}: {line}"));
@@ -734,6 +775,131 @@ fn expected_ocomp_full_node_mismatch_records(
     Ok(accepted)
 }
 
+fn expected_tee_lease_guard_shutdown_records(
+    logs: &[(PathBuf, String)],
+    validators: usize,
+    expected_validator: usize,
+) -> Result<BTreeSet<(PathBuf, usize)>, String> {
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum Record {
+        Guard,
+        StackShutdown,
+        Engine,
+        Cli,
+    }
+
+    if expected_validator >= validators {
+        return Err(format!(
+            "expected TEE lease guard shutdown validator-{expected_validator} is outside the {validators}-validator committee"
+        ));
+    }
+
+    let mut accepted = BTreeSet::new();
+    let mut sinks = BTreeSet::new();
+    for (path, content) in logs {
+        if validator_log_index(path, validators) != Some(expected_validator) {
+            continue;
+        }
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let sink = if file_name == "node.log" {
+            "node.log"
+        } else if file_name == "reth.log" {
+            "reth.log"
+        } else {
+            continue;
+        };
+
+        let lines = content.lines().collect::<Vec<_>>();
+        let records = lines
+            .iter()
+            .copied()
+            .enumerate()
+            .filter_map(|(index, line)| {
+                if exact_tee_lease_jailed_guard_shutdown(line) {
+                    Some((index, Record::Guard))
+                } else if exact_consensus_stack_shutdown(line) {
+                    Some((index, Record::StackShutdown))
+                } else if exact_engine_fatal_trailer(line) {
+                    Some((index, Record::Engine))
+                } else if exact_cli_fatal_trailer(line) {
+                    Some((index, Record::Cli))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        if records.is_empty() {
+            continue;
+        }
+        let kinds = records
+            .iter()
+            .map(|(_, record)| *record)
+            .collect::<Vec<_>>();
+        if kinds
+            != [
+                Record::Guard,
+                Record::StackShutdown,
+                Record::Engine,
+                Record::Cli,
+            ]
+        {
+            return Err(format!(
+                "malformed expected TEE lease guard shutdown bundle in {}: {kinds:?}",
+                path.display()
+            ));
+        }
+        let guard_index = records[0].0;
+        let cli_index = records[3].0;
+        if cli_index.saturating_sub(guard_index) > 64
+            || lines[guard_index + 1..=cli_index].iter().any(|line| {
+                line.contains("reth::cli: Initialized tracing, debug log directory:")
+                    || line.contains("reth::cli: Starting Reth version=")
+            })
+        {
+            return Err(format!(
+                "expected TEE lease guard shutdown crossed its process epoch in {}",
+                path.display()
+            ));
+        }
+        if !sinks.insert(sink) {
+            return Err(format!(
+                "duplicate expected TEE lease guard shutdown sink {sink} for validator-{expected_validator}"
+            ));
+        }
+        accepted.extend(
+            records
+                .into_iter()
+                .filter(|(_, record)| matches!(record, Record::Engine | Record::Cli))
+                .map(|(index, _)| (path.clone(), index)),
+        );
+    }
+
+    if sinks != BTreeSet::from(["node.log", "reth.log"]) {
+        return Err(format!(
+            "expected one node.log and one reth.log TEE lease guard shutdown bundle for validator-{expected_validator}, observed {sinks:?}"
+        ));
+    }
+    Ok(accepted)
+}
+
+fn exact_tee_lease_jailed_guard_shutdown(line: &str) -> bool {
+    let line = line.to_ascii_lowercase();
+    line.trim_end().ends_with(
+        "outbe_chain: finalized tee lease guard requested node shutdown reason=validator is jailed; complete ordinary unjail and then run tee join",
+    ) && line.contains("error")
+        && !contains_nonfatal_alarm(&line)
+}
+
+fn exact_consensus_stack_shutdown(line: &str) -> bool {
+    let line = line.to_ascii_lowercase();
+    line.trim_end()
+        .ends_with("outbe_chain: consensus stack shutting down")
+        && line.contains("info")
+        && !contains_nonfatal_alarm(&line)
+}
+
 fn exact_ocomp_mismatch_evidence(line: &str, job_id: B256) -> bool {
     let line = line.to_ascii_lowercase();
     fatal_at_runtime_severity(&line)
@@ -797,7 +963,10 @@ fn contains_nonfatal_alarm(line: &str) -> bool {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::{audit_loaded_logs, audit_loaded_logs_with_expectations};
+    use super::{
+        audit_loaded_logs, audit_loaded_logs_with_all_expectations,
+        audit_loaded_logs_with_expectations,
+    };
     use alloy_primitives::B256;
     use outbe_primitives::runtime_audit_v1::{
         BODY_READ_REQUEST_DEADLINE, OTHER_PAYLOAD_EXECUTION_FAILURE, PAYLOAD_EXECUTION_FAILED,
@@ -1264,6 +1433,83 @@ mod tests {
 
         let absent = audit_loaded_logs_with_expectations(&[], 4, None, None, Some(job_id));
         assert!(!absent.is_clean());
+    }
+
+    fn tee_lease_guard_shutdown_bundle(validator: usize) -> Vec<(PathBuf, String)> {
+        let guard = "ERROR outbe_chain: finalized TEE lease guard requested node shutdown \
+            reason=validator is jailed; complete ordinary unjail and then run tee join";
+        let shutdown = "INFO outbe_chain: consensus stack shutting down";
+        let cli = "ERROR reth::cli: Fatal error in consensus engine";
+        vec![
+            (
+                PathBuf::from(format!("scenario-1/validator-{validator}/node.log")),
+                format!("{guard}\n{shutdown}\nERROR engine::tree: Fatal error\n{cli}"),
+            ),
+            (
+                PathBuf::from(format!(
+                    "scenario-1/validator-{validator}/logs/54322345/reth.log"
+                )),
+                format!(
+                    "{guard}\n{shutdown}\nERROR poll_next_event: engine::tree: Fatal error\n{cli}"
+                ),
+            ),
+        ]
+    }
+
+    #[test]
+    fn tee_lease_guard_accepts_only_the_explicit_exact_two_sink_shutdown_bundle() {
+        let expected = tee_lease_guard_shutdown_bundle(3);
+        let accepted =
+            audit_loaded_logs_with_all_expectations(&expected, 4, None, None, None, Some(3));
+        assert!(accepted.is_clean(), "{:?}", accepted.findings);
+        assert_eq!(accepted.counts.expected_tee_lease_guard_shutdown_fatal, 4);
+
+        let unarmed = audit_loaded_logs_with_expectations(&expected, 4, None, None, None);
+        assert!(!unarmed.is_clean());
+
+        let wrong_validator =
+            audit_loaded_logs_with_all_expectations(&expected, 4, None, None, None, Some(2));
+        assert!(!wrong_validator.is_clean());
+
+        let missing_sink = vec![expected[0].clone()];
+        assert!(!audit_loaded_logs_with_all_expectations(
+            &missing_sink,
+            4,
+            None,
+            None,
+            None,
+            Some(3),
+        )
+        .is_clean());
+
+        let reordered = expected
+            .iter()
+            .map(|(path, content)| {
+                let lines = content.lines().collect::<Vec<_>>();
+                (
+                    path.clone(),
+                    format!("{}\n{}\n{}\n{}", lines[1], lines[0], lines[2], lines[3]),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            !audit_loaded_logs_with_all_expectations(&reordered, 4, None, None, None, Some(3),)
+                .is_clean()
+        );
+
+        let mut extra_fatal = expected.clone();
+        extra_fatal[0]
+            .1
+            .push_str("\nERROR outbe_chain: unrelated fatal condition");
+        assert!(!audit_loaded_logs_with_all_expectations(
+            &extra_fatal,
+            4,
+            None,
+            None,
+            None,
+            Some(3),
+        )
+        .is_clean());
     }
 
     #[test]

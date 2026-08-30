@@ -21,6 +21,11 @@ const LEASE_SECONDS: u64 = 14 * 24 * 60 * 60;
 const FINALIZED_CLOCK_STALL_TIMEOUT: Duration = Duration::from_secs(180);
 const VALIDATOR_RECOVERY_CATCH_UP_TIMEOUT: Duration = Duration::from_secs(240);
 const FOLLOWER_ENGINE_STARTED_MARKER: &str = "follower engine started; syncing from upstream";
+const CERTIFIED_FOLLOWER_RECOVERY_MARKERS: [&str; 3] = [
+    "certified follower",
+    "omit --validator",
+    "--upstream <healthy-certified-rpc>",
+];
 
 #[derive(Default)]
 struct LeaseScenarioState {
@@ -55,6 +60,12 @@ fn wait_until(mut predicate: impl FnMut() -> bool, attempts: u32, label: &str) {
 
 fn recovery_follower_has_post_start_progress(baseline: u64, current: Option<u64>) -> bool {
     current.is_some_and(|height| height > baseline)
+}
+
+fn requires_certified_follower_recovery(evidence: &str) -> bool {
+    CERTIFIED_FOLLOWER_RECOVERY_MARKERS
+        .iter()
+        .all(|marker| evidence.contains(marker))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -561,6 +572,7 @@ fn missed_validator_is_jailed_without_slash(world: &mut World) {
         60,
         "expired validator fail-stop",
     );
+    world.state.expected_tee_lease_guard_shutdown_validator = Some(MISSED_VALIDATOR);
 
     let primary = world.validators.primary_port();
     let before = world
@@ -689,14 +701,35 @@ fn stale_validator_recovers_through_certified_follower(world: &mut World) {
         .missed_validator_epoch
         .expect("captured validator epoch before expiry");
 
-    let startup_error = world
+    let startup_log_offset = node_log_len(world, MISSED_VALIDATOR);
+    let immediate_startup_error = world
         .localnet
         .restart_validator(MISSED_VALIDATOR)
-        .expect_err("stale validator startup must require certified follower recovery");
-    let startup_error = startup_error.to_string();
-    assert!(startup_error.contains("certified follower"));
-    assert!(startup_error.contains("omit --validator"));
-    assert!(startup_error.contains("--upstream <healthy-certified-rpc>"));
+        .err()
+        .map(|error| error.to_string());
+    if immediate_startup_error.is_none() {
+        wait_until(
+            || {
+                !world.localnet.validator_running(MISSED_VALIDATOR)
+                    && requires_certified_follower_recovery(&node_log_since(
+                        world,
+                        MISSED_VALIDATOR,
+                        startup_log_offset,
+                    ))
+            },
+            60,
+            "stale validator certified-follower fail-closed verdict",
+        );
+    }
+    let startup_evidence = format!(
+        "{}\n{}",
+        immediate_startup_error.unwrap_or_default(),
+        node_log_since(world, MISSED_VALIDATOR, startup_log_offset)
+    );
+    assert!(
+        requires_certified_follower_recovery(&startup_evidence),
+        "stale validator startup omitted certified-follower recovery guidance: {startup_evidence}"
+    );
     assert!(
         !world.localnet.validator_running(MISSED_VALIDATOR),
         "stale validator retained authority after fail-closed startup"
@@ -1002,6 +1035,16 @@ fn recovered_nodes_resume(world: &mut World) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn certified_follower_recovery_evidence_requires_all_operator_guidance() {
+        let complete = "validator recovery requires certified follower catch-up; \
+            omit --validator and use --upstream <healthy-certified-rpc>";
+        assert!(super::requires_certified_follower_recovery(complete));
+        assert!(!super::requires_certified_follower_recovery(
+            "validator recovery requires certified follower catch-up; omit --validator"
+        ));
+    }
+
     #[test]
     fn recovery_follower_crash_requires_strict_post_start_progress() {
         assert!(!super::recovery_follower_has_post_start_progress(357, None));
