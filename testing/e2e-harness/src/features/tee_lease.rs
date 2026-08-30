@@ -18,6 +18,7 @@ const STATUS_JAILED: u8 = 6;
 const WINDOW_SECONDS: u64 = 7 * 24 * 60 * 60;
 const LEASE_SECONDS: u64 = 14 * 24 * 60 * 60;
 const FINALIZED_CLOCK_STALL_TIMEOUT: Duration = Duration::from_secs(180);
+const VALIDATOR_RECOVERY_CATCH_UP_TIMEOUT: Duration = Duration::from_secs(240);
 
 #[derive(Default)]
 struct LeaseScenarioState {
@@ -217,6 +218,59 @@ fn wait_for_live_full_node_checkpoint(
         if started.elapsed() >= timeout {
             return Err(format!(
                 "FullNode {full_node} remained alive but did not reach checkpoint {checkpoint} within {}s (last head {head:?}); inspect {}",
+                timeout.as_secs(),
+                node_log.display()
+            ));
+        }
+        sleep(Duration::from_secs(2));
+    }
+}
+
+fn wait_for_live_validator_checkpoint(
+    world: &mut World,
+    validator: usize,
+    checkpoint: u64,
+    expected_hash: &str,
+    timeout: Duration,
+) -> Result<u64, String> {
+    let port = world.validators.http_port(validator);
+    let node_log = world
+        .localnet
+        .scenario_dir()
+        .join(format!("validator-{validator}/node.log"));
+    let started = Instant::now();
+    loop {
+        if !world.localnet.validator_running(validator) {
+            return Err(format!(
+                "validator-{validator} exited before reaching finalized recovery checkpoint \
+                 {checkpoint}; inspect {}",
+                node_log.display()
+            ));
+        }
+        if let Some(height) = world.rpc.finalized(port) {
+            if height >= checkpoint {
+                let observed_hash = world.rpc.block_hash(port, checkpoint).ok_or_else(|| {
+                    format!(
+                        "validator-{validator} finalized height {height} but cannot read block \
+                         {checkpoint}; inspect {}",
+                        node_log.display()
+                    )
+                })?;
+                if observed_hash != expected_hash {
+                    return Err(format!(
+                        "validator-{validator} recovery checkpoint hash mismatch at height \
+                         {checkpoint}: committee {expected_hash}, validator {observed_hash}; \
+                         inspect {}",
+                        node_log.display()
+                    ));
+                }
+                return Ok(height);
+            }
+        }
+        if started.elapsed() >= timeout {
+            return Err(format!(
+                "validator-{validator} remained alive but did not reach finalized recovery \
+                 checkpoint {checkpoint} within {}s; inspect {}",
                 timeout.as_secs(),
                 node_log.display()
             ));
@@ -578,6 +632,16 @@ fn expired_nodes_rejoin(world: &mut World) {
         .join_node_enclave_until(full_node, next_deadline)
         .expect("expired FullNode tee join");
 
+    let primary = world.validators.primary_port();
+    let recovery_checkpoint = world
+        .rpc
+        .finalized(primary)
+        .expect("validator recovery checkpoint height");
+    let recovery_checkpoint_hash = world
+        .rpc
+        .block_hash(primary, recovery_checkpoint)
+        .expect("validator recovery checkpoint hash");
+
     world
         .localnet
         .restart_validator(MISSED_VALIDATOR)
@@ -590,6 +654,16 @@ fn expired_nodes_rejoin(world: &mut World) {
             0,
         )
         .expect("restart rejoined FullNode");
+    wait_for_live_validator_checkpoint(
+        world,
+        MISSED_VALIDATOR,
+        recovery_checkpoint,
+        &recovery_checkpoint_hash,
+        VALIDATOR_RECOVERY_CATCH_UP_TIMEOUT,
+    )
+    .unwrap_or_else(|error| {
+        panic!("rejoined validator did not catch up before readiness: {error}")
+    });
 }
 
 #[then("validator 3 returns only after readiness and DKG while the FullNode resumes sync")]
@@ -628,8 +702,47 @@ fn recovered_nodes_resume(world: &mut World) {
         "fresh DKG activation after readiness",
     );
 
-    let full_node = state().full_node_index.expect("FullNode index");
+    assert!(
+        world.localnet.validator_running(MISSED_VALIDATOR),
+        "validator process exited during fresh DKG activation"
+    );
+    let restarted_port = world.validators.http_port(MISSED_VALIDATOR);
     let primary = world.validators.primary_port();
+    let canonical_checkpoint = world
+        .rpc
+        .finalized(primary)
+        .expect("post-activation canonical checkpoint height");
+    let canonical_checkpoint_hash = world
+        .rpc
+        .block_hash(primary, canonical_checkpoint)
+        .expect("post-activation canonical checkpoint hash");
+    wait_for_live_validator_checkpoint(
+        world,
+        MISSED_VALIDATOR,
+        canonical_checkpoint,
+        &canonical_checkpoint_hash,
+        VALIDATOR_RECOVERY_CATCH_UP_TIMEOUT,
+    )
+    .unwrap_or_else(|error| panic!("rejoined validator lost canonical parity: {error}"));
+    assert_eq!(
+        world.rpc.has_threshold_shares(restarted_port),
+        Some(true),
+        "canonically caught-up ACTIVE validator has no current private threshold share"
+    );
+    let expected_material_version = world
+        .rpc
+        .consensus_status_field(primary, "vrfMaterialVersion")
+        .expect("primary active VRF material version");
+    let restarted_material_version = world
+        .rpc
+        .consensus_status_field(restarted_port, "vrfMaterialVersion")
+        .expect("restarted validator active VRF material version");
+    assert_eq!(
+        restarted_material_version, expected_material_version,
+        "restarted validator loaded a different active VRF material version"
+    );
+
+    let full_node = state().full_node_index.expect("FullNode index");
     let checkpoint = world.rpc.finalized(primary).expect("recovery checkpoint");
     wait_for_live_full_node_checkpoint(world, full_node, checkpoint, Duration::from_secs(240))
         .unwrap_or_else(|error| panic!("rejoined FullNode did not resume sync: {error}"));
@@ -643,6 +756,40 @@ fn recovered_nodes_resume(world: &mut World) {
             "expired recovery changed node {index} permanent offer key"
         );
     }
+
+    let completion_checkpoint = world
+        .rpc
+        .finalized(primary)
+        .expect("scenario completion checkpoint height");
+    let completion_checkpoint_hash = world
+        .rpc
+        .block_hash(primary, completion_checkpoint)
+        .expect("scenario completion checkpoint hash");
+    wait_for_live_validator_checkpoint(
+        world,
+        MISSED_VALIDATOR,
+        completion_checkpoint,
+        &completion_checkpoint_hash,
+        VALIDATOR_RECOVERY_CATCH_UP_TIMEOUT,
+    )
+    .unwrap_or_else(|error| panic!("validator did not remain live through completion: {error}"));
+    assert_eq!(
+        world.rpc.has_threshold_shares(restarted_port),
+        Some(true),
+        "validator lost its current private threshold share before scenario completion"
+    );
+    let expected_completion_material_version = world
+        .rpc
+        .consensus_status_field(primary, "vrfMaterialVersion")
+        .expect("primary completion VRF material version");
+    let restarted_completion_material_version = world
+        .rpc
+        .consensus_status_field(restarted_port, "vrfMaterialVersion")
+        .expect("validator completion VRF material version");
+    assert_eq!(
+        restarted_completion_material_version, expected_completion_material_version,
+        "validator VRF material diverged before scenario completion"
+    );
 }
 
 #[cfg(test)]
