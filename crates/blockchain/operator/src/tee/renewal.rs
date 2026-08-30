@@ -555,8 +555,8 @@ async fn exact_transaction_receipt_exists(
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| eyre::eyre!("exact renewal transaction receipt has no status"))?;
     eyre::ensure!(
-        status != "0x0",
-        "exact renewal transaction reverted before canonical finality"
+        status == "0x1",
+        "exact renewal transaction receipt has non-success status {status}"
     );
     Ok(true)
 }
@@ -765,8 +765,9 @@ mod tests {
         policy: outbe_primitives::tee_attestation_v1::TeePolicyV1,
         binding: RenewalBindingV1,
         schedule: TeeRenewalScheduleV1,
-        receipt: Option<serde_json::Value>,
+        receipt: Arc<Mutex<Option<serde_json::Value>>>,
         send_error: Option<&'static str>,
+        receipt_after_send_error: Option<serde_json::Value>,
         sent: Arc<Mutex<Vec<Vec<u8>>>>,
     }
 
@@ -775,7 +776,7 @@ mod tests {
             &self,
             _transaction_hash: &str,
         ) -> Result<Option<serde_json::Value>> {
-            Ok(self.receipt.clone())
+            Ok(self.receipt.lock().unwrap().clone())
         }
 
         async fn logs(
@@ -843,6 +844,9 @@ mod tests {
         async fn send_raw_transaction(&self, raw_transaction: &[u8]) -> Result<String> {
             self.sent.lock().unwrap().push(raw_transaction.to_vec());
             if let Some(error) = self.send_error {
+                if let Some(receipt) = &self.receipt_after_send_error {
+                    *self.receipt.lock().unwrap() = Some(receipt.clone());
+                }
                 return Err(eyre::eyre!(error));
             }
             Ok(format!("{:#x}", keccak256(raw_transaction)))
@@ -1135,8 +1139,9 @@ mod tests {
             policy,
             binding: source,
             schedule,
-            receipt: None,
+            receipt: Arc::new(Mutex::new(None)),
             send_error: None,
+            receipt_after_send_error: None,
             sent,
         };
         let config = RenewalServiceConfigV1 {
@@ -1339,10 +1344,10 @@ mod tests {
     #[tokio::test]
     async fn submitted_exact_transaction_observed_before_finality_is_not_rebroadcast() {
         let node_data_dir = tempfile::tempdir().unwrap();
-        let (mut rpc, relay, config, attempt) =
+        let (rpc, relay, config, attempt) =
             replay_fixture(node_data_dir.path(), AttestationMode::GramineDirectDev);
         let expected_hash = attempt.relay_variants[0].transaction_hash;
-        rpc.receipt = Some(serde_json::json!({
+        *rpc.receipt.lock().unwrap() = Some(serde_json::json!({
             "transactionHash": format!("{expected_hash:#x}"),
             "status": "0x1",
         }));
@@ -1410,6 +1415,78 @@ mod tests {
                 .contains("consumed without the exact transaction receipt"),
             "unexpected error: {error:#}"
         );
+    }
+
+    #[tokio::test]
+    async fn nonce_too_low_race_accepts_only_the_exact_success_receipt() {
+        let node_data_dir = tempfile::tempdir().unwrap();
+        let (mut rpc, relay, config, attempt) =
+            replay_fixture(node_data_dir.path(), AttestationMode::GramineDirectDev);
+        let expected_raw = attempt.relay_variants[0].raw_transaction.clone();
+        let expected_hash = attempt.relay_variants[0].transaction_hash;
+        rpc.send_error = Some("nonce too low: next nonce 1, tx nonce 0");
+        rpc.receipt_after_send_error = Some(serde_json::json!({
+            "transactionHash": format!("{expected_hash:#x}"),
+            "status": "0x1",
+        }));
+        RenewalJournalGuard::acquire(node_data_dir.path())
+            .unwrap()
+            .store(RenewalJournalSnapshotV1::new(
+                RenewalJournalStateV1::Submitted {
+                    attempt,
+                    submitted_at_finalized_height: 119,
+                    transaction_hashes: vec![expected_hash],
+                },
+            ))
+            .unwrap();
+
+        let mut enclave = ReplayMustNotPrepare;
+        let node_signer = |_hash: B256| -> Result<[u8; 65]> {
+            panic!("nonce race handling regenerated a NodeHost signature")
+        };
+        let outcome = run_renewal_once_v1(&rpc, &relay, &mut enclave, &node_signer, &config)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            outcome,
+            RenewalOutcomeV1::Submitted {
+                transaction_hash: expected_hash,
+                replayed: true,
+            }
+        );
+        assert_eq!(rpc.sent.lock().unwrap().as_slice(), [expected_raw]);
+    }
+
+    #[tokio::test]
+    async fn exact_receipt_requires_canonical_hash_and_success_status() {
+        let node_data_dir = tempfile::tempdir().unwrap();
+        let (rpc, _relay, _config, attempt) =
+            replay_fixture(node_data_dir.path(), AttestationMode::GramineDirectDev);
+        let raw = &attempt.relay_variants[0];
+        let expected_hash = raw.transaction_hash;
+
+        for status in ["0x0", "0x00", "0", "0x2", "malformed"] {
+            *rpc.receipt.lock().unwrap() = Some(serde_json::json!({
+                "transactionHash": format!("{expected_hash:#x}"),
+                "status": status,
+            }));
+            let error = exact_transaction_receipt_exists(&rpc, raw)
+                .await
+                .expect_err("non-success receipt status must fail closed");
+            assert!(error.to_string().contains("non-success status"));
+        }
+
+        *rpc.receipt.lock().unwrap() = Some(serde_json::json!({
+            "transactionHash": format!("{:#x}", B256::repeat_byte(0x33)),
+            "status": "0x1",
+        }));
+        assert!(exact_transaction_receipt_exists(&rpc, raw).await.is_err());
+
+        *rpc.receipt.lock().unwrap() = Some(serde_json::json!({
+            "transactionHash": format!("{expected_hash:#x}"),
+        }));
+        assert!(exact_transaction_receipt_exists(&rpc, raw).await.is_err());
     }
 
     #[test]
