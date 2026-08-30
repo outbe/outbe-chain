@@ -823,6 +823,7 @@ fn recovered_nodes_resume(world: &mut World) {
         .get(MISSED_VALIDATOR)
         .evm_key()
         .expect("missed validator key");
+    let restarted_port = world.validators.http_port(MISSED_VALIDATOR);
     assert_eq!(
         world
             .rpc
@@ -836,11 +837,30 @@ fn recovered_nodes_resume(world: &mut World) {
         .rpc
         .voter_miss_count(world.validators.primary_port(), &address)
         .expect("restarted validator voter misses before readiness");
+    assert_eq!(
+        world.rpc.has_threshold_shares(restarted_port),
+        Some(false),
+        "PENDING validator exposed current threshold material before readiness"
+    );
     let ready = world
         .rpc
         .confirm_ready_outcome(&validator_key, MISSED_VALIDATOR)
         .expect("submit readiness after TEE rejoin");
     assert!(ready.success, "readiness confirmation failed");
+    assert_eq!(
+        world
+            .rpc
+            .validator_record(world.validators.primary_port(), &address)
+            .expect("validator immediately after readiness")
+            .status,
+        STATUS_PENDING,
+        "readiness bypassed the fresh DKG activation boundary"
+    );
+    assert_eq!(
+        world.rpc.has_threshold_shares(restarted_port),
+        Some(false),
+        "validator exposed current threshold material after readiness but before fresh DKG"
+    );
     wait_until(
         || {
             world
@@ -856,7 +876,6 @@ fn recovered_nodes_resume(world: &mut World) {
         world.localnet.validator_running(MISSED_VALIDATOR),
         "validator process exited during fresh DKG activation"
     );
-    let restarted_port = world.validators.http_port(MISSED_VALIDATOR);
     let primary = world.validators.primary_port();
     let canonical_checkpoint = world
         .rpc
