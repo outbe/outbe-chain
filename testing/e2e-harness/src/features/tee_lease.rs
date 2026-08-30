@@ -20,6 +20,7 @@ const WINDOW_SECONDS: u64 = 7 * 24 * 60 * 60;
 const LEASE_SECONDS: u64 = 14 * 24 * 60 * 60;
 const FINALIZED_CLOCK_STALL_TIMEOUT: Duration = Duration::from_secs(180);
 const VALIDATOR_RECOVERY_CATCH_UP_TIMEOUT: Duration = Duration::from_secs(240);
+const FOLLOWER_ENGINE_STARTED_MARKER: &str = "follower engine started; syncing from upstream";
 
 #[derive(Default)]
 struct LeaseScenarioState {
@@ -50,6 +51,10 @@ fn wait_until(mut predicate: impl FnMut() -> bool, attempts: u32, label: &str) {
         sleep(Duration::from_secs(2));
     }
     assert!(predicate(), "timed out waiting for {label}");
+}
+
+fn recovery_follower_has_post_start_progress(baseline: u64, current: Option<u64>) -> bool {
+    current.is_some_and(|height| height > baseline)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -680,9 +685,6 @@ fn expired_nodes_rejoin(world: &mut World) {
 #[when("stale validator 3 fails closed and catches up through its certified follower datadir")]
 fn stale_validator_recovers_through_certified_follower(world: &mut World) {
     let primary = world.validators.primary_port();
-    let stale_height = state()
-        .missed_validator_last_finalized
-        .expect("captured validator finalized height before expiry");
     let stale_epoch = state()
         .missed_validator_epoch
         .expect("captured validator epoch before expiry");
@@ -714,13 +716,27 @@ fn stale_validator_recovers_through_certified_follower(world: &mut World) {
     wait_until(
         || {
             world.localnet.follower_running(&follower_name)
-                && world
-                    .rpc
-                    .finalized(world.validators.http_port(MISSED_VALIDATOR))
-                    .is_some_and(|height| height > stale_height)
+                && node_log_since(world, MISSED_VALIDATOR, recovery_log_offset)
+                    .contains(FOLLOWER_ENGINE_STARTED_MARKER)
         },
         120,
-        "interrupted certified follower progress beyond stale validator height",
+        "first certified recovery follower engine startup",
+    );
+    let recovery_port = world.validators.http_port(MISSED_VALIDATOR);
+    let first_run_baseline = world
+        .rpc
+        .finalized(recovery_port)
+        .expect("first recovery follower finalized baseline after engine startup");
+    wait_until(
+        || {
+            world.localnet.follower_running(&follower_name)
+                && recovery_follower_has_post_start_progress(
+                    first_run_baseline,
+                    world.rpc.finalized(recovery_port),
+                )
+        },
+        120,
+        "first certified recovery follower post-start finalized progress",
     );
     world
         .localnet
@@ -986,6 +1002,19 @@ fn recovered_nodes_resume(world: &mut World) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn recovery_follower_crash_requires_strict_post_start_progress() {
+        assert!(!super::recovery_follower_has_post_start_progress(357, None));
+        assert!(!super::recovery_follower_has_post_start_progress(
+            357,
+            Some(357)
+        ));
+        assert!(super::recovery_follower_has_post_start_progress(
+            357,
+            Some(358)
+        ));
+    }
+
     #[test]
     fn finalized_clock_wait_refreshes_only_on_monotonic_progress() {
         let now = std::time::Instant::now();
