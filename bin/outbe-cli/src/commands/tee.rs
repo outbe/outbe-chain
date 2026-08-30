@@ -11,7 +11,7 @@
 
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -26,8 +26,9 @@ use outbe_operator::{
         await_finalized_onboarding_v1, copy_same_platform_sealed_root_and_checkpoint_v1,
         inspect_upgrade_journal_v1, prepare_upgrade_journal_v1, read_finalized_registry_view_v1,
         read_finalized_staged_successor_policy_v1, read_renewal_status_v1, run_renewal_once_v1,
-        run_upgrade_submission_v1, ExpectedOnboardingBindingV1, NodeBindingSelectorV1,
-        RenewalBindingV1, RenewalOutcomeV1, RenewalServiceConfigV1, UpgradeContextV1,
+        run_upgrade_submission_v1, ExpectedOnboardingBindingV1, FinalizedRegistryChainViewV1,
+        NodeBindingSelectorV1, RenewalBindingV1, RenewalOutcomeV1, RenewalServiceConfigV1,
+        UpgradeContextV1,
     },
     tx::{buffered_gas_price, RelaySignerV1},
 };
@@ -46,10 +47,12 @@ use outbe_tee::{
     load_committed_enclave_manifest_v1, load_committed_join_relay, load_committed_join_submission,
     load_replacement_candidate_relay, load_replacement_candidate_submission,
     persist_committed_join_relay, persist_committed_join_submission,
-    persist_replacement_candidate_relay, persist_replacement_candidate_submission,
-    promote_replacement_candidate, AuthorizedEnclaveClient, CommittedJoinSubmissionV1,
-    EnclaveClient, FinalizedReplacementBindingV1, GeneratedDcapQuoteV1, NodeHostIdentityV1,
-    ReplacementCandidateEnclaveV1, ReplacementCandidateSubmissionV1,
+    persist_finalized_join_admission_anchor, persist_replacement_candidate_relay,
+    persist_replacement_candidate_submission, promote_replacement_candidate,
+    AuthorizedEnclaveClient, CommittedJoinSubmissionV1, EnclaveClient,
+    FinalizedJoinAdmissionAnchorV1, FinalizedRegistryViewV1, FinalizedReplacementBindingV1,
+    GeneratedDcapQuoteV1, NodeHostIdentityV1, ReplacementCandidateEnclaveV1,
+    ReplacementCandidateSubmissionV1,
 };
 use zeroize::Zeroizing;
 
@@ -976,6 +979,45 @@ fn committed_manifest_matches_binding(
             == binding.node_host_authorization_hash)
 }
 
+fn finalized_join_admission_anchor_v1(
+    view: &FinalizedRegistryViewV1,
+    binding: &RenewalBindingV1,
+) -> FinalizedJoinAdmissionAnchorV1 {
+    FinalizedJoinAdmissionAnchorV1 {
+        chain_id: view.chain_id,
+        genesis_hash: view.genesis_hash,
+        node_id_hash: binding.node_id_hash,
+        enclave_id: binding.enclave_id,
+        intent_hash: binding.intent_hash,
+        finalized_height: view.block_number,
+        finalized_hash: view.block_hash,
+        finalized_state_root: view.state_root,
+        finalized_consensus_timestamp: view.consensus_timestamp,
+    }
+}
+
+fn persist_authorized_join_admission_anchor_v1(
+    node_data_dir: &Path,
+    finalized: &FinalizedRegistryChainViewV1,
+    node_id_hash: B256,
+    enclave_id: B256,
+    intent_hash: B256,
+) -> Result<FinalizedJoinAdmissionAnchorV1> {
+    let binding = finalized
+        .binding
+        .as_ref()
+        .ok_or_else(|| eyre::eyre!("finalized Registry lost the completed join binding"))?;
+    if binding.node_id_hash != node_id_hash
+        || binding.enclave_id != enclave_id
+        || binding.intent_hash != intent_hash
+    {
+        eyre::bail!("finalized join admission anchor differs from the completed join binding");
+    }
+    let anchor = finalized_join_admission_anchor_v1(&finalized.view, binding);
+    persist_finalized_join_admission_anchor(node_data_dir, anchor)
+        .map_err(|error| eyre::eyre!("persist finalized join admission anchor: {error}"))
+}
+
 async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
     let TeeJoinArgs {
         private_key,
@@ -1104,6 +1146,13 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                     } if recipient_x25519_pub
                         == <B256 as Into<[u8; 32]>>::into(finalized.tribute_offer_public) =>
                     {
+                        persist_authorized_join_admission_anchor_v1(
+                            node_data_dir.expect("completed replay requires NodeHost state"),
+                            &finalized,
+                            binding.node_id_hash,
+                            binding.enclave_id,
+                            binding.intent_hash,
+                        )?;
                         println!("✓ exact tee join is already finalized and locally committed");
                         return Ok(());
                     }
@@ -1522,6 +1571,13 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                             "cleanup recovery did not reopen the exact permanent offer key: {other:?}"
                         ),
                     }
+                    persist_authorized_join_admission_anchor_v1(
+                        node_data_dir,
+                        &finalized,
+                        node_id_hash,
+                        enclave_id,
+                        intent_hash,
+                    )?;
                     clear_committed_join_checkpoint(node_data_dir, intent_hash).map_err(
                         |error| eyre::eyre!("clear recovered committed join checkpoint: {error}"),
                     )?;
@@ -1588,7 +1644,7 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
         evm_signer.address()
     );
 
-    await_finalized_join_target(
+    let finalized_join = await_finalized_join_target(
         client,
         &binding_selector,
         &intent,
@@ -1676,6 +1732,16 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
             tribute_offer_public,
         } => {
             if join_transport == JoinTransport::AuthorizedNodeHost {
+                let node_data_dir = node_data_dir.ok_or_else(|| {
+                    eyre::eyre!("authenticated onboarding lost its required node data directory")
+                })?;
+                persist_authorized_join_admission_anchor_v1(
+                    node_data_dir,
+                    &finalized_join,
+                    node_id_hash,
+                    enclave_id,
+                    intent_hash,
+                )?;
                 let promotion = if completion_plan.promote_candidate {
                     let exact =
                         read_finalized_registry_view_v1(&CliFinalityRpc(client), &binding_selector)
@@ -1707,9 +1773,6 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                     None
                 };
                 drop(enclave);
-                let node_data_dir = node_data_dir.ok_or_else(|| {
-                    eyre::eyre!("authenticated onboarding lost its required node data directory")
-                })?;
                 if let Some(finalized_binding) = promotion {
                     let authorization = construct_finalized_replacement_authorization_v1(
                         node_data_dir,
@@ -1773,12 +1836,12 @@ async fn await_finalized_join_target(
     selector: &NodeBindingSelectorV1,
     intent: &RegistrationIntentV1,
     timeout: Duration,
-) -> Result<()> {
+) -> Result<FinalizedRegistryChainViewV1> {
     let started = tokio::time::Instant::now();
     loop {
         let view = read_finalized_registry_view_v1(&CliFinalityRpc(client), selector).await?;
         match view.binding.as_ref() {
-            Some(binding) if finalized_binding_matches_intent(binding, intent)? => return Ok(()),
+            Some(binding) if finalized_binding_matches_intent(binding, intent)? => return Ok(view),
             Some(binding) if view.schedule.finalized_timestamp < binding.valid_until => {
                 eyre::bail!("finalized Registry contains a competing live join binding")
             }
@@ -2105,6 +2168,58 @@ mod tests {
         let mut sealed = vec![0x44; MIN_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES];
         sealed[..32].copy_from_slice(&offer_public);
         sealed
+    }
+
+    #[test]
+    fn finalized_join_anchor_binds_the_exact_finalized_view_and_registry_binding() {
+        let view = FinalizedRegistryViewV1 {
+            chain_id: U256::from(676_u64).to_be_bytes(),
+            genesis_hash: B256::repeat_byte(0x11),
+            block_number: 91,
+            block_hash: B256::repeat_byte(0x12),
+            state_root: B256::repeat_byte(0x13),
+            consensus_timestamp: 19_000,
+        };
+        let binding = RenewalBindingV1 {
+            node_id_hash: B256::repeat_byte(0x21),
+            enclave_id: B256::repeat_byte(0x22),
+            binding_id: B256::repeat_byte(0x23),
+            intent_hash: B256::repeat_byte(0x24),
+            evidence_hash: B256::repeat_byte(0x25),
+            policy_hash: B256::repeat_byte(0x26),
+            binding_version: 2,
+            registration_version: 3,
+            renewal_nonce: 0,
+            transition_nonce: 0,
+            lease_started_at: 18_000,
+            valid_until: 20_000,
+            collateral_valid_until: 20_000,
+            recipient_x25519: B256::repeat_byte(0x31),
+            attestation_ed25519: B256::repeat_byte(0x32),
+            noise_responder_x25519: B256::repeat_byte(0x33),
+            mrenclave: B256::repeat_byte(0x34),
+            mrsigner: B256::repeat_byte(0x35),
+            isv_prod_id: 1,
+            isv_svn: 2,
+            platform_tcb_status: 1,
+            verdict_hash: B256::repeat_byte(0x36),
+            node_host_authorization_hash: B256::repeat_byte(0x37),
+        };
+
+        assert_eq!(
+            finalized_join_admission_anchor_v1(&view, &binding),
+            FinalizedJoinAdmissionAnchorV1 {
+                chain_id: view.chain_id,
+                genesis_hash: view.genesis_hash,
+                node_id_hash: binding.node_id_hash,
+                enclave_id: binding.enclave_id,
+                intent_hash: binding.intent_hash,
+                finalized_height: view.block_number,
+                finalized_hash: view.block_hash,
+                finalized_state_root: view.state_root,
+                finalized_consensus_timestamp: view.consensus_timestamp,
+            }
+        );
     }
 
     #[test]

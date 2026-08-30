@@ -60,7 +60,7 @@ pub use node_host::{
     prepare_node_host_enclave_replacement_candidate, promote_replacement_candidate,
     CommittedJoinRelayV1, CommittedJoinSubmissionV1, FinalizedJoinAdmissionAnchorV1,
     FinalizedReplacementAuthorizationV1, FinalizedReplacementBindingV1, NodeHostIdentityV1,
-    ReplacementCandidateRelayV1, ReplacementCandidateSubmissionV1,
+    ReplacementCandidateEnclaveV1, ReplacementCandidateRelayV1, ReplacementCandidateSubmissionV1,
 };
 pub use remote_session::{
     admit_remote_session_v1, admit_rpc_trusted_remote_session_v1, FinalizedRegistryBindingV1,
