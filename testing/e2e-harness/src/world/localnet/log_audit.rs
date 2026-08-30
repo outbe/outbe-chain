@@ -813,56 +813,65 @@ fn expected_tee_lease_guard_shutdown_records(
         };
 
         let lines = content.lines().collect::<Vec<_>>();
-        let records = lines
+        let guard_indices = lines
             .iter()
-            .copied()
             .enumerate()
             .filter_map(|(index, line)| {
-                if exact_tee_lease_jailed_guard_shutdown(line) {
-                    Some((index, Record::Guard))
-                } else if exact_consensus_stack_shutdown(line) {
-                    Some((index, Record::StackShutdown))
-                } else if exact_engine_fatal_trailer(line) {
-                    Some((index, Record::Engine))
-                } else if exact_cli_fatal_trailer(line) {
-                    Some((index, Record::Cli))
-                } else {
-                    None
-                }
+                exact_tee_lease_jailed_guard_shutdown(line).then_some(index)
             })
             .collect::<Vec<_>>();
-        if records.is_empty() {
+        if guard_indices.is_empty() {
             continue;
         }
-        let kinds = records
-            .iter()
-            .map(|(_, record)| *record)
-            .collect::<Vec<_>>();
-        if kinds
-            != [
-                Record::Guard,
-                Record::StackShutdown,
-                Record::Engine,
-                Record::Cli,
-            ]
-        {
+        if guard_indices.len() != 1 {
             return Err(format!(
-                "malformed expected TEE lease guard shutdown bundle in {}: {kinds:?}",
-                path.display()
+                "expected exactly one TEE lease guard in {}, observed {}",
+                path.display(),
+                guard_indices.len()
             ));
         }
-        let guard_index = records[0].0;
-        let cli_index = records[3].0;
-        if cli_index.saturating_sub(guard_index) > 64
-            || lines[guard_index + 1..=cli_index].iter().any(|line| {
-                line.contains("reth::cli: Initialized tracing, debug log directory:")
-                    || line.contains("reth::cli: Starting Reth version=")
-            })
-        {
-            return Err(format!(
-                "expected TEE lease guard shutdown crossed its process epoch in {}",
-                path.display()
-            ));
+
+        let guard_index = guard_indices[0];
+        let mut records = vec![(guard_index, Record::Guard)];
+        let mut cursor = guard_index.saturating_add(1);
+        for expected in [Record::StackShutdown, Record::Engine, Record::Cli] {
+            loop {
+                let Some(line) = lines.get(cursor).copied() else {
+                    return Err(format!(
+                        "incomplete expected TEE lease guard shutdown bundle in {}: missing {expected:?}",
+                        path.display()
+                    ));
+                };
+                if cursor.saturating_sub(guard_index) > 64 || process_start_boundary(line) {
+                    return Err(format!(
+                        "expected TEE lease guard shutdown crossed its line or process-epoch bound in {} before {expected:?}",
+                        path.display()
+                    ));
+                }
+                let observed = if exact_tee_lease_jailed_guard_shutdown(line) {
+                    Some(Record::Guard)
+                } else if exact_consensus_stack_shutdown(line) {
+                    Some(Record::StackShutdown)
+                } else if exact_engine_fatal_trailer(line) {
+                    Some(Record::Engine)
+                } else if exact_cli_fatal_trailer(line) {
+                    Some(Record::Cli)
+                } else {
+                    None
+                };
+                cursor = cursor.saturating_add(1);
+                let Some(observed) = observed else {
+                    continue;
+                };
+                if observed != expected {
+                    return Err(format!(
+                        "malformed expected TEE lease guard shutdown bundle in {}: expected {expected:?}, observed {observed:?}",
+                        path.display()
+                    ));
+                }
+                records.push((cursor - 1, observed));
+                break;
+            }
         }
         if !sinks.insert(sink) {
             return Err(format!(
@@ -899,6 +908,11 @@ fn exact_consensus_stack_shutdown(line: &str) -> bool {
         .ends_with("outbe_chain: consensus stack shutting down")
         && line.contains("info")
         && !contains_nonfatal_alarm(&line)
+}
+
+fn process_start_boundary(line: &str) -> bool {
+    line.contains("reth::cli: Initialized tracing, debug log directory:")
+        || line.contains("reth::cli: Starting Reth version=")
 }
 
 fn exact_ocomp_mismatch_evidence(line: &str, job_id: B256) -> bool {
@@ -1465,6 +1479,34 @@ mod tests {
         assert!(accepted.is_clean(), "{:?}", accepted.findings);
         assert_eq!(accepted.counts.expected_tee_lease_guard_shutdown_fatal, 4);
 
+        let mut later_unrelated_shutdown = expected.clone();
+        later_unrelated_shutdown[0]
+            .1
+            .push_str("\nINFO outbe_chain: consensus stack shutting down");
+        later_unrelated_shutdown[1].1.push_str(
+            "\nINFO reth::cli: Starting Reth version=1.2.3\n\
+             INFO outbe_chain: consensus stack shutting down",
+        );
+        let accepted_with_later_shutdown = audit_loaded_logs_with_all_expectations(
+            &later_unrelated_shutdown,
+            4,
+            None,
+            None,
+            None,
+            Some(3),
+        );
+        assert!(
+            accepted_with_later_shutdown.is_clean(),
+            "{:?}",
+            accepted_with_later_shutdown.findings
+        );
+        assert_eq!(
+            accepted_with_later_shutdown
+                .counts
+                .expected_tee_lease_guard_shutdown_fatal,
+            4
+        );
+
         let unarmed = audit_loaded_logs_with_expectations(&expected, 4, None, None, None);
         assert!(!unarmed.is_clean());
 
@@ -1475,6 +1517,18 @@ mod tests {
         let missing_sink = vec![expected[0].clone()];
         assert!(!audit_loaded_logs_with_all_expectations(
             &missing_sink,
+            4,
+            None,
+            None,
+            None,
+            Some(3),
+        )
+        .is_clean());
+
+        let mut duplicate_sink = expected.clone();
+        duplicate_sink.push(expected[0].clone());
+        assert!(!audit_loaded_logs_with_all_expectations(
+            &duplicate_sink,
             4,
             None,
             None,
@@ -1498,12 +1552,49 @@ mod tests {
                 .is_clean()
         );
 
+        let process_epoch_crossing = expected
+            .iter()
+            .map(|(path, content)| {
+                (
+                    path.clone(),
+                    content.replacen(
+                        "\nERROR engine::tree: Fatal error",
+                        "\nINFO reth::cli: Starting Reth version=1.2.3\nERROR engine::tree: Fatal error",
+                        1,
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert!(!audit_loaded_logs_with_all_expectations(
+            &process_epoch_crossing,
+            4,
+            None,
+            None,
+            None,
+            Some(3),
+        )
+        .is_clean());
+
         let mut extra_fatal = expected.clone();
         extra_fatal[0]
             .1
             .push_str("\nERROR outbe_chain: unrelated fatal condition");
         assert!(!audit_loaded_logs_with_all_expectations(
             &extra_fatal,
+            4,
+            None,
+            None,
+            None,
+            Some(3),
+        )
+        .is_clean());
+
+        let mut duplicate_fatal_trailer = expected.clone();
+        duplicate_fatal_trailer[0]
+            .1
+            .push_str("\nERROR engine::tree: Fatal error");
+        assert!(!audit_loaded_logs_with_all_expectations(
+            &duplicate_fatal_trailer,
             4,
             None,
             None,
