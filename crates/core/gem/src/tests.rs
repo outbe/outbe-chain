@@ -290,6 +290,16 @@ fn seed_currency(storage: &StorageHandle, iso_code: u16, rate: Option<U256>) -> 
     index
 }
 
+fn block_ctx_at<'s>(
+    storage: &StorageHandle<'s>,
+    timestamp: u64,
+) -> outbe_primitives::block::BlockRuntimeContext<'s> {
+    outbe_primitives::block::BlockRuntimeContext::new(
+        outbe_primitives::block::BlockContext::empty_for_tests(1, timestamp, 1),
+        storage.clone(),
+    )
+}
+
 fn block_ctx<'s>(storage: &StorageHandle<'s>) -> outbe_primitives::block::BlockRuntimeContext<'s> {
     let timestamp = storage.timestamp().unwrap().to::<u64>();
     outbe_primitives::block::BlockRuntimeContext::new(
@@ -640,6 +650,106 @@ fn qualified_gem(storage: &StorageHandle) -> U256 {
     let gem_id = api::add_gem(storage, p).unwrap();
     api::set_state(storage, gem_id, GemState::Qualified).unwrap();
     gem_id
+}
+
+/// The call pass is budgeted, so a run cut short must carry on from its own bin
+/// cursor rather than starting the currency over.
+#[test]
+fn the_call_pass_resumes_from_its_bin_cursor() {
+    with_storage(|storage| {
+        let mut low = sample_params(ALICE);
+        low.issued_at = T_NOW - 100 * 86_400;
+        low.call_price_minor = U256::from(100_000u64);
+        let low_id = api::add_gem(storage, low).unwrap();
+        let mut high = sample_params(BOB);
+        high.issued_at = T_NOW - 100 * 86_400;
+        high.call_price_minor = U256::from(200_000u64);
+        let high_id = api::add_gem(storage, high).unwrap();
+        api::set_state(storage, low_id, GemState::Qualified).unwrap();
+        api::set_state(storage, high_id, GemState::Qualified).unwrap();
+
+        // Every day of the window sits above both call prices.
+        let pair = seed_currency(storage, 840, Some(U256::from(600_000u64)));
+        let oracle = OracleContract::new(storage.clone());
+        let last_closed_day = previous_date_key(timestamp_to_date_key(T_NOW));
+        let mut day = last_closed_day;
+        for _ in 0..(crate::constants::CALL_WINDOW / 86_400) {
+            oracle
+                .utc_day_vwap_value
+                .get_nested(&day)
+                .write(&pair, U256::from(300_000u64))
+                .unwrap();
+            day = previous_date_key(day);
+        }
+        oracle
+            .utc_day_vwap_last_finalized
+            .write(last_closed_day)
+            .unwrap();
+
+        // A budget of one takes the lower bin and persists the cursor above it.
+        let ctx = block_ctx(storage);
+        let mut budget = 1u32;
+        let window = vec![
+            (last_closed_day, Some(U256::from(300_000u64)));
+            (crate::constants::CALL_WINDOW / 86_400) as usize
+        ];
+        assert_eq!(
+            crate::hooks::call_currency(
+                &ctx,
+                840,
+                &window,
+                outbe_primitives::math::constants::MAX_BIN_ID,
+                &mut budget
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            api::get_gem(storage, high_id).unwrap().unwrap().state,
+            GemState::Qualified as u8
+        );
+
+        // The next run picks up where it stopped instead of revisiting the first.
+        let mut budget = 8u32;
+        assert_eq!(
+            crate::hooks::call_currency(
+                &ctx,
+                840,
+                &window,
+                outbe_primitives::math::constants::MAX_BIN_ID,
+                &mut budget
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            api::get_gem(storage, high_id).unwrap().unwrap().state,
+            GemState::Called as u8
+        );
+    });
+}
+
+/// A queue entry the sweep cannot retire is announced on chain once it has failed
+/// enough times running, rather than only in a node's log.
+#[test]
+fn a_sweep_that_keeps_failing_says_so() {
+    with_storage(|storage| {
+        let gem = GemContract::new(storage.clone());
+        // A slot pointing at a gem that is not there: forfeit errors every run.
+        let ghost = U256::from(0xdeadu64);
+        gem.called_queue_at.write(&0, ghost).unwrap();
+        gem.called_queue_index.write(&ghost, 0).unwrap();
+        gem.called_deadline.write(&ghost, T_NOW).unwrap();
+        gem.called_tail.write(1).unwrap();
+
+        let ctx = block_ctx_at(storage, T_NOW + 1);
+        for expected in 1..=crate::constants::EXPIRY_STALL_THRESHOLD {
+            crate::hooks::run_call_daily(&ctx).unwrap();
+            assert_eq!(gem.expiry_attempts.read(&ghost).unwrap(), expected);
+        }
+        // The entry is still there: nothing was credited and nothing was lost.
+        assert_eq!(gem.called_queue_slot(0).unwrap(), Some(ghost));
+    });
 }
 
 /// The load of a gem nobody settled goes back to the emission accumulator.

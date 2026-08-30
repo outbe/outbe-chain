@@ -182,7 +182,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 /// Walk one currency's qualified bins up to `ceiling`, resuming where the last
 /// run gave out. The cursor resumes rather than restarting: a gem left behind is
 /// picked up later, which cannot change an outcome that needs a multi-day breach.
-fn call_currency(
+pub(crate) fn call_currency(
     ctx: &BlockRuntimeContext,
     iso_code: u16,
     window: &[(u32, Option<U256>)],
