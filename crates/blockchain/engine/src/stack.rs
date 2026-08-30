@@ -2895,15 +2895,17 @@ where
     let local = crate::follow_transport::RethLocalBlockSource::new(node.clone());
     let upstream_client = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
     let tip_client = crate::follow_transport::UpstreamRpcClient::new(&upstream)?;
-    outbe_consensus::follow::engine::prepare_committee_chain(
-        &chain,
-        &upstream_client,
-        &epocher,
-        anchor_epoch,
-        Height::new(recovery_height),
-    )
-    .await
-    .wrap_err("failed to rebuild authenticated follower committee chain on restart")?;
+    if recovery_height > 0 {
+        outbe_consensus::follow::engine::prepare_committee_chain(
+            &chain,
+            &upstream_client,
+            &epocher,
+            anchor_epoch,
+            Height::new(recovery_height),
+        )
+        .await
+        .wrap_err("failed to rebuild authenticated follower committee chain on restart")?;
+    }
     let recovery_anchor = if recovery_height == 0 {
         CertifiedFollowerRecoveryAnchor {
             checkpoint: ProjectionCheckpoint {
@@ -3019,7 +3021,6 @@ where
         )
         .wrap_err("failed to reconcile recovered certified follower parent")?;
     }
-    bridge.set_last_finalized_block_number(recovery_anchor.checkpoint.block_number);
     wait_for_recovered_projection(
         "offchain-data",
         projection_readiness.clone(),
@@ -3029,6 +3030,7 @@ where
     if let Some(readiness) = ocomp_readiness.clone() {
         wait_for_recovered_projection("OCOMP", readiness, recovery_anchor.checkpoint).await?;
     }
+    bridge.set_last_finalized_block_number(recovery_anchor.checkpoint.block_number);
 
     info!(
         marshal_processed = last_consensus_finalized.get(),
