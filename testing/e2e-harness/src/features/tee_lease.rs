@@ -1,5 +1,6 @@
 //! Release real-SGX/no-DCAP evidence for the recurring manual TEE lease.
 
+use std::io::{Read, Seek, SeekFrom};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -28,6 +29,8 @@ struct LeaseScenarioState {
     missed_validator_address: Option<String>,
     missed_validator_stake: Option<U256>,
     missed_validator_slash_count: Option<u64>,
+    missed_validator_last_finalized: Option<u64>,
+    missed_validator_epoch: Option<u64>,
     permanent_offer_keys: Vec<[u8; 32]>,
 }
 
@@ -291,6 +294,32 @@ fn validator_address(world: &World, index: usize) -> String {
     )
 }
 
+fn node_log_len(world: &World, index: usize) -> u64 {
+    std::fs::metadata(
+        world
+            .localnet
+            .scenario_dir()
+            .join(format!("validator-{index}/node.log")),
+    )
+    .map(|metadata| metadata.len())
+    .unwrap_or_default()
+}
+
+fn node_log_since(world: &World, index: usize, offset: u64) -> String {
+    let path = world
+        .localnet
+        .scenario_dir()
+        .join(format!("validator-{index}/node.log"));
+    let mut file = std::fs::File::open(&path)
+        .unwrap_or_else(|error| panic!("open recovery log {}: {error}", path.display()));
+    file.seek(SeekFrom::Start(offset))
+        .unwrap_or_else(|error| panic!("seek recovery log {}: {error}", path.display()));
+    let mut suffix = String::new();
+    file.read_to_string(&mut suffix)
+        .unwrap_or_else(|error| panic!("read recovery log {}: {error}", path.display()));
+    suffix
+}
+
 #[given("a fresh four-validator manual TEE lease localnet")]
 fn fresh_manual_lease_localnet(world: &mut World) {
     assert_eq!(
@@ -434,7 +463,7 @@ fn three_validators_renew(world: &mut World) {
 
 #[then("their exact next deadlines finalize without changing any permanent offer key")]
 fn renewed_deadlines_and_keys_are_exact(world: &mut World) {
-    let scenario = state();
+    let mut scenario = state();
     let original = scenario.original_deadline.expect("original deadline");
     let renewed = scenario.renewed_deadline.expect("renewed deadline");
     let full_node = scenario.full_node_index.expect("FullNode index");
@@ -464,6 +493,12 @@ fn renewed_deadlines_and_keys_are_exact(world: &mut World) {
             "manual lease transition changed node {index} permanent offer key"
         );
     }
+    scenario.missed_validator_last_finalized = world
+        .rpc
+        .finalized(world.validators.http_port(MISSED_VALIDATOR));
+    scenario.missed_validator_epoch = world
+        .rpc
+        .epoch_on(world.validators.http_port(MISSED_VALIDATOR));
 }
 
 #[when("finalized consensus time reaches the original lease deadline")]
@@ -632,20 +667,6 @@ fn expired_nodes_rejoin(world: &mut World) {
         .join_node_enclave_until(full_node, next_deadline)
         .expect("expired FullNode tee join");
 
-    let primary = world.validators.primary_port();
-    let recovery_checkpoint = world
-        .rpc
-        .finalized(primary)
-        .expect("validator recovery checkpoint height");
-    let recovery_checkpoint_hash = world
-        .rpc
-        .block_hash(primary, recovery_checkpoint)
-        .expect("validator recovery checkpoint hash");
-
-    world
-        .localnet
-        .restart_validator(MISSED_VALIDATOR)
-        .expect("restart rejoined validator");
     world
         .localnet
         .launch_dcap_full_node(
@@ -654,6 +675,120 @@ fn expired_nodes_rejoin(world: &mut World) {
             0,
         )
         .expect("restart rejoined FullNode");
+}
+
+#[when("stale validator 3 fails closed and catches up through its certified follower datadir")]
+fn stale_validator_recovers_through_certified_follower(world: &mut World) {
+    let primary = world.validators.primary_port();
+    let stale_height = state()
+        .missed_validator_last_finalized
+        .expect("captured validator finalized height before expiry");
+    let stale_epoch = state()
+        .missed_validator_epoch
+        .expect("captured validator epoch before expiry");
+
+    let startup_error = world
+        .localnet
+        .restart_validator(MISSED_VALIDATOR)
+        .expect_err("stale validator startup must require certified follower recovery");
+    let startup_error = startup_error.to_string();
+    assert!(startup_error.contains("certified follower"));
+    assert!(startup_error.contains("omit --validator"));
+    assert!(startup_error.contains("--upstream <healthy-certified-rpc>"));
+    assert!(
+        !world.localnet.validator_running(MISSED_VALIDATOR),
+        "stale validator retained authority after fail-closed startup"
+    );
+
+    let recovery_log_offset = node_log_len(world, MISSED_VALIDATOR);
+    let follower_name = world
+        .localnet
+        .launch_validator_recovery_follower(MISSED_VALIDATOR, 0)
+        .expect("launch validator datadir as certified follower");
+    wait_until(
+        || {
+            world.localnet.follower_running(&follower_name)
+                && world
+                    .rpc
+                    .finalized(world.validators.http_port(MISSED_VALIDATOR))
+                    .is_some_and(|height| height > stale_height)
+        },
+        120,
+        "interrupted certified follower progress beyond stale validator height",
+    );
+    world
+        .localnet
+        .stop_follower(&follower_name)
+        .expect("interrupt validator recovery follower");
+
+    let restarted_name = world
+        .localnet
+        .launch_validator_recovery_follower(MISSED_VALIDATOR, 0)
+        .expect("restart validator recovery follower on the same datadir");
+    assert_eq!(restarted_name, follower_name);
+    let recovery_checkpoint = world
+        .rpc
+        .finalized(primary)
+        .expect("sample healthy finalized recovery target");
+    let recovery_checkpoint_hash = world
+        .rpc
+        .block_hash(primary, recovery_checkpoint)
+        .expect("sample healthy finalized recovery target hash");
+    wait_until(
+        || {
+            if !world.localnet.follower_running(&restarted_name) {
+                return false;
+            }
+            let port = world.validators.http_port(MISSED_VALIDATOR);
+            world.rpc.finalized(port).is_some_and(|height| {
+                height >= recovery_checkpoint
+                    && world.rpc.block_hash(port, recovery_checkpoint)
+                        == Some(recovery_checkpoint_hash.clone())
+            })
+        },
+        180,
+        "certified follower exact canonical recovery checkpoint",
+    );
+    let recovered_epoch = world
+        .rpc
+        .epoch_on(world.validators.http_port(MISSED_VALIDATOR))
+        .expect("recovered follower epoch");
+    assert!(
+        recovered_epoch > stale_epoch,
+        "recovery follower did not cross the exclusion/DKG epoch boundary: stale {stale_epoch}, recovered {recovered_epoch}"
+    );
+    wait_until(
+        || {
+            node_log_since(world, MISSED_VALIDATOR, recovery_log_offset)
+                .contains("local TEE lease guard armed at authenticated catch-up anchor")
+        },
+        60,
+        "authenticated certified follower admission anchor",
+    );
+    world
+        .localnet
+        .stop_follower(&restarted_name)
+        .expect("stop recovered certified follower before validator restart");
+
+    let recovery_log = node_log_since(world, MISSED_VALIDATOR, recovery_log_offset);
+    for forbidden in [
+        "propose requested",
+        "relay forwarding proposed block",
+        "restoring durable DKG dealer transcript",
+        "local validator is DKG player-only for this reshare",
+        "recorded finalized DKG dealer log",
+        "VRF material active",
+    ] {
+        assert!(
+            !recovery_log.contains(forbidden),
+            "certified follower recovery exercised validator authority marker `{forbidden}`"
+        );
+    }
+
+    world
+        .localnet
+        .restart_validator(MISSED_VALIDATOR)
+        .expect("restart caught-up validator in its original role");
     wait_for_live_validator_checkpoint(
         world,
         MISSED_VALIDATOR,

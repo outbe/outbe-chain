@@ -3,7 +3,7 @@
 use std::fs;
 use std::process::Command;
 
-use eyre::{bail, eyre, Result};
+use eyre::{bail, ensure, eyre, Result};
 
 use crate::env::TeeMode;
 use crate::internal::{
@@ -13,6 +13,36 @@ use crate::internal::{
 };
 
 use super::Localnet;
+
+const VALIDATOR_RECOVERY_FOLLOWER_FORBIDDEN_ARGS: &[&str] = &[
+    "--validator",
+    "--consensus.signing-key",
+    "--validator.evm-key",
+    "--radicle.control-socket",
+    "--radicle.status-address",
+    "--upstream.nocertify",
+];
+
+fn ensure_validator_recovery_follower_args(args: &[String]) -> Result<()> {
+    ensure!(
+        args.iter()
+            .any(|arg| arg == "--upstream" || arg.starts_with("--upstream=")),
+        "validator recovery follower requires a certified --upstream"
+    );
+    if let Some(option) = args.iter().find(|arg| {
+        VALIDATOR_RECOVERY_FOLLOWER_FORBIDDEN_ARGS
+            .iter()
+            .any(|forbidden| {
+                arg.as_str() == *forbidden
+                    || arg
+                        .strip_prefix(forbidden)
+                        .is_some_and(|suffix| suffix.starts_with('='))
+            })
+    }) {
+        bail!("validator recovery follower command contains forbidden authority/bypass option {option}");
+    }
+    Ok(())
+}
 
 impl Localnet {
     /// Provision a production full-node enclave with its persistent Reth and
@@ -111,6 +141,7 @@ impl Localnet {
             format!("127.0.0.1:{}", self.cfg.consensus_port(index)),
         ]);
         self.extend_real_sgx_startup_timeout(&mut args);
+        ensure_validator_recovery_follower_args(&args)?;
 
         let mut command = Command::new(&self.cfg.bin_chain);
         command
@@ -123,6 +154,50 @@ impl Localnet {
         Ok(())
     }
 
+    /// Start an excluded validator's existing datadir as the ordinary certified
+    /// follower. The validator node and its Radicle signer are removed first so
+    /// this phase has one database writer and no validator authority process.
+    pub fn launch_validator_recovery_follower(
+        &mut self,
+        index: usize,
+        upstream_slot: usize,
+    ) -> Result<String> {
+        if index >= self.committee_size() {
+            bail!("validator index {index} is outside the committee");
+        }
+        if self
+            .validators
+            .get_mut(&index)
+            .is_some_and(|guard| !guard.exited())
+        {
+            bail!("validator-{index} is still running; refusing a second datadir writer");
+        }
+        self.validators.remove(&index);
+        self.radicle_sidecars.remove(&index);
+
+        let name = Self::validator_recovery_follower_name(index);
+        if self
+            .followers
+            .get_mut(&name)
+            .is_some_and(|guard| !guard.exited())
+        {
+            bail!("{name} is already running");
+        }
+        self.followers.remove(&name);
+        self.launch_dcap_full_node(&name, index, upstream_slot)?;
+        Ok(name)
+    }
+
+    pub fn validator_recovery_follower_name(index: usize) -> String {
+        format!("validator-{index}-recovery-follower")
+    }
+
+    pub fn follower_running(&mut self, name: &str) -> bool {
+        self.followers
+            .get_mut(name)
+            .is_some_and(|guard| !guard.exited())
+    }
+
     /// Stop all follower nodes (drop owned handles → kill + reap).
     pub fn stop_followers(&mut self) -> Result<()> {
         self.followers.clear();
@@ -133,5 +208,49 @@ impl Localnet {
     pub fn stop_follower(&mut self, name: &str) -> Result<()> {
         self.followers.remove(name);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn validator_recovery_follower_requires_certified_non_authority_arguments() {
+        let safe = vec![
+            "node".to_owned(),
+            "--datadir".to_owned(),
+            "/srv/outbe/validator-3/data".to_owned(),
+            "--upstream".to_owned(),
+            "http://validator-0:8545".to_owned(),
+            "--tee-enclave-socket".to_owned(),
+            "127.0.0.1:7003".to_owned(),
+        ];
+        super::ensure_validator_recovery_follower_args(&safe)
+            .expect("a certified authority-free follower command is valid");
+
+        for forbidden in [
+            "--validator",
+            "--consensus.signing-key",
+            "--validator.evm-key",
+            "--radicle.control-socket",
+            "--radicle.status-address",
+            "--upstream.nocertify",
+        ] {
+            let mut unsafe_args = safe.clone();
+            unsafe_args.push(forbidden.to_owned());
+            assert!(
+                super::ensure_validator_recovery_follower_args(&unsafe_args).is_err(),
+                "recovery follower accepted authority/bypass option {forbidden}"
+            );
+
+            let mut inline_unsafe_args = safe.clone();
+            inline_unsafe_args.push(format!("{forbidden}=value"));
+            assert!(
+                super::ensure_validator_recovery_follower_args(&inline_unsafe_args).is_err(),
+                "recovery follower accepted inline authority/bypass option {forbidden}"
+            );
+        }
+
+        let no_upstream = vec!["node".to_owned(), "--datadir".to_owned(), "data".to_owned()];
+        assert!(super::ensure_validator_recovery_follower_args(&no_upstream).is_err());
     }
 }

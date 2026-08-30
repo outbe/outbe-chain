@@ -450,8 +450,64 @@ boundary. Recovery is explicit:
   a new enclave and resumes its durable promotion journal after a crash.
 - Validator: wait until the boundary has moved it to JAILED, run
   `outbe-cli staking unjail` with the same global EVM key, perform the fresh
-  `tee join`, restart and catch up, submit `validator confirm-ready`, and wait
-  for the normal DKG boundary. Rejoin never bypasses unjail or grants a share.
+  `tee join`, recover the stale datadir through certified follower mode as
+  described below, submit `validator confirm-ready`, and wait for the normal
+  DKG boundary. Rejoin never bypasses unjail or grants a share.
+
+#### Recovering an expired validator datadir
+
+After expiry and committee exclusion, a validator datadir can be older than the
+finalized `tee join` admission anchor. Starting it immediately as `--validator`
+fails closed before consensus, DKG, voting, or validator Radicle authority is
+started. The error prints the anchor and this recovery sequence. This is
+intentional: an old validator epoch cannot discover arbitrary later epoch
+certificates through the validator P2P routes, while the existing certified
+follower is specifically built to authenticate and replay that history.
+
+Use one process and one datadir writer at a time:
+
+1. Complete ordinary `staking unjail` and fresh `tee join`. Keep the durable
+   NodeHost/enclave state and the entire validator datadir intact.
+2. Stop the validator process and its validator Radicle sidecar. Do not delete
+   MDBX, marshal, consensus, DKG, NodeHost, or admission-anchor files.
+3. Start the same `outbe-chain` binary, chain manifest, datadir, P2P identity,
+   enclave socket, execution, projection, and RPC configuration in certified
+   follower mode. Omit `--validator`, `--consensus.signing-key`,
+   `--validator.evm-key`, `--radicle.control-socket`, and
+   `--radicle.status-address`. Add `--upstream <healthy-certified-rpc>`. Never
+   use `--upstream.nocertify` for recovery.
+4. Sample the healthy upstream's finalized height and hash. Wait until the local
+   RPC has at least that height with the exact same hash and the node logs
+   `local TEE lease guard armed at authenticated catch-up anchor`. Reaching only
+   the older join anchor is not enough. If the follower is interrupted, restart
+   the same follower command on the same datadir; replay is idempotent.
+5. Stop and fully reap the follower. Restart the original Radicle sidecar and
+   original validator command. Never overlap follower and validator processes.
+6. The validator revalidates the exact durable join anchor and current finalized
+   Registry state. It remains PENDING/non-signing. Submit the ordinary explicit
+   `validator confirm-ready`, then wait for a fresh eligible DKG and activation.
+7. Before declaring recovery complete, verify canonical finalized height/hash
+   parity, `hasThresholdShares=true`, matching `vrfMaterialVersion`, and no new
+   voter misses or unexpected `REVEALED` event.
+
+A minimal follower command has this shape; retain every deployment-specific
+execution/TEE/projection option from the normal command, but none of its validator
+authority options:
+
+```sh
+/usr/local/bin/outbe-chain node \
+  --chain /var/lib/outbe/mainnet/genesis.json \
+  --datadir /var/lib/outbe/validator/data \
+  --p2p-secret-key /var/lib/outbe/validator/reth-p2p-secret.hex \
+  --tee-enclave-socket 127.0.0.1:7000 \
+  --upstream http://<healthy-certified-rpc>:8545 \
+  --http --http.addr 127.0.0.1 --http.port 8545 \
+  --http.api eth,net,web3,outbe
+```
+
+The finalized join admission anchor is evidence that the exact local identity
+was admitted on the canonical chain. It is not membership, readiness, a private
+threshold share, or signing authority.
 
 ---
 

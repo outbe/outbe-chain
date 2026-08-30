@@ -1,7 +1,9 @@
 @tee @sgx-no-attest @sudo @min-validators-4
 Feature: Manual consensus-enforced TEE lease lifecycle
   The release SGX/no-attest lane keeps the production fourteen-day lease and
-  crosses its seven-day window with the testnet-only consensus clock.
+  crosses its seven-day window with the testnet-only consensus clock. Expired
+  validator recovery reuses the same datadir sequentially as a certified
+  follower and then as a validator; the two roles never run concurrently.
 
   Scenario: Three validators renew while one validator and one FullNode expire and recover
     Given a fresh four-validator manual TEE lease localnet
@@ -14,4 +16,5 @@ Feature: Manual consensus-enforced TEE lease lifecycle
     And the expired FullNode fail-stops and late renewal is rejected for both missed nodes
     When the jailed validator is excluded at the normal DKG boundary
     And validator 3 unjails and both expired nodes complete fresh TEE join
+    And stale validator 3 fails closed and catches up through its certified follower datadir
     Then validator 3 returns only after readiness and DKG while the FullNode resumes sync
