@@ -12,15 +12,15 @@ use std::os::unix::fs::{
 };
 use std::path::{Path, PathBuf};
 
-use alloy_primitives::{B256, U256, keccak256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationOperationV1, DcapEvidenceV1, EnclaveInitializationManifestV1,
-    MAX_ATTESTATION_EVIDENCE_BYTES, NodeIdV1, RegistrationIntentV1,
+    NodeIdV1, RegistrationIntentV1, MAX_ATTESTATION_EVIDENCE_BYTES,
 };
 
 use crate::{
-    AuthorizedEnclaveClient, GeneratedDcapQuoteV1, NodeHostNoiseKey, TransportError,
-    remote_session::FinalizedRegistryViewV1,
+    remote_session::FinalizedRegistryViewV1, AuthorizedEnclaveClient, GeneratedDcapQuoteV1,
+    NodeHostNoiseKey, TransportError,
 };
 
 pub const NODE_HOST_DIRECTORY_V1: &str = "tee-node-host-v1";
@@ -31,23 +31,32 @@ pub const NODE_HOST_REPLACEMENT_CANDIDATE_V1: &str = "replacement-candidate.v1";
 pub const NODE_HOST_REPLACEMENT_SUBMISSION_V1: &str = "replacement-submission.v1";
 pub const NODE_HOST_REPLACEMENT_RELAY_V1: &str = "replacement-relay.v1";
 pub const NODE_HOST_REPLACEMENT_PROMOTION_V1: &str = "replacement-promotion.v1";
+pub const NODE_HOST_COMMITTED_JOIN_SUBMISSION_V1: &str = "committed-join-submission.v1";
+pub const NODE_HOST_COMMITTED_JOIN_RELAY_V1: &str = "committed-join-relay.v1";
 const NODE_HOST_NEXT_MANIFEST_V1: &str = "initialization-manifest.next";
 const NODE_HOST_REPLACEMENT_CANDIDATE_NEXT_V1: &str = "replacement-candidate.next";
 const NODE_HOST_REPLACEMENT_SUBMISSION_NEXT_V1: &str = "replacement-submission.next";
 const NODE_HOST_REPLACEMENT_RELAY_NEXT_V1: &str = "replacement-relay.next";
 const NODE_HOST_REPLACEMENT_PROMOTION_NEXT_V1: &str = "replacement-promotion.next";
+const NODE_HOST_COMMITTED_JOIN_SUBMISSION_NEXT_V1: &str = "committed-join-submission.next";
+const NODE_HOST_COMMITTED_JOIN_RELAY_NEXT_V1: &str = "committed-join-relay.next";
 const NODE_HOST_STATE_LOCK_V1: &str = "state.lock";
 const NODE_HOST_REPLACEMENT_WRITE_SCRATCH_V1: &str = "replacement-write.tmp";
+const NODE_HOST_COMMITTED_JOIN_WRITE_SCRATCH_V1: &str = "committed-join-write.tmp";
 const MAX_INITIALIZATION_MANIFEST_BYTES: u64 = 512;
 const REPLACEMENT_CANDIDATE_VERSION_V1: u8 = 1;
 const MAX_REPLACEMENT_CANDIDATE_BYTES: u64 = 1 + 32 + 2 + MAX_INITIALIZATION_MANIFEST_BYTES;
 const REPLACEMENT_SUBMISSION_VERSION_V1: u8 = 1;
 const MAX_REPLACEMENT_SUBMISSION_BYTES: u64 =
     1 + 4 + MAX_ATTESTATION_EVIDENCE_BYTES as u64 + 65 + 64;
+const COMMITTED_JOIN_SUBMISSION_VERSION_V1: u8 = 1;
+const MAX_COMMITTED_JOIN_SUBMISSION_BYTES: u64 = MAX_REPLACEMENT_SUBMISSION_BYTES + 20;
 const REPLACEMENT_RELAY_VERSION_V1: u8 = 1;
 const MAX_REPLACEMENT_RELAY_BYTES: u64 = MAX_ATTESTATION_EVIDENCE_BYTES as u64 + 4_096;
 const REPLACEMENT_PROMOTION_VERSION_V1: u8 = 1;
 const REPLACEMENT_PROMOTION_BYTES: u64 = 1 + 32 + 32;
+const COMMITTED_JOIN_RELAY_VERSION_V1: u8 = 1;
+const MAX_COMMITTED_JOIN_RELAY_BYTES: u64 = MAX_ATTESTATION_EVIDENCE_BYTES as u64 + 4_104;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NodeHostIdentityV1 {
@@ -83,6 +92,26 @@ pub struct ReplacementCandidateSubmissionV1 {
     evidence: Vec<u8>,
     node_signature: [u8; 65],
     enclave_signature: [u8; 64],
+}
+
+/// Exact registration material durably bound to the already committed
+/// NodeHost enclave before its first registration transaction is constructed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommittedJoinSubmissionV1 {
+    registration_caller: Address,
+    evidence: Vec<u8>,
+    node_signature: [u8; 65],
+    enclave_signature: [u8; 64],
+}
+
+/// Exact signed committed-join transaction persisted before its first relay.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommittedJoinRelayV1 {
+    submission_hash: B256,
+    calldata_hash: B256,
+    transaction_hash: B256,
+    from_block: u64,
+    raw_transaction: Vec<u8>,
 }
 
 /// Exact signed registration transaction persisted before relay. It is bound
@@ -227,6 +256,185 @@ impl ReplacementCandidateSubmissionV1 {
             node_signature,
             enclave_signature,
         })
+    }
+}
+
+impl CommittedJoinSubmissionV1 {
+    #[must_use]
+    pub const fn registration_caller(&self) -> Address {
+        self.registration_caller
+    }
+
+    #[must_use]
+    pub fn evidence(&self) -> &[u8] {
+        &self.evidence
+    }
+
+    #[must_use]
+    pub const fn node_signature(&self) -> &[u8; 65] {
+        &self.node_signature
+    }
+
+    #[must_use]
+    pub const fn enclave_signature(&self) -> &[u8; 64] {
+        &self.enclave_signature
+    }
+
+    pub fn submission_hash(&self) -> Result<B256, TransportError> {
+        Ok(keccak256(self.encode_canonical()?))
+    }
+
+    fn encode_canonical(&self) -> Result<Vec<u8>, TransportError> {
+        if self.registration_caller.is_zero() {
+            return Err(TransportError::Codec(
+                "committed join registration caller is zero".into(),
+            ));
+        }
+        let evidence_len = u32::try_from(self.evidence.len())
+            .map_err(|_| TransportError::Codec("committed join evidence length overflow".into()))?;
+        let capacity = 154_usize.checked_add(self.evidence.len()).ok_or_else(|| {
+            TransportError::Codec("committed join submission allocation length overflow".into())
+        })?;
+        let mut out = Vec::with_capacity(capacity);
+        out.push(COMMITTED_JOIN_SUBMISSION_VERSION_V1);
+        out.extend_from_slice(self.registration_caller.as_slice());
+        out.extend_from_slice(&evidence_len.to_be_bytes());
+        out.extend_from_slice(&self.evidence);
+        out.extend_from_slice(&self.node_signature);
+        out.extend_from_slice(&self.enclave_signature);
+        if u64::try_from(out.len()).unwrap_or(u64::MAX) > MAX_COMMITTED_JOIN_SUBMISSION_BYTES {
+            return Err(TransportError::Codec(
+                "committed join submission exceeds its fixed cap".into(),
+            ));
+        }
+        Ok(out)
+    }
+
+    fn decode_canonical(input: &[u8]) -> Result<Self, TransportError> {
+        if input.len() < 154
+            || u64::try_from(input.len()).unwrap_or(u64::MAX) > MAX_COMMITTED_JOIN_SUBMISSION_BYTES
+            || input[0] != COMMITTED_JOIN_SUBMISSION_VERSION_V1
+        {
+            return Err(TransportError::Codec(
+                "committed join submission framing is invalid".into(),
+            ));
+        }
+        let evidence_len =
+            usize::try_from(u32::from_be_bytes(input[21..25].try_into().map_err(
+                |_| TransportError::Codec("committed join evidence length".into()),
+            )?))
+            .map_err(|_| TransportError::Codec("committed join evidence length overflow".into()))?;
+        let expected_len = 154_usize.checked_add(evidence_len).ok_or_else(|| {
+            TransportError::Codec("committed join submission length overflow".into())
+        })?;
+        if evidence_len > MAX_ATTESTATION_EVIDENCE_BYTES || input.len() != expected_len {
+            return Err(TransportError::Codec(
+                "committed join evidence length is non-canonical".into(),
+            ));
+        }
+        let registration_caller = Address::from_slice(&input[1..21]);
+        if registration_caller.is_zero() {
+            return Err(TransportError::Codec(
+                "committed join registration caller is zero".into(),
+            ));
+        }
+        let evidence_end = 25 + evidence_len;
+        let evidence = input[25..evidence_end].to_vec();
+        AttestationEvidenceV1::decode_canonical(&evidence).map_err(codec_error)?;
+        let node_signature = input[evidence_end..evidence_end + 65]
+            .try_into()
+            .map_err(|_| TransportError::Codec("committed join node signature length".into()))?;
+        let enclave_signature = input[evidence_end + 65..]
+            .try_into()
+            .map_err(|_| TransportError::Codec("committed join enclave signature length".into()))?;
+        Ok(Self {
+            registration_caller,
+            evidence,
+            node_signature,
+            enclave_signature,
+        })
+    }
+}
+
+impl CommittedJoinRelayV1 {
+    #[must_use]
+    pub const fn calldata_hash(&self) -> B256 {
+        self.calldata_hash
+    }
+
+    #[must_use]
+    pub const fn transaction_hash(&self) -> B256 {
+        self.transaction_hash
+    }
+
+    #[must_use]
+    pub const fn from_block(&self) -> u64 {
+        self.from_block
+    }
+
+    #[must_use]
+    pub fn raw_transaction(&self) -> &[u8] {
+        &self.raw_transaction
+    }
+
+    fn encode_canonical(&self) -> Result<Vec<u8>, TransportError> {
+        let raw_len = u32::try_from(self.raw_transaction.len())
+            .map_err(|_| TransportError::Codec("committed join relay length overflow".into()))?;
+        let mut out = Vec::with_capacity(109 + self.raw_transaction.len());
+        out.push(COMMITTED_JOIN_RELAY_VERSION_V1);
+        out.extend_from_slice(self.submission_hash.as_slice());
+        out.extend_from_slice(self.calldata_hash.as_slice());
+        out.extend_from_slice(self.transaction_hash.as_slice());
+        out.extend_from_slice(&self.from_block.to_be_bytes());
+        out.extend_from_slice(&raw_len.to_be_bytes());
+        out.extend_from_slice(&self.raw_transaction);
+        if u64::try_from(out.len()).unwrap_or(u64::MAX) > MAX_COMMITTED_JOIN_RELAY_BYTES {
+            return Err(TransportError::Codec(
+                "committed join relay exceeds its fixed cap".into(),
+            ));
+        }
+        Ok(out)
+    }
+
+    fn decode_canonical(input: &[u8]) -> Result<Self, TransportError> {
+        if input.len() < 109
+            || u64::try_from(input.len()).unwrap_or(u64::MAX) > MAX_COMMITTED_JOIN_RELAY_BYTES
+            || input[0] != COMMITTED_JOIN_RELAY_VERSION_V1
+        {
+            return Err(TransportError::Codec(
+                "committed join relay framing is invalid".into(),
+            ));
+        }
+        let raw_len = u32::from_be_bytes(
+            input[105..109]
+                .try_into()
+                .map_err(|_| TransportError::Codec("committed join relay length".into()))?,
+        ) as usize;
+        if input.len() != 109 + raw_len || raw_len == 0 {
+            return Err(TransportError::Codec(
+                "committed join relay raw transaction length is invalid".into(),
+            ));
+        }
+        let relay = Self {
+            submission_hash: B256::from_slice(&input[1..33]),
+            calldata_hash: B256::from_slice(&input[33..65]),
+            transaction_hash: B256::from_slice(&input[65..97]),
+            from_block: u64::from_be_bytes(
+                input[97..105]
+                    .try_into()
+                    .map_err(|_| TransportError::Codec("committed join from_block".into()))?,
+            ),
+            raw_transaction: input[109..].to_vec(),
+        };
+        if relay.submission_hash.is_zero()
+            || relay.calldata_hash.is_zero()
+            || relay.transaction_hash != keccak256(&relay.raw_transaction)
+        {
+            return Err(TransportError::Codec(
+                "committed join relay commitments are invalid".into(),
+            ));
+        }
+        Ok(relay)
     }
 }
 
@@ -631,6 +839,190 @@ pub fn load_replacement_candidate_submission(
     let submission = read_replacement_submission(&paths.replacement_submission)?;
     validate_durable_replacement_submission(&candidate.manifest, &submission)?;
     Ok(Some(submission))
+}
+
+/// Persist exact canonical registration material for the already committed
+/// enclave. Exact replay is idempotent; conflicting material is rejected.
+pub fn persist_committed_join_submission(
+    node_data_dir: &Path,
+    registration_caller: Address,
+    evidence: &AttestationEvidenceV1,
+    node_signature: &[u8; 65],
+    enclave_signature: &[u8; 64],
+) -> Result<CommittedJoinSubmissionV1, TransportError> {
+    let paths = NodeHostPaths::new(node_data_dir);
+    ensure_private_directory(&paths.root)?;
+    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
+    if !path_exists(&paths.manifest)? || !path_exists(&paths.noise_key)? {
+        return Err(TransportError::Codec(
+            "committed join submission requires committed NodeHost state".into(),
+        ));
+    }
+    let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
+    let manifest = read_manifest(&paths.manifest)?;
+    if manifest.node_host_noise_x25519 != node_host.public() {
+        return Err(TransportError::Codec(
+            "committed join manifest does not match the persistent NodeHost key".into(),
+        ));
+    }
+    reconcile_committed_join_state(&paths, &manifest)?;
+    let submission = CommittedJoinSubmissionV1 {
+        registration_caller,
+        evidence: evidence.encode_canonical().map_err(codec_error)?,
+        node_signature: *node_signature,
+        enclave_signature: *enclave_signature,
+    };
+    validate_durable_committed_join_submission(&manifest, &submission)?;
+    let bytes = submission.encode_canonical()?;
+    if path_exists(&paths.committed_join_submission)? {
+        let durable = read_committed_join_submission(&paths.committed_join_submission)?;
+        if durable == submission {
+            return Ok(durable);
+        }
+        return Err(TransportError::Codec(
+            "committed join material conflicts with the durable submission".into(),
+        ));
+    }
+    replace_bytes_atomically(
+        &paths.committed_join_submission,
+        &paths.committed_join_submission_next,
+        &paths.committed_join_write_scratch,
+        &bytes,
+        &paths.root,
+    )?;
+    Ok(submission)
+}
+
+/// Reload and revalidate exact committed-enclave registration material.
+pub fn load_committed_join_submission(
+    node_data_dir: &Path,
+) -> Result<Option<CommittedJoinSubmissionV1>, TransportError> {
+    let paths = NodeHostPaths::new(node_data_dir);
+    ensure_private_directory(&paths.root)?;
+    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
+    if !path_exists(&paths.manifest)? || !path_exists(&paths.noise_key)? {
+        return Err(TransportError::Codec(
+            "committed join submission reload requires committed NodeHost state".into(),
+        ));
+    }
+    let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
+    let manifest = read_manifest(&paths.manifest)?;
+    if manifest.node_host_noise_x25519 != node_host.public() {
+        return Err(TransportError::Codec(
+            "committed join manifest does not match the persistent NodeHost key".into(),
+        ));
+    }
+    reconcile_committed_join_state(&paths, &manifest)?;
+    if !path_exists(&paths.committed_join_submission)? {
+        return Ok(None);
+    }
+    let submission = read_committed_join_submission(&paths.committed_join_submission)?;
+    validate_durable_committed_join_submission(&manifest, &submission)?;
+    Ok(Some(submission))
+}
+
+/// Persist the byte-identical signed committed-join transaction before its
+/// first network send.
+pub fn persist_committed_join_relay(
+    node_data_dir: &Path,
+    calldata_hash: B256,
+    from_block: u64,
+    raw_transaction: &[u8],
+) -> Result<CommittedJoinRelayV1, TransportError> {
+    let paths = NodeHostPaths::new(node_data_dir);
+    ensure_private_directory(&paths.root)?;
+    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
+    let manifest = read_manifest(&paths.manifest)?;
+    reconcile_committed_join_state(&paths, &manifest)?;
+    if !path_exists(&paths.committed_join_submission)? {
+        return Err(TransportError::Codec(
+            "committed join relay requires durable submission state".into(),
+        ));
+    }
+    let submission = read_committed_join_submission(&paths.committed_join_submission)?;
+    validate_durable_committed_join_submission(&manifest, &submission)?;
+    if calldata_hash.is_zero() || raw_transaction.is_empty() {
+        return Err(TransportError::Codec(
+            "committed join relay transaction is incomplete".into(),
+        ));
+    }
+    let relay = CommittedJoinRelayV1 {
+        submission_hash: submission.submission_hash()?,
+        calldata_hash,
+        transaction_hash: keccak256(raw_transaction),
+        from_block,
+        raw_transaction: raw_transaction.to_vec(),
+    };
+    let bytes = relay.encode_canonical()?;
+    if path_exists(&paths.committed_join_relay)? {
+        let durable = read_committed_join_relay(&paths.committed_join_relay)?;
+        if durable == relay {
+            return Ok(durable);
+        }
+        return Err(TransportError::Codec(
+            "committed join transaction conflicts with the durable relay checkpoint".into(),
+        ));
+    }
+    replace_bytes_atomically(
+        &paths.committed_join_relay,
+        &paths.committed_join_relay_next,
+        &paths.committed_join_write_scratch,
+        &bytes,
+        &paths.root,
+    )?;
+    Ok(relay)
+}
+
+/// Reload the byte-identical signed committed-join transaction after restart.
+pub fn load_committed_join_relay(
+    node_data_dir: &Path,
+) -> Result<Option<CommittedJoinRelayV1>, TransportError> {
+    let paths = NodeHostPaths::new(node_data_dir);
+    ensure_private_directory(&paths.root)?;
+    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
+    let manifest = read_manifest(&paths.manifest)?;
+    reconcile_committed_join_state(&paths, &manifest)?;
+    if !path_exists(&paths.committed_join_relay)? {
+        return Ok(None);
+    }
+    let submission = read_committed_join_submission(&paths.committed_join_submission)?;
+    validate_durable_committed_join_submission(&manifest, &submission)?;
+    let relay = read_committed_join_relay(&paths.committed_join_relay)?;
+    if relay.submission_hash != submission.submission_hash()? {
+        return Err(TransportError::Codec(
+            "committed join relay targets another durable submission".into(),
+        ));
+    }
+    Ok(Some(relay))
+}
+
+/// Remove an exact committed-join checkpoint only after the caller has proved
+/// the same intent completed locally. A crash between removals converges on
+/// retry because relay is removed before submission.
+pub fn clear_committed_join_checkpoint(
+    node_data_dir: &Path,
+    expected_intent_hash: B256,
+) -> Result<(), TransportError> {
+    let paths = NodeHostPaths::new(node_data_dir);
+    ensure_private_directory(&paths.root)?;
+    let _state_lock = NodeHostStateLock::acquire(&paths.state_lock)?;
+    let manifest = read_manifest(&paths.manifest)?;
+    reconcile_committed_join_state(&paths, &manifest)?;
+    if !path_exists(&paths.committed_join_submission)? {
+        return Ok(());
+    }
+    let submission = read_committed_join_submission(&paths.committed_join_submission)?;
+    let intent = validate_durable_committed_join_submission(&manifest, &submission)?;
+    if intent.intent_hash().map_err(codec_error)? != expected_intent_hash {
+        return Err(TransportError::Codec(
+            "committed join checkpoint belongs to another intent".into(),
+        ));
+    }
+    remove_file_if_exists(&paths.committed_join_relay)?;
+    File::open(&paths.root)?.sync_all()?;
+    remove_file_if_exists(&paths.committed_join_submission)?;
+    File::open(&paths.root)?.sync_all()?;
+    Ok(())
 }
 
 /// Persist the exact signed transaction before the first relay attempt. The
@@ -1171,6 +1563,23 @@ fn read_replacement_submission(
     ReplacementCandidateSubmissionV1::decode_canonical(&bytes)
 }
 
+fn read_committed_join_submission(
+    path: &Path,
+) -> Result<CommittedJoinSubmissionV1, TransportError> {
+    let bytes = read_owned_bounded_file(
+        path,
+        MAX_COMMITTED_JOIN_SUBMISSION_BYTES,
+        "committed join submission",
+    )?;
+    CommittedJoinSubmissionV1::decode_canonical(&bytes)
+}
+
+fn read_committed_join_relay(path: &Path) -> Result<CommittedJoinRelayV1, TransportError> {
+    let bytes =
+        read_owned_bounded_file(path, MAX_COMMITTED_JOIN_RELAY_BYTES, "committed join relay")?;
+    CommittedJoinRelayV1::decode_canonical(&bytes)
+}
+
 fn read_replacement_relay(path: &Path) -> Result<ReplacementCandidateRelayV1, TransportError> {
     let bytes = read_owned_bounded_file(path, MAX_REPLACEMENT_RELAY_BYTES, "replacement relay")?;
     ReplacementCandidateRelayV1::decode_canonical(&bytes)
@@ -1220,6 +1629,43 @@ fn validate_durable_replacement_submission(
     {
         return Err(TransportError::Codec(
             "durable replacement submission proof of possession is invalid".into(),
+        ));
+    }
+    Ok(intent)
+}
+
+fn validate_durable_committed_join_submission(
+    manifest: &EnclaveInitializationManifestV1,
+    submission: &CommittedJoinSubmissionV1,
+) -> Result<RegistrationIntentV1, TransportError> {
+    let evidence =
+        AttestationEvidenceV1::decode_canonical(submission.evidence()).map_err(codec_error)?;
+    let intent = match evidence {
+        AttestationEvidenceV1::Dcap(value)
+            if value.intent.operation == AttestationOperationV1::RegisterEnclave =>
+        {
+            value.intent
+        }
+        AttestationEvidenceV1::GramineDirectDev(value)
+            if value.intent.operation == AttestationOperationV1::RegisterEnclave
+                && value.dev_signature == *submission.enclave_signature() =>
+        {
+            value.intent
+        }
+        AttestationEvidenceV1::Dcap(_) | AttestationEvidenceV1::GramineDirectDev(_) => {
+            return Err(TransportError::Codec(
+                "committed join submission is not RegisterEnclave evidence".into(),
+            ));
+        }
+    };
+    manifest
+        .validate_intent_binding(&intent)
+        .map_err(codec_error)?;
+    if !intent.verify_node_signature(submission.node_signature())
+        || !intent.verify_enclave_signature(submission.enclave_signature())
+    {
+        return Err(TransportError::Codec(
+            "committed join submission proof of possession is invalid".into(),
         ));
     }
     Ok(intent)
@@ -1480,6 +1926,74 @@ fn validate_candidate_refresh_pair(
     {
         return Err(TransportError::Codec(
             "candidate refresh journal changes replacement identity".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn reconcile_committed_join_state(
+    paths: &NodeHostPaths,
+    manifest: &EnclaveInitializationManifestV1,
+) -> Result<(), TransportError> {
+    if path_exists(&paths.committed_join_write_scratch)? {
+        remove_file_if_exists(&paths.committed_join_write_scratch)?;
+        File::open(&paths.root)?.sync_all()?;
+    }
+    let mut submission_exists = path_exists(&paths.committed_join_submission)?;
+    if path_exists(&paths.committed_join_submission_next)? {
+        let next = read_committed_join_submission(&paths.committed_join_submission_next)?;
+        validate_durable_committed_join_submission(manifest, &next)?;
+        if submission_exists {
+            if read_committed_join_submission(&paths.committed_join_submission)? != next {
+                return Err(TransportError::Codec(
+                    "committed join submission journal conflicts with durable state".into(),
+                ));
+            }
+            remove_file_if_exists(&paths.committed_join_submission_next)?;
+        } else {
+            fs::rename(
+                &paths.committed_join_submission_next,
+                &paths.committed_join_submission,
+            )?;
+            submission_exists = true;
+        }
+        File::open(&paths.root)?.sync_all()?;
+    }
+
+    let relay_exists = path_exists(&paths.committed_join_relay)?;
+    if path_exists(&paths.committed_join_relay_next)? {
+        if !submission_exists {
+            return Err(TransportError::Codec(
+                "committed join relay journal is missing submission state".into(),
+            ));
+        }
+        let submission = read_committed_join_submission(&paths.committed_join_submission)?;
+        validate_durable_committed_join_submission(manifest, &submission)?;
+        let next = read_committed_join_relay(&paths.committed_join_relay_next)?;
+        if next.submission_hash != submission.submission_hash()? {
+            return Err(TransportError::Codec(
+                "committed join relay journal targets another submission".into(),
+            ));
+        }
+        if relay_exists {
+            if read_committed_join_relay(&paths.committed_join_relay)? != next {
+                return Err(TransportError::Codec(
+                    "committed join relay journal conflicts with durable state".into(),
+                ));
+            }
+            remove_file_if_exists(&paths.committed_join_relay_next)?;
+        } else {
+            fs::rename(
+                &paths.committed_join_relay_next,
+                &paths.committed_join_relay,
+            )?;
+        }
+        File::open(&paths.root)?.sync_all()?;
+    }
+
+    if path_exists(&paths.committed_join_relay)? && !submission_exists {
+        return Err(TransportError::Codec(
+            "committed join relay is missing its submission".into(),
         ));
     }
     Ok(())
@@ -1815,12 +2329,17 @@ struct NodeHostPaths {
     replacement_submission: PathBuf,
     replacement_relay: PathBuf,
     replacement_promotion: PathBuf,
+    committed_join_submission: PathBuf,
+    committed_join_relay: PathBuf,
     next_manifest: PathBuf,
     replacement_candidate_next: PathBuf,
     replacement_submission_next: PathBuf,
     replacement_relay_next: PathBuf,
     replacement_promotion_next: PathBuf,
+    committed_join_submission_next: PathBuf,
+    committed_join_relay_next: PathBuf,
     replacement_write_scratch: PathBuf,
+    committed_join_write_scratch: PathBuf,
 }
 
 impl NodeHostPaths {
@@ -1835,12 +2354,17 @@ impl NodeHostPaths {
             replacement_submission: root.join(NODE_HOST_REPLACEMENT_SUBMISSION_V1),
             replacement_relay: root.join(NODE_HOST_REPLACEMENT_RELAY_V1),
             replacement_promotion: root.join(NODE_HOST_REPLACEMENT_PROMOTION_V1),
+            committed_join_submission: root.join(NODE_HOST_COMMITTED_JOIN_SUBMISSION_V1),
+            committed_join_relay: root.join(NODE_HOST_COMMITTED_JOIN_RELAY_V1),
             next_manifest: root.join(NODE_HOST_NEXT_MANIFEST_V1),
             replacement_candidate_next: root.join(NODE_HOST_REPLACEMENT_CANDIDATE_NEXT_V1),
             replacement_submission_next: root.join(NODE_HOST_REPLACEMENT_SUBMISSION_NEXT_V1),
             replacement_relay_next: root.join(NODE_HOST_REPLACEMENT_RELAY_NEXT_V1),
             replacement_promotion_next: root.join(NODE_HOST_REPLACEMENT_PROMOTION_NEXT_V1),
+            committed_join_submission_next: root.join(NODE_HOST_COMMITTED_JOIN_SUBMISSION_NEXT_V1),
+            committed_join_relay_next: root.join(NODE_HOST_COMMITTED_JOIN_RELAY_NEXT_V1),
             replacement_write_scratch: root.join(NODE_HOST_REPLACEMENT_WRITE_SCRATCH_V1),
+            committed_join_write_scratch: root.join(NODE_HOST_COMMITTED_JOIN_WRITE_SCRATCH_V1),
             root,
         }
     }
@@ -2061,16 +2585,14 @@ mod tests {
             .unwrap(),
             relay
         );
-        assert!(
-            persist_replacement_candidate_relay(
-                &fixture.node_data_dir,
-                B256::repeat_byte(0x90),
-                &[0x94],
-            )
-            .unwrap_err()
-            .to_string()
-            .contains("conflicts")
-        );
+        assert!(persist_replacement_candidate_relay(
+            &fixture.node_data_dir,
+            B256::repeat_byte(0x90),
+            &[0x94],
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("conflicts"));
         assert_eq!(
             load_replacement_candidate_relay(&fixture.node_data_dir)
                 .unwrap()
@@ -2081,11 +2603,9 @@ mod tests {
             promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization).unwrap(),
             fixture.candidate
         );
-        assert!(
-            load_replacement_candidate_relay(&fixture.node_data_dir)
-                .unwrap()
-                .is_none()
-        );
+        assert!(load_replacement_candidate_relay(&fixture.node_data_dir)
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -2106,6 +2626,278 @@ mod tests {
             promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization).unwrap(),
             fixture.candidate
         );
+    }
+
+    #[test]
+    fn committed_join_submission_round_trips_exact_registration_material() {
+        let fixture = replacement_fixture_for_mode(
+            AttestationOperationV1::RegisterEnclave,
+            AttestationMode::GramineDirectDev,
+        );
+        let candidate_submission = load_replacement_candidate_submission(&fixture.node_data_dir)
+            .unwrap()
+            .unwrap();
+        let evidence =
+            AttestationEvidenceV1::decode_canonical(candidate_submission.evidence()).unwrap();
+        let node_signature = *candidate_submission.node_signature();
+        let enclave_signature = *candidate_submission.enclave_signature();
+        let registration_caller = Address::repeat_byte(0x42);
+        promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization).unwrap();
+
+        let durable = persist_committed_join_submission(
+            &fixture.node_data_dir,
+            registration_caller,
+            &evidence,
+            &node_signature,
+            &enclave_signature,
+        )
+        .unwrap();
+        assert_eq!(durable.registration_caller(), registration_caller);
+        assert_eq!(
+            load_committed_join_submission(&fixture.node_data_dir)
+                .unwrap()
+                .unwrap(),
+            durable
+        );
+        assert_eq!(
+            persist_committed_join_submission(
+                &fixture.node_data_dir,
+                registration_caller,
+                &evidence,
+                &node_signature,
+                &enclave_signature,
+            )
+            .unwrap(),
+            durable
+        );
+        assert!(persist_committed_join_submission(
+            &fixture.node_data_dir,
+            Address::repeat_byte(0x43),
+            &evidence,
+            &node_signature,
+            &enclave_signature,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("conflicts"));
+    }
+
+    #[test]
+    fn committed_join_relay_round_trips_exact_raw_transaction_and_scan_origin() {
+        let fixture = replacement_fixture_for_mode(
+            AttestationOperationV1::RegisterEnclave,
+            AttestationMode::GramineDirectDev,
+        );
+        let candidate_submission = load_replacement_candidate_submission(&fixture.node_data_dir)
+            .unwrap()
+            .unwrap();
+        let evidence =
+            AttestationEvidenceV1::decode_canonical(candidate_submission.evidence()).unwrap();
+        let node_signature = *candidate_submission.node_signature();
+        let enclave_signature = *candidate_submission.enclave_signature();
+        promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization).unwrap();
+        persist_committed_join_submission(
+            &fixture.node_data_dir,
+            Address::repeat_byte(0x42),
+            &evidence,
+            &node_signature,
+            &enclave_signature,
+        )
+        .unwrap();
+
+        let raw_transaction = [0x91, 0x92, 0x93];
+        let relay = persist_committed_join_relay(
+            &fixture.node_data_dir,
+            B256::repeat_byte(0x90),
+            77,
+            &raw_transaction,
+        )
+        .unwrap();
+        assert_eq!(relay.transaction_hash(), keccak256(raw_transaction));
+        assert_eq!(relay.from_block(), 77);
+        assert_eq!(relay.raw_transaction(), raw_transaction);
+        assert_eq!(
+            load_committed_join_relay(&fixture.node_data_dir)
+                .unwrap()
+                .unwrap(),
+            relay
+        );
+        assert_eq!(
+            persist_committed_join_relay(
+                &fixture.node_data_dir,
+                B256::repeat_byte(0x90),
+                77,
+                &raw_transaction,
+            )
+            .unwrap(),
+            relay
+        );
+        assert!(persist_committed_join_relay(
+            &fixture.node_data_dir,
+            B256::repeat_byte(0x90),
+            78,
+            &raw_transaction,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("conflicts"));
+        assert_eq!(
+            std::fs::metadata(&fixture.paths.committed_join_submission)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        assert_eq!(
+            std::fs::metadata(&fixture.paths.committed_join_relay)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn committed_join_restart_recovers_only_fsynced_next_checkpoints() {
+        let fixture = replacement_fixture_for_mode(
+            AttestationOperationV1::RegisterEnclave,
+            AttestationMode::GramineDirectDev,
+        );
+        let candidate_submission = load_replacement_candidate_submission(&fixture.node_data_dir)
+            .unwrap()
+            .unwrap();
+        let evidence =
+            AttestationEvidenceV1::decode_canonical(candidate_submission.evidence()).unwrap();
+        let node_signature = *candidate_submission.node_signature();
+        let enclave_signature = *candidate_submission.enclave_signature();
+        promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization).unwrap();
+        let submission = persist_committed_join_submission(
+            &fixture.node_data_dir,
+            Address::repeat_byte(0x42),
+            &evidence,
+            &node_signature,
+            &enclave_signature,
+        )
+        .unwrap();
+        let submission_bytes = std::fs::read(&fixture.paths.committed_join_submission).unwrap();
+        std::fs::remove_file(&fixture.paths.committed_join_submission).unwrap();
+        write_bytes_once(
+            &fixture.paths.committed_join_submission_next,
+            &submission_bytes,
+            &fixture.paths.root,
+        )
+        .unwrap();
+        assert_eq!(
+            load_committed_join_submission(&fixture.node_data_dir)
+                .unwrap()
+                .unwrap(),
+            submission
+        );
+
+        let relay = persist_committed_join_relay(
+            &fixture.node_data_dir,
+            B256::repeat_byte(0x81),
+            82,
+            &[0x83, 0x84],
+        )
+        .unwrap();
+        let relay_bytes = std::fs::read(&fixture.paths.committed_join_relay).unwrap();
+        std::fs::remove_file(&fixture.paths.committed_join_relay).unwrap();
+        write_bytes_once(
+            &fixture.paths.committed_join_relay_next,
+            &relay_bytes,
+            &fixture.paths.root,
+        )
+        .unwrap();
+        assert_eq!(
+            load_committed_join_relay(&fixture.node_data_dir)
+                .unwrap()
+                .unwrap(),
+            relay
+        );
+        assert!(!fixture.paths.committed_join_submission_next.exists());
+        assert!(!fixture.paths.committed_join_relay_next.exists());
+    }
+
+    #[test]
+    fn committed_join_cleanup_requires_the_exact_intent_and_is_idempotent() {
+        let fixture = replacement_fixture_for_mode(
+            AttestationOperationV1::RegisterEnclave,
+            AttestationMode::GramineDirectDev,
+        );
+        let candidate_submission = load_replacement_candidate_submission(&fixture.node_data_dir)
+            .unwrap()
+            .unwrap();
+        let evidence =
+            AttestationEvidenceV1::decode_canonical(candidate_submission.evidence()).unwrap();
+        let intent_hash = match &evidence {
+            AttestationEvidenceV1::Dcap(value) => value.intent.intent_hash().unwrap(),
+            AttestationEvidenceV1::GramineDirectDev(value) => value.intent.intent_hash().unwrap(),
+        };
+        let node_signature = *candidate_submission.node_signature();
+        let enclave_signature = *candidate_submission.enclave_signature();
+        promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization).unwrap();
+        persist_committed_join_submission(
+            &fixture.node_data_dir,
+            Address::repeat_byte(0x42),
+            &evidence,
+            &node_signature,
+            &enclave_signature,
+        )
+        .unwrap();
+        persist_committed_join_relay(
+            &fixture.node_data_dir,
+            B256::repeat_byte(0x81),
+            82,
+            &[0x83, 0x84],
+        )
+        .unwrap();
+
+        assert!(
+            clear_committed_join_checkpoint(&fixture.node_data_dir, B256::repeat_byte(0x85),)
+                .unwrap_err()
+                .to_string()
+                .contains("another intent")
+        );
+        assert!(fixture.paths.committed_join_submission.exists());
+        assert!(fixture.paths.committed_join_relay.exists());
+
+        std::fs::remove_file(&fixture.paths.committed_join_relay).unwrap();
+        File::open(&fixture.paths.root).unwrap().sync_all().unwrap();
+        clear_committed_join_checkpoint(&fixture.node_data_dir, intent_hash).unwrap();
+        assert!(!fixture.paths.committed_join_submission.exists());
+        assert!(!fixture.paths.committed_join_relay.exists());
+        clear_committed_join_checkpoint(&fixture.node_data_dir, intent_hash).unwrap();
+    }
+
+    #[test]
+    fn corrupt_committed_join_checkpoint_is_retained_and_rejected() {
+        let fixture = replacement_fixture_for_mode(
+            AttestationOperationV1::RegisterEnclave,
+            AttestationMode::GramineDirectDev,
+        );
+        let candidate_submission = load_replacement_candidate_submission(&fixture.node_data_dir)
+            .unwrap()
+            .unwrap();
+        let evidence =
+            AttestationEvidenceV1::decode_canonical(candidate_submission.evidence()).unwrap();
+        let node_signature = *candidate_submission.node_signature();
+        let enclave_signature = *candidate_submission.enclave_signature();
+        promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization).unwrap();
+        persist_committed_join_submission(
+            &fixture.node_data_dir,
+            Address::repeat_byte(0x42),
+            &evidence,
+            &node_signature,
+            &enclave_signature,
+        )
+        .unwrap();
+        std::fs::write(&fixture.paths.committed_join_submission, [0xff, 0x00]).unwrap();
+
+        assert!(load_committed_join_submission(&fixture.node_data_dir).is_err());
+        assert!(fixture.paths.committed_join_submission.exists());
     }
 
     #[test]
@@ -2226,12 +3018,13 @@ mod tests {
 
         let mut wrong_lease = finalized;
         wrong_lease.valid_until -= 1;
-        assert!(
-            construct_finalized_replacement_authorization_v1(&fixture.node_data_dir, &wrong_lease,)
-                .unwrap_err()
-                .to_string()
-                .contains("finalized Registry binding does not match")
-        );
+        assert!(construct_finalized_replacement_authorization_v1(
+            &fixture.node_data_dir,
+            &wrong_lease,
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("finalized Registry binding does not match"));
     }
 
     #[test]
@@ -2284,12 +3077,10 @@ mod tests {
         .unwrap();
 
         let node_host = NodeHostNoiseKey::load(&fixture.paths.noise_key).unwrap();
-        assert!(
-            reconcile_replacement_state(&fixture.paths, &node_host)
-                .unwrap_err()
-                .to_string()
-                .contains("changes replacement identity")
-        );
+        assert!(reconcile_replacement_state(&fixture.paths, &node_host)
+            .unwrap_err()
+            .to_string()
+            .contains("changes replacement identity"));
         assert_eq!(
             read_manifest(&fixture.paths.manifest).unwrap(),
             fixture.active
@@ -2436,12 +3227,10 @@ mod tests {
         );
         rustix::fs::flock(&lock, FlockOperation::Unlock).unwrap();
         drop(lock);
-        assert!(
-            result_receiver
-                .recv_timeout(Duration::from_secs(2))
-                .unwrap()
-                .is_ok()
-        );
+        assert!(result_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .is_ok());
         writer.join().unwrap();
     }
 

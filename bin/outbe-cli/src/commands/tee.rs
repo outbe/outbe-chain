@@ -15,7 +15,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use alloy_primitives::{Address, B256, U256, keccak256};
+use alloy_primitives::{keccak256, Address, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use clap::Subcommand;
 use eyre::{Result, WrapErr};
@@ -23,31 +23,33 @@ use k256::ecdsa::signature::hazmat::PrehashSigner as _;
 use outbe_operator::{
     rpc::{FinalityRpc, RenewalRpc},
     tee::{
-        ExpectedOnboardingBindingV1, NodeBindingSelectorV1, RenewalBindingV1, RenewalOutcomeV1,
-        RenewalServiceConfigV1, UpgradeContextV1, await_finalized_onboarding_v1,
-        copy_same_platform_sealed_root_and_checkpoint_v1, inspect_upgrade_journal_v1,
-        prepare_upgrade_journal_v1, read_finalized_registry_view_v1,
+        await_finalized_onboarding_v1, copy_same_platform_sealed_root_and_checkpoint_v1,
+        inspect_upgrade_journal_v1, prepare_upgrade_journal_v1, read_finalized_registry_view_v1,
         read_finalized_staged_successor_policy_v1, read_renewal_status_v1, run_renewal_once_v1,
-        run_upgrade_submission_v1,
+        run_upgrade_submission_v1, ExpectedOnboardingBindingV1, NodeBindingSelectorV1,
+        RenewalBindingV1, RenewalOutcomeV1, RenewalServiceConfigV1, UpgradeContextV1,
     },
-    tx::{RelaySignerV1, buffered_gas_price},
+    tx::{buffered_gas_price, RelaySignerV1},
 };
 use outbe_primitives::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, DcapEvidenceV1,
-    ENCLAVE_ID_DOMAIN_V1, GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1,
-    RegistryMutatorV1, TeePolicyV1, TeeRegistryGasScheduleV1, ValidatorNodeBindingV1,
+    GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1, RegistryMutatorV1, TeePolicyV1,
+    TeeRegistryGasScheduleV1, ValidatorNodeBindingV1, ENCLAVE_ID_DOMAIN_V1,
 };
 use outbe_tee::protocol::{
     EnclaveRequest, EnclaveResponse, MAX_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES,
     MIN_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES,
 };
 use outbe_tee::{
-    AuthorizedEnclaveClient, EnclaveClient, FinalizedReplacementBindingV1, GeneratedDcapQuoteV1,
-    NodeHostIdentityV1, ReplacementCandidateEnclaveV1, acquire_dcap_collateral_v1,
+    acquire_dcap_collateral_v1, clear_committed_join_checkpoint,
     connect_committed_node_host_enclave, construct_finalized_replacement_authorization_v1,
-    load_committed_enclave_manifest_v1, load_replacement_candidate_relay,
-    load_replacement_candidate_submission, persist_replacement_candidate_relay,
-    persist_replacement_candidate_submission, promote_replacement_candidate,
+    load_committed_enclave_manifest_v1, load_committed_join_relay, load_committed_join_submission,
+    load_replacement_candidate_relay, load_replacement_candidate_submission,
+    persist_committed_join_relay, persist_committed_join_submission,
+    persist_replacement_candidate_relay, persist_replacement_candidate_submission,
+    promote_replacement_candidate, AuthorizedEnclaveClient, CommittedJoinSubmissionV1,
+    EnclaveClient, FinalizedReplacementBindingV1, GeneratedDcapQuoteV1, NodeHostIdentityV1,
+    ReplacementCandidateEnclaveV1, ReplacementCandidateSubmissionV1,
 };
 use zeroize::Zeroizing;
 
@@ -678,6 +680,132 @@ struct JoinCompletionPlan {
     promote_candidate: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MissingCommittedRelayPlan {
+    ConstructAndPersist,
+    CleanupReadyExact,
+}
+
+struct ExactJoinRelayV1 {
+    transaction_hash: B256,
+    raw_transaction: Vec<u8>,
+}
+
+enum DurableJoinSubmissionV1 {
+    Candidate(ReplacementCandidateSubmissionV1),
+    Committed(CommittedJoinSubmissionV1),
+}
+
+impl DurableJoinSubmissionV1 {
+    fn evidence(&self) -> &[u8] {
+        match self {
+            Self::Candidate(value) => value.evidence(),
+            Self::Committed(value) => value.evidence(),
+        }
+    }
+
+    const fn node_signature(&self) -> &[u8; 65] {
+        match self {
+            Self::Candidate(value) => value.node_signature(),
+            Self::Committed(value) => value.node_signature(),
+        }
+    }
+
+    const fn enclave_signature(&self) -> &[u8; 64] {
+        match self {
+            Self::Candidate(value) => value.enclave_signature(),
+            Self::Committed(value) => value.enclave_signature(),
+        }
+    }
+
+    const fn is_candidate(&self) -> bool {
+        matches!(self, Self::Candidate(_))
+    }
+
+    const fn is_committed(&self) -> bool {
+        matches!(self, Self::Committed(_))
+    }
+
+    const fn registration_caller(&self) -> Option<Address> {
+        match self {
+            Self::Candidate(_) => None,
+            Self::Committed(value) => Some(value.registration_caller()),
+        }
+    }
+}
+
+fn ensure_durable_join_registration_caller(
+    durable_caller: Option<Address>,
+    current_caller: Address,
+) -> Result<()> {
+    if durable_caller.is_some_and(|caller| caller != current_caller) {
+        eyre::bail!("durable tee join was created with a different global --private-key");
+    }
+    Ok(())
+}
+
+fn plan_missing_committed_relay(
+    resumes_finalized_target: bool,
+    offer_key_state: JoinOfferKeyState,
+) -> Result<MissingCommittedRelayPlan> {
+    match (resumes_finalized_target, offer_key_state) {
+        (false, _) => Ok(MissingCommittedRelayPlan::ConstructAndPersist),
+        (true, JoinOfferKeyState::ReadyExact) => Ok(MissingCommittedRelayPlan::CleanupReadyExact),
+        (true, JoinOfferKeyState::Keyless) => eyre::bail!(
+            "finalized committed binding has no durable pre-relay transaction checkpoint"
+        ),
+    }
+}
+
+async fn relay_exact_join_transaction(
+    client: &(impl Rpc + Sync),
+    relay: &ExactJoinRelayV1,
+    resumes_finalized_target: bool,
+) -> Result<String> {
+    if keccak256(&relay.raw_transaction) != relay.transaction_hash {
+        eyre::bail!("durable join relay transaction hash mismatch")
+    }
+    let encoded_hash = format!("0x{}", hex::encode(relay.transaction_hash));
+    if resumes_finalized_target {
+        return Ok(encoded_hash);
+    }
+    let returned = match client
+        .eth_send_raw_transaction(&relay.raw_transaction)
+        .await
+    {
+        Ok(returned) => returned,
+        Err(error) => {
+            let message = format!("{error:#}").to_ascii_lowercase();
+            if message.contains("already known") || message.contains("known transaction") {
+                return Ok(encoded_hash);
+            }
+            if message.contains("nonce too low") {
+                let exact_receipt_exists = client
+                    .eth_get_transaction_receipt(&encoded_hash)
+                    .await?
+                    .and_then(|receipt| {
+                        receipt
+                            .get("transactionHash")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_owned)
+                    })
+                    .is_some_and(|hash| hash.eq_ignore_ascii_case(&encoded_hash));
+                if exact_receipt_exists {
+                    return Ok(encoded_hash);
+                }
+            }
+            return Err(error).wrap_err("relay exact durable registerEnclave transaction");
+        }
+    };
+    let returned_hash = returned
+        .parse::<B256>()
+        .wrap_err("parse durable registerEnclave transaction hash")?;
+    if returned_hash != relay.transaction_hash {
+        eyre::bail!("RPC returned a different durable join transaction hash");
+    }
+    Ok(encoded_hash)
+}
+
 fn plan_join_completion(
     offer_key_state: JoinOfferKeyState,
     is_candidate: bool,
@@ -899,30 +1027,46 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
             eyre::bail!("global --private-key does not own this finalized NodeHost association");
         }
     }
-    let durable_resume_intent = if let Some(node_data_dir) = node_data_dir {
+    let mut durable_submission = if let Some(node_data_dir) = node_data_dir {
         let manifest_path = node_data_dir
             .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
             .join(outbe_tee::node_host::NODE_HOST_MANIFEST_V1);
         if manifest_path.exists() {
-            load_replacement_candidate_submission(node_data_dir)
-                .map_err(|error| eyre::eyre!("inspect candidate join checkpoint: {error}"))?
-                .map(|submission| {
-                    let evidence = AttestationEvidenceV1::decode_canonical(submission.evidence())
-                        .map_err(|error| {
-                        eyre::eyre!("decode candidate join checkpoint: {error}")
-                    })?;
-                    Ok::<_, eyre::Report>(match evidence {
-                        AttestationEvidenceV1::Dcap(value) => value.intent,
-                        AttestationEvidenceV1::GramineDirectDev(value) => value.intent,
-                    })
-                })
-                .transpose()?
+            let candidate = load_replacement_candidate_submission(node_data_dir)
+                .map_err(|error| eyre::eyre!("inspect candidate join checkpoint: {error}"))?;
+            let committed = load_committed_join_submission(node_data_dir)
+                .map_err(|error| eyre::eyre!("inspect committed join checkpoint: {error}"))?;
+            match (candidate, committed) {
+                (Some(_), Some(_)) => {
+                    eyre::bail!("candidate and committed tee join checkpoints coexist")
+                }
+                (Some(value), None) => Some(DurableJoinSubmissionV1::Candidate(value)),
+                (None, Some(value)) => Some(DurableJoinSubmissionV1::Committed(value)),
+                (None, None) => None,
+            }
         } else {
             None
         }
     } else {
         None
     };
+    ensure_durable_join_registration_caller(
+        durable_submission
+            .as_ref()
+            .and_then(DurableJoinSubmissionV1::registration_caller),
+        evm_signer.address(),
+    )?;
+    let durable_resume_intent = durable_submission
+        .as_ref()
+        .map(|submission| {
+            let evidence = AttestationEvidenceV1::decode_canonical(submission.evidence())
+                .map_err(|error| eyre::eyre!("decode durable join checkpoint: {error}"))?;
+            Ok::<_, eyre::Report>(match evidence {
+                AttestationEvidenceV1::Dcap(value) => value.intent,
+                AttestationEvidenceV1::GramineDirectDev(value) => value.intent,
+            })
+        })
+        .transpose()?;
     let resumes_finalized_target = match (&finalized.binding, &durable_resume_intent) {
         (Some(binding), Some(intent)) => finalized_binding_matches_intent(binding, intent)?,
         _ => false,
@@ -1143,6 +1287,12 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
         expected_offer_pub,
     )?;
     let completion_plan = plan_join_completion(offer_key_state, enclave.is_candidate());
+    if durable_submission
+        .as_ref()
+        .is_some_and(|submission| submission.is_candidate() != enclave.is_candidate())
+    {
+        eyre::bail!("durable tee join checkpoint targets another enclave lifecycle");
+    }
 
     let source_binding = if resumes_finalized_target {
         None
@@ -1180,31 +1330,24 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
         || intent.noise_responder_x25519 != noise_responder_x25519
         || intent.node_host_authorization_hash != node_host_authorization_hash
     {
-        eyre::bail!("requested tee join does not match its durable candidate checkpoint");
+        eyre::bail!("requested tee join does not match its durable checkpoint");
     }
     let intent_hash = intent
         .intent_hash()
         .map_err(|error| eyre::eyre!("invalid V1 registration intent: {error}"))?;
     let fresh_node_signature = sign_node_hash(&node_signing_key, intent_hash)
         .map_err(|error| eyre::eyre!("sign V1 node intent: {error}"))?;
-    let durable_submission = if enclave.is_candidate() {
-        let node_data_dir = node_data_dir.expect("candidate join requires NodeHost state");
-        load_replacement_candidate_submission(node_data_dir)
-            .map_err(|error| eyre::eyre!("load durable candidate submission: {error}"))?
-    } else {
-        None
-    };
     let (evidence_value, node_signature, enclave_signature) = if let Some(durable) =
         durable_submission.as_ref()
     {
         let evidence = AttestationEvidenceV1::decode_canonical(durable.evidence())
-            .map_err(|error| eyre::eyre!("decode durable candidate evidence: {error}"))?;
+            .map_err(|error| eyre::eyre!("decode durable join evidence: {error}"))?;
         let durable_intent = match &evidence {
             AttestationEvidenceV1::Dcap(value) => &value.intent,
             AttestationEvidenceV1::GramineDirectDev(value) => &value.intent,
         };
         if durable_intent != &intent || durable.node_signature() != &fresh_node_signature {
-            eyre::bail!("requested tee join conflicts with the durable candidate registration");
+            eyre::bail!("requested tee join conflicts with the durable registration");
         }
         (
             evidence,
@@ -1241,13 +1384,26 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
             }
         };
         if enclave.is_candidate() {
-            persist_replacement_candidate_submission(
+            let persisted = persist_replacement_candidate_submission(
                 node_data_dir.expect("candidate join requires NodeHost state"),
                 &evidence,
                 &fresh_node_signature,
                 &signature,
             )
             .map_err(|error| eyre::eyre!("persist candidate registration: {error}"))?;
+            durable_submission = Some(DurableJoinSubmissionV1::Candidate(persisted));
+        } else if join_transport == JoinTransport::AuthorizedNodeHost
+            && offer_key_state == JoinOfferKeyState::Keyless
+        {
+            let persisted = persist_committed_join_submission(
+                node_data_dir.expect("committed join requires NodeHost state"),
+                evm_signer.address(),
+                &evidence,
+                &fresh_node_signature,
+                &signature,
+            )
+            .map_err(|error| eyre::eyre!("persist committed registration: {error}"))?;
+            durable_submission = Some(DurableJoinSubmissionV1::Committed(persisted));
         }
         (evidence, fresh_node_signature, signature)
     };
@@ -1283,10 +1439,9 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
 
     // The global EVM signer owns both the address-to-NodeHost association and
     // the transaction envelope. No second node or renewal EVM key exists.
-    let from_block = client.eth_block_number().await?;
-    let tx_hash = if enclave.is_candidate() {
+    let calldata_hash = keccak256(&call);
+    let (tx_hash, from_block) = if enclave.is_candidate() {
         let node_data_dir = node_data_dir.expect("candidate join requires NodeHost state");
-        let calldata_hash = keccak256(&call);
         let relay = if let Some(durable) = load_replacement_candidate_relay(node_data_dir)
             .map_err(|error| eyre::eyre!("load durable candidate relay: {error}"))?
         {
@@ -1327,59 +1482,106 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
             persist_replacement_candidate_relay(node_data_dir, calldata_hash, &raw.raw_transaction)
                 .map_err(|error| eyre::eyre!("persist exact candidate transaction: {error}"))?
         };
-        let expected_hash = relay.transaction_hash();
-        if !resumes_finalized_target {
-            match client
-                .eth_send_raw_transaction(relay.raw_transaction())
-                .await
-            {
-                Ok(returned) => {
-                    let returned_hash = returned
-                        .parse::<B256>()
-                        .wrap_err("parse registerEnclave transaction hash")?;
-                    if returned_hash != expected_hash {
-                        eyre::bail!("RPC returned a different candidate transaction hash");
-                    }
-                }
-                Err(error) => {
-                    let message = format!("{error:#}").to_ascii_lowercase();
-                    let already_known =
-                        message.contains("already known") || message.contains("known transaction");
-                    let exact_receipt_exists = if message.contains("nonce too low") {
-                        client
-                            .eth_get_transaction_receipt(&format!(
-                                "0x{}",
-                                hex::encode(expected_hash)
-                            ))
-                            .await?
-                            .and_then(|receipt| {
-                                receipt
-                                    .get("transactionHash")
-                                    .and_then(serde_json::Value::as_str)
-                                    .map(str::to_owned)
-                            })
-                            .is_some_and(|hash| {
-                                hash.eq_ignore_ascii_case(&format!(
-                                    "0x{}",
-                                    hex::encode(expected_hash)
-                                ))
-                            })
-                    } else {
-                        false
-                    };
-                    if !already_known && !exact_receipt_exists {
-                        return Err(error)
-                            .wrap_err("relay exact candidate registerEnclave transaction");
-                    }
-                }
+        let exact = ExactJoinRelayV1 {
+            transaction_hash: relay.transaction_hash(),
+            raw_transaction: relay.raw_transaction().to_vec(),
+        };
+        let from_block = client.eth_block_number().await?;
+        (
+            relay_exact_join_transaction(client, &exact, resumes_finalized_target).await?,
+            from_block,
+        )
+    } else if durable_submission
+        .as_ref()
+        .is_some_and(DurableJoinSubmissionV1::is_committed)
+    {
+        let node_data_dir = node_data_dir.expect("committed join requires NodeHost state");
+        let relay = if let Some(durable) = load_committed_join_relay(node_data_dir)
+            .map_err(|error| eyre::eyre!("load durable committed relay: {error}"))?
+        {
+            if durable.calldata_hash() != calldata_hash {
+                eyre::bail!("durable committed transaction targets different calldata");
             }
-        }
-        format!("0x{}", hex::encode(expected_hash))
+            durable
+        } else {
+            match plan_missing_committed_relay(resumes_finalized_target, offer_key_state)? {
+                MissingCommittedRelayPlan::CleanupReadyExact => {
+                    drop(enclave);
+                    let mut reopened =
+                        connect_committed_node_host_enclave(enclave_socket, node_data_dir)
+                            .map_err(|error| {
+                                eyre::eyre!("reopen completed committed enclave: {error}")
+                            })?;
+                    match reopened.request(&EnclaveRequest::GetPublicKeys)? {
+                        EnclaveResponse::PublicKeys {
+                            offer_key_ready: true,
+                            recipient_x25519_pub,
+                            ..
+                        } if recipient_x25519_pub == expected_offer_pub => {}
+                        other => eyre::bail!(
+                            "cleanup recovery did not reopen the exact permanent offer key: {other:?}"
+                        ),
+                    }
+                    clear_committed_join_checkpoint(node_data_dir, intent_hash).map_err(
+                        |error| eyre::eyre!("clear recovered committed join checkpoint: {error}"),
+                    )?;
+                    println!(
+                        "✓ finalized tee join cleanup recovered without another transaction or onboarding ingest"
+                    );
+                    return Ok(());
+                }
+                MissingCommittedRelayPlan::ConstructAndPersist => {}
+            }
+            let relay_signer = RelaySignerV1::new(private_key_hex)?;
+            if relay_signer.address() != evm_signer.address() {
+                eyre::bail!("global EVM signer address is inconsistent");
+            }
+            let account_nonce = client
+                .eth_get_transaction_count(evm_signer.address())
+                .await?;
+            let gas_price = buffered_gas_price(client.eth_gas_price().await?);
+            let required_balance = gas_price.saturating_mul(U256::from(gas_limit));
+            let balance = client.eth_get_balance(evm_signer.address()).await?;
+            if balance < required_balance {
+                eyre::bail!(
+                    "TEE join EVM signer {} has {balance} but needs at least {required_balance}",
+                    evm_signer.address()
+                );
+            }
+            let from_block = client.eth_block_number().await?;
+            let raw = relay_signer.sign_renewal(
+                rpc_chain_id,
+                account_nonce,
+                gas_price,
+                gas_limit,
+                abi::TEE_REGISTRY_ADDR,
+                &call,
+            )?;
+            persist_committed_join_relay(
+                node_data_dir,
+                calldata_hash,
+                from_block,
+                &raw.raw_transaction,
+            )
+            .map_err(|error| eyre::eyre!("persist exact committed transaction: {error}"))?
+        };
+        let exact = ExactJoinRelayV1 {
+            transaction_hash: relay.transaction_hash(),
+            raw_transaction: relay.raw_transaction().to_vec(),
+        };
+        (
+            relay_exact_join_transaction(client, &exact, resumes_finalized_target).await?,
+            relay.from_block(),
+        )
     } else {
-        evm_signer
-            .send_tx_with_gas(client, abi::TEE_REGISTRY_ADDR, call, U256::ZERO, gas_limit)
-            .await
-            .wrap_err("V1 registerEnclave submission failed")?
+        let from_block = client.eth_block_number().await?;
+        (
+            evm_signer
+                .send_tx_with_gas(client, abi::TEE_REGISTRY_ADDR, call, U256::ZERO, gas_limit)
+                .await
+                .wrap_err("V1 registerEnclave submission failed")?,
+            from_block,
+        )
     };
     println!(
         "V1 registerEnclave submitted by {}: {tx_hash}",
@@ -1534,6 +1736,14 @@ async fn join(client: &(impl Rpc + Sync), args: TeeJoinArgs<'_>) -> Result<()> {
                             "durable onboarding reopen did not expose the exact permanent offer key: {other:?}"
                         ));
                     }
+                }
+                if durable_submission
+                    .as_ref()
+                    .is_some_and(DurableJoinSubmissionV1::is_committed)
+                {
+                    clear_committed_join_checkpoint(node_data_dir, intent_hash).map_err(
+                        |error| eyre::eyre!("clear completed committed join checkpoint: {error}"),
+                    )?;
                 }
             }
             if join_transport == JoinTransport::AuthorizedNodeHost {
@@ -1887,6 +2097,9 @@ fn decode_offer_key_sealed_data(data: &[u8], expected_offer_public: [u8; 32]) ->
 mod tests {
     use super::*;
     use alloy_primitives::Bytes;
+    use outbe_rpc::test_support::{
+        ExpectedRpcCall, RecordedRpcCall, RecordedRpcResponse, RecordingRpc,
+    };
 
     fn sealed_artifact(offer_public: [u8; 32]) -> Vec<u8> {
         let mut sealed = vec![0x44; MIN_SEALED_OFFER_KEY_FOR_REGISTRY_BYTES];
@@ -2007,6 +2220,144 @@ mod tests {
                 ingest_offer_key: false,
                 promote_candidate: true,
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn finalized_durable_join_does_not_relay_a_second_transaction() {
+        let raw_transaction = vec![0x62, 0x63];
+        let transaction_hash = keccak256(&raw_transaction);
+        let relay = ExactJoinRelayV1 {
+            transaction_hash,
+            raw_transaction,
+        };
+        let rpc = RecordingRpc::new([]);
+
+        assert_eq!(
+            relay_exact_join_transaction(&rpc, &relay, true)
+                .await
+                .unwrap(),
+            format!("0x{}", hex::encode(transaction_hash))
+        );
+        rpc.assert_done();
+        assert!(rpc.recorded_calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn pending_durable_join_relays_only_the_exact_raw_transaction() {
+        let raw_transaction = vec![0x71, 0x72];
+        let transaction_hash = keccak256(&raw_transaction);
+        let relay = ExactJoinRelayV1 {
+            transaction_hash,
+            raw_transaction: raw_transaction.clone(),
+        };
+        let encoded_hash = format!("0x{}", hex::encode(transaction_hash));
+        let rpc = RecordingRpc::new([ExpectedRpcCall::ok(
+            RecordedRpcCall::EthSendRawTransaction {
+                raw_tx: raw_transaction,
+            },
+            RecordedRpcResponse::Text(encoded_hash.clone()),
+        )]);
+
+        assert_eq!(
+            relay_exact_join_transaction(&rpc, &relay, false)
+                .await
+                .unwrap(),
+            encoded_hash
+        );
+        rpc.assert_done();
+    }
+
+    #[tokio::test]
+    async fn already_known_durable_join_preserves_the_exact_transaction_identity() {
+        let raw_transaction = vec![0x73, 0x74];
+        let transaction_hash = keccak256(&raw_transaction);
+        let relay = ExactJoinRelayV1 {
+            transaction_hash,
+            raw_transaction: raw_transaction.clone(),
+        };
+        let encoded_hash = format!("0x{}", hex::encode(transaction_hash));
+        let rpc = RecordingRpc::new([ExpectedRpcCall::err(
+            RecordedRpcCall::EthSendRawTransaction {
+                raw_tx: raw_transaction,
+            },
+            "already known",
+        )]);
+
+        assert_eq!(
+            relay_exact_join_transaction(&rpc, &relay, false)
+                .await
+                .unwrap(),
+            encoded_hash
+        );
+        rpc.assert_done();
+    }
+
+    #[tokio::test]
+    async fn nonce_too_low_is_accepted_only_for_the_exact_durable_join_receipt() {
+        let raw_transaction = vec![0x75, 0x76];
+        let transaction_hash = keccak256(&raw_transaction);
+        let relay = ExactJoinRelayV1 {
+            transaction_hash,
+            raw_transaction: raw_transaction.clone(),
+        };
+        let encoded_hash = format!("0x{}", hex::encode(transaction_hash));
+        let rpc = RecordingRpc::new([
+            ExpectedRpcCall::err(
+                RecordedRpcCall::EthSendRawTransaction {
+                    raw_tx: raw_transaction,
+                },
+                "nonce too low",
+            ),
+            ExpectedRpcCall::ok(
+                RecordedRpcCall::EthGetTransactionReceipt {
+                    transaction_hash: encoded_hash.clone(),
+                },
+                RecordedRpcResponse::OptionalValue(Some(serde_json::json!({
+                    "transactionHash": encoded_hash,
+                }))),
+            ),
+        ]);
+
+        assert_eq!(
+            relay_exact_join_transaction(&rpc, &relay, false)
+                .await
+                .unwrap(),
+            format!("0x{}", hex::encode(transaction_hash))
+        );
+        rpc.assert_done();
+    }
+
+    #[test]
+    fn committed_submission_rejects_a_different_global_evm_signer() {
+        let original = Address::repeat_byte(0x41);
+        let replacement = Address::repeat_byte(0x42);
+
+        ensure_durable_join_registration_caller(Some(original), original).unwrap();
+        ensure_durable_join_registration_caller(None, replacement).unwrap();
+        assert!(
+            ensure_durable_join_registration_caller(Some(original), replacement)
+                .unwrap_err()
+                .to_string()
+                .contains("different global --private-key")
+        );
+    }
+
+    #[test]
+    fn missing_committed_relay_is_only_recoverable_after_ready_exact_completion() {
+        assert_eq!(
+            plan_missing_committed_relay(true, JoinOfferKeyState::ReadyExact).unwrap(),
+            MissingCommittedRelayPlan::CleanupReadyExact
+        );
+        assert_eq!(
+            plan_missing_committed_relay(false, JoinOfferKeyState::Keyless).unwrap(),
+            MissingCommittedRelayPlan::ConstructAndPersist
+        );
+        assert!(
+            plan_missing_committed_relay(true, JoinOfferKeyState::Keyless)
+                .unwrap_err()
+                .to_string()
+                .contains("no durable pre-relay transaction checkpoint")
         );
     }
 
@@ -2148,10 +2499,14 @@ mod tests {
             "topics": ["0xtopic0", "0xwrong"],
             "data": format!("0x{}", hex::encode(Bytes::from(sealed).abi_encode())),
         });
-        assert!(
-            matching_offer_key_log(&wrong_topic, "0xtopic0", "0xtopic1", "0xaaaa", offer_public,)
-                .is_err()
-        );
+        assert!(matching_offer_key_log(
+            &wrong_topic,
+            "0xtopic0",
+            "0xtopic1",
+            "0xaaaa",
+            offer_public,
+        )
+        .is_err());
     }
 
     #[tokio::test]
