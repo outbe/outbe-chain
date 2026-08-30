@@ -166,6 +166,7 @@ fn audit_loaded_logs(logs: &[(PathBuf, String)]) -> LogAudit {
     audit_loaded_logs_with_expectations(logs, usize::MAX, None, None, None)
 }
 
+#[cfg(test)]
 fn audit_loaded_logs_with_expectations(
     logs: &[(PathBuf, String)],
     validators: usize,
