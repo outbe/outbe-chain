@@ -8139,6 +8139,7 @@ dependencies = [
  "alloy-sol-types",
  "clap",
  "commonware-consensus",
+ "commonware-macros",
  "commonware-runtime",
  "commonware-storage",
  "commonware-utils",

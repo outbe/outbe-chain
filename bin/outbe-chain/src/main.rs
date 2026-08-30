@@ -1405,9 +1405,9 @@ fn run_node() -> eyre::Result<()> {
         let ret: eyre::Result<()> = run_with_lifetime_pin(node_lifetime_pin, || {
             runner.start(async move |ctx| {
                 let graceful_shutdown = ctx.child("shutdown");
-                let mut stack_handle = ctx.child("consensus_stack").spawn(move |stack_ctx| async move {
+                let mut stack_handle = ctx.child("consensus_stack").spawn(move |stack_ctx| {
                     outbe_engine::run_consensus_stack(
-                        &stack_ctx,
+                        stack_ctx,
                         args,
                         node,
                         bridge_for_consensus,
@@ -1426,10 +1426,8 @@ fn run_node() -> eyre::Result<()> {
                             services
                         },
                     )
-                    .await
                 });
-                tokio::select! {
-                    biased;
+                commonware_macros::select! {
                     _ = shutdown_token_clone.cancelled() => {
                         info!("consensus stack shutting down");
                         let stop_result = graceful_shutdown
@@ -1440,7 +1438,7 @@ fn run_node() -> eyre::Result<()> {
                                 "consensus graceful shutdown did not complete within 5 seconds: {error}"
                             ))?;
                         Ok(())
-                    }
+                    },
                     result = &mut stack_handle => {
                         let result = result.map_err(|error| {
                             eyre::eyre!("consensus stack task failed: {error:?}")
@@ -1449,7 +1447,7 @@ fn run_node() -> eyre::Result<()> {
                             tracing::error!(%e, "consensus stack failed");
                         }
                         result
-                    }
+                    },
                 }
             })
         });

@@ -144,7 +144,6 @@ where
 
 #[test]
 fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
-    let _expected_owner = StackShutdownOrNetworkExit::GlobalStop;
     let storage = tempfile::tempdir().expect("stack shutdown test storage");
     let config = commonware_tokio::Config::default()
         .with_worker_threads(1)
@@ -239,9 +238,8 @@ fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
             let mut shutdown = owner.stopped();
             let mut network_handle = network_handle;
             let mut engine_handle = engine_handle;
-            match wait_for_stack_shutdown_or_network_exit(&mut shutdown, &mut network_handle).await
-            {
-                StackShutdownOrNetworkExit::GlobalStop => {
+            commonware_macros::select! {
+                _ = &mut shutdown => {
                     let action = supervise_epoch_loop_result(
                         &owner,
                         Ok(EpochLoopOutcome::GlobalStop),
@@ -250,8 +248,8 @@ fn global_stop_wins_over_sibling_exit_and_drains_real_voter_journal() {
                     .await
                     .expect("simplex engine must drain on global stop");
                     assert_eq!(action, EpochLoopAction::ExitStack);
-                }
-                StackShutdownOrNetworkExit::NetworkExit => {}
+                },
+                _ = &mut network_handle => {}
             }
         });
 
@@ -395,15 +393,12 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
             .recv_timeout(Duration::from_secs(1))
             .expect("sole blocking worker must be occupied");
 
-        // The next first-attempt timeout queues the real voter's ordinary
-        // sync_journal behind the occupied Tokio blocking worker.
-        let send_count_before_pending_sync = vote_send_count.load(Ordering::Relaxed);
+        // Let the next first-attempt timeout queue the real voter's ordinary
+        // journal sync behind the occupied blocking worker. The sender count is
+        // deliberately not used as a barrier: it also includes unrelated and
+        // retry traffic. The direct owner-liveness assertion below proves that
+        // shutdown is waiting for the blocked journal operation.
         context.sleep(Duration::from_millis(250)).await;
-        assert_eq!(
-            vote_send_count.load(Ordering::Relaxed),
-            send_count_before_pending_sync,
-            "the first-attempt vote must remain behind its required journal sync"
-        );
         fatal_tx.send(()).expect("trigger fatal stack exit");
 
         commonware_macros::select! {
@@ -414,6 +409,7 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
             _ = context.sleep(Duration::from_millis(50)) => {},
         }
 
+        let send_count_before_release = vote_send_count.load(Ordering::Relaxed);
         release_tx.send(()).expect("release blocking worker");
         let result = stack_owner
             .await
@@ -424,7 +420,7 @@ fn fatal_stack_exit_drains_real_voter_journal_before_owner_returns() {
             "fatal result: {result:#}"
         );
         assert!(
-            vote_send_count.load(Ordering::Relaxed) > send_count_before_pending_sync,
+            vote_send_count.load(Ordering::Relaxed) > send_count_before_release,
             "releasing the storage worker must complete the pending ordinary sync_journal before broadcast"
         );
     });
@@ -519,6 +515,27 @@ fn completed_engine_outcome_is_not_polled_twice() {
         .expect("an already observed engine exit must stop the stack without repolling the handle");
 
         assert_eq!(action, EpochLoopAction::ExitStack);
+    });
+}
+
+#[test]
+fn signer_replacement_aborts_engine_after_epoch_select_completes() {
+    commonware_tokio::Runner::default().start(|context| async move {
+        let mut engine_handle = context
+            .child("replace_signer_engine")
+            .spawn(|engine| async move {
+                let _ = engine.stopped().await;
+            });
+
+        let action = supervise_epoch_loop_result(
+            &context,
+            Ok(EpochLoopOutcome::ReplaceSigner),
+            &mut engine_handle,
+        )
+        .await
+        .expect("signer replacement must stop the old engine before restarting the epoch");
+
+        assert_eq!(action, EpochLoopAction::ReplaceSigner);
     });
 }
 
@@ -2014,7 +2031,7 @@ fn recover_application_finalized_round_returns_none_at_genesis_height() {
         let (marshal_mailbox, resolver_keepalive, actor_handle) =
             start_recovery_marshal(context, HybridSchemeProvider::new()).await;
 
-        let recovered = recover_application_finalized_round(&clock, &marshal_mailbox, 0)
+        let recovered = recover_application_finalized_round(clock, marshal_mailbox, 0)
             .await
             .unwrap();
 
@@ -2042,7 +2059,7 @@ fn recover_application_finalized_round_reads_round_from_marshal_archive() {
         // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
         let _ = marshal_mailbox.report(Activity::Finalization(finalization));
 
-        let recovered = recover_application_finalized_round(&clock, &marshal_mailbox, 5700)
+        let recovered = recover_application_finalized_round(clock, marshal_mailbox, 5700)
             .await
             .unwrap();
 
@@ -2302,7 +2319,7 @@ fn recovered_fcu_skips_engine_when_provider_is_already_exact() {
         let counted = Arc::clone(&attempts);
 
         confirm_recovered_forkchoice(
-            &context,
+            context,
             anchor,
             move || {
                 counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -2337,7 +2354,7 @@ fn recovered_fcu_reanchors_speculative_head_even_when_finalized_is_exact() {
         let counted = Arc::clone(&attempts);
 
         confirm_recovered_forkchoice(
-            &context,
+            context,
             anchor,
             move || {
                 counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -2377,7 +2394,7 @@ fn recovered_fcu_retries_syncing_until_valid_and_provider_exact() {
         let scripted_observations = Arc::clone(&observations);
 
         confirm_recovered_forkchoice(
-            &context,
+            context,
             anchor,
             move || {
                 let outcome = scripted_outcomes.lock().unwrap().pop_front().unwrap();
@@ -2411,7 +2428,7 @@ fn recovered_fcu_lost_response_completes_when_provider_is_exact() {
         let scripted_observations = Arc::clone(&observations);
 
         confirm_recovered_forkchoice(
-            &context,
+            context,
             anchor,
             || async { RecoveredForkchoiceAttempt::Retryable("response lost".to_string()) },
             move || Ok(scripted_observations.lock().unwrap().pop_front().unwrap()),
@@ -2441,7 +2458,7 @@ fn recovered_fcu_payload_invalid_fails_closed_even_if_provider_is_exact() {
         let scripted_observations = Arc::clone(&observations);
 
         let error = confirm_recovered_forkchoice(
-            &context,
+            context,
             anchor,
             || async { RecoveredForkchoiceAttempt::Invalid("rejected".to_string()) },
             move || Ok(scripted_observations.lock().unwrap().pop_front().unwrap()),
@@ -2467,7 +2484,7 @@ fn recovered_fcu_attempt_timeout_exhaustion_fails_closed() {
         };
 
         let error = confirm_recovered_forkchoice(
-            &context,
+            context,
             anchor,
             std::future::pending::<RecoveredForkchoiceAttempt>,
             move || Ok(below_recovered_reth_readback(below)),
@@ -2488,7 +2505,7 @@ fn recover_application_finalized_round_fails_when_archive_is_missing_height() {
         let (marshal_mailbox, resolver_keepalive, actor_handle) =
             start_recovery_marshal(context, HybridSchemeProvider::new()).await;
 
-        let error = recover_application_finalized_round(&clock, &marshal_mailbox, 5700)
+        let error = recover_application_finalized_round(clock, marshal_mailbox, 5700)
             .await
             .unwrap_err()
             .to_string();

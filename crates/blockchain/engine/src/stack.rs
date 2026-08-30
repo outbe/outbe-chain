@@ -102,15 +102,10 @@ fn radicle_channel_config() -> (u64, u32, usize) {
     )
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum StackShutdownOrNetworkExit {
-    GlobalStop,
-    NetworkExit,
-}
-
 #[derive(Debug)]
 enum EpochLoopOutcome {
     RestartEpoch,
+    ReplaceSigner,
     GlobalStop,
     EngineExit(Result<(), commonware_runtime::Error>),
     StackExit,
@@ -119,6 +114,7 @@ enum EpochLoopOutcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EpochLoopAction {
     RestartEpoch,
+    ReplaceSigner,
     ExitStack,
 }
 
@@ -209,6 +205,11 @@ where
 {
     match outcome {
         Ok(EpochLoopOutcome::RestartEpoch) => Ok(EpochLoopAction::RestartEpoch),
+        Ok(EpochLoopOutcome::ReplaceSigner) => {
+            engine.abort();
+            let _ = (&mut *engine).await;
+            Ok(EpochLoopAction::ReplaceSigner)
+        }
         Ok(EpochLoopOutcome::GlobalStop) => {
             drain_engine_with_deadline(ctx, engine).await?;
             Ok(EpochLoopAction::ExitStack)
@@ -230,23 +231,6 @@ where
             Err(error),
             signal_global_stop_and_drain_engine(ctx, engine).await,
         ),
-    }
-}
-
-/// Give global shutdown ownership of the current Simplex engine before a
-/// sibling network exit can tear down the stack subtree.
-async fn wait_for_stack_shutdown_or_network_exit<S, N>(
-    shutdown: &mut S,
-    network: &mut N,
-) -> StackShutdownOrNetworkExit
-where
-    S: Future + Unpin,
-    N: Future + Unpin,
-{
-    tokio::select! {
-        biased;
-        _ = shutdown => StackShutdownOrNetworkExit::GlobalStop,
-        _ = network => StackShutdownOrNetworkExit::NetworkExit,
     }
 }
 
@@ -576,7 +560,7 @@ fn classify_recovered_fcu_attempt(
 }
 
 async fn confirm_recovered_forkchoice<C, Attempt, AttemptFuture, ReadProvider>(
-    clock: &C,
+    clock: C,
     anchor: ProjectionCheckpoint,
     mut attempt: Attempt,
     mut read_provider: ReadProvider,
@@ -1170,11 +1154,11 @@ async fn collect_reth_genesis_peer_evidence(node: &OutbeFullNode) -> RethGenesis
 
 #[allow(clippy::too_many_arguments)]
 async fn resolve_startup_dkg_snapshot<E>(
-    ctx: &E,
+    ctx: E,
     node: &OutbeFullNode,
     args: &ConsensusArgs,
     key_backend: &bls::KeyBackend,
-    signing_key: &bls12381::PrivateKey,
+    local_pk: bls12381::PublicKey,
     validator_set: &validators::ValidatorSet,
     genesis_hash: B256,
     dkg_rotation_params: DkgRotationParams,
@@ -1183,7 +1167,6 @@ async fn resolve_startup_dkg_snapshot<E>(
 where
     E: Clock,
 {
-    let local_pk = commonware_cryptography::Signer::public_key(signing_key);
     let startup_participants: commonware_utils::ordered::Set<bls12381::PublicKey> = validator_set
         .public_keys
         .clone()
@@ -2373,7 +2356,7 @@ fn validate_validator_evm_signer(
 /// consensus engine. Selected by `--upstream`.
 #[allow(clippy::too_many_arguments)]
 async fn run_follow_stack<E>(
-    ctx: &E,
+    ctx: E,
     args: ConsensusArgs,
     node: OutbeFullNode,
     bridge: ConsensusExecutionBridge,
@@ -2622,7 +2605,7 @@ const fn follower_height_has_certified_finalization(height: u64) -> bool {
 /// each against the per-epoch committee derived from the trusted anchor.
 #[allow(clippy::too_many_arguments)]
 async fn run_certified_follow_stack<E>(
-    ctx: &E,
+    ctx: E,
     anchor_participants: commonware_utils::ordered::Set<bls12381::PublicKey>,
     node: OutbeFullNode,
     bridge: ConsensusExecutionBridge,
@@ -2677,7 +2660,7 @@ where
 
     // ── 2. Page cache + marshal archives (mirrors run_consensus_stack) ───
     let page_cache = CacheRef::from_pooler(
-        ctx,
+        &ctx,
         nonzero_u16(4096, "page cache page size")?,
         nonzero_usize(config::PAGE_CACHE_SIZE / 4096, "PAGE_CACHE_SIZE / 4096")?,
     );
@@ -2956,7 +2939,7 @@ where
     );
     let fcu_provider_node = node.clone();
     confirm_recovered_forkchoice(
-        ctx,
+        ctx.child("recovered_forkchoice"),
         recovery_anchor.checkpoint,
         || executor_actor.replay_recovered_forkchoice_once(recovery_anchor.checkpoint),
         move || read_reth_recovery_forkchoice(&fcu_provider_node),
@@ -3051,7 +3034,7 @@ where
     // ── 4b. Serve `outbe_getFinalization`. The critical observer below owns
     // finality publication only after exact parent-proof persistence and OCOMP
     // retention both succeed. ──────────────────────────────────────
-    spawn_finalization_drainer(ctx, marshal_mailbox.clone(), bridge.clone());
+    spawn_finalization_drainer(&ctx, marshal_mailbox.clone(), bridge.clone());
 
     // ── 5. Assemble + run the follower engine ────────────────────────────
     let observer_mailbox = marshal_mailbox.clone();
@@ -3138,8 +3121,31 @@ fn ocomp_p2p_namespace(install_hash: Option<B256>) -> Vec<u8> {
     alloy_primitives::keccak256(preimage).to_vec()
 }
 
-pub async fn run_consensus_stack<E>(
-    ctx: &E,
+pub fn run_consensus_stack<E>(
+    ctx: E,
+    args: ConsensusArgs,
+    node: OutbeFullNode,
+    bridge: ConsensusExecutionBridge,
+    services: ConsensusStackServices,
+) -> impl Future<Output = Result<()>> + Send
+where
+    E: BufferPooler
+        + Clock
+        + CryptoRngCore
+        + Network
+        + Resolver
+        + Spawner
+        + Storage
+        + Metrics
+        + Send
+        + Sync
+        + 'static,
+{
+    run_consensus_stack_inner(ctx, args, node, bridge, services)
+}
+
+async fn run_consensus_stack_inner<E>(
+    ctx: E,
     args: ConsensusArgs,
     node: OutbeFullNode,
     bridge: ConsensusExecutionBridge,
@@ -3440,7 +3446,7 @@ where
 
     // ── 5b. Pre-compute page cache (shared across marshal + epochs) ─────
     let page_cache = CacheRef::from_pooler(
-        ctx,
+        &ctx,
         nonzero_u16(4096, "page cache page size")?,
         nonzero_usize(config::PAGE_CACHE_SIZE / 4096, "PAGE_CACHE_SIZE / 4096")?,
     );
@@ -3591,12 +3597,13 @@ where
         "marshal actor initialized; exact archive/Reth recovery reconciliation pending"
     );
 
+    let local_consensus_key = signing_key.public_key();
     let startup_snapshot = resolve_startup_dkg_snapshot(
-        ctx,
+        ctx.child("startup_dkg_snapshot"),
         &node,
         &args,
         &key_backend,
-        &signing_key,
+        local_consensus_key.clone(),
         &validator_set,
         genesis_hash,
         dkg_rotation_params,
@@ -3616,7 +3623,6 @@ where
     let verifier_join = args.signing_share.is_none()
         && args.public_polynomial.is_some()
         && args.dkg_output.is_some();
-    let local_consensus_key = signing_key.public_key();
     let local_key_in_current_consensus_set = validator_set
         .public_keys
         .iter()
@@ -3664,10 +3670,10 @@ where
         }
     } else {
         obtain_threshold_material(
-            ctx,
+            ctx.child("initial_dkg_material"),
             &args,
             &key_backend,
-            &signing_key,
+            signing_key.clone(),
             &validator_set,
             startup_dkg_context,
             dkg_init_tx,
@@ -4341,11 +4347,15 @@ where
 
     // Serve `outbe_getFinalization` from the marshal so `--upstream` followers
     // can backfill + verify finalized blocks from this validator.
-    spawn_finalization_drainer(ctx, marshal_mailbox.clone(), bridge.clone());
+    spawn_finalization_drainer(&ctx, marshal_mailbox.clone(), bridge.clone());
 
     let (recovery_anchor_height, recovery_anchor_hash, recovered_finalized_round) =
-        match recover_application_finalized_round(ctx, &marshal_mailbox, last_execution_height)
-            .await
+        match recover_application_finalized_round(
+            ctx.child("recover_application_finalized_round"),
+            marshal_mailbox.clone(),
+            last_execution_height,
+        )
+        .await
         {
             Ok(recovered) => reconcile_recovered_execution_head(
                 last_execution_height,
@@ -4378,8 +4388,12 @@ where
                 if !unfinalized_head_lead_is_recoverable(last_execution_height, finalized_tip) {
                     return Err(head_error);
                 }
-                let Ok(recovered_finalization) =
-                    recover_application_finalized_round(ctx, &marshal_mailbox, finalized_tip).await
+                let Ok(recovered_finalization) = recover_application_finalized_round(
+                    ctx.child("recover_application_finalized_tip"),
+                    marshal_mailbox.clone(),
+                    finalized_tip,
+                )
+                .await
                 else {
                     return Err(head_error);
                 };
@@ -5118,24 +5132,24 @@ where
             let mut stack_shutdown = ctx.stopped();
 
             loop {
-            tokio::select! {
-                biased;
-
-                lifecycle = wait_for_stack_shutdown_or_network_exit(
-                    &mut stack_shutdown,
-                    &mut network_handle,
-                ) => {
-                    match lifecycle {
-                        StackShutdownOrNetworkExit::GlobalStop => {
-                            info!(epoch = %current_epoch, "global stop received; draining simplex engine");
-                            return Ok(EpochLoopOutcome::GlobalStop);
-                        }
-                        StackShutdownOrNetworkExit::NetworkExit => {
-                            info!("P2P network exited");
-                            return Ok(EpochLoopOutcome::StackExit);
-                        }
-                    }
+            let reshare_active = reshare_in_progress;
+            let wait_for_execution_finalized_height = async {
+                if reshare_active {
+                    std::future::pending::<Option<u64>>().await
+                } else {
+                    execution_finalized_height_rx.recv().await
                 }
+            };
+            commonware_macros::select! {
+                _ = &mut stack_shutdown => {
+                    info!(epoch = %current_epoch, "global stop received; draining simplex engine");
+                    return Ok(EpochLoopOutcome::GlobalStop);
+                },
+
+                _ = &mut network_handle => {
+                    info!("P2P network exited");
+                    return Ok(EpochLoopOutcome::StackExit);
+                },
 
                 desired_signer = wait_for_radicle_role_change(
                     &mut radicle_updates,
@@ -5149,33 +5163,14 @@ where
                         desired_signer,
                         "canonical Radicle voting gate changed; replacing same-epoch Simplex role"
                     );
-                    engine_handle_task.abort();
-                    let _ = (&mut engine_handle_task).await;
-                    replacement_epoch_subchannels = Some(
-                        outbe_consensus::epoch_subchannels::reacquire_epoch_subchannels(
-                            current_epoch,
-                            ctx,
-                            Duration::from_secs(5),
-                            Duration::from_millis(10),
-                            &mut vote_mux,
-                            &mut cert_mux,
-                            &mut res_mux,
-                        )
-                        .await
-                        .wrap_err_with(|| {
-                            format!(
-                                "reacquire same-epoch channels while replacing Radicle role in epoch {current_epoch}"
-                            )
-                        })?,
-                    );
-                    return Ok(EpochLoopOutcome::RestartEpoch);
+                    return Ok(EpochLoopOutcome::ReplaceSigner);
                 },
 
                 // Engine exit → clean shutdown.
                 result = &mut engine_handle_task => {
                     info!(epoch = %current_epoch, "simplex engine exited");
                     return Ok(EpochLoopOutcome::EngineExit(result));
-                }
+                },
 
                 // DKG reshare completed (from background task).
                 Some(dkg_result) = dkg_result_rx.recv() => {
@@ -5402,7 +5397,7 @@ where
                             retry_frozen_dkg = true;
                         }
                     }
-                }
+                },
 
                 Some(progress) = dkg_progress_rx.recv() => {
                     match progress {
@@ -5417,7 +5412,7 @@ where
                             }
                         }
                     }
-                }
+                },
 
                 _ = &mut execution_watchdog_timer => {
                     execution_watchdog_timer =
@@ -5586,7 +5581,7 @@ where
                             ));
                         }
                     }
-                }
+                },
 
                 consensus_tip_changed = consensus_tip_rx.changed() => {
                     match consensus_tip_changed {
@@ -5600,19 +5595,19 @@ where
                             warn!(%error, "consensus tip watch channel closed");
                         }
                     }
-                }
+                },
 
-                _ = &mut provider_ready_retry_timer, if pending_provider_ready_height.is_some() => {
+                _ = &mut provider_ready_retry_timer => {
                     provider_ready_retry_timer = Box::pin(std::future::pending());
                     if let Some(current_height) = pending_provider_ready_height {
                         let _ = execution_finalized_height_tx.send(current_height);
                     }
-                }
+                },
 
                 // Block-height based DKG/VRF rotation. This is driven by execution-finalized
                 // height notifications after successful new_payload + FCU, not wall-clock
                 // polling or raw consensus finalization.
-                Some(current_height) = execution_finalized_height_rx.recv(), if !reshare_in_progress => {
+                Some(current_height) = wait_for_execution_finalized_height => {
                     match latest_consensus_tip {
                         Some(tip) => {
                             if !provider_matches_consensus_tip(&node.provider, tip, current_height)? {
@@ -6623,7 +6618,7 @@ where
                             "DKG rotation freeze height not reached"
                         );
                     }
-                }
+                },
 
                 // Component exits → fatal.
                 result = &mut executor_handle_task => {
@@ -6632,26 +6627,26 @@ where
                         .map_err(|e| eyre::eyre!("executor actor task failed: {e:?}"))?;
                     executor_result.wrap_err("executor actor returned fatal error")?;
                     return Ok(EpochLoopOutcome::StackExit);
-                }
+                },
                 result = &mut handler_handle => {
                     info!("application handler exited");
                     let application_result = result
                         .map_err(|e| eyre::eyre!("application handler task failed: {e:?}"))?;
                     application_result.wrap_err("application handler returned fatal error")?;
                     return Ok(EpochLoopOutcome::StackExit);
-                }
+                },
                 result = &mut finalization_handle => {
                     info!("finalization actor exited");
                     let finalization_result = result
                         .map_err(|e| eyre::eyre!("finalization actor task failed: {e:?}"))?;
                     finalization_result.wrap_err("finalization actor returned fatal error")?;
                     return Ok(EpochLoopOutcome::StackExit);
-                }
+                },
                 result = &mut peer_manager_handle_task => {
                     info!("peer manager actor exited");
                     result.map_err(|e| eyre::eyre!("peer manager actor exited: {e:?}"))?;
                     return Ok(EpochLoopOutcome::StackExit);
-                }
+                },
                 // SSA-8: the marshal actor is consensus-liveness-critical (block
                 // availability, finalized-block delivery to the executor). With
                 // `catch_panics`, a marshal panic (e.g. an unacknowledged Exact,
@@ -6664,7 +6659,7 @@ where
                     info!("marshal actor exited");
                     result.map_err(|e| eyre::eyre!("marshal actor exited: {e:?}"))?;
                     return Ok(EpochLoopOutcome::StackExit);
-                }
+                },
                 // The broadcast (buffered dissemination) handle remains managed by
                 // the Commonware runtime; its failure degrades to the marshal
                 // pull/serve path rather than a consensus stall.
@@ -6673,8 +6668,28 @@ where
         }
         .await;
 
-        match supervise_epoch_loop_result(ctx, epoch_loop_result, &mut engine_handle_task).await? {
+        match supervise_epoch_loop_result(&ctx, epoch_loop_result, &mut engine_handle_task).await? {
             EpochLoopAction::RestartEpoch => continue 'epoch_loop,
+            EpochLoopAction::ReplaceSigner => {
+                replacement_epoch_subchannels = Some(
+                    outbe_consensus::epoch_subchannels::reacquire_epoch_subchannels(
+                        current_epoch,
+                        &ctx,
+                        Duration::from_secs(5),
+                        Duration::from_millis(10),
+                        &mut vote_mux,
+                        &mut cert_mux,
+                        &mut res_mux,
+                    )
+                    .await
+                    .wrap_err_with(|| {
+                        format!(
+                            "reacquire same-epoch channels while replacing Radicle role in epoch {current_epoch}"
+                        )
+                    })?,
+                );
+                continue 'epoch_loop;
+            }
             EpochLoopAction::ExitStack => break 'epoch_loop,
         }
     }
@@ -6689,11 +6704,14 @@ where
 // Helper functions
 // ═══════════════════════════════════════════════════════════════════════════
 
-async fn recover_application_finalized_round(
-    clock: &impl Clock,
-    marshal_mailbox: &outbe_consensus::marshal_types::MarshalMailbox,
+async fn recover_application_finalized_round<C>(
+    clock: C,
+    marshal_mailbox: outbe_consensus::marshal_types::MarshalMailbox,
     last_execution_height: u64,
-) -> Result<Option<RecoveredApplicationFinalization>> {
+) -> Result<Option<RecoveredApplicationFinalization>>
+where
+    C: Clock,
+{
     if last_execution_height == 0 {
         return Ok(None);
     }
@@ -7550,16 +7568,19 @@ fn collect_finalized_dealer_logs(
 /// `bootstrap_from_live_dkg` is `true` only when this startup actually ran the
 /// interactive initial DKG ceremony (path 3).
 #[allow(clippy::too_many_arguments)]
-async fn obtain_threshold_material(
-    clock: &impl Clock,
+async fn obtain_threshold_material<C>(
+    clock: C,
     args: &ConsensusArgs,
     key_backend: &bls::KeyBackend,
-    signing_key: &bls12381::PrivateKey,
+    signing_key: bls12381::PrivateKey,
     validator_set: &validators::ValidatorSet,
     startup_dkg_context: StartupDkgContext,
     dkg_sender: impl P2pSender<PublicKey = bls12381::PublicKey>,
     dkg_receiver: impl P2pReceiver<PublicKey = bls12381::PublicKey>,
-) -> Result<ThresholdMaterial> {
+) -> Result<ThresholdMaterial>
+where
+    C: Clock,
+{
     // Path 1: Try loading saved DKG state from keys_dir (restart precedence).
     // On ordinary restart, saved local DKG state wins over CLI bootstrap material.
     if let Some(ref keys_dir) = args.keys_dir {
@@ -7766,7 +7787,7 @@ async fn obtain_threshold_material(
     }
 
     // Path 3: Run interactive DKG ceremony.
-    let local_pk = commonware_cryptography::Signer::public_key(signing_key);
+    let local_pk = signing_key.public_key();
     let startup_participants: commonware_utils::ordered::Set<bls12381::PublicKey> = validator_set
         .public_keys
         .clone()
@@ -7792,8 +7813,8 @@ async fn obtain_threshold_material(
     info!("no threshold material available — running DKG ceremony (NO BLOCKS until complete)");
 
     let dkg_result = dkg_actor::run_initial_dkg_durable(
-        clock,
-        signing_key.clone(),
+        &clock,
+        signing_key,
         startup_participants,
         None, // initial: no previous output
         None, // initial: no previous share
