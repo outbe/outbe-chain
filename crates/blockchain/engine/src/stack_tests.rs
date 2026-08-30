@@ -2097,6 +2097,391 @@ fn mismatched_marshal_finalization_digest_fails_closed() {
 }
 
 #[test]
+fn certified_follower_recovery_anchor_is_bounded_by_exact_archive_and_execution() {
+    let selected = select_certified_follower_recovery_height(CertifiedFollowerRecoveryFloors {
+        marshal_processed: 357,
+        archive_finalization_tip: 358,
+        archive_block_tip: 358,
+        execution_tip: 358,
+        reth_finalized: 357,
+    })
+    .unwrap();
+
+    assert_eq!(selected, 358);
+}
+
+#[test]
+fn certified_follower_recovery_anchor_rejects_unexplained_ack_gap() {
+    let error = select_certified_follower_recovery_height(CertifiedFollowerRecoveryFloors {
+        marshal_processed: 357,
+        archive_finalization_tip: 359,
+        archive_block_tip: 359,
+        execution_tip: 359,
+        reth_finalized: 357,
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("exceeds Marshal processed floor 357 by more than one block"));
+}
+
+#[test]
+fn certified_follower_recovery_anchor_rejects_finality_regression() {
+    let error = select_certified_follower_recovery_height(CertifiedFollowerRecoveryFloors {
+        marshal_processed: 357,
+        archive_finalization_tip: 357,
+        archive_block_tip: 357,
+        execution_tip: 357,
+        reth_finalized: 358,
+    })
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("Reth finalized height 358 exceeds recovery anchor 357"));
+}
+
+#[test]
+fn certified_follower_recovery_anchor_requires_matching_verified_records() {
+    let block = recovery_block(358);
+    let round = Round::new(Epoch::new(0), View::new(29));
+    let (provider, finalization) = recovery_finalization_fixture(&block, round);
+
+    let anchor = validate_certified_follower_recovery_record(
+        358,
+        block.block_hash(),
+        &finalization,
+        &block,
+        &finalization,
+        &block,
+        &provider,
+    )
+    .unwrap();
+    assert_eq!(anchor.checkpoint.block_number, 358);
+    assert_eq!(anchor.checkpoint.block_hash, block.block_hash());
+
+    let wrong_block = recovery_block(359);
+    let error = validate_certified_follower_recovery_record(
+        358,
+        block.block_hash(),
+        &finalization,
+        &wrong_block,
+        &finalization,
+        &block,
+        &provider,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("local archived block reports height 359, expected 358"));
+}
+
+fn recovered_reth_readback(
+    head: ProjectionCheckpoint,
+    safe: Option<ProjectionCheckpoint>,
+    finalized: Option<ProjectionCheckpoint>,
+) -> RecoveredRethForkchoice {
+    RecoveredRethForkchoice {
+        head,
+        safe,
+        finalized,
+    }
+}
+
+fn exact_recovered_reth_readback(anchor: ProjectionCheckpoint) -> RecoveredRethForkchoice {
+    recovered_reth_readback(anchor, Some(anchor), Some(anchor))
+}
+
+fn below_recovered_reth_readback(below: ProjectionCheckpoint) -> RecoveredRethForkchoice {
+    recovered_reth_readback(below, Some(below), Some(below))
+}
+
+#[test]
+fn recovered_fcu_requires_valid_response_and_exact_provider_identity() {
+    let anchor = ProjectionCheckpoint {
+        block_number: 358,
+        block_hash: B256::repeat_byte(0x58),
+    };
+
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Valid,
+            exact_recovered_reth_readback(anchor),
+        ),
+        RecoveredFcuAction::Complete,
+    );
+    let below = ProjectionCheckpoint {
+        block_number: 357,
+        block_hash: B256::repeat_byte(0x57),
+    };
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Valid,
+            below_recovered_reth_readback(below),
+        ),
+        RecoveredFcuAction::Retry,
+    );
+}
+
+#[test]
+fn recovered_fcu_retries_syncing_and_transport_errors_without_changing_anchor() {
+    let anchor = ProjectionCheckpoint {
+        block_number: 358,
+        block_hash: B256::repeat_byte(0x58),
+    };
+    let below = ProjectionCheckpoint {
+        block_number: 357,
+        block_hash: B256::repeat_byte(0x57),
+    };
+
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Syncing,
+            recovered_reth_readback(below, None, None),
+        ),
+        RecoveredFcuAction::Retry,
+    );
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Retryable("response lost".to_string()),
+            exact_recovered_reth_readback(anchor),
+        ),
+        RecoveredFcuAction::Complete,
+    );
+}
+
+#[test]
+fn recovered_fcu_rejects_invalid_or_conflicting_provider_finality() {
+    let anchor = ProjectionCheckpoint {
+        block_number: 358,
+        block_hash: B256::repeat_byte(0x58),
+    };
+
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Invalid("rejected".to_string()),
+            exact_recovered_reth_readback(anchor),
+        ),
+        RecoveredFcuAction::Fatal,
+    );
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Valid,
+            exact_recovered_reth_readback(ProjectionCheckpoint {
+                block_number: 358,
+                block_hash: B256::repeat_byte(0x99),
+            }),
+        ),
+        RecoveredFcuAction::Fatal,
+    );
+    assert_eq!(
+        classify_recovered_fcu_attempt(
+            anchor,
+            &RecoveredForkchoiceAttempt::Valid,
+            exact_recovered_reth_readback(ProjectionCheckpoint {
+                block_number: 359,
+                block_hash: B256::repeat_byte(0x59),
+            }),
+        ),
+        RecoveredFcuAction::Fatal,
+    );
+}
+
+#[test]
+fn recovered_fcu_skips_engine_when_provider_is_already_exact() {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
+        let anchor = ProjectionCheckpoint {
+            block_number: 358,
+            block_hash: B256::repeat_byte(0x58),
+        };
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&attempts);
+
+        confirm_recovered_forkchoice(
+            &context,
+            anchor,
+            move || {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async { RecoveredForkchoiceAttempt::Valid }
+            },
+            move || Ok(exact_recovered_reth_readback(anchor)),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 0);
+    });
+}
+
+#[test]
+fn recovered_fcu_reanchors_speculative_head_even_when_finalized_is_exact() {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
+        let anchor = ProjectionCheckpoint {
+            block_number: 358,
+            block_hash: B256::repeat_byte(0x58),
+        };
+        let speculative_head = ProjectionCheckpoint {
+            block_number: 359,
+            block_hash: B256::repeat_byte(0x59),
+        };
+        let observations = Arc::new(StdMutex::new(std::collections::VecDeque::from([
+            recovered_reth_readback(speculative_head, Some(anchor), Some(anchor)),
+            exact_recovered_reth_readback(anchor),
+        ])));
+        let scripted_observations = Arc::clone(&observations);
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&attempts);
+
+        confirm_recovered_forkchoice(
+            &context,
+            anchor,
+            move || {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async { RecoveredForkchoiceAttempt::Valid }
+            },
+            move || Ok(scripted_observations.lock().unwrap().pop_front().unwrap()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(observations.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn recovered_fcu_retries_syncing_until_valid_and_provider_exact() {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
+        let anchor = ProjectionCheckpoint {
+            block_number: 358,
+            block_hash: B256::repeat_byte(0x58),
+        };
+        let below = ProjectionCheckpoint {
+            block_number: 357,
+            block_hash: B256::repeat_byte(0x57),
+        };
+        let outcomes = Arc::new(StdMutex::new(std::collections::VecDeque::from([
+            RecoveredForkchoiceAttempt::Syncing,
+            RecoveredForkchoiceAttempt::Valid,
+        ])));
+        let observations = Arc::new(StdMutex::new(std::collections::VecDeque::from([
+            below_recovered_reth_readback(below),
+            below_recovered_reth_readback(below),
+            exact_recovered_reth_readback(anchor),
+        ])));
+        let scripted_outcomes = Arc::clone(&outcomes);
+        let scripted_observations = Arc::clone(&observations);
+
+        confirm_recovered_forkchoice(
+            &context,
+            anchor,
+            move || {
+                let outcome = scripted_outcomes.lock().unwrap().pop_front().unwrap();
+                async move { outcome }
+            },
+            move || Ok(scripted_observations.lock().unwrap().pop_front().unwrap()),
+        )
+        .await
+        .unwrap();
+
+        assert!(outcomes.lock().unwrap().is_empty());
+        assert!(observations.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn recovered_fcu_lost_response_completes_when_provider_is_exact() {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
+        let anchor = ProjectionCheckpoint {
+            block_number: 358,
+            block_hash: B256::repeat_byte(0x58),
+        };
+        let below = ProjectionCheckpoint {
+            block_number: 357,
+            block_hash: B256::repeat_byte(0x57),
+        };
+        let observations = Arc::new(StdMutex::new(std::collections::VecDeque::from([
+            below_recovered_reth_readback(below),
+            exact_recovered_reth_readback(anchor),
+        ])));
+        let scripted_observations = Arc::clone(&observations);
+
+        confirm_recovered_forkchoice(
+            &context,
+            anchor,
+            || async { RecoveredForkchoiceAttempt::Retryable("response lost".to_string()) },
+            move || Ok(scripted_observations.lock().unwrap().pop_front().unwrap()),
+        )
+        .await
+        .unwrap();
+
+        assert!(observations.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn recovered_fcu_payload_invalid_fails_closed_even_if_provider_is_exact() {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
+        let anchor = ProjectionCheckpoint {
+            block_number: 358,
+            block_hash: B256::repeat_byte(0x58),
+        };
+        let below = ProjectionCheckpoint {
+            block_number: 357,
+            block_hash: B256::repeat_byte(0x57),
+        };
+        let observations = Arc::new(StdMutex::new(std::collections::VecDeque::from([
+            below_recovered_reth_readback(below),
+            exact_recovered_reth_readback(anchor),
+        ])));
+        let scripted_observations = Arc::clone(&observations);
+
+        let error = confirm_recovered_forkchoice(
+            &context,
+            anchor,
+            || async { RecoveredForkchoiceAttempt::Invalid("rejected".to_string()) },
+            move || Ok(scripted_observations.lock().unwrap().pop_front().unwrap()),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("failed closed"));
+    });
+}
+
+#[test]
+fn recovered_fcu_attempt_timeout_exhaustion_fails_closed() {
+    commonware_runtime::deterministic::Runner::default().start(|context| async move {
+        let anchor = ProjectionCheckpoint {
+            block_number: 358,
+            block_hash: B256::repeat_byte(0x58),
+        };
+        let below = ProjectionCheckpoint {
+            block_number: 357,
+            block_hash: B256::repeat_byte(0x57),
+        };
+
+        let error = confirm_recovered_forkchoice(
+            &context,
+            anchor,
+            std::future::pending::<RecoveredForkchoiceAttempt>,
+            move || Ok(below_recovered_reth_readback(below)),
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("did not converge"));
+        assert!(error.contains("timed out"));
+    });
+}
+
+#[test]
 fn recover_application_finalized_round_fails_when_archive_is_missing_height() {
     let error = commonware_runtime::tokio::Runner::default().start(|context| async move {
         let clock = context.child("recover_clock");
